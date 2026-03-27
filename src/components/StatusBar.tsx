@@ -1,0 +1,29 @@
+import { useSessionStore } from "../stores/sessionStore";
+
+export function StatusBar() {
+	const { getActiveSession, focusedPaneId } = useSessionStore();
+	const session = getActiveSession();
+
+	return (
+		<div
+			className="flex items-center px-4 gap-4"
+			style={{
+				height: "var(--statusbar-height)",
+				backgroundColor: "var(--bg-secondary)",
+				borderTop: "1px solid var(--border)",
+				fontSize: 12,
+				color: "var(--fg-secondary)",
+			}}
+		>
+			{session ? (
+				<>
+					<span style={{ color: "var(--accent)" }}>{session.name}</span>
+					<span>{session.rootFolder}</span>
+					{focusedPaneId && <span>Pane: {focusedPaneId.slice(0, 8)}</span>}
+				</>
+			) : (
+				<span>No active session</span>
+			)}
+		</div>
+	);
+}
