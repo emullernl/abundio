@@ -19,6 +19,7 @@
   --sidebar-width: 280px;
   --statusbar-height: 40px;
   --transition-fast: 120ms ease-out;
+  --prompt-height: 44px;
 }
 
 * {
@@ -61,4 +62,9 @@ body,
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--fg-secondary);
+}
+
+/* Spinner for terminal initialization */
+@keyframes abundio-spin {
+  to { transform: rotate(360deg); }
 }

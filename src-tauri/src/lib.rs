@@ -7,6 +7,7 @@ pub mod migrations;
 pub mod pty_manager;
 pub mod session_store;
 pub mod shell_env;
+pub mod shell_hooks;
 
 use tauri::Manager;
 

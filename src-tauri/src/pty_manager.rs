@@ -115,7 +115,7 @@ impl PtyManager {
         );
 
         // Open log file for PTY output persistence
-        let log_file = log_id.and_then(|id| {
+        let mut log_file = log_id.and_then(|id| {
             let log_dir = Self::log_dir();
             fs::create_dir_all(&log_dir).ok()?;
             let log_path = log_dir.join(format!("{}.log", id));
@@ -130,9 +130,30 @@ impl PtyManager {
         let id_clone = pty_id.clone();
         let master = pair.master;
 
+        // Determine if we should inject shell hooks (only for default shell, not custom commands)
+        let inject_hooks = command.is_none();
+
+        // Write init-begin marker to log before hook injection so it can be
+        // stripped on replay. The matching end marker is the first OSC 7337
+        // emitted by the precmd hook.
+        if inject_hooks {
+            if let Some((ref mut file, _)) = log_file {
+                let _ = file.write_all(b"\x1b]7338;init-begin\x07");
+            }
+        }
+
         thread::spawn(move || {
             pty_thread(id_clone, master, child, rx, alive, app, log_file);
         });
+
+        // Inject shell hooks after spawn to set up precmd/PROMPT_COMMAND
+        // and suppress the native PS1 prompt
+        if inject_hooks {
+            let hook_cmd = crate::shell_hooks::hook_setup_command();
+            if !hook_cmd.is_empty() {
+                let _ = self.write(&pty_id, hook_cmd.into_bytes());
+            }
+        }
 
         Ok(pty_id)
     }
