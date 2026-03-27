@@ -9,15 +9,24 @@ import { initKeybindings, registerAction } from "./lib/keybindings";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useAutoSpawn } from "./hooks/useAutoSpawn";
 import { useSessionStore } from "./stores/sessionStore";
+import type { PaneNode } from "./lib/types";
 
 const TITLEBAR_HEIGHT = 52;
 
+function parseLayout(layoutJson: string): PaneNode | null {
+	try {
+		return JSON.parse(layoutJson) as PaneNode;
+	} catch {
+		return null;
+	}
+}
+
 export function App() {
-	const { getActiveSession, getActiveLayout, focusedPaneId } = useSession();
+	const { focusedPaneId } = useSession();
+	const sessions = useSessionStore((s) => s.sessions);
+	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
 	useAutoSpawn();
-	const activeSession = getActiveSession();
-	const layout = getActiveLayout();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 
 	useEffect(() => {
@@ -50,10 +59,8 @@ export function App() {
 			<div className="flex flex-1 min-h-0">
 				<Sidebar titlebarHeight={TITLEBAR_HEIGHT} />
 				<div className="flex-1 min-w-0 flex flex-col" style={{ paddingTop: TITLEBAR_HEIGHT }}>
-					<div className="flex-1 min-h-0">
-						{activeSession && layout ? (
-							<SplitContainer node={layout} cwd={activeSession.rootFolder} />
-						) : (
+					<div className="flex-1 min-h-0 relative">
+						{!activeSessionId && (
 							<div
 								className="flex items-center justify-center h-full"
 								style={{ color: "var(--fg-secondary)" }}
@@ -66,6 +73,20 @@ export function App() {
 								</div>
 							</div>
 						)}
+						{sessions.map((session) => {
+							const layout = parseLayout(session.layoutJson);
+							if (!layout) return null;
+							const isActive = session.id === activeSessionId;
+							return (
+								<div
+									key={session.id}
+									className="absolute inset-0"
+									style={{ display: isActive ? "block" : "none" }}
+								>
+									<SplitContainer node={layout} cwd={session.rootFolder} />
+								</div>
+							);
+						})}
 					</div>
 				</div>
 			</div>

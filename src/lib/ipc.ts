@@ -3,8 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AgentInfo, PtyStatusType, Session, SessionUpdate } from "./types";
 
 export const pty = {
-	spawn: (cwd: string, cols: number, rows: number, command?: string) =>
-		invoke<string>("pty_spawn", { cwd, cols, rows, command }),
+	spawn: (cwd: string, cols: number, rows: number, command?: string, logId?: string) =>
+		invoke<string>("pty_spawn", { cwd, cols, rows, command, logId }),
 
 	write: (ptyId: string, data: string) => invoke<void>("pty_write", { ptyId, data }),
 
@@ -21,6 +21,16 @@ export const pty = {
 
 	onStatus: (ptyId: string, callback: (status: PtyStatusType) => void): Promise<UnlistenFn> =>
 		listen<PtyStatusType>(`pty-status-${ptyId}`, (event) => callback(event.payload)),
+
+	readLog: async (logId: string): Promise<Uint8Array | null> => {
+		const data = await invoke<string | null>("pty_read_log", { logId });
+		if (!data) return null;
+		return Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+	},
+
+	deleteLog: (logId: string) => invoke<void>("pty_delete_log", { logId }),
+
+	cleanupStaleLogs: (paneIds: string[]) => invoke<void>("pty_cleanup_stale_logs", { paneIds }),
 };
 
 export const sessions = {

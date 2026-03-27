@@ -49,6 +49,9 @@ pub fn run() {
             commands::agents_list_available,
             commands::agents_refresh,
             commands::agent_spawn,
+            commands::pty_read_log,
+            commands::pty_delete_log,
+            commands::pty_cleanup_stale_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

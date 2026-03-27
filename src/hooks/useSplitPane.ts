@@ -104,10 +104,13 @@ export function useSplitPane() {
 			const layout = getActiveLayout();
 			if (!session || !layout) return;
 
-			// Find and kill the PTY for this pane
+			// Find and kill the PTY for this pane, and clean up its log file
 			const node = findNode(layout, paneId);
-			if (node?.type === "terminal" && node.ptyId) {
-				pty.kill(node.ptyId).catch(() => {});
+			if (node?.type === "terminal") {
+				if (node.ptyId) {
+					pty.kill(node.ptyId).catch(() => {});
+				}
+				pty.deleteLog(paneId).catch(() => {});
 			}
 
 			const newLayout = removeNode(layout, paneId);

@@ -15,8 +15,9 @@ pub async fn pty_spawn(
     cols: u16,
     rows: u16,
     command: Option<String>,
+    log_id: Option<String>,
 ) -> Result<String, AbundioError> {
-    pty_mgr.spawn(app, &cwd, command.as_deref(), cols, rows)
+    pty_mgr.spawn(app, &cwd, command.as_deref(), cols, rows, log_id.as_deref())
 }
 
 #[tauri::command]
@@ -123,5 +124,22 @@ pub async fn agent_spawn(
     let command = parts.join(" ");
 
     let _ = session_id; // Will be used for session-specific env in the future
-    pty_mgr.spawn(app, &cwd, Some(&command), cols, rows)
+    pty_mgr.spawn(app, &cwd, Some(&command), cols, rows, None)
+}
+
+// ── PTY log commands ──
+
+#[tauri::command]
+pub async fn pty_read_log(log_id: String) -> Result<Option<String>, AbundioError> {
+    PtyManager::read_log(&log_id)
+}
+
+#[tauri::command]
+pub async fn pty_delete_log(log_id: String) -> Result<(), AbundioError> {
+    PtyManager::delete_log(&log_id)
+}
+
+#[tauri::command]
+pub async fn pty_cleanup_stale_logs(pane_ids: Vec<String>) -> Result<(), AbundioError> {
+    PtyManager::cleanup_stale_logs(&pane_ids)
 }

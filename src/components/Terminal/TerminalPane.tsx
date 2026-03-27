@@ -99,7 +99,13 @@ export function TerminalPane({
 
 		async function initPty() {
 			if (!currentPtyId) {
-				currentPtyId = await pty.spawn(cwd, term.cols, term.rows);
+				// Replay persisted scrollback from a previous session before spawning a new PTY
+				const logData = await pty.readLog(paneId);
+				if (logData) {
+					term.write(logData);
+				}
+
+				currentPtyId = await pty.spawn(cwd, term.cols, term.rows, undefined, paneId);
 				activePtyIdRef.current = currentPtyId;
 
 				// Update the layout tree with the real ptyId so status tracking works
@@ -138,9 +144,11 @@ export function TerminalPane({
 				}
 			});
 
-			// Resize: debounced
+			// Resize: debounced (skip when hidden — display:none gives 0 dimensions)
 			let resizeTimer: ReturnType<typeof setTimeout>;
 			const resizeObserver = new ResizeObserver(() => {
+				const el = containerRef.current;
+				if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
 				fitAddon.fit();
 				clearTimeout(resizeTimer);
 				resizeTimer = setTimeout(() => {

@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -13,6 +15,8 @@ use tauri::{AppHandle, Emitter};
 use crate::error::AbundioError;
 use crate::events::{PtyOutput, PtyStatus};
 use crate::shell_env;
+
+const MAX_LOG_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
 
 /// Commands sent from the main thread to a PTY's dedicated thread.
 enum PtyCommand {
@@ -44,6 +48,7 @@ impl PtyManager {
     /// - `cwd`: working directory for the shell
     /// - `command`: optional command to run instead of the default shell
     /// - `cols`, `rows`: initial terminal size
+    /// - `log_id`: optional stable identifier for the PTY output log file
     ///
     /// Returns the PTY ID.
     pub fn spawn(
@@ -53,6 +58,7 @@ impl PtyManager {
         command: Option<&str>,
         cols: u16,
         rows: u16,
+        log_id: Option<&str>,
     ) -> Result<String, AbundioError> {
         let pty_id = uuid::Uuid::new_v4().to_string();
 
@@ -108,11 +114,24 @@ impl PtyManager {
             },
         );
 
+        // Open log file for PTY output persistence
+        let log_file = log_id.and_then(|id| {
+            let log_dir = Self::log_dir();
+            fs::create_dir_all(&log_dir).ok()?;
+            let log_path = log_dir.join(format!("{}.log", id));
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .ok()
+                .map(|f| (f, log_path))
+        });
+
         let id_clone = pty_id.clone();
         let master = pair.master;
 
         thread::spawn(move || {
-            pty_thread(id_clone, master, child, rx, alive, app);
+            pty_thread(id_clone, master, child, rx, alive, app, log_file);
         });
 
         Ok(pty_id)
@@ -147,6 +166,55 @@ impl PtyManager {
         self.entries.remove(pty_id);
         Ok(())
     }
+
+    fn log_dir() -> PathBuf {
+        dirs::data_dir()
+            .unwrap_or_else(|| Path::new("~").to_path_buf())
+            .join("abundio")
+            .join("pty-logs")
+    }
+
+    /// Read a PTY output log file, returning its contents as base64.
+    pub fn read_log(log_id: &str) -> Result<Option<String>, AbundioError> {
+        let log_path = Self::log_dir().join(format!("{}.log", log_id));
+        if !log_path.exists() {
+            return Ok(None);
+        }
+        let data = fs::read(&log_path)?;
+        if data.is_empty() {
+            return Ok(None);
+        }
+        let engine = base64::engine::general_purpose::STANDARD;
+        Ok(Some(engine.encode(&data)))
+    }
+
+    /// Delete a PTY output log file.
+    pub fn delete_log(log_id: &str) -> Result<(), AbundioError> {
+        let log_path = Self::log_dir().join(format!("{}.log", log_id));
+        if log_path.exists() {
+            fs::remove_file(&log_path)?;
+        }
+        Ok(())
+    }
+
+    /// Remove log files that don't belong to any known pane ID.
+    pub fn cleanup_stale_logs(valid_pane_ids: &[String]) -> Result<(), AbundioError> {
+        let log_dir = Self::log_dir();
+        if !log_dir.exists() {
+            return Ok(());
+        }
+        let valid: HashSet<&str> = valid_pane_ids.iter().map(|s| s.as_str()).collect();
+        for entry in fs::read_dir(&log_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if !valid.contains(stem) {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Runs on a dedicated OS thread. Owns the master PTY and child process.
@@ -157,6 +225,7 @@ fn pty_thread(
     rx: Receiver<PtyCommand>,
     alive: Arc<AtomicBool>,
     app: AppHandle,
+    log_file: Option<(File, PathBuf)>,
 ) {
     let mut writer = master.take_writer().unwrap();
     let mut reader = master.try_clone_reader().unwrap();
@@ -169,6 +238,7 @@ fn pty_thread(
     let read_thread = thread::spawn(move || {
         let mut buf = [0u8; 4096];
         let engine = base64::engine::general_purpose::STANDARD;
+        let mut log = log_file;
 
         loop {
             if !read_alive.load(Ordering::Relaxed) {
@@ -178,6 +248,21 @@ fn pty_thread(
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF
                 Ok(n) => {
+                    // Append raw output to log file for persistence
+                    if let Some((ref mut file, ref path)) = log {
+                        let _ = file.write_all(&buf[..n]);
+                        // Truncate if log exceeds max size
+                        if let Ok(meta) = file.metadata() {
+                            if meta.len() > MAX_LOG_SIZE {
+                                truncate_log_file(path, MAX_LOG_SIZE / 2);
+                                // Reopen in append mode after truncation
+                                if let Ok(f) = OpenOptions::new().append(true).open(path) {
+                                    *file = f;
+                                }
+                            }
+                        }
+                    }
+
                     let encoded = engine.encode(&buf[..n]);
                     let event_name = format!("pty-output-{}", read_pty_id);
                     let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
@@ -231,4 +316,17 @@ fn pty_thread(
     }
 
     let _ = read_thread.join();
+}
+
+/// Truncate a log file by keeping only the last `keep_bytes` bytes.
+fn truncate_log_file(path: &Path, keep_bytes: u64) {
+    let Ok(data) = fs::read(path) else { return };
+    let len = data.len() as u64;
+    if len <= keep_bytes {
+        return;
+    }
+    let start = (len - keep_bytes) as usize;
+    if let Ok(mut file) = File::create(path) {
+        let _ = file.write_all(&data[start..]);
+    }
 }
