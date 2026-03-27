@@ -90,6 +90,8 @@ impl PtyManager {
 
         cmd.env("TERM_PROGRAM", "Abundio");
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        // Suppress zsh's partial-line EOL marker (%) so it doesn't appear in replayed scrollback logs
+        cmd.env("PROMPT_EOL_MARK", "");
 
         if Path::new(cwd).is_dir() {
             cmd.cwd(cwd);
@@ -188,16 +190,43 @@ impl PtyManager {
         Ok(Some(engine.encode(&data)))
     }
 
-    /// Delete a PTY output log file.
+    /// Write a serialized terminal snapshot (from xterm SerializeAddon).
+    pub fn write_snapshot(pane_id: &str, data: &str) -> Result<(), AbundioError> {
+        let dir = Self::log_dir();
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{}.snapshot", pane_id));
+        fs::write(&path, data.as_bytes())?;
+        Ok(())
+    }
+
+    /// Read a terminal snapshot, returning its contents as a string.
+    pub fn read_snapshot(pane_id: &str) -> Result<Option<String>, AbundioError> {
+        let path = Self::log_dir().join(format!("{}.snapshot", pane_id));
+        if !path.exists() {
+            return Ok(None);
+        }
+        let data = fs::read_to_string(&path)?;
+        if data.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(data))
+    }
+
+    /// Delete a PTY output log file and its snapshot.
     pub fn delete_log(log_id: &str) -> Result<(), AbundioError> {
-        let log_path = Self::log_dir().join(format!("{}.log", log_id));
+        let log_dir = Self::log_dir();
+        let log_path = log_dir.join(format!("{}.log", log_id));
         if log_path.exists() {
             fs::remove_file(&log_path)?;
+        }
+        let snapshot_path = log_dir.join(format!("{}.snapshot", log_id));
+        if snapshot_path.exists() {
+            fs::remove_file(&snapshot_path)?;
         }
         Ok(())
     }
 
-    /// Remove log files that don't belong to any known pane ID.
+    /// Remove log and snapshot files that don't belong to any known pane ID.
     pub fn cleanup_stale_logs(valid_pane_ids: &[String]) -> Result<(), AbundioError> {
         let log_dir = Self::log_dir();
         if !log_dir.exists() {

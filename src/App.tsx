@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { StatusBar } from "./components/StatusBar";
@@ -9,6 +10,7 @@ import { initKeybindings, registerAction } from "./lib/keybindings";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useAutoSpawn } from "./hooks/useAutoSpawn";
 import { useSessionStore } from "./stores/sessionStore";
+import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import type { PaneNode } from "./lib/types";
 
 const TITLEBAR_HEIGHT = 52;
@@ -32,6 +34,23 @@ export function App() {
 	useEffect(() => {
 		const cleanup = initKeybindings();
 		return cleanup;
+	}, []);
+
+	// Save terminal snapshots before the window closes
+	useEffect(() => {
+		const appWindow = getCurrentWindow();
+		const unlisten = appWindow.onCloseRequested(async (event) => {
+			event.preventDefault();
+			// Save snapshots with a timeout so the window always closes
+			await Promise.race([
+				saveAllSnapshots(),
+				new Promise((r) => setTimeout(r, 2000)),
+			]);
+			appWindow.destroy();
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
 	}, []);
 
 	useEffect(() => {

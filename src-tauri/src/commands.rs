@@ -135,6 +135,16 @@ pub async fn pty_read_log(log_id: String) -> Result<Option<String>, AbundioError
 }
 
 #[tauri::command]
+pub async fn pty_write_snapshot(pane_id: String, data: String) -> Result<(), AbundioError> {
+    PtyManager::write_snapshot(&pane_id, &data)
+}
+
+#[tauri::command]
+pub async fn pty_read_snapshot(pane_id: String) -> Result<Option<String>, AbundioError> {
+    PtyManager::read_snapshot(&pane_id)
+}
+
+#[tauri::command]
 pub async fn pty_delete_log(log_id: String) -> Result<(), AbundioError> {
     PtyManager::delete_log(&log_id)
 }

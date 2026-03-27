@@ -28,6 +28,12 @@ export const pty = {
 		return Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
 	},
 
+	writeSnapshot: (paneId: string, data: string) =>
+		invoke<void>("pty_write_snapshot", { paneId, data }),
+
+	readSnapshot: (paneId: string) =>
+		invoke<string | null>("pty_read_snapshot", { paneId }),
+
 	deleteLog: (logId: string) => invoke<void>("pty_delete_log", { logId }),
 
 	cleanupStaleLogs: (paneIds: string[]) => invoke<void>("pty_cleanup_stale_logs", { paneIds }),

@@ -4,7 +4,9 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { pty } from "../../lib/ipc";
+import { registerSnapshot, unregisterSnapshot } from "../../lib/snapshotRegistry";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { getTheme } from "../../lib/themes";
 import { useSessionStore } from "../../stores/sessionStore";
@@ -74,8 +76,10 @@ export function TerminalPane({
 
 		const fitAddon = new FitAddon();
 		const searchAddon = new SearchAddon();
+		const serializeAddon = new SerializeAddon();
 		term.loadAddon(fitAddon);
 		term.loadAddon(searchAddon);
+		term.loadAddon(serializeAddon);
 		term.loadAddon(new WebLinksAddon());
 		searchAddonRef.current = searchAddon;
 		term.open(containerRef.current);
@@ -99,10 +103,15 @@ export function TerminalPane({
 
 		async function initPty() {
 			if (!currentPtyId) {
-				// Replay persisted scrollback from a previous session before spawning a new PTY
-				const logData = await pty.readLog(paneId);
-				if (logData) {
-					term.write(logData);
+				// Restore scrollback: prefer serialized snapshot (clean shutdown) over raw log (crash)
+				const snapshot = await pty.readSnapshot(paneId);
+				if (snapshot) {
+					term.write(snapshot);
+				} else {
+					const logData = await pty.readLog(paneId);
+					if (logData) {
+						term.write(logData);
+					}
 				}
 
 				currentPtyId = await pty.spawn(cwd, term.cols, term.rows, undefined, paneId);
@@ -157,11 +166,15 @@ export function TerminalPane({
 			});
 			resizeObserver.observe(containerRef.current!);
 
+			// Register with the snapshot registry so App can save all snapshots on quit
+			registerSnapshot(paneId, () => serializeAddon.serialize());
+
 			// Cleanup: dispose UI resources but do NOT kill the PTY.
 			// PTY processes are killed explicitly via closePane/deleteSession.
 			// Killing here would terminate the shell when React remounts
 			// the component during split/layout changes.
 			return () => {
+				unregisterSnapshot(paneId);
 				unlistenOutput();
 				unlistenStatus();
 				clearTimeout(resizeTimer);

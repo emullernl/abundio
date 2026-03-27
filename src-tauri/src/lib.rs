@@ -50,6 +50,8 @@ pub fn run() {
             commands::agents_refresh,
             commands::agent_spawn,
             commands::pty_read_log,
+            commands::pty_write_snapshot,
+            commands::pty_read_snapshot,
             commands::pty_delete_log,
             commands::pty_cleanup_stale_logs,
         ])
