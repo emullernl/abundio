@@ -6,10 +6,25 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { pty } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useSessionStore } from "../../stores/sessionStore";
 import { PaneContextMenu, type ContextMenuItem } from "./PaneContextMenu";
+import { sendNotification } from "@tauri-apps/plugin-notification";
+import type { PaneNode } from "../../lib/types";
 import "@xterm/xterm/css/xterm.css";
 
+function setPtyIdInLayout(node: PaneNode, targetPaneId: string, ptyId: string): PaneNode {
+	if (node.type === "terminal") {
+		return node.id === targetPaneId ? { ...node, ptyId } : node;
+	}
+	return {
+		...node,
+		first: setPtyIdInLayout(node.first, targetPaneId, ptyId),
+		second: setPtyIdInLayout(node.second, targetPaneId, ptyId),
+	};
+}
+
 interface Props {
+	paneId: string;
 	ptyId: string;
 	cwd: string;
 	isFocused: boolean;
@@ -22,6 +37,7 @@ interface Props {
 }
 
 export function TerminalPane({
+	paneId,
 	ptyId: initialPtyId,
 	cwd,
 	isFocused,
@@ -91,11 +107,25 @@ export function TerminalPane({
 		// Spawn PTY if needed (empty ptyId means "spawn on activate")
 		let currentPtyId = initialPtyId;
 
+		const { setPtyStatus } = useSessionStore.getState();
+
 		async function initPty() {
 			if (!currentPtyId) {
 				currentPtyId = await pty.spawn(cwd, term.cols, term.rows);
 				activePtyIdRef.current = currentPtyId;
+
+				// Update the layout tree with the real ptyId so status tracking works
+				const store = useSessionStore.getState();
+				const session = store.getActiveSession();
+				const layout = store.getActiveLayout();
+				if (session && layout) {
+					const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
+					store.updateLayoutLocal(session.id, updated);
+				}
 			}
+
+			// Mark as running
+			setPtyStatus(currentPtyId, { type: "running" });
 
 			// Input: terminal → PTY
 			term.onData((data) => {
@@ -105,6 +135,19 @@ export function TerminalPane({
 			// Output: PTY → terminal (binary)
 			const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
 				term.write(data);
+			});
+
+			// Status: track process lifecycle
+			const unlistenStatus = await pty.onStatus(currentPtyId, (status) => {
+				useSessionStore.getState().setPtyStatus(currentPtyId, status);
+				if (status.type === "exited") {
+					const exitMsg = status.code === 0 ? "exited" : `exited with code ${status.code}`;
+					try {
+						sendNotification({ title: "Abundio", body: `Process ${exitMsg}` });
+					} catch {
+						// Notifications may not be permitted
+					}
+				}
 			});
 
 			// Resize: debounced
@@ -121,6 +164,7 @@ export function TerminalPane({
 			// Store cleanup references
 			return () => {
 				unlistenOutput();
+				unlistenStatus();
 				clearTimeout(resizeTimer);
 				resizeObserver.disconnect();
 				pty.kill(currentPtyId);

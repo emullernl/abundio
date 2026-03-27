@@ -17,6 +17,7 @@ export function SplitContainer({ node, cwd }: Props) {
 	if (node.type === "terminal") {
 		return (
 			<TerminalPane
+				paneId={node.id}
 				ptyId={node.ptyId}
 				cwd={cwd}
 				isFocused={focusedPaneId === node.id}

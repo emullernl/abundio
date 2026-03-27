@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { PaneNode, Session } from "../lib/types";
+import type { PaneNode, PtyStatusType, Session } from "../lib/types";
 import { sessions as sessionsApi } from "../lib/ipc";
 
 interface SessionState {
@@ -8,6 +8,7 @@ interface SessionState {
 	focusedPaneId: string | null;
 	maximizedPaneId: string | null;
 	savedLayout: PaneNode | null; // stashed layout while a pane is maximized
+	ptyStatuses: Record<string, PtyStatusType>; // ptyId → status
 
 	// Actions
 	loadSessions: () => Promise<void>;
@@ -19,6 +20,7 @@ interface SessionState {
 	updateLayoutLocal: (sessionId: string, layout: PaneNode) => void;
 	persistLayout: (sessionId: string) => Promise<void>;
 	setMaximized: (paneId: string | null, savedLayout: PaneNode | null) => void;
+	setPtyStatus: (ptyId: string, status: PtyStatusType) => void;
 
 	// Derived
 	getActiveSession: () => Session | undefined;
@@ -49,6 +51,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 	focusedPaneId: null,
 	maximizedPaneId: null,
 	savedLayout: null,
+	ptyStatuses: {},
 
 	loadSessions: async () => {
 		const sessions = await sessionsApi.list();
@@ -115,6 +118,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 	},
 
 	setMaximized: (paneId, savedLayout) => set({ maximizedPaneId: paneId, savedLayout }),
+
+	setPtyStatus: (ptyId, status) =>
+		set((state) => ({
+			ptyStatuses: { ...state.ptyStatuses, [ptyId]: status },
+		})),
 
 	getActiveSession: () => {
 		const { sessions, activeSessionId } = get();

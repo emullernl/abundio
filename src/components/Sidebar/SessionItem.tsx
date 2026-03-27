@@ -1,4 +1,5 @@
-import type { Session } from "../../lib/types";
+import type { PaneNode, PtyStatusType, Session } from "../../lib/types";
+import { useSessionStore } from "../../stores/sessionStore";
 
 interface Props {
 	session: Session;
@@ -7,7 +8,37 @@ interface Props {
 	onDelete: () => void;
 }
 
+function collectPtyIds(node: PaneNode): string[] {
+	if (node.type === "terminal") return node.ptyId ? [node.ptyId] : [];
+	return [...collectPtyIds(node.first), ...collectPtyIds(node.second)];
+}
+
+function statusColor(statuses: PtyStatusType[]): string {
+	if (statuses.length === 0) return "var(--fg-secondary)"; // no panes
+	// If any are running, show green
+	if (statuses.some((s) => s.type === "running")) return "var(--success)";
+	// If any exited with error, show red
+	if (statuses.some((s) => s.type === "exited" && s.code !== 0 && s.code !== null))
+		return "var(--error)";
+	// All exited cleanly
+	return "var(--fg-secondary)";
+}
+
 export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
+	const ptyStatuses = useSessionStore((s) => s.ptyStatuses);
+
+	let paneStatuses: PtyStatusType[] = [];
+	try {
+		const layout = JSON.parse(session.layoutJson) as PaneNode;
+		const ptyIds = collectPtyIds(layout);
+		paneStatuses = ptyIds.map((id) => ptyStatuses[id]).filter(Boolean);
+	} catch {
+		// ignore
+	}
+
+	const dotColor = statusColor(paneStatuses);
+	const runningCount = paneStatuses.filter((s) => s.type === "running").length;
+
 	return (
 		<div
 			onClick={onClick}
@@ -24,10 +55,20 @@ export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 				if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: "var(--success)" }} />
+			<div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: dotColor }} />
 			<div className="flex-1 min-w-0">
-				<div className="truncate font-medium" style={{ color: "var(--fg-primary)", fontSize: 14 }}>
-					{session.name}
+				<div className="flex items-center gap-2">
+					<span className="truncate font-medium" style={{ color: "var(--fg-primary)", fontSize: 14 }}>
+						{session.name}
+					</span>
+					{runningCount > 0 && (
+						<span
+							className="flex-shrink-0 rounded-full px-1.5"
+							style={{ fontSize: 11, color: "var(--fg-secondary)", backgroundColor: "var(--bg-tertiary)" }}
+						>
+							{runningCount}
+						</span>
+					)}
 				</div>
 				<div className="truncate mt-0.5" style={{ color: "var(--fg-secondary)", fontSize: 12 }}>
 					{session.rootFolder}

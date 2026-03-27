@@ -6,12 +6,14 @@ import { Titlebar } from "./components/Titlebar";
 import { useSession } from "./hooks/useSession";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { useSplitPane } from "./hooks/useSplitPane";
+import { useAutoSpawn } from "./hooks/useAutoSpawn";
 
 const TITLEBAR_HEIGHT = 52;
 
 export function App() {
 	const { getActiveSession, getActiveLayout, focusedPaneId } = useSession();
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
+	useAutoSpawn();
 	const activeSession = getActiveSession();
 	const layout = getActiveLayout();
 
