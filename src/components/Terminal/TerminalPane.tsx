@@ -6,8 +6,10 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { pty } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { getTheme } from "../../lib/themes";
 import { useSessionStore } from "../../stores/sessionStore";
 import { PaneContextMenu, type ContextMenuItem } from "./PaneContextMenu";
+import { SearchBar } from "./SearchBar";
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import type { PaneNode } from "../../lib/types";
 import "@xterm/xterm/css/xterm.css";
@@ -50,46 +52,32 @@ export function TerminalPane({
 }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const termRef = useRef<Terminal | null>(null);
+	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const activePtyIdRef = useRef(initialPtyId);
-	const { fontFamily, fontSize } = useSettingsStore();
+	const { fontFamily, fontSize, theme: themeName } = useSettingsStore();
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+	const searchPaneId = useSessionStore((s) => s.searchPaneId);
+	const toggleSearch = useSessionStore((s) => s.toggleSearch);
+	const searchOpen = searchPaneId === paneId;
 
 	useEffect(() => {
 		if (!containerRef.current) return;
 
+		const currentTheme = getTheme(themeName);
 		const term = new Terminal({
 			fontSize,
 			fontFamily,
 			cursorBlink: true,
 			allowProposedApi: true,
-			theme: {
-				background: "#0D1117",
-				foreground: "#E6EDF3",
-				cursor: "#58D5BA",
-				selectionBackground: "#264F78",
-				black: "#484F58",
-				red: "#FF7B72",
-				green: "#3FB950",
-				yellow: "#D29922",
-				blue: "#58A6FF",
-				magenta: "#BC8CFF",
-				cyan: "#58D5BA",
-				white: "#E6EDF3",
-				brightBlack: "#6E7681",
-				brightRed: "#FFA198",
-				brightGreen: "#56D364",
-				brightYellow: "#E3B341",
-				brightBlue: "#79C0FF",
-				brightMagenta: "#D2A8FF",
-				brightCyan: "#7EE2CC",
-				brightWhite: "#FFFFFF",
-			},
+			theme: currentTheme.terminal,
 		});
 
 		const fitAddon = new FitAddon();
+		const searchAddon = new SearchAddon();
 		term.loadAddon(fitAddon);
-		term.loadAddon(new SearchAddon());
+		term.loadAddon(searchAddon);
 		term.loadAddon(new WebLinksAddon());
+		searchAddonRef.current = searchAddon;
 		term.open(containerRef.current);
 
 		// GPU acceleration — fallback to canvas if WebGL2 unavailable
@@ -217,6 +205,7 @@ export function TerminalPane({
 		{ label: "Copy", shortcut: "⌘C", onClick: handleCopy },
 		{ label: "Paste", shortcut: "⌘V", onClick: handlePaste },
 		{ separator: true },
+		{ label: "Find", shortcut: "⇧⌘F", onClick: toggleSearch },
 		{ label: "Clear Terminal", onClick: handleClear },
 		{ separator: true },
 		{ label: "Split Right", shortcut: "⇧⌘V", onClick: onSplitVertical },
@@ -243,6 +232,12 @@ export function TerminalPane({
 			onMouseDown={onFocus}
 			onContextMenu={handleContextMenu}
 		>
+			{searchOpen && searchAddonRef.current && (
+				<SearchBar
+					searchAddon={searchAddonRef.current}
+					onClose={toggleSearch}
+				/>
+			)}
 			{contextMenu && (
 				<PaneContextMenu
 					x={contextMenu.x}

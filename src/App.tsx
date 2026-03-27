@@ -1,12 +1,14 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { StatusBar } from "./components/StatusBar";
 import { Titlebar } from "./components/Titlebar";
+import { CommandPalette } from "./components/CommandPalette";
 import { useSession } from "./hooks/useSession";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useAutoSpawn } from "./hooks/useAutoSpawn";
+import { useSessionStore } from "./stores/sessionStore";
 
 const TITLEBAR_HEIGHT = 52;
 
@@ -16,6 +18,7 @@ export function App() {
 	useAutoSpawn();
 	const activeSession = getActiveSession();
 	const layout = getActiveLayout();
+	const [paletteOpen, setPaletteOpen] = useState(false);
 
 	useEffect(() => {
 		const cleanup = initKeybindings();
@@ -37,6 +40,8 @@ export function App() {
 		registerAction("navigate-left", () => navigatePane("left"));
 		registerAction("navigate-right", () => navigatePane("right"));
 		registerAction("maximize-pane", () => toggleMaximize());
+		registerAction("command-palette", () => setPaletteOpen((v) => !v));
+		registerAction("search-in-terminal", () => useSessionStore.getState().toggleSearch());
 	}, [focusedPaneId, splitPane, closePane, navigatePane, toggleMaximize]);
 
 	return (
@@ -65,6 +70,7 @@ export function App() {
 				</div>
 			</div>
 			<StatusBar />
+			<CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
 		</div>
 	);
 }

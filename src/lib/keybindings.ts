@@ -8,6 +8,7 @@ type KeyAction =
 	| "navigate-right"
 	| "maximize-pane"
 	| "command-palette"
+	| "search-in-terminal"
 	| "new-session";
 
 interface KeyBinding {
@@ -30,6 +31,7 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "ArrowRight", meta: isMac, shift: true, ctrl: !isMac, action: "navigate-right" },
 	{ key: "m", meta: isMac, shift: true, ctrl: !isMac, action: "maximize-pane" },
 	{ key: "k", meta: isMac, shift: false, ctrl: !isMac, action: "command-palette" },
+	{ key: "f", meta: isMac, shift: true, ctrl: !isMac, action: "search-in-terminal" },
 	{ key: "n", meta: isMac, shift: true, ctrl: !isMac, action: "new-session" },
 ];
 

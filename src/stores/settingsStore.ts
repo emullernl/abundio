@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { applyTheme, getTheme } from "../lib/themes";
 
 interface SettingsState {
 	fontFamily: string;
@@ -20,6 +21,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
 	setFontFamily: (fontFamily) => set({ fontFamily }),
 	setFontSize: (fontSize) => set({ fontSize }),
-	setTheme: (theme) => set({ theme }),
+	setTheme: (themeName) => {
+		applyTheme(getTheme(themeName));
+		set({ theme: themeName });
+	},
 	toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 }));
+
+// Apply default theme on load
+applyTheme(getTheme("default"));
