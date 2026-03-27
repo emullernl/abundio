@@ -249,7 +249,7 @@ export function TerminalPane({
 			style={{
 				padding: 0,
 				overflow: "hidden",
-				boxShadow: isFocused ? "0 0 0 1px var(--accent)" : "none",
+				boxShadow: "none",
 			}}
 			onFocus={onFocus}
 			onMouseDown={onFocus}
