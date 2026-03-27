@@ -149,13 +149,15 @@ export function TerminalPane({
 			});
 			resizeObserver.observe(containerRef.current!);
 
-			// Store cleanup references
+			// Cleanup: dispose UI resources but do NOT kill the PTY.
+			// PTY processes are killed explicitly via closePane/deleteSession.
+			// Killing here would terminate the shell when React remounts
+			// the component during split/layout changes.
 			return () => {
 				unlistenOutput();
 				unlistenStatus();
 				clearTimeout(resizeTimer);
 				resizeObserver.disconnect();
-				pty.kill(currentPtyId);
 				term.dispose();
 			};
 		}
