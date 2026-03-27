@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { FitAddon } from "@xterm/addon-fit";
@@ -6,6 +6,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { pty } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { PaneContextMenu, type ContextMenuItem } from "./PaneContextMenu";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
@@ -13,13 +14,29 @@ interface Props {
 	cwd: string;
 	isFocused: boolean;
 	onFocus: () => void;
+	onSplitHorizontal: () => void;
+	onSplitVertical: () => void;
+	onClose: () => void;
+	onMaximize: () => void;
+	isMaximized: boolean;
 }
 
-export function TerminalPane({ ptyId: initialPtyId, cwd, isFocused, onFocus }: Props) {
+export function TerminalPane({
+	ptyId: initialPtyId,
+	cwd,
+	isFocused,
+	onFocus,
+	onSplitHorizontal,
+	onSplitVertical,
+	onClose,
+	onMaximize,
+	isMaximized,
+}: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const activePtyIdRef = useRef(initialPtyId);
 	const { fontFamily, fontSize } = useSettingsStore();
+	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -123,10 +140,56 @@ export function TerminalPane({ ptyId: initialPtyId, cwd, isFocused, onFocus }: P
 		if (isFocused) termRef.current?.focus();
 	}, [isFocused]);
 
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			onFocus();
+			setContextMenu({ x: e.clientX, y: e.clientY });
+		},
+		[onFocus],
+	);
+
+	const handleCopy = useCallback(() => {
+		const term = termRef.current;
+		if (!term) return;
+		const selection = term.getSelection();
+		if (selection) {
+			navigator.clipboard.writeText(selection);
+		}
+	}, []);
+
+	const handlePaste = useCallback(async () => {
+		const text = await navigator.clipboard.readText();
+		if (text && activePtyIdRef.current) {
+			pty.write(activePtyIdRef.current, text);
+		}
+	}, []);
+
+	const handleClear = useCallback(() => {
+		termRef.current?.clear();
+	}, []);
+
+	const contextMenuItems: ContextMenuItem[] = [
+		{ label: "Copy", shortcut: "⌘C", onClick: handleCopy },
+		{ label: "Paste", shortcut: "⌘V", onClick: handlePaste },
+		{ separator: true },
+		{ label: "Clear Terminal", onClick: handleClear },
+		{ separator: true },
+		{ label: "Split Right", shortcut: "⇧⌘V", onClick: onSplitVertical },
+		{ label: "Split Down", shortcut: "⇧⌘H", onClick: onSplitHorizontal },
+		{ separator: true },
+		{
+			label: isMaximized ? "Restore Pane" : "Maximize Pane",
+			shortcut: "⇧⌘M",
+			onClick: onMaximize,
+		},
+		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: onClose },
+	];
+
 	return (
 		<div
 			ref={containerRef}
-			className="w-full h-full"
+			className="w-full h-full relative"
 			style={{
 				padding: 0,
 				overflow: "hidden",
@@ -134,6 +197,16 @@ export function TerminalPane({ ptyId: initialPtyId, cwd, isFocused, onFocus }: P
 			}}
 			onFocus={onFocus}
 			onMouseDown={onFocus}
-		/>
+			onContextMenu={handleContextMenu}
+		>
+			{contextMenu && (
+				<PaneContextMenu
+					x={contextMenu.x}
+					y={contextMenu.y}
+					items={contextMenuItems}
+					onClose={() => setContextMenu(null)}
+				/>
+			)}
+		</div>
 	);
 }

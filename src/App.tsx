@@ -11,7 +11,7 @@ const TITLEBAR_HEIGHT = 52;
 
 export function App() {
 	const { getActiveSession, getActiveLayout, focusedPaneId } = useSession();
-	const { splitPane, closePane } = useSplitPane();
+	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
 	const activeSession = getActiveSession();
 	const layout = getActiveLayout();
 
@@ -30,7 +30,12 @@ export function App() {
 		registerAction("close-pane", () => {
 			if (focusedPaneId) closePane(focusedPaneId);
 		});
-	}, [focusedPaneId, splitPane, closePane]);
+		registerAction("navigate-up", () => navigatePane("up"));
+		registerAction("navigate-down", () => navigatePane("down"));
+		registerAction("navigate-left", () => navigatePane("left"));
+		registerAction("navigate-right", () => navigatePane("right"));
+		registerAction("maximize-pane", () => toggleMaximize());
+	}, [focusedPaneId, splitPane, closePane, navigatePane, toggleMaximize]);
 
 	return (
 		<div className="flex flex-col h-full w-full">

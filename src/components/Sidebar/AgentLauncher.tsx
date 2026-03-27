@@ -19,11 +19,13 @@ export function AgentLauncher({ onSpawnAgent }: Props) {
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
-				className="w-full px-4 py-2 text-sm rounded-lg transition-colors"
+				className="w-full rounded-lg transition-colors font-medium"
 				style={{
 					backgroundColor: "var(--bg-tertiary)",
 					color: "var(--accent)",
 					border: "1px solid var(--border)",
+					fontSize: 14,
+					height: 40,
 				}}
 			>
 				Launch Agent
@@ -31,7 +33,7 @@ export function AgentLauncher({ onSpawnAgent }: Props) {
 
 			{open && (
 				<div
-					className="absolute left-0 right-0 bottom-full mb-1 rounded-lg overflow-hidden z-50 shadow-lg"
+					className="absolute left-0 right-0 bottom-full mb-2 rounded-xl overflow-hidden z-50 shadow-2xl py-1.5"
 					style={{
 						backgroundColor: "var(--bg-secondary)",
 						border: "1px solid var(--border)",
@@ -45,8 +47,8 @@ export function AgentLauncher({ onSpawnAgent }: Props) {
 								onSpawnAgent(agent.name);
 								setOpen(false);
 							}}
-							className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-tertiary)] transition-colors"
-							style={{ color: "var(--fg-primary)" }}
+							className="w-full text-left px-4 py-2.5 hover:bg-[var(--bg-tertiary)] transition-colors"
+							style={{ color: "var(--fg-primary)", fontSize: 14 }}
 						>
 							{agent.displayName}
 						</button>
@@ -54,8 +56,8 @@ export function AgentLauncher({ onSpawnAgent }: Props) {
 					{unavailableAgents.map((agent) => (
 						<div
 							key={agent.name}
-							className="px-3 py-2 text-sm"
-							style={{ color: "var(--fg-secondary)", opacity: 0.5 }}
+							className="px-4 py-2.5"
+							style={{ color: "var(--fg-secondary)", opacity: 0.5, fontSize: 14 }}
 						>
 							{agent.displayName} — not installed
 						</div>

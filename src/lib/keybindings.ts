@@ -69,6 +69,7 @@ export function handleKeyDown(e: KeyboardEvent) {
 }
 
 export function initKeybindings() {
-	window.addEventListener("keydown", handleKeyDown);
-	return () => window.removeEventListener("keydown", handleKeyDown);
+	// Use capture phase so we intercept before xterm.js handles the event
+	window.addEventListener("keydown", handleKeyDown, true);
+	return () => window.removeEventListener("keydown", handleKeyDown, true);
 }

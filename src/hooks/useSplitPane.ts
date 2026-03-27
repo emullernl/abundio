@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import type { PaneNode } from "../lib/types";
+import { pty } from "../lib/ipc";
 
 function generateId(): string {
 	return crypto.randomUUID();
@@ -46,9 +47,25 @@ function removeNode(tree: PaneNode, id: string): PaneNode | null {
 	return tree;
 }
 
+/** Collect all terminal node IDs in tree order (depth-first). */
+function collectTerminals(tree: PaneNode): { id: string; ptyId: string }[] {
+	if (tree.type === "terminal") return [{ id: tree.id, ptyId: tree.ptyId }];
+	return [...collectTerminals(tree.first), ...collectTerminals(tree.second)];
+}
+
 export function useSplitPane() {
-	const { getActiveSession, getActiveLayout, updateLayout, setFocusedPane } =
-		useSessionStore();
+	const {
+		getActiveSession,
+		getActiveLayout,
+		updateLayout,
+		updateLayoutLocal,
+		persistLayout,
+		setFocusedPane,
+		focusedPaneId,
+		maximizedPaneId,
+		savedLayout,
+		setMaximized,
+	} = useSessionStore();
 
 	const splitPane = useCallback(
 		async (paneId: string, direction: "horizontal" | "vertical") => {
@@ -87,16 +104,33 @@ export function useSplitPane() {
 			const layout = getActiveLayout();
 			if (!session || !layout) return;
 
+			// Find and kill the PTY for this pane
+			const node = findNode(layout, paneId);
+			if (node?.type === "terminal" && node.ptyId) {
+				pty.kill(node.ptyId).catch(() => {});
+			}
+
 			const newLayout = removeNode(layout, paneId);
 			if (newLayout) {
 				await updateLayout(session.id, newLayout);
+				// Focus the first terminal in the remaining tree
+				const terminals = collectTerminals(newLayout);
+				if (terminals.length > 0) {
+					setFocusedPane(terminals[0].id);
+				}
+			}
+
+			// Clear maximize state if the maximized pane was closed
+			if (maximizedPaneId === paneId) {
+				setMaximized(null, null);
 			}
 		},
-		[getActiveSession, getActiveLayout, updateLayout],
+		[getActiveSession, getActiveLayout, updateLayout, setFocusedPane, maximizedPaneId, setMaximized],
 	);
 
-	const updateRatio = useCallback(
-		async (splitNodeId: string, ratio: number) => {
+	/** Local-only ratio update (no DB persist) — call during drag. */
+	const updateRatioLocal = useCallback(
+		(splitNodeId: string, ratio: number) => {
 			const session = getActiveSession();
 			const layout = getActiveLayout();
 			if (!session || !layout) return;
@@ -105,10 +139,74 @@ export function useSplitPane() {
 			if (!node || node.type !== "split") return;
 
 			const updated = replaceNode(layout, splitNodeId, { ...node, ratio });
-			await updateLayout(session.id, updated);
+			updateLayoutLocal(session.id, updated);
 		},
-		[getActiveSession, getActiveLayout, updateLayout],
+		[getActiveSession, getActiveLayout, updateLayoutLocal],
 	);
 
-	return { splitPane, closePane, updateRatio };
+	/** Persist current layout to DB — call on mouseup after drag. */
+	const persistCurrentLayout = useCallback(async () => {
+		const session = getActiveSession();
+		if (!session) return;
+		await persistLayout(session.id);
+	}, [getActiveSession, persistLayout]);
+
+	/** Navigate focus to adjacent pane in the given direction. */
+	const navigatePane = useCallback(
+		(direction: "up" | "down" | "left" | "right") => {
+			const layout = getActiveLayout();
+			if (!layout) return;
+
+			const terminals = collectTerminals(layout);
+			if (terminals.length <= 1) return;
+
+			const currentIndex = terminals.findIndex((t) => t.id === focusedPaneId);
+			if (currentIndex === -1) {
+				setFocusedPane(terminals[0].id);
+				return;
+			}
+
+			let nextIndex: number;
+			if (direction === "right" || direction === "down") {
+				nextIndex = (currentIndex + 1) % terminals.length;
+			} else {
+				nextIndex = (currentIndex - 1 + terminals.length) % terminals.length;
+			}
+
+			setFocusedPane(terminals[nextIndex].id);
+		},
+		[getActiveLayout, focusedPaneId, setFocusedPane],
+	);
+
+	/** Toggle maximize/restore for the focused pane. */
+	const toggleMaximize = useCallback(async () => {
+		const session = getActiveSession();
+		const layout = getActiveLayout();
+		if (!session || !layout || !focusedPaneId) return;
+
+		if (maximizedPaneId) {
+			// Restore: put back the saved layout
+			if (savedLayout) {
+				await updateLayout(session.id, savedLayout);
+			}
+			setMaximized(null, null);
+		} else {
+			// Maximize: find the focused terminal and make it the only pane
+			const node = findNode(layout, focusedPaneId);
+			if (!node || node.type !== "terminal") return;
+
+			setMaximized(focusedPaneId, layout);
+			const maximizedLayout: PaneNode = { ...node };
+			await updateLayout(session.id, maximizedLayout);
+		}
+	}, [getActiveSession, getActiveLayout, focusedPaneId, maximizedPaneId, savedLayout, updateLayout, setMaximized]);
+
+	return {
+		splitPane,
+		closePane,
+		updateRatioLocal,
+		persistCurrentLayout,
+		navigatePane,
+		toggleMaximize,
+	};
 }

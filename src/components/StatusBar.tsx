@@ -6,18 +6,18 @@ export function StatusBar() {
 
 	return (
 		<div
-			className="flex items-center px-4 gap-4"
+			className="flex items-center px-5 gap-5"
 			style={{
 				height: "var(--statusbar-height)",
 				backgroundColor: "var(--bg-secondary)",
 				borderTop: "1px solid var(--border)",
-				fontSize: 12,
+				fontSize: 13,
 				color: "var(--fg-secondary)",
 			}}
 		>
 			{session ? (
 				<>
-					<span style={{ color: "var(--accent)" }}>{session.name}</span>
+					<span className="font-medium" style={{ color: "var(--accent)" }}>{session.name}</span>
 					<span>{session.rootFolder}</span>
 					{focusedPaneId && <span>Pane: {focusedPaneId.slice(0, 8)}</span>}
 				</>

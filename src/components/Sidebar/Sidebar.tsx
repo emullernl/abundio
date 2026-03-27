@@ -39,7 +39,7 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 			<div
 				className="flex flex-col items-center gap-2"
 				style={{
-					width: 48,
+					width: 56,
 					paddingTop: titlebarHeight + 8,
 					backgroundColor: "var(--bg-secondary)",
 					borderRight: "1px solid var(--border)",
@@ -48,8 +48,8 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				<button
 					type="button"
 					onClick={toggleSidebar}
-					className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
-					style={{ color: "var(--fg-secondary)" }}
+					className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
+					style={{ color: "var(--fg-secondary)", fontSize: 15 }}
 				>
 					&gt;
 				</button>
@@ -70,15 +70,18 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 			<div data-tauri-drag-region style={{ height: titlebarHeight, flexShrink: 0 }} />
 
 			{/* Header */}
-			<div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
-				<span className="text-sm font-medium" style={{ color: "var(--fg-secondary)" }}>
+			<div
+				className="flex items-center justify-between px-5"
+				style={{ borderBottom: "1px solid var(--border)", height: 44 }}
+			>
+				<span className="font-semibold" style={{ color: "var(--fg-secondary)", fontSize: 13, letterSpacing: "0.02em", textTransform: "uppercase" }}>
 					Sessions
 				</span>
 				<button
 					type="button"
 					onClick={toggleSidebar}
-					className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors text-sm"
-					style={{ color: "var(--fg-secondary)" }}
+					className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
+					style={{ color: "var(--fg-secondary)", fontSize: 15 }}
 				>
 					&lt;
 				</button>
@@ -90,17 +93,18 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 			</div>
 
 			{/* Actions */}
-			<div className="p-3 flex flex-col gap-2.5" style={{ borderTop: "1px solid var(--border)" }}>
+			<div className="p-4 flex flex-col gap-3" style={{ borderTop: "1px solid var(--border)" }}>
 				<AgentLauncher onSpawnAgent={handleSpawnAgent} />
 				<button
 					type="button"
 					onClick={handleNewSession}
 					disabled={creating}
-					className="w-full px-4 py-2 text-sm rounded-lg transition-colors"
+					className="w-full rounded-lg transition-colors font-medium"
 					style={{
 						backgroundColor: "var(--accent)",
 						color: "var(--bg-primary)",
-						fontWeight: 500,
+						fontSize: 14,
+						height: 40,
 					}}
 				>
 					{creating ? "Creating..." : "New Session"}

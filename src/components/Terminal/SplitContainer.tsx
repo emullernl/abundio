@@ -10,8 +10,9 @@ interface Props {
 }
 
 export function SplitContainer({ node, cwd }: Props) {
-	const { focusedPaneId, setFocusedPane } = useSessionStore();
-	const { updateRatio } = useSplitPane();
+	const { focusedPaneId, setFocusedPane, maximizedPaneId } = useSessionStore();
+	const { updateRatioLocal, persistCurrentLayout, splitPane, closePane, toggleMaximize } =
+		useSplitPane();
 
 	if (node.type === "terminal") {
 		return (
@@ -19,7 +20,12 @@ export function SplitContainer({ node, cwd }: Props) {
 				ptyId={node.ptyId}
 				cwd={cwd}
 				isFocused={focusedPaneId === node.id}
+				isMaximized={maximizedPaneId === node.id}
 				onFocus={() => setFocusedPane(node.id)}
+				onSplitHorizontal={() => splitPane(node.id, "horizontal")}
+				onSplitVertical={() => splitPane(node.id, "vertical")}
+				onClose={() => closePane(node.id)}
+				onMaximize={toggleMaximize}
 			/>
 		);
 	}
@@ -38,7 +44,8 @@ export function SplitContainer({ node, cwd }: Props) {
 			</div>
 			<PaneResizer
 				direction={node.direction}
-				onResize={(ratio) => updateRatio(node.id, ratio)}
+				onResize={(ratio) => updateRatioLocal(node.id, ratio)}
+				onResizeEnd={persistCurrentLayout}
 			/>
 			<div style={{ flexBasis: secondBasis, flexGrow: 0, flexShrink: 0, overflow: "hidden" }}>
 				<SplitContainer node={node.second} cwd={cwd} />

@@ -16,8 +16,8 @@
   --font-ui: "Geist Sans", "Inter", system-ui, sans-serif;
   --pane-border: 1px solid var(--border);
   --pane-focus-glow: 0 0 0 1px var(--accent);
-  --sidebar-width: 260px;
-  --statusbar-height: 36px;
+  --sidebar-width: 280px;
+  --statusbar-height: 40px;
   --transition-fast: 120ms ease-out;
 }
 

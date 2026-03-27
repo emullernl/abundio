@@ -3,9 +3,10 @@ import { useCallback, useRef } from "react";
 interface Props {
 	direction: "horizontal" | "vertical";
 	onResize: (ratio: number) => void;
+	onResizeEnd: () => void;
 }
 
-export function PaneResizer({ direction, onResize }: Props) {
+export function PaneResizer({ direction, onResize, onResizeEnd }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	const handleMouseDown = useCallback(
@@ -33,12 +34,13 @@ export function PaneResizer({ direction, onResize }: Props) {
 				document.body.classList.remove("dragging");
 				document.removeEventListener("mousemove", onMouseMove);
 				document.removeEventListener("mouseup", onMouseUp);
+				onResizeEnd();
 			}
 
 			document.addEventListener("mousemove", onMouseMove);
 			document.addEventListener("mouseup", onMouseUp);
 		},
-		[direction, onResize],
+		[direction, onResize, onResizeEnd],
 	);
 
 	const isVertical = direction === "vertical";
