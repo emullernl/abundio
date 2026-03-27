@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import type { PaneNode } from "../lib/types";
 import { pty } from "../lib/ipc";
+import { destroyTerminal } from "../lib/terminalManager";
 
 function generateId(): string {
 	return crypto.randomUUID();
@@ -104,9 +105,10 @@ export function useSplitPane() {
 			const layout = getActiveLayout();
 			if (!session || !layout) return;
 
-			// Find and kill the PTY for this pane, and clean up its log file
+			// Destroy terminal instance, kill PTY, and clean up log file
 			const node = findNode(layout, paneId);
 			if (node?.type === "terminal") {
+				destroyTerminal(paneId);
 				if (node.ptyId) {
 					pty.kill(node.ptyId).catch(() => {});
 				}

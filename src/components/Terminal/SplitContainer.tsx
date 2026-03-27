@@ -41,7 +41,7 @@ export function SplitContainer({ node, cwd }: Props) {
 			style={{ flexDirection: isVertical ? "row" : "column" }}
 		>
 			<div style={{ flexBasis: firstBasis, flexGrow: 0, flexShrink: 0, overflow: "hidden" }}>
-				<SplitContainer node={node.first} cwd={cwd} />
+				<SplitContainer key={node.first.id} node={node.first} cwd={cwd} />
 			</div>
 			<PaneResizer
 				direction={node.direction}
@@ -49,7 +49,7 @@ export function SplitContainer({ node, cwd }: Props) {
 				onResizeEnd={persistCurrentLayout}
 			/>
 			<div style={{ flexBasis: secondBasis, flexGrow: 0, flexShrink: 0, overflow: "hidden" }}>
-				<SplitContainer node={node.second} cwd={cwd} />
+				<SplitContainer key={node.second.id} node={node.second} cwd={cwd} />
 			</div>
 		</div>
 	);
