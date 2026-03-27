@@ -41,10 +41,15 @@ impl SessionStore {
     pub fn create(&self, name: &str, root_folder: &str) -> Result<Session, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let id = uuid::Uuid::new_v4().to_string();
+        let pane_id = uuid::Uuid::new_v4().to_string();
+        let layout_json = format!(
+            r#"{{"type":"terminal","id":"{}","ptyId":""}}"#,
+            pane_id
+        );
 
         conn.execute(
-            "INSERT INTO sessions (id, name, root_folder) VALUES (?1, ?2, ?3)",
-            rusqlite::params![id, name, root_folder],
+            "INSERT INTO sessions (id, name, root_folder, layout_json) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, name, root_folder, layout_json],
         )?;
 
         self.get_by_id_with_conn(&conn, &id)

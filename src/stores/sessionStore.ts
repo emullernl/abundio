@@ -30,11 +30,9 @@ interface SessionState {
 	getActiveLayout: () => PaneNode | null;
 }
 
-const DEFAULT_LAYOUT: PaneNode = {
-	type: "terminal",
-	id: "default",
-	ptyId: "",
-};
+function defaultLayout(): PaneNode {
+	return { type: "terminal", id: crypto.randomUUID(), ptyId: "" };
+}
 
 /** Collect all terminal pane IDs from a layout tree. */
 function collectPaneIds(node: PaneNode): string[] {
@@ -183,7 +181,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		try {
 			return JSON.parse(session.layoutJson) as PaneNode;
 		} catch {
-			return DEFAULT_LAYOUT;
+			return defaultLayout();
 		}
 	},
 }));
