@@ -116,11 +116,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		managed.ptyId = currentPtyId;
 
 		const store = useSessionStore.getState();
-		const session = store.getActiveSession();
+		const tab = store.getActiveTab();
 		const layout = store.getActiveLayout();
-		if (session && layout) {
+		if (tab && layout) {
 			const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
-			store.updateLayoutLocal(session.id, updated);
+			store.updateLayoutLocal(tab.id, updated);
 		}
 	}
 

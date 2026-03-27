@@ -56,7 +56,7 @@ function collectTerminals(tree: PaneNode): { id: string; ptyId: string }[] {
 
 export function useSplitPane() {
 	const {
-		getActiveSession,
+		getActiveTab,
 		getActiveLayout,
 		updateLayout,
 		updateLayoutLocal,
@@ -70,9 +70,9 @@ export function useSplitPane() {
 
 	const splitPane = useCallback(
 		async (paneId: string, direction: "horizontal" | "vertical") => {
-			const session = getActiveSession();
+			const tab = getActiveTab();
 			const layout = getActiveLayout();
-			if (!session || !layout) return;
+			if (!tab || !layout) return;
 
 			const newTerminal: PaneNode = {
 				type: "terminal",
@@ -93,17 +93,17 @@ export function useSplitPane() {
 			};
 
 			const newLayout = replaceNode(layout, paneId, splitNode);
-			await updateLayout(session.id, newLayout);
+			await updateLayout(tab.id, newLayout);
 			setFocusedPane(newTerminal.id);
 		},
-		[getActiveSession, getActiveLayout, updateLayout, setFocusedPane],
+		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane],
 	);
 
 	const closePane = useCallback(
 		async (paneId: string) => {
-			const session = getActiveSession();
+			const tab = getActiveTab();
 			const layout = getActiveLayout();
-			if (!session || !layout) return;
+			if (!tab || !layout) return;
 
 			// Destroy terminal instance, kill PTY, and clean up log file
 			const node = findNode(layout, paneId);
@@ -117,7 +117,7 @@ export function useSplitPane() {
 
 			const newLayout = removeNode(layout, paneId);
 			if (newLayout) {
-				await updateLayout(session.id, newLayout);
+				await updateLayout(tab.id, newLayout);
 				// Focus the first terminal in the remaining tree
 				const terminals = collectTerminals(newLayout);
 				if (terminals.length > 0) {
@@ -130,31 +130,31 @@ export function useSplitPane() {
 				setMaximized(null, null);
 			}
 		},
-		[getActiveSession, getActiveLayout, updateLayout, setFocusedPane, maximizedPaneId, setMaximized],
+		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, maximizedPaneId, setMaximized],
 	);
 
 	/** Local-only ratio update (no DB persist) — call during drag. */
 	const updateRatioLocal = useCallback(
 		(splitNodeId: string, ratio: number) => {
-			const session = getActiveSession();
+			const tab = getActiveTab();
 			const layout = getActiveLayout();
-			if (!session || !layout) return;
+			if (!tab || !layout) return;
 
 			const node = findNode(layout, splitNodeId);
 			if (!node || node.type !== "split") return;
 
 			const updated = replaceNode(layout, splitNodeId, { ...node, ratio });
-			updateLayoutLocal(session.id, updated);
+			updateLayoutLocal(tab.id, updated);
 		},
-		[getActiveSession, getActiveLayout, updateLayoutLocal],
+		[getActiveTab, getActiveLayout, updateLayoutLocal],
 	);
 
 	/** Persist current layout to DB — call on mouseup after drag. */
 	const persistCurrentLayout = useCallback(async () => {
-		const session = getActiveSession();
-		if (!session) return;
-		await persistLayout(session.id);
-	}, [getActiveSession, persistLayout]);
+		const tab = getActiveTab();
+		if (!tab) return;
+		await persistLayout(tab.id);
+	}, [getActiveTab, persistLayout]);
 
 	/** Navigate focus to adjacent pane in the given direction. */
 	const navigatePane = useCallback(
@@ -185,14 +185,14 @@ export function useSplitPane() {
 
 	/** Toggle maximize/restore for the focused pane. */
 	const toggleMaximize = useCallback(async () => {
-		const session = getActiveSession();
+		const tab = getActiveTab();
 		const layout = getActiveLayout();
-		if (!session || !layout || !focusedPaneId) return;
+		if (!tab || !layout || !focusedPaneId) return;
 
 		if (maximizedPaneId) {
 			// Restore: put back the saved layout
 			if (savedLayout) {
-				await updateLayout(session.id, savedLayout);
+				await updateLayout(tab.id, savedLayout);
 			}
 			setMaximized(null, null);
 		} else {
@@ -202,9 +202,9 @@ export function useSplitPane() {
 
 			setMaximized(focusedPaneId, layout);
 			const maximizedLayout: PaneNode = { ...node };
-			await updateLayout(session.id, maximizedLayout);
+			await updateLayout(tab.id, maximizedLayout);
 		}
-	}, [getActiveSession, getActiveLayout, focusedPaneId, maximizedPaneId, savedLayout, updateLayout, setMaximized]);
+	}, [getActiveTab, getActiveLayout, focusedPaneId, maximizedPaneId, savedLayout, updateLayout, setMaximized]);
 
 	return {
 		splitPane,

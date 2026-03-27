@@ -17,7 +17,6 @@ export interface Session {
 	id: string;
 	name: string;
 	rootFolder: string;
-	layoutJson: string;
 	envJson: string;
 	agentPresetsJson: string;
 	createdAt: number;
@@ -27,9 +26,37 @@ export interface Session {
 export interface SessionUpdate {
 	name?: string;
 	rootFolder?: string;
-	layoutJson?: string;
 	envJson?: string;
 	agentPresetsJson?: string;
+}
+
+export interface SessionWithTabs {
+	id: string;
+	name: string;
+	rootFolder: string;
+	envJson: string;
+	agentPresetsJson: string;
+	createdAt: number;
+	updatedAt: number;
+	tabs: Tab[];
+}
+
+// ── Tab ──
+
+export interface Tab {
+	id: string;
+	sessionId: string;
+	name: string;
+	layoutJson: string;
+	position: number;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface TabUpdate {
+	name?: string;
+	layoutJson?: string;
+	position?: number;
 }
 
 // ── Agent ──

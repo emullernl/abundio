@@ -3,7 +3,7 @@ use tauri::{AppHandle, State};
 use crate::agent_registry::{AgentInfo, AgentRegistry};
 use crate::error::AbundioError;
 use crate::pty_manager::PtyManager;
-use crate::session_store::{Session, SessionStore, SessionUpdate};
+use crate::session_store::{SessionStore, SessionUpdate, SessionWithTabs, Tab, TabUpdate};
 
 // ── PTY commands ──
 
@@ -55,12 +55,12 @@ pub async fn session_create(
     store: State<'_, SessionStore>,
     name: String,
     root_folder: String,
-) -> Result<Session, AbundioError> {
+) -> Result<SessionWithTabs, AbundioError> {
     store.create(&name, &root_folder)
 }
 
 #[tauri::command]
-pub async fn session_list(store: State<'_, SessionStore>) -> Result<Vec<Session>, AbundioError> {
+pub async fn session_list(store: State<'_, SessionStore>) -> Result<Vec<SessionWithTabs>, AbundioError> {
     store.list()
 }
 
@@ -79,6 +79,42 @@ pub async fn session_delete(
     id: String,
 ) -> Result<(), AbundioError> {
     store.delete(&id)
+}
+
+// ── Tab commands ──
+
+#[tauri::command]
+pub async fn tab_create(
+    store: State<'_, SessionStore>,
+    session_id: String,
+    name: String,
+) -> Result<Tab, AbundioError> {
+    store.create_tab(&session_id, &name)
+}
+
+#[tauri::command]
+pub async fn tab_list(
+    store: State<'_, SessionStore>,
+    session_id: String,
+) -> Result<Vec<Tab>, AbundioError> {
+    store.list_tabs(&session_id)
+}
+
+#[tauri::command]
+pub async fn tab_update(
+    store: State<'_, SessionStore>,
+    id: String,
+    updates: TabUpdate,
+) -> Result<(), AbundioError> {
+    store.update_tab(&id, updates)
+}
+
+#[tauri::command]
+pub async fn tab_delete(
+    store: State<'_, SessionStore>,
+    id: String,
+) -> Result<(), AbundioError> {
+    store.delete_tab(&id)
 }
 
 // ── Agent commands ──

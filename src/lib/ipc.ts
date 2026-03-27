@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentInfo, PtyStatusType, Session, SessionUpdate } from "./types";
+import type { AgentInfo, PtyStatusType, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
 
 export const pty = {
 	spawn: (cwd: string, cols: number, rows: number, command?: string, logId?: string) =>
@@ -41,14 +41,26 @@ export const pty = {
 
 export const sessions = {
 	create: (name: string, rootFolder: string) =>
-		invoke<Session>("session_create", { name, rootFolder }),
+		invoke<SessionWithTabs>("session_create", { name, rootFolder }),
 
-	list: () => invoke<Session[]>("session_list"),
+	list: () => invoke<SessionWithTabs[]>("session_list"),
 
 	update: (id: string, updates: SessionUpdate) =>
 		invoke<void>("session_update", { id, updates }),
 
 	delete: (id: string) => invoke<void>("session_delete", { id }),
+};
+
+export const tabs = {
+	create: (sessionId: string, name: string) =>
+		invoke<Tab>("tab_create", { sessionId, name }),
+
+	list: (sessionId: string) => invoke<Tab[]>("tab_list", { sessionId }),
+
+	update: (id: string, updates: TabUpdate) =>
+		invoke<void>("tab_update", { id, updates }),
+
+	delete: (id: string) => invoke<void>("tab_delete", { id }),
 };
 
 export const agents = {

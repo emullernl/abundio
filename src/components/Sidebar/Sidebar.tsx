@@ -24,8 +24,13 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 
 		const name = folderPath.split("/").pop() || "Untitled";
 		setCreating(true);
-		await createSession(name, folderPath);
-		setCreating(false);
+		try {
+			await createSession(name, folderPath);
+		} catch (err) {
+			console.error("Failed to create session:", err);
+		} finally {
+			setCreating(false);
+		}
 	}
 
 	async function handleSpawnAgent(agentName: string) {

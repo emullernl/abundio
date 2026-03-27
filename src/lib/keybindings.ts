@@ -9,7 +9,11 @@ type KeyAction =
 	| "maximize-pane"
 	| "command-palette"
 	| "search-in-terminal"
-	| "new-session";
+	| "new-session"
+	| "new-tab"
+	| "close-tab"
+	| "next-tab"
+	| "prev-tab";
 
 interface KeyBinding {
 	key: string;
@@ -33,6 +37,10 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "k", meta: isMac, shift: false, ctrl: !isMac, action: "command-palette" },
 	{ key: "f", meta: isMac, shift: true, ctrl: !isMac, action: "search-in-terminal" },
 	{ key: "n", meta: isMac, shift: true, ctrl: !isMac, action: "new-session" },
+	{ key: "t", meta: isMac, shift: false, ctrl: !isMac, action: "new-tab" },
+	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
+	{ key: "]", meta: isMac, shift: true, ctrl: !isMac, action: "next-tab" },
+	{ key: "[", meta: isMac, shift: true, ctrl: !isMac, action: "prev-tab" },
 ];
 
 type ActionHandler = () => void;

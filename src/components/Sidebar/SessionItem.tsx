@@ -1,8 +1,8 @@
-import type { PaneNode, PtyStatusType, Session } from "../../lib/types";
+import type { PaneNode, PtyStatusType, SessionWithTabs } from "../../lib/types";
 import { useSessionStore } from "../../stores/sessionStore";
 
 interface Props {
-	session: Session;
+	session: SessionWithTabs;
 	isActive: boolean;
 	onClick: () => void;
 	onDelete: () => void;
@@ -27,14 +27,17 @@ function statusColor(statuses: PtyStatusType[]): string {
 export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 	const ptyStatuses = useSessionStore((s) => s.ptyStatuses);
 
-	let paneStatuses: PtyStatusType[] = [];
-	try {
-		const layout = JSON.parse(session.layoutJson) as PaneNode;
-		const ptyIds = collectPtyIds(layout);
-		paneStatuses = ptyIds.map((id) => ptyStatuses[id]).filter(Boolean);
-	} catch {
-		// ignore
+	// Collect pty IDs across all tabs
+	const allPtyIds: string[] = [];
+	for (const tab of session.tabs) {
+		try {
+			const layout = JSON.parse(tab.layoutJson) as PaneNode;
+			allPtyIds.push(...collectPtyIds(layout));
+		} catch {
+			// ignore
+		}
 	}
+	const paneStatuses = allPtyIds.map((id) => ptyStatuses[id]).filter(Boolean);
 
 	const dotColor = statusColor(paneStatuses);
 	const runningCount = paneStatuses.filter((s) => s.type === "running").length;
