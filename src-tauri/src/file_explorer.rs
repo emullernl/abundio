@@ -71,11 +71,6 @@ pub async fn fs_list_dir(path: String) -> Result<Vec<DirEntry>, AbundioError> {
 		let entry = entry?;
 		let name = entry.file_name().to_string_lossy().to_string();
 
-		// Skip dotfiles
-		if name.starts_with('.') {
-			continue;
-		}
-
 		let file_type = entry.file_type()?;
 		let metadata = entry.metadata()?;
 		let ext = Path::new(&name)
