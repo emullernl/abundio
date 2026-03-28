@@ -194,6 +194,13 @@ export function flushPendingRestore(paneId: string): void {
 	managed.pendingRestore = null;
 }
 
+/** Update theme on all terminal instances */
+export function setAllTerminalsTheme(theme: ITheme): void {
+	for (const managed of instances.values()) {
+		managed.term.options.theme = theme;
+	}
+}
+
 /** Update font size on all terminal instances and refit */
 export function setAllTerminalsFontSize(fontSize: number): void {
 	for (const managed of instances.values()) {

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { applyTheme, getTheme } from "../lib/themes";
+import { setAllTerminalsTheme } from "../lib/terminalManager";
 
 interface SettingsState {
 	fontFamily: string;
@@ -28,7 +29,9 @@ export const useSettingsStore = create<SettingsState>()(
 			setFontFamily: (fontFamily) => set({ fontFamily }),
 			setFontSize: (fontSize) => set({ fontSize }),
 			setTheme: (themeName) => {
-				applyTheme(getTheme(themeName));
+				const fullTheme = getTheme(themeName);
+				applyTheme(fullTheme);
+				setAllTerminalsTheme(fullTheme.terminal);
 				set({ theme: themeName });
 			},
 			toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
@@ -41,5 +44,21 @@ export const useSettingsStore = create<SettingsState>()(
 	),
 );
 
-// Apply default theme on load
-applyTheme(getTheme("default"));
+// Apply the persisted theme immediately on load by reading localStorage directly.
+// Zustand's persist middleware rehydrates asynchronously (microtask), which is too late
+// for CSS variables — the UI would flash the default theme first.
+{
+	let themeName = "default";
+	try {
+		const raw = localStorage.getItem("abundio-settings");
+		if (raw) {
+			const parsed = JSON.parse(raw);
+			if (parsed?.state?.theme) {
+				themeName = parsed.state.theme;
+			}
+		}
+	} catch {
+		// Fall back to default
+	}
+	applyTheme(getTheme(themeName));
+}
