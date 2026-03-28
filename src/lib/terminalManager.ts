@@ -90,7 +90,7 @@ setTimeout(() => {
 			managed.focused = isTerminalView && focusedPaneId === paneId;
 			if (managed.focused) {
 				managed.suppressActivity = false;
-				if (!wasFocused && managed.ptyId) {
+				if (managed.ptyId) {
 					activityStore.markIdle(managed.ptyId);
 				}
 			}
@@ -248,7 +248,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
 		term.write(data);
-		if (!managed.suppressActivity && !managed.focused && Date.now() - managed.lastInputAt > INPUT_ECHO_MS) {
+		if (!managed.suppressActivity && Date.now() - managed.lastInputAt > INPUT_ECHO_MS) {
 			usePtyActivityStore.getState().recordOutput(currentPtyId);
 		}
 	});
