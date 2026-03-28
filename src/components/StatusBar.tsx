@@ -29,9 +29,11 @@ export function StatusBar() {
 
 	return (
 		<div
-			className="flex items-center justify-between px-4"
+			className="flex items-center justify-between"
 			style={{
 				height: "var(--statusbar-height)",
+				paddingLeft: 24,
+				paddingRight: 24,
 				backgroundColor: "var(--bg-secondary)",
 				borderTop: "1px solid var(--border)",
 				fontSize: 12,

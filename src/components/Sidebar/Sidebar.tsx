@@ -77,8 +77,8 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 
 			{/* Header */}
 			<div
-				className="flex items-center justify-between px-4"
-				style={{ borderBottom: "1px solid var(--border)", height: 40 }}
+				className="flex items-center justify-between"
+				style={{ borderBottom: "1px solid var(--border)", height: 40, paddingLeft: 24, paddingRight: 16 }}
 			>
 				<div className="flex items-center gap-2">
 					<span className="font-semibold" style={{ color: "var(--fg-secondary)", fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase" }}>
@@ -124,12 +124,12 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 			</div>
 
 			{/* Session list */}
-			<div className="flex-1 overflow-y-auto p-2">
+			<div className="flex-1 overflow-y-auto px-4 py-2">
 				<SessionList />
 			</div>
 
 			{/* Actions */}
-			<div className="p-3" style={{ borderTop: "1px solid var(--border)" }}>
+			<div className="px-5 py-3" style={{ borderTop: "1px solid var(--border)" }}>
 				<AgentLauncher onSpawnAgent={handleSpawnAgent} />
 			</div>
 		</div>
