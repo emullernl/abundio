@@ -65,8 +65,9 @@ export function SessionItem({
 			onMouseDown={onMouseDown}
 			onClick={onClick}
 			onKeyDown={(e) => e.key === "Enter" && onClick()}
-			className="group flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+			className="group flex items-center gap-2.5 pr-3 py-2.5 rounded-lg cursor-pointer transition-colors"
 			style={{
+				paddingLeft: 20,
 				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
 				borderLeft: isActive ? "2px solid var(--accent)" : "2px solid transparent",
 				opacity: isDragging ? 0.4 : 1,
