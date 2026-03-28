@@ -12,6 +12,7 @@ interface SessionState {
 	savedLayout: PaneNode | null;
 	ptyStatuses: Record<string, PtyStatusType>; // ptyId → status
 	searchPaneId: string | null; // pane currently showing search bar
+	activeView: Record<string, "terminal" | "file">; // sessionId → current view
 
 	// Session actions
 	loadSessions: () => Promise<void>;
@@ -33,6 +34,7 @@ interface SessionState {
 	setMaximized: (paneId: string | null, savedLayout: PaneNode | null) => void;
 	setPtyStatus: (ptyId: string, status: PtyStatusType) => void;
 	toggleSearch: () => void;
+	setActiveView: (sessionId: string, view: "terminal" | "file") => void;
 
 	// Derived
 	getActiveSession: () => SessionWithTabs | undefined;
@@ -85,6 +87,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 	savedLayout: null,
 	ptyStatuses: {},
 	searchPaneId: null,
+	activeView: {},
 
 	loadSessions: async () => {
 		const sessionsWithTabs = await sessionsApi.list();
@@ -342,6 +345,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 	toggleSearch: () =>
 		set((state) => ({
 			searchPaneId: state.searchPaneId === state.focusedPaneId ? null : state.focusedPaneId,
+		})),
+
+	setActiveView: (sessionId, view) =>
+		set((state) => ({
+			activeView: { ...state.activeView, [sessionId]: view },
 		})),
 
 	// ── Derived ──

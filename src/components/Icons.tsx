@@ -74,6 +74,50 @@ export function Grid({ size, ...props }: IconProps) {
 	);
 }
 
+export function ChevronDown({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<path d="M6 9l6 6 6-6" />
+		</svg>
+	);
+}
+
+export function File({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+			<path d="M14 2v6h6" />
+		</svg>
+	);
+}
+
+export function FolderOpen({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2v1" />
+			<path d="M2 10l2.5 9h15l2.5-9H2z" />
+		</svg>
+	);
+}
+
+export function Image({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+			<circle cx="8.5" cy="8.5" r="1.5" />
+			<path d="M21 15l-5-5L5 21" />
+		</svg>
+	);
+}
+
+export function Code({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />
+		</svg>
+	);
+}
+
 export function Bot({ size, ...props }: IconProps) {
 	return (
 		<svg {...defaults(size)} {...props}>

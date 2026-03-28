@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
+import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { StatusBar } from "./components/StatusBar";
 import { Titlebar } from "./components/Titlebar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -13,6 +14,7 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useAutoSpawn } from "./hooks/useAutoSpawn";
 import { useSessionStore } from "./stores/sessionStore";
+import { useExplorerStore } from "./stores/explorerStore";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import type { PaneNode } from "./lib/types";
@@ -36,9 +38,15 @@ export function App() {
 	const createTab = useSessionStore((s) => s.createTab);
 	const closeTab = useSessionStore((s) => s.closeTab);
 	const renameTab = useSessionStore((s) => s.renameTab);
+	const activeView = useSessionStore((s) => s.activeView);
+	const setActiveView = useSessionStore((s) => s.setActiveView);
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
 	useAutoSpawn();
 	const [paletteOpen, setPaletteOpen] = useState(false);
+	const fileTabs = useExplorerStore((s) => s.fileTabs);
+	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
+	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
+	const closeFileTab = useExplorerStore((s) => s.closeFileTab);
 
 	useEffect(() => {
 		const cleanup = initKeybindings();
@@ -117,6 +125,12 @@ export function App() {
 			setFontSize(newSize);
 			setAllTerminalsFontSize(newSize);
 		});
+		registerAction("save-file", () => {
+			const { activeFileTabId } = useExplorerStore.getState();
+			if (activeFileTabId) {
+				useExplorerStore.getState().saveFile(activeFileTabId);
+			}
+		});
 	}, [focusedPaneId, splitPane, closePane, navigatePane, toggleMaximize]);
 
 	return (
@@ -150,21 +164,35 @@ export function App() {
 								<TabBar
 									tabs={session.tabs}
 									activeTabId={activeTabId}
-									onActivate={(tabId) => setActiveTab(session.id, tabId)}
+									onActivate={(tabId) => {
+										setActiveTab(session.id, tabId);
+										setActiveView(session.id, "terminal");
+									}}
 									onClose={(tabId) => closeTab(tabId)}
 									onNew={() => createTab(session.id)}
 									onRename={(tabId, name) => renameTab(tabId, name)}
+									fileTabs={fileTabs.filter((ft) => ft.sessionId === session.id)}
+									activeFileTabId={activeFileTabId}
+									activeView={activeView[session.id] ?? "terminal"}
+									onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
+									onCloseFileTab={(tabId) => closeFileTab(tabId)}
 								/>
 								<div className="flex-1 min-h-0 relative">
+									{(activeView[session.id] ?? "terminal") === "file" && activeFileTabId && (
+										<div className="absolute inset-0">
+											<FileViewerContainer />
+										</div>
+									)}
 									{session.tabs.map((tab) => {
 										const layout = parseLayout(tab.layoutJson);
 										if (!layout) return null;
 										const isTabActive = tab.id === activeTabId;
+										const showTerminal = (activeView[session.id] ?? "terminal") === "terminal" && isTabActive;
 										return (
 											<div
 												key={tab.id}
 												className="absolute inset-0"
-												style={{ display: isTabActive ? "block" : "none" }}
+												style={{ display: showTerminal ? "block" : "none" }}
 											>
 												<SplitContainer node={layout} cwd={session.rootFolder} />
 											</div>

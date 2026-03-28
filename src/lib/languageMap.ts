@@ -1,0 +1,41 @@
+const extensionToLanguage: Record<string, string> = {
+	ts: "typescript",
+	tsx: "typescript",
+	js: "javascript",
+	jsx: "javascript",
+	mjs: "javascript",
+	cjs: "javascript",
+	json: "json",
+	html: "html",
+	htm: "html",
+	css: "css",
+	scss: "css",
+	less: "css",
+	md: "markdown",
+	mdx: "markdown",
+	py: "python",
+	pyw: "python",
+	rs: "rust",
+	c: "cpp",
+	cpp: "cpp",
+	cc: "cpp",
+	cxx: "cpp",
+	h: "cpp",
+	hpp: "cpp",
+	hxx: "cpp",
+	java: "java",
+	xml: "html",
+	svg: "html",
+	yaml: "javascript",
+	yml: "javascript",
+	toml: "javascript",
+	sh: "javascript",
+	bash: "javascript",
+	zsh: "javascript",
+	sql: "javascript",
+};
+
+export function getLanguage(extension: string | null): string | null {
+	if (!extension) return null;
+	return extensionToLanguage[extension.toLowerCase()] ?? null;
+}

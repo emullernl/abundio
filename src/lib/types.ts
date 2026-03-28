@@ -77,6 +77,24 @@ export interface AgentInfo {
 	available: boolean;
 }
 
+// ── File Explorer ──
+
+export interface DirEntry {
+	name: string;
+	path: string;
+	isDir: boolean;
+	isSymlink: boolean;
+	size: number;
+	extension: string | null;
+}
+
+export interface FileContent {
+	fileType: "text" | "image" | "binary";
+	content: string | null;
+	mime: string | null;
+	size: number;
+}
+
 // ── PTY ──
 
 export type PtyStatusType = { type: "running" } | { type: "exited"; code: number | null };

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Tab } from "../lib/types";
+import type { FileTab } from "../stores/explorerStore";
+import { Terminal, File } from "./Icons";
 
 interface TabBarProps {
 	tabs: Tab[];
@@ -8,6 +10,11 @@ interface TabBarProps {
 	onClose: (tabId: string) => void;
 	onNew: () => void;
 	onRename: (tabId: string, name: string) => void;
+	fileTabs?: FileTab[];
+	activeFileTabId?: string | null;
+	activeView?: "terminal" | "file";
+	onActivateFileTab?: (tabId: string) => void;
+	onCloseFileTab?: (tabId: string) => void;
 }
 
 function CloseIcon({ size = 14 }: { size?: number }) {
@@ -50,8 +57,10 @@ function TabItem({
 	inputRef,
 	commitRename,
 	cancelRename,
+	icon,
+	isDirty,
 }: {
-	tab: Tab;
+	tab: Tab | { id: string; name: string };
 	isActive: boolean;
 	showSeparator: boolean;
 	onActivate: () => void;
@@ -64,6 +73,8 @@ function TabItem({
 	inputRef: React.RefObject<HTMLInputElement | null>;
 	commitRename: () => void;
 	cancelRename: () => void;
+	icon?: React.ReactNode;
+	isDirty?: boolean;
 }) {
 	const [hovered, setHovered] = useState(false);
 	const isEditing = editingTabId === tab.id;
@@ -110,6 +121,24 @@ function TabItem({
 						height: 14,
 						backgroundColor: "var(--border)",
 						opacity: 0.6,
+					}}
+				/>
+			)}
+
+			{icon && (
+				<span style={{ flexShrink: 0, display: "flex", alignItems: "center", opacity: 0.7 }}>
+					{icon}
+				</span>
+			)}
+
+			{isDirty && (
+				<span
+					style={{
+						width: 6,
+						height: 6,
+						borderRadius: "50%",
+						backgroundColor: "var(--accent)",
+						flexShrink: 0,
 					}}
 				/>
 			)}
@@ -175,7 +204,19 @@ function CloseButton({ visible, onClick }: { visible: boolean; onClick: () => vo
 	);
 }
 
-export function TabBar({ tabs, activeTabId, onActivate, onClose, onNew, onRename }: TabBarProps) {
+export function TabBar({
+	tabs,
+	activeTabId,
+	onActivate,
+	onClose,
+	onNew,
+	onRename,
+	fileTabs = [],
+	activeFileTabId,
+	activeView = "terminal",
+	onActivateFileTab,
+	onCloseFileTab,
+}: TabBarProps) {
 	const [editingTabId, setEditingTabId] = useState<string | null>(null);
 	const [editValue, setEditValue] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -253,8 +294,8 @@ export function TabBar({ tabs, activeTabId, onActivate, onClose, onNew, onRename
 				style={{ gap: 1, scrollbarWidth: "none" }}
 			>
 				{tabs.map((tab, index) => {
-					const isActive = tab.id === activeTabId;
-					const prevIsActive = index > 0 && tabs[index - 1]?.id === activeTabId;
+					const isActive = activeView === "terminal" && tab.id === activeTabId;
+					const prevIsActive = index > 0 && activeView === "terminal" && tabs[index - 1]?.id === activeTabId;
 					const showSeparator = !isActive && index > 0 && !prevIsActive;
 
 					return (
@@ -276,6 +317,43 @@ export function TabBar({ tabs, activeTabId, onActivate, onClose, onNew, onRename
 							inputRef={inputRef}
 							commitRename={commitRename}
 							cancelRename={cancelRename}
+							icon={<Terminal size={12} />}
+						/>
+					);
+				})}
+				{fileTabs.length > 0 && (
+					<div
+						style={{
+							width: 1,
+							height: 16,
+							backgroundColor: "var(--border)",
+							alignSelf: "center",
+							flexShrink: 0,
+							margin: "0 4px",
+							opacity: 0.6,
+						}}
+					/>
+				)}
+				{fileTabs.map((ft, index) => {
+					const isActive = activeView === "file" && ft.id === activeFileTabId;
+					return (
+						<TabItem
+							key={ft.id}
+							tab={{ id: ft.id, name: ft.fileName }}
+							isActive={isActive}
+							showSeparator={!isActive && index > 0}
+							onActivate={() => onActivateFileTab?.(ft.id)}
+							onClose={() => onCloseFileTab?.(ft.id)}
+							onDoubleClick={() => {}}
+							onContextMenu={(e) => e.preventDefault()}
+							editingTabId={null}
+							editValue=""
+							setEditValue={() => {}}
+							inputRef={inputRef}
+							commitRename={() => {}}
+							cancelRename={() => {}}
+							icon={<File size={12} />}
+							isDirty={ft.isDirty}
 						/>
 					);
 				})}

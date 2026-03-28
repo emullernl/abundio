@@ -3,6 +3,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod file_explorer;
 pub mod migrations;
 pub mod pty_manager;
 pub mod session_store;
@@ -58,6 +59,10 @@ pub fn run() {
             commands::tab_list,
             commands::tab_update,
             commands::tab_delete,
+            file_explorer::fs_list_dir,
+            file_explorer::fs_read_file,
+            file_explorer::fs_write_file,
+            file_explorer::fs_file_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -15,7 +15,8 @@ type KeyAction =
 	| "next-tab"
 	| "prev-tab"
 	| "font-size-increase"
-	| "font-size-decrease";
+	| "font-size-decrease"
+	| "save-file";
 
 interface KeyBinding {
 	key: string;
@@ -45,6 +46,7 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "[", meta: isMac, shift: true, ctrl: !isMac, action: "prev-tab" },
 	{ key: "=", meta: isMac, shift: false, ctrl: !isMac, action: "font-size-increase" },
 	{ key: "-", meta: isMac, shift: false, ctrl: !isMac, action: "font-size-decrease" },
+	{ key: "s", meta: isMac, shift: false, ctrl: !isMac, action: "save-file" },
 ];
 
 type ActionHandler = () => void;
@@ -71,13 +73,14 @@ function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
 export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of DEFAULT_BINDINGS) {
 		if (matchesBinding(e, binding)) {
+			// Always prevent default for registered bindings, even if no handler yet
+			e.preventDefault();
+			e.stopPropagation();
 			const handler = handlers.get(binding.action);
 			if (handler) {
-				e.preventDefault();
-				e.stopPropagation();
 				handler();
-				return;
 			}
+			return;
 		}
 	}
 }

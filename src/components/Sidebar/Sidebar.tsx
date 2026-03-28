@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { SessionList } from "./SessionList";
 import { AgentLauncher } from "./AgentLauncher";
+import { Explorer } from "../Explorer/Explorer";
 import { agents as agentsApi } from "../../lib/ipc";
 import { ChevronLeft, ChevronRight, Plus } from "../Icons";
 
@@ -11,10 +12,78 @@ interface SidebarProps {
 	titlebarHeight: number;
 }
 
+function SidebarDivider({
+	onResize,
+	onResizeEnd,
+}: {
+	onResize: (ratio: number) => void;
+	onResizeEnd: () => void;
+}) {
+	const dividerRef = useRef<HTMLDivElement>(null);
+
+	const handleMouseDown = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			document.body.classList.add("dragging");
+
+			const parent = dividerRef.current?.parentElement;
+			if (!parent) return;
+
+			const parentRect = parent.getBoundingClientRect();
+
+			function onMouseMove(e: MouseEvent) {
+				let ratio = (e.clientY - parentRect.top) / parentRect.height;
+				ratio = Math.max(0.15, Math.min(0.85, ratio));
+				onResize(ratio);
+			}
+
+			function onMouseUp() {
+				document.body.classList.remove("dragging");
+				document.removeEventListener("mousemove", onMouseMove);
+				document.removeEventListener("mouseup", onMouseUp);
+				onResizeEnd();
+			}
+
+			document.addEventListener("mousemove", onMouseMove);
+			document.addEventListener("mouseup", onMouseUp);
+		},
+		[onResize, onResizeEnd],
+	);
+
+	return (
+		<div
+			ref={dividerRef}
+			onMouseDown={handleMouseDown}
+			className="flex-shrink-0 bg-[var(--border)] hover:bg-[var(--accent)] transition-colors"
+			style={{
+				height: 4,
+				width: "100%",
+				cursor: "row-resize",
+				transitionDuration: "var(--transition-fast)",
+			}}
+		/>
+	);
+}
+
 export function Sidebar({ titlebarHeight }: SidebarProps) {
 	const { createSession, getActiveSession } = useSessionStore();
-	const { sidebarCollapsed, toggleSidebar } = useSettingsStore();
+	const { sidebarCollapsed, toggleSidebar, sidebarSplitRatio, setSidebarSplitRatio } =
+		useSettingsStore();
 	const [creating, setCreating] = useState(false);
+	const [localRatio, setLocalRatio] = useState<number | null>(null);
+
+	const ratio = localRatio ?? sidebarSplitRatio;
+
+	const handleResize = useCallback((r: number) => {
+		setLocalRatio(r);
+	}, []);
+
+	const handleResizeEnd = useCallback(() => {
+		if (localRatio !== null) {
+			setSidebarSplitRatio(localRatio);
+			setLocalRatio(null);
+		}
+	}, [localRatio, setSidebarSplitRatio]);
 
 	async function handleNewSession() {
 		const folder = await open({ directory: true, multiple: false });
@@ -77,7 +146,7 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 
 			{/* Header */}
 			<div
-				className="flex items-center justify-between"
+				className="flex items-center justify-between flex-shrink-0"
 				style={{ borderBottom: "1px solid var(--border)", height: 40, paddingLeft: 24, paddingRight: 16 }}
 			>
 				<div className="flex items-center gap-2">
@@ -108,13 +177,30 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				</div>
 			</div>
 
-			{/* Session list */}
-			<div className="flex-1 overflow-y-auto px-4 py-2">
-				<SessionList />
+			{/* Split area: Sessions + Explorer */}
+			<div className="flex flex-col flex-1 min-h-0">
+				{/* Session list */}
+				<div
+					className="overflow-y-auto px-4 py-2 min-h-0"
+					style={{ flex: `${ratio} 1 0%` }}
+				>
+					<SessionList />
+				</div>
+
+				{/* Draggable divider */}
+				<SidebarDivider onResize={handleResize} onResizeEnd={handleResizeEnd} />
+
+				{/* Explorer */}
+				<div
+					className="min-h-0"
+					style={{ flex: `${1 - ratio} 1 0%` }}
+				>
+					<Explorer />
+				</div>
 			</div>
 
 			{/* Actions */}
-			<div className="px-5 py-3" style={{ borderTop: "1px solid var(--border)" }}>
+			<div className="flex-shrink-0 px-5 py-3" style={{ borderTop: "1px solid var(--border)" }}>
 				<AgentLauncher onSpawnAgent={handleSpawnAgent} />
 			</div>
 		</div>

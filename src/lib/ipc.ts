@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentInfo, PtyStatusType, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
+import type { AgentInfo, DirEntry, FileContent, PtyStatusType, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
 
 export const pty = {
 	spawn: (cwd: string, cols: number, rows: number, command?: string, logId?: string) =>
@@ -61,6 +61,16 @@ export const tabs = {
 		invoke<void>("tab_update", { id, updates }),
 
 	delete: (id: string) => invoke<void>("tab_delete", { id }),
+};
+
+export const fs = {
+	listDir: (path: string) => invoke<DirEntry[]>("fs_list_dir", { path }),
+
+	readFile: (path: string) => invoke<FileContent>("fs_read_file", { path }),
+
+	writeFile: (path: string, content: string) => invoke<void>("fs_write_file", { path, content }),
+
+	fileExists: (path: string) => invoke<boolean>("fs_file_exists", { path }),
 };
 
 export const agents = {
