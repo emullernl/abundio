@@ -4,3 +4,4 @@ src-tauri/target/
 app-icon.png
 *.log
 .DS_Store
+.claude
