@@ -12,7 +12,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ titlebarHeight }: SidebarProps) {
-	const { sessions, createSession, getActiveSession } = useSessionStore();
+	const { createSession, getActiveSession } = useSessionStore();
 	const { sidebarCollapsed, toggleSidebar } = useSettingsStore();
 	const [creating, setCreating] = useState(false);
 
@@ -84,21 +84,6 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 					<span className="font-semibold" style={{ color: "var(--fg-secondary)", fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase" }}>
 						Sessions
 					</span>
-					{sessions.length > 0 && (
-						<span
-							className="rounded-full px-1.5 font-medium"
-							style={{
-								fontSize: 10,
-								color: "var(--fg-secondary)",
-								backgroundColor: "var(--bg-tertiary)",
-								lineHeight: "18px",
-								minWidth: 18,
-								textAlign: "center",
-							}}
-						>
-							{sessions.length}
-						</span>
-					)}
 				</div>
 				<div className="flex items-center gap-1">
 					<button
