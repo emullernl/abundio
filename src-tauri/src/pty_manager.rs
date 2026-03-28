@@ -88,6 +88,7 @@ impl PtyManager {
             cmd
         };
 
+        cmd.env("TERM", "xterm-256color");
         cmd.env("TERM_PROGRAM", "Abundio");
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         // Suppress zsh's partial-line EOL marker (%) so it doesn't appear in replayed scrollback logs
