@@ -31,6 +31,8 @@ export interface ManagedTerminal {
 	cleanup: (() => void) | null;
 	/** Deferred scrollback data to write after terminal is projected into a visible container */
 	pendingRestore: string | Uint8Array | null;
+	/** True while replaying saved scrollback — suppresses forwarding xterm query responses to the PTY */
+	restoring: boolean;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -95,6 +97,7 @@ export async function createTerminal(
 		ptyId: initialPtyId,
 		cleanup: null,
 		pendingRestore: null,
+		restoring: false,
 	};
 
 	instances.set(paneId, managed);
@@ -126,7 +129,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		// If terminal is already projected (has real dimensions), write immediately;
 		// otherwise store for flushPendingRestore() to handle after projection
 		if (term.cols > 1 && term.rows > 1) {
-			term.write(restoreData);
+			managed.restoring = true;
+			term.write(restoreData, () => {
+				managed.restoring = false;
+			});
 		} else {
 			managed.pendingRestore = restoreData;
 		}
@@ -148,6 +154,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	setPtyStatus(currentPtyId, { type: "running" });
 
 	term.onData((data) => {
+		if (managed.restoring) return;
 		pty.write(currentPtyId, data);
 	});
 
@@ -180,7 +187,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 export function flushPendingRestore(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed || !managed.pendingRestore) return;
-	managed.term.write(managed.pendingRestore);
+	managed.restoring = true;
+	managed.term.write(managed.pendingRestore, () => {
+		managed.restoring = false;
+	});
 	managed.pendingRestore = null;
 }
 
