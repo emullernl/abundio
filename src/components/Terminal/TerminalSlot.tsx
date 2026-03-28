@@ -1,22 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { pty } from "../../lib/ipc";
-import {
-	getTerminal,
-	createTerminal,
-	attachTerminal,
-	detachTerminal,
-} from "../../lib/terminalManager";
-import { useSettingsStore } from "../../stores/settingsStore";
-import { getTheme } from "../../lib/themes";
+import { getTerminal } from "../../lib/terminalManager";
+import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import { useSessionStore } from "../../stores/sessionStore";
 import { PaneContextMenu, type ContextMenuItem } from "./PaneContextMenu";
 import { SearchBar } from "./SearchBar";
-import "@xterm/xterm/css/xterm.css";
 
 interface Props {
 	paneId: string;
-	ptyId: string;
-	cwd: string;
 	isFocused: boolean;
 	onFocus: () => void;
 	onSplitHorizontal: () => void;
@@ -26,10 +17,8 @@ interface Props {
 	isMaximized: boolean;
 }
 
-export function TerminalPane({
+export function TerminalSlot({
 	paneId,
-	ptyId: initialPtyId,
-	cwd,
 	isFocused,
 	onFocus,
 	onSplitHorizontal,
@@ -39,7 +28,6 @@ export function TerminalPane({
 	isMaximized,
 }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
-	const { fontFamily, fontSize, theme: themeName } = useSettingsStore();
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 	const searchPaneId = useSessionStore((s) => s.searchPaneId);
 	const toggleSearch = useSessionStore((s) => s.toggleSearch);
@@ -47,59 +35,8 @@ export function TerminalPane({
 
 	useEffect(() => {
 		if (!containerRef.current) return;
-
-		let resizeTimer: ReturnType<typeof setTimeout>;
-		let resizeObserver: ResizeObserver | null = null;
-		let cancelled = false;
-
-		const setup = async () => {
-			if (!containerRef.current) return;
-
-			const existing = getTerminal(paneId);
-			if (existing) {
-				// Reattach existing terminal to new container
-				attachTerminal(paneId, containerRef.current);
-			} else {
-				// Create new terminal (waits for font to load)
-				const currentTheme = getTheme(themeName);
-				await createTerminal(paneId, initialPtyId, cwd, containerRef.current, {
-					fontSize,
-					fontFamily,
-					theme: currentTheme.terminal,
-				});
-			}
-
-			if (cancelled) return;
-
-			// Resize observer for this container
-			const managed = getTerminal(paneId);
-			resizeObserver = new ResizeObserver(() => {
-				const el = containerRef.current;
-				if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
-				if (!managed) return;
-				managed.fitAddon.fit();
-				clearTimeout(resizeTimer);
-				resizeTimer = setTimeout(() => {
-					if (managed.ptyId) {
-						pty.resize(managed.ptyId, managed.term.cols, managed.term.rows);
-					}
-				}, 100);
-			});
-			if (containerRef.current) {
-				resizeObserver.observe(containerRef.current);
-			}
-		};
-
-		setup();
-
-		return () => {
-			cancelled = true;
-			clearTimeout(resizeTimer);
-			resizeObserver?.disconnect();
-			// Detach to offscreen — don't destroy
-			detachTerminal(paneId);
-		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
+		registerTarget(paneId, containerRef.current);
+		return () => unregisterTarget(paneId);
 	}, [paneId]);
 
 	useEffect(() => {

@@ -31,13 +31,6 @@ export interface ManagedTerminal {
 	cleanup: (() => void) | null;
 }
 
-/** Hidden container to hold detached terminal DOMs so they aren't garbage collected */
-const offscreen = document.createElement("div");
-offscreen.style.position = "fixed";
-offscreen.style.left = "-9999px";
-offscreen.style.visibility = "hidden";
-document.body.appendChild(offscreen);
-
 const instances = new Map<string, ManagedTerminal>();
 
 export function getTerminal(paneId: string): ManagedTerminal | undefined {
@@ -178,28 +171,6 @@ export function setAllTerminalsFontSize(fontSize: number): void {
 		if (managed.ptyId) {
 			pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});
 		}
-	}
-}
-
-/** Move a terminal's DOM into a new container and refit */
-export function attachTerminal(paneId: string, container: HTMLElement): void {
-	const managed = instances.get(paneId);
-	if (!managed) return;
-	const termEl = managed.term.element;
-	if (termEl && termEl.parentElement !== container) {
-		container.appendChild(termEl);
-	}
-	managed.fitAddon.fit();
-	pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});
-}
-
-/** Detach a terminal's DOM to offscreen (keeps it alive) */
-export function detachTerminal(paneId: string): void {
-	const managed = instances.get(paneId);
-	if (!managed) return;
-	const termEl = managed.term.element;
-	if (termEl) {
-		offscreen.appendChild(termEl);
 	}
 }
 

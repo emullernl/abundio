@@ -1,7 +1,7 @@
 import type { PaneNode } from "../../lib/types";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useSplitPane } from "../../hooks/useSplitPane";
-import { TerminalPane } from "./TerminalPane";
+import { TerminalSlot } from "./TerminalSlot";
 import { PaneResizer } from "./PaneResizer";
 
 interface Props {
@@ -16,10 +16,8 @@ export function SplitContainer({ node, cwd }: Props) {
 
 	if (node.type === "terminal") {
 		return (
-			<TerminalPane
+			<TerminalSlot
 				paneId={node.id}
-				ptyId={node.ptyId}
-				cwd={cwd}
 				isFocused={focusedPaneId === node.id}
 				isMaximized={maximizedPaneId === node.id}
 				onFocus={() => setFocusedPane(node.id)}

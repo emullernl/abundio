@@ -14,6 +14,7 @@ import { useSplitPane } from "./hooks/useSplitPane";
 import { useAutoSpawn } from "./hooks/useAutoSpawn";
 import { useSessionStore } from "./stores/sessionStore";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
+import { TerminalPool } from "./components/Terminal/TerminalPool";
 import type { PaneNode } from "./lib/types";
 
 const TITLEBAR_HEIGHT = 52;
@@ -177,6 +178,7 @@ export function App() {
 			</div>
 			<StatusBar />
 			<CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+			<TerminalPool />
 		</div>
 	);
 }
