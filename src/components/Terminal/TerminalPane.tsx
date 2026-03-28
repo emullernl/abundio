@@ -48,40 +48,54 @@ export function TerminalPane({
 	useEffect(() => {
 		if (!containerRef.current) return;
 
-		const existing = getTerminal(paneId);
-		if (existing) {
-			// Reattach existing terminal to new container
-			attachTerminal(paneId, containerRef.current);
-		} else {
-			// Create new terminal
-			const currentTheme = getTheme(themeName);
-			createTerminal(paneId, initialPtyId, cwd, containerRef.current, {
-				fontSize,
-				fontFamily,
-				theme: currentTheme.terminal,
-			});
-		}
-
-		// Resize observer for this container
-		const managed = getTerminal(paneId);
 		let resizeTimer: ReturnType<typeof setTimeout>;
-		const resizeObserver = new ResizeObserver(() => {
-			const el = containerRef.current;
-			if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
-			if (!managed) return;
-			managed.fitAddon.fit();
-			clearTimeout(resizeTimer);
-			resizeTimer = setTimeout(() => {
-				if (managed.ptyId) {
-					pty.resize(managed.ptyId, managed.term.cols, managed.term.rows);
-				}
-			}, 100);
-		});
-		resizeObserver.observe(containerRef.current);
+		let resizeObserver: ResizeObserver | null = null;
+		let cancelled = false;
+
+		const setup = async () => {
+			if (!containerRef.current) return;
+
+			const existing = getTerminal(paneId);
+			if (existing) {
+				// Reattach existing terminal to new container
+				attachTerminal(paneId, containerRef.current);
+			} else {
+				// Create new terminal (waits for font to load)
+				const currentTheme = getTheme(themeName);
+				await createTerminal(paneId, initialPtyId, cwd, containerRef.current, {
+					fontSize,
+					fontFamily,
+					theme: currentTheme.terminal,
+				});
+			}
+
+			if (cancelled) return;
+
+			// Resize observer for this container
+			const managed = getTerminal(paneId);
+			resizeObserver = new ResizeObserver(() => {
+				const el = containerRef.current;
+				if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
+				if (!managed) return;
+				managed.fitAddon.fit();
+				clearTimeout(resizeTimer);
+				resizeTimer = setTimeout(() => {
+					if (managed.ptyId) {
+						pty.resize(managed.ptyId, managed.term.cols, managed.term.rows);
+					}
+				}, 100);
+			});
+			if (containerRef.current) {
+				resizeObserver.observe(containerRef.current);
+			}
+		};
+
+		setup();
 
 		return () => {
+			cancelled = true;
 			clearTimeout(resizeTimer);
-			resizeObserver.disconnect();
+			resizeObserver?.disconnect();
 			// Detach to offscreen — don't destroy
 			detachTerminal(paneId);
 		};
@@ -149,9 +163,10 @@ export function TerminalPane({
 			ref={containerRef}
 			className="w-full h-full relative"
 			style={{
-				padding: 0,
+				padding: "8px 0 0 8px",
 				overflow: "hidden",
 				boxShadow: "none",
+				background: "var(--bg-primary)",
 			}}
 			onFocus={onFocus}
 			onMouseDown={onFocus}

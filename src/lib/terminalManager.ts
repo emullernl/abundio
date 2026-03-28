@@ -43,13 +43,24 @@ export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
 }
 
-export function createTerminal(
+export async function createTerminal(
 	paneId: string,
 	initialPtyId: string,
 	cwd: string,
 	container: HTMLElement,
 	options: { fontSize: number; fontFamily: string; theme: ITheme },
-): ManagedTerminal {
+): Promise<ManagedTerminal> {
+	// Ensure all font variants are loaded before xterm rasterizes glyphs into its texture atlas
+	try {
+		await Promise.all([
+			document.fonts.load(`${options.fontSize}px ${options.fontFamily}`),
+			document.fonts.load(`bold ${options.fontSize}px ${options.fontFamily}`),
+			document.fonts.load(`italic ${options.fontSize}px ${options.fontFamily}`),
+		]);
+	} catch {
+		// Proceed with fallback if font loading fails
+	}
+
 	const term = new Terminal({
 		fontSize: options.fontSize,
 		fontFamily: options.fontFamily,
@@ -153,6 +164,17 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenOutput();
 		unlistenStatus();
 	};
+}
+
+/** Update font size on all terminal instances and refit */
+export function setAllTerminalsFontSize(fontSize: number): void {
+	for (const managed of instances.values()) {
+		managed.term.options.fontSize = fontSize;
+		managed.fitAddon.fit();
+		if (managed.ptyId) {
+			pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});
+		}
+	}
 }
 
 /** Move a terminal's DOM into a new container and refit */

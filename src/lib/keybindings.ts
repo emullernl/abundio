@@ -13,7 +13,9 @@ type KeyAction =
 	| "new-tab"
 	| "close-tab"
 	| "next-tab"
-	| "prev-tab";
+	| "prev-tab"
+	| "font-size-increase"
+	| "font-size-decrease";
 
 interface KeyBinding {
 	key: string;
@@ -41,6 +43,8 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
 	{ key: "]", meta: isMac, shift: true, ctrl: !isMac, action: "next-tab" },
 	{ key: "[", meta: isMac, shift: true, ctrl: !isMac, action: "prev-tab" },
+	{ key: "=", meta: isMac, shift: false, ctrl: !isMac, action: "font-size-increase" },
+	{ key: "-", meta: isMac, shift: false, ctrl: !isMac, action: "font-size-decrease" },
 ];
 
 type ActionHandler = () => void;

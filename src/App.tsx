@@ -8,6 +8,8 @@ import { CommandPalette } from "./components/CommandPalette";
 import { TabBar } from "./components/TabBar";
 import { useSession } from "./hooks/useSession";
 import { initKeybindings, registerAction } from "./lib/keybindings";
+import { setAllTerminalsFontSize } from "./lib/terminalManager";
+import { useSettingsStore } from "./stores/settingsStore";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useAutoSpawn } from "./hooks/useAutoSpawn";
 import { useSessionStore } from "./stores/sessionStore";
@@ -101,6 +103,18 @@ export function App() {
 			const idx = session.tabs.findIndex((t) => t.id === currentTabId);
 			const prevIdx = (idx - 1 + session.tabs.length) % session.tabs.length;
 			state.setActiveTab(session.id, session.tabs[prevIdx].id);
+		});
+		registerAction("font-size-increase", () => {
+			const { fontSize, setFontSize } = useSettingsStore.getState();
+			const newSize = Math.min(fontSize + 1, 32);
+			setFontSize(newSize);
+			setAllTerminalsFontSize(newSize);
+		});
+		registerAction("font-size-decrease", () => {
+			const { fontSize, setFontSize } = useSettingsStore.getState();
+			const newSize = Math.max(fontSize - 1, 8);
+			setFontSize(newSize);
+			setAllTerminalsFontSize(newSize);
 		});
 	}, [focusedPaneId, splitPane, closePane, navigatePane, toggleMaximize]);
 
