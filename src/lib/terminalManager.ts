@@ -8,8 +8,14 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { pty } from "./ipc";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { useSessionStore } from "../stores/sessionStore";
+import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import type { PaneNode } from "./types";
+
+function containsPaneId(node: PaneNode, targetPaneId: string): boolean {
+	if (node.type === "terminal") return node.id === targetPaneId;
+	return containsPaneId(node.first, targetPaneId) || containsPaneId(node.second, targetPaneId);
+}
 
 function setPtyIdInLayout(node: PaneNode, targetPaneId: string, ptyId: string): PaneNode {
 	if (node.type === "terminal") {
@@ -33,9 +39,68 @@ export interface ManagedTerminal {
 	pendingRestore: string | Uint8Array | null;
 	/** True while replaying saved scrollback — suppresses forwarding xterm query responses to the PTY */
 	restoring: boolean;
+	/** True until the terminal receives its first focus — suppresses activity tracking during shell startup */
+	suppressActivity: boolean;
+	/** True while the terminal has keyboard focus — keeps dot in idle (green) state */
+	focused: boolean;
+	/** Timestamp of last user input — used to suppress activity tracking for echoed characters */
+	lastInputAt: number;
 }
 
 const instances = new Map<string, ManagedTerminal>();
+
+// Background activity listeners for PTYs whose terminals have been destroyed (session switch)
+// These keep tracking activity so session/tab dots update for inactive sessions
+const backgroundTrackers = new Map<string, { unlistenOutput: () => void; unlistenStatus: () => void }>();
+
+async function startBackgroundTracking(ptyId: string) {
+	if (backgroundTrackers.has(ptyId)) return;
+	const unlistenOutput = await pty.onOutput(ptyId, () => {
+		usePtyActivityStore.getState().recordOutput(ptyId);
+	});
+	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
+		useSessionStore.getState().setPtyStatus(ptyId, status);
+		if (status.type === "exited" && status.code !== 0 && status.code !== null) {
+			usePtyActivityStore.getState().recordError(ptyId);
+		}
+	});
+	backgroundTrackers.set(ptyId, { unlistenOutput, unlistenStatus });
+}
+
+function stopBackgroundTracking(ptyId: string) {
+	const tracker = backgroundTrackers.get(ptyId);
+	if (tracker) {
+		tracker.unlistenOutput();
+		tracker.unlistenStatus();
+		backgroundTrackers.delete(ptyId);
+	}
+}
+
+// Deferred subscription — runs after all modules are initialized
+setTimeout(() => {
+	useSessionStore.subscribe((state) => {
+		const { activeSessionId, activeView, focusedPaneId } = state;
+		if (!activeSessionId) return;
+		const view = activeView[activeSessionId] ?? "terminal";
+		const isTerminalView = view === "terminal";
+
+		const activityStore = usePtyActivityStore.getState();
+		for (const [paneId, managed] of instances) {
+			const wasFocused = managed.focused;
+			managed.focused = isTerminalView && focusedPaneId === paneId;
+			if (managed.focused) {
+				managed.suppressActivity = false;
+				if (!wasFocused && managed.ptyId) {
+					activityStore.markIdle(managed.ptyId);
+				}
+			}
+			// Ensure all terminals in the active session have an activity entry (grey → green)
+			if (managed.ptyId) {
+				activityStore.initPty(managed.ptyId);
+			}
+		}
+	});
+}, 0);
 
 export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
@@ -98,6 +163,9 @@ export async function createTerminal(
 		cleanup: null,
 		pendingRestore: null,
 		restoring: false,
+		suppressActivity: true,
+		focused: false,
+		lastInputAt: 0,
 	};
 
 	instances.set(paneId, managed);
@@ -142,29 +210,55 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		currentPtyId = await pty.spawn(cwd, term.cols, term.rows, undefined, paneId);
 		managed.ptyId = currentPtyId;
 
+		// Write ptyId to the correct tab's layout (not just the active tab)
 		const store = useSessionStore.getState();
-		const tab = store.getActiveTab();
-		const layout = store.getActiveLayout();
-		if (tab && layout) {
-			const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
-			store.updateLayoutLocal(tab.id, updated);
+		const session = store.getActiveSession();
+		if (session) {
+			for (const tab of session.tabs) {
+				try {
+					const layout = JSON.parse(tab.layoutJson) as PaneNode;
+					if (containsPaneId(layout, paneId)) {
+						const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
+						store.updateLayoutLocal(tab.id, updated);
+						break;
+					}
+				} catch {
+					// skip
+				}
+			}
 		}
 	}
 
+	// Stop background tracker if one exists — full listener takes over
+	stopBackgroundTracking(currentPtyId);
+
 	setPtyStatus(currentPtyId, { type: "running" });
+	const actStore = usePtyActivityStore.getState();
+	actStore.initPty(currentPtyId);
+	actStore.registerPane(paneId, currentPtyId);
 
 	term.onData((data) => {
 		if (managed.restoring) return;
+		managed.lastInputAt = Date.now();
+		usePtyActivityStore.getState().markIdle(currentPtyId);
 		pty.write(currentPtyId, data);
 	});
 
+	const INPUT_ECHO_MS = 100;
+
 	const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
 		term.write(data);
+		if (!managed.suppressActivity && !managed.focused && Date.now() - managed.lastInputAt > INPUT_ECHO_MS) {
+			usePtyActivityStore.getState().recordOutput(currentPtyId);
+		}
 	});
 
 	const unlistenStatus = await pty.onStatus(currentPtyId, (status) => {
 		useSessionStore.getState().setPtyStatus(currentPtyId, status);
 		if (status.type === "exited") {
+			if (status.code !== 0 && status.code !== null) {
+				usePtyActivityStore.getState().recordError(currentPtyId);
+			}
 			const exitMsg = status.code === 0 ? "exited" : `exited with code ${status.code}`;
 			try {
 				sendNotification({ title: "Abundio", body: `Process ${exitMsg}` });
@@ -172,6 +266,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				// Notifications may not be permitted
 			}
 		}
+	});
+
+	term.onTitleChange((title) => {
+		usePtyActivityStore.getState().setTitle(paneId, title);
 	});
 
 	registerSnapshot(paneId, () => serializeAddon.serialize());
@@ -228,4 +326,8 @@ export function destroyTerminal(paneId: string): void {
 	managed.cleanup?.();
 	managed.term.dispose();
 	instances.delete(paneId);
+	// Start background tracking so activity dots update for inactive sessions
+	if (managed.ptyId) {
+		startBackgroundTracking(managed.ptyId);
+	}
 }

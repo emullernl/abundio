@@ -85,3 +85,5 @@ export interface FileContent {
 // ── PTY ──
 
 export type PtyStatusType = { type: "running" } | { type: "exited"; code: number | null };
+
+export type PtyActivityState = "idle" | "active" | "waiting" | "error";

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { PaneNode, PtyStatusType, SessionWithTabs, Tab } from "../lib/types";
 import { sessions as sessionsApi, tabs as tabsApi, pty } from "../lib/ipc";
 import { persistFileTabs } from "./explorerStore";
+import { usePtyActivityStore } from "./ptyActivityStore";
 
 interface SessionState {
 	sessions: SessionWithTabs[];
@@ -128,6 +129,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
 	createSession: async (name, rootFolder) => {
 		const sessionWithTabs = await sessionsApi.create(name, rootFolder);
+		usePtyActivityStore.getState().markSessionOpened(sessionWithTabs.id);
 		const firstTabId = sessionWithTabs.tabs[0]?.id;
 		set((state) => ({
 			sessions: [...state.sessions, sessionWithTabs],
@@ -163,8 +165,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		}));
 	},
 
-	setActiveSession: (id) =>
-		set((state) => {
+	setActiveSession: (id) => {
+		if (id) usePtyActivityStore.getState().markSessionOpened(id);
+		return set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
 			// Save current focused pane for the current tab
 			const currentSessionId = state.activeSessionId;
@@ -184,7 +187,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 				maximizedPaneId: null,
 				savedLayout: null,
 			};
-		}),
+		});
+	},
 
 	reorderSessions: (ids) => {
 		const { sessions } = get();

@@ -1,5 +1,11 @@
-import type { PaneNode, PtyStatusType, SessionWithTabs } from "../../lib/types";
-import { useSessionStore } from "../../stores/sessionStore";
+import type { PaneNode, SessionWithTabs } from "../../lib/types";
+import {
+	usePtyActivityStore,
+	computeSessionDotStatus,
+	DOT_COLORS,
+	DOT_GLOWS,
+	shouldPulse,
+} from "../../stores/ptyActivityStore";
 import { X } from "../Icons";
 
 interface Props {
@@ -9,19 +15,6 @@ interface Props {
 	onClick: () => void;
 	onDelete: () => void;
 	onMouseDown: (e: React.MouseEvent) => void;
-}
-
-function collectPtyIds(node: PaneNode): string[] {
-	if (node.type === "terminal") return node.ptyId ? [node.ptyId] : [];
-	return [...collectPtyIds(node.first), ...collectPtyIds(node.second)];
-}
-
-function statusColor(statuses: PtyStatusType[]): string {
-	if (statuses.length === 0) return "var(--fg-secondary)"; // no panes
-	if (statuses.some((s) => s.type === "running")) return "var(--success)";
-	if (statuses.some((s) => s.type === "exited" && s.code !== 0 && s.code !== null))
-		return "var(--error)";
-	return "var(--fg-secondary)";
 }
 
 function shortenPath(fullPath: string): string {
@@ -45,20 +38,22 @@ export function SessionItem({
 	onDelete,
 	onMouseDown,
 }: Props) {
-	const ptyStatuses = useSessionStore((s) => s.ptyStatuses);
+	const activities = usePtyActivityStore((s) => s.activities);
+	const openedSessionIds = usePtyActivityStore((s) => s.openedSessionIds);
+	const panePtyMap = usePtyActivityStore((s) => s.panePtyMap);
 
-	const allPtyIds: string[] = [];
+	const tabLayouts: PaneNode[] = [];
 	for (const tab of session.tabs) {
 		try {
-			const layout = JSON.parse(tab.layoutJson) as PaneNode;
-			allPtyIds.push(...collectPtyIds(layout));
+			tabLayouts.push(JSON.parse(tab.layoutJson) as PaneNode);
 		} catch {
 			// ignore
 		}
 	}
-	const paneStatuses = allPtyIds.map((id) => ptyStatuses[id]).filter(Boolean);
 
-	const dotColor = statusColor(paneStatuses);
+	const dotStatus = computeSessionDotStatus(session.id, tabLayouts, activities, openedSessionIds, panePtyMap);
+	const dotColor = DOT_COLORS[dotStatus];
+	const pulse = shouldPulse(dotStatus);
 
 	return (
 		<div
@@ -80,7 +75,13 @@ export function SessionItem({
 				if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: dotColor }} />
+			<div
+				className={`w-2 h-2 rounded-full flex-shrink-0 ${pulse ? "status-dot-pulse" : ""}`}
+				style={{
+					backgroundColor: dotColor,
+					"--dot-glow": DOT_GLOWS[dotStatus] ?? "transparent",
+				} as React.CSSProperties}
+			/>
 			<div className="flex-1 min-w-0">
 				<span className="truncate font-medium" style={{ color: "var(--fg-primary)", fontSize: 13 }}>
 					{session.name}

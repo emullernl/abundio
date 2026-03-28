@@ -5,6 +5,7 @@ import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import { useSessionStore } from "../../stores/sessionStore";
 import { PaneContextMenu, type ContextMenuItem } from "./PaneContextMenu";
 import { SearchBar } from "./SearchBar";
+import { TerminalTitleBar } from "./TerminalTitleBar";
 
 interface Props {
 	paneId: string;
@@ -60,13 +61,21 @@ export function TerminalSlot({
 		}
 	}, [isFocused, paneId, activeView, activeTabId]);
 
+	const handleFocus = useCallback(() => {
+		onFocus();
+		const managed = getTerminal(paneId);
+		if (managed) {
+			managed.suppressActivity = false;
+		}
+	}, [onFocus, paneId]);
+
 	const handleContextMenu = useCallback(
 		(e: React.MouseEvent) => {
 			e.preventDefault();
-			onFocus();
+			handleFocus();
 			setContextMenu({ x: e.clientX, y: e.clientY });
 		},
-		[onFocus],
+		[handleFocus],
 	);
 
 	const handleCopy = useCallback(() => {
@@ -113,20 +122,21 @@ export function TerminalSlot({
 	return (
 		<div
 			ref={containerRef}
-			className="w-full h-full relative"
+			className="w-full h-full relative flex flex-col"
 			style={{
-				padding: "8px 0 0 8px",
+				padding: "0 0 0 8px",
 				overflow: "hidden",
 				boxShadow: "none",
 				background: "var(--bg-primary)",
 			}}
-			onFocus={onFocus}
-			onMouseDown={onFocus}
+			onFocus={handleFocus}
+			onMouseDown={handleFocus}
 			onContextMenu={handleContextMenu}
 		>
+			<TerminalTitleBar paneId={paneId} />
 			<div
 				ref={innerRef}
-				className="w-full h-full"
+				className="w-full flex-1 min-h-0"
 				style={{ overflow: "hidden" }}
 			/>
 			{searchOpen && searchAddon && (

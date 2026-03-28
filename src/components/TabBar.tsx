@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Tab } from "../lib/types";
 import type { FileTab } from "../stores/explorerStore";
+import {
+	usePtyActivityStore,
+	computeTabDotStatus,
+	DOT_COLORS,
+	DOT_GLOWS,
+	shouldPulse,
+} from "../stores/ptyActivityStore";
 import { Terminal, File } from "./Icons";
 
 interface TabBarProps {
@@ -59,6 +66,7 @@ function TabItem({
 	cancelRename,
 	icon,
 	isDirty,
+	statusDot,
 }: {
 	tab: Tab | { id: string; name: string };
 	isActive: boolean;
@@ -75,6 +83,7 @@ function TabItem({
 	cancelRename: () => void;
 	icon?: React.ReactNode;
 	isDirty?: boolean;
+	statusDot?: React.ReactNode;
 }) {
 	const [hovered, setHovered] = useState(false);
 	const isEditing = editingTabId === tab.id;
@@ -135,6 +144,8 @@ function TabItem({
 					{icon}
 				</span>
 			)}
+
+			{statusDot}
 
 			{isDirty && (
 				<span
@@ -222,6 +233,8 @@ export function TabBar({
 	onActivateFileTab,
 	onCloseFileTab,
 }: TabBarProps) {
+	const activities = usePtyActivityStore((s) => s.activities);
+	const panePtyMap = usePtyActivityStore((s) => s.panePtyMap);
 	const [editingTabId, setEditingTabId] = useState<string | null>(null);
 	const [editValue, setEditValue] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -302,6 +315,7 @@ export function TabBar({
 					const isActive = activeView === "terminal" && tab.id === activeTabId;
 					const prevIsActive = index > 0 && activeView === "terminal" && tabs[index - 1]?.id === activeTabId;
 					const showSeparator = !isActive && index > 0 && !prevIsActive;
+					const tabDot = computeTabDotStatus(tab, activities, panePtyMap);
 
 					return (
 						<TabItem
@@ -323,6 +337,18 @@ export function TabBar({
 							commitRename={commitRename}
 							cancelRename={cancelRename}
 							icon={<Terminal size={12} />}
+							statusDot={
+								<span
+									className={`rounded-full ${shouldPulse(tabDot) ? "status-dot-pulse" : ""}`}
+									style={{
+										width: 7,
+										height: 7,
+										flexShrink: 0,
+										backgroundColor: DOT_COLORS[tabDot],
+										"--dot-glow": DOT_GLOWS[tabDot] ?? "transparent",
+									} as React.CSSProperties}
+								/>
+							}
 						/>
 					);
 				})}
