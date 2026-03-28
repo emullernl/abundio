@@ -5,8 +5,10 @@ import { X } from "../Icons";
 interface Props {
 	session: SessionWithTabs;
 	isActive: boolean;
+	isDragging: boolean;
 	onClick: () => void;
 	onDelete: () => void;
+	onMouseDown: (e: React.MouseEvent) => void;
 }
 
 function collectPtyIds(node: PaneNode): string[] {
@@ -35,7 +37,14 @@ function shortenPath(fullPath: string): string {
 	return fullPath;
 }
 
-export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
+export function SessionItem({
+	session,
+	isActive,
+	isDragging,
+	onClick,
+	onDelete,
+	onMouseDown,
+}: Props) {
 	const ptyStatuses = useSessionStore((s) => s.ptyStatuses);
 
 	const allPtyIds: string[] = [];
@@ -53,12 +62,14 @@ export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 
 	return (
 		<div
+			onMouseDown={onMouseDown}
 			onClick={onClick}
 			onKeyDown={(e) => e.key === "Enter" && onClick()}
 			className="group flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
 			style={{
 				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
 				borderLeft: isActive ? "2px solid var(--accent)" : "2px solid transparent",
+				opacity: isDragging ? 0.4 : 1,
 				transitionDuration: "var(--transition-fast)",
 			}}
 			onMouseEnter={(e) => {

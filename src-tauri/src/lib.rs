@@ -47,6 +47,7 @@ pub fn run() {
             commands::session_list,
             commands::session_update,
             commands::session_delete,
+            commands::session_reorder,
             commands::agents_list_available,
             commands::agents_refresh,
             commands::agent_spawn,

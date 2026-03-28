@@ -20,6 +20,8 @@ interface SessionState {
 	deleteSession: (id: string) => Promise<void>;
 	setActiveSession: (id: string | null) => void;
 
+	reorderSessions: (ids: string[]) => void;
+
 	// Tab actions
 	createTab: (sessionId: string) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
@@ -122,7 +124,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		const sessionWithTabs = await sessionsApi.create(name, rootFolder);
 		const firstTabId = sessionWithTabs.tabs[0]?.id;
 		set((state) => ({
-			sessions: [sessionWithTabs, ...state.sessions],
+			sessions: [...state.sessions, sessionWithTabs],
 			activeSessionId: sessionWithTabs.id,
 			activeTabBySession: {
 				...state.activeTabBySession,
@@ -177,6 +179,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 				savedLayout: null,
 			};
 		}),
+
+	reorderSessions: (ids) => {
+		const { sessions } = get();
+		const byId = new Map(sessions.map((s) => [s.id, s]));
+		const reordered = ids.map((id) => byId.get(id)).filter(Boolean) as SessionWithTabs[];
+		set({ sessions: reordered });
+		sessionsApi.reorder(ids).catch(() => {});
+	},
 
 	// ── Tab actions ──
 

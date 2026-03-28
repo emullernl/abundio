@@ -81,6 +81,14 @@ pub async fn session_delete(
     store.delete(&id)
 }
 
+#[tauri::command]
+pub async fn session_reorder(
+    store: State<'_, SessionStore>,
+    ids: Vec<String>,
+) -> Result<(), AbundioError> {
+    store.reorder_sessions(&ids)
+}
+
 // ── Tab commands ──
 
 #[tauri::command]

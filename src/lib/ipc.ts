@@ -49,6 +49,8 @@ export const sessions = {
 		invoke<void>("session_update", { id, updates }),
 
 	delete: (id: string) => invoke<void>("session_delete", { id }),
+
+	reorder: (ids: string[]) => invoke<void>("session_reorder", { ids }),
 };
 
 export const tabs = {

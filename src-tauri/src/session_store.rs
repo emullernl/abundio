@@ -12,6 +12,7 @@ pub struct Session {
     pub root_folder: String,
     pub env_json: String,
     pub agent_presets_json: String,
+    pub position: i32,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -70,9 +71,15 @@ impl SessionStore {
         let conn = self.conn.lock().unwrap();
         let session_id = uuid::Uuid::new_v4().to_string();
 
+        let position: i32 = conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM sessions",
+            [],
+            |row| row.get(0),
+        )?;
+
         conn.execute(
-            "INSERT INTO sessions (id, name, root_folder) VALUES (?1, ?2, ?3)",
-            rusqlite::params![session_id, name, root_folder],
+            "INSERT INTO sessions (id, name, root_folder, position) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![session_id, name, root_folder, position],
         )?;
 
         // Create default first tab
@@ -96,8 +103,8 @@ impl SessionStore {
     pub fn list(&self) -> Result<Vec<SessionWithTabs>, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, created_at, updated_at
-             FROM sessions ORDER BY updated_at DESC",
+            "SELECT id, name, root_folder, env_json, agent_presets_json, position, created_at, updated_at
+             FROM sessions ORDER BY position ASC",
         )?;
 
         let sessions = stmt
@@ -108,8 +115,9 @@ impl SessionStore {
                     root_folder: row.get(2)?,
                     env_json: row.get(3)?,
                     agent_presets_json: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    position: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -231,11 +239,24 @@ impl SessionStore {
         Ok(())
     }
 
+    pub fn reorder_sessions(&self, ids: &[String]) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        for (i, id) in ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE sessions SET position = ?1 WHERE id = ?2",
+                rusqlite::params![i as i32, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     // ── Internal helpers ──
 
     fn get_session_with_conn(conn: &Connection, id: &str) -> Result<Session, AbundioError> {
         conn.query_row(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, created_at, updated_at
+            "SELECT id, name, root_folder, env_json, agent_presets_json, position, created_at, updated_at
              FROM sessions WHERE id = ?1",
             [id],
             |row| {
@@ -245,8 +266,9 @@ impl SessionStore {
                     root_folder: row.get(2)?,
                     env_json: row.get(3)?,
                     agent_presets_json: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    position: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
                 })
             },
         )

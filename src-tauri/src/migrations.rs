@@ -4,6 +4,10 @@ use std::path::Path;
 const MIGRATIONS: &[(&str, &str)] = &[
     ("001_init", include_str!("../migrations/001_init.sql")),
     ("002_add_tabs", include_str!("../migrations/002_add_tabs.sql")),
+    (
+        "003_add_session_position",
+        include_str!("../migrations/003_add_session_position.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
