@@ -1,0 +1,149 @@
+name: Semgrep Security Scan
+
+on:
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  semgrep-diff:
+    name: Security Scan (Changed Files)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    if: github.actor != 'dependabot[bot]'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for baseline comparison
+
+      - name: Run Semgrep differential scan
+        # Find rules at https://semgrep.dev/r
+        run: |
+          semgrep scan \
+            --baseline-commit ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }} \
+            --config=p/security-audit \
+            --config=p/react \
+            --config=p/typescript \
+            --config=p/javascript \
+            --config=p/secrets \
+            --config=p/rust \
+            --config=p/command-injection \
+            --config=p/owasp-top-ten \
+            --config=p/xss \
+            --exclude='src-tauri/target' \
+            --sarif \
+            --sarif-output=semgrep-results.sarif \
+            --metrics=off \
+            .
+        continue-on-error: true
+        id: semgrep
+
+      - name: Check for blocking findings
+        run: |
+          # In SARIF, level is in the rule definition, not on results directly
+          # Build a map of ruleId -> level, then check if any result has error level
+          BLOCKING=$(jq '
+            (.runs[0].tool.driver.rules // []) as $rules |
+            [.runs[0].results[] |
+              . as $result |
+              ($rules[] | select(.id == $result.ruleId) | .defaultConfiguration.level // "warning") as $level |
+              select($level == "error")
+            ] | length
+          ' semgrep-results.sarif 2>/dev/null || echo "0")
+
+          if [ "$BLOCKING" -gt 0 ]; then
+            echo "::error::Found $BLOCKING high-severity security finding(s)"
+            exit 1
+          fi
+        if: always()
+
+      - name: Save SARIF as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-results
+          path: semgrep-results.sarif
+          retention-days: 30
+        if: always()
+
+      - name: Comment on PR with findings
+        if: github.event_name == 'pull_request' && always()
+        run: |
+          # In SARIF, level is in rule.defaultConfiguration.level, not on results
+          # Count findings by looking up each result's rule level
+          CRITICAL=$(jq '
+            (.runs[0].tool.driver.rules // []) as $rules |
+            [.runs[0].results[] |
+              . as $result |
+              ($rules[] | select(.id == $result.ruleId) | .defaultConfiguration.level // "warning") as $level |
+              select($level == "error")
+            ] | length
+          ' semgrep-results.sarif 2>/dev/null || echo "0")
+
+          WARNING=$(jq '
+            (.runs[0].tool.driver.rules // []) as $rules |
+            [.runs[0].results[] |
+              . as $result |
+              ($rules[] | select(.id == $result.ruleId) | .defaultConfiguration.level // "warning") as $level |
+              select($level == "warning")
+            ] | length
+          ' semgrep-results.sarif 2>/dev/null || echo "0")
+
+          NOTE=$(jq '
+            (.runs[0].tool.driver.rules // []) as $rules |
+            [.runs[0].results[] |
+              . as $result |
+              ($rules[] | select(.id == $result.ruleId) | .defaultConfiguration.level // "warning") as $level |
+              select($level == "note")
+            ] | length
+          ' semgrep-results.sarif 2>/dev/null || echo "0")
+
+          TOTAL=$(jq '.runs[0].results | length' semgrep-results.sarif 2>/dev/null || echo "0")
+
+          if [ "$TOTAL" -gt 0 ]; then
+            # Build findings table with level lookup
+            FINDINGS_TABLE=$(jq -r '
+              (.runs[0].tool.driver.rules // []) as $rules |
+              .runs[0].results[:20] |
+              map(
+                . as $result |
+                ($rules[] | select(.id == $result.ruleId) | .defaultConfiguration.level // "warning") as $level |
+                "| \($result.ruleId // "unknown" | split(".") | last) | \($level) | \($result.locations[0].physicalLocation.artifactLocation.uri // "unknown"):\($result.locations[0].physicalLocation.region.startLine // "?") | \($result.message.text // "No message" | gsub("\n"; " ") | .[0:80]) |"
+              ) |
+              join("\n")
+            ' semgrep-results.sarif 2>/dev/null || echo "| Error parsing findings |")
+
+            COMMENT_BODY="## 🔒 Semgrep Security Scan Results
+
+          | Severity | Count |
+          |----------|-------|
+          | 🔴 Error | $CRITICAL |
+          | 🟡 Warning | $WARNING |
+          | 🔵 Note | $NOTE |
+          | **Total** | **$TOTAL** |
+
+          ### Findings (max 20 shown)
+
+          | Rule | Severity | Location | Message |
+          |------|----------|----------|---------|
+          $FINDINGS_TABLE
+
+          [View full SARIF report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          else
+            COMMENT_BODY="## 🔒 Semgrep Security Scan Results
+
+          ✅ No security findings detected. Great job!"
+          fi
+
+          # Use GitHub API directly (gh CLI not available in semgrep container)
+          curl -X POST \
+            -H "Authorization: token ${{ github.token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            -d "$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
