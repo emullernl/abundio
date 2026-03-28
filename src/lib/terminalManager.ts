@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { pty } from "./ipc";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { useSessionStore } from "../stores/sessionStore";
@@ -76,6 +77,9 @@ export async function createTerminal(
 	term.loadAddon(searchAddon);
 	term.loadAddon(serializeAddon);
 	term.loadAddon(new WebLinksAddon());
+	const unicode11 = new Unicode11Addon();
+	term.loadAddon(unicode11);
+	term.unicode.activeVersion = "11";
 	term.open(container);
 
 	try {
