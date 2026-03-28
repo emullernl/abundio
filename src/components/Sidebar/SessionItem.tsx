@@ -50,7 +50,6 @@ export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 	const paneStatuses = allPtyIds.map((id) => ptyStatuses[id]).filter(Boolean);
 
 	const dotColor = statusColor(paneStatuses);
-	const runningCount = paneStatuses.filter((s) => s.type === "running").length;
 
 	return (
 		<div
@@ -71,26 +70,9 @@ export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 		>
 			<div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: dotColor }} />
 			<div className="flex-1 min-w-0">
-				<div className="flex items-center gap-2">
-					<span className="truncate font-medium" style={{ color: "var(--fg-primary)", fontSize: 13 }}>
-						{session.name}
-					</span>
-					{runningCount > 0 && (
-						<span
-							className="flex-shrink-0 rounded-full px-1.5 font-medium"
-							style={{
-								fontSize: 10,
-								color: "var(--bg-primary)",
-								backgroundColor: "var(--accent)",
-								lineHeight: "16px",
-								minWidth: 16,
-								textAlign: "center",
-							}}
-						>
-							{runningCount}
-						</span>
-					)}
-				</div>
+				<span className="truncate font-medium" style={{ color: "var(--fg-primary)", fontSize: 13 }}>
+					{session.name}
+				</span>
 				<div className="truncate mt-0.5" style={{ color: "var(--fg-secondary)", fontSize: 11 }}>
 					{shortenPath(session.rootFolder)}
 				</div>
