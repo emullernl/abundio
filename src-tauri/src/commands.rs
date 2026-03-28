@@ -1,6 +1,5 @@
 use tauri::{AppHandle, State};
 
-use crate::agent_registry::{AgentInfo, AgentRegistry};
 use crate::error::AbundioError;
 use crate::pty_manager::PtyManager;
 use crate::session_store::{SessionStore, SessionUpdate, SessionWithTabs, Tab, TabUpdate};
@@ -123,52 +122,6 @@ pub async fn tab_delete(
     id: String,
 ) -> Result<(), AbundioError> {
     store.delete_tab(&id)
-}
-
-// ── Agent commands ──
-
-#[tauri::command]
-pub async fn agents_list_available(
-    registry: State<'_, AgentRegistry>,
-) -> Result<Vec<AgentInfo>, AbundioError> {
-    Ok(registry.list())
-}
-
-#[tauri::command]
-pub async fn agents_refresh(registry: State<'_, AgentRegistry>) -> Result<(), AbundioError> {
-    registry.refresh();
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn agent_spawn(
-    app: AppHandle,
-    pty_mgr: State<'_, PtyManager>,
-    registry: State<'_, AgentRegistry>,
-    session_id: String,
-    agent_name: String,
-    cwd: String,
-    cols: u16,
-    rows: u16,
-) -> Result<String, AbundioError> {
-    let agent = registry
-        .get(&agent_name)
-        .ok_or_else(|| AbundioError::NotFound(format!("Agent not found: {}", agent_name)))?;
-
-    if !agent.available {
-        return Err(AbundioError::NotFound(format!(
-            "Agent not installed: {}",
-            agent_name
-        )));
-    }
-
-    // Build command string: binary + default args
-    let mut parts = vec![agent.binary.clone()];
-    parts.extend(agent.default_args.clone());
-    let command = parts.join(" ");
-
-    let _ = session_id; // Will be used for session-specific env in the future
-    pty_mgr.spawn(app, &cwd, Some(&command), cols, rows, None)
 }
 
 // ── PTY log commands ──

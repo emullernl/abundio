@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useSplitPane } from "../hooks/useSplitPane";
-import { useAgents } from "../hooks/useAgents";
 import { themeList } from "../lib/themes";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -44,7 +43,6 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 	const { sessions, setActiveSession, createSession, focusedPaneId } = useSessionStore();
 	const { setTheme } = useSettingsStore();
 	const { splitPane, closePane, toggleMaximize } = useSplitPane();
-	const { agents } = useAgents();
 
 	const items = useMemo<PaletteItem[]>(() => {
 		const result: PaletteItem[] = [];
@@ -103,18 +101,6 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 			);
 		}
 
-		// Agents
-		for (const a of agents.filter((a) => a.available)) {
-			result.push({
-				id: `agent-${a.name}`,
-				label: `Launch ${a.displayName}`,
-				category: "Agents",
-				action: () => {
-					// TODO: spawn agent in new pane
-				},
-			});
-		}
-
 		// Themes
 		for (const t of themeList()) {
 			result.push({
@@ -126,7 +112,7 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 		}
 
 		return result;
-	}, [sessions, focusedPaneId, agents, setActiveSession, createSession, splitPane, closePane, toggleMaximize, setTheme]);
+	}, [sessions, focusedPaneId, setActiveSession, createSession, splitPane, closePane, toggleMaximize, setTheme]);
 
 	const filtered = useMemo(() => {
 		if (!query) return items;

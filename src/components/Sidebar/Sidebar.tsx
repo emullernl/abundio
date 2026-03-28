@@ -3,9 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { SessionList } from "./SessionList";
-import { AgentLauncher } from "./AgentLauncher";
 import { Explorer } from "../Explorer/Explorer";
-import { agents as agentsApi } from "../../lib/ipc";
 import { ChevronLeft, ChevronRight, Plus } from "../Icons";
 
 interface SidebarProps {
@@ -66,7 +64,7 @@ function SidebarDivider({
 }
 
 export function Sidebar({ titlebarHeight }: SidebarProps) {
-	const { createSession, getActiveSession } = useSessionStore();
+	const { createSession } = useSessionStore();
 	const { sidebarCollapsed, toggleSidebar, sidebarSplitRatio, setSidebarSplitRatio } =
 		useSettingsStore();
 	const [creating, setCreating] = useState(false);
@@ -101,12 +99,6 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 		} finally {
 			setCreating(false);
 		}
-	}
-
-	async function handleSpawnAgent(agentName: string) {
-		const session = getActiveSession();
-		if (!session) return;
-		await agentsApi.spawn(session.id, agentName, session.rootFolder, 80, 24);
 	}
 
 	if (sidebarCollapsed) {
@@ -199,10 +191,6 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				</div>
 			</div>
 
-			{/* Actions */}
-			<div className="flex-shrink-0 px-5 py-3" style={{ borderTop: "1px solid var(--border)" }}>
-				<AgentLauncher onSpawnAgent={handleSpawnAgent} />
-			</div>
 		</div>
 	);
 }

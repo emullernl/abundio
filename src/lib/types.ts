@@ -64,24 +64,6 @@ export interface TabUpdate {
 	position?: number;
 }
 
-// ── Agent ──
-
-export interface AgentPreset {
-	agentName: string;
-	args: string[];
-	env: Record<string, string>;
-	autoSpawn: boolean;
-}
-
-export interface AgentInfo {
-	name: string;
-	binary: string;
-	displayName: string;
-	icon: string;
-	defaultArgs: string[];
-	available: boolean;
-}
-
 // ── File Explorer ──
 
 export interface DirEntry {

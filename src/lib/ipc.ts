@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentInfo, DirEntry, FileContent, PtyStatusType, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
+import type { DirEntry, FileContent, PtyStatusType, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
 
 export const pty = {
 	spawn: (cwd: string, cols: number, rows: number, command?: string, logId?: string) =>
@@ -75,17 +75,3 @@ export const fs = {
 	fileExists: (path: string) => invoke<boolean>("fs_file_exists", { path }),
 };
 
-export const agents = {
-	listAvailable: () => invoke<AgentInfo[]>("agents_list_available"),
-
-	refresh: () => invoke<void>("agents_refresh"),
-
-	spawn: (
-		sessionId: string,
-		agentName: string,
-		cwd: string,
-		cols: number,
-		rows: number,
-	) =>
-		invoke<string>("agent_spawn", { sessionId, agentName, cwd, cols, rows }),
-};

@@ -12,7 +12,6 @@ import { initKeybindings, registerAction } from "./lib/keybindings";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useSplitPane } from "./hooks/useSplitPane";
-import { useAutoSpawn } from "./hooks/useAutoSpawn";
 import { useSessionStore } from "./stores/sessionStore";
 import { useExplorerStore, persistAllFileTabs } from "./stores/explorerStore";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
@@ -43,7 +42,6 @@ export function App() {
 	const activeView = useSessionStore((s) => s.activeView);
 	const setActiveView = useSessionStore((s) => s.setActiveView);
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
-	useAutoSpawn();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const fileTabs = useExplorerStore((s) => s.fileTabs);
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);

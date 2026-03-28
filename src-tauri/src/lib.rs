@@ -1,4 +1,3 @@
-pub mod agent_registry;
 pub mod commands;
 pub mod config;
 pub mod error;
@@ -11,7 +10,6 @@ pub mod shell_env;
 
 use tauri::Manager;
 
-use agent_registry::AgentRegistry;
 use pty_manager::PtyManager;
 use session_store::SessionStore;
 
@@ -32,10 +30,6 @@ pub fn run() {
             let pty_mgr = PtyManager::new();
             app.manage(pty_mgr);
 
-            // Detect available agents (cached at startup)
-            let registry = AgentRegistry::new();
-            app.manage(registry);
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -48,9 +42,6 @@ pub fn run() {
             commands::session_update,
             commands::session_delete,
             commands::session_reorder,
-            commands::agents_list_available,
-            commands::agents_refresh,
-            commands::agent_spawn,
             commands::pty_read_log,
             commands::pty_write_snapshot,
             commands::pty_read_snapshot,
