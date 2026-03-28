@@ -29,6 +29,8 @@ export interface ManagedTerminal {
 	serializeAddon: SerializeAddon;
 	ptyId: string;
 	cleanup: (() => void) | null;
+	/** Deferred scrollback data to write after terminal is projected into a visible container */
+	pendingRestore: string | Uint8Array | null;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -92,11 +94,12 @@ export async function createTerminal(
 		serializeAddon,
 		ptyId: initialPtyId,
 		cleanup: null,
+		pendingRestore: null,
 	};
 
 	instances.set(paneId, managed);
 
-	// Initialize PTY connection
+	// Initialize PTY connection (scrollback is deferred until projectInto)
 	initPty(paneId, managed, cwd);
 
 	return managed;
@@ -108,18 +111,28 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	const { setPtyStatus } = useSessionStore.getState();
 
-	if (!currentPtyId) {
-		// Restore scrollback: prefer snapshot over raw log
+	// Load scrollback but defer writing until terminal is projected into a visible container
+	// (writing into a 0x0 hidden container would wrap content at ~2 columns)
+	// When reconnecting to a running PTY, prefer the log over the snapshot — the log
+	// includes output produced while the UI was torn down, while the snapshot is stale.
+	let restoreData: string | Uint8Array | null = null;
+	if (currentPtyId) {
+		restoreData = (await pty.readLog(paneId)) ?? (await pty.readSnapshot(paneId));
+	} else {
 		const snapshot = await pty.readSnapshot(paneId);
-		if (snapshot) {
-			term.write(snapshot);
+		restoreData = snapshot ?? (await pty.readLog(paneId));
+	}
+	if (restoreData) {
+		// If terminal is already projected (has real dimensions), write immediately;
+		// otherwise store for flushPendingRestore() to handle after projection
+		if (term.cols > 1 && term.rows > 1) {
+			term.write(restoreData);
 		} else {
-			const logData = await pty.readLog(paneId);
-			if (logData) {
-				term.write(logData);
-			}
+			managed.pendingRestore = restoreData;
 		}
+	}
 
+	if (!currentPtyId) {
 		currentPtyId = await pty.spawn(cwd, term.cols, term.rows, undefined, paneId);
 		managed.ptyId = currentPtyId;
 
@@ -163,6 +176,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	};
 }
 
+/** Write any deferred scrollback restore data now that the terminal has real dimensions */
+export function flushPendingRestore(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed || !managed.pendingRestore) return;
+	managed.term.write(managed.pendingRestore);
+	managed.pendingRestore = null;
+}
+
 /** Update font size on all terminal instances and refit */
 export function setAllTerminalsFontSize(fontSize: number): void {
 	for (const managed of instances.values()) {
@@ -178,6 +199,15 @@ export function setAllTerminalsFontSize(fontSize: number): void {
 export function destroyTerminal(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed) return;
+	// Serialize scrollback before cleanup/dispose destroys the terminal
+	try {
+		const data = managed.serializeAddon.serialize();
+		if (data) {
+			pty.writeSnapshot(paneId, data);
+		}
+	} catch {
+		// Terminal may be in intermediate state
+	}
 	managed.cleanup?.();
 	managed.term.dispose();
 	instances.delete(paneId);

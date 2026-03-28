@@ -4,6 +4,7 @@ import {
 	getTerminal,
 	createTerminal,
 	destroyTerminal,
+	flushPendingRestore,
 } from "../../lib/terminalManager";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { getTheme } from "../../lib/themes";
@@ -87,6 +88,7 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 		}
 
 		managed.fitAddon.fit();
+		flushPendingRestore(id);
 		if (managed.ptyId) {
 			pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});
 		}
