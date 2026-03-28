@@ -1,5 +1,6 @@
 import type { PaneNode, PtyStatusType, SessionWithTabs } from "../../lib/types";
 import { useSessionStore } from "../../stores/sessionStore";
+import { X } from "../Icons";
 
 interface Props {
 	session: SessionWithTabs;
@@ -15,19 +16,28 @@ function collectPtyIds(node: PaneNode): string[] {
 
 function statusColor(statuses: PtyStatusType[]): string {
 	if (statuses.length === 0) return "var(--fg-secondary)"; // no panes
-	// If any are running, show green
 	if (statuses.some((s) => s.type === "running")) return "var(--success)";
-	// If any exited with error, show red
 	if (statuses.some((s) => s.type === "exited" && s.code !== 0 && s.code !== null))
 		return "var(--error)";
-	// All exited cleanly
 	return "var(--fg-secondary)";
+}
+
+function shortenPath(fullPath: string): string {
+	const home = "/Users/";
+	if (fullPath.startsWith(home)) {
+		const afterHome = fullPath.slice(home.length);
+		const slashIdx = afterHome.indexOf("/");
+		if (slashIdx !== -1) {
+			return `~${afterHome.slice(slashIdx)}`;
+		}
+		return "~";
+	}
+	return fullPath;
 }
 
 export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 	const ptyStatuses = useSessionStore((s) => s.ptyStatuses);
 
-	// Collect pty IDs across all tabs
 	const allPtyIds: string[] = [];
 	for (const tab of session.tabs) {
 		try {
@@ -46,9 +56,10 @@ export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 		<div
 			onClick={onClick}
 			onKeyDown={(e) => e.key === "Enter" && onClick()}
-			className="group flex items-center gap-3 px-3.5 py-3 rounded-lg cursor-pointer transition-colors"
+			className="group flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
 			style={{
 				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
+				borderLeft: isActive ? "2px solid var(--accent)" : "2px solid transparent",
 				transitionDuration: "var(--transition-fast)",
 			}}
 			onMouseEnter={(e) => {
@@ -58,23 +69,30 @@ export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 				if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: dotColor }} />
+			<div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: dotColor }} />
 			<div className="flex-1 min-w-0">
 				<div className="flex items-center gap-2">
-					<span className="truncate font-medium" style={{ color: "var(--fg-primary)", fontSize: 14 }}>
+					<span className="truncate font-medium" style={{ color: "var(--fg-primary)", fontSize: 13 }}>
 						{session.name}
 					</span>
 					{runningCount > 0 && (
 						<span
-							className="flex-shrink-0 rounded-full px-1.5"
-							style={{ fontSize: 11, color: "var(--fg-secondary)", backgroundColor: "var(--bg-tertiary)" }}
+							className="flex-shrink-0 rounded-full px-1.5 font-medium"
+							style={{
+								fontSize: 10,
+								color: "var(--bg-primary)",
+								backgroundColor: "var(--accent)",
+								lineHeight: "16px",
+								minWidth: 16,
+								textAlign: "center",
+							}}
 						>
 							{runningCount}
 						</span>
 					)}
 				</div>
-				<div className="truncate mt-0.5" style={{ color: "var(--fg-secondary)", fontSize: 12 }}>
-					{session.rootFolder}
+				<div className="truncate mt-0.5" style={{ color: "var(--fg-secondary)", fontSize: 11 }}>
+					{shortenPath(session.rootFolder)}
 				</div>
 			</div>
 			<button
@@ -83,10 +101,10 @@ export function SessionItem({ session, isActive, onClick, onDelete }: Props) {
 					e.stopPropagation();
 					onDelete();
 				}}
-				className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--error)] hover:text-white transition-all"
-				style={{ color: "var(--fg-secondary)", fontSize: 13 }}
+				className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-md flex items-center justify-center hover:bg-[var(--error)] hover:text-white transition-all"
+				style={{ color: "var(--fg-secondary)" }}
 			>
-				&times;
+				<X size={12} />
 			</button>
 		</div>
 	);

@@ -45,7 +45,7 @@
   --pane-border: 1px solid var(--border);
   --pane-focus-glow: 0 0 0 1px var(--accent);
   --sidebar-width: 280px;
-  --statusbar-height: 40px;
+  --statusbar-height: 30px;
   --transition-fast: 120ms ease-out;
 }
 

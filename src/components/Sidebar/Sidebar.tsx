@@ -5,13 +5,14 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { SessionList } from "./SessionList";
 import { AgentLauncher } from "./AgentLauncher";
 import { agents as agentsApi } from "../../lib/ipc";
+import { ChevronLeft, ChevronRight, Plus } from "../Icons";
 
 interface SidebarProps {
 	titlebarHeight: number;
 }
 
 export function Sidebar({ titlebarHeight }: SidebarProps) {
-	const { createSession, getActiveSession } = useSessionStore();
+	const { sessions, createSession, getActiveSession } = useSessionStore();
 	const { sidebarCollapsed, toggleSidebar } = useSettingsStore();
 	const [creating, setCreating] = useState(false);
 
@@ -53,10 +54,10 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				<button
 					type="button"
 					onClick={toggleSidebar}
-					className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
-					style={{ color: "var(--fg-secondary)", fontSize: 15 }}
+					className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
+					style={{ color: "var(--fg-secondary)" }}
 				>
-					&gt;
+					<ChevronRight size={14} />
 				</button>
 			</div>
 		);
@@ -76,44 +77,60 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 
 			{/* Header */}
 			<div
-				className="flex items-center justify-between px-5"
-				style={{ borderBottom: "1px solid var(--border)", height: 44 }}
+				className="flex items-center justify-between px-4"
+				style={{ borderBottom: "1px solid var(--border)", height: 40 }}
 			>
-				<span className="font-semibold" style={{ color: "var(--fg-secondary)", fontSize: 13, letterSpacing: "0.02em", textTransform: "uppercase" }}>
-					Sessions
-				</span>
-				<button
-					type="button"
-					onClick={toggleSidebar}
-					className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
-					style={{ color: "var(--fg-secondary)", fontSize: 15 }}
-				>
-					&lt;
-				</button>
+				<div className="flex items-center gap-2">
+					<span className="font-semibold" style={{ color: "var(--fg-secondary)", fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+						Sessions
+					</span>
+					{sessions.length > 0 && (
+						<span
+							className="rounded-full px-1.5 font-medium"
+							style={{
+								fontSize: 10,
+								color: "var(--fg-secondary)",
+								backgroundColor: "var(--bg-tertiary)",
+								lineHeight: "18px",
+								minWidth: 18,
+								textAlign: "center",
+							}}
+						>
+							{sessions.length}
+						</span>
+					)}
+				</div>
+				<div className="flex items-center gap-1">
+					<button
+						type="button"
+						onClick={handleNewSession}
+						disabled={creating}
+						className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
+						style={{ color: "var(--fg-secondary)" }}
+						title="New Session"
+					>
+						<Plus size={14} />
+					</button>
+					<button
+						type="button"
+						onClick={toggleSidebar}
+						className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
+						style={{ color: "var(--fg-secondary)" }}
+						title="Collapse sidebar"
+					>
+						<ChevronLeft size={14} />
+					</button>
+				</div>
 			</div>
 
 			{/* Session list */}
-			<div className="flex-1 overflow-y-auto p-3">
+			<div className="flex-1 overflow-y-auto p-2">
 				<SessionList />
 			</div>
 
 			{/* Actions */}
-			<div className="p-4 flex flex-col gap-3" style={{ borderTop: "1px solid var(--border)" }}>
+			<div className="p-3" style={{ borderTop: "1px solid var(--border)" }}>
 				<AgentLauncher onSpawnAgent={handleSpawnAgent} />
-				<button
-					type="button"
-					onClick={handleNewSession}
-					disabled={creating}
-					className="w-full rounded-lg transition-colors font-medium"
-					style={{
-						backgroundColor: "var(--accent)",
-						color: "var(--bg-primary)",
-						fontSize: 14,
-						height: 40,
-					}}
-				>
-					{creating ? "Creating..." : "New Session"}
-				</button>
 			</div>
 		</div>
 	);
