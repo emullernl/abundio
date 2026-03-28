@@ -30,8 +30,9 @@ export function SplitContainer({ node, cwd }: Props) {
 	}
 
 	const isVertical = node.direction === "vertical";
-	const firstBasis = `${node.ratio * 100}%`;
-	const secondBasis = `${(1 - node.ratio) * 100}%`;
+	const RESIZER_PX = 4;
+	const firstBasis = `calc(${node.ratio * 100}% - ${RESIZER_PX / 2}px)`;
+	const secondBasis = `calc(${(1 - node.ratio) * 100}% - ${RESIZER_PX / 2}px)`;
 
 	return (
 		<div

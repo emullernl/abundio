@@ -28,14 +28,15 @@ export function TerminalSlot({
 	isMaximized,
 }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const innerRef = useRef<HTMLDivElement>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 	const searchPaneId = useSessionStore((s) => s.searchPaneId);
 	const toggleSearch = useSessionStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
 
 	useEffect(() => {
-		if (!containerRef.current) return;
-		registerTarget(paneId, containerRef.current);
+		if (!innerRef.current) return;
+		registerTarget(paneId, innerRef.current);
 		return () => unregisterTarget(paneId);
 	}, [paneId]);
 
@@ -109,6 +110,11 @@ export function TerminalSlot({
 			onMouseDown={onFocus}
 			onContextMenu={handleContextMenu}
 		>
+			<div
+				ref={innerRef}
+				className="w-full h-full"
+				style={{ overflow: "hidden" }}
+			/>
 			{searchOpen && searchAddon && (
 				<SearchBar
 					searchAddon={searchAddon}
