@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Project
 
 Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v2. It manages sessions (each bound to a folder), supports split panes, and has first-class support for AI coding CLI agents (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, OpenCode).
@@ -23,6 +25,10 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `session_store.rs` — SQLite CRUD for sessions, layouts, env vars. DB at `~/Library/Application Support/abundio/abundio.db`.
 - `agent_registry.rs` — Detects installed agents by scanning `$PATH` directories (no subprocess spawning).
 - `commands.rs` — All `#[tauri::command]` handlers. All return `Result<T, AbundioError>`.
+- `error.rs` — `AbundioError` enum (variants: `Pty`, `Db`, `Io`, `NotFound`, `Channel`) using thiserror + Serialize.
+- `events.rs` — Event structs for PTY output (`PtyOutput` with base64 data) and status (`PtyStatus`: Running/Exited).
+- `config.rs` — `AppConfig` struct (fontFamily, fontSize, theme). Defaults: "JetBrains Mono", 14pt, "default".
+- `shell_env.rs` — `default_shell()`: reads `$SHELL` env var, falls back to `/bin/zsh`.
 - `migrations.rs` — Auto-runs SQL migrations on startup, tracks applied in `_migrations` table.
 - `lib.rs` — App entry with `Builder::setup()` that initializes DB, PTY manager, and agent registry via `app.manage()`.
 
@@ -34,6 +40,10 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `stores/sessionStore.ts` — Sessions, active layout, PTY statuses, focused pane. Has `updateLayoutLocal` (no DB) and `persistLayout` (DB only) for debounced resize.
 - `lib/ipc.ts` — Typed wrappers around Tauri `invoke()` and `listen()`.
 - `lib/themes.ts` — 5 built-in themes. `applyTheme()` sets CSS variables on `:root`.
+- `lib/terminalManager.ts` — `ManagedTerminal` wraps xterm.js with FitAddon, SearchAddon, SerializeAddon, WebGL (canvas fallback). Handles PTY connection, scrollback restore, font updates.
+- `lib/snapshotRegistry.ts` — Registry of per-pane snapshot functions. `saveAllSnapshots()` persists all terminal scrollback.
+- `lib/portalRegistry.ts` — Maps pane IDs to DOM elements for terminal rendering. Pub/sub pattern for target changes.
+- `stores/settingsStore.ts` — Zustand store for fontFamily, fontSize, theme, sidebarCollapsed. Persists to localStorage (`abundio-settings`).
 
 ### Data Flow
 
@@ -57,7 +67,8 @@ type PaneNode =
 ```bash
 pnpm tauri dev          # Run dev server (Vite + Tauri)
 pnpm build              # TypeScript check + Vite build
-pnpm test               # Vitest
+pnpm test               # Vitest (all tests)
+pnpm test -- path/to/file  # Run a single test file
 pnpm check              # Biome lint/format check
 pnpm check:fix          # Biome auto-fix
 ```
@@ -65,8 +76,9 @@ pnpm check:fix          # Biome auto-fix
 Rust requires `cargo` on PATH. If not found, it's at `~/.rustup/toolchains/stable-x86_64-apple-darwin/bin/cargo`.
 
 ```bash
-cd src-tauri && cargo check    # Rust type check
-cd src-tauri && cargo test     # Rust tests
+cd src-tauri && cargo check              # Rust type check
+cd src-tauri && cargo test               # Rust tests (all)
+cd src-tauri && cargo test test_name     # Run a single Rust test
 ```
 
 ## Key Conventions
