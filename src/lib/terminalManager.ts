@@ -86,7 +86,6 @@ setTimeout(() => {
 
 		const activityStore = usePtyActivityStore.getState();
 		for (const [paneId, managed] of instances) {
-			const wasFocused = managed.focused;
 			managed.focused = isTerminalView && focusedPaneId === paneId;
 			if (managed.focused) {
 				managed.suppressActivity = false;
