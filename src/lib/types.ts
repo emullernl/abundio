@@ -19,6 +19,7 @@ export interface Session {
 	rootFolder: string;
 	envJson: string;
 	agentPresetsJson: string;
+	fileTabsJson: string;
 	position: number;
 	createdAt: number;
 	updatedAt: number;
@@ -29,6 +30,7 @@ export interface SessionUpdate {
 	rootFolder?: string;
 	envJson?: string;
 	agentPresetsJson?: string;
+	fileTabsJson?: string;
 }
 
 export interface SessionWithTabs {
@@ -37,6 +39,7 @@ export interface SessionWithTabs {
 	rootFolder: string;
 	envJson: string;
 	agentPresetsJson: string;
+	fileTabsJson: string;
 	position: number;
 	createdAt: number;
 	updatedAt: number;

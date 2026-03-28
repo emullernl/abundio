@@ -14,7 +14,7 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useAutoSpawn } from "./hooks/useAutoSpawn";
 import { useSessionStore } from "./stores/sessionStore";
-import { useExplorerStore } from "./stores/explorerStore";
+import { useExplorerStore, persistAllFileTabs } from "./stores/explorerStore";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import type { PaneNode } from "./lib/types";
@@ -28,6 +28,8 @@ function parseLayout(layoutJson: string): PaneNode | null {
 		return null;
 	}
 }
+
+
 
 export function App() {
 	const { focusedPaneId } = useSession();
@@ -58,9 +60,9 @@ export function App() {
 		const appWindow = getCurrentWindow();
 		const unlisten = appWindow.onCloseRequested(async (event) => {
 			event.preventDefault();
-			// Save snapshots with a timeout so the window always closes
+			// Save file tabs and terminal snapshots with a timeout so the window always closes
 			await Promise.race([
-				saveAllSnapshots(),
+				Promise.all([saveAllSnapshots(), persistAllFileTabs()]),
 				new Promise((r) => setTimeout(r, 2000)),
 			]);
 			appWindow.destroy();
@@ -178,11 +180,17 @@ export function App() {
 									onCloseFileTab={(tabId) => closeFileTab(tabId)}
 								/>
 								<div className="flex-1 min-h-0 relative">
-									{(activeView[session.id] ?? "terminal") === "file" && activeFileTabId && (
-										<div className="absolute inset-0">
-											<FileViewerContainer />
-										</div>
-									)}
+									<div
+										className="absolute inset-0"
+										style={{
+											display:
+												(activeView[session.id] ?? "terminal") === "file" && activeFileTabId
+													? "block"
+													: "none",
+										}}
+									>
+										<FileViewerContainer />
+									</div>
 									{session.tabs.map((tab) => {
 										const layout = parseLayout(tab.layoutJson);
 										if (!layout) return null;

@@ -21,27 +21,38 @@ export function FileViewerContainer() {
 		);
 	}
 
-	switch (activeTab.fileType) {
-		case "text":
-			return (
-				<CodeEditor
-					key={activeTab.id}
-					content={activeTab.content ?? ""}
-					language={activeTab.language}
-					onChange={(content) => updateFileContent(activeTab.id, content)}
-				/>
-			);
-		case "image":
-			return (
+	return (
+		<>
+			{/* Render all text file editors and toggle visibility — keeps scroll/cursor alive */}
+			{fileTabs
+				.filter((t) => t.fileType === "text")
+				.map((t) => (
+					<div
+						key={t.id}
+						className="absolute inset-0"
+						style={{ display: t.id === activeFileTabId ? "block" : "none" }}
+					>
+						<CodeEditor
+							tabId={t.id}
+							isActive={t.id === activeFileTabId}
+							content={t.content ?? ""}
+							language={t.language}
+							initialEditorState={t.initialEditorState}
+							onChange={(content) => updateFileContent(t.id, content)}
+						/>
+					</div>
+				))}
+			{/* Non-text viewers only render when active (no state to preserve) */}
+			{activeTab.fileType === "image" && (
 				<ImageViewer
 					content={activeTab.content ?? ""}
 					mime={activeTab.mime ?? "image/png"}
 					fileName={activeTab.fileName}
 				/>
-			);
-		case "binary":
-			return <UnsupportedFile fileName={activeTab.fileName} size={0} />;
-		default:
-			return null;
-	}
+			)}
+			{activeTab.fileType === "binary" && (
+				<UnsupportedFile fileName={activeTab.fileName} size={0} />
+			)}
+		</>
+	);
 }

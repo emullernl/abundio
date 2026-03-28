@@ -106,6 +106,11 @@ function TabItem({
 				minWidth: 0,
 				marginTop: "auto",
 			}}
+			onMouseDown={(e) => {
+				// Prevent browser from moving focus to the tab element,
+				// so our programmatic focus on terminal/editor works
+				if (!isEditing) e.preventDefault();
+			}}
 			onClick={onActivate}
 			onDoubleClick={onDoubleClick}
 			onContextMenu={onContextMenu}

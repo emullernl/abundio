@@ -8,6 +8,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "003_add_session_position",
         include_str!("../migrations/003_add_session_position.sql"),
     ),
+    (
+        "004_add_file_tabs",
+        include_str!("../migrations/004_add_file_tabs.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {

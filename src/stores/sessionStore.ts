@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { PaneNode, PtyStatusType, SessionWithTabs, Tab } from "../lib/types";
 import { sessions as sessionsApi, tabs as tabsApi, pty } from "../lib/ipc";
+import { persistFileTabs } from "./explorerStore";
 
 interface SessionState {
 	sessions: SessionWithTabs[];
@@ -47,6 +48,11 @@ interface SessionState {
 
 function defaultLayout(): PaneNode {
 	return { type: "terminal", id: crypto.randomUUID(), ptyId: "" };
+}
+
+function firstTerminalId(node: PaneNode): string | null {
+	if (node.type === "terminal") return node.id;
+	return firstTerminalId(node.first) ?? firstTerminalId(node.second);
 }
 
 /** Collect all terminal pane IDs from a layout tree. */
@@ -288,8 +294,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 			if (oldTabId && state.focusedPaneId) {
 				focusedPaneByTab[oldTabId] = state.focusedPaneId;
 			}
-			// Restore focused pane for the new tab
-			const restoredFocus = focusedPaneByTab[tabId] ?? null;
+			// Restore focused pane for the new tab, falling back to first pane in layout
+			let restoredFocus: string | null = focusedPaneByTab[tabId] ?? null;
+			if (!restoredFocus) {
+				const session = state.sessions.find((s) => s.id === sessionId);
+				const tab = session?.tabs.find((t) => t.id === tabId);
+				if (tab) {
+					try {
+						const layout = JSON.parse(tab.layoutJson) as PaneNode;
+						restoredFocus = firstTerminalId(layout);
+					} catch { /* ignore */ }
+				}
+			}
 			return {
 				activeTabBySession: {
 					...state.activeTabBySession,
@@ -357,10 +373,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 			searchPaneId: state.searchPaneId === state.focusedPaneId ? null : state.focusedPaneId,
 		})),
 
-	setActiveView: (sessionId, view) =>
+	setActiveView: (sessionId, view) => {
 		set((state) => ({
 			activeView: { ...state.activeView, [sessionId]: view },
-		})),
+		}));
+		persistFileTabs(sessionId);
+	},
 
 	// ── Derived ──
 

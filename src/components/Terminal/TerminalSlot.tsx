@@ -40,11 +40,25 @@ export function TerminalSlot({
 		return () => unregisterTarget(paneId);
 	}, [paneId]);
 
+	const activeView = useSessionStore((s) => {
+		const activeSessionId = s.activeSessionId;
+		return activeSessionId ? s.activeView[activeSessionId] ?? "terminal" : "terminal";
+	});
+	const activeTabId = useSessionStore((s) => {
+		const activeSessionId = s.activeSessionId;
+		return activeSessionId ? s.activeTabBySession[activeSessionId] : null;
+	});
+
 	useEffect(() => {
-		if (isFocused) {
-			getTerminal(paneId)?.term.focus();
+		if (isFocused && activeView === "terminal") {
+			// Double rAF: first waits for display:none→block commit, second for layout
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					getTerminal(paneId)?.term.focus();
+				});
+			});
 		}
-	}, [isFocused, paneId]);
+	}, [isFocused, paneId, activeView, activeTabId]);
 
 	const handleContextMenu = useCallback(
 		(e: React.MouseEvent) => {

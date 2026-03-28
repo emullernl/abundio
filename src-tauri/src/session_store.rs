@@ -12,6 +12,7 @@ pub struct Session {
     pub root_folder: String,
     pub env_json: String,
     pub agent_presets_json: String,
+    pub file_tabs_json: String,
     pub position: i32,
     pub created_at: i64,
     pub updated_at: i64,
@@ -24,6 +25,7 @@ pub struct SessionUpdate {
     pub root_folder: Option<String>,
     pub env_json: Option<String>,
     pub agent_presets_json: Option<String>,
+    pub file_tabs_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +105,7 @@ impl SessionStore {
     pub fn list(&self) -> Result<Vec<SessionWithTabs>, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, position, created_at, updated_at
+            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, position, created_at, updated_at
              FROM sessions ORDER BY position ASC",
         )?;
 
@@ -115,9 +117,10 @@ impl SessionStore {
                     root_folder: row.get(2)?,
                     env_json: row.get(3)?,
                     agent_presets_json: row.get(4)?,
-                    position: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
+                    file_tabs_json: row.get(5)?,
+                    position: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -152,6 +155,10 @@ impl SessionStore {
         if let Some(ref agent_presets_json) = updates.agent_presets_json {
             sets.push(format!("agent_presets_json = ?{}", params.len() + 1));
             params.push(Box::new(agent_presets_json.clone()));
+        }
+        if let Some(ref file_tabs_json) = updates.file_tabs_json {
+            sets.push(format!("file_tabs_json = ?{}", params.len() + 1));
+            params.push(Box::new(file_tabs_json.clone()));
         }
 
         let idx = params.len() + 1;
@@ -256,7 +263,7 @@ impl SessionStore {
 
     fn get_session_with_conn(conn: &Connection, id: &str) -> Result<Session, AbundioError> {
         conn.query_row(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, position, created_at, updated_at
+            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, position, created_at, updated_at
              FROM sessions WHERE id = ?1",
             [id],
             |row| {
@@ -266,9 +273,10 @@ impl SessionStore {
                     root_folder: row.get(2)?,
                     env_json: row.get(3)?,
                     agent_presets_json: row.get(4)?,
-                    position: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
+                    file_tabs_json: row.get(5)?,
+                    position: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
                 })
             },
         )
