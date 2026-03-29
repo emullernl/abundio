@@ -270,7 +270,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		const toRefresh = paths.filter((p) => p in dirContents);
 		if (toRefresh.length === 0) return;
 
-		const results = await Promise.all(
+		const results = await Promise.allSettled(
 			toRefresh.map(async (p) => {
 				const entries = await fsApi.listDir(p);
 				return [p, entries] as const;
@@ -279,8 +279,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 		set((s) => {
 			const updated = { ...s.dirContents };
-			for (const [p, entries] of results) {
-				updated[p] = entries;
+			for (const result of results) {
+				if (result.status === "fulfilled") {
+					const [p, entries] = result.value;
+					updated[p] = entries;
+				}
 			}
 			return { dirContents: updated };
 		});

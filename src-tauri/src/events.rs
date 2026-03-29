@@ -16,6 +16,7 @@ pub enum PtyStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FsChange {
+    pub root: String,
     pub paths: Vec<String>,
 }
 

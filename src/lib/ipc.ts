@@ -79,8 +79,10 @@ export const fs = {
 	watchStop: (rootPath: string) => invoke<void>("fs_watch_stop", { rootPath }),
 
 	onFsChange: (rootPath: string, callback: (paths: string[]) => void): Promise<UnlistenFn> =>
-		listen<{ paths: string[] }>(`fs-change-${rootPath}`, (event) => {
-			callback(event.payload.paths);
+		listen<{ root: string; paths: string[] }>("fs-change", (event) => {
+			if (event.payload.root === rootPath) {
+				callback(event.payload.paths);
+			}
 		}),
 };
 

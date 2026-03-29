@@ -57,13 +57,17 @@ export function FileTree({ rootPath, sessionId }: FileTreeProps) {
 
 	// File system watcher: start on mount, stop on unmount
 	useEffect(() => {
-		fsApi.watchStart(rootPath);
+		fsApi.watchStart(rootPath).catch((err) => {
+			console.error("[FileTree] fs_watch_start failed:", err);
+		});
 
 		let unlisten: (() => void) | null = null;
 		fsApi.onFsChange(rootPath, (paths) => {
 			useExplorerStore.getState().refreshDirs(paths);
 		}).then((fn) => {
 			unlisten = fn;
+		}).catch((err) => {
+			console.error("[FileTree] onFsChange listen failed:", err);
 		});
 
 		return () => {
