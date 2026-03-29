@@ -12,6 +12,8 @@ pub enum AbundioError {
     NotFound(String),
     #[error("Channel error: {0}")]
     Channel(String),
+    #[error("Watcher error: {0}")]
+    Watcher(String),
 }
 
 impl Serialize for AbundioError {

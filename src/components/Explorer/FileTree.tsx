@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { fs as fsApi } from "../../lib/ipc";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { FileTreeItem } from "./FileTreeItem";
 import type { DirEntry } from "../../lib/types";
@@ -53,6 +54,23 @@ export function FileTree({ rootPath, sessionId }: FileTreeProps) {
 			loadDir(rootPath);
 		}
 	}, [rootPath, entries, loadDir]);
+
+	// File system watcher: start on mount, stop on unmount
+	useEffect(() => {
+		fsApi.watchStart(rootPath);
+
+		let unlisten: (() => void) | null = null;
+		fsApi.onFsChange(rootPath, (paths) => {
+			useExplorerStore.getState().refreshDirs(paths);
+		}).then((fn) => {
+			unlisten = fn;
+		});
+
+		return () => {
+			fsApi.watchStop(rootPath);
+			unlisten?.();
+		};
+	}, [rootPath]);
 
 	if (!entries) {
 		return (

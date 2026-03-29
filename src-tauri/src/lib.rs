@@ -3,6 +3,7 @@ pub mod config;
 pub mod error;
 pub mod events;
 pub mod file_explorer;
+pub mod file_watcher;
 pub mod migrations;
 pub mod pty_manager;
 pub mod session_store;
@@ -30,6 +31,9 @@ pub fn run() {
             let pty_mgr = PtyManager::new();
             app.manage(pty_mgr);
 
+            // Initialize file watcher
+            app.manage(file_watcher::FileWatcher::new());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -55,6 +59,8 @@ pub fn run() {
             file_explorer::fs_read_file,
             file_explorer::fs_write_file,
             file_explorer::fs_file_exists,
+            commands::fs_watch_start,
+            commands::fs_watch_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
