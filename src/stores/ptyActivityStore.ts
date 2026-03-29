@@ -240,14 +240,14 @@ export function computePtyDotStatus(
 export const DOT_COLORS: Record<DotStatus, string> = {
 	grey: "var(--fg-secondary)",
 	green: "var(--success)",
-	blue: "#F59E0B",
-	orange: "#8B5CF6",
+	amber: "#F59E0B",
+	purple: "#8B5CF6",
 	red: "var(--error)",
 };
 
 export const DOT_GLOWS: Record<string, string> = {
-	blue: "rgba(245, 158, 11, 0.4)",
-	orange: "rgba(139, 92, 246, 0.4)",
+	amber: "rgba(245, 158, 11, 0.4)",
+	purple: "rgba(139, 92, 246, 0.4)",
 	red: "rgba(248, 81, 73, 0.4)",
 };
 

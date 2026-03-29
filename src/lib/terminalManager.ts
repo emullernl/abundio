@@ -55,10 +55,17 @@ const instances = new Map<string, ManagedTerminal>();
 // These keep tracking activity so session/tab dots update for inactive sessions
 const backgroundTrackers = new Map<string, { unlistenOutput: () => void; unlistenStatus: () => void }>();
 
+const ACTIVITY_BYTE_THRESHOLD = 512;
+
 async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
-	const unlistenOutput = await pty.onOutput(ptyId, () => {
-		usePtyActivityStore.getState().recordOutput(ptyId);
+	let bgBytesSinceIdle = 0;
+	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
+		bgBytesSinceIdle += data.length;
+		if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+			bgBytesSinceIdle = 0;
+			usePtyActivityStore.getState().recordOutput(ptyId);
+		}
 	});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
 		useSessionStore.getState().setPtyStatus(ptyId, status);
@@ -248,13 +255,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	});
 
 	const INPUT_ECHO_MS = 100;
-	const ACTIVITY_BYTE_THRESHOLD = 512;
 
 	const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
 		term.write(data);
 		if (!managed.suppressActivity && Date.now() - managed.lastInputAt > INPUT_ECHO_MS) {
 			managed.bytesSinceIdle += data.length;
 			if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+				managed.bytesSinceIdle = 0;
 				usePtyActivityStore.getState().recordOutput(currentPtyId);
 			}
 		}

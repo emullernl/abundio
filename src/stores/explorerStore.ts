@@ -202,8 +202,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 					}
 				} else {
 					const oldSessionIdx = s.fileTabs
-						.filter((t) => t.sessionId === closedSessionId)
-						.findIndex((t) => t.id === tabId);
+						.slice(0, idx)
+						.filter((t) => t.sessionId === closedSessionId).length;
 					const newIdx = Math.min(oldSessionIdx, sessionTabs.length - 1);
 					newActiveId = sessionTabs[newIdx].id;
 				}
