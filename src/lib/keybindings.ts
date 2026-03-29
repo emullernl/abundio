@@ -16,7 +16,8 @@ type KeyAction =
 	| "prev-tab"
 	| "font-size-increase"
 	| "font-size-decrease"
-	| "save-file";
+	| "save-file"
+	| "toggle-git-panel";
 
 interface KeyBinding {
 	key: string;
@@ -47,6 +48,7 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "=", meta: isMac, shift: false, ctrl: !isMac, action: "font-size-increase" },
 	{ key: "-", meta: isMac, shift: false, ctrl: !isMac, action: "font-size-decrease" },
 	{ key: "s", meta: isMac, shift: false, ctrl: !isMac, action: "save-file" },
+	{ key: "g", meta: isMac, shift: true, ctrl: !isMac, action: "toggle-git-panel" },
 ];
 
 type ActionHandler = () => void;

@@ -2,11 +2,13 @@ import { useExplorerStore } from "../../stores/explorerStore";
 import { CodeEditor } from "./CodeEditor";
 import { ImageViewer } from "./ImageViewer";
 import { UnsupportedFile } from "./UnsupportedFile";
+import { DiffViewer } from "../GitChanges/DiffViewer";
 
 export function FileViewerContainer() {
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const fileTabs = useExplorerStore((s) => s.fileTabs);
 	const updateFileContent = useExplorerStore((s) => s.updateFileContent);
+	const closeFileTab = useExplorerStore((s) => s.closeFileTab);
 
 	const activeTab = fileTabs.find((t) => t.id === activeFileTabId);
 
@@ -42,6 +44,19 @@ export function FileViewerContainer() {
 						/>
 					</div>
 				))}
+			{/* Diff viewer — only render when active */}
+			{activeTab.fileType === "diff" && activeTab.diffOriginal != null && activeTab.diffModified != null && (
+				<div className="absolute inset-0">
+					<DiffViewer
+						diff={{
+							original: activeTab.diffOriginal,
+							modified: activeTab.diffModified,
+							filePath: activeTab.filePath.replace(/^diff:/, ""),
+						}}
+						onBack={() => closeFileTab(activeTab.id)}
+					/>
+				</div>
+			)}
 			{/* Non-text viewers only render when active (no state to preserve) */}
 			{activeTab.fileType === "image" && (
 				<ImageViewer

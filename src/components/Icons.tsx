@@ -127,3 +127,54 @@ export function Bot({ size, ...props }: IconProps) {
 		</svg>
 	);
 }
+
+export function GitBranch({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<line x1="6" y1="3" x2="6" y2="15" />
+			<circle cx="18" cy="6" r="3" />
+			<circle cx="6" cy="18" r="3" />
+			<path d="M18 9a9 9 0 01-9 9" />
+		</svg>
+	);
+}
+
+export function RefreshCw({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<path d="M21 2v6h-6" />
+			<path d="M3 12a9 9 0 0115-6.7L21 8" />
+			<path d="M3 22v-6h6" />
+			<path d="M21 12a9 9 0 01-15 6.7L3 16" />
+		</svg>
+	);
+}
+
+export function ArrowLeft({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<line x1="19" y1="12" x2="5" y2="12" />
+			<polyline points="12 19 5 12 12 5" />
+		</svg>
+	);
+}
+
+export function GitCompare({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<circle cx="18" cy="18" r="3" />
+			<circle cx="6" cy="6" r="3" />
+			<path d="M13 6h3a2 2 0 012 2v7" />
+			<path d="M11 18H8a2 2 0 01-2-2V9" />
+		</svg>
+	);
+}
+
+export function PanelRight({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<rect x="3" y="3" width="18" height="18" rx="2" />
+			<line x1="15" y1="3" x2="15" y2="21" />
+		</svg>
+	);
+}

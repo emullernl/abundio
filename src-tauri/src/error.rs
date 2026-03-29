@@ -14,6 +14,8 @@ pub enum AbundioError {
     Channel(String),
     #[error("Watcher error: {0}")]
     Watcher(String),
+    #[error("Git error: {0}")]
+    Git(String),
 }
 
 impl Serialize for AbundioError {
