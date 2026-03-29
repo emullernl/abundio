@@ -3,6 +3,8 @@ import { persist } from "zustand/middleware";
 import { git, sessions as sessionsApi } from "../lib/ipc";
 import type { GitChangedFile } from "../lib/types";
 
+let fetchGeneration = 0;
+
 interface GitChangesState {
 	panelOpen: boolean;
 	changedFiles: GitChangedFile[];
@@ -42,12 +44,14 @@ export const useGitChangesStore = create<GitChangesState>()(
 			setPanel: (open) => set({ panelOpen: open }),
 
 			fetchChanges: async (cwd, sessionBaseBranch) => {
+				const gen = ++fetchGeneration;
 				set({ loading: true, error: null });
 				try {
 					const [files, branchInfo] = await Promise.all([
 						git.changedFiles(cwd, sessionBaseBranch),
 						git.branchInfo(cwd),
 					]);
+					if (gen !== fetchGeneration) return; // stale response
 					set({
 						changedFiles: files,
 						baseBranch: sessionBaseBranch || branchInfo.defaultBranch,
@@ -55,6 +59,7 @@ export const useGitChangesStore = create<GitChangesState>()(
 						loading: false,
 					});
 				} catch (e) {
+					if (gen !== fetchGeneration) return; // stale response
 					set({
 						loading: false,
 						error: e instanceof Error ? e.message : String(e),
@@ -73,7 +78,7 @@ export const useGitChangesStore = create<GitChangesState>()(
 
 			setBaseBranch: async (sessionId, branch, cwd) => {
 				await sessionsApi.update(sessionId, { baseBranch: branch });
-				get().fetchChanges(cwd, branch);
+				await get().fetchChanges(cwd, branch);
 			},
 
 			toggleBranchSelector: () => set((s) => ({ branchSelectorOpen: !s.branchSelectorOpen })),

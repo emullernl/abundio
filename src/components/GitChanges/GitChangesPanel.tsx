@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -27,6 +27,8 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 
 	const gitPanelWidth = useSettingsStore((s) => s.gitPanelWidth);
 
+	const [selectedFile, setSelectedFile] = useState<GitChangedFile | null>(null);
+
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const sessions = useSessionStore((s) => s.sessions);
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -46,6 +48,7 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 	useEffect(() => {
 		if (!panelOpen || !cwd) return;
 		let unlisten: (() => void) | null = null;
+		let cancelled = false;
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 		fs.onFsChange(cwd, () => {
@@ -54,10 +57,15 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 				fetchChanges(cwd, sessionBaseBranch);
 			}, 1000);
 		}).then((fn) => {
-			unlisten = fn;
+			if (cancelled) {
+				fn();
+			} else {
+				unlisten = fn;
+			}
 		});
 
 		return () => {
+			cancelled = true;
 			unlisten?.();
 			if (debounceTimer) clearTimeout(debounceTimer);
 		};
@@ -65,6 +73,7 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 
 	async function handleSelectFile(file: GitChangedFile) {
 		if (!cwd || !activeSessionId) return;
+		setSelectedFile(file);
 		try {
 			const diff = await git.fileDiff(cwd, file.path, file.section, sessionBaseBranch);
 			useExplorerStore.getState().openDiff(activeSessionId, file.path, diff.original, diff.modified);
@@ -243,7 +252,7 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 								files={changedFiles}
 								baseBranch={baseBranch}
 								onSelectFile={handleSelectFile}
-								selectedFile={null}
+								selectedFile={selectedFile}
 							/>
 						</div>
 					)}

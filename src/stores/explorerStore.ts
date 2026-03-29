@@ -48,7 +48,7 @@ function buildFileTabsPayload(sessionId: string): string {
 	const activeView =
 		useSessionStore.getState().activeView[sessionId] ?? "terminal";
 
-	const sessionTabs = fileTabs.filter((t) => t.sessionId === sessionId);
+	const sessionTabs = fileTabs.filter((t) => t.sessionId === sessionId && t.fileType !== "diff");
 	return JSON.stringify({
 		tabs: sessionTabs.map((t) => ({
 			id: t.id,

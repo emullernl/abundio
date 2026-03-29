@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EditorState } from "@codemirror/state";
+import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { MergeView } from "@codemirror/merge";
 import { oneDark } from "@codemirror/theme-one-dark";
@@ -49,13 +49,25 @@ export function DiffViewer({ diff, onBack }: Props) {
 	const viewRef = useRef<MergeView | null>(null);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
-	const [orientation] = useState<"a-b" | "b-a">("a-b");
+	const orientation = "a-b" as const;
 	const [collapseUnchanged, setCollapseUnchanged] = useState(true);
+	const [langExt, setLangExt] = useState<Extension[] | null>(null);
 
 	const language = detectLanguage(diff.filePath);
 
+	// Load language extension asynchronously
 	useEffect(() => {
-		if (!containerRef.current) return;
+		let cancelled = false;
+		setLangExt(null);
+		getLanguageExtension(language).then((ext) => {
+			if (!cancelled) setLangExt(ext);
+		});
+		return () => { cancelled = true; };
+	}, [language]);
+
+	// Build the MergeView once language is loaded (or resolved to empty)
+	useEffect(() => {
+		if (langExt === null || !containerRef.current) return;
 		const container = containerRef.current;
 		container.innerHTML = "";
 
@@ -67,9 +79,10 @@ export function DiffViewer({ diff, onBack }: Props) {
 			diffTheme,
 			EditorState.readOnly.of(true),
 			EditorView.editable.of(false),
+			...langExt,
 		];
 
-		const mergeConfig = {
+		const view = new MergeView({
 			a: {
 				doc: diff.original,
 				extensions: [...baseExtensions],
@@ -83,33 +96,14 @@ export function DiffViewer({ diff, onBack }: Props) {
 			collapseUnchanged: collapseUnchanged ? { margin: 3, minSize: 4 } : undefined,
 			highlightChanges: true,
 			gutter: true,
-		};
-
-		const view = new MergeView(mergeConfig);
+		});
 		viewRef.current = view;
 
-		// Async load language extensions by rebuilding the view
-		let cancelled = false;
-		getLanguageExtension(language).then((langExt) => {
-			if (cancelled || langExt.length === 0) return;
-			const current = viewRef.current;
-			if (current) current.destroy();
-			container.innerHTML = "";
-			const viewWithLang = new MergeView({
-				...mergeConfig,
-				a: { doc: diff.original, extensions: [...baseExtensions, ...langExt] },
-				b: { doc: diff.modified, extensions: [...baseExtensions, ...langExt] },
-			});
-			viewRef.current = viewWithLang;
-		});
-
 		return () => {
-			cancelled = true;
-			const current = viewRef.current;
-			if (current) current.destroy();
+			view.destroy();
 			viewRef.current = null;
 		};
-	}, [diff.original, diff.modified, diff.filePath, language, orientation, collapseUnchanged]);
+	}, [diff.original, diff.modified, diff.filePath, langExt, orientation, collapseUnchanged]);
 
 	const fileName = diff.filePath.split("/").pop() ?? diff.filePath;
 

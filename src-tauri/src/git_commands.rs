@@ -1,5 +1,6 @@
 use crate::error::AbundioError;
 use serde::Serialize;
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,10 +54,28 @@ fn run_git_allow_empty(cwd: &str, args: &[&str]) -> Result<String, AbundioError>
         .output()
         .map_err(|e| AbundioError::Git(format!("Failed to run git: {}", e)))?;
 
+    #[cfg(debug_assertions)]
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.trim().is_empty() {
+            eprintln!("git {} (non-fatal): {}", args.join(" "), stderr.trim());
+        }
+    }
+
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn detect_default_branch(cwd: &str) -> Result<String, AbundioError> {
+    // Try the remote HEAD symbolic ref first (works for any default branch name)
+    if let Ok(output) = run_git(cwd, &["symbolic-ref", "refs/remotes/origin/HEAD"]) {
+        let trimmed = output.trim();
+        if let Some(branch) = trimmed.strip_prefix("refs/remotes/origin/") {
+            if !branch.is_empty() {
+                return Ok(branch.to_string());
+            }
+        }
+    }
+    // Fall back to checking common branch names locally
     if run_git(cwd, &["rev-parse", "--verify", "main"]).is_ok() {
         return Ok("main".to_string());
     }
@@ -64,7 +83,7 @@ fn detect_default_branch(cwd: &str) -> Result<String, AbundioError> {
         return Ok("master".to_string());
     }
     Err(AbundioError::Git(
-        "No main or master branch found".to_string(),
+        "No default branch found".to_string(),
     ))
 }
 
@@ -205,11 +224,20 @@ pub fn git_file_diff(
 ) -> Result<GitFileDiff, AbundioError> {
     let base = resolve_base_branch(&cwd, base_branch.clone())?;
 
+    // Validate file_path: must be relative and contain no ".." components
+    let fp = Path::new(&file_path);
+    if fp.is_absolute() || fp.components().any(|c| c == std::path::Component::ParentDir) {
+        return Err(AbundioError::Git(format!(
+            "Invalid file path: {}",
+            file_path
+        )));
+    }
+
     let (original, modified) = match section.as_str() {
         "against_base" => {
             let git_path = format!("{}:{}", base, file_path);
             let original = run_git(&cwd, &["show", &git_path]).unwrap_or_default();
-            let full_path = std::path::Path::new(&cwd).join(&file_path);
+            let full_path = Path::new(&cwd).join(&file_path);
             let modified =
                 std::fs::read_to_string(&full_path).unwrap_or_default();
             (original, modified)
@@ -224,7 +252,7 @@ pub fn git_file_diff(
         "unstaged" => {
             let index_path = format!(":{}", file_path);
             let original = run_git(&cwd, &["show", &index_path]).unwrap_or_default();
-            let full_path = std::path::Path::new(&cwd).join(&file_path);
+            let full_path = Path::new(&cwd).join(&file_path);
             let modified =
                 std::fs::read_to_string(&full_path).unwrap_or_default();
             (original, modified)
