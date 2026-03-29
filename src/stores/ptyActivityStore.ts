@@ -165,7 +165,7 @@ export function collectPtyIds(node: PaneNode, panePtyMap?: Record<string, string
 
 // ── Aggregation ──
 
-export type DotStatus = "grey" | "green" | "blue" | "orange" | "red";
+export type DotStatus = "grey" | "green" | "amber" | "purple" | "red";
 
 export function computeSessionDotStatus(
 	sessionId: string,
@@ -184,8 +184,8 @@ export function computeSessionDotStatus(
 	const entries = allPtyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "active")) return "blue";
-	if (entries.some((e) => e.state === "waiting")) return "orange";
+	if (entries.some((e) => e.state === "active")) return "amber";
+	if (entries.some((e) => e.state === "waiting")) return "purple";
 
 	if (openedSessionIds.has(sessionId)) return "green";
 	return "grey";
@@ -209,8 +209,8 @@ export function computeTabDotStatus(
 	const entries = ptyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "active")) return "blue";
-	if (entries.some((e) => e.state === "waiting")) return "orange";
+	if (entries.some((e) => e.state === "active")) return "amber";
+	if (entries.some((e) => e.state === "waiting")) return "purple";
 
 	// Tabs are only shown for the active session — default to green
 	return "green";
@@ -225,9 +225,9 @@ export function computePtyDotStatus(
 
 	switch (entry.state) {
 		case "active":
-			return "blue";
+			return "amber";
 		case "waiting":
-			return "orange";
+			return "purple";
 		case "error":
 			return "red";
 		default:
@@ -252,5 +252,5 @@ export const DOT_GLOWS: Record<string, string> = {
 };
 
 export function shouldPulse(status: DotStatus | null): boolean {
-	return status === "blue" || status === "orange" || status === "red";
+	return status === "amber" || status === "purple" || status === "red";
 }

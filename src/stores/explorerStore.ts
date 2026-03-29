@@ -192,16 +192,20 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			let newActiveId = s.activeFileTabId;
 
 			if (s.activeFileTabId === tabId) {
-				if (newTabs.length === 0) {
+				const closedSessionId = s.fileTabs[idx]?.sessionId;
+				const sessionTabs = newTabs.filter((t) => t.sessionId === closedSessionId);
+				if (sessionTabs.length === 0) {
 					newActiveId = null;
 					// Switch back to terminal view
-					const tab = s.fileTabs[idx];
-					if (tab) {
-						useSessionStore.getState().setActiveView(tab.sessionId, "terminal");
+					if (closedSessionId) {
+						useSessionStore.getState().setActiveView(closedSessionId, "terminal");
 					}
 				} else {
-					const newIdx = Math.min(idx, newTabs.length - 1);
-					newActiveId = newTabs[newIdx].id;
+					const oldSessionIdx = s.fileTabs
+						.filter((t) => t.sessionId === closedSessionId)
+						.findIndex((t) => t.id === tabId);
+					const newIdx = Math.min(oldSessionIdx, sessionTabs.length - 1);
+					newActiveId = sessionTabs[newIdx].id;
 				}
 			}
 
