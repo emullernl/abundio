@@ -336,3 +336,179 @@ impl SessionStore {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_store() -> SessionStore {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::migrations::run_migrations(&conn).unwrap();
+        SessionStore::new(conn)
+    }
+
+    #[test]
+    fn create_session_returns_session_with_tab() {
+        let store = test_store();
+        let result = store.create("Test", "/tmp").unwrap();
+        assert_eq!(result.session.name, "Test");
+        assert_eq!(result.session.root_folder, "/tmp");
+        assert_eq!(result.tabs.len(), 1);
+        assert_eq!(result.tabs[0].name, "Terminal 1");
+    }
+
+    #[test]
+    fn list_sessions_returns_created() {
+        let store = test_store();
+        store.create("A", "/a").unwrap();
+        store.create("B", "/b").unwrap();
+        let sessions = store.list().unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].session.name, "A");
+        assert_eq!(sessions[1].session.name, "B");
+    }
+
+    #[test]
+    fn list_sessions_ordered_by_position() {
+        let store = test_store();
+        store.create("First", "/a").unwrap();
+        store.create("Second", "/b").unwrap();
+        let sessions = store.list().unwrap();
+        assert_eq!(sessions[0].session.position, 0);
+        assert_eq!(sessions[1].session.position, 1);
+    }
+
+    #[test]
+    fn update_session_name() {
+        let store = test_store();
+        let created = store.create("Old", "/tmp").unwrap();
+        store
+            .update(
+                &created.session.id,
+                SessionUpdate {
+                    name: Some("New".to_string()),
+                    root_folder: None,
+                    env_json: None,
+                    agent_presets_json: None,
+                    file_tabs_json: None,
+                },
+            )
+            .unwrap();
+        let sessions = store.list().unwrap();
+        assert_eq!(sessions[0].session.name, "New");
+    }
+
+    #[test]
+    fn delete_session() {
+        let store = test_store();
+        let created = store.create("ToDelete", "/tmp").unwrap();
+        store.delete(&created.session.id).unwrap();
+        let sessions = store.list().unwrap();
+        assert_eq!(sessions.len(), 0);
+    }
+
+    #[test]
+    fn delete_session_cascades_to_tabs() {
+        let store = test_store();
+        let created = store.create("Test", "/tmp").unwrap();
+        let session_id = created.session.id.clone();
+        store.create_tab(&session_id, "Tab 2").unwrap();
+        store.delete(&session_id).unwrap();
+        // Tabs should also be deleted via CASCADE
+        let tabs = store.list_tabs(&session_id).unwrap();
+        assert_eq!(tabs.len(), 0);
+    }
+
+    #[test]
+    fn create_tab() {
+        let store = test_store();
+        let session = store.create("Test", "/tmp").unwrap();
+        let tab = store.create_tab(&session.session.id, "Tab 2").unwrap();
+        assert_eq!(tab.name, "Tab 2");
+        assert_eq!(tab.position, 1);
+    }
+
+    #[test]
+    fn list_tabs_ordered() {
+        let store = test_store();
+        let session = store.create("Test", "/tmp").unwrap();
+        store.create_tab(&session.session.id, "Tab 2").unwrap();
+        store.create_tab(&session.session.id, "Tab 3").unwrap();
+        let tabs = store.list_tabs(&session.session.id).unwrap();
+        assert_eq!(tabs.len(), 3); // 1 default + 2 created
+        assert_eq!(tabs[0].name, "Terminal 1");
+        assert_eq!(tabs[1].name, "Tab 2");
+        assert_eq!(tabs[2].name, "Tab 3");
+    }
+
+    #[test]
+    fn update_tab_name() {
+        let store = test_store();
+        let session = store.create("Test", "/tmp").unwrap();
+        let tab_id = session.tabs[0].id.clone();
+        store
+            .update_tab(
+                &tab_id,
+                TabUpdate {
+                    name: Some("Renamed".to_string()),
+                    layout_json: None,
+                    position: None,
+                },
+            )
+            .unwrap();
+        let tabs = store.list_tabs(&session.session.id).unwrap();
+        assert_eq!(tabs[0].name, "Renamed");
+    }
+
+    #[test]
+    fn update_tab_layout() {
+        let store = test_store();
+        let session = store.create("Test", "/tmp").unwrap();
+        let tab_id = session.tabs[0].id.clone();
+        let new_layout = r#"{"type":"terminal","id":"new","ptyId":""}"#;
+        store
+            .update_tab(
+                &tab_id,
+                TabUpdate {
+                    name: None,
+                    layout_json: Some(new_layout.to_string()),
+                    position: None,
+                },
+            )
+            .unwrap();
+        let tabs = store.list_tabs(&session.session.id).unwrap();
+        assert_eq!(tabs[0].layout_json, new_layout);
+    }
+
+    #[test]
+    fn delete_tab() {
+        let store = test_store();
+        let session = store.create("Test", "/tmp").unwrap();
+        let tab_id = session.tabs[0].id.clone();
+        store.delete_tab(&tab_id).unwrap();
+        let tabs = store.list_tabs(&session.session.id).unwrap();
+        assert_eq!(tabs.len(), 0);
+    }
+
+    #[test]
+    fn reorder_sessions() {
+        let store = test_store();
+        let s1 = store.create("A", "/a").unwrap();
+        let s2 = store.create("B", "/b").unwrap();
+        let s3 = store.create("C", "/c").unwrap();
+
+        store
+            .reorder_sessions(&[
+                s3.session.id.clone(),
+                s1.session.id.clone(),
+                s2.session.id.clone(),
+            ])
+            .unwrap();
+
+        let sessions = store.list().unwrap();
+        assert_eq!(sessions[0].session.name, "C");
+        assert_eq!(sessions[1].session.name, "A");
+        assert_eq!(sessions[2].session.name, "B");
+    }
+}

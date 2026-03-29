@@ -39,6 +39,60 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        conn
+    }
+
+    #[test]
+    fn run_migrations_succeeds() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+    }
+
+    #[test]
+    fn run_migrations_is_idempotent() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+    }
+
+    #[test]
+    fn sessions_table_exists() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+        let count: i32 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn tabs_table_exists() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+        let count: i32 = conn
+            .query_row("SELECT COUNT(*) FROM tabs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn migrations_table_has_entries() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+        let count: i32 = conn
+            .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 4);
+    }
+}
+
 pub fn open_db() -> Result<Connection, rusqlite::Error> {
     let data_dir = dirs::data_dir()
         .unwrap_or_else(|| Path::new("~").to_path_buf())

@@ -199,3 +199,68 @@ pub async fn fs_write_file(path: String, content: String) -> Result<(), AbundioE
 pub async fn fs_file_exists(path: String) -> Result<bool, AbundioError> {
 	Ok(Path::new(&path).exists())
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn extension_to_mime_known() {
+		assert_eq!(extension_to_mime("png"), Some("image/png"));
+		assert_eq!(extension_to_mime("jpg"), Some("image/jpeg"));
+		assert_eq!(extension_to_mime("jpeg"), Some("image/jpeg"));
+		assert_eq!(extension_to_mime("gif"), Some("image/gif"));
+		assert_eq!(extension_to_mime("webp"), Some("image/webp"));
+		assert_eq!(extension_to_mime("svg"), Some("image/svg+xml"));
+		assert_eq!(extension_to_mime("ico"), Some("image/x-icon"));
+		assert_eq!(extension_to_mime("bmp"), Some("image/bmp"));
+	}
+
+	#[test]
+	fn extension_to_mime_unknown() {
+		assert_eq!(extension_to_mime("txt"), None);
+		assert_eq!(extension_to_mime("rs"), None);
+		assert_eq!(extension_to_mime("pdf"), None);
+	}
+
+	#[test]
+	fn is_image_ext_true() {
+		for ext in &["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp"] {
+			assert!(is_image_ext(ext), "{} should be image", ext);
+		}
+	}
+
+	#[test]
+	fn is_image_ext_false() {
+		assert!(!is_image_ext("txt"));
+		assert!(!is_image_ext("pdf"));
+		assert!(!is_image_ext("rs"));
+	}
+
+	#[test]
+	fn is_binary_ext_true() {
+		for ext in &["exe", "zip", "pdf", "wasm", "sqlite3", "jar", "dll", "mp3"] {
+			assert!(is_binary_ext(ext), "{} should be binary", ext);
+		}
+	}
+
+	#[test]
+	fn is_binary_ext_false() {
+		assert!(!is_binary_ext("txt"));
+		assert!(!is_binary_ext("rs"));
+		assert!(!is_binary_ext("js"));
+		assert!(!is_binary_ext("html"));
+	}
+
+	#[test]
+	fn has_null_bytes_true() {
+		assert!(has_null_bytes(b"hel\0lo"));
+		assert!(has_null_bytes(&[0u8]));
+	}
+
+	#[test]
+	fn has_null_bytes_false() {
+		assert!(!has_null_bytes(b"hello"));
+		assert!(!has_null_bytes(b""));
+	}
+}
