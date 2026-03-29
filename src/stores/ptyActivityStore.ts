@@ -165,7 +165,7 @@ export function collectPtyIds(node: PaneNode, panePtyMap?: Record<string, string
 
 // ── Aggregation ──
 
-export type DotStatus = "grey" | "green" | "blue" | "orange" | "red";
+export type DotStatus = "grey" | "green" | "amber" | "purple" | "red";
 
 export function computeSessionDotStatus(
 	sessionId: string,
@@ -184,8 +184,8 @@ export function computeSessionDotStatus(
 	const entries = allPtyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "active")) return "blue";
-	if (entries.some((e) => e.state === "waiting")) return "orange";
+	if (entries.some((e) => e.state === "active")) return "amber";
+	if (entries.some((e) => e.state === "waiting")) return "purple";
 
 	if (openedSessionIds.has(sessionId)) return "green";
 	return "grey";
@@ -209,8 +209,8 @@ export function computeTabDotStatus(
 	const entries = ptyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "active")) return "blue";
-	if (entries.some((e) => e.state === "waiting")) return "orange";
+	if (entries.some((e) => e.state === "active")) return "amber";
+	if (entries.some((e) => e.state === "waiting")) return "purple";
 
 	// Tabs are only shown for the active session — default to green
 	return "green";
@@ -225,9 +225,9 @@ export function computePtyDotStatus(
 
 	switch (entry.state) {
 		case "active":
-			return "blue";
+			return "amber";
 		case "waiting":
-			return "orange";
+			return "purple";
 		case "error":
 			return "red";
 		default:
@@ -240,17 +240,17 @@ export function computePtyDotStatus(
 export const DOT_COLORS: Record<DotStatus, string> = {
 	grey: "var(--fg-secondary)",
 	green: "var(--success)",
-	blue: "#F59E0B",
-	orange: "#8B5CF6",
+	amber: "#F59E0B",
+	purple: "#8B5CF6",
 	red: "var(--error)",
 };
 
 export const DOT_GLOWS: Record<string, string> = {
-	blue: "rgba(245, 158, 11, 0.4)",
-	orange: "rgba(139, 92, 246, 0.4)",
+	amber: "rgba(245, 158, 11, 0.4)",
+	purple: "rgba(139, 92, 246, 0.4)",
 	red: "rgba(248, 81, 73, 0.4)",
 };
 
 export function shouldPulse(status: DotStatus | null): boolean {
-	return status === "blue" || status === "orange" || status === "red";
+	return status === "amber" || status === "purple" || status === "red";
 }

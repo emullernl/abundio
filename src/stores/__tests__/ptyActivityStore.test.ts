@@ -163,12 +163,12 @@ describe("computeSessionDotStatus", () => {
 
 	it("returns blue when any active", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("active") }, new Set())).toBe("blue");
+		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("active") }, new Set())).toBe("amber");
 	});
 
 	it("returns orange when any waiting", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("waiting") }, new Set())).toBe("orange");
+		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("waiting") }, new Set())).toBe("purple");
 	});
 
 	it("returns green when all idle and session opened", () => {
@@ -217,7 +217,7 @@ describe("computeTabDotStatus", () => {
 
 	it("returns blue when active", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeTabDotStatus(makeTab(JSON.stringify(layout)), { "pty-1": makeEntry("active") })).toBe("blue");
+		expect(computeTabDotStatus(makeTab(JSON.stringify(layout)), { "pty-1": makeEntry("active") })).toBe("amber");
 	});
 
 	it("returns green when all idle", () => {
@@ -238,11 +238,11 @@ describe("computePtyDotStatus", () => {
 	});
 
 	it("returns blue for active", () => {
-		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("active") })).toBe("blue");
+		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("active") })).toBe("amber");
 	});
 
 	it("returns orange for waiting", () => {
-		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("waiting") })).toBe("orange");
+		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("waiting") })).toBe("purple");
 	});
 
 	it("returns red for error", () => {
@@ -256,8 +256,8 @@ describe("computePtyDotStatus", () => {
 
 describe("shouldPulse", () => {
 	it("returns true for blue, orange, red", () => {
-		expect(shouldPulse("blue")).toBe(true);
-		expect(shouldPulse("orange")).toBe(true);
+		expect(shouldPulse("amber")).toBe(true);
+		expect(shouldPulse("purple")).toBe(true);
 		expect(shouldPulse("red")).toBe(true);
 	});
 
