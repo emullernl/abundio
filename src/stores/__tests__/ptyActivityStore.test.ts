@@ -255,15 +255,15 @@ describe("computePtyDotStatus", () => {
 });
 
 describe("shouldPulse", () => {
-	it("returns true for blue, orange, red", () => {
+	it("returns true for amber, red", () => {
 		expect(shouldPulse("amber")).toBe(true);
-		expect(shouldPulse("purple")).toBe(true);
 		expect(shouldPulse("red")).toBe(true);
 	});
 
-	it("returns false for grey, green, null", () => {
+	it("returns false for grey, green, purple, null", () => {
 		expect(shouldPulse("grey")).toBe(false);
 		expect(shouldPulse("green")).toBe(false);
+		expect(shouldPulse("purple")).toBe(false);
 		expect(shouldPulse(null)).toBe(false);
 	});
 });
