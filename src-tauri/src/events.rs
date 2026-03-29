@@ -13,6 +13,13 @@ pub enum PtyStatus {
     Exited { code: Option<u32> },
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsChange {
+    pub root: String,
+    pub paths: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

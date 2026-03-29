@@ -35,6 +35,7 @@ interface ExplorerState {
 	saveFile: (tabId: string) => Promise<void>;
 	toggleDir: (path: string) => Promise<void>;
 	loadDir: (path: string) => Promise<void>;
+	refreshDirs: (paths: string[]) => Promise<void>;
 	clearSessionFileTabs: (sessionId: string) => void;
 }
 
@@ -261,6 +262,31 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		set((s) => ({
 			dirContents: { ...s.dirContents, [path]: entries },
 		}));
+	},
+
+	refreshDirs: async (paths) => {
+		const { dirContents } = get();
+		// Only refresh directories that are currently loaded
+		const toRefresh = paths.filter((p) => p in dirContents);
+		if (toRefresh.length === 0) return;
+
+		const results = await Promise.allSettled(
+			toRefresh.map(async (p) => {
+				const entries = await fsApi.listDir(p);
+				return [p, entries] as const;
+			}),
+		);
+
+		set((s) => {
+			const updated = { ...s.dirContents };
+			for (const result of results) {
+				if (result.status === "fulfilled") {
+					const [p, entries] = result.value;
+					updated[p] = entries;
+				}
+			}
+			return { dirContents: updated };
+		});
 	},
 
 	clearSessionFileTabs: (sessionId) => {

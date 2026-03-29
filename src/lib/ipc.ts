@@ -73,5 +73,16 @@ export const fs = {
 	writeFile: (path: string, content: string) => invoke<void>("fs_write_file", { path, content }),
 
 	fileExists: (path: string) => invoke<boolean>("fs_file_exists", { path }),
+
+	watchStart: (rootPath: string) => invoke<void>("fs_watch_start", { rootPath }),
+
+	watchStop: (rootPath: string) => invoke<void>("fs_watch_stop", { rootPath }),
+
+	onFsChange: (rootPath: string, callback: (paths: string[]) => void): Promise<UnlistenFn> =>
+		listen<{ root: string; paths: string[] }>("fs-change", (event) => {
+			if (event.payload.root === rootPath) {
+				callback(event.payload.paths);
+			}
+		}),
 };
 

@@ -1,6 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::error::AbundioError;
+use crate::file_watcher::FileWatcher;
 use crate::pty_manager::PtyManager;
 use crate::session_store::{SessionStore, SessionUpdate, SessionWithTabs, Tab, TabUpdate};
 
@@ -149,4 +150,24 @@ pub async fn pty_delete_log(log_id: String) -> Result<(), AbundioError> {
 #[tauri::command]
 pub async fn pty_cleanup_stale_logs(pane_ids: Vec<String>) -> Result<(), AbundioError> {
     PtyManager::cleanup_stale_logs(&pane_ids)
+}
+
+// ── File watcher commands ──
+
+#[tauri::command]
+pub async fn fs_watch_start(
+    app: AppHandle,
+    watcher: State<'_, FileWatcher>,
+    root_path: String,
+) -> Result<(), AbundioError> {
+    watcher.start_watching(app, &root_path)
+}
+
+#[tauri::command]
+pub async fn fs_watch_stop(
+    watcher: State<'_, FileWatcher>,
+    root_path: String,
+) -> Result<(), AbundioError> {
+    watcher.stop_watching(&root_path);
+    Ok(())
 }
