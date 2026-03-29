@@ -156,6 +156,7 @@ fn collect_parents(event: &Event, pending: &mut HashSet<String>) {
 mod tests {
     use super::*;
     use notify::EventKind;
+    use std::path::PathBuf;
 
     #[test]
     fn is_ignored_git_directory() {
