@@ -93,6 +93,14 @@ cd src-tauri && cargo test test_name     # Run a single Rust test
 - Themes apply to both CSS variables (UI) and xterm.js terminal options.
 - macOS uses native titlebar with `titleBarStyle: "Overlay"` — content extends behind traffic lights.
 
+## Testing
+
+Unit tests are required when adding new functionality. Run tests before considering work complete.
+
+- **Frontend**: Tests live in `__tests__/` directories co-located with source (e.g., `src/lib/__tests__/`). Use Vitest with jsdom. Mock Tauri IPC via `vi.mock("../ipc")`. Zustand stores are tested via `store.getState()`/`store.setState()`.
+- **Rust**: Tests use inline `#[cfg(test)]` modules at the bottom of each source file. Use `Connection::open_in_memory()` for database tests. Run `crate::migrations::run_migrations(&conn)` before creating a `SessionStore` in tests.
+- Pure helper functions should be extracted into testable modules (e.g., `src/lib/paneTree.ts`) rather than kept as unexported file-local functions.
+
 ## Keyboard Shortcuts (macOS)
 
 | Action | Shortcut |
