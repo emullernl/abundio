@@ -53,6 +53,7 @@ function makeSession(overrides: Partial<SessionWithTabs> = {}): SessionWithTabs 
 		envJson: "{}",
 		agentPresetsJson: "{}",
 		fileTabsJson: "{}",
+		baseBranch: null,
 		position: 0,
 		createdAt: 0,
 		updatedAt: 0,

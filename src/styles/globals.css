@@ -47,6 +47,7 @@
   --sidebar-width: 280px;
   --statusbar-height: 34px;
   --transition-fast: 120ms ease-out;
+  --git-panel-width: 360px;
 }
 
 * {

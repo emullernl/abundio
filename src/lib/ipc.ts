@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { DirEntry, FileContent, PtyStatusType, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
+import type { BranchInfo, DirEntry, FileContent, GitChangedFile, GitFileDiff, PtyStatusType, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
 
 export const pty = {
 	spawn: (cwd: string, cols: number, rows: number, command?: string, logId?: string) =>
@@ -63,6 +63,26 @@ export const tabs = {
 		invoke<void>("tab_update", { id, updates }),
 
 	delete: (id: string) => invoke<void>("tab_delete", { id }),
+};
+
+export const git = {
+	changedFiles: (cwd: string, baseBranch?: string | null) =>
+		invoke<GitChangedFile[]>("git_changed_files", {
+			cwd,
+			baseBranch: baseBranch ?? null,
+		}),
+
+	fileDiff: (cwd: string, filePath: string, section: string, baseBranch?: string | null) =>
+		invoke<GitFileDiff>("git_file_diff", {
+			cwd,
+			filePath,
+			section,
+			baseBranch: baseBranch ?? null,
+		}),
+
+	branchInfo: (cwd: string) => invoke<BranchInfo>("git_branch_info", { cwd }),
+
+	listBranches: (cwd: string) => invoke<string[]>("git_list_branches", { cwd }),
 };
 
 export const fs = {

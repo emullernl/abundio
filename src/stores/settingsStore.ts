@@ -9,12 +9,14 @@ interface SettingsState {
 	theme: string;
 	sidebarCollapsed: boolean;
 	sidebarSplitRatio: number;
+	gitPanelWidth: number;
 
 	setFontFamily: (font: string) => void;
 	setFontSize: (size: number) => void;
 	setTheme: (theme: string) => void;
 	toggleSidebar: () => void;
 	setSidebarSplitRatio: (ratio: number) => void;
+	setGitPanelWidth: (width: number) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -25,6 +27,7 @@ export const useSettingsStore = create<SettingsState>()(
 			theme: "default",
 			sidebarCollapsed: false,
 			sidebarSplitRatio: 0.4,
+			gitPanelWidth: 360,
 
 			setFontFamily: (fontFamily) => set({ fontFamily }),
 			setFontSize: (fontSize) => set({ fontSize }),
@@ -36,10 +39,11 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 			setSidebarSplitRatio: (sidebarSplitRatio) => set({ sidebarSplitRatio }),
+			setGitPanelWidth: (gitPanelWidth) => set({ gitPanelWidth }),
 		}),
 		{
 			name: "abundio-settings",
-			partialize: (state) => ({ fontSize: state.fontSize, theme: state.theme, sidebarSplitRatio: state.sidebarSplitRatio }),
+			partialize: (state) => ({ fontSize: state.fontSize, theme: state.theme, sidebarSplitRatio: state.sidebarSplitRatio, gitPanelWidth: state.gitPanelWidth }),
 		},
 	),
 );

@@ -12,6 +12,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "004_add_file_tabs",
         include_str!("../migrations/004_add_file_tabs.sql"),
     ),
+    (
+        "005_add_base_branch",
+        include_str!("../migrations/005_add_base_branch.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -89,7 +93,7 @@ mod tests {
         let count: i32 = conn
             .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
     }
 }
 

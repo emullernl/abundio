@@ -8,7 +8,7 @@ import {
 	DOT_GLOWS,
 	shouldPulse,
 } from "../stores/ptyActivityStore";
-import { Terminal, File } from "./Icons";
+import { Terminal, File, GitCompare } from "./Icons";
 
 interface TabBarProps {
 	tabs: Tab[];
@@ -383,7 +383,7 @@ export function TabBar({
 							inputRef={inputRef}
 							commitRename={() => {}}
 							cancelRename={() => {}}
-							icon={<File size={12} />}
+							icon={ft.fileType === "diff" ? <GitCompare size={12} /> : <File size={12} />}
 							isDirty={ft.isDirty}
 						/>
 					);

@@ -4,6 +4,7 @@ pub mod error;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
+pub mod git_commands;
 pub mod migrations;
 pub mod pty_manager;
 pub mod session_store;
@@ -61,6 +62,10 @@ pub fn run() {
             file_explorer::fs_file_exists,
             commands::fs_watch_start,
             commands::fs_watch_stop,
+            git_commands::git_changed_files,
+            git_commands::git_file_diff,
+            git_commands::git_branch_info,
+            git_commands::git_list_branches,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -14,12 +14,15 @@ export interface FileTab {
 	sessionId: string;
 	filePath: string;
 	fileName: string;
-	fileType: "text" | "image" | "binary";
+	fileType: "text" | "image" | "binary" | "diff";
 	content: string | null;
 	mime: string | null;
 	isDirty: boolean;
 	language: string | null;
 	initialEditorState: SerializedEditorState | null;
+	// Diff-specific fields (only set when fileType === "diff")
+	diffOriginal: string | null;
+	diffModified: string | null;
 }
 
 interface ExplorerState {
@@ -29,6 +32,7 @@ interface ExplorerState {
 	dirContents: Record<string, DirEntry[]>;
 
 	openFile: (sessionId: string, filePath: string, editorState?: SerializedEditorState | null) => Promise<void>;
+	openDiff: (sessionId: string, filePath: string, original: string, modified: string) => void;
 	closeFileTab: (tabId: string) => void;
 	setActiveFileTab: (tabId: string | null) => void;
 	updateFileContent: (tabId: string, content: string) => void;
@@ -44,7 +48,7 @@ function buildFileTabsPayload(sessionId: string): string {
 	const activeView =
 		useSessionStore.getState().activeView[sessionId] ?? "terminal";
 
-	const sessionTabs = fileTabs.filter((t) => t.sessionId === sessionId);
+	const sessionTabs = fileTabs.filter((t) => t.sessionId === sessionId && t.fileType !== "diff");
 	return JSON.stringify({
 		tabs: sessionTabs.map((t) => ({
 			id: t.id,
@@ -173,6 +177,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			isDirty: false,
 			language: getLanguage(ext),
 			initialEditorState: editorState ?? null,
+			diffOriginal: null,
+			diffModified: null,
 		};
 
 		set((s) => ({
@@ -181,6 +187,47 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		}));
 		useSessionStore.getState().setActiveView(sessionId, "file");
 		persistFileTabs(sessionId);
+	},
+
+	openDiff: (sessionId, filePath, original, modified) => {
+		// Use a unique key so the same file can be open as both a regular tab and a diff tab
+		const diffKey = `diff:${filePath}`;
+		const existing = get().fileTabs.find((t) => t.filePath === diffKey && t.sessionId === sessionId);
+		if (existing) {
+			// Update the diff content and activate
+			set((s) => ({
+				fileTabs: s.fileTabs.map((t) =>
+					t.id === existing.id ? { ...t, diffOriginal: original, diffModified: modified } : t,
+				),
+				activeFileTabId: existing.id,
+			}));
+			useSessionStore.getState().setActiveView(sessionId, "file");
+			return;
+		}
+
+		const fileName = filePath.split("/").pop() || "Untitled";
+		const ext = fileName.includes(".") ? fileName.split(".").pop() || null : null;
+
+		const tab: FileTab = {
+			id: crypto.randomUUID(),
+			sessionId,
+			filePath: diffKey,
+			fileName: `${fileName} (diff)`,
+			fileType: "diff",
+			content: null,
+			mime: null,
+			isDirty: false,
+			language: getLanguage(ext),
+			initialEditorState: null,
+			diffOriginal: original,
+			diffModified: modified,
+		};
+
+		set((s) => ({
+			fileTabs: [...s.fileTabs, tab],
+			activeFileTabId: tab.id,
+		}));
+		useSessionStore.getState().setActiveView(sessionId, "file");
 	},
 
 	closeFileTab: (tabId) => {

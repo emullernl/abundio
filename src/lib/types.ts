@@ -20,6 +20,7 @@ export interface Session {
 	envJson: string;
 	agentPresetsJson: string;
 	fileTabsJson: string;
+	baseBranch: string | null;
 	position: number;
 	createdAt: number;
 	updatedAt: number;
@@ -31,6 +32,7 @@ export interface SessionUpdate {
 	envJson?: string;
 	agentPresetsJson?: string;
 	fileTabsJson?: string;
+	baseBranch?: string | null;
 }
 
 export interface SessionWithTabs {
@@ -40,6 +42,7 @@ export interface SessionWithTabs {
 	envJson: string;
 	agentPresetsJson: string;
 	fileTabsJson: string;
+	baseBranch: string | null;
 	position: number;
 	createdAt: number;
 	updatedAt: number;
@@ -87,3 +90,24 @@ export interface FileContent {
 export type PtyStatusType = { type: "running" } | { type: "exited"; code: number | null };
 
 export type PtyActivityState = "idle" | "active" | "waiting" | "error";
+
+// ── Git ──
+
+export interface GitChangedFile {
+	path: string;
+	status: string;
+	additions: number;
+	deletions: number;
+	section: "against_base" | "staged" | "unstaged";
+}
+
+export interface GitFileDiff {
+	original: string;
+	modified: string;
+	filePath: string;
+}
+
+export interface BranchInfo {
+	defaultBranch: string;
+	currentBranch: string;
+}

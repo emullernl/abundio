@@ -16,6 +16,8 @@ import { useSessionStore } from "./stores/sessionStore";
 import { useExplorerStore, persistAllFileTabs } from "./stores/explorerStore";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
+import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
+import { useGitChangesStore } from "./stores/gitChangesStore";
 import type { PaneNode } from "./lib/types";
 
 const TITLEBAR_HEIGHT = 52;
@@ -131,6 +133,9 @@ export function App() {
 				useExplorerStore.getState().saveFile(activeFileTabId);
 			}
 		});
+		registerAction("toggle-git-panel", () => {
+			useGitChangesStore.getState().togglePanel();
+		});
 	}, [focusedPaneId, splitPane, closePane, navigatePane, toggleMaximize]);
 
 	return (
@@ -209,6 +214,7 @@ export function App() {
 						);
 					})}
 				</div>
+				<GitChangesPanel titlebarHeight={TITLEBAR_HEIGHT} />
 			</div>
 			<StatusBar />
 			<CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

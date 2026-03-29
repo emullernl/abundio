@@ -252,5 +252,5 @@ export const DOT_GLOWS: Record<string, string> = {
 };
 
 export function shouldPulse(status: DotStatus | null): boolean {
-	return status === "amber" || status === "purple" || status === "red";
+	return status === "amber" || status === "red";
 }
