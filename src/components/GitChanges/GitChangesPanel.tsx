@@ -136,8 +136,8 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			>
 				{/* Header */}
 				<div
-					className="flex items-center gap-2 px-3 py-2 flex-shrink-0"
-					style={{ borderBottom: "1px solid var(--border)" }}
+					className="flex items-center gap-2 py-2 flex-shrink-0"
+					style={{ borderBottom: "1px solid var(--border)", paddingLeft: 12, paddingRight: 12 }}
 				>
 					<GitCompare size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
 					<span
@@ -201,10 +201,12 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 				{/* Current branch indicator */}
 				{currentBranch && (
 					<div
-						className="flex items-center gap-1.5 px-3 py-1.5 flex-shrink-0"
+						className="flex items-center gap-1.5 py-1.5 flex-shrink-0"
 						style={{
 							borderBottom: "1px solid var(--border)",
 							backgroundColor: "color-mix(in srgb, var(--bg-tertiary) 30%, transparent)",
+							paddingLeft: 12,
+							paddingRight: 12,
 						}}
 					>
 						<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>On</span>

@@ -49,10 +49,12 @@ export function GitChangesFileList({ files, baseBranch, onSelectFile, selectedFi
 						<button
 							type="button"
 							onClick={() => toggleSection(group.key)}
-							className="w-full flex items-center gap-1.5 px-3 py-1.5 transition-colors"
+							className="w-full flex items-center gap-1.5 py-1.5 transition-colors"
 							style={{
 								backgroundColor: "color-mix(in srgb, var(--bg-tertiary) 40%, transparent)",
 								borderBottom: "1px solid var(--border)",
+								paddingLeft: 12,
+								paddingRight: 12,
 							}}
 							onMouseEnter={(e) => {
 								e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
