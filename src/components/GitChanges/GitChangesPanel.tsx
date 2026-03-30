@@ -44,29 +44,41 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 		fetchChanges(cwd, sessionBaseBranch);
 	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges, clear]);
 
-	// Re-fetch on file system changes
+	// Re-fetch on file system or git changes
 	useEffect(() => {
 		if (!panelOpen || !cwd) return;
-		let unlisten: (() => void) | null = null;
+		let unlistenFs: (() => void) | null = null;
+		let unlistenGit: (() => void) | null = null;
 		let cancelled = false;
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-		fs.onFsChange(cwd, () => {
+		const debouncedFetch = () => {
 			if (debounceTimer) clearTimeout(debounceTimer);
 			debounceTimer = setTimeout(() => {
 				fetchChanges(cwd, sessionBaseBranch);
 			}, 1000);
-		}).then((fn) => {
+		};
+
+		fs.onFsChange(cwd, debouncedFetch).then((fn) => {
 			if (cancelled) {
 				fn();
 			} else {
-				unlisten = fn;
+				unlistenFs = fn;
+			}
+		});
+
+		fs.onGitChange(cwd, debouncedFetch).then((fn) => {
+			if (cancelled) {
+				fn();
+			} else {
+				unlistenGit = fn;
 			}
 		});
 
 		return () => {
 			cancelled = true;
-			unlisten?.();
+			unlistenFs?.();
+			unlistenGit?.();
 			if (debounceTimer) clearTimeout(debounceTimer);
 		};
 	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges]);
