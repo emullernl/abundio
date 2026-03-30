@@ -47,7 +47,7 @@ export interface ManagedTerminal {
 	lastInputAt: number;
 	/** Accumulated output bytes since last idle — used to filter out small outputs like prompt redraws */
 	bytesSinceIdle: number;
-	/** Start of the current activity detection window */
+	/** Start of the current activity detection window (0 = no prior window) */
 	windowStartAt: number;
 }
 
@@ -263,6 +263,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	term.onData((data) => {
 		if (managed.restoring) return;
 		managed.lastInputAt = Date.now();
+		// Note: windowStartAt is intentionally NOT reset here.
+		// bytesSinceIdle is cleared instead, so the first output chunk
+		// after a command always starts a fresh accumulation window.
 		managed.bytesSinceIdle = 0;
 		usePtyActivityStore.getState().markIdle(currentPtyId);
 		pty.write(currentPtyId, data);
