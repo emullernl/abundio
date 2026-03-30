@@ -47,8 +47,8 @@ export interface ManagedTerminal {
 	lastInputAt: number;
 	/** Accumulated output bytes since last idle — used to filter out small outputs like prompt redraws */
 	bytesSinceIdle: number;
-	/** Timestamp of last output chunk — used for byte accumulator decay */
-	lastOutputChunkAt: number;
+	/** Start of the current activity detection window */
+	windowStartAt: number;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -58,18 +58,22 @@ const instances = new Map<string, ManagedTerminal>();
 const backgroundTrackers = new Map<string, { unlistenOutput: () => void; unlistenStatus: () => void }>();
 
 const ACTIVITY_BYTE_THRESHOLD = 512;
-const BYTE_DECAY_MS = 300;
+// Bytes are accumulated within a rolling window. When the window expires the
+// counter resets to zero. This filters out cursor-blink escape sequences
+// (~12 bytes every ~530ms ≈ 113 bytes/5s, well below 512) while still catching
+// slow-but-legitimate output like `ping -i 0.5` (~600 bytes/5s).
+const ACTIVITY_WINDOW_MS = 5000;
 
 async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
 	let bgBytesSinceIdle = 0;
-	let bgLastChunkAt = 0;
+	let bgWindowStartAt = 0;
 	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
 		const now = Date.now();
-		if (now - bgLastChunkAt > BYTE_DECAY_MS) {
+		if (now - bgWindowStartAt > ACTIVITY_WINDOW_MS) {
 			bgBytesSinceIdle = 0;
+			bgWindowStartAt = now;
 		}
-		bgLastChunkAt = now;
 		bgBytesSinceIdle += data.length;
 		if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 			bgBytesSinceIdle = 0;
@@ -184,7 +188,7 @@ export async function createTerminal(
 		focused: false,
 		lastInputAt: 0,
 		bytesSinceIdle: 0,
-		lastOutputChunkAt: 0,
+		windowStartAt: 0,
 	};
 
 	instances.set(paneId, managed);
@@ -270,10 +274,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		term.write(data);
 		if (!managed.suppressActivity && Date.now() - managed.lastInputAt > INPUT_ECHO_MS) {
 			const now = Date.now();
-			if (now - managed.lastOutputChunkAt > BYTE_DECAY_MS) {
+			if (now - managed.windowStartAt > ACTIVITY_WINDOW_MS) {
 				managed.bytesSinceIdle = 0;
+				managed.windowStartAt = now;
 			}
-			managed.lastOutputChunkAt = now;
 			managed.bytesSinceIdle += data.length;
 			if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 				managed.bytesSinceIdle = 0;
