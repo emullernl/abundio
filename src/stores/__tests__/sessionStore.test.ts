@@ -155,6 +155,14 @@ describe("sessionStore", () => {
 			useSessionStore.getState().setFocusedPane("pane-1");
 			expect(useSessionStore.getState().focusedPaneId).toBe("pane-1");
 		});
+
+		it("does not update state when paneId is already focused", () => {
+			useSessionStore.setState({ focusedPaneId: "pane-1" });
+			const before = useSessionStore.getState();
+			useSessionStore.getState().setFocusedPane("pane-1");
+			// Zustand `set` creates a new object, so referential equality verifies no update was made
+			expect(useSessionStore.getState()).toBe(before);
+		});
 	});
 
 	describe("updateLayoutLocal", () => {

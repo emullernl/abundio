@@ -30,7 +30,6 @@ export function TerminalSlot({
 }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
-	const innerRafRef = useRef<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 	const searchPaneId = useSessionStore((s) => s.searchPaneId);
 	const toggleSearch = useSessionStore((s) => s.toggleSearch);
@@ -54,16 +53,15 @@ export function TerminalSlot({
 	useEffect(() => {
 		if (isFocused && activeView === "terminal") {
 			// Double rAF: first waits for display:none→block commit, second for layout
+			let innerRaf: number | null = null;
 			const outerRaf = requestAnimationFrame(() => {
-				innerRafRef.current = requestAnimationFrame(() => {
+				innerRaf = requestAnimationFrame(() => {
 					getTerminal(paneId)?.term.focus();
 				});
 			});
 			return () => {
 				cancelAnimationFrame(outerRaf);
-				if (innerRafRef.current !== null) {
-					cancelAnimationFrame(innerRafRef.current);
-				}
+				if (innerRaf !== null) cancelAnimationFrame(innerRaf);
 			};
 		}
 	}, [isFocused, paneId, activeView, activeTabId]);
