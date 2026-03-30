@@ -47,6 +47,8 @@ export interface ManagedTerminal {
 	lastInputAt: number;
 	/** Accumulated output bytes since last idle — used to filter out small outputs like prompt redraws */
 	bytesSinceIdle: number;
+	/** Timestamp of last output chunk — used for byte accumulator decay */
+	lastOutputChunkAt: number;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -56,11 +58,18 @@ const instances = new Map<string, ManagedTerminal>();
 const backgroundTrackers = new Map<string, { unlistenOutput: () => void; unlistenStatus: () => void }>();
 
 const ACTIVITY_BYTE_THRESHOLD = 512;
+const BYTE_DECAY_MS = 300;
 
 async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
 	let bgBytesSinceIdle = 0;
+	let bgLastChunkAt = 0;
 	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
+		const now = Date.now();
+		if (now - bgLastChunkAt > BYTE_DECAY_MS) {
+			bgBytesSinceIdle = 0;
+		}
+		bgLastChunkAt = now;
 		bgBytesSinceIdle += data.length;
 		if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 			bgBytesSinceIdle = 0;
@@ -175,6 +184,7 @@ export async function createTerminal(
 		focused: false,
 		lastInputAt: 0,
 		bytesSinceIdle: 0,
+		lastOutputChunkAt: 0,
 	};
 
 	instances.set(paneId, managed);
@@ -259,6 +269,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
 		term.write(data);
 		if (!managed.suppressActivity && Date.now() - managed.lastInputAt > INPUT_ECHO_MS) {
+			const now = Date.now();
+			if (now - managed.lastOutputChunkAt > BYTE_DECAY_MS) {
+				managed.bytesSinceIdle = 0;
+			}
+			managed.lastOutputChunkAt = now;
 			managed.bytesSinceIdle += data.length;
 			if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 				managed.bytesSinceIdle = 0;
