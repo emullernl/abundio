@@ -58,10 +58,11 @@ const instances = new Map<string, ManagedTerminal>();
 const backgroundTrackers = new Map<string, { unlistenOutput: () => void; unlistenStatus: () => void }>();
 
 const ACTIVITY_BYTE_THRESHOLD = 512;
-// Bytes are accumulated within a rolling window. When the window expires the
-// counter resets to zero. This filters out cursor-blink escape sequences
-// (~12 bytes every ~530ms ≈ 113 bytes/5s, well below 512) while still catching
-// slow-but-legitimate output like `ping -i 0.5` (~600 bytes/5s).
+// Output is ignored for INPUT_GATE_MS after the last keystroke to suppress
+// echoed characters and prompt redraws. The sliding window then filters out
+// cursor-blink escape sequences (~113 bytes/5s, well below 512) while still
+// catching slow-but-legitimate output like `ping -i 0.5` (~600 bytes/5s).
+const INPUT_GATE_MS = 2000;
 const ACTIVITY_WINDOW_MS = 5000;
 
 async function startBackgroundTracking(ptyId: string) {
@@ -271,11 +272,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		pty.write(currentPtyId, data);
 	});
 
-	const INPUT_ECHO_MS = 100;
-
 	const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
 		term.write(data);
-		if (!managed.suppressActivity && Date.now() - managed.lastInputAt > INPUT_ECHO_MS) {
+		if (!managed.suppressActivity && Date.now() - managed.lastInputAt > INPUT_GATE_MS) {
 			const now = Date.now();
 			if (now - managed.windowStartAt > ACTIVITY_WINDOW_MS) {
 				managed.bytesSinceIdle = 0;
