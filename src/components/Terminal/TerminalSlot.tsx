@@ -53,11 +53,16 @@ export function TerminalSlot({
 	useEffect(() => {
 		if (isFocused && activeView === "terminal") {
 			// Double rAF: first waits for display:none→block commit, second for layout
-			requestAnimationFrame(() => {
-				requestAnimationFrame(() => {
+			let innerRaf: number | null = null;
+			const outerRaf = requestAnimationFrame(() => {
+				innerRaf = requestAnimationFrame(() => {
 					getTerminal(paneId)?.term.focus();
 				});
 			});
+			return () => {
+				cancelAnimationFrame(outerRaf);
+				if (innerRaf !== null) cancelAnimationFrame(innerRaf);
+			};
 		}
 	}, [isFocused, paneId, activeView, activeTabId]);
 

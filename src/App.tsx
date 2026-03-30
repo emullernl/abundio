@@ -33,7 +33,7 @@ function parseLayout(layoutJson: string): PaneNode | null {
 
 
 export function App() {
-	const { focusedPaneId } = useSession();
+	useSession();
 	const sessions = useSessionStore((s) => s.sessions);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const activeTabBySession = useSessionStore((s) => s.activeTabBySession);
@@ -74,13 +74,16 @@ export function App() {
 
 	useEffect(() => {
 		registerAction("split-horizontal", () => {
-			if (focusedPaneId) splitPane(focusedPaneId, "horizontal");
+			const paneId = useSessionStore.getState().focusedPaneId;
+			if (paneId) splitPane(paneId, "horizontal");
 		});
 		registerAction("split-vertical", () => {
-			if (focusedPaneId) splitPane(focusedPaneId, "vertical");
+			const paneId = useSessionStore.getState().focusedPaneId;
+			if (paneId) splitPane(paneId, "vertical");
 		});
 		registerAction("close-pane", () => {
-			if (focusedPaneId) closePane(focusedPaneId);
+			const paneId = useSessionStore.getState().focusedPaneId;
+			if (paneId) closePane(paneId);
 		});
 		registerAction("navigate-up", () => navigatePane("up"));
 		registerAction("navigate-down", () => navigatePane("down"));
@@ -136,7 +139,7 @@ export function App() {
 		registerAction("toggle-git-panel", () => {
 			useGitChangesStore.getState().togglePanel();
 		});
-	}, [focusedPaneId, splitPane, closePane, navigatePane, toggleMaximize]);
+	}, [splitPane, closePane, navigatePane, toggleMaximize]);
 
 	return (
 		<div className="flex flex-col h-full w-full">

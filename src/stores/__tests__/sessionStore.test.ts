@@ -91,6 +91,17 @@ describe("sessionStore", () => {
 			expect(useSessionStore.getState().savedLayout).toBeNull();
 		});
 
+		it("falls back to first terminal when no saved focus exists", () => {
+			const session = makeSession();
+			useSessionStore.setState({
+				sessions: [session],
+				activeTabBySession: { "session-1": "tab-1" },
+			});
+
+			useSessionStore.getState().setActiveSession("session-1");
+			expect(useSessionStore.getState().focusedPaneId).toBe("pane-1");
+		});
+
 		it("saves and restores focused pane per tab", () => {
 			const session = makeSession();
 			const tab2 = makeTab({ id: "tab-2" });
@@ -150,10 +161,40 @@ describe("sessionStore", () => {
 		});
 	});
 
+	describe("createTab", () => {
+		it("focuses the first terminal pane in the new tab", async () => {
+			const { tabs } = await import("../../lib/ipc");
+			const layout: PaneNode = { type: "terminal", id: "new-pane-1", ptyId: "" };
+			const newTab = makeTab({
+				id: "tab-new",
+				layoutJson: JSON.stringify(layout),
+			});
+			vi.mocked(tabs.create).mockResolvedValueOnce(newTab);
+
+			const session = makeSession();
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: "session-1",
+				activeTabBySession: { "session-1": "tab-1" },
+			});
+
+			await useSessionStore.getState().createTab("session-1");
+			expect(useSessionStore.getState().focusedPaneId).toBe("new-pane-1");
+		});
+	});
+
 	describe("setFocusedPane", () => {
 		it("sets focusedPaneId", () => {
 			useSessionStore.getState().setFocusedPane("pane-1");
 			expect(useSessionStore.getState().focusedPaneId).toBe("pane-1");
+		});
+
+		it("does not update state when paneId is already focused", () => {
+			useSessionStore.setState({ focusedPaneId: "pane-1" });
+			const before = useSessionStore.getState();
+			useSessionStore.getState().setFocusedPane("pane-1");
+			// Zustand `set` creates a new object, so referential equality verifies no update was made
+			expect(useSessionStore.getState()).toBe(before);
 		});
 	});
 

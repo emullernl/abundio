@@ -10,18 +10,13 @@ function generateId(): string {
 }
 
 export function useSplitPane() {
-	const {
-		getActiveTab,
-		getActiveLayout,
-		updateLayout,
-		updateLayoutLocal,
-		persistLayout,
-		setFocusedPane,
-		focusedPaneId,
-		maximizedPaneId,
-		savedLayout,
-		setMaximized,
-	} = useSessionStore();
+	const getActiveTab = useSessionStore((s) => s.getActiveTab);
+	const getActiveLayout = useSessionStore((s) => s.getActiveLayout);
+	const updateLayout = useSessionStore((s) => s.updateLayout);
+	const updateLayoutLocal = useSessionStore((s) => s.updateLayoutLocal);
+	const persistLayout = useSessionStore((s) => s.persistLayout);
+	const setFocusedPane = useSessionStore((s) => s.setFocusedPane);
+	const setMaximized = useSessionStore((s) => s.setMaximized);
 
 	const splitPane = useCallback(
 		async (paneId: string, direction: "horizontal" | "vertical") => {
@@ -81,11 +76,11 @@ export function useSplitPane() {
 			}
 
 			// Clear maximize state if the maximized pane was closed
-			if (maximizedPaneId === paneId) {
+			if (useSessionStore.getState().maximizedPaneId === paneId) {
 				setMaximized(null, null);
 			}
 		},
-		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, maximizedPaneId, setMaximized],
+		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, setMaximized],
 	);
 
 	/** Local-only ratio update (no DB persist) — call during drag. */
@@ -120,7 +115,8 @@ export function useSplitPane() {
 			const terminals = collectTerminals(layout);
 			if (terminals.length <= 1) return;
 
-			const currentIndex = terminals.findIndex((t) => t.id === focusedPaneId);
+			const currentFocused = useSessionStore.getState().focusedPaneId;
+			const currentIndex = terminals.findIndex((t) => t.id === currentFocused);
 			if (currentIndex === -1) {
 				setFocusedPane(terminals[0].id);
 				return;
@@ -135,13 +131,14 @@ export function useSplitPane() {
 
 			setFocusedPane(terminals[nextIndex].id);
 		},
-		[getActiveLayout, focusedPaneId, setFocusedPane],
+		[getActiveLayout, setFocusedPane],
 	);
 
 	/** Toggle maximize/restore for the focused pane. */
 	const toggleMaximize = useCallback(async () => {
 		const tab = getActiveTab();
 		const layout = getActiveLayout();
+		const { focusedPaneId, maximizedPaneId, savedLayout } = useSessionStore.getState();
 		if (!tab || !layout || !focusedPaneId) return;
 
 		if (maximizedPaneId) {
@@ -159,7 +156,7 @@ export function useSplitPane() {
 			const maximizedLayout: PaneNode = { ...node };
 			await updateLayout(tab.id, maximizedLayout);
 		}
-	}, [getActiveTab, getActiveLayout, focusedPaneId, maximizedPaneId, savedLayout, updateLayout, setMaximized]);
+	}, [getActiveTab, getActiveLayout, updateLayout, setMaximized]);
 
 	return {
 		splitPane,
