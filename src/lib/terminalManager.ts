@@ -286,12 +286,27 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		usePtyActivityStore.getState().setTitle(paneId, title);
 	});
 
+	// A click in an already-focused terminal (e.g. scrolling without typing) should
+	// clear "waiting" → "idle". Focus-changes and keystrokes are handled elsewhere.
+	const onTermClick = () => {
+		if (managed.ptyId) {
+			usePtyActivityStore.getState().markIdle(managed.ptyId);
+		}
+	};
+	if (term.element) {
+		term.element.addEventListener("mousedown", onTermClick);
+	} else {
+		// term.open() hasn't been called yet; log so this is visible during development
+		console.warn("[terminalManager] term.element is null in initPty — mousedown idle-clear not registered for", paneId);
+	}
+
 	registerSnapshot(paneId, () => serializeAddon.serialize());
 
 	managed.cleanup = () => {
 		unregisterSnapshot(paneId);
 		unlistenOutput();
 		unlistenStatus();
+		term.element?.removeEventListener("mousedown", onTermClick);
 	};
 }
 
