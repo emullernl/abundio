@@ -3,15 +3,12 @@ import { useSessionStore } from "../stores/sessionStore";
 import { restoreFileTabs } from "../stores/explorerStore";
 
 export function useSession() {
-	const store = useSessionStore();
+	const loadSessions = useSessionStore((s) => s.loadSessions);
 
 	useEffect(() => {
-		store.loadSessions().then(() => {
+		loadSessions().then(() => {
 			const sessions = useSessionStore.getState().sessions;
 			restoreFileTabs(sessions);
 		});
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
-
-	return store;
+	}, [loadSessions]);
 }

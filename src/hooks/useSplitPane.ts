@@ -10,18 +10,16 @@ function generateId(): string {
 }
 
 export function useSplitPane() {
-	const {
-		getActiveTab,
-		getActiveLayout,
-		updateLayout,
-		updateLayoutLocal,
-		persistLayout,
-		setFocusedPane,
-		focusedPaneId,
-		maximizedPaneId,
-		savedLayout,
-		setMaximized,
-	} = useSessionStore();
+	const getActiveTab = useSessionStore((s) => s.getActiveTab);
+	const getActiveLayout = useSessionStore((s) => s.getActiveLayout);
+	const updateLayout = useSessionStore((s) => s.updateLayout);
+	const updateLayoutLocal = useSessionStore((s) => s.updateLayoutLocal);
+	const persistLayout = useSessionStore((s) => s.persistLayout);
+	const setFocusedPane = useSessionStore((s) => s.setFocusedPane);
+	const focusedPaneId = useSessionStore((s) => s.focusedPaneId);
+	const maximizedPaneId = useSessionStore((s) => s.maximizedPaneId);
+	const savedLayout = useSessionStore((s) => s.savedLayout);
+	const setMaximized = useSessionStore((s) => s.setMaximized);
 
 	const splitPane = useCallback(
 		async (paneId: string, direction: "horizontal" | "vertical") => {

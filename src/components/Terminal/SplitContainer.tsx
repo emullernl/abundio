@@ -10,7 +10,9 @@ interface Props {
 }
 
 export function SplitContainer({ node, cwd }: Props) {
-	const { focusedPaneId, setFocusedPane, maximizedPaneId } = useSessionStore();
+	const focusedPaneId = useSessionStore((s) => s.focusedPaneId);
+	const setFocusedPane = useSessionStore((s) => s.setFocusedPane);
+	const maximizedPaneId = useSessionStore((s) => s.maximizedPaneId);
 	const { updateRatioLocal, persistCurrentLayout, splitPane, closePane, toggleMaximize } =
 		useSplitPane();
 

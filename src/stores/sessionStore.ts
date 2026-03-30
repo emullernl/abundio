@@ -334,7 +334,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
 	// ── Pane/layout actions ──
 
-	setFocusedPane: (paneId) => set({ focusedPaneId: paneId }),
+	setFocusedPane: (paneId) => {
+		if (get().focusedPaneId === paneId) return;
+		set({ focusedPaneId: paneId });
+	},
 
 	// Full update: local state + persist to SQLite
 	updateLayout: async (tabId, layout) => {
