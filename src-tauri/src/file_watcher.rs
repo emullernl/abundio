@@ -146,7 +146,8 @@ fn debounce_loop(
             );
         }
 
-        // Emit git-change when .git directory was modified (commits, pushes, etc.)
+        // Both events may fire in the same cycle (e.g. on git commit).
+        // The frontend debounce coalesces them, so no double-fetch occurs.
         if git_changed {
             git_changed = false;
             let _ = app.emit(
@@ -279,5 +280,13 @@ mod tests {
         };
         collect_parents(&event, &mut pending, &mut git_changed);
         assert!(pending.contains("/"));
+        assert!(!git_changed);
+    }
+
+    #[test]
+    fn git_internal_matches_git_dir_itself() {
+        // is_git_internal matches the `.git` directory itself, not just its children.
+        // This is intentional — changes to `.git` are a valid git-change signal.
+        assert!(is_git_internal(Path::new("/projects/myapp/.git")));
     }
 }

@@ -59,19 +59,16 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			}, 1000);
 		};
 
-		fs.onFsChange(cwd, debouncedFetch).then((fn) => {
+		Promise.all([
+			fs.onFsChange(cwd, debouncedFetch),
+			fs.onGitChange(cwd, debouncedFetch),
+		]).then(([unlistenFsResult, unlistenGitResult]) => {
 			if (cancelled) {
-				fn();
+				unlistenFsResult();
+				unlistenGitResult();
 			} else {
-				unlistenFs = fn;
-			}
-		});
-
-		fs.onGitChange(cwd, debouncedFetch).then((fn) => {
-			if (cancelled) {
-				fn();
-			} else {
-				unlistenGit = fn;
+				unlistenFs = unlistenFsResult;
+				unlistenGit = unlistenGitResult;
 			}
 		});
 
