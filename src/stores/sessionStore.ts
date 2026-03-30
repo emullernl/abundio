@@ -39,6 +39,7 @@ interface SessionState {
 	setPtyStatus: (ptyId: string, status: PtyStatusType) => void;
 	toggleSearch: () => void;
 	setActiveView: (sessionId: string, view: "terminal" | "file") => void;
+	setSessionBaseBranch: (sessionId: string, baseBranch: string | null) => void;
 
 	// Derived
 	getActiveSession: () => SessionWithTabs | undefined;
@@ -401,6 +402,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		}));
 		persistFileTabs(sessionId);
 	},
+
+	setSessionBaseBranch: (sessionId, baseBranch) =>
+		set((state) => ({
+			sessions: state.sessions.map((s) =>
+				s.id === sessionId ? { ...s, baseBranch } : s,
+			),
+		})),
 
 	// ── Derived ──
 
