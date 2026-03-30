@@ -286,12 +286,21 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		usePtyActivityStore.getState().setTitle(paneId, title);
 	});
 
+	// Clicking an already-focused terminal should clear "waiting" → "idle"
+	const onTermClick = () => {
+		if (managed.ptyId) {
+			usePtyActivityStore.getState().markIdle(managed.ptyId);
+		}
+	};
+	term.element?.addEventListener("mousedown", onTermClick);
+
 	registerSnapshot(paneId, () => serializeAddon.serialize());
 
 	managed.cleanup = () => {
 		unregisterSnapshot(paneId);
 		unlistenOutput();
 		unlistenStatus();
+		term.element?.removeEventListener("mousedown", onTermClick);
 	};
 }
 

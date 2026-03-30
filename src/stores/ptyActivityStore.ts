@@ -4,7 +4,6 @@ import type { PaneNode, PtyActivityState, Tab } from "../lib/types";
 // ── Constants ──
 
 const IDLE_THRESHOLD_MS = 2500;
-const SETTLED_THRESHOLD_MS = 30000;
 const SCAN_INTERVAL_MS = 500;
 
 // ── Types ──
@@ -139,9 +138,6 @@ setInterval(() => {
 
 		if (entry.state === "active" && elapsed > IDLE_THRESHOLD_MS) {
 			updates[ptyId] = { ...entry, state: "waiting" };
-			hasChanges = true;
-		} else if (entry.state === "waiting" && elapsed > SETTLED_THRESHOLD_MS) {
-			updates[ptyId] = { ...entry, state: "idle" };
 			hasChanges = true;
 		}
 	}
