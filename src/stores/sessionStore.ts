@@ -179,7 +179,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 			}
 			// Restore focused pane for the new session's active tab
 			const newTabId = id ? state.activeTabBySession[id] : undefined;
-			const restoredFocus = newTabId ? focusedPaneByTab[newTabId] ?? null : null;
+			let restoredFocus: string | null = newTabId ? focusedPaneByTab[newTabId] ?? null : null;
+			if (!restoredFocus && newTabId) {
+				const session = state.sessions.find((s) => s.id === id);
+				const tab = session?.tabs.find((t) => t.id === newTabId);
+				if (tab) {
+					try {
+						const layout = JSON.parse(tab.layoutJson) as PaneNode;
+						restoredFocus = firstTerminalId(layout);
+					} catch { /* ignore */ }
+				}
+			}
 			return {
 				activeSessionId: id,
 				focusedPaneId: restoredFocus,
@@ -205,6 +215,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		const nextNum = (session?.tabs.length ?? 0) + 1;
 		const name = `Terminal ${nextNum}`;
 		const tab = await tabsApi.create(sessionId, name);
+		let initialFocus: string | null = null;
+		try {
+			const layout = JSON.parse(tab.layoutJson) as PaneNode;
+			initialFocus = firstTerminalId(layout);
+		} catch { /* ignore */ }
 		set((state) => ({
 			sessions: state.sessions.map((s) =>
 				s.id === sessionId ? { ...s, tabs: [...s.tabs, tab] } : s,
@@ -213,7 +228,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 				...state.activeTabBySession,
 				[sessionId]: tab.id,
 			},
-			focusedPaneId: null,
+			focusedPaneId: initialFocus,
 			maximizedPaneId: null,
 			savedLayout: null,
 		}));
