@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { git, sessions as sessionsApi } from "../lib/ipc";
+import { useSessionStore } from "./sessionStore";
 import type { GitChangedFile } from "../lib/types";
 
 let fetchGeneration = 0;
@@ -78,6 +79,7 @@ export const useGitChangesStore = create<GitChangesState>()(
 
 			setBaseBranch: async (sessionId, branch, cwd) => {
 				await sessionsApi.update(sessionId, { baseBranch: branch });
+				useSessionStore.getState().setSessionBaseBranch(sessionId, branch);
 				await get().fetchChanges(cwd, branch);
 			},
 

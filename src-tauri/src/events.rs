@@ -20,6 +20,12 @@ pub struct FsChange {
     pub paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitChange {
+    pub root: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

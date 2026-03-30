@@ -39,9 +39,12 @@ export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="w-full flex items-center gap-2 px-3 py-1 text-left transition-colors group"
+			className="w-full flex items-center gap-2 py-1 text-left transition-colors group"
 			style={{
 				height: 28,
+				// Inline padding instead of Tailwind px-3 to avoid specificity issues with the borderLeft style
+				paddingLeft: 12,
+				paddingRight: 12,
 				backgroundColor: isSelected ? "var(--bg-tertiary)" : "transparent",
 				borderLeft: isSelected ? "2px solid var(--accent)" : "2px solid transparent",
 			}}

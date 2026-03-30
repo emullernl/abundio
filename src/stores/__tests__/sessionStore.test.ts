@@ -255,6 +255,28 @@ describe("sessionStore", () => {
 		});
 	});
 
+	describe("setSessionBaseBranch", () => {
+		it("updates baseBranch in-memory for the target session", () => {
+			const s1 = makeSession({ id: "s1", baseBranch: null });
+			const s2 = makeSession({ id: "s2", baseBranch: null });
+			useSessionStore.setState({ sessions: [s1, s2] });
+
+			useSessionStore.getState().setSessionBaseBranch("s1", "develop");
+
+			expect(useSessionStore.getState().sessions.find((s) => s.id === "s1")?.baseBranch).toBe("develop");
+			expect(useSessionStore.getState().sessions.find((s) => s.id === "s2")?.baseBranch).toBeNull();
+		});
+
+		it("clears baseBranch when set to null", () => {
+			const session = makeSession({ id: "s1", baseBranch: "feature/foo" });
+			useSessionStore.setState({ sessions: [session] });
+
+			useSessionStore.getState().setSessionBaseBranch("s1", null);
+
+			expect(useSessionStore.getState().sessions.find((s) => s.id === "s1")?.baseBranch).toBeNull();
+		});
+	});
+
 	describe("derived getters", () => {
 		it("getActiveSession returns the active session", () => {
 			const session = makeSession();

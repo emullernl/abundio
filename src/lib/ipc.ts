@@ -104,5 +104,12 @@ export const fs = {
 				callback(event.payload.paths);
 			}
 		}),
+
+	onGitChange: (rootPath: string, callback: () => void): Promise<UnlistenFn> =>
+		listen<{ root: string }>("git-change", (event) => {
+			if (event.payload.root === rootPath) {
+				callback();
+			}
+		}),
 };
 

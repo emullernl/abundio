@@ -8,7 +8,7 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
 
 use crate::error::AbundioError;
-use crate::events::FsChange;
+use crate::events::{FsChange, GitChange};
 
 const DEBOUNCE_MS: u64 = 200;
 
@@ -18,8 +18,15 @@ fn is_ignored(path: &Path) -> bool {
         matches!(
             c,
             Component::Normal(s)
-                if matches!(s.to_str(), Some(".git" | "node_modules" | ".DS_Store" | "target"))
+                if matches!(s.to_str(), Some("node_modules" | ".DS_Store" | "target"))
         )
+    })
+}
+
+/// Whether the path is inside the `.git` directory.
+fn is_git_internal(path: &Path) -> bool {
+    path.components().any(|c| {
+        matches!(c, Component::Normal(s) if s == ".git")
     })
 }
 
@@ -100,6 +107,7 @@ fn debounce_loop(
     stop_rx: &crossbeam_channel::Receiver<()>,
 ) {
     let mut pending: HashSet<String> = HashSet::new();
+    let mut git_changed = false;
     let timeout = Duration::from_millis(DEBOUNCE_MS);
 
     loop {
@@ -108,7 +116,7 @@ fn debounce_loop(
             recv(stop_rx) -> _ => break,
             recv(event_rx) -> msg => {
                 if let Ok(event) = msg {
-                    collect_parents(&event, &mut pending);
+                    collect_parents(&event, &mut pending, &mut git_changed);
                 }
             }
         }
@@ -119,7 +127,7 @@ fn debounce_loop(
                 recv(stop_rx) -> _ => return,
                 recv(event_rx) -> msg => {
                     if let Ok(event) = msg {
-                        collect_parents(&event, &mut pending);
+                        collect_parents(&event, &mut pending, &mut git_changed);
                     }
                 }
                 default(timeout) => break,
@@ -137,12 +145,28 @@ fn debounce_loop(
                 },
             );
         }
+
+        // Both events may fire in the same cycle (e.g. on git commit).
+        // The frontend debounce coalesces them, so no double-fetch occurs.
+        if git_changed {
+            git_changed = false;
+            let _ = app.emit(
+                "git-change",
+                GitChange {
+                    root: root_path.to_string(),
+                },
+            );
+        }
     }
 }
 
-fn collect_parents(event: &Event, pending: &mut HashSet<String>) {
+fn collect_parents(event: &Event, pending: &mut HashSet<String>, git_changed: &mut bool) {
     for path in &event.paths {
         if is_ignored(path) {
+            continue;
+        }
+        if is_git_internal(path) {
+            *git_changed = true;
             continue;
         }
         // Add the parent directory (the directory whose listing changed)
@@ -159,9 +183,16 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn is_ignored_git_directory() {
-        assert!(is_ignored(Path::new("/projects/myapp/.git/HEAD")));
-        assert!(is_ignored(Path::new("/projects/myapp/.git/refs/heads/main")));
+    fn git_internal_detected() {
+        assert!(is_git_internal(Path::new("/projects/myapp/.git/HEAD")));
+        assert!(is_git_internal(Path::new("/projects/myapp/.git/refs/heads/main")));
+        assert!(!is_git_internal(Path::new("/projects/myapp/src/main.rs")));
+    }
+
+    #[test]
+    fn is_ignored_does_not_include_git() {
+        // .git paths are handled separately via is_git_internal, not ignored
+        assert!(!is_ignored(Path::new("/projects/myapp/.git/HEAD")));
     }
 
     #[test]
@@ -189,19 +220,22 @@ mod tests {
     #[test]
     fn collect_parents_adds_parent_dirs() {
         let mut pending = HashSet::new();
+        let mut git_changed = false;
         let event = Event {
             kind: EventKind::Create(notify::event::CreateKind::File),
             paths: vec![PathBuf::from("/projects/myapp/src/main.rs")],
             attrs: Default::default(),
         };
-        collect_parents(&event, &mut pending);
+        collect_parents(&event, &mut pending, &mut git_changed);
         assert!(pending.contains("/projects/myapp/src"));
         assert_eq!(pending.len(), 1);
+        assert!(!git_changed);
     }
 
     #[test]
     fn collect_parents_deduplicates() {
         let mut pending = HashSet::new();
+        let mut git_changed = false;
         let event = Event {
             kind: EventKind::Create(notify::event::CreateKind::File),
             paths: vec![
@@ -210,14 +244,15 @@ mod tests {
             ],
             attrs: Default::default(),
         };
-        collect_parents(&event, &mut pending);
+        collect_parents(&event, &mut pending, &mut git_changed);
         assert_eq!(pending.len(), 1);
         assert!(pending.contains("/projects/myapp/src"));
     }
 
     #[test]
-    fn collect_parents_skips_ignored() {
+    fn collect_parents_routes_git_changes() {
         let mut pending = HashSet::new();
+        let mut git_changed = false;
         let event = Event {
             kind: EventKind::Modify(notify::event::ModifyKind::Data(
                 notify::event::DataChange::Content,
@@ -228,20 +263,30 @@ mod tests {
             ],
             attrs: Default::default(),
         };
-        collect_parents(&event, &mut pending);
+        collect_parents(&event, &mut pending, &mut git_changed);
         assert_eq!(pending.len(), 1);
         assert!(pending.contains("/projects/myapp/src"));
+        assert!(git_changed);
     }
 
     #[test]
     fn collect_parents_handles_root_path() {
         let mut pending = HashSet::new();
+        let mut git_changed = false;
         let event = Event {
             kind: EventKind::Create(notify::event::CreateKind::File),
             paths: vec![PathBuf::from("/file.txt")],
             attrs: Default::default(),
         };
-        collect_parents(&event, &mut pending);
+        collect_parents(&event, &mut pending, &mut git_changed);
         assert!(pending.contains("/"));
+        assert!(!git_changed);
+    }
+
+    #[test]
+    fn git_internal_matches_git_dir_itself() {
+        // is_git_internal matches the `.git` directory itself, not just its children.
+        // This is intentional — changes to `.git` are a valid git-change signal.
+        assert!(is_git_internal(Path::new("/projects/myapp/.git")));
     }
 }

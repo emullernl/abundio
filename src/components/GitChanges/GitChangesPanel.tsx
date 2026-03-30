@@ -44,29 +44,38 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 		fetchChanges(cwd, sessionBaseBranch);
 	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges, clear]);
 
-	// Re-fetch on file system changes
+	// Re-fetch on file system or git changes
 	useEffect(() => {
 		if (!panelOpen || !cwd) return;
-		let unlisten: (() => void) | null = null;
+		let unlistenFs: (() => void) | null = null;
+		let unlistenGit: (() => void) | null = null;
 		let cancelled = false;
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-		fs.onFsChange(cwd, () => {
+		const debouncedFetch = () => {
 			if (debounceTimer) clearTimeout(debounceTimer);
 			debounceTimer = setTimeout(() => {
 				fetchChanges(cwd, sessionBaseBranch);
 			}, 1000);
-		}).then((fn) => {
+		};
+
+		Promise.all([
+			fs.onFsChange(cwd, debouncedFetch),
+			fs.onGitChange(cwd, debouncedFetch),
+		]).then(([unlistenFsResult, unlistenGitResult]) => {
 			if (cancelled) {
-				fn();
+				unlistenFsResult();
+				unlistenGitResult();
 			} else {
-				unlisten = fn;
+				unlistenFs = unlistenFsResult;
+				unlistenGit = unlistenGitResult;
 			}
 		});
 
 		return () => {
 			cancelled = true;
-			unlisten?.();
+			unlistenFs?.();
+			unlistenGit?.();
 			if (debounceTimer) clearTimeout(debounceTimer);
 		};
 	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges]);
@@ -136,8 +145,8 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			>
 				{/* Header */}
 				<div
-					className="flex items-center gap-2 px-3 py-2 flex-shrink-0"
-					style={{ borderBottom: "1px solid var(--border)" }}
+					className="flex items-center gap-2 py-2 flex-shrink-0"
+					style={{ borderBottom: "1px solid var(--border)", paddingLeft: 12, paddingRight: 12 }}
 				>
 					<GitCompare size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
 					<span
@@ -201,10 +210,12 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 				{/* Current branch indicator */}
 				{currentBranch && (
 					<div
-						className="flex items-center gap-1.5 px-3 py-1.5 flex-shrink-0"
+						className="flex items-center gap-1.5 py-1.5 flex-shrink-0"
 						style={{
 							borderBottom: "1px solid var(--border)",
 							backgroundColor: "color-mix(in srgb, var(--bg-tertiary) 30%, transparent)",
+							paddingLeft: 12,
+							paddingRight: 12,
 						}}
 					>
 						<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>On</span>
