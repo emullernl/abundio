@@ -12,15 +12,17 @@ vi.mock("../../lib/themes", () => ({
 
 vi.mock("../../lib/terminalManager", () => ({
 	setAllTerminalsTheme: vi.fn(),
+	setActivityByteThreshold: vi.fn(),
 }));
 
 import { useSettingsStore } from "../settingsStore";
 import { applyTheme, getTheme } from "../../lib/themes";
-import { setAllTerminalsTheme } from "../../lib/terminalManager";
+import { setAllTerminalsTheme, setActivityByteThreshold } from "../../lib/terminalManager";
 
 const mockApplyTheme = vi.mocked(applyTheme);
 const mockGetTheme = vi.mocked(getTheme);
 const mockSetAllTerminalsTheme = vi.mocked(setAllTerminalsTheme);
+const mockSetActivityByteThreshold = vi.mocked(setActivityByteThreshold);
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -30,6 +32,8 @@ beforeEach(() => {
 		theme: "default",
 		sidebarCollapsed: false,
 		sidebarSplitRatio: 0.4,
+		debugActivityMeter: false,
+		activityByteThreshold: 512,
 	});
 });
 
@@ -72,5 +76,19 @@ describe("settingsStore", () => {
 	it("setSidebarSplitRatio updates ratio", () => {
 		useSettingsStore.getState().setSidebarSplitRatio(0.6);
 		expect(useSettingsStore.getState().sidebarSplitRatio).toBe(0.6);
+	});
+
+	it("toggleDebugActivityMeter flips the flag", () => {
+		expect(useSettingsStore.getState().debugActivityMeter).toBe(false);
+		useSettingsStore.getState().toggleDebugActivityMeter();
+		expect(useSettingsStore.getState().debugActivityMeter).toBe(true);
+		useSettingsStore.getState().toggleDebugActivityMeter();
+		expect(useSettingsStore.getState().debugActivityMeter).toBe(false);
+	});
+
+	it("setActivityByteThreshold updates store and calls terminalManager", () => {
+		useSettingsStore.getState().setActivityByteThreshold(256);
+		expect(useSettingsStore.getState().activityByteThreshold).toBe(256);
+		expect(mockSetActivityByteThreshold).toHaveBeenCalledWith(256);
 	});
 });

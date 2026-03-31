@@ -56,7 +56,7 @@ export const useSettingsStore = create<SettingsState>()(
 			name: "abundio-settings",
 			partialize: (state) => ({ fontSize: state.fontSize, theme: state.theme, sidebarSplitRatio: state.sidebarSplitRatio, gitPanelWidth: state.gitPanelWidth, debugActivityMeter: state.debugActivityMeter, activityByteThreshold: state.activityByteThreshold }),
 			onRehydrateStorage: () => (state) => {
-				if (state?.activityByteThreshold) {
+				if (state?.activityByteThreshold != null) {
 					setTerminalActivityByteThreshold(state.activityByteThreshold);
 				}
 			},

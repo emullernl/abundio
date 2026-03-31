@@ -5,10 +5,9 @@ import {
 	INPUT_GATE_MS,
 	INACTIVITY_RESET_MS,
 } from "../../lib/terminalManager";
-import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { usePtyActivityStore, IDLE_THRESHOLD_MS } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 
-const IDLE_THRESHOLD_MS = 2500;
 const POLL_MS = 100;
 
 interface DebugSnapshot {
@@ -18,6 +17,7 @@ interface DebugSnapshot {
 	lastInputAt: number;
 	inGate: boolean;
 	timeSinceLastChunk: number;
+	waitingRatio: number;
 }
 
 function lerp(a: string, b: string, t: number): string {
@@ -51,9 +51,6 @@ export function DebugActivityMeter({ paneId }: Props) {
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	const ptyId = usePtyActivityStore((s) => s.panePtyMap[paneId]);
-	const activity = usePtyActivityStore((s) =>
-		ptyId ? s.activities[ptyId] : undefined,
-	);
 
 	useEffect(() => {
 		const id = setInterval(() => {
@@ -61,6 +58,17 @@ export function DebugActivityMeter({ paneId }: Props) {
 			if (!managed) return;
 			const now = Date.now();
 			const threshold = getActivityByteThreshold();
+
+			// Compute waiting ratio inside the poll so it animates smoothly
+			let waitingRatio = 0;
+			if (ptyId) {
+				const entry = usePtyActivityStore.getState().activities[ptyId];
+				if (entry?.state === "active" && entry.lastOutputAt) {
+					const elapsed = now - entry.lastOutputAt;
+					waitingRatio = Math.min(1, elapsed / IDLE_THRESHOLD_MS);
+				}
+			}
+
 			setSnap({
 				bytesSinceIdle: managed.bytesSinceIdle,
 				threshold,
@@ -70,6 +78,7 @@ export function DebugActivityMeter({ paneId }: Props) {
 				timeSinceLastChunk: managed.lastOutputChunkAt
 					? now - managed.lastOutputChunkAt
 					: 0,
+				waitingRatio,
 			});
 
 			// Keep input in sync unless user is editing
@@ -78,7 +87,7 @@ export function DebugActivityMeter({ paneId }: Props) {
 			}
 		}, POLL_MS);
 		return () => clearInterval(id);
-	}, [paneId]);
+	}, [paneId, ptyId]);
 
 	const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		setThresholdInput(e.target.value);
@@ -90,16 +99,11 @@ export function DebugActivityMeter({ paneId }: Props) {
 
 	if (!snap) return null;
 
-	const state = activity?.state ?? "idle";
+	const state = ptyId
+		? (usePtyActivityStore.getState().activities[ptyId]?.state ?? "idle")
+		: "idle";
 	const byteRatio = Math.min(1, snap.bytesSinceIdle / snap.threshold);
 	const isActive = state === "active";
-
-	// Waiting countdown: time since last output toward IDLE_THRESHOLD_MS
-	let waitingRatio = 0;
-	if (isActive && activity?.lastOutputAt) {
-		const elapsed = Date.now() - activity.lastOutputAt;
-		waitingRatio = Math.min(1, elapsed / IDLE_THRESHOLD_MS);
-	}
 
 	// Inactivity reset countdown: progress toward 3s reset
 	const resetRatio = snap.lastOutputChunkAt
@@ -216,7 +220,7 @@ export function DebugActivityMeter({ paneId }: Props) {
 				>
 					<div
 						style={{
-							width: `${waitingRatio * 100}%`,
+							width: `${snap.waitingRatio * 100}%`,
 							height: "100%",
 							background: "#8b5cf6",
 							borderRadius: 4,
