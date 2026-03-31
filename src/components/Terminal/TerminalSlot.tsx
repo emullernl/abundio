@@ -6,6 +6,8 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { PaneContextMenu, type ContextMenuItem } from "./PaneContextMenu";
 import { SearchBar } from "./SearchBar";
 import { TerminalTitleBar } from "./TerminalTitleBar";
+import { DebugActivityMeter } from "./DebugActivityMeter";
+import { useSettingsStore } from "../../stores/settingsStore";
 
 interface Props {
 	paneId: string;
@@ -34,6 +36,7 @@ export function TerminalSlot({
 	const searchPaneId = useSessionStore((s) => s.searchPaneId);
 	const toggleSearch = useSessionStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
+	const debugMeterEnabled = useSettingsStore((s) => s.debugActivityMeter);
 
 	useEffect(() => {
 		if (!innerRef.current) return;
@@ -139,6 +142,7 @@ export function TerminalSlot({
 			onContextMenu={handleContextMenu}
 		>
 			<TerminalTitleBar paneId={paneId} />
+			{debugMeterEnabled && <DebugActivityMeter paneId={paneId} />}
 			<div
 				ref={innerRef}
 				className="w-full flex-1 min-h-0"

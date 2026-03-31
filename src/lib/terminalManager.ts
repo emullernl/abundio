@@ -47,8 +47,8 @@ export interface ManagedTerminal {
 	lastInputAt: number;
 	/** Accumulated output bytes since last idle — used to filter out small outputs like prompt redraws */
 	bytesSinceIdle: number;
-	/** Start of the current activity detection window (0 = no prior window) */
-	windowStartAt: number;
+	/** Timestamp of last output chunk — used to reset accumulation after inactivity gap */
+	lastOutputChunkAt: number;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -57,24 +57,33 @@ const instances = new Map<string, ManagedTerminal>();
 // These keep tracking activity so session/tab dots update for inactive sessions
 const backgroundTrackers = new Map<string, { unlistenOutput: () => void; unlistenStatus: () => void }>();
 
-const ACTIVITY_BYTE_THRESHOLD = 512;
+let ACTIVITY_BYTE_THRESHOLD = 512;
+
+export function getActivityByteThreshold(): number {
+	return ACTIVITY_BYTE_THRESHOLD;
+}
+
+export function setActivityByteThreshold(n: number): void {
+	ACTIVITY_BYTE_THRESHOLD = Math.max(1, Math.round(n));
+}
 // Output is ignored for INPUT_GATE_MS after the last keystroke to suppress
-// echoed characters and prompt redraws. The sliding window then filters out
-// cursor-blink escape sequences (~113 bytes/5s, well below 512) while still
-// catching slow-but-legitimate output like `ping -i 0.5` (~600 bytes/5s).
-const INPUT_GATE_MS = 2000;
-const ACTIVITY_WINDOW_MS = 5000;
+// echoed characters and prompt redraws. If no output arrives for
+// INACTIVITY_RESET_MS the byte counter resets, filtering out slow trickle
+// noise (cursor blinks, periodic status output) that never builds into
+// sustained activity.
+export const INPUT_GATE_MS = 2000;
+export const INACTIVITY_RESET_MS = 3000;
 
 async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
 	let bgBytesSinceIdle = 0;
-	let bgWindowStartAt = 0;
+	let bgLastOutputChunkAt = 0;
 	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
 		const now = Date.now();
-		if (now - bgWindowStartAt > ACTIVITY_WINDOW_MS) {
+		if (bgLastOutputChunkAt && now - bgLastOutputChunkAt > INACTIVITY_RESET_MS) {
 			bgBytesSinceIdle = 0;
-			bgWindowStartAt = now;
 		}
+		bgLastOutputChunkAt = now;
 		bgBytesSinceIdle += data.length;
 		if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 			bgBytesSinceIdle = 0;
@@ -189,7 +198,7 @@ export async function createTerminal(
 		focused: false,
 		lastInputAt: 0,
 		bytesSinceIdle: 0,
-		windowStartAt: 0,
+		lastOutputChunkAt: 0,
 	};
 
 	instances.set(paneId, managed);
@@ -264,9 +273,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	term.onData((data) => {
 		if (managed.restoring) return;
 		managed.lastInputAt = Date.now();
-		// Note: windowStartAt is intentionally NOT reset here.
-		// bytesSinceIdle is cleared instead, so the first output chunk
-		// after a command always starts a fresh accumulation window.
 		managed.bytesSinceIdle = 0;
 		usePtyActivityStore.getState().markIdle(currentPtyId);
 		pty.write(currentPtyId, data);
@@ -276,10 +282,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		term.write(data);
 		if (!managed.suppressActivity && Date.now() - managed.lastInputAt > INPUT_GATE_MS) {
 			const now = Date.now();
-			if (now - managed.windowStartAt > ACTIVITY_WINDOW_MS) {
+			if (managed.lastOutputChunkAt && now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS) {
 				managed.bytesSinceIdle = 0;
-				managed.windowStartAt = now;
 			}
+			managed.lastOutputChunkAt = now;
 			managed.bytesSinceIdle += data.length;
 			if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 				managed.bytesSinceIdle = 0;
