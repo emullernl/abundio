@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { applyTheme, getTheme } from "../lib/themes";
-import { setAllTerminalsTheme } from "../lib/terminalManager";
+import { setAllTerminalsTheme, setActivityByteThreshold as setTerminalActivityByteThreshold } from "../lib/terminalManager";
 
 interface SettingsState {
 	fontFamily: string;
@@ -10,6 +10,8 @@ interface SettingsState {
 	sidebarCollapsed: boolean;
 	sidebarSplitRatio: number;
 	gitPanelWidth: number;
+	debugActivityMeter: boolean;
+	activityByteThreshold: number;
 
 	setFontFamily: (font: string) => void;
 	setFontSize: (size: number) => void;
@@ -17,6 +19,8 @@ interface SettingsState {
 	toggleSidebar: () => void;
 	setSidebarSplitRatio: (ratio: number) => void;
 	setGitPanelWidth: (width: number) => void;
+	toggleDebugActivityMeter: () => void;
+	setActivityByteThreshold: (n: number) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -28,6 +32,8 @@ export const useSettingsStore = create<SettingsState>()(
 			sidebarCollapsed: false,
 			sidebarSplitRatio: 0.4,
 			gitPanelWidth: 360,
+			debugActivityMeter: false,
+			activityByteThreshold: 512,
 
 			setFontFamily: (fontFamily) => set({ fontFamily }),
 			setFontSize: (fontSize) => set({ fontSize }),
@@ -40,10 +46,20 @@ export const useSettingsStore = create<SettingsState>()(
 			toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 			setSidebarSplitRatio: (sidebarSplitRatio) => set({ sidebarSplitRatio }),
 			setGitPanelWidth: (gitPanelWidth) => set({ gitPanelWidth }),
+			toggleDebugActivityMeter: () => set((state) => ({ debugActivityMeter: !state.debugActivityMeter })),
+			setActivityByteThreshold: (n) => {
+				setTerminalActivityByteThreshold(n);
+				set({ activityByteThreshold: n });
+			},
 		}),
 		{
 			name: "abundio-settings",
-			partialize: (state) => ({ fontSize: state.fontSize, theme: state.theme, sidebarSplitRatio: state.sidebarSplitRatio, gitPanelWidth: state.gitPanelWidth }),
+			partialize: (state) => ({ fontSize: state.fontSize, theme: state.theme, sidebarSplitRatio: state.sidebarSplitRatio, gitPanelWidth: state.gitPanelWidth, debugActivityMeter: state.debugActivityMeter, activityByteThreshold: state.activityByteThreshold }),
+			onRehydrateStorage: () => (state) => {
+				if (state?.activityByteThreshold != null) {
+					setTerminalActivityByteThreshold(state.activityByteThreshold);
+				}
+			},
 		},
 	),
 );

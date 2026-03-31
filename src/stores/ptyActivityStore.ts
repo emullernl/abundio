@@ -3,7 +3,7 @@ import type { PaneNode, PtyActivityState, Tab } from "../lib/types";
 
 // ── Constants ──
 
-const IDLE_THRESHOLD_MS = 2500;
+export const IDLE_THRESHOLD_MS = 2500;
 const SCAN_INTERVAL_MS = 500;
 
 // ── Types ──

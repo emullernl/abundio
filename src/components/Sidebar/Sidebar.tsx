@@ -18,6 +18,8 @@ function SidebarDivider({
 	onResizeEnd: () => void;
 }) {
 	const dividerRef = useRef<HTMLDivElement>(null);
+	const onResizeEndRef = useRef(onResizeEnd);
+	onResizeEndRef.current = onResizeEnd;
 
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
@@ -39,13 +41,13 @@ function SidebarDivider({
 				document.body.classList.remove("dragging");
 				document.removeEventListener("mousemove", onMouseMove);
 				document.removeEventListener("mouseup", onMouseUp);
-				onResizeEnd();
+				onResizeEndRef.current();
 			}
 
 			document.addEventListener("mousemove", onMouseMove);
 			document.addEventListener("mouseup", onMouseUp);
 		},
-		[onResize, onResizeEnd],
+		[onResize],
 	);
 
 	return (

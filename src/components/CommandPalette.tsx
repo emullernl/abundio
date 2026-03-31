@@ -41,7 +41,7 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 	const listRef = useRef<HTMLDivElement>(null);
 
 	const { sessions, setActiveSession, createSession, focusedPaneId } = useSessionStore();
-	const { setTheme } = useSettingsStore();
+	const { setTheme, debugActivityMeter, toggleDebugActivityMeter } = useSettingsStore();
 	const { splitPane, closePane, toggleMaximize } = useSplitPane();
 
 	const items = useMemo<PaletteItem[]>(() => {
@@ -101,6 +101,14 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 			);
 		}
 
+		// Debug
+		result.push({
+			id: "action-toggle-debug-meter",
+			label: `Debug Activity Meter: ${debugActivityMeter ? "On" : "Off"}`,
+			category: "Debug",
+			action: () => toggleDebugActivityMeter(),
+		});
+
 		// Themes
 		for (const t of themeList()) {
 			result.push({
@@ -112,7 +120,7 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 		}
 
 		return result;
-	}, [sessions, focusedPaneId, setActiveSession, createSession, splitPane, closePane, toggleMaximize, setTheme]);
+	}, [sessions, focusedPaneId, setActiveSession, createSession, splitPane, closePane, toggleMaximize, setTheme, debugActivityMeter, toggleDebugActivityMeter]);
 
 	const filtered = useMemo(() => {
 		if (!query) return items;
