@@ -212,6 +212,30 @@ pub fn git_changed_files(
         all_files.extend(files);
     }
 
+    // Untracked (--directory collapses untracked dirs to a single entry)
+    if let Ok(output) = run_git_allow_empty(&cwd, &["ls-files", "--others", "--exclude-standard", "--directory"]) {
+        for line in output.lines() {
+            let path = line.trim().to_string();
+            if path.is_empty() {
+                continue;
+            }
+            let full_path = Path::new(&cwd).join(&path);
+            let additions = std::fs::File::open(&full_path)
+                .map(|f| {
+                    use std::io::{BufRead, BufReader};
+                    BufReader::new(f).lines().count() as i32
+                })
+                .unwrap_or(0);
+            all_files.push(GitChangedFile {
+                path,
+                status: "?".to_string(),
+                additions,
+                deletions: 0,
+                section: "untracked".to_string(),
+            });
+        }
+    }
+
     Ok(all_files)
 }
 
@@ -256,6 +280,11 @@ pub fn git_file_diff(
             let modified =
                 std::fs::read_to_string(&full_path).unwrap_or_default();
             (original, modified)
+        }
+        "untracked" => {
+            let full_path = Path::new(&cwd).join(&file_path);
+            let modified = std::fs::read_to_string(&full_path).unwrap_or_default();
+            (String::new(), modified)
         }
         _ => {
             return Err(AbundioError::Git(format!(
@@ -351,5 +380,56 @@ mod tests {
     fn parse_numstat_empty() {
         let result = parse_numstat("");
         assert_eq!(result.len(), 0);
+    }
+
+    /// Helper: create a temporary git repo with an initial commit.
+    fn setup_temp_git_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        run_git(cwd, &["init"]).unwrap();
+        run_git(cwd, &["config", "user.email", "test@test.com"]).unwrap();
+        run_git(cwd, &["config", "user.name", "Test"]).unwrap();
+        std::fs::write(dir.path().join("initial.txt"), "hello\n").unwrap();
+        run_git(cwd, &["add", "."]).unwrap();
+        run_git(cwd, &["commit", "-m", "init"]).unwrap();
+        dir
+    }
+
+    #[test]
+    fn git_changed_files_includes_untracked() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+
+        // Create an untracked file with 3 lines
+        std::fs::write(dir.path().join("new_file.txt"), "a\nb\nc\n").unwrap();
+
+        let files = git_changed_files(cwd.to_string(), Some("main".to_string())).unwrap();
+        let untracked: Vec<_> = files.iter().filter(|f| f.section == "untracked").collect();
+
+        assert_eq!(untracked.len(), 1);
+        assert_eq!(untracked[0].path, "new_file.txt");
+        assert_eq!(untracked[0].status, "?");
+        assert_eq!(untracked[0].additions, 3);
+        assert_eq!(untracked[0].deletions, 0);
+    }
+
+    #[test]
+    fn git_file_diff_untracked_returns_empty_original() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+
+        std::fs::write(dir.path().join("untracked.txt"), "line1\nline2\n").unwrap();
+
+        let diff = git_file_diff(
+            cwd.to_string(),
+            "untracked.txt".to_string(),
+            "untracked".to_string(),
+            Some("main".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(diff.original, "");
+        assert_eq!(diff.modified, "line1\nline2\n");
+        assert_eq!(diff.file_path, "untracked.txt");
     }
 }

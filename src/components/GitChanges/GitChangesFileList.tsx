@@ -14,6 +14,7 @@ const SECTION_ORDER: Array<{ key: string; label: (base: string | null) => string
 	{ key: "against_base", label: (base) => `Against ${base ?? "base"}` },
 	{ key: "staged", label: () => "Staged" },
 	{ key: "unstaged", label: () => "Unstaged" },
+	{ key: "untracked", label: () => "Untracked" },
 ];
 
 export function GitChangesFileList({ files, baseBranch, onSelectFile, selectedFile }: Props) {
