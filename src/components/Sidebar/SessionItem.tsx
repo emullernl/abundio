@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { PaneNode, SessionWithTabs } from "../../lib/types";
 import {
 	usePtyActivityStore,
@@ -6,6 +7,7 @@ import {
 	DOT_GLOWS,
 	shouldPulse,
 } from "../../stores/ptyActivityStore";
+import type { DotStatus } from "../../stores/ptyActivityStore";
 import { X } from "../Icons";
 
 interface Props {
@@ -30,6 +32,24 @@ function shortenPath(fullPath: string): string {
 	return fullPath;
 }
 
+function useSessionDotStatus(session: SessionWithTabs): DotStatus {
+	const tabLayouts = useMemo(() => {
+		const layouts: PaneNode[] = [];
+		for (const tab of session.tabs) {
+			try {
+				layouts.push(JSON.parse(tab.layoutJson) as PaneNode);
+			} catch {
+				// ignore
+			}
+		}
+		return layouts;
+	}, [session.tabs]);
+
+	return usePtyActivityStore((s) => {
+		return computeSessionDotStatus(session.id, tabLayouts, s.activities, s.openedSessionIds, s.panePtyMap);
+	});
+}
+
 export function SessionItem({
 	session,
 	isActive,
@@ -38,20 +58,7 @@ export function SessionItem({
 	onDelete,
 	onMouseDown,
 }: Props) {
-	const activities = usePtyActivityStore((s) => s.activities);
-	const openedSessionIds = usePtyActivityStore((s) => s.openedSessionIds);
-	const panePtyMap = usePtyActivityStore((s) => s.panePtyMap);
-
-	const tabLayouts: PaneNode[] = [];
-	for (const tab of session.tabs) {
-		try {
-			tabLayouts.push(JSON.parse(tab.layoutJson) as PaneNode);
-		} catch {
-			// ignore
-		}
-	}
-
-	const dotStatus = computeSessionDotStatus(session.id, tabLayouts, activities, openedSessionIds, panePtyMap);
+	const dotStatus = useSessionDotStatus(session);
 	const dotColor = DOT_COLORS[dotStatus];
 	const pulse = shouldPulse(dotStatus);
 

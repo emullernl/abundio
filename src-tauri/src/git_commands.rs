@@ -1,7 +1,18 @@
 use crate::error::AbundioError;
+use dashmap::DashMap;
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
+
+/// Per-repo cache of the detected default branch name.
+/// Keyed by the canonicalized repo working directory path.
+/// Note: this cache lives for the process lifetime. If the remote default
+/// branch is renamed, the app must be restarted to pick up the change.
+fn default_branch_cache() -> &'static DashMap<String, String> {
+    static CACHE: OnceLock<DashMap<String, String>> = OnceLock::new();
+    CACHE.get_or_init(DashMap::new)
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,9 +40,12 @@ pub struct BranchInfo {
 }
 
 fn run_git(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
+    let mut full_args = vec!["--no-optional-locks"];
+    full_args.extend_from_slice(args);
     let output = Command::new("git")
-        .args(args)
+        .args(&full_args)
         .current_dir(cwd)
+        .env("PATH", crate::shell_env::shell_path())
         .output()
         .map_err(|e| AbundioError::Git(format!("Failed to run git: {}", e)))?;
 
@@ -48,9 +62,12 @@ fn run_git(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 }
 
 fn run_git_allow_empty(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
+    let mut full_args = vec!["--no-optional-locks"];
+    full_args.extend_from_slice(args);
     let output = Command::new("git")
-        .args(args)
+        .args(&full_args)
         .current_dir(cwd)
+        .env("PATH", crate::shell_env::shell_path())
         .output()
         .map_err(|e| AbundioError::Git(format!("Failed to run git: {}", e)))?;
 
@@ -66,20 +83,32 @@ fn run_git_allow_empty(cwd: &str, args: &[&str]) -> Result<String, AbundioError>
 }
 
 fn detect_default_branch(cwd: &str) -> Result<String, AbundioError> {
+    let cache_key = std::fs::canonicalize(cwd)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| cwd.to_string());
+
+    // Return cached result if available
+    if let Some(cached) = default_branch_cache().get(&cache_key) {
+        return Ok(cached.clone());
+    }
+
     // Try the remote HEAD symbolic ref first (works for any default branch name)
     if let Ok(output) = run_git(cwd, &["symbolic-ref", "refs/remotes/origin/HEAD"]) {
         let trimmed = output.trim();
         if let Some(branch) = trimmed.strip_prefix("refs/remotes/origin/") {
             if !branch.is_empty() {
+                default_branch_cache().insert(cache_key, branch.to_string());
                 return Ok(branch.to_string());
             }
         }
     }
     // Fall back to checking common branch names locally
     if run_git(cwd, &["rev-parse", "--verify", "main"]).is_ok() {
+        default_branch_cache().insert(cache_key, "main".to_string());
         return Ok("main".to_string());
     }
     if run_git(cwd, &["rev-parse", "--verify", "master"]).is_ok() {
+        default_branch_cache().insert(cache_key, "master".to_string());
         return Ok("master".to_string());
     }
     Err(AbundioError::Git(
@@ -186,145 +215,170 @@ fn get_changed_files_for_section(
 }
 
 #[tauri::command]
-pub fn git_changed_files(
+pub async fn git_changed_files(
     cwd: String,
     base_branch: Option<String>,
 ) -> Result<Vec<GitChangedFile>, AbundioError> {
-    let base = resolve_base_branch(&cwd, base_branch)?;
-    let merge_base_spec = format!("{}...HEAD", base);
+    tokio::task::spawn_blocking(move || {
+        let base = resolve_base_branch(&cwd, base_branch)?;
+        let merge_base_spec = format!("{}...HEAD", base);
 
-    let mut all_files = Vec::new();
+        let mut all_files = Vec::new();
 
-    // Against base branch
-    if let Ok(files) =
-        get_changed_files_for_section(&cwd, &["diff", &merge_base_spec], "against_base")
-    {
-        all_files.extend(files);
-    }
-
-    // Staged
-    if let Ok(files) = get_changed_files_for_section(&cwd, &["diff", "--cached"], "staged") {
-        all_files.extend(files);
-    }
-
-    // Unstaged
-    if let Ok(files) = get_changed_files_for_section(&cwd, &["diff"], "unstaged") {
-        all_files.extend(files);
-    }
-
-    // Untracked — from git status --short (lines starting with "?? ")
-    if let Ok(output) = run_git_allow_empty(&cwd, &["-c", "core.quotePath=false", "status", "--short"]) {
-        const MAX_UNTRACKED: usize = 500;
-        let mut count = 0;
-        for line in output.lines() {
-            if !line.starts_with("?? ") {
-                continue;
-            }
-            if count >= MAX_UNTRACKED {
-                break;
-            }
-            let path = line[3..].trim().to_string();
-            if path.is_empty() {
-                continue;
-            }
-            all_files.push(GitChangedFile {
-                path,
-                status: "?".to_string(),
-                additions: 0,
-                deletions: 0,
-                section: "untracked".to_string(),
-            });
-            count += 1;
+        // Against base branch
+        if let Ok(files) =
+            get_changed_files_for_section(&cwd, &["diff", &merge_base_spec], "against_base")
+        {
+            all_files.extend(files);
         }
-    }
 
-    Ok(all_files)
+        // Staged
+        if let Ok(files) = get_changed_files_for_section(&cwd, &["diff", "--cached"], "staged") {
+            all_files.extend(files);
+        }
+
+        // Unstaged
+        if let Ok(files) = get_changed_files_for_section(&cwd, &["diff"], "unstaged") {
+            all_files.extend(files);
+        }
+
+        // Untracked — from git status --short (lines starting with "?? ")
+        if let Ok(output) = run_git_allow_empty(&cwd, &["-c", "core.quotePath=false", "status", "--short"]) {
+            const MAX_UNTRACKED: usize = 500;
+            let mut count = 0;
+            for line in output.lines() {
+                if !line.starts_with("?? ") {
+                    continue;
+                }
+                if count >= MAX_UNTRACKED {
+                    break;
+                }
+                let path = line[3..].trim().to_string();
+                if path.is_empty() {
+                    continue;
+                }
+                all_files.push(GitChangedFile {
+                    path,
+                    status: "?".to_string(),
+                    additions: 0,
+                    deletions: 0,
+                    section: "untracked".to_string(),
+                });
+                count += 1;
+            }
+        }
+
+        Ok(all_files)
+    })
+    .await
+    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
 }
 
 #[tauri::command]
-pub fn git_file_diff(
+pub async fn git_file_diff(
     cwd: String,
     file_path: String,
     section: String,
     base_branch: Option<String>,
 ) -> Result<GitFileDiff, AbundioError> {
-    let base = resolve_base_branch(&cwd, base_branch.clone())?;
+    tokio::task::spawn_blocking(move || {
+        let base = resolve_base_branch(&cwd, base_branch.clone())?;
 
-    // Validate file_path: must be relative and contain no ".." components
-    let fp = Path::new(&file_path);
-    if fp.is_absolute() || fp.components().any(|c| c == std::path::Component::ParentDir) {
-        return Err(AbundioError::Git(format!(
-            "Invalid file path: {}",
-            file_path
-        )));
-    }
-
-    let (original, modified) = match section.as_str() {
-        "against_base" => {
-            let git_path = format!("{}:{}", base, file_path);
-            let original = run_git(&cwd, &["show", &git_path]).unwrap_or_default();
-            let full_path = Path::new(&cwd).join(&file_path);
-            let modified =
-                std::fs::read_to_string(&full_path).unwrap_or_default();
-            (original, modified)
-        }
-        "staged" => {
-            let head_path = format!("HEAD:{}", file_path);
-            let original = run_git(&cwd, &["show", &head_path]).unwrap_or_default();
-            let index_path = format!(":{}", file_path);
-            let modified = run_git(&cwd, &["show", &index_path]).unwrap_or_default();
-            (original, modified)
-        }
-        "unstaged" => {
-            let index_path = format!(":{}", file_path);
-            let original = run_git(&cwd, &["show", &index_path]).unwrap_or_default();
-            let full_path = Path::new(&cwd).join(&file_path);
-            let modified =
-                std::fs::read_to_string(&full_path).unwrap_or_default();
-            (original, modified)
-        }
-        "untracked" => {
-            let full_path = Path::new(&cwd).join(&file_path);
-            let modified = std::fs::read_to_string(&full_path).unwrap_or_default();
-            (String::new(), modified)
-        }
-        _ => {
+        // Validate file_path: must be relative and contain no ".." components
+        let fp = Path::new(&file_path);
+        if fp.is_absolute() || fp.components().any(|c| c == std::path::Component::ParentDir) {
             return Err(AbundioError::Git(format!(
-                "Unknown section: {}",
-                section
+                "Invalid file path: {}",
+                file_path
             )));
         }
-    };
 
-    Ok(GitFileDiff {
-        original,
-        modified,
-        file_path,
+        let (original, modified) = match section.as_str() {
+            "against_base" => {
+                let git_path = format!("{}:{}", base, file_path);
+                let original = run_git(&cwd, &["show", &git_path]).unwrap_or_default();
+                let full_path = Path::new(&cwd).join(&file_path);
+                let modified =
+                    std::fs::read_to_string(&full_path).unwrap_or_default();
+                (original, modified)
+            }
+            "staged" => {
+                let head_path = format!("HEAD:{}", file_path);
+                let original = run_git(&cwd, &["show", &head_path]).unwrap_or_default();
+                let index_path = format!(":{}", file_path);
+                let modified = run_git(&cwd, &["show", &index_path]).unwrap_or_default();
+                (original, modified)
+            }
+            "unstaged" => {
+                let index_path = format!(":{}", file_path);
+                let original = run_git(&cwd, &["show", &index_path]).unwrap_or_default();
+                let full_path = Path::new(&cwd).join(&file_path);
+                let modified =
+                    std::fs::read_to_string(&full_path).unwrap_or_default();
+                (original, modified)
+            }
+            "untracked" => {
+                let full_path = Path::new(&cwd).join(&file_path);
+                let modified = std::fs::read_to_string(&full_path).unwrap_or_default();
+                (String::new(), modified)
+            }
+            _ => {
+                return Err(AbundioError::Git(format!(
+                    "Unknown section: {}",
+                    section
+                )));
+            }
+        };
+
+        Ok(GitFileDiff {
+            original,
+            modified,
+            file_path,
+        })
     })
+    .await
+    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
 }
 
 #[tauri::command]
-pub fn git_branch_info(cwd: String) -> Result<BranchInfo, AbundioError> {
-    let current = run_git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?
-        .trim()
-        .to_string();
-    let default = detect_default_branch(&cwd)?;
+pub async fn git_branch_info(cwd: String) -> Result<BranchInfo, AbundioError> {
+    tokio::task::spawn_blocking(move || {
+        let current = run_git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string();
+        let default = detect_default_branch(&cwd)?;
 
-    Ok(BranchInfo {
-        default_branch: default,
-        current_branch: current,
+        Ok(BranchInfo {
+            default_branch: default,
+            current_branch: current,
+        })
     })
+    .await
+    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
 }
 
 #[tauri::command]
-pub fn git_list_branches(cwd: String) -> Result<Vec<String>, AbundioError> {
-    let output = run_git(&cwd, &["branch", "-a", "--format=%(refname:short)"])?;
-    let branches: Vec<String> = output
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
-    Ok(branches)
+pub async fn git_status_fingerprint(cwd: String) -> Result<String, AbundioError> {
+    tokio::task::spawn_blocking(move || {
+        run_git_allow_empty(&cwd, &["-c", "core.quotePath=false", "status", "--porcelain=v1"])
+    })
+    .await
+    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+}
+
+#[tauri::command]
+pub async fn git_list_branches(cwd: String) -> Result<Vec<String>, AbundioError> {
+    tokio::task::spawn_blocking(move || {
+        let output = run_git(&cwd, &["branch", "-a", "--format=%(refname:short)"])?;
+        let branches: Vec<String> = output
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        Ok(branches)
+    })
+    .await
+    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
 }
 
 #[cfg(test)]
@@ -397,15 +451,15 @@ mod tests {
         dir
     }
 
-    #[test]
-    fn git_changed_files_includes_untracked() {
+    #[tokio::test]
+    async fn git_changed_files_includes_untracked() {
         let dir = setup_temp_git_repo();
         let cwd = dir.path().to_str().unwrap();
 
         // Create an untracked file with 3 lines
         std::fs::write(dir.path().join("new_file.txt"), "a\nb\nc\n").unwrap();
 
-        let files = git_changed_files(cwd.to_string(), Some("main".to_string())).unwrap();
+        let files = git_changed_files(cwd.to_string(), Some("main".to_string())).await.unwrap();
         let untracked: Vec<_> = files.iter().filter(|f| f.section == "untracked").collect();
 
         assert_eq!(untracked.len(), 1);
@@ -415,8 +469,8 @@ mod tests {
         assert_eq!(untracked[0].deletions, 0);
     }
 
-    #[test]
-    fn git_file_diff_untracked_returns_empty_original() {
+    #[tokio::test]
+    async fn git_file_diff_untracked_returns_empty_original() {
         let dir = setup_temp_git_repo();
         let cwd = dir.path().to_str().unwrap();
 
@@ -428,6 +482,7 @@ mod tests {
             "untracked".to_string(),
             Some("main".to_string()),
         )
+        .await
         .unwrap();
 
         assert_eq!(diff.original, "");

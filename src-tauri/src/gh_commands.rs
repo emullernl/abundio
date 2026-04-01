@@ -116,6 +116,7 @@ fn run_gh(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 	let output = Command::new("gh")
 		.args(args)
 		.current_dir(cwd)
+		.env("PATH", crate::shell_env::shell_path())
 		.output()
 		.map_err(|e| AbundioError::Git(format!("Failed to run gh: {}", e)))?;
 
@@ -150,8 +151,10 @@ fn invalidate_gh_auth_cache() {
 }
 
 fn check_gh_auth() -> (bool, bool) {
+	let path = crate::shell_env::shell_path();
 	let available = Command::new("gh")
 		.arg("--version")
+		.env("PATH", path)
 		.output()
 		.map(|o| o.status.success())
 		.unwrap_or(false);
@@ -160,6 +163,7 @@ fn check_gh_auth() -> (bool, bool) {
 	}
 	let authenticated = Command::new("gh")
 		.args(["auth", "status"])
+		.env("PATH", path)
 		.output()
 		.map(|o| o.status.success())
 		.unwrap_or(false);
