@@ -38,7 +38,6 @@ const makePr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
 	statusCheckRollup: "SUCCESS",
 	isDraft: false,
 	labels: [],
-	comments: 0,
 	repository: "",
 	...overrides,
 });

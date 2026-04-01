@@ -1,7 +1,7 @@
 use crate::error::AbundioError;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 // ── Data types ──
 
@@ -30,7 +30,6 @@ pub struct PullRequest {
 	pub status_check_rollup: String,
 	pub is_draft: bool,
 	pub labels: Vec<String>,
-	pub comments: i32,
 	pub repository: String,
 }
 
@@ -62,8 +61,6 @@ struct GhPrListItem {
 	is_draft: bool,
 	#[serde(default)]
 	labels: Vec<GhLabel>,
-	#[serde(default)]
-	comments: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -134,26 +131,39 @@ fn run_gh(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 	Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Cached result of `gh --version` + `gh auth status` (doesn't change between sessions).
-static GH_AUTH_CACHE: OnceLock<(bool, bool)> = OnceLock::new();
+/// Cached result of `gh --version` + `gh auth status`.
+/// Uses RwLock so it can be refreshed when the user re-checks status
+/// (e.g. after running `gh auth login`).
+static GH_AUTH_CACHE: RwLock<Option<(bool, bool)>> = RwLock::new(None);
 
 fn gh_available_and_authenticated() -> (bool, bool) {
-	*GH_AUTH_CACHE.get_or_init(|| {
-		let available = Command::new("gh")
-			.arg("--version")
-			.output()
-			.map(|o| o.status.success())
-			.unwrap_or(false);
-		if !available {
-			return (false, false);
-		}
-		let authenticated = Command::new("gh")
-			.args(["auth", "status"])
-			.output()
-			.map(|o| o.status.success())
-			.unwrap_or(false);
-		(available, authenticated)
-	})
+	if let Some(cached) = *GH_AUTH_CACHE.read().unwrap() {
+		return cached;
+	}
+	let result = check_gh_auth();
+	*GH_AUTH_CACHE.write().unwrap() = Some(result);
+	result
+}
+
+fn invalidate_gh_auth_cache() {
+	*GH_AUTH_CACHE.write().unwrap() = None;
+}
+
+fn check_gh_auth() -> (bool, bool) {
+	let available = Command::new("gh")
+		.arg("--version")
+		.output()
+		.map(|o| o.status.success())
+		.unwrap_or(false);
+	if !available {
+		return (false, false);
+	}
+	let authenticated = Command::new("gh")
+		.args(["auth", "status"])
+		.output()
+		.map(|o| o.status.success())
+		.unwrap_or(false);
+	(available, authenticated)
 }
 
 /// Check if any git remote points to github.com (local operation, no network).
@@ -164,7 +174,10 @@ fn has_github_remote(cwd: &str) -> bool {
 		.output()
 		.map(|o| {
 			let stdout = String::from_utf8_lossy(&o.stdout);
-			stdout.contains("github.com")
+			stdout.lines().any(|l| {
+				let url = l.split_whitespace().nth(1).unwrap_or("");
+				url.contains("github.com/") || url.contains("github.com:")
+			})
 		})
 		.unwrap_or(false)
 }
@@ -210,7 +223,6 @@ pub fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>, AbundioError> {
 			status_check_rollup: rollup_status(&item.status_check_rollup),
 			is_draft: item.is_draft,
 			labels: item.labels.into_iter().map(|l| l.name).collect(),
-			comments: item.comments.len() as i32,
 			repository: String::new(),
 		})
 		.collect())
@@ -242,6 +254,7 @@ pub fn parse_search_prs(json: &str) -> Result<Vec<PullRequest>, AbundioError> {
 // waiting for `gh` subprocess I/O (especially network calls).
 
 fn gh_status_sync(cwd: &str) -> Result<GhStatus, AbundioError> {
+	invalidate_gh_auth_cache();
 	let (available, authenticated) = gh_available_and_authenticated();
 	if !available {
 		return Ok(GhStatus {
@@ -268,7 +281,8 @@ fn gh_status_sync(cwd: &str) -> Result<GhStatus, AbundioError> {
 	})
 }
 
-const PR_LIST_FIELDS: &str = "number,title,url,author,createdAt,updatedAt,headRefName,baseRefName,additions,deletions,reviewDecision,statusCheckRollup,isDraft,labels,comments";
+const PR_LIST_FIELDS: &str = "number,title,url,author,createdAt,updatedAt,headRefName,baseRefName,additions,deletions,reviewDecision,statusCheckRollup,isDraft,labels";
+const PR_LIST_LIMIT: &str = "100";
 
 #[tauri::command]
 pub async fn gh_status(cwd: String) -> Result<GhStatus, AbundioError> {
@@ -289,6 +303,8 @@ pub async fn gh_review_requests(cwd: String) -> Result<Vec<PullRequest>, Abundio
 				"review-requested:@me",
 				"--state",
 				"open",
+				"--limit",
+				PR_LIST_LIMIT,
 				"--json",
 				PR_LIST_FIELDS,
 			],
@@ -309,6 +325,7 @@ pub async fn gh_review_requests_all(cwd: String) -> Result<Vec<PullRequest>, Abu
 				"prs",
 				"--review-requested=@me",
 				"--state=open",
+				&format!("--limit={}", PR_LIST_LIMIT),
 				"--json",
 				"number,title,url,repository,author,createdAt,updatedAt,isDraft,labels",
 			],
@@ -331,6 +348,8 @@ pub async fn gh_my_prs(cwd: String) -> Result<Vec<PullRequest>, AbundioError> {
 				"@me",
 				"--state",
 				"open",
+				"--limit",
+				PR_LIST_LIMIT,
 				"--json",
 				PR_LIST_FIELDS,
 			],
@@ -351,6 +370,7 @@ pub async fn gh_my_prs_all(cwd: String) -> Result<Vec<PullRequest>, AbundioError
 				"prs",
 				"--author=@me",
 				"--state=open",
+				&format!("--limit={}", PR_LIST_LIMIT),
 				"--json",
 				"number,title,url,repository,author,createdAt,updatedAt,isDraft,labels",
 			],
@@ -382,8 +402,7 @@ mod tests {
 				"reviewDecision": "APPROVED",
 				"statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
 				"isDraft": false,
-				"labels": [{"name": "bug"}, {"name": "priority"}],
-				"comments": [{}, {}]
+				"labels": [{"name": "bug"}, {"name": "priority"}]
 			}
 		]"#;
 
@@ -399,7 +418,6 @@ mod tests {
 		assert_eq!(pr.status_check_rollup, "SUCCESS");
 		assert!(!pr.is_draft);
 		assert_eq!(pr.labels, vec!["bug", "priority"]);
-		assert_eq!(pr.comments, 2);
 		assert_eq!(pr.repository, "");
 	}
 
@@ -421,8 +439,7 @@ mod tests {
 				"updatedAt": "2026-03-28T10:00:00Z",
 				"isDraft": true,
 				"statusCheckRollup": [],
-				"labels": [],
-				"comments": []
+				"labels": []
 			}
 		]"#;
 
@@ -446,8 +463,7 @@ mod tests {
 					{"status": "COMPLETED", "conclusion": "SUCCESS"},
 					{"status": "COMPLETED", "conclusion": "FAILURE"}
 				],
-				"labels": [],
-				"comments": []
+				"labels": []
 			}
 		]"#;
 

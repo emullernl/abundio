@@ -213,7 +213,7 @@ pub fn git_changed_files(
     }
 
     // Untracked — from git status --short (lines starting with "?? ")
-    if let Ok(output) = run_git_allow_empty(&cwd, &["status", "--short"]) {
+    if let Ok(output) = run_git_allow_empty(&cwd, &["-c", "core.quotePath=false", "status", "--short"]) {
         const MAX_UNTRACKED: usize = 500;
         let mut count = 0;
         for line in output.lines() {
@@ -223,7 +223,7 @@ pub fn git_changed_files(
             if count >= MAX_UNTRACKED {
                 break;
             }
-            let path = line[3..].trim().trim_matches('"').to_string();
+            let path = line[3..].trim().to_string();
             if path.is_empty() {
                 continue;
             }

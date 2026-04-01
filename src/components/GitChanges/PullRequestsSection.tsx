@@ -60,9 +60,9 @@ export function PullRequestsSection() {
 		return () => document.removeEventListener("mousedown", handleClickOutside);
 	}, [dropdownOpen]);
 
-	const handleRefresh = useCallback(() => {
+	const handleRefresh = useCallback(async () => {
 		if (cwd) {
-			checkGhStatus(cwd);
+			await checkGhStatus(cwd);
 			fetchPrs(cwd);
 		}
 	}, [cwd, checkGhStatus, fetchPrs]);

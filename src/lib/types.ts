@@ -135,6 +135,5 @@ export interface PullRequest {
 	statusCheckRollup: string;
 	isDraft: boolean;
 	labels: string[];
-	comments: number;
 	repository: string;
 }

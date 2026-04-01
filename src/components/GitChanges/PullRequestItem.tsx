@@ -9,10 +9,13 @@ interface Props {
 export function PullRequestItem({ pr }: Props) {
 	return (
 		<div
+			role="group"
+			tabIndex={0}
 			className="w-full text-left transition-colors group"
 			style={{
 				padding: "6px 12px",
 				backgroundColor: "transparent",
+				outline: "none",
 			}}
 			onMouseEnter={(e) => {
 				e.currentTarget.style.backgroundColor = "color-mix(in srgb, var(--bg-tertiary) 60%, transparent)";

@@ -5,8 +5,6 @@ import type { GhStatus, PullRequest } from "../lib/types";
 
 export type PrView = "review-repo" | "review-all" | "mine-repo" | "mine-all";
 
-let fetchGeneration = 0;
-
 interface PrState {
 	ghStatus: GhStatus | null;
 	activeView: PrView;
@@ -29,7 +27,9 @@ export const PR_VIEW_LABELS: Record<PrView, string> = {
 
 export const usePrStore = create<PrState>()(
 	persist(
-		(set, get) => ({
+		(set, get) => {
+			let fetchGeneration = 0;
+			return {
 			ghStatus: null,
 			activeView: "review-all",
 			prs: [],
@@ -90,7 +90,8 @@ export const usePrStore = create<PrState>()(
 					loading: false,
 					error: null,
 				}),
-		}),
+		};
+		},
 		{
 			name: "abundio-pr-panel",
 			partialize: (state) => ({ activeView: state.activeView }),
