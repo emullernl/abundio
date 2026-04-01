@@ -178,3 +178,41 @@ export function PanelRight({ size, ...props }: IconProps) {
 		</svg>
 	);
 }
+
+export function GitPullRequest({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<circle cx="18" cy="18" r="3" />
+			<circle cx="6" cy="6" r="3" />
+			<path d="M6 9v12" />
+			<path d="M18 9a9 9 0 00-9 9" />
+		</svg>
+	);
+}
+
+export function Check({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<path d="M20 6L9 17l-5-5" />
+		</svg>
+	);
+}
+
+export function XCircle({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<circle cx="12" cy="12" r="10" />
+			<path d="M15 9l-6 6M9 9l6 6" />
+		</svg>
+	);
+}
+
+export function ExternalLink({ size, ...props }: IconProps) {
+	return (
+		<svg {...defaults(size)} {...props}>
+			<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+			<path d="M15 3h6v6" />
+			<path d="M10 14L21 3" />
+		</svg>
+	);
+}

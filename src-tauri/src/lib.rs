@@ -4,6 +4,7 @@ pub mod error;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
+pub mod gh_commands;
 pub mod git_commands;
 pub mod migrations;
 pub mod pty_manager;
@@ -66,6 +67,11 @@ pub fn run() {
             git_commands::git_file_diff,
             git_commands::git_branch_info,
             git_commands::git_list_branches,
+            gh_commands::gh_status,
+            gh_commands::gh_review_requests,
+            gh_commands::gh_review_requests_all,
+            gh_commands::gh_my_prs,
+            gh_commands::gh_my_prs_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

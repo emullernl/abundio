@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { GitChangesFileList } from "./GitChangesFileList";
 import { GitChangesResizer } from "./GitChangesResizer";
+import { GitPanelDivider } from "./GitPanelDivider";
+import { PullRequestsSection } from "./PullRequestsSection";
 import { BranchSelector } from "./BranchSelector";
 import { GitCompare, RefreshCw, PanelRight } from "../Icons";
 import { git, fs } from "../../lib/ipc";
@@ -26,8 +28,13 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 	const clear = useGitChangesStore((s) => s.clear);
 
 	const gitPanelWidth = useSettingsStore((s) => s.gitPanelWidth);
+	const gitPanelSplitRatio = useSettingsStore((s) => s.gitPanelSplitRatio);
+	const setGitPanelSplitRatio = useSettingsStore((s) => s.setGitPanelSplitRatio);
 
 	const [selectedFile, setSelectedFile] = useState<GitChangedFile | null>(null);
+	const [localRatio, setLocalRatio] = useState<number | null>(null);
+
+	const ratio = localRatio ?? gitPanelSplitRatio;
 
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const sessions = useSessionStore((s) => s.sessions);
@@ -95,6 +102,17 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 		if (cwd) fetchChanges(cwd, sessionBaseBranch);
 	}
 
+	const handleDividerResize = useCallback((r: number) => {
+		setLocalRatio(r);
+	}, []);
+
+	const handleDividerResizeEnd = useCallback(() => {
+		if (localRatio !== null) {
+			setGitPanelSplitRatio(localRatio);
+			setLocalRatio(null);
+		}
+	}, [localRatio, setGitPanelSplitRatio]);
+
 	// Collapsed state — show a thin strip
 	if (!panelOpen) {
 		return (
@@ -143,130 +161,147 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 					paddingTop: titlebarHeight,
 				}}
 			>
-				{/* Header */}
+				{/* ── Top section: Git Changes ── */}
 				<div
-					className="flex items-center gap-2 py-2 flex-shrink-0"
-					style={{ borderBottom: "1px solid var(--border)", paddingLeft: 12, paddingRight: 12 }}
+					className="flex flex-col min-h-0"
+					style={{ flex: `${ratio} 1 0%` }}
 				>
-					<GitCompare size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
-					<span
-						className="font-medium truncate"
-						style={{ fontSize: 12, color: "var(--fg-primary)" }}
-					>
-						Changes
-					</span>
-
-					{cwd && activeSessionId && (
-						<BranchSelector cwd={cwd} sessionId={activeSessionId} />
-					)}
-
-					<div className="flex-1" />
-
-					{/* Stats */}
-					{changedFiles.length > 0 && (
-						<span className="flex items-center gap-1 flex-shrink-0" style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}>
-							<span style={{ color: "var(--fg-secondary)" }}>{changedFiles.length}F</span>
-							{totalAdditions > 0 && <span style={{ color: "var(--success)" }}>+{totalAdditions}</span>}
-							{totalDeletions > 0 && <span style={{ color: "var(--error)" }}>-{totalDeletions}</span>}
-						</span>
-					)}
-
-					<button
-						type="button"
-						onClick={handleRefresh}
-						className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
-						style={{ color: "var(--fg-secondary)" }}
-						onMouseEnter={(e) => {
-							e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
-							e.currentTarget.style.color = "var(--fg-primary)";
-						}}
-						onMouseLeave={(e) => {
-							e.currentTarget.style.backgroundColor = "transparent";
-							e.currentTarget.style.color = "var(--fg-secondary)";
-						}}
-						title="Refresh"
-					>
-						<RefreshCw size={12} />
-					</button>
-					<button
-						type="button"
-						onClick={togglePanel}
-						className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
-						style={{ color: "var(--fg-secondary)" }}
-						onMouseEnter={(e) => {
-							e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
-							e.currentTarget.style.color = "var(--fg-primary)";
-						}}
-						onMouseLeave={(e) => {
-							e.currentTarget.style.backgroundColor = "transparent";
-							e.currentTarget.style.color = "var(--fg-secondary)";
-						}}
-						title="Close panel"
-					>
-						<PanelRight size={12} />
-					</button>
-				</div>
-
-				{/* Current branch indicator */}
-				{currentBranch && (
+					{/* Header */}
 					<div
-						className="flex items-center gap-1.5 py-1.5 flex-shrink-0"
-						style={{
-							borderBottom: "1px solid var(--border)",
-							backgroundColor: "color-mix(in srgb, var(--bg-tertiary) 30%, transparent)",
-							paddingLeft: 12,
-							paddingRight: 12,
-						}}
+						className="flex items-center gap-2 py-2 flex-shrink-0"
+						style={{ borderBottom: "1px solid var(--border)", paddingLeft: 12, paddingRight: 12 }}
 					>
-						<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>On</span>
+						<GitCompare size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
 						<span
+							className="font-medium truncate"
+							style={{ fontSize: 12, color: "var(--fg-primary)" }}
+						>
+							Changes
+						</span>
+
+						{cwd && activeSessionId && (
+							<BranchSelector cwd={cwd} sessionId={activeSessionId} />
+						)}
+
+						<div className="flex-1" />
+
+						{/* Stats */}
+						{changedFiles.length > 0 && (
+							<span className="flex items-center gap-1 flex-shrink-0" style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}>
+								<span style={{ color: "var(--fg-secondary)" }}>{changedFiles.length}F</span>
+								{totalAdditions > 0 && <span style={{ color: "var(--success)" }}>+{totalAdditions}</span>}
+								{totalDeletions > 0 && <span style={{ color: "var(--error)" }}>-{totalDeletions}</span>}
+							</span>
+						)}
+
+						<button
+							type="button"
+							onClick={handleRefresh}
+							className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
+							style={{ color: "var(--fg-secondary)" }}
+							onMouseEnter={(e) => {
+								e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+								e.currentTarget.style.color = "var(--fg-primary)";
+							}}
+							onMouseLeave={(e) => {
+								e.currentTarget.style.backgroundColor = "transparent";
+								e.currentTarget.style.color = "var(--fg-secondary)";
+							}}
+							title="Refresh"
+						>
+							<RefreshCw size={12} />
+						</button>
+						<button
+							type="button"
+							onClick={togglePanel}
+							className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
+							style={{ color: "var(--fg-secondary)" }}
+							onMouseEnter={(e) => {
+								e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+								e.currentTarget.style.color = "var(--fg-primary)";
+							}}
+							onMouseLeave={(e) => {
+								e.currentTarget.style.backgroundColor = "transparent";
+								e.currentTarget.style.color = "var(--fg-secondary)";
+							}}
+							title="Close panel"
+						>
+							<PanelRight size={12} />
+						</button>
+					</div>
+
+					{/* Current branch indicator */}
+					{currentBranch && (
+						<div
+							className="flex items-center gap-1.5 py-1.5 flex-shrink-0"
 							style={{
-								fontSize: 11,
-								color: "var(--fg-primary)",
-								fontFamily: "var(--font-mono)",
-								fontWeight: 500,
+								borderBottom: "1px solid var(--border)",
+								backgroundColor: "color-mix(in srgb, var(--bg-tertiary) 30%, transparent)",
+								paddingLeft: 12,
+								paddingRight: 12,
 							}}
 						>
-							{currentBranch}
-						</span>
-					</div>
-				)}
-
-				{/* Content */}
-				<div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-					{loading && changedFiles.length === 0 ? (
-						<div
-							className="flex items-center justify-center h-32"
-							style={{ color: "var(--fg-secondary)", fontSize: 13 }}
-						>
-							<span className="animate-pulse">Loading changes...</span>
-						</div>
-					) : error && changedFiles.length === 0 ? (
-						<div
-							className="flex items-center justify-center h-32 px-4 text-center"
-							style={{ color: "var(--fg-secondary)", fontSize: 12 }}
-						>
-							{error.includes("Not a git repository") || error.includes("not a git repository")
-								? "Not a git repository"
-								: error}
-						</div>
-					) : !cwd ? (
-						<div
-							className="flex items-center justify-center h-32"
-							style={{ color: "var(--fg-secondary)", fontSize: 13 }}
-						>
-							No session selected
-						</div>
-					) : (
-						<div className="flex-1 overflow-y-auto">
-							<GitChangesFileList
-								files={changedFiles}
-								baseBranch={baseBranch}
-								onSelectFile={handleSelectFile}
-								selectedFile={selectedFile}
-							/>
+							<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>On</span>
+							<span
+								style={{
+									fontSize: 11,
+									color: "var(--fg-primary)",
+									fontFamily: "var(--font-mono)",
+									fontWeight: 500,
+								}}
+							>
+								{currentBranch}
+							</span>
 						</div>
 					)}
+
+					{/* Content */}
+					<div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+						{loading && changedFiles.length === 0 ? (
+							<div
+								className="flex items-center justify-center h-32"
+								style={{ color: "var(--fg-secondary)", fontSize: 13 }}
+							>
+								<span className="animate-pulse">Loading changes...</span>
+							</div>
+						) : error && changedFiles.length === 0 ? (
+							<div
+								className="flex items-center justify-center h-32 px-4 text-center"
+								style={{ color: "var(--fg-secondary)", fontSize: 12 }}
+							>
+								{error.includes("Not a git repository") || error.includes("not a git repository")
+									? "Not a git repository"
+									: error}
+							</div>
+						) : !cwd ? (
+							<div
+								className="flex items-center justify-center h-32"
+								style={{ color: "var(--fg-secondary)", fontSize: 13 }}
+							>
+								No session selected
+							</div>
+						) : (
+							<div className="flex-1 overflow-y-auto">
+								<GitChangesFileList
+									files={changedFiles}
+									baseBranch={baseBranch}
+									onSelectFile={handleSelectFile}
+									selectedFile={selectedFile}
+								/>
+							</div>
+						)}
+					</div>
+				</div>
+
+				{/* ── Divider ── */}
+				<GitPanelDivider onResize={handleDividerResize} onResizeEnd={handleDividerResizeEnd} />
+
+				{/* ── Bottom section: Pull Requests ── */}
+				<div
+					className="min-h-0"
+					style={{ flex: `${1 - ratio} 1 0%` }}
+				>
+					<PullRequestsSection />
 				</div>
 			</div>
 		</>
