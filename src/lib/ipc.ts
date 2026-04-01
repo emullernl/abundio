@@ -83,6 +83,8 @@ export const git = {
 	branchInfo: (cwd: string) => invoke<BranchInfo>("git_branch_info", { cwd }),
 
 	listBranches: (cwd: string) => invoke<string[]>("git_list_branches", { cwd }),
+
+	statusFingerprint: (cwd: string) => invoke<string>("git_status_fingerprint", { cwd }),
 };
 
 export const gh = {

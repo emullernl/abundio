@@ -5,6 +5,22 @@ import { useSessionStore } from "./sessionStore";
 import type { GitChangedFile } from "../lib/types";
 
 let fetchGeneration = 0;
+let lastFingerprint: string | null = null;
+
+function filesEqual(a: GitChangedFile[], b: GitChangedFile[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (
+			a[i].path !== b[i].path ||
+			a[i].status !== b[i].status ||
+			a[i].additions !== b[i].additions ||
+			a[i].deletions !== b[i].deletions ||
+			a[i].section !== b[i].section
+		)
+			return false;
+	}
+	return true;
+}
 
 interface GitChangesState {
 	panelOpen: boolean;
@@ -20,6 +36,7 @@ interface GitChangesState {
 	togglePanel: () => void;
 	setPanel: (open: boolean) => void;
 	fetchChanges: (cwd: string, sessionBaseBranch?: string | null) => Promise<void>;
+	refreshChanges: (cwd: string, sessionBaseBranch?: string | null) => Promise<void>;
 	toggleSection: (section: string) => void;
 	setBaseBranch: (sessionId: string, branch: string | null, cwd: string) => Promise<void>;
 	toggleBranchSelector: () => void;
@@ -46,19 +63,33 @@ export const useGitChangesStore = create<GitChangesState>()(
 
 			fetchChanges: async (cwd, sessionBaseBranch) => {
 				const gen = ++fetchGeneration;
-				set({ loading: true, error: null });
+				// Only show loading spinner on first fetch — avoid flicker on refreshes
+				if (get().changedFiles.length === 0 && !get().currentBranch) {
+					set({ loading: true, error: null });
+				} else {
+					set({ error: null });
+				}
 				try {
-					const [files, branchInfo] = await Promise.all([
+					const [files, branchInfo, fingerprint] = await Promise.all([
 						git.changedFiles(cwd, sessionBaseBranch),
 						git.branchInfo(cwd),
+						git.statusFingerprint(cwd),
 					]);
 					if (gen !== fetchGeneration) return; // stale response
-					set({
-						changedFiles: files,
-						baseBranch: sessionBaseBranch || branchInfo.defaultBranch,
-						currentBranch: branchInfo.currentBranch,
-						loading: false,
-					});
+					lastFingerprint = fingerprint;
+					const state = get();
+					const newBaseBranch = sessionBaseBranch || branchInfo.defaultBranch;
+					const updates: Partial<GitChangesState> = { loading: false };
+					if (!filesEqual(state.changedFiles, files)) {
+						updates.changedFiles = files;
+					}
+					if (state.baseBranch !== newBaseBranch) {
+						updates.baseBranch = newBaseBranch;
+					}
+					if (state.currentBranch !== branchInfo.currentBranch) {
+						updates.currentBranch = branchInfo.currentBranch;
+					}
+					set(updates);
 				} catch (e) {
 					if (gen !== fetchGeneration) return; // stale response
 					set({
@@ -66,6 +97,23 @@ export const useGitChangesStore = create<GitChangesState>()(
 						error: e instanceof Error ? e.message : String(e),
 						changedFiles: [],
 					});
+				}
+			},
+
+			refreshChanges: async (cwd, sessionBaseBranch) => {
+				try {
+					const fingerprint = await git.statusFingerprint(cwd);
+					if (fingerprint === lastFingerprint) return;
+					lastFingerprint = fingerprint;
+					const gen = ++fetchGeneration;
+					const files = await git.changedFiles(cwd, sessionBaseBranch);
+					if (gen !== fetchGeneration) return;
+					const state = get();
+					if (!filesEqual(state.changedFiles, files)) {
+						set({ changedFiles: files });
+					}
+				} catch {
+					// Fingerprint/refresh failures are non-critical
 				}
 			},
 
@@ -95,7 +143,8 @@ export const useGitChangesStore = create<GitChangesState>()(
 				}
 			},
 
-			clear: () =>
+			clear: () => {
+				lastFingerprint = null;
 				set({
 					changedFiles: [],
 					baseBranch: null,
@@ -104,7 +153,8 @@ export const useGitChangesStore = create<GitChangesState>()(
 					loading: false,
 					error: null,
 					branchSelectorOpen: false,
-				}),
+				});
+			},
 		}),
 		{
 			name: "abundio-git-panel",

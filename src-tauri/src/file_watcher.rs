@@ -30,6 +30,20 @@ fn is_git_internal(path: &Path) -> bool {
     })
 }
 
+/// Whether a `.git` path represents a meaningful ref change (branch switch,
+/// commit, merge, rebase) rather than an index/lock refresh. Read-only git
+/// commands with `--no-optional-locks` still touch the index occasionally;
+/// we don't want those to trigger full git-change events.
+fn is_meaningful_git_change(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    // HEAD, refs/*, MERGE_HEAD, REBASE_HEAD, COMMIT_EDITMSG, etc.
+    s.contains(".git/HEAD")
+        || s.contains(".git/refs/")
+        || s.contains(".git/MERGE_HEAD")
+        || s.contains(".git/REBASE_HEAD")
+        || s.contains(".git/COMMIT_EDITMSG")
+}
+
 struct WatcherEntry {
     _watcher: RecommendedWatcher,
     stop_tx: Sender<()>,
@@ -166,7 +180,9 @@ fn collect_parents(event: &Event, pending: &mut HashSet<String>, git_changed: &m
             continue;
         }
         if is_git_internal(path) {
-            *git_changed = true;
+            if is_meaningful_git_change(path) {
+                *git_changed = true;
+            }
             continue;
         }
         // Add the parent directory (the directory whose listing changed)

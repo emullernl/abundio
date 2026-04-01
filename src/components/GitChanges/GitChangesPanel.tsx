@@ -25,6 +25,7 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 	const loading = useGitChangesStore((s) => s.loading);
 	const error = useGitChangesStore((s) => s.error);
 	const fetchChanges = useGitChangesStore((s) => s.fetchChanges);
+	const refreshChanges = useGitChangesStore((s) => s.refreshChanges);
 	const clear = useGitChangesStore((s) => s.clear);
 
 	const gitPanelWidth = useSettingsStore((s) => s.gitPanelWidth);
@@ -51,24 +52,52 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 		fetchChanges(cwd, sessionBaseBranch);
 	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges, clear]);
 
-	// Re-fetch on file system or git changes
+	// Re-fetch on file system or git changes (throttled)
+	// FS events use lightweight fingerprint check; git events do a full refresh
 	useEffect(() => {
 		if (!panelOpen || !cwd) return;
 		let unlistenFs: (() => void) | null = null;
 		let unlistenGit: (() => void) | null = null;
 		let cancelled = false;
-		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+		let fsTrailingTimer: ReturnType<typeof setTimeout> | null = null;
+		let gitTrailingTimer: ReturnType<typeof setTimeout> | null = null;
+		let lastFsAt = 0;
+		let lastGitAt = 0;
+		const MIN_INTERVAL = 500;
 
-		const debouncedFetch = () => {
-			if (debounceTimer) clearTimeout(debounceTimer);
-			debounceTimer = setTimeout(() => {
+		const throttledFsRefresh = () => {
+			const now = Date.now();
+			const elapsed = now - lastFsAt;
+			if (elapsed >= MIN_INTERVAL) {
+				lastFsAt = now;
+				refreshChanges(cwd, sessionBaseBranch);
+			} else if (!fsTrailingTimer) {
+				fsTrailingTimer = setTimeout(() => {
+					fsTrailingTimer = null;
+					lastFsAt = Date.now();
+					refreshChanges(cwd, sessionBaseBranch);
+				}, MIN_INTERVAL - elapsed);
+			}
+		};
+
+		const throttledGitFetch = () => {
+			const now = Date.now();
+			const elapsed = now - lastGitAt;
+			if (elapsed >= MIN_INTERVAL) {
+				lastGitAt = now;
 				fetchChanges(cwd, sessionBaseBranch);
-			}, 1000);
+			} else if (!gitTrailingTimer) {
+				gitTrailingTimer = setTimeout(() => {
+					gitTrailingTimer = null;
+					lastGitAt = Date.now();
+					fetchChanges(cwd, sessionBaseBranch);
+				}, MIN_INTERVAL - elapsed);
+			}
 		};
 
 		Promise.all([
-			fs.onFsChange(cwd, debouncedFetch),
-			fs.onGitChange(cwd, debouncedFetch),
+			fs.onFsChange(cwd, throttledFsRefresh),
+			fs.onGitChange(cwd, throttledGitFetch),
 		]).then(([unlistenFsResult, unlistenGitResult]) => {
 			if (cancelled) {
 				unlistenFsResult();
@@ -83,9 +112,10 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			cancelled = true;
 			unlistenFs?.();
 			unlistenGit?.();
-			if (debounceTimer) clearTimeout(debounceTimer);
+			if (fsTrailingTimer) clearTimeout(fsTrailingTimer);
+			if (gitTrailingTimer) clearTimeout(gitTrailingTimer);
 		};
-	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges]);
+	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges, refreshChanges]);
 
 	async function handleSelectFile(file: GitChangedFile) {
 		if (!cwd || !activeSessionId) return;

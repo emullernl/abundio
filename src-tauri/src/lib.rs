@@ -67,6 +67,7 @@ pub fn run() {
             git_commands::git_file_diff,
             git_commands::git_branch_info,
             git_commands::git_list_branches,
+            git_commands::git_status_fingerprint,
             gh_commands::gh_status,
             gh_commands::gh_review_requests,
             gh_commands::gh_review_requests_all,

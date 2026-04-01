@@ -1,18 +1,31 @@
 import { useState } from "react";
-import { usePtyActivityStore, computePtyDotStatus, DOT_COLORS, DOT_GLOWS, shouldPulse } from "../../stores/ptyActivityStore";
+import { usePtyActivityStore, DOT_COLORS, DOT_GLOWS, shouldPulse } from "../../stores/ptyActivityStore";
+import type { DotStatus } from "../../stores/ptyActivityStore";
 import { getTerminal } from "../../lib/terminalManager";
 
 interface Props {
 	paneId: string;
 }
 
+function usePtyDotStatus(paneId: string): DotStatus {
+	const panePtyId = usePtyActivityStore((s) => s.panePtyMap[paneId] ?? "");
+	const ptyId = getTerminal(paneId)?.ptyId || panePtyId;
+	return usePtyActivityStore((s) => {
+		const entry = s.activities[ptyId];
+		if (!entry) return "green";
+		switch (entry.state) {
+			case "active": return "amber";
+			case "waiting": return "purple";
+			case "error": return "red";
+			default: return "green";
+		}
+	});
+}
+
 export function TerminalTitleBar({ paneId }: Props) {
 	const [hovered, setHovered] = useState(false);
 	const title = usePtyActivityStore((s) => s.titles[paneId] ?? "");
-	const panePtyId = usePtyActivityStore((s) => s.panePtyMap[paneId] ?? "");
-	const ptyId = getTerminal(paneId)?.ptyId || panePtyId;
-	const activities = usePtyActivityStore((s) => s.activities);
-	const dotStatus = computePtyDotStatus(ptyId, activities);
+	const dotStatus = usePtyDotStatus(paneId);
 
 	return (
 		<div
