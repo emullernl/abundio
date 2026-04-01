@@ -212,27 +212,29 @@ pub fn git_changed_files(
         all_files.extend(files);
     }
 
-    // Untracked (--directory collapses untracked dirs to a single entry)
-    if let Ok(output) = run_git_allow_empty(&cwd, &["ls-files", "--others", "--exclude-standard", "--directory"]) {
+    // Untracked — from git status --short (lines starting with "?? ")
+    if let Ok(output) = run_git_allow_empty(&cwd, &["status", "--short"]) {
+        const MAX_UNTRACKED: usize = 500;
+        let mut count = 0;
         for line in output.lines() {
-            let path = line.trim().to_string();
+            if !line.starts_with("?? ") {
+                continue;
+            }
+            if count >= MAX_UNTRACKED {
+                break;
+            }
+            let path = line[3..].trim().trim_matches('"').to_string();
             if path.is_empty() {
                 continue;
             }
-            let full_path = Path::new(&cwd).join(&path);
-            let additions = std::fs::File::open(&full_path)
-                .map(|f| {
-                    use std::io::{BufRead, BufReader};
-                    BufReader::new(f).lines().count() as i32
-                })
-                .unwrap_or(0);
             all_files.push(GitChangedFile {
                 path,
                 status: "?".to_string(),
-                additions,
+                additions: 0,
                 deletions: 0,
                 section: "untracked".to_string(),
             });
+            count += 1;
         }
     }
 
@@ -409,7 +411,7 @@ mod tests {
         assert_eq!(untracked.len(), 1);
         assert_eq!(untracked[0].path, "new_file.txt");
         assert_eq!(untracked[0].status, "?");
-        assert_eq!(untracked[0].additions, 3);
+        assert_eq!(untracked[0].additions, 0);
         assert_eq!(untracked[0].deletions, 0);
     }
 
