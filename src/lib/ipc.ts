@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { BranchInfo, DirEntry, FileContent, GitChangedFile, GitFileDiff, PtyStatusType, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
+import type { BranchInfo, DirEntry, FileContent, GhStatus, GitChangedFile, GitFileDiff, PtyStatusType, PullRequest, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
 
 export const pty = {
 	spawn: (cwd: string, cols: number, rows: number, command?: string, logId?: string) =>
@@ -83,6 +83,21 @@ export const git = {
 	branchInfo: (cwd: string) => invoke<BranchInfo>("git_branch_info", { cwd }),
 
 	listBranches: (cwd: string) => invoke<string[]>("git_list_branches", { cwd }),
+};
+
+export const gh = {
+	status: (cwd: string) => invoke<GhStatus>("gh_status", { cwd }),
+
+	reviewRequests: (cwd: string) =>
+		invoke<PullRequest[]>("gh_review_requests", { cwd }),
+
+	reviewRequestsAll: (cwd: string) =>
+		invoke<PullRequest[]>("gh_review_requests_all", { cwd }),
+
+	myPrs: (cwd: string) => invoke<PullRequest[]>("gh_my_prs", { cwd }),
+
+	myPrsAll: (cwd: string) =>
+		invoke<PullRequest[]>("gh_my_prs_all", { cwd }),
 };
 
 export const fs = {

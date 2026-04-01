@@ -111,3 +111,29 @@ export interface BranchInfo {
 	defaultBranch: string;
 	currentBranch: string;
 }
+
+// ── GitHub CLI ──
+
+export interface GhStatus {
+	available: boolean;
+	authenticated: boolean;
+	hasRemote: boolean;
+}
+
+export interface PullRequest {
+	number: number;
+	title: string;
+	url: string;
+	author: string;
+	createdAt: string;
+	updatedAt: string;
+	headRef: string;
+	baseRef: string;
+	additions: number;
+	deletions: number;
+	reviewDecision: string;
+	statusCheckRollup: string;
+	isDraft: boolean;
+	labels: string[];
+	repository: string;
+}

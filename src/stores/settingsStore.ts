@@ -10,6 +10,7 @@ interface SettingsState {
 	sidebarCollapsed: boolean;
 	sidebarSplitRatio: number;
 	gitPanelWidth: number;
+	gitPanelSplitRatio: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 
@@ -19,6 +20,7 @@ interface SettingsState {
 	toggleSidebar: () => void;
 	setSidebarSplitRatio: (ratio: number) => void;
 	setGitPanelWidth: (width: number) => void;
+	setGitPanelSplitRatio: (ratio: number) => void;
 	toggleDebugActivityMeter: () => void;
 	setActivityByteThreshold: (n: number) => void;
 }
@@ -32,6 +34,7 @@ export const useSettingsStore = create<SettingsState>()(
 			sidebarCollapsed: false,
 			sidebarSplitRatio: 0.4,
 			gitPanelWidth: 360,
+			gitPanelSplitRatio: 0.5,
 			debugActivityMeter: false,
 			activityByteThreshold: 512,
 
@@ -46,6 +49,7 @@ export const useSettingsStore = create<SettingsState>()(
 			toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 			setSidebarSplitRatio: (sidebarSplitRatio) => set({ sidebarSplitRatio }),
 			setGitPanelWidth: (gitPanelWidth) => set({ gitPanelWidth }),
+			setGitPanelSplitRatio: (gitPanelSplitRatio) => set({ gitPanelSplitRatio }),
 			toggleDebugActivityMeter: () => set((state) => ({ debugActivityMeter: !state.debugActivityMeter })),
 			setActivityByteThreshold: (n) => {
 				setTerminalActivityByteThreshold(n);
@@ -54,7 +58,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			partialize: (state) => ({ fontSize: state.fontSize, theme: state.theme, sidebarSplitRatio: state.sidebarSplitRatio, gitPanelWidth: state.gitPanelWidth, debugActivityMeter: state.debugActivityMeter, activityByteThreshold: state.activityByteThreshold }),
+			partialize: (state) => ({ fontSize: state.fontSize, theme: state.theme, sidebarSplitRatio: state.sidebarSplitRatio, gitPanelWidth: state.gitPanelWidth, gitPanelSplitRatio: state.gitPanelSplitRatio, debugActivityMeter: state.debugActivityMeter, activityByteThreshold: state.activityByteThreshold }),
 			onRehydrateStorage: () => (state) => {
 				if (state?.activityByteThreshold != null) {
 					setTerminalActivityByteThreshold(state.activityByteThreshold);
