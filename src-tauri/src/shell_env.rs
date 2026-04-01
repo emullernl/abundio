@@ -25,7 +25,7 @@ pub fn shell_path() -> &'static str {
 
         let shell = default_shell();
         if let Ok(output) = Command::new(&shell)
-            .args(["-l", "-c", "echo $PATH"])
+            .args(["-l", "-c", "printenv PATH 2>/dev/null"])
             .output()
         {
             if output.status.success() {

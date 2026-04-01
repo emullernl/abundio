@@ -36,11 +36,12 @@ fn is_git_internal(path: &Path) -> bool {
 /// we don't want those to trigger full git-change events.
 fn is_meaningful_git_change(path: &Path) -> bool {
     let s = path.to_string_lossy();
-    // HEAD, refs/*, MERGE_HEAD, REBASE_HEAD, COMMIT_EDITMSG, etc.
     s.contains(".git/HEAD")
         || s.contains(".git/refs/")
+        || s.contains(".git/packed-refs")
         || s.contains(".git/MERGE_HEAD")
         || s.contains(".git/REBASE_HEAD")
+        || s.contains(".git/CHERRY_PICK_HEAD")
         || s.contains(".git/COMMIT_EDITMSG")
 }
 

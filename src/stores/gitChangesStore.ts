@@ -7,6 +7,9 @@ import type { GitChangedFile } from "../lib/types";
 let fetchGeneration = 0;
 let lastFingerprint: string | null = null;
 
+// Order-sensitive comparison — relies on the backend returning files in a
+// stable order (against_base → staged → unstaged → untracked). This is
+// guaranteed by the sequential section fetches in git_changed_files().
 function filesEqual(a: GitChangedFile[], b: GitChangedFile[]): boolean {
 	if (a.length !== b.length) return false;
 	for (let i = 0; i < a.length; i++) {
@@ -104,10 +107,10 @@ export const useGitChangesStore = create<GitChangesState>()(
 				try {
 					const fingerprint = await git.statusFingerprint(cwd);
 					if (fingerprint === lastFingerprint) return;
-					lastFingerprint = fingerprint;
 					const gen = ++fetchGeneration;
 					const files = await git.changedFiles(cwd, sessionBaseBranch);
 					if (gen !== fetchGeneration) return;
+					lastFingerprint = fingerprint; // only commit once fetch succeeded
 					const state = get();
 					if (!filesEqual(state.changedFiles, files)) {
 						set({ changedFiles: files });

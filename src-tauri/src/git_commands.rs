@@ -6,7 +6,9 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// Per-repo cache of the detected default branch name.
-/// Keyed by the repo working directory path.
+/// Keyed by the canonicalized repo working directory path.
+/// Note: this cache lives for the process lifetime. If the remote default
+/// branch is renamed, the app must be restarted to pick up the change.
 fn default_branch_cache() -> &'static DashMap<String, String> {
     static CACHE: OnceLock<DashMap<String, String>> = OnceLock::new();
     CACHE.get_or_init(DashMap::new)
@@ -81,8 +83,12 @@ fn run_git_allow_empty(cwd: &str, args: &[&str]) -> Result<String, AbundioError>
 }
 
 fn detect_default_branch(cwd: &str) -> Result<String, AbundioError> {
+    let cache_key = std::fs::canonicalize(cwd)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| cwd.to_string());
+
     // Return cached result if available
-    if let Some(cached) = default_branch_cache().get(cwd) {
+    if let Some(cached) = default_branch_cache().get(&cache_key) {
         return Ok(cached.clone());
     }
 
@@ -91,18 +97,18 @@ fn detect_default_branch(cwd: &str) -> Result<String, AbundioError> {
         let trimmed = output.trim();
         if let Some(branch) = trimmed.strip_prefix("refs/remotes/origin/") {
             if !branch.is_empty() {
-                default_branch_cache().insert(cwd.to_string(), branch.to_string());
+                default_branch_cache().insert(cache_key, branch.to_string());
                 return Ok(branch.to_string());
             }
         }
     }
     // Fall back to checking common branch names locally
     if run_git(cwd, &["rev-parse", "--verify", "main"]).is_ok() {
-        default_branch_cache().insert(cwd.to_string(), "main".to_string());
+        default_branch_cache().insert(cache_key, "main".to_string());
         return Ok("main".to_string());
     }
     if run_git(cwd, &["rev-parse", "--verify", "master"]).is_ok() {
-        default_branch_cache().insert(cwd.to_string(), "master".to_string());
+        default_branch_cache().insert(cache_key, "master".to_string());
         return Ok("master".to_string());
     }
     Err(AbundioError::Git(
