@@ -212,6 +212,27 @@ pub fn git_changed_files(
         all_files.extend(files);
     }
 
+    // Untracked
+    if let Ok(output) = run_git_allow_empty(&cwd, &["ls-files", "--others", "--exclude-standard"]) {
+        for line in output.lines() {
+            let path = line.trim().to_string();
+            if path.is_empty() {
+                continue;
+            }
+            let full_path = Path::new(&cwd).join(&path);
+            let additions = std::fs::read_to_string(&full_path)
+                .map(|content| content.lines().count() as i32)
+                .unwrap_or(0);
+            all_files.push(GitChangedFile {
+                path,
+                status: "?".to_string(),
+                additions,
+                deletions: 0,
+                section: "untracked".to_string(),
+            });
+        }
+    }
+
     Ok(all_files)
 }
 
@@ -256,6 +277,11 @@ pub fn git_file_diff(
             let modified =
                 std::fs::read_to_string(&full_path).unwrap_or_default();
             (original, modified)
+        }
+        "untracked" => {
+            let full_path = Path::new(&cwd).join(&file_path);
+            let modified = std::fs::read_to_string(&full_path).unwrap_or_default();
+            (String::new(), modified)
         }
         _ => {
             return Err(AbundioError::Git(format!(

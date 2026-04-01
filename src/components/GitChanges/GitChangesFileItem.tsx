@@ -11,6 +11,7 @@ const STATUS_COLORS: Record<string, string> = {
 	M: "var(--warning)",
 	D: "var(--error)",
 	R: "var(--accent)",
+	"?": "var(--fg-secondary)",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -18,6 +19,7 @@ const STATUS_LABELS: Record<string, string> = {
 	M: "M",
 	D: "D",
 	R: "R",
+	"?": "U",
 };
 
 function fileName(path: string): string {
