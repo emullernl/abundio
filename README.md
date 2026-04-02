@@ -192,6 +192,17 @@ The first build will take a few minutes while Cargo compiles all Rust dependenci
 - The SQLite database can be inspected directly at `~/Library/Application Support/abundio/abundio.db`
 - If Cargo isn't on your PATH, it's at `~/.rustup/toolchains/stable-x86_64-apple-darwin/bin/cargo`
 
+## Releasing
+
+Releases are triggered by git tags. A helper script bumps the version in all config files, commits, and tags:
+
+```bash
+pnpm run release 0.2.0        # bumps version, commits, creates v0.2.0 tag
+git push --follow-tags         # triggers CI build for all platforms
+```
+
+This creates a draft [GitHub Release](../../releases) with macOS, Linux, and Windows artifacts. Review the draft on GitHub and publish when ready.
+
 ## License
 
 TBD
