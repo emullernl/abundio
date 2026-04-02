@@ -11,6 +11,9 @@ pub fn has_child_processes(pid: u32) -> bool {
     }
 
     let mut buf: [i32; 1] = [0];
+    // SAFETY: proc_listchildpids is a stable macOS libproc API. We pass a valid
+    // stack-allocated buffer with its correct byte size. The function writes at
+    // most `buffersize` bytes and returns the number of bytes written.
     let ret = unsafe {
         proc_listchildpids(
             pid as i32,
@@ -62,6 +65,9 @@ pub fn has_child_processes(pid: u32) -> bool {
         fn CloseHandle(hObject: isize) -> i32;
     }
 
+    // SAFETY: We use the Windows Toolhelp API to enumerate processes. The snapshot
+    // handle is closed in all code paths. PROCESSENTRY32W is zero-initialized with
+    // dwSize set correctly before the first call, as required by the API contract.
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
