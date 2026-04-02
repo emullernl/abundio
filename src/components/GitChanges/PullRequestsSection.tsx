@@ -98,6 +98,7 @@ export function PullRequestsSection() {
 				ghStatus={ghStatus}
 				onRefresh={handleRefresh}
 				showRefresh={false}
+				showPrStatus
 			/>
 		</div>
 	);
@@ -111,6 +112,7 @@ interface PrSubPanelProps<V extends PrView> {
 	ghStatus: GhStatus | null;
 	onRefresh: () => void;
 	showRefresh: boolean;
+	showPrStatus?: boolean;
 }
 
 function PrSubPanel<V extends PrView>({
@@ -121,6 +123,7 @@ function PrSubPanel<V extends PrView>({
 	ghStatus,
 	onRefresh,
 	showRefresh,
+	showPrStatus,
 }: PrSubPanelProps<V>) {
 	const [dropdownOpen, setDropdownOpen] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
@@ -331,6 +334,7 @@ function PrSubPanel<V extends PrView>({
 							<PullRequestItem
 								key={`${pr.repository || "local"}-${pr.number}`}
 								pr={pr}
+								showStatus={showPrStatus}
 							/>
 						))}
 					</div>
