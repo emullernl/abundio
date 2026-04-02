@@ -139,6 +139,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
+        .plugin(tauri_plugin_os::init())
         .setup(|app| {
             // Build and set the application menu
             let menu = build_menu(app)?;
