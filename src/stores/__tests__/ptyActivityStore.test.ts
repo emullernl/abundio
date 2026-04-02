@@ -5,6 +5,7 @@ import {
 	computePtyDotStatus,
 	computeSessionDotStatus,
 	computeTabDotStatus,
+	getLastOutputAt,
 	type PtyActivityEntry,
 	shouldPulse,
 	usePtyActivityStore,
@@ -53,16 +54,19 @@ describe("store actions", () => {
 		expect(entry.lastOutputAt).not.toBeNull();
 	});
 
-	it("recordOutput when already active updates lastOutputAt", () => {
+	it("recordOutput when already active updates lastOutputAt in external map", () => {
 		const { initPty, recordOutput } = usePtyActivityStore.getState();
 		initPty("pty-1");
 		vi.setSystemTime(1000);
 		recordOutput("pty-1");
 		vi.setSystemTime(2000);
 		recordOutput("pty-1");
-		// lastOutputAt is mutated directly (no set()), check the value
+		// Hot-path: lastOutputAt is stored in module-level Map (not Zustand state)
+		// to avoid re-renders. Zustand state retains the value from the initial transition.
 		const entry = usePtyActivityStore.getState().activities["pty-1"];
-		expect(entry.lastOutputAt).toBe(2000);
+		expect(entry.lastOutputAt).toBe(1000);
+		// The external map has the updated value
+		expect(getLastOutputAt("pty-1")).toBe(2000);
 	});
 
 	it("markIdle transitions to idle", () => {

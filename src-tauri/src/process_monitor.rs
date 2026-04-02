@@ -117,9 +117,15 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn pid_1_has_children() {
-        // On Unix systems, PID 1 (init/launchd) should have children.
-        assert!(has_child_processes(1));
+    fn detects_spawned_child() {
+        use std::process::Command;
+        let child = Command::new("sleep").arg("10").spawn().expect("failed to spawn sleep");
+        let pid = std::process::id();
+        assert!(has_child_processes(pid));
+        // Clean up
+        let mut child = child;
+        child.kill().ok();
+        child.wait().ok();
     }
 
     #[test]

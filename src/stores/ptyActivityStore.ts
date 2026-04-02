@@ -11,6 +11,15 @@ import type {
 export const IDLE_THRESHOLD_MS = 2000;
 const SCAN_INTERVAL_MS = 500;
 
+// Hot-path optimization: track last output timestamps outside Zustand state
+// to avoid triggering re-renders on every output chunk.
+const lastOutputTimestamps = new Map<string, number>();
+
+/** Get the last output timestamp for a PTY (for use outside the store, e.g. DebugActivityMeter). */
+export function getLastOutputAt(ptyId: string): number | null {
+	return lastOutputTimestamps.get(ptyId) ?? null;
+}
+
 // ── Types ──
 
 export interface PtyActivityEntry {
@@ -82,7 +91,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			const entry = get().activities[ptyId];
 			// Skip set() if already active — this fires on every output chunk
 			if (entry?.state === "active") {
-				entry.lastOutputAt = Date.now();
+				lastOutputTimestamps.set(ptyId, Date.now());
 				return;
 			}
 			set((s) => ({
@@ -223,8 +232,9 @@ setInterval(() => {
 	const appHasFocus = typeof document !== "undefined" && document.hasFocus();
 
 	for (const [ptyId, entry] of Object.entries(activities)) {
-		if (entry.lastOutputAt === null) continue;
-		const elapsed = now - entry.lastOutputAt;
+		const lastOutput = lastOutputTimestamps.get(ptyId) ?? entry.lastOutputAt;
+		if (lastOutput === null) continue;
+		const elapsed = now - lastOutput;
 
 		if (entry.state === "active" && elapsed > IDLE_THRESHOLD_MS) {
 			const paneId = ptyToPaneMap[ptyId];

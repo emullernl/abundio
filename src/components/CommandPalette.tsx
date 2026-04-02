@@ -184,7 +184,7 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 
 	useEffect(() => {
 		setSelectedIndex(0);
-	}, []);
+	}, [filtered]);
 
 	// Scroll selected item into view
 	useEffect(() => {

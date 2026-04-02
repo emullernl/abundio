@@ -42,6 +42,7 @@ export function parseShellIntegration(data: Uint8Array): {
 				}
 
 				if (belIndex === -1) {
+					// TODO: buffer partial sequences across chunks
 					// Partial sequence at end of data — keep it in cleaned output
 					break;
 				}
@@ -55,9 +56,10 @@ export function parseShellIntegration(data: Uint8Array): {
 					commands.push({ type: "command_start" });
 				} else if (payload.startsWith("command_end;")) {
 					const codeStr = payload.slice("command_end;".length);
+					const parsed = Number.parseInt(codeStr, 10);
 					commands.push({
 						type: "command_end",
-						exitCode: parseInt(codeStr, 10),
+						exitCode: Number.isNaN(parsed) ? undefined : parsed,
 					});
 				}
 

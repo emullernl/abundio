@@ -3,7 +3,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 
 use base64::Engine;
@@ -98,10 +98,10 @@ impl PtyManager {
                     cmd.env("ZDOTDIR", integration_dir.to_string_lossy().as_ref());
                 }
                 ShellType::Bash => {
-                    // Use --rcfile to load our wrapper that sources ~/.bashrc + hooks
+                    // Use --rcfile to load our wrapper (not -l; --rcfile is ignored for login shells)
                     let rcfile = integration_dir.join(".bashrc");
                     cmd.args([
-                        "-l",
+                        "-i",
                         "--rcfile",
                         rcfile.to_string_lossy().as_ref(),
                     ]);
@@ -160,7 +160,7 @@ impl PtyManager {
         let master = pair.master;
 
         thread::spawn(move || {
-            pty_thread(id_clone, master, child, rx, alive, app, log_file);
+            pty_thread(id_clone, master, child, rx, alive, app, log_file, shell_type);
         });
 
         Ok(pty_id)
@@ -296,9 +296,17 @@ fn detect_shell_type(shell: &str) -> ShellType {
 }
 
 /// Returns the directory containing shell integration startup files.
-/// Creates the files on first call. The hooks are loaded via ZDOTDIR (zsh)
-/// or --rcfile (bash) so they never appear in terminal output or history.
+/// Creates the files on first call per process lifetime. The hooks are loaded
+/// via ZDOTDIR (zsh) or --rcfile (bash) so they never appear in terminal output
+/// or history.
 fn shell_integration_dir() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        write_shell_integration_files()
+    }).clone()
+}
+
+fn write_shell_integration_files() -> PathBuf {
     let dir = dirs::data_dir()
         .unwrap_or_else(|| Path::new("~").to_path_buf())
         .join("abundio")
@@ -344,6 +352,15 @@ fi
     let _ = fs::write(
         &bashrc,
         r#"# Abundio shell integration — loaded via --rcfile
+# Source login shell config files for parity (--rcfile replaces -l)
+[ -f /etc/profile ] && source /etc/profile
+if [ -f ~/.bash_profile ]; then
+  source ~/.bash_profile
+elif [ -f ~/.bash_login ]; then
+  source ~/.bash_login
+elif [ -f ~/.profile ]; then
+  source ~/.profile
+fi
 # Source the user's real bash config
 [ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
 [ -f ~/.bashrc ] && source ~/.bashrc
@@ -367,6 +384,7 @@ fn pty_thread(
     alive: Arc<AtomicBool>,
     app: AppHandle,
     log_file: Option<(File, PathBuf)>,
+    shell_type: ShellType,
 ) {
     let mut writer = master.take_writer().unwrap();
     let mut reader = master.try_clone_reader().unwrap();
@@ -428,17 +446,21 @@ fn pty_thread(
             break;
         }
 
-        // Poll for child processes of the shell (command start/stop detection)
-        if let Some(pid) = shell_pid {
-            let has_children = process_monitor::has_child_processes(pid);
-            if has_children && !command_running {
-                command_running = true;
-                let event_name = format!("pty-activity-{}", pty_id);
-                let _ = app.emit(&event_name, PtyActivity::CommandStarted);
-            } else if !has_children && command_running {
-                command_running = false;
-                let event_name = format!("pty-activity-{}", pty_id);
-                let _ = app.emit(&event_name, PtyActivity::CommandFinished);
+        // Poll for child processes of the shell (command start/stop detection).
+        // Only use process monitoring for shells without OSC shell integration
+        // (zsh/bash use OSC 7770 sequences instead, so polling would race).
+        if shell_type == ShellType::Other {
+            if let Some(pid) = shell_pid {
+                let has_children = process_monitor::has_child_processes(pid);
+                if has_children && !command_running {
+                    command_running = true;
+                    let event_name = format!("pty-activity-{}", pty_id);
+                    let _ = app.emit(&event_name, PtyActivity::CommandStarted);
+                } else if !has_children && command_running {
+                    command_running = false;
+                    let event_name = format!("pty-activity-{}", pty_id);
+                    let _ = app.emit(&event_name, PtyActivity::CommandFinished);
+                }
             }
         }
 

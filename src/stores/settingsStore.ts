@@ -98,7 +98,7 @@ export const useSettingsStore = create<SettingsState>()(
 				set({ activityByteThreshold: n });
 			},
 			addAgent: (name, command, args) => {
-				const id = `custom-${Date.now()}`;
+				const id = `custom-${crypto.randomUUID()}`;
 				set((s) => ({
 					agents: [
 						...s.agents,

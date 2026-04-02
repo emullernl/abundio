@@ -6,6 +6,7 @@ import {
 	INPUT_GATE_MS,
 } from "../../lib/terminalManager";
 import {
+	getLastOutputAt,
 	IDLE_THRESHOLD_MS,
 	usePtyActivityStore,
 } from "../../stores/ptyActivityStore";
@@ -68,8 +69,9 @@ export function DebugActivityMeter({ paneId }: Props) {
 			let waitingRatio = 0;
 			if (ptyId) {
 				const entry = usePtyActivityStore.getState().activities[ptyId];
-				if (entry?.state === "active" && entry.lastOutputAt) {
-					const elapsed = now - entry.lastOutputAt;
+				const lastOutput = getLastOutputAt(ptyId) ?? entry?.lastOutputAt;
+				if (entry?.state === "active" && lastOutput) {
+					const elapsed = now - lastOutput;
 					waitingRatio = Math.min(1, elapsed / IDLE_THRESHOLD_MS);
 				}
 			}
