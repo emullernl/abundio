@@ -79,8 +79,8 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 			cleanupResizeObserver();
 			destroyTerminal(paneId);
 		};
-		// biome-ignore lint/correctness/useExhaustiveDependencies: cleanupResizeObserver, projectInto, and retract use refs and don't need to trigger re-runs
-	}, [paneId, cleanupResizeObserver, cwd, projectInto, ptyId, retract]);
+		// biome-ignore lint/correctness/useExhaustiveDependencies: cleanupResizeObserver, projectInto, and retract use refs; ptyId is only used for initial createTerminal — subsequent ptyId updates are managed internally by terminalManager
+	}, [paneId, cleanupResizeObserver, cwd, projectInto, retract]);
 
 	function projectInto(id: string, target: HTMLDivElement) {
 		const managed = getTerminal(id);
