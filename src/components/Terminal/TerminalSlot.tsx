@@ -15,14 +15,22 @@ function TerminalLoader({ paneId }: { paneId: string }) {
 	useEffect(() => {
 		const interval = setInterval(() => {
 			const managed = getTerminal(paneId);
-			if (!managed) return;
-			// Terminal is ready when it has a PTY and the buffer has content (shell prompt rendered)
-			if (managed.ptyId && managed.term.buffer.active.cursorY > 0) {
+			if (managed?.ready) {
 				setVisible(false);
 				clearInterval(interval);
 			}
 		}, 80);
-		return () => clearInterval(interval);
+
+		// Safety net: hide loader after 5s even if ready never fires
+		const timeout = setTimeout(() => {
+			setVisible(false);
+			clearInterval(interval);
+		}, 5000);
+
+		return () => {
+			clearInterval(interval);
+			clearTimeout(timeout);
+		};
 	}, [paneId]);
 
 	if (!visible) return null;

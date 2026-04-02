@@ -23,7 +23,8 @@ export const pty = {
 		rows: number,
 		command?: string,
 		logId?: string,
-	) => invoke<string>("pty_spawn", { cwd, cols, rows, command, logId }),
+		ptyId?: string,
+	) => invoke<string>("pty_spawn", { cwd, cols, rows, command, logId, ptyId }),
 
 	write: (ptyId: string, data: string) =>
 		invoke<void>("pty_write", { ptyId, data }),

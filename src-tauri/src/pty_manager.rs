@@ -60,8 +60,11 @@ impl PtyManager {
         cols: u16,
         rows: u16,
         log_id: Option<&str>,
+        pty_id: Option<&str>,
     ) -> Result<String, AbundioError> {
-        let pty_id = uuid::Uuid::new_v4().to_string();
+        let pty_id = pty_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let pty_system = native_pty_system();
         let size = PtySize {

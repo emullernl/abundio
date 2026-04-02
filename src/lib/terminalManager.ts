@@ -63,6 +63,8 @@ export interface ManagedTerminal {
 	bytesSinceIdle: number;
 	/** Timestamp of last output chunk — used to reset accumulation after inactivity gap */
 	lastOutputChunkAt: number;
+	/** True once initPty has completed — used by TerminalLoader to hide the spinner */
+	ready: boolean;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -223,6 +225,7 @@ export async function createTerminal(
 		lastInputAt: 0,
 		bytesSinceIdle: 0,
 		lastOutputChunkAt: 0,
+		ready: false,
 	};
 
 	instances.set(paneId, managed);
@@ -236,6 +239,7 @@ export async function createTerminal(
 async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	const { term, serializeAddon } = managed;
 	let currentPtyId = managed.ptyId;
+	const isNewPty = !currentPtyId;
 
 	const { setPtyStatus } = useSessionStore.getState();
 
@@ -264,33 +268,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 	}
 
-	if (!currentPtyId) {
-		currentPtyId = await pty.spawn(
-			cwd,
-			term.cols,
-			term.rows,
-			undefined,
-			paneId,
-		);
+	// For new PTYs, generate the ID upfront and register event listeners BEFORE
+	// spawning so no shell output is lost in the gap between spawn and listen.
+	if (isNewPty) {
+		currentPtyId = crypto.randomUUID();
 		managed.ptyId = currentPtyId;
-
-		// Write ptyId to the correct tab's layout (not just the active tab)
-		const store = useSessionStore.getState();
-		const session = store.getActiveSession();
-		if (session) {
-			for (const tab of session.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					if (containsPaneId(layout, paneId)) {
-						const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
-						store.updateLayoutLocal(tab.id, updated);
-						break;
-					}
-				} catch {
-					// skip
-				}
-			}
-		}
 	}
 
 	// Stop background tracker if one exists — full listener takes over
@@ -412,6 +394,36 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 	});
 
+	// Now spawn the PTY — listeners are already in place so no output is lost
+	if (isNewPty) {
+		await pty.spawn(
+			cwd,
+			term.cols,
+			term.rows,
+			undefined,
+			paneId,
+			currentPtyId,
+		);
+
+		// Write ptyId to the correct tab's layout (not just the active tab)
+		const store = useSessionStore.getState();
+		const session = store.getActiveSession();
+		if (session) {
+			for (const tab of session.tabs) {
+				try {
+					const layout = JSON.parse(tab.layoutJson) as PaneNode;
+					if (containsPaneId(layout, paneId)) {
+						const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
+						store.updateLayoutLocal(tab.id, updated);
+						break;
+					}
+				} catch {
+					// skip
+				}
+			}
+		}
+	}
+
 	term.onTitleChange((title) => {
 		const actStore = usePtyActivityStore.getState();
 		actStore.setTitle(paneId, title);
@@ -450,6 +462,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenStatus();
 		term.element?.removeEventListener("mousedown", onTermClick);
 	};
+
+	managed.ready = true;
 }
 
 /** Write any deferred scrollback restore data now that the terminal has real dimensions */
@@ -531,6 +545,7 @@ export async function resetTerminal(paneId: string): Promise<void> {
 	// Reset xterm content
 	managed.term.reset();
 	managed.ptyId = "";
+	managed.ready = false;
 	managed.suppressActivity = true;
 	managed.lastInputAt = 0;
 	managed.bytesSinceIdle = 0;
