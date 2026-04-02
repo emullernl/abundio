@@ -2,7 +2,8 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    tags:
+      - 'v*'
 
 jobs:
   build:
@@ -65,3 +66,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
+          tagName: ${{ github.ref_name }}
+          releaseName: "Abundio v__VERSION__"
+          releaseDraft: true
+          prerelease: false
