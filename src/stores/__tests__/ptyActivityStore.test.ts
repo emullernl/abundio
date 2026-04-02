@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PaneNode, Tab } from "../../lib/types";
 import {
-	usePtyActivityStore,
 	collectPtyIds,
+	computePtyDotStatus,
 	computeSessionDotStatus,
 	computeTabDotStatus,
-	computePtyDotStatus,
-	shouldPulse,
 	type PtyActivityEntry,
+	shouldPulse,
+	usePtyActivityStore,
 } from "../ptyActivityStore";
-import type { PaneNode, Tab } from "../../lib/types";
 
 function resetStore() {
 	usePtyActivityStore.setState({
@@ -16,6 +16,7 @@ function resetStore() {
 		titles: {},
 		panePtyMap: {},
 		openedSessionIds: new Set(),
+		agentPtyIds: new Set(),
 	});
 }
 
@@ -38,7 +39,9 @@ describe("store actions", () => {
 		recordOutput("pty-1");
 		initPty("pty-1");
 		// Should still be active, not reset to idle
-		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe("active");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
 	});
 
 	it("recordOutput transitions to active", () => {
@@ -67,25 +70,63 @@ describe("store actions", () => {
 		initPty("pty-1");
 		recordOutput("pty-1");
 		markIdle("pty-1");
-		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe("idle");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
 	});
 
 	it("markIdle is no-op when already idle", () => {
 		const { initPty, markIdle } = usePtyActivityStore.getState();
 		initPty("pty-1");
 		markIdle("pty-1"); // should not throw
-		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe("idle");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
 	});
 
 	it("recordError transitions to error", () => {
 		const { initPty, recordError } = usePtyActivityStore.getState();
 		initPty("pty-1");
 		recordError("pty-1");
-		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe("error");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"error",
+		);
+	});
+
+	it("markIdle does not override error state", () => {
+		const { initPty, recordError, markIdle } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordError("pty-1");
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"error",
+		);
+	});
+
+	it("clearError transitions error to idle", () => {
+		const { initPty, recordError, clearError } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordError("pty-1");
+		clearError("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("clearError is no-op when not in error state", () => {
+		const { initPty, recordOutput, clearError } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		clearError("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
 	});
 
 	it("registerPane / removePane", () => {
-		const { registerPane, removePane, setTitle } = usePtyActivityStore.getState();
+		const { registerPane, removePane, setTitle } =
+			usePtyActivityStore.getState();
 		registerPane("pane-1", "pty-1");
 		setTitle("pane-1", "bash");
 		expect(usePtyActivityStore.getState().panePtyMap["pane-1"]).toBe("pty-1");
@@ -107,7 +148,9 @@ describe("store actions", () => {
 
 	it("markSessionOpened adds to set", () => {
 		usePtyActivityStore.getState().markSessionOpened("s1");
-		expect(usePtyActivityStore.getState().openedSessionIds.has("s1")).toBe(true);
+		expect(usePtyActivityStore.getState().openedSessionIds.has("s1")).toBe(
+			true,
+		);
 	});
 
 	it("removePty removes activity entry", () => {
@@ -117,7 +160,6 @@ describe("store actions", () => {
 		expect(usePtyActivityStore.getState().activities["pty-1"]).toBeUndefined();
 	});
 });
-
 
 describe("collectPtyIds", () => {
 	it("collects ptyId from terminal node", () => {
@@ -137,7 +179,10 @@ describe("collectPtyIds", () => {
 
 	it("collects from split nodes", () => {
 		const node: PaneNode = {
-			type: "split", id: "s1", direction: "horizontal", ratio: 0.5,
+			type: "split",
+			id: "s1",
+			direction: "horizontal",
+			ratio: 0.5,
 			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
 			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
 		};
@@ -150,6 +195,7 @@ describe("computeSessionDotStatus", () => {
 		state: state as PtyActivityEntry["state"],
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
+		detectionMode: "shell",
 	});
 
 	it("returns grey when no ptyIds", () => {
@@ -158,39 +204,84 @@ describe("computeSessionDotStatus", () => {
 
 	it("returns red when any error", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("error") }, new Set())).toBe("red");
+		expect(
+			computeSessionDotStatus(
+				"s1",
+				[layout],
+				{ "pty-1": makeEntry("error") },
+				new Set(),
+			),
+		).toBe("red");
 	});
 
 	it("returns blue when any active", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("active") }, new Set())).toBe("amber");
+		expect(
+			computeSessionDotStatus(
+				"s1",
+				[layout],
+				{ "pty-1": makeEntry("active") },
+				new Set(),
+			),
+		).toBe("amber");
 	});
 
 	it("returns orange when any waiting", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("waiting") }, new Set())).toBe("purple");
+		expect(
+			computeSessionDotStatus(
+				"s1",
+				[layout],
+				{ "pty-1": makeEntry("waiting") },
+				new Set(),
+			),
+		).toBe("purple");
 	});
 
 	it("returns green when all idle and session opened", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("idle") }, new Set(["s1"]))).toBe("green");
+		expect(
+			computeSessionDotStatus(
+				"s1",
+				[layout],
+				{ "pty-1": makeEntry("idle") },
+				new Set(["s1"]),
+			),
+		).toBe("green");
 	});
 
 	it("returns grey when all idle but session not opened", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeSessionDotStatus("s1", [layout], { "pty-1": makeEntry("idle") }, new Set())).toBe("grey");
+		expect(
+			computeSessionDotStatus(
+				"s1",
+				[layout],
+				{ "pty-1": makeEntry("idle") },
+				new Set(),
+			),
+		).toBe("grey");
 	});
 
 	it("error takes priority over active", () => {
 		const layout: PaneNode = {
-			type: "split", id: "s", direction: "horizontal", ratio: 0.5,
+			type: "split",
+			id: "s",
+			direction: "horizontal",
+			ratio: 0.5,
 			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
 			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
 		};
-		expect(computeSessionDotStatus("s1", [layout], {
-			"pty-1": makeEntry("error"),
-			"pty-2": makeEntry("active"),
-		}, new Set())).toBe("red");
+		expect(
+			computeSessionDotStatus(
+				"s1",
+				[layout],
+				{
+					"pty-1": makeEntry("error"),
+					"pty-2": makeEntry("active"),
+				},
+				new Set(),
+			),
+		).toBe("red");
 	});
 });
 
@@ -199,6 +290,7 @@ describe("computeTabDotStatus", () => {
 		state: state as PtyActivityEntry["state"],
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
+		detectionMode: "shell",
 	});
 
 	const makeTab = (layoutJson: string): Tab => ({
@@ -217,12 +309,20 @@ describe("computeTabDotStatus", () => {
 
 	it("returns blue when active", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeTabDotStatus(makeTab(JSON.stringify(layout)), { "pty-1": makeEntry("active") })).toBe("amber");
+		expect(
+			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
+				"pty-1": makeEntry("active"),
+			}),
+		).toBe("amber");
 	});
 
 	it("returns green when all idle", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(computeTabDotStatus(makeTab(JSON.stringify(layout)), { "pty-1": makeEntry("idle") })).toBe("green");
+		expect(
+			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
+				"pty-1": makeEntry("idle"),
+			}),
+		).toBe("green");
 	});
 });
 
@@ -231,6 +331,7 @@ describe("computePtyDotStatus", () => {
 		state: state as PtyActivityEntry["state"],
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
+		detectionMode: "shell",
 	});
 
 	it("returns green for unknown ptyId", () => {
@@ -238,19 +339,27 @@ describe("computePtyDotStatus", () => {
 	});
 
 	it("returns blue for active", () => {
-		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("active") })).toBe("amber");
+		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("active") })).toBe(
+			"amber",
+		);
 	});
 
 	it("returns orange for waiting", () => {
-		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("waiting") })).toBe("purple");
+		expect(
+			computePtyDotStatus("pty-1", { "pty-1": makeEntry("waiting") }),
+		).toBe("purple");
 	});
 
 	it("returns red for error", () => {
-		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("error") })).toBe("red");
+		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("error") })).toBe(
+			"red",
+		);
 	});
 
 	it("returns green for idle", () => {
-		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("idle") })).toBe("green");
+		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("idle") })).toBe(
+			"green",
+		);
 	});
 });
 
@@ -265,5 +374,59 @@ describe("shouldPulse", () => {
 		expect(shouldPulse("green")).toBe(false);
 		expect(shouldPulse("purple")).toBe(false);
 		expect(shouldPulse(null)).toBe(false);
+	});
+});
+
+describe("detection mode", () => {
+	it("initPty defaults to shell mode", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		const entry = usePtyActivityStore.getState().activities["pty-1"];
+		expect(entry.detectionMode).toBe("shell");
+	});
+
+	it("initPty accepts explicit agent mode", () => {
+		usePtyActivityStore.getState().initPty("pty-1", "agent");
+		const entry = usePtyActivityStore.getState().activities["pty-1"];
+		expect(entry.detectionMode).toBe("agent");
+	});
+
+	it("setAgentPty marks a PTY as agent mode", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().setAgentPty("pty-1");
+		const state = usePtyActivityStore.getState();
+		expect(state.agentPtyIds.has("pty-1")).toBe(true);
+		expect(state.activities["pty-1"].detectionMode).toBe("agent");
+	});
+
+	it("setAgentPty is idempotent", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().setAgentPty("pty-1");
+		usePtyActivityStore.getState().setAgentPty("pty-1");
+		expect(usePtyActivityStore.getState().agentPtyIds.size).toBe(1);
+	});
+
+	it("recordExitSuccess transitions to waiting", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().recordOutput("pty-1");
+		usePtyActivityStore.getState().recordExitSuccess("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"waiting",
+		);
+	});
+
+	it("recordOutput preserves detectionMode", () => {
+		usePtyActivityStore.getState().initPty("pty-1", "agent");
+		usePtyActivityStore.getState().recordOutput("pty-1");
+		expect(
+			usePtyActivityStore.getState().activities["pty-1"].detectionMode,
+		).toBe("agent");
+	});
+
+	it("recordError preserves detectionMode", () => {
+		usePtyActivityStore.getState().initPty("pty-1", "agent");
+		usePtyActivityStore.getState().recordError("pty-1");
+		expect(
+			usePtyActivityStore.getState().activities["pty-1"].detectionMode,
+		).toBe("agent");
 	});
 });

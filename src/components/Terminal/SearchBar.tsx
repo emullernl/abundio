@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import type { SearchAddon } from "@xterm/addon-search";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Props {
 	searchAddon: SearchAddon;
@@ -28,7 +28,10 @@ export function SearchBar({ searchAddon, onClose }: Props) {
 			} else if (e.key === "Enter") {
 				e.preventDefault();
 				if (e.shiftKey) {
-					searchAddon.findPrevious(query, { caseSensitive: false, regex: false });
+					searchAddon.findPrevious(query, {
+						caseSensitive: false,
+						regex: false,
+					});
 				} else {
 					searchAddon.findNext(query, { caseSensitive: false, regex: false });
 				}
@@ -58,7 +61,12 @@ export function SearchBar({ searchAddon, onClose }: Props) {
 			/>
 			<button
 				type="button"
-				onClick={() => searchAddon.findPrevious(query, { caseSensitive: false, regex: false })}
+				onClick={() =>
+					searchAddon.findPrevious(query, {
+						caseSensitive: false,
+						regex: false,
+					})
+				}
 				className="w-6 h-6 rounded flex items-center justify-center hover:bg-[var(--bg-tertiary)]"
 				style={{ color: "var(--fg-secondary)", fontSize: 12 }}
 			>
@@ -66,7 +74,9 @@ export function SearchBar({ searchAddon, onClose }: Props) {
 			</button>
 			<button
 				type="button"
-				onClick={() => searchAddon.findNext(query, { caseSensitive: false, regex: false })}
+				onClick={() =>
+					searchAddon.findNext(query, { caseSensitive: false, regex: false })
+				}
 				className="w-6 h-6 rounded flex items-center justify-center hover:bg-[var(--bg-tertiary)]"
 				style={{ color: "var(--fg-secondary)", fontSize: 12 }}
 			>

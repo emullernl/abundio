@@ -15,9 +15,10 @@ export const abundioTheme = EditorView.theme({
 	".cm-cursor, .cm-dropCursor": {
 		borderLeftColor: "var(--accent)",
 	},
-	"&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-		backgroundColor: "color-mix(in srgb, var(--accent) 25%, transparent)",
-	},
+	"&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+		{
+			backgroundColor: "color-mix(in srgb, var(--accent) 25%, transparent)",
+		},
 	".cm-gutters": {
 		backgroundColor: "var(--bg-secondary)",
 		color: "var(--fg-secondary)",

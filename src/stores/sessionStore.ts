@@ -1,6 +1,11 @@
 import { create } from "zustand";
-import type { PaneNode, PtyStatusType, SessionWithTabs, Tab } from "../lib/types";
-import { sessions as sessionsApi, tabs as tabsApi, pty } from "../lib/ipc";
+import { pty, sessions as sessionsApi, tabs as tabsApi } from "../lib/ipc";
+import type {
+	PaneNode,
+	PtyStatusType,
+	SessionWithTabs,
+	Tab,
+} from "../lib/types";
 import { persistFileTabs } from "./explorerStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 
@@ -162,7 +167,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		await sessionsApi.delete(id);
 		set((state) => ({
 			sessions: state.sessions.filter((s) => s.id !== id),
-			activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
+			activeSessionId:
+				state.activeSessionId === id ? null : state.activeSessionId,
 		}));
 	},
 
@@ -180,7 +186,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 			}
 			// Restore focused pane for the new session's active tab
 			const newTabId = id ? state.activeTabBySession[id] : undefined;
-			let restoredFocus: string | null = newTabId ? focusedPaneByTab[newTabId] ?? null : null;
+			let restoredFocus: string | null = newTabId
+				? (focusedPaneByTab[newTabId] ?? null)
+				: null;
 			if (!restoredFocus && newTabId) {
 				const session = state.sessions.find((s) => s.id === id);
 				const tab = session?.tabs.find((t) => t.id === newTabId);
@@ -188,7 +196,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 					try {
 						const layout = JSON.parse(tab.layoutJson) as PaneNode;
 						restoredFocus = firstTerminalId(layout);
-					} catch { /* ignore */ }
+					} catch {
+						/* ignore */
+					}
 				}
 			}
 			return {
@@ -204,7 +214,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 	reorderSessions: (ids) => {
 		const { sessions } = get();
 		const byId = new Map(sessions.map((s) => [s.id, s]));
-		const reordered = ids.map((id) => byId.get(id)).filter(Boolean) as SessionWithTabs[];
+		const reordered = ids
+			.map((id) => byId.get(id))
+			.filter(Boolean) as SessionWithTabs[];
 		set({ sessions: reordered });
 		sessionsApi.reorder(ids).catch(() => {});
 	},
@@ -220,7 +232,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		try {
 			const layout = JSON.parse(tab.layoutJson) as PaneNode;
 			initialFocus = firstTerminalId(layout);
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 		set((state) => ({
 			sessions: state.sessions.map((s) =>
 				s.id === sessionId ? { ...s, tabs: [...s.tabs, tab] } : s,
@@ -239,7 +253,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 	closeTab: async (tabId) => {
 		const state = get();
 		// Find which session owns this tab
-		const session = state.sessions.find((s) => s.tabs.some((t) => t.id === tabId));
+		const session = state.sessions.find((s) =>
+			s.tabs.some((t) => t.id === tabId),
+		);
 		if (!session) return;
 
 		const tabIndex = session.tabs.findIndex((t) => t.id === tabId);
@@ -264,9 +280,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 			await tabsApi.delete(tabId);
 			set((state) => ({
 				sessions: state.sessions.map((s) =>
-					s.id === session.id
-						? { ...s, tabs: [newTab] }
-						: s,
+					s.id === session.id ? { ...s, tabs: [newTab] } : s,
 				),
 				activeTabBySession: {
 					...state.activeTabBySession,
@@ -323,7 +337,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 					try {
 						const layout = JSON.parse(tab.layoutJson) as PaneNode;
 						restoredFocus = firstTerminalId(layout);
-					} catch { /* ignore */ }
+					} catch {
+						/* ignore */
+					}
 				}
 			}
 			return {
@@ -384,7 +400,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		await tabsApi.update(tabId, { layoutJson: tab.layoutJson });
 	},
 
-	setMaximized: (paneId, savedLayout) => set({ maximizedPaneId: paneId, savedLayout }),
+	setMaximized: (paneId, savedLayout) =>
+		set({ maximizedPaneId: paneId, savedLayout }),
 
 	setPtyStatus: (ptyId, status) =>
 		set((state) => ({
@@ -393,7 +410,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
 	toggleSearch: () =>
 		set((state) => ({
-			searchPaneId: state.searchPaneId === state.focusedPaneId ? null : state.focusedPaneId,
+			searchPaneId:
+				state.searchPaneId === state.focusedPaneId ? null : state.focusedPaneId,
 		})),
 
 	setActiveView: (sessionId, view) => {

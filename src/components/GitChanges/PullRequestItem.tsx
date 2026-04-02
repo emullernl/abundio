@@ -8,9 +8,8 @@ interface Props {
 
 export function PullRequestItem({ pr }: Props) {
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: hover effect container
 		<div
-			role="group"
-			tabIndex={0}
 			className="w-full text-left transition-colors group"
 			style={{
 				padding: "6px 12px",
@@ -18,7 +17,8 @@ export function PullRequestItem({ pr }: Props) {
 				outline: "none",
 			}}
 			onMouseEnter={(e) => {
-				e.currentTarget.style.backgroundColor = "color-mix(in srgb, var(--bg-tertiary) 60%, transparent)";
+				e.currentTarget.style.backgroundColor =
+					"color-mix(in srgb, var(--bg-tertiary) 60%, transparent)";
 			}}
 			onMouseLeave={(e) => {
 				e.currentTarget.style.backgroundColor = "transparent";
@@ -28,7 +28,11 @@ export function PullRequestItem({ pr }: Props) {
 			<div className="flex items-center gap-1.5 min-w-0">
 				<span
 					className="flex-shrink-0"
-					style={{ fontSize: 11, color: "var(--accent)", fontFamily: "var(--font-mono)" }}
+					style={{
+						fontSize: 11,
+						color: "var(--accent)",
+						fontFamily: "var(--font-mono)",
+					}}
 				>
 					#{pr.number}
 				</span>
@@ -60,13 +64,17 @@ export function PullRequestItem({ pr }: Props) {
 			</div>
 
 			{/* Row 2: author + repo */}
-			<div className="flex items-center gap-1.5 mt-0.5" style={{ fontSize: 10, color: "var(--fg-secondary)" }}>
-				{pr.author && (
-					<span>@{pr.author}</span>
-				)}
+			<div
+				className="flex items-center gap-1.5 mt-0.5"
+				style={{ fontSize: 10, color: "var(--fg-secondary)" }}
+			>
+				{pr.author && <span>@{pr.author}</span>}
 				{pr.author && pr.repository && <span>·</span>}
 				{pr.repository && (
-					<span className="truncate" style={{ fontFamily: "var(--font-mono)", maxWidth: 140 }}>
+					<span
+						className="truncate"
+						style={{ fontFamily: "var(--font-mono)", maxWidth: 140 }}
+					>
 						{pr.repository}
 					</span>
 				)}

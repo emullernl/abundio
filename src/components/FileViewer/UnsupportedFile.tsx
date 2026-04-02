@@ -20,7 +20,9 @@ export function UnsupportedFile({ fileName, size }: UnsupportedFileProps) {
 			<span style={{ color: "var(--fg-secondary)" }}>
 				<File size={48} />
 			</span>
-			<span style={{ fontSize: 14, color: "var(--fg-primary)", fontWeight: 500 }}>
+			<span
+				style={{ fontSize: 14, color: "var(--fg-primary)", fontWeight: 500 }}
+			>
 				{fileName}
 			</span>
 			<span style={{ fontSize: 12, color: "var(--fg-secondary)" }}>

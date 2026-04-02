@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/ipc", () => ({
 	sessions: {
@@ -28,8 +28,8 @@ vi.mock("../ptyActivityStore", () => ({
 	},
 }));
 
-import { useSessionStore } from "../sessionStore";
 import type { PaneNode, SessionWithTabs, Tab } from "../../lib/types";
+import { useSessionStore } from "../sessionStore";
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
 	const layout: PaneNode = { type: "terminal", id: "pane-1", ptyId: "" };
@@ -45,7 +45,9 @@ function makeTab(overrides: Partial<Tab> = {}): Tab {
 	};
 }
 
-function makeSession(overrides: Partial<SessionWithTabs> = {}): SessionWithTabs {
+function makeSession(
+	overrides: Partial<SessionWithTabs> = {},
+): SessionWithTabs {
 	return {
 		id: "session-1",
 		name: "Test Session",
@@ -85,7 +87,10 @@ describe("sessionStore", () => {
 		});
 
 		it("clears maximize state", () => {
-			useSessionStore.setState({ maximizedPaneId: "p1", savedLayout: { type: "terminal", id: "p1", ptyId: "" } });
+			useSessionStore.setState({
+				maximizedPaneId: "p1",
+				savedLayout: { type: "terminal", id: "p1", ptyId: "" },
+			});
 			useSessionStore.getState().setActiveSession("s1");
 			expect(useSessionStore.getState().maximizedPaneId).toBeNull();
 			expect(useSessionStore.getState().savedLayout).toBeNull();
@@ -116,7 +121,9 @@ describe("sessionStore", () => {
 
 			// Switch to session-2 — should save pane-focused for tab-1
 			useSessionStore.getState().setActiveSession("session-2");
-			expect(useSessionStore.getState().focusedPaneByTab["tab-1"]).toBe("pane-focused");
+			expect(useSessionStore.getState().focusedPaneByTab["tab-1"]).toBe(
+				"pane-focused",
+			);
 		});
 	});
 
@@ -133,7 +140,9 @@ describe("sessionStore", () => {
 			});
 
 			useSessionStore.getState().setActiveTab("session-1", "tab-2");
-			expect(useSessionStore.getState().activeTabBySession["session-1"]).toBe("tab-2");
+			expect(useSessionStore.getState().activeTabBySession["session-1"]).toBe(
+				"tab-2",
+			);
 		});
 
 		it("clears maximize state", () => {
@@ -164,7 +173,11 @@ describe("sessionStore", () => {
 	describe("createTab", () => {
 		it("focuses the first terminal pane in the new tab", async () => {
 			const { tabs } = await import("../../lib/ipc");
-			const layout: PaneNode = { type: "terminal", id: "new-pane-1", ptyId: "" };
+			const layout: PaneNode = {
+				type: "terminal",
+				id: "new-pane-1",
+				ptyId: "",
+			};
 			const newTab = makeTab({
 				id: "tab-new",
 				layoutJson: JSON.stringify(layout),
@@ -203,7 +216,11 @@ describe("sessionStore", () => {
 			const session = makeSession();
 			useSessionStore.setState({ sessions: [session] });
 
-			const newLayout: PaneNode = { type: "terminal", id: "new-pane", ptyId: "new-pty" };
+			const newLayout: PaneNode = {
+				type: "terminal",
+				id: "new-pane",
+				ptyId: "new-pty",
+			};
 			useSessionStore.getState().updateLayoutLocal("tab-1", newLayout);
 
 			const tab = useSessionStore.getState().sessions[0].tabs[0];
@@ -220,7 +237,9 @@ describe("sessionStore", () => {
 		});
 
 		it("clears with null", () => {
-			useSessionStore.getState().setMaximized("p1", { type: "terminal", id: "p1", ptyId: "" });
+			useSessionStore
+				.getState()
+				.setMaximized("p1", { type: "terminal", id: "p1", ptyId: "" });
 			useSessionStore.getState().setMaximized(null, null);
 			expect(useSessionStore.getState().maximizedPaneId).toBeNull();
 			expect(useSessionStore.getState().savedLayout).toBeNull();
@@ -230,7 +249,9 @@ describe("sessionStore", () => {
 	describe("setPtyStatus", () => {
 		it("updates ptyStatuses record", () => {
 			useSessionStore.getState().setPtyStatus("pty-1", { type: "running" });
-			expect(useSessionStore.getState().ptyStatuses["pty-1"]).toEqual({ type: "running" });
+			expect(useSessionStore.getState().ptyStatuses["pty-1"]).toEqual({
+				type: "running",
+			});
 		});
 	});
 
@@ -251,7 +272,7 @@ describe("sessionStore", () => {
 	describe("setActiveView", () => {
 		it("updates activeView for session", () => {
 			useSessionStore.getState().setActiveView("s1", "file");
-			expect(useSessionStore.getState().activeView["s1"]).toBe("file");
+			expect(useSessionStore.getState().activeView.s1).toBe("file");
 		});
 	});
 
@@ -263,8 +284,14 @@ describe("sessionStore", () => {
 
 			useSessionStore.getState().setSessionBaseBranch("s1", "develop");
 
-			expect(useSessionStore.getState().sessions.find((s) => s.id === "s1")?.baseBranch).toBe("develop");
-			expect(useSessionStore.getState().sessions.find((s) => s.id === "s2")?.baseBranch).toBeNull();
+			expect(
+				useSessionStore.getState().sessions.find((s) => s.id === "s1")
+					?.baseBranch,
+			).toBe("develop");
+			expect(
+				useSessionStore.getState().sessions.find((s) => s.id === "s2")
+					?.baseBranch,
+			).toBeNull();
 		});
 
 		it("clears baseBranch when set to null", () => {
@@ -273,15 +300,23 @@ describe("sessionStore", () => {
 
 			useSessionStore.getState().setSessionBaseBranch("s1", null);
 
-			expect(useSessionStore.getState().sessions.find((s) => s.id === "s1")?.baseBranch).toBeNull();
+			expect(
+				useSessionStore.getState().sessions.find((s) => s.id === "s1")
+					?.baseBranch,
+			).toBeNull();
 		});
 	});
 
 	describe("derived getters", () => {
 		it("getActiveSession returns the active session", () => {
 			const session = makeSession();
-			useSessionStore.setState({ sessions: [session], activeSessionId: "session-1" });
-			expect(useSessionStore.getState().getActiveSession()?.id).toBe("session-1");
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: "session-1",
+			});
+			expect(useSessionStore.getState().getActiveSession()?.id).toBe(
+				"session-1",
+			);
 		});
 
 		it("getActiveSession returns undefined when no active session", () => {
@@ -300,7 +335,9 @@ describe("sessionStore", () => {
 
 		it("getActiveLayout parses layoutJson", () => {
 			const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "" };
-			const session = makeSession({ tabs: [makeTab({ layoutJson: JSON.stringify(layout) })] });
+			const session = makeSession({
+				tabs: [makeTab({ layoutJson: JSON.stringify(layout) })],
+			});
 			useSessionStore.setState({
 				sessions: [session],
 				activeSessionId: "session-1",
@@ -312,11 +349,15 @@ describe("sessionStore", () => {
 		it("getTabsForSession returns tabs", () => {
 			const session = makeSession();
 			useSessionStore.setState({ sessions: [session] });
-			expect(useSessionStore.getState().getTabsForSession("session-1")).toHaveLength(1);
+			expect(
+				useSessionStore.getState().getTabsForSession("session-1"),
+			).toHaveLength(1);
 		});
 
 		it("getTabsForSession returns empty for unknown session", () => {
-			expect(useSessionStore.getState().getTabsForSession("unknown")).toEqual([]);
+			expect(useSessionStore.getState().getTabsForSession("unknown")).toEqual(
+				[],
+			);
 		});
 	});
 });

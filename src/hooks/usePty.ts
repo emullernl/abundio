@@ -11,7 +11,14 @@ interface UsePtyOptions {
 	onStatus?: (status: PtyStatusType) => void;
 }
 
-export function usePty({ cwd, cols, rows, command, onData, onStatus }: UsePtyOptions) {
+export function usePty({
+	cwd,
+	cols,
+	rows,
+	command,
+	onData,
+	onStatus,
+}: UsePtyOptions) {
 	const [ptyId, setPtyId] = useState<string | null>(null);
 	const [status, setStatus] = useState<PtyStatusType>({ type: "running" });
 	const unlistenOutputRef = useRef<(() => void) | null>(null);
@@ -51,7 +58,7 @@ export function usePty({ cwd, cols, rows, command, onData, onStatus }: UsePtyOpt
 			}
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [cwd, command]);
+	}, [cwd, command, cols, onData, onStatus, ptyId, rows]);
 
 	const write = useCallback(
 		(data: string) => {

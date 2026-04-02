@@ -1,14 +1,14 @@
 import { useEffect, useRef } from "react";
 import { pty } from "../../lib/ipc";
+import { getTarget, onTargetChange } from "../../lib/portalRegistry";
 import {
-	getTerminal,
 	createTerminal,
 	destroyTerminal,
 	flushPendingRestore,
+	getTerminal,
 } from "../../lib/terminalManager";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { getTheme } from "../../lib/themes";
-import { getTarget, onTargetChange } from "../../lib/portalRegistry";
+import { useSettingsStore } from "../../stores/settingsStore";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
@@ -32,7 +32,11 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 
 			// Only create if not already existing
 			if (!getTerminal(paneId)) {
-				const { terminalFontFamily, fontSize, theme: themeName } = useSettingsStore.getState();
+				const {
+					terminalFontFamily,
+					fontSize,
+					theme: themeName,
+				} = useSettingsStore.getState();
 				const currentTheme = getTheme(themeName);
 				await createTerminal(paneId, ptyId, cwd, stableRef.current, {
 					fontSize,
@@ -75,8 +79,8 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 			cleanupResizeObserver();
 			destroyTerminal(paneId);
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [paneId]);
+		// biome-ignore lint/correctness/useExhaustiveDependencies: cleanupResizeObserver, projectInto, and retract use refs and don't need to trigger re-runs
+	}, [paneId, cleanupResizeObserver, cwd, projectInto, ptyId, retract]);
 
 	function projectInto(id: string, target: HTMLDivElement) {
 		const managed = getTerminal(id);
@@ -90,7 +94,9 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 		managed.fitAddon.fit();
 		flushPendingRestore(id);
 		if (managed.ptyId) {
-			pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});
+			pty
+				.resize(managed.ptyId, managed.term.cols, managed.term.rows)
+				.catch(() => {});
 		}
 
 		// Observe the target for resize

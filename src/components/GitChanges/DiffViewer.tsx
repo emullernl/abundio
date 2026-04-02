@@ -1,13 +1,20 @@
-import { useEffect, useRef, useState } from "react";
-import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView, lineNumbers } from "@codemirror/view";
+import {
+	defaultHighlightStyle,
+	syntaxHighlighting,
+} from "@codemirror/language";
 import { MergeView } from "@codemirror/merge";
+import { EditorState, type Extension } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { abundioTheme, getLanguageExtension, detectLanguage } from "../../lib/codemirrorShared";
+import { EditorView, lineNumbers } from "@codemirror/view";
+import { useEffect, useRef, useState } from "react";
+import {
+	abundioTheme,
+	detectLanguage,
+	getLanguageExtension,
+} from "../../lib/codemirrorShared";
+import type { GitFileDiff } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ArrowLeft } from "../Icons";
-import type { GitFileDiff } from "../../lib/types";
 
 interface Props {
 	diff: GitFileDiff;
@@ -22,22 +29,28 @@ const diffTheme = EditorView.theme({
 		overflow: "auto",
 	},
 	".cm-changedLine": {
-		backgroundColor: "color-mix(in srgb, var(--warning) 8%, transparent) !important",
+		backgroundColor:
+			"color-mix(in srgb, var(--warning) 8%, transparent) !important",
 	},
 	".cm-changedText": {
-		backgroundColor: "color-mix(in srgb, var(--warning) 20%, transparent) !important",
+		backgroundColor:
+			"color-mix(in srgb, var(--warning) 20%, transparent) !important",
 	},
 	".cm-insertedLine": {
-		backgroundColor: "color-mix(in srgb, var(--success) 8%, transparent) !important",
+		backgroundColor:
+			"color-mix(in srgb, var(--success) 8%, transparent) !important",
 	},
 	".cm-insertedText": {
-		backgroundColor: "color-mix(in srgb, var(--success) 20%, transparent) !important",
+		backgroundColor:
+			"color-mix(in srgb, var(--success) 20%, transparent) !important",
 	},
 	".cm-deletedLine": {
-		backgroundColor: "color-mix(in srgb, var(--error) 8%, transparent) !important",
+		backgroundColor:
+			"color-mix(in srgb, var(--error) 8%, transparent) !important",
 	},
 	".cm-deletedText": {
-		backgroundColor: "color-mix(in srgb, var(--error) 20%, transparent) !important",
+		backgroundColor:
+			"color-mix(in srgb, var(--error) 20%, transparent) !important",
 	},
 	".cm-mergeViewGutter": {
 		backgroundColor: "var(--bg-secondary)",
@@ -62,7 +75,9 @@ export function DiffViewer({ diff, onBack }: Props) {
 		getLanguageExtension(language).then((ext) => {
 			if (!cancelled) setLangExt(ext);
 		});
-		return () => { cancelled = true; };
+		return () => {
+			cancelled = true;
+		};
 	}, [language]);
 
 	// Build the MergeView once language is loaded (or resolved to empty)
@@ -93,7 +108,9 @@ export function DiffViewer({ diff, onBack }: Props) {
 			},
 			parent: container,
 			orientation,
-			collapseUnchanged: collapseUnchanged ? { margin: 3, minSize: 4 } : undefined,
+			collapseUnchanged: collapseUnchanged
+				? { margin: 3, minSize: 4 }
+				: undefined,
 			highlightChanges: true,
 			gutter: true,
 		});
@@ -103,7 +120,7 @@ export function DiffViewer({ diff, onBack }: Props) {
 			view.destroy();
 			viewRef.current = null;
 		};
-	}, [diff.original, diff.modified, diff.filePath, langExt, orientation, collapseUnchanged]);
+	}, [diff.original, diff.modified, langExt, orientation, collapseUnchanged]);
 
 	const fileName = diff.filePath.split("/").pop() ?? diff.filePath;
 
@@ -113,7 +130,8 @@ export function DiffViewer({ diff, onBack }: Props) {
 				className="flex items-center gap-2 px-3 py-2 flex-shrink-0"
 				style={{
 					borderBottom: "1px solid var(--border)",
-					backgroundColor: "color-mix(in srgb, var(--bg-tertiary) 40%, transparent)",
+					backgroundColor:
+						"color-mix(in srgb, var(--bg-tertiary) 40%, transparent)",
 				}}
 			>
 				<button
@@ -134,20 +152,31 @@ export function DiffViewer({ diff, onBack }: Props) {
 				</button>
 				<span
 					className="truncate flex-1"
-					style={{ fontSize: 12, color: "var(--fg-primary)", fontFamily: "var(--font-mono)" }}
+					style={{
+						fontSize: 12,
+						color: "var(--fg-primary)",
+						fontFamily: "var(--font-mono)",
+					}}
 					title={diff.filePath}
 				>
 					{fileName}
 				</span>
-				<div className="flex items-center rounded overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+				<div
+					className="flex items-center rounded overflow-hidden"
+					style={{ border: "1px solid var(--border)" }}
+				>
 					<button
 						type="button"
 						onClick={() => setCollapseUnchanged((v) => !v)}
 						className="px-2 py-0.5 transition-colors"
 						style={{
 							fontSize: 10,
-							color: collapseUnchanged ? "var(--accent)" : "var(--fg-secondary)",
-							backgroundColor: collapseUnchanged ? "var(--bg-tertiary)" : "transparent",
+							color: collapseUnchanged
+								? "var(--accent)"
+								: "var(--fg-secondary)",
+							backgroundColor: collapseUnchanged
+								? "var(--bg-tertiary)"
+								: "transparent",
 						}}
 					>
 						Hide unchanged
@@ -157,12 +186,14 @@ export function DiffViewer({ diff, onBack }: Props) {
 			<div
 				ref={containerRef}
 				className="flex-1 min-h-0"
-				style={{
-					backgroundColor: "var(--bg-primary)",
-					overflow: "auto",
-					"--cm-font-size": `${fontSize}px`,
-					"--cm-font-family": fontFamily,
-				} as React.CSSProperties}
+				style={
+					{
+						backgroundColor: "var(--bg-primary)",
+						overflow: "auto",
+						"--cm-font-size": `${fontSize}px`,
+						"--cm-font-family": fontFamily,
+					} as React.CSSProperties
+				}
 			/>
 		</div>
 	);

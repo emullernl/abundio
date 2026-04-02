@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { themes, applyTheme, getTheme, themeList } from "../themes";
+import { describe, expect, it } from "vitest";
+import { applyTheme, getTheme, themeList, themes } from "../themes";
 
 describe("getTheme", () => {
 	it("returns the correct theme by name", () => {
@@ -22,16 +22,39 @@ describe("themeList", () => {
 
 	it("every theme has required shape", () => {
 		const uiKeys = [
-			"bgPrimary", "bgSecondary", "bgTertiary",
-			"fgPrimary", "fgSecondary",
-			"accent", "accentHover", "border",
-			"error", "warning", "success",
+			"bgPrimary",
+			"bgSecondary",
+			"bgTertiary",
+			"fgPrimary",
+			"fgSecondary",
+			"accent",
+			"accentHover",
+			"border",
+			"error",
+			"warning",
+			"success",
 		];
 		const terminalKeys = [
-			"background", "foreground", "cursor", "selectionBackground",
-			"black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-			"brightBlack", "brightRed", "brightGreen", "brightYellow",
-			"brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+			"background",
+			"foreground",
+			"cursor",
+			"selectionBackground",
+			"black",
+			"red",
+			"green",
+			"yellow",
+			"blue",
+			"magenta",
+			"cyan",
+			"white",
+			"brightBlack",
+			"brightRed",
+			"brightGreen",
+			"brightYellow",
+			"brightBlue",
+			"brightMagenta",
+			"brightCyan",
+			"brightWhite",
 		];
 
 		for (const theme of themeList()) {
@@ -49,9 +72,18 @@ describe("themeList", () => {
 	it("includes all expected theme names", () => {
 		const names = themeList().map((t) => t.name);
 		for (const name of [
-			"default", "dracula", "catppuccin", "tokyoNight", "oneDark",
-			"gruvbox", "nord", "solarizedDark", "kanagawa", "rosePine",
-			"moonlight", "vesper",
+			"default",
+			"dracula",
+			"catppuccin",
+			"tokyoNight",
+			"oneDark",
+			"gruvbox",
+			"nord",
+			"solarizedDark",
+			"kanagawa",
+			"rosePine",
+			"moonlight",
+			"vesper",
 		]) {
 			expect(names).toContain(name);
 		}

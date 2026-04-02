@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
+import { fs, git } from "../../lib/ipc";
+import type { GitChangedFile } from "../../lib/types";
+import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { useExplorerStore } from "../../stores/explorerStore";
+import { GitCompare, PanelRight, RefreshCw } from "../Icons";
+import { BranchSelector } from "./BranchSelector";
 import { GitChangesFileList } from "./GitChangesFileList";
 import { GitChangesResizer } from "./GitChangesResizer";
 import { GitPanelDivider } from "./GitPanelDivider";
 import { PullRequestsSection } from "./PullRequestsSection";
-import { BranchSelector } from "./BranchSelector";
-import { GitCompare, RefreshCw, PanelRight } from "../Icons";
-import { git, fs } from "../../lib/ipc";
-import type { GitChangedFile } from "../../lib/types";
 
 interface Props {
 	titlebarHeight: number;
@@ -30,7 +30,9 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 
 	const gitPanelWidth = useSettingsStore((s) => s.gitPanelWidth);
 	const gitPanelSplitRatio = useSettingsStore((s) => s.gitPanelSplitRatio);
-	const setGitPanelSplitRatio = useSettingsStore((s) => s.setGitPanelSplitRatio);
+	const setGitPanelSplitRatio = useSettingsStore(
+		(s) => s.setGitPanelSplitRatio,
+	);
 
 	const [selectedFile, setSelectedFile] = useState<GitChangedFile | null>(null);
 	const [localRatio, setLocalRatio] = useState<number | null>(null);
@@ -121,8 +123,15 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 		if (!cwd || !activeSessionId) return;
 		setSelectedFile(file);
 		try {
-			const diff = await git.fileDiff(cwd, file.path, file.section, sessionBaseBranch);
-			useExplorerStore.getState().openDiff(activeSessionId, file.path, diff.original, diff.modified);
+			const diff = await git.fileDiff(
+				cwd,
+				file.path,
+				file.section,
+				sessionBaseBranch,
+			);
+			useExplorerStore
+				.getState()
+				.openDiff(activeSessionId, file.path, diff.original, diff.modified);
 		} catch {
 			// Failed to load diff
 		}
@@ -199,9 +208,16 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 					{/* Header */}
 					<div
 						className="flex items-center gap-2 py-2 flex-shrink-0"
-						style={{ borderBottom: "1px solid var(--border)", paddingLeft: 12, paddingRight: 12 }}
+						style={{
+							borderBottom: "1px solid var(--border)",
+							paddingLeft: 12,
+							paddingRight: 12,
+						}}
 					>
-						<GitCompare size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+						<GitCompare
+							size={14}
+							style={{ color: "var(--accent)", flexShrink: 0 }}
+						/>
 						<span
 							className="font-medium truncate"
 							style={{ fontSize: 12, color: "var(--fg-primary)" }}
@@ -217,10 +233,23 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 
 						{/* Stats */}
 						{changedFiles.length > 0 && (
-							<span className="flex items-center gap-1 flex-shrink-0" style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}>
-								<span style={{ color: "var(--fg-secondary)" }}>{changedFiles.length}F</span>
-								{totalAdditions > 0 && <span style={{ color: "var(--success)" }}>+{totalAdditions}</span>}
-								{totalDeletions > 0 && <span style={{ color: "var(--error)" }}>-{totalDeletions}</span>}
+							<span
+								className="flex items-center gap-1 flex-shrink-0"
+								style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}
+							>
+								<span style={{ color: "var(--fg-secondary)" }}>
+									{changedFiles.length}F
+								</span>
+								{totalAdditions > 0 && (
+									<span style={{ color: "var(--success)" }}>
+										+{totalAdditions}
+									</span>
+								)}
+								{totalDeletions > 0 && (
+									<span style={{ color: "var(--error)" }}>
+										-{totalDeletions}
+									</span>
+								)}
 							</span>
 						)}
 
@@ -266,12 +295,15 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 							className="flex items-center gap-1.5 py-1.5 flex-shrink-0"
 							style={{
 								borderBottom: "1px solid var(--border)",
-								backgroundColor: "color-mix(in srgb, var(--bg-tertiary) 30%, transparent)",
+								backgroundColor:
+									"color-mix(in srgb, var(--bg-tertiary) 30%, transparent)",
 								paddingLeft: 12,
 								paddingRight: 12,
 							}}
 						>
-							<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>On</span>
+							<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>
+								On
+							</span>
 							<span
 								style={{
 									fontSize: 11,
@@ -299,7 +331,8 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 								className="flex items-center justify-center h-32 px-4 text-center"
 								style={{ color: "var(--fg-secondary)", fontSize: 12 }}
 							>
-								{error.includes("Not a git repository") || error.includes("not a git repository")
+								{error.includes("Not a git repository") ||
+								error.includes("not a git repository")
 									? "Not a git repository"
 									: error}
 							</div>
@@ -324,13 +357,13 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 				</div>
 
 				{/* ── Divider ── */}
-				<GitPanelDivider onResize={handleDividerResize} onResizeEnd={handleDividerResizeEnd} />
+				<GitPanelDivider
+					onResize={handleDividerResize}
+					onResizeEnd={handleDividerResizeEnd}
+				/>
 
 				{/* ── Bottom section: Pull Requests ── */}
-				<div
-					className="min-h-0"
-					style={{ flex: `${1 - ratio} 1 0%` }}
-				>
+				<div className="min-h-0" style={{ flex: `${1 - ratio} 1 0%` }}>
 					<PullRequestsSection />
 				</div>
 			</div>

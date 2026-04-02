@@ -3,8 +3,36 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// Returns the user's default shell.
+/// On Windows, prefers Git Bash (bash.exe) for shell integration support.
 pub fn default_shell() -> String {
     if cfg!(target_os = "windows") {
+        // Prefer Git Bash for shell integration (precmd/preexec hooks)
+        for path in [
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+        ] {
+            if std::path::Path::new(path).exists() {
+                return path.to_string();
+            }
+        }
+        // Check PATH for bash
+        if let Ok(output) = std::process::Command::new("where")
+            .arg("bash.exe")
+            .output()
+        {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !path.is_empty() {
+                    return path;
+                }
+            }
+        }
+        // Fallback to cmd.exe (no shell integration)
         env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
     } else {
         env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())

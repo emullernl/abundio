@@ -1,7 +1,7 @@
 import type { GitChangedFile } from "../../lib/types";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
-import { GitChangesFileItem } from "./GitChangesFileItem";
 import { ChevronDown, ChevronRight } from "../Icons";
+import { GitChangesFileItem } from "./GitChangesFileItem";
 
 interface Props {
 	files: GitChangedFile[];
@@ -10,14 +10,22 @@ interface Props {
 	selectedFile: GitChangedFile | null;
 }
 
-const SECTION_ORDER: Array<{ key: string; label: (base: string | null) => string }> = [
+const SECTION_ORDER: Array<{
+	key: string;
+	label: (base: string | null) => string;
+}> = [
 	{ key: "against_base", label: (base) => `Against ${base ?? "base"}` },
 	{ key: "staged", label: () => "Staged" },
 	{ key: "unstaged", label: () => "Unstaged" },
 	{ key: "untracked", label: () => "Untracked" },
 ];
 
-export function GitChangesFileList({ files, baseBranch, onSelectFile, selectedFile }: Props) {
+export function GitChangesFileList({
+	files,
+	baseBranch,
+	onSelectFile,
+	selectedFile,
+}: Props) {
 	const collapsedSections = useGitChangesStore((s) => s.collapsedSections);
 	const toggleSection = useGitChangesStore((s) => s.toggleSection);
 
@@ -52,7 +60,8 @@ export function GitChangesFileList({ files, baseBranch, onSelectFile, selectedFi
 							onClick={() => toggleSection(group.key)}
 							className="w-full flex items-center gap-1.5 py-1.5 transition-colors"
 							style={{
-								backgroundColor: "color-mix(in srgb, var(--bg-tertiary) 40%, transparent)",
+								backgroundColor:
+									"color-mix(in srgb, var(--bg-tertiary) 40%, transparent)",
 								borderBottom: "1px solid var(--border)",
 								paddingLeft: 12,
 								paddingRight: 12,
@@ -61,17 +70,29 @@ export function GitChangesFileList({ files, baseBranch, onSelectFile, selectedFi
 								e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
 							}}
 							onMouseLeave={(e) => {
-								e.currentTarget.style.backgroundColor = "color-mix(in srgb, var(--bg-tertiary) 40%, transparent)";
+								e.currentTarget.style.backgroundColor =
+									"color-mix(in srgb, var(--bg-tertiary) 40%, transparent)";
 							}}
 						>
 							{isCollapsed ? (
-								<ChevronRight size={12} style={{ color: "var(--fg-secondary)" }} />
+								<ChevronRight
+									size={12}
+									style={{ color: "var(--fg-secondary)" }}
+								/>
 							) : (
-								<ChevronDown size={12} style={{ color: "var(--fg-secondary)" }} />
+								<ChevronDown
+									size={12}
+									style={{ color: "var(--fg-secondary)" }}
+								/>
 							)}
 							<span
 								className="flex-1 text-left font-medium truncate"
-								style={{ fontSize: 11, color: "var(--fg-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}
+								style={{
+									fontSize: 11,
+									color: "var(--fg-secondary)",
+									textTransform: "uppercase",
+									letterSpacing: "0.05em",
+								}}
 							>
 								{group.label}
 							</span>
@@ -90,9 +111,20 @@ export function GitChangesFileList({ files, baseBranch, onSelectFile, selectedFi
 								{group.files.length}
 							</span>
 							{(totalAdditions > 0 || totalDeletions > 0) && (
-								<span className="flex-shrink-0 flex items-center gap-1" style={{ fontSize: 10, fontFamily: "var(--font-mono)" }}>
-									{totalAdditions > 0 && <span style={{ color: "var(--success)" }}>+{totalAdditions}</span>}
-									{totalDeletions > 0 && <span style={{ color: "var(--error)" }}>-{totalDeletions}</span>}
+								<span
+									className="flex-shrink-0 flex items-center gap-1"
+									style={{ fontSize: 10, fontFamily: "var(--font-mono)" }}
+								>
+									{totalAdditions > 0 && (
+										<span style={{ color: "var(--success)" }}>
+											+{totalAdditions}
+										</span>
+									)}
+									{totalDeletions > 0 && (
+										<span style={{ color: "var(--error)" }}>
+											-{totalDeletions}
+										</span>
+									)}
 								</span>
 							)}
 						</button>
@@ -102,7 +134,10 @@ export function GitChangesFileList({ files, baseBranch, onSelectFile, selectedFi
 									<GitChangesFileItem
 										key={`${group.key}-${file.path}`}
 										file={file}
-										isSelected={selectedFile?.path === file.path && selectedFile?.section === file.section}
+										isSelected={
+											selectedFile?.path === file.path &&
+											selectedFile?.section === file.section
+										}
 										onClick={() => onSelectFile(file)}
 									/>
 								))}

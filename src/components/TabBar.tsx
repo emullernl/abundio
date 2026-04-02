@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Tab } from "../lib/types";
 import type { FileTab } from "../stores/explorerStore";
 import {
-	usePtyActivityStore,
 	computeTabDotStatus,
 	DOT_COLORS,
 	DOT_GLOWS,
 	shouldPulse,
+	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
-import { Terminal, File, GitCompare } from "./Icons";
+import { File, GitCompare, Terminal } from "./Icons";
 
 interface TabBarProps {
 	tabs: Tab[];
@@ -26,7 +26,13 @@ interface TabBarProps {
 
 function CloseIcon({ size = 14 }: { size?: number }) {
 	return (
-		<svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 16 16"
+			fill="none"
+			aria-hidden="true"
+		>
 			<path
 				d="M4.5 4.5L11.5 11.5M11.5 4.5L4.5 11.5"
 				stroke="currentColor"
@@ -39,7 +45,13 @@ function CloseIcon({ size = 14 }: { size?: number }) {
 
 function PlusIcon({ size = 14 }: { size?: number }) {
 	return (
-		<svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 16 16"
+			fill="none"
+			aria-hidden="true"
+		>
 			<path
 				d="M8 3.5V12.5M3.5 8H12.5"
 				stroke="currentColor"
@@ -90,8 +102,11 @@ function TabItem({
 	const showClose = isActive || hovered;
 
 	return (
+		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard navigation handled at tab container level
 		<div
 			className="flex items-center shrink-0 cursor-pointer relative"
+			role="tab"
+			tabIndex={0}
 			style={{
 				height: isActive ? 32 : 28,
 				paddingLeft: 14,
@@ -100,16 +115,26 @@ function TabItem({
 				fontSize: 12.5,
 				fontFamily: "var(--font-mono)",
 				letterSpacing: "0.01em",
-				color: isActive ? "var(--fg-primary)" : hovered ? "var(--fg-primary)" : "var(--fg-secondary)",
+				color: isActive
+					? "var(--fg-primary)"
+					: hovered
+						? "var(--fg-primary)"
+						: "var(--fg-secondary)",
 				backgroundColor: isActive
 					? "var(--bg-primary)"
 					: hovered
 						? "color-mix(in srgb, var(--bg-tertiary) 50%, transparent)"
 						: "transparent",
 				borderRadius: "6px 6px 0 0",
-				borderTop: isActive ? "1px solid var(--accent)" : "1px solid transparent",
-				borderLeft: isActive ? "1px solid var(--border)" : "1px solid transparent",
-				borderRight: isActive ? "1px solid var(--border)" : "1px solid transparent",
+				borderTop: isActive
+					? "1px solid var(--accent)"
+					: "1px solid transparent",
+				borderLeft: isActive
+					? "1px solid var(--border)"
+					: "1px solid transparent",
+				borderRight: isActive
+					? "1px solid var(--border)"
+					: "1px solid transparent",
 				transition: "all 150ms ease-out",
 				maxWidth: 200,
 				minWidth: 0,
@@ -140,7 +165,14 @@ function TabItem({
 			)}
 
 			{icon && (
-				<span style={{ flexShrink: 0, display: "flex", alignItems: "center", opacity: 0.7 }}>
+				<span
+					style={{
+						flexShrink: 0,
+						display: "flex",
+						alignItems: "center",
+						opacity: 0.7,
+					}}
+				>
 					{icon}
 				</span>
 			)}
@@ -193,7 +225,13 @@ function TabItem({
 	);
 }
 
-function CloseButton({ visible, onClick }: { visible: boolean; onClick: () => void }) {
+function CloseButton({
+	visible,
+	onClick,
+}: {
+	visible: boolean;
+	onClick: () => void;
+}) {
 	const [hovered, setHovered] = useState(false);
 
 	return (
@@ -208,9 +246,12 @@ function CloseButton({ visible, onClick }: { visible: boolean; onClick: () => vo
 				width: 20,
 				height: 20,
 				color: hovered ? "var(--error)" : "var(--fg-secondary)",
-				backgroundColor: hovered ? "color-mix(in srgb, var(--error) 15%, transparent)" : "transparent",
+				backgroundColor: hovered
+					? "color-mix(in srgb, var(--error) 15%, transparent)"
+					: "transparent",
 				opacity: visible ? (hovered ? 1 : 0.6) : 0,
-				transition: "opacity 100ms ease-out, background-color 100ms ease-out, color 100ms ease-out",
+				transition:
+					"opacity 100ms ease-out, background-color 100ms ease-out, color 100ms ease-out",
 			}}
 			onMouseEnter={() => setHovered(true)}
 			onMouseLeave={() => setHovered(false)}
@@ -238,7 +279,11 @@ export function TabBar({
 	const [editingTabId, setEditingTabId] = useState<string | null>(null);
 	const [editValue, setEditValue] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
-	const [contextMenu, setContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
+	const [contextMenu, setContextMenu] = useState<{
+		tabId: string;
+		x: number;
+		y: number;
+	} | null>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
@@ -252,7 +297,10 @@ export function TabBar({
 	useEffect(() => {
 		if (!contextMenu) return;
 		const handleClick = (e: MouseEvent) => {
-			if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+			if (
+				contextMenuRef.current &&
+				!contextMenuRef.current.contains(e.target as Node)
+			) {
 				setContextMenu(null);
 			}
 		};
@@ -310,10 +358,14 @@ export function TabBar({
 			<div
 				className="flex items-end flex-1 min-w-0 overflow-x-auto"
 				style={{ gap: 1, scrollbarWidth: "none" }}
+				role="tablist"
 			>
 				{tabs.map((tab, index) => {
 					const isActive = activeView === "terminal" && tab.id === activeTabId;
-					const prevIsActive = index > 0 && activeView === "terminal" && tabs[index - 1]?.id === activeTabId;
+					const prevIsActive =
+						index > 0 &&
+						activeView === "terminal" &&
+						tabs[index - 1]?.id === activeTabId;
 					const showSeparator = !isActive && index > 0 && !prevIsActive;
 					const tabDot = computeTabDotStatus(tab, activities, panePtyMap);
 
@@ -340,13 +392,15 @@ export function TabBar({
 							statusDot={
 								<span
 									className={`rounded-full ${shouldPulse(tabDot) ? "status-dot-pulse" : ""}`}
-									style={{
-										width: 7,
-										height: 7,
-										flexShrink: 0,
-										backgroundColor: DOT_COLORS[tabDot],
-										"--dot-glow": DOT_GLOWS[tabDot] ?? "transparent",
-									} as React.CSSProperties}
+									style={
+										{
+											width: 7,
+											height: 7,
+											flexShrink: 0,
+											backgroundColor: DOT_COLORS[tabDot],
+											"--dot-glow": DOT_GLOWS[tabDot] ?? "transparent",
+										} as React.CSSProperties
+									}
 								/>
 							}
 						/>
@@ -383,7 +437,13 @@ export function TabBar({
 							inputRef={inputRef}
 							commitRename={() => {}}
 							cancelRename={() => {}}
-							icon={ft.fileType === "diff" ? <GitCompare size={12} /> : <File size={12} />}
+							icon={
+								ft.fileType === "diff" ? (
+									<GitCompare size={12} />
+								) : (
+									<File size={12} />
+								)
+							}
 							isDirty={ft.isDirty}
 						/>
 					);
@@ -415,7 +475,13 @@ export function TabBar({
 							setContextMenu(null);
 						}}
 					/>
-					<div style={{ height: 1, backgroundColor: "var(--border)", margin: "4px 8px" }} />
+					<div
+						style={{
+							height: 1,
+							backgroundColor: "var(--border)",
+							margin: "4px 8px",
+						}}
+					/>
 					<ContextMenuButton
 						label="Close Tab"
 						shortcut="&#8984;W"
@@ -485,7 +551,9 @@ function ContextMenuButton({
 			{shortcut && (
 				<span
 					style={{
-						color: hovered ? "color-mix(in srgb, var(--bg-primary) 60%, transparent)" : "var(--fg-secondary)",
+						color: hovered
+							? "color-mix(in srgb, var(--bg-primary) 60%, transparent)"
+							: "var(--fg-secondary)",
 						fontSize: 12,
 						fontFamily: "var(--font-mono)",
 						transition: "color 80ms ease-out",

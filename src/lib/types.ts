@@ -87,9 +87,26 @@ export interface FileContent {
 
 // ── PTY ──
 
-export type PtyStatusType = { type: "running" } | { type: "exited"; code: number | null };
+export type PtyStatusType =
+	| { type: "running" }
+	| { type: "exited"; code: number | null };
 
 export type PtyActivityState = "idle" | "active" | "waiting" | "error";
+
+export type PtyActivityType =
+	| { type: "commandStarted" }
+	| { type: "commandFinished" };
+
+export type PtyDetectionMode = "agent" | "shell";
+
+export interface CodingAgent {
+	id: string;
+	name: string;
+	command: string;
+	args?: string[];
+	builtin: boolean;
+	enabled: boolean;
+}
 
 // ── Git ──
 

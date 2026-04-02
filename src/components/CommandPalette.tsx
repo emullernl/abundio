@@ -1,10 +1,13 @@
+import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSplitPane } from "../hooks/useSplitPane";
+import { pty } from "../lib/ipc";
+import { triggerAction } from "../lib/keybindings";
+import { getTerminal } from "../lib/terminalManager";
+import { themeList } from "../lib/themes";
+import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
-import { useSplitPane } from "../hooks/useSplitPane";
-import { themeList } from "../lib/themes";
-import { triggerAction } from "../lib/keybindings";
-import { open } from "@tauri-apps/plugin-dialog";
 
 interface PaletteItem {
 	id: string;
@@ -17,7 +20,7 @@ function fuzzyMatch(query: string, text: string): number {
 	const q = query.toLowerCase();
 	const t = text.toLowerCase();
 	if (q.length === 0) return 1;
-	if (t.includes(q)) return 2 + (q.length / t.length);
+	if (t.includes(q)) return 2 + q.length / t.length;
 
 	let qi = 0;
 	let score = 0;
@@ -41,8 +44,10 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
-	const { sessions, setActiveSession, createSession, focusedPaneId } = useSessionStore();
-	const { setTheme, debugActivityMeter, toggleDebugActivityMeter } = useSettingsStore();
+	const { sessions, setActiveSession, createSession, focusedPaneId } =
+		useSessionStore();
+	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
+		useSettingsStore();
 	const { splitPane, closePane, toggleMaximize } = useSplitPane();
 
 	const items = useMemo<PaletteItem[]>(() => {
@@ -109,6 +114,24 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 			action: () => triggerAction("open-settings"),
 		});
 
+		// Agents
+		if (focusedPaneId) {
+			for (const agent of agents.filter((a) => a.enabled)) {
+				result.push({
+					id: `agent-${agent.id}`,
+					label: `Launch ${agent.name}`,
+					category: "Agents",
+					action: () => {
+						const managed = getTerminal(focusedPaneId);
+						if (!managed?.ptyId) return;
+						const cmd = [agent.command, ...(agent.args || [])].join(" ");
+						pty.write(managed.ptyId, `${cmd}\n`);
+						usePtyActivityStore.getState().setAgentPty(managed.ptyId);
+					},
+				});
+			}
+		}
+
 		// Debug
 		result.push({
 			id: "action-toggle-debug-meter",
@@ -128,7 +151,19 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 		}
 
 		return result;
-	}, [sessions, focusedPaneId, setActiveSession, createSession, splitPane, closePane, toggleMaximize, setTheme, debugActivityMeter, toggleDebugActivityMeter]);
+	}, [
+		sessions,
+		focusedPaneId,
+		setActiveSession,
+		createSession,
+		splitPane,
+		closePane,
+		toggleMaximize,
+		setTheme,
+		debugActivityMeter,
+		toggleDebugActivityMeter,
+		agents,
+	]);
 
 	const filtered = useMemo(() => {
 		if (!query) return items;
@@ -149,12 +184,14 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 
 	useEffect(() => {
 		setSelectedIndex(0);
-	}, [query]);
+	}, []);
 
 	// Scroll selected item into view
 	useEffect(() => {
 		if (!listRef.current) return;
-		const selected = listRef.current.children[selectedIndex] as HTMLElement | undefined;
+		const selected = listRef.current.children[selectedIndex] as
+			| HTMLElement
+			| undefined;
 		selected?.scrollIntoView({ block: "nearest" });
 	}, [selectedIndex]);
 
@@ -183,12 +220,16 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 	let lastCategory = "";
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: modal backdrop dismiss
 		<div
+			role="presentation"
 			className="fixed inset-0 z-[200] flex items-start justify-center"
 			style={{ paddingTop: 80, backgroundColor: "rgba(0,0,0,0.5)" }}
 			onClick={onClose}
+			onKeyDown={(e) => e.key === "Escape" && onClose()}
 		>
 			<div
+				role="dialog"
 				className="rounded-xl shadow-2xl overflow-hidden flex flex-col"
 				style={{
 					width: 520,
@@ -199,7 +240,10 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 				onClick={(e) => e.stopPropagation()}
 				onKeyDown={handleKeyDown}
 			>
-				<div className="p-3" style={{ borderBottom: "1px solid var(--border)" }}>
+				<div
+					className="p-3"
+					style={{ borderBottom: "1px solid var(--border)" }}
+				>
 					<input
 						ref={inputRef}
 						type="text"
@@ -207,12 +251,19 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
 						className="w-full bg-transparent outline-none"
-						style={{ color: "var(--fg-primary)", fontSize: 15, padding: "6px 4px" }}
+						style={{
+							color: "var(--fg-primary)",
+							fontSize: 15,
+							padding: "6px 4px",
+						}}
 					/>
 				</div>
 				<div ref={listRef} className="flex-1 overflow-y-auto py-2">
 					{filtered.length === 0 && (
-						<div className="px-4 py-6 text-center" style={{ color: "var(--fg-secondary)", fontSize: 14 }}>
+						<div
+							className="px-4 py-6 text-center"
+							style={{ color: "var(--fg-secondary)", fontSize: 14 }}
+						>
 							No results
 						</div>
 					)}
@@ -224,7 +275,12 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 								{showCategory && (
 									<div
 										className="px-4 pt-3 pb-1 font-semibold"
-										style={{ fontSize: 11, color: "var(--fg-secondary)", letterSpacing: "0.05em", textTransform: "uppercase" }}
+										style={{
+											fontSize: 11,
+											color: "var(--fg-secondary)",
+											letterSpacing: "0.05em",
+											textTransform: "uppercase",
+										}}
 									>
 										{item.category}
 									</div>
@@ -241,8 +297,12 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 										padding: "8px 12px",
 										fontSize: 14,
 										width: "calc(100% - 12px)",
-										color: i === selectedIndex ? "var(--bg-primary)" : "var(--fg-primary)",
-										backgroundColor: i === selectedIndex ? "var(--accent)" : "transparent",
+										color:
+											i === selectedIndex
+												? "var(--bg-primary)"
+												: "var(--fg-primary)",
+										backgroundColor:
+											i === selectedIndex ? "var(--accent)" : "transparent",
 									}}
 								>
 									{item.label}

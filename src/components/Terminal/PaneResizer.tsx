@@ -46,6 +46,7 @@ export function PaneResizer({ direction, onResize, onResizeEnd }: Props) {
 	const isVertical = direction === "vertical";
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag resize handle
 		<div
 			ref={containerRef}
 			onMouseDown={handleMouseDown}

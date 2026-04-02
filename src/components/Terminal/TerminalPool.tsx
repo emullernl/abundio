@@ -1,5 +1,5 @@
-import { useSessionStore } from "../../stores/sessionStore";
 import type { PaneNode } from "../../lib/types";
+import { useSessionStore } from "../../stores/sessionStore";
 import { TerminalInstance } from "./TerminalInstance";
 
 interface TerminalInfo {
@@ -33,7 +33,15 @@ export function TerminalPool() {
 	}
 
 	return (
-		<div style={{ position: "fixed", left: "-9999px", visibility: "hidden", width: 0, height: 0 }}>
+		<div
+			style={{
+				position: "fixed",
+				left: "-9999px",
+				visibility: "hidden",
+				width: 0,
+				height: 0,
+			}}
+		>
 			{terminals.map((t) => (
 				<TerminalInstance
 					key={t.paneId}

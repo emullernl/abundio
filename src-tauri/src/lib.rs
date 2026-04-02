@@ -7,6 +7,7 @@ pub mod file_watcher;
 pub mod gh_commands;
 pub mod git_commands;
 pub mod migrations;
+pub mod process_monitor;
 pub mod pty_manager;
 pub mod session_store;
 pub mod shell_env;

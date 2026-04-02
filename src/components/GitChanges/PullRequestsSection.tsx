@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { GhStatus } from "../../lib/types";
 import {
-	usePrStore,
 	PR_VIEW_LABELS,
-	type PrView,
 	type PrSectionState,
+	type PrView,
+	usePrStore,
 } from "../../stores/prStore";
 import { useSessionStore } from "../../stores/sessionStore";
+import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
-import { GitPullRequest, RefreshCw, ChevronDown } from "../Icons";
-import type { GhStatus } from "../../lib/types";
 
 const REFRESH_INTERVAL = 60_000;
 
@@ -43,13 +43,13 @@ export function PullRequestsSection() {
 	useEffect(() => {
 		if (!cwd || !ghStatus?.available || !ghStatus?.authenticated) return;
 		fetchReviewPrs(cwd);
-	}, [cwd, ghStatus?.available, ghStatus?.authenticated, reviewView, fetchReviewPrs]);
+	}, [cwd, ghStatus?.available, ghStatus?.authenticated, fetchReviewPrs]);
 
 	// Fetch my PRs when gh is ready, view changes, or session changes
 	useEffect(() => {
 		if (!cwd || !ghStatus?.available || !ghStatus?.authenticated) return;
 		fetchMyPrs(cwd);
-	}, [cwd, ghStatus?.available, ghStatus?.authenticated, myPrsView, fetchMyPrs]);
+	}, [cwd, ghStatus?.available, ghStatus?.authenticated, fetchMyPrs]);
 
 	// Auto-refresh both sections
 	useEffect(() => {
@@ -59,7 +59,13 @@ export function PullRequestsSection() {
 			fetchMyPrs(cwd);
 		}, REFRESH_INTERVAL);
 		return () => clearInterval(interval);
-	}, [cwd, ghStatus?.available, ghStatus?.authenticated, reviewView, myPrsView, fetchReviewPrs, fetchMyPrs]);
+	}, [
+		cwd,
+		ghStatus?.available,
+		ghStatus?.authenticated,
+		fetchReviewPrs,
+		fetchMyPrs,
+	]);
 
 	const handleRefresh = useCallback(async () => {
 		if (cwd) {
@@ -123,7 +129,10 @@ function PrSubPanel<V extends PrView>({
 	useEffect(() => {
 		if (!dropdownOpen) return;
 		function handleClickOutside(e: MouseEvent) {
-			if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+			if (
+				dropdownRef.current &&
+				!dropdownRef.current.contains(e.target as Node)
+			) {
 				setDropdownOpen(false);
 			}
 		}
@@ -138,9 +147,16 @@ function PrSubPanel<V extends PrView>({
 			{/* Header */}
 			<div
 				className="flex items-center gap-2 py-2 flex-shrink-0"
-				style={{ borderBottom: "1px solid var(--border)", paddingLeft: 12, paddingRight: 12 }}
+				style={{
+					borderBottom: "1px solid var(--border)",
+					paddingLeft: 12,
+					paddingRight: 12,
+				}}
 			>
-				<GitPullRequest size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+				<GitPullRequest
+					size={14}
+					style={{ color: "var(--accent)", flexShrink: 0 }}
+				/>
 
 				{/* View selector dropdown */}
 				<div className="relative" ref={dropdownRef}>
@@ -190,15 +206,27 @@ function PrSubPanel<V extends PrView>({
 									className="w-full text-left px-3 py-1.5 transition-colors"
 									style={{
 										fontSize: 12,
-										color: view === activeView ? "var(--accent)" : "var(--fg-primary)",
-										backgroundColor: view === activeView ? "var(--bg-tertiary)" : "transparent",
-										borderLeft: view === activeView ? "2px solid var(--accent)" : "2px solid transparent",
+										color:
+											view === activeView
+												? "var(--accent)"
+												: "var(--fg-primary)",
+										backgroundColor:
+											view === activeView
+												? "var(--bg-tertiary)"
+												: "transparent",
+										borderLeft:
+											view === activeView
+												? "2px solid var(--accent)"
+												: "2px solid transparent",
 									}}
 									onMouseEnter={(e) => {
-										if (view !== activeView) e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+										if (view !== activeView)
+											e.currentTarget.style.backgroundColor =
+												"var(--bg-tertiary)";
 									}}
 									onMouseLeave={(e) => {
-										if (view !== activeView) e.currentTarget.style.backgroundColor = "transparent";
+										if (view !== activeView)
+											e.currentTarget.style.backgroundColor = "transparent";
 									}}
 								>
 									{PR_VIEW_LABELS[view]}
@@ -214,7 +242,11 @@ function PrSubPanel<V extends PrView>({
 				{section.prs.length > 0 && (
 					<span
 						className="flex-shrink-0"
-						style={{ fontSize: 11, color: "var(--fg-secondary)", fontFamily: "var(--font-mono)" }}
+						style={{
+							fontSize: 11,
+							color: "var(--fg-secondary)",
+							fontFamily: "var(--font-mono)",
+						}}
 					>
 						{section.prs.length}
 					</span>
@@ -247,21 +279,39 @@ function PrSubPanel<V extends PrView>({
 					<StatusMessage>Checking GitHub CLI...</StatusMessage>
 				) : !ghStatus.available ? (
 					<StatusMessage>
-						<span style={{ fontWeight: 500, color: "var(--fg-primary)", marginBottom: 4, display: "block" }}>
+						<span
+							style={{
+								fontWeight: 500,
+								color: "var(--fg-primary)",
+								marginBottom: 4,
+								display: "block",
+							}}
+						>
 							gh CLI not found
 						</span>
 						Install from{" "}
-						<span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)" }}>
+						<span
+							style={{ color: "var(--accent)", fontFamily: "var(--font-mono)" }}
+						>
 							cli.github.com
 						</span>
 					</StatusMessage>
 				) : !ghStatus.authenticated ? (
 					<StatusMessage>
-						<span style={{ fontWeight: 500, color: "var(--fg-primary)", marginBottom: 4, display: "block" }}>
+						<span
+							style={{
+								fontWeight: 500,
+								color: "var(--fg-primary)",
+								marginBottom: 4,
+								display: "block",
+							}}
+						>
 							gh not authenticated
 						</span>
 						Run{" "}
-						<span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)" }}>
+						<span
+							style={{ color: "var(--accent)", fontFamily: "var(--font-mono)" }}
+						>
 							gh auth login
 						</span>
 					</StatusMessage>

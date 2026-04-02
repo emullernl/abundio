@@ -1,8 +1,8 @@
+import { useSplitPane } from "../../hooks/useSplitPane";
 import type { PaneNode } from "../../lib/types";
 import { useSessionStore } from "../../stores/sessionStore";
-import { useSplitPane } from "../../hooks/useSplitPane";
-import { TerminalSlot } from "./TerminalSlot";
 import { PaneResizer } from "./PaneResizer";
+import { TerminalSlot } from "./TerminalSlot";
 
 interface Props {
 	node: PaneNode;
@@ -13,8 +13,13 @@ export function SplitContainer({ node, cwd }: Props) {
 	const focusedPaneId = useSessionStore((s) => s.focusedPaneId);
 	const setFocusedPane = useSessionStore((s) => s.setFocusedPane);
 	const maximizedPaneId = useSessionStore((s) => s.maximizedPaneId);
-	const { updateRatioLocal, persistCurrentLayout, splitPane, closePane, toggleMaximize } =
-		useSplitPane();
+	const {
+		updateRatioLocal,
+		persistCurrentLayout,
+		splitPane,
+		closePane,
+		toggleMaximize,
+	} = useSplitPane();
 
 	if (node.type === "terminal") {
 		return (
@@ -41,7 +46,14 @@ export function SplitContainer({ node, cwd }: Props) {
 			className="flex w-full h-full"
 			style={{ flexDirection: isVertical ? "row" : "column" }}
 		>
-			<div style={{ flexBasis: firstBasis, flexGrow: 0, flexShrink: 0, overflow: "hidden" }}>
+			<div
+				style={{
+					flexBasis: firstBasis,
+					flexGrow: 0,
+					flexShrink: 0,
+					overflow: "hidden",
+				}}
+			>
 				<SplitContainer key={node.first.id} node={node.first} cwd={cwd} />
 			</div>
 			<PaneResizer
@@ -49,7 +61,14 @@ export function SplitContainer({ node, cwd }: Props) {
 				onResize={(ratio) => updateRatioLocal(node.id, ratio)}
 				onResizeEnd={persistCurrentLayout}
 			/>
-			<div style={{ flexBasis: secondBasis, flexGrow: 0, flexShrink: 0, overflow: "hidden" }}>
+			<div
+				style={{
+					flexBasis: secondBasis,
+					flexGrow: 0,
+					flexShrink: 0,
+					overflow: "hidden",
+				}}
+			>
 				<SplitContainer key={node.second.id} node={node.second} cwd={cwd} />
 			</div>
 		</div>

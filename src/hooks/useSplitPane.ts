@@ -1,9 +1,14 @@
 import { useCallback } from "react";
-import { useSessionStore } from "../stores/sessionStore";
-import type { PaneNode } from "../lib/types";
 import { pty } from "../lib/ipc";
+import {
+	collectTerminals,
+	findNode,
+	removeNode,
+	replaceNode,
+} from "../lib/paneTree";
 import { destroyTerminal } from "../lib/terminalManager";
-import { findNode, replaceNode, removeNode, collectTerminals } from "../lib/paneTree";
+import type { PaneNode } from "../lib/types";
+import { useSessionStore } from "../stores/sessionStore";
 
 function generateId(): string {
 	return crypto.randomUUID();
@@ -138,7 +143,8 @@ export function useSplitPane() {
 	const toggleMaximize = useCallback(async () => {
 		const tab = getActiveTab();
 		const layout = getActiveLayout();
-		const { focusedPaneId, maximizedPaneId, savedLayout } = useSessionStore.getState();
+		const { focusedPaneId, maximizedPaneId, savedLayout } =
+			useSessionStore.getState();
 		if (!tab || !layout || !focusedPaneId) return;
 
 		if (maximizedPaneId) {

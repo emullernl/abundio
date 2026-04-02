@@ -1,14 +1,24 @@
-import { useEffect, useRef } from "react";
-import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightSpecialChars } from "@codemirror/view";
-import { useSettingsStore } from "../../stores/settingsStore";
-import { useSessionStore } from "../../stores/sessionStore";
-import { useExplorerStore } from "../../stores/explorerStore";
-import { setAllTerminalsFontSize } from "../../lib/terminalManager";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { bracketMatching, defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import {
+	bracketMatching,
+	defaultHighlightStyle,
+	syntaxHighlighting,
+} from "@codemirror/language";
+import { Compartment, EditorState } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
+import {
+	EditorView,
+	highlightActiveLine,
+	highlightSpecialChars,
+	keymap,
+	lineNumbers,
+} from "@codemirror/view";
+import { useEffect, useRef } from "react";
 import { abundioTheme, getLanguageExtension } from "../../lib/codemirrorShared";
+import { setAllTerminalsFontSize } from "../../lib/terminalManager";
+import { useExplorerStore } from "../../stores/explorerStore";
+import { useSessionStore } from "../../stores/sessionStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 
 interface CodeEditorProps {
 	tabId: string;
@@ -20,13 +30,19 @@ interface CodeEditorProps {
 }
 
 // Cache EditorState + scroll per tab so switching tabs preserves cursor/scroll
-const stateCache = new Map<string, { state: EditorState; scrollTop: number; scrollLeft: number }>();
+const stateCache = new Map<
+	string,
+	{ state: EditorState; scrollTop: number; scrollLeft: number }
+>();
 
 // Live EditorView instances (mounted editors) — keyed by tabId
 const liveViews = new Map<string, EditorView>();
 
 // Last-known scroll positions — updated by scroll listener, survives display:none
-const lastKnownScroll = new Map<string, { scrollTop: number; scrollLeft: number }>();
+const lastKnownScroll = new Map<
+	string,
+	{ scrollTop: number; scrollLeft: number }
+>();
 
 export interface SerializedEditorState {
 	cursorPos: number;
@@ -45,11 +61,16 @@ export function clearEditorStateCache(tabId: string) {
 }
 
 /** Extract serializable cursor/scroll — uses tracked scroll (survives display:none) */
-export function getSerializableEditorState(tabId: string): SerializedEditorState | null {
+export function getSerializableEditorState(
+	tabId: string,
+): SerializedEditorState | null {
 	const live = liveViews.get(tabId);
 	if (live) {
 		const sel = live.state.selection.main;
-		const scroll = lastKnownScroll.get(tabId) ?? { scrollTop: 0, scrollLeft: 0 };
+		const scroll = lastKnownScroll.get(tabId) ?? {
+			scrollTop: 0,
+			scrollLeft: 0,
+		};
 		return {
 			cursorPos: sel.head,
 			anchorPos: sel.anchor,
@@ -68,7 +89,14 @@ export function getSerializableEditorState(tabId: string): SerializedEditorState
 	};
 }
 
-export function CodeEditor({ tabId, isActive, content, language, initialEditorState, onChange }: CodeEditorProps) {
+export function CodeEditor({
+	tabId,
+	isActive,
+	content,
+	language,
+	initialEditorState,
+	onChange,
+}: CodeEditorProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<EditorView | null>(null);
 	const onChangeRef = useRef(onChange);
@@ -233,7 +261,10 @@ export function CodeEditor({ tabId, isActive, content, language, initialEditorSt
 		});
 
 		// Track scroll in module-level Map so it survives display:none
-		lastKnownScroll.set(currentTabId, { scrollTop: targetScrollTop, scrollLeft: targetScrollLeft });
+		lastKnownScroll.set(currentTabId, {
+			scrollTop: targetScrollTop,
+			scrollLeft: targetScrollLeft,
+		});
 		const scroller = view.scrollDOM;
 		const onScroll = () => {
 			lastKnownScroll.set(currentTabId, {
@@ -248,7 +279,10 @@ export function CodeEditor({ tabId, isActive, content, language, initialEditorSt
 			scroller.removeEventListener("scroll", onScroll);
 			cancelled = true;
 			liveViews.delete(currentTabId);
-			const scroll = lastKnownScroll.get(currentTabId) ?? { scrollTop: 0, scrollLeft: 0 };
+			const scroll = lastKnownScroll.get(currentTabId) ?? {
+				scrollTop: 0,
+				scrollLeft: 0,
+			};
 			stateCache.set(currentTabId, {
 				state: view.state,
 				scrollTop: scroll.scrollTop,
@@ -258,7 +292,7 @@ export function CodeEditor({ tabId, isActive, content, language, initialEditorSt
 			view.destroy();
 			viewRef.current = null;
 		};
-	}, [language]);
+	}, [language, content, initialEditorState]);
 
 	// Update content when it changes externally (e.g., file reload)
 	useEffect(() => {
@@ -276,11 +310,13 @@ export function CodeEditor({ tabId, isActive, content, language, initialEditorSt
 		<div
 			ref={containerRef}
 			className="h-full w-full overflow-hidden"
-			style={{
-				backgroundColor: "var(--bg-primary)",
-				"--cm-font-size": `${fontSize}px`,
-				"--cm-font-family": fontFamily,
-			} as React.CSSProperties}
+			style={
+				{
+					backgroundColor: "var(--bg-primary)",
+					"--cm-font-size": `${fontSize}px`,
+					"--cm-font-family": fontFamily,
+				} as React.CSSProperties
+			}
 		/>
 	);
 }

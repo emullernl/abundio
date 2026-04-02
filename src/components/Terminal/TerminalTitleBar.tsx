@@ -1,7 +1,12 @@
 import { useState } from "react";
-import { usePtyActivityStore, DOT_COLORS, DOT_GLOWS, shouldPulse } from "../../stores/ptyActivityStore";
-import type { DotStatus } from "../../stores/ptyActivityStore";
 import { getTerminal } from "../../lib/terminalManager";
+import type { DotStatus } from "../../stores/ptyActivityStore";
+import {
+	DOT_COLORS,
+	DOT_GLOWS,
+	shouldPulse,
+	usePtyActivityStore,
+} from "../../stores/ptyActivityStore";
 
 interface Props {
 	paneId: string;
@@ -14,10 +19,14 @@ function usePtyDotStatus(paneId: string): DotStatus {
 		const entry = s.activities[ptyId];
 		if (!entry) return "green";
 		switch (entry.state) {
-			case "active": return "amber";
-			case "waiting": return "purple";
-			case "error": return "red";
-			default: return "green";
+			case "active":
+				return "amber";
+			case "waiting":
+				return "purple";
+			case "error":
+				return "red";
+			default:
+				return "green";
 		}
 	});
 }
@@ -28,13 +37,15 @@ export function TerminalTitleBar({ paneId }: Props) {
 	const dotStatus = usePtyDotStatus(paneId);
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: hover state for title bar styling
 		<div
 			className="flex items-center shrink-0"
 			style={{
 				height: 22,
 				padding: "0 8px",
 				background: "color-mix(in srgb, var(--bg-primary) 85%, transparent)",
-				borderBottom: "1px solid color-mix(in srgb, var(--border) 40%, transparent)",
+				borderBottom:
+					"1px solid color-mix(in srgb, var(--border) 40%, transparent)",
 			}}
 			onMouseEnter={() => setHovered(true)}
 			onMouseLeave={() => setHovered(false)}
@@ -54,13 +65,15 @@ export function TerminalTitleBar({ paneId }: Props) {
 
 			<div
 				className={`shrink-0 rounded-full ${shouldPulse(dotStatus) ? "status-dot-pulse" : ""}`}
-				style={{
-					width: 8,
-					height: 8,
-					marginLeft: 8,
-					backgroundColor: DOT_COLORS[dotStatus],
-					"--dot-glow": DOT_GLOWS[dotStatus] ?? "transparent",
-				} as React.CSSProperties}
+				style={
+					{
+						width: 8,
+						height: 8,
+						marginLeft: 8,
+						backgroundColor: DOT_COLORS[dotStatus],
+						"--dot-glow": DOT_GLOWS[dotStatus] ?? "transparent",
+					} as React.CSSProperties
+				}
 			/>
 		</div>
 	);

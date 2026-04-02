@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
-	getTerminal,
 	getActivityByteThreshold,
-	INPUT_GATE_MS,
+	getTerminal,
 	INACTIVITY_RESET_MS,
+	INPUT_GATE_MS,
 } from "../../lib/terminalManager";
-import { usePtyActivityStore, IDLE_THRESHOLD_MS } from "../../stores/ptyActivityStore";
+import {
+	IDLE_THRESHOLD_MS,
+	usePtyActivityStore,
+} from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 
 const POLL_MS = 100;
@@ -47,7 +50,9 @@ export function DebugActivityMeter({ paneId }: Props) {
 	const [snap, setSnap] = useState<DebugSnapshot | null>(null);
 	const storeThreshold = useSettingsStore((s) => s.activityByteThreshold);
 	const setStoreThreshold = useSettingsStore((s) => s.setActivityByteThreshold);
-	const [thresholdInput, setThresholdInput] = useState(() => String(storeThreshold));
+	const [thresholdInput, setThresholdInput] = useState(() =>
+		String(storeThreshold),
+	);
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	const ptyId = usePtyActivityStore((s) => s.panePtyMap[paneId]);
@@ -83,7 +88,9 @@ export function DebugActivityMeter({ paneId }: Props) {
 
 			// Keep input in sync unless user is editing
 			if (document.activeElement !== inputRef.current) {
-				setThresholdInput(String(useSettingsStore.getState().activityByteThreshold));
+				setThresholdInput(
+					String(useSettingsStore.getState().activityByteThreshold),
+				);
 			}
 		}, POLL_MS);
 		return () => clearInterval(id);
