@@ -3,6 +3,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useSplitPane } from "../hooks/useSplitPane";
 import { themeList } from "../lib/themes";
+import { triggerAction } from "../lib/keybindings";
 import { open } from "@tauri-apps/plugin-dialog";
 
 interface PaletteItem {
@@ -100,6 +101,13 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 				},
 			);
 		}
+
+		result.push({
+			id: "action-open-settings",
+			label: "Open Settings",
+			category: "Actions",
+			action: () => triggerAction("open-settings"),
+		});
 
 		// Debug
 		result.push({

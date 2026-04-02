@@ -130,3 +130,7 @@ export const fs = {
 		}),
 };
 
+export const fonts = {
+	listSystemFonts: () => invoke<string[]>("list_system_fonts"),
+};
+

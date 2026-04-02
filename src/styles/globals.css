@@ -1,31 +1,227 @@
 @import "tailwindcss";
 
+/* ── JetBrains Mono NL ── */
 @font-face {
   font-family: "JetBrainsMonoNL Nerd Font Mono";
   src: url("/fonts/JetBrainsMonoNLNerdFontMono-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
 }
-
 @font-face {
   font-family: "JetBrainsMonoNL Nerd Font Mono";
   src: url("/fonts/JetBrainsMonoNLNerdFontMono-Bold.ttf") format("truetype");
   font-weight: 700;
   font-style: normal;
 }
-
 @font-face {
   font-family: "JetBrainsMonoNL Nerd Font Mono";
   src: url("/fonts/JetBrainsMonoNLNerdFontMono-Italic.ttf") format("truetype");
   font-weight: 400;
   font-style: italic;
 }
-
 @font-face {
   font-family: "JetBrainsMonoNL Nerd Font Mono";
   src: url("/fonts/JetBrainsMonoNLNerdFontMono-BoldItalic.ttf") format("truetype");
   font-weight: 700;
   font-style: italic;
+}
+
+/* ── Fira Code ── */
+@font-face {
+  font-family: "FiraCode Nerd Font Mono";
+  src: url("/fonts/FiraCodeNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "FiraCode Nerd Font Mono";
+  src: url("/fonts/FiraCodeNerdFontMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+/* ── Cascadia Code ── */
+@font-face {
+  font-family: "CaskaydiaCove Nerd Font Mono";
+  src: url("/fonts/CaskaydiaCoveNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "CaskaydiaCove Nerd Font Mono";
+  src: url("/fonts/CaskaydiaCoveNerdFontMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "CaskaydiaCove Nerd Font Mono";
+  src: url("/fonts/CaskaydiaCoveNerdFontMono-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "CaskaydiaCove Nerd Font Mono";
+  src: url("/fonts/CaskaydiaCoveNerdFontMono-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+}
+
+/* ── Hack ── */
+@font-face {
+  font-family: "Hack Nerd Font Mono";
+  src: url("/fonts/HackNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Hack Nerd Font Mono";
+  src: url("/fonts/HackNerdFontMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Hack Nerd Font Mono";
+  src: url("/fonts/HackNerdFontMono-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "Hack Nerd Font Mono";
+  src: url("/fonts/HackNerdFontMono-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+}
+
+/* ── Meslo LGS ── */
+@font-face {
+  font-family: "MesloLGS Nerd Font Mono";
+  src: url("/fonts/MesloLGSNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "MesloLGS Nerd Font Mono";
+  src: url("/fonts/MesloLGSNerdFontMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "MesloLGS Nerd Font Mono";
+  src: url("/fonts/MesloLGSNerdFontMono-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "MesloLGS Nerd Font Mono";
+  src: url("/fonts/MesloLGSNerdFontMono-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+}
+
+/* ── Source Code Pro ── */
+@font-face {
+  font-family: "SauceCodePro Nerd Font Mono";
+  src: url("/fonts/SauceCodeProNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "SauceCodePro Nerd Font Mono";
+  src: url("/fonts/SauceCodeProNerdFontMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "SauceCodePro Nerd Font Mono";
+  src: url("/fonts/SauceCodeProNerdFontMono-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "SauceCodePro Nerd Font Mono";
+  src: url("/fonts/SauceCodeProNerdFontMono-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+}
+
+/* ── Victor Mono ── */
+@font-face {
+  font-family: "VictorMono Nerd Font Mono";
+  src: url("/fonts/VictorMonoNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "VictorMono Nerd Font Mono";
+  src: url("/fonts/VictorMonoNerdFontMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "VictorMono Nerd Font Mono";
+  src: url("/fonts/VictorMonoNerdFontMono-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "VictorMono Nerd Font Mono";
+  src: url("/fonts/VictorMonoNerdFontMono-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+}
+
+/* ── Geist Mono ── */
+@font-face {
+  font-family: "GeistMono Nerd Font Mono";
+  src: url("/fonts/GeistMonoNerdFontMono-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "GeistMono Nerd Font Mono";
+  src: url("/fonts/GeistMonoNerdFontMono-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+/* ── Ubuntu Mono ── */
+@font-face {
+  font-family: "UbuntuMono Nerd Font Mono";
+  src: url("/fonts/UbuntuMonoNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "UbuntuMono Nerd Font Mono";
+  src: url("/fonts/UbuntuMonoNerdFontMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "UbuntuMono Nerd Font Mono";
+  src: url("/fonts/UbuntuMonoNerdFontMono-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "UbuntuMono Nerd Font Mono";
+  src: url("/fonts/UbuntuMonoNerdFontMono-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+}
+
+/* ── Inconsolata ── */
+@font-face {
+  font-family: "Inconsolata Nerd Font Mono";
+  src: url("/fonts/InconsolataNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Inconsolata Nerd Font Mono";
+  src: url("/fonts/InconsolataNerdFontMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
 }
 
 :root {
@@ -41,13 +237,14 @@
   --warning: #d29922;
   --success: #3fb950;
   --font-mono: "JetBrainsMonoNL Nerd Font Mono", monospace;
-  --font-ui: "Geist Sans", "Inter", system-ui, sans-serif;
+  --font-ui: system-ui, -apple-system, sans-serif;
   --pane-border: 1px solid var(--border);
   --pane-focus-glow: 0 0 0 1px var(--accent);
   --sidebar-width: 280px;
   --statusbar-height: 34px;
   --transition-fast: 120ms ease-out;
   --git-panel-width: 360px;
+  --ui-font-size: 14px;
 }
 
 * {
@@ -65,7 +262,7 @@ body,
   background: var(--bg-primary);
   color: var(--fg-primary);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: var(--ui-font-size);
 }
 
 /* Prevent text selection during drag operations */

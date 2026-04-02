@@ -171,3 +171,17 @@ pub async fn fs_watch_stop(
     watcher.stop_watching(&root_path);
     Ok(())
 }
+
+// ── Font commands ──
+
+#[tauri::command]
+pub async fn list_system_fonts() -> Result<Vec<String>, AbundioError> {
+    let families = tauri::async_runtime::spawn_blocking(|| {
+        font_kit::source::SystemSource::new()
+            .all_families()
+            .map_err(|e| AbundioError::Font(e.to_string()))
+    })
+    .await
+    .map_err(|e| AbundioError::Font(e.to_string()))??;
+    Ok(families)
+}

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { StatusBar } from "./components/StatusBar";
 import { Titlebar } from "./components/Titlebar";
 import { CommandPalette } from "./components/CommandPalette";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { TabBar } from "./components/TabBar";
 import { useSession } from "./hooks/useSession";
 import { initKeybindings, registerAction } from "./lib/keybindings";
@@ -45,6 +47,7 @@ export function App() {
 	const setActiveView = useSessionStore((s) => s.setActiveView);
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
 	const fileTabs = useExplorerStore((s) => s.fileTabs);
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
@@ -72,6 +75,17 @@ export function App() {
 		};
 	}, []);
 
+	// Listen for native menu "Settings..." click
+	useEffect(() => {
+		const unlisten = listen("open-settings", () => {
+			setPaletteOpen(false);
+			setSettingsOpen(true);
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
 	useEffect(() => {
 		registerAction("split-horizontal", () => {
 			const paneId = useSessionStore.getState().focusedPaneId;
@@ -90,7 +104,14 @@ export function App() {
 		registerAction("navigate-left", () => navigatePane("left"));
 		registerAction("navigate-right", () => navigatePane("right"));
 		registerAction("maximize-pane", () => toggleMaximize());
-		registerAction("command-palette", () => setPaletteOpen((v) => !v));
+		registerAction("command-palette", () => {
+			setSettingsOpen(false);
+			setPaletteOpen((v) => !v);
+		});
+		registerAction("open-settings", () => {
+			setPaletteOpen(false);
+			setSettingsOpen(true);
+		});
 		registerAction("search-in-terminal", () => useSessionStore.getState().toggleSearch());
 		registerAction("new-tab", () => {
 			const sessionId = useSessionStore.getState().activeSessionId;
@@ -221,6 +242,7 @@ export function App() {
 			</div>
 			<StatusBar />
 			<CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+			<SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 			<TerminalPool />
 		</div>
 	);

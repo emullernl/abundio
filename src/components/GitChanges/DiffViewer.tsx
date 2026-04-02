@@ -48,7 +48,7 @@ export function DiffViewer({ diff, onBack }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<MergeView | null>(null);
 	const fontSize = useSettingsStore((s) => s.fontSize);
-	const fontFamily = useSettingsStore((s) => s.fontFamily);
+	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const orientation = "a-b" as const;
 	const [collapseUnchanged, setCollapseUnchanged] = useState(true);
 	const [langExt, setLangExt] = useState<Extension[] | null>(null);
