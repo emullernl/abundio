@@ -1,7 +1,6 @@
 use base64::Engine;
 use serde::Serialize;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::error::AbundioError;
@@ -103,23 +102,25 @@ pub async fn fs_read_file(path: String) -> Result<FileContent, AbundioError> {
 	let metadata = fs::metadata(file_path)?;
 	let size = metadata.len();
 
-	// Check executable bit
-	let perms = metadata.permissions();
-	if perms.mode() & 0o111 != 0 && !metadata.is_dir() {
-		// Check if it's a script (text with shebang) or true binary
-		let ext = file_path
-			.extension()
-			.map(|e| e.to_string_lossy().to_lowercase())
-			.unwrap_or_default();
+	// Check executable bit (Unix only — Windows has no permission bits)
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		let perms = metadata.permissions();
+		if perms.mode() & 0o111 != 0 && !metadata.is_dir() {
+			let ext = file_path
+				.extension()
+				.map(|e| e.to_string_lossy().to_lowercase())
+				.unwrap_or_default();
 
-		// Allow text-based scripts even if executable
-		if ext.is_empty() || is_binary_ext(&ext) {
-			return Ok(FileContent {
-				file_type: "binary".to_string(),
-				content: None,
-				mime: None,
-				size,
-			});
+			if ext.is_empty() || is_binary_ext(&ext) {
+				return Ok(FileContent {
+					file_type: "binary".to_string(),
+					content: None,
+					mime: None,
+					size,
+				});
+			}
 		}
 	}
 

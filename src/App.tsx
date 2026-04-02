@@ -21,8 +21,9 @@ import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { useGitChangesStore } from "./stores/gitChangesStore";
 import type { PaneNode } from "./lib/types";
+import { isMac } from "./lib/platform";
 
-const TITLEBAR_HEIGHT = 52;
+const TITLEBAR_HEIGHT = isMac ? 52 : 0;
 
 function parseLayout(layoutJson: string): PaneNode | null {
 	try {

@@ -28,7 +28,7 @@ interface KeyBinding {
 	action: KeyAction;
 }
 
-const isMac = navigator.platform.toUpperCase().includes("MAC");
+import { isMac } from "./platform";
 
 const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "h", meta: isMac, shift: true, ctrl: !isMac, action: "split-horizontal" },

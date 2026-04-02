@@ -1,9 +1,12 @@
+import { isMac } from "../lib/platform";
+
 /**
  * Transparent drag region overlay for macOS titleBarStyle: "Overlay".
  * The native traffic lights sit on top of this area.
  * This is positioned absolutely so it doesn't affect layout flow.
  */
 export function Titlebar() {
+	if (!isMac) return null;
 	return (
 		<div
 			data-tauri-drag-region

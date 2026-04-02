@@ -84,6 +84,7 @@ impl PtyManager {
             cmd
         } else {
             let mut cmd = CommandBuilder::new(&shell);
+            #[cfg(not(target_os = "windows"))]
             cmd.args(["-l", "-i"]); // login + interactive shell (sources .zshrc)
             cmd
         };
