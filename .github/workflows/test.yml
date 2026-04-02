@@ -29,6 +29,9 @@ jobs:
       - name: Run frontend tests
         run: pnpm test
 
+      - name: Build frontend
+        run: pnpm build
+
   rust:
     strategy:
       fail-fast: false
@@ -59,6 +62,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Cargo check
+        working-directory: src-tauri
+        run: cargo check
 
       - name: Run Rust tests
         working-directory: src-tauri

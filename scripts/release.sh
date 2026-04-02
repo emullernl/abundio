@@ -14,6 +14,12 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+  echo "Error: Must be on main branch to release (currently on '$CURRENT_BRANCH')."
+  exit 1
+fi
+
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Error: Working tree is not clean. Commit or stash changes first."
   exit 1
@@ -51,16 +57,16 @@ else
   sed -i "0,/^version = .*/s//version = \"$VERSION\"/" "$ROOT/src-tauri/Cargo.toml"
 fi
 
-# Update Cargo.lock
-(cd "$ROOT/src-tauri" && cargo generate-lockfile 2>/dev/null || true)
+# Update Cargo.lock without re-resolving transitive dependencies
+(cd "$ROOT/src-tauri" && cargo check --quiet) || { echo "Error: cargo check failed — fix build errors before releasing."; exit 1; }
 
 echo "Bumped version to $VERSION"
 echo ""
 
 git add "$ROOT/package.json" "$ROOT/src-tauri/tauri.conf.json" "$ROOT/src-tauri/Cargo.toml" "$ROOT/src-tauri/Cargo.lock"
 git commit -m "release: v$VERSION"
-git tag "v$VERSION"
+git tag -a "v$VERSION" -m "Release v$VERSION"
 
 echo ""
 echo "Created commit and tag v$VERSION."
-echo "Run 'git push && git push --tags' to trigger the release build."
+echo "Run 'git push --follow-tags' to trigger the release build."

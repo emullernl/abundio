@@ -198,7 +198,7 @@ Releases are triggered by git tags. A helper script bumps the version in all con
 
 ```bash
 pnpm run release 0.2.0        # bumps version, commits, creates v0.2.0 tag
-git push && git push --tags    # triggers CI build for all platforms
+git push --follow-tags         # triggers CI build for all platforms
 ```
 
 This creates a draft [GitHub Release](../../releases) with macOS, Linux, and Windows artifacts. Review the draft on GitHub and publish when ready.
