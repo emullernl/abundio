@@ -15,9 +15,21 @@ const SCAN_INTERVAL_MS = 500;
 // to avoid triggering re-renders on every output chunk.
 const lastOutputTimestamps = new Map<string, number>();
 
+// Track whether a shell command is currently running (between command_start and command_end).
+// Stored outside Zustand like lastOutputTimestamps to avoid re-renders.
+const shellCommandRunning = new Map<string, boolean>();
+
 /** Get the last output timestamp for a PTY (for use outside the store, e.g. DebugActivityMeter). */
 export function getLastOutputAt(ptyId: string): number | null {
 	return lastOutputTimestamps.get(ptyId) ?? null;
+}
+
+export function isShellCommandRunning(ptyId: string): boolean {
+	return shellCommandRunning.get(ptyId) ?? false;
+}
+
+export function setShellCommandRunning(ptyId: string, running: boolean): void {
+	shellCommandRunning.set(ptyId, running);
 }
 
 // ── Types ──
@@ -191,6 +203,8 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		},
 
 		removePty: (ptyId) => {
+			lastOutputTimestamps.delete(ptyId);
+			shellCommandRunning.delete(ptyId);
 			set((s) => {
 				const { [ptyId]: _, ...rest } = s.activities;
 				return { activities: rest };
@@ -237,6 +251,8 @@ setInterval(() => {
 		const elapsed = now - lastOutput;
 
 		if (entry.state === "active" && elapsed > IDLE_THRESHOLD_MS) {
+			// Don't transition to idle if a shell command is still running
+			if (shellCommandRunning.get(ptyId)) continue;
 			const paneId = ptyToPaneMap[ptyId];
 			const isFocused =
 				appHasFocus && paneId != null && focusedPaneId === paneId;

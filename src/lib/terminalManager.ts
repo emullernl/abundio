@@ -8,6 +8,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import {
 	setFocusedPaneIdGetter,
+	setShellCommandRunning,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
@@ -320,8 +321,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			for (const cmd of commands) {
 				const actStore = usePtyActivityStore.getState();
 				if (cmd.type === "command_start") {
+					setShellCommandRunning(currentPtyId, true);
 					actStore.recordOutput(currentPtyId);
 				} else if (cmd.type === "command_end") {
+					setShellCommandRunning(currentPtyId, false);
 					if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
 						actStore.recordError(currentPtyId);
 					} else {
@@ -367,8 +370,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		const entry = actStore.activities[currentPtyId];
 		if (entry?.detectionMode !== "shell") return;
 		if (activity.type === "commandStarted") {
+			setShellCommandRunning(currentPtyId, true);
 			actStore.recordOutput(currentPtyId);
 		} else if (activity.type === "commandFinished") {
+			setShellCommandRunning(currentPtyId, false);
 			if (entry.state === "active") {
 				const isFocused =
 					document.hasFocus() &&
