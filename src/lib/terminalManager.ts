@@ -368,11 +368,12 @@ export function setAllTerminalsFontSize(fontSize: number): void {
 
 /** Update font family on all terminal instances and refit */
 export async function setAllTerminalsFontFamily(fontFamily: string): Promise<void> {
+	const fontSize = instances.values().next().value?.term.options.fontSize ?? 14;
 	try {
 		await Promise.all([
-			document.fonts.load(`14px ${fontFamily}`),
-			document.fonts.load(`bold 14px ${fontFamily}`),
-			document.fonts.load(`italic 14px ${fontFamily}`),
+			document.fonts.load(`${fontSize}px ${fontFamily}`),
+			document.fonts.load(`bold ${fontSize}px ${fontFamily}`),
+			document.fonts.load(`italic ${fontSize}px ${fontFamily}`),
 		]);
 	} catch {
 		// Proceed with fallback if font loading fails
@@ -380,6 +381,7 @@ export async function setAllTerminalsFontFamily(fontFamily: string): Promise<voi
 
 	for (const managed of instances.values()) {
 		managed.term.options.fontFamily = fontFamily;
+		managed.term.refresh(0, managed.term.rows - 1);
 		managed.fitAddon.fit();
 		if (managed.ptyId) {
 			pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});

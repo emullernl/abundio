@@ -30,7 +30,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	useSettingsStore.setState({
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
-		uiFontFamily: "'Geist Sans', 'Inter', system-ui, sans-serif",
+		uiFontFamily: "system-ui, -apple-system, sans-serif",
 		fontSize: 14,
 		uiFontSize: 14,
 		theme: "default",
@@ -45,7 +45,7 @@ describe("settingsStore", () => {
 	it("has correct defaults", () => {
 		const state = useSettingsStore.getState();
 		expect(state.terminalFontFamily).toContain("JetBrainsMonoNL");
-		expect(state.uiFontFamily).toContain("Geist Sans");
+		expect(state.uiFontFamily).toContain("system-ui");
 		expect(state.fontSize).toBe(14);
 		expect(state.theme).toBe("default");
 		expect(state.sidebarCollapsed).toBe(false);

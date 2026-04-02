@@ -19,7 +19,11 @@ export const TERMINAL_FONTS: FontEntry[] = [
 	{ name: "'Inconsolata Nerd Font Mono', monospace", displayName: "Inconsolata" },
 ];
 
-/** Convert a raw system font family name to a FontEntry */
+/**
+ * Convert a raw system font family name to a FontEntry for UI (non-terminal) use.
+ * Falls back to system-ui, sans-serif since this is used for the app interface,
+ * not for terminal rendering where monospace would be required.
+ */
 export function systemFontToEntry(family: string): FontEntry {
 	return {
 		name: `'${family}', system-ui, sans-serif`,

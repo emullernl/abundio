@@ -33,7 +33,7 @@ export const useSettingsStore = create<SettingsState>()(
 	persist(
 		(set) => ({
 			terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
-			uiFontFamily: "'Geist Sans', 'Inter', system-ui, sans-serif",
+			uiFontFamily: "system-ui, -apple-system, sans-serif",
 			fontSize: 14,
 			uiFontSize: 14,
 			theme: "default",

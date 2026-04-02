@@ -76,6 +76,7 @@ export function CodeEditor({ tabId, isActive, content, language, initialEditorSt
 	const tabIdRef = useRef(tabId);
 	tabIdRef.current = tabId;
 	const langCompartmentRef = useRef(new Compartment());
+	// Code editor intentionally uses the terminal (monospace) font, not the UI font
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 

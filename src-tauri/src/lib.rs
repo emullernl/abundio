@@ -108,14 +108,12 @@ fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
         ],
     )?;
 
+    #[cfg(not(target_os = "macos"))]
     let help_menu = Submenu::with_items(
         handle,
         "Help",
         true,
-        &[
-            #[cfg(not(target_os = "macos"))]
-            &PredefinedMenuItem::about(handle, None, Some(about_metadata))?,
-        ],
+        &[&PredefinedMenuItem::about(handle, None, Some(about_metadata))?],
     )?;
 
     Menu::with_items(
@@ -128,6 +126,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
             #[cfg(target_os = "macos")]
             &view_menu,
             &window_menu,
+            #[cfg(not(target_os = "macos"))]
             &help_menu,
         ],
     )

@@ -237,7 +237,7 @@
   --warning: #d29922;
   --success: #3fb950;
   --font-mono: "JetBrainsMonoNL Nerd Font Mono", monospace;
-  --font-ui: "Geist Sans", "Inter", system-ui, sans-serif;
+  --font-ui: system-ui, -apple-system, sans-serif;
   --pane-border: 1px solid var(--border);
   --pane-focus-glow: 0 0 0 1px var(--accent);
   --sidebar-width: 280px;

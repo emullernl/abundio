@@ -267,15 +267,16 @@ function FontPicker({
 			.map(({ font }) => font);
 	}, [fonts, query]);
 
-	// Scroll selected into view on mount
+	// Scroll selected into view once the font list is populated
+	const hasScrolled = useRef(false);
 	useEffect(() => {
-		if (!listRef.current) return;
+		if (!listRef.current || filtered.length === 0 || hasScrolled.current) return;
+		hasScrolled.current = true;
 		const idx = filtered.findIndex((f) => f.name === selectedFont);
 		if (idx > 0) {
-			const el = listRef.current.children[idx] as HTMLElement | undefined;
-			el?.scrollIntoView({ block: "center" });
+			(listRef.current.children[idx] as HTMLElement | undefined)?.scrollIntoView({ block: "center" });
 		}
-	}, []); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [filtered, selectedFont]);
 
 	return (
 		<div className="flex flex-col gap-2 flex-1 min-h-0">
@@ -477,13 +478,14 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const themes = useMemo(() => themeList(), []);
 
 	const [systemFonts, setSystemFonts] = useState<FontEntry[]>([]);
+	const systemFontsLoaded = useRef(false);
 	useEffect(() => {
-		if (!isOpen) return;
+		if (!isOpen || systemFontsLoaded.current) return;
 		fontsIpc.listSystemFonts().then((families) => {
 			const sorted = families.slice().sort((a, b) => a.localeCompare(b));
 			setSystemFonts(sorted.map(systemFontToEntry));
+			systemFontsLoaded.current = true;
 		}).catch(() => {
-			// Fallback if font enumeration fails
 			setSystemFonts([]);
 		});
 	}, [isOpen]);
