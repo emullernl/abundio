@@ -12,23 +12,27 @@ vi.mock("../../lib/themes", () => ({
 
 vi.mock("../../lib/terminalManager", () => ({
 	setAllTerminalsTheme: vi.fn(),
+	setAllTerminalsFontFamily: vi.fn(),
 	setActivityByteThreshold: vi.fn(),
 }));
 
 import { useSettingsStore } from "../settingsStore";
 import { applyTheme, getTheme } from "../../lib/themes";
-import { setAllTerminalsTheme, setActivityByteThreshold } from "../../lib/terminalManager";
+import { setAllTerminalsTheme, setAllTerminalsFontFamily, setActivityByteThreshold } from "../../lib/terminalManager";
 
 const mockApplyTheme = vi.mocked(applyTheme);
 const mockGetTheme = vi.mocked(getTheme);
 const mockSetAllTerminalsTheme = vi.mocked(setAllTerminalsTheme);
+const mockSetAllTerminalsFontFamily = vi.mocked(setAllTerminalsFontFamily);
 const mockSetActivityByteThreshold = vi.mocked(setActivityByteThreshold);
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	useSettingsStore.setState({
-		fontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
+		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
+		uiFontFamily: "'Geist Sans', 'Inter', system-ui, sans-serif",
 		fontSize: 14,
+		uiFontSize: 14,
 		theme: "default",
 		sidebarCollapsed: false,
 		sidebarSplitRatio: 0.4,
@@ -40,16 +44,23 @@ beforeEach(() => {
 describe("settingsStore", () => {
 	it("has correct defaults", () => {
 		const state = useSettingsStore.getState();
-		expect(state.fontFamily).toContain("JetBrainsMonoNL");
+		expect(state.terminalFontFamily).toContain("JetBrainsMonoNL");
+		expect(state.uiFontFamily).toContain("Geist Sans");
 		expect(state.fontSize).toBe(14);
 		expect(state.theme).toBe("default");
 		expect(state.sidebarCollapsed).toBe(false);
 		expect(state.sidebarSplitRatio).toBe(0.4);
 	});
 
-	it("setFontFamily updates fontFamily", () => {
-		useSettingsStore.getState().setFontFamily("Fira Code");
-		expect(useSettingsStore.getState().fontFamily).toBe("Fira Code");
+	it("setTerminalFontFamily updates terminalFontFamily", () => {
+		useSettingsStore.getState().setTerminalFontFamily("'FiraCode Nerd Font Mono', monospace");
+		expect(useSettingsStore.getState().terminalFontFamily).toBe("'FiraCode Nerd Font Mono', monospace");
+		expect(mockSetAllTerminalsFontFamily).toHaveBeenCalledWith("'FiraCode Nerd Font Mono', monospace");
+	});
+
+	it("setUiFontFamily updates uiFontFamily", () => {
+		useSettingsStore.getState().setUiFontFamily("'Inter', system-ui, sans-serif");
+		expect(useSettingsStore.getState().uiFontFamily).toBe("'Inter', system-ui, sans-serif");
 	});
 
 	it("setFontSize updates fontSize", () => {

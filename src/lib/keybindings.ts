@@ -17,7 +17,8 @@ type KeyAction =
 	| "font-size-increase"
 	| "font-size-decrease"
 	| "save-file"
-	| "toggle-git-panel";
+	| "toggle-git-panel"
+	| "open-settings";
 
 interface KeyBinding {
 	key: string;
@@ -49,6 +50,7 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "-", meta: isMac, shift: false, ctrl: !isMac, action: "font-size-decrease" },
 	{ key: "s", meta: isMac, shift: false, ctrl: !isMac, action: "save-file" },
 	{ key: "g", meta: isMac, shift: true, ctrl: !isMac, action: "toggle-git-panel" },
+	{ key: ",", meta: isMac, shift: false, ctrl: !isMac, action: "open-settings" },
 ];
 
 type ActionHandler = () => void;
@@ -61,6 +63,10 @@ export function registerAction(action: KeyAction, handler: ActionHandler) {
 
 export function unregisterAction(action: KeyAction) {
 	handlers.delete(action);
+}
+
+export function triggerAction(action: KeyAction) {
+	handlers.get(action)?.();
 }
 
 function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {

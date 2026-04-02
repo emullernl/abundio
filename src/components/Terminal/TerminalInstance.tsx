@@ -32,11 +32,11 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 
 			// Only create if not already existing
 			if (!getTerminal(paneId)) {
-				const { fontFamily, fontSize, theme: themeName } = useSettingsStore.getState();
+				const { terminalFontFamily, fontSize, theme: themeName } = useSettingsStore.getState();
 				const currentTheme = getTheme(themeName);
 				await createTerminal(paneId, ptyId, cwd, stableRef.current, {
 					fontSize,
-					fontFamily,
+					fontFamily: terminalFontFamily,
 					theme: currentTheme.terminal,
 				});
 			}

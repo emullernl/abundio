@@ -366,6 +366,27 @@ export function setAllTerminalsFontSize(fontSize: number): void {
 	}
 }
 
+/** Update font family on all terminal instances and refit */
+export async function setAllTerminalsFontFamily(fontFamily: string): Promise<void> {
+	try {
+		await Promise.all([
+			document.fonts.load(`14px ${fontFamily}`),
+			document.fonts.load(`bold 14px ${fontFamily}`),
+			document.fonts.load(`italic 14px ${fontFamily}`),
+		]);
+	} catch {
+		// Proceed with fallback if font loading fails
+	}
+
+	for (const managed of instances.values()) {
+		managed.term.options.fontFamily = fontFamily;
+		managed.fitAddon.fit();
+		if (managed.ptyId) {
+			pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});
+		}
+	}
+}
+
 /** Fully destroy a terminal (used when closing a pane) */
 export function destroyTerminal(paneId: string): void {
 	const managed = instances.get(paneId);

@@ -73,6 +73,7 @@ pub fn run() {
             gh_commands::gh_review_requests_all,
             gh_commands::gh_my_prs,
             gh_commands::gh_my_prs_all,
+            commands::list_system_fonts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

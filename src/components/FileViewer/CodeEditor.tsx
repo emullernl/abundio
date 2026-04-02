@@ -76,7 +76,7 @@ export function CodeEditor({ tabId, isActive, content, language, initialEditorSt
 	const tabIdRef = useRef(tabId);
 	tabIdRef.current = tabId;
 	const langCompartmentRef = useRef(new Compartment());
-	const fontFamily = useSettingsStore((s) => s.fontFamily);
+	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 
 	// Focus editor when it becomes the active visible tab
