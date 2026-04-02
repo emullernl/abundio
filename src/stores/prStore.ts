@@ -3,18 +3,30 @@ import { persist } from "zustand/middleware";
 import { gh } from "../lib/ipc";
 import type { GhStatus, PullRequest } from "../lib/types";
 
-export type PrView = "review-repo" | "review-all" | "mine-repo" | "mine-all";
+export type ReviewView = "review-all" | "review-repo";
+export type MyPrsView = "mine-all" | "mine-repo";
+export type PrView = ReviewView | MyPrsView;
 
-interface PrState {
-	ghStatus: GhStatus | null;
-	activeView: PrView;
+export interface PrSectionState {
 	prs: PullRequest[];
 	loading: boolean;
 	error: string | null;
+}
+
+interface PrState {
+	ghStatus: GhStatus | null;
+
+	reviewView: ReviewView;
+	review: PrSectionState;
+
+	myPrsView: MyPrsView;
+	myPrs: PrSectionState;
 
 	checkGhStatus: (cwd: string) => Promise<void>;
-	fetchPrs: (cwd: string) => Promise<void>;
-	setActiveView: (view: PrView) => void;
+	fetchReviewPrs: (cwd: string) => Promise<void>;
+	fetchMyPrs: (cwd: string) => Promise<void>;
+	setReviewView: (view: ReviewView) => void;
+	setMyPrsView: (view: MyPrsView) => void;
 	clear: () => void;
 }
 
@@ -25,76 +37,105 @@ export const PR_VIEW_LABELS: Record<PrView, string> = {
 	"mine-all": "My Open PRs (All)",
 };
 
+const EMPTY_SECTION: PrSectionState = {
+	prs: [],
+	loading: false,
+	error: null,
+};
+
 export const usePrStore = create<PrState>()(
 	persist(
 		(set, get) => {
-			let fetchGeneration = 0;
+			let reviewGeneration = 0;
+			let myPrsGeneration = 0;
 			return {
-			ghStatus: null,
-			activeView: "review-all",
-			prs: [],
-			loading: false,
-			error: null,
+				ghStatus: null,
+				reviewView: "review-all",
+				review: { ...EMPTY_SECTION },
+				myPrsView: "mine-all",
+				myPrs: { ...EMPTY_SECTION },
 
-			checkGhStatus: async (cwd) => {
-				try {
-					const status = await gh.status(cwd);
-					set({ ghStatus: status });
-				} catch {
-					set({
-						ghStatus: { available: false, authenticated: false, hasRemote: false },
-					});
-				}
-			},
-
-			fetchPrs: async (cwd) => {
-				const gen = ++fetchGeneration;
-				set({ loading: true, error: null });
-
-				try {
-					const view = get().activeView;
-					let prs: PullRequest[];
-
-					switch (view) {
-						case "review-repo":
-							prs = await gh.reviewRequests(cwd);
-							break;
-						case "review-all":
-							prs = await gh.reviewRequestsAll(cwd);
-							break;
-						case "mine-repo":
-							prs = await gh.myPrs(cwd);
-							break;
-						case "mine-all":
-							prs = await gh.myPrsAll(cwd);
-							break;
+				checkGhStatus: async (cwd) => {
+					try {
+						const status = await gh.status(cwd);
+						set({ ghStatus: status });
+					} catch {
+						set({
+							ghStatus: {
+								available: false,
+								authenticated: false,
+								hasRemote: false,
+							},
+						});
 					}
+				},
 
-					if (gen !== fetchGeneration) return;
-					set({ prs, loading: false });
-				} catch (e) {
-					if (gen !== fetchGeneration) return;
+				fetchReviewPrs: async (cwd) => {
+					const gen = ++reviewGeneration;
+					set({ review: { ...get().review, loading: true, error: null } });
+
+					try {
+						const view = get().reviewView;
+						const prs =
+							view === "review-repo"
+								? await gh.reviewRequests(cwd)
+								: await gh.reviewRequestsAll(cwd);
+
+						if (gen !== reviewGeneration) return;
+						set({ review: { prs, loading: false, error: null } });
+					} catch (e) {
+						if (gen !== reviewGeneration) return;
+						set({
+							review: {
+								prs: [],
+								loading: false,
+								error: e instanceof Error ? e.message : String(e),
+							},
+						});
+					}
+				},
+
+				fetchMyPrs: async (cwd) => {
+					const gen = ++myPrsGeneration;
+					set({ myPrs: { ...get().myPrs, loading: true, error: null } });
+
+					try {
+						const view = get().myPrsView;
+						const prs =
+							view === "mine-repo"
+								? await gh.myPrs(cwd)
+								: await gh.myPrsAll(cwd);
+
+						if (gen !== myPrsGeneration) return;
+						set({ myPrs: { prs, loading: false, error: null } });
+					} catch (e) {
+						if (gen !== myPrsGeneration) return;
+						set({
+							myPrs: {
+								prs: [],
+								loading: false,
+								error: e instanceof Error ? e.message : String(e),
+							},
+						});
+					}
+				},
+
+				setReviewView: (view) => set({ reviewView: view }),
+				setMyPrsView: (view) => set({ myPrsView: view }),
+
+				clear: () =>
 					set({
-						loading: false,
-						error: e instanceof Error ? e.message : String(e),
-						prs: [],
-					});
-				}
-			},
-
-			setActiveView: (view) => set({ activeView: view }),
-
-			clear: () =>
-				set({
-					prs: [],
-					loading: false,
-					error: null,
-				}),
-		};
+						review: { ...EMPTY_SECTION },
+						myPrs: { ...EMPTY_SECTION },
+					}),
+			};
 		},
 		{
 			name: "abundio-pr-panel",
-			partialize: (state) => ({ activeView: state.activeView }),
+			partialize: (state) => ({
+				reviewView: state.reviewView,
+				myPrsView: state.myPrsView,
+			}),
 		},
 	),
 );

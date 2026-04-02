@@ -46,10 +46,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	usePrStore.setState({
 		ghStatus: null,
-		activeView: "review-repo",
-		prs: [],
-		loading: false,
-		error: null,
+		reviewView: "review-all",
+		review: { prs: [], loading: false, error: null },
+		myPrsView: "mine-all",
+		myPrs: { prs: [], loading: false, error: null },
 	});
 });
 
@@ -63,10 +63,17 @@ describe("prStore", () => {
 		});
 	});
 
-	describe("setActiveView", () => {
-		it("updates the active view", () => {
-			usePrStore.getState().setActiveView("mine-all");
-			expect(usePrStore.getState().activeView).toBe("mine-all");
+	describe("setReviewView", () => {
+		it("updates the review view", () => {
+			usePrStore.getState().setReviewView("review-repo");
+			expect(usePrStore.getState().reviewView).toBe("review-repo");
+		});
+	});
+
+	describe("setMyPrsView", () => {
+		it("updates the my PRs view", () => {
+			usePrStore.getState().setMyPrsView("mine-repo");
+			expect(usePrStore.getState().myPrsView).toBe("mine-repo");
 		});
 	});
 
@@ -94,56 +101,38 @@ describe("prStore", () => {
 		});
 	});
 
-	describe("fetchPrs", () => {
+	describe("fetchReviewPrs", () => {
 		it("fetches review requests for review-repo view", async () => {
 			const prs = [makePr({ number: 42 })];
 			mockGh.reviewRequests.mockResolvedValue(prs);
 
-			usePrStore.setState({ activeView: "review-repo" });
-			await usePrStore.getState().fetchPrs("/test");
+			usePrStore.setState({ reviewView: "review-repo" });
+			await usePrStore.getState().fetchReviewPrs("/test");
 
 			expect(mockGh.reviewRequests).toHaveBeenCalledWith("/test");
-			expect(usePrStore.getState().prs).toEqual(prs);
-			expect(usePrStore.getState().loading).toBe(false);
+			expect(usePrStore.getState().review.prs).toEqual(prs);
+			expect(usePrStore.getState().review.loading).toBe(false);
 		});
 
 		it("fetches all review requests for review-all view", async () => {
 			const prs = [makePr({ number: 87, repository: "org/lib" })];
 			mockGh.reviewRequestsAll.mockResolvedValue(prs);
 
-			usePrStore.setState({ activeView: "review-all" });
-			await usePrStore.getState().fetchPrs("/test");
+			usePrStore.setState({ reviewView: "review-all" });
+			await usePrStore.getState().fetchReviewPrs("/test");
 
 			expect(mockGh.reviewRequestsAll).toHaveBeenCalledWith("/test");
-			expect(usePrStore.getState().prs).toEqual(prs);
-		});
-
-		it("fetches my PRs for mine-repo view", async () => {
-			mockGh.myPrs.mockResolvedValue([]);
-
-			usePrStore.setState({ activeView: "mine-repo" });
-			await usePrStore.getState().fetchPrs("/test");
-
-			expect(mockGh.myPrs).toHaveBeenCalledWith("/test");
-		});
-
-		it("fetches all my PRs for mine-all view", async () => {
-			mockGh.myPrsAll.mockResolvedValue([]);
-
-			usePrStore.setState({ activeView: "mine-all" });
-			await usePrStore.getState().fetchPrs("/test");
-
-			expect(mockGh.myPrsAll).toHaveBeenCalledWith("/test");
+			expect(usePrStore.getState().review.prs).toEqual(prs);
 		});
 
 		it("sets error on failure", async () => {
-			mockGh.reviewRequests.mockRejectedValue(new Error("rate limited"));
+			mockGh.reviewRequestsAll.mockRejectedValue(new Error("rate limited"));
 
-			await usePrStore.getState().fetchPrs("/test");
+			await usePrStore.getState().fetchReviewPrs("/test");
 
-			expect(usePrStore.getState().error).toBe("rate limited");
-			expect(usePrStore.getState().prs).toEqual([]);
-			expect(usePrStore.getState().loading).toBe(false);
+			expect(usePrStore.getState().review.error).toBe("rate limited");
+			expect(usePrStore.getState().review.prs).toEqual([]);
+			expect(usePrStore.getState().review.loading).toBe(false);
 		});
 
 		it("sets loading while fetching", async () => {
@@ -151,25 +140,77 @@ describe("prStore", () => {
 			const pending = new Promise<PullRequest[]>((resolve) => {
 				resolvePromise = resolve;
 			});
-			mockGh.reviewRequests.mockReturnValue(pending);
+			mockGh.reviewRequestsAll.mockReturnValue(pending);
 
-			const fetchPromise = usePrStore.getState().fetchPrs("/test");
-			expect(usePrStore.getState().loading).toBe(true);
+			const fetchPromise = usePrStore.getState().fetchReviewPrs("/test");
+			expect(usePrStore.getState().review.loading).toBe(true);
 
 			resolvePromise!([]);
 			await fetchPromise;
-			expect(usePrStore.getState().loading).toBe(false);
+			expect(usePrStore.getState().review.loading).toBe(false);
+		});
+	});
+
+	describe("fetchMyPrs", () => {
+		it("fetches my PRs for mine-repo view", async () => {
+			const prs = [makePr({ number: 10 })];
+			mockGh.myPrs.mockResolvedValue(prs);
+
+			usePrStore.setState({ myPrsView: "mine-repo" });
+			await usePrStore.getState().fetchMyPrs("/test");
+
+			expect(mockGh.myPrs).toHaveBeenCalledWith("/test");
+			expect(usePrStore.getState().myPrs.prs).toEqual(prs);
+			expect(usePrStore.getState().myPrs.loading).toBe(false);
+		});
+
+		it("fetches all my PRs for mine-all view", async () => {
+			const prs = [makePr({ number: 20, repository: "org/other" })];
+			mockGh.myPrsAll.mockResolvedValue(prs);
+
+			usePrStore.setState({ myPrsView: "mine-all" });
+			await usePrStore.getState().fetchMyPrs("/test");
+
+			expect(mockGh.myPrsAll).toHaveBeenCalledWith("/test");
+			expect(usePrStore.getState().myPrs.prs).toEqual(prs);
+		});
+
+		it("sets error on failure", async () => {
+			mockGh.myPrsAll.mockRejectedValue(new Error("network error"));
+
+			await usePrStore.getState().fetchMyPrs("/test");
+
+			expect(usePrStore.getState().myPrs.error).toBe("network error");
+			expect(usePrStore.getState().myPrs.prs).toEqual([]);
+			expect(usePrStore.getState().myPrs.loading).toBe(false);
+		});
+
+		it("sets loading while fetching", async () => {
+			let resolvePromise: (value: PullRequest[]) => void;
+			const pending = new Promise<PullRequest[]>((resolve) => {
+				resolvePromise = resolve;
+			});
+			mockGh.myPrsAll.mockReturnValue(pending);
+
+			const fetchPromise = usePrStore.getState().fetchMyPrs("/test");
+			expect(usePrStore.getState().myPrs.loading).toBe(true);
+
+			resolvePromise!([]);
+			await fetchPromise;
+			expect(usePrStore.getState().myPrs.loading).toBe(false);
 		});
 	});
 
 	describe("clear", () => {
-		it("resets prs, loading, and error", () => {
-			usePrStore.setState({ prs: [makePr()], loading: true, error: "oops" });
+		it("resets both sections", () => {
+			usePrStore.setState({
+				review: { prs: [makePr()], loading: true, error: "oops" },
+				myPrs: { prs: [makePr({ number: 2 })], loading: true, error: "fail" },
+			});
 			usePrStore.getState().clear();
 
-			expect(usePrStore.getState().prs).toEqual([]);
-			expect(usePrStore.getState().loading).toBe(false);
-			expect(usePrStore.getState().error).toBeNull();
+			expect(usePrStore.getState().review).toEqual({ prs: [], loading: false, error: null });
+			expect(usePrStore.getState().myPrs).toEqual({ prs: [], loading: false, error: null });
 		});
 	});
 });

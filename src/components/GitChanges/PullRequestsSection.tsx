@@ -1,25 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePrStore, PR_VIEW_LABELS, type PrView } from "../../stores/prStore";
+import {
+	usePrStore,
+	PR_VIEW_LABELS,
+	type PrView,
+	type PrSectionState,
+} from "../../stores/prStore";
 import { useSessionStore } from "../../stores/sessionStore";
 import { PullRequestItem } from "./PullRequestItem";
 import { GitPullRequest, RefreshCw, ChevronDown } from "../Icons";
+import type { GhStatus } from "../../lib/types";
 
-const PR_VIEWS: PrView[] = ["review-all", "review-repo", "mine-all", "mine-repo"];
 const REFRESH_INTERVAL = 60_000;
 
 export function PullRequestsSection() {
 	const ghStatus = usePrStore((s) => s.ghStatus);
-	const activeView = usePrStore((s) => s.activeView);
-	const prs = usePrStore((s) => s.prs);
-	const loading = usePrStore((s) => s.loading);
-	const error = usePrStore((s) => s.error);
+	const reviewView = usePrStore((s) => s.reviewView);
+	const review = usePrStore((s) => s.review);
+	const myPrsView = usePrStore((s) => s.myPrsView);
+	const myPrs = usePrStore((s) => s.myPrs);
 	const checkGhStatus = usePrStore((s) => s.checkGhStatus);
-	const fetchPrs = usePrStore((s) => s.fetchPrs);
-	const setActiveView = usePrStore((s) => s.setActiveView);
+	const fetchReviewPrs = usePrStore((s) => s.fetchReviewPrs);
+	const fetchMyPrs = usePrStore((s) => s.fetchMyPrs);
+	const setReviewView = usePrStore((s) => s.setReviewView);
+	const setMyPrsView = usePrStore((s) => s.setMyPrsView);
 	const clear = usePrStore((s) => s.clear);
-
-	const [dropdownOpen, setDropdownOpen] = useState(false);
-	const dropdownRef = useRef<HTMLDivElement>(null);
 
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const sessions = useSessionStore((s) => s.sessions);
@@ -35,18 +39,85 @@ export function PullRequestsSection() {
 		checkGhStatus(cwd);
 	}, [cwd, checkGhStatus, clear]);
 
-	// Fetch PRs when gh is ready, view changes, or session changes
+	// Fetch review PRs when gh is ready, view changes, or session changes
 	useEffect(() => {
 		if (!cwd || !ghStatus?.available || !ghStatus?.authenticated) return;
-		fetchPrs(cwd);
-	}, [cwd, ghStatus?.available, ghStatus?.authenticated, activeView, fetchPrs]);
+		fetchReviewPrs(cwd);
+	}, [cwd, ghStatus?.available, ghStatus?.authenticated, reviewView, fetchReviewPrs]);
 
-	// Auto-refresh
+	// Fetch my PRs when gh is ready, view changes, or session changes
 	useEffect(() => {
 		if (!cwd || !ghStatus?.available || !ghStatus?.authenticated) return;
-		const interval = setInterval(() => fetchPrs(cwd), REFRESH_INTERVAL);
+		fetchMyPrs(cwd);
+	}, [cwd, ghStatus?.available, ghStatus?.authenticated, myPrsView, fetchMyPrs]);
+
+	// Auto-refresh both sections
+	useEffect(() => {
+		if (!cwd || !ghStatus?.available || !ghStatus?.authenticated) return;
+		const interval = setInterval(() => {
+			fetchReviewPrs(cwd);
+			fetchMyPrs(cwd);
+		}, REFRESH_INTERVAL);
 		return () => clearInterval(interval);
-	}, [cwd, ghStatus?.available, ghStatus?.authenticated, activeView, fetchPrs]);
+	}, [cwd, ghStatus?.available, ghStatus?.authenticated, reviewView, myPrsView, fetchReviewPrs, fetchMyPrs]);
+
+	const handleRefresh = useCallback(async () => {
+		if (cwd) {
+			await checkGhStatus(cwd);
+			fetchReviewPrs(cwd);
+			fetchMyPrs(cwd);
+		}
+	}, [cwd, checkGhStatus, fetchReviewPrs, fetchMyPrs]);
+
+	return (
+		<div className="flex flex-col h-full min-h-0">
+			<PrSubPanel
+				views={["review-all", "review-repo"]}
+				activeView={reviewView}
+				setActiveView={setReviewView}
+				section={review}
+				ghStatus={ghStatus}
+				onRefresh={handleRefresh}
+				showRefresh
+			/>
+			<div
+				className="flex-shrink-0"
+				style={{ height: 1, backgroundColor: "var(--border)" }}
+			/>
+			<PrSubPanel
+				views={["mine-all", "mine-repo"]}
+				activeView={myPrsView}
+				setActiveView={setMyPrsView}
+				section={myPrs}
+				ghStatus={ghStatus}
+				onRefresh={handleRefresh}
+				showRefresh={false}
+			/>
+		</div>
+	);
+}
+
+interface PrSubPanelProps<V extends PrView> {
+	views: V[];
+	activeView: V;
+	setActiveView: (view: V) => void;
+	section: PrSectionState;
+	ghStatus: GhStatus | null;
+	onRefresh: () => void;
+	showRefresh: boolean;
+}
+
+function PrSubPanel<V extends PrView>({
+	views,
+	activeView,
+	setActiveView,
+	section,
+	ghStatus,
+	onRefresh,
+	showRefresh,
+}: PrSubPanelProps<V>) {
+	const [dropdownOpen, setDropdownOpen] = useState(false);
+	const dropdownRef = useRef<HTMLDivElement>(null);
 
 	// Close dropdown on click outside
 	useEffect(() => {
@@ -60,27 +131,16 @@ export function PullRequestsSection() {
 		return () => document.removeEventListener("mousedown", handleClickOutside);
 	}, [dropdownOpen]);
 
-	const handleRefresh = useCallback(async () => {
-		if (cwd) {
-			await checkGhStatus(cwd);
-			fetchPrs(cwd);
-		}
-	}, [cwd, checkGhStatus, fetchPrs]);
+	const isRepoView = activeView === "review-repo" || activeView === "mine-repo";
 
 	return (
-		<div className="flex flex-col h-full min-h-0">
+		<div className="flex flex-col min-h-0" style={{ flex: "1 1 0%" }}>
 			{/* Header */}
 			<div
 				className="flex items-center gap-2 py-2 flex-shrink-0"
 				style={{ borderBottom: "1px solid var(--border)", paddingLeft: 12, paddingRight: 12 }}
 			>
 				<GitPullRequest size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
-				<span
-					className="font-medium truncate"
-					style={{ fontSize: 12, color: "var(--fg-primary)" }}
-				>
-					PRs
-				</span>
 
 				{/* View selector dropdown */}
 				<div className="relative" ref={dropdownRef}>
@@ -119,7 +179,7 @@ export function PullRequestsSection() {
 								zIndex: 50,
 							}}
 						>
-							{PR_VIEWS.map((view) => (
+							{views.map((view) => (
 								<button
 									key={view}
 									type="button"
@@ -151,32 +211,34 @@ export function PullRequestsSection() {
 				<div className="flex-1" />
 
 				{/* Count */}
-				{prs.length > 0 && (
+				{section.prs.length > 0 && (
 					<span
 						className="flex-shrink-0"
 						style={{ fontSize: 11, color: "var(--fg-secondary)", fontFamily: "var(--font-mono)" }}
 					>
-						{prs.length}
+						{section.prs.length}
 					</span>
 				)}
 
-				<button
-					type="button"
-					onClick={handleRefresh}
-					className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
-					style={{ color: "var(--fg-secondary)" }}
-					onMouseEnter={(e) => {
-						e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
-						e.currentTarget.style.color = "var(--fg-primary)";
-					}}
-					onMouseLeave={(e) => {
-						e.currentTarget.style.backgroundColor = "transparent";
-						e.currentTarget.style.color = "var(--fg-secondary)";
-					}}
-					title="Refresh"
-				>
-					<RefreshCw size={12} />
-				</button>
+				{showRefresh && (
+					<button
+						type="button"
+						onClick={onRefresh}
+						className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
+						style={{ color: "var(--fg-secondary)" }}
+						onMouseEnter={(e) => {
+							e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+							e.currentTarget.style.color = "var(--fg-primary)";
+						}}
+						onMouseLeave={(e) => {
+							e.currentTarget.style.backgroundColor = "transparent";
+							e.currentTarget.style.color = "var(--fg-secondary)";
+						}}
+						title="Refresh"
+					>
+						<RefreshCw size={12} />
+					</button>
+				)}
 			</div>
 
 			{/* Content */}
@@ -203,19 +265,19 @@ export function PullRequestsSection() {
 							gh auth login
 						</span>
 					</StatusMessage>
-				) : !ghStatus.hasRemote && (activeView === "review-repo" || activeView === "mine-repo") ? (
+				) : !ghStatus.hasRemote && isRepoView ? (
 					<StatusMessage>No GitHub remote found</StatusMessage>
-				) : loading && prs.length === 0 ? (
+				) : section.loading && section.prs.length === 0 ? (
 					<StatusMessage>
 						<span className="animate-pulse">Loading pull requests...</span>
 					</StatusMessage>
-				) : error && prs.length === 0 ? (
-					<StatusMessage>{error}</StatusMessage>
-				) : prs.length === 0 ? (
+				) : section.error && section.prs.length === 0 ? (
+					<StatusMessage>{section.error}</StatusMessage>
+				) : section.prs.length === 0 ? (
 					<StatusMessage>No pull requests</StatusMessage>
 				) : (
 					<div className="flex flex-col">
-						{prs.map((pr) => (
+						{section.prs.map((pr) => (
 							<PullRequestItem
 								key={`${pr.repository || "local"}-${pr.number}`}
 								pr={pr}
@@ -231,7 +293,7 @@ export function PullRequestsSection() {
 function StatusMessage({ children }: { children: React.ReactNode }) {
 	return (
 		<div
-			className="flex items-center justify-center h-32 px-4 text-center"
+			className="flex items-center justify-center h-20 px-4 text-center"
 			style={{ color: "var(--fg-secondary)", fontSize: 12 }}
 		>
 			<div>{children}</div>
