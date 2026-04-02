@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
@@ -68,6 +69,17 @@ export function App() {
 				new Promise((r) => setTimeout(r, 2000)),
 			]);
 			appWindow.destroy();
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
+	// Listen for native menu "Settings..." click
+	useEffect(() => {
+		const unlisten = listen("open-settings", () => {
+			setPaletteOpen(false);
+			setSettingsOpen(true);
 		});
 		return () => {
 			unlisten.then((fn) => fn());
