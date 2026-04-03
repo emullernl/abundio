@@ -27,11 +27,40 @@ pub fn has_child_processes(pid: u32) -> bool {
 /// Returns `true` if the process identified by `pid` has at least one child process.
 #[cfg(target_os = "linux")]
 pub fn has_child_processes(pid: u32) -> bool {
+    // Fast path: /proc/{pid}/task/{pid}/children (requires CONFIG_PROC_CHILDREN)
     let path = format!("/proc/{}/task/{}/children", pid, pid);
     match std::fs::read_to_string(&path) {
-        Ok(contents) => !contents.trim().is_empty(),
-        Err(_) => false,
+        Ok(contents) if !contents.trim().is_empty() => return true,
+        Ok(_) => return false,
+        Err(_) => {}
     }
+
+    // Fallback: scan /proc/*/stat for processes whose ppid matches
+    let entries = match std::fs::read_dir("/proc") {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let stat_path = format!("/proc/{}/stat", name);
+        if let Ok(stat) = std::fs::read_to_string(&stat_path) {
+            // Format: "pid (comm) state ppid ..." — find ppid after the last ')'
+            if let Some(after_comm) = stat.rfind(')') {
+                let fields: Vec<&str> = stat[after_comm + 1..].split_whitespace().collect();
+                // fields[0] = state, fields[1] = ppid
+                if let Some(ppid_str) = fields.get(1) {
+                    if ppid_str.parse::<u32>().ok() == Some(pid) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Returns `true` if the process identified by `pid` has at least one child process.
