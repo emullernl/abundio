@@ -6,6 +6,7 @@ import {
 	destroyTerminal,
 	flushPendingRestore,
 	getTerminal,
+	markSettled,
 } from "../../lib/terminalManager";
 import { getTheme } from "../../lib/themes";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -21,6 +22,7 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 	const stableRef = useRef<HTMLDivElement>(null);
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+	const rafRef = useRef<number | null>(null);
 
 	useEffect(() => {
 		if (!stableRef.current) return;
@@ -87,6 +89,10 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 		if (!managed) return;
 
 		const termEl = managed.term.element;
+
+		// Hide terminal during projection to prevent flicker from fit/restore/resize
+		if (termEl) termEl.style.visibility = "hidden";
+
 		if (termEl && termEl.parentElement !== target) {
 			target.appendChild(termEl);
 		}
@@ -99,17 +105,33 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 				.catch(() => {});
 		}
 
-		// Observe the target for resize
+		// Reveal after the browser has painted the settled content
+		requestAnimationFrame(() => {
+			if (termEl) termEl.style.visibility = "";
+			markSettled(id);
+		});
+
+		// Observe the target for resize — throttle fit() to one call per frame
 		cleanupResizeObserver();
 		resizeObserverRef.current = new ResizeObserver(() => {
 			if (target.offsetWidth === 0 || target.offsetHeight === 0) return;
-			managed.fitAddon.fit();
-			clearTimeout(resizeTimerRef.current);
-			resizeTimerRef.current = setTimeout(() => {
-				if (managed.ptyId) {
-					pty.resize(managed.ptyId, managed.term.cols, managed.term.rows);
+			if (rafRef.current !== null) return;
+			rafRef.current = requestAnimationFrame(() => {
+				rafRef.current = null;
+				const prevCols = managed.term.cols;
+				const prevRows = managed.term.rows;
+				managed.fitAddon.fit();
+				// Only send PTY resize when grid dimensions actually changed
+				if (
+					managed.ptyId &&
+					(managed.term.cols !== prevCols || managed.term.rows !== prevRows)
+				) {
+					clearTimeout(resizeTimerRef.current);
+					resizeTimerRef.current = setTimeout(() => {
+						pty.resize(managed.ptyId, managed.term.cols, managed.term.rows);
+					}, 100);
 				}
-			}, 100);
+			});
 		});
 		resizeObserverRef.current.observe(target);
 	}
@@ -126,6 +148,10 @@ export function TerminalInstance({ paneId, ptyId, cwd }: Props) {
 
 	function cleanupResizeObserver() {
 		clearTimeout(resizeTimerRef.current);
+		if (rafRef.current !== null) {
+			cancelAnimationFrame(rafRef.current);
+			rafRef.current = null;
+		}
 		resizeObserverRef.current?.disconnect();
 		resizeObserverRef.current = null;
 	}

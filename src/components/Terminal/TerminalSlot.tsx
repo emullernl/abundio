@@ -15,7 +15,7 @@ function TerminalLoader({ paneId }: { paneId: string }) {
 	useEffect(() => {
 		const interval = setInterval(() => {
 			const managed = getTerminal(paneId);
-			if (managed?.ready) {
+			if (managed?.ready && managed?.settled) {
 				setVisible(false);
 				clearInterval(interval);
 			}

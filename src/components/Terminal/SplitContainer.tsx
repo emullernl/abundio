@@ -58,8 +58,10 @@ export function SplitContainer({ node, cwd }: Props) {
 			</div>
 			<PaneResizer
 				direction={node.direction}
-				onResize={(ratio) => updateRatioLocal(node.id, ratio)}
-				onResizeEnd={persistCurrentLayout}
+				onResizeEnd={(ratio) => {
+					updateRatioLocal(node.id, ratio);
+					persistCurrentLayout();
+				}}
 			/>
 			<div
 				style={{

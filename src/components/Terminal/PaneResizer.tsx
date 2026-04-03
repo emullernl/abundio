@@ -2,11 +2,12 @@ import { useCallback, useRef } from "react";
 
 interface Props {
 	direction: "horizontal" | "vertical";
-	onResize: (ratio: number) => void;
-	onResizeEnd: () => void;
+	onResizeEnd: (ratio: number) => void;
 }
 
-export function PaneResizer({ direction, onResize, onResizeEnd }: Props) {
+const RESIZER_PX = 4;
+
+export function PaneResizer({ direction, onResizeEnd }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	const handleMouseDown = useCallback(
@@ -14,10 +15,16 @@ export function PaneResizer({ direction, onResize, onResizeEnd }: Props) {
 			e.preventDefault();
 			document.body.classList.add("dragging");
 
-			const parent = containerRef.current?.parentElement;
-			if (!parent) return;
+			const el = containerRef.current;
+			if (!el?.parentElement) return;
 
+			const parent = el.parentElement;
 			const parentRect = parent.getBoundingClientRect();
+			const firstSibling = el.previousElementSibling as HTMLElement | null;
+			const secondSibling = el.nextElementSibling as HTMLElement | null;
+			if (!firstSibling || !secondSibling) return;
+
+			let lastRatio = 0.5;
 
 			function onMouseMove(e: MouseEvent) {
 				let ratio: number;
@@ -27,20 +34,23 @@ export function PaneResizer({ direction, onResize, onResizeEnd }: Props) {
 					ratio = (e.clientY - parentRect.top) / parentRect.height;
 				}
 				ratio = Math.max(0.1, Math.min(0.9, ratio));
-				onResize(ratio);
+				lastRatio = ratio;
+
+				firstSibling!.style.flexBasis = `calc(${ratio * 100}% - ${RESIZER_PX / 2}px)`;
+				secondSibling!.style.flexBasis = `calc(${(1 - ratio) * 100}% - ${RESIZER_PX / 2}px)`;
 			}
 
 			function onMouseUp() {
 				document.body.classList.remove("dragging");
 				document.removeEventListener("mousemove", onMouseMove);
 				document.removeEventListener("mouseup", onMouseUp);
-				onResizeEnd();
+				onResizeEnd(lastRatio);
 			}
 
 			document.addEventListener("mousemove", onMouseMove);
 			document.addEventListener("mouseup", onMouseUp);
 		},
-		[direction, onResize, onResizeEnd],
+		[direction, onResizeEnd],
 	);
 
 	const isVertical = direction === "vertical";

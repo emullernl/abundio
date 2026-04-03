@@ -65,6 +65,8 @@ export interface ManagedTerminal {
 	lastOutputChunkAt: number;
 	/** True once initPty has completed — used by TerminalLoader to hide the spinner */
 	ready: boolean;
+	/** True once the terminal has been projected, fit, and painted — loader waits for this */
+	settled: boolean;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -226,6 +228,7 @@ export async function createTerminal(
 		bytesSinceIdle: 0,
 		lastOutputChunkAt: 0,
 		ready: false,
+		settled: false,
 	};
 
 	instances.set(paneId, managed);
@@ -464,6 +467,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	};
 
 	managed.ready = true;
+}
+
+/** Mark terminal as visually settled — loader can now hide */
+export function markSettled(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (managed) managed.settled = true;
 }
 
 /** Write any deferred scrollback restore data now that the terminal has real dimensions */
