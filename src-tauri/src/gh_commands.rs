@@ -1,5 +1,6 @@
 use crate::error::AbundioError;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::process::Command;
 use std::sync::RwLock;
 
@@ -253,6 +254,200 @@ pub fn parse_search_prs(json: &str) -> Result<Vec<PullRequest>, AbundioError> {
 		.collect())
 }
 
+// ── GraphQL enrichment for search results ──
+
+/// GraphQL response shape for batch PR enrichment.
+/// Uses aliases like `repo0`, `pr42` to map back to PRs.
+#[derive(Debug, Deserialize)]
+struct GqlResponse {
+	#[serde(default)]
+	data: HashMap<String, HashMap<String, GqlPrNode>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlPrNode {
+	#[serde(default)]
+	review_decision: Option<String>,
+	#[serde(default)]
+	commits: Option<GqlCommits>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GqlCommits {
+	#[serde(default)]
+	nodes: Vec<GqlCommitWrapper>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GqlCommitWrapper {
+	commit: GqlCommit,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlCommit {
+	#[serde(default)]
+	status_check_rollup: Option<GqlStatusCheckRollup>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GqlStatusCheckRollup {
+	#[serde(default)]
+	contexts: GqlContexts,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct GqlContexts {
+	#[serde(default)]
+	nodes: Vec<GqlCheckNode>,
+}
+
+/// Flattened union of CheckRun and StatusContext fields.
+#[derive(Debug, Deserialize)]
+struct GqlCheckNode {
+	// CheckRun fields
+	#[serde(default)]
+	status: Option<String>,
+	#[serde(default)]
+	conclusion: Option<String>,
+	// StatusContext field
+	#[serde(default)]
+	state: Option<String>,
+}
+
+impl GqlCheckNode {
+	fn to_check_context(&self) -> GhCheckContext {
+		// StatusContext uses `state` (SUCCESS, FAILURE, PENDING, ERROR)
+		if let Some(state) = &self.state {
+			if self.status.is_none() && self.conclusion.is_none() {
+				return GhCheckContext {
+					status: "COMPLETED".to_string(),
+					conclusion: state.clone(),
+				};
+			}
+		}
+		// CheckRun uses status + conclusion
+		GhCheckContext {
+			status: self.status.clone().unwrap_or_default(),
+			conclusion: self.conclusion.clone().unwrap_or_default(),
+		}
+	}
+}
+
+/// Build a GraphQL query to batch-fetch reviewDecision and status checks
+/// for a set of PRs grouped by repository.
+/// Returns (query_string, ordered_repo_names) so the caller can map aliases back.
+fn build_enrichment_query(prs: &[PullRequest]) -> Option<(String, Vec<String>)> {
+	if prs.is_empty() {
+		return None;
+	}
+
+	// Group PR numbers by repository, preserving insertion order
+	let mut repo_order: Vec<String> = Vec::new();
+	let mut repo_prs: HashMap<String, Vec<i32>> = HashMap::new();
+	for pr in prs {
+		if !pr.repository.is_empty() {
+			if !repo_prs.contains_key(&pr.repository) {
+				repo_order.push(pr.repository.clone());
+			}
+			repo_prs.entry(pr.repository.clone()).or_default().push(pr.number);
+		}
+	}
+
+	if repo_order.is_empty() {
+		return None;
+	}
+
+	let mut query = String::from("{ ");
+	for (i, repo) in repo_order.iter().enumerate() {
+		let parts: Vec<&str> = repo.splitn(2, '/').collect();
+		if parts.len() != 2 {
+			continue;
+		}
+		let (owner, name) = (parts[0], parts[1]);
+		query.push_str(&format!(
+			"repo{i}: repository(owner: \"{owner}\", name: \"{name}\") {{ "
+		));
+		for num in &repo_prs[repo] {
+			query.push_str(&format!(
+				"pr{num}: pullRequest(number: {num}) {{ reviewDecision commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ contexts(first: 100) {{ nodes {{ __typename ... on CheckRun {{ status conclusion }} ... on StatusContext {{ state }} }} }} }} }} }} }} }} "
+			));
+		}
+		query.push_str("} ");
+	}
+	query.push('}');
+
+	Some((query, repo_order))
+}
+
+/// Enrich search-result PRs with reviewDecision and statusCheckRollup
+/// via a single GraphQL API call. Best-effort: silently returns on failure.
+fn enrich_search_prs(cwd: &str, prs: &mut [PullRequest]) {
+	let (query, repo_order) = match build_enrichment_query(prs) {
+		Some(qr) => qr,
+		None => return,
+	};
+
+	let output = match run_gh(cwd, &["api", "graphql", "-f", &format!("query={}", query)]) {
+		Ok(o) => o,
+		Err(_) => return, // best-effort
+	};
+
+	let response: GqlResponse = match serde_json::from_str(&output) {
+		Ok(r) => r,
+		Err(_) => return,
+	};
+
+	// Build a lookup: (repo, number) -> (reviewDecision, statusRollup)
+	let mut lookup: HashMap<(String, i32), (String, String)> = HashMap::new();
+	for (repo_alias, pr_map) in &response.data {
+		let repo_idx: usize = match repo_alias.strip_prefix("repo").and_then(|s| s.parse().ok()) {
+			Some(idx) => idx,
+			None => continue,
+		};
+
+		let repo_name = match repo_order.get(repo_idx) {
+			Some(name) => name.clone(),
+			None => continue,
+		};
+
+		for (pr_alias, node) in pr_map {
+			let pr_num: i32 = match pr_alias.strip_prefix("pr").and_then(|s| s.parse().ok()) {
+				Some(n) => n,
+				None => continue,
+			};
+
+			let review = node
+				.review_decision
+				.clone()
+				.unwrap_or_default();
+
+			let status = node
+				.commits
+				.as_ref()
+				.and_then(|c| c.nodes.first())
+				.and_then(|w| w.commit.status_check_rollup.as_ref())
+				.map(|r| {
+					let checks: Vec<GhCheckContext> =
+						r.contexts.nodes.iter().map(|n| n.to_check_context()).collect();
+					rollup_status(&checks)
+				})
+				.unwrap_or_default();
+
+			lookup.insert((repo_name.clone(), pr_num), (review, status));
+		}
+	}
+
+	// Apply enrichment
+	for pr in prs.iter_mut() {
+		if let Some((review, status)) = lookup.get(&(pr.repository.clone(), pr.number)) {
+			pr.review_decision = review.clone();
+			pr.status_check_rollup = status.clone();
+		}
+	}
+}
+
 // ── Tauri commands ──
 // All commands are async to avoid blocking the main IPC thread while
 // waiting for `gh` subprocess I/O (especially network calls).
@@ -334,7 +529,9 @@ pub async fn gh_review_requests_all(cwd: String) -> Result<Vec<PullRequest>, Abu
 				"number,title,url,repository,author,createdAt,updatedAt,isDraft,labels",
 			],
 		)?;
-		parse_search_prs(&output)
+		let mut prs = parse_search_prs(&output)?;
+		enrich_search_prs(&cwd, &mut prs);
+		Ok(prs)
 	})
 	.await
 	.map_err(|e| AbundioError::Git(format!("gh task failed: {}", e)))?
@@ -379,7 +576,9 @@ pub async fn gh_my_prs_all(cwd: String) -> Result<Vec<PullRequest>, AbundioError
 				"number,title,url,repository,author,createdAt,updatedAt,isDraft,labels",
 			],
 		)?;
-		parse_search_prs(&output)
+		let mut prs = parse_search_prs(&output)?;
+		enrich_search_prs(&cwd, &mut prs);
+		Ok(prs)
 	})
 	.await
 	.map_err(|e| AbundioError::Git(format!("gh task failed: {}", e)))?
@@ -533,5 +732,138 @@ mod tests {
 	fn rollup_status_empty() {
 		let checks: Vec<GhCheckContext> = vec![];
 		assert_eq!(rollup_status(&checks), "");
+	}
+
+	#[test]
+	fn build_enrichment_query_empty_prs() {
+		let prs: Vec<PullRequest> = vec![];
+		assert!(build_enrichment_query(&prs).is_none());
+	}
+
+	#[test]
+	fn build_enrichment_query_no_repos() {
+		let prs = vec![PullRequest {
+			number: 1,
+			title: "test".to_string(),
+			repository: String::new(), // no repo
+			..Default::default()
+		}];
+		assert!(build_enrichment_query(&prs).is_none());
+	}
+
+	#[test]
+	fn build_enrichment_query_generates_valid_query() {
+		let prs = vec![
+			PullRequest {
+				number: 42,
+				repository: "org/repo".to_string(),
+				..Default::default()
+			},
+			PullRequest {
+				number: 10,
+				repository: "org/repo".to_string(),
+				..Default::default()
+			},
+			PullRequest {
+				number: 5,
+				repository: "other/lib".to_string(),
+				..Default::default()
+			},
+		];
+		let (query, repo_order) = build_enrichment_query(&prs).unwrap();
+		assert!(query.contains("repository(owner: \"org\", name: \"repo\")"));
+		assert!(query.contains("repository(owner: \"other\", name: \"lib\")"));
+		assert!(query.contains("pr42:"));
+		assert!(query.contains("pr10:"));
+		assert!(query.contains("pr5:"));
+		assert!(query.contains("reviewDecision"));
+		// Verify deterministic ordering matches insertion order
+		assert_eq!(repo_order, vec!["org/repo", "other/lib"]);
+	}
+
+	#[test]
+	fn parse_gql_response_and_enrich() {
+		let gql_json = r#"{
+			"data": {
+				"repo0": {
+					"pr42": {
+						"reviewDecision": "APPROVED",
+						"commits": {
+							"nodes": [{
+								"commit": {
+									"statusCheckRollup": {
+										"contexts": {
+											"nodes": [
+												{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"},
+												{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}
+											]
+										}
+									}
+								}
+							}]
+						}
+					},
+					"pr10": {
+						"reviewDecision": "CHANGES_REQUESTED",
+						"commits": {
+							"nodes": [{
+								"commit": {
+									"statusCheckRollup": {
+										"contexts": {
+											"nodes": [
+												{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "FAILURE"}
+											]
+										}
+									}
+								}
+							}]
+						}
+					}
+				}
+			}
+		}"#;
+
+		let response: GqlResponse = serde_json::from_str(gql_json).unwrap();
+		assert!(response.data.contains_key("repo0"));
+
+		let repo = &response.data["repo0"];
+		let pr42 = &repo["pr42"];
+		assert_eq!(pr42.review_decision, Some("APPROVED".to_string()));
+
+		let pr10 = &repo["pr10"];
+		assert_eq!(pr10.review_decision, Some("CHANGES_REQUESTED".to_string()));
+
+		// Verify check context conversion
+		let checks: Vec<GhCheckContext> = pr10
+			.commits.as_ref().unwrap()
+			.nodes[0].commit
+			.status_check_rollup.as_ref().unwrap()
+			.contexts.nodes.iter()
+			.map(|n| n.to_check_context())
+			.collect();
+		assert_eq!(rollup_status(&checks), "FAILURE");
+	}
+
+	#[test]
+	fn parse_gql_status_context_variant() {
+		let node = GqlCheckNode {
+			status: None,
+			conclusion: None,
+			state: Some("SUCCESS".to_string()),
+		};
+		let ctx = node.to_check_context();
+		assert_eq!(ctx.conclusion, "SUCCESS");
+	}
+
+	#[test]
+	fn parse_gql_check_run_variant() {
+		let node = GqlCheckNode {
+			status: Some("COMPLETED".to_string()),
+			conclusion: Some("FAILURE".to_string()),
+			state: None,
+		};
+		let ctx = node.to_check_context();
+		assert_eq!(ctx.status, "COMPLETED");
+		assert_eq!(ctx.conclusion, "FAILURE");
 	}
 }
