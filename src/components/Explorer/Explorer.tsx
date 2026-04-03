@@ -40,7 +40,10 @@ export function Explorer() {
 			</button>
 			{!collapsed && (
 				<div className="flex-1 overflow-y-auto min-h-0">
-					<FileTree rootPath={activeSession.rootFolder} sessionId={activeSession.id} />
+					<FileTree
+						rootPath={activeSession.rootFolder}
+						sessionId={activeSession.id}
+					/>
 				</div>
 			)}
 		</div>

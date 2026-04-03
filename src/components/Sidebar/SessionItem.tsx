@@ -1,13 +1,13 @@
 import { useMemo } from "react";
 import type { PaneNode, SessionWithTabs } from "../../lib/types";
+import type { DotStatus } from "../../stores/ptyActivityStore";
 import {
-	usePtyActivityStore,
 	computeSessionDotStatus,
 	DOT_COLORS,
 	DOT_GLOWS,
 	shouldPulse,
+	usePtyActivityStore,
 } from "../../stores/ptyActivityStore";
-import type { DotStatus } from "../../stores/ptyActivityStore";
 import { X } from "../Icons";
 
 interface Props {
@@ -46,7 +46,13 @@ function useSessionDotStatus(session: SessionWithTabs): DotStatus {
 	}, [session.tabs]);
 
 	return usePtyActivityStore((s) => {
-		return computeSessionDotStatus(session.id, tabLayouts, s.activities, s.openedSessionIds, s.panePtyMap);
+		return computeSessionDotStatus(
+			session.id,
+			tabLayouts,
+			s.activities,
+			s.openedSessionIds,
+			s.panePtyMap,
+		);
 	});
 }
 
@@ -63,7 +69,10 @@ export function SessionItem({
 	const pulse = shouldPulse(dotStatus);
 
 	return (
+		// biome-ignore lint/a11y/useSemanticElements: div used intentionally for styling
 		<div
+			role="button"
+			tabIndex={0}
 			onMouseDown={onMouseDown}
 			onClick={onClick}
 			onKeyDown={(e) => e.key === "Enter" && onClick()}
@@ -71,12 +80,15 @@ export function SessionItem({
 			style={{
 				paddingLeft: 20,
 				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
-				borderLeft: isActive ? "2px solid var(--accent)" : "2px solid transparent",
+				borderLeft: isActive
+					? "2px solid var(--accent)"
+					: "2px solid transparent",
 				opacity: isDragging ? 0.4 : 1,
 				transitionDuration: "var(--transition-fast)",
 			}}
 			onMouseEnter={(e) => {
-				if (!isActive) e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+				if (!isActive)
+					e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
 			}}
 			onMouseLeave={(e) => {
 				if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
@@ -84,16 +96,24 @@ export function SessionItem({
 		>
 			<div
 				className={`w-2 h-2 rounded-full flex-shrink-0 ${pulse ? "status-dot-pulse" : ""}`}
-				style={{
-					backgroundColor: dotColor,
-					"--dot-glow": DOT_GLOWS[dotStatus] ?? "transparent",
-				} as React.CSSProperties}
+				style={
+					{
+						backgroundColor: dotColor,
+						"--dot-glow": DOT_GLOWS[dotStatus] ?? "transparent",
+					} as React.CSSProperties
+				}
 			/>
 			<div className="flex-1 min-w-0">
-				<span className="truncate font-medium" style={{ color: "var(--fg-primary)", fontSize: 13 }}>
+				<span
+					className="truncate font-medium"
+					style={{ color: "var(--fg-primary)", fontSize: 13 }}
+				>
 					{session.name}
 				</span>
-				<div className="truncate mt-0.5" style={{ color: "var(--fg-secondary)", fontSize: 11 }}>
+				<div
+					className="truncate mt-0.5"
+					style={{ color: "var(--fg-secondary)", fontSize: 11 }}
+				>
 					{shortenPath(session.rootFolder)}
 				</div>
 			</div>

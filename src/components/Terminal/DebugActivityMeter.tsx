@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import {
-	getTerminal,
 	getActivityByteThreshold,
-	INPUT_GATE_MS,
+	getTerminal,
 	INACTIVITY_RESET_MS,
+	INPUT_GATE_MS,
 } from "../../lib/terminalManager";
-import { usePtyActivityStore, IDLE_THRESHOLD_MS } from "../../stores/ptyActivityStore";
+import {
+	getLastOutputAt,
+	IDLE_THRESHOLD_MS,
+	usePtyActivityStore,
+} from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 
 const POLL_MS = 100;
@@ -47,7 +51,9 @@ export function DebugActivityMeter({ paneId }: Props) {
 	const [snap, setSnap] = useState<DebugSnapshot | null>(null);
 	const storeThreshold = useSettingsStore((s) => s.activityByteThreshold);
 	const setStoreThreshold = useSettingsStore((s) => s.setActivityByteThreshold);
-	const [thresholdInput, setThresholdInput] = useState(() => String(storeThreshold));
+	const [thresholdInput, setThresholdInput] = useState(() =>
+		String(storeThreshold),
+	);
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	const ptyId = usePtyActivityStore((s) => s.panePtyMap[paneId]);
@@ -63,8 +69,9 @@ export function DebugActivityMeter({ paneId }: Props) {
 			let waitingRatio = 0;
 			if (ptyId) {
 				const entry = usePtyActivityStore.getState().activities[ptyId];
-				if (entry?.state === "active" && entry.lastOutputAt) {
-					const elapsed = now - entry.lastOutputAt;
+				const lastOutput = getLastOutputAt(ptyId) ?? entry?.lastOutputAt;
+				if (entry?.state === "active" && lastOutput) {
+					const elapsed = now - lastOutput;
 					waitingRatio = Math.min(1, elapsed / IDLE_THRESHOLD_MS);
 				}
 			}
@@ -83,7 +90,9 @@ export function DebugActivityMeter({ paneId }: Props) {
 
 			// Keep input in sync unless user is editing
 			if (document.activeElement !== inputRef.current) {
-				setThresholdInput(String(useSettingsStore.getState().activityByteThreshold));
+				setThresholdInput(
+					String(useSettingsStore.getState().activityByteThreshold),
+				);
 			}
 		}, POLL_MS);
 		return () => clearInterval(id);
@@ -99,9 +108,11 @@ export function DebugActivityMeter({ paneId }: Props) {
 
 	if (!snap) return null;
 
-	const state = ptyId
-		? (usePtyActivityStore.getState().activities[ptyId]?.state ?? "idle")
-		: "idle";
+	const entry = ptyId
+		? usePtyActivityStore.getState().activities[ptyId]
+		: undefined;
+	const state = entry?.state ?? "idle";
+	const detectionMode = entry?.detectionMode ?? "shell";
 	const byteRatio = Math.min(1, snap.bytesSinceIdle / snap.threshold);
 	const isActive = state === "active";
 
@@ -130,6 +141,24 @@ export function DebugActivityMeter({ paneId }: Props) {
 				flexShrink: 0,
 			}}
 		>
+			{/* Mode badge */}
+			<span
+				style={{
+					fontWeight: 600,
+					fontSize: 9,
+					padding: "1px 4px",
+					borderRadius: 3,
+					background:
+						detectionMode === "agent"
+							? "rgba(139, 92, 246, 0.15)"
+							: "rgba(34, 197, 94, 0.15)",
+					color: detectionMode === "agent" ? "#8b5cf6" : "#22c55e",
+					border: `1px solid ${detectionMode === "agent" ? "rgba(139, 92, 246, 0.3)" : "rgba(34, 197, 94, 0.3)"}`,
+				}}
+			>
+				{detectionMode === "agent" ? "AGENT" : "SHELL"}
+			</span>
+
 			{/* State badge */}
 			<span
 				style={{

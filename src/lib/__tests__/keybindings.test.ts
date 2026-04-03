@@ -1,12 +1,14 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	registerAction,
-	unregisterAction,
 	handleKeyDown,
 	initKeybindings,
+	registerAction,
+	unregisterAction,
 } from "../keybindings";
 
-function makeKeyEvent(opts: Partial<KeyboardEvent> & { key: string }): KeyboardEvent {
+function makeKeyEvent(
+	opts: Partial<KeyboardEvent> & { key: string },
+): KeyboardEvent {
 	return new KeyboardEvent("keydown", {
 		key: opts.key,
 		metaKey: opts.metaKey ?? false,

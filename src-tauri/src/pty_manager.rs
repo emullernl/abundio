@@ -3,7 +3,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 
 use base64::Engine;
@@ -13,7 +13,8 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use tauri::{AppHandle, Emitter};
 
 use crate::error::AbundioError;
-use crate::events::{PtyOutput, PtyStatus};
+use crate::events::{PtyActivity, PtyOutput, PtyStatus};
+use crate::process_monitor;
 use crate::shell_env;
 
 const MAX_LOG_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
@@ -59,8 +60,11 @@ impl PtyManager {
         cols: u16,
         rows: u16,
         log_id: Option<&str>,
+        pty_id: Option<&str>,
     ) -> Result<String, AbundioError> {
-        let pty_id = uuid::Uuid::new_v4().to_string();
+        let pty_id = pty_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let pty_system = native_pty_system();
         let size = PtySize {
@@ -75,6 +79,9 @@ impl PtyManager {
             .map_err(|e| AbundioError::Pty(e.to_string()))?;
 
         let shell = shell_env::default_shell();
+        let shell_type = detect_shell_type(&shell);
+        let integration_dir = shell_integration_dir();
+
         let mut cmd = if let Some(command) = command {
             let parts: Vec<&str> = command.split_whitespace().collect();
             let mut cmd = CommandBuilder::new(parts[0]);
@@ -84,8 +91,29 @@ impl PtyManager {
             cmd
         } else {
             let mut cmd = CommandBuilder::new(&shell);
-            #[cfg(not(target_os = "windows"))]
-            cmd.args(["-l", "-i"]); // login + interactive shell (sources .zshrc)
+            match shell_type {
+                ShellType::Zsh => {
+                    cmd.args(["-l", "-i"]);
+                    // Redirect ZDOTDIR so zsh loads our wrapper .zshrc
+                    let original_zdotdir =
+                        std::env::var("ZDOTDIR").unwrap_or_default();
+                    cmd.env("ABUNDIO_ORIGINAL_ZDOTDIR", &original_zdotdir);
+                    cmd.env("ZDOTDIR", integration_dir.to_string_lossy().as_ref());
+                }
+                ShellType::Bash => {
+                    // Use --rcfile to load our wrapper (not -l; --rcfile is ignored for login shells)
+                    let rcfile = integration_dir.join(".bashrc");
+                    cmd.args([
+                        "-i",
+                        "--rcfile",
+                        rcfile.to_string_lossy().as_ref(),
+                    ]);
+                }
+                ShellType::Other => {
+                    #[cfg(not(target_os = "windows"))]
+                    cmd.args(["-l", "-i"]);
+                }
+            }
             cmd
         };
 
@@ -135,7 +163,7 @@ impl PtyManager {
         let master = pair.master;
 
         thread::spawn(move || {
-            pty_thread(id_clone, master, child, rx, alive, app, log_file);
+            pty_thread(id_clone, master, child, rx, alive, app, log_file, shell_type);
         });
 
         Ok(pty_id)
@@ -248,6 +276,108 @@ impl PtyManager {
     }
 }
 
+/// Shell type detected from the binary name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ShellType {
+    Zsh,
+    Bash,
+    Other,
+}
+
+fn detect_shell_type(shell: &str) -> ShellType {
+    let base = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(shell);
+    if base.contains("zsh") {
+        ShellType::Zsh
+    } else if base.contains("bash") {
+        ShellType::Bash
+    } else {
+        ShellType::Other
+    }
+}
+
+/// Returns the directory containing shell integration startup files.
+/// Creates the files on first call per process lifetime. The hooks are loaded
+/// via ZDOTDIR (zsh) or --rcfile (bash) so they never appear in terminal output
+/// or history.
+fn shell_integration_dir() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        write_shell_integration_files()
+    }).clone()
+}
+
+fn write_shell_integration_files() -> PathBuf {
+    let dir = dirs::data_dir()
+        .unwrap_or_else(|| Path::new("~").to_path_buf())
+        .join("abundio")
+        .join("shell-integration");
+    let _ = fs::create_dir_all(&dir);
+
+    // zsh: wrapper .zshrc that sources user config then adds hooks
+    let zshrc = dir.join(".zshrc");
+    let _ = fs::write(
+        &zshrc,
+        r#"# Abundio shell integration — loaded via ZDOTDIR
+# Source the user's real zsh config
+if [ -n "$ABUNDIO_ORIGINAL_ZDOTDIR" ] && [ -f "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshrc" ]; then
+  ZDOTDIR="$ABUNDIO_ORIGINAL_ZDOTDIR"
+  source "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshrc"
+elif [ -f "$HOME/.zshrc" ]; then
+  ZDOTDIR="$HOME"
+  source "$HOME/.zshrc"
+fi
+# Hooks
+__abundio_preexec() { printf '\e]7770;command_start\a' }
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?" }
+precmd_functions+=(__abundio_precmd)
+preexec_functions+=(__abundio_preexec)
+"#,
+    );
+
+    // Also create .zshenv to source the user's .zshenv
+    let zshenv = dir.join(".zshenv");
+    let _ = fs::write(
+        &zshenv,
+        r#"# Abundio: forward to user's real .zshenv
+if [ -n "$ABUNDIO_ORIGINAL_ZDOTDIR" ] && [ -f "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshenv" ]; then
+  source "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshenv"
+elif [ -f "$HOME/.zshenv" ]; then
+  source "$HOME/.zshenv"
+fi
+"#,
+    );
+
+    // bash: wrapper rcfile that sources user config then adds hooks
+    let bashrc = dir.join(".bashrc");
+    let _ = fs::write(
+        &bashrc,
+        r#"# Abundio shell integration — loaded via --rcfile
+# Source login shell config files for parity (--rcfile replaces -l)
+[ -f /etc/profile ] && source /etc/profile
+if [ -f ~/.bash_profile ]; then
+  source ~/.bash_profile
+elif [ -f ~/.bash_login ]; then
+  source ~/.bash_login
+elif [ -f ~/.profile ]; then
+  source ~/.profile
+fi
+# Source the user's real bash config
+[ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
+[ -f ~/.bashrc ] && source ~/.bashrc
+# Hooks
+__abundio_preexec() { printf '\e]7770;command_start\a'; }
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; }
+trap '__abundio_preexec' DEBUG
+PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+"#,
+    );
+
+    dir
+}
+
 /// Runs on a dedicated OS thread. Owns the master PTY and child process.
 fn pty_thread(
     pty_id: String,
@@ -257,9 +387,14 @@ fn pty_thread(
     alive: Arc<AtomicBool>,
     app: AppHandle,
     log_file: Option<(File, PathBuf)>,
+    shell_type: ShellType,
 ) {
     let mut writer = master.take_writer().unwrap();
     let mut reader = master.try_clone_reader().unwrap();
+
+    // Get shell PID for child process monitoring
+    let shell_pid = child.process_id();
+    let mut command_running = false;
 
     // Spawn a sub-thread for reading PTY output → emitting events
     let read_pty_id = pty_id.clone();
@@ -312,6 +447,24 @@ fn pty_thread(
             let event_name = format!("pty-status-{}", pty_id);
             let _ = app.emit(&event_name, PtyStatus::Exited { code });
             break;
+        }
+
+        // Poll for child processes of the shell (command start/stop detection).
+        // Only use process monitoring for shells without OSC shell integration
+        // (zsh/bash use OSC 7770 sequences instead, so polling would race).
+        if shell_type == ShellType::Other {
+            if let Some(pid) = shell_pid {
+                let has_children = process_monitor::has_child_processes(pid);
+                if has_children && !command_running {
+                    command_running = true;
+                    let event_name = format!("pty-activity-{}", pty_id);
+                    let _ = app.emit(&event_name, PtyActivity::CommandStarted);
+                } else if !has_children && command_running {
+                    command_running = false;
+                    let event_name = format!("pty-activity-{}", pty_id);
+                    let _ = app.emit(&event_name, PtyActivity::CommandFinished);
+                }
+            }
         }
 
         // Non-blocking receive with a short timeout to allow checking child status

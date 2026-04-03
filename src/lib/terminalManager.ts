@@ -1,23 +1,37 @@
-import { Terminal, type ITheme } from "@xterm/xterm";
-import { WebglAddon } from "@xterm/addon-webgl";
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { pty } from "./ipc";
-import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { type ITheme, Terminal } from "@xterm/xterm";
+import {
+	setFocusedPaneIdGetter,
+	setShellCommandRunning,
+	usePtyActivityStore,
+} from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
-import { usePtyActivityStore } from "../stores/ptyActivityStore";
-import { sendNotification } from "@tauri-apps/plugin-notification";
+import { useSettingsStore } from "../stores/settingsStore";
+import { matchTitleToAgent } from "./agents";
+import { pty } from "./ipc";
+import { parseShellIntegration } from "./shellIntegration";
+import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import type { PaneNode } from "./types";
 
 function containsPaneId(node: PaneNode, targetPaneId: string): boolean {
 	if (node.type === "terminal") return node.id === targetPaneId;
-	return containsPaneId(node.first, targetPaneId) || containsPaneId(node.second, targetPaneId);
+	return (
+		containsPaneId(node.first, targetPaneId) ||
+		containsPaneId(node.second, targetPaneId)
+	);
 }
 
-function setPtyIdInLayout(node: PaneNode, targetPaneId: string, ptyId: string): PaneNode {
+function setPtyIdInLayout(
+	node: PaneNode,
+	targetPaneId: string,
+	ptyId: string,
+): PaneNode {
 	if (node.type === "terminal") {
 		return node.id === targetPaneId ? { ...node, ptyId } : node;
 	}
@@ -49,13 +63,20 @@ export interface ManagedTerminal {
 	bytesSinceIdle: number;
 	/** Timestamp of last output chunk — used to reset accumulation after inactivity gap */
 	lastOutputChunkAt: number;
+	/** True once initPty has completed — used by TerminalLoader to hide the spinner */
+	ready: boolean;
+	/** True once the terminal has been projected, fit, and painted — loader waits for this */
+	settled: boolean;
 }
 
 const instances = new Map<string, ManagedTerminal>();
 
 // Background activity listeners for PTYs whose terminals have been destroyed (session switch)
 // These keep tracking activity so session/tab dots update for inactive sessions
-const backgroundTrackers = new Map<string, { unlistenOutput: () => void; unlistenStatus: () => void }>();
+const backgroundTrackers = new Map<
+	string,
+	{ unlistenOutput: () => void; unlistenStatus: () => void }
+>();
 
 let ACTIVITY_BYTE_THRESHOLD = 512;
 
@@ -79,8 +100,14 @@ async function startBackgroundTracking(ptyId: string) {
 	let bgBytesSinceIdle = 0;
 	let bgLastOutputChunkAt = 0;
 	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
+		// Only run byte accumulation for agent-mode PTYs
+		const entry = usePtyActivityStore.getState().activities[ptyId];
+		if (entry?.detectionMode !== "agent") return;
 		const now = Date.now();
-		if (bgLastOutputChunkAt && now - bgLastOutputChunkAt > INACTIVITY_RESET_MS) {
+		if (
+			bgLastOutputChunkAt &&
+			now - bgLastOutputChunkAt > INACTIVITY_RESET_MS
+		) {
 			bgBytesSinceIdle = 0;
 		}
 		bgLastOutputChunkAt = now;
@@ -91,10 +118,15 @@ async function startBackgroundTracking(ptyId: string) {
 		}
 	});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
-		useSessionStore.getState().setPtyStatus(ptyId, status);
-		if (status.type === "exited" && status.code !== 0 && status.code !== null) {
-			usePtyActivityStore.getState().recordError(ptyId);
+		if (status.type === "exited") {
+			const actStore = usePtyActivityStore.getState();
+			if (status.code !== 0 && status.code !== null) {
+				actStore.recordError(ptyId);
+			} else {
+				actStore.recordExitSuccess(ptyId);
+			}
 		}
+		useSessionStore.getState().setPtyStatus(ptyId, status);
 	});
 	backgroundTrackers.set(ptyId, { unlistenOutput, unlistenStatus });
 }
@@ -110,6 +142,7 @@ function stopBackgroundTracking(ptyId: string) {
 
 // Deferred subscription — runs after all modules are initialized
 setTimeout(() => {
+	setFocusedPaneIdGetter(() => useSessionStore.getState().focusedPaneId);
 	useSessionStore.subscribe((state) => {
 		const { activeSessionId, activeView, focusedPaneId } = state;
 		if (!activeSessionId) return;
@@ -199,6 +232,8 @@ export async function createTerminal(
 		lastInputAt: 0,
 		bytesSinceIdle: 0,
 		lastOutputChunkAt: 0,
+		ready: false,
+		settled: false,
 	};
 
 	instances.set(paneId, managed);
@@ -212,6 +247,7 @@ export async function createTerminal(
 async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	const { term, serializeAddon } = managed;
 	let currentPtyId = managed.ptyId;
+	const isNewPty = !currentPtyId;
 
 	const { setPtyStatus } = useSessionStore.getState();
 
@@ -221,7 +257,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	// includes output produced while the UI was torn down, while the snapshot is stale.
 	let restoreData: string | Uint8Array | null = null;
 	if (currentPtyId) {
-		restoreData = (await pty.readLog(paneId)) ?? (await pty.readSnapshot(paneId));
+		restoreData =
+			(await pty.readLog(paneId)) ?? (await pty.readSnapshot(paneId));
 	} else {
 		const snapshot = await pty.readSnapshot(paneId);
 		restoreData = snapshot ?? (await pty.readLog(paneId));
@@ -239,9 +276,139 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 	}
 
-	if (!currentPtyId) {
-		currentPtyId = await pty.spawn(cwd, term.cols, term.rows, undefined, paneId);
+	// For new PTYs, generate the ID upfront and register event listeners BEFORE
+	// spawning so no shell output is lost in the gap between spawn and listen.
+	if (isNewPty) {
+		currentPtyId = crypto.randomUUID();
 		managed.ptyId = currentPtyId;
+	}
+
+	// Stop background tracker if one exists — full listener takes over
+	stopBackgroundTracking(currentPtyId);
+
+	setPtyStatus(currentPtyId, { type: "running" });
+	const actStore = usePtyActivityStore.getState();
+	actStore.initPty(currentPtyId);
+	actStore.registerPane(paneId, currentPtyId);
+
+	term.onData((data) => {
+		if (managed.restoring) return;
+		managed.lastInputAt = Date.now();
+		managed.bytesSinceIdle = 0;
+		const actStore = usePtyActivityStore.getState();
+		actStore.clearError(currentPtyId);
+		actStore.markIdle(currentPtyId);
+		pty.write(currentPtyId, data);
+	});
+
+	const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
+		const entry = usePtyActivityStore.getState().activities[currentPtyId];
+		if (entry?.detectionMode === "shell") {
+			// Shell mode: parse and strip shell integration sequences, no output pipeline
+			const { cleaned, commands } = parseShellIntegration(data);
+			term.write(cleaned);
+			if (managed.suppressActivity) return;
+			for (const cmd of commands) {
+				const actStore = usePtyActivityStore.getState();
+				if (cmd.type === "command_start") {
+					setShellCommandRunning(currentPtyId, true);
+					actStore.recordOutput(currentPtyId);
+				} else if (cmd.type === "command_end") {
+					setShellCommandRunning(currentPtyId, false);
+					if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
+						actStore.recordError(currentPtyId);
+					} else {
+						const isFocused =
+							document.hasFocus() &&
+							useSessionStore.getState().focusedPaneId === paneId;
+						if (isFocused) {
+							actStore.markIdle(currentPtyId);
+						} else {
+							actStore.recordExitSuccess(currentPtyId);
+						}
+					}
+				}
+			}
+		} else {
+			// Agent mode: existing byte accumulation pipeline
+			term.write(data);
+			if (
+				!managed.suppressActivity &&
+				Date.now() - managed.lastInputAt > INPUT_GATE_MS
+			) {
+				const now = Date.now();
+				if (
+					managed.lastOutputChunkAt &&
+					now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
+				) {
+					managed.bytesSinceIdle = 0;
+				}
+				managed.lastOutputChunkAt = now;
+				managed.bytesSinceIdle += data.length;
+				if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+					managed.bytesSinceIdle = 0;
+					usePtyActivityStore.getState().recordOutput(currentPtyId);
+				}
+			}
+		}
+	});
+
+	// Process monitoring: command start/stop detection for shell mode
+	const unlistenActivity = await pty.onActivity(currentPtyId, (activity) => {
+		if (managed.suppressActivity) return;
+		const actStore = usePtyActivityStore.getState();
+		const entry = actStore.activities[currentPtyId];
+		if (entry?.detectionMode !== "shell") return;
+		if (activity.type === "commandStarted") {
+			setShellCommandRunning(currentPtyId, true);
+			actStore.recordOutput(currentPtyId);
+		} else if (activity.type === "commandFinished") {
+			setShellCommandRunning(currentPtyId, false);
+			if (entry.state === "active") {
+				const isFocused =
+					document.hasFocus() &&
+					useSessionStore.getState().focusedPaneId === paneId;
+				if (isFocused) {
+					actStore.markIdle(currentPtyId);
+				} else {
+					actStore.recordExitSuccess(currentPtyId);
+				}
+			}
+		}
+	});
+
+	const unlistenStatus = await pty.onStatus(currentPtyId, (status) => {
+		if (status.type === "exited") {
+			// Set activity state BEFORE setPtyStatus to avoid subscriber race
+			const actStore = usePtyActivityStore.getState();
+			if (status.code !== 0 && status.code !== null) {
+				actStore.recordError(currentPtyId);
+			} else {
+				actStore.recordExitSuccess(currentPtyId);
+			}
+		}
+		useSessionStore.getState().setPtyStatus(currentPtyId, status);
+		if (status.type === "exited") {
+			const exitMsg =
+				status.code === 0 ? "exited" : `exited with code ${status.code}`;
+			try {
+				sendNotification({ title: "Abundio", body: `Process ${exitMsg}` });
+			} catch {
+				// Notifications may not be permitted
+			}
+		}
+	});
+
+	// Now spawn the PTY — listeners are already in place so no output is lost
+	if (isNewPty) {
+		await pty.spawn(
+			cwd,
+			term.cols,
+			term.rows,
+			undefined,
+			paneId,
+			currentPtyId,
+		);
 
 		// Write ptyId to the correct tab's layout (not just the active tab)
 		const store = useSessionStore.getState();
@@ -262,69 +429,33 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 	}
 
-	// Stop background tracker if one exists — full listener takes over
-	stopBackgroundTracking(currentPtyId);
-
-	setPtyStatus(currentPtyId, { type: "running" });
-	const actStore = usePtyActivityStore.getState();
-	actStore.initPty(currentPtyId);
-	actStore.registerPane(paneId, currentPtyId);
-
-	term.onData((data) => {
-		if (managed.restoring) return;
-		managed.lastInputAt = Date.now();
-		managed.bytesSinceIdle = 0;
-		usePtyActivityStore.getState().markIdle(currentPtyId);
-		pty.write(currentPtyId, data);
-	});
-
-	const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
-		term.write(data);
-		if (!managed.suppressActivity && Date.now() - managed.lastInputAt > INPUT_GATE_MS) {
-			const now = Date.now();
-			if (managed.lastOutputChunkAt && now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS) {
-				managed.bytesSinceIdle = 0;
-			}
-			managed.lastOutputChunkAt = now;
-			managed.bytesSinceIdle += data.length;
-			if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
-				managed.bytesSinceIdle = 0;
-				usePtyActivityStore.getState().recordOutput(currentPtyId);
-			}
-		}
-	});
-
-	const unlistenStatus = await pty.onStatus(currentPtyId, (status) => {
-		useSessionStore.getState().setPtyStatus(currentPtyId, status);
-		if (status.type === "exited") {
-			if (status.code !== 0 && status.code !== null) {
-				usePtyActivityStore.getState().recordError(currentPtyId);
-			}
-			const exitMsg = status.code === 0 ? "exited" : `exited with code ${status.code}`;
-			try {
-				sendNotification({ title: "Abundio", body: `Process ${exitMsg}` });
-			} catch {
-				// Notifications may not be permitted
-			}
-		}
-	});
-
 	term.onTitleChange((title) => {
-		usePtyActivityStore.getState().setTitle(paneId, title);
+		const actStore = usePtyActivityStore.getState();
+		actStore.setTitle(paneId, title);
+		// Auto-detect coding agents from terminal title
+		const agents = useSettingsStore.getState().agents;
+		if (matchTitleToAgent(title, agents)) {
+			actStore.setAgentPty(currentPtyId);
+		}
 	});
 
 	// A click in an already-focused terminal (e.g. scrolling without typing) should
 	// clear "waiting" → "idle". Focus-changes and keystrokes are handled elsewhere.
 	const onTermClick = () => {
 		if (managed.ptyId) {
-			usePtyActivityStore.getState().markIdle(managed.ptyId);
+			const actStore = usePtyActivityStore.getState();
+			actStore.clearError(managed.ptyId);
+			actStore.markIdle(managed.ptyId);
 		}
 	};
 	if (term.element) {
 		term.element.addEventListener("mousedown", onTermClick);
 	} else {
 		// term.open() hasn't been called yet; log so this is visible during development
-		console.warn("[terminalManager] term.element is null in initPty — mousedown idle-clear not registered for", paneId);
+		console.warn(
+			"[terminalManager] term.element is null in initPty — mousedown idle-clear not registered for",
+			paneId,
+		);
 	}
 
 	registerSnapshot(paneId, () => serializeAddon.serialize());
@@ -332,15 +463,24 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	managed.cleanup = () => {
 		unregisterSnapshot(paneId);
 		unlistenOutput();
+		unlistenActivity();
 		unlistenStatus();
 		term.element?.removeEventListener("mousedown", onTermClick);
 	};
+
+	managed.ready = true;
+}
+
+/** Mark terminal as visually settled — loader can now hide */
+export function markSettled(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (managed) managed.settled = true;
 }
 
 /** Write any deferred scrollback restore data now that the terminal has real dimensions */
 export function flushPendingRestore(paneId: string): void {
 	const managed = instances.get(paneId);
-	if (!managed || !managed.pendingRestore) return;
+	if (!managed?.pendingRestore) return;
 	managed.restoring = true;
 	managed.term.write(managed.pendingRestore, () => {
 		managed.restoring = false;
@@ -361,13 +501,17 @@ export function setAllTerminalsFontSize(fontSize: number): void {
 		managed.term.options.fontSize = fontSize;
 		managed.fitAddon.fit();
 		if (managed.ptyId) {
-			pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});
+			pty
+				.resize(managed.ptyId, managed.term.cols, managed.term.rows)
+				.catch(() => {});
 		}
 	}
 }
 
 /** Update font family on all terminal instances and refit */
-export async function setAllTerminalsFontFamily(fontFamily: string): Promise<void> {
+export async function setAllTerminalsFontFamily(
+	fontFamily: string,
+): Promise<void> {
 	const fontSize = instances.values().next().value?.term.options.fontSize ?? 14;
 	try {
 		await Promise.all([
@@ -384,9 +528,48 @@ export async function setAllTerminalsFontFamily(fontFamily: string): Promise<voi
 		managed.term.refresh(0, managed.term.rows - 1);
 		managed.fitAddon.fit();
 		if (managed.ptyId) {
-			pty.resize(managed.ptyId, managed.term.cols, managed.term.rows).catch(() => {});
+			pty
+				.resize(managed.ptyId, managed.term.cols, managed.term.rows)
+				.catch(() => {});
 		}
 	}
+}
+
+/** Reset a terminal: kill the current PTY and spawn a fresh one */
+export async function resetTerminal(paneId: string): Promise<void> {
+	const managed = instances.get(paneId);
+	if (!managed) return;
+
+	const oldPtyId = managed.ptyId;
+
+	// Clean up old PTY listeners
+	managed.cleanup?.();
+	managed.cleanup = null;
+
+	// Kill the old PTY
+	if (oldPtyId) {
+		pty.kill(oldPtyId).catch(() => {});
+		usePtyActivityStore.getState().removePty(oldPtyId);
+		usePtyActivityStore.getState().removePane(paneId);
+	}
+
+	// Reset xterm content
+	managed.term.reset();
+	managed.ptyId = "";
+	managed.ready = false;
+	managed.suppressActivity = true;
+	managed.lastInputAt = 0;
+	managed.bytesSinceIdle = 0;
+	managed.lastOutputChunkAt = 0;
+	managed.pendingRestore = null;
+	managed.restoring = false;
+
+	// Get cwd from the active session
+	const session = useSessionStore.getState().getActiveSession();
+	const cwd = session?.rootFolder ?? ".";
+
+	// Re-initialize PTY (spawns a new shell)
+	await initPty(paneId, managed, cwd);
 }
 
 /** Fully destroy a terminal (used when closing a pane) */

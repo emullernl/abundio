@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { git, sessions as sessionsApi } from "../lib/ipc";
-import { useSessionStore } from "./sessionStore";
 import type { GitChangedFile } from "../lib/types";
+import { useSessionStore } from "./sessionStore";
 
 let fetchGeneration = 0;
 let lastFingerprint: string | null = null;
@@ -38,10 +38,20 @@ interface GitChangesState {
 
 	togglePanel: () => void;
 	setPanel: (open: boolean) => void;
-	fetchChanges: (cwd: string, sessionBaseBranch?: string | null) => Promise<void>;
-	refreshChanges: (cwd: string, sessionBaseBranch?: string | null) => Promise<void>;
+	fetchChanges: (
+		cwd: string,
+		sessionBaseBranch?: string | null,
+	) => Promise<void>;
+	refreshChanges: (
+		cwd: string,
+		sessionBaseBranch?: string | null,
+	) => Promise<void>;
 	toggleSection: (section: string) => void;
-	setBaseBranch: (sessionId: string, branch: string | null, cwd: string) => Promise<void>;
+	setBaseBranch: (
+		sessionId: string,
+		branch: string | null,
+		cwd: string,
+	) => Promise<void>;
 	toggleBranchSelector: () => void;
 	closeBranchSelector: () => void;
 	fetchBranches: (cwd: string) => Promise<void>;
@@ -134,7 +144,8 @@ export const useGitChangesStore = create<GitChangesState>()(
 				await get().fetchChanges(cwd, branch);
 			},
 
-			toggleBranchSelector: () => set((s) => ({ branchSelectorOpen: !s.branchSelectorOpen })),
+			toggleBranchSelector: () =>
+				set((s) => ({ branchSelectorOpen: !s.branchSelectorOpen })),
 			closeBranchSelector: () => set({ branchSelectorOpen: false }),
 
 			fetchBranches: async (cwd) => {

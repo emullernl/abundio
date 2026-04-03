@@ -35,7 +35,7 @@ export function onTargetChange(
 	}
 	set.add(cb);
 	return () => {
-		set!.delete(cb);
-		if (set!.size === 0) listeners.delete(paneId);
+		set?.delete(cb);
+		if (set?.size === 0) listeners.delete(paneId);
 	};
 }

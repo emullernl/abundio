@@ -1,13 +1,13 @@
 import { create } from "zustand";
-import { fs as fsApi, sessions as sessionsApi } from "../lib/ipc";
-import { getLanguage } from "../lib/languageMap";
-import type { DirEntry } from "../lib/types";
-import { useSessionStore } from "./sessionStore";
 import {
 	clearEditorStateCache,
 	getSerializableEditorState,
 	type SerializedEditorState,
 } from "../components/FileViewer/CodeEditor";
+import { fs as fsApi, sessions as sessionsApi } from "../lib/ipc";
+import { getLanguage } from "../lib/languageMap";
+import type { DirEntry } from "../lib/types";
+import { useSessionStore } from "./sessionStore";
 
 export interface FileTab {
 	id: string;
@@ -31,8 +31,17 @@ interface ExplorerState {
 	expandedDirs: Record<string, boolean>;
 	dirContents: Record<string, DirEntry[]>;
 
-	openFile: (sessionId: string, filePath: string, editorState?: SerializedEditorState | null) => Promise<void>;
-	openDiff: (sessionId: string, filePath: string, original: string, modified: string) => void;
+	openFile: (
+		sessionId: string,
+		filePath: string,
+		editorState?: SerializedEditorState | null,
+	) => Promise<void>;
+	openDiff: (
+		sessionId: string,
+		filePath: string,
+		original: string,
+		modified: string,
+	) => void;
 	closeFileTab: (tabId: string) => void;
 	setActiveFileTab: (tabId: string | null) => void;
 	updateFileContent: (tabId: string, content: string) => void;
@@ -48,7 +57,9 @@ function buildFileTabsPayload(sessionId: string): string {
 	const activeView =
 		useSessionStore.getState().activeView[sessionId] ?? "terminal";
 
-	const sessionTabs = fileTabs.filter((t) => t.sessionId === sessionId && t.fileType !== "diff");
+	const sessionTabs = fileTabs.filter(
+		(t) => t.sessionId === sessionId && t.fileType !== "diff",
+	);
 	return JSON.stringify({
 		tabs: sessionTabs.map((t) => ({
 			id: t.id,
@@ -104,7 +115,9 @@ export async function restoreFileTabs(
 			if (!persisted.tabs?.length) continue;
 
 			for (const tab of persisted.tabs) {
-				await store.openFile(s.id, tab.filePath, tab.editorState).catch(() => {});
+				await store
+					.openFile(s.id, tab.filePath, tab.editorState)
+					.catch(() => {});
 			}
 
 			// Restore active file tab by matching filePath
@@ -117,8 +130,7 @@ export async function restoreFileTabs(
 						.getState()
 						.fileTabs.find(
 							(t) =>
-								t.filePath === persistedActive.filePath &&
-								t.sessionId === s.id,
+								t.filePath === persistedActive.filePath && t.sessionId === s.id,
 						);
 					if (restored) {
 						useExplorerStore.getState().setActiveFileTab(restored.id);
@@ -164,7 +176,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		}
 
 		const fileName = filePath.split("/").pop() || "Untitled";
-		const ext = fileName.includes(".") ? fileName.split(".").pop() || null : null;
+		const ext = fileName.includes(".")
+			? fileName.split(".").pop() || null
+			: null;
 
 		const tab: FileTab = {
 			id: crypto.randomUUID(),
@@ -192,12 +206,16 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	openDiff: (sessionId, filePath, original, modified) => {
 		// Use a unique key so the same file can be open as both a regular tab and a diff tab
 		const diffKey = `diff:${filePath}`;
-		const existing = get().fileTabs.find((t) => t.filePath === diffKey && t.sessionId === sessionId);
+		const existing = get().fileTabs.find(
+			(t) => t.filePath === diffKey && t.sessionId === sessionId,
+		);
 		if (existing) {
 			// Update the diff content and activate
 			set((s) => ({
 				fileTabs: s.fileTabs.map((t) =>
-					t.id === existing.id ? { ...t, diffOriginal: original, diffModified: modified } : t,
+					t.id === existing.id
+						? { ...t, diffOriginal: original, diffModified: modified }
+						: t,
 				),
 				activeFileTabId: existing.id,
 			}));
@@ -206,7 +224,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		}
 
 		const fileName = filePath.split("/").pop() || "Untitled";
-		const ext = fileName.includes(".") ? fileName.split(".").pop() || null : null;
+		const ext = fileName.includes(".")
+			? fileName.split(".").pop() || null
+			: null;
 
 		const tab: FileTab = {
 			id: crypto.randomUUID(),
@@ -240,12 +260,16 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 			if (s.activeFileTabId === tabId) {
 				const closedSessionId = s.fileTabs[idx]?.sessionId;
-				const sessionTabs = newTabs.filter((t) => t.sessionId === closedSessionId);
+				const sessionTabs = newTabs.filter(
+					(t) => t.sessionId === closedSessionId,
+				);
 				if (sessionTabs.length === 0) {
 					newActiveId = null;
 					// Switch back to terminal view
 					if (closedSessionId) {
-						useSessionStore.getState().setActiveView(closedSessionId, "terminal");
+						useSessionStore
+							.getState()
+							.setActiveView(closedSessionId, "terminal");
 					}
 				} else {
 					const oldSessionIdx = s.fileTabs
@@ -284,7 +308,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 	saveFile: async (tabId) => {
 		const tab = get().fileTabs.find((t) => t.id === tabId);
-		if (!tab || !tab.content || tab.fileType !== "text") return;
+		if (!tab?.content || tab.fileType !== "text") return;
 
 		await fsApi.writeFile(tab.filePath, tab.content);
 		set((s) => ({

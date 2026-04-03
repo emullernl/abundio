@@ -1,5 +1,5 @@
 import { useSessionStore } from "../stores/sessionStore";
-import { Folder, Terminal, Grid } from "./Icons";
+import { Folder, Grid, Terminal } from "./Icons";
 
 function shortenPath(fullPath: string): string {
 	const home = "/Users/";
@@ -43,7 +43,9 @@ export function StatusBar() {
 			{session ? (
 				<>
 					<div className="flex items-center gap-3">
-						<span className="font-medium" style={{ color: "var(--accent)" }}>{session.name}</span>
+						<span className="font-medium" style={{ color: "var(--accent)" }}>
+							{session.name}
+						</span>
 						{tab && (
 							<>
 								<Separator />
@@ -62,10 +64,7 @@ export function StatusBar() {
 					{focusedPaneId && (
 						<span className="flex items-center gap-1.5">
 							<Grid size={12} />
-							<span
-								className="font-mono"
-								style={{ fontSize: 11 }}
-							>
+							<span className="font-mono" style={{ fontSize: 11 }}>
 								{focusedPaneId.slice(0, 8)}
 							</span>
 						</span>

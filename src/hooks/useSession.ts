@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { useSessionStore } from "../stores/sessionStore";
 import { restoreFileTabs } from "../stores/explorerStore";
+import { useSessionStore } from "../stores/sessionStore";
 
 export function useSession() {
 	const loadSessions = useSessionStore((s) => s.loadSessions);

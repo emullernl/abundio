@@ -16,8 +16,9 @@ pub async fn pty_spawn(
     rows: u16,
     command: Option<String>,
     log_id: Option<String>,
+    pty_id: Option<String>,
 ) -> Result<String, AbundioError> {
-    pty_mgr.spawn(app, &cwd, command.as_deref(), cols, rows, log_id.as_deref())
+    pty_mgr.spawn(app, &cwd, command.as_deref(), cols, rows, log_id.as_deref(), pty_id.as_deref())
 }
 
 #[tauri::command]

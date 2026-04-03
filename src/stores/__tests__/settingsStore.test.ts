@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/themes", () => ({
 	applyTheme: vi.fn(),
@@ -16,9 +16,13 @@ vi.mock("../../lib/terminalManager", () => ({
 	setActivityByteThreshold: vi.fn(),
 }));
 
-import { useSettingsStore } from "../settingsStore";
+import {
+	setActivityByteThreshold,
+	setAllTerminalsFontFamily,
+	setAllTerminalsTheme,
+} from "../../lib/terminalManager";
 import { applyTheme, getTheme } from "../../lib/themes";
-import { setAllTerminalsTheme, setAllTerminalsFontFamily, setActivityByteThreshold } from "../../lib/terminalManager";
+import { useSettingsStore } from "../settingsStore";
 
 const mockApplyTheme = vi.mocked(applyTheme);
 const mockGetTheme = vi.mocked(getTheme);
@@ -53,14 +57,24 @@ describe("settingsStore", () => {
 	});
 
 	it("setTerminalFontFamily updates terminalFontFamily", () => {
-		useSettingsStore.getState().setTerminalFontFamily("'FiraCode Nerd Font Mono', monospace");
-		expect(useSettingsStore.getState().terminalFontFamily).toBe("'FiraCode Nerd Font Mono', monospace");
-		expect(mockSetAllTerminalsFontFamily).toHaveBeenCalledWith("'FiraCode Nerd Font Mono', monospace");
+		useSettingsStore
+			.getState()
+			.setTerminalFontFamily("'FiraCode Nerd Font Mono', monospace");
+		expect(useSettingsStore.getState().terminalFontFamily).toBe(
+			"'FiraCode Nerd Font Mono', monospace",
+		);
+		expect(mockSetAllTerminalsFontFamily).toHaveBeenCalledWith(
+			"'FiraCode Nerd Font Mono', monospace",
+		);
 	});
 
 	it("setUiFontFamily updates uiFontFamily", () => {
-		useSettingsStore.getState().setUiFontFamily("'Inter', system-ui, sans-serif");
-		expect(useSettingsStore.getState().uiFontFamily).toBe("'Inter', system-ui, sans-serif");
+		useSettingsStore
+			.getState()
+			.setUiFontFamily("'Inter', system-ui, sans-serif");
+		expect(useSettingsStore.getState().uiFontFamily).toBe(
+			"'Inter', system-ui, sans-serif",
+		);
 	});
 
 	it("setFontSize updates fontSize", () => {

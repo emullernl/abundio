@@ -40,6 +40,7 @@ export function GitPanelDivider({ onResize, onResizeEnd }: Props) {
 	);
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for panel resize
 		<div
 			ref={dividerRef}
 			onMouseDown={handleMouseDown}

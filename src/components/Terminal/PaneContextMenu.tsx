@@ -71,8 +71,13 @@ export function PaneContextMenu({ x, y, items, onClose }: Props) {
 				if (item.separator) {
 					return (
 						<div
+							// biome-ignore lint/suspicious/noArrayIndexKey: separators have no unique identifier
 							key={`sep-${i}`}
-							style={{ height: 1, backgroundColor: "var(--border)", margin: "4px 8px" }}
+							style={{
+								height: 1,
+								backgroundColor: "var(--border)",
+								margin: "4px 8px",
+							}}
 						/>
 					);
 				}

@@ -1,26 +1,65 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { BranchInfo, DirEntry, FileContent, GhStatus, GitChangedFile, GitFileDiff, PtyStatusType, PullRequest, SessionUpdate, SessionWithTabs, Tab, TabUpdate } from "./types";
+import type {
+	BranchInfo,
+	DirEntry,
+	FileContent,
+	GhStatus,
+	GitChangedFile,
+	GitFileDiff,
+	PtyActivityType,
+	PtyStatusType,
+	PullRequest,
+	SessionUpdate,
+	SessionWithTabs,
+	Tab,
+	TabUpdate,
+} from "./types";
 
 export const pty = {
-	spawn: (cwd: string, cols: number, rows: number, command?: string, logId?: string) =>
-		invoke<string>("pty_spawn", { cwd, cols, rows, command, logId }),
+	spawn: (
+		cwd: string,
+		cols: number,
+		rows: number,
+		command?: string,
+		logId?: string,
+		ptyId?: string,
+	) => invoke<string>("pty_spawn", { cwd, cols, rows, command, logId, ptyId }),
 
-	write: (ptyId: string, data: string) => invoke<void>("pty_write", { ptyId, data }),
+	write: (ptyId: string, data: string) =>
+		invoke<void>("pty_write", { ptyId, data }),
 
 	resize: (ptyId: string, cols: number, rows: number) =>
 		invoke<void>("pty_resize", { ptyId, cols, rows }),
 
 	kill: (ptyId: string) => invoke<void>("pty_kill", { ptyId }),
 
-	onOutput: (ptyId: string, callback: (data: Uint8Array) => void): Promise<UnlistenFn> =>
+	onOutput: (
+		ptyId: string,
+		callback: (data: Uint8Array) => void,
+	): Promise<UnlistenFn> =>
 		listen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
-			const binary = Uint8Array.from(atob(event.payload.data), (c) => c.charCodeAt(0));
+			const binary = Uint8Array.from(atob(event.payload.data), (c) =>
+				c.charCodeAt(0),
+			);
 			callback(binary);
 		}),
 
-	onStatus: (ptyId: string, callback: (status: PtyStatusType) => void): Promise<UnlistenFn> =>
-		listen<PtyStatusType>(`pty-status-${ptyId}`, (event) => callback(event.payload)),
+	onStatus: (
+		ptyId: string,
+		callback: (status: PtyStatusType) => void,
+	): Promise<UnlistenFn> =>
+		listen<PtyStatusType>(`pty-status-${ptyId}`, (event) =>
+			callback(event.payload),
+		),
+
+	onActivity: (
+		ptyId: string,
+		callback: (activity: PtyActivityType) => void,
+	): Promise<UnlistenFn> =>
+		listen<PtyActivityType>(`pty-activity-${ptyId}`, (event) =>
+			callback(event.payload),
+		),
 
 	readLog: async (logId: string): Promise<Uint8Array | null> => {
 		const data = await invoke<string | null>("pty_read_log", { logId });
@@ -36,7 +75,8 @@ export const pty = {
 
 	deleteLog: (logId: string) => invoke<void>("pty_delete_log", { logId }),
 
-	cleanupStaleLogs: (paneIds: string[]) => invoke<void>("pty_cleanup_stale_logs", { paneIds }),
+	cleanupStaleLogs: (paneIds: string[]) =>
+		invoke<void>("pty_cleanup_stale_logs", { paneIds }),
 };
 
 export const sessions = {
@@ -72,7 +112,12 @@ export const git = {
 			baseBranch: baseBranch ?? null,
 		}),
 
-	fileDiff: (cwd: string, filePath: string, section: string, baseBranch?: string | null) =>
+	fileDiff: (
+		cwd: string,
+		filePath: string,
+		section: string,
+		baseBranch?: string | null,
+	) =>
 		invoke<GitFileDiff>("git_file_diff", {
 			cwd,
 			filePath,
@@ -84,7 +129,8 @@ export const git = {
 
 	listBranches: (cwd: string) => invoke<string[]>("git_list_branches", { cwd }),
 
-	statusFingerprint: (cwd: string) => invoke<string>("git_status_fingerprint", { cwd }),
+	statusFingerprint: (cwd: string) =>
+		invoke<string>("git_status_fingerprint", { cwd }),
 };
 
 export const gh = {
@@ -98,8 +144,7 @@ export const gh = {
 
 	myPrs: (cwd: string) => invoke<PullRequest[]>("gh_my_prs", { cwd }),
 
-	myPrsAll: (cwd: string) =>
-		invoke<PullRequest[]>("gh_my_prs_all", { cwd }),
+	myPrsAll: (cwd: string) => invoke<PullRequest[]>("gh_my_prs_all", { cwd }),
 };
 
 export const fs = {
@@ -107,15 +152,20 @@ export const fs = {
 
 	readFile: (path: string) => invoke<FileContent>("fs_read_file", { path }),
 
-	writeFile: (path: string, content: string) => invoke<void>("fs_write_file", { path, content }),
+	writeFile: (path: string, content: string) =>
+		invoke<void>("fs_write_file", { path, content }),
 
 	fileExists: (path: string) => invoke<boolean>("fs_file_exists", { path }),
 
-	watchStart: (rootPath: string) => invoke<void>("fs_watch_start", { rootPath }),
+	watchStart: (rootPath: string) =>
+		invoke<void>("fs_watch_start", { rootPath }),
 
 	watchStop: (rootPath: string) => invoke<void>("fs_watch_stop", { rootPath }),
 
-	onFsChange: (rootPath: string, callback: (paths: string[]) => void): Promise<UnlistenFn> =>
+	onFsChange: (
+		rootPath: string,
+		callback: (paths: string[]) => void,
+	): Promise<UnlistenFn> =>
 		listen<{ root: string; paths: string[] }>("fs-change", (event) => {
 			if (event.payload.root === rootPath) {
 				callback(event.payload.paths);
@@ -133,4 +183,3 @@ export const fs = {
 export const fonts = {
 	listSystemFonts: () => invoke<string[]>("list_system_fonts"),
 };
-

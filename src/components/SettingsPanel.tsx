@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSettingsStore } from "../stores/settingsStore";
-import { themeList, type AppTheme } from "../lib/themes";
-import { setAllTerminalsFontSize } from "../lib/terminalManager";
-import { TERMINAL_FONTS, systemFontToEntry, type FontEntry } from "../lib/nerdFonts";
 import { fonts as fontsIpc } from "../lib/ipc";
-import { Check } from "./Icons";
+import {
+	type FontEntry,
+	systemFontToEntry,
+	TERMINAL_FONTS,
+} from "../lib/nerdFonts";
+import { setAllTerminalsFontSize } from "../lib/terminalManager";
+import { type AppTheme, themeList } from "../lib/themes";
+import type { CodingAgent } from "../lib/types";
+import { useSettingsStore } from "../stores/settingsStore";
+import { Check, Plus, X } from "./Icons";
 
-type Section = "theme" | "terminal-font" | "ui-font";
+type Section = "theme" | "terminal-font" | "ui-font" | "agents";
 
 interface Props {
 	open: boolean;
@@ -32,6 +37,7 @@ function fuzzyMatch(query: string, text: string): number {
 /* ─── Mini terminal preview for theme cards ─── */
 function TerminalPreview({ theme }: { theme: AppTheme }) {
 	const t = theme.terminal;
+	const labels = ["drwx", "file", ".cfg", "app/", "test", "node"] as const;
 	const colors = [t.red, t.green, t.yellow, t.blue, t.magenta, t.cyan];
 	return (
 		<div
@@ -52,8 +58,8 @@ function TerminalPreview({ theme }: { theme: AppTheme }) {
 			</div>
 			<div className="flex gap-2 mt-0.5">
 				{colors.map((c, i) => (
-					<span key={i} style={{ color: c ?? "#888" }}>
-						{["drwx", "file", ".cfg", "app/", "test", "node"][i]}
+					<span key={labels[i]} style={{ color: c ?? "#888" }}>
+						{labels[i]}
 					</span>
 				))}
 			</div>
@@ -103,9 +109,7 @@ function ThemeCard({
 			}}
 		>
 			<TerminalPreview theme={theme} />
-			<div
-				className="flex items-center justify-between px-2 py-1.5"
-			>
+			<div className="flex items-center justify-between px-2 py-1.5">
 				<span
 					className="text-xs font-medium"
 					style={{
@@ -114,9 +118,7 @@ function ThemeCard({
 				>
 					{theme.displayName}
 				</span>
-				{isActive && (
-					<Check size={12} />
-				)}
+				{isActive && <Check size={12} />}
 			</div>
 		</button>
 	);
@@ -153,6 +155,7 @@ function SearchInput({
 	return (
 		<div className="relative">
 			<svg
+				aria-hidden="true"
 				className="absolute top-1/2 -translate-y-1/2"
 				style={{ left: 10, color: "var(--fg-secondary)", opacity: 0.5 }}
 				width="13"
@@ -206,7 +209,9 @@ function FontRow({
 				backgroundColor: isSelected
 					? "color-mix(in srgb, var(--accent) 10%, transparent)"
 					: "transparent",
-				borderLeft: isSelected ? "2px solid var(--accent)" : "2px solid transparent",
+				borderLeft: isSelected
+					? "2px solid var(--accent)"
+					: "2px solid transparent",
 			}}
 		>
 			<div className="flex-1 min-w-0">
@@ -270,11 +275,14 @@ function FontPicker({
 	// Scroll selected into view once the font list is populated
 	const hasScrolled = useRef(false);
 	useEffect(() => {
-		if (!listRef.current || filtered.length === 0 || hasScrolled.current) return;
+		if (!listRef.current || filtered.length === 0 || hasScrolled.current)
+			return;
 		hasScrolled.current = true;
 		const idx = filtered.findIndex((f) => f.name === selectedFont);
 		if (idx > 0) {
-			(listRef.current.children[idx] as HTMLElement | undefined)?.scrollIntoView({ block: "center" });
+			(
+				listRef.current.children[idx] as HTMLElement | undefined
+			)?.scrollIntoView({ block: "center" });
 		}
 	}, [filtered, selectedFont]);
 
@@ -344,9 +352,7 @@ function FontSizeControl({
 				className="flex-1 accent-[var(--accent)]"
 				style={{ height: 3 }}
 			/>
-			<div
-				className="flex items-center gap-1 flex-shrink-0"
-			>
+			<div className="flex items-center gap-1 flex-shrink-0">
 				<button
 					type="button"
 					onClick={() => onChange(Math.max(8, value - 1))}
@@ -413,9 +419,7 @@ function NavItem({
 				padding: "7px 10px",
 				fontSize: 12,
 				color: isActive ? "var(--fg-primary)" : "var(--fg-secondary)",
-				backgroundColor: isActive
-					? "var(--bg-tertiary)"
-					: "transparent",
+				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
 			}}
 		>
 			<span style={{ opacity: isActive ? 1 : 0.5 }}>{icon}</span>
@@ -427,7 +431,17 @@ function NavItem({
 /* ─── SVG icons for nav ─── */
 function PaletteIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
 			<circle cx="13.5" cy="6.5" r="0.5" fill="currentColor" />
 			<circle cx="17.5" cy="10.5" r="0.5" fill="currentColor" />
 			<circle cx="8.5" cy="7.5" r="0.5" fill="currentColor" />
@@ -439,7 +453,17 @@ function PaletteIcon() {
 
 function TypeIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
 			<polyline points="4 7 4 4 20 4 20 7" />
 			<line x1="9" y1="20" x2="15" y2="20" />
 			<line x1="12" y1="4" x2="12" y2="20" />
@@ -449,10 +473,266 @@ function TypeIcon() {
 
 function LayoutIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
 			<rect x="3" y="3" width="18" height="18" rx="2" />
 			<path d="M3 9h18" />
 			<path d="M9 21V9" />
+		</svg>
+	);
+}
+
+/* ─── Toggle switch ─── */
+function Toggle({
+	checked,
+	onChange,
+}: {
+	checked: boolean;
+	onChange: (v: boolean) => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={() => onChange(!checked)}
+			className="relative flex-shrink-0 rounded-full transition-colors"
+			style={{
+				width: 32,
+				height: 18,
+				backgroundColor: checked ? "var(--accent)" : "var(--bg-tertiary)",
+				border: `1px solid ${checked ? "transparent" : "var(--border)"}`,
+			}}
+		>
+			<span
+				className="absolute top-0.5 rounded-full transition-all"
+				style={{
+					width: 14,
+					height: 14,
+					left: checked ? 15 : 2,
+					backgroundColor: checked
+						? "var(--bg-primary)"
+						: "var(--fg-secondary)",
+				}}
+			/>
+		</button>
+	);
+}
+
+/* ─── Agent row ─── */
+function AgentRow({
+	agent,
+	onToggle,
+	onRemove,
+}: {
+	agent: CodingAgent;
+	onToggle: () => void;
+	onRemove?: () => void;
+}) {
+	return (
+		<div
+			className="flex items-center gap-3 rounded-lg group transition-colors"
+			style={{
+				padding: "9px 10px",
+				backgroundColor: agent.enabled
+					? "transparent"
+					: "color-mix(in srgb, var(--bg-tertiary) 40%, transparent)",
+			}}
+		>
+			<Toggle checked={agent.enabled} onChange={onToggle} />
+			<div
+				className="flex-1 min-w-0"
+				style={{
+					opacity: agent.enabled ? 1 : 0.5,
+				}}
+			>
+				<div
+					className="truncate"
+					style={{
+						fontSize: 13,
+						color: "var(--fg-primary)",
+						lineHeight: 1.3,
+					}}
+				>
+					{agent.name}
+				</div>
+				<div
+					className="truncate"
+					style={{
+						fontSize: 11,
+						color: "var(--fg-secondary)",
+						fontFamily: "var(--font-mono)",
+						marginTop: 1,
+					}}
+				>
+					{agent.command}
+					{agent.args?.length ? ` ${agent.args.join(" ")}` : ""}
+				</div>
+			</div>
+			{agent.builtin ? (
+				<span
+					className="flex-shrink-0 rounded"
+					style={{
+						fontSize: 9,
+						fontWeight: 600,
+						color: "var(--fg-secondary)",
+						letterSpacing: "0.05em",
+						textTransform: "uppercase",
+						padding: "2px 5px",
+						border: "1px solid var(--border)",
+						opacity: 0.6,
+					}}
+				>
+					Built-in
+				</span>
+			) : onRemove ? (
+				<button
+					type="button"
+					onClick={onRemove}
+					className="flex-shrink-0 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+					style={{
+						width: 24,
+						height: 24,
+						color: "var(--fg-secondary)",
+					}}
+					onMouseEnter={(e) => {
+						(e.currentTarget as HTMLElement).style.color = "var(--error)";
+						(e.currentTarget as HTMLElement).style.backgroundColor =
+							"color-mix(in srgb, var(--error) 10%, transparent)";
+					}}
+					onMouseLeave={(e) => {
+						(e.currentTarget as HTMLElement).style.color =
+							"var(--fg-secondary)";
+						(e.currentTarget as HTMLElement).style.backgroundColor =
+							"transparent";
+					}}
+				>
+					<X size={13} />
+				</button>
+			) : null}
+		</div>
+	);
+}
+
+/* ─── Add agent form ─── */
+function AddAgentForm({
+	onAdd,
+}: {
+	onAdd: (name: string, command: string) => void;
+}) {
+	const [name, setName] = useState("");
+	const [command, setCommand] = useState("");
+
+	const canSubmit = name.trim().length > 0 && command.trim().length > 0;
+
+	const handleSubmit = () => {
+		if (!canSubmit) return;
+		onAdd(name.trim(), command.trim());
+		setName("");
+		setCommand("");
+	};
+
+	return (
+		<div
+			className="rounded-lg"
+			style={{
+				padding: "12px",
+				backgroundColor: "var(--bg-primary)",
+				border: "1px solid var(--border)",
+			}}
+		>
+			<div
+				className="font-medium"
+				style={{
+					fontSize: 11,
+					color: "var(--fg-secondary)",
+					letterSpacing: "0.04em",
+					marginBottom: 8,
+				}}
+			>
+				Add Custom Agent
+			</div>
+			<div className="flex gap-2">
+				<input
+					type="text"
+					placeholder="Name"
+					value={name}
+					onChange={(e) => setName(e.target.value)}
+					onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+					className="flex-1 bg-transparent outline-none rounded-md"
+					style={{
+						color: "var(--fg-primary)",
+						fontSize: 12,
+						padding: "6px 8px",
+						border: "1px solid var(--border)",
+						backgroundColor: "var(--bg-secondary)",
+						minWidth: 0,
+					}}
+				/>
+				<input
+					type="text"
+					placeholder="Command"
+					value={command}
+					onChange={(e) => setCommand(e.target.value)}
+					onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+					className="flex-1 bg-transparent outline-none rounded-md"
+					style={{
+						color: "var(--fg-primary)",
+						fontSize: 12,
+						padding: "6px 8px",
+						border: "1px solid var(--border)",
+						backgroundColor: "var(--bg-secondary)",
+						fontFamily: "var(--font-mono)",
+						minWidth: 0,
+					}}
+				/>
+				<button
+					type="button"
+					onClick={handleSubmit}
+					disabled={!canSubmit}
+					className="flex items-center gap-1.5 rounded-md transition-colors flex-shrink-0"
+					style={{
+						padding: "6px 10px",
+						fontSize: 12,
+						fontWeight: 500,
+						color: canSubmit ? "var(--bg-primary)" : "var(--fg-secondary)",
+						backgroundColor: canSubmit ? "var(--accent)" : "var(--bg-tertiary)",
+						opacity: canSubmit ? 1 : 0.5,
+						cursor: canSubmit ? "pointer" : "default",
+					}}
+				>
+					<Plus size={12} />
+					Add
+				</button>
+			</div>
+		</div>
+	);
+}
+
+/* ─── Bot icon for nav ─── */
+function AgentIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<path d="M12 8V4H8" />
+			<rect x="4" y="8" width="16" height="12" rx="2" />
+			<path d="M2 14h2M20 14h2M9 13v2M15 13v2" />
 		</svg>
 	);
 }
@@ -468,12 +748,18 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const setTheme = useSettingsStore((s) => s.setTheme);
 	const terminalFontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
-	const setTerminalFontFamily = useSettingsStore((s) => s.setTerminalFontFamily);
+	const setTerminalFontFamily = useSettingsStore(
+		(s) => s.setTerminalFontFamily,
+	);
 	const setUiFontFamily = useSettingsStore((s) => s.setUiFontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const setFontSize = useSettingsStore((s) => s.setFontSize);
 	const uiFontSize = useSettingsStore((s) => s.uiFontSize);
 	const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
+	const agents = useSettingsStore((s) => s.agents);
+	const addAgent = useSettingsStore((s) => s.addAgent);
+	const removeAgent = useSettingsStore((s) => s.removeAgent);
+	const toggleAgent = useSettingsStore((s) => s.toggleAgent);
 
 	const themes = useMemo(() => themeList(), []);
 
@@ -481,13 +767,16 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const systemFontsLoaded = useRef(false);
 	useEffect(() => {
 		if (!isOpen || systemFontsLoaded.current) return;
-		fontsIpc.listSystemFonts().then((families) => {
-			const sorted = families.slice().sort((a, b) => a.localeCompare(b));
-			setSystemFonts(sorted.map(systemFontToEntry));
-			systemFontsLoaded.current = true;
-		}).catch(() => {
-			setSystemFonts([]);
-		});
+		fontsIpc
+			.listSystemFonts()
+			.then((families) => {
+				const sorted = families.slice().sort((a, b) => a.localeCompare(b));
+				setSystemFonts(sorted.map(systemFontToEntry));
+				systemFontsLoaded.current = true;
+			})
+			.catch(() => {
+				setSystemFonts([]);
+			});
 	}, [isOpen]);
 
 	useEffect(() => {
@@ -521,19 +810,25 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	if (!isOpen) return null;
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: modal backdrop dismiss
 		<div
+			role="presentation"
 			className="fixed inset-0 z-[200] flex items-center justify-center"
 			style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
 			onClick={onClose}
+			onKeyDown={(e) => e.key === "Escape" && onClose()}
 		>
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only, keyboard handled by parent */}
 			<div
+				role="dialog"
 				className="rounded-xl shadow-2xl overflow-hidden flex flex-col"
 				style={{
 					width: 840,
 					height: 620,
 					backgroundColor: "var(--bg-secondary)",
 					border: "1px solid var(--border)",
-					boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03) inset",
+					boxShadow:
+						"0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03) inset",
 				}}
 				onClick={(e) => e.stopPropagation()}
 			>
@@ -549,7 +844,7 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 						className="font-semibold"
 						style={{ fontSize: 13, color: "var(--fg-primary)" }}
 					>
-						Appearance
+						Settings
 					</span>
 					<div className="flex items-center gap-3">
 						<span
@@ -577,7 +872,8 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 							width: 160,
 							padding: "12px 8px",
 							borderRight: "1px solid var(--border)",
-							backgroundColor: "color-mix(in srgb, var(--bg-primary) 50%, var(--bg-secondary))",
+							backgroundColor:
+								"color-mix(in srgb, var(--bg-primary) 50%, var(--bg-secondary))",
 						}}
 					>
 						<NavItem
@@ -597,6 +893,12 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 							icon={<LayoutIcon />}
 							isActive={section === "ui-font"}
 							onClick={() => setSection("ui-font")}
+						/>
+						<NavItem
+							label="Agents"
+							icon={<AgentIcon />}
+							isActive={section === "agents"}
+							onClick={() => setSection("agents")}
 						/>
 					</div>
 
@@ -661,6 +963,42 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 										searchPlaceholder="Search UI fonts..."
 										previewStyle="ui"
 									/>
+								</div>
+							</div>
+						)}
+
+						{section === "agents" && (
+							<div className="flex flex-col gap-4 flex-1 min-h-0">
+								<div className="flex-1 min-h-0 overflow-y-auto">
+									<SectionLabel>Coding Agents</SectionLabel>
+									<p
+										style={{
+											fontSize: 12,
+											color: "var(--fg-secondary)",
+											marginBottom: 12,
+											lineHeight: 1.5,
+										}}
+									>
+										Agents are detected by terminal title matching. Enable or
+										disable detection per agent, or add your own.
+									</p>
+									<div className="flex flex-col gap-0.5">
+										{agents.map((agent) => (
+											<AgentRow
+												key={agent.id}
+												agent={agent}
+												onToggle={() => toggleAgent(agent.id)}
+												onRemove={
+													agent.builtin
+														? undefined
+														: () => removeAgent(agent.id)
+												}
+											/>
+										))}
+									</div>
+								</div>
+								<div className="flex-shrink-0">
+									<AddAgentForm onAdd={addAgent} />
 								</div>
 							</div>
 						)}

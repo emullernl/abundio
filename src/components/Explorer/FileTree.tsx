@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { fs as fsApi } from "../../lib/ipc";
+import type { DirEntry } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { FileTreeItem } from "./FileTreeItem";
-import type { DirEntry } from "../../lib/types";
 
 interface FileTreeProps {
 	rootPath: string;
@@ -37,7 +37,11 @@ function TreeLevel({
 					onOpenFile={(filePath) => openFile(sessionId, filePath)}
 				>
 					{entry.isDir && expandedDirs[entry.path] && (
-						<TreeLevel dirPath={entry.path} sessionId={sessionId} depth={depth + 1} />
+						<TreeLevel
+							dirPath={entry.path}
+							sessionId={sessionId}
+							depth={depth + 1}
+						/>
 					)}
 				</FileTreeItem>
 			))}
@@ -62,13 +66,16 @@ export function FileTree({ rootPath, sessionId }: FileTreeProps) {
 		});
 
 		let unlisten: (() => void) | null = null;
-		fsApi.onFsChange(rootPath, (paths) => {
-			useExplorerStore.getState().refreshDirs(paths);
-		}).then((fn) => {
-			unlisten = fn;
-		}).catch((err) => {
-			console.error("[FileTree] onFsChange listen failed:", err);
-		});
+		fsApi
+			.onFsChange(rootPath, (paths) => {
+				useExplorerStore.getState().refreshDirs(paths);
+			})
+			.then((fn) => {
+				unlisten = fn;
+			})
+			.catch((err) => {
+				console.error("[FileTree] onFsChange listen failed:", err);
+			});
 
 		return () => {
 			fsApi.watchStop(rootPath);

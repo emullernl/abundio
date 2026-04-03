@@ -6,11 +6,19 @@ import { SessionItem } from "./SessionItem";
 const DRAG_THRESHOLD = 5;
 
 export function SessionList() {
-	const { sessions, activeSessionId, setActiveSession, deleteSession, reorderSessions } =
-		useSessionStore();
+	const {
+		sessions,
+		activeSessionId,
+		setActiveSession,
+		deleteSession,
+		reorderSessions,
+	} = useSessionStore();
 
 	const [draggedId, setDraggedId] = useState<string | null>(null);
-	const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+	const [mousePos, setMousePos] = useState<{ x: number; y: number }>({
+		x: 0,
+		y: 0,
+	});
 	const [ghostWidth, setGhostWidth] = useState(0);
 	const [nearestSlot, setNearestSlot] = useState<number | null>(null);
 
@@ -35,7 +43,9 @@ export function SessionList() {
 			const dy = e.clientY - startPos.current.y;
 			if (Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD && pendingId.current) {
 				setDraggedId(pendingId.current);
-				setGhostWidth(containerRef.current?.getBoundingClientRect().width ?? 200);
+				setGhostWidth(
+					containerRef.current?.getBoundingClientRect().width ?? 200,
+				);
 				pendingId.current = null;
 			}
 		};
@@ -96,7 +106,11 @@ export function SessionList() {
 			setNearestSlot((slot) => {
 				if (slot !== null) {
 					const currentIdx = sessions.findIndex((s) => s.id === draggedId);
-					if (currentIdx !== -1 && slot !== currentIdx && slot !== currentIdx + 1) {
+					if (
+						currentIdx !== -1 &&
+						slot !== currentIdx &&
+						slot !== currentIdx + 1
+					) {
 						const ids = sessions.map((s) => s.id);
 						ids.splice(currentIdx, 1);
 						const insertAt = slot > currentIdx ? slot - 1 : slot;
@@ -117,12 +131,17 @@ export function SessionList() {
 		};
 	}, [draggedId, sessions, reorderSessions]);
 
-	const draggedSession = draggedId ? sessions.find((s) => s.id === draggedId) : null;
+	const draggedSession = draggedId
+		? sessions.find((s) => s.id === draggedId)
+		: null;
 
 	return (
 		<div className="flex flex-col" ref={containerRef}>
 			{sessions.length === 0 && (
-				<div className="px-3 py-4 text-center text-xs" style={{ color: "var(--fg-secondary)" }}>
+				<div
+					className="px-3 py-4 text-center text-xs"
+					style={{ color: "var(--fg-secondary)" }}
+				>
 					No sessions yet
 				</div>
 			)}
@@ -152,7 +171,11 @@ export function SessionList() {
 
 			{/* Floating ghost following the cursor */}
 			{draggedSession && (
-				<DragGhost session={draggedSession} mousePos={mousePos} width={ghostWidth} />
+				<DragGhost
+					session={draggedSession}
+					mousePos={mousePos}
+					width={ghostWidth}
+				/>
 			)}
 		</div>
 	);

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, File, FolderOpen, Image } from "../Icons";
 import type { DirEntry } from "../../lib/types";
+import { ChevronDown, ChevronRight, File, FolderOpen, Image } from "../Icons";
 
 interface FileTreeItemProps {
 	entry: DirEntry;
@@ -68,8 +68,11 @@ export function FileTreeItem({
 	children,
 }: FileTreeItemProps) {
 	const [hovered, setHovered] = useState(false);
-	const isImage = entry.extension
-		&& ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp"].includes(entry.extension);
+	const isImage =
+		entry.extension &&
+		["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp"].includes(
+			entry.extension,
+		);
 
 	const handleClick = () => {
 		if (entry.isDir) {
@@ -87,7 +90,9 @@ export function FileTreeItem({
 			? Image
 			: File;
 
-	const iconColor = entry.isDir ? "var(--accent)" : getFileColor(entry.extension);
+	const iconColor = entry.isDir
+		? "var(--accent)"
+		: getFileColor(entry.extension);
 
 	return (
 		<>
@@ -108,8 +113,14 @@ export function FileTreeItem({
 				}}
 			>
 				{entry.isDir ? (
-					<span style={{ width: 14, flexShrink: 0, color: "var(--fg-secondary)" }}>
-						{isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+					<span
+						style={{ width: 14, flexShrink: 0, color: "var(--fg-secondary)" }}
+					>
+						{isExpanded ? (
+							<ChevronDown size={12} />
+						) : (
+							<ChevronRight size={12} />
+						)}
 					</span>
 				) : (
 					<span style={{ width: 14, flexShrink: 0 }} />

@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { findNode, replaceNode, removeNode, collectTerminals } from "../paneTree";
+import { describe, expect, it } from "vitest";
+import {
+	collectTerminals,
+	findNode,
+	removeNode,
+	replaceNode,
+} from "../paneTree";
 import type { PaneNode } from "../types";
 
 const leafA: PaneNode = { type: "terminal", id: "a", ptyId: "pty-a" };
@@ -98,8 +103,11 @@ describe("removeNode", () => {
 		// Remove leafA from nestedSplit: s1 collapses to leafB
 		const result = removeNode(nestedSplit, "a");
 		expect(result).not.toBeNull();
+		// biome-ignore lint/style/noNonNullAssertion: test assertion after toBeNull check
 		expect(findNode(result!, "a")).toBeNull();
+		// biome-ignore lint/style/noNonNullAssertion: test assertion after toBeNull check
 		expect(findNode(result!, "b")).toEqual(leafB);
+		// biome-ignore lint/style/noNonNullAssertion: test assertion after toBeNull check
 		expect(findNode(result!, "c")).toEqual(leafC);
 	});
 });

@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	registerSnapshot,
-	unregisterSnapshot,
 	saveAllSnapshots,
+	unregisterSnapshot,
 } from "../snapshotRegistry";
 
 vi.mock("../ipc", () => ({

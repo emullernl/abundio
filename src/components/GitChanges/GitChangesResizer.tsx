@@ -17,7 +17,10 @@ export function GitChangesResizer() {
 			const onMouseMove = (ev: MouseEvent) => {
 				if (!isDragging.current) return;
 				// Panel is on the right, so width = window width - mouseX
-				const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - ev.clientX));
+				const width = Math.min(
+					MAX_WIDTH,
+					Math.max(MIN_WIDTH, window.innerWidth - ev.clientX),
+				);
 				setGitPanelWidth(width);
 			};
 
@@ -35,6 +38,7 @@ export function GitChangesResizer() {
 	);
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for panel resize
 		<div
 			onMouseDown={onMouseDown}
 			className="flex-shrink-0 transition-colors"

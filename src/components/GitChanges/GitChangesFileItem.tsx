@@ -48,10 +48,14 @@ export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
 				paddingLeft: 12,
 				paddingRight: 12,
 				backgroundColor: isSelected ? "var(--bg-tertiary)" : "transparent",
-				borderLeft: isSelected ? "2px solid var(--accent)" : "2px solid transparent",
+				borderLeft: isSelected
+					? "2px solid var(--accent)"
+					: "2px solid transparent",
 			}}
 			onMouseEnter={(e) => {
-				if (!isSelected) e.currentTarget.style.backgroundColor = "color-mix(in srgb, var(--bg-tertiary) 60%, transparent)";
+				if (!isSelected)
+					e.currentTarget.style.backgroundColor =
+						"color-mix(in srgb, var(--bg-tertiary) 60%, transparent)";
 			}}
 			onMouseLeave={(e) => {
 				if (!isSelected) e.currentTarget.style.backgroundColor = "transparent";
@@ -72,14 +76,23 @@ export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
 			</span>
 			<span
 				className="truncate flex-1 min-w-0"
-				style={{ fontSize: 12, color: "var(--fg-primary)", fontFamily: "var(--font-mono)" }}
+				style={{
+					fontSize: 12,
+					color: "var(--fg-primary)",
+					fontFamily: "var(--font-mono)",
+				}}
 			>
 				{fileName(file.path)}
 				{dir && (
-					<span style={{ color: "var(--fg-secondary)", marginLeft: 4 }}>{dir}</span>
+					<span style={{ color: "var(--fg-secondary)", marginLeft: 4 }}>
+						{dir}
+					</span>
 				)}
 			</span>
-			<span className="flex-shrink-0 flex items-center gap-1" style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}>
+			<span
+				className="flex-shrink-0 flex items-center gap-1"
+				style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}
+			>
 				{file.additions > 0 && (
 					<span style={{ color: "var(--success)" }}>+{file.additions}</span>
 				)}

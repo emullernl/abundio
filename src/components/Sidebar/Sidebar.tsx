@@ -1,10 +1,10 @@
-import { useCallback, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useCallback, useRef, useState } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { SessionList } from "./SessionList";
 import { Explorer } from "../Explorer/Explorer";
 import { ChevronLeft, ChevronRight, Plus } from "../Icons";
+import { SessionList } from "./SessionList";
 
 interface SidebarProps {
 	titlebarHeight: number;
@@ -51,6 +51,7 @@ function SidebarDivider({
 	);
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for sidebar resize
 		<div
 			ref={dividerRef}
 			onMouseDown={handleMouseDown}
@@ -67,8 +68,12 @@ function SidebarDivider({
 
 export function Sidebar({ titlebarHeight }: SidebarProps) {
 	const { createSession } = useSessionStore();
-	const { sidebarCollapsed, toggleSidebar, sidebarSplitRatio, setSidebarSplitRatio } =
-		useSettingsStore();
+	const {
+		sidebarCollapsed,
+		toggleSidebar,
+		sidebarSplitRatio,
+		setSidebarSplitRatio,
+	} = useSettingsStore();
 	const [creating, setCreating] = useState(false);
 	const [localRatio, setLocalRatio] = useState<number | null>(null);
 
@@ -136,15 +141,31 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 			}}
 		>
 			{/* Titlebar spacer */}
-			<div data-tauri-drag-region style={{ height: titlebarHeight, flexShrink: 0 }} />
+			<div
+				data-tauri-drag-region
+				style={{ height: titlebarHeight, flexShrink: 0 }}
+			/>
 
 			{/* Header */}
 			<div
 				className="flex items-center justify-between flex-shrink-0"
-				style={{ borderBottom: "1px solid var(--border)", height: 40, paddingLeft: 24, paddingRight: 16 }}
+				style={{
+					borderBottom: "1px solid var(--border)",
+					height: 40,
+					paddingLeft: 24,
+					paddingRight: 16,
+				}}
 			>
 				<div className="flex items-center gap-2">
-					<span className="font-semibold" style={{ color: "var(--fg-secondary)", fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+					<span
+						className="font-semibold"
+						style={{
+							color: "var(--fg-secondary)",
+							fontSize: 11,
+							letterSpacing: "0.05em",
+							textTransform: "uppercase",
+						}}
+					>
 						Sessions
 					</span>
 				</div>
@@ -185,14 +206,10 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				<SidebarDivider onResize={handleResize} onResizeEnd={handleResizeEnd} />
 
 				{/* Explorer */}
-				<div
-					className="min-h-0"
-					style={{ flex: `${1 - ratio} 1 0%` }}
-				>
+				<div className="min-h-0" style={{ flex: `${1 - ratio} 1 0%` }}>
 					<Explorer />
 				</div>
 			</div>
-
 		</div>
 	);
 }

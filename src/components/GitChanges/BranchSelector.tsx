@@ -10,7 +10,9 @@ interface Props {
 export function BranchSelector({ cwd, sessionId }: Props) {
 	const baseBranch = useGitChangesStore((s) => s.baseBranch);
 	const branchSelectorOpen = useGitChangesStore((s) => s.branchSelectorOpen);
-	const toggleBranchSelector = useGitChangesStore((s) => s.toggleBranchSelector);
+	const toggleBranchSelector = useGitChangesStore(
+		(s) => s.toggleBranchSelector,
+	);
 	const closeBranchSelector = useGitChangesStore((s) => s.closeBranchSelector);
 	const availableBranches = useGitChangesStore((s) => s.availableBranches);
 	const fetchBranches = useGitChangesStore((s) => s.fetchBranches);
@@ -33,7 +35,10 @@ export function BranchSelector({ cwd, sessionId }: Props) {
 	useEffect(() => {
 		if (!branchSelectorOpen) return;
 		function handleClickOutside(e: MouseEvent) {
-			if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+			if (
+				dropdownRef.current &&
+				!dropdownRef.current.contains(e.target as Node)
+			) {
 				closeBranchSelector();
 			}
 		}
@@ -89,7 +94,9 @@ export function BranchSelector({ cwd, sessionId }: Props) {
 					e.currentTarget.style.borderColor = "transparent";
 				}}
 			>
-				<span className="truncate" style={{ maxWidth: 120 }}>vs {baseBranch ?? "..."}</span>
+				<span className="truncate" style={{ maxWidth: 120 }}>
+					vs {baseBranch ?? "..."}
+				</span>
 				<ChevronDown size={10} />
 			</button>
 
@@ -134,22 +141,36 @@ export function BranchSelector({ cwd, sessionId }: Props) {
 								className="w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors"
 								style={{
 									fontSize: 12,
-									fontFamily: item.value ? "var(--font-mono)" : "var(--font-ui)",
-									color: item.value === null ? "var(--fg-secondary)" : "var(--fg-primary)",
+									fontFamily: item.value
+										? "var(--font-mono)"
+										: "var(--font-ui)",
+									color:
+										item.value === null
+											? "var(--fg-secondary)"
+											: "var(--fg-primary)",
 									fontStyle: item.value === null ? "italic" : "normal",
-									backgroundColor: idx === highlightIdx ? "var(--bg-tertiary)" : "transparent",
-									borderLeft: item.value === baseBranch ? "2px solid var(--accent)" : "2px solid transparent",
+									backgroundColor:
+										idx === highlightIdx ? "var(--bg-tertiary)" : "transparent",
+									borderLeft:
+										item.value === baseBranch
+											? "2px solid var(--accent)"
+											: "2px solid transparent",
 								}}
 								onMouseEnter={() => setHighlightIdx(idx)}
 							>
 								<span className="truncate">{item.label}</span>
 								{item.value?.startsWith("origin/") && (
-									<span style={{ color: "var(--fg-secondary)", fontSize: 10 }}>remote</span>
+									<span style={{ color: "var(--fg-secondary)", fontSize: 10 }}>
+										remote
+									</span>
 								)}
 							</button>
 						))}
 						{filtered.length === 0 && (
-							<div className="px-3 py-2" style={{ color: "var(--fg-secondary)", fontSize: 12 }}>
+							<div
+								className="px-3 py-2"
+								style={{ color: "var(--fg-secondary)", fontSize: 12 }}
+							>
 								No matching branches
 							</div>
 						)}

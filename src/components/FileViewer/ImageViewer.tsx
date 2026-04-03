@@ -21,7 +21,9 @@ export function ImageViewer({ content, mime, fileName }: ImageViewerProps) {
 					border: "1px solid var(--border)",
 				}}
 			/>
-			<span style={{ fontSize: 12, color: "var(--fg-secondary)" }}>{fileName}</span>
+			<span style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
+				{fileName}
+			</span>
 		</div>
 	);
 }

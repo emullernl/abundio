@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/ipc", () => ({
 	gh: {
@@ -10,9 +10,9 @@ vi.mock("../../lib/ipc", () => ({
 	},
 }));
 
-import { usePrStore, PR_VIEW_LABELS } from "../prStore";
 import { gh } from "../../lib/ipc";
 import type { GhStatus, PullRequest } from "../../lib/types";
+import { PR_VIEW_LABELS, usePrStore } from "../prStore";
 
 const mockGh = vi.mocked(gh);
 
@@ -145,6 +145,7 @@ describe("prStore", () => {
 			const fetchPromise = usePrStore.getState().fetchReviewPrs("/test");
 			expect(usePrStore.getState().review.loading).toBe(true);
 
+			// biome-ignore lint/style/noNonNullAssertion: assigned in Promise callback above
 			resolvePromise!([]);
 			await fetchPromise;
 			expect(usePrStore.getState().review.loading).toBe(false);
@@ -195,6 +196,7 @@ describe("prStore", () => {
 			const fetchPromise = usePrStore.getState().fetchMyPrs("/test");
 			expect(usePrStore.getState().myPrs.loading).toBe(true);
 
+			// biome-ignore lint/style/noNonNullAssertion: assigned in Promise callback above
 			resolvePromise!([]);
 			await fetchPromise;
 			expect(usePrStore.getState().myPrs.loading).toBe(false);
@@ -209,8 +211,16 @@ describe("prStore", () => {
 			});
 			usePrStore.getState().clear();
 
-			expect(usePrStore.getState().review).toEqual({ prs: [], loading: false, error: null });
-			expect(usePrStore.getState().myPrs).toEqual({ prs: [], loading: false, error: null });
+			expect(usePrStore.getState().review).toEqual({
+				prs: [],
+				loading: false,
+				error: null,
+			});
+			expect(usePrStore.getState().myPrs).toEqual({
+				prs: [],
+				loading: false,
+				error: null,
+			});
 		});
 	});
 });

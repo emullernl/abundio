@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-	registerTarget,
-	unregisterTarget,
 	getTarget,
 	onTargetChange,
+	registerTarget,
+	unregisterTarget,
 } from "../portalRegistry";
 
 // Clean up between tests by unregistering known pane IDs

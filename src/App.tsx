@@ -1,27 +1,27 @@
-import { useEffect, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { Sidebar } from "./components/Sidebar/Sidebar";
-import { SplitContainer } from "./components/Terminal/SplitContainer";
-import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
-import { StatusBar } from "./components/StatusBar";
-import { Titlebar } from "./components/Titlebar";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useEffect, useState } from "react";
 import { CommandPalette } from "./components/CommandPalette";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { TabBar } from "./components/TabBar";
-import { useSession } from "./hooks/useSession";
-import { initKeybindings, registerAction } from "./lib/keybindings";
-import { setAllTerminalsFontSize } from "./lib/terminalManager";
-import { useSettingsStore } from "./stores/settingsStore";
-import { useSplitPane } from "./hooks/useSplitPane";
-import { useSessionStore } from "./stores/sessionStore";
-import { useExplorerStore, persistAllFileTabs } from "./stores/explorerStore";
-import { saveAllSnapshots } from "./lib/snapshotRegistry";
-import { TerminalPool } from "./components/Terminal/TerminalPool";
+import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
-import { useGitChangesStore } from "./stores/gitChangesStore";
-import type { PaneNode } from "./lib/types";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { Sidebar } from "./components/Sidebar/Sidebar";
+import { StatusBar } from "./components/StatusBar";
+import { TabBar } from "./components/TabBar";
+import { SplitContainer } from "./components/Terminal/SplitContainer";
+import { TerminalPool } from "./components/Terminal/TerminalPool";
+import { Titlebar } from "./components/Titlebar";
+import { useSession } from "./hooks/useSession";
+import { useSplitPane } from "./hooks/useSplitPane";
+import { initKeybindings, registerAction } from "./lib/keybindings";
 import { isMac } from "./lib/platform";
+import { saveAllSnapshots } from "./lib/snapshotRegistry";
+import { setAllTerminalsFontSize } from "./lib/terminalManager";
+import type { PaneNode } from "./lib/types";
+import { persistAllFileTabs, useExplorerStore } from "./stores/explorerStore";
+import { useGitChangesStore } from "./stores/gitChangesStore";
+import { useSessionStore } from "./stores/sessionStore";
+import { useSettingsStore } from "./stores/settingsStore";
 
 const TITLEBAR_HEIGHT = isMac ? 52 : 0;
 
@@ -32,8 +32,6 @@ function parseLayout(layoutJson: string): PaneNode | null {
 		return null;
 	}
 }
-
-
 
 export function App() {
 	useSession();
@@ -113,7 +111,9 @@ export function App() {
 			setPaletteOpen(false);
 			setSettingsOpen(true);
 		});
-		registerAction("search-in-terminal", () => useSessionStore.getState().toggleSearch());
+		registerAction("search-in-terminal", () =>
+			useSessionStore.getState().toggleSearch(),
+		);
 		registerAction("new-tab", () => {
 			const sessionId = useSessionStore.getState().activeSessionId;
 			if (sessionId) useSessionStore.getState().createTab(sessionId);
@@ -168,14 +168,20 @@ export function App() {
 			<Titlebar />
 			<div className="flex flex-1 min-h-0">
 				<Sidebar titlebarHeight={TITLEBAR_HEIGHT} />
-				<div className="flex-1 min-w-0 flex flex-col" style={{ paddingTop: TITLEBAR_HEIGHT }}>
+				<div
+					className="flex-1 min-w-0 flex flex-col"
+					style={{ paddingTop: TITLEBAR_HEIGHT }}
+				>
 					{!activeSessionId && (
 						<div
 							className="flex items-center justify-center flex-1"
 							style={{ color: "var(--fg-secondary)" }}
 						>
 							<div className="text-center">
-								<div className="text-2xl mb-3 font-medium" style={{ color: "var(--accent)" }}>
+								<div
+									className="text-2xl mb-3 font-medium"
+									style={{ color: "var(--accent)" }}
+								>
 									Abundio
 								</div>
 								<div className="text-base">Create a session to get started</div>
@@ -201,7 +207,9 @@ export function App() {
 									onClose={(tabId) => closeTab(tabId)}
 									onNew={() => createTab(session.id)}
 									onRename={(tabId, name) => renameTab(tabId, name)}
-									fileTabs={fileTabs.filter((ft) => ft.sessionId === session.id)}
+									fileTabs={fileTabs.filter(
+										(ft) => ft.sessionId === session.id,
+									)}
 									activeFileTabId={activeFileTabId}
 									activeView={activeView[session.id] ?? "terminal"}
 									onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
@@ -212,7 +220,8 @@ export function App() {
 										className="absolute inset-0"
 										style={{
 											display:
-												(activeView[session.id] ?? "terminal") === "file" && activeFileTabId
+												(activeView[session.id] ?? "terminal") === "file" &&
+												activeFileTabId
 													? "block"
 													: "none",
 										}}
@@ -223,14 +232,19 @@ export function App() {
 										const layout = parseLayout(tab.layoutJson);
 										if (!layout) return null;
 										const isTabActive = tab.id === activeTabId;
-										const showTerminal = (activeView[session.id] ?? "terminal") === "terminal" && isTabActive;
+										const showTerminal =
+											(activeView[session.id] ?? "terminal") === "terminal" &&
+											isTabActive;
 										return (
 											<div
 												key={tab.id}
 												className="absolute inset-0"
 												style={{ display: showTerminal ? "block" : "none" }}
 											>
-												<SplitContainer node={layout} cwd={session.rootFolder} />
+												<SplitContainer
+													node={layout}
+													cwd={session.rootFolder}
+												/>
 											</div>
 										);
 									})}
@@ -242,8 +256,14 @@ export function App() {
 				<GitChangesPanel titlebarHeight={TITLEBAR_HEIGHT} />
 			</div>
 			<StatusBar />
-			<CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-			<SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+			<CommandPalette
+				open={paletteOpen}
+				onClose={() => setPaletteOpen(false)}
+			/>
+			<SettingsPanel
+				open={settingsOpen}
+				onClose={() => setSettingsOpen(false)}
+			/>
 			<TerminalPool />
 		</div>
 	);
