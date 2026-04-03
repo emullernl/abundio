@@ -108,9 +108,11 @@ export function DebugActivityMeter({ paneId }: Props) {
 
 	if (!snap) return null;
 
-	const state = ptyId
-		? (usePtyActivityStore.getState().activities[ptyId]?.state ?? "idle")
-		: "idle";
+	const entry = ptyId
+		? usePtyActivityStore.getState().activities[ptyId]
+		: undefined;
+	const state = entry?.state ?? "idle";
+	const detectionMode = entry?.detectionMode ?? "shell";
 	const byteRatio = Math.min(1, snap.bytesSinceIdle / snap.threshold);
 	const isActive = state === "active";
 
@@ -139,6 +141,24 @@ export function DebugActivityMeter({ paneId }: Props) {
 				flexShrink: 0,
 			}}
 		>
+			{/* Mode badge */}
+			<span
+				style={{
+					fontWeight: 600,
+					fontSize: 9,
+					padding: "1px 4px",
+					borderRadius: 3,
+					background:
+						detectionMode === "agent"
+							? "rgba(139, 92, 246, 0.15)"
+							: "rgba(34, 197, 94, 0.15)",
+					color: detectionMode === "agent" ? "#8b5cf6" : "#22c55e",
+					border: `1px solid ${detectionMode === "agent" ? "rgba(139, 92, 246, 0.3)" : "rgba(34, 197, 94, 0.3)"}`,
+				}}
+			>
+				{detectionMode === "agent" ? "AGENT" : "SHELL"}
+			</span>
+
 			{/* State badge */}
 			<span
 				style={{

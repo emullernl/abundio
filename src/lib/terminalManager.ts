@@ -118,8 +118,13 @@ async function startBackgroundTracking(ptyId: string) {
 		}
 	});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
-		if (status.type === "exited" && status.code !== 0 && status.code !== null) {
-			usePtyActivityStore.getState().recordError(ptyId);
+		if (status.type === "exited") {
+			const actStore = usePtyActivityStore.getState();
+			if (status.code !== 0 && status.code !== null) {
+				actStore.recordError(ptyId);
+			} else {
+				actStore.recordExitSuccess(ptyId);
+			}
 		}
 		useSessionStore.getState().setPtyStatus(ptyId, status);
 	});
@@ -379,10 +384,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			if (status.code !== 0 && status.code !== null) {
 				actStore.recordError(currentPtyId);
 			} else {
-				const entry = actStore.activities[currentPtyId];
-				if (entry?.detectionMode === "shell") {
-					actStore.recordExitSuccess(currentPtyId);
-				}
+				actStore.recordExitSuccess(currentPtyId);
 			}
 		}
 		useSessionStore.getState().setPtyStatus(currentPtyId, status);

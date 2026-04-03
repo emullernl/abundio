@@ -172,6 +172,9 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			if (s.agentPtyIds.has(ptyId)) return;
 			const newSet = new Set(s.agentPtyIds);
 			newSet.add(ptyId);
+			// Clear shell command tracking — agent mode doesn't use shell integration
+			// sequences, so command_end will never fire to clear this flag.
+			shellCommandRunning.delete(ptyId);
 			const entry = s.activities[ptyId];
 			if (entry) {
 				set({
