@@ -287,6 +287,28 @@ describe("computeSessionDotStatus", () => {
 			),
 		).toBe("red");
 	});
+
+	it("waiting takes priority over active", () => {
+		const layout: PaneNode = {
+			type: "split",
+			id: "s",
+			direction: "horizontal",
+			ratio: 0.5,
+			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
+			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
+		};
+		expect(
+			computeSessionDotStatus(
+				"s1",
+				[layout],
+				{
+					"pty-1": makeEntry("waiting"),
+					"pty-2": makeEntry("active"),
+				},
+				new Set(),
+			),
+		).toBe("purple");
+	});
 });
 
 describe("computeTabDotStatus", () => {

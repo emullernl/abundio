@@ -315,8 +315,8 @@ export function computeSessionDotStatus(
 	const entries = allPtyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "active")) return "amber";
 	if (entries.some((e) => e.state === "waiting")) return "purple";
+	if (entries.some((e) => e.state === "active")) return "amber";
 
 	if (openedSessionIds.has(sessionId)) return "green";
 	return "grey";
@@ -340,8 +340,8 @@ export function computeTabDotStatus(
 	const entries = ptyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "active")) return "amber";
 	if (entries.some((e) => e.state === "waiting")) return "purple";
+	if (entries.some((e) => e.state === "active")) return "amber";
 
 	// Tabs are only shown for the active session — default to green
 	return "green";
