@@ -27,12 +27,14 @@ pub fn has_child_processes(pid: u32) -> bool {
 /// Returns `true` if the process identified by `pid` has at least one child process.
 #[cfg(target_os = "linux")]
 pub fn has_child_processes(pid: u32) -> bool {
-    // Fast path: /proc/{pid}/task/{pid}/children (requires CONFIG_PROC_CHILDREN)
+    // Fast path: /proc/{pid}/task/{pid}/children (requires CONFIG_PROC_CHILDREN).
+    // Note: this file is per-thread, so it may miss children spawned from
+    // non-main threads. On miss, fall through to the /proc scan below.
     let path = format!("/proc/{}/task/{}/children", pid, pid);
-    match std::fs::read_to_string(&path) {
-        Ok(contents) if !contents.trim().is_empty() => return true,
-        Ok(_) => return false,
-        Err(_) => {}
+    if let Ok(contents) = std::fs::read_to_string(&path) {
+        if !contents.trim().is_empty() {
+            return true;
+        }
     }
 
     // Fallback: scan /proc/*/stat for processes whose ppid matches
