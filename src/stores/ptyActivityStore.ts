@@ -256,9 +256,13 @@ setInterval(() => {
 			const paneId = ptyToPaneMap[ptyId];
 			const isFocused =
 				appHasFocus && paneId != null && focusedPaneId === paneId;
+			// Agent mode always goes to "waiting" — the agent finished work and
+			// is waiting for user input, even when the terminal has focus.
+			const nextState =
+				isFocused && entry.detectionMode !== "agent" ? "idle" : "waiting";
 			updates[ptyId] = {
 				...entry,
-				state: isFocused ? "idle" : "waiting",
+				state: nextState,
 			};
 			hasChanges = true;
 		}
