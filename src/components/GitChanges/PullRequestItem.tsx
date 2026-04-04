@@ -82,8 +82,7 @@ function CiDot({ status }: { status: string }) {
 
 export function PullRequestItem({ pr, showStatus }: Props) {
 	const hasStatus =
-		showStatus &&
-		(pr.reviewDecision || pr.statusCheckRollup || pr.isDraft);
+		showStatus && (pr.reviewDecision || pr.statusCheckRollup || pr.isDraft);
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: hover effect container

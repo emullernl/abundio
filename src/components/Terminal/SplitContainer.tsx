@@ -36,7 +36,13 @@ const TerminalLeaf = memo(function TerminalLeaf({
 });
 
 /** Split node — only handles layout, no store subscriptions for focus/maximize. */
-function SplitNode({ node, cwd }: { node: PaneNode & { type: "split" }; cwd: string }) {
+function SplitNode({
+	node,
+	cwd,
+}: {
+	node: PaneNode & { type: "split" };
+	cwd: string;
+}) {
 	const { updateRatioLocal, persistCurrentLayout } = useSplitPane();
 	const isVertical = node.direction === "vertical";
 	const RESIZER_PX = 4;

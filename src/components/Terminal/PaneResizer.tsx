@@ -36,8 +36,10 @@ export function PaneResizer({ direction, onResizeEnd }: Props) {
 				ratio = Math.max(0.1, Math.min(0.9, ratio));
 				lastRatio = ratio;
 
-				firstSibling!.style.flexBasis = `calc(${ratio * 100}% - ${RESIZER_PX / 2}px)`;
-				secondSibling!.style.flexBasis = `calc(${(1 - ratio) * 100}% - ${RESIZER_PX / 2}px)`;
+				if (firstSibling)
+					firstSibling.style.flexBasis = `calc(${ratio * 100}% - ${RESIZER_PX / 2}px)`;
+				if (secondSibling)
+					secondSibling.style.flexBasis = `calc(${(1 - ratio) * 100}% - ${RESIZER_PX / 2}px)`;
 			}
 
 			function onMouseUp() {

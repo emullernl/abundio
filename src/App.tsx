@@ -46,7 +46,6 @@ const TabTerminalContent = memo(function TabTerminalContent({
 	return <SplitContainer node={layout} cwd={cwd} />;
 });
 
-
 export function App() {
 	useSession();
 	const sessions = useSessionStore((s) => s.sessions);

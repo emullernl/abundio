@@ -182,9 +182,10 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 		}
 	}, [isOpen]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when query changes
 	useEffect(() => {
 		setSelectedIndex(0);
-	}, [filtered]);
+	}, [query]);
 
 	// Scroll selected item into view
 	useEffect(() => {
