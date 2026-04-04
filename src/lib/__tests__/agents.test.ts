@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	BUILTIN_AGENTS,
 	getEnabledAgentCommands,
+	matchProcessToAgent,
 	matchTitleToAgent,
 	mergeAgentsWithBuiltins,
 } from "../agents";
@@ -71,6 +72,39 @@ describe("matchTitleToAgent", () => {
 	it("matches command preceded by backslash (Windows path)", () => {
 		const result = matchTitleToAgent("C:\\Users\\bin\\codex", agents);
 		expect(result?.command).toBe("codex");
+	});
+});
+
+describe("matchProcessToAgent", () => {
+	const agents = BUILTIN_AGENTS;
+
+	it("matches exact process name", () => {
+		const result = matchProcessToAgent("claude", agents);
+		expect(result?.command).toBe("claude");
+	});
+
+	it("is case-insensitive", () => {
+		const result = matchProcessToAgent("Claude", agents);
+		expect(result?.command).toBe("claude");
+	});
+
+	it("returns null for empty name", () => {
+		expect(matchProcessToAgent("", agents)).toBeNull();
+	});
+
+	it("returns null for non-matching process", () => {
+		expect(matchProcessToAgent("vim", agents)).toBeNull();
+	});
+
+	it("does not match substrings", () => {
+		expect(matchProcessToAgent("claudette", agents)).toBeNull();
+	});
+
+	it("skips disabled agents", () => {
+		const modified = agents.map((a) =>
+			a.command === "claude" ? { ...a, enabled: false } : a,
+		);
+		expect(matchProcessToAgent("claude", modified)).toBeNull();
 	});
 });
 

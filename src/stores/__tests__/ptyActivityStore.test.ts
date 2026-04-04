@@ -456,6 +456,40 @@ describe("detection mode", () => {
 			usePtyActivityStore.getState().activities["pty-1"].detectionMode,
 		).toBe("agent");
 	});
+
+	it("clearAgentPty reverts agent mode to shell", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().setAgentPty("pty-1");
+		usePtyActivityStore.getState().clearAgentPty("pty-1");
+		const state = usePtyActivityStore.getState();
+		expect(state.agentPtyIds.has("pty-1")).toBe(false);
+		expect(state.activities["pty-1"].detectionMode).toBe("shell");
+	});
+
+	it("clearAgentPty is no-op for shell-mode PTY", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		const before = usePtyActivityStore.getState();
+		usePtyActivityStore.getState().clearAgentPty("pty-1");
+		const after = usePtyActivityStore.getState();
+		expect(after.agentPtyIds).toBe(before.agentPtyIds);
+	});
+
+	it("clearAgentPty handles missing activity entry", () => {
+		usePtyActivityStore.setState({
+			agentPtyIds: new Set(["pty-orphan"]),
+		});
+		usePtyActivityStore.getState().clearAgentPty("pty-orphan");
+		expect(usePtyActivityStore.getState().agentPtyIds.has("pty-orphan")).toBe(
+			false,
+		);
+	});
+
+	it("removePty cleans up agentPtyIds", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().setAgentPty("pty-1");
+		usePtyActivityStore.getState().removePty("pty-1");
+		expect(usePtyActivityStore.getState().agentPtyIds.has("pty-1")).toBe(false);
+	});
 });
 
 describe("touchLastOutput", () => {

@@ -95,7 +95,9 @@ export type PtyActivityState = "idle" | "active" | "waiting" | "error";
 
 export type PtyActivityType =
 	| { type: "commandStarted" }
-	| { type: "commandFinished" };
+	| { type: "commandFinished" }
+	| { type: "foregroundProcess"; name: string }
+	| { type: "foregroundProcessExited" };
 
 export type PtyDetectionMode = "agent" | "shell";
 

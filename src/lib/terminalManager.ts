@@ -14,7 +14,7 @@ import {
 } from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
-import { matchTitleToAgent } from "./agents";
+import { matchProcessToAgent } from "./agents";
 import { pty } from "./ipc";
 import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
@@ -387,8 +387,25 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}),
 
 		pty.onActivity(currentPtyId, (activity) => {
-			if (managed.suppressActivity) return;
 			const actStore = usePtyActivityStore.getState();
+
+			// Agent detection via foreground process — always processed,
+			// even when suppressActivity is true (mode detection, not activity).
+			if (activity.type === "foregroundProcess") {
+				const agents = useSettingsStore.getState().agents;
+				if (matchProcessToAgent(activity.name, agents)) {
+					actStore.setAgentPty(currentPtyId);
+				}
+				return;
+			}
+			if (activity.type === "foregroundProcessExited") {
+				actStore.clearAgentPty(currentPtyId);
+				return;
+			}
+
+			if (managed.suppressActivity) return;
+
+			// Shell command tracking — only applies in shell mode
 			const entry = actStore.activities[currentPtyId];
 			if (entry?.detectionMode !== "shell") return;
 			if (activity.type === "commandStarted") {
@@ -435,21 +452,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		// event names that include the ptyId, so they won't miss output even
 		// if spawn completes first (Tauri buffers events until listen resolves).
 		...(isNewPty
-			? [
-					pty.spawn(
-						cwd,
-						term.cols,
-						term.rows,
-						undefined,
-						paneId,
-						currentPtyId,
-					),
-				]
+			? [pty.spawn(cwd, term.cols, term.rows, undefined, paneId, currentPtyId)]
 			: []),
 	]);
 
 	if (isNewPty) {
-
 		// Write ptyId to the correct tab's layout (not just the active tab)
 		const store = useSessionStore.getState();
 		const session = store.getActiveSession();
@@ -472,11 +479,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	term.onTitleChange((title) => {
 		const actStore = usePtyActivityStore.getState();
 		actStore.setTitle(paneId, title);
-		// Auto-detect coding agents from terminal title
-		const agents = useSettingsStore.getState().agents;
-		if (matchTitleToAgent(title, agents)) {
-			actStore.setAgentPty(currentPtyId);
-		}
 	});
 
 	// A click in an already-focused terminal (e.g. scrolling without typing) should

@@ -62,6 +62,7 @@ interface PtyActivityState_Store {
 	markIdle: (ptyId: string) => void;
 	clearError: (ptyId: string) => void;
 	setAgentPty: (ptyId: string) => void;
+	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
 	registerPane: (paneId: string, ptyId: string) => void;
 	markSessionOpened: (sessionId: string) => void;
@@ -196,6 +197,25 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			}
 		},
 
+		clearAgentPty: (ptyId) => {
+			const s = get();
+			if (!s.agentPtyIds.has(ptyId)) return;
+			const newSet = new Set(s.agentPtyIds);
+			newSet.delete(ptyId);
+			const entry = s.activities[ptyId];
+			if (entry) {
+				set({
+					agentPtyIds: newSet,
+					activities: {
+						...s.activities,
+						[ptyId]: { ...entry, detectionMode: "shell" },
+					},
+				});
+			} else {
+				set({ agentPtyIds: newSet });
+			}
+		},
+
 		registerPane: (paneId, ptyId) => {
 			if (get().panePtyMap[paneId] === ptyId) return;
 			set((s) => ({ panePtyMap: { ...s.panePtyMap, [paneId]: ptyId } }));
@@ -217,7 +237,11 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			shellCommandRunning.delete(ptyId);
 			set((s) => {
 				const { [ptyId]: _, ...rest } = s.activities;
-				return { activities: rest };
+				const newAgentIds = new Set(s.agentPtyIds);
+				const changed = newAgentIds.delete(ptyId);
+				return changed
+					? { activities: rest, agentPtyIds: newAgentIds }
+					: { activities: rest };
 			});
 		},
 

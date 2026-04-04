@@ -397,7 +397,11 @@ fn pty_thread(
 
     // Get shell PID for child process monitoring
     let shell_pid = child.process_id();
+    if shell_pid.is_none() {
+        eprintln!("[pty_thread] WARNING: shell process_id() returned None for pty {}", pty_id);
+    }
     let mut command_running = false;
+    let mut last_fg_process: Option<String> = None;
 
     // Spawn a sub-thread for reading PTY output → emitting events
     let read_pty_id = pty_id.clone();
@@ -452,12 +456,14 @@ fn pty_thread(
             break;
         }
 
-        // Poll for child processes of the shell (command start/stop detection).
-        // Only use process monitoring for shells without OSC shell integration
-        // (zsh/bash use OSC 7770 sequences instead, so polling would race).
-        if shell_type == ShellType::Other {
-            if let Some(pid) = shell_pid {
-                let has_children = process_monitor::has_child_processes(pid);
+        // Poll for child processes of the shell.
+        if let Some(pid) = shell_pid {
+            let child_names = process_monitor::get_child_process_names(pid);
+            let has_children = !child_names.is_empty();
+
+            // CommandStarted/CommandFinished: only for shells without OSC integration
+            // (zsh/bash use OSC 7770 sequences instead, so polling would race).
+            if shell_type == ShellType::Other {
                 if has_children && !command_running {
                     command_running = true;
                     let event_name = format!("pty-activity-{}", pty_id);
@@ -467,6 +473,19 @@ fn pty_thread(
                     let event_name = format!("pty-activity-{}", pty_id);
                     let _ = app.emit(&event_name, PtyActivity::CommandFinished);
                 }
+            }
+
+            // ForegroundProcess detection: emit for all shell types so the
+            // frontend can toggle agent/shell detection mode.
+            let current_fg = child_names.first().cloned();
+            if current_fg != last_fg_process {
+                let event_name = format!("pty-activity-{}", pty_id);
+                if let Some(ref name) = current_fg {
+                    let _ = app.emit(&event_name, PtyActivity::ForegroundProcess { name: name.clone() });
+                } else {
+                    let _ = app.emit(&event_name, PtyActivity::ForegroundProcessExited);
+                }
+                last_fg_process = current_fg;
             }
         }
 

@@ -65,6 +65,23 @@ export function matchTitleToAgent(
 }
 
 /**
+ * Check if a process name matches any enabled agent's command.
+ * Compares the process executable name directly against agent commands.
+ */
+export function matchProcessToAgent(
+	processName: string,
+	agents: CodingAgent[],
+): CodingAgent | null {
+	if (!processName) return null;
+	const lower = processName.toLowerCase();
+	for (const agent of agents) {
+		if (!agent.enabled) continue;
+		if (lower === agent.command.toLowerCase()) return agent;
+	}
+	return null;
+}
+
+/**
  * Returns the command strings of all enabled agents.
  */
 export function getEnabledAgentCommands(agents: CodingAgent[]): string[] {
