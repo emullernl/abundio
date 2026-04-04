@@ -16,6 +16,8 @@ pub enum AbundioError {
     Watcher(String),
     #[error("Git error: {0}")]
     Git(String),
+    #[error("Not a git repository: {0}")]
+    NotGitRepo(String),
     #[error("Font enumeration error: {0}")]
     Font(String),
 }
