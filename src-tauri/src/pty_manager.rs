@@ -98,16 +98,19 @@ impl PtyManager {
                     let original_zdotdir =
                         std::env::var("ZDOTDIR").unwrap_or_default();
                     cmd.env("ABUNDIO_ORIGINAL_ZDOTDIR", &original_zdotdir);
-                    cmd.env("ZDOTDIR", integration_dir.to_string_lossy().as_ref());
+                    let zdotdir_str = integration_dir.to_string_lossy().into_owned();
+                    #[cfg(target_os = "windows")]
+                    let zdotdir_str = zdotdir_str.replace('\\', "/");
+                    cmd.env("ZDOTDIR", &zdotdir_str);
                 }
                 ShellType::Bash => {
                     // Use --rcfile to load our wrapper (not -l; --rcfile is ignored for login shells)
                     let rcfile = integration_dir.join(".bashrc");
-                    cmd.args([
-                        "-i",
-                        "--rcfile",
-                        rcfile.to_string_lossy().as_ref(),
-                    ]);
+                    let rcfile_str = rcfile.to_string_lossy().into_owned();
+                    // Git Bash on Windows needs forward-slash paths
+                    #[cfg(target_os = "windows")]
+                    let rcfile_str = rcfile_str.replace('\\', "/");
+                    cmd.args(["-i", "--rcfile", &rcfile_str]);
                 }
                 ShellType::Other => {
                     #[cfg(not(target_os = "windows"))]

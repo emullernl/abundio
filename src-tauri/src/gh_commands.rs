@@ -2,6 +2,8 @@ use crate::error::AbundioError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::RwLock;
 
 // ── Data types ──
@@ -114,10 +116,13 @@ struct GhRepository {
 // ── Helpers ──
 
 fn run_gh(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
-	let output = Command::new("gh")
-		.args(args)
+	let mut cmd = Command::new("gh");
+	cmd.args(args)
 		.current_dir(cwd)
-		.env("PATH", crate::shell_env::shell_path())
+		.env("PATH", crate::shell_env::shell_path());
+	#[cfg(target_os = "windows")]
+	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
+	let output = cmd
 		.output()
 		.map_err(|e| AbundioError::Git(format!("Failed to run gh: {}", e)))?;
 
@@ -153,30 +158,29 @@ fn invalidate_gh_auth_cache() {
 
 fn check_gh_auth() -> (bool, bool) {
 	let path = crate::shell_env::shell_path();
-	let available = Command::new("gh")
-		.arg("--version")
-		.env("PATH", path)
-		.output()
-		.map(|o| o.status.success())
-		.unwrap_or(false);
+	let mut cmd = Command::new("gh");
+	cmd.arg("--version").env("PATH", path);
+	#[cfg(target_os = "windows")]
+	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
+	let available = cmd.output().map(|o| o.status.success()).unwrap_or(false);
 	if !available {
 		return (false, false);
 	}
-	let authenticated = Command::new("gh")
-		.args(["auth", "status"])
-		.env("PATH", path)
-		.output()
-		.map(|o| o.status.success())
-		.unwrap_or(false);
+	let mut cmd = Command::new("gh");
+	cmd.args(["auth", "status"]).env("PATH", path);
+	#[cfg(target_os = "windows")]
+	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
+	let authenticated = cmd.output().map(|o| o.status.success()).unwrap_or(false);
 	(available, authenticated)
 }
 
 /// Check if any git remote points to github.com (local operation, no network).
 fn has_github_remote(cwd: &str) -> bool {
-	Command::new("git")
-		.args(["remote", "-v"])
-		.current_dir(cwd)
-		.output()
+	let mut cmd = Command::new("git");
+	cmd.args(["remote", "-v"]).current_dir(cwd);
+	#[cfg(target_os = "windows")]
+	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
+	cmd.output()
 		.map(|o| {
 			let stdout = String::from_utf8_lossy(&o.stdout);
 			stdout.lines().any(|l| {
