@@ -98,7 +98,7 @@ impl PtyManager {
                     let original_zdotdir =
                         std::env::var("ZDOTDIR").unwrap_or_default();
                     cmd.env("ABUNDIO_ORIGINAL_ZDOTDIR", &original_zdotdir);
-                    let zdotdir_str = integration_dir.to_string_lossy().to_string();
+                    let zdotdir_str = integration_dir.to_string_lossy().into_owned();
                     #[cfg(target_os = "windows")]
                     let zdotdir_str = zdotdir_str.replace('\\', "/");
                     cmd.env("ZDOTDIR", &zdotdir_str);
@@ -106,7 +106,7 @@ impl PtyManager {
                 ShellType::Bash => {
                     // Use --rcfile to load our wrapper (not -l; --rcfile is ignored for login shells)
                     let rcfile = integration_dir.join(".bashrc");
-                    let rcfile_str = rcfile.to_string_lossy().to_string();
+                    let rcfile_str = rcfile.to_string_lossy().into_owned();
                     // Git Bash on Windows needs forward-slash paths
                     #[cfg(target_os = "windows")]
                     let rcfile_str = rcfile_str.replace('\\', "/");

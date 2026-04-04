@@ -121,7 +121,7 @@ fn run_gh(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 		.current_dir(cwd)
 		.env("PATH", crate::shell_env::shell_path());
 	#[cfg(target_os = "windows")]
-	cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
 	let output = cmd
 		.output()
 		.map_err(|e| AbundioError::Git(format!("Failed to run gh: {}", e)))?;
@@ -161,7 +161,7 @@ fn check_gh_auth() -> (bool, bool) {
 	let mut cmd = Command::new("gh");
 	cmd.arg("--version").env("PATH", path);
 	#[cfg(target_os = "windows")]
-	cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
 	let available = cmd.output().map(|o| o.status.success()).unwrap_or(false);
 	if !available {
 		return (false, false);
@@ -169,7 +169,7 @@ fn check_gh_auth() -> (bool, bool) {
 	let mut cmd = Command::new("gh");
 	cmd.args(["auth", "status"]).env("PATH", path);
 	#[cfg(target_os = "windows")]
-	cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
 	let authenticated = cmd.output().map(|o| o.status.success()).unwrap_or(false);
 	(available, authenticated)
 }
@@ -179,7 +179,7 @@ fn has_github_remote(cwd: &str) -> bool {
 	let mut cmd = Command::new("git");
 	cmd.args(["remote", "-v"]).current_dir(cwd);
 	#[cfg(target_os = "windows")]
-	cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
 	cmd.output()
 		.map(|o| {
 			let stdout = String::from_utf8_lossy(&o.stdout);

@@ -49,7 +49,7 @@ fn run_git(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
         .current_dir(cwd)
         .env("PATH", crate::shell_env::shell_path());
     #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
     let output = cmd
         .output()
         .map_err(|e| AbundioError::Git(format!("Failed to run git: {}", e)))?;
@@ -74,7 +74,7 @@ fn run_git_allow_empty(cwd: &str, args: &[&str]) -> Result<String, AbundioError>
         .current_dir(cwd)
         .env("PATH", crate::shell_env::shell_path());
     #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
     let output = cmd
         .output()
         .map_err(|e| AbundioError::Git(format!("Failed to run git: {}", e)))?;

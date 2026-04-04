@@ -4,6 +4,10 @@ use std::process::Command;
 use std::os::windows::process::CommandExt;
 use std::sync::OnceLock;
 
+/// Windows process creation flag to suppress console window popups.
+#[cfg(target_os = "windows")]
+pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Returns the user's default shell.
 /// On Windows, prefers Git Bash (bash.exe) for shell integration support.
 pub fn default_shell() -> String {
@@ -20,8 +24,10 @@ pub fn default_shell() -> String {
         // Check PATH for bash
         let mut cmd = std::process::Command::new("where");
         cmd.arg("bash.exe");
+        // `#[cfg]` (not `cfg!()`) needed — `cfg!()` compiles both branches
+        // but CommandExt::creation_flags doesn't exist on non-Windows
         #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.creation_flags(CREATE_NO_WINDOW);
         if let Ok(output) = cmd.output()
         {
             if output.status.success() {
@@ -32,6 +38,9 @@ pub fn default_shell() -> String {
                     .trim()
                     .to_string();
                 if !path.is_empty() {
+                    // Win32 CreateProcess accepts backslashes natively;
+                    // no slash conversion needed here (unlike --rcfile /
+                    // ZDOTDIR which go through Git Bash's MSYS path layer)
                     return path;
                 }
             }
