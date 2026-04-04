@@ -110,7 +110,7 @@ impl PtyManager {
                     // Git Bash on Windows needs forward-slash paths
                     #[cfg(target_os = "windows")]
                     let rcfile_str = rcfile_str.replace('\\', "/");
-                    cmd.args(["-i", "--rcfile", &rcfile_str]);
+                    cmd.args(["--rcfile", &rcfile_str, "-i"]);
                 }
                 ShellType::Other => {
                     #[cfg(not(target_os = "windows"))]
