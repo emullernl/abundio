@@ -8,6 +8,7 @@ import {
 	getLastOutputAt,
 	type PtyActivityEntry,
 	shouldPulse,
+	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
 
@@ -454,5 +455,31 @@ describe("detection mode", () => {
 		expect(
 			usePtyActivityStore.getState().activities["pty-1"].detectionMode,
 		).toBe("agent");
+	});
+});
+
+describe("touchLastOutput", () => {
+	it("updates getLastOutputAt without changing Zustand state", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().recordOutput("pty-1");
+		const stateBefore = usePtyActivityStore.getState().activities["pty-1"];
+
+		touchLastOutput("pty-1", 9999);
+
+		// External map is updated
+		expect(getLastOutputAt("pty-1")).toBe(9999);
+		// Zustand state object is unchanged (no re-render)
+		expect(usePtyActivityStore.getState().activities["pty-1"]).toBe(
+			stateBefore,
+		);
+	});
+
+	it("defaults to Date.now() when no timestamp provided", () => {
+		const before = Date.now();
+		touchLastOutput("pty-1");
+		const after = Date.now();
+		const ts = getLastOutputAt("pty-1");
+		expect(ts).toBeGreaterThanOrEqual(before);
+		expect(ts).toBeLessThanOrEqual(after);
 	});
 });

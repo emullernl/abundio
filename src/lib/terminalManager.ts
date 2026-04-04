@@ -9,6 +9,7 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import {
 	setFocusedPaneIdGetter,
 	setShellCommandRunning,
+	touchLastOutput,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
@@ -112,7 +113,10 @@ async function startBackgroundTracking(ptyId: string) {
 		}
 		bgLastOutputChunkAt = now;
 		bgBytesSinceIdle += data.length;
-		if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+
+		if (entry?.state === "active") {
+			touchLastOutput(ptyId, now);
+		} else if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 			bgBytesSinceIdle = 0;
 			usePtyActivityStore.getState().recordOutput(ptyId);
 		}
@@ -368,7 +372,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					}
 					managed.lastOutputChunkAt = now;
 					managed.bytesSinceIdle += data.length;
-					if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+
+					const entry = usePtyActivityStore.getState().activities[currentPtyId];
+					if (entry?.state === "active") {
+						// Keep-alive: any output keeps active state alive without
+						// needing to re-accumulate the full byte threshold.
+						touchLastOutput(currentPtyId, now);
+					} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 						managed.bytesSinceIdle = 0;
 						usePtyActivityStore.getState().recordOutput(currentPtyId);
 					}

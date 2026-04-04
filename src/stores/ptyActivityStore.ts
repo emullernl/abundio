@@ -24,6 +24,13 @@ export function getLastOutputAt(ptyId: string): number | null {
 	return lastOutputTimestamps.get(ptyId) ?? null;
 }
 
+/** Refresh the last-output timestamp without triggering a Zustand state transition.
+ *  Used in agent mode to keep the idle scanner from transitioning "active" → "waiting"
+ *  while output is still flowing but below the byte-accumulation threshold. */
+export function touchLastOutput(ptyId: string, now?: number): void {
+	lastOutputTimestamps.set(ptyId, now ?? Date.now());
+}
+
 export function isShellCommandRunning(ptyId: string): boolean {
 	return shellCommandRunning.get(ptyId) ?? false;
 }
