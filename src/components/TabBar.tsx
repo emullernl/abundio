@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { Tab } from "../lib/types";
 import type { FileTab } from "../stores/explorerStore";
 import {
@@ -261,6 +261,27 @@ function CloseButton({
 	);
 }
 
+/** Per-tab status dot that only re-renders when this tab's computed status changes. */
+const TabStatusDot = memo(function TabStatusDot({ tab }: { tab: Tab }) {
+	const tabDot = usePtyActivityStore((s) =>
+		computeTabDotStatus(tab, s.activities, s.panePtyMap),
+	);
+	return (
+		<span
+			className={`rounded-full ${shouldPulse(tabDot) ? "status-dot-pulse" : ""}`}
+			style={
+				{
+					width: 7,
+					height: 7,
+					flexShrink: 0,
+					backgroundColor: DOT_COLORS[tabDot],
+					"--dot-glow": DOT_GLOWS[tabDot] ?? "transparent",
+				} as React.CSSProperties
+			}
+		/>
+	);
+});
+
 export function TabBar({
 	tabs,
 	activeTabId,
@@ -274,8 +295,6 @@ export function TabBar({
 	onActivateFileTab,
 	onCloseFileTab,
 }: TabBarProps) {
-	const activities = usePtyActivityStore((s) => s.activities);
-	const panePtyMap = usePtyActivityStore((s) => s.panePtyMap);
 	const [editingTabId, setEditingTabId] = useState<string | null>(null);
 	const [editValue, setEditValue] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -367,7 +386,6 @@ export function TabBar({
 						activeView === "terminal" &&
 						tabs[index - 1]?.id === activeTabId;
 					const showSeparator = !isActive && index > 0 && !prevIsActive;
-					const tabDot = computeTabDotStatus(tab, activities, panePtyMap);
 
 					return (
 						<TabItem
@@ -389,20 +407,7 @@ export function TabBar({
 							commitRename={commitRename}
 							cancelRename={cancelRename}
 							icon={<Terminal size={12} />}
-							statusDot={
-								<span
-									className={`rounded-full ${shouldPulse(tabDot) ? "status-dot-pulse" : ""}`}
-									style={
-										{
-											width: 7,
-											height: 7,
-											flexShrink: 0,
-											backgroundColor: DOT_COLORS[tabDot],
-											"--dot-glow": DOT_GLOWS[tabDot] ?? "transparent",
-										} as React.CSSProperties
-									}
-								/>
-							}
+							statusDot={<TabStatusDot tab={tab} />}
 						/>
 					);
 				})}

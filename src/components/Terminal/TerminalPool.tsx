@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { PaneNode } from "../../lib/types";
 import { useSessionStore } from "../../stores/sessionStore";
 import { TerminalInstance } from "./TerminalInstance";
@@ -14,23 +15,26 @@ function collectTerminals(node: PaneNode): TerminalInfo[] {
 
 export function TerminalPool() {
 	const sessions = useSessionStore((s) => s.sessions);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 
-	const session = sessions.find((s) => s.id === activeSessionId);
-	if (!session) return null;
-
-	// Collect terminals from ALL tabs so they survive tab switches
-	const terminals: (TerminalInfo & { cwd: string })[] = [];
-	for (const tab of session.tabs) {
-		try {
-			const layout = JSON.parse(tab.layoutJson) as PaneNode;
-			for (const t of collectTerminals(layout)) {
-				terminals.push({ ...t, cwd: session.rootFolder });
+	// Collect terminals from ALL sessions so they survive session switches.
+	// App.tsx already keeps all sessions' SplitContainer trees mounted (display:none),
+	// so the slot/target side survives; this makes the instance side match.
+	const terminals = useMemo(() => {
+		const result: (TerminalInfo & { cwd: string })[] = [];
+		for (const session of sessions) {
+			for (const tab of session.tabs) {
+				try {
+					const layout = JSON.parse(tab.layoutJson) as PaneNode;
+					for (const t of collectTerminals(layout)) {
+						result.push({ ...t, cwd: session.rootFolder });
+					}
+				} catch {
+					// Skip unparseable layouts
+				}
 			}
-		} catch {
-			// Skip unparseable layouts
 		}
-	}
+		return result;
+	}, [sessions]);
 
 	return (
 		<div

@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { CommandPalette } from "./components/CommandPalette";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
@@ -25,13 +25,26 @@ import { useSettingsStore } from "./stores/settingsStore";
 
 const TITLEBAR_HEIGHT = isMac ? 52 : 0;
 
-function parseLayout(layoutJson: string): PaneNode | null {
-	try {
-		return JSON.parse(layoutJson) as PaneNode;
-	} catch {
-		return null;
-	}
-}
+/** Memoized tab content — only re-renders when layoutJson string changes. */
+const TabTerminalContent = memo(function TabTerminalContent({
+	layoutJson,
+	cwd,
+}: {
+	layoutJson: string;
+	cwd: string;
+}) {
+	const layout = useMemo(() => {
+		try {
+			return JSON.parse(layoutJson) as PaneNode;
+		} catch {
+			return null;
+		}
+	}, [layoutJson]);
+
+	if (!layout) return null;
+	return <SplitContainer node={layout} cwd={cwd} />;
+});
+
 
 export function App() {
 	useSession();
@@ -229,8 +242,6 @@ export function App() {
 										<FileViewerContainer />
 									</div>
 									{session.tabs.map((tab) => {
-										const layout = parseLayout(tab.layoutJson);
-										if (!layout) return null;
 										const isTabActive = tab.id === activeTabId;
 										const showTerminal =
 											(activeView[session.id] ?? "terminal") === "terminal" &&
@@ -241,8 +252,8 @@ export function App() {
 												className="absolute inset-0"
 												style={{ display: showTerminal ? "block" : "none" }}
 											>
-												<SplitContainer
-													node={layout}
+												<TabTerminalContent
+													layoutJson={tab.layoutJson}
 													cwd={session.rootFolder}
 												/>
 											</div>

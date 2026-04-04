@@ -107,31 +107,55 @@ impl SessionStore {
     pub fn list(&self) -> Result<Vec<SessionWithTabs>, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, base_branch, position, created_at, updated_at
-             FROM sessions ORDER BY position ASC",
+            "SELECT s.id, s.name, s.root_folder, s.env_json, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.position, s.created_at, s.updated_at,
+                    t.id, t.session_id, t.name, t.layout_json, t.position, t.created_at, t.updated_at
+             FROM sessions s
+             LEFT JOIN tabs t ON t.session_id = s.id
+             ORDER BY s.position ASC, t.position ASC",
         )?;
 
-        let sessions = stmt
-            .query_map([], |row| {
-                Ok(Session {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    root_folder: row.get(2)?,
-                    env_json: row.get(3)?,
-                    agent_presets_json: row.get(4)?,
-                    file_tabs_json: row.get(5)?,
-                    base_branch: row.get(6)?,
-                    position: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut result: Vec<SessionWithTabs> = Vec::new();
+        let mut last_session_id: Option<String> = None;
 
-        let mut result = Vec::with_capacity(sessions.len());
-        for session in sessions {
-            let tabs = Self::list_tabs_with_conn(&conn, &session.id)?;
-            result.push(SessionWithTabs { session, tabs });
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let session_id: String = row.get(0)?;
+
+            // Start a new session group if the session ID changed
+            if last_session_id.as_ref() != Some(&session_id) {
+                result.push(SessionWithTabs {
+                    session: Session {
+                        id: session_id.clone(),
+                        name: row.get(1)?,
+                        root_folder: row.get(2)?,
+                        env_json: row.get(3)?,
+                        agent_presets_json: row.get(4)?,
+                        file_tabs_json: row.get(5)?,
+                        base_branch: row.get(6)?,
+                        position: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    },
+                    tabs: Vec::new(),
+                });
+                last_session_id = Some(session_id);
+            }
+
+            // Append tab if present (LEFT JOIN may produce NULL tab columns)
+            let tab_id: Option<String> = row.get(10)?;
+            if let Some(tid) = tab_id {
+                if let Some(entry) = result.last_mut() {
+                    entry.tabs.push(Tab {
+                        id: tid,
+                        session_id: row.get(11)?,
+                        name: row.get(12)?,
+                        layout_json: row.get(13)?,
+                        position: row.get(14)?,
+                        created_at: row.get(15)?,
+                        updated_at: row.get(16)?,
+                    });
+                }
+            }
         }
 
         Ok(result)
