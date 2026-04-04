@@ -242,22 +242,27 @@ export async function createTerminal(
 
 	instances.set(paneId, managed);
 
-	// Initialize PTY connection (scrollback is deferred until projectInto)
+	// Load scrollback BEFORE returning so it's available when projectInto
+	// calls flushPendingRestore. initPty is fire-and-forget, so if we read
+	// scrollback inside it, the data wouldn't be ready in time.
+	await loadScrollback(paneId, managed);
+
+	// Initialize PTY connection (listeners + spawn, fire-and-forget)
 	initPty(paneId, managed, cwd);
 
 	return managed;
 }
 
-async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
-	const { term, serializeAddon } = managed;
-	let currentPtyId = managed.ptyId;
-	const isNewPty = !currentPtyId;
+/** Load scrollback from snapshot/log and store it on the managed terminal.
+ *  Called from createTerminal (awaited) so data is ready before projectInto. */
+async function loadScrollback(
+	paneId: string,
+	managed: ManagedTerminal,
+): Promise<void> {
+	const currentPtyId = managed.ptyId;
 
-	const { setPtyStatus } = useSessionStore.getState();
-
-	// Load scrollback but defer writing until terminal is projected into a visible container
-	// (writing into a 0x0 hidden container would wrap content at ~2 columns).
 	// Fire both reads concurrently and pick the preferred source afterwards.
+	// When reconnecting to a running PTY, prefer the log over the snapshot.
 	let restoreData: string | Uint8Array | null = null;
 	if (currentPtyId) {
 		const [log, snapshot] = await Promise.all([
@@ -273,15 +278,23 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		restoreData = snapshot ?? log;
 	}
 	if (restoreData) {
-		if (term.cols > 1 && term.rows > 1) {
+		if (managed.term.cols > 1 && managed.term.rows > 1) {
 			managed.restoring = true;
-			term.write(restoreData, () => {
+			managed.term.write(restoreData, () => {
 				managed.restoring = false;
 			});
 		} else {
 			managed.pendingRestore = restoreData;
 		}
 	}
+}
+
+async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
+	const { term, serializeAddon } = managed;
+	let currentPtyId = managed.ptyId;
+	const isNewPty = !currentPtyId;
+
+	const { setPtyStatus } = useSessionStore.getState();
 
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
 	// spawning so no shell output is lost in the gap between spawn and listen.
