@@ -20,6 +20,7 @@ interface SessionState {
 	ptyStatuses: Record<string, PtyStatusType>; // ptyId → status
 	searchPaneId: string | null; // pane currently showing search bar
 	activeView: Record<string, "terminal" | "file">; // sessionId → current view
+	sessionsInitialized: boolean; // true after initial loadSessions() completes
 
 	// Session actions
 	loadSessions: () => Promise<void>;
@@ -103,6 +104,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 	ptyStatuses: {},
 	searchPaneId: null,
 	activeView: {},
+	sessionsInitialized: false,
 
 	loadSessions: async () => {
 		const sessionsWithTabs = await sessionsApi.list();
@@ -129,7 +131,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 			}
 		}
 
-		set({ sessions: cleaned, activeTabBySession });
+		set({
+			sessions: cleaned,
+			activeTabBySession,
+			sessionsInitialized: true,
+		});
 		pty.cleanupStaleLogs(allPaneIds).catch(() => {});
 	},
 

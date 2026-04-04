@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { memo, useEffect, useMemo, useState } from "react";
+import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
@@ -64,6 +65,7 @@ export function App() {
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
 	const closeFileTab = useExplorerStore((s) => s.closeFileTab);
+	const sessionsInitialized = useSessionStore((s) => s.sessionsInitialized);
 
 	useEffect(() => {
 		const cleanup = initKeybindings();
@@ -178,6 +180,7 @@ export function App() {
 
 	return (
 		<div className="flex flex-col h-full w-full">
+			{!sessionsInitialized && <AppLoader />}
 			<Titlebar />
 			<div className="flex flex-1 min-h-0">
 				<Sidebar titlebarHeight={TITLEBAR_HEIGHT} />
