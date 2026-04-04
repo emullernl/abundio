@@ -9,12 +9,17 @@ use std::sync::OnceLock;
 pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Returns the user's default shell.
-/// On Windows, prefers Git Bash (bash.exe) for shell integration support.
+/// On Windows, prefers Git Bash's real bash binary (`usr\bin\bash.exe`) over
+/// the wrapper (`bin\bash.exe`) which can mangle `--rcfile` arguments.
 pub fn default_shell() -> String {
     if cfg!(target_os = "windows") {
-        // Prefer Git Bash for shell integration (precmd/preexec hooks)
+        // Prefer Git Bash for shell integration (precmd/preexec hooks).
+        // The real MSYS2 bash binary lives in usr\bin\; the wrapper in bin\
+        // can split --rcfile into "--" which bash rejects as invalid.
         for path in [
+            "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
             "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
             "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
         ] {
             if std::path::Path::new(path).exists() {
