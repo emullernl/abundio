@@ -3,6 +3,8 @@ use dashmap::DashMap;
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::OnceLock;
 
 /// Per-repo cache of the detected default branch name.
@@ -42,10 +44,13 @@ pub struct BranchInfo {
 fn run_git(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
     let mut full_args = vec!["--no-optional-locks"];
     full_args.extend_from_slice(args);
-    let output = Command::new("git")
-        .args(&full_args)
+    let mut cmd = Command::new("git");
+    cmd.args(&full_args)
         .current_dir(cwd)
-        .env("PATH", crate::shell_env::shell_path())
+        .env("PATH", crate::shell_env::shell_path());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd
         .output()
         .map_err(|e| AbundioError::Git(format!("Failed to run git: {}", e)))?;
 
@@ -64,10 +69,13 @@ fn run_git(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 fn run_git_allow_empty(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
     let mut full_args = vec!["--no-optional-locks"];
     full_args.extend_from_slice(args);
-    let output = Command::new("git")
-        .args(&full_args)
+    let mut cmd = Command::new("git");
+    cmd.args(&full_args)
         .current_dir(cwd)
-        .env("PATH", crate::shell_env::shell_path())
+        .env("PATH", crate::shell_env::shell_path());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd
         .output()
         .map_err(|e| AbundioError::Git(format!("Failed to run git: {}", e)))?;
 

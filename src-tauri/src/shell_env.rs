@@ -1,5 +1,7 @@
 use std::env;
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::OnceLock;
 
 /// Returns the user's default shell.
@@ -16,9 +18,11 @@ pub fn default_shell() -> String {
             }
         }
         // Check PATH for bash
-        if let Ok(output) = std::process::Command::new("where")
-            .arg("bash.exe")
-            .output()
+        let mut cmd = std::process::Command::new("where");
+        cmd.arg("bash.exe");
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        if let Ok(output) = cmd.output()
         {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout)
