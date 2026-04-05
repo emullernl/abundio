@@ -72,6 +72,8 @@ export interface ManagedTerminal {
 	/** Buffers PTY output during shell startup so reset sequences can be stripped from the
 	 *  complete buffer before writing. Null when the grace period has ended. */
 	startupBuffer: Uint8Array[] | null;
+	/** True once the shell's first precmd/command_end has fired — shell init is complete */
+	startupShellReady: boolean;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -256,6 +258,7 @@ export async function createTerminal(
 		ready: false,
 		settled: false,
 		startupBuffer: [],
+		startupShellReady: false,
 	};
 
 	instances.set(paneId, managed);
@@ -317,6 +320,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	// No grace period needed for reconnections — the shell has already started
 	if (!isNewPty) {
 		managed.startupBuffer = null;
+		managed.startupShellReady = true;
 	}
 
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
@@ -367,7 +371,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						setShellCommandRunning(currentPtyId, true);
 						actStore.recordOutput(currentPtyId);
 					} else if (cmd.type === "command_end") {
-						flushStartupBuffer(managed);
+						managed.startupShellReady = true;
+						tryFlushStartup(managed);
 						setShellCommandRunning(currentPtyId, false);
 						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
 							actStore.recordError(currentPtyId);
@@ -552,9 +557,18 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	managed.ready = true;
 }
 
+/** Try to flush the startup buffer. Only flushes once BOTH the terminal is
+ *  settled (projected + scrollback written) AND the shell has finished
+ *  initializing (command_end received). Adds a short delay to also capture
+ *  the shell's resize-triggered redraw that follows projectInto's PTY resize. */
+function tryFlushStartup(managed: ManagedTerminal): void {
+	if (!managed.startupBuffer) return; // already flushed
+	if (!managed.settled || !managed.startupShellReady) return; // not ready yet
+	setTimeout(() => flushStartupBuffer(managed), 200);
+}
+
 /** Flush the startup output buffer: concatenate all chunks, strip terminal
- *  reset/clear/home sequences, then write the cleaned result to the terminal.
- *  Called when the grace period ends (first command_end or timeout). */
+ *  reset/clear/home sequences, then write the cleaned result to the terminal. */
 function flushStartupBuffer(managed: ManagedTerminal): void {
 	const chunks = managed.startupBuffer;
 	if (!chunks) return;
@@ -581,7 +595,9 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 /** Mark terminal as visually settled — loader can now hide */
 export function markSettled(paneId: string): void {
 	const managed = instances.get(paneId);
-	if (managed) managed.settled = true;
+	if (!managed) return;
+	managed.settled = true;
+	tryFlushStartup(managed);
 }
 
 /** Write any deferred scrollback restore data now that the terminal has real dimensions */
