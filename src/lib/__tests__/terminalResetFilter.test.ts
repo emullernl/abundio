@@ -34,8 +34,8 @@ describe("stripResetSequences", () => {
 		expect(result.length).toBe(0);
 	});
 
-	it("strips all three sequences in a row", () => {
-		const data = encode("\x1bc\x1b[2J\x1b[3J");
+	it("strips all reset/clear/home sequences in a row", () => {
+		const data = encode("\x1bc\x1b[H\x1b[2J\x1b[3J");
 		const result = stripResetSequences(data);
 		expect(result.length).toBe(0);
 	});
@@ -76,18 +76,34 @@ describe("stripResetSequences", () => {
 		expect(new TextDecoder().decode(result)).toBe("\x1b[1J\x1b[0J");
 	});
 
-	it("preserves other ESC sequences like SGR and cursor movement", () => {
-		const data = encode("\x1b[1;32mgreen\x1b[0m\x1b[H");
+	it("preserves other ESC sequences like SGR", () => {
+		const data = encode("\x1b[1;32mgreen\x1b[0m");
 		const result = stripResetSequences(data);
-		expect(new TextDecoder().decode(result)).toBe(
-			"\x1b[1;32mgreen\x1b[0m\x1b[H",
-		);
+		expect(new TextDecoder().decode(result)).toBe("\x1b[1;32mgreen\x1b[0m");
 	});
 
-	it("handles reset at the very start of output", () => {
+	it("strips ESC [ H (cursor home)", () => {
+		const data = encode("\x1b[H");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips ESC [ ; H (cursor home variant)", () => {
+		const data = encode("\x1b[;H");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips typical clear+home combo", () => {
 		const data = encode("\x1b[2J\x1b[Huser@host:~$ ");
 		const result = stripResetSequences(data);
-		expect(new TextDecoder().decode(result)).toBe("\x1b[Huser@host:~$ ");
+		expect(new TextDecoder().decode(result)).toBe("user@host:~$ ");
+	});
+
+	it("preserves cursor movement to non-home positions", () => {
+		const data = encode("\x1b[5;1H\x1b[10;20H");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("\x1b[5;1H\x1b[10;20H");
 	});
 
 	it("handles reset at the very end of output", () => {

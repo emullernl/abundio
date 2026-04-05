@@ -3,9 +3,11 @@
  * shell startup grace period so that restored scrollback is not wiped.
  *
  * Targeted sequences:
- *  - ESC c        (0x1b 0x63)        — RIS: Reset to Initial State
- *  - ESC [ 2 J    (0x1b 0x5b 0x32 0x4a) — ED 2: Erase entire display
- *  - ESC [ 3 J    (0x1b 0x5b 0x33 0x4a) — ED 3: Erase scrollback buffer
+ *  - ESC c          (0x1b 0x63)           — RIS: Reset to Initial State
+ *  - ESC [ H        (0x1b 0x5b 0x48)     — CUP: Cursor Home (move to 1,1)
+ *  - ESC [ ; H      (0x1b 0x5b 0x3b 0x48) — CUP: Cursor Home variant
+ *  - ESC [ 2 J      (0x1b 0x5b 0x32 0x4a) — ED 2: Erase entire display
+ *  - ESC [ 3 J      (0x1b 0x5b 0x33 0x4a) — ED 3: Erase scrollback buffer
  */
 export function stripResetSequences(data: Uint8Array): Uint8Array {
 	const len = data.length;
@@ -32,6 +34,27 @@ export function stripResetSequences(data: Uint8Array): Uint8Array {
 			if (i + 1 < len && data[i + 1] === 0x63) {
 				if (i > regionStart) regions.push([regionStart, i]);
 				i += 2;
+				regionStart = i;
+				continue;
+			}
+
+			// Check for ESC [ H (cursor home) — 3 bytes
+			if (i + 2 < len && data[i + 1] === 0x5b && data[i + 2] === 0x48) {
+				if (i > regionStart) regions.push([regionStart, i]);
+				i += 3;
+				regionStart = i;
+				continue;
+			}
+
+			// Check for ESC [ ; H (cursor home variant) — 4 bytes
+			if (
+				i + 3 < len &&
+				data[i + 1] === 0x5b &&
+				data[i + 2] === 0x3b &&
+				data[i + 3] === 0x48
+			) {
+				if (i > regionStart) regions.push([regionStart, i]);
+				i += 4;
 				regionStart = i;
 				continue;
 			}
