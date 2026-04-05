@@ -268,9 +268,11 @@ fn resolve_command_name_from_args(args: &[String]) -> Option<String> {
         if basename.is_empty() {
             continue;
         }
-        // Strip known script extensions to get the stem
+        // Strip known extensions to get the stem (.exe first for Windows
+        // executables like node.exe, then script extensions like .js/.py)
         let stem = basename
-            .strip_suffix(".js")
+            .strip_suffix(".exe")
+            .or_else(|| basename.strip_suffix(".js"))
             .or_else(|| basename.strip_suffix(".mjs"))
             .or_else(|| basename.strip_suffix(".cjs"))
             .or_else(|| basename.strip_suffix(".ts"))
@@ -784,6 +786,17 @@ mod tests {
     fn resolve_args_skips_env_and_interpreter() {
         let args = vec!["env".into(), "node".into(), "/usr/bin/codex".into()];
         assert_eq!(resolve_command_name_from_args(&args), Some("codex".into()));
+    }
+
+    #[test]
+    fn resolve_args_node_exe_with_flag_and_script() {
+        // Windows: node.exe in argv[0] must be recognised as an interpreter
+        let args = vec![
+            "C:\\Program Files\\nodejs\\node.exe".into(),
+            "--no-warnings=DEP0040".into(),
+            "C:\\Users\\X\\AppData\\Roaming\\npm/node_modules/opencode-ai/bin/opencode".into(),
+        ];
+        assert_eq!(resolve_command_name_from_args(&args), Some("opencode".into()));
     }
 
     #[test]
