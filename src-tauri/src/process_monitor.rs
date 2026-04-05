@@ -584,13 +584,22 @@ fn resolve_child_name(child_pid: u32, exe_name: &str) -> String {
     let base = exe_name.strip_suffix(".exe").unwrap_or(exe_name);
     let base_lower = base.to_ascii_lowercase();
     if !INTERPRETERS.contains(&base_lower.as_str()) {
+        eprintln!("[process_monitor] pid={child_pid} exe={exe_name:?} → not interpreter, returning {base:?}");
         return base.to_string();
     }
     // Interpreter process — try to resolve via command line
-    if let Some(cmdline) = get_process_command_line(child_pid) {
-        let args = parse_windows_command_line(&cmdline);
-        if let Some(resolved) = resolve_command_name_from_args(&args) {
-            return resolved;
+    match get_process_command_line(child_pid) {
+        Some(cmdline) => {
+            let args = parse_windows_command_line(&cmdline);
+            eprintln!("[process_monitor] pid={child_pid} exe={exe_name:?} cmdline args={args:?}");
+            if let Some(resolved) = resolve_command_name_from_args(&args) {
+                eprintln!("[process_monitor] pid={child_pid} → resolved to {resolved:?}");
+                return resolved;
+            }
+            eprintln!("[process_monitor] pid={child_pid} → resolve_command_name_from_args returned None, falling back to {base:?}");
+        }
+        None => {
+            eprintln!("[process_monitor] pid={child_pid} exe={exe_name:?} → get_process_command_line returned None");
         }
     }
     base.to_string()
@@ -697,19 +706,24 @@ pub fn get_child_process_names(pid: u32) -> Vec<String> {
     // (parent_pid, depth)
     let mut queue: Vec<(u32, u8)> = vec![(pid, 0)];
 
+    eprintln!("[process_monitor] get_child_process_names(pid={pid}), {} entries in snapshot", entries.len());
+
     while let Some((parent, depth)) = queue.pop() {
         if depth >= MAX_DEPTH {
             continue;
         }
-        for entry in entries.iter().filter(|e| e.parent_pid == parent) {
+        let children: Vec<&ProcEntry> = entries.iter().filter(|e| e.parent_pid == parent).collect();
+        if !children.is_empty() {
+            eprintln!("[process_monitor]   depth={depth} parent={parent} children: {:?}",
+                children.iter().map(|c| format!("{}({})", c.exe_name, c.pid)).collect::<Vec<_>>());
+        }
+        for entry in children {
             let base = entry.exe_name.strip_suffix(".exe").unwrap_or(&entry.exe_name);
 
             if is_intermediary(base) {
                 // Transparent intermediary — look through it at its children.
+                eprintln!("[process_monitor]   → {base:?} is intermediary, looking through pid={}", entry.pid);
                 queue.push((entry.pid, depth + 1));
-                // Also track the PID for cache eviction even though we don't
-                // report it, so that if the intermediary exits and a new one
-                // appears with the same PID the cache stays consistent.
                 seen_pids.push(entry.pid);
                 continue;
             }
