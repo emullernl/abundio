@@ -565,48 +565,56 @@ pub fn get_child_process_names(pid: u32) -> Vec<String> {
         CloseHandle(snapshot);
     }
 
-    // Find direct children of the target process
-    let direct_children: Vec<&ProcEntry> = entries
-        .iter()
-        .filter(|e| e.parent_pid == pid)
-        .collect();
+    // Intermediary exe names that are transparent wrappers — when one of these
+    // is a child process we look through it at its own children instead.
+    const INTERMEDIARIES: &[&str] = &["cmd", "bash", "sh", "zsh", "pwsh", "powershell", "wsl", "env"];
+
+    /// Check if an exe basename (without .exe) is an intermediary we should
+    /// look through rather than report.
+    fn is_intermediary(base: &str) -> bool {
+        INTERMEDIARIES.iter().any(|i| base.eq_ignore_ascii_case(i))
+    }
 
     let mut names = Vec::new();
     let mut seen_pids: Vec<u32> = Vec::new();
 
-    for child in &direct_children {
-        let base = child.exe_name.strip_suffix(".exe").unwrap_or(&child.exe_name);
+    // BFS through the process tree starting from `pid`.  We walk through
+    // intermediary processes (cmd.exe, bash.exe, …) transparently because
+    // MSYS2/Git Bash inserts forked-bash processes between the shell and the
+    // actual command.  Max depth prevents runaway traversal.
+    const MAX_DEPTH: u8 = 4;
+    // (parent_pid, depth)
+    let mut queue: Vec<(u32, u8)> = vec![(pid, 0)];
 
-        // cmd.exe intermediary: PowerShell → .cmd shim → node.exe
-        // Look one level deeper for the real process.
-        if base.eq_ignore_ascii_case("cmd") {
-            for grandchild in entries.iter().filter(|e| e.parent_pid == child.pid) {
-                seen_pids.push(grandchild.pid);
-                let resolved = NAME_CACHE.with(|cache| {
-                    let mut cache = cache.borrow_mut();
-                    if let Some(cached) = cache.get(&grandchild.pid) {
-                        return cached.clone();
-                    }
-                    let name = resolve_child_name(grandchild.pid, &grandchild.exe_name);
-                    cache.insert(grandchild.pid, name.clone());
-                    name
-                });
-                names.push(resolved);
-            }
+    while let Some((parent, depth)) = queue.pop() {
+        if depth >= MAX_DEPTH {
             continue;
         }
+        for entry in entries.iter().filter(|e| e.parent_pid == parent) {
+            let base = entry.exe_name.strip_suffix(".exe").unwrap_or(&entry.exe_name);
 
-        seen_pids.push(child.pid);
-        let resolved = NAME_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            if let Some(cached) = cache.get(&child.pid) {
-                return cached.clone();
+            if is_intermediary(base) {
+                // Transparent intermediary — look through it at its children.
+                queue.push((entry.pid, depth + 1));
+                // Also track the PID for cache eviction even though we don't
+                // report it, so that if the intermediary exits and a new one
+                // appears with the same PID the cache stays consistent.
+                seen_pids.push(entry.pid);
+                continue;
             }
-            let name = resolve_child_name(child.pid, &child.exe_name);
-            cache.insert(child.pid, name.clone());
-            name
-        });
-        names.push(resolved);
+
+            seen_pids.push(entry.pid);
+            let resolved = NAME_CACHE.with(|cache| {
+                let mut cache = cache.borrow_mut();
+                if let Some(cached) = cache.get(&entry.pid) {
+                    return cached.clone();
+                }
+                let name = resolve_child_name(entry.pid, &entry.exe_name);
+                cache.insert(entry.pid, name.clone());
+                name
+            });
+            names.push(resolved);
+        }
     }
 
     // Evict stale PIDs from the cache
