@@ -278,11 +278,12 @@ fn resolve_command_name_from_args(args: &[String]) -> Option<String> {
             .or_else(|| basename.strip_suffix(".ts"))
             .or_else(|| basename.strip_suffix(".py"))
             .unwrap_or(basename);
-        if INTERPRETERS.contains(&stem) {
+        let stem_lower = stem.to_ascii_lowercase();
+        if INTERPRETERS.contains(&stem_lower.as_str()) {
             continue;
         }
         // Generic entry-point name → try package.json resolution
-        if GENERIC_SCRIPT_STEMS.contains(&stem) {
+        if GENERIC_SCRIPT_STEMS.contains(&stem_lower.as_str()) {
             let path = std::path::Path::new(arg.as_str());
             if let Some(name) = resolve_from_package_json(path) {
                 return Some(name);
@@ -364,11 +365,29 @@ fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
     a == b
 }
 
-/// Read the command line of a Windows process via NtQueryInformationProcess.
+/// Read the command line of a Windows process.
+///
+/// Uses two strategies:
+/// 1. `NtQueryInformationProcess` with `ProcessCommandLineInformation` (Win10+)
+/// 2. Fallback: read the PEB → ProcessParameters → CommandLine via
+///    `ReadProcessMemory` (works on all Windows versions).
 #[cfg(target_os = "windows")]
 fn get_process_command_line(pid: u32) -> Option<String> {
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-    const PROCESS_COMMAND_LINE_INFORMATION: u32 = 60;
+    const PROCESS_QUERY_INFORMATION: u32 = 0x0400;
+    const PROCESS_VM_READ: u32 = 0x0010;
+
+    extern "system" {
+        fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> isize;
+        fn CloseHandle(hObject: isize) -> i32;
+        fn ReadProcessMemory(
+            hProcess: isize,
+            lpBaseAddress: usize,
+            lpBuffer: *mut u8,
+            nSize: usize,
+            lpNumberOfBytesRead: *mut usize,
+        ) -> i32;
+    }
 
     #[link(name = "ntdll")]
     extern "system" {
@@ -381,55 +400,144 @@ fn get_process_command_line(pid: u32) -> Option<String> {
         ) -> i32;
     }
 
-    extern "system" {
-        fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> isize;
-        fn CloseHandle(hObject: isize) -> i32;
-    }
-
+    // ---- Strategy 1: ProcessCommandLineInformation (info class 60) ----
+    // Returns a UNICODE_STRING whose Buffer points into the output buffer.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle != 0 {
+            let mut buf = vec![0u8; 8192];
+            let mut ret_len: u32 = 0;
+            let status = NtQueryInformationProcess(
+                handle, 60, // ProcessCommandLineInformation
+                buf.as_mut_ptr(), buf.len() as u32, &mut ret_len,
+            );
+            if status == 0 {
+                // UNICODE_STRING.Length is at offset 0 (2 bytes)
+                let length = u16::from_ne_bytes([buf[0], buf[1]]) as usize;
+                if length > 0 {
+                    // Read the Buffer pointer from the UNICODE_STRING to find
+                    // where the string data actually lives in our buffer.
+                    let ptr_size = std::mem::size_of::<usize>();
+                    // Buffer field offset: 4 bytes (Length + MaxLength) + padding
+                    let ptr_offset = if ptr_size == 8 { 8 } else { 4 };
+                    let mut ptr_bytes = [0u8; 8];
+                    ptr_bytes[..ptr_size].copy_from_slice(&buf[ptr_offset..ptr_offset + ptr_size]);
+                    let buffer_addr = usize::from_ne_bytes(ptr_bytes);
+                    let buf_addr = buf.as_ptr() as usize;
+                    // The Buffer pointer should point into our buf allocation
+                    if let Some(str_offset) = buffer_addr.checked_sub(buf_addr) {
+                        if str_offset + length <= buf.len() {
+                            let str_bytes = &buf[str_offset..str_offset + length];
+                            let chars: Vec<u16> = str_bytes
+                                .chunks_exact(2)
+                                .map(|c| u16::from_ne_bytes([c[0], c[1]]))
+                                .collect();
+                            let result = String::from_utf16_lossy(&chars);
+                            CloseHandle(handle);
+                            return Some(result);
+                        }
+                    }
+                }
+            }
+            CloseHandle(handle);
+        }
+    }
+
+    // ---- Strategy 2: PEB → ProcessParameters → CommandLine ----
+    // More widely compatible; requires PROCESS_QUERY_INFORMATION | PROCESS_VM_READ.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid);
         if handle == 0 {
             return None;
         }
 
-        // UNICODE_STRING on x64: Length(2) + MaxLength(2) + pad(4) + Buffer ptr(8) = 16 bytes header
-        // Allocate generous buffer for header + string data.
-        let mut buf = vec![0u8; 8192];
-        let mut return_length: u32 = 0;
+        // Step 1: Get PEB base address via ProcessBasicInformation (class 0).
+        // PROCESS_BASIC_INFORMATION (x64): 48 bytes, PebBaseAddress at offset 8.
+        let pbi_size: u32 = 48;
+        let mut pbi = vec![0u8; pbi_size as usize];
+        let mut ret_len: u32 = 0;
         let status = NtQueryInformationProcess(
-            handle,
-            PROCESS_COMMAND_LINE_INFORMATION,
-            buf.as_mut_ptr(),
-            buf.len() as u32,
-            &mut return_length,
+            handle, 0, // ProcessBasicInformation
+            pbi.as_mut_ptr(), pbi_size, &mut ret_len,
         );
+        if status != 0 {
+            CloseHandle(handle);
+            return None;
+        }
+
+        let ptr_size = std::mem::size_of::<usize>();
+        let peb_addr = read_ptr(&pbi, 8, ptr_size)?;
+
+        // Step 2: Read ProcessParameters pointer from PEB.
+        // PEB.ProcessParameters offset: 0x20 (x64) / 0x10 (x86).
+        let params_offset: usize = if ptr_size == 8 { 0x20 } else { 0x10 };
+        let mut ptr_buf = vec![0u8; ptr_size];
+        let mut bytes_read: usize = 0;
+        if ReadProcessMemory(
+            handle, peb_addr + params_offset,
+            ptr_buf.as_mut_ptr(), ptr_size, &mut bytes_read,
+        ) == 0 {
+            CloseHandle(handle);
+            return None;
+        }
+        let params_addr = read_ptr(&ptr_buf, 0, ptr_size)?;
+
+        // Step 3: Read CommandLine UNICODE_STRING from RTL_USER_PROCESS_PARAMETERS.
+        // CommandLine offset: 0x70 (x64) / 0x40 (x86).
+        let cmdline_offset: usize = if ptr_size == 8 { 0x70 } else { 0x40 };
+        // UNICODE_STRING: Length(2) + MaxLength(2) + [padding] + Buffer(ptr_size)
+        let us_size = if ptr_size == 8 { 16 } else { 8 };
+        let mut us_buf = vec![0u8; us_size];
+        if ReadProcessMemory(
+            handle, params_addr + cmdline_offset,
+            us_buf.as_mut_ptr(), us_size, &mut bytes_read,
+        ) == 0 {
+            CloseHandle(handle);
+            return None;
+        }
+
+        let length = u16::from_ne_bytes([us_buf[0], us_buf[1]]) as usize;
+        if length == 0 {
+            CloseHandle(handle);
+            return None;
+        }
+        let buffer_ptr_offset = if ptr_size == 8 { 8 } else { 4 };
+        let buffer_addr = read_ptr(&us_buf, buffer_ptr_offset, ptr_size)?;
+
+        // Step 4: Read the actual command line string.
+        let mut str_buf = vec![0u8; length];
+        if ReadProcessMemory(
+            handle, buffer_addr,
+            str_buf.as_mut_ptr(), length, &mut bytes_read,
+        ) == 0 {
+            CloseHandle(handle);
+            return None;
+        }
+
         CloseHandle(handle);
 
-        if status != 0 {
-            return None;
-        }
-
-        // Parse UNICODE_STRING: first 2 bytes are Length (in bytes of the UTF-16 data)
-        if (return_length as usize) < 4 {
-            return None;
-        }
-        let length = u16::from_ne_bytes([buf[0], buf[1]]) as usize;
-        if length == 0 {
-            return None;
-        }
-
-        // The string data starts after the UNICODE_STRING header.
-        // On x64 the header is 16 bytes (2+2+4 padding+8 pointer).
-        let header_size = std::mem::size_of::<usize>() + std::mem::size_of::<usize>();
-        if header_size + length > return_length as usize {
-            return None;
-        }
-        let str_bytes = &buf[header_size..header_size + length];
-        let u16_chars: Vec<u16> = str_bytes
+        let chars: Vec<u16> = str_buf
             .chunks_exact(2)
             .map(|c| u16::from_ne_bytes([c[0], c[1]]))
             .collect();
-        Some(String::from_utf16_lossy(&u16_chars))
+        Some(String::from_utf16_lossy(&chars))
+    }
+}
+
+/// Helper: read a pointer-sized value from a byte buffer at the given offset.
+#[cfg(target_os = "windows")]
+fn read_ptr(buf: &[u8], offset: usize, ptr_size: usize) -> Option<usize> {
+    if offset + ptr_size > buf.len() {
+        return None;
+    }
+    if ptr_size == 8 {
+        Some(usize::from_ne_bytes(
+            buf[offset..offset + 8].try_into().ok()?,
+        ))
+    } else {
+        Some(u32::from_ne_bytes(
+            buf[offset..offset + 4].try_into().ok()?,
+        ) as usize)
     }
 }
 
@@ -474,7 +582,8 @@ fn parse_windows_command_line(cmdline: &str) -> Vec<String> {
 #[cfg(target_os = "windows")]
 fn resolve_child_name(child_pid: u32, exe_name: &str) -> String {
     let base = exe_name.strip_suffix(".exe").unwrap_or(exe_name);
-    if !INTERPRETERS.contains(&base) {
+    let base_lower = base.to_ascii_lowercase();
+    if !INTERPRETERS.contains(&base_lower.as_str()) {
         return base.to_string();
     }
     // Interpreter process — try to resolve via command line
