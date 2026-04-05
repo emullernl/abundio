@@ -216,15 +216,24 @@ export async function createTerminal(
 	term.unicode.activeVersion = "11";
 	term.open(container);
 
-	try {
-		const webgl = new WebglAddon();
-		webgl.onContextLoss(() => webgl.dispose());
-		term.loadAddon(webgl);
-	} catch {
-		// Canvas renderer fallback
-	}
+	const loadWebgl = (retries = 3) => {
+		if (retries <= 0) return;
+		try {
+			const webgl = new WebglAddon();
+			webgl.onContextLoss(() => {
+				webgl.dispose();
+				requestAnimationFrame(() => loadWebgl(retries - 1));
+			});
+			term.loadAddon(webgl);
+		} catch {
+			// Canvas renderer fallback
+		}
+	};
+	loadWebgl();
 
-	fitAddon.fit();
+	if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+		fitAddon.fit();
+	}
 
 	const managed: ManagedTerminal = {
 		term,
@@ -534,6 +543,7 @@ export function flushPendingRestore(paneId: string): void {
 export function setAllTerminalsTheme(theme: ITheme): void {
 	for (const managed of instances.values()) {
 		managed.term.options.theme = theme;
+		managed.term.refresh(0, managed.term.rows - 1);
 	}
 }
 

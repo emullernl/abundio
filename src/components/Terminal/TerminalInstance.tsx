@@ -24,6 +24,8 @@ export const TerminalInstance = memo(function TerminalInstance({
 	cwd,
 }: Props) {
 	const stableRef = useRef<HTMLDivElement>(null);
+	const ptyIdRef = useRef(ptyId);
+	const destroyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 	const rafRef = useRef<number | null>(null);
@@ -109,12 +111,16 @@ export const TerminalInstance = memo(function TerminalInstance({
 	useEffect(() => {
 		if (!stableRef.current) return;
 
+		// Cancel any pending deferred destroy from a previous cleanup (StrictMode
+		// unmounts and immediately remounts — the terminal should survive that).
+		clearTimeout(destroyTimerRef.current);
+
 		let cancelled = false;
 
 		const init = async () => {
 			if (cancelled || !stableRef.current) return;
 
-			// Only create if not already existing
+			// Only create if not already existing (survives StrictMode remount)
 			if (!getTerminal(paneId)) {
 				const {
 					terminalFontFamily,
@@ -122,7 +128,7 @@ export const TerminalInstance = memo(function TerminalInstance({
 					theme: themeName,
 				} = useSettingsStore.getState();
 				const currentTheme = getTheme(themeName);
-				await createTerminal(paneId, ptyId, cwd, stableRef.current, {
+				await createTerminal(paneId, ptyIdRef.current, cwd, stableRef.current, {
 					fontSize,
 					fontFamily: terminalFontFamily,
 					theme: currentTheme.terminal,
@@ -161,9 +167,15 @@ export const TerminalInstance = memo(function TerminalInstance({
 			cancelled = true;
 			unsubscribe?.();
 			cleanupResizeObserver();
-			destroyTerminal(paneId);
+			// Defer destruction so StrictMode's immediate remount can cancel it.
+			// On real unmount the timeout fires and the terminal is destroyed.
+			destroyTimerRef.current = setTimeout(() => destroyTerminal(paneId), 0);
 		};
-	}, [paneId, cwd, ptyId, projectInto, retract, cleanupResizeObserver]);
+		// ptyId intentionally excluded — it's an initial value captured in ptyIdRef.
+		// Including it would cause a destroy+recreate cycle when initPty writes the
+		// generated UUID back to the layout store.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [paneId, cwd, projectInto, retract, cleanupResizeObserver]);
 
 	return (
 		<div
