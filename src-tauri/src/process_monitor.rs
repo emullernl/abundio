@@ -568,7 +568,7 @@ pub fn get_child_process_names(pid: u32) -> Vec<String> {
     // Find direct children of the target process
     let direct_children: Vec<&ProcEntry> = entries
         .iter()
-        .filter(|e| e.th32ParentProcessID == pid)
+        .filter(|e| e.parent_pid == pid)
         .collect();
 
     let mut names = Vec::new();
@@ -580,7 +580,7 @@ pub fn get_child_process_names(pid: u32) -> Vec<String> {
         // cmd.exe intermediary: PowerShell → .cmd shim → node.exe
         // Look one level deeper for the real process.
         if base.eq_ignore_ascii_case("cmd") {
-            for grandchild in entries.iter().filter(|e| e.th32ParentProcessID == child.pid) {
+            for grandchild in entries.iter().filter(|e| e.parent_pid == child.pid) {
                 seen_pids.push(grandchild.pid);
                 let resolved = NAME_CACHE.with(|cache| {
                     let mut cache = cache.borrow_mut();
