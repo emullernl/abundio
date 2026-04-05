@@ -69,8 +69,9 @@ export interface ManagedTerminal {
 	ready: boolean;
 	/** True once the terminal has been projected, fit, and painted — loader waits for this */
 	settled: boolean;
-	/** True during shell startup — filters terminal reset sequences from PTY output to preserve scrollback */
-	startupGracePeriod: boolean;
+	/** Buffers PTY output during shell startup so reset sequences can be stripped from the
+	 *  complete buffer before writing. Null when the grace period has ended. */
+	startupBuffer: Uint8Array[] | null;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -254,7 +255,7 @@ export async function createTerminal(
 		lastOutputChunkAt: 0,
 		ready: false,
 		settled: false,
-		startupGracePeriod: true,
+		startupBuffer: [],
 	};
 
 	instances.set(paneId, managed);
@@ -315,7 +316,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	// No grace period needed for reconnections — the shell has already started
 	if (!isNewPty) {
-		managed.startupGracePeriod = false;
+		managed.startupBuffer = null;
 	}
 
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
@@ -351,9 +352,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			if (entry?.detectionMode === "shell") {
 				// Shell mode: parse and strip shell integration sequences, no output pipeline
 				const { cleaned, commands } = parseShellIntegration(data);
-				term.write(
-					managed.startupGracePeriod ? stripResetSequences(cleaned) : cleaned,
-				);
+
+				if (managed.startupBuffer) {
+					// Buffer output during shell startup; flush when grace period ends
+					managed.startupBuffer.push(cleaned);
+				} else {
+					term.write(cleaned);
+				}
+
 				if (managed.suppressActivity) return;
 				for (const cmd of commands) {
 					const actStore = usePtyActivityStore.getState();
@@ -361,7 +367,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						setShellCommandRunning(currentPtyId, true);
 						actStore.recordOutput(currentPtyId);
 					} else if (cmd.type === "command_end") {
-						managed.startupGracePeriod = false;
+						flushStartupBuffer(managed);
 						setShellCommandRunning(currentPtyId, false);
 						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
 							actStore.recordError(currentPtyId);
@@ -379,9 +385,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				}
 			} else {
 				// Agent mode: existing byte accumulation pipeline
-				term.write(
-					managed.startupGracePeriod ? stripResetSequences(data) : data,
-				);
+				if (managed.startupBuffer) {
+					managed.startupBuffer.push(data);
+				} else {
+					term.write(data);
+				}
 				if (
 					!managed.suppressActivity &&
 					Date.now() - managed.lastInputAt > INPUT_GATE_MS
@@ -479,11 +487,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			: []),
 	]);
 
-	// Safety timeout: end the startup grace period even if shell integration
+	// Safety timeout: flush the startup buffer even if shell integration
 	// hooks never fire (e.g. custom shell without integration support).
 	if (isNewPty) {
 		setTimeout(() => {
-			managed.startupGracePeriod = false;
+			flushStartupBuffer(managed);
 		}, 3000);
 	}
 
@@ -542,6 +550,32 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	};
 
 	managed.ready = true;
+}
+
+/** Flush the startup output buffer: concatenate all chunks, strip terminal
+ *  reset/clear/home sequences, then write the cleaned result to the terminal.
+ *  Called when the grace period ends (first command_end or timeout). */
+function flushStartupBuffer(managed: ManagedTerminal): void {
+	const chunks = managed.startupBuffer;
+	if (!chunks) return;
+	managed.startupBuffer = null;
+
+	if (chunks.length === 0) return;
+
+	// Concatenate all buffered chunks into a single Uint8Array
+	let totalLen = 0;
+	for (const chunk of chunks) totalLen += chunk.length;
+	const combined = new Uint8Array(totalLen);
+	let offset = 0;
+	for (const chunk of chunks) {
+		combined.set(chunk, offset);
+		offset += chunk.length;
+	}
+
+	const cleaned = stripResetSequences(combined);
+	if (cleaned.length > 0) {
+		managed.term.write(cleaned);
+	}
 }
 
 /** Mark terminal as visually settled — loader can now hide */
