@@ -18,6 +18,7 @@ import { matchProcessToAgent } from "./agents";
 import { pty } from "./ipc";
 import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
+import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
 
 function containsPaneId(node: PaneNode, targetPaneId: string): boolean {
@@ -68,6 +69,8 @@ export interface ManagedTerminal {
 	ready: boolean;
 	/** True once the terminal has been projected, fit, and painted — loader waits for this */
 	settled: boolean;
+	/** True during shell startup — filters terminal reset sequences from PTY output to preserve scrollback */
+	startupGracePeriod: boolean;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -251,6 +254,7 @@ export async function createTerminal(
 		lastOutputChunkAt: 0,
 		ready: false,
 		settled: false,
+		startupGracePeriod: true,
 	};
 
 	instances.set(paneId, managed);
@@ -309,6 +313,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	const { setPtyStatus } = useSessionStore.getState();
 
+	// No grace period needed for reconnections — the shell has already started
+	if (!isNewPty) {
+		managed.startupGracePeriod = false;
+	}
+
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
 	// spawning so no shell output is lost in the gap between spawn and listen.
 	if (isNewPty) {
@@ -342,7 +351,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			if (entry?.detectionMode === "shell") {
 				// Shell mode: parse and strip shell integration sequences, no output pipeline
 				const { cleaned, commands } = parseShellIntegration(data);
-				term.write(cleaned);
+				term.write(
+					managed.startupGracePeriod ? stripResetSequences(cleaned) : cleaned,
+				);
 				if (managed.suppressActivity) return;
 				for (const cmd of commands) {
 					const actStore = usePtyActivityStore.getState();
@@ -350,6 +361,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						setShellCommandRunning(currentPtyId, true);
 						actStore.recordOutput(currentPtyId);
 					} else if (cmd.type === "command_end") {
+						managed.startupGracePeriod = false;
 						setShellCommandRunning(currentPtyId, false);
 						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
 							actStore.recordError(currentPtyId);
@@ -367,7 +379,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				}
 			} else {
 				// Agent mode: existing byte accumulation pipeline
-				term.write(data);
+				term.write(
+					managed.startupGracePeriod ? stripResetSequences(data) : data,
+				);
 				if (
 					!managed.suppressActivity &&
 					Date.now() - managed.lastInputAt > INPUT_GATE_MS
@@ -464,6 +478,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			? [pty.spawn(cwd, term.cols, term.rows, undefined, paneId, currentPtyId)]
 			: []),
 	]);
+
+	// Safety timeout: end the startup grace period even if shell integration
+	// hooks never fire (e.g. custom shell without integration support).
+	if (isNewPty) {
+		setTimeout(() => {
+			managed.startupGracePeriod = false;
+		}, 3000);
+	}
 
 	if (isNewPty) {
 		// Write ptyId to the correct tab's layout (not just the active tab)
