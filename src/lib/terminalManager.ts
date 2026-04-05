@@ -72,6 +72,8 @@ export interface ManagedTerminal {
 	/** Buffers PTY output during shell startup so reset sequences can be stripped from the
 	 *  complete buffer before writing. Null when the grace period has ended. */
 	startupBuffer: Uint8Array[] | null;
+	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods) */
+	filterResets: boolean;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
 	startupShellReady: boolean;
 }
@@ -257,6 +259,7 @@ export async function createTerminal(
 		lastOutputChunkAt: 0,
 		ready: false,
 		settled: false,
+		filterResets: false,
 		startupBuffer: [],
 		startupShellReady: false,
 	};
@@ -361,7 +364,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					// Buffer output during shell startup; flush when grace period ends
 					managed.startupBuffer.push(cleaned);
 				} else {
-					term.write(cleaned);
+					term.write(
+						managed.filterResets ? stripResetSequences(cleaned) : cleaned,
+					);
 				}
 
 				if (managed.suppressActivity) return;
@@ -393,7 +398,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				if (managed.startupBuffer) {
 					managed.startupBuffer.push(data);
 				} else {
-					term.write(data);
+					term.write(managed.filterResets ? stripResetSequences(data) : data);
 				}
 				if (
 					!managed.suppressActivity &&
@@ -598,6 +603,18 @@ export function markSettled(paneId: string): void {
 	if (!managed) return;
 	managed.settled = true;
 	tryFlushStartup(managed);
+}
+
+/** Temporarily filter terminal reset sequences from PTY output.
+ *  Used around PTY resize during session switches to prevent the shell's
+ *  resize-triggered redraw from wiping existing terminal content. */
+export function beginResizeFilter(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed) return;
+	managed.filterResets = true;
+	setTimeout(() => {
+		managed.filterResets = false;
+	}, 500);
 }
 
 /** Write any deferred scrollback restore data now that the terminal has real dimensions */

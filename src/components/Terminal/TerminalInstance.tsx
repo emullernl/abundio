@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useRef } from "react";
 import { pty } from "../../lib/ipc";
 import { getTarget, onTargetChange } from "../../lib/portalRegistry";
 import {
+	beginResizeFilter,
 	createTerminal,
 	destroyTerminal,
 	flushPendingRestore,
@@ -57,6 +58,9 @@ export const TerminalInstance = memo(function TerminalInstance({
 			managed.fitAddon.fit();
 			flushPendingRestore(id);
 			if (managed.ptyId) {
+				// Filter reset sequences from the shell's resize response to
+				// prevent it from wiping terminal content (Windows session switch).
+				beginResizeFilter(id);
 				pty
 					.resize(managed.ptyId, managed.term.cols, managed.term.rows)
 					.catch(() => {});
