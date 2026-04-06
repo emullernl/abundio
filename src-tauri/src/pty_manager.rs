@@ -513,41 +513,86 @@ fn pty_thread(
     let read_alive = alive.clone();
     let read_app = app.clone();
 
+    // Output coalescing: a dedicated reader thread sends raw chunks through a
+    // bounded channel.  The coalescing loop drains all immediately-available
+    // chunks before base64-encoding and emitting a single batched event.
+    // During burst output this collapses many small reads into one IPC event;
+    // during interactive use the try_recv drain returns immediately so latency
+    // is unaffected.
     let read_thread = thread::spawn(move || {
-        let mut buf = [0u8; 4096];
         let engine = base64::engine::general_purpose::STANDARD;
         let mut log = log_file;
+        let event_name = format!("pty-output-{}", read_pty_id);
+
+        // Bounded channel: 32 slots × 4 KB = 128 KB max buffered before
+        // back-pressure slows the reader — prevents unbounded memory growth.
+        let (chunk_tx, chunk_rx) = crossbeam_channel::bounded::<Vec<u8>>(32);
+
+        // Inner thread: blocking reads from PTY master fd
+        let inner_alive = read_alive.clone();
+        let inner = thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                if !inner_alive.load(Ordering::Relaxed) {
+                    break;
+                }
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        if chunk_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        const MAX_ACCUM: usize = 65536; // 64 KB ceiling per batched event
+        let mut accum = Vec::with_capacity(MAX_ACCUM);
 
         loop {
             if !read_alive.load(Ordering::Relaxed) {
                 break;
             }
 
-            match reader.read(&mut buf) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    // Append raw output to log file for persistence
-                    if let Some((ref mut file, ref path)) = log {
-                        let _ = file.write_all(&buf[..n]);
-                        // Truncate if log exceeds max size
-                        if let Ok(meta) = file.metadata() {
-                            if meta.len() > MAX_LOG_SIZE {
-                                truncate_log_file(path, MAX_LOG_SIZE / 2);
-                                // Reopen in append mode after truncation
-                                if let Ok(f) = OpenOptions::new().append(true).open(path) {
-                                    *file = f;
-                                }
-                            }
-                        }
-                    }
-
-                    let encoded = engine.encode(&buf[..n]);
-                    let event_name = format!("pty-output-{}", read_pty_id);
-                    let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
+            // Block until at least one chunk arrives (or channel closes)
+            match chunk_rx.recv() {
+                Ok(chunk) => {
+                    append_to_log(&mut log, &chunk);
+                    accum.extend_from_slice(&chunk);
                 }
                 Err(_) => break,
             }
+
+            // Drain all immediately-available chunks without blocking
+            while accum.len() < MAX_ACCUM {
+                match chunk_rx.try_recv() {
+                    Ok(chunk) => {
+                        append_to_log(&mut log, &chunk);
+                        accum.extend_from_slice(&chunk);
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            // Emit the coalesced batch as a single event
+            let encoded = engine.encode(&accum);
+            let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
+            accum.clear();
         }
+
+        // Flush any remaining data after channel close
+        for chunk in chunk_rx.try_iter() {
+            append_to_log(&mut log, &chunk);
+            accum.extend_from_slice(&chunk);
+        }
+        if !accum.is_empty() {
+            let encoded = engine.encode(&accum);
+            let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
+        }
+
+        let _ = inner.join();
     });
 
     // Main loop: process commands from the channel
@@ -623,6 +668,21 @@ fn pty_thread(
     }
 
     let _ = read_thread.join();
+}
+
+/// Append raw bytes to the log file and truncate if it exceeds the limit.
+fn append_to_log(log: &mut Option<(File, PathBuf)>, data: &[u8]) {
+    if let Some((ref mut file, ref path)) = log {
+        let _ = file.write_all(data);
+        if let Ok(meta) = file.metadata() {
+            if meta.len() > MAX_LOG_SIZE {
+                truncate_log_file(path, MAX_LOG_SIZE / 2);
+                if let Ok(f) = OpenOptions::new().append(true).open(path) {
+                    *file = f;
+                }
+            }
+        }
+    }
 }
 
 /// Truncate a log file by keeping only the last `keep_bytes` bytes.

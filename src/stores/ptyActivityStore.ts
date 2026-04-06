@@ -264,16 +264,24 @@ export function setFocusedPaneIdGetter(getter: () => string | null): void {
 	_getFocusedPaneId = getter;
 }
 
+// Cached reverse map: only rebuilt when panePtyMap reference changes
+let _cachedPanePtyMapRef: Record<string, string> | null = null;
+let _cachedPtyToPaneMap: Record<string, string> = {};
+
 setInterval(() => {
 	const { activities, panePtyMap } = usePtyActivityStore.getState();
 	const now = Date.now();
 	const updates: Record<string, PtyActivityEntry> = {};
 	let hasChanges = false;
 
-	// Build reverse map: ptyId → paneId
-	const ptyToPaneMap: Record<string, string> = {};
-	for (const [paneId, ptyId] of Object.entries(panePtyMap)) {
-		ptyToPaneMap[ptyId] = paneId;
+	// Rebuild reverse map only when panePtyMap has changed (Zustand produces
+	// a new object reference on mutation, so === is sufficient)
+	if (panePtyMap !== _cachedPanePtyMapRef) {
+		_cachedPanePtyMapRef = panePtyMap;
+		_cachedPtyToPaneMap = {};
+		for (const [paneId, ptyId] of Object.entries(panePtyMap)) {
+			_cachedPtyToPaneMap[ptyId] = paneId;
+		}
 	}
 
 	const focusedPaneId = _getFocusedPaneId?.() ?? null;
@@ -287,7 +295,7 @@ setInterval(() => {
 		if (entry.state === "active" && elapsed > IDLE_THRESHOLD_MS) {
 			// Don't transition to idle if a shell command is still running
 			if (shellCommandRunning.get(ptyId)) continue;
-			const paneId = ptyToPaneMap[ptyId];
+			const paneId = _cachedPtyToPaneMap[ptyId];
 			const isFocused =
 				appHasFocus && paneId != null && focusedPaneId === paneId;
 			// Agent mode always goes to "waiting" — the agent finished work and

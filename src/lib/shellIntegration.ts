@@ -9,6 +9,7 @@ const BEL = 0x07;
 const BRACKET = 0x5d; // ']'
 
 const PREFIX = new TextEncoder().encode("]7770;");
+const textDecoder = new TextDecoder();
 
 export function parseShellIntegration(data: Uint8Array): {
 	cleaned: Uint8Array;
@@ -49,7 +50,7 @@ export function parseShellIntegration(data: Uint8Array): {
 				}
 
 				// Extract payload string between "7770;" and BEL
-				const payload = new TextDecoder().decode(
+				const payload = textDecoder.decode(
 					data.subarray(payloadStart, belIndex),
 				);
 

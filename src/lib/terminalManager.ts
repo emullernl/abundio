@@ -76,6 +76,10 @@ export interface ManagedTerminal {
 	filterResets: boolean;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
 	startupShellReady: boolean;
+	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
+	pendingWrites: Uint8Array[];
+	/** rAF handle for the pending write flush, or null if none scheduled */
+	writeRafId: number | null;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -108,7 +112,9 @@ async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
 	let bgBytesSinceIdle = 0;
 	let bgLastOutputChunkAt = 0;
-	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
+	// Use onOutputRaw to skip base64 decode — background trackers only need
+	// approximate byte counts for activity thresholds, not decoded content.
+	const unlistenOutput = await pty.onOutputRaw(ptyId, (base64Data) => {
 		// Only run byte accumulation for agent-mode PTYs
 		const entry = usePtyActivityStore.getState().activities[ptyId];
 		if (entry?.detectionMode !== "agent") return;
@@ -120,7 +126,8 @@ async function startBackgroundTracking(ptyId: string) {
 			bgBytesSinceIdle = 0;
 		}
 		bgLastOutputChunkAt = now;
-		bgBytesSinceIdle += data.length;
+		// Estimate decoded byte count from base64 string length
+		bgBytesSinceIdle += Math.floor(base64Data.length * 0.75);
 
 		if (entry?.state === "active") {
 			touchLastOutput(ptyId, now);
@@ -150,6 +157,38 @@ function stopBackgroundTracking(ptyId: string) {
 		tracker.unlistenStatus();
 		backgroundTrackers.delete(ptyId);
 	}
+}
+
+/** Queue a chunk for batched writing to xterm.js.  All chunks queued within
+ *  one animation frame are concatenated and written in a single term.write()
+ *  call, which xterm processes more efficiently than many small writes. */
+function scheduleWrite(managed: ManagedTerminal, chunk: Uint8Array): void {
+	managed.pendingWrites.push(chunk);
+	if (managed.writeRafId === null) {
+		managed.writeRafId = requestAnimationFrame(() => {
+			flushWrites(managed);
+		});
+	}
+}
+
+function flushWrites(managed: ManagedTerminal): void {
+	managed.writeRafId = null;
+	const chunks = managed.pendingWrites;
+	if (chunks.length === 0) return;
+	if (chunks.length === 1) {
+		managed.term.write(chunks[0]);
+	} else {
+		let total = 0;
+		for (const c of chunks) total += c.length;
+		const merged = new Uint8Array(total);
+		let offset = 0;
+		for (const c of chunks) {
+			merged.set(c, offset);
+			offset += c.length;
+		}
+		managed.term.write(merged);
+	}
+	managed.pendingWrites = [];
 }
 
 // Deferred subscription — runs after all modules are initialized
@@ -262,6 +301,8 @@ export async function createTerminal(
 		filterResets: false,
 		startupBuffer: [],
 		startupShellReady: false,
+		pendingWrites: [],
+		writeRafId: null,
 	};
 
 	instances.set(paneId, managed);
@@ -359,52 +400,56 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			// so command_end is detected even while in agent mode.
 			const { cleaned, commands } = parseShellIntegration(data);
 
-			const entry = usePtyActivityStore.getState().activities[currentPtyId];
+			// Cache store state once per chunk to avoid repeated getState() calls
+			const actState = usePtyActivityStore.getState();
+			const entry = actState.activities[currentPtyId];
 			const isAgentMode = entry?.detectionMode === "agent";
 
 			if (managed.startupBuffer) {
 				managed.startupBuffer.push(cleaned);
 			} else {
-				term.write(
-					managed.filterResets ? stripResetSequences(cleaned) : cleaned,
-				);
+				const output = managed.filterResets
+					? stripResetSequences(cleaned)
+					: cleaned;
+				scheduleWrite(managed, output);
 			}
 
 			// Process shell integration commands (agent detection + shell activity)
 			for (const cmd of commands) {
-				const actStore = usePtyActivityStore.getState();
 				if (cmd.type === "command_start") {
 					// Agent detection from command text
 					if (cmd.commandText) {
 						const agents = useSettingsStore.getState().agents;
 						if (matchTitleToAgent(cmd.commandText, agents)) {
-							actStore.setAgentPty(currentPtyId);
+							actState.setAgentPty(currentPtyId);
 						}
 					}
 					if (!managed.suppressActivity && !isAgentMode) {
 						setShellCommandRunning(currentPtyId, true);
-						actStore.recordOutput(currentPtyId);
+						actState.recordOutput(currentPtyId);
 					}
 				} else if (cmd.type === "command_end") {
 					managed.startupShellReady = true;
 					tryFlushStartup(managed);
-					// Exit agent mode when the command finishes
-					const currentEntry = actStore.activities[currentPtyId];
+					// Exit agent mode when the command finishes — re-fetch
+					// state since setAgentPty above may have mutated it
+					const freshState = usePtyActivityStore.getState();
+					const currentEntry = freshState.activities[currentPtyId];
 					if (currentEntry?.detectionMode === "agent") {
-						actStore.clearAgentPty(currentPtyId);
+						freshState.clearAgentPty(currentPtyId);
 					}
 					if (!managed.suppressActivity && !isAgentMode) {
 						setShellCommandRunning(currentPtyId, false);
 						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
-							actStore.recordError(currentPtyId);
+							freshState.recordError(currentPtyId);
 						} else {
 							const isFocused =
 								document.hasFocus() &&
 								useSessionStore.getState().focusedPaneId === paneId;
 							if (isFocused) {
-								actStore.markIdle(currentPtyId);
+								freshState.markIdle(currentPtyId);
 							} else {
-								actStore.recordExitSuccess(currentPtyId);
+								freshState.recordExitSuccess(currentPtyId);
 							}
 						}
 					}
@@ -413,11 +458,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 			// Agent mode: byte accumulation activity tracking
 			if (isAgentMode) {
+				const now = Date.now();
 				if (
 					!managed.suppressActivity &&
-					Date.now() - managed.lastInputAt > INPUT_GATE_MS
+					now - managed.lastInputAt > INPUT_GATE_MS
 				) {
-					const now = Date.now();
 					if (
 						managed.lastOutputChunkAt &&
 						now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
@@ -427,9 +472,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					managed.lastOutputChunkAt = now;
 					managed.bytesSinceIdle += cleaned.length;
 
-					const latestEntry =
-						usePtyActivityStore.getState().activities[currentPtyId];
-					if (latestEntry?.state === "active") {
+					if (entry?.state === "active") {
 						touchLastOutput(currentPtyId, now);
 					} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 						managed.bytesSinceIdle = 0;
@@ -565,6 +608,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenActivity();
 		unlistenStatus();
 		term.element?.removeEventListener("mousedown", onTermClick);
+		if (managed.writeRafId !== null) {
+			cancelAnimationFrame(managed.writeRafId);
+			flushWrites(managed);
+		}
 	};
 
 	managed.ready = true;
