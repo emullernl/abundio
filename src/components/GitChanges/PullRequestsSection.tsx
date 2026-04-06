@@ -85,6 +85,7 @@ export function PullRequestsSection() {
 				ghStatus={ghStatus}
 				onRefresh={handleRefresh}
 				showRefresh
+				showPrStatus
 			/>
 			<div
 				className="flex-shrink-0"

@@ -11,6 +11,10 @@ pub struct PtyOutput {
 pub enum PtyStatus {
     Running,
     Exited { code: Option<u32> },
+    ShellNotFound {
+        configured: String,
+        fallback: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,4 +68,5 @@ mod tests {
         let json = serde_json::to_string(&status).unwrap();
         assert_eq!(json, r#"{"type":"exited","code":null}"#);
     }
+
 }

@@ -76,10 +76,30 @@ beforeEach(() => {
 		ptyStatuses: {},
 		searchPaneId: null,
 		activeView: {},
+		sessionsInitialized: false,
 	});
 });
 
 describe("sessionStore", () => {
+	describe("loadSessions", () => {
+		it("sets sessionsInitialized to true after loading", async () => {
+			const { sessions } = await import("../../lib/ipc");
+			vi.mocked(sessions.list).mockResolvedValueOnce([]);
+
+			expect(useSessionStore.getState().sessionsInitialized).toBe(false);
+			await useSessionStore.getState().loadSessions();
+			expect(useSessionStore.getState().sessionsInitialized).toBe(true);
+		});
+
+		it("does not auto-select any session on load", async () => {
+			const { sessions } = await import("../../lib/ipc");
+			vi.mocked(sessions.list).mockResolvedValueOnce([makeSession()]);
+
+			await useSessionStore.getState().loadSessions();
+			expect(useSessionStore.getState().activeSessionId).toBeNull();
+		});
+	});
+
 	describe("setActiveSession", () => {
 		it("sets activeSessionId", () => {
 			useSessionStore.getState().setActiveSession("s1");

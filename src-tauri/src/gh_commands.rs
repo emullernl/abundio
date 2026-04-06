@@ -1,6 +1,7 @@
 use crate::error::AbundioError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -176,6 +177,9 @@ fn check_gh_auth() -> (bool, bool) {
 
 /// Check if any git remote points to github.com (local operation, no network).
 fn has_github_remote(cwd: &str) -> bool {
+	if !Path::new(cwd).join(".git").exists() {
+		return false;
+	}
 	let mut cmd = Command::new("git");
 	cmd.args(["remote", "-v"]).current_dir(cwd);
 	#[cfg(target_os = "windows")]

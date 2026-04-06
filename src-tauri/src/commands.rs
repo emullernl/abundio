@@ -4,6 +4,7 @@ use crate::error::AbundioError;
 use crate::file_watcher::FileWatcher;
 use crate::pty_manager::PtyManager;
 use crate::session_store::{SessionStore, SessionUpdate, SessionWithTabs, Tab, TabUpdate};
+use crate::shell_env;
 
 // ── PTY commands ──
 
@@ -15,10 +16,16 @@ pub async fn pty_spawn(
     cols: u16,
     rows: u16,
     command: Option<String>,
+    shell: Option<String>,
     log_id: Option<String>,
     pty_id: Option<String>,
 ) -> Result<String, AbundioError> {
-    pty_mgr.spawn(app, &cwd, command.as_deref(), cols, rows, log_id.as_deref(), pty_id.as_deref())
+    pty_mgr.spawn(app, &cwd, command.as_deref(), shell.as_deref(), cols, rows, log_id.as_deref(), pty_id.as_deref())
+}
+
+#[tauri::command]
+pub async fn list_available_shells() -> Result<Vec<shell_env::AvailableShell>, AbundioError> {
+    Ok(shell_env::list_available_shells())
 }
 
 #[tauri::command]

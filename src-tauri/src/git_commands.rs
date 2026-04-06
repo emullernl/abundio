@@ -16,6 +16,14 @@ fn default_branch_cache() -> &'static DashMap<String, String> {
     CACHE.get_or_init(DashMap::new)
 }
 
+/// Per-repo cache of successful git-repo checks.
+/// Only positive results are cached; non-git directories are always
+/// re-checked so that a later `git init` is picked up.
+fn git_repo_cache() -> &'static DashMap<String, ()> {
+    static CACHE: OnceLock<DashMap<String, ()>> = OnceLock::new();
+    CACHE.get_or_init(DashMap::new)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitChangedFile {
@@ -41,7 +49,31 @@ pub struct BranchInfo {
     pub current_branch: String,
 }
 
+fn ensure_git_repo(cwd: &str) -> Result<(), AbundioError> {
+    let cache_key = std::fs::canonicalize(cwd)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| cwd.to_string());
+
+    if git_repo_cache().contains_key(&cache_key) {
+        return Ok(());
+    }
+
+    let status = Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--git-dir"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            git_repo_cache().insert(cache_key, ());
+            Ok(())
+        }
+        _ => Err(AbundioError::NotGitRepo(cwd.to_string())),
+    }
+}
+
 fn run_git(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
+    ensure_git_repo(cwd)?;
     let mut full_args = vec!["--no-optional-locks"];
     full_args.extend_from_slice(args);
     let mut cmd = Command::new("git");
@@ -67,6 +99,7 @@ fn run_git(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 }
 
 fn run_git_allow_empty(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
+    ensure_git_repo(cwd)?;
     let mut full_args = vec!["--no-optional-locks"];
     full_args.extend_from_slice(args);
     let mut cmd = Command::new("git");
@@ -446,11 +479,36 @@ mod tests {
         assert_eq!(result.len(), 0);
     }
 
+    #[test]
+    fn ensure_git_repo_rejects_non_git_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = ensure_git_repo(dir.path().to_str().unwrap());
+        assert!(matches!(result, Err(AbundioError::NotGitRepo(_))));
+    }
+
+    #[test]
+    fn ensure_git_repo_accepts_git_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        let result = ensure_git_repo(cwd);
+        assert!(result.is_ok());
+    }
+
     /// Helper: create a temporary git repo with an initial commit.
     fn setup_temp_git_repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().to_str().unwrap();
-        run_git(cwd, &["init"]).unwrap();
+        // Use Command directly for init since .git doesn't exist yet
+        Command::new("git")
+            .args(["init"])
+            .current_dir(cwd)
+            .output()
+            .unwrap();
         run_git(cwd, &["config", "user.email", "test@test.com"]).unwrap();
         run_git(cwd, &["config", "user.name", "Test"]).unwrap();
         std::fs::write(dir.path().join("initial.txt"), "hello\n").unwrap();

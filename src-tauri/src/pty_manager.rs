@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 use std::thread;
 
 use base64::Engine;
@@ -57,6 +58,7 @@ impl PtyManager {
         app: AppHandle,
         cwd: &str,
         command: Option<&str>,
+        shell: Option<&str>,
         cols: u16,
         rows: u16,
         log_id: Option<&str>,
@@ -78,7 +80,21 @@ impl PtyManager {
             .openpty(size)
             .map_err(|e| AbundioError::Pty(e.to_string()))?;
 
-        let shell = shell_env::default_shell();
+        let shell = match shell {
+            Some(s) if Path::new(s).exists() => s.to_string(),
+            Some(s) => {
+                let fallback = shell_env::default_shell();
+                let _ = app.emit(
+                    &format!("pty-status-{}", pty_id),
+                    PtyStatus::ShellNotFound {
+                        configured: s.to_string(),
+                        fallback: fallback.clone(),
+                    },
+                );
+                fallback
+            }
+            None => shell_env::default_shell(),
+        };
         let shell_type = detect_shell_type(&shell);
         let integration_dir = shell_integration_dir();
 
@@ -111,6 +127,15 @@ impl PtyManager {
                     #[cfg(target_os = "windows")]
                     let rcfile_str = rcfile_str.replace('\\', "/");
                     cmd.args(["--rcfile", &rcfile_str, "-i"]);
+                }
+                ShellType::PowerShell => {
+                    let init_script = integration_dir.join("abundio_init.ps1");
+                    let init_str = init_script.to_string_lossy().into_owned();
+                    #[cfg(target_os = "windows")]
+                    let init_str = init_str.replace('\\', "/");
+                    // Bypass execution policy for this process only (same as VS Code terminal)
+                    // so our integration script loads regardless of system policy.
+                    cmd.args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-NoExit", "-File", &init_str]);
                 }
                 ShellType::Other => {
                     #[cfg(not(target_os = "windows"))]
@@ -284,6 +309,7 @@ impl PtyManager {
 enum ShellType {
     Zsh,
     Bash,
+    PowerShell,
     Other,
 }
 
@@ -296,6 +322,8 @@ fn detect_shell_type(shell: &str) -> ShellType {
         ShellType::Zsh
     } else if base.contains("bash") {
         ShellType::Bash
+    } else if base.contains("pwsh") || base.contains("powershell") {
+        ShellType::PowerShell
     } else {
         ShellType::Other
     }
@@ -333,7 +361,7 @@ elif [ -f "$HOME/.zshrc" ]; then
   source "$HOME/.zshrc"
 fi
 # Hooks
-__abundio_preexec() { printf '\e]7770;command_start\a' }
+__abundio_preexec() { printf '\e]7770;command_start;%s\a' "${1//$'\a'/ }" }
 __abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?" }
 precmd_functions+=(__abundio_precmd)
 preexec_functions+=(__abundio_preexec)
@@ -355,9 +383,33 @@ fi
 
     // bash: wrapper rcfile that sources user config then adds hooks
     let bashrc = dir.join(".bashrc");
-    let _ = fs::write(
-        &bashrc,
-        r#"# Abundio shell integration — loaded via --rcfile
+
+    // On Windows (Git Bash / MSYS2), skip /etc/profile and /etc/bash.bashrc —
+    // these are MSYS2 system scripts that send terminal reset sequences which
+    // wipe restored scrollback. Git Bash already runs MSYS2 init before --rcfile.
+    #[cfg(target_os = "windows")]
+    let bashrc_content = r#"# Abundio shell integration — loaded via --rcfile
+if [ -f ~/.bash_profile ]; then
+  source ~/.bash_profile
+elif [ -f ~/.bash_login ]; then
+  source ~/.bash_login
+elif [ -f ~/.profile ]; then
+  source ~/.profile
+fi
+# Source the user's real bash config
+[ -f ~/.bashrc ] && source ~/.bashrc
+# Hooks
+__abundio_preexec() {
+  [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
+  printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
+}
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; }
+trap '__abundio_preexec' DEBUG
+PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+"#;
+
+    #[cfg(not(target_os = "windows"))]
+    let bashrc_content = r#"# Abundio shell integration — loaded via --rcfile
 # Source login shell config files for parity (--rcfile replaces -l)
 [ -f /etc/profile ] && source /etc/profile
 if [ -f ~/.bash_profile ]; then
@@ -371,10 +423,65 @@ fi
 [ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
 [ -f ~/.bashrc ] && source ~/.bashrc
 # Hooks
-__abundio_preexec() { printf '\e]7770;command_start\a'; }
+__abundio_preexec() {
+  [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
+  printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
+}
 __abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; }
 trap '__abundio_preexec' DEBUG
 PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+"#;
+
+    let _ = fs::write(&bashrc, bashrc_content);
+
+    // PowerShell: wrapper init script that sources user profile then adds hooks
+    // Uses [char]0x1b (ESC) and [char]0x07 (BEL) for PS 5.1 compatibility
+    // (`e and `a require PS 6+).
+    let ps1 = dir.join("abundio_init.ps1");
+    let _ = fs::write(
+        &ps1,
+        r#"# Abundio shell integration for PowerShell — loaded via -NoProfile -File
+# Source the user's profile first
+if (Test-Path $PROFILE) { . $PROFILE }
+
+# ESC and BEL characters for OSC sequences (compatible with PS 5.1+)
+$Global:__AbundioESC = [char]0x1b
+$Global:__AbundioBEL = [char]0x07
+$Global:__AbundioLastHistoryId = -1
+
+# Stash the user's prompt (from profile or default) so we can wrap it
+$Global:__AbundioOriginalPrompt = $function:prompt
+
+function Global:prompt {
+    $lastExit = $LASTEXITCODE
+    if ($null -eq $lastExit) { $lastExit = 0 }
+    $lastEntry = Get-History -Count 1 -ErrorAction SilentlyContinue
+    # Emit command_end for the previous command (if a new command ran)
+    if ($Global:__AbundioLastHistoryId -ne -1 -and $lastEntry -and $lastEntry.Id -ne $Global:__AbundioLastHistoryId) {
+        $Host.UI.Write("$Global:__AbundioESC]7770;command_end;$lastExit$Global:__AbundioBEL")
+    }
+    if ($lastEntry) { $Global:__AbundioLastHistoryId = $lastEntry.Id }
+    # Call the original prompt function
+    if ($Global:__AbundioOriginalPrompt) {
+        & $Global:__AbundioOriginalPrompt
+    } else {
+        "PS $($executionContext.SessionState.Path.CurrentLocation)> "
+    }
+}
+
+# Hook Enter key via PSReadLine to emit command_start (preexec equivalent)
+if (Get-Module -Name PSReadLine) {
+    Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
+        $line = $null
+        $cursor = $null
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+        if ($line.Trim().Length -gt 0) {
+            $escaped = $line -replace [char]0x07, ' '
+            $Host.UI.Write("$Global:__AbundioESC]7770;command_start;$escaped$Global:__AbundioBEL")
+        }
+        [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+    }
+}
 "#,
     );
 
@@ -395,8 +502,17 @@ fn pty_thread(
     let mut writer = master.take_writer().unwrap();
     let mut reader = master.try_clone_reader().unwrap();
 
-    // Get shell PID for child process monitoring
-    let shell_pid = child.process_id();
+    // For ShellType::Other, poll child processes to emit CommandStarted/CommandFinished
+    // (zsh/bash get these via OSC 7770 shell integration hooks instead).
+    let shell_pid = if shell_type == ShellType::Other {
+        let pid = child.process_id();
+        if pid.is_none() {
+            eprintln!("[pty_thread] WARNING: shell process_id() returned None for pty {}", pty_id);
+        }
+        pid
+    } else {
+        None
+    };
     let mut command_running = false;
 
     // Spawn a sub-thread for reading PTY output → emitting events
@@ -404,44 +520,92 @@ fn pty_thread(
     let read_alive = alive.clone();
     let read_app = app.clone();
 
+    // Output coalescing: a dedicated reader thread sends raw chunks through a
+    // bounded channel.  The coalescing loop drains all immediately-available
+    // chunks before base64-encoding and emitting a single batched event.
+    // During burst output this collapses many small reads into one IPC event;
+    // during interactive use the try_recv drain returns immediately so latency
+    // is unaffected.
     let read_thread = thread::spawn(move || {
-        let mut buf = [0u8; 4096];
         let engine = base64::engine::general_purpose::STANDARD;
         let mut log = log_file;
+        let event_name = format!("pty-output-{}", read_pty_id);
+
+        // Bounded channel: 32 slots × 4 KB = 128 KB max buffered before
+        // back-pressure slows the reader — prevents unbounded memory growth.
+        let (chunk_tx, chunk_rx) = crossbeam_channel::bounded::<Vec<u8>>(32);
+
+        // Inner thread: blocking reads from PTY master fd
+        let inner_alive = read_alive.clone();
+        let inner = thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                if !inner_alive.load(Ordering::Relaxed) {
+                    break;
+                }
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        if chunk_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        const MAX_ACCUM: usize = 16 * 1024; // 16 KB — rAF batching in the frontend handles burst coalescing
+        let mut accum = Vec::with_capacity(MAX_ACCUM);
 
         loop {
             if !read_alive.load(Ordering::Relaxed) {
                 break;
             }
 
-            match reader.read(&mut buf) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    // Append raw output to log file for persistence
-                    if let Some((ref mut file, ref path)) = log {
-                        let _ = file.write_all(&buf[..n]);
-                        // Truncate if log exceeds max size
-                        if let Ok(meta) = file.metadata() {
-                            if meta.len() > MAX_LOG_SIZE {
-                                truncate_log_file(path, MAX_LOG_SIZE / 2);
-                                // Reopen in append mode after truncation
-                                if let Ok(f) = OpenOptions::new().append(true).open(path) {
-                                    *file = f;
-                                }
-                            }
-                        }
-                    }
-
-                    let encoded = engine.encode(&buf[..n]);
-                    let event_name = format!("pty-output-{}", read_pty_id);
-                    let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
+            // Block until at least one chunk arrives (or channel closes)
+            match chunk_rx.recv() {
+                Ok(chunk) => {
+                    append_to_log(&mut log, &chunk);
+                    accum.extend_from_slice(&chunk);
                 }
                 Err(_) => break,
             }
+
+            // Drain all immediately-available chunks without blocking
+            while accum.len() < MAX_ACCUM {
+                match chunk_rx.try_recv() {
+                    Ok(chunk) => {
+                        append_to_log(&mut log, &chunk);
+                        accum.extend_from_slice(&chunk);
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            // Emit the coalesced batch as a single event
+            let encoded = engine.encode(&accum);
+            let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
+            accum.clear();
         }
+
+        // Flush any remaining data after channel close
+        for chunk in chunk_rx.try_iter() {
+            append_to_log(&mut log, &chunk);
+            accum.extend_from_slice(&chunk);
+        }
+        if !accum.is_empty() {
+            let encoded = engine.encode(&accum);
+            let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
+        }
+
+        let _ = inner.join();
     });
 
     // Main loop: process commands from the channel
+    let mut last_process_check = Instant::now();
+    let poll_interval = Duration::from_millis(200);
+
     loop {
         // Check if child has exited
         if let Ok(Some(status)) = child.try_wait() {
@@ -452,11 +616,11 @@ fn pty_thread(
             break;
         }
 
-        // Poll for child processes of the shell (command start/stop detection).
-        // Only use process monitoring for shells without OSC shell integration
-        // (zsh/bash use OSC 7770 sequences instead, so polling would race).
-        if shell_type == ShellType::Other {
-            if let Some(pid) = shell_pid {
+        // For ShellType::Other: lightweight child-process polling for
+        // CommandStarted/CommandFinished (no name resolution needed).
+        if let Some(pid) = shell_pid {
+            if last_process_check.elapsed() >= poll_interval {
+                last_process_check = Instant::now();
                 let has_children = process_monitor::has_child_processes(pid);
                 if has_children && !command_running {
                     command_running = true;
@@ -470,8 +634,16 @@ fn pty_thread(
             }
         }
 
-        // Non-blocking receive with a short timeout to allow checking child status
-        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+        let recv_timeout = if shell_pid.is_some() {
+            poll_interval
+                .checked_sub(last_process_check.elapsed())
+                .unwrap_or(Duration::from_millis(10))
+                .min(Duration::from_millis(100))
+        } else {
+            Duration::from_millis(100)
+        };
+
+        match rx.recv_timeout(recv_timeout) {
             Ok(PtyCommand::Write(data)) => {
                 let _ = writer.write_all(&data);
             }
@@ -503,6 +675,21 @@ fn pty_thread(
     }
 
     let _ = read_thread.join();
+}
+
+/// Append raw bytes to the log file and truncate if it exceeds the limit.
+fn append_to_log(log: &mut Option<(File, PathBuf)>, data: &[u8]) {
+    if let Some((ref mut file, ref path)) = log {
+        let _ = file.write_all(data);
+        if let Ok(meta) = file.metadata() {
+            if meta.len() > MAX_LOG_SIZE {
+                truncate_log_file(path, MAX_LOG_SIZE / 2);
+                if let Ok(f) = OpenOptions::new().append(true).open(path) {
+                    *file = f;
+                }
+            }
+        }
+    }
 }
 
 /// Truncate a log file by keeping only the last `keep_bytes` bytes.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fonts as fontsIpc } from "../lib/ipc";
+import { fonts as fontsIpc, shells as shellsIpc } from "../lib/ipc";
 import {
 	type FontEntry,
 	systemFontToEntry,
@@ -7,11 +7,11 @@ import {
 } from "../lib/nerdFonts";
 import { setAllTerminalsFontSize } from "../lib/terminalManager";
 import { type AppTheme, themeList } from "../lib/themes";
-import type { CodingAgent } from "../lib/types";
+import type { AvailableShell, CodingAgent } from "../lib/types";
 import { useSettingsStore } from "../stores/settingsStore";
 import { Check, Plus, X } from "./Icons";
 
-type Section = "theme" | "terminal-font" | "ui-font" | "agents";
+type Section = "theme" | "terminal-font" | "ui-font" | "shell" | "agents";
 
 interface Props {
 	open: boolean;
@@ -741,6 +741,123 @@ function AgentIcon() {
    Main SettingsPanel
    ═══════════════════════════════════════════════ */
 
+/* ──��� Terminal icon for shell nav ─── */
+function TerminalIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<polyline points="4 17 10 11 4 5" />
+			<line x1="12" y1="19" x2="20" y2="19" />
+		</svg>
+	);
+}
+
+/* ─��─ Shell row ─── */
+function ShellRow({
+	name,
+	path,
+	isSelected,
+	available,
+	badge,
+	onSelect,
+}: {
+	name: string;
+	path: string;
+	isSelected: boolean;
+	available: boolean;
+	badge?: string;
+	onSelect: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={available ? onSelect : undefined}
+			className="w-full text-left rounded-lg flex items-center gap-3 transition-colors"
+			style={{
+				padding: "9px 10px",
+				backgroundColor: isSelected
+					? "color-mix(in srgb, var(--accent) 10%, transparent)"
+					: "transparent",
+				borderLeft: isSelected
+					? "2px solid var(--accent)"
+					: "2px solid transparent",
+				opacity: available ? 1 : 0.4,
+				cursor: available ? "pointer" : "default",
+			}}
+		>
+			<div className="flex-1 min-w-0">
+				<div
+					className="truncate flex items-center gap-2"
+					style={{
+						fontSize: 13,
+						color: "var(--fg-primary)",
+						lineHeight: 1.3,
+					}}
+				>
+					{name}
+					{badge && (
+						<span
+							className="flex-shrink-0 rounded"
+							style={{
+								fontSize: 9,
+								fontWeight: 600,
+								color: "var(--fg-secondary)",
+								letterSpacing: "0.05em",
+								textTransform: "uppercase",
+								padding: "1px 5px",
+								border: "1px solid var(--border)",
+								opacity: 0.6,
+							}}
+						>
+							{badge}
+						</span>
+					)}
+				</div>
+				{path && (
+					<div
+						className="truncate"
+						style={{
+							fontSize: 11,
+							color: isSelected ? "var(--accent)" : "var(--fg-secondary)",
+							fontFamily: "var(--font-mono)",
+							marginTop: 1,
+							opacity: isSelected ? 1 : 0.7,
+						}}
+					>
+						{path}
+					</div>
+				)}
+			</div>
+			{isSelected && (
+				<div style={{ color: "var(--accent)", flexShrink: 0 }}>
+					<Check size={14} />
+				</div>
+			)}
+			{!available && (
+				<span
+					className="flex-shrink-0"
+					style={{
+						fontSize: 10,
+						color: "var(--fg-secondary)",
+						opacity: 0.7,
+					}}
+				>
+					Not found
+				</span>
+			)}
+		</button>
+	);
+}
+
 export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const [section, setSection] = useState<Section>("theme");
 
@@ -756,6 +873,8 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const setFontSize = useSettingsStore((s) => s.setFontSize);
 	const uiFontSize = useSettingsStore((s) => s.uiFontSize);
 	const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
+	const shellPath = useSettingsStore((s) => s.shellPath);
+	const setShellPath = useSettingsStore((s) => s.setShellPath);
 	const agents = useSettingsStore((s) => s.agents);
 	const addAgent = useSettingsStore((s) => s.addAgent);
 	const removeAgent = useSettingsStore((s) => s.removeAgent);
@@ -776,6 +895,21 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 			})
 			.catch(() => {
 				setSystemFonts([]);
+			});
+	}, [isOpen]);
+
+	const [availableShells, setAvailableShells] = useState<AvailableShell[]>([]);
+	const shellsLoaded = useRef(false);
+	useEffect(() => {
+		if (!isOpen || shellsLoaded.current) return;
+		shellsIpc
+			.listAvailable()
+			.then((shells) => {
+				setAvailableShells(shells);
+				shellsLoaded.current = true;
+			})
+			.catch(() => {
+				setAvailableShells([]);
 			});
 	}, [isOpen]);
 
@@ -895,6 +1029,12 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 							onClick={() => setSection("ui-font")}
 						/>
 						<NavItem
+							label="Shell"
+							icon={<TerminalIcon />}
+							isActive={section === "shell"}
+							onClick={() => setSection("shell")}
+						/>
+						<NavItem
 							label="Agents"
 							icon={<AgentIcon />}
 							isActive={section === "agents"}
@@ -963,6 +1103,43 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 										searchPlaceholder="Search UI fonts..."
 										previewStyle="ui"
 									/>
+								</div>
+							</div>
+						)}
+
+						{section === "shell" && (
+							<div className="flex flex-col flex-1 min-h-0">
+								<SectionLabel>Default Shell</SectionLabel>
+								<p
+									style={{
+										fontSize: 12,
+										color: "var(--fg-secondary)",
+										marginBottom: 12,
+										lineHeight: 1.5,
+									}}
+								>
+									Choose the shell for new terminal panes. Existing panes are
+									not affected.
+								</p>
+								<div className="overflow-y-auto flex flex-col flex-1 min-h-0 gap-0.5">
+									<ShellRow
+										name="System Default"
+										path={availableShells.find((s) => s.isDefault)?.path ?? ""}
+										isSelected={shellPath === null}
+										available={true}
+										badge="Default"
+										onSelect={() => setShellPath(null)}
+									/>
+									{availableShells.map((shell) => (
+										<ShellRow
+											key={shell.path}
+											name={shell.name}
+											path={shell.path}
+											isSelected={shellPath === shell.path}
+											available={shell.available}
+											onSelect={() => setShellPath(shell.path)}
+										/>
+									))}
 								</div>
 							</div>
 						)}

@@ -24,6 +24,13 @@ export function getLastOutputAt(ptyId: string): number | null {
 	return lastOutputTimestamps.get(ptyId) ?? null;
 }
 
+/** Refresh the last-output timestamp without triggering a Zustand state transition.
+ *  Used in agent mode to keep the idle scanner from transitioning "active" → "waiting"
+ *  while output is still flowing but below the byte-accumulation threshold. */
+export function touchLastOutput(ptyId: string, now?: number): void {
+	lastOutputTimestamps.set(ptyId, now ?? Date.now());
+}
+
 export function isShellCommandRunning(ptyId: string): boolean {
 	return shellCommandRunning.get(ptyId) ?? false;
 }
@@ -55,6 +62,7 @@ interface PtyActivityState_Store {
 	markIdle: (ptyId: string) => void;
 	clearError: (ptyId: string) => void;
 	setAgentPty: (ptyId: string) => void;
+	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
 	registerPane: (paneId: string, ptyId: string) => void;
 	markSessionOpened: (sessionId: string) => void;
@@ -189,6 +197,25 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			}
 		},
 
+		clearAgentPty: (ptyId) => {
+			const s = get();
+			if (!s.agentPtyIds.has(ptyId)) return;
+			const newSet = new Set(s.agentPtyIds);
+			newSet.delete(ptyId);
+			const entry = s.activities[ptyId];
+			if (entry) {
+				set({
+					agentPtyIds: newSet,
+					activities: {
+						...s.activities,
+						[ptyId]: { ...entry, detectionMode: "shell" },
+					},
+				});
+			} else {
+				set({ agentPtyIds: newSet });
+			}
+		},
+
 		registerPane: (paneId, ptyId) => {
 			if (get().panePtyMap[paneId] === ptyId) return;
 			set((s) => ({ panePtyMap: { ...s.panePtyMap, [paneId]: ptyId } }));
@@ -210,7 +237,11 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			shellCommandRunning.delete(ptyId);
 			set((s) => {
 				const { [ptyId]: _, ...rest } = s.activities;
-				return { activities: rest };
+				const newAgentIds = new Set(s.agentPtyIds);
+				const changed = newAgentIds.delete(ptyId);
+				return changed
+					? { activities: rest, agentPtyIds: newAgentIds }
+					: { activities: rest };
 			});
 		},
 
@@ -233,19 +264,30 @@ export function setFocusedPaneIdGetter(getter: () => string | null): void {
 	_getFocusedPaneId = getter;
 }
 
+// Cached reverse map: only rebuilt when panePtyMap reference changes
+let _cachedPanePtyMapRef: Record<string, string> | null = null;
+let _cachedPtyToPaneMap: Record<string, string> = {};
+
 setInterval(() => {
 	const { activities, panePtyMap } = usePtyActivityStore.getState();
 	const now = Date.now();
 	const updates: Record<string, PtyActivityEntry> = {};
 	let hasChanges = false;
 
-	// Build reverse map: ptyId → paneId
-	const ptyToPaneMap: Record<string, string> = {};
-	for (const [paneId, ptyId] of Object.entries(panePtyMap)) {
-		ptyToPaneMap[ptyId] = paneId;
+	// Rebuild reverse map only when panePtyMap has changed (Zustand produces
+	// a new object reference on mutation, so === is sufficient)
+	if (panePtyMap !== _cachedPanePtyMapRef) {
+		_cachedPanePtyMapRef = panePtyMap;
+		_cachedPtyToPaneMap = {};
+		for (const [paneId, ptyId] of Object.entries(panePtyMap)) {
+			_cachedPtyToPaneMap[ptyId] = paneId;
+		}
 	}
 
 	const focusedPaneId = _getFocusedPaneId?.() ?? null;
+	// If the getter hasn't been injected yet, treat every pane as focused
+	// so we don't spam "waiting" transitions during startup.
+	const focusGetterReady = _getFocusedPaneId !== null;
 	const appHasFocus = typeof document !== "undefined" && document.hasFocus();
 
 	for (const [ptyId, entry] of Object.entries(activities)) {
@@ -256,9 +298,10 @@ setInterval(() => {
 		if (entry.state === "active" && elapsed > IDLE_THRESHOLD_MS) {
 			// Don't transition to idle if a shell command is still running
 			if (shellCommandRunning.get(ptyId)) continue;
-			const paneId = ptyToPaneMap[ptyId];
+			const paneId = _cachedPtyToPaneMap[ptyId];
 			const isFocused =
-				appHasFocus && paneId != null && focusedPaneId === paneId;
+				!focusGetterReady ||
+				(appHasFocus && paneId != null && focusedPaneId === paneId);
 			// Agent mode always goes to "waiting" — the agent finished work and
 			// is waiting for user input, even when the terminal has focus.
 			const nextState =

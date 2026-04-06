@@ -11,11 +11,31 @@ describe("parseShellIntegration", () => {
 		expect(result.commands).toEqual([]);
 	});
 
-	it("parses command_start sequence", () => {
+	it("parses command_start sequence without command text", () => {
 		const data = encode("\x1b]7770;command_start\x07");
 		const result = parseShellIntegration(data);
 		expect(result.cleaned.length).toBe(0);
-		expect(result.commands).toEqual([{ type: "command_start" }]);
+		expect(result.commands).toEqual([
+			{ type: "command_start", commandText: undefined },
+		]);
+	});
+
+	it("parses command_start with command text", () => {
+		const data = encode("\x1b]7770;command_start;claude\x07");
+		const result = parseShellIntegration(data);
+		expect(result.cleaned.length).toBe(0);
+		expect(result.commands).toEqual([
+			{ type: "command_start", commandText: "claude" },
+		]);
+	});
+
+	it("parses command_start with full command line", () => {
+		const data = encode("\x1b]7770;command_start;npx claude --model opus\x07");
+		const result = parseShellIntegration(data);
+		expect(result.cleaned.length).toBe(0);
+		expect(result.commands).toEqual([
+			{ type: "command_start", commandText: "npx claude --model opus" },
+		]);
 	});
 
 	it("parses command_end with exit code 0", () => {
@@ -39,7 +59,7 @@ describe("parseShellIntegration", () => {
 		const result = parseShellIntegration(data);
 		expect(result.cleaned.length).toBe(0);
 		expect(result.commands).toEqual([
-			{ type: "command_start" },
+			{ type: "command_start", commandText: undefined },
 			{ type: "command_end", exitCode: 0 },
 		]);
 	});
@@ -52,7 +72,7 @@ describe("parseShellIntegration", () => {
 		const cleanedStr = new TextDecoder().decode(result.cleaned);
 		expect(cleanedStr).toBe("beforemiddleafter");
 		expect(result.commands).toEqual([
-			{ type: "command_start" },
+			{ type: "command_start", commandText: undefined },
 			{ type: "command_end", exitCode: 42 },
 		]);
 	});

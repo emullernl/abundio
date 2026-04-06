@@ -8,6 +8,7 @@ import {
 	getLastOutputAt,
 	type PtyActivityEntry,
 	shouldPulse,
+	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
 
@@ -454,5 +455,65 @@ describe("detection mode", () => {
 		expect(
 			usePtyActivityStore.getState().activities["pty-1"].detectionMode,
 		).toBe("agent");
+	});
+
+	it("clearAgentPty reverts agent mode to shell", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().setAgentPty("pty-1");
+		usePtyActivityStore.getState().clearAgentPty("pty-1");
+		const state = usePtyActivityStore.getState();
+		expect(state.agentPtyIds.has("pty-1")).toBe(false);
+		expect(state.activities["pty-1"].detectionMode).toBe("shell");
+	});
+
+	it("clearAgentPty is no-op for shell-mode PTY", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		const before = usePtyActivityStore.getState();
+		usePtyActivityStore.getState().clearAgentPty("pty-1");
+		const after = usePtyActivityStore.getState();
+		expect(after.agentPtyIds).toBe(before.agentPtyIds);
+	});
+
+	it("clearAgentPty handles missing activity entry", () => {
+		usePtyActivityStore.setState({
+			agentPtyIds: new Set(["pty-orphan"]),
+		});
+		usePtyActivityStore.getState().clearAgentPty("pty-orphan");
+		expect(usePtyActivityStore.getState().agentPtyIds.has("pty-orphan")).toBe(
+			false,
+		);
+	});
+
+	it("removePty cleans up agentPtyIds", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().setAgentPty("pty-1");
+		usePtyActivityStore.getState().removePty("pty-1");
+		expect(usePtyActivityStore.getState().agentPtyIds.has("pty-1")).toBe(false);
+	});
+});
+
+describe("touchLastOutput", () => {
+	it("updates getLastOutputAt without changing Zustand state", () => {
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().recordOutput("pty-1");
+		const stateBefore = usePtyActivityStore.getState().activities["pty-1"];
+
+		touchLastOutput("pty-1", 9999);
+
+		// External map is updated
+		expect(getLastOutputAt("pty-1")).toBe(9999);
+		// Zustand state object is unchanged (no re-render)
+		expect(usePtyActivityStore.getState().activities["pty-1"]).toBe(
+			stateBefore,
+		);
+	});
+
+	it("defaults to Date.now() when no timestamp provided", () => {
+		const before = Date.now();
+		touchLastOutput("pty-1");
+		const after = Date.now();
+		const ts = getLastOutputAt("pty-1");
+		expect(ts).toBeGreaterThanOrEqual(before);
+		expect(ts).toBeLessThanOrEqual(after);
 	});
 });

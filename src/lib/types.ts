@@ -154,3 +154,10 @@ export interface PullRequest {
 	labels: string[];
 	repository: string;
 }
+
+export interface AvailableShell {
+	name: string;
+	path: string;
+	available: boolean;
+	isDefault: boolean;
+}

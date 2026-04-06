@@ -1,8 +1,11 @@
 use std::env;
+use std::path::Path;
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::sync::OnceLock;
+
+use serde::Serialize;
 
 /// Windows process creation flag to suppress console window popups.
 #[cfg(target_os = "windows")]
@@ -81,6 +84,158 @@ pub fn shell_path() -> &'static str {
         let current = env::var("PATH").unwrap_or_default();
         format!("{current}:/opt/homebrew/bin:/usr/local/bin")
     })
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableShell {
+    pub name: String,
+    pub path: String,
+    pub available: bool,
+    pub is_default: bool,
+}
+
+/// Returns a list of shells available on the system.
+///
+/// On Unix, reads `/etc/shells` and validates each path exists.
+/// On Windows, checks for Git Bash and PowerShell.
+pub fn list_available_shells() -> Vec<AvailableShell> {
+    let default = default_shell();
+
+    if cfg!(target_os = "windows") {
+        list_available_shells_windows(&default)
+    } else {
+        list_available_shells_unix(&default)
+    }
+}
+
+fn list_available_shells_unix(default: &str) -> Vec<AvailableShell> {
+    let mut shells = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Ok(contents) = std::fs::read_to_string("/etc/shells") {
+        for line in contents.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if !seen.insert(line.to_string()) {
+                continue;
+            }
+            let path = Path::new(line);
+            let available = path.exists();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(line)
+                .to_string();
+            shells.push(AvailableShell {
+                name,
+                path: line.to_string(),
+                available,
+                is_default: line == default,
+            });
+        }
+    }
+
+    shells
+}
+
+fn list_available_shells_windows(default: &str) -> Vec<AvailableShell> {
+    let mut shells = Vec::new();
+
+    // Git Bash
+    let git_bash_path = find_git_bash();
+    let git_bash_available = git_bash_path.is_some();
+    shells.push(AvailableShell {
+        name: "Git Bash".to_string(),
+        path: git_bash_path.unwrap_or_else(|| "bash.exe".to_string()),
+        available: git_bash_available,
+        is_default: git_bash_available && default.contains("bash"),
+    });
+
+    // PowerShell 7 (pwsh)
+    let pwsh_path = find_powershell("pwsh");
+    let pwsh_available = pwsh_path.is_some();
+
+    // Windows PowerShell 5.1 (powershell.exe)
+    let ps5_path = find_powershell("powershell");
+    let ps5_available = ps5_path.is_some();
+
+    if pwsh_available {
+        shells.push(AvailableShell {
+            name: "PowerShell 7".to_string(),
+            path: pwsh_path.unwrap(),
+            available: true,
+            is_default: !git_bash_available,
+        });
+    }
+    if ps5_available {
+        shells.push(AvailableShell {
+            name: "Windows PowerShell".to_string(),
+            path: ps5_path.unwrap(),
+            available: true,
+            is_default: !git_bash_available && !pwsh_available,
+        });
+    }
+
+    // If neither pwsh nor powershell found, add a disabled entry
+    if !pwsh_available && !ps5_available {
+        shells.push(AvailableShell {
+            name: "PowerShell".to_string(),
+            path: "pwsh.exe".to_string(),
+            available: false,
+            is_default: false,
+        });
+    }
+
+    shells
+}
+
+fn find_git_bash() -> Option<String> {
+    for path in [
+        "C:\\Program Files\\Git\\bin\\bash.exe",
+        "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+    ] {
+        if Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+    // Check PATH
+    where_command("bash.exe")
+}
+
+fn find_powershell(name: &str) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let exe = format!("{name}.exe");
+        where_command(&exe)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = name;
+        None
+    }
+}
+
+fn where_command(exe: &str) -> Option<String> {
+    let mut cmd = Command::new(if cfg!(target_os = "windows") { "where" } else { "which" });
+    cmd.arg(exe);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd.output().ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !path.is_empty() {
+            return Some(path);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

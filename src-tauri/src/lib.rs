@@ -201,6 +201,7 @@ pub fn run() {
             gh_commands::gh_my_prs,
             gh_commands::gh_my_prs_all,
             commands::list_system_fonts,
+            commands::list_available_shells,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

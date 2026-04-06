@@ -1,0 +1,114 @@
+import { describe, expect, it } from "vitest";
+import { stripResetSequences } from "../terminalResetFilter";
+
+const encode = (s: string): Uint8Array => new TextEncoder().encode(s);
+
+describe("stripResetSequences", () => {
+	it("returns original reference when no ESC bytes present", () => {
+		const data = encode("hello world");
+		const result = stripResetSequences(data);
+		expect(result).toBe(data);
+	});
+
+	it("returns original reference for empty input", () => {
+		const data = new Uint8Array(0);
+		const result = stripResetSequences(data);
+		expect(result).toBe(data);
+	});
+
+	it("strips ESC c (RIS)", () => {
+		const data = encode("\x1bc");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips ESC [ 2 J (ED 2 — erase display)", () => {
+		const data = encode("\x1b[2J");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips ESC [ 3 J (ED 3 — erase scrollback)", () => {
+		const data = encode("\x1b[3J");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips all reset/clear/home sequences in a row", () => {
+		const data = encode("\x1bc\x1b[H\x1b[2J\x1b[3J");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips reset interleaved with normal output", () => {
+		const data = encode("hello\x1bcworld");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("helloworld");
+	});
+
+	it("strips ED sequences interleaved with normal output", () => {
+		const data = encode("before\x1b[2Jmiddle\x1b[3Jafter");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("beforemiddleafter");
+	});
+
+	it("preserves ESC at end of buffer (partial sequence)", () => {
+		const data = encode("hello\x1b");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("hello\x1b");
+	});
+
+	it("preserves ESC [ at end of buffer (partial CSI)", () => {
+		const data = encode("hello\x1b[");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("hello\x1b[");
+	});
+
+	it("preserves ESC followed by non-reset byte", () => {
+		const data = encode("\x1b[0m");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("\x1b[0m");
+	});
+
+	it("preserves similar but different ED sequences (ESC [ 1 J, ESC [ 0 J)", () => {
+		const data = encode("\x1b[1J\x1b[0J");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("\x1b[1J\x1b[0J");
+	});
+
+	it("preserves other ESC sequences like SGR", () => {
+		const data = encode("\x1b[1;32mgreen\x1b[0m");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("\x1b[1;32mgreen\x1b[0m");
+	});
+
+	it("strips ESC [ H (cursor home)", () => {
+		const data = encode("\x1b[H");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips ESC [ ; H (cursor home variant)", () => {
+		const data = encode("\x1b[;H");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips typical clear+home combo", () => {
+		const data = encode("\x1b[2J\x1b[Huser@host:~$ ");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("user@host:~$ ");
+	});
+
+	it("preserves cursor movement to non-home positions", () => {
+		const data = encode("\x1b[5;1H\x1b[10;20H");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("\x1b[5;1H\x1b[10;20H");
+	});
+
+	it("handles reset at the very end of output", () => {
+		const data = encode("some output\x1b[3J");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("some output");
+	});
+});

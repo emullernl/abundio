@@ -2,6 +2,7 @@
 ///
 /// Provides a single function `has_child_processes(pid)` that checks whether
 /// the given process has any child processes, using platform-native APIs.
+/// Used only for `ShellType::Other` to emit CommandStarted/CommandFinished.
 
 /// Returns `true` if the process identified by `pid` has at least one child process.
 #[cfg(target_os = "macos")]

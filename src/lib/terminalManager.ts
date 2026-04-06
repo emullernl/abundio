@@ -9,6 +9,7 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import {
 	setFocusedPaneIdGetter,
 	setShellCommandRunning,
+	touchLastOutput,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
@@ -17,6 +18,7 @@ import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
 import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
+import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
 
 function containsPaneId(node: PaneNode, targetPaneId: string): boolean {
@@ -67,6 +69,19 @@ export interface ManagedTerminal {
 	ready: boolean;
 	/** True once the terminal has been projected, fit, and painted — loader waits for this */
 	settled: boolean;
+	/** Buffers PTY output during shell startup so reset sequences can be stripped from the
+	 *  complete buffer before writing. Null when the grace period has ended. */
+	startupBuffer: Uint8Array[] | null;
+	/** Set to true once tryFlushStartup has scheduled its flush so re-entrant calls are ignored */
+	startupFlushScheduled: boolean;
+	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods) */
+	filterResets: boolean;
+	/** True once the shell's first precmd/command_end has fired — shell init is complete */
+	startupShellReady: boolean;
+	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
+	pendingWrites: Uint8Array[];
+	/** rAF handle for the pending write flush, or null if none scheduled */
+	writeRafId: number | null;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -99,7 +114,9 @@ async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
 	let bgBytesSinceIdle = 0;
 	let bgLastOutputChunkAt = 0;
-	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
+	// Use onOutputRaw to skip base64 decode — background trackers only need
+	// approximate byte counts for activity thresholds, not decoded content.
+	const unlistenOutput = await pty.onOutputRaw(ptyId, (base64Data) => {
 		// Only run byte accumulation for agent-mode PTYs
 		const entry = usePtyActivityStore.getState().activities[ptyId];
 		if (entry?.detectionMode !== "agent") return;
@@ -111,8 +128,12 @@ async function startBackgroundTracking(ptyId: string) {
 			bgBytesSinceIdle = 0;
 		}
 		bgLastOutputChunkAt = now;
-		bgBytesSinceIdle += data.length;
-		if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+		// Estimate decoded byte count from base64 string length
+		bgBytesSinceIdle += Math.floor(base64Data.length * 0.75);
+
+		if (entry?.state === "active") {
+			touchLastOutput(ptyId, now);
+		} else if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 			bgBytesSinceIdle = 0;
 			usePtyActivityStore.getState().recordOutput(ptyId);
 		}
@@ -138,6 +159,38 @@ function stopBackgroundTracking(ptyId: string) {
 		tracker.unlistenStatus();
 		backgroundTrackers.delete(ptyId);
 	}
+}
+
+/** Queue a chunk for batched writing to xterm.js.  All chunks queued within
+ *  one animation frame are concatenated and written in a single term.write()
+ *  call, which xterm processes more efficiently than many small writes. */
+function scheduleWrite(managed: ManagedTerminal, chunk: Uint8Array): void {
+	managed.pendingWrites.push(chunk);
+	if (managed.writeRafId === null) {
+		managed.writeRafId = requestAnimationFrame(() => {
+			flushWrites(managed);
+		});
+	}
+}
+
+function flushWrites(managed: ManagedTerminal): void {
+	managed.writeRafId = null;
+	const chunks = managed.pendingWrites;
+	if (chunks.length === 0) return;
+	if (chunks.length === 1) {
+		managed.term.write(chunks[0]);
+	} else {
+		let total = 0;
+		for (const c of chunks) total += c.length;
+		const merged = new Uint8Array(total);
+		let offset = 0;
+		for (const c of chunks) {
+			merged.set(c, offset);
+			offset += c.length;
+		}
+		managed.term.write(merged);
+	}
+	managed.pendingWrites = [];
 }
 
 // Deferred subscription — runs after all modules are initialized
@@ -177,15 +230,19 @@ export async function createTerminal(
 	container: HTMLElement,
 	options: { fontSize: number; fontFamily: string; theme: ITheme },
 ): Promise<ManagedTerminal> {
-	// Ensure all font variants are loaded before xterm rasterizes glyphs into its texture atlas
-	try {
-		await Promise.all([
-			document.fonts.load(`${options.fontSize}px ${options.fontFamily}`),
-			document.fonts.load(`bold ${options.fontSize}px ${options.fontFamily}`),
-			document.fonts.load(`italic ${options.fontSize}px ${options.fontFamily}`),
-		]);
-	} catch {
-		// Proceed with fallback if font loading fails
+	// Ensure all font variants are loaded before xterm rasterizes glyphs into its texture atlas.
+	// Fonts are eagerly preloaded in main.tsx; this is a fast synchronous check with async fallback.
+	const fontSpec = `${options.fontSize}px ${options.fontFamily}`;
+	if (!document.fonts.check(fontSpec)) {
+		try {
+			await Promise.all([
+				document.fonts.load(fontSpec),
+				document.fonts.load(`bold ${fontSpec}`),
+				document.fonts.load(`italic ${fontSpec}`),
+			]);
+		} catch {
+			// Proceed with fallback if font loading fails
+		}
 	}
 
 	const term = new Terminal({
@@ -208,15 +265,24 @@ export async function createTerminal(
 	term.unicode.activeVersion = "11";
 	term.open(container);
 
-	try {
-		const webgl = new WebglAddon();
-		webgl.onContextLoss(() => webgl.dispose());
-		term.loadAddon(webgl);
-	} catch {
-		// Canvas renderer fallback
-	}
+	const loadWebgl = (retries = 3) => {
+		if (retries <= 0) return;
+		try {
+			const webgl = new WebglAddon();
+			webgl.onContextLoss(() => {
+				webgl.dispose();
+				requestAnimationFrame(() => loadWebgl(retries - 1));
+			});
+			term.loadAddon(webgl);
+		} catch {
+			// Canvas renderer fallback
+		}
+	};
+	loadWebgl();
 
-	fitAddon.fit();
+	if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+		fitAddon.fit();
+	}
 
 	const managed: ManagedTerminal = {
 		term,
@@ -234,14 +300,61 @@ export async function createTerminal(
 		lastOutputChunkAt: 0,
 		ready: false,
 		settled: false,
+		filterResets: false,
+		startupBuffer: [],
+		startupFlushScheduled: false,
+		startupShellReady: false,
+		pendingWrites: [],
+		writeRafId: null,
 	};
 
 	instances.set(paneId, managed);
 
-	// Initialize PTY connection (scrollback is deferred until projectInto)
+	// Load scrollback BEFORE returning so it's available when projectInto
+	// calls flushPendingRestore. initPty is fire-and-forget, so if we read
+	// scrollback inside it, the data wouldn't be ready in time.
+	await loadScrollback(paneId, managed);
+
+	// Initialize PTY connection (listeners + spawn, fire-and-forget)
 	initPty(paneId, managed, cwd);
 
 	return managed;
+}
+
+/** Load scrollback from snapshot/log and store it on the managed terminal.
+ *  Called from createTerminal (awaited) so data is ready before projectInto. */
+async function loadScrollback(
+	paneId: string,
+	managed: ManagedTerminal,
+): Promise<void> {
+	const currentPtyId = managed.ptyId;
+
+	// Fire both reads concurrently and pick the preferred source afterwards.
+	// When reconnecting to a running PTY, prefer the log over the snapshot.
+	let restoreData: string | Uint8Array | null = null;
+	if (currentPtyId) {
+		const [log, snapshot] = await Promise.all([
+			pty.readLog(paneId),
+			pty.readSnapshot(paneId),
+		]);
+		restoreData = log ?? snapshot;
+	} else {
+		const [snapshot, log] = await Promise.all([
+			pty.readSnapshot(paneId),
+			pty.readLog(paneId),
+		]);
+		restoreData = snapshot ?? log;
+	}
+	if (restoreData) {
+		if (managed.term.cols > 1 && managed.term.rows > 1) {
+			managed.restoring = true;
+			managed.term.write(restoreData, () => {
+				managed.restoring = false;
+			});
+		} else {
+			managed.pendingRestore = restoreData;
+		}
+	}
 }
 
 async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
@@ -251,29 +364,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	const { setPtyStatus } = useSessionStore.getState();
 
-	// Load scrollback but defer writing until terminal is projected into a visible container
-	// (writing into a 0x0 hidden container would wrap content at ~2 columns)
-	// When reconnecting to a running PTY, prefer the log over the snapshot — the log
-	// includes output produced while the UI was torn down, while the snapshot is stale.
-	let restoreData: string | Uint8Array | null = null;
-	if (currentPtyId) {
-		restoreData =
-			(await pty.readLog(paneId)) ?? (await pty.readSnapshot(paneId));
-	} else {
-		const snapshot = await pty.readSnapshot(paneId);
-		restoreData = snapshot ?? (await pty.readLog(paneId));
-	}
-	if (restoreData) {
-		// If terminal is already projected (has real dimensions), write immediately;
-		// otherwise store for flushPendingRestore() to handle after projection
-		if (term.cols > 1 && term.rows > 1) {
-			managed.restoring = true;
-			term.write(restoreData, () => {
-				managed.restoring = false;
-			});
-		} else {
-			managed.pendingRestore = restoreData;
-		}
+	// No grace period needed for reconnections — the shell has already started
+	if (!isNewPty) {
+		managed.startupBuffer = null;
+		managed.startupShellReady = true;
 	}
 
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
@@ -301,115 +395,173 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		pty.write(currentPtyId, data);
 	});
 
-	const unlistenOutput = await pty.onOutput(currentPtyId, (data) => {
-		const entry = usePtyActivityStore.getState().activities[currentPtyId];
-		if (entry?.detectionMode === "shell") {
-			// Shell mode: parse and strip shell integration sequences, no output pipeline
+	// Register all event listeners and spawn PTY in parallel — each is an async
+	// IPC round-trip, so running them concurrently cuts init time significantly.
+	const [unlistenOutput, unlistenActivity, unlistenStatus] = await Promise.all([
+		pty.onOutput(currentPtyId, (data) => {
+			// Always parse and strip shell integration sequences in both modes,
+			// so command_end is detected even while in agent mode.
 			const { cleaned, commands } = parseShellIntegration(data);
-			term.write(cleaned);
-			if (managed.suppressActivity) return;
+
+			// Cache store state once per chunk to avoid repeated getState() calls
+			const actState = usePtyActivityStore.getState();
+			const entry = actState.activities[currentPtyId];
+			const isAgentMode = entry?.detectionMode === "agent";
+
+			if (managed.startupBuffer) {
+				managed.startupBuffer.push(cleaned);
+			} else {
+				const output = managed.filterResets
+					? stripResetSequences(cleaned)
+					: cleaned;
+				scheduleWrite(managed, output);
+			}
+
+			// Process shell integration commands (agent detection + shell activity)
 			for (const cmd of commands) {
-				const actStore = usePtyActivityStore.getState();
 				if (cmd.type === "command_start") {
-					setShellCommandRunning(currentPtyId, true);
-					actStore.recordOutput(currentPtyId);
+					// Agent detection from command text
+					if (cmd.commandText) {
+						const agents = useSettingsStore.getState().agents;
+						if (matchTitleToAgent(cmd.commandText, agents)) {
+							actState.setAgentPty(currentPtyId);
+						}
+					}
+					if (!managed.suppressActivity && !isAgentMode) {
+						setShellCommandRunning(currentPtyId, true);
+						actState.recordOutput(currentPtyId);
+					}
 				} else if (cmd.type === "command_end") {
-					setShellCommandRunning(currentPtyId, false);
-					if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
-						actStore.recordError(currentPtyId);
-					} else {
-						const isFocused =
-							document.hasFocus() &&
-							useSessionStore.getState().focusedPaneId === paneId;
-						if (isFocused) {
-							actStore.markIdle(currentPtyId);
+					managed.startupShellReady = true;
+					tryFlushStartup(managed);
+					// Exit agent mode when the command finishes — re-fetch
+					// state since setAgentPty above may have mutated it
+					const freshState = usePtyActivityStore.getState();
+					const currentEntry = freshState.activities[currentPtyId];
+					if (currentEntry?.detectionMode === "agent") {
+						freshState.clearAgentPty(currentPtyId);
+					}
+					const wasAgentMode =
+						currentEntry?.detectionMode === "agent";
+					if (!managed.suppressActivity && !wasAgentMode) {
+						setShellCommandRunning(currentPtyId, false);
+						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
+							freshState.recordError(currentPtyId);
 						} else {
-							actStore.recordExitSuccess(currentPtyId);
+							const isFocused =
+								document.hasFocus() &&
+								useSessionStore.getState().focusedPaneId === paneId;
+							if (isFocused) {
+								freshState.markIdle(currentPtyId);
+							} else {
+								freshState.recordExitSuccess(currentPtyId);
+							}
 						}
 					}
 				}
 			}
-		} else {
-			// Agent mode: existing byte accumulation pipeline
-			term.write(data);
-			if (
-				!managed.suppressActivity &&
-				Date.now() - managed.lastInputAt > INPUT_GATE_MS
-			) {
+
+			// Agent mode: byte accumulation activity tracking
+			if (isAgentMode) {
 				const now = Date.now();
 				if (
-					managed.lastOutputChunkAt &&
-					now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
+					!managed.suppressActivity &&
+					now - managed.lastInputAt > INPUT_GATE_MS
 				) {
-					managed.bytesSinceIdle = 0;
-				}
-				managed.lastOutputChunkAt = now;
-				managed.bytesSinceIdle += data.length;
-				if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
-					managed.bytesSinceIdle = 0;
-					usePtyActivityStore.getState().recordOutput(currentPtyId);
+					if (
+						managed.lastOutputChunkAt &&
+						now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
+					) {
+						managed.bytesSinceIdle = 0;
+					}
+					managed.lastOutputChunkAt = now;
+					managed.bytesSinceIdle += cleaned.length;
+
+					if (entry?.state === "active") {
+						touchLastOutput(currentPtyId, now);
+					} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+						managed.bytesSinceIdle = 0;
+						usePtyActivityStore.getState().recordOutput(currentPtyId);
+					}
 				}
 			}
-		}
-	});
+		}),
 
-	// Process monitoring: command start/stop detection for shell mode
-	const unlistenActivity = await pty.onActivity(currentPtyId, (activity) => {
-		if (managed.suppressActivity) return;
-		const actStore = usePtyActivityStore.getState();
-		const entry = actStore.activities[currentPtyId];
-		if (entry?.detectionMode !== "shell") return;
-		if (activity.type === "commandStarted") {
-			setShellCommandRunning(currentPtyId, true);
-			actStore.recordOutput(currentPtyId);
-		} else if (activity.type === "commandFinished") {
-			setShellCommandRunning(currentPtyId, false);
-			if (entry.state === "active") {
-				const isFocused =
-					document.hasFocus() &&
-					useSessionStore.getState().focusedPaneId === paneId;
-				if (isFocused) {
-					actStore.markIdle(currentPtyId);
+		pty.onActivity(currentPtyId, (activity) => {
+			if (managed.suppressActivity) return;
+
+			const actStore = usePtyActivityStore.getState();
+
+			// Shell command tracking — only applies in shell mode
+			const entry = actStore.activities[currentPtyId];
+			if (entry?.detectionMode !== "shell") return;
+			if (activity.type === "commandStarted") {
+				setShellCommandRunning(currentPtyId, true);
+				actStore.recordOutput(currentPtyId);
+			} else if (activity.type === "commandFinished") {
+				setShellCommandRunning(currentPtyId, false);
+				if (entry.state === "active") {
+					const isFocused =
+						document.hasFocus() &&
+						useSessionStore.getState().focusedPaneId === paneId;
+					if (isFocused) {
+						actStore.markIdle(currentPtyId);
+					} else {
+						actStore.recordExitSuccess(currentPtyId);
+					}
+				}
+			}
+		}),
+
+		pty.onStatus(currentPtyId, (status) => {
+			if (status.type === "exited") {
+				// Set activity state BEFORE setPtyStatus to avoid subscriber race
+				const actStore = usePtyActivityStore.getState();
+				if (status.code !== 0 && status.code !== null) {
+					actStore.recordError(currentPtyId);
 				} else {
 					actStore.recordExitSuccess(currentPtyId);
 				}
 			}
-		}
-	});
-
-	const unlistenStatus = await pty.onStatus(currentPtyId, (status) => {
-		if (status.type === "exited") {
-			// Set activity state BEFORE setPtyStatus to avoid subscriber race
-			const actStore = usePtyActivityStore.getState();
-			if (status.code !== 0 && status.code !== null) {
-				actStore.recordError(currentPtyId);
-			} else {
-				actStore.recordExitSuccess(currentPtyId);
+			useSessionStore.getState().setPtyStatus(currentPtyId, status);
+			if (status.type === "exited") {
+				const exitMsg =
+					status.code === 0 ? "exited" : `exited with code ${status.code}`;
+				try {
+					sendNotification({ title: "Abundio", body: `Process ${exitMsg}` });
+				} catch {
+					// Notifications may not be permitted
+				}
 			}
-		}
-		useSessionStore.getState().setPtyStatus(currentPtyId, status);
-		if (status.type === "exited") {
-			const exitMsg =
-				status.code === 0 ? "exited" : `exited with code ${status.code}`;
-			try {
-				sendNotification({ title: "Abundio", body: `Process ${exitMsg}` });
-			} catch {
-				// Notifications may not be permitted
-			}
-		}
-	});
+		}),
 
-	// Now spawn the PTY — listeners are already in place so no output is lost
+		// Spawn PTY concurrently with listener registration — listeners use
+		// event names that include the ptyId, so they won't miss output even
+		// if spawn completes first (Tauri buffers events until listen resolves).
+		...(isNewPty
+			? [
+					pty.spawn(
+						cwd,
+						term.cols,
+						term.rows,
+						undefined,
+						useSettingsStore.getState().shellPath ?? undefined,
+						paneId,
+						currentPtyId,
+					),
+				]
+			: []),
+	]);
+
+	// Safety timeout: flush the startup buffer even if shell integration
+	// hooks never fire (e.g. custom shell without integration support).
 	if (isNewPty) {
-		await pty.spawn(
-			cwd,
-			term.cols,
-			term.rows,
-			undefined,
-			paneId,
-			currentPtyId,
-		);
+		setTimeout(() => {
+			flushStartupBuffer(managed);
+		}, 3000);
+	}
 
+	if (isNewPty) {
 		// Write ptyId to the correct tab's layout (not just the active tab)
 		const store = useSessionStore.getState();
 		const session = store.getActiveSession();
@@ -432,11 +584,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	term.onTitleChange((title) => {
 		const actStore = usePtyActivityStore.getState();
 		actStore.setTitle(paneId, title);
-		// Auto-detect coding agents from terminal title
-		const agents = useSettingsStore.getState().agents;
-		if (matchTitleToAgent(title, agents)) {
-			actStore.setAgentPty(currentPtyId);
-		}
 	});
 
 	// A click in an already-focused terminal (e.g. scrolling without typing) should
@@ -466,15 +613,69 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenActivity();
 		unlistenStatus();
 		term.element?.removeEventListener("mousedown", onTermClick);
+		if (managed.writeRafId !== null) {
+			cancelAnimationFrame(managed.writeRafId);
+			flushWrites(managed);
+		}
 	};
 
 	managed.ready = true;
 }
 
+/** Try to flush the startup buffer. Only flushes once BOTH the terminal is
+ *  settled (projected + scrollback written) AND the shell has finished
+ *  initializing (command_end received). Adds a short delay to also capture
+ *  the shell's resize-triggered redraw that follows projectInto's PTY resize. */
+function tryFlushStartup(managed: ManagedTerminal): void {
+	if (!managed.startupBuffer || managed.startupFlushScheduled) return;
+	if (!managed.settled || !managed.startupShellReady) return; // not ready yet
+	managed.startupFlushScheduled = true;
+	setTimeout(() => flushStartupBuffer(managed), 200);
+}
+
+/** Flush the startup output buffer: concatenate all chunks, strip terminal
+ *  reset/clear/home sequences, then write the cleaned result to the terminal. */
+function flushStartupBuffer(managed: ManagedTerminal): void {
+	const chunks = managed.startupBuffer;
+	if (!chunks) return;
+	managed.startupBuffer = null;
+
+	if (chunks.length === 0) return;
+
+	// Concatenate all buffered chunks into a single Uint8Array
+	let totalLen = 0;
+	for (const chunk of chunks) totalLen += chunk.length;
+	const combined = new Uint8Array(totalLen);
+	let offset = 0;
+	for (const chunk of chunks) {
+		combined.set(chunk, offset);
+		offset += chunk.length;
+	}
+
+	const cleaned = stripResetSequences(combined);
+	if (cleaned.length > 0) {
+		managed.term.write(cleaned);
+	}
+}
+
 /** Mark terminal as visually settled — loader can now hide */
 export function markSettled(paneId: string): void {
 	const managed = instances.get(paneId);
-	if (managed) managed.settled = true;
+	if (!managed) return;
+	managed.settled = true;
+	tryFlushStartup(managed);
+}
+
+/** Temporarily filter terminal reset sequences from PTY output.
+ *  Used around PTY resize during session switches to prevent the shell's
+ *  resize-triggered redraw from wiping existing terminal content. */
+export function beginResizeFilter(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed) return;
+	managed.filterResets = true;
+	setTimeout(() => {
+		managed.filterResets = false;
+	}, 500);
 }
 
 /** Write any deferred scrollback restore data now that the terminal has real dimensions */
@@ -492,6 +693,7 @@ export function flushPendingRestore(paneId: string): void {
 export function setAllTerminalsTheme(theme: ITheme): void {
 	for (const managed of instances.values()) {
 		managed.term.options.theme = theme;
+		managed.term.refresh(0, managed.term.rows - 1);
 	}
 }
 

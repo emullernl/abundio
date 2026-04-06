@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { decodeBase64 } from "./base64";
 import type {
+	AvailableShell,
 	BranchInfo,
 	DirEntry,
 	FileContent,
@@ -22,9 +24,19 @@ export const pty = {
 		cols: number,
 		rows: number,
 		command?: string,
+		shell?: string,
 		logId?: string,
 		ptyId?: string,
-	) => invoke<string>("pty_spawn", { cwd, cols, rows, command, logId, ptyId }),
+	) =>
+		invoke<string>("pty_spawn", {
+			cwd,
+			cols,
+			rows,
+			command,
+			shell,
+			logId,
+			ptyId,
+		}),
 
 	write: (ptyId: string, data: string) =>
 		invoke<void>("pty_write", { ptyId, data }),
@@ -39,10 +51,16 @@ export const pty = {
 		callback: (data: Uint8Array) => void,
 	): Promise<UnlistenFn> =>
 		listen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
-			const binary = Uint8Array.from(atob(event.payload.data), (c) =>
-				c.charCodeAt(0),
-			);
-			callback(binary);
+			callback(decodeBase64(event.payload.data));
+		}),
+
+	/** Like onOutput but passes the raw base64 string (no decode). */
+	onOutputRaw: (
+		ptyId: string,
+		callback: (base64Data: string) => void,
+	): Promise<UnlistenFn> =>
+		listen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
+			callback(event.payload.data);
 		}),
 
 	onStatus: (
@@ -64,7 +82,7 @@ export const pty = {
 	readLog: async (logId: string): Promise<Uint8Array | null> => {
 		const data = await invoke<string | null>("pty_read_log", { logId });
 		if (!data) return null;
-		return Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+		return decodeBase64(data);
 	},
 
 	writeSnapshot: (paneId: string, data: string) =>
@@ -182,4 +200,8 @@ export const fs = {
 
 export const fonts = {
 	listSystemFonts: () => invoke<string[]>("list_system_fonts"),
+};
+
+export const shells = {
+	listAvailable: () => invoke<AvailableShell[]>("list_available_shells"),
 };

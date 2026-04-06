@@ -1,6 +1,7 @@
 export interface ShellCommand {
 	type: "command_start" | "command_end";
 	exitCode?: number;
+	commandText?: string;
 }
 
 const ESC = 0x1b;
@@ -8,6 +9,7 @@ const BEL = 0x07;
 const BRACKET = 0x5d; // ']'
 
 const PREFIX = new TextEncoder().encode("]7770;");
+const textDecoder = new TextDecoder();
 
 export function parseShellIntegration(data: Uint8Array): {
 	cleaned: Uint8Array;
@@ -48,12 +50,19 @@ export function parseShellIntegration(data: Uint8Array): {
 				}
 
 				// Extract payload string between "7770;" and BEL
-				const payload = new TextDecoder().decode(
+				const payload = textDecoder.decode(
 					data.subarray(payloadStart, belIndex),
 				);
 
-				if (payload === "command_start") {
-					commands.push({ type: "command_start" });
+				if (
+					payload === "command_start" ||
+					payload.startsWith("command_start;")
+				) {
+					const text =
+						payload.length > "command_start;".length
+							? payload.slice("command_start;".length)
+							: undefined;
+					commands.push({ type: "command_start", commandText: text });
 				} else if (payload.startsWith("command_end;")) {
 					const codeStr = payload.slice("command_end;".length);
 					const parsed = Number.parseInt(codeStr, 10);
