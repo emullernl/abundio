@@ -428,6 +428,8 @@ PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
     let _ = fs::write(&bashrc, bashrc_content);
 
     // PowerShell: wrapper init script that sources user profile then adds hooks
+    // Uses [char]0x1b (ESC) and [char]0x07 (BEL) for PS 5.1 compatibility
+    // (`e and `a require PS 6+).
     let ps1 = dir.join("abundio_init.ps1");
     let _ = fs::write(
         &ps1,
@@ -435,6 +437,9 @@ PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 # Source the user's profile first
 if (Test-Path $PROFILE) { . $PROFILE }
 
+# ESC and BEL characters for OSC sequences (compatible with PS 5.1+)
+$Global:__AbundioESC = [char]0x1b
+$Global:__AbundioBEL = [char]0x07
 $Global:__AbundioLastHistoryId = -1
 
 # Stash the user's prompt (from profile or default) so we can wrap it
@@ -446,7 +451,7 @@ function Global:prompt {
     $lastEntry = Get-History -Count 1 -ErrorAction SilentlyContinue
     # Emit command_end for the previous command (if a new command ran)
     if ($Global:__AbundioLastHistoryId -ne -1 -and $lastEntry -and $lastEntry.Id -ne $Global:__AbundioLastHistoryId) {
-        [Console]::Write("`e]7770;command_end;$lastExit`a")
+        $Host.UI.Write("$Global:__AbundioESC]7770;command_end;$lastExit$Global:__AbundioBEL")
     }
     if ($lastEntry) { $Global:__AbundioLastHistoryId = $lastEntry.Id }
     # Call the original prompt function
@@ -464,8 +469,8 @@ if (Get-Module -Name PSReadLine) {
         $cursor = $null
         [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
         if ($line.Trim().Length -gt 0) {
-            $escaped = $line -replace "`a", ' '
-            [Console]::Write("`e]7770;command_start;$escaped`a")
+            $escaped = $line -replace [char]0x07, ' '
+            $Host.UI.Write("$Global:__AbundioESC]7770;command_start;$escaped$Global:__AbundioBEL")
         }
         [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
     }
