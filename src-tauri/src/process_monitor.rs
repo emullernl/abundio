@@ -404,18 +404,14 @@ fn get_process_command_line(pid: u32) -> Option<String> {
     // Returns a UNICODE_STRING whose Buffer points into the output buffer.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle == 0 {
-            eprintln!("[cmdline] pid={pid} Strategy 1: OpenProcess failed");
-        } else {
+        if handle != 0 {
             let mut buf = vec![0u8; 8192];
             let mut ret_len: u32 = 0;
             let status = NtQueryInformationProcess(
                 handle, 60, // ProcessCommandLineInformation
                 buf.as_mut_ptr(), buf.len() as u32, &mut ret_len,
             );
-            if status != 0 {
-                eprintln!("[cmdline] pid={pid} Strategy 1: NtQuery status=0x{status:08X}");
-            } else {
+            if status == 0 {
                 let length = u16::from_ne_bytes([buf[0], buf[1]]) as usize;
                 if length > 0 {
                     let ptr_size = std::mem::size_of::<usize>();
@@ -432,16 +428,10 @@ fn get_process_command_line(pid: u32) -> Option<String> {
                                 .map(|c| u16::from_ne_bytes([c[0], c[1]]))
                                 .collect();
                             let result = String::from_utf16_lossy(&chars);
-                            eprintln!("[cmdline] pid={pid} Strategy 1: OK → {result:?}");
                             CloseHandle(handle);
                             return Some(result);
                         }
-                        eprintln!("[cmdline] pid={pid} Strategy 1: offset {str_offset}+{length} > buf {}", buf.len());
-                    } else {
-                        eprintln!("[cmdline] pid={pid} Strategy 1: Buffer ptr 0x{buffer_addr:X} outside buf 0x{buf_addr:X}");
                     }
-                } else {
-                    eprintln!("[cmdline] pid={pid} Strategy 1: length=0, ret_len={ret_len}");
                 }
             }
             CloseHandle(handle);
@@ -449,10 +439,10 @@ fn get_process_command_line(pid: u32) -> Option<String> {
     }
 
     // ---- Strategy 2: PEB → ProcessParameters → CommandLine ----
+    // More widely compatible; requires PROCESS_QUERY_INFORMATION | PROCESS_VM_READ.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid);
         if handle == 0 {
-            eprintln!("[cmdline] pid={pid} Strategy 2: OpenProcess failed");
             return None;
         }
 
@@ -460,11 +450,10 @@ fn get_process_command_line(pid: u32) -> Option<String> {
         let mut pbi = vec![0u8; pbi_size as usize];
         let mut ret_len: u32 = 0;
         let status = NtQueryInformationProcess(
-            handle, 0,
+            handle, 0, // ProcessBasicInformation
             pbi.as_mut_ptr(), pbi_size, &mut ret_len,
         );
         if status != 0 {
-            eprintln!("[cmdline] pid={pid} Strategy 2: NtQuery(PBI) status=0x{status:08X}");
             CloseHandle(handle);
             return None;
         }
@@ -472,11 +461,7 @@ fn get_process_command_line(pid: u32) -> Option<String> {
         let ptr_size = std::mem::size_of::<usize>();
         let peb_addr = match read_ptr(&pbi, 8, ptr_size) {
             Some(a) => a,
-            None => {
-                eprintln!("[cmdline] pid={pid} Strategy 2: read_ptr(pbi) failed");
-                CloseHandle(handle);
-                return None;
-            }
+            None => { CloseHandle(handle); return None; }
         };
 
         let params_offset: usize = if ptr_size == 8 { 0x20 } else { 0x10 };
@@ -486,17 +471,12 @@ fn get_process_command_line(pid: u32) -> Option<String> {
             handle, peb_addr + params_offset,
             ptr_buf.as_mut_ptr(), ptr_size, &mut bytes_read,
         ) == 0 {
-            eprintln!("[cmdline] pid={pid} Strategy 2: ReadProcessMemory(PEB) failed");
             CloseHandle(handle);
             return None;
         }
         let params_addr = match read_ptr(&ptr_buf, 0, ptr_size) {
             Some(a) => a,
-            None => {
-                eprintln!("[cmdline] pid={pid} Strategy 2: read_ptr(params) failed");
-                CloseHandle(handle);
-                return None;
-            }
+            None => { CloseHandle(handle); return None; }
         };
 
         let cmdline_offset: usize = if ptr_size == 8 { 0x70 } else { 0x40 };
@@ -506,25 +486,19 @@ fn get_process_command_line(pid: u32) -> Option<String> {
             handle, params_addr + cmdline_offset,
             us_buf.as_mut_ptr(), us_size, &mut bytes_read,
         ) == 0 {
-            eprintln!("[cmdline] pid={pid} Strategy 2: ReadProcessMemory(cmdline_us) failed");
             CloseHandle(handle);
             return None;
         }
 
         let length = u16::from_ne_bytes([us_buf[0], us_buf[1]]) as usize;
         if length == 0 {
-            eprintln!("[cmdline] pid={pid} Strategy 2: length=0");
             CloseHandle(handle);
             return None;
         }
         let buffer_ptr_offset = if ptr_size == 8 { 8 } else { 4 };
         let buffer_addr = match read_ptr(&us_buf, buffer_ptr_offset, ptr_size) {
             Some(a) => a,
-            None => {
-                eprintln!("[cmdline] pid={pid} Strategy 2: read_ptr(buffer) failed");
-                CloseHandle(handle);
-                return None;
-            }
+            None => { CloseHandle(handle); return None; }
         };
 
         let mut str_buf = vec![0u8; length];
@@ -532,7 +506,6 @@ fn get_process_command_line(pid: u32) -> Option<String> {
             handle, buffer_addr,
             str_buf.as_mut_ptr(), length, &mut bytes_read,
         ) == 0 {
-            eprintln!("[cmdline] pid={pid} Strategy 2: ReadProcessMemory(string) failed");
             CloseHandle(handle);
             return None;
         }
@@ -543,9 +516,7 @@ fn get_process_command_line(pid: u32) -> Option<String> {
             .chunks_exact(2)
             .map(|c| u16::from_ne_bytes([c[0], c[1]]))
             .collect();
-        let result = String::from_utf16_lossy(&chars);
-        eprintln!("[cmdline] pid={pid} Strategy 2: OK → {result:?}");
-        Some(result)
+        Some(String::from_utf16_lossy(&chars))
     }
 }
 

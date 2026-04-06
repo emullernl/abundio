@@ -423,7 +423,7 @@ fn pty_thread(
         eprintln!("[pty_thread] WARNING: shell process_id() returned None for pty {}", pty_id);
     }
     let mut command_running = false;
-    let mut last_fg_process: Option<String> = None;
+    let mut last_fg_processes: Vec<String> = Vec::new();
 
     // Spawn a sub-thread for reading PTY output → emitting events
     let read_pty_id = pty_id.clone();
@@ -499,15 +499,20 @@ fn pty_thread(
 
             // ForegroundProcess detection: emit for all shell types so the
             // frontend can toggle agent/shell detection mode.
-            let current_fg = child_names.first().cloned();
-            if current_fg != last_fg_process {
+            // On Windows, child_names may include processes from the full
+            // snapshot (MSYS2 reparenting workaround), so we emit an event
+            // for every NEW name and let the frontend filter by agent list.
+            if child_names != last_fg_processes {
                 let event_name = format!("pty-activity-{}", pty_id);
-                if let Some(ref name) = current_fg {
-                    let _ = app.emit(&event_name, PtyActivity::ForegroundProcess { name: name.clone() });
-                } else {
+                for name in &child_names {
+                    if !last_fg_processes.contains(name) {
+                        let _ = app.emit(&event_name, PtyActivity::ForegroundProcess { name: name.clone() });
+                    }
+                }
+                if child_names.is_empty() && !last_fg_processes.is_empty() {
                     let _ = app.emit(&event_name, PtyActivity::ForegroundProcessExited);
                 }
-                last_fg_process = current_fg;
+                last_fg_processes = child_names;
             }
         }
 
