@@ -58,6 +58,7 @@ impl PtyManager {
         app: AppHandle,
         cwd: &str,
         command: Option<&str>,
+        shell: Option<&str>,
         cols: u16,
         rows: u16,
         log_id: Option<&str>,
@@ -79,7 +80,14 @@ impl PtyManager {
             .openpty(size)
             .map_err(|e| AbundioError::Pty(e.to_string()))?;
 
-        let shell = shell_env::default_shell();
+        let shell = match shell {
+            Some(s) if Path::new(s).exists() => s.to_string(),
+            Some(s) => {
+                eprintln!("[pty] Configured shell {s} not found, falling back to default");
+                shell_env::default_shell()
+            }
+            None => shell_env::default_shell(),
+        };
         let shell_type = detect_shell_type(&shell);
         let integration_dir = shell_integration_dir();
 
@@ -112,6 +120,13 @@ impl PtyManager {
                     #[cfg(target_os = "windows")]
                     let rcfile_str = rcfile_str.replace('\\', "/");
                     cmd.args(["--rcfile", &rcfile_str, "-i"]);
+                }
+                ShellType::PowerShell => {
+                    let init_script = integration_dir.join("abundio_init.ps1");
+                    let init_str = init_script.to_string_lossy().into_owned();
+                    #[cfg(target_os = "windows")]
+                    let init_str = init_str.replace('\\', "/");
+                    cmd.args(["-NoProfile", "-NoLogo", "-NoExit", "-File", &init_str]);
                 }
                 ShellType::Other => {
                     #[cfg(not(target_os = "windows"))]
@@ -285,6 +300,7 @@ impl PtyManager {
 enum ShellType {
     Zsh,
     Bash,
+    PowerShell,
     Other,
 }
 
@@ -297,6 +313,8 @@ fn detect_shell_type(shell: &str) -> ShellType {
         ShellType::Zsh
     } else if base.contains("bash") {
         ShellType::Bash
+    } else if base.contains("pwsh") || base.contains("powershell") {
+        ShellType::PowerShell
     } else {
         ShellType::Other
     }
@@ -406,6 +424,52 @@ PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 "#;
 
     let _ = fs::write(&bashrc, bashrc_content);
+
+    // PowerShell: wrapper init script that sources user profile then adds hooks
+    let ps1 = dir.join("abundio_init.ps1");
+    let _ = fs::write(
+        &ps1,
+        r#"# Abundio shell integration for PowerShell — loaded via -NoProfile -File
+# Source the user's profile first
+if (Test-Path $PROFILE) { . $PROFILE }
+
+$Global:__AbundioLastHistoryId = -1
+
+# Stash the user's prompt (from profile or default) so we can wrap it
+$Global:__AbundioOriginalPrompt = $function:prompt
+
+function Global:prompt {
+    $lastExit = $LASTEXITCODE
+    if ($null -eq $lastExit) { $lastExit = 0 }
+    $lastEntry = Get-History -Count 1 -ErrorAction SilentlyContinue
+    # Emit command_end for the previous command (if a new command ran)
+    if ($Global:__AbundioLastHistoryId -ne -1 -and $lastEntry -and $lastEntry.Id -ne $Global:__AbundioLastHistoryId) {
+        [Console]::Write("`e]7770;command_end;$lastExit`a")
+    }
+    if ($lastEntry) { $Global:__AbundioLastHistoryId = $lastEntry.Id }
+    # Call the original prompt function
+    if ($Global:__AbundioOriginalPrompt) {
+        & $Global:__AbundioOriginalPrompt
+    } else {
+        "PS $($executionContext.SessionState.Path.CurrentLocation)> "
+    }
+}
+
+# Hook Enter key via PSReadLine to emit command_start (preexec equivalent)
+if (Get-Module -Name PSReadLine) {
+    Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
+        $line = $null
+        $cursor = $null
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+        if ($line.Trim().Length -gt 0) {
+            $escaped = $line -replace "`a", ' '
+            [Console]::Write("`e]7770;command_start;$escaped`a")
+        }
+        [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+    }
+}
+"#,
+    );
 
     dir
 }

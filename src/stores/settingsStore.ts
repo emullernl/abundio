@@ -21,8 +21,10 @@ interface SettingsState {
 	gitPanelSplitRatio: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
+	shellPath: string | null;
 	agents: CodingAgent[];
 
+	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
 	setUiFontFamily: (font: string) => void;
 	setFontSize: (size: number) => void;
@@ -57,8 +59,10 @@ export const useSettingsStore = create<SettingsState>()(
 			gitPanelSplitRatio: 0.5,
 			debugActivityMeter: false,
 			activityByteThreshold: 512,
+			shellPath: null,
 			agents: BUILTIN_AGENTS,
 
+			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
 				document.documentElement.style.setProperty(
 					"--font-mono",
@@ -137,6 +141,7 @@ export const useSettingsStore = create<SettingsState>()(
 				gitPanelSplitRatio: state.gitPanelSplitRatio,
 				debugActivityMeter: state.debugActivityMeter,
 				activityByteThreshold: state.activityByteThreshold,
+				shellPath: state.shellPath,
 				agents: state.agents,
 			}),
 			onRehydrateStorage: () => (state) => {

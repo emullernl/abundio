@@ -491,7 +491,17 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		// event names that include the ptyId, so they won't miss output even
 		// if spawn completes first (Tauri buffers events until listen resolves).
 		...(isNewPty
-			? [pty.spawn(cwd, term.cols, term.rows, undefined, paneId, currentPtyId)]
+			? [
+					pty.spawn(
+						cwd,
+						term.cols,
+						term.rows,
+						undefined,
+						useSettingsStore.getState().shellPath ?? undefined,
+						paneId,
+						currentPtyId,
+					),
+				]
 			: []),
 	]);
 

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+	AvailableShell,
 	BranchInfo,
 	DirEntry,
 	FileContent,
@@ -22,9 +23,19 @@ export const pty = {
 		cols: number,
 		rows: number,
 		command?: string,
+		shell?: string,
 		logId?: string,
 		ptyId?: string,
-	) => invoke<string>("pty_spawn", { cwd, cols, rows, command, logId, ptyId }),
+	) =>
+		invoke<string>("pty_spawn", {
+			cwd,
+			cols,
+			rows,
+			command,
+			shell,
+			logId,
+			ptyId,
+		}),
 
 	write: (ptyId: string, data: string) =>
 		invoke<void>("pty_write", { ptyId, data }),
@@ -182,4 +193,8 @@ export const fs = {
 
 export const fonts = {
 	listSystemFonts: () => invoke<string[]>("list_system_fonts"),
+};
+
+export const shells = {
+	listAvailable: () => invoke<AvailableShell[]>("list_available_shells"),
 };
