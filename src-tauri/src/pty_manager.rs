@@ -509,8 +509,12 @@ fn pty_thread(
                         let _ = app.emit(&event_name, PtyActivity::ForegroundProcess { name: name.clone() });
                     }
                 }
-                if child_names.is_empty() && !last_fg_processes.is_empty() {
-                    let _ = app.emit(&event_name, PtyActivity::ForegroundProcessExited);
+                // Emit exit for each name that disappeared — the frontend
+                // only acts on this if the name was an agent.
+                for name in &last_fg_processes {
+                    if !child_names.contains(name) {
+                        let _ = app.emit(&event_name, PtyActivity::ForegroundProcessExited { name: name.clone() });
+                    }
                 }
                 last_fg_processes = child_names;
             }

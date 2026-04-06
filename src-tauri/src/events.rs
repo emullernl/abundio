@@ -19,7 +19,7 @@ pub enum PtyActivity {
     CommandStarted,
     CommandFinished,
     ForegroundProcess { name: String },
-    ForegroundProcessExited,
+    ForegroundProcessExited { name: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,8 +76,8 @@ mod tests {
 
     #[test]
     fn pty_activity_foreground_process_exited_serialization() {
-        let activity = PtyActivity::ForegroundProcessExited;
+        let activity = PtyActivity::ForegroundProcessExited { name: "claude".to_string() };
         let json = serde_json::to_string(&activity).unwrap();
-        assert_eq!(json, r#"{"type":"foregroundProcessExited"}"#);
+        assert_eq!(json, r#"{"type":"foregroundProcessExited","name":"claude"}"#);
     }
 }

@@ -440,7 +440,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				return;
 			}
 			if (activity.type === "foregroundProcessExited") {
-				actStore.clearAgentPty(currentPtyId);
+				const agents = useSettingsStore.getState().agents;
+				if (matchProcessToAgent(activity.name, agents)) {
+					actStore.clearAgentPty(currentPtyId);
+				}
 				return;
 			}
 

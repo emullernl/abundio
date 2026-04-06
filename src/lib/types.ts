@@ -97,7 +97,7 @@ export type PtyActivityType =
 	| { type: "commandStarted" }
 	| { type: "commandFinished" }
 	| { type: "foregroundProcess"; name: string }
-	| { type: "foregroundProcessExited" };
+	| { type: "foregroundProcessExited"; name: string };
 
 export type PtyDetectionMode = "agent" | "shell";
 
