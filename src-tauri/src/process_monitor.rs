@@ -708,6 +708,18 @@ pub fn get_child_process_names(pid: u32) -> Vec<String> {
 
     eprintln!("[process_monitor] get_child_process_names(pid={pid}), {} entries in snapshot", entries.len());
 
+    // Dump all node.exe / python.exe / copilot.exe processes to see where they
+    // actually sit in the Windows process tree.
+    for e in &entries {
+        let lower = e.exe_name.to_ascii_lowercase();
+        if lower.contains("node") || lower.contains("python") || lower.contains("copilot")
+            || lower.contains("claude") || lower.contains("opencode") || lower.contains("gemini")
+            || lower.contains("aider") || lower.contains("codex") || lower.contains("conhost")
+        {
+            eprintln!("[process_monitor]   INTERESTING: exe={:?} pid={} ppid={}", e.exe_name, e.pid, e.parent_pid);
+        }
+    }
+
     while let Some((parent, depth)) = queue.pop() {
         if depth >= MAX_DEPTH {
             continue;
