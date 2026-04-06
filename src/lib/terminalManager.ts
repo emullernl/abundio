@@ -14,7 +14,7 @@ import {
 } from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
-import { matchProcessToAgent } from "./agents";
+import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
 import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
@@ -355,29 +355,45 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	// IPC round-trip, so running them concurrently cuts init time significantly.
 	const [unlistenOutput, unlistenActivity, unlistenStatus] = await Promise.all([
 		pty.onOutput(currentPtyId, (data) => {
+			// Always parse and strip shell integration sequences in both modes,
+			// so command_end is detected even while in agent mode.
+			const { cleaned, commands } = parseShellIntegration(data);
+
 			const entry = usePtyActivityStore.getState().activities[currentPtyId];
-			if (entry?.detectionMode === "shell") {
-				// Shell mode: parse and strip shell integration sequences, no output pipeline
-				const { cleaned, commands } = parseShellIntegration(data);
+			const isAgentMode = entry?.detectionMode === "agent";
 
-				if (managed.startupBuffer) {
-					// Buffer output during shell startup; flush when grace period ends
-					managed.startupBuffer.push(cleaned);
-				} else {
-					term.write(
-						managed.filterResets ? stripResetSequences(cleaned) : cleaned,
-					);
-				}
+			if (managed.startupBuffer) {
+				managed.startupBuffer.push(cleaned);
+			} else {
+				term.write(
+					managed.filterResets ? stripResetSequences(cleaned) : cleaned,
+				);
+			}
 
-				if (managed.suppressActivity) return;
-				for (const cmd of commands) {
-					const actStore = usePtyActivityStore.getState();
-					if (cmd.type === "command_start") {
+			// Process shell integration commands (agent detection + shell activity)
+			for (const cmd of commands) {
+				const actStore = usePtyActivityStore.getState();
+				if (cmd.type === "command_start") {
+					// Agent detection from command text
+					if (cmd.commandText) {
+						const agents = useSettingsStore.getState().agents;
+						if (matchTitleToAgent(cmd.commandText, agents)) {
+							actStore.setAgentPty(currentPtyId);
+						}
+					}
+					if (!managed.suppressActivity && !isAgentMode) {
 						setShellCommandRunning(currentPtyId, true);
 						actStore.recordOutput(currentPtyId);
-					} else if (cmd.type === "command_end") {
-						managed.startupShellReady = true;
-						tryFlushStartup(managed);
+					}
+				} else if (cmd.type === "command_end") {
+					managed.startupShellReady = true;
+					tryFlushStartup(managed);
+					// Exit agent mode when the command finishes
+					const currentEntry = actStore.activities[currentPtyId];
+					if (currentEntry?.detectionMode === "agent") {
+						actStore.clearAgentPty(currentPtyId);
+					}
+					if (!managed.suppressActivity && !isAgentMode) {
 						setShellCommandRunning(currentPtyId, false);
 						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
 							actStore.recordError(currentPtyId);
@@ -393,13 +409,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						}
 					}
 				}
-			} else {
-				// Agent mode: existing byte accumulation pipeline
-				if (managed.startupBuffer) {
-					managed.startupBuffer.push(data);
-				} else {
-					term.write(managed.filterResets ? stripResetSequences(data) : data);
-				}
+			}
+
+			// Agent mode: byte accumulation activity tracking
+			if (isAgentMode) {
 				if (
 					!managed.suppressActivity &&
 					Date.now() - managed.lastInputAt > INPUT_GATE_MS
@@ -412,12 +425,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						managed.bytesSinceIdle = 0;
 					}
 					managed.lastOutputChunkAt = now;
-					managed.bytesSinceIdle += data.length;
+					managed.bytesSinceIdle += cleaned.length;
 
-					const entry = usePtyActivityStore.getState().activities[currentPtyId];
-					if (entry?.state === "active") {
-						// Keep-alive: any output keeps active state alive without
-						// needing to re-accumulate the full byte threshold.
+					const latestEntry =
+						usePtyActivityStore.getState().activities[currentPtyId];
+					if (latestEntry?.state === "active") {
 						touchLastOutput(currentPtyId, now);
 					} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 						managed.bytesSinceIdle = 0;
@@ -428,26 +440,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}),
 
 		pty.onActivity(currentPtyId, (activity) => {
-			const actStore = usePtyActivityStore.getState();
-
-			// Agent detection via foreground process — always processed,
-			// even when suppressActivity is true (mode detection, not activity).
-			if (activity.type === "foregroundProcess") {
-				const agents = useSettingsStore.getState().agents;
-				if (matchProcessToAgent(activity.name, agents)) {
-					actStore.setAgentPty(currentPtyId);
-				}
-				return;
-			}
-			if (activity.type === "foregroundProcessExited") {
-				const agents = useSettingsStore.getState().agents;
-				if (matchProcessToAgent(activity.name, agents)) {
-					actStore.clearAgentPty(currentPtyId);
-				}
-				return;
-			}
-
 			if (managed.suppressActivity) return;
+
+			const actStore = usePtyActivityStore.getState();
 
 			// Shell command tracking — only applies in shell mode
 			const entry = actStore.activities[currentPtyId];

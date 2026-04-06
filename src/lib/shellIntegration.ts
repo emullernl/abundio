@@ -1,6 +1,7 @@
 export interface ShellCommand {
 	type: "command_start" | "command_end";
 	exitCode?: number;
+	commandText?: string;
 }
 
 const ESC = 0x1b;
@@ -52,8 +53,15 @@ export function parseShellIntegration(data: Uint8Array): {
 					data.subarray(payloadStart, belIndex),
 				);
 
-				if (payload === "command_start") {
-					commands.push({ type: "command_start" });
+				if (
+					payload === "command_start" ||
+					payload.startsWith("command_start;")
+				) {
+					const text =
+						payload.length > "command_start;".length
+							? payload.slice("command_start;".length)
+							: undefined;
+					commands.push({ type: "command_start", commandText: text });
 				} else if (payload.startsWith("command_end;")) {
 					const codeStr = payload.slice("command_end;".length);
 					const parsed = Number.parseInt(codeStr, 10);

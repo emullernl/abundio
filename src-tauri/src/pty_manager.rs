@@ -2,9 +2,9 @@ use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use std::thread;
 
 use base64::Engine;
@@ -334,7 +334,7 @@ elif [ -f "$HOME/.zshrc" ]; then
   source "$HOME/.zshrc"
 fi
 # Hooks
-__abundio_preexec() { printf '\e]7770;command_start\a' }
+__abundio_preexec() { printf '\e]7770;command_start;%s\a' "${1//$'\a'/ }" }
 __abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?" }
 precmd_functions+=(__abundio_precmd)
 preexec_functions+=(__abundio_preexec)
@@ -372,7 +372,10 @@ fi
 # Source the user's real bash config
 [ -f ~/.bashrc ] && source ~/.bashrc
 # Hooks
-__abundio_preexec() { printf '\e]7770;command_start\a'; }
+__abundio_preexec() {
+  [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
+  printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
+}
 __abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; }
 trap '__abundio_preexec' DEBUG
 PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
@@ -393,7 +396,10 @@ fi
 [ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
 [ -f ~/.bashrc ] && source ~/.bashrc
 # Hooks
-__abundio_preexec() { printf '\e]7770;command_start\a'; }
+__abundio_preexec() {
+  [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
+  printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
+}
 __abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; }
 trap '__abundio_preexec' DEBUG
 PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
@@ -418,18 +424,18 @@ fn pty_thread(
     let mut writer = master.take_writer().unwrap();
     let mut reader = master.try_clone_reader().unwrap();
 
-    // Get shell PID for child process monitoring
-    let shell_pid = child.process_id();
-    if shell_pid.is_none() {
-        eprintln!("[pty_thread] WARNING: shell process_id() returned None for pty {}", pty_id);
-    }
+    // For ShellType::Other, poll child processes to emit CommandStarted/CommandFinished
+    // (zsh/bash get these via OSC 7770 shell integration hooks instead).
+    let shell_pid = if shell_type == ShellType::Other {
+        let pid = child.process_id();
+        if pid.is_none() {
+            eprintln!("[pty_thread] WARNING: shell process_id() returned None for pty {}", pty_id);
+        }
+        pid
+    } else {
+        None
+    };
     let mut command_running = false;
-    let mut last_fg_processes: Vec<String> = Vec::new();
-
-    // Shared timestamp: read thread writes epoch millis on every output,
-    // main loop reads it to adapt process-monitoring frequency.
-    let last_output_time = Arc::new(AtomicU64::new(0));
-    let read_last_output = last_output_time.clone();
 
     // Spawn a sub-thread for reading PTY output → emitting events
     let read_pty_id = pty_id.clone();
@@ -449,15 +455,6 @@ fn pty_thread(
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF
                 Ok(n) => {
-                    // Signal activity to the main loop for adaptive polling
-                    read_last_output.store(
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64,
-                        Ordering::Relaxed,
-                    );
-
                     // Append raw output to log file for persistence
                     if let Some((ref mut file, ref path)) = log {
                         let _ = file.write_all(&buf[..n]);
@@ -484,6 +481,7 @@ fn pty_thread(
 
     // Main loop: process commands from the channel
     let mut last_process_check = Instant::now();
+    let poll_interval = Duration::from_millis(200);
 
     loop {
         // Check if child has exited
@@ -495,80 +493,32 @@ fn pty_thread(
             break;
         }
 
-        // Adaptive polling: check process tree less often when idle.
-        // The read thread stamps last_output_time on every PTY read.
-        let now_millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let since_output_ms = now_millis.saturating_sub(last_output_time.load(Ordering::Relaxed));
-        let poll_interval = if since_output_ms < 500 {
-            Duration::from_millis(50)   // burst — catch new processes quickly
-        } else if since_output_ms < 2000 {
-            Duration::from_millis(150)  // active
-        } else {
-            Duration::from_millis(1000) // idle
-        };
-
-        // Only poll the process tree when enough time has elapsed.
-        if last_process_check.elapsed() >= poll_interval {
-            last_process_check = Instant::now();
-
-            if let Some(pid) = shell_pid {
-                // Fast path: single lightweight syscall to check for children.
+        // For ShellType::Other: lightweight child-process polling for
+        // CommandStarted/CommandFinished (no name resolution needed).
+        if let Some(pid) = shell_pid {
+            if last_process_check.elapsed() >= poll_interval {
+                last_process_check = Instant::now();
                 let has_children = process_monitor::has_child_processes(pid);
-
-                // CommandStarted/CommandFinished: only for shells without OSC integration
-                // (zsh/bash use OSC 7770 sequences instead, so polling would race).
-                if shell_type == ShellType::Other {
-                    if has_children && !command_running {
-                        command_running = true;
-                        let event_name = format!("pty-activity-{}", pty_id);
-                        let _ = app.emit(&event_name, PtyActivity::CommandStarted);
-                    } else if !has_children && command_running {
-                        command_running = false;
-                        let event_name = format!("pty-activity-{}", pty_id);
-                        let _ = app.emit(&event_name, PtyActivity::CommandFinished);
-                    }
-                }
-
-                // Only resolve child names (expensive) when children actually exist.
-                let child_names = if has_children {
-                    process_monitor::get_child_process_names(pid)
-                } else {
-                    Vec::new()
-                };
-
-                // ForegroundProcess detection: emit for all shell types so the
-                // frontend can toggle agent/shell detection mode.
-                // On Windows, child_names may include processes from the full
-                // snapshot (MSYS2 reparenting workaround), so we emit an event
-                // for every NEW name and let the frontend filter by agent list.
-                if child_names != last_fg_processes {
+                if has_children && !command_running {
+                    command_running = true;
                     let event_name = format!("pty-activity-{}", pty_id);
-                    for name in &child_names {
-                        if !last_fg_processes.contains(name) {
-                            let _ = app.emit(&event_name, PtyActivity::ForegroundProcess { name: name.clone() });
-                        }
-                    }
-                    // Emit exit for each name that disappeared — the frontend
-                    // only acts on this if the name was an agent.
-                    for name in &last_fg_processes {
-                        if !child_names.contains(name) {
-                            let _ = app.emit(&event_name, PtyActivity::ForegroundProcessExited { name: name.clone() });
-                        }
-                    }
-                    last_fg_processes = child_names;
+                    let _ = app.emit(&event_name, PtyActivity::CommandStarted);
+                } else if !has_children && command_running {
+                    command_running = false;
+                    let event_name = format!("pty-activity-{}", pty_id);
+                    let _ = app.emit(&event_name, PtyActivity::CommandFinished);
                 }
             }
         }
 
-        // recv_timeout: stay responsive to commands (cap at 100ms) but
-        // align with the next scheduled process check when possible.
-        let time_to_next_check = poll_interval
-            .checked_sub(last_process_check.elapsed())
-            .unwrap_or(Duration::from_millis(10));
-        let recv_timeout = time_to_next_check.min(Duration::from_millis(100));
+        let recv_timeout = if shell_pid.is_some() {
+            poll_interval
+                .checked_sub(last_process_check.elapsed())
+                .unwrap_or(Duration::from_millis(10))
+                .min(Duration::from_millis(100))
+        } else {
+            Duration::from_millis(100)
+        };
 
         match rx.recv_timeout(recv_timeout) {
             Ok(PtyCommand::Write(data)) => {
