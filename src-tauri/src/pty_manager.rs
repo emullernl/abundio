@@ -126,7 +126,9 @@ impl PtyManager {
                     let init_str = init_script.to_string_lossy().into_owned();
                     #[cfg(target_os = "windows")]
                     let init_str = init_str.replace('\\', "/");
-                    cmd.args(["-NoProfile", "-NoLogo", "-NoExit", "-File", &init_str]);
+                    // Bypass execution policy for this process only (same as VS Code terminal)
+                    // so our integration script loads regardless of system policy.
+                    cmd.args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-NoExit", "-File", &init_str]);
                 }
                 ShellType::Other => {
                     #[cfg(not(target_os = "windows"))]
