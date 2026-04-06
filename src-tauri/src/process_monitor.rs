@@ -723,43 +723,15 @@ pub fn get_child_process_names(pid: u32) -> Vec<String> {
         }
     }
 
-    // Phase 2: Scan ALL interpreter processes in the snapshot.
-    //
-    // MSYS2/Cygwin's exec() reparents non-Cygwin child processes so their
-    // Windows PPID no longer chains back to our shell.  This means node.exe
-    // (gemini, opencode, codex) and python.exe (aider) are invisible to the
-    // BFS above.  As a fallback we scan every interpreter process in the
-    // snapshot and resolve its command line.  The frontend already filters
-    // results against known agent commands, so non-agent interpreters (e.g.
-    // the Vite dev server) are harmlessly ignored.
-    for entry in &entries {
-        if seen_pids.contains(&entry.pid) {
-            continue; // already handled by BFS
-        }
-        let base = entry
-            .exe_name
-            .strip_suffix(".exe")
-            .unwrap_or(&entry.exe_name);
-        let base_lower = base.to_ascii_lowercase();
-        if !INTERPRETERS.contains(&base_lower.as_str()) {
-            continue; // not an interpreter
-        }
-        seen_pids.push(entry.pid);
-        let resolved = NAME_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            if let Some(cached) = cache.get(&entry.pid) {
-                return cached.clone();
-            }
-            let name = resolve_child_name(entry.pid, &entry.exe_name);
-            cache.insert(entry.pid, name.clone());
-            name
-        });
-        // Only include if it resolved to something other than the
-        // interpreter name itself (i.e. we actually found a command name).
-        if resolved != base_lower {
-            names.push(resolved);
-        }
-    }
+    // NOTE: An earlier Phase 2 scanned ALL interpreter processes system-wide
+    // to handle MSYS2/Cygwin's exec() reparenting (where child PPIDs no
+    // longer chain back to our shell).  This was removed because it caused
+    // every PTY to claim every interpreter-based agent on the system as its
+    // own child, making all terminals switch to agent mode when any one of
+    // them ran an agent.  The BFS in Phase 1 (with MAX_DEPTH=4) correctly
+    // handles cmd.exe/bash.exe intermediaries; MSYS2 reparented processes
+    // are a known gap — they can be addressed later via Job Objects or
+    // ConPTY association if needed.
 
     // Evict stale PIDs from the cache
     NAME_CACHE.with(|cache| {
