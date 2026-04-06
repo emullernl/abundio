@@ -83,8 +83,15 @@ impl PtyManager {
         let shell = match shell {
             Some(s) if Path::new(s).exists() => s.to_string(),
             Some(s) => {
-                eprintln!("[pty] Configured shell {s} not found, falling back to default");
-                shell_env::default_shell()
+                let fallback = shell_env::default_shell();
+                let _ = app.emit(
+                    &format!("pty-status-{}", pty_id),
+                    PtyStatus::ShellNotFound {
+                        configured: s.to_string(),
+                        fallback: fallback.clone(),
+                    },
+                );
+                fallback
             }
             None => shell_env::default_shell(),
         };
@@ -548,7 +555,7 @@ fn pty_thread(
             }
         });
 
-        const MAX_ACCUM: usize = 65536; // 64 KB ceiling per batched event
+        const MAX_ACCUM: usize = 16 * 1024; // 16 KB — rAF batching in the frontend handles burst coalescing
         let mut accum = Vec::with_capacity(MAX_ACCUM);
 
         loop {

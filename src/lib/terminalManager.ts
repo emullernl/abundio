@@ -72,6 +72,8 @@ export interface ManagedTerminal {
 	/** Buffers PTY output during shell startup so reset sequences can be stripped from the
 	 *  complete buffer before writing. Null when the grace period has ended. */
 	startupBuffer: Uint8Array[] | null;
+	/** Set to true once tryFlushStartup has scheduled its flush so re-entrant calls are ignored */
+	startupFlushScheduled: boolean;
 	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods) */
 	filterResets: boolean;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
@@ -300,6 +302,7 @@ export async function createTerminal(
 		settled: false,
 		filterResets: false,
 		startupBuffer: [],
+		startupFlushScheduled: false,
 		startupShellReady: false,
 		pendingWrites: [],
 		writeRafId: null,
@@ -438,7 +441,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					if (currentEntry?.detectionMode === "agent") {
 						freshState.clearAgentPty(currentPtyId);
 					}
-					if (!managed.suppressActivity && !isAgentMode) {
+					const wasAgentMode =
+						currentEntry?.detectionMode === "agent";
+					if (!managed.suppressActivity && !wasAgentMode) {
 						setShellCommandRunning(currentPtyId, false);
 						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
 							freshState.recordError(currentPtyId);
@@ -622,8 +627,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
  *  initializing (command_end received). Adds a short delay to also capture
  *  the shell's resize-triggered redraw that follows projectInto's PTY resize. */
 function tryFlushStartup(managed: ManagedTerminal): void {
-	if (!managed.startupBuffer) return; // already flushed
+	if (!managed.startupBuffer || managed.startupFlushScheduled) return;
 	if (!managed.settled || !managed.startupShellReady) return; // not ready yet
+	managed.startupFlushScheduled = true;
 	setTimeout(() => flushStartupBuffer(managed), 200);
 }
 

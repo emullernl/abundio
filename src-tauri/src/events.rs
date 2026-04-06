@@ -11,6 +11,10 @@ pub struct PtyOutput {
 pub enum PtyStatus {
     Running,
     Exited { code: Option<u32> },
+    ShellNotFound {
+        configured: String,
+        fallback: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]

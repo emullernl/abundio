@@ -22,6 +22,11 @@ export function decodeBase64(str: string): Uint8Array {
 	const out = new Uint8Array(outLen);
 	let j = 0;
 
+	if (len % 4 !== 0) {
+		console.error(`[base64] unexpected input length ${len}, not a multiple of 4`);
+		return new Uint8Array(0);
+	}
+
 	// Process 4 input chars → 3 output bytes
 	for (let i = 0; i < len; i += 4) {
 		const a = B64_LOOKUP[str.charCodeAt(i)];

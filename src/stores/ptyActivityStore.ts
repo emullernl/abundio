@@ -285,6 +285,9 @@ setInterval(() => {
 	}
 
 	const focusedPaneId = _getFocusedPaneId?.() ?? null;
+	// If the getter hasn't been injected yet, treat every pane as focused
+	// so we don't spam "waiting" transitions during startup.
+	const focusGetterReady = _getFocusedPaneId !== null;
 	const appHasFocus = typeof document !== "undefined" && document.hasFocus();
 
 	for (const [ptyId, entry] of Object.entries(activities)) {
@@ -297,7 +300,8 @@ setInterval(() => {
 			if (shellCommandRunning.get(ptyId)) continue;
 			const paneId = _cachedPtyToPaneMap[ptyId];
 			const isFocused =
-				appHasFocus && paneId != null && focusedPaneId === paneId;
+				!focusGetterReady ||
+				(appHasFocus && paneId != null && focusedPaneId === paneId);
 			// Agent mode always goes to "waiting" — the agent finished work and
 			// is waiting for user input, even when the terminal has focus.
 			const nextState =

@@ -42,10 +42,15 @@ pub struct BranchInfo {
 }
 
 fn ensure_git_repo(cwd: &str) -> Result<(), AbundioError> {
-    if !Path::new(cwd).join(".git").exists() {
-        return Err(AbundioError::NotGitRepo(cwd.to_string()));
+    let status = Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--git-dir"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        _ => Err(AbundioError::NotGitRepo(cwd.to_string())),
     }
-    Ok(())
 }
 
 fn run_git(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
@@ -465,8 +470,13 @@ mod tests {
     #[test]
     fn ensure_git_repo_accepts_git_dir() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
-        let result = ensure_git_repo(dir.path().to_str().unwrap());
+        let cwd = dir.path().to_str().unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        let result = ensure_git_repo(cwd);
         assert!(result.is_ok());
     }
 
