@@ -16,6 +16,14 @@ fn default_branch_cache() -> &'static DashMap<String, String> {
     CACHE.get_or_init(DashMap::new)
 }
 
+/// Per-repo cache of successful git-repo checks.
+/// Only positive results are cached; non-git directories are always
+/// re-checked so that a later `git init` is picked up.
+fn git_repo_cache() -> &'static DashMap<String, ()> {
+    static CACHE: OnceLock<DashMap<String, ()>> = OnceLock::new();
+    CACHE.get_or_init(DashMap::new)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitChangedFile {
@@ -42,13 +50,24 @@ pub struct BranchInfo {
 }
 
 fn ensure_git_repo(cwd: &str) -> Result<(), AbundioError> {
+    let cache_key = std::fs::canonicalize(cwd)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| cwd.to_string());
+
+    if git_repo_cache().contains_key(&cache_key) {
+        return Ok(());
+    }
+
     let status = Command::new("git")
         .args(["-C", cwd, "rev-parse", "--git-dir"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
     match status {
-        Ok(s) if s.success() => Ok(()),
+        Ok(s) if s.success() => {
+            git_repo_cache().insert(cache_key, ());
+            Ok(())
+        }
         _ => Err(AbundioError::NotGitRepo(cwd.to_string())),
     }
 }
