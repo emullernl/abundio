@@ -76,7 +76,10 @@ export const useSettingsStore = create<SettingsState>()(
 				document.documentElement.style.setProperty("--font-ui", uiFontFamily);
 				set({ uiFontFamily });
 			},
-			setFontSize: (fontSize) => set({ fontSize }),
+			setFontSize: (fontSize) => {
+				setAllTerminalsFontSize(fontSize);
+				set({ fontSize });
+			},
 			setUiFontSize: (uiFontSize) => {
 				document.documentElement.style.setProperty(
 					"--ui-font-size",
@@ -152,17 +155,7 @@ export const useSettingsStore = create<SettingsState>()(
 				if (state?.agents) {
 					state.agents = mergeAgentsWithBuiltins(state.agents);
 				}
-				// Fix race: terminals created before rehydration have default font/theme.
-				if (state?.terminalFontFamily) {
-					setAllTerminalsFontFamily(state.terminalFontFamily);
-				}
-				if (state?.fontSize) {
-					setAllTerminalsFontSize(state.fontSize);
-				}
-				if (state?.theme) {
-					setAllTerminalsTheme(getTheme(state.theme).terminal);
-				}
-			},
+				},
 		},
 	),
 );

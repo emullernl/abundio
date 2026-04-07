@@ -13,12 +13,14 @@ vi.mock("../../lib/themes", () => ({
 vi.mock("../../lib/terminalManager", () => ({
 	setAllTerminalsTheme: vi.fn(),
 	setAllTerminalsFontFamily: vi.fn(),
+	setAllTerminalsFontSize: vi.fn(),
 	setActivityByteThreshold: vi.fn(),
 }));
 
 import {
 	setActivityByteThreshold,
 	setAllTerminalsFontFamily,
+	setAllTerminalsFontSize,
 	setAllTerminalsTheme,
 } from "../../lib/terminalManager";
 import { applyTheme, getTheme } from "../../lib/themes";
@@ -28,6 +30,7 @@ const mockApplyTheme = vi.mocked(applyTheme);
 const mockGetTheme = vi.mocked(getTheme);
 const mockSetAllTerminalsTheme = vi.mocked(setAllTerminalsTheme);
 const mockSetAllTerminalsFontFamily = vi.mocked(setAllTerminalsFontFamily);
+const mockSetAllTerminalsFontSize = vi.mocked(setAllTerminalsFontSize);
 const mockSetActivityByteThreshold = vi.mocked(setActivityByteThreshold);
 
 beforeEach(() => {
@@ -77,9 +80,10 @@ describe("settingsStore", () => {
 		);
 	});
 
-	it("setFontSize updates fontSize", () => {
+	it("setFontSize updates fontSize and calls setAllTerminalsFontSize", () => {
 		useSettingsStore.getState().setFontSize(18);
 		expect(useSettingsStore.getState().fontSize).toBe(18);
+		expect(mockSetAllTerminalsFontSize).toHaveBeenCalledWith(18);
 	});
 
 	it("setTheme calls getTheme, applyTheme, setAllTerminalsTheme", () => {

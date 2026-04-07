@@ -15,6 +15,7 @@ import {
 import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { matchTitleToAgent } from "./agents";
+import { getTheme } from "./themes";
 import { pty } from "./ipc";
 import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
@@ -215,6 +216,18 @@ setTimeout(() => {
 			if (managed.ptyId) {
 				activityStore.initPty(managed.ptyId);
 			}
+		}
+	});
+
+	useSettingsStore.subscribe((state, prev) => {
+		if (state.terminalFontFamily !== prev.terminalFontFamily) {
+			setAllTerminalsFontFamily(state.terminalFontFamily);
+		}
+		if (state.fontSize !== prev.fontSize) {
+			setAllTerminalsFontSize(state.fontSize);
+		}
+		if (state.theme !== prev.theme) {
+			setAllTerminalsTheme(getTheme(state.theme).terminal);
 		}
 	});
 }, 0);
