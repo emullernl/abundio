@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
 import {
 	setAllTerminalsFontFamily,
+	setAllTerminalsFontSize,
 	setAllTerminalsTheme,
 	setActivityByteThreshold as setTerminalActivityByteThreshold,
 } from "../lib/terminalManager";
@@ -150,6 +151,16 @@ export const useSettingsStore = create<SettingsState>()(
 				}
 				if (state?.agents) {
 					state.agents = mergeAgentsWithBuiltins(state.agents);
+				}
+				// Fix race: terminals created before rehydration have default font/theme.
+				if (state?.terminalFontFamily) {
+					setAllTerminalsFontFamily(state.terminalFontFamily);
+				}
+				if (state?.fontSize) {
+					setAllTerminalsFontSize(state.fontSize);
+				}
+				if (state?.theme) {
+					setAllTerminalsTheme(getTheme(state.theme).terminal);
 				}
 			},
 		},
