@@ -1,9 +1,9 @@
 /** Number of byte-threshold crossings required within ACTIVITY_HIT_WINDOW_MS
  *  before agent-mode activity detection fires. */
-export const ACTIVITY_HIT_COUNT = 7;
+export const ACTIVITY_HIT_COUNT = 5;
 
 /** Sliding window in which ACTIVITY_HIT_COUNT crossings must occur. */
-export const ACTIVITY_HIT_WINDOW_MS = 10_000;
+export const ACTIVITY_HIT_WINDOW_MS = 5_000;
 
 /** Record a new threshold crossing into a sliding window of recent crossings.
  *
