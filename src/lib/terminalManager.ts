@@ -14,6 +14,7 @@ import {
 } from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { recordThresholdHit } from "./activityGate";
 import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
@@ -157,6 +158,10 @@ export interface ManagedTerminal {
 	lastInputAt: number;
 	/** Accumulated output bytes since last idle — used to filter out small outputs like prompt redraws */
 	bytesSinceIdle: number;
+	/** Timestamps of recent byte-threshold crossings — activity fires only after
+	 *  ACTIVITY_HIT_COUNT crossings within ACTIVITY_HIT_WINDOW_MS, so a single
+	 *  burst of output is no longer enough to flip the dot to active. */
+	thresholdHitTimes: number[];
 	/** Timestamp of last output chunk — used to reset accumulation after inactivity gap */
 	lastOutputChunkAt: number;
 	/** True once initPty has completed — used by TerminalLoader to hide the spinner */
@@ -207,6 +212,7 @@ export const INACTIVITY_RESET_MS = 3000;
 async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
 	let bgBytesSinceIdle = 0;
+	let bgThresholdHitTimes: number[] = [];
 	let bgLastOutputChunkAt = 0;
 	// Use onOutputRaw to skip base64 decode — background trackers only need
 	// approximate byte counts for activity thresholds, not decoded content.
@@ -220,6 +226,8 @@ async function startBackgroundTracking(ptyId: string) {
 			now - bgLastOutputChunkAt > INACTIVITY_RESET_MS
 		) {
 			bgBytesSinceIdle = 0;
+			// See foreground path: hit history is pruned by its own sliding
+			// window, not by the byte-counter's inactivity gap.
 		}
 		bgLastOutputChunkAt = now;
 		// Estimate decoded byte count from base64 string length
@@ -229,7 +237,11 @@ async function startBackgroundTracking(ptyId: string) {
 			touchLastOutput(ptyId, now);
 		} else if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 			bgBytesSinceIdle = 0;
-			usePtyActivityStore.getState().recordOutput(ptyId);
+			const result = recordThresholdHit(bgThresholdHitTimes, now);
+			bgThresholdHitTimes = result.hitTimes;
+			if (result.fire) {
+				usePtyActivityStore.getState().recordOutput(ptyId);
+			}
 		}
 	});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
@@ -406,6 +418,7 @@ export async function createTerminal(
 		focused: false,
 		lastInputAt: 0,
 		bytesSinceIdle: 0,
+		thresholdHitTimes: [],
 		lastOutputChunkAt: 0,
 		ready: false,
 		settled: false,
@@ -535,14 +548,23 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			// Process shell integration commands (agent detection + shell activity)
 			for (const cmd of commands) {
 				if (cmd.type === "command_start") {
-					// Agent detection from command text
+					// Agent detection from command text. setAgentPty mutates
+					// the store, so we have to track the transition with a
+					// local flag — the captured `isAgentMode` from the top of
+					// this chunk is now stale.
+					let nowIsAgent = isAgentMode;
 					if (cmd.commandText) {
 						const agents = useSettingsStore.getState().agents;
 						if (matchTitleToAgent(cmd.commandText, agents)) {
 							actState.setAgentPty(currentPtyId);
+							nowIsAgent = true;
 						}
 					}
-					if (!managed.suppressActivity && !isAgentMode) {
+					// Critical: the !nowIsAgent guard keeps us from setting
+					// shellCommandRunning=true for the agent's own command_start.
+					// If that flag stays true, the idle scanner will never
+					// transition active → waiting (purple) for the agent.
+					if (!managed.suppressActivity && !nowIsAgent) {
 						setShellCommandRunning(currentPtyId, true);
 						actState.recordOutput(currentPtyId);
 					}
@@ -556,8 +578,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					if (currentEntry?.detectionMode === "agent") {
 						freshState.clearAgentPty(currentPtyId);
 					}
-					const wasAgentMode =
-						currentEntry?.detectionMode === "agent";
+					const wasAgentMode = currentEntry?.detectionMode === "agent";
 					if (!managed.suppressActivity && !wasAgentMode) {
 						setShellCommandRunning(currentPtyId, false);
 						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
@@ -588,6 +609,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
 					) {
 						managed.bytesSinceIdle = 0;
+						// Note: do NOT clear thresholdHitTimes here. Agents
+						// naturally pause for several seconds between bursts
+						// while thinking; the sliding window in
+						// recordThresholdHit handles pruning at its own
+						// (longer) cadence. Wiping hits on every 3s gap would
+						// prevent the count from ever reaching the threshold.
 					}
 					managed.lastOutputChunkAt = now;
 					managed.bytesSinceIdle += cleaned.length;
@@ -596,7 +623,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						touchLastOutput(currentPtyId, now);
 					} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 						managed.bytesSinceIdle = 0;
-						usePtyActivityStore.getState().recordOutput(currentPtyId);
+						const result = recordThresholdHit(managed.thresholdHitTimes, now);
+						managed.thresholdHitTimes = result.hitTimes;
+						if (result.fire) {
+							usePtyActivityStore.getState().recordOutput(currentPtyId);
+						}
 					}
 				}
 			}
