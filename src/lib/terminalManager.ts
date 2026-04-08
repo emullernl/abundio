@@ -192,7 +192,7 @@ const backgroundTrackers = new Map<
 	{ unlistenOutput: () => void; unlistenStatus: () => void }
 >();
 
-let ACTIVITY_BYTE_THRESHOLD = 512;
+let ACTIVITY_BYTE_THRESHOLD = 1024;
 
 export function getActivityByteThreshold(): number {
 	return ACTIVITY_BYTE_THRESHOLD;

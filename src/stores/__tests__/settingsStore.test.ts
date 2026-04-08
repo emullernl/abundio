@@ -41,7 +41,7 @@ beforeEach(() => {
 		sidebarCollapsed: false,
 		sidebarSplitRatio: 0.4,
 		debugActivityMeter: false,
-		activityByteThreshold: 512,
+		activityByteThreshold: 1024,
 	});
 });
 

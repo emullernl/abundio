@@ -76,7 +76,7 @@ const PERSISTED_DEFAULTS: {
 		gitPanelWidth: 360,
 		gitPanelSplitRatio: 0.5,
 		debugActivityMeter: false,
-		activityByteThreshold: 512,
+		activityByteThreshold: 1024,
 		shellPath: null as string | null,
 		agents: BUILTIN_AGENTS as CodingAgent[],
 	};
@@ -117,7 +117,11 @@ const PERSISTED_DEFAULTS: {
 					: defaults.debugActivityMeter,
 			activityByteThreshold:
 				typeof s.activityByteThreshold === "number"
-					? s.activityByteThreshold
+					? // Migrate the previous default (512) up to the new default (1024).
+						// Custom values are preserved.
+						s.activityByteThreshold === 512
+						? 1024
+						: s.activityByteThreshold
 					: defaults.activityByteThreshold,
 			shellPath:
 				typeof s.shellPath === "string" || s.shellPath === null
@@ -217,6 +221,15 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
+			version: 1,
+			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
+			migrate: (persistedState: any, version: number) => {
+				if (!persistedState) return persistedState;
+				if (version < 1 && persistedState.activityByteThreshold === 512) {
+					return { ...persistedState, activityByteThreshold: 1024 };
+				}
+				return persistedState;
+			},
 			partialize: (state) => ({
 				terminalFontFamily: state.terminalFontFamily,
 				uiFontFamily: state.uiFontFamily,
