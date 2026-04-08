@@ -21,6 +21,26 @@ import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
 
+/** CSS generic family keywords — these have no @font-face and must never be
+ *  passed to FontFaceSet.load() / .check() as the family to await on. */
+const CSS_GENERIC_FAMILIES =
+	/^(monospace|serif|sans-serif|cursive|fantasy|system-ui|ui-monospace|ui-serif|ui-sans-serif|ui-rounded|emoji|math|fangsong)$/i;
+
+/** Strip the comma-separated fallback list and any quotes from a CSS font-family
+ *  value, returning the primary family name. e.g.
+ *    "'Hack Nerd Font Mono', monospace" → "Hack Nerd Font Mono"
+ *  Returns null if the primary family is a CSS generic (which has no @font-face)
+ *  or if the value is empty. */
+export function primaryFontFamily(fontFamily: string): string | null {
+	const first = fontFamily
+		.split(",")[0]
+		?.trim()
+		.replace(/^['"]|['"]$/g, "");
+	if (!first) return null;
+	if (CSS_GENERIC_FAMILIES.test(first)) return null;
+	return first;
+}
+
 function containsPaneId(node: PaneNode, targetPaneId: string): boolean {
 	if (node.type === "terminal") return node.id === targetPaneId;
 	return (
@@ -233,18 +253,24 @@ export async function createTerminal(
 	container: HTMLElement,
 	options: { fontSize: number; fontFamily: string; theme: ITheme },
 ): Promise<ManagedTerminal> {
-	// Ensure all font variants are loaded before xterm rasterizes glyphs into its texture atlas.
-	// Fonts are eagerly preloaded in main.tsx; this is a fast synchronous check with async fallback.
-	const fontSpec = `${options.fontSize}px ${options.fontFamily}`;
-	if (!document.fonts.check(fontSpec)) {
-		try {
-			await Promise.all([
-				document.fonts.load(fontSpec),
-				document.fonts.load(`bold ${fontSpec}`),
-				document.fonts.load(`italic ${fontSpec}`),
-			]);
-		} catch {
-			// Proceed with fallback if font loading fails
+	// Ensure the configured font is loaded before xterm rasterizes glyphs into its
+	// texture atlas. We must check the *primary* family in isolation: stored fontFamily
+	// values look like "'Hack Nerd Font Mono', monospace", and FontFaceSet.check()
+	// short-circuits to true the moment any family in the list is loadable — and
+	// `monospace` is always loadable. Stripping the fallback restores the check.
+	const primary = primaryFontFamily(options.fontFamily);
+	if (primary) {
+		const primarySpec = `${options.fontSize}px "${primary}"`;
+		if (!document.fonts.check(primarySpec)) {
+			try {
+				await Promise.all([
+					document.fonts.load(primarySpec),
+					document.fonts.load(`bold ${primarySpec}`),
+					document.fonts.load(`italic ${primarySpec}`),
+				]);
+			} catch {
+				// Proceed with fallback if font loading fails
+			}
 		}
 	}
 

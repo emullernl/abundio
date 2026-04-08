@@ -1,36 +1,45 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
+import { primaryFontFamily } from "./lib/terminalManager";
 import "./styles/globals.css";
 
 // Block React render until the configured terminal font is fully loaded.
-// document.fonts.check() in createTerminal() can return true for system-installed
-// fallbacks while the bundled @font-face .ttf is still unfetched, causing the
-// WebGL atlas to bake glyphs against the wrong font. Awaiting here guarantees
-// the @font-face is downloaded and registered before any terminal is created.
+// createTerminal() also has its own preload as a safety net, but loading the
+// font here means the very first paint of every terminal already has correct
+// glyphs in the WebGL atlas — no flicker.
 async function preloadTerminalFont(): Promise<void> {
-	let fontFamily = "'JetBrainsMonoNL Nerd Font Mono', monospace";
+	let fontFamily = "JetBrainsMonoNL Nerd Font Mono";
 	let fontSize = 14;
 	try {
 		const raw = localStorage.getItem("abundio-settings");
 		if (raw) {
 			const parsed = JSON.parse(raw);
-			if (parsed?.state?.terminalFontFamily)
-				fontFamily = parsed.state.terminalFontFamily;
-			if (parsed?.state?.fontSize) fontSize = parsed.state.fontSize;
+			const stored = parsed?.state?.terminalFontFamily;
+			if (typeof stored === "string") {
+				const primary = primaryFontFamily(stored);
+				if (primary) fontFamily = primary;
+			}
+			if (typeof parsed?.state?.fontSize === "number") {
+				fontSize = parsed.state.fontSize;
+			}
 		}
 	} catch {
 		// Fall back to defaults
 	}
-	const spec = `${fontSize}px ${fontFamily}`;
-	// 500ms safety net so a missing/broken font file never blocks startup forever.
+	// Quote the family to avoid the , monospace fallback ever short-circuiting
+	// FontFaceSet.load (monospace is always loadable, so a comma list returns
+	// immediately without actually fetching the bundled @font-face .ttf).
+	const spec = `${fontSize}px "${fontFamily}"`;
+	// 3s safety net so a totally broken environment can't wedge startup forever.
+	// createTerminal()'s own preload is the real safety net for individual panes.
 	await Promise.race([
 		Promise.all([
 			document.fonts.load(spec),
 			document.fonts.load(`bold ${spec}`),
 			document.fonts.load(`italic ${spec}`),
 		]),
-		new Promise((r) => setTimeout(r, 500)),
+		new Promise((r) => setTimeout(r, 3000)),
 	]).catch(() => {});
 }
 
