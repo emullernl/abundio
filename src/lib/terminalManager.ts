@@ -26,6 +26,40 @@ import type { PaneNode } from "./types";
 const CSS_GENERIC_FAMILIES =
 	/^(monospace|serif|sans-serif|cursive|fantasy|system-ui|ui-monospace|ui-serif|ui-sans-serif|ui-rounded|emoji|math|fangsong)$/i;
 
+/** Attempt to load the WebGL renderer addon on a managed terminal. Idempotent:
+ *  if webglAddon is already set, this is a no-op. On failure, logs the error
+ *  (previously swallowed) so we can see when the browser refuses to create a
+ *  WebGL context — e.g. the per-page context limit (~16) or creation on a 0×0
+ *  hidden canvas. On silent fall-through xterm keeps its DOM renderer, which
+ *  has different glyph metrics and looks like the wrong font. */
+function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
+	if (managed.webglAddon || retries <= 0) return;
+	try {
+		const webgl = new WebglAddon();
+		webgl.onContextLoss(() => {
+			webgl.dispose();
+			managed.webglAddon = null;
+			requestAnimationFrame(() => tryLoadWebgl(managed, retries - 1));
+		});
+		managed.term.loadAddon(webgl);
+		managed.webglAddon = webgl;
+	} catch (err) {
+		console.warn(
+			"[abundio] WebGL renderer failed to load; xterm will fall back to DOM renderer (glyph metrics will look off).",
+			err,
+		);
+	}
+}
+
+/** Ensure the WebGL renderer is loaded on a terminal. Called from projectInto
+ *  once the container is visible and sized — the first attempt in createTerminal
+ *  runs while the canvas is still 0×0 and offscreen, which some browsers refuse. */
+export function ensureWebglLoaded(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed || managed.webglAddon) return;
+	tryLoadWebgl(managed);
+}
+
 /** Strip the comma-separated fallback list and any quotes from a CSS font-family
  *  value, returning the primary family name. e.g.
  *    "'Hack Nerd Font Mono', monospace" → "Hack Nerd Font Mono"
@@ -325,22 +359,10 @@ export async function createTerminal(
 
 	instances.set(paneId, managed);
 
-	const loadWebgl = (retries = 3) => {
-		if (retries <= 0) return;
-		try {
-			const webgl = new WebglAddon();
-			webgl.onContextLoss(() => {
-				webgl.dispose();
-				managed.webglAddon = null;
-				requestAnimationFrame(() => loadWebgl(retries - 1));
-			});
-			term.loadAddon(webgl);
-			managed.webglAddon = webgl;
-		} catch {
-			// Canvas renderer fallback
-		}
-	};
-	loadWebgl();
+	// First attempt — may fail because the container is still hidden/0×0
+	// at this point. projectInto() will retry via ensureWebglLoaded() once
+	// the terminal is in a visible, sized container.
+	tryLoadWebgl(managed);
 
 	// Load scrollback BEFORE returning so it's available when projectInto
 	// calls flushPendingRestore. initPty is fire-and-forget, so if we read
