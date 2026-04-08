@@ -16,6 +16,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
+import { collectPaneIds } from "./paneTree";
 import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { stripResetSequences } from "./terminalResetFilter";
@@ -53,11 +54,47 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 
 /** Ensure the WebGL renderer is loaded on a terminal. Called from projectInto
  *  once the container is visible and sized — the first attempt in createTerminal
- *  runs while the canvas is still 0×0 and offscreen, which some browsers refuse. */
+ *  runs while the canvas is still 0×0 and offscreen, which some browsers refuse.
+ *
+ *  Bails out for panes that aren't in the currently active tab: WebGL contexts
+ *  are capped per page (~16 in Chromium), so we only ever hold contexts for
+ *  panes the user is actually looking at. The store subscription below
+ *  reattaches WebGL on tab/session switch. */
 export function ensureWebglLoaded(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed || managed.webglAddon) return;
+	if (!isPaneInActiveTab(paneId)) return;
 	tryLoadWebgl(managed);
+}
+
+/** Dispose this pane's WebGL addon and free its GPU context. The terminal,
+ *  PTY, and scrollback all keep running — only the GPU canvas is detached.
+ *  A later ensureWebglLoaded() call will recreate it. */
+export function unloadWebgl(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed?.webglAddon) return;
+	managed.webglAddon.dispose();
+	managed.webglAddon = null;
+}
+
+/** Returns true if `paneId` belongs to the active tab of the active session
+ *  (and the active view is the terminal view). Used to gate WebGL loading. */
+function isPaneInActiveTab(paneId: string): boolean {
+	const state = useSessionStore.getState();
+	const sessionId = state.activeSessionId;
+	if (!sessionId) return false;
+	if ((state.activeView[sessionId] ?? "terminal") !== "terminal") return false;
+	const tabId = state.activeTabBySession[sessionId];
+	if (!tabId) return false;
+	const session = state.sessions.find((s) => s.id === sessionId);
+	const tab = session?.tabs.find((t) => t.id === tabId);
+	if (!tab) return false;
+	try {
+		const layout = JSON.parse(tab.layoutJson) as PaneNode;
+		return collectPaneIds(layout).includes(paneId);
+	} catch {
+		return false;
+	}
 }
 
 /** Strip the comma-separated fallback list and any quotes from a CSS font-family
@@ -259,6 +296,23 @@ setTimeout(() => {
 		const view = activeView[activeSessionId] ?? "terminal";
 		const isTerminalView = view === "terminal";
 
+		// Compute the set of paneIds in the currently active tab so we can
+		// keep WebGL contexts only for panes the user is actually looking at.
+		// Browsers cap WebGL contexts at ~16 per page; without this gate, a
+		// user with many tabs/sessions hits "too many active WebGL contexts".
+		const activeTabId = state.activeTabBySession[activeSessionId];
+		const activeSession = state.sessions.find((s) => s.id === activeSessionId);
+		const activeTab = activeSession?.tabs.find((t) => t.id === activeTabId);
+		let activePaneIds: Set<string> | null = null;
+		if (activeTab && isTerminalView) {
+			try {
+				const layout = JSON.parse(activeTab.layoutJson) as PaneNode;
+				activePaneIds = new Set(collectPaneIds(layout));
+			} catch {
+				activePaneIds = null;
+			}
+		}
+
 		const activityStore = usePtyActivityStore.getState();
 		for (const [paneId, managed] of instances) {
 			managed.focused = isTerminalView && focusedPaneId === paneId;
@@ -271,6 +325,12 @@ setTimeout(() => {
 			// Ensure all terminals in the active session have an activity entry (grey → green)
 			if (managed.ptyId) {
 				activityStore.initPty(managed.ptyId);
+			}
+			// Reconcile WebGL: load for panes in the active tab, unload for the rest.
+			if (activePaneIds?.has(paneId)) {
+				ensureWebglLoaded(paneId);
+			} else {
+				unloadWebgl(paneId);
 			}
 		}
 	});
@@ -359,10 +419,11 @@ export async function createTerminal(
 
 	instances.set(paneId, managed);
 
-	// First attempt — may fail because the container is still hidden/0×0
-	// at this point. projectInto() will retry via ensureWebglLoaded() once
-	// the terminal is in a visible, sized container.
-	tryLoadWebgl(managed);
+	// First attempt — may no-op because the pane isn't in the active tab yet,
+	// or because the container is still hidden/0×0. projectInto() will retry
+	// via ensureWebglLoaded() once the terminal is in a visible, sized
+	// container, and the store subscription will retry on tab switch.
+	ensureWebglLoaded(paneId);
 
 	// Load scrollback BEFORE returning so it's available when projectInto
 	// calls flushPendingRestore. initPty is fire-and-forget, so if we read
