@@ -2,7 +2,9 @@
 
 A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https://v2.tauri.app). Abundio manages sessions (each bound to a folder), supports split panes, and has first-class support for AI coding CLI agents like Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode.
 
-![macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)
 
 ## Features
 
