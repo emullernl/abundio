@@ -49,6 +49,9 @@ export interface ManagedTerminal {
 	fitAddon: FitAddon;
 	searchAddon: SearchAddon;
 	serializeAddon: SerializeAddon;
+	/** Active WebGL addon, if loaded — used to clear the texture atlas after
+	 *  font/theme changes so glyphs are re-rasterized with the new settings. */
+	webglAddon: WebglAddon | null;
 	ptyId: string;
 	cleanup: (() => void) | null;
 	/** Deferred scrollback data to write after terminal is projected into a visible container */
@@ -265,21 +268,6 @@ export async function createTerminal(
 	term.unicode.activeVersion = "11";
 	term.open(container);
 
-	const loadWebgl = (retries = 3) => {
-		if (retries <= 0) return;
-		try {
-			const webgl = new WebglAddon();
-			webgl.onContextLoss(() => {
-				webgl.dispose();
-				requestAnimationFrame(() => loadWebgl(retries - 1));
-			});
-			term.loadAddon(webgl);
-		} catch {
-			// Canvas renderer fallback
-		}
-	};
-	loadWebgl();
-
 	if (container.offsetWidth > 0 && container.offsetHeight > 0) {
 		fitAddon.fit();
 	}
@@ -289,6 +277,7 @@ export async function createTerminal(
 		fitAddon,
 		searchAddon,
 		serializeAddon,
+		webglAddon: null,
 		ptyId: initialPtyId,
 		cleanup: null,
 		pendingRestore: null,
@@ -309,6 +298,23 @@ export async function createTerminal(
 	};
 
 	instances.set(paneId, managed);
+
+	const loadWebgl = (retries = 3) => {
+		if (retries <= 0) return;
+		try {
+			const webgl = new WebglAddon();
+			webgl.onContextLoss(() => {
+				webgl.dispose();
+				managed.webglAddon = null;
+				requestAnimationFrame(() => loadWebgl(retries - 1));
+			});
+			term.loadAddon(webgl);
+			managed.webglAddon = webgl;
+		} catch {
+			// Canvas renderer fallback
+		}
+	};
+	loadWebgl();
 
 	// Load scrollback BEFORE returning so it's available when projectInto
 	// calls flushPendingRestore. initPty is fire-and-forget, so if we read
@@ -693,6 +699,9 @@ export function flushPendingRestore(paneId: string): void {
 export function setAllTerminalsTheme(theme: ITheme): void {
 	for (const managed of instances.values()) {
 		managed.term.options.theme = theme;
+		// WebGL caches rasterized glyphs in a texture atlas with the old fg/bg
+		// colors baked in — clear it so refresh() rebuilds against the new theme.
+		managed.webglAddon?.clearTextureAtlas();
 		managed.term.refresh(0, managed.term.rows - 1);
 	}
 }
@@ -701,6 +710,7 @@ export function setAllTerminalsTheme(theme: ITheme): void {
 export function setAllTerminalsFontSize(fontSize: number): void {
 	for (const managed of instances.values()) {
 		managed.term.options.fontSize = fontSize;
+		managed.webglAddon?.clearTextureAtlas();
 		managed.fitAddon.fit();
 		if (managed.ptyId) {
 			pty
@@ -727,6 +737,10 @@ export async function setAllTerminalsFontFamily(
 
 	for (const managed of instances.values()) {
 		managed.term.options.fontFamily = fontFamily;
+		// WebGL caches rasterized glyphs in a texture atlas — refresh() alone
+		// re-renders from the existing atlas and won't pick up the new font.
+		// Clearing the atlas forces glyphs to be re-rasterized on next paint.
+		managed.webglAddon?.clearTextureAtlas();
 		managed.term.refresh(0, managed.term.rows - 1);
 		managed.fitAddon.fit();
 		if (managed.ptyId) {
