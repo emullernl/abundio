@@ -38,9 +38,7 @@ describe("decodeBase64", () => {
 		// Build a string with all byte values 0x00–0xFF
 		const bytes = new Uint8Array(256);
 		for (let i = 0; i < 256; i++) bytes[i] = i;
-		const binaryStr = Array.from(bytes, (b) => String.fromCharCode(b)).join(
-			"",
-		);
+		const binaryStr = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
 		const encoded = btoa(binaryStr);
 
 		const result = decodeBase64(encoded);
@@ -52,9 +50,7 @@ describe("decodeBase64", () => {
 		const size = 65536;
 		const bytes = new Uint8Array(size);
 		for (let i = 0; i < size; i++) bytes[i] = i & 0xff;
-		const binaryStr = Array.from(bytes, (b) => String.fromCharCode(b)).join(
-			"",
-		);
+		const binaryStr = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
 		const encoded = btoa(binaryStr);
 
 		const result = decodeBase64(encoded);

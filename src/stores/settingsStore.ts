@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
 import {
 	setAllTerminalsFontFamily,
+	setAllTerminalsFontSize,
 	setAllTerminalsTheme,
 	setActivityByteThreshold as setTerminalActivityByteThreshold,
 } from "../lib/terminalManager";
@@ -45,22 +46,112 @@ interface SettingsState {
 	) => void;
 }
 
+// Read persisted settings from localStorage synchronously so the store's
+// initial state matches the user's chosen values from the very first render.
+// Zustand `persist` rehydrates asynchronously (microtask), and any consumer
+// that calls `useSettingsStore.getState()` during that window would otherwise
+// read the hardcoded defaults — most visibly causing terminals to briefly
+// rasterize against the default font before settling on the configured one.
+const PERSISTED_DEFAULTS: {
+	terminalFontFamily: string;
+	uiFontFamily: string;
+	fontSize: number;
+	uiFontSize: number;
+	theme: string;
+	sidebarSplitRatio: number;
+	gitPanelWidth: number;
+	gitPanelSplitRatio: number;
+	debugActivityMeter: boolean;
+	activityByteThreshold: number;
+	shellPath: string | null;
+	agents: CodingAgent[];
+} = (() => {
+	const defaults = {
+		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
+		uiFontFamily: "system-ui, -apple-system, sans-serif",
+		fontSize: 14,
+		uiFontSize: 14,
+		theme: "default",
+		sidebarSplitRatio: 0.4,
+		gitPanelWidth: 360,
+		gitPanelSplitRatio: 0.5,
+		debugActivityMeter: false,
+		activityByteThreshold: 1024,
+		shellPath: null as string | null,
+		agents: BUILTIN_AGENTS as CodingAgent[],
+	};
+	try {
+		const raw = localStorage.getItem("abundio-settings");
+		if (!raw) return defaults;
+		const parsed = JSON.parse(raw);
+		const s = parsed?.state;
+		if (!s) return defaults;
+		return {
+			terminalFontFamily:
+				typeof s.terminalFontFamily === "string"
+					? s.terminalFontFamily
+					: defaults.terminalFontFamily,
+			uiFontFamily:
+				typeof s.uiFontFamily === "string"
+					? s.uiFontFamily
+					: defaults.uiFontFamily,
+			fontSize: typeof s.fontSize === "number" ? s.fontSize : defaults.fontSize,
+			uiFontSize:
+				typeof s.uiFontSize === "number" ? s.uiFontSize : defaults.uiFontSize,
+			theme: typeof s.theme === "string" ? s.theme : defaults.theme,
+			sidebarSplitRatio:
+				typeof s.sidebarSplitRatio === "number"
+					? s.sidebarSplitRatio
+					: defaults.sidebarSplitRatio,
+			gitPanelWidth:
+				typeof s.gitPanelWidth === "number"
+					? s.gitPanelWidth
+					: defaults.gitPanelWidth,
+			gitPanelSplitRatio:
+				typeof s.gitPanelSplitRatio === "number"
+					? s.gitPanelSplitRatio
+					: defaults.gitPanelSplitRatio,
+			debugActivityMeter:
+				typeof s.debugActivityMeter === "boolean"
+					? s.debugActivityMeter
+					: defaults.debugActivityMeter,
+			activityByteThreshold:
+				typeof s.activityByteThreshold === "number"
+					? // Migrate the previous default (512) up to the new default (1024).
+						// Custom values are preserved.
+						s.activityByteThreshold === 512
+						? 1024
+						: s.activityByteThreshold
+					: defaults.activityByteThreshold,
+			shellPath:
+				typeof s.shellPath === "string" || s.shellPath === null
+					? s.shellPath
+					: defaults.shellPath,
+			agents: Array.isArray(s.agents)
+				? mergeAgentsWithBuiltins(s.agents)
+				: defaults.agents,
+		};
+	} catch {
+		return defaults;
+	}
+})();
+
 export const useSettingsStore = create<SettingsState>()(
 	persist(
 		(set) => ({
-			terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
-			uiFontFamily: "system-ui, -apple-system, sans-serif",
-			fontSize: 14,
-			uiFontSize: 14,
-			theme: "default",
+			terminalFontFamily: PERSISTED_DEFAULTS.terminalFontFamily,
+			uiFontFamily: PERSISTED_DEFAULTS.uiFontFamily,
+			fontSize: PERSISTED_DEFAULTS.fontSize,
+			uiFontSize: PERSISTED_DEFAULTS.uiFontSize,
+			theme: PERSISTED_DEFAULTS.theme,
 			sidebarCollapsed: false,
-			sidebarSplitRatio: 0.4,
-			gitPanelWidth: 360,
-			gitPanelSplitRatio: 0.5,
-			debugActivityMeter: false,
-			activityByteThreshold: 512,
-			shellPath: null,
-			agents: BUILTIN_AGENTS,
+			sidebarSplitRatio: PERSISTED_DEFAULTS.sidebarSplitRatio,
+			gitPanelWidth: PERSISTED_DEFAULTS.gitPanelWidth,
+			gitPanelSplitRatio: PERSISTED_DEFAULTS.gitPanelSplitRatio,
+			debugActivityMeter: PERSISTED_DEFAULTS.debugActivityMeter,
+			activityByteThreshold: PERSISTED_DEFAULTS.activityByteThreshold,
+			shellPath: PERSISTED_DEFAULTS.shellPath,
+			agents: PERSISTED_DEFAULTS.agents,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -130,6 +221,15 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
+			version: 1,
+			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
+			migrate: (persistedState: any, version: number) => {
+				if (!persistedState) return persistedState;
+				if (version < 1 && persistedState.activityByteThreshold === 512) {
+					return { ...persistedState, activityByteThreshold: 1024 };
+				}
+				return persistedState;
+			},
 			partialize: (state) => ({
 				terminalFontFamily: state.terminalFontFamily,
 				uiFontFamily: state.uiFontFamily,
@@ -151,50 +251,34 @@ export const useSettingsStore = create<SettingsState>()(
 				if (state?.agents) {
 					state.agents = mergeAgentsWithBuiltins(state.agents);
 				}
+				// Fix race: terminals created before rehydration have default font/theme.
+				if (state?.terminalFontFamily) {
+					setAllTerminalsFontFamily(state.terminalFontFamily);
+				}
+				if (state?.fontSize) {
+					setAllTerminalsFontSize(state.fontSize);
+				}
+				if (state?.theme) {
+					setAllTerminalsTheme(getTheme(state.theme).terminal);
+				}
 			},
 		},
 	),
 );
 
-// Apply the persisted theme and fonts immediately on load by reading localStorage directly.
-// Zustand's persist middleware rehydrates asynchronously (microtask), which is too late
-// for CSS variables — the UI would flash the default theme/font first.
-{
-	let themeName = "default";
-	let uiFont: string | null = null;
-	let termFont: string | null = null;
-	let uiFontSizeVal: number | null = null;
-	try {
-		const raw = localStorage.getItem("abundio-settings");
-		if (raw) {
-			const parsed = JSON.parse(raw);
-			if (parsed?.state?.theme) {
-				themeName = parsed.state.theme;
-			}
-			if (parsed?.state?.uiFontFamily) {
-				uiFont = parsed.state.uiFontFamily;
-			}
-			if (parsed?.state?.terminalFontFamily) {
-				termFont = parsed.state.terminalFontFamily;
-			}
-			if (parsed?.state?.uiFontSize) {
-				uiFontSizeVal = parsed.state.uiFontSize;
-			}
-		}
-	} catch {
-		// Fall back to defaults
-	}
-	applyTheme(getTheme(themeName));
-	if (uiFont) {
-		document.documentElement.style.setProperty("--font-ui", uiFont);
-	}
-	if (termFont) {
-		document.documentElement.style.setProperty("--font-mono", termFont);
-	}
-	if (uiFontSizeVal) {
-		document.documentElement.style.setProperty(
-			"--ui-font-size",
-			`${uiFontSizeVal}px`,
-		);
-	}
-}
+// Apply the persisted theme and fonts immediately on load. Zustand's persist
+// middleware rehydrates asynchronously (microtask), which is too late for CSS
+// variables — the UI would flash the default theme/font first.
+applyTheme(getTheme(PERSISTED_DEFAULTS.theme));
+document.documentElement.style.setProperty(
+	"--font-ui",
+	PERSISTED_DEFAULTS.uiFontFamily,
+);
+document.documentElement.style.setProperty(
+	"--font-mono",
+	PERSISTED_DEFAULTS.terminalFontFamily,
+);
+document.documentElement.style.setProperty(
+	"--ui-font-size",
+	`${PERSISTED_DEFAULTS.uiFontSize}px`,
+);

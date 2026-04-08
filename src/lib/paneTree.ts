@@ -51,3 +51,9 @@ export function collectTerminals(
 	if (tree.type === "terminal") return [{ id: tree.id, ptyId: tree.ptyId }];
 	return [...collectTerminals(tree.first), ...collectTerminals(tree.second)];
 }
+
+/** Collect just the terminal pane IDs in tree order (depth-first). */
+export function collectPaneIds(tree: PaneNode): string[] {
+	if (tree.type === "terminal") return [tree.id];
+	return [...collectPaneIds(tree.first), ...collectPaneIds(tree.second)];
+}

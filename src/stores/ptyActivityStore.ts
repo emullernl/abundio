@@ -130,6 +130,12 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		markIdle: (ptyId) => {
 			const entry = get().activities[ptyId];
 			if (!entry || entry.state === "idle" || entry.state === "error") return;
+			// Agent mode: never cancel an in-progress "active" state. markIdle
+			// is meant to dismiss "waiting"/"error" alerts the user has
+			// acknowledged (focus, click, etc.); for an agent that's still
+			// streaming output, the work hasn't finished yet, so flipping the
+			// dot from amber to green would lie about what's happening.
+			if (entry.state === "active" && entry.detectionMode === "agent") return;
 			set((s) => ({
 				activities: {
 					...s.activities,

@@ -108,6 +108,35 @@ describe("store actions", () => {
 		);
 	});
 
+	it("markIdle does not override active state in agent mode", () => {
+		const { initPty, recordOutput, setAgentPty, markIdle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		recordOutput("pty-1");
+		// Simulates a session switch / focus change while the agent is still
+		// streaming — must NOT clear the in-progress active state.
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+	});
+
+	it("markIdle still clears waiting state in agent mode", () => {
+		const { initPty, setAgentPty, recordExitSuccess, markIdle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		recordExitSuccess("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"waiting",
+		);
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
 	it("clearError transitions error to idle", () => {
 		const { initPty, recordError, clearError } = usePtyActivityStore.getState();
 		initPty("pty-1");

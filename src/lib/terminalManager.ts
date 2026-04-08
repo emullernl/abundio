@@ -14,12 +14,104 @@ import {
 } from "../stores/ptyActivityStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { recordThresholdHit } from "./activityGate";
 import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
+import { collectPaneIds } from "./paneTree";
 import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
+
+/** CSS generic family keywords — these have no @font-face and must never be
+ *  passed to FontFaceSet.load() / .check() as the family to await on. */
+const CSS_GENERIC_FAMILIES =
+	/^(monospace|serif|sans-serif|cursive|fantasy|system-ui|ui-monospace|ui-serif|ui-sans-serif|ui-rounded|emoji|math|fangsong)$/i;
+
+/** Attempt to load the WebGL renderer addon on a managed terminal. Idempotent:
+ *  if webglAddon is already set, this is a no-op. On failure, logs the error
+ *  (previously swallowed) so we can see when the browser refuses to create a
+ *  WebGL context — e.g. the per-page context limit (~16) or creation on a 0×0
+ *  hidden canvas. On silent fall-through xterm keeps its DOM renderer, which
+ *  has different glyph metrics and looks like the wrong font. */
+function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
+	if (managed.webglAddon || retries <= 0) return;
+	try {
+		const webgl = new WebglAddon();
+		webgl.onContextLoss(() => {
+			webgl.dispose();
+			managed.webglAddon = null;
+			requestAnimationFrame(() => tryLoadWebgl(managed, retries - 1));
+		});
+		managed.term.loadAddon(webgl);
+		managed.webglAddon = webgl;
+	} catch (err) {
+		console.warn(
+			"[abundio] WebGL renderer failed to load; xterm will fall back to DOM renderer (glyph metrics will look off).",
+			err,
+		);
+	}
+}
+
+/** Ensure the WebGL renderer is loaded on a terminal. Called from projectInto
+ *  once the container is visible and sized — the first attempt in createTerminal
+ *  runs while the canvas is still 0×0 and offscreen, which some browsers refuse.
+ *
+ *  Bails out for panes that aren't in the currently active tab: WebGL contexts
+ *  are capped per page (~16 in Chromium), so we only ever hold contexts for
+ *  panes the user is actually looking at. The store subscription below
+ *  reattaches WebGL on tab/session switch. */
+export function ensureWebglLoaded(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed || managed.webglAddon) return;
+	if (!isPaneInActiveTab(paneId)) return;
+	tryLoadWebgl(managed);
+}
+
+/** Dispose this pane's WebGL addon and free its GPU context. The terminal,
+ *  PTY, and scrollback all keep running — only the GPU canvas is detached.
+ *  A later ensureWebglLoaded() call will recreate it. */
+export function unloadWebgl(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed?.webglAddon) return;
+	managed.webglAddon.dispose();
+	managed.webglAddon = null;
+}
+
+/** Returns true if `paneId` belongs to the active tab of the active session
+ *  (and the active view is the terminal view). Used to gate WebGL loading. */
+function isPaneInActiveTab(paneId: string): boolean {
+	const state = useSessionStore.getState();
+	const sessionId = state.activeSessionId;
+	if (!sessionId) return false;
+	if ((state.activeView[sessionId] ?? "terminal") !== "terminal") return false;
+	const tabId = state.activeTabBySession[sessionId];
+	if (!tabId) return false;
+	const session = state.sessions.find((s) => s.id === sessionId);
+	const tab = session?.tabs.find((t) => t.id === tabId);
+	if (!tab) return false;
+	try {
+		const layout = JSON.parse(tab.layoutJson) as PaneNode;
+		return collectPaneIds(layout).includes(paneId);
+	} catch {
+		return false;
+	}
+}
+
+/** Strip the comma-separated fallback list and any quotes from a CSS font-family
+ *  value, returning the primary family name. e.g.
+ *    "'Hack Nerd Font Mono', monospace" → "Hack Nerd Font Mono"
+ *  Returns null if the primary family is a CSS generic (which has no @font-face)
+ *  or if the value is empty. */
+export function primaryFontFamily(fontFamily: string): string | null {
+	const first = fontFamily
+		.split(",")[0]
+		?.trim()
+		.replace(/^['"]|['"]$/g, "");
+	if (!first) return null;
+	if (CSS_GENERIC_FAMILIES.test(first)) return null;
+	return first;
+}
 
 function containsPaneId(node: PaneNode, targetPaneId: string): boolean {
 	if (node.type === "terminal") return node.id === targetPaneId;
@@ -49,6 +141,9 @@ export interface ManagedTerminal {
 	fitAddon: FitAddon;
 	searchAddon: SearchAddon;
 	serializeAddon: SerializeAddon;
+	/** Active WebGL addon, if loaded — used to clear the texture atlas after
+	 *  font/theme changes so glyphs are re-rasterized with the new settings. */
+	webglAddon: WebglAddon | null;
 	ptyId: string;
 	cleanup: (() => void) | null;
 	/** Deferred scrollback data to write after terminal is projected into a visible container */
@@ -63,6 +158,10 @@ export interface ManagedTerminal {
 	lastInputAt: number;
 	/** Accumulated output bytes since last idle — used to filter out small outputs like prompt redraws */
 	bytesSinceIdle: number;
+	/** Timestamps of recent byte-threshold crossings — activity fires only after
+	 *  ACTIVITY_HIT_COUNT crossings within ACTIVITY_HIT_WINDOW_MS, so a single
+	 *  burst of output is no longer enough to flip the dot to active. */
+	thresholdHitTimes: number[];
 	/** Timestamp of last output chunk — used to reset accumulation after inactivity gap */
 	lastOutputChunkAt: number;
 	/** True once initPty has completed — used by TerminalLoader to hide the spinner */
@@ -93,7 +192,7 @@ const backgroundTrackers = new Map<
 	{ unlistenOutput: () => void; unlistenStatus: () => void }
 >();
 
-let ACTIVITY_BYTE_THRESHOLD = 512;
+let ACTIVITY_BYTE_THRESHOLD = 1024;
 
 export function getActivityByteThreshold(): number {
 	return ACTIVITY_BYTE_THRESHOLD;
@@ -113,6 +212,7 @@ export const INACTIVITY_RESET_MS = 3000;
 async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
 	let bgBytesSinceIdle = 0;
+	let bgThresholdHitTimes: number[] = [];
 	let bgLastOutputChunkAt = 0;
 	// Use onOutputRaw to skip base64 decode — background trackers only need
 	// approximate byte counts for activity thresholds, not decoded content.
@@ -126,6 +226,8 @@ async function startBackgroundTracking(ptyId: string) {
 			now - bgLastOutputChunkAt > INACTIVITY_RESET_MS
 		) {
 			bgBytesSinceIdle = 0;
+			// See foreground path: hit history is pruned by its own sliding
+			// window, not by the byte-counter's inactivity gap.
 		}
 		bgLastOutputChunkAt = now;
 		// Estimate decoded byte count from base64 string length
@@ -135,7 +237,11 @@ async function startBackgroundTracking(ptyId: string) {
 			touchLastOutput(ptyId, now);
 		} else if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 			bgBytesSinceIdle = 0;
-			usePtyActivityStore.getState().recordOutput(ptyId);
+			const result = recordThresholdHit(bgThresholdHitTimes, now);
+			bgThresholdHitTimes = result.hitTimes;
+			if (result.fire) {
+				usePtyActivityStore.getState().recordOutput(ptyId);
+			}
 		}
 	});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
@@ -202,6 +308,23 @@ setTimeout(() => {
 		const view = activeView[activeSessionId] ?? "terminal";
 		const isTerminalView = view === "terminal";
 
+		// Compute the set of paneIds in the currently active tab so we can
+		// keep WebGL contexts only for panes the user is actually looking at.
+		// Browsers cap WebGL contexts at ~16 per page; without this gate, a
+		// user with many tabs/sessions hits "too many active WebGL contexts".
+		const activeTabId = state.activeTabBySession[activeSessionId];
+		const activeSession = state.sessions.find((s) => s.id === activeSessionId);
+		const activeTab = activeSession?.tabs.find((t) => t.id === activeTabId);
+		let activePaneIds: Set<string> | null = null;
+		if (activeTab && isTerminalView) {
+			try {
+				const layout = JSON.parse(activeTab.layoutJson) as PaneNode;
+				activePaneIds = new Set(collectPaneIds(layout));
+			} catch {
+				activePaneIds = null;
+			}
+		}
+
 		const activityStore = usePtyActivityStore.getState();
 		for (const [paneId, managed] of instances) {
 			managed.focused = isTerminalView && focusedPaneId === paneId;
@@ -214,6 +337,12 @@ setTimeout(() => {
 			// Ensure all terminals in the active session have an activity entry (grey → green)
 			if (managed.ptyId) {
 				activityStore.initPty(managed.ptyId);
+			}
+			// Reconcile WebGL: load for panes in the active tab, unload for the rest.
+			if (activePaneIds?.has(paneId)) {
+				ensureWebglLoaded(paneId);
+			} else {
+				unloadWebgl(paneId);
 			}
 		}
 	});
@@ -230,18 +359,24 @@ export async function createTerminal(
 	container: HTMLElement,
 	options: { fontSize: number; fontFamily: string; theme: ITheme },
 ): Promise<ManagedTerminal> {
-	// Ensure all font variants are loaded before xterm rasterizes glyphs into its texture atlas.
-	// Fonts are eagerly preloaded in main.tsx; this is a fast synchronous check with async fallback.
-	const fontSpec = `${options.fontSize}px ${options.fontFamily}`;
-	if (!document.fonts.check(fontSpec)) {
-		try {
-			await Promise.all([
-				document.fonts.load(fontSpec),
-				document.fonts.load(`bold ${fontSpec}`),
-				document.fonts.load(`italic ${fontSpec}`),
-			]);
-		} catch {
-			// Proceed with fallback if font loading fails
+	// Ensure the configured font is loaded before xterm rasterizes glyphs into its
+	// texture atlas. We must check the *primary* family in isolation: stored fontFamily
+	// values look like "'Hack Nerd Font Mono', monospace", and FontFaceSet.check()
+	// short-circuits to true the moment any family in the list is loadable — and
+	// `monospace` is always loadable. Stripping the fallback restores the check.
+	const primary = primaryFontFamily(options.fontFamily);
+	if (primary) {
+		const primarySpec = `${options.fontSize}px "${primary}"`;
+		if (!document.fonts.check(primarySpec)) {
+			try {
+				await Promise.all([
+					document.fonts.load(primarySpec),
+					document.fonts.load(`bold ${primarySpec}`),
+					document.fonts.load(`italic ${primarySpec}`),
+				]);
+			} catch {
+				// Proceed with fallback if font loading fails
+			}
 		}
 	}
 
@@ -265,21 +400,6 @@ export async function createTerminal(
 	term.unicode.activeVersion = "11";
 	term.open(container);
 
-	const loadWebgl = (retries = 3) => {
-		if (retries <= 0) return;
-		try {
-			const webgl = new WebglAddon();
-			webgl.onContextLoss(() => {
-				webgl.dispose();
-				requestAnimationFrame(() => loadWebgl(retries - 1));
-			});
-			term.loadAddon(webgl);
-		} catch {
-			// Canvas renderer fallback
-		}
-	};
-	loadWebgl();
-
 	if (container.offsetWidth > 0 && container.offsetHeight > 0) {
 		fitAddon.fit();
 	}
@@ -289,6 +409,7 @@ export async function createTerminal(
 		fitAddon,
 		searchAddon,
 		serializeAddon,
+		webglAddon: null,
 		ptyId: initialPtyId,
 		cleanup: null,
 		pendingRestore: null,
@@ -297,6 +418,7 @@ export async function createTerminal(
 		focused: false,
 		lastInputAt: 0,
 		bytesSinceIdle: 0,
+		thresholdHitTimes: [],
 		lastOutputChunkAt: 0,
 		ready: false,
 		settled: false,
@@ -309,6 +431,12 @@ export async function createTerminal(
 	};
 
 	instances.set(paneId, managed);
+
+	// First attempt — may no-op because the pane isn't in the active tab yet,
+	// or because the container is still hidden/0×0. projectInto() will retry
+	// via ensureWebglLoaded() once the terminal is in a visible, sized
+	// container, and the store subscription will retry on tab switch.
+	ensureWebglLoaded(paneId);
 
 	// Load scrollback BEFORE returning so it's available when projectInto
 	// calls flushPendingRestore. initPty is fire-and-forget, so if we read
@@ -420,14 +548,23 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			// Process shell integration commands (agent detection + shell activity)
 			for (const cmd of commands) {
 				if (cmd.type === "command_start") {
-					// Agent detection from command text
+					// Agent detection from command text. setAgentPty mutates
+					// the store, so we have to track the transition with a
+					// local flag — the captured `isAgentMode` from the top of
+					// this chunk is now stale.
+					let nowIsAgent = isAgentMode;
 					if (cmd.commandText) {
 						const agents = useSettingsStore.getState().agents;
 						if (matchTitleToAgent(cmd.commandText, agents)) {
 							actState.setAgentPty(currentPtyId);
+							nowIsAgent = true;
 						}
 					}
-					if (!managed.suppressActivity && !isAgentMode) {
+					// Critical: the !nowIsAgent guard keeps us from setting
+					// shellCommandRunning=true for the agent's own command_start.
+					// If that flag stays true, the idle scanner will never
+					// transition active → waiting (purple) for the agent.
+					if (!managed.suppressActivity && !nowIsAgent) {
 						setShellCommandRunning(currentPtyId, true);
 						actState.recordOutput(currentPtyId);
 					}
@@ -441,8 +578,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					if (currentEntry?.detectionMode === "agent") {
 						freshState.clearAgentPty(currentPtyId);
 					}
-					const wasAgentMode =
-						currentEntry?.detectionMode === "agent";
+					const wasAgentMode = currentEntry?.detectionMode === "agent";
 					if (!managed.suppressActivity && !wasAgentMode) {
 						setShellCommandRunning(currentPtyId, false);
 						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
@@ -473,6 +609,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
 					) {
 						managed.bytesSinceIdle = 0;
+						// Note: do NOT clear thresholdHitTimes here. Agents
+						// naturally pause for several seconds between bursts
+						// while thinking; the sliding window in
+						// recordThresholdHit handles pruning at its own
+						// (longer) cadence. Wiping hits on every 3s gap would
+						// prevent the count from ever reaching the threshold.
 					}
 					managed.lastOutputChunkAt = now;
 					managed.bytesSinceIdle += cleaned.length;
@@ -481,7 +623,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						touchLastOutput(currentPtyId, now);
 					} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 						managed.bytesSinceIdle = 0;
-						usePtyActivityStore.getState().recordOutput(currentPtyId);
+						const result = recordThresholdHit(managed.thresholdHitTimes, now);
+						managed.thresholdHitTimes = result.hitTimes;
+						if (result.fire) {
+							usePtyActivityStore.getState().recordOutput(currentPtyId);
+						}
 					}
 				}
 			}
@@ -693,6 +839,9 @@ export function flushPendingRestore(paneId: string): void {
 export function setAllTerminalsTheme(theme: ITheme): void {
 	for (const managed of instances.values()) {
 		managed.term.options.theme = theme;
+		// WebGL caches rasterized glyphs in a texture atlas with the old fg/bg
+		// colors baked in — clear it so refresh() rebuilds against the new theme.
+		managed.webglAddon?.clearTextureAtlas();
 		managed.term.refresh(0, managed.term.rows - 1);
 	}
 }
@@ -701,6 +850,7 @@ export function setAllTerminalsTheme(theme: ITheme): void {
 export function setAllTerminalsFontSize(fontSize: number): void {
 	for (const managed of instances.values()) {
 		managed.term.options.fontSize = fontSize;
+		managed.webglAddon?.clearTextureAtlas();
 		managed.fitAddon.fit();
 		if (managed.ptyId) {
 			pty
@@ -727,6 +877,10 @@ export async function setAllTerminalsFontFamily(
 
 	for (const managed of instances.values()) {
 		managed.term.options.fontFamily = fontFamily;
+		// WebGL caches rasterized glyphs in a texture atlas — refresh() alone
+		// re-renders from the existing atlas and won't pick up the new font.
+		// Clearing the atlas forces glyphs to be re-rasterized on next paint.
+		managed.webglAddon?.clearTextureAtlas();
 		managed.term.refresh(0, managed.term.rows - 1);
 		managed.fitAddon.fit();
 		if (managed.ptyId) {

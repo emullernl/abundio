@@ -5,6 +5,7 @@ import {
 	beginResizeFilter,
 	createTerminal,
 	destroyTerminal,
+	ensureWebglLoaded,
 	flushPendingRestore,
 	getTerminal,
 	markSettled,
@@ -56,6 +57,12 @@ export const TerminalInstance = memo(function TerminalInstance({
 			}
 
 			managed.fitAddon.fit();
+			// Retry WebGL loading now that the terminal is in a visible, sized
+			// container. The first attempt during createTerminal runs while the
+			// canvas is still 0×0 offscreen, which some browsers refuse — if that
+			// failed, xterm silently fell back to its DOM renderer and we'd see
+			// wrong glyph metrics. This is a no-op when WebGL is already loaded.
+			ensureWebglLoaded(id);
 			flushPendingRestore(id);
 			if (managed.ptyId) {
 				// Filter reset sequences from the shell's resize response to

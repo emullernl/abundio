@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
+	ACTIVITY_HIT_COUNT,
+	ACTIVITY_HIT_WINDOW_MS,
+} from "../../lib/activityGate";
+import {
 	getActivityByteThreshold,
 	getTerminal,
 	INACTIVITY_RESET_MS,
@@ -22,6 +26,8 @@ interface DebugSnapshot {
 	inGate: boolean;
 	timeSinceLastChunk: number;
 	waitingRatio: number;
+	hitCount: number;
+	hitsRequired: number;
 }
 
 function lerp(a: string, b: string, t: number): string {
@@ -76,6 +82,13 @@ export function DebugActivityMeter({ paneId }: Props) {
 				}
 			}
 
+			// Prune stale crossings so the displayed count matches what the
+			// next chunk would actually see.
+			const cutoff = now - ACTIVITY_HIT_WINDOW_MS;
+			const liveHits = managed.thresholdHitTimes.filter(
+				(t) => t >= cutoff,
+			).length;
+
 			setSnap({
 				bytesSinceIdle: managed.bytesSinceIdle,
 				threshold,
@@ -86,6 +99,8 @@ export function DebugActivityMeter({ paneId }: Props) {
 					? now - managed.lastOutputChunkAt
 					: 0,
 				waitingRatio,
+				hitCount: liveHits,
+				hitsRequired: ACTIVITY_HIT_COUNT,
 			});
 
 			// Keep input in sync unless user is editing
@@ -201,6 +216,24 @@ export function DebugActivityMeter({ paneId }: Props) {
 			{/* Byte count */}
 			<span style={{ minWidth: 70, textAlign: "right" }}>
 				{snap.bytesSinceIdle}/{snap.threshold}b
+			</span>
+
+			{/* Hit counter — agent mode requires N crossings within the window */}
+			<span
+				title={`Threshold crossings within ${ACTIVITY_HIT_WINDOW_MS / 1000}s`}
+				style={{
+					minWidth: 36,
+					textAlign: "right",
+					fontWeight: 600,
+					color:
+						snap.hitCount >= snap.hitsRequired
+							? "#f59e0b"
+							: snap.hitCount > 0
+								? "#8b5cf6"
+								: "var(--fg-secondary)",
+				}}
+			>
+				{snap.hitCount}/{snap.hitsRequired}
 			</span>
 
 			{/* Inactivity reset countdown (3s gap resets bytes) */}

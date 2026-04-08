@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	collectPaneIds,
 	collectTerminals,
 	findNode,
 	removeNode,
@@ -130,5 +131,19 @@ describe("collectTerminals", () => {
 			{ id: "b", ptyId: "pty-b" },
 			{ id: "c", ptyId: "pty-c" },
 		]);
+	});
+});
+
+describe("collectPaneIds", () => {
+	it("returns single id for a leaf", () => {
+		expect(collectPaneIds(leafA)).toEqual(["a"]);
+	});
+
+	it("returns ids from a split", () => {
+		expect(collectPaneIds(simpleSplit)).toEqual(["a", "b"]);
+	});
+
+	it("returns all ids depth-first from a nested tree", () => {
+		expect(collectPaneIds(nestedSplit)).toEqual(["a", "b", "c"]);
 	});
 });

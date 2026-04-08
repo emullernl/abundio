@@ -10,7 +10,7 @@ for (let i = 0; i < B64_CHARS.length; i++) {
 }
 
 export function decodeBase64(str: string): Uint8Array {
-	let len = str.length;
+	const len = str.length;
 	if (len === 0) return new Uint8Array(0);
 
 	// Count trailing '=' padding
@@ -23,7 +23,9 @@ export function decodeBase64(str: string): Uint8Array {
 	let j = 0;
 
 	if (len % 4 !== 0) {
-		console.error(`[base64] unexpected input length ${len}, not a multiple of 4`);
+		console.error(
+			`[base64] unexpected input length ${len}, not a multiple of 4`,
+		);
 		return new Uint8Array(0);
 	}
 
