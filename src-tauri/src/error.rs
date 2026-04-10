@@ -40,8 +40,8 @@ mod tests {
 
     #[test]
     fn not_found_display() {
-        let err = AbundioError::NotFound("session xyz".into());
-        assert_eq!(err.to_string(), "Not found: session xyz");
+        let err = AbundioError::NotFound("workspace xyz".into());
+        assert_eq!(err.to_string(), "Not found: workspace xyz");
     }
 
     #[test]

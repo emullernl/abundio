@@ -12,10 +12,10 @@ import type {
 	PtyActivityType,
 	PtyStatusType,
 	PullRequest,
-	SessionUpdate,
-	SessionWithTabs,
 	Tab,
 	TabUpdate,
+	WorkspaceUpdate,
+	WorkspaceWithTabs,
 } from "./types";
 
 export const pty = {
@@ -97,25 +97,25 @@ export const pty = {
 		invoke<void>("pty_cleanup_stale_logs", { paneIds }),
 };
 
-export const sessions = {
+export const workspaces = {
 	create: (name: string, rootFolder: string) =>
-		invoke<SessionWithTabs>("session_create", { name, rootFolder }),
+		invoke<WorkspaceWithTabs>("workspace_create", { name, rootFolder }),
 
-	list: () => invoke<SessionWithTabs[]>("session_list"),
+	list: () => invoke<WorkspaceWithTabs[]>("workspace_list"),
 
-	update: (id: string, updates: SessionUpdate) =>
-		invoke<void>("session_update", { id, updates }),
+	update: (id: string, updates: WorkspaceUpdate) =>
+		invoke<void>("workspace_update", { id, updates }),
 
-	delete: (id: string) => invoke<void>("session_delete", { id }),
+	delete: (id: string) => invoke<void>("workspace_delete", { id }),
 
-	reorder: (ids: string[]) => invoke<void>("session_reorder", { ids }),
+	reorder: (ids: string[]) => invoke<void>("workspace_reorder", { ids }),
 };
 
 export const tabs = {
-	create: (sessionId: string, name: string) =>
-		invoke<Tab>("tab_create", { sessionId, name }),
+	create: (workspaceId: string, name: string) =>
+		invoke<Tab>("tab_create", { workspaceId, name }),
 
-	list: (sessionId: string) => invoke<Tab[]>("tab_list", { sessionId }),
+	list: (workspaceId: string) => invoke<Tab[]>("tab_list", { workspaceId }),
 
 	update: (id: string, updates: TabUpdate) =>
 		invoke<void>("tab_update", { id, updates }),

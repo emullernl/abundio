@@ -17,8 +17,8 @@ import { useEffect, useRef } from "react";
 import { abundioTheme, getLanguageExtension } from "../../lib/codemirrorShared";
 import { setAllTerminalsFontSize } from "../../lib/terminalManager";
 import { useExplorerStore } from "../../stores/explorerStore";
-import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 
 interface CodeEditorProps {
 	tabId: string;
@@ -109,8 +109,8 @@ export function CodeEditor({
 	const fontSize = useSettingsStore((s) => s.fontSize);
 
 	// Focus editor when it becomes the active visible tab
-	const isFileView = useSessionStore((s) => {
-		const sid = s.activeSessionId;
+	const isFileView = useWorkspaceStore((s) => {
+		const sid = s.activeWorkspaceId;
 		return sid ? (s.activeView[sid] ?? "terminal") === "file" : false;
 	});
 

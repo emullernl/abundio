@@ -52,7 +52,7 @@ interface PtyActivityState_Store {
 	activities: Record<string, PtyActivityEntry>;
 	titles: Record<string, string>;
 	panePtyMap: Record<string, string>; // paneId → ptyId
-	openedSessionIds: Set<string>;
+	openedWorkspaceIds: Set<string>;
 	agentPtyIds: Set<string>;
 
 	initPty: (ptyId: string, mode?: PtyDetectionMode) => void;
@@ -65,7 +65,8 @@ interface PtyActivityState_Store {
 	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
 	registerPane: (paneId: string, ptyId: string) => void;
-	markSessionOpened: (sessionId: string) => void;
+	markWorkspaceOpened: (workspaceId: string) => void;
+	unmarkWorkspaceOpened: (workspaceId: string) => void;
 	removePty: (ptyId: string) => void;
 	removePane: (paneId: string) => void;
 }
@@ -77,7 +78,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		activities: {},
 		titles: {},
 		panePtyMap: {},
-		openedSessionIds: new Set(),
+		openedWorkspaceIds: new Set(),
 		agentPtyIds: new Set(),
 
 		initPty: (ptyId, mode) => {
@@ -232,10 +233,20 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			set((s) => ({ titles: { ...s.titles, [paneId]: title } }));
 		},
 
-		markSessionOpened: (sessionId) => {
+		markWorkspaceOpened: (workspaceId) => {
 			const s = get();
-			if (s.openedSessionIds.has(sessionId)) return;
-			set({ openedSessionIds: new Set([...s.openedSessionIds, sessionId]) });
+			if (s.openedWorkspaceIds.has(workspaceId)) return;
+			set({
+				openedWorkspaceIds: new Set([...s.openedWorkspaceIds, workspaceId]),
+			});
+		},
+
+		unmarkWorkspaceOpened: (workspaceId) => {
+			const s = get();
+			if (!s.openedWorkspaceIds.has(workspaceId)) return;
+			const next = new Set(s.openedWorkspaceIds);
+			next.delete(workspaceId);
+			set({ openedWorkspaceIds: next });
 		},
 
 		removePty: (ptyId) => {
@@ -347,11 +358,11 @@ export function collectPtyIds(
 
 export type DotStatus = "grey" | "green" | "amber" | "purple" | "red";
 
-export function computeSessionDotStatus(
-	sessionId: string,
+export function computeWorkspaceDotStatus(
+	workspaceId: string,
 	tabLayouts: PaneNode[],
 	activities: Record<string, PtyActivityEntry>,
-	openedSessionIds: Set<string>,
+	openedWorkspaceIds: Set<string>,
 	panePtyMap?: Record<string, string>,
 ): DotStatus {
 	const allPtyIds: string[] = [];
@@ -359,7 +370,9 @@ export function computeSessionDotStatus(
 		allPtyIds.push(...collectPtyIds(layout, panePtyMap));
 	}
 
-	if (allPtyIds.length === 0) return "grey";
+	if (allPtyIds.length === 0) {
+		return openedWorkspaceIds.has(workspaceId) ? "green" : "grey";
+	}
 
 	const entries = allPtyIds.map((id) => activities[id]).filter(Boolean);
 
@@ -367,7 +380,7 @@ export function computeSessionDotStatus(
 	if (entries.some((e) => e.state === "waiting")) return "purple";
 	if (entries.some((e) => e.state === "active")) return "amber";
 
-	if (openedSessionIds.has(sessionId)) return "green";
+	if (openedWorkspaceIds.has(workspaceId)) return "green";
 	return "grey";
 }
 
@@ -392,7 +405,7 @@ export function computeTabDotStatus(
 	if (entries.some((e) => e.state === "waiting")) return "purple";
 	if (entries.some((e) => e.state === "active")) return "amber";
 
-	// Tabs are only shown for the active session — default to green
+	// Tabs are only shown for the active workspace — default to green
 	return "green";
 }
 
@@ -413,24 +426,4 @@ export function computePtyDotStatus(
 		default:
 			return "green";
 	}
-}
-
-// ── Dot color mapping ──
-
-export const DOT_COLORS: Record<DotStatus, string> = {
-	grey: "var(--fg-secondary)",
-	green: "var(--success)",
-	amber: "#F59E0B",
-	purple: "#8B5CF6",
-	red: "var(--error)",
-};
-
-export const DOT_GLOWS: Record<string, string> = {
-	amber: "rgba(245, 158, 11, 0.4)",
-	purple: "rgba(139, 92, 246, 0.4)",
-	red: "rgba(248, 81, 73, 0.4)",
-};
-
-export function shouldPulse(status: DotStatus | null): boolean {
-	return status === "amber" || status === "red";
 }

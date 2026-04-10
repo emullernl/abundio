@@ -6,7 +6,7 @@ import {
 	type PrView,
 	usePrStore,
 } from "../../stores/prStore";
-import { useSessionStore } from "../../stores/sessionStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
 
@@ -25,10 +25,10 @@ export function PullRequestsSection() {
 	const setMyPrsView = usePrStore((s) => s.setMyPrsView);
 	const clear = usePrStore((s) => s.clear);
 
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
-	const sessions = useSessionStore((s) => s.sessions);
-	const activeSession = sessions.find((s) => s.id === activeSessionId);
-	const cwd = activeSession?.rootFolder ?? null;
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
+	const cwd = activeWorkspace?.rootFolder ?? null;
 
 	// Check gh status on mount / session change
 	useEffect(() => {

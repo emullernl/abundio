@@ -290,25 +290,6 @@ body,
 	background: var(--fg-secondary);
 }
 
-/* Status dot breathing glow animation */
-@keyframes dot-breathe {
-	0%,
-	100% {
-		opacity: 1;
-		box-shadow: 0 0 0 0 var(--dot-glow, transparent);
-		transform: scale(1);
-	}
-	50% {
-		opacity: 0.35;
-		box-shadow: 0 0 12px 4px var(--dot-glow, transparent);
-		transform: scale(1.4);
-	}
-}
-
-.status-dot-pulse {
-	animation: dot-breathe 1.4s ease-in-out infinite;
-}
-
 /* Terminal loader — audio-bar wave */
 @keyframes terminal-bar-wave {
 	0%,

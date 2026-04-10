@@ -12,8 +12,8 @@ import { TabBar } from "./components/TabBar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
-import { useSession } from "./hooks/useSession";
 import { useSplitPane } from "./hooks/useSplitPane";
+import { useWorkspace } from "./hooks/useWorkspace";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
@@ -21,8 +21,9 @@ import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import type { PaneNode } from "./lib/types";
 import { persistAllFileTabs, useExplorerStore } from "./stores/explorerStore";
 import { useGitChangesStore } from "./stores/gitChangesStore";
-import { useSessionStore } from "./stores/sessionStore";
+import { usePtyActivityStore } from "./stores/ptyActivityStore";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useWorkspaceStore } from "./stores/workspaceStore";
 
 const TITLEBAR_HEIGHT = isMac ? 52 : 0;
 
@@ -47,16 +48,16 @@ const TabTerminalContent = memo(function TabTerminalContent({
 });
 
 export function App() {
-	useSession();
-	const sessions = useSessionStore((s) => s.sessions);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
-	const activeTabBySession = useSessionStore((s) => s.activeTabBySession);
-	const setActiveTab = useSessionStore((s) => s.setActiveTab);
-	const createTab = useSessionStore((s) => s.createTab);
-	const closeTab = useSessionStore((s) => s.closeTab);
-	const renameTab = useSessionStore((s) => s.renameTab);
-	const activeView = useSessionStore((s) => s.activeView);
-	const setActiveView = useSessionStore((s) => s.setActiveView);
+	useWorkspace();
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	const activeTabByWorkspace = useWorkspaceStore((s) => s.activeTabByWorkspace);
+	const setActiveTab = useWorkspaceStore((s) => s.setActiveTab);
+	const createTab = useWorkspaceStore((s) => s.createTab);
+	const closeTab = useWorkspaceStore((s) => s.closeTab);
+	const renameTab = useWorkspaceStore((s) => s.renameTab);
+	const activeView = useWorkspaceStore((s) => s.activeView);
+	const setActiveView = useWorkspaceStore((s) => s.setActiveView);
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
@@ -64,7 +65,10 @@ export function App() {
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
 	const closeFileTab = useExplorerStore((s) => s.closeFileTab);
-	const sessionsInitialized = useSessionStore((s) => s.sessionsInitialized);
+	const workspacesInitialized = useWorkspaceStore(
+		(s) => s.workspacesInitialized,
+	);
+	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 
 	useEffect(() => {
 		const cleanup = initKeybindings();
@@ -101,15 +105,15 @@ export function App() {
 
 	useEffect(() => {
 		registerAction("split-horizontal", () => {
-			const paneId = useSessionStore.getState().focusedPaneId;
+			const paneId = useWorkspaceStore.getState().focusedPaneId;
 			if (paneId) splitPane(paneId, "horizontal");
 		});
 		registerAction("split-vertical", () => {
-			const paneId = useSessionStore.getState().focusedPaneId;
+			const paneId = useWorkspaceStore.getState().focusedPaneId;
 			if (paneId) splitPane(paneId, "vertical");
 		});
 		registerAction("close-pane", () => {
-			const paneId = useSessionStore.getState().focusedPaneId;
+			const paneId = useWorkspaceStore.getState().focusedPaneId;
 			if (paneId) closePane(paneId);
 		});
 		registerAction("navigate-up", () => navigatePane("up"));
@@ -126,33 +130,33 @@ export function App() {
 			setSettingsOpen(true);
 		});
 		registerAction("search-in-terminal", () =>
-			useSessionStore.getState().toggleSearch(),
+			useWorkspaceStore.getState().toggleSearch(),
 		);
 		registerAction("new-tab", () => {
-			const sessionId = useSessionStore.getState().activeSessionId;
-			if (sessionId) useSessionStore.getState().createTab(sessionId);
+			const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+			if (workspaceId) useWorkspaceStore.getState().createTab(workspaceId);
 		});
 		registerAction("close-tab", () => {
-			const tab = useSessionStore.getState().getActiveTab();
-			if (tab) useSessionStore.getState().closeTab(tab.id);
+			const tab = useWorkspaceStore.getState().getActiveTab();
+			if (tab) useWorkspaceStore.getState().closeTab(tab.id);
 		});
 		registerAction("next-tab", () => {
-			const state = useSessionStore.getState();
-			const session = state.getActiveSession();
-			if (!session || session.tabs.length <= 1) return;
-			const currentTabId = state.activeTabBySession[session.id];
-			const idx = session.tabs.findIndex((t) => t.id === currentTabId);
-			const nextIdx = (idx + 1) % session.tabs.length;
-			state.setActiveTab(session.id, session.tabs[nextIdx].id);
+			const state = useWorkspaceStore.getState();
+			const workspace = state.getActiveWorkspace();
+			if (!workspace || workspace.tabs.length <= 1) return;
+			const currentTabId = state.activeTabByWorkspace[workspace.id];
+			const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
+			const nextIdx = (idx + 1) % workspace.tabs.length;
+			state.setActiveTab(workspace.id, workspace.tabs[nextIdx].id);
 		});
 		registerAction("prev-tab", () => {
-			const state = useSessionStore.getState();
-			const session = state.getActiveSession();
-			if (!session || session.tabs.length <= 1) return;
-			const currentTabId = state.activeTabBySession[session.id];
-			const idx = session.tabs.findIndex((t) => t.id === currentTabId);
-			const prevIdx = (idx - 1 + session.tabs.length) % session.tabs.length;
-			state.setActiveTab(session.id, session.tabs[prevIdx].id);
+			const state = useWorkspaceStore.getState();
+			const workspace = state.getActiveWorkspace();
+			if (!workspace || workspace.tabs.length <= 1) return;
+			const currentTabId = state.activeTabByWorkspace[workspace.id];
+			const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
+			const prevIdx = (idx - 1 + workspace.tabs.length) % workspace.tabs.length;
+			state.setActiveTab(workspace.id, workspace.tabs[prevIdx].id);
 		});
 		registerAction("font-size-increase", () => {
 			const { fontSize, setFontSize } = useSettingsStore.getState();
@@ -179,7 +183,7 @@ export function App() {
 
 	return (
 		<div className="flex flex-col h-full w-full">
-			{!sessionsInitialized && <AppLoader />}
+			{!workspacesInitialized && <AppLoader />}
 			<Titlebar />
 			<div className="flex flex-1 min-h-0">
 				<Sidebar titlebarHeight={TITLEBAR_HEIGHT} />
@@ -187,7 +191,7 @@ export function App() {
 					className="flex-1 min-w-0 flex flex-col"
 					style={{ paddingTop: TITLEBAR_HEIGHT }}
 				>
-					{!activeSessionId && (
+					{!activeWorkspaceId && (
 						<div
 							className="flex items-center justify-center flex-1"
 							style={{ color: "var(--fg-secondary)" }}
@@ -199,72 +203,76 @@ export function App() {
 								>
 									Abundio
 								</div>
-								<div className="text-base">Create a session to get started</div>
+								<div className="text-base">
+									Create a workspace to get started
+								</div>
 							</div>
 						</div>
 					)}
-					{sessions.map((session) => {
-						const isActive = session.id === activeSessionId;
-						const activeTabId = activeTabBySession[session.id];
-						return (
-							<div
-								key={session.id}
-								className="flex-1 min-h-0 flex flex-col"
-								style={{ display: isActive ? "flex" : "none" }}
-							>
-								<TabBar
-									tabs={session.tabs}
-									activeTabId={activeTabId}
-									onActivate={(tabId) => {
-										setActiveTab(session.id, tabId);
-										setActiveView(session.id, "terminal");
-									}}
-									onClose={(tabId) => closeTab(tabId)}
-									onNew={() => createTab(session.id)}
-									onRename={(tabId, name) => renameTab(tabId, name)}
-									fileTabs={fileTabs.filter(
-										(ft) => ft.sessionId === session.id,
-									)}
-									activeFileTabId={activeFileTabId}
-									activeView={activeView[session.id] ?? "terminal"}
-									onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
-									onCloseFileTab={(tabId) => closeFileTab(tabId)}
-								/>
-								<div className="flex-1 min-h-0 relative">
-									<div
-										className="absolute inset-0"
-										style={{
-											display:
-												(activeView[session.id] ?? "terminal") === "file" &&
-												activeFileTabId
-													? "block"
-													: "none",
+					{workspaces
+						.filter((w) => openedWorkspaceIds.has(w.id))
+						.map((workspace) => {
+							const isActive = workspace.id === activeWorkspaceId;
+							const activeTabId = activeTabByWorkspace[workspace.id];
+							return (
+								<div
+									key={workspace.id}
+									className="flex-1 min-h-0 flex flex-col"
+									style={{ display: isActive ? "flex" : "none" }}
+								>
+									<TabBar
+										tabs={workspace.tabs}
+										activeTabId={activeTabId}
+										onActivate={(tabId) => {
+											setActiveTab(workspace.id, tabId);
+											setActiveView(workspace.id, "terminal");
 										}}
-									>
-										<FileViewerContainer />
+										onClose={(tabId) => closeTab(tabId)}
+										onNew={() => createTab(workspace.id)}
+										onRename={(tabId, name) => renameTab(tabId, name)}
+										fileTabs={fileTabs.filter(
+											(ft) => ft.workspaceId === workspace.id,
+										)}
+										activeFileTabId={activeFileTabId}
+										activeView={activeView[workspace.id] ?? "terminal"}
+										onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
+										onCloseFileTab={(tabId) => closeFileTab(tabId)}
+									/>
+									<div className="flex-1 min-h-0 relative">
+										<div
+											className="absolute inset-0"
+											style={{
+												display:
+													(activeView[workspace.id] ?? "terminal") === "file" &&
+													activeFileTabId
+														? "block"
+														: "none",
+											}}
+										>
+											<FileViewerContainer />
+										</div>
+										{workspace.tabs.map((tab) => {
+											const isTabActive = tab.id === activeTabId;
+											const showTerminal =
+												(activeView[workspace.id] ?? "terminal") ===
+													"terminal" && isTabActive;
+											return (
+												<div
+													key={tab.id}
+													className="absolute inset-0"
+													style={{ display: showTerminal ? "block" : "none" }}
+												>
+													<TabTerminalContent
+														layoutJson={tab.layoutJson}
+														cwd={workspace.rootFolder}
+													/>
+												</div>
+											);
+										})}
 									</div>
-									{session.tabs.map((tab) => {
-										const isTabActive = tab.id === activeTabId;
-										const showTerminal =
-											(activeView[session.id] ?? "terminal") === "terminal" &&
-											isTabActive;
-										return (
-											<div
-												key={tab.id}
-												className="absolute inset-0"
-												style={{ display: showTerminal ? "block" : "none" }}
-											>
-												<TabTerminalContent
-													layoutJson={tab.layoutJson}
-													cwd={session.rootFolder}
-												/>
-											</div>
-										);
-									})}
 								</div>
-							</div>
-						);
-					})}
+							);
+						})}
 				</div>
 				<GitChangesPanel titlebarHeight={TITLEBAR_HEIGHT} />
 			</div>

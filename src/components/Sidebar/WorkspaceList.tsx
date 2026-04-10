@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SessionWithTabs } from "../../lib/types";
-import { useSessionStore } from "../../stores/sessionStore";
-import { SessionItem } from "./SessionItem";
+import type { WorkspaceWithTabs } from "../../lib/types";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { ConfirmDialog } from "../ConfirmDialog";
+import {
+	type ContextMenuItem,
+	PaneContextMenu,
+} from "../Terminal/PaneContextMenu";
+import { WorkspaceItem } from "./WorkspaceItem";
 
 const DRAG_THRESHOLD = 5;
 
-export function SessionList() {
+export function WorkspaceList() {
 	const {
-		sessions,
-		activeSessionId,
-		setActiveSession,
-		deleteSession,
-		reorderSessions,
-	} = useSessionStore();
+		workspaces,
+		activeWorkspaceId,
+		setActiveWorkspace,
+		deleteWorkspace,
+		closeWorkspace,
+		renameWorkspace,
+		reorderWorkspaces,
+	} = useWorkspaceStore();
 
 	const [draggedId, setDraggedId] = useState<string | null>(null);
 	const [mousePos, setMousePos] = useState<{ x: number; y: number }>({
@@ -21,6 +28,22 @@ export function SessionList() {
 	});
 	const [ghostWidth, setGhostWidth] = useState(0);
 	const [nearestSlot, setNearestSlot] = useState<number | null>(null);
+
+	// Context menu state
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+		workspaceId: string;
+	} | null>(null);
+
+	// Inline rename state
+	const [renamingId, setRenamingId] = useState<string | null>(null);
+
+	// Confirmation dialog state for permanent workspace removal
+	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+	const pendingWorkspace = pendingDeleteId
+		? workspaces.find((w) => w.id === pendingDeleteId)
+		: null;
 
 	const startPos = useRef<{ x: number; y: number } | null>(null);
 	const pendingId = useRef<string | null>(null);
@@ -66,7 +89,7 @@ export function SessionList() {
 	// While dragging, track mouse position and compute nearest drop slot
 	useEffect(() => {
 		if (draggedId === null) return;
-		const draggedIndex = sessions.findIndex((s) => s.id === draggedId);
+		const draggedIndex = workspaces.findIndex((s) => s.id === draggedId);
 
 		const onMouseMove = (e: MouseEvent) => {
 			setMousePos({ x: e.clientX, y: e.clientY });
@@ -75,18 +98,18 @@ export function SessionList() {
 			let bestSlot: number | null = null;
 			let bestDist = Number.POSITIVE_INFINITY;
 
-			for (let i = 0; i <= sessions.length; i++) {
+			for (let i = 0; i <= workspaces.length; i++) {
 				// Skip adjacent slots (no-op positions)
 				if (i === draggedIndex || i === draggedIndex + 1) continue;
 
 				// Slot i is the gap before item i (or after last item)
 				let slotY: number;
-				if (i < sessions.length) {
+				if (i < workspaces.length) {
 					const el = itemRefs.current.get(i);
 					if (!el) continue;
 					slotY = el.getBoundingClientRect().top;
 				} else {
-					const el = itemRefs.current.get(sessions.length - 1);
+					const el = itemRefs.current.get(workspaces.length - 1);
 					if (!el) continue;
 					slotY = el.getBoundingClientRect().bottom;
 				}
@@ -105,17 +128,17 @@ export function SessionList() {
 			// Perform drop if we have a valid slot
 			setNearestSlot((slot) => {
 				if (slot !== null) {
-					const currentIdx = sessions.findIndex((s) => s.id === draggedId);
+					const currentIdx = workspaces.findIndex((s) => s.id === draggedId);
 					if (
 						currentIdx !== -1 &&
 						slot !== currentIdx &&
 						slot !== currentIdx + 1
 					) {
-						const ids = sessions.map((s) => s.id);
+						const ids = workspaces.map((s) => s.id);
 						ids.splice(currentIdx, 1);
 						const insertAt = slot > currentIdx ? slot - 1 : slot;
 						ids.splice(insertAt, 0, draggedId);
-						reorderSessions(ids);
+						reorderWorkspaces(ids);
 					}
 				}
 				return null;
@@ -129,52 +152,109 @@ export function SessionList() {
 			document.removeEventListener("mousemove", onMouseMove);
 			document.removeEventListener("mouseup", onMouseUp);
 		};
-	}, [draggedId, sessions, reorderSessions]);
+	}, [draggedId, workspaces, reorderWorkspaces]);
 
-	const draggedSession = draggedId
-		? sessions.find((s) => s.id === draggedId)
+	const draggedWorkspace = draggedId
+		? workspaces.find((s) => s.id === draggedId)
 		: null;
+
+	const contextMenuItems: ContextMenuItem[] = contextMenu
+		? [
+				{
+					label: "Unload Workspace",
+					onClick: () => closeWorkspace(contextMenu.workspaceId),
+				},
+				{ separator: true as const },
+				{
+					label: "Rename Workspace",
+					onClick: () => setRenamingId(contextMenu.workspaceId),
+				},
+				{
+					label: "Close Workspace",
+					onClick: () => setPendingDeleteId(contextMenu.workspaceId),
+				},
+			]
+		: [];
 
 	return (
 		<div className="flex flex-col" ref={containerRef}>
-			{sessions.length === 0 && (
+			{workspaces.length === 0 && (
 				<div
 					className="px-3 py-4 text-center text-xs"
 					style={{ color: "var(--fg-secondary)" }}
 				>
-					No sessions yet
+					No workspaces yet
 				</div>
 			)}
-			{sessions.map((session, i) => (
+			{workspaces.map((workspace, i) => (
 				<div
-					key={session.id}
+					key={workspace.id}
 					ref={(el) => {
 						if (el) itemRefs.current.set(i, el);
 						else itemRefs.current.delete(i);
 					}}
 				>
 					{nearestSlot === i && <DropIndicator />}
-					<SessionItem
-						session={session}
-						isActive={session.id === activeSessionId}
-						isDragging={session.id === draggedId}
+					<WorkspaceItem
+						workspace={workspace}
+						isActive={workspace.id === activeWorkspaceId}
+						isDragging={workspace.id === draggedId}
+						isRenaming={workspace.id === renamingId}
 						onClick={() => {
 							if (draggedId) return;
-							setActiveSession(session.id);
+							setActiveWorkspace(workspace.id);
 						}}
-						onDelete={() => deleteSession(session.id)}
-						onMouseDown={(e) => handleMouseDown(e, session.id)}
+						onDelete={() => setPendingDeleteId(workspace.id)}
+						onContextMenu={(e) => {
+							e.preventDefault();
+							setContextMenu({
+								x: e.clientX,
+								y: e.clientY,
+								workspaceId: workspace.id,
+							});
+						}}
+						onRename={(name) => {
+							renameWorkspace(workspace.id, name);
+							setRenamingId(null);
+						}}
+						onRenameCancel={() => setRenamingId(null)}
+						onMouseDown={(e) => handleMouseDown(e, workspace.id)}
 					/>
 				</div>
 			))}
-			{nearestSlot === sessions.length && <DropIndicator />}
+			{nearestSlot === workspaces.length && <DropIndicator />}
 
 			{/* Floating ghost following the cursor */}
-			{draggedSession && (
+			{draggedWorkspace && (
 				<DragGhost
-					session={draggedSession}
+					workspace={draggedWorkspace}
 					mousePos={mousePos}
 					width={ghostWidth}
+				/>
+			)}
+
+			{/* Workspace context menu */}
+			{contextMenu && (
+				<PaneContextMenu
+					x={contextMenu.x}
+					y={contextMenu.y}
+					items={contextMenuItems}
+					onClose={() => setContextMenu(null)}
+				/>
+			)}
+
+			{/* Confirmation dialog for permanent workspace removal */}
+			{pendingWorkspace && (
+				<ConfirmDialog
+					title="Close Workspace"
+					message={`"${pendingWorkspace.name}" will be permanently removed from your workspace list. This cannot be undone.`}
+					confirmLabel="Close Workspace"
+					confirmVariant="danger"
+					onConfirm={() => {
+						if (pendingDeleteId) deleteWorkspace(pendingDeleteId);
+						setPendingDeleteId(null);
+					}}
+					onCancel={() => setPendingDeleteId(null)}
 				/>
 			)}
 		</div>
@@ -195,11 +275,11 @@ function DropIndicator() {
 }
 
 function DragGhost({
-	session,
+	workspace,
 	mousePos,
 	width,
 }: {
-	session: SessionWithTabs;
+	workspace: WorkspaceWithTabs;
 	mousePos: { x: number; y: number };
 	width: number;
 }) {
@@ -216,12 +296,16 @@ function DragGhost({
 				filter: "drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3))",
 			}}
 		>
-			<SessionItem
-				session={session}
+			<WorkspaceItem
+				workspace={workspace}
 				isActive={false}
 				isDragging={false}
+				isRenaming={false}
 				onClick={() => {}}
 				onDelete={() => {}}
+				onContextMenu={() => {}}
+				onRename={() => {}}
+				onRenameCancel={() => {}}
 				onMouseDown={() => {}}
 			/>
 		</div>

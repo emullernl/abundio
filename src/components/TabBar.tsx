@@ -3,11 +3,9 @@ import type { Tab } from "../lib/types";
 import type { FileTab } from "../stores/explorerStore";
 import {
 	computeTabDotStatus,
-	DOT_COLORS,
-	DOT_GLOWS,
-	shouldPulse,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
+import { AgentStatusIcon } from "./AgentStatusIcon";
 import { File, GitCompare, Terminal } from "./Icons";
 
 interface TabBarProps {
@@ -266,20 +264,7 @@ const TabStatusDot = memo(function TabStatusDot({ tab }: { tab: Tab }) {
 	const tabDot = usePtyActivityStore((s) =>
 		computeTabDotStatus(tab, s.activities, s.panePtyMap),
 	);
-	return (
-		<span
-			className={`rounded-full ${shouldPulse(tabDot) ? "status-dot-pulse" : ""}`}
-			style={
-				{
-					width: 7,
-					height: 7,
-					flexShrink: 0,
-					backgroundColor: DOT_COLORS[tabDot],
-					"--dot-glow": DOT_GLOWS[tabDot] ?? "transparent",
-				} as React.CSSProperties
-			}
-		/>
-	);
+	return <AgentStatusIcon status={tabDot} size={12} />;
 });
 
 export function TabBar({

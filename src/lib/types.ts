@@ -11,9 +11,9 @@ export type PaneNode =
 			second: PaneNode;
 	  };
 
-// ── Session ──
+// ── Workspace ──
 
-export interface Session {
+export interface Workspace {
 	id: string;
 	name: string;
 	rootFolder: string;
@@ -26,7 +26,7 @@ export interface Session {
 	updatedAt: number;
 }
 
-export interface SessionUpdate {
+export interface WorkspaceUpdate {
 	name?: string;
 	rootFolder?: string;
 	envJson?: string;
@@ -35,7 +35,7 @@ export interface SessionUpdate {
 	baseBranch?: string | null;
 }
 
-export interface SessionWithTabs {
+export interface WorkspaceWithTabs {
 	id: string;
 	name: string;
 	rootFolder: string;
@@ -53,7 +53,7 @@ export interface SessionWithTabs {
 
 export interface Tab {
 	id: string;
-	sessionId: string;
+	workspaceId: string;
 	name: string;
 	layoutJson: string;
 	position: number;

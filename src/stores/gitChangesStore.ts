@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { git, sessions as sessionsApi } from "../lib/ipc";
+import { git, workspaces as workspacesApi } from "../lib/ipc";
 import type { GitChangedFile } from "../lib/types";
-import { useSessionStore } from "./sessionStore";
+import { useWorkspaceStore } from "./workspaceStore";
 
 let fetchGeneration = 0;
 let lastFingerprint: string | null = null;
@@ -40,15 +40,15 @@ interface GitChangesState {
 	setPanel: (open: boolean) => void;
 	fetchChanges: (
 		cwd: string,
-		sessionBaseBranch?: string | null,
+		workspaceBaseBranch?: string | null,
 	) => Promise<void>;
 	refreshChanges: (
 		cwd: string,
-		sessionBaseBranch?: string | null,
+		workspaceBaseBranch?: string | null,
 	) => Promise<void>;
 	toggleSection: (section: string) => void;
 	setBaseBranch: (
-		sessionId: string,
+		workspaceId: string,
 		branch: string | null,
 		cwd: string,
 	) => Promise<void>;
@@ -74,7 +74,7 @@ export const useGitChangesStore = create<GitChangesState>()(
 			togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
 			setPanel: (open) => set({ panelOpen: open }),
 
-			fetchChanges: async (cwd, sessionBaseBranch) => {
+			fetchChanges: async (cwd, workspaceBaseBranch) => {
 				const gen = ++fetchGeneration;
 				// Only show loading spinner on first fetch — avoid flicker on refreshes
 				if (get().changedFiles.length === 0 && !get().currentBranch) {
@@ -84,14 +84,14 @@ export const useGitChangesStore = create<GitChangesState>()(
 				}
 				try {
 					const [files, branchInfo, fingerprint] = await Promise.all([
-						git.changedFiles(cwd, sessionBaseBranch),
+						git.changedFiles(cwd, workspaceBaseBranch),
 						git.branchInfo(cwd),
 						git.statusFingerprint(cwd),
 					]);
 					if (gen !== fetchGeneration) return; // stale response
 					lastFingerprint = fingerprint;
 					const state = get();
-					const newBaseBranch = sessionBaseBranch || branchInfo.defaultBranch;
+					const newBaseBranch = workspaceBaseBranch || branchInfo.defaultBranch;
 					const updates: Partial<GitChangesState> = { loading: false };
 					if (!filesEqual(state.changedFiles, files)) {
 						updates.changedFiles = files;
@@ -113,12 +113,12 @@ export const useGitChangesStore = create<GitChangesState>()(
 				}
 			},
 
-			refreshChanges: async (cwd, sessionBaseBranch) => {
+			refreshChanges: async (cwd, workspaceBaseBranch) => {
 				try {
 					const fingerprint = await git.statusFingerprint(cwd);
 					if (fingerprint === lastFingerprint) return;
 					const gen = ++fetchGeneration;
-					const files = await git.changedFiles(cwd, sessionBaseBranch);
+					const files = await git.changedFiles(cwd, workspaceBaseBranch);
 					if (gen !== fetchGeneration) return;
 					lastFingerprint = fingerprint; // only commit once fetch succeeded
 					const state = get();
@@ -138,9 +138,11 @@ export const useGitChangesStore = create<GitChangesState>()(
 					},
 				})),
 
-			setBaseBranch: async (sessionId, branch, cwd) => {
-				await sessionsApi.update(sessionId, { baseBranch: branch });
-				useSessionStore.getState().setSessionBaseBranch(sessionId, branch);
+			setBaseBranch: async (workspaceId, branch, cwd) => {
+				await workspacesApi.update(workspaceId, { baseBranch: branch });
+				useWorkspaceStore
+					.getState()
+					.setWorkspaceBaseBranch(workspaceId, branch);
 				await get().fetchChanges(cwd, branch);
 			},
 

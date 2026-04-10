@@ -1,6 +1,6 @@
 # Abundio
 
-A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https://v2.tauri.app). Abundio manages sessions (each bound to a folder), supports split panes, and has first-class support for AI coding CLI agents like Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode.
+A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https://v2.tauri.app). Abundio manages workspaces (each bound to a folder), supports split panes, and has first-class support for AI coding CLI agents like Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode.
 
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)
@@ -10,10 +10,10 @@ A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https:/
 
 - **GPU-accelerated rendering** — WebGL-powered terminal via xterm.js with canvas fallback
 - **Split panes** — Horizontal and vertical splits with recursive nesting
-- **Session management** — Persistent sessions tied to project directories, stored in SQLite
+- **Workspace management** — Persistent workspaces tied to project directories, stored in SQLite
 - **AI agent detection** — Automatically detects installed AI coding agents on your `$PATH`
 - **Theming** — Multiple built-in dark themes with live switching
-- **Scrollback persistence** — Terminal scrollback is saved and restored across sessions
+- **Scrollback persistence** — Terminal scrollback is saved and restored across workspaces
 - **Native macOS integration** — Overlay titlebar with traffic light controls
 - **Command palette** — Quick access to actions via `Cmd+K`
 
@@ -79,12 +79,12 @@ abundio/
 │   │   └── Terminal/           # TerminalPane, SplitContainer
 │   ├── hooks/                  # useSplitPane, etc.
 │   ├── lib/                    # ipc, themes, terminalManager, portalRegistry
-│   ├── stores/                 # Zustand stores (session, settings)
+│   ├── stores/                 # Zustand stores (workspace, settings)
 │   └── App.tsx
 ├── src-tauri/                  # Backend (Rust)
 │   └── src/
 │       ├── pty_manager.rs      # PTY lifecycle on dedicated OS threads
-│       ├── session_store.rs    # SQLite CRUD for sessions/layouts
+│       ├── workspace_store.rs  # SQLite CRUD for workspaces/layouts
 │       ├── commands.rs         # Tauri command handlers
 │       ├── config.rs           # App configuration
 │       ├── error.rs            # AbundioError enum
@@ -170,7 +170,7 @@ The first build will take a few minutes while Cargo compiles all Rust dependenci
 3. **`src-tauri/src/commands.rs`** — All IPC commands the frontend can call.
 4. **`src/lib/ipc.ts`** — Frontend-side typed wrappers for those commands.
 5. **`src/components/Terminal/TerminalPane.tsx`** — The core terminal component.
-6. **`src/stores/sessionStore.ts`** — Central state for sessions and pane layout.
+6. **`src/stores/workspaceStore.ts`** — Central state for workspaces and pane layout.
 
 ### 4. Common Tasks
 

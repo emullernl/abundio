@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { pty } from "../../lib/ipc";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import { getTerminal, resetTerminal } from "../../lib/terminalManager";
-import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { SearchBar } from "./SearchBar";
@@ -100,8 +100,8 @@ export function TerminalSlot({
 		x: number;
 		y: number;
 	} | null>(null);
-	const searchPaneId = useSessionStore((s) => s.searchPaneId);
-	const toggleSearch = useSessionStore((s) => s.toggleSearch);
+	const searchPaneId = useWorkspaceStore((s) => s.searchPaneId);
+	const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
 	const debugMeterEnabled = useSettingsStore((s) => s.debugActivityMeter);
 
@@ -111,17 +111,17 @@ export function TerminalSlot({
 		return () => unregisterTarget(paneId);
 	}, [paneId]);
 
-	const activeView = useSessionStore((s) => {
-		const activeSessionId = s.activeSessionId;
-		return activeSessionId
-			? (s.activeView[activeSessionId] ?? "terminal")
+	const activeView = useWorkspaceStore((s) => {
+		const activeWorkspaceId = s.activeWorkspaceId;
+		return activeWorkspaceId
+			? (s.activeView[activeWorkspaceId] ?? "terminal")
 			: "terminal";
 	});
 	// @ts-expect-error intentionally unused — Zustand subscription triggers re-render
 	// biome-ignore lint/correctness/noUnusedVariables: subscription trigger for re-render on tab switch
-	const activeTabId = useSessionStore((s) => {
-		const activeSessionId = s.activeSessionId;
-		return activeSessionId ? s.activeTabBySession[activeSessionId] : null;
+	const activeTabId = useWorkspaceStore((s) => {
+		const activeWorkspaceId = s.activeWorkspaceId;
+		return activeWorkspaceId ? s.activeTabByWorkspace[activeWorkspaceId] : null;
 	});
 
 	useEffect(() => {
@@ -213,6 +213,8 @@ export function TerminalSlot({
 				overflow: "hidden",
 				boxShadow: "none",
 				background: "var(--bg-primary)",
+				opacity: isFocused ? 1 : 0.75,
+				transition: "opacity 150ms ease",
 			}}
 			onFocus={handleFocus}
 			onMouseDown={handleFocus}

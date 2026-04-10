@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useSessionStore } from "../stores/sessionStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 
 export function AppLoader() {
-	const initialized = useSessionStore((s) => s.sessionsInitialized);
+	const initialized = useWorkspaceStore((s) => s.workspacesInitialized);
 	const [visible, setVisible] = useState(true);
 
 	useEffect(() => {

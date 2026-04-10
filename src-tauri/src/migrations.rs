@@ -16,6 +16,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "005_add_base_branch",
         include_str!("../migrations/005_add_base_branch.sql"),
     ),
+    (
+        "006_rename_sessions_to_workspaces",
+        include_str!("../migrations/006_rename_sessions_to_workspaces.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -67,11 +71,11 @@ mod tests {
     }
 
     #[test]
-    fn sessions_table_exists() {
+    fn workspaces_table_exists() {
         let conn = test_db();
         run_migrations(&conn).unwrap();
         let count: i32 = conn
-            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM workspaces", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -93,7 +97,7 @@ mod tests {
         let count: i32 = conn
             .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 6);
     }
 }
 

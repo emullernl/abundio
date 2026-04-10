@@ -9,14 +9,14 @@ pub mod git_commands;
 pub mod migrations;
 pub mod process_monitor;
 pub mod pty_manager;
-pub mod session_store;
+pub mod workspace_store;
 pub mod shell_env;
 
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
 
 use pty_manager::PtyManager;
-use session_store::SessionStore;
+use workspace_store::WorkspaceStore;
 
 fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
     let handle = app.handle();
@@ -148,7 +148,7 @@ pub fn run() {
 
             // Initialize SQLite + run migrations
             let conn = migrations::open_db().expect("Failed to open database");
-            let store = SessionStore::new(conn);
+            let store = WorkspaceStore::new(conn);
             app.manage(store);
 
             // Initialize PTY manager
@@ -170,11 +170,11 @@ pub fn run() {
             commands::pty_write,
             commands::pty_resize,
             commands::pty_kill,
-            commands::session_create,
-            commands::session_list,
-            commands::session_update,
-            commands::session_delete,
-            commands::session_reorder,
+            commands::workspace_create,
+            commands::workspace_list,
+            commands::workspace_update,
+            commands::workspace_delete,
+            commands::workspace_reorder,
             commands::pty_read_log,
             commands::pty_write_snapshot,
             commands::pty_read_snapshot,

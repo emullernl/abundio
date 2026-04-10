@@ -1,15 +1,15 @@
 import { useState } from "react";
-import { useSessionStore } from "../../stores/sessionStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ChevronDown, ChevronRight } from "../Icons";
 import { FileTree } from "./FileTree";
 
 export function Explorer() {
-	const activeSession = useSessionStore((s) =>
-		s.sessions.find((sess) => sess.id === s.activeSessionId),
+	const activeWorkspace = useWorkspaceStore((s) =>
+		s.workspaces.find((sess) => sess.id === s.activeWorkspaceId),
 	);
 	const [collapsed, setCollapsed] = useState(false);
 
-	if (!activeSession) return null;
+	if (!activeWorkspace) return null;
 
 	return (
 		<div className="flex flex-col min-h-0 h-full">
@@ -41,8 +41,8 @@ export function Explorer() {
 			{!collapsed && (
 				<div className="flex-1 overflow-y-auto min-h-0">
 					<FileTree
-						rootPath={activeSession.rootFolder}
-						sessionId={activeSession.id}
+						rootPath={activeWorkspace.rootFolder}
+						workspaceId={activeWorkspace.id}
 					/>
 				</div>
 			)}

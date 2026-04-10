@@ -3,8 +3,8 @@ import { fs, git } from "../../lib/ipc";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
-import { useSessionStore } from "../../stores/sessionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { GitCompare, PanelRight, RefreshCw } from "../Icons";
 import { BranchSelector } from "./BranchSelector";
 import { GitChangesFileList } from "./GitChangesFileList";
@@ -39,11 +39,11 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 
 	const ratio = localRatio ?? gitPanelSplitRatio;
 
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
-	const sessions = useSessionStore((s) => s.sessions);
-	const activeSession = sessions.find((s) => s.id === activeSessionId);
-	const cwd = activeSession?.rootFolder ?? null;
-	const sessionBaseBranch = activeSession?.baseBranch ?? null;
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
+	const cwd = activeWorkspace?.rootFolder ?? null;
+	const workspaceBaseBranch = activeWorkspace?.baseBranch ?? null;
 
 	// Fetch changes when session changes or panel opens
 	useEffect(() => {
@@ -51,8 +51,8 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			clear();
 			return;
 		}
-		fetchChanges(cwd, sessionBaseBranch);
-	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges, clear]);
+		fetchChanges(cwd, workspaceBaseBranch);
+	}, [panelOpen, cwd, workspaceBaseBranch, fetchChanges, clear]);
 
 	// Re-fetch on file system or git changes (throttled)
 	// FS events use lightweight fingerprint check; git events do a full refresh
@@ -72,12 +72,12 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			const elapsed = now - lastFsAt;
 			if (elapsed >= MIN_INTERVAL) {
 				lastFsAt = now;
-				refreshChanges(cwd, sessionBaseBranch);
+				refreshChanges(cwd, workspaceBaseBranch);
 			} else if (!fsTrailingTimer) {
 				fsTrailingTimer = setTimeout(() => {
 					fsTrailingTimer = null;
 					lastFsAt = Date.now();
-					refreshChanges(cwd, sessionBaseBranch);
+					refreshChanges(cwd, workspaceBaseBranch);
 				}, MIN_INTERVAL - elapsed);
 			}
 		};
@@ -87,12 +87,12 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			const elapsed = now - lastGitAt;
 			if (elapsed >= MIN_INTERVAL) {
 				lastGitAt = now;
-				fetchChanges(cwd, sessionBaseBranch);
+				fetchChanges(cwd, workspaceBaseBranch);
 			} else if (!gitTrailingTimer) {
 				gitTrailingTimer = setTimeout(() => {
 					gitTrailingTimer = null;
 					lastGitAt = Date.now();
-					fetchChanges(cwd, sessionBaseBranch);
+					fetchChanges(cwd, workspaceBaseBranch);
 				}, MIN_INTERVAL - elapsed);
 			}
 		};
@@ -117,28 +117,28 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			if (fsTrailingTimer) clearTimeout(fsTrailingTimer);
 			if (gitTrailingTimer) clearTimeout(gitTrailingTimer);
 		};
-	}, [panelOpen, cwd, sessionBaseBranch, fetchChanges, refreshChanges]);
+	}, [panelOpen, cwd, workspaceBaseBranch, fetchChanges, refreshChanges]);
 
 	async function handleSelectFile(file: GitChangedFile) {
-		if (!cwd || !activeSessionId) return;
+		if (!cwd || !activeWorkspaceId) return;
 		setSelectedFile(file);
 		try {
 			const diff = await git.fileDiff(
 				cwd,
 				file.path,
 				file.section,
-				sessionBaseBranch,
+				workspaceBaseBranch,
 			);
 			useExplorerStore
 				.getState()
-				.openDiff(activeSessionId, file.path, diff.original, diff.modified);
+				.openDiff(activeWorkspaceId, file.path, diff.original, diff.modified);
 		} catch {
 			// Failed to load diff
 		}
 	}
 
 	function handleRefresh() {
-		if (cwd) fetchChanges(cwd, sessionBaseBranch);
+		if (cwd) fetchChanges(cwd, workspaceBaseBranch);
 	}
 
 	const handleDividerResize = useCallback((r: number) => {
@@ -225,8 +225,8 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 							Changes
 						</span>
 
-						{cwd && activeSessionId && (
-							<BranchSelector cwd={cwd} sessionId={activeSessionId} />
+						{cwd && activeWorkspaceId && (
+							<BranchSelector cwd={cwd} workspaceId={activeWorkspaceId} />
 						)}
 
 						<div className="flex-1" />
@@ -341,7 +341,7 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 								className="flex items-center justify-center h-32"
 								style={{ color: "var(--fg-secondary)", fontSize: 13 }}
 							>
-								No session selected
+								No workspace selected
 							</div>
 						) : (
 							<div className="flex-1 overflow-y-auto">
