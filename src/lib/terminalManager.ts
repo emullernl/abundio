@@ -12,8 +12,8 @@ import {
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
-import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { recordThresholdHit } from "./activityGate";
 import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
@@ -84,7 +84,8 @@ function isPaneInActiveTab(paneId: string): boolean {
 	const state = useWorkspaceStore.getState();
 	const workspaceId = state.activeWorkspaceId;
 	if (!workspaceId) return false;
-	if ((state.activeView[workspaceId] ?? "terminal") !== "terminal") return false;
+	if ((state.activeView[workspaceId] ?? "terminal") !== "terminal")
+		return false;
 	const tabId = state.activeTabByWorkspace[workspaceId];
 	if (!tabId) return false;
 	const workspace = state.workspaces.find((s) => s.id === workspaceId);
@@ -313,7 +314,9 @@ setTimeout(() => {
 		// Browsers cap WebGL contexts at ~16 per page; without this gate, a
 		// user with many tabs/workspaces hits "too many active WebGL contexts".
 		const activeTabId = state.activeTabByWorkspace[activeWorkspaceId];
-		const activeWorkspace = state.workspaces.find((s) => s.id === activeWorkspaceId);
+		const activeWorkspace = state.workspaces.find(
+			(s) => s.id === activeWorkspaceId,
+		);
 		const activeTab = activeWorkspace?.tabs.find((t) => t.id === activeTabId);
 		let activePaneIds: Set<string> | null = null;
 		if (activeTab && isTerminalView) {

@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useRef, useState } from "react";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { Explorer } from "../Explorer/Explorer";
 import { ChevronLeft, ChevronRight, Plus } from "../Icons";
 import { WorkspaceList } from "./WorkspaceList";

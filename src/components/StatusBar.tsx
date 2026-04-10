@@ -23,7 +23,8 @@ function Separator() {
 }
 
 export function StatusBar() {
-	const { getActiveWorkspace, getActiveTab, focusedPaneId } = useWorkspaceStore();
+	const { getActiveWorkspace, getActiveTab, focusedPaneId } =
+		useWorkspaceStore();
 	const workspace = getActiveWorkspace();
 	const tab = getActiveTab();
 

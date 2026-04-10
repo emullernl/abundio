@@ -66,6 +66,7 @@ interface PtyActivityState_Store {
 	setTitle: (paneId: string, title: string) => void;
 	registerPane: (paneId: string, ptyId: string) => void;
 	markWorkspaceOpened: (workspaceId: string) => void;
+	unmarkWorkspaceOpened: (workspaceId: string) => void;
 	removePty: (ptyId: string) => void;
 	removePane: (paneId: string) => void;
 }
@@ -235,7 +236,17 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		markWorkspaceOpened: (workspaceId) => {
 			const s = get();
 			if (s.openedWorkspaceIds.has(workspaceId)) return;
-			set({ openedWorkspaceIds: new Set([...s.openedWorkspaceIds, workspaceId]) });
+			set({
+				openedWorkspaceIds: new Set([...s.openedWorkspaceIds, workspaceId]),
+			});
+		},
+
+		unmarkWorkspaceOpened: (workspaceId) => {
+			const s = get();
+			if (!s.openedWorkspaceIds.has(workspaceId)) return;
+			const next = new Set(s.openedWorkspaceIds);
+			next.delete(workspaceId);
+			set({ openedWorkspaceIds: next });
 		},
 
 		removePty: (ptyId) => {
@@ -359,7 +370,9 @@ export function computeWorkspaceDotStatus(
 		allPtyIds.push(...collectPtyIds(layout, panePtyMap));
 	}
 
-	if (allPtyIds.length === 0) return "grey";
+	if (allPtyIds.length === 0) {
+		return openedWorkspaceIds.has(workspaceId) ? "green" : "grey";
+	}
 
 	const entries = allPtyIds.map((id) => activities[id]).filter(Boolean);
 

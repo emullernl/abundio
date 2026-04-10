@@ -6,8 +6,8 @@ import { triggerAction } from "../lib/keybindings";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
-import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 
 interface PaletteItem {
 	id: string;

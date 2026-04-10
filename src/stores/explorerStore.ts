@@ -130,7 +130,8 @@ export async function restoreFileTabs(
 						.getState()
 						.fileTabs.find(
 							(t) =>
-								t.filePath === persistedActive.filePath && t.workspaceId === s.id,
+								t.filePath === persistedActive.filePath &&
+								t.workspaceId === s.id,
 						);
 					if (restored) {
 						useExplorerStore.getState().setActiveFileTab(restored.id);

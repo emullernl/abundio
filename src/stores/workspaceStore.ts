@@ -1,10 +1,10 @@
 import { create } from "zustand";
-import { pty, workspaces as workspacesApi, tabs as tabsApi } from "../lib/ipc";
+import { pty, tabs as tabsApi, workspaces as workspacesApi } from "../lib/ipc";
 import type {
 	PaneNode,
 	PtyStatusType,
-	WorkspaceWithTabs,
 	Tab,
+	WorkspaceWithTabs,
 } from "../lib/types";
 import { persistFileTabs } from "./explorerStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
@@ -24,8 +24,13 @@ interface WorkspaceState {
 
 	// Workspace actions
 	loadWorkspaces: () => Promise<void>;
-	createWorkspace: (name: string, rootFolder: string) => Promise<WorkspaceWithTabs>;
+	createWorkspace: (
+		name: string,
+		rootFolder: string,
+	) => Promise<WorkspaceWithTabs>;
 	deleteWorkspace: (id: string) => Promise<void>;
+	closeWorkspace: (id: string) => Promise<void>;
+	renameWorkspace: (id: string, name: string) => Promise<void>;
 	setActiveWorkspace: (id: string | null) => void;
 
 	reorderWorkspaces: (ids: string[]) => void;
@@ -45,7 +50,10 @@ interface WorkspaceState {
 	setPtyStatus: (ptyId: string, status: PtyStatusType) => void;
 	toggleSearch: () => void;
 	setActiveView: (workspaceId: string, view: "terminal" | "file") => void;
-	setWorkspaceBaseBranch: (workspaceId: string, baseBranch: string | null) => void;
+	setWorkspaceBaseBranch: (
+		workspaceId: string,
+		baseBranch: string | null,
+	) => void;
 
 	// Derived
 	getActiveWorkspace: () => WorkspaceWithTabs | undefined;
@@ -175,6 +183,77 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			workspaces: state.workspaces.filter((s) => s.id !== id),
 			activeWorkspaceId:
 				state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
+		}));
+	},
+
+	closeWorkspace: async (id) => {
+		// Await import before any cleanup to avoid race with reopen
+		const { destroyTerminal } = await import("../lib/terminalManager");
+
+		const state = get();
+		const workspace = state.workspaces.find((s) => s.id === id);
+		if (!workspace) return;
+
+		const activityStore = usePtyActivityStore.getState();
+
+		// Destroy terminal instances, kill PTYs, and clean up activity state.
+		// App.tsx only renders content for opened workspaces, so React will
+		// unmount the components after unmarkWorkspaceOpened below.
+		for (const tab of workspace.tabs) {
+			try {
+				const layout = JSON.parse(tab.layoutJson) as PaneNode;
+				const paneIds = collectPaneIds(layout);
+				for (const paneId of paneIds) {
+					destroyTerminal(paneId);
+					const ptyId = activityStore.panePtyMap[paneId];
+					if (ptyId) {
+						pty.kill(ptyId).catch(() => {});
+						activityStore.removePty(ptyId);
+					}
+					activityStore.removePane(paneId);
+				}
+			} catch {
+				// Layout parse failure — skip
+			}
+		}
+
+		// Reset dot to grey
+		activityStore.unmarkWorkspaceOpened(id);
+
+		// Clear ptyIds from layouts so fresh PTYs spawn on next open
+		const isActive = state.activeWorkspaceId === id;
+		set({
+			workspaces: state.workspaces.map((s) =>
+				s.id === id
+					? {
+							...s,
+							tabs: s.tabs.map((t) => {
+								try {
+									const layout = JSON.parse(t.layoutJson) as PaneNode;
+									return {
+										...t,
+										layoutJson: JSON.stringify(clearPtyIds(layout)),
+									};
+								} catch {
+									return t;
+								}
+							}),
+						}
+					: s,
+			),
+			activeWorkspaceId: isActive ? null : state.activeWorkspaceId,
+			focusedPaneId: isActive ? null : state.focusedPaneId,
+			maximizedPaneId: isActive ? null : state.maximizedPaneId,
+			savedLayout: isActive ? null : state.savedLayout,
+		});
+	},
+
+	renameWorkspace: async (id, name) => {
+		await workspacesApi.update(id, { name });
+		set((state) => ({
+			workspaces: state.workspaces.map((s) =>
+				s.id === id ? { ...s, name } : s,
+			),
 		}));
 	},
 
@@ -443,7 +522,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	getActiveTab: () => {
 		const state = get();
-		const workspace = state.workspaces.find((s) => s.id === state.activeWorkspaceId);
+		const workspace = state.workspaces.find(
+			(s) => s.id === state.activeWorkspaceId,
+		);
 		if (!workspace) return undefined;
 		const tabId = state.activeTabByWorkspace[workspace.id];
 		return workspace.tabs.find((t) => t.id === tabId);

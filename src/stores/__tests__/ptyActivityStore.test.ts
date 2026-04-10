@@ -3,8 +3,8 @@ import type { PaneNode, Tab } from "../../lib/types";
 import {
 	collectPtyIds,
 	computePtyDotStatus,
-	computeWorkspaceDotStatus,
 	computeTabDotStatus,
+	computeWorkspaceDotStatus,
 	getLastOutputAt,
 	type PtyActivityEntry,
 	shouldPulse,

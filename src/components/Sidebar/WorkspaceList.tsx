@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import {
+	type ContextMenuItem,
+	PaneContextMenu,
+} from "../Terminal/PaneContextMenu";
 import { WorkspaceItem } from "./WorkspaceItem";
 
 const DRAG_THRESHOLD = 5;
@@ -11,6 +15,8 @@ export function WorkspaceList() {
 		activeWorkspaceId,
 		setActiveWorkspace,
 		deleteWorkspace,
+		closeWorkspace,
+		renameWorkspace,
 		reorderWorkspaces,
 	} = useWorkspaceStore();
 
@@ -21,6 +27,16 @@ export function WorkspaceList() {
 	});
 	const [ghostWidth, setGhostWidth] = useState(0);
 	const [nearestSlot, setNearestSlot] = useState<number | null>(null);
+
+	// Context menu state
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+		workspaceId: string;
+	} | null>(null);
+
+	// Inline rename state
+	const [renamingId, setRenamingId] = useState<string | null>(null);
 
 	const startPos = useRef<{ x: number; y: number } | null>(null);
 	const pendingId = useRef<string | null>(null);
@@ -135,6 +151,24 @@ export function WorkspaceList() {
 		? workspaces.find((s) => s.id === draggedId)
 		: null;
 
+	const contextMenuItems: ContextMenuItem[] = contextMenu
+		? [
+				{
+					label: "Close Workspace",
+					onClick: () => closeWorkspace(contextMenu.workspaceId),
+				},
+				{ separator: true as const },
+				{
+					label: "Rename Workspace",
+					onClick: () => setRenamingId(contextMenu.workspaceId),
+				},
+				{
+					label: "Delete Workspace",
+					onClick: () => deleteWorkspace(contextMenu.workspaceId),
+				},
+			]
+		: [];
+
 	return (
 		<div className="flex flex-col" ref={containerRef}>
 			{workspaces.length === 0 && (
@@ -158,11 +192,25 @@ export function WorkspaceList() {
 						workspace={workspace}
 						isActive={workspace.id === activeWorkspaceId}
 						isDragging={workspace.id === draggedId}
+						isRenaming={workspace.id === renamingId}
 						onClick={() => {
 							if (draggedId) return;
 							setActiveWorkspace(workspace.id);
 						}}
 						onDelete={() => deleteWorkspace(workspace.id)}
+						onContextMenu={(e) => {
+							e.preventDefault();
+							setContextMenu({
+								x: e.clientX,
+								y: e.clientY,
+								workspaceId: workspace.id,
+							});
+						}}
+						onRename={(name) => {
+							renameWorkspace(workspace.id, name);
+							setRenamingId(null);
+						}}
+						onRenameCancel={() => setRenamingId(null)}
 						onMouseDown={(e) => handleMouseDown(e, workspace.id)}
 					/>
 				</div>
@@ -175,6 +223,16 @@ export function WorkspaceList() {
 					workspace={draggedWorkspace}
 					mousePos={mousePos}
 					width={ghostWidth}
+				/>
+			)}
+
+			{/* Workspace context menu */}
+			{contextMenu && (
+				<PaneContextMenu
+					x={contextMenu.x}
+					y={contextMenu.y}
+					items={contextMenuItems}
+					onClose={() => setContextMenu(null)}
 				/>
 			)}
 		</div>
@@ -220,8 +278,12 @@ function DragGhost({
 				workspace={workspace}
 				isActive={false}
 				isDragging={false}
+				isRenaming={false}
 				onClick={() => {}}
 				onDelete={() => {}}
+				onContextMenu={() => {}}
+				onRename={() => {}}
+				onRenameCancel={() => {}}
 				onMouseDown={() => {}}
 			/>
 		</div>

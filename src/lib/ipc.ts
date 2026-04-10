@@ -12,10 +12,10 @@ import type {
 	PtyActivityType,
 	PtyStatusType,
 	PullRequest,
-	WorkspaceUpdate,
-	WorkspaceWithTabs,
 	Tab,
 	TabUpdate,
+	WorkspaceUpdate,
+	WorkspaceWithTabs,
 } from "./types";
 
 export const pty = {

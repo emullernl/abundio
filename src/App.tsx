@@ -12,8 +12,8 @@ import { TabBar } from "./components/TabBar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
-import { useWorkspace } from "./hooks/useWorkspace";
 import { useSplitPane } from "./hooks/useSplitPane";
+import { useWorkspace } from "./hooks/useWorkspace";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
@@ -21,8 +21,9 @@ import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import type { PaneNode } from "./lib/types";
 import { persistAllFileTabs, useExplorerStore } from "./stores/explorerStore";
 import { useGitChangesStore } from "./stores/gitChangesStore";
-import { useWorkspaceStore } from "./stores/workspaceStore";
+import { usePtyActivityStore } from "./stores/ptyActivityStore";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useWorkspaceStore } from "./stores/workspaceStore";
 
 const TITLEBAR_HEIGHT = isMac ? 52 : 0;
 
@@ -64,7 +65,10 @@ export function App() {
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
 	const closeFileTab = useExplorerStore((s) => s.closeFileTab);
-	const workspacesInitialized = useWorkspaceStore((s) => s.workspacesInitialized);
+	const workspacesInitialized = useWorkspaceStore(
+		(s) => s.workspacesInitialized,
+	);
+	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 
 	useEffect(() => {
 		const cleanup = initKeybindings();
@@ -199,72 +203,76 @@ export function App() {
 								>
 									Abundio
 								</div>
-								<div className="text-base">Create a workspace to get started</div>
+								<div className="text-base">
+									Create a workspace to get started
+								</div>
 							</div>
 						</div>
 					)}
-					{workspaces.map((workspace) => {
-						const isActive = workspace.id === activeWorkspaceId;
-						const activeTabId = activeTabByWorkspace[workspace.id];
-						return (
-							<div
-								key={workspace.id}
-								className="flex-1 min-h-0 flex flex-col"
-								style={{ display: isActive ? "flex" : "none" }}
-							>
-								<TabBar
-									tabs={workspace.tabs}
-									activeTabId={activeTabId}
-									onActivate={(tabId) => {
-										setActiveTab(workspace.id, tabId);
-										setActiveView(workspace.id, "terminal");
-									}}
-									onClose={(tabId) => closeTab(tabId)}
-									onNew={() => createTab(workspace.id)}
-									onRename={(tabId, name) => renameTab(tabId, name)}
-									fileTabs={fileTabs.filter(
-										(ft) => ft.workspaceId === workspace.id,
-									)}
-									activeFileTabId={activeFileTabId}
-									activeView={activeView[workspace.id] ?? "terminal"}
-									onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
-									onCloseFileTab={(tabId) => closeFileTab(tabId)}
-								/>
-								<div className="flex-1 min-h-0 relative">
-									<div
-										className="absolute inset-0"
-										style={{
-											display:
-												(activeView[workspace.id] ?? "terminal") === "file" &&
-												activeFileTabId
-													? "block"
-													: "none",
+					{workspaces
+						.filter((w) => openedWorkspaceIds.has(w.id))
+						.map((workspace) => {
+							const isActive = workspace.id === activeWorkspaceId;
+							const activeTabId = activeTabByWorkspace[workspace.id];
+							return (
+								<div
+									key={workspace.id}
+									className="flex-1 min-h-0 flex flex-col"
+									style={{ display: isActive ? "flex" : "none" }}
+								>
+									<TabBar
+										tabs={workspace.tabs}
+										activeTabId={activeTabId}
+										onActivate={(tabId) => {
+											setActiveTab(workspace.id, tabId);
+											setActiveView(workspace.id, "terminal");
 										}}
-									>
-										<FileViewerContainer />
+										onClose={(tabId) => closeTab(tabId)}
+										onNew={() => createTab(workspace.id)}
+										onRename={(tabId, name) => renameTab(tabId, name)}
+										fileTabs={fileTabs.filter(
+											(ft) => ft.workspaceId === workspace.id,
+										)}
+										activeFileTabId={activeFileTabId}
+										activeView={activeView[workspace.id] ?? "terminal"}
+										onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
+										onCloseFileTab={(tabId) => closeFileTab(tabId)}
+									/>
+									<div className="flex-1 min-h-0 relative">
+										<div
+											className="absolute inset-0"
+											style={{
+												display:
+													(activeView[workspace.id] ?? "terminal") === "file" &&
+													activeFileTabId
+														? "block"
+														: "none",
+											}}
+										>
+											<FileViewerContainer />
+										</div>
+										{workspace.tabs.map((tab) => {
+											const isTabActive = tab.id === activeTabId;
+											const showTerminal =
+												(activeView[workspace.id] ?? "terminal") ===
+													"terminal" && isTabActive;
+											return (
+												<div
+													key={tab.id}
+													className="absolute inset-0"
+													style={{ display: showTerminal ? "block" : "none" }}
+												>
+													<TabTerminalContent
+														layoutJson={tab.layoutJson}
+														cwd={workspace.rootFolder}
+													/>
+												</div>
+											);
+										})}
 									</div>
-									{workspace.tabs.map((tab) => {
-										const isTabActive = tab.id === activeTabId;
-										const showTerminal =
-											(activeView[workspace.id] ?? "terminal") === "terminal" &&
-											isTabActive;
-										return (
-											<div
-												key={tab.id}
-												className="absolute inset-0"
-												style={{ display: showTerminal ? "block" : "none" }}
-											>
-												<TabTerminalContent
-													layoutJson={tab.layoutJson}
-													cwd={workspace.rootFolder}
-												/>
-											</div>
-										);
-									})}
 								</div>
-							</div>
-						);
-					})}
+							);
+						})}
 				</div>
 				<GitChangesPanel titlebarHeight={TITLEBAR_HEIGHT} />
 			</div>

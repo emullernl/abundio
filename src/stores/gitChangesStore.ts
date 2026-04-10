@@ -140,7 +140,9 @@ export const useGitChangesStore = create<GitChangesState>()(
 
 			setBaseBranch: async (workspaceId, branch, cwd) => {
 				await workspacesApi.update(workspaceId, { baseBranch: branch });
-				useWorkspaceStore.getState().setWorkspaceBaseBranch(workspaceId, branch);
+				useWorkspaceStore
+					.getState()
+					.setWorkspaceBaseBranch(workspaceId, branch);
 				await get().fetchChanges(cwd, branch);
 			},
 

@@ -17,8 +17,8 @@ import { useEffect, useRef } from "react";
 import { abundioTheme, getLanguageExtension } from "../../lib/codemirrorShared";
 import { setAllTerminalsFontSize } from "../../lib/terminalManager";
 import { useExplorerStore } from "../../stores/explorerStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 
 interface CodeEditorProps {
 	tabId: string;

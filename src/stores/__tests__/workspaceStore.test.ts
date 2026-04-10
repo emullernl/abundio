@@ -28,7 +28,7 @@ vi.mock("../ptyActivityStore", () => ({
 	},
 }));
 
-import type { PaneNode, WorkspaceWithTabs, Tab } from "../../lib/types";
+import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
 import { useWorkspaceStore } from "../workspaceStore";
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
@@ -135,7 +135,10 @@ describe("workspaceStore", () => {
 			useWorkspaceStore.setState({
 				workspaces: [workspace, workspace2],
 				activeWorkspaceId: "workspace-1",
-				activeTabByWorkspace: { "workspace-1": "tab-1", "workspace-2": "tab-2" },
+				activeTabByWorkspace: {
+					"workspace-1": "tab-1",
+					"workspace-2": "tab-2",
+				},
 				focusedPaneId: "pane-focused",
 			});
 
@@ -160,9 +163,9 @@ describe("workspaceStore", () => {
 			});
 
 			useWorkspaceStore.getState().setActiveTab("workspace-1", "tab-2");
-			expect(useWorkspaceStore.getState().activeTabByWorkspace["workspace-1"]).toBe(
-				"tab-2",
-			);
+			expect(
+				useWorkspaceStore.getState().activeTabByWorkspace["workspace-1"],
+			).toBe("tab-2");
 		});
 
 		it("clears maximize state", () => {
@@ -375,9 +378,9 @@ describe("workspaceStore", () => {
 		});
 
 		it("getTabsForWorkspace returns empty for unknown workspace", () => {
-			expect(useWorkspaceStore.getState().getTabsForWorkspace("unknown")).toEqual(
-				[],
-			);
+			expect(
+				useWorkspaceStore.getState().getTabsForWorkspace("unknown"),
+			).toEqual([]);
 		});
 	});
 });

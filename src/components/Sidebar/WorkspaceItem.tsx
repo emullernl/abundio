@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PaneNode, WorkspaceWithTabs } from "../../lib/types";
 import type { DotStatus } from "../../stores/ptyActivityStore";
 import {
@@ -14,8 +14,12 @@ interface Props {
 	workspace: WorkspaceWithTabs;
 	isActive: boolean;
 	isDragging: boolean;
+	isRenaming: boolean;
 	onClick: () => void;
 	onDelete: () => void;
+	onContextMenu: (e: React.MouseEvent) => void;
+	onRename: (name: string) => void;
+	onRenameCancel: () => void;
 	onMouseDown: (e: React.MouseEvent) => void;
 }
 
@@ -60,13 +64,37 @@ export function WorkspaceItem({
 	workspace,
 	isActive,
 	isDragging,
+	isRenaming,
 	onClick,
 	onDelete,
+	onContextMenu,
+	onRename,
+	onRenameCancel,
 	onMouseDown,
 }: Props) {
 	const dotStatus = useWorkspaceDotStatus(workspace);
 	const dotColor = DOT_COLORS[dotStatus];
 	const pulse = shouldPulse(dotStatus);
+
+	const [renameValue, setRenameValue] = useState(workspace.name);
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		if (isRenaming) {
+			setRenameValue(workspace.name);
+			// Focus after React renders the input
+			requestAnimationFrame(() => inputRef.current?.select());
+		}
+	}, [isRenaming, workspace.name]);
+
+	const commitRename = () => {
+		const trimmed = renameValue.trim();
+		if (trimmed && trimmed !== workspace.name) {
+			onRename(trimmed);
+		} else {
+			onRenameCancel();
+		}
+	};
 
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: div used intentionally for styling
@@ -76,6 +104,7 @@ export function WorkspaceItem({
 			onMouseDown={onMouseDown}
 			onClick={onClick}
 			onKeyDown={(e) => e.key === "Enter" && onClick()}
+			onContextMenu={onContextMenu}
 			className="group flex items-center gap-2.5 pr-3 py-2.5 rounded-lg cursor-pointer transition-colors"
 			style={{
 				paddingLeft: 20,
@@ -104,12 +133,33 @@ export function WorkspaceItem({
 				}
 			/>
 			<div className="flex-1 min-w-0">
-				<span
-					className="truncate font-medium"
-					style={{ color: "var(--fg-primary)", fontSize: 13 }}
-				>
-					{workspace.name}
-				</span>
+				{isRenaming ? (
+					<input
+						ref={inputRef}
+						value={renameValue}
+						onChange={(e) => setRenameValue(e.target.value)}
+						onBlur={commitRename}
+						onKeyDown={(e) => {
+							e.stopPropagation();
+							if (e.key === "Enter") commitRename();
+							if (e.key === "Escape") onRenameCancel();
+						}}
+						onClick={(e) => e.stopPropagation()}
+						className="w-full bg-transparent outline-none font-medium rounded px-1 -mx-1"
+						style={{
+							color: "var(--fg-primary)",
+							fontSize: 13,
+							border: "1px solid var(--accent)",
+						}}
+					/>
+				) : (
+					<span
+						className="truncate font-medium"
+						style={{ color: "var(--fg-primary)", fontSize: 13 }}
+					>
+						{workspace.name}
+					</span>
+				)}
 				<div
 					className="truncate mt-0.5"
 					style={{ color: "var(--fg-secondary)", fontSize: 11 }}
