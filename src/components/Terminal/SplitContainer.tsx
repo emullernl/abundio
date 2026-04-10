@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import type { PaneNode } from "../../lib/types";
-import { useSessionStore } from "../../stores/sessionStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { PaneResizer } from "./PaneResizer";
 import { TerminalSlot } from "./TerminalSlot";
 
@@ -16,9 +16,9 @@ const TerminalLeaf = memo(function TerminalLeaf({
 }: {
 	nodeId: string;
 }) {
-	const focusedPaneId = useSessionStore((s) => s.focusedPaneId);
-	const setFocusedPane = useSessionStore((s) => s.setFocusedPane);
-	const maximizedPaneId = useSessionStore((s) => s.maximizedPaneId);
+	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
+	const maximizedPaneId = useWorkspaceStore((s) => s.maximizedPaneId);
 	const { splitPane, closePane, toggleMaximize } = useSplitPane();
 
 	return (

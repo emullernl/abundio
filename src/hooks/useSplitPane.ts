@@ -8,20 +8,20 @@ import {
 } from "../lib/paneTree";
 import { destroyTerminal } from "../lib/terminalManager";
 import type { PaneNode } from "../lib/types";
-import { useSessionStore } from "../stores/sessionStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 
 function generateId(): string {
 	return crypto.randomUUID();
 }
 
 export function useSplitPane() {
-	const getActiveTab = useSessionStore((s) => s.getActiveTab);
-	const getActiveLayout = useSessionStore((s) => s.getActiveLayout);
-	const updateLayout = useSessionStore((s) => s.updateLayout);
-	const updateLayoutLocal = useSessionStore((s) => s.updateLayoutLocal);
-	const persistLayout = useSessionStore((s) => s.persistLayout);
-	const setFocusedPane = useSessionStore((s) => s.setFocusedPane);
-	const setMaximized = useSessionStore((s) => s.setMaximized);
+	const getActiveTab = useWorkspaceStore((s) => s.getActiveTab);
+	const getActiveLayout = useWorkspaceStore((s) => s.getActiveLayout);
+	const updateLayout = useWorkspaceStore((s) => s.updateLayout);
+	const updateLayoutLocal = useWorkspaceStore((s) => s.updateLayoutLocal);
+	const persistLayout = useWorkspaceStore((s) => s.persistLayout);
+	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
+	const setMaximized = useWorkspaceStore((s) => s.setMaximized);
 
 	const splitPane = useCallback(
 		async (paneId: string, direction: "horizontal" | "vertical") => {
@@ -81,7 +81,7 @@ export function useSplitPane() {
 			}
 
 			// Clear maximize state if the maximized pane was closed
-			if (useSessionStore.getState().maximizedPaneId === paneId) {
+			if (useWorkspaceStore.getState().maximizedPaneId === paneId) {
 				setMaximized(null, null);
 			}
 		},
@@ -120,7 +120,7 @@ export function useSplitPane() {
 			const terminals = collectTerminals(layout);
 			if (terminals.length <= 1) return;
 
-			const currentFocused = useSessionStore.getState().focusedPaneId;
+			const currentFocused = useWorkspaceStore.getState().focusedPaneId;
 			const currentIndex = terminals.findIndex((t) => t.id === currentFocused);
 			if (currentIndex === -1) {
 				setFocusedPane(terminals[0].id);
@@ -144,7 +144,7 @@ export function useSplitPane() {
 		const tab = getActiveTab();
 		const layout = getActiveLayout();
 		const { focusedPaneId, maximizedPaneId, savedLayout } =
-			useSessionStore.getState();
+			useWorkspaceStore.getState();
 		if (!tab || !layout || !focusedPaneId) return;
 
 		if (maximizedPaneId) {

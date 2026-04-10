@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PaneNode } from "../../lib/types";
-import { useSessionStore } from "../../stores/sessionStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { TerminalInstance } from "./TerminalInstance";
 
 interface TerminalInfo {
@@ -14,29 +14,29 @@ function collectTerminals(node: PaneNode): TerminalInfo[] {
 }
 
 export function TerminalPool() {
-	const sessions = useSessionStore((s) => s.sessions);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const [loadAll, setLoadAll] = useState(false);
 
-	// Defer non-active session PTY spawning by 2s so the active session is responsive first.
+	// Defer non-active workspace PTY spawning by 2s so the active workspace is responsive first.
 	useEffect(() => {
-		if (!activeSessionId) return;
+		if (!activeWorkspaceId) return;
 		const timer = setTimeout(() => setLoadAll(true), 2000);
 		return () => clearTimeout(timer);
-	}, [activeSessionId]);
+	}, [activeWorkspaceId]);
 
-	// Collect terminals from ALL sessions so they survive session switches.
-	// App.tsx already keeps all sessions' SplitContainer trees mounted (display:none),
+	// Collect terminals from ALL workspaces so they survive workspace switches.
+	// App.tsx already keeps all workspaces' SplitContainer trees mounted (display:none),
 	// so the slot/target side survives; this makes the instance side match.
 	const terminals = useMemo(() => {
 		const result: (TerminalInfo & { cwd: string })[] = [];
-		for (const session of sessions) {
-			if (!loadAll && session.id !== activeSessionId) continue;
-			for (const tab of session.tabs) {
+		for (const workspace of workspaces) {
+			if (!loadAll && workspace.id !== activeWorkspaceId) continue;
+			for (const tab of workspace.tabs) {
 				try {
 					const layout = JSON.parse(tab.layoutJson) as PaneNode;
 					for (const t of collectTerminals(layout)) {
-						result.push({ ...t, cwd: session.rootFolder });
+						result.push({ ...t, cwd: workspace.rootFolder });
 					}
 				} catch {
 					// Skip unparseable layouts
@@ -44,7 +44,7 @@ export function TerminalPool() {
 			}
 		}
 		return result;
-	}, [sessions, activeSessionId, loadAll]);
+	}, [workspaces, activeWorkspaceId, loadAll]);
 
 	return (
 		<div

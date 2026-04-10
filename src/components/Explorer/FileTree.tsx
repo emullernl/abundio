@@ -6,16 +6,16 @@ import { FileTreeItem } from "./FileTreeItem";
 
 interface FileTreeProps {
 	rootPath: string;
-	sessionId: string;
+	workspaceId: string;
 }
 
 function TreeLevel({
 	dirPath,
-	sessionId,
+	workspaceId,
 	depth,
 }: {
 	dirPath: string;
-	sessionId: string;
+	workspaceId: string;
 	depth: number;
 }) {
 	const entries = useExplorerStore((s) => s.dirContents[dirPath]);
@@ -34,12 +34,12 @@ function TreeLevel({
 					depth={depth}
 					isExpanded={!!expandedDirs[entry.path]}
 					onToggleDir={toggleDir}
-					onOpenFile={(filePath) => openFile(sessionId, filePath)}
+					onOpenFile={(filePath) => openFile(workspaceId, filePath)}
 				>
 					{entry.isDir && expandedDirs[entry.path] && (
 						<TreeLevel
 							dirPath={entry.path}
-							sessionId={sessionId}
+							workspaceId={workspaceId}
 							depth={depth + 1}
 						/>
 					)}
@@ -49,7 +49,7 @@ function TreeLevel({
 	);
 }
 
-export function FileTree({ rootPath, sessionId }: FileTreeProps) {
+export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 	const loadDir = useExplorerStore((s) => s.loadDir);
 	const entries = useExplorerStore((s) => s.dirContents[rootPath]);
 
@@ -107,7 +107,7 @@ export function FileTree({ rootPath, sessionId }: FileTreeProps) {
 
 	return (
 		<div className="py-1">
-			<TreeLevel dirPath={rootPath} sessionId={sessionId} depth={0} />
+			<TreeLevel dirPath={rootPath} workspaceId={workspaceId} depth={0} />
 		</div>
 	);
 }

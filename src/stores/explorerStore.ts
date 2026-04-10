@@ -4,14 +4,14 @@ import {
 	getSerializableEditorState,
 	type SerializedEditorState,
 } from "../components/FileViewer/CodeEditor";
-import { fs as fsApi, sessions as sessionsApi } from "../lib/ipc";
+import { fs as fsApi, workspaces as workspacesApi } from "../lib/ipc";
 import { getLanguage } from "../lib/languageMap";
 import type { DirEntry } from "../lib/types";
-import { useSessionStore } from "./sessionStore";
+import { useWorkspaceStore } from "./workspaceStore";
 
 export interface FileTab {
 	id: string;
-	sessionId: string;
+	workspaceId: string;
 	filePath: string;
 	fileName: string;
 	fileType: "text" | "image" | "binary" | "diff";
@@ -32,12 +32,12 @@ interface ExplorerState {
 	dirContents: Record<string, DirEntry[]>;
 
 	openFile: (
-		sessionId: string,
+		workspaceId: string,
 		filePath: string,
 		editorState?: SerializedEditorState | null,
 	) => Promise<void>;
 	openDiff: (
-		sessionId: string,
+		workspaceId: string,
 		filePath: string,
 		original: string,
 		modified: string,
@@ -49,25 +49,25 @@ interface ExplorerState {
 	toggleDir: (path: string) => Promise<void>;
 	loadDir: (path: string) => Promise<void>;
 	refreshDirs: (paths: string[]) => Promise<void>;
-	clearSessionFileTabs: (sessionId: string) => void;
+	clearWorkspaceFileTabs: (workspaceId: string) => void;
 }
 
-function buildFileTabsPayload(sessionId: string): string {
+function buildFileTabsPayload(workspaceId: string): string {
 	const { fileTabs, activeFileTabId } = useExplorerStore.getState();
 	const activeView =
-		useSessionStore.getState().activeView[sessionId] ?? "terminal";
+		useWorkspaceStore.getState().activeView[workspaceId] ?? "terminal";
 
-	const sessionTabs = fileTabs.filter(
-		(t) => t.sessionId === sessionId && t.fileType !== "diff",
+	const workspaceTabs = fileTabs.filter(
+		(t) => t.workspaceId === workspaceId && t.fileType !== "diff",
 	);
 	return JSON.stringify({
-		tabs: sessionTabs.map((t) => ({
+		tabs: workspaceTabs.map((t) => ({
 			id: t.id,
 			filePath: t.filePath,
 			fileName: t.fileName,
 			editorState: getSerializableEditorState(t.id),
 		})),
-		activeFileTabId: sessionTabs.some((t) => t.id === activeFileTabId)
+		activeFileTabId: workspaceTabs.some((t) => t.id === activeFileTabId)
 			? activeFileTabId
 			: null,
 		activeView,
@@ -75,17 +75,17 @@ function buildFileTabsPayload(sessionId: string): string {
 }
 
 /** Fire-and-forget persist — used during normal operations */
-export function persistFileTabs(sessionId: string) {
-	const payload = buildFileTabsPayload(sessionId);
-	sessionsApi.update(sessionId, { fileTabsJson: payload }).catch(() => {});
+export function persistFileTabs(workspaceId: string) {
+	const payload = buildFileTabsPayload(workspaceId);
+	workspacesApi.update(workspaceId, { fileTabsJson: payload }).catch(() => {});
 }
 
 /** Awaitable persist — used on app close so the IPC completes before destroy */
 export async function persistAllFileTabs() {
-	const sessions = useSessionStore.getState().sessions;
+	const workspaces = useWorkspaceStore.getState().workspaces;
 	await Promise.all(
-		sessions.map((s) =>
-			sessionsApi.update(s.id, { fileTabsJson: buildFileTabsPayload(s.id) }),
+		workspaces.map((s) =>
+			workspacesApi.update(s.id, { fileTabsJson: buildFileTabsPayload(s.id) }),
 		),
 	);
 }
@@ -104,12 +104,12 @@ interface PersistedFileTabState {
 }
 
 export async function restoreFileTabs(
-	sessions: { id: string; fileTabsJson: string }[],
+	workspaces: { id: string; fileTabsJson: string }[],
 ) {
 	const store = useExplorerStore.getState();
-	const sessionStore = useSessionStore.getState();
+	const workspaceStore = useWorkspaceStore.getState();
 
-	for (const s of sessions) {
+	for (const s of workspaces) {
 		try {
 			const persisted: PersistedFileTabState = JSON.parse(s.fileTabsJson);
 			if (!persisted.tabs?.length) continue;
@@ -130,7 +130,7 @@ export async function restoreFileTabs(
 						.getState()
 						.fileTabs.find(
 							(t) =>
-								t.filePath === persistedActive.filePath && t.sessionId === s.id,
+								t.filePath === persistedActive.filePath && t.workspaceId === s.id,
 						);
 					if (restored) {
 						useExplorerStore.getState().setActiveFileTab(restored.id);
@@ -140,7 +140,7 @@ export async function restoreFileTabs(
 
 			// Restore active view
 			if (persisted.activeView) {
-				sessionStore.setActiveView(s.id, persisted.activeView);
+				workspaceStore.setActiveView(s.id, persisted.activeView);
 			}
 		} catch {
 			// Invalid JSON, skip
@@ -154,12 +154,12 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	expandedDirs: {},
 	dirContents: {},
 
-	openFile: async (sessionId, filePath, editorState) => {
+	openFile: async (workspaceId, filePath, editorState) => {
 		// If already open, just activate it
 		const existing = get().fileTabs.find((t) => t.filePath === filePath);
 		if (existing) {
 			set({ activeFileTabId: existing.id });
-			useSessionStore.getState().setActiveView(sessionId, "file");
+			useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 			return;
 		}
 
@@ -171,7 +171,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		);
 		if (existingAfterRead) {
 			set({ activeFileTabId: existingAfterRead.id });
-			useSessionStore.getState().setActiveView(sessionId, "file");
+			useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 			return;
 		}
 
@@ -182,7 +182,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 		const tab: FileTab = {
 			id: crypto.randomUUID(),
-			sessionId,
+			workspaceId,
 			filePath,
 			fileName,
 			fileType: result.fileType,
@@ -199,15 +199,15 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			fileTabs: [...s.fileTabs, tab],
 			activeFileTabId: tab.id,
 		}));
-		useSessionStore.getState().setActiveView(sessionId, "file");
-		persistFileTabs(sessionId);
+		useWorkspaceStore.getState().setActiveView(workspaceId, "file");
+		persistFileTabs(workspaceId);
 	},
 
-	openDiff: (sessionId, filePath, original, modified) => {
+	openDiff: (workspaceId, filePath, original, modified) => {
 		// Use a unique key so the same file can be open as both a regular tab and a diff tab
 		const diffKey = `diff:${filePath}`;
 		const existing = get().fileTabs.find(
-			(t) => t.filePath === diffKey && t.sessionId === sessionId,
+			(t) => t.filePath === diffKey && t.workspaceId === workspaceId,
 		);
 		if (existing) {
 			// Update the diff content and activate
@@ -219,7 +219,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				),
 				activeFileTabId: existing.id,
 			}));
-			useSessionStore.getState().setActiveView(sessionId, "file");
+			useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 			return;
 		}
 
@@ -230,7 +230,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 		const tab: FileTab = {
 			id: crypto.randomUUID(),
-			sessionId,
+			workspaceId,
 			filePath: diffKey,
 			fileName: `${fileName} (diff)`,
 			fileType: "diff",
@@ -247,7 +247,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			fileTabs: [...s.fileTabs, tab],
 			activeFileTabId: tab.id,
 		}));
-		useSessionStore.getState().setActiveView(sessionId, "file");
+		useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 	},
 
 	closeFileTab: (tabId) => {
@@ -259,31 +259,31 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			let newActiveId = s.activeFileTabId;
 
 			if (s.activeFileTabId === tabId) {
-				const closedSessionId = s.fileTabs[idx]?.sessionId;
-				const sessionTabs = newTabs.filter(
-					(t) => t.sessionId === closedSessionId,
+				const closedWorkspaceId = s.fileTabs[idx]?.workspaceId;
+				const workspaceTabs = newTabs.filter(
+					(t) => t.workspaceId === closedWorkspaceId,
 				);
-				if (sessionTabs.length === 0) {
+				if (workspaceTabs.length === 0) {
 					newActiveId = null;
 					// Switch back to terminal view
-					if (closedSessionId) {
-						useSessionStore
+					if (closedWorkspaceId) {
+						useWorkspaceStore
 							.getState()
-							.setActiveView(closedSessionId, "terminal");
+							.setActiveView(closedWorkspaceId, "terminal");
 					}
 				} else {
-					const oldSessionIdx = s.fileTabs
+					const oldIdx = s.fileTabs
 						.slice(0, idx)
-						.filter((t) => t.sessionId === closedSessionId).length;
-					const newIdx = Math.min(oldSessionIdx, sessionTabs.length - 1);
-					newActiveId = sessionTabs[newIdx].id;
+						.filter((t) => t.workspaceId === closedWorkspaceId).length;
+					const newIdx = Math.min(oldIdx, workspaceTabs.length - 1);
+					newActiveId = workspaceTabs[newIdx].id;
 				}
 			}
 
 			return { fileTabs: newTabs, activeFileTabId: newActiveId };
 		});
 		if (closedTab) {
-			persistFileTabs(closedTab.sessionId);
+			persistFileTabs(closedTab.workspaceId);
 		}
 	},
 
@@ -292,8 +292,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		if (tabId) {
 			const tab = get().fileTabs.find((t) => t.id === tabId);
 			if (tab) {
-				useSessionStore.getState().setActiveView(tab.sessionId, "file");
-				persistFileTabs(tab.sessionId);
+				useWorkspaceStore.getState().setActiveView(tab.workspaceId, "file");
+				persistFileTabs(tab.workspaceId);
 			}
 		}
 	},
@@ -364,9 +364,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		});
 	},
 
-	clearSessionFileTabs: (sessionId) => {
+	clearWorkspaceFileTabs: (workspaceId) => {
 		set((s) => {
-			const newTabs = s.fileTabs.filter((t) => t.sessionId !== sessionId);
+			const newTabs = s.fileTabs.filter((t) => t.workspaceId !== workspaceId);
 			const activeStillExists = newTabs.some((t) => t.id === s.activeFileTabId);
 			return {
 				fileTabs: newTabs,

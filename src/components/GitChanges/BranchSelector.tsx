@@ -4,10 +4,10 @@ import { ChevronDown } from "../Icons";
 
 interface Props {
 	cwd: string;
-	sessionId: string;
+	workspaceId: string;
 }
 
-export function BranchSelector({ cwd, sessionId }: Props) {
+export function BranchSelector({ cwd, workspaceId }: Props) {
 	const baseBranch = useGitChangesStore((s) => s.baseBranch);
 	const branchSelectorOpen = useGitChangesStore((s) => s.branchSelectorOpen);
 	const toggleBranchSelector = useGitChangesStore(
@@ -54,7 +54,7 @@ export function BranchSelector({ cwd, sessionId }: Props) {
 	];
 
 	function selectBranch(value: string | null) {
-		setBaseBranch(sessionId, value, cwd);
+		setBaseBranch(workspaceId, value, cwd);
 		closeBranchSelector();
 	}
 

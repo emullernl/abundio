@@ -1,8 +1,8 @@
 import { useMemo } from "react";
-import type { PaneNode, SessionWithTabs } from "../../lib/types";
+import type { PaneNode, WorkspaceWithTabs } from "../../lib/types";
 import type { DotStatus } from "../../stores/ptyActivityStore";
 import {
-	computeSessionDotStatus,
+	computeWorkspaceDotStatus,
 	DOT_COLORS,
 	DOT_GLOWS,
 	shouldPulse,
@@ -11,7 +11,7 @@ import {
 import { X } from "../Icons";
 
 interface Props {
-	session: SessionWithTabs;
+	workspace: WorkspaceWithTabs;
 	isActive: boolean;
 	isDragging: boolean;
 	onClick: () => void;
@@ -32,10 +32,10 @@ function shortenPath(fullPath: string): string {
 	return fullPath;
 }
 
-function useSessionDotStatus(session: SessionWithTabs): DotStatus {
+function useWorkspaceDotStatus(workspace: WorkspaceWithTabs): DotStatus {
 	const tabLayouts = useMemo(() => {
 		const layouts: PaneNode[] = [];
-		for (const tab of session.tabs) {
+		for (const tab of workspace.tabs) {
 			try {
 				layouts.push(JSON.parse(tab.layoutJson) as PaneNode);
 			} catch {
@@ -43,28 +43,28 @@ function useSessionDotStatus(session: SessionWithTabs): DotStatus {
 			}
 		}
 		return layouts;
-	}, [session.tabs]);
+	}, [workspace.tabs]);
 
 	return usePtyActivityStore((s) => {
-		return computeSessionDotStatus(
-			session.id,
+		return computeWorkspaceDotStatus(
+			workspace.id,
 			tabLayouts,
 			s.activities,
-			s.openedSessionIds,
+			s.openedWorkspaceIds,
 			s.panePtyMap,
 		);
 	});
 }
 
-export function SessionItem({
-	session,
+export function WorkspaceItem({
+	workspace,
 	isActive,
 	isDragging,
 	onClick,
 	onDelete,
 	onMouseDown,
 }: Props) {
-	const dotStatus = useSessionDotStatus(session);
+	const dotStatus = useWorkspaceDotStatus(workspace);
 	const dotColor = DOT_COLORS[dotStatus];
 	const pulse = shouldPulse(dotStatus);
 
@@ -108,13 +108,13 @@ export function SessionItem({
 					className="truncate font-medium"
 					style={{ color: "var(--fg-primary)", fontSize: 13 }}
 				>
-					{session.name}
+					{workspace.name}
 				</span>
 				<div
 					className="truncate mt-0.5"
 					style={{ color: "var(--fg-secondary)", fontSize: 11 }}
 				>
-					{shortenPath(session.rootFolder)}
+					{shortenPath(workspace.rootFolder)}
 				</div>
 			</div>
 			<button

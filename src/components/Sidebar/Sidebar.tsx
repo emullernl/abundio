@@ -1,10 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useRef, useState } from "react";
-import { useSessionStore } from "../../stores/sessionStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { Explorer } from "../Explorer/Explorer";
 import { ChevronLeft, ChevronRight, Plus } from "../Icons";
-import { SessionList } from "./SessionList";
+import { WorkspaceList } from "./WorkspaceList";
 
 interface SidebarProps {
 	titlebarHeight: number;
@@ -67,7 +67,7 @@ function SidebarDivider({
 }
 
 export function Sidebar({ titlebarHeight }: SidebarProps) {
-	const { createSession } = useSessionStore();
+	const { createWorkspace } = useWorkspaceStore();
 	const {
 		sidebarCollapsed,
 		toggleSidebar,
@@ -90,7 +90,7 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 		}
 	}, [localRatio, setSidebarSplitRatio]);
 
-	async function handleNewSession() {
+	async function handleNewWorkspace() {
 		const folder = await open({ directory: true, multiple: false });
 		if (!folder) return;
 
@@ -100,9 +100,9 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 		const name = folderPath.split("/").pop() || "Untitled";
 		setCreating(true);
 		try {
-			await createSession(name, folderPath);
+			await createWorkspace(name, folderPath);
 		} catch (err) {
-			console.error("Failed to create session:", err);
+			console.error("Failed to create workspace:", err);
 		} finally {
 			setCreating(false);
 		}
@@ -166,17 +166,17 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 							textTransform: "uppercase",
 						}}
 					>
-						Sessions
+						Workspaces
 					</span>
 				</div>
 				<div className="flex items-center gap-1">
 					<button
 						type="button"
-						onClick={handleNewSession}
+						onClick={handleNewWorkspace}
 						disabled={creating}
 						className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
 						style={{ color: "var(--fg-secondary)" }}
-						title="New Session"
+						title="New Workspace"
 					>
 						<Plus size={14} />
 					</button>
@@ -192,14 +192,14 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				</div>
 			</div>
 
-			{/* Split area: Sessions + Explorer */}
+			{/* Split area: Workspaces + Explorer */}
 			<div className="flex flex-col flex-1 min-h-0">
-				{/* Session list */}
+				{/* Workspace list */}
 				<div
 					className="overflow-y-auto px-4 py-2 min-h-0"
 					style={{ flex: `${ratio} 1 0%` }}
 				>
-					<SessionList />
+					<WorkspaceList />
 				</div>
 
 				{/* Draggable divider */}

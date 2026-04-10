@@ -6,7 +6,7 @@ import { triggerAction } from "../lib/keybindings";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
-import { useSessionStore } from "../stores/sessionStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useSettingsStore } from "../stores/settingsStore";
 
 interface PaletteItem {
@@ -44,8 +44,8 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
-	const { sessions, setActiveSession, createSession, focusedPaneId } =
-		useSessionStore();
+	const { workspaces, setActiveWorkspace, createWorkspace, focusedPaneId } =
+		useWorkspaceStore();
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
 	const { splitPane, closePane, toggleMaximize } = useSplitPane();
@@ -53,20 +53,20 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 	const items = useMemo<PaletteItem[]>(() => {
 		const result: PaletteItem[] = [];
 
-		// Sessions
-		for (const s of sessions) {
+		// Workspaces
+		for (const s of workspaces) {
 			result.push({
-				id: `session-${s.id}`,
+				id: `workspace-${s.id}`,
 				label: s.name,
-				category: "Sessions",
-				action: () => setActiveSession(s.id),
+				category: "Workspaces",
+				action: () => setActiveWorkspace(s.id),
 			});
 		}
 
 		// Actions
 		result.push({
-			id: "action-new-session",
-			label: "New Session",
+			id: "action-new-workspace",
+			label: "New Workspace",
 			category: "Actions",
 			action: async () => {
 				const folder = await open({ directory: true, multiple: false });
@@ -74,7 +74,7 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 				const folderPath = typeof folder === "string" ? folder : folder[0];
 				if (!folderPath) return;
 				const name = folderPath.split("/").pop() || "Untitled";
-				await createSession(name, folderPath);
+				await createWorkspace(name, folderPath);
 			},
 		});
 
@@ -152,10 +152,10 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 
 		return result;
 	}, [
-		sessions,
+		workspaces,
 		focusedPaneId,
-		setActiveSession,
-		createSession,
+		setActiveWorkspace,
+		createWorkspace,
 		splitPane,
 		closePane,
 		toggleMaximize,
@@ -248,7 +248,7 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 					<input
 						ref={inputRef}
 						type="text"
-						placeholder="Search commands, sessions, agents..."
+						placeholder="Search commands, workspaces, agents..."
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
 						className="w-full bg-transparent outline-none"

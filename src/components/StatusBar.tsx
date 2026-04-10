@@ -1,4 +1,4 @@
-import { useSessionStore } from "../stores/sessionStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Folder, Grid, Terminal } from "./Icons";
 
 function shortenPath(fullPath: string): string {
@@ -23,8 +23,8 @@ function Separator() {
 }
 
 export function StatusBar() {
-	const { getActiveSession, getActiveTab, focusedPaneId } = useSessionStore();
-	const session = getActiveSession();
+	const { getActiveWorkspace, getActiveTab, focusedPaneId } = useWorkspaceStore();
+	const workspace = getActiveWorkspace();
 	const tab = getActiveTab();
 
 	return (
@@ -40,11 +40,11 @@ export function StatusBar() {
 				color: "var(--fg-secondary)",
 			}}
 		>
-			{session ? (
+			{workspace ? (
 				<>
 					<div className="flex items-center gap-3">
 						<span className="font-medium" style={{ color: "var(--accent)" }}>
-							{session.name}
+							{workspace.name}
 						</span>
 						{tab && (
 							<>
@@ -58,7 +58,7 @@ export function StatusBar() {
 						<Separator />
 						<span className="flex items-center gap-1.5">
 							<Folder size={12} />
-							{shortenPath(session.rootFolder)}
+							{shortenPath(workspace.rootFolder)}
 						</span>
 					</div>
 					{focusedPaneId && (
@@ -71,7 +71,7 @@ export function StatusBar() {
 					)}
 				</>
 			) : (
-				<span>No active session</span>
+				<span>No active workspace</span>
 			)}
 		</div>
 	);

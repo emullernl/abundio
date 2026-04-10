@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v2. It manages sessions (each bound to a folder), supports split panes, and has first-class support for AI coding CLI agents (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, OpenCode).
+Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v2. It manages workspaces (each bound to a folder), supports split panes, and has first-class support for AI coding CLI agents (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, OpenCode).
 
 ## Tech Stack
 
@@ -22,7 +22,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 ### Rust Backend (`src-tauri/src/`)
 
 - `pty_manager.rs` — Per-PTY dedicated OS threads with crossbeam channels. PTY types never cross async boundaries. Output is base64-encoded and emitted via Tauri events.
-- `session_store.rs` — SQLite CRUD for sessions, layouts, env vars. DB at `~/Library/Application Support/abundio/abundio.db`.
+- `workspace_store.rs` — SQLite CRUD for workspaces, layouts, env vars. DB at `~/Library/Application Support/abundio/abundio.db`.
 - `agent_registry.rs` — Detects installed agents by scanning `$PATH` directories (no subprocess spawning).
 - `commands.rs` — All `#[tauri::command]` handlers. All return `Result<T, AbundioError>`.
 - `error.rs` — `AbundioError` enum (variants: `Pty`, `Db`, `Io`, `NotFound`, `Channel`) using thiserror + Serialize.
@@ -37,7 +37,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `components/Terminal/TerminalPane.tsx` — xterm.js instance with WebGL, PTY bridge, search bar, context menu.
 - `components/Terminal/SplitContainer.tsx` — Recursive renderer for `PaneNode` tree.
 - `hooks/useSplitPane.ts` — Split, close, navigate, maximize pane operations.
-- `stores/sessionStore.ts` — Sessions, active layout, PTY statuses, focused pane. Has `updateLayoutLocal` (no DB) and `persistLayout` (DB only) for debounced resize.
+- `stores/workspaceStore.ts` — Workspaces, active layout, PTY statuses, focused pane. Has `updateLayoutLocal` (no DB) and `persistLayout` (DB only) for debounced resize.
 - `lib/ipc.ts` — Typed wrappers around Tauri `invoke()` and `listen()`.
 - `lib/themes.ts` — 5 built-in themes. `applyTheme()` sets CSS variables on `:root`.
 - `lib/terminalManager.ts` — `ManagedTerminal` wraps xterm.js with FitAddon, SearchAddon, SerializeAddon, WebGL (canvas fallback). Handles PTY connection, scrollback restore, font updates.
@@ -87,7 +87,7 @@ cd src-tauri && cargo test test_name     # Run a single Rust test
 - PTY data is binary — base64 over IPC, `Uint8Array` in frontend. Never treat as UTF-8 strings.
 - Resize events are debounced (100ms). Layout persists to DB only on mouseup, not during drag.
 - Empty `ptyId` in a layout node means "spawn PTY on first render". TerminalPane handles this and writes the real ID back into the layout.
-- Stale `ptyId`s are cleared on session load (those processes died with the previous app instance).
+- Stale `ptyId`s are cleared on workspace load (those processes died with the previous app instance).
 - Shell is spawned with `-l -i` flags (login + interactive) to source `.zshrc`. `TERM_PROGRAM=Abundio` is set.
 - Keybindings use capture phase (`addEventListener(..., true)`) to intercept before xterm.js.
 - Themes apply to both CSS variables (UI) and xterm.js terminal options.
@@ -98,7 +98,7 @@ cd src-tauri && cargo test test_name     # Run a single Rust test
 Unit tests are required when adding new functionality. Run tests before considering work complete.
 
 - **Frontend**: Tests live in `__tests__/` directories co-located with source (e.g., `src/lib/__tests__/`). Use Vitest with jsdom. Mock Tauri IPC via `vi.mock("../ipc")`. Zustand stores are tested via `store.getState()`/`store.setState()`.
-- **Rust**: Tests use inline `#[cfg(test)]` modules at the bottom of each source file. Use `Connection::open_in_memory()` for database tests. Run `crate::migrations::run_migrations(&conn)` before creating a `SessionStore` in tests.
+- **Rust**: Tests use inline `#[cfg(test)]` modules at the bottom of each source file. Use `Connection::open_in_memory()` for database tests. Run `crate::migrations::run_migrations(&conn)` before creating a `WorkspaceStore` in tests.
 - Pure helper functions should be extracted into testable modules (e.g., `src/lib/paneTree.ts`) rather than kept as unexported file-local functions.
 
 ## Keyboard Shortcuts (macOS)

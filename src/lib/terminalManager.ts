@@ -12,7 +12,7 @@ import {
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
-import { useSessionStore } from "../stores/sessionStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { recordThresholdHit } from "./activityGate";
 import { matchTitleToAgent } from "./agents";
@@ -60,7 +60,7 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
  *  Bails out for panes that aren't in the currently active tab: WebGL contexts
  *  are capped per page (~16 in Chromium), so we only ever hold contexts for
  *  panes the user is actually looking at. The store subscription below
- *  reattaches WebGL on tab/session switch. */
+ *  reattaches WebGL on tab/workspace switch. */
 export function ensureWebglLoaded(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed || managed.webglAddon) return;
@@ -78,17 +78,17 @@ export function unloadWebgl(paneId: string): void {
 	managed.webglAddon = null;
 }
 
-/** Returns true if `paneId` belongs to the active tab of the active session
+/** Returns true if `paneId` belongs to the active tab of the active workspace
  *  (and the active view is the terminal view). Used to gate WebGL loading. */
 function isPaneInActiveTab(paneId: string): boolean {
-	const state = useSessionStore.getState();
-	const sessionId = state.activeSessionId;
-	if (!sessionId) return false;
-	if ((state.activeView[sessionId] ?? "terminal") !== "terminal") return false;
-	const tabId = state.activeTabBySession[sessionId];
+	const state = useWorkspaceStore.getState();
+	const workspaceId = state.activeWorkspaceId;
+	if (!workspaceId) return false;
+	if ((state.activeView[workspaceId] ?? "terminal") !== "terminal") return false;
+	const tabId = state.activeTabByWorkspace[workspaceId];
 	if (!tabId) return false;
-	const session = state.sessions.find((s) => s.id === sessionId);
-	const tab = session?.tabs.find((t) => t.id === tabId);
+	const workspace = state.workspaces.find((s) => s.id === workspaceId);
+	const tab = workspace?.tabs.find((t) => t.id === tabId);
 	if (!tab) return false;
 	try {
 		const layout = JSON.parse(tab.layoutJson) as PaneNode;
@@ -185,8 +185,8 @@ export interface ManagedTerminal {
 
 const instances = new Map<string, ManagedTerminal>();
 
-// Background activity listeners for PTYs whose terminals have been destroyed (session switch)
-// These keep tracking activity so session/tab dots update for inactive sessions
+// Background activity listeners for PTYs whose terminals have been destroyed (workspace switch)
+// These keep tracking activity so workspace/tab dots update for inactive workspaces
 const backgroundTrackers = new Map<
 	string,
 	{ unlistenOutput: () => void; unlistenStatus: () => void }
@@ -253,7 +253,7 @@ async function startBackgroundTracking(ptyId: string) {
 				actStore.recordExitSuccess(ptyId);
 			}
 		}
-		useSessionStore.getState().setPtyStatus(ptyId, status);
+		useWorkspaceStore.getState().setPtyStatus(ptyId, status);
 	});
 	backgroundTrackers.set(ptyId, { unlistenOutput, unlistenStatus });
 }
@@ -301,20 +301,20 @@ function flushWrites(managed: ManagedTerminal): void {
 
 // Deferred subscription — runs after all modules are initialized
 setTimeout(() => {
-	setFocusedPaneIdGetter(() => useSessionStore.getState().focusedPaneId);
-	useSessionStore.subscribe((state) => {
-		const { activeSessionId, activeView, focusedPaneId } = state;
-		if (!activeSessionId) return;
-		const view = activeView[activeSessionId] ?? "terminal";
+	setFocusedPaneIdGetter(() => useWorkspaceStore.getState().focusedPaneId);
+	useWorkspaceStore.subscribe((state) => {
+		const { activeWorkspaceId, activeView, focusedPaneId } = state;
+		if (!activeWorkspaceId) return;
+		const view = activeView[activeWorkspaceId] ?? "terminal";
 		const isTerminalView = view === "terminal";
 
 		// Compute the set of paneIds in the currently active tab so we can
 		// keep WebGL contexts only for panes the user is actually looking at.
 		// Browsers cap WebGL contexts at ~16 per page; without this gate, a
-		// user with many tabs/sessions hits "too many active WebGL contexts".
-		const activeTabId = state.activeTabBySession[activeSessionId];
-		const activeSession = state.sessions.find((s) => s.id === activeSessionId);
-		const activeTab = activeSession?.tabs.find((t) => t.id === activeTabId);
+		// user with many tabs/workspaces hits "too many active WebGL contexts".
+		const activeTabId = state.activeTabByWorkspace[activeWorkspaceId];
+		const activeWorkspace = state.workspaces.find((s) => s.id === activeWorkspaceId);
+		const activeTab = activeWorkspace?.tabs.find((t) => t.id === activeTabId);
 		let activePaneIds: Set<string> | null = null;
 		if (activeTab && isTerminalView) {
 			try {
@@ -334,7 +334,7 @@ setTimeout(() => {
 					activityStore.markIdle(managed.ptyId);
 				}
 			}
-			// Ensure all terminals in the active session have an activity entry (grey → green)
+			// Ensure all terminals in the active workspace have an activity entry (grey → green)
 			if (managed.ptyId) {
 				activityStore.initPty(managed.ptyId);
 			}
@@ -490,7 +490,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	let currentPtyId = managed.ptyId;
 	const isNewPty = !currentPtyId;
 
-	const { setPtyStatus } = useSessionStore.getState();
+	const { setPtyStatus } = useWorkspaceStore.getState();
 
 	// No grace period needed for reconnections — the shell has already started
 	if (!isNewPty) {
@@ -586,7 +586,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						} else {
 							const isFocused =
 								document.hasFocus() &&
-								useSessionStore.getState().focusedPaneId === paneId;
+								useWorkspaceStore.getState().focusedPaneId === paneId;
 							if (isFocused) {
 								freshState.markIdle(currentPtyId);
 							} else {
@@ -649,7 +649,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				if (entry.state === "active") {
 					const isFocused =
 						document.hasFocus() &&
-						useSessionStore.getState().focusedPaneId === paneId;
+						useWorkspaceStore.getState().focusedPaneId === paneId;
 					if (isFocused) {
 						actStore.markIdle(currentPtyId);
 					} else {
@@ -669,7 +669,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					actStore.recordExitSuccess(currentPtyId);
 				}
 			}
-			useSessionStore.getState().setPtyStatus(currentPtyId, status);
+			useWorkspaceStore.getState().setPtyStatus(currentPtyId, status);
 			if (status.type === "exited") {
 				const exitMsg =
 					status.code === 0 ? "exited" : `exited with code ${status.code}`;
@@ -709,10 +709,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	if (isNewPty) {
 		// Write ptyId to the correct tab's layout (not just the active tab)
-		const store = useSessionStore.getState();
-		const session = store.getActiveSession();
-		if (session) {
-			for (const tab of session.tabs) {
+		const store = useWorkspaceStore.getState();
+		const workspace = store.getActiveWorkspace();
+		if (workspace) {
+			for (const tab of workspace.tabs) {
 				try {
 					const layout = JSON.parse(tab.layoutJson) as PaneNode;
 					if (containsPaneId(layout, paneId)) {
@@ -813,7 +813,7 @@ export function markSettled(paneId: string): void {
 }
 
 /** Temporarily filter terminal reset sequences from PTY output.
- *  Used around PTY resize during session switches to prevent the shell's
+ *  Used around PTY resize during workspace switches to prevent the shell's
  *  resize-triggered redraw from wiping existing terminal content. */
 export function beginResizeFilter(paneId: string): void {
 	const managed = instances.get(paneId);
@@ -920,9 +920,9 @@ export async function resetTerminal(paneId: string): Promise<void> {
 	managed.pendingRestore = null;
 	managed.restoring = false;
 
-	// Get cwd from the active session
-	const session = useSessionStore.getState().getActiveSession();
-	const cwd = session?.rootFolder ?? ".";
+	// Get cwd from the active workspace
+	const workspace = useWorkspaceStore.getState().getActiveWorkspace();
+	const cwd = workspace?.rootFolder ?? ".";
 
 	// Re-initialize PTY (spawns a new shell)
 	await initPty(paneId, managed, cwd);
@@ -944,7 +944,7 @@ export function destroyTerminal(paneId: string): void {
 	managed.cleanup?.();
 	managed.term.dispose();
 	instances.delete(paneId);
-	// Start background tracking so activity dots update for inactive sessions
+	// Start background tracking so activity dots update for inactive workspaces
 	if (managed.ptyId) {
 		startBackgroundTracking(managed.ptyId);
 	}

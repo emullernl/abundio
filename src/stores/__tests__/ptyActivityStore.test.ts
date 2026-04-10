@@ -3,7 +3,7 @@ import type { PaneNode, Tab } from "../../lib/types";
 import {
 	collectPtyIds,
 	computePtyDotStatus,
-	computeSessionDotStatus,
+	computeWorkspaceDotStatus,
 	computeTabDotStatus,
 	getLastOutputAt,
 	type PtyActivityEntry,
@@ -17,7 +17,7 @@ function resetStore() {
 		activities: {},
 		titles: {},
 		panePtyMap: {},
-		openedSessionIds: new Set(),
+		openedWorkspaceIds: new Set(),
 		agentPtyIds: new Set(),
 	});
 }
@@ -114,7 +114,7 @@ describe("store actions", () => {
 		initPty("pty-1");
 		setAgentPty("pty-1");
 		recordOutput("pty-1");
-		// Simulates a session switch / focus change while the agent is still
+		// Simulates a workspace switch / focus change while the agent is still
 		// streaming — must NOT clear the in-progress active state.
 		markIdle("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
@@ -180,9 +180,9 @@ describe("store actions", () => {
 		expect(usePtyActivityStore.getState().titles).toBe(stateBefore.titles);
 	});
 
-	it("markSessionOpened adds to set", () => {
-		usePtyActivityStore.getState().markSessionOpened("s1");
-		expect(usePtyActivityStore.getState().openedSessionIds.has("s1")).toBe(
+	it("markWorkspaceOpened adds to set", () => {
+		usePtyActivityStore.getState().markWorkspaceOpened("s1");
+		expect(usePtyActivityStore.getState().openedWorkspaceIds.has("s1")).toBe(
 			true,
 		);
 	});
@@ -224,7 +224,7 @@ describe("collectPtyIds", () => {
 	});
 });
 
-describe("computeSessionDotStatus", () => {
+describe("computeWorkspaceDotStatus", () => {
 	const makeEntry = (state: string): PtyActivityEntry => ({
 		state: state as PtyActivityEntry["state"],
 		lastOutputAt: 0,
@@ -233,13 +233,13 @@ describe("computeSessionDotStatus", () => {
 	});
 
 	it("returns grey when no ptyIds", () => {
-		expect(computeSessionDotStatus("s1", [], {}, new Set())).toBe("grey");
+		expect(computeWorkspaceDotStatus("s1", [], {}, new Set())).toBe("grey");
 	});
 
 	it("returns red when any error", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
-			computeSessionDotStatus(
+			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
 				{ "pty-1": makeEntry("error") },
@@ -251,7 +251,7 @@ describe("computeSessionDotStatus", () => {
 	it("returns blue when any active", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
-			computeSessionDotStatus(
+			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
 				{ "pty-1": makeEntry("active") },
@@ -263,7 +263,7 @@ describe("computeSessionDotStatus", () => {
 	it("returns orange when any waiting", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
-			computeSessionDotStatus(
+			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
 				{ "pty-1": makeEntry("waiting") },
@@ -272,10 +272,10 @@ describe("computeSessionDotStatus", () => {
 		).toBe("purple");
 	});
 
-	it("returns green when all idle and session opened", () => {
+	it("returns green when all idle and workspace opened", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
-			computeSessionDotStatus(
+			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
 				{ "pty-1": makeEntry("idle") },
@@ -284,10 +284,10 @@ describe("computeSessionDotStatus", () => {
 		).toBe("green");
 	});
 
-	it("returns grey when all idle but session not opened", () => {
+	it("returns grey when all idle but workspace not opened", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
-			computeSessionDotStatus(
+			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
 				{ "pty-1": makeEntry("idle") },
@@ -306,7 +306,7 @@ describe("computeSessionDotStatus", () => {
 			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
 		};
 		expect(
-			computeSessionDotStatus(
+			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
 				{
@@ -328,7 +328,7 @@ describe("computeSessionDotStatus", () => {
 			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
 		};
 		expect(
-			computeSessionDotStatus(
+			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
 				{
@@ -351,7 +351,7 @@ describe("computeTabDotStatus", () => {
 
 	const makeTab = (layoutJson: string): Tab => ({
 		id: "t1",
-		sessionId: "s1",
+		workspaceId: "s1",
 		name: "Tab 1",
 		layoutJson,
 		position: 0,

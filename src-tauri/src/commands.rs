@@ -3,7 +3,7 @@ use tauri::{AppHandle, State};
 use crate::error::AbundioError;
 use crate::file_watcher::FileWatcher;
 use crate::pty_manager::PtyManager;
-use crate::session_store::{SessionStore, SessionUpdate, SessionWithTabs, Tab, TabUpdate};
+use crate::workspace_store::{WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs, Tab, TabUpdate};
 use crate::shell_env;
 
 // ── PTY commands ──
@@ -56,69 +56,69 @@ pub async fn pty_kill(
     pty_mgr.kill(&pty_id)
 }
 
-// ── Session commands ──
+// ── Workspace commands ──
 
 #[tauri::command]
-pub async fn session_create(
-    store: State<'_, SessionStore>,
+pub async fn workspace_create(
+    store: State<'_, WorkspaceStore>,
     name: String,
     root_folder: String,
-) -> Result<SessionWithTabs, AbundioError> {
+) -> Result<WorkspaceWithTabs, AbundioError> {
     store.create(&name, &root_folder)
 }
 
 #[tauri::command]
-pub async fn session_list(store: State<'_, SessionStore>) -> Result<Vec<SessionWithTabs>, AbundioError> {
+pub async fn workspace_list(store: State<'_, WorkspaceStore>) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
     store.list()
 }
 
 #[tauri::command]
-pub async fn session_update(
-    store: State<'_, SessionStore>,
+pub async fn workspace_update(
+    store: State<'_, WorkspaceStore>,
     id: String,
-    updates: SessionUpdate,
+    updates: WorkspaceUpdate,
 ) -> Result<(), AbundioError> {
     store.update(&id, updates)
 }
 
 #[tauri::command]
-pub async fn session_delete(
-    store: State<'_, SessionStore>,
+pub async fn workspace_delete(
+    store: State<'_, WorkspaceStore>,
     id: String,
 ) -> Result<(), AbundioError> {
     store.delete(&id)
 }
 
 #[tauri::command]
-pub async fn session_reorder(
-    store: State<'_, SessionStore>,
+pub async fn workspace_reorder(
+    store: State<'_, WorkspaceStore>,
     ids: Vec<String>,
 ) -> Result<(), AbundioError> {
-    store.reorder_sessions(&ids)
+    store.reorder_workspaces(&ids)
 }
 
 // ── Tab commands ──
 
 #[tauri::command]
 pub async fn tab_create(
-    store: State<'_, SessionStore>,
-    session_id: String,
+    store: State<'_, WorkspaceStore>,
+    workspace_id: String,
     name: String,
 ) -> Result<Tab, AbundioError> {
-    store.create_tab(&session_id, &name)
+    store.create_tab(&workspace_id, &name)
 }
 
 #[tauri::command]
 pub async fn tab_list(
-    store: State<'_, SessionStore>,
-    session_id: String,
+    store: State<'_, WorkspaceStore>,
+    workspace_id: String,
 ) -> Result<Vec<Tab>, AbundioError> {
-    store.list_tabs(&session_id)
+    store.list_tabs(&workspace_id)
 }
 
 #[tauri::command]
 pub async fn tab_update(
-    store: State<'_, SessionStore>,
+    store: State<'_, WorkspaceStore>,
     id: String,
     updates: TabUpdate,
 ) -> Result<(), AbundioError> {
@@ -127,7 +127,7 @@ pub async fn tab_update(
 
 #[tauri::command]
 pub async fn tab_delete(
-    store: State<'_, SessionStore>,
+    store: State<'_, WorkspaceStore>,
     id: String,
 ) -> Result<(), AbundioError> {
     store.delete_tab(&id)

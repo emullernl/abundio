@@ -9,7 +9,7 @@ type KeyAction =
 	| "maximize-pane"
 	| "command-palette"
 	| "search-in-terminal"
-	| "new-session"
+	| "new-workspace"
 	| "new-tab"
 	| "close-tab"
 	| "next-tab"
@@ -89,7 +89,7 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		ctrl: !isMac,
 		action: "search-in-terminal",
 	},
-	{ key: "n", meta: isMac, shift: true, ctrl: !isMac, action: "new-session" },
+	{ key: "n", meta: isMac, shift: true, ctrl: !isMac, action: "new-workspace" },
 	{ key: "t", meta: isMac, shift: false, ctrl: !isMac, action: "new-tab" },
 	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
 	{ key: "]", meta: isMac, shift: true, ctrl: !isMac, action: "next-tab" },

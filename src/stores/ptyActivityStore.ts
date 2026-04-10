@@ -52,7 +52,7 @@ interface PtyActivityState_Store {
 	activities: Record<string, PtyActivityEntry>;
 	titles: Record<string, string>;
 	panePtyMap: Record<string, string>; // paneId → ptyId
-	openedSessionIds: Set<string>;
+	openedWorkspaceIds: Set<string>;
 	agentPtyIds: Set<string>;
 
 	initPty: (ptyId: string, mode?: PtyDetectionMode) => void;
@@ -65,7 +65,7 @@ interface PtyActivityState_Store {
 	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
 	registerPane: (paneId: string, ptyId: string) => void;
-	markSessionOpened: (sessionId: string) => void;
+	markWorkspaceOpened: (workspaceId: string) => void;
 	removePty: (ptyId: string) => void;
 	removePane: (paneId: string) => void;
 }
@@ -77,7 +77,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		activities: {},
 		titles: {},
 		panePtyMap: {},
-		openedSessionIds: new Set(),
+		openedWorkspaceIds: new Set(),
 		agentPtyIds: new Set(),
 
 		initPty: (ptyId, mode) => {
@@ -232,10 +232,10 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			set((s) => ({ titles: { ...s.titles, [paneId]: title } }));
 		},
 
-		markSessionOpened: (sessionId) => {
+		markWorkspaceOpened: (workspaceId) => {
 			const s = get();
-			if (s.openedSessionIds.has(sessionId)) return;
-			set({ openedSessionIds: new Set([...s.openedSessionIds, sessionId]) });
+			if (s.openedWorkspaceIds.has(workspaceId)) return;
+			set({ openedWorkspaceIds: new Set([...s.openedWorkspaceIds, workspaceId]) });
 		},
 
 		removePty: (ptyId) => {
@@ -347,11 +347,11 @@ export function collectPtyIds(
 
 export type DotStatus = "grey" | "green" | "amber" | "purple" | "red";
 
-export function computeSessionDotStatus(
-	sessionId: string,
+export function computeWorkspaceDotStatus(
+	workspaceId: string,
 	tabLayouts: PaneNode[],
 	activities: Record<string, PtyActivityEntry>,
-	openedSessionIds: Set<string>,
+	openedWorkspaceIds: Set<string>,
 	panePtyMap?: Record<string, string>,
 ): DotStatus {
 	const allPtyIds: string[] = [];
@@ -367,7 +367,7 @@ export function computeSessionDotStatus(
 	if (entries.some((e) => e.state === "waiting")) return "purple";
 	if (entries.some((e) => e.state === "active")) return "amber";
 
-	if (openedSessionIds.has(sessionId)) return "green";
+	if (openedWorkspaceIds.has(workspaceId)) return "green";
 	return "grey";
 }
 
@@ -392,7 +392,7 @@ export function computeTabDotStatus(
 	if (entries.some((e) => e.state === "waiting")) return "purple";
 	if (entries.some((e) => e.state === "active")) return "amber";
 
-	// Tabs are only shown for the active session — default to green
+	// Tabs are only shown for the active workspace — default to green
 	return "green";
 }
 
