@@ -213,6 +213,8 @@ export function TerminalSlot({
 				overflow: "hidden",
 				boxShadow: "none",
 				background: "var(--bg-primary)",
+				opacity: isFocused ? 1 : 0.75,
+				transition: "opacity 150ms ease",
 			}}
 			onFocus={handleFocus}
 			onMouseDown={handleFocus}
