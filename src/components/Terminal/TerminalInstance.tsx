@@ -56,36 +56,44 @@ export const TerminalInstance = memo(function TerminalInstance({
 				target.appendChild(termEl);
 			}
 
-			managed.fitAddon.fit();
-			// Retry WebGL loading now that the terminal is in a visible, sized
-			// container. The first attempt during createTerminal runs while the
-			// canvas is still 0×0 offscreen, which some browsers refuse — if that
-			// failed, xterm silently fell back to its DOM renderer and we'd see
-			// wrong glyph metrics. This is a no-op when WebGL is already loaded.
-			ensureWebglLoaded(id);
-			flushPendingRestore(id);
-			if (managed.ptyId) {
-				// Filter reset sequences from the shell's resize response to
-				// prevent it from wiping terminal content (Windows session switch).
-				beginResizeFilter(id);
-				pty
-					.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-					.catch(() => {});
-			}
-
-			// Reveal after the browser has painted the settled content
-			requestAnimationFrame(() => {
-				if (termEl) termEl.style.visibility = "";
-				markSettled(id);
-			});
-
-			// Observe the target for resize — throttle fit() to one call per frame
+			// Set up ResizeObserver BEFORE fitting so the first callback (fired
+			// once the browser has computed flexbox layout) drives the initial fit.
+			// This avoids calling fit() synchronously before the container has its
+			// real dimensions, which caused terminals to not use their full width.
+			let initialised = false;
 			cleanupResizeObserver();
 			resizeObserverRef.current = new ResizeObserver(() => {
 				if (target.offsetWidth === 0 || target.offsetHeight === 0) return;
 				if (rafRef.current !== null) return;
 				rafRef.current = requestAnimationFrame(() => {
 					rafRef.current = null;
+
+					if (!initialised) {
+						// First callback — container now has real dimensions
+						initialised = true;
+						managed.fitAddon.fit();
+						// Retry WebGL loading now that the terminal is in a visible,
+						// sized container. The first attempt during createTerminal
+						// runs while the canvas is still 0×0 offscreen, which some
+						// browsers refuse — if that failed, xterm silently fell back
+						// to its DOM renderer and we'd see wrong glyph metrics.
+						ensureWebglLoaded(id);
+						flushPendingRestore(id);
+						if (managed.ptyId) {
+							beginResizeFilter(id);
+							pty
+								.resize(managed.ptyId, managed.term.cols, managed.term.rows)
+								.catch(() => {});
+						}
+						// Reveal after the browser has painted the settled content
+						requestAnimationFrame(() => {
+							if (termEl) termEl.style.visibility = "";
+							markSettled(id);
+						});
+						return;
+					}
+
+					// Subsequent callbacks — normal resize handling
 					const prevCols = managed.term.cols;
 					const prevRows = managed.term.rows;
 					managed.fitAddon.fit();
