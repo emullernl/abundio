@@ -17,9 +17,7 @@ function collectTerminals(node: PaneNode): TerminalInfo[] {
 export function TerminalPool() {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-	const openedWorkspaceIds = usePtyActivityStore(
-		(s) => s.openedWorkspaceIds,
-	);
+	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const [loadAll, setLoadAll] = useState(false);
 
 	// Defer non-active workspace PTY spawning by 2s so the active workspace is responsive first.

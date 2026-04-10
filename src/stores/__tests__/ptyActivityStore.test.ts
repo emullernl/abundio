@@ -7,7 +7,6 @@ import {
 	computeWorkspaceDotStatus,
 	getLastOutputAt,
 	type PtyActivityEntry,
-	shouldPulse,
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
@@ -416,20 +415,6 @@ describe("computePtyDotStatus", () => {
 		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("idle") })).toBe(
 			"green",
 		);
-	});
-});
-
-describe("shouldPulse", () => {
-	it("returns true for amber, red", () => {
-		expect(shouldPulse("amber")).toBe(true);
-		expect(shouldPulse("red")).toBe(true);
-	});
-
-	it("returns false for grey, green, purple, null", () => {
-		expect(shouldPulse("grey")).toBe(false);
-		expect(shouldPulse("green")).toBe(false);
-		expect(shouldPulse("purple")).toBe(false);
-		expect(shouldPulse(null)).toBe(false);
 	});
 });
 

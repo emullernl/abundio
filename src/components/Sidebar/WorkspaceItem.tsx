@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PaneNode, WorkspaceWithTabs } from "../../lib/types";
-import type { DotStatus } from "../../stores/ptyActivityStore";
 import {
 	computeWorkspaceDotStatus,
-	DOT_COLORS,
-	DOT_GLOWS,
-	shouldPulse,
+	type DotStatus,
 	usePtyActivityStore,
 } from "../../stores/ptyActivityStore";
+import { AgentStatusIcon } from "../AgentStatusIcon";
 import { X } from "../Icons";
 
 interface Props {
@@ -73,8 +71,6 @@ export function WorkspaceItem({
 	onMouseDown,
 }: Props) {
 	const dotStatus = useWorkspaceDotStatus(workspace);
-	const dotColor = DOT_COLORS[dotStatus];
-	const pulse = shouldPulse(dotStatus);
 
 	const [renameValue, setRenameValue] = useState(workspace.name);
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -105,7 +101,7 @@ export function WorkspaceItem({
 			onClick={onClick}
 			onKeyDown={(e) => e.key === "Enter" && onClick()}
 			onContextMenu={onContextMenu}
-			className="group flex items-center gap-2.5 pr-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+			className="group flex items-start gap-2.5 pr-3 py-2.5 rounded-lg cursor-pointer transition-colors"
 			style={{
 				paddingLeft: 20,
 				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
@@ -123,15 +119,9 @@ export function WorkspaceItem({
 				if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<div
-				className={`w-2 h-2 rounded-full flex-shrink-0 ${pulse ? "status-dot-pulse" : ""}`}
-				style={
-					{
-						backgroundColor: dotColor,
-						"--dot-glow": DOT_GLOWS[dotStatus] ?? "transparent",
-					} as React.CSSProperties
-				}
-			/>
+			<div style={{ marginTop: 3 }}>
+				<AgentStatusIcon status={dotStatus} />
+			</div>
 			<div className="flex-1 min-w-0">
 				{isRenaming ? (
 					<input

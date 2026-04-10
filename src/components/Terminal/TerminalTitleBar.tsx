@@ -1,12 +1,8 @@
 import { useState } from "react";
 import { getTerminal } from "../../lib/terminalManager";
 import type { DotStatus } from "../../stores/ptyActivityStore";
-import {
-	DOT_COLORS,
-	DOT_GLOWS,
-	shouldPulse,
-	usePtyActivityStore,
-} from "../../stores/ptyActivityStore";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { AgentStatusIcon } from "../AgentStatusIcon";
 
 interface Props {
 	paneId: string;
@@ -63,18 +59,9 @@ export function TerminalTitleBar({ paneId }: Props) {
 				{title}
 			</span>
 
-			<div
-				className={`shrink-0 rounded-full ${shouldPulse(dotStatus) ? "status-dot-pulse" : ""}`}
-				style={
-					{
-						width: 8,
-						height: 8,
-						marginLeft: 8,
-						backgroundColor: DOT_COLORS[dotStatus],
-						"--dot-glow": DOT_GLOWS[dotStatus] ?? "transparent",
-					} as React.CSSProperties
-				}
-			/>
+			<div className="shrink-0" style={{ marginLeft: 8 }}>
+				<AgentStatusIcon status={dotStatus} size={12} />
+			</div>
 		</div>
 	);
 }
