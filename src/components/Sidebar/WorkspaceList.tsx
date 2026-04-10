@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { ConfirmDialog } from "../ConfirmDialog";
 import {
 	type ContextMenuItem,
 	PaneContextMenu,
@@ -37,6 +38,12 @@ export function WorkspaceList() {
 
 	// Inline rename state
 	const [renamingId, setRenamingId] = useState<string | null>(null);
+
+	// Confirmation dialog state for permanent workspace removal
+	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+	const pendingWorkspace = pendingDeleteId
+		? workspaces.find((w) => w.id === pendingDeleteId)
+		: null;
 
 	const startPos = useRef<{ x: number; y: number } | null>(null);
 	const pendingId = useRef<string | null>(null);
@@ -154,7 +161,7 @@ export function WorkspaceList() {
 	const contextMenuItems: ContextMenuItem[] = contextMenu
 		? [
 				{
-					label: "Close Workspace",
+					label: "Unload Workspace",
 					onClick: () => closeWorkspace(contextMenu.workspaceId),
 				},
 				{ separator: true as const },
@@ -163,8 +170,8 @@ export function WorkspaceList() {
 					onClick: () => setRenamingId(contextMenu.workspaceId),
 				},
 				{
-					label: "Delete Workspace",
-					onClick: () => deleteWorkspace(contextMenu.workspaceId),
+					label: "Close Workspace",
+					onClick: () => setPendingDeleteId(contextMenu.workspaceId),
 				},
 			]
 		: [];
@@ -197,7 +204,7 @@ export function WorkspaceList() {
 							if (draggedId) return;
 							setActiveWorkspace(workspace.id);
 						}}
-						onDelete={() => deleteWorkspace(workspace.id)}
+						onDelete={() => setPendingDeleteId(workspace.id)}
 						onContextMenu={(e) => {
 							e.preventDefault();
 							setContextMenu({
@@ -233,6 +240,21 @@ export function WorkspaceList() {
 					y={contextMenu.y}
 					items={contextMenuItems}
 					onClose={() => setContextMenu(null)}
+				/>
+			)}
+
+			{/* Confirmation dialog for permanent workspace removal */}
+			{pendingWorkspace && (
+				<ConfirmDialog
+					title="Close Workspace"
+					message={`"${pendingWorkspace.name}" will be permanently removed from your workspace list. This cannot be undone.`}
+					confirmLabel="Close Workspace"
+					confirmVariant="danger"
+					onConfirm={() => {
+						if (pendingDeleteId) deleteWorkspace(pendingDeleteId);
+						setPendingDeleteId(null);
+					}}
+					onCancel={() => setPendingDeleteId(null)}
 				/>
 			)}
 		</div>
