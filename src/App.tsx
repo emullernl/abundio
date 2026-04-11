@@ -1,10 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
+import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -12,6 +13,7 @@ import { TabBar } from "./components/TabBar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
+import { useConfirmCloseFileTab } from "./hooks/useConfirmCloseFileTab";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { initKeybindings, registerAction } from "./lib/keybindings";
@@ -64,7 +66,9 @@ export function App() {
 	const fileTabs = useExplorerStore((s) => s.fileTabs);
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
-	const closeFileTab = useExplorerStore((s) => s.closeFileTab);
+	const { requestClose: requestCloseFileTab, dialogProps: closeFileTabDialogProps } = useConfirmCloseFileTab();
+	const [appCloseRequested, setAppCloseRequested] = useState(false);
+	const appWindowRef = useRef<Awaited<ReturnType<typeof getCurrentWindow>> | null>(null);
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
 	);
@@ -75,22 +79,32 @@ export function App() {
 		return cleanup;
 	}, []);
 
+	const proceedWithClose = useCallback(async () => {
+		const appWindow = appWindowRef.current ?? getCurrentWindow();
+		await Promise.race([
+			Promise.all([saveAllSnapshots(), persistAllFileTabs()]),
+			new Promise((r) => setTimeout(r, 2000)),
+		]);
+		appWindow.destroy();
+	}, []);
+
 	// Save terminal snapshots before the window closes
 	useEffect(() => {
 		const appWindow = getCurrentWindow();
+		appWindowRef.current = appWindow;
 		const unlisten = appWindow.onCloseRequested(async (event) => {
 			event.preventDefault();
-			// Save file tabs and terminal snapshots with a timeout so the window always closes
-			await Promise.race([
-				Promise.all([saveAllSnapshots(), persistAllFileTabs()]),
-				new Promise((r) => setTimeout(r, 2000)),
-			]);
-			appWindow.destroy();
+			const dirtyTabs = useExplorerStore.getState().fileTabs.filter((t) => t.isDirty);
+			if (dirtyTabs.length > 0) {
+				setAppCloseRequested(true);
+				return;
+			}
+			await proceedWithClose();
 		});
 		return () => {
 			unlisten.then((fn) => fn());
 		};
-	}, []);
+	}, [proceedWithClose]);
 
 	// Listen for native menu "Settings..." click
 	useEffect(() => {
@@ -236,7 +250,7 @@ export function App() {
 										activeFileTabId={activeFileTabId}
 										activeView={activeView[workspace.id] ?? "terminal"}
 										onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
-										onCloseFileTab={(tabId) => closeFileTab(tabId)}
+										onCloseFileTab={(tabId) => requestCloseFileTab(tabId)}
 									/>
 									<div className="flex-1 min-h-0 relative">
 										<div
@@ -286,6 +300,28 @@ export function App() {
 				onClose={() => setSettingsOpen(false)}
 			/>
 			<TerminalPool />
+			{closeFileTabDialogProps && (
+				<SaveConfirmDialog {...closeFileTabDialogProps} />
+			)}
+			{appCloseRequested && (() => {
+				const dirtyTabs = fileTabs.filter((t) => t.isDirty);
+				const name = dirtyTabs.length === 1 ? dirtyTabs[0].fileName : `${dirtyTabs.length} files`;
+				return (
+				<SaveConfirmDialog
+					fileName={name}
+					onSave={async () => {
+						await Promise.all(dirtyTabs.map((t) => useExplorerStore.getState().saveFile(t.id)));
+						setAppCloseRequested(false);
+						await proceedWithClose();
+					}}
+					onDontSave={async () => {
+						setAppCloseRequested(false);
+						await proceedWithClose();
+					}}
+					onCancel={() => setAppCloseRequested(false)}
+				/>
+				);
+			})()}
 		</div>
 	);
 }

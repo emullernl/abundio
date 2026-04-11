@@ -1,4 +1,6 @@
+import { useConfirmCloseFileTab } from "../../hooks/useConfirmCloseFileTab";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { SaveConfirmDialog } from "../SaveConfirmDialog";
 import { DiffViewer } from "../GitChanges/DiffViewer";
 import { CodeEditor } from "./CodeEditor";
 import { ImageViewer } from "./ImageViewer";
@@ -8,7 +10,7 @@ export function FileViewerContainer() {
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const fileTabs = useExplorerStore((s) => s.fileTabs);
 	const updateFileContent = useExplorerStore((s) => s.updateFileContent);
-	const closeFileTab = useExplorerStore((s) => s.closeFileTab);
+	const { requestClose, dialogProps } = useConfirmCloseFileTab();
 
 	const activeTab = fileTabs.find((t) => t.id === activeFileTabId);
 
@@ -58,7 +60,7 @@ export function FileViewerContainer() {
 								modified: activeTab.diffModified,
 								filePath: activeTab.filePath.replace(/^diff:/, ""),
 							}}
-							onBack={() => closeFileTab(activeTab.id)}
+							onBack={() => requestClose(activeTab.id)}
 						/>
 					</div>
 				)}
@@ -73,6 +75,7 @@ export function FileViewerContainer() {
 			{activeTab.fileType === "binary" && (
 				<UnsupportedFile fileName={activeTab.fileName} size={0} />
 			)}
+			{dialogProps && <SaveConfirmDialog {...dialogProps} />}
 		</>
 	);
 }

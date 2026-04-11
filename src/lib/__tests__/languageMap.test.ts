@@ -19,8 +19,8 @@ describe("getLanguage", () => {
 		expect(getLanguage("html")).toBe("html");
 		expect(getLanguage("htm")).toBe("html");
 		expect(getLanguage("css")).toBe("css");
-		expect(getLanguage("scss")).toBe("css");
-		expect(getLanguage("less")).toBe("css");
+		expect(getLanguage("scss")).toBe("scss");
+		expect(getLanguage("less")).toBe("less");
 		expect(getLanguage("md")).toBe("markdown");
 		expect(getLanguage("mdx")).toBe("markdown");
 		expect(getLanguage("py")).toBe("python");
@@ -47,7 +47,6 @@ describe("getLanguage", () => {
 
 	it("returns null for unknown extensions", () => {
 		expect(getLanguage("xyz")).toBeNull();
-		expect(getLanguage("go")).toBeNull();
 		expect(getLanguage("dart")).toBeNull();
 	});
 
@@ -55,14 +54,35 @@ describe("getLanguage", () => {
 		expect(getLanguage("")).toBeNull();
 	});
 
-	it("maps xml and svg to html", () => {
-		expect(getLanguage("xml")).toBe("html");
-		expect(getLanguage("svg")).toBe("html");
+	it("maps xml and svg to xml", () => {
+		expect(getLanguage("xml")).toBe("xml");
+		expect(getLanguage("svg")).toBe("xml");
 	});
 
-	it("maps shell/config extensions to javascript", () => {
-		for (const ext of ["yaml", "yml", "toml", "sh", "bash", "zsh", "sql"]) {
-			expect(getLanguage(ext)).toBe("javascript");
+	it("maps shell extensions to shell", () => {
+		for (const ext of ["sh", "bash", "zsh"]) {
+			expect(getLanguage(ext)).toBe("shell");
 		}
+	});
+
+	it("maps yaml extensions to yaml", () => {
+		expect(getLanguage("yaml")).toBe("yaml");
+		expect(getLanguage("yml")).toBe("yaml");
+	});
+
+	it("maps config and data extensions correctly", () => {
+		expect(getLanguage("toml")).toBe("ini");
+		expect(getLanguage("sql")).toBe("sql");
+	});
+
+	it("supports additional Monaco languages", () => {
+		expect(getLanguage("go")).toBe("go");
+		expect(getLanguage("rb")).toBe("ruby");
+		expect(getLanguage("php")).toBe("php");
+		expect(getLanguage("swift")).toBe("swift");
+		expect(getLanguage("kt")).toBe("kotlin");
+		expect(getLanguage("lua")).toBe("lua");
+		expect(getLanguage("r")).toBe("r");
+		expect(getLanguage("dockerfile")).toBe("dockerfile");
 	});
 });

@@ -1,4 +1,13 @@
+import type { Monaco } from "@monaco-editor/react";
 import type { ITheme } from "@xterm/xterm";
+import { defineAbundioTheme } from "./monacoShared";
+
+let _monaco: Monaco | null = null;
+
+/** Store the Monaco instance so applyTheme can re-define the editor theme. */
+export function setMonacoInstance(monaco: Monaco) {
+	_monaco = monaco;
+}
 
 export interface AppTheme {
 	name: string;
@@ -514,6 +523,12 @@ export function applyTheme(theme: AppTheme) {
 	root.style.setProperty("--error", theme.ui.error);
 	root.style.setProperty("--warning", theme.ui.warning);
 	root.style.setProperty("--success", theme.ui.success);
+
+	// Re-define the Monaco editor theme with the new CSS variable values
+	if (_monaco) {
+		defineAbundioTheme(_monaco);
+		_monaco.editor.setTheme("abundio");
+	}
 }
 
 export function getTheme(name: string): AppTheme {

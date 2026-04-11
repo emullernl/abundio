@@ -1,21 +1,9 @@
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import {
-	bracketMatching,
-	defaultHighlightStyle,
-	syntaxHighlighting,
-} from "@codemirror/language";
-import { Compartment, EditorState } from "@codemirror/state";
-import { oneDark } from "@codemirror/theme-one-dark";
-import {
-	EditorView,
-	highlightActiveLine,
-	highlightSpecialChars,
-	keymap,
-	lineNumbers,
-} from "@codemirror/view";
-import { useEffect, useRef } from "react";
-import { abundioTheme, getLanguageExtension } from "../../lib/codemirrorShared";
+import Editor, { type Monaco, useMonaco } from "@monaco-editor/react";
+import type { editor } from "monaco-editor";
+import { useCallback, useEffect, useRef } from "react";
+import { defineAbundioTheme } from "../../lib/monacoShared";
 import { setAllTerminalsFontSize } from "../../lib/terminalManager";
+import { setMonacoInstance } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -29,20 +17,11 @@ interface CodeEditorProps {
 	onChange: (content: string) => void;
 }
 
-// Cache EditorState + scroll per tab so switching tabs preserves cursor/scroll
-const stateCache = new Map<
-	string,
-	{ state: EditorState; scrollTop: number; scrollLeft: number }
->();
+// Cache view state per tab so switching tabs preserves cursor/scroll
+const stateCache = new Map<string, editor.ICodeEditorViewState>();
 
-// Live EditorView instances (mounted editors) — keyed by tabId
-const liveViews = new Map<string, EditorView>();
-
-// Last-known scroll positions — updated by scroll listener, survives display:none
-const lastKnownScroll = new Map<
-	string,
-	{ scrollTop: number; scrollLeft: number }
->();
+// Live editor instances (mounted editors) — keyed by tabId
+const liveEditors = new Map<string, editor.IStandaloneCodeEditor>();
 
 export interface SerializedEditorState {
 	cursorPos: number;
@@ -52,40 +31,43 @@ export interface SerializedEditorState {
 }
 
 export function focusEditor(tabId: string) {
-	liveViews.get(tabId)?.focus();
+	liveEditors.get(tabId)?.focus();
 }
 
 export function clearEditorStateCache(tabId: string) {
 	stateCache.delete(tabId);
-	lastKnownScroll.delete(tabId);
 }
 
-/** Extract serializable cursor/scroll — uses tracked scroll (survives display:none) */
+/** Extract serializable cursor/scroll state */
 export function getSerializableEditorState(
 	tabId: string,
 ): SerializedEditorState | null {
-	const live = liveViews.get(tabId);
+	const live = liveEditors.get(tabId);
 	if (live) {
-		const sel = live.state.selection.main;
-		const scroll = lastKnownScroll.get(tabId) ?? {
-			scrollTop: 0,
-			scrollLeft: 0,
-		};
+		const pos = live.getPosition();
+		const sel = live.getSelection();
 		return {
-			cursorPos: sel.head,
-			anchorPos: sel.anchor,
-			scrollTop: scroll.scrollTop,
-			scrollLeft: scroll.scrollLeft,
+			cursorPos: (pos ? live.getModel()?.getOffsetAt(pos) : 0) ?? 0,
+			anchorPos: sel
+				? (live.getModel()?.getOffsetAt({
+						lineNumber: sel.startLineNumber,
+						column: sel.startColumn,
+					}) ?? 0)
+				: 0,
+			scrollTop: live.getScrollTop(),
+			scrollLeft: live.getScrollLeft(),
 		};
 	}
+
+	// Fall back to cached state — reconstruct from view state
 	const cached = stateCache.get(tabId);
 	if (!cached) return null;
-	const sel = cached.state.selection.main;
+
 	return {
-		cursorPos: sel.head,
-		anchorPos: sel.anchor,
-		scrollTop: cached.scrollTop,
-		scrollLeft: cached.scrollLeft,
+		cursorPos: 0,
+		anchorPos: 0,
+		scrollTop: cached.viewState?.scrollTop ?? 0,
+		scrollLeft: cached.viewState?.scrollLeft ?? 0,
 	};
 }
 
@@ -97,16 +79,16 @@ export function CodeEditor({
 	initialEditorState,
 	onChange,
 }: CodeEditorProps) {
-	const containerRef = useRef<HTMLDivElement>(null);
-	const viewRef = useRef<EditorView | null>(null);
+	const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 	const onChangeRef = useRef(onChange);
 	onChangeRef.current = onChange;
 	const tabIdRef = useRef(tabId);
 	tabIdRef.current = tabId;
-	const langCompartmentRef = useRef(new Compartment());
-	// Code editor intentionally uses the terminal (monospace) font, not the UI font
+
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
+	const monacoFontSize = fontSize - 1;
+	const monaco = useMonaco();
 
 	// Focus editor when it becomes the active visible tab
 	const isFileView = useWorkspaceStore((s) => {
@@ -115,208 +97,137 @@ export function CodeEditor({
 	});
 
 	useEffect(() => {
-		if (isActive && isFileView && viewRef.current) {
-			const view = viewRef.current;
-			// Double rAF: first waits for display:none→block commit, second for layout
+		if (isActive && isFileView && editorRef.current) {
+			const ed = editorRef.current;
 			requestAnimationFrame(() => {
-				requestAnimationFrame(() => view.focus());
+				requestAnimationFrame(() => ed.focus());
 			});
 		}
 	}, [isActive, isFileView]);
 
-	// Capture-phase keydown on the container to intercept before CodeMirror
+	// Update font when settings change
 	useEffect(() => {
-		const el = containerRef.current;
-		if (!el) return;
+		editorRef.current?.updateOptions({ fontFamily, fontSize: monacoFontSize });
+	}, [fontFamily, monacoFontSize]);
 
-		function handleKeyDown(e: KeyboardEvent) {
-			const mod = e.metaKey || e.ctrlKey;
-			if (!mod || e.shiftKey) return;
+	// Re-define theme when it might have changed (monaco instance available)
+	useEffect(() => {
+		if (monaco) {
+			defineAbundioTheme(monaco);
+			monaco.editor.setTheme("abundio");
+		}
+	}, [monaco]);
 
-			if (e.key === "=" || e.key === "+") {
-				e.preventDefault();
-				e.stopPropagation();
-				e.stopImmediatePropagation();
-				const { fontSize, setFontSize } = useSettingsStore.getState();
-				const newSize = Math.min(fontSize + 1, 32);
-				setFontSize(newSize);
-				setAllTerminalsFontSize(newSize);
-			} else if (e.key === "-") {
-				e.preventDefault();
-				e.stopPropagation();
-				e.stopImmediatePropagation();
-				const { fontSize, setFontSize } = useSettingsStore.getState();
-				const newSize = Math.max(fontSize - 1, 8);
-				setFontSize(newSize);
-				setAllTerminalsFontSize(newSize);
-			} else if (e.key === "s") {
-				e.preventDefault();
-				e.stopPropagation();
-				e.stopImmediatePropagation();
+	const handleMount = useCallback(
+		(ed: editor.IStandaloneCodeEditor, m: Monaco) => {
+			editorRef.current = ed;
+			liveEditors.set(tabIdRef.current, ed);
+
+			// Define and apply theme, store Monaco instance for theme sync
+			defineAbundioTheme(m);
+			m.editor.setTheme("abundio");
+			setMonacoInstance(m);
+
+			// Restore view state from initialEditorState or cache
+			if (initialEditorState) {
+				const model = ed.getModel();
+				if (model) {
+					const pos = model.getPositionAt(initialEditorState.cursorPos);
+					ed.setPosition(pos);
+					ed.setScrollTop(initialEditorState.scrollTop);
+					ed.setScrollLeft(initialEditorState.scrollLeft);
+				}
+			} else {
+				const cached = stateCache.get(tabIdRef.current);
+				if (cached) {
+					ed.restoreViewState(cached);
+				}
+			}
+
+			// Register keybindings
+			// biome-ignore lint/style/noNonNullAssertion: Monaco KeyMod/KeyCode exist at runtime
+			const KeyMod = m.KeyMod!;
+			// biome-ignore lint/style/noNonNullAssertion: Monaco KeyMod/KeyCode exist at runtime
+			const KeyCode = m.KeyCode!;
+
+			// Cmd+S → save file
+			ed.addCommand(KeyMod.CtrlCmd | KeyCode.KeyS, () => {
 				const { activeFileTabId } = useExplorerStore.getState();
 				if (activeFileTabId) {
 					useExplorerStore.getState().saveFile(activeFileTabId);
 				}
-			}
-		}
+			});
 
-		el.addEventListener("keydown", handleKeyDown, true);
-		return () => el.removeEventListener("keydown", handleKeyDown, true);
+			// Cmd+= → zoom in
+			ed.addCommand(KeyMod.CtrlCmd | KeyCode.Equal, () => {
+				const { fontSize: fs, setFontSize } = useSettingsStore.getState();
+				const newSize = Math.min(fs + 1, 32);
+				setFontSize(newSize);
+				setAllTerminalsFontSize(newSize);
+			});
+
+			// Cmd+- → zoom out
+			ed.addCommand(KeyMod.CtrlCmd | KeyCode.Minus, () => {
+				const { fontSize: fs, setFontSize } = useSettingsStore.getState();
+				const newSize = Math.max(fs - 1, 8);
+				setFontSize(newSize);
+				setAllTerminalsFontSize(newSize);
+			});
+		},
+		[initialEditorState],
+	);
+
+	// Save view state on unmount
+	useEffect(() => {
+		const currentTabId = tabIdRef.current;
+		return () => {
+			const ed = liveEditors.get(currentTabId);
+			if (ed) {
+				const viewState = ed.saveViewState();
+				if (viewState) {
+					stateCache.set(currentTabId, viewState);
+				}
+				liveEditors.delete(currentTabId);
+			}
+		};
 	}, []);
 
-	// Create EditorView synchronously so cleanup always has access to it.
-	// Language extensions are loaded async and applied via Compartment.
-	useEffect(() => {
-		if (!containerRef.current) return;
-
-		const currentTabId = tabIdRef.current;
-		const langCompartment = langCompartmentRef.current;
-
-		// Prefer initialEditorState (from DB restore) over stateCache
-		// to avoid StrictMode double-mount poisoning the cache
-		let doc = content;
-		let selection: { anchor: number; head: number } | undefined;
-		let targetScrollTop = 0;
-		let targetScrollLeft = 0;
-
-		if (initialEditorState) {
-			selection = {
-				anchor: Math.min(initialEditorState.anchorPos, content.length),
-				head: Math.min(initialEditorState.cursorPos, content.length),
-			};
-			targetScrollTop = initialEditorState.scrollTop;
-			targetScrollLeft = initialEditorState.scrollLeft;
-		} else {
-			const cached = stateCache.get(currentTabId);
-			if (cached) {
-				doc = cached.state.doc.toString();
-				const sel = cached.state.selection.main;
-				selection = { anchor: sel.anchor, head: sel.head };
-				targetScrollTop = cached.scrollTop;
-				targetScrollLeft = cached.scrollLeft;
-			}
-		}
-
-		const extensions = [
-			lineNumbers(),
-			highlightActiveLine(),
-			highlightSpecialChars(),
-			history(),
-			bracketMatching(),
-			syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-			oneDark,
-			abundioTheme,
-			keymap.of([...defaultKeymap, ...historyKeymap]),
-			langCompartment.of([]),
-			EditorView.updateListener.of((update) => {
-				if (update.docChanged) {
-					onChangeRef.current(update.state.doc.toString());
-				}
-			}),
-		];
-
-		const state = EditorState.create({ doc, extensions, selection });
-		const view = new EditorView({ state, parent: containerRef.current });
-
-		viewRef.current = view;
-		liveViews.set(currentTabId, view);
-
-		// Restore scroll — use ResizeObserver to wait until the element is visible
-		// (display:none elements have 0 size, so scrollTop assignment is a no-op)
-		let scrollRestored = false;
-		const restoreScroll = () => {
-			if (scrollRestored) return;
-			view.scrollDOM.scrollTop = targetScrollTop;
-			view.scrollDOM.scrollLeft = targetScrollLeft;
-			if (view.scrollDOM.scrollTop > 0 || targetScrollTop === 0) {
-				scrollRestored = true;
-			}
-		};
-
-		let resizeObserver: ResizeObserver | null = null;
-		if (targetScrollTop || targetScrollLeft) {
-			restoreScroll(); // try immediately
-			if (!scrollRestored) {
-				resizeObserver = new ResizeObserver(() => {
-					if (view.scrollDOM.clientHeight > 0) {
-						restoreScroll();
-						if (scrollRestored) {
-							resizeObserver?.disconnect();
-							resizeObserver = null;
-						}
-					}
-				});
-				resizeObserver.observe(view.scrollDOM);
-			}
-		}
-
-		// Load language extension async and reconfigure into the compartment
-		let cancelled = false;
-		getLanguageExtension(language).then((langExt) => {
-			if (!cancelled && langExt.length > 0) {
-				view.dispatch({
-					effects: langCompartment.reconfigure(langExt),
-				});
-			}
-		});
-
-		// Track scroll in module-level Map so it survives display:none
-		lastKnownScroll.set(currentTabId, {
-			scrollTop: targetScrollTop,
-			scrollLeft: targetScrollLeft,
-		});
-		const scroller = view.scrollDOM;
-		const onScroll = () => {
-			lastKnownScroll.set(currentTabId, {
-				scrollTop: scroller.scrollTop,
-				scrollLeft: scroller.scrollLeft,
-			});
-		};
-		scroller.addEventListener("scroll", onScroll);
-
-		return () => {
-			resizeObserver?.disconnect();
-			scroller.removeEventListener("scroll", onScroll);
-			cancelled = true;
-			liveViews.delete(currentTabId);
-			const scroll = lastKnownScroll.get(currentTabId) ?? {
-				scrollTop: 0,
-				scrollLeft: 0,
-			};
-			stateCache.set(currentTabId, {
-				state: view.state,
-				scrollTop: scroll.scrollTop,
-				scrollLeft: scroll.scrollLeft,
-			});
-			lastKnownScroll.delete(currentTabId);
-			view.destroy();
-			viewRef.current = null;
-		};
-	}, [language, content, initialEditorState]);
-
-	// Update content when it changes externally (e.g., file reload)
-	useEffect(() => {
-		const view = viewRef.current;
-		if (!view) return;
-		const currentContent = view.state.doc.toString();
-		if (currentContent !== content) {
-			view.dispatch({
-				changes: { from: 0, to: currentContent.length, insert: content },
-			});
-		}
-	}, [content]);
+	const monacoLanguage = language ?? undefined;
 
 	return (
 		<div
-			ref={containerRef}
 			className="h-full w-full overflow-hidden"
-			style={
-				{
-					backgroundColor: "var(--bg-primary)",
-					"--cm-font-size": `${fontSize}px`,
-					"--cm-font-family": fontFamily,
-				} as React.CSSProperties
-			}
-		/>
+			style={{ backgroundColor: "var(--bg-primary)" }}
+		>
+			<Editor
+				height="100%"
+				language={monacoLanguage}
+				value={content}
+				theme="abundio"
+				onChange={(value) => {
+					if (value !== undefined) {
+						onChangeRef.current(value);
+					}
+				}}
+				onMount={handleMount}
+				options={{
+					fontFamily,
+					fontSize: monacoFontSize,
+					minimap: { enabled: false },
+					scrollBeyondLastLine: false,
+					lineNumbers: "on",
+					renderLineHighlight: "line",
+					matchBrackets: "always",
+					automaticLayout: true,
+					padding: { top: 8 },
+					overviewRulerLanes: 0,
+					hideCursorInOverviewRuler: true,
+					scrollbar: {
+						verticalScrollbarSize: 10,
+						horizontalScrollbarSize: 10,
+					},
+				}}
+			/>
+		</div>
 	);
 }
