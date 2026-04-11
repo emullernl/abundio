@@ -1,3 +1,4 @@
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode, Tab } from "../../lib/types";
 import {
@@ -10,6 +11,10 @@ import {
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
+
+vi.mock("@tauri-apps/plugin-notification", () => ({
+	sendNotification: vi.fn(),
+}));
 
 function resetStore() {
 	usePtyActivityStore.setState({
@@ -503,6 +508,98 @@ describe("detection mode", () => {
 		usePtyActivityStore.getState().setAgentPty("pty-1");
 		usePtyActivityStore.getState().removePty("pty-1");
 		expect(usePtyActivityStore.getState().agentPtyIds.has("pty-1")).toBe(false);
+	});
+});
+
+describe("notifications on state transitions", () => {
+	const mockSendNotification = vi.mocked(sendNotification);
+
+	beforeEach(() => {
+		mockSendNotification.mockClear();
+	});
+
+	it("sends notification when transitioning to error while app is unfocused", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		const { initPty, recordOutput, recordError, registerPane, setTitle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		registerPane("pane-1", "pty-1");
+		setTitle("pane-1", "bash");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordError("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith({
+			title: "Abundio",
+			body: "bash encountered an error",
+		});
+		vi.restoreAllMocks();
+	});
+
+	it("sends notification when transitioning to waiting while app is unfocused", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		const { initPty, recordOutput, recordExitSuccess, registerPane, setTitle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		registerPane("pane-1", "pty-1");
+		setTitle("pane-1", "zsh");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordExitSuccess("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith({
+			title: "Abundio",
+			body: "zsh is waiting for input",
+		});
+		vi.restoreAllMocks();
+	});
+
+	it("does not send notification when app is focused", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		const { initPty, recordOutput, recordError } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordError("pty-1");
+
+		expect(mockSendNotification).not.toHaveBeenCalled();
+		vi.restoreAllMocks();
+	});
+
+	it("does not send notification when state does not change", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		const { initPty, recordError } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordError("pty-1");
+		mockSendNotification.mockClear();
+
+		// Record error again — state is already "error", no transition
+		recordError("pty-1");
+
+		expect(mockSendNotification).not.toHaveBeenCalled();
+		vi.restoreAllMocks();
+	});
+
+	it("uses agent label when no title is available", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		const { initPty, setAgentPty, recordOutput, recordExitSuccess } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordExitSuccess("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith({
+			title: "Abundio",
+			body: "Agent is waiting for input",
+		});
+		vi.restoreAllMocks();
 	});
 });
 

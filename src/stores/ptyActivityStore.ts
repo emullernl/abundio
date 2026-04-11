@@ -1,3 +1,4 @@
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import type {
 	PaneNode,
@@ -337,6 +338,39 @@ setInterval(() => {
 		}));
 	}
 }, SCAN_INTERVAL_MS);
+
+// ── Notifications for state transitions ──
+
+usePtyActivityStore.subscribe((state, prevState) => {
+	if (typeof document !== "undefined" && document.hasFocus()) return;
+
+	const { activities, titles, panePtyMap } = state;
+	const prevActivities = prevState.activities;
+
+	for (const [ptyId, entry] of Object.entries(activities)) {
+		const prevEntry = prevActivities[ptyId];
+		if (!prevEntry || prevEntry.state === entry.state) continue;
+
+		if (entry.state === "waiting" || entry.state === "error") {
+			const paneId = Object.entries(panePtyMap).find(
+				([, pid]) => pid === ptyId,
+			)?.[0];
+			const title = paneId ? titles[paneId] : undefined;
+			const label =
+				title || (entry.detectionMode === "agent" ? "Agent" : "Terminal");
+			const body =
+				entry.state === "error"
+					? `${label} encountered an error`
+					: `${label} is waiting for input`;
+
+			try {
+				sendNotification({ title: "Abundio", body });
+			} catch {
+				// Notifications may not be permitted
+			}
+		}
+	}
+});
 
 // ── Helpers ──
 

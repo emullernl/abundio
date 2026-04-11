@@ -1,4 +1,3 @@
-import { sendNotification } from "@tauri-apps/plugin-notification";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -673,15 +672,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				}
 			}
 			useWorkspaceStore.getState().setPtyStatus(currentPtyId, status);
-			if (status.type === "exited") {
-				const exitMsg =
-					status.code === 0 ? "exited" : `exited with code ${status.code}`;
-				try {
-					sendNotification({ title: "Abundio", body: `Process ${exitMsg}` });
-				} catch {
-					// Notifications may not be permitted
-				}
-			}
 		}),
 
 		// Spawn PTY concurrently with listener registration — listeners use
