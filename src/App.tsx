@@ -66,9 +66,14 @@ export function App() {
 	const fileTabs = useExplorerStore((s) => s.fileTabs);
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
-	const { requestClose: requestCloseFileTab, dialogProps: closeFileTabDialogProps } = useConfirmCloseFileTab();
+	const {
+		requestClose: requestCloseFileTab,
+		dialogProps: closeFileTabDialogProps,
+	} = useConfirmCloseFileTab();
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
-	const appWindowRef = useRef<Awaited<ReturnType<typeof getCurrentWindow>> | null>(null);
+	const appWindowRef = useRef<Awaited<
+		ReturnType<typeof getCurrentWindow>
+	> | null>(null);
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
 	);
@@ -94,7 +99,9 @@ export function App() {
 		appWindowRef.current = appWindow;
 		const unlisten = appWindow.onCloseRequested(async (event) => {
 			event.preventDefault();
-			const dirtyTabs = useExplorerStore.getState().fileTabs.filter((t) => t.isDirty);
+			const dirtyTabs = useExplorerStore
+				.getState()
+				.fileTabs.filter((t) => t.isDirty);
 			if (dirtyTabs.length > 0) {
 				setAppCloseRequested(true);
 				return;
@@ -192,6 +199,14 @@ export function App() {
 		});
 		registerAction("toggle-git-panel", () => {
 			useGitChangesStore.getState().togglePanel();
+		});
+		registerAction("search-in-workspace", () => {
+			const settings = useSettingsStore.getState();
+			if (settings.sidebarCollapsed) {
+				settings.toggleSidebar();
+			}
+			settings.setSidebarBottomPanel("search");
+			// Focus is handled by SearchPanel's useEffect on sidebarBottomPanel change
 		});
 	}, [splitPane, closePane, navigatePane, toggleMaximize]);
 
@@ -303,25 +318,33 @@ export function App() {
 			{closeFileTabDialogProps && (
 				<SaveConfirmDialog {...closeFileTabDialogProps} />
 			)}
-			{appCloseRequested && (() => {
-				const dirtyTabs = fileTabs.filter((t) => t.isDirty);
-				const name = dirtyTabs.length === 1 ? dirtyTabs[0].fileName : `${dirtyTabs.length} files`;
-				return (
-				<SaveConfirmDialog
-					fileName={name}
-					onSave={async () => {
-						await Promise.all(dirtyTabs.map((t) => useExplorerStore.getState().saveFile(t.id)));
-						setAppCloseRequested(false);
-						await proceedWithClose();
-					}}
-					onDontSave={async () => {
-						setAppCloseRequested(false);
-						await proceedWithClose();
-					}}
-					onCancel={() => setAppCloseRequested(false)}
-				/>
-				);
-			})()}
+			{appCloseRequested &&
+				(() => {
+					const dirtyTabs = fileTabs.filter((t) => t.isDirty);
+					const name =
+						dirtyTabs.length === 1
+							? dirtyTabs[0].fileName
+							: `${dirtyTabs.length} files`;
+					return (
+						<SaveConfirmDialog
+							fileName={name}
+							onSave={async () => {
+								await Promise.all(
+									dirtyTabs.map((t) =>
+										useExplorerStore.getState().saveFile(t.id),
+									),
+								);
+								setAppCloseRequested(false);
+								await proceedWithClose();
+							}}
+							onDontSave={async () => {
+								setAppCloseRequested(false);
+								await proceedWithClose();
+							}}
+							onCancel={() => setAppCloseRequested(false)}
+						/>
+					);
+				})()}
 		</div>
 	);
 }

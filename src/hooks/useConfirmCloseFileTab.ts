@@ -5,7 +5,9 @@ export function useConfirmCloseFileTab() {
 	const [pendingTabId, setPendingTabId] = useState<string | null>(null);
 
 	const requestClose = useCallback((tabId: string) => {
-		const tab = useExplorerStore.getState().fileTabs.find((t) => t.id === tabId);
+		const tab = useExplorerStore
+			.getState()
+			.fileTabs.find((t) => t.id === tabId);
 		if (!tab || !tab.isDirty) {
 			useExplorerStore.getState().closeFileTab(tabId);
 			return;

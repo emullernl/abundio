@@ -9,6 +9,7 @@ pub mod git_commands;
 pub mod migrations;
 pub mod process_monitor;
 pub mod pty_manager;
+pub mod search;
 pub mod workspace_store;
 pub mod shell_env;
 
@@ -158,6 +159,9 @@ pub fn run() {
             // Initialize file watcher
             app.manage(file_watcher::FileWatcher::new());
 
+            // Initialize search manager
+            app.manage(search::SearchManager::new());
+
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -202,6 +206,8 @@ pub fn run() {
             gh_commands::gh_my_prs_all,
             commands::list_system_fonts,
             commands::list_available_shells,
+            search::fs_search,
+            search::fs_search_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

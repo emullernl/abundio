@@ -9,6 +9,7 @@ type KeyAction =
 	| "maximize-pane"
 	| "command-palette"
 	| "search-in-terminal"
+	| "search-in-workspace"
 	| "new-workspace"
 	| "new-tab"
 	| "close-tab"
@@ -86,6 +87,13 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		key: "f",
 		meta: isMac,
 		shift: true,
+		ctrl: !isMac,
+		action: "search-in-workspace",
+	},
+	{
+		key: "f",
+		meta: isMac,
+		shift: false,
 		ctrl: !isMac,
 		action: "search-in-terminal",
 	},

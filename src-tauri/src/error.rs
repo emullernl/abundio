@@ -20,6 +20,8 @@ pub enum AbundioError {
     NotGitRepo(String),
     #[error("Font enumeration error: {0}")]
     Font(String),
+    #[error("Search error: {0}")]
+    Search(String),
 }
 
 impl Serialize for AbundioError {

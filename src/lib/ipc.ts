@@ -12,6 +12,7 @@ import type {
 	PtyActivityType,
 	PtyStatusType,
 	PullRequest,
+	SearchResult,
 	Tab,
 	TabUpdate,
 	WorkspaceUpdate,
@@ -196,6 +197,21 @@ export const fs = {
 				callback();
 			}
 		}),
+
+	search: (params: {
+		rootPath: string;
+		query: string;
+		caseSensitive: boolean;
+		isRegex: boolean;
+		wholeWord: boolean;
+		includePattern: string | null;
+		excludePattern: string | null;
+		maxResults?: number;
+		searchId: string;
+	}) => invoke<SearchResult>("fs_search", { params }),
+
+	searchCancel: (searchId: string) =>
+		invoke<void>("fs_search_cancel", { searchId }),
 };
 
 export const fonts = {

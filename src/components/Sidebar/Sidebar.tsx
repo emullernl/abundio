@@ -3,7 +3,8 @@ import { useCallback, useRef, useState } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { Explorer } from "../Explorer/Explorer";
-import { ChevronLeft, ChevronRight, Plus } from "../Icons";
+import { ChevronLeft, ChevronRight, Folder, Plus, Search } from "../Icons";
+import { SearchPanel } from "../Search/SearchPanel";
 import { WorkspaceList } from "./WorkspaceList";
 
 interface SidebarProps {
@@ -66,16 +67,117 @@ function SidebarDivider({
 	);
 }
 
+const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_DEFAULT_WIDTH = 280;
+
+function SidebarEdgeHandle({
+	onResize,
+	onResizeEnd,
+}: {
+	onResize: (width: number) => void;
+	onResizeEnd: () => void;
+}) {
+	const onResizeEndRef = useRef(onResizeEnd);
+	onResizeEndRef.current = onResizeEnd;
+
+	const handleMouseDown = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			document.body.classList.add("dragging");
+
+			const startX = e.clientX;
+			const sidebar = (e.target as HTMLElement).parentElement;
+			if (!sidebar) return;
+			const startWidth = sidebar.getBoundingClientRect().width;
+
+			function onMouseMove(e: MouseEvent) {
+				const newWidth = Math.max(
+					SIDEBAR_MIN_WIDTH,
+					Math.min(SIDEBAR_MAX_WIDTH, startWidth + (e.clientX - startX)),
+				);
+				onResize(newWidth);
+			}
+
+			function onMouseUp() {
+				document.body.classList.remove("dragging");
+				document.removeEventListener("mousemove", onMouseMove);
+				document.removeEventListener("mouseup", onMouseUp);
+				onResizeEndRef.current();
+			}
+
+			document.addEventListener("mousemove", onMouseMove);
+			document.addEventListener("mouseup", onMouseUp);
+		},
+		[onResize],
+	);
+
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for sidebar width resize
+		<div
+			onMouseDown={handleMouseDown}
+			onDoubleClick={() => {
+				onResize(SIDEBAR_DEFAULT_WIDTH);
+				onResizeEndRef.current();
+			}}
+			style={{
+				position: "absolute",
+				top: 0,
+				right: 0,
+				width: 4,
+				height: "100%",
+				cursor: "col-resize",
+				zIndex: 10,
+			}}
+			className="hover:bg-[var(--accent)] transition-colors"
+		/>
+	);
+}
+
+function PanelTab({
+	active,
+	onClick,
+	title,
+	children,
+}: {
+	active: boolean;
+	onClick: () => void;
+	title: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			title={title}
+			className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
+			style={{
+				color: active ? "var(--accent)" : "var(--fg-secondary)",
+				transitionDuration: "var(--transition-fast)",
+			}}
+		>
+			{children}
+		</button>
+	);
+}
+
 export function Sidebar({ titlebarHeight }: SidebarProps) {
 	const { createWorkspace } = useWorkspaceStore();
 	const {
 		sidebarCollapsed,
 		toggleSidebar,
+		sidebarWidth,
+		setSidebarWidth,
 		sidebarSplitRatio,
 		setSidebarSplitRatio,
+		sidebarBottomPanel,
+		setSidebarBottomPanel,
 	} = useSettingsStore();
 	const [creating, setCreating] = useState(false);
 	const [localRatio, setLocalRatio] = useState<number | null>(null);
+	const [localWidth, setLocalWidth] = useState<number | null>(null);
+
+	const currentWidth = localWidth ?? sidebarWidth;
 
 	const ratio = localRatio ?? sidebarSplitRatio;
 
@@ -89,6 +191,17 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 			setLocalRatio(null);
 		}
 	}, [localRatio, setSidebarSplitRatio]);
+
+	const handleWidthResize = useCallback((w: number) => {
+		setLocalWidth(w);
+	}, []);
+
+	const handleWidthResizeEnd = useCallback(() => {
+		if (localWidth !== null) {
+			setSidebarWidth(localWidth);
+			setLocalWidth(null);
+		}
+	}, [localWidth, setSidebarWidth]);
 
 	async function handleNewWorkspace() {
 		const folder = await open({ directory: true, multiple: false });
@@ -127,19 +240,35 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				>
 					<ChevronRight size={14} />
 				</button>
+				<button
+					type="button"
+					onClick={() => {
+						toggleSidebar();
+						setSidebarBottomPanel("search");
+					}}
+					className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
+					style={{ color: "var(--fg-secondary)" }}
+					title="Search in workspace"
+				>
+					<Search size={14} />
+				</button>
 			</div>
 		);
 	}
 
 	return (
 		<div
-			className="flex flex-col h-full"
+			className="flex flex-col h-full relative"
 			style={{
-				width: "var(--sidebar-width)",
+				width: currentWidth,
 				backgroundColor: "var(--bg-secondary)",
 				borderRight: "1px solid var(--border)",
 			}}
 		>
+			<SidebarEdgeHandle
+				onResize={handleWidthResize}
+				onResizeEnd={handleWidthResizeEnd}
+			/>
 			{/* Titlebar spacer */}
 			<div
 				data-tauri-drag-region
@@ -192,7 +321,7 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				</div>
 			</div>
 
-			{/* Split area: Workspaces + Explorer */}
+			{/* Split area: Workspaces + Bottom Panel */}
 			<div className="flex flex-col flex-1 min-h-0">
 				{/* Workspace list */}
 				<div
@@ -205,9 +334,41 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 				{/* Draggable divider */}
 				<SidebarDivider onResize={handleResize} onResizeEnd={handleResizeEnd} />
 
-				{/* Explorer */}
-				<div className="min-h-0" style={{ flex: `${1 - ratio} 1 0%` }}>
-					<Explorer />
+				{/* Bottom panel with tab selector */}
+				<div
+					className="min-h-0 flex flex-col"
+					style={{ flex: `${1 - ratio} 1 0%` }}
+				>
+					{/* Panel tabs */}
+					<div
+						className="flex items-center gap-1 flex-shrink-0"
+						style={{
+							height: 32,
+							paddingLeft: 16,
+							paddingRight: 8,
+							borderBottom: "1px solid var(--border)",
+						}}
+					>
+						<PanelTab
+							active={sidebarBottomPanel === "explorer"}
+							onClick={() => setSidebarBottomPanel("explorer")}
+							title="Explorer"
+						>
+							<Folder size={14} />
+						</PanelTab>
+						<PanelTab
+							active={sidebarBottomPanel === "search"}
+							onClick={() => setSidebarBottomPanel("search")}
+							title="Search"
+						>
+							<Search size={14} />
+						</PanelTab>
+					</div>
+
+					{/* Panel content */}
+					<div className="flex-1 min-h-0">
+						{sidebarBottomPanel === "explorer" ? <Explorer /> : <SearchPanel />}
+					</div>
 				</div>
 			</div>
 		</div>
