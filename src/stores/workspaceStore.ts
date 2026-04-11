@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { pty, tabs as tabsApi, workspaces as workspacesApi } from "../lib/ipc";
+import { destroyTerminal } from "../lib/terminalManager";
 import type {
 	PaneNode,
 	PtyStatusType,
@@ -187,9 +188,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	closeWorkspace: async (id) => {
-		// Await import before any cleanup to avoid race with reopen
-		const { destroyTerminal } = await import("../lib/terminalManager");
-
 		const state = get();
 		const workspace = state.workspaces.find((s) => s.id === id);
 		if (!workspace) return;

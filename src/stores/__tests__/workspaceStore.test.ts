@@ -28,6 +28,10 @@ vi.mock("../ptyActivityStore", () => ({
 	},
 }));
 
+vi.mock("../../lib/terminalManager", () => ({
+	destroyTerminal: vi.fn(),
+}));
+
 import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
 import { useWorkspaceStore } from "../workspaceStore";
 
