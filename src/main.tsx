@@ -7,6 +7,11 @@ import "./styles/globals.css";
 
 initNotificationListener();
 
+// Pause all CSS animations when the app is hidden to reduce GPU usage.
+document.addEventListener("visibilitychange", () => {
+	document.documentElement.classList.toggle("app-hidden", document.hidden);
+});
+
 // Block React render until the configured terminal font is fully loaded.
 // createTerminal() also has its own preload as a safety net, but loading the
 // font here means the very first paint of every terminal already has correct

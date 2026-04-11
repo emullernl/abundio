@@ -330,6 +330,7 @@ setTimeout(() => {
 		const activityStore = usePtyActivityStore.getState();
 		for (const [paneId, managed] of instances) {
 			managed.focused = isTerminalView && focusedPaneId === paneId;
+			managed.term.options.cursorBlink = managed.focused;
 			if (managed.focused) {
 				managed.suppressActivity = false;
 				if (managed.ptyId) {
@@ -385,7 +386,7 @@ export async function createTerminal(
 	const term = new Terminal({
 		fontSize: options.fontSize,
 		fontFamily: options.fontFamily,
-		cursorBlink: true,
+		cursorBlink: false,
 		allowProposedApi: true,
 		theme: options.theme,
 	});

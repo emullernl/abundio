@@ -11,7 +11,7 @@ import type {
 // ── Constants ──
 
 export const IDLE_THRESHOLD_MS = 2000;
-const SCAN_INTERVAL_MS = 500;
+const SCAN_INTERVAL_MS = 2000;
 
 // Hot-path optimization: track last output timestamps outside Zustand state
 // to avoid triggering re-renders on every output chunk.
