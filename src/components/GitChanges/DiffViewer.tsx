@@ -14,6 +14,7 @@ interface Props {
 export function DiffViewer({ diff, onBack }: Props) {
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
+	const monacoFontSize = fontSize - 1;
 	const [hideUnchanged, setHideUnchanged] = useState(true);
 
 	const language = detectLanguage(diff.filePath);
@@ -96,7 +97,7 @@ export function DiffViewer({ diff, onBack }: Props) {
 					onMount={handleMount}
 					options={{
 						fontFamily,
-						fontSize,
+						fontSize: monacoFontSize,
 						readOnly: true,
 						minimap: { enabled: false },
 						scrollBeyondLastLine: false,

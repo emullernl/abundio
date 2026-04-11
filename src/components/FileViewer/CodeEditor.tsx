@@ -87,6 +87,7 @@ export function CodeEditor({
 
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
+	const monacoFontSize = fontSize - 1;
 	const monaco = useMonaco();
 
 	// Focus editor when it becomes the active visible tab
@@ -106,8 +107,8 @@ export function CodeEditor({
 
 	// Update font when settings change
 	useEffect(() => {
-		editorRef.current?.updateOptions({ fontFamily, fontSize });
-	}, [fontFamily, fontSize]);
+		editorRef.current?.updateOptions({ fontFamily, fontSize: monacoFontSize });
+	}, [fontFamily, monacoFontSize]);
 
 	// Re-define theme when it might have changed (monaco instance available)
 	useEffect(() => {
@@ -211,7 +212,7 @@ export function CodeEditor({
 				onMount={handleMount}
 				options={{
 					fontFamily,
-					fontSize,
+					fontSize: monacoFontSize,
 					minimap: { enabled: false },
 					scrollBeyondLastLine: false,
 					lineNumbers: "on",
