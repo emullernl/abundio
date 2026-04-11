@@ -235,9 +235,9 @@ export function SearchPanel() {
 				{/* Loading indicator */}
 				{loading && (
 					<div
+						className="shimmer-text"
 						style={{
 							padding: "8px 12px",
-							color: "var(--fg-secondary)",
 							fontSize: 11,
 						}}
 					>

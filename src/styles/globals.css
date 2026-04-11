@@ -290,6 +290,32 @@ body,
 	background: var(--fg-secondary);
 }
 
+/* Shimmer text animation — silver-white gradient sweep */
+@keyframes shimmer {
+	0% {
+		background-position: -200% center;
+	}
+	100% {
+		background-position: 200% center;
+	}
+}
+
+.shimmer-text {
+	background: linear-gradient(
+		90deg,
+		var(--fg-secondary) 0%,
+		var(--fg-secondary) 35%,
+		#ffffff 50%,
+		var(--fg-secondary) 65%,
+		var(--fg-secondary) 100%
+	);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	animation: shimmer 2s ease-in-out infinite;
+}
+
 /* Terminal loader — audio-bar wave */
 @keyframes terminal-bar-wave {
 	0%,
