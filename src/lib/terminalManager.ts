@@ -5,6 +5,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
+import { open } from "@tauri-apps/plugin-shell";
 import {
 	setFocusedPaneIdGetter,
 	setShellCommandRunning,
@@ -397,7 +398,9 @@ export async function createTerminal(
 	term.loadAddon(fitAddon);
 	term.loadAddon(searchAddon);
 	term.loadAddon(serializeAddon);
-	term.loadAddon(new WebLinksAddon());
+	term.loadAddon(new WebLinksAddon((_event, url) => {
+		open(url);
+	}));
 	const unicode11 = new Unicode11Addon();
 	term.loadAddon(unicode11);
 	term.unicode.activeVersion = "11";
