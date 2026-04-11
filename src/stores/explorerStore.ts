@@ -30,6 +30,7 @@ interface ExplorerState {
 	activeFileTabId: string | null;
 	expandedDirs: Record<string, boolean>;
 	dirContents: Record<string, DirEntry[]>;
+	pendingGotoLine: { filePath: string; line: number } | null;
 
 	openFile: (
 		workspaceId: string,
@@ -50,6 +51,9 @@ interface ExplorerState {
 	loadDir: (path: string) => Promise<void>;
 	refreshDirs: (paths: string[]) => Promise<void>;
 	clearWorkspaceFileTabs: (workspaceId: string) => void;
+	setPendingGotoLine: (
+		target: { filePath: string; line: number } | null,
+	) => void;
 }
 
 function buildFileTabsPayload(workspaceId: string): string {
@@ -154,6 +158,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	activeFileTabId: null,
 	expandedDirs: {},
 	dirContents: {},
+	pendingGotoLine: null,
 
 	openFile: async (workspaceId, filePath, editorState) => {
 		// If already open, just activate it
@@ -375,4 +380,6 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			};
 		});
 	},
+
+	setPendingGotoLine: (target) => set({ pendingGotoLine: target }),
 }));

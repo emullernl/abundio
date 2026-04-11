@@ -96,6 +96,8 @@ export function CodeEditor({
 		return sid ? (s.activeView[sid] ?? "terminal") === "file" : false;
 	});
 
+	const pendingGotoLine = useExplorerStore((s) => s.pendingGotoLine);
+
 	useEffect(() => {
 		if (isActive && isFileView && editorRef.current) {
 			const ed = editorRef.current;
@@ -104,6 +106,23 @@ export function CodeEditor({
 			});
 		}
 	}, [isActive, isFileView]);
+
+	// Handle pending go-to-line from search results
+	useEffect(() => {
+		if (!isActive || !isFileView || !pendingGotoLine || !editorRef.current)
+			return;
+		const tab = useExplorerStore
+			.getState()
+			.fileTabs.find((t) => t.id === tabId);
+		if (!tab || tab.filePath !== pendingGotoLine.filePath) return;
+
+		const ed = editorRef.current;
+		const line = pendingGotoLine.line;
+		ed.revealLineInCenter(line);
+		ed.setPosition({ lineNumber: line, column: 1 });
+		ed.focus();
+		useExplorerStore.getState().setPendingGotoLine(null);
+	}, [isActive, isFileView, pendingGotoLine, tabId]);
 
 	// Update font when settings change
 	useEffect(() => {

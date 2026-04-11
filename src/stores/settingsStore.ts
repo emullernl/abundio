@@ -24,6 +24,7 @@ interface SettingsState {
 	activityByteThreshold: number;
 	shellPath: string | null;
 	agents: CodingAgent[];
+	sidebarBottomPanel: "explorer" | "search";
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -44,6 +45,7 @@ interface SettingsState {
 		id: string,
 		updates: Partial<Pick<CodingAgent, "name" | "command" | "args">>,
 	) => void;
+	setSidebarBottomPanel: (panel: "explorer" | "search") => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -152,6 +154,7 @@ export const useSettingsStore = create<SettingsState>()(
 			activityByteThreshold: PERSISTED_DEFAULTS.activityByteThreshold,
 			shellPath: PERSISTED_DEFAULTS.shellPath,
 			agents: PERSISTED_DEFAULTS.agents,
+			sidebarBottomPanel: "explorer",
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -218,6 +221,8 @@ export const useSettingsStore = create<SettingsState>()(
 					agents: s.agents.map((a) => (a.id === id ? { ...a, ...updates } : a)),
 				}));
 			},
+			setSidebarBottomPanel: (sidebarBottomPanel) =>
+				set({ sidebarBottomPanel }),
 		}),
 		{
 			name: "abundio-settings",

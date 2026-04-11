@@ -161,3 +161,21 @@ export interface AvailableShell {
 	available: boolean;
 	isDefault: boolean;
 }
+
+export interface SearchMatch {
+	lineNumber: number;
+	lineContent: string;
+	matchStart: number;
+	matchEnd: number;
+}
+
+export interface SearchFileResult {
+	filePath: string;
+	matches: SearchMatch[];
+}
+
+export interface SearchResult {
+	files: SearchFileResult[];
+	totalMatches: number;
+	truncated: boolean;
+}

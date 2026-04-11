@@ -217,3 +217,57 @@ export function ExternalLink({ size, ...props }: IconProps) {
 		</svg>
 	);
 }
+
+export function Search({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<circle cx="11" cy="11" r="8" />
+			<line x1="21" y1="21" x2="16.65" y2="16.65" />
+		</svg>
+	);
+}
+
+export function CaseSensitive({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M2 15V9a3 3 0 016 0v6" />
+			<path d="M2 12h6" />
+			<path d="M14 12a3 3 0 100 6h0a3 3 0 000-6" />
+			<path d="M20 9v9" />
+		</svg>
+	);
+}
+
+export function WholeWord({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M2 9a3 3 0 016 0v6" />
+			<path d="M2 12h6" />
+			<path d="M12 12a3 3 0 100 6" />
+			<path d="M18 9v9" />
+			<path d="M2 21h20" strokeDasharray="2 2" />
+		</svg>
+	);
+}
+
+export function Regex({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M12 4v8" />
+			<path d="M16.24 7.76l-5.66 5.66" />
+			<path d="M7.76 7.76l5.66 5.66" />
+			<circle cx="12" cy="19" r="2" fill="currentColor" stroke="none" />
+			<path d="M5 19h3M16 19h3" />
+		</svg>
+	);
+}
+
+export function Ellipsis({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+			<circle cx="6" cy="12" r="1" fill="currentColor" stroke="none" />
+			<circle cx="18" cy="12" r="1" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
