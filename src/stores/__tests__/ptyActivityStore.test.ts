@@ -126,14 +126,14 @@ describe("store actions", () => {
 		);
 	});
 
-	it("markIdle still clears waiting state in agent mode", () => {
+	it("markIdle still clears ready state in agent mode", () => {
 		const { initPty, setAgentPty, recordExitSuccess, markIdle } =
 			usePtyActivityStore.getState();
 		initPty("pty-1");
 		setAgentPty("pty-1");
 		recordExitSuccess("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
-			"waiting",
+			"ready",
 		);
 		markIdle("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
@@ -264,13 +264,13 @@ describe("computeWorkspaceDotStatus", () => {
 		).toBe("amber");
 	});
 
-	it("returns orange when any waiting", () => {
+	it("returns orange when any ready", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
 			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
-				{ "pty-1": makeEntry("waiting") },
+				{ "pty-1": makeEntry("ready") },
 				new Set(),
 			),
 		).toBe("purple");
@@ -322,7 +322,7 @@ describe("computeWorkspaceDotStatus", () => {
 		).toBe("red");
 	});
 
-	it("waiting takes priority over active", () => {
+	it("ready takes priority over active", () => {
 		const layout: PaneNode = {
 			type: "split",
 			id: "s",
@@ -336,7 +336,7 @@ describe("computeWorkspaceDotStatus", () => {
 				"s1",
 				[layout],
 				{
-					"pty-1": makeEntry("waiting"),
+					"pty-1": makeEntry("ready"),
 					"pty-2": makeEntry("active"),
 				},
 				new Set(),
@@ -404,10 +404,10 @@ describe("computePtyDotStatus", () => {
 		);
 	});
 
-	it("returns orange for waiting", () => {
-		expect(
-			computePtyDotStatus("pty-1", { "pty-1": makeEntry("waiting") }),
-		).toBe("purple");
+	it("returns orange for ready", () => {
+		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("ready") })).toBe(
+			"purple",
+		);
 	});
 
 	it("returns red for error", () => {
@@ -451,12 +451,12 @@ describe("detection mode", () => {
 		expect(usePtyActivityStore.getState().agentPtyIds.size).toBe(1);
 	});
 
-	it("recordExitSuccess transitions to waiting", () => {
+	it("recordExitSuccess transitions to ready", () => {
 		usePtyActivityStore.getState().initPty("pty-1");
 		usePtyActivityStore.getState().recordOutput("pty-1");
 		usePtyActivityStore.getState().recordExitSuccess("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
-			"waiting",
+			"ready",
 		);
 	});
 
@@ -537,7 +537,7 @@ describe("notifications on state transitions", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("sends notification when transitioning to waiting while app is unfocused", () => {
+	it("sends notification when transitioning to ready while app is unfocused", () => {
 		vi.spyOn(document, "hasFocus").mockReturnValue(false);
 		const { initPty, recordOutput, recordExitSuccess, registerPane, setTitle } =
 			usePtyActivityStore.getState();
@@ -551,7 +551,7 @@ describe("notifications on state transitions", () => {
 
 		expect(mockSendNotification).toHaveBeenCalledWith({
 			title: "Abundio",
-			body: "zsh is waiting for input",
+			body: "zsh is ready",
 		});
 		vi.restoreAllMocks();
 	});
@@ -597,7 +597,7 @@ describe("notifications on state transitions", () => {
 
 		expect(mockSendNotification).toHaveBeenCalledWith({
 			title: "Abundio",
-			body: "Agent is waiting for input",
+			body: "Agent is ready",
 		});
 		vi.restoreAllMocks();
 	});

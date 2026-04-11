@@ -565,7 +565,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					// Critical: the !nowIsAgent guard keeps us from setting
 					// shellCommandRunning=true for the agent's own command_start.
 					// If that flag stays true, the idle scanner will never
-					// transition active → waiting (purple) for the agent.
+					// transition active → ready (purple) for the agent.
 					if (!managed.suppressActivity && !nowIsAgent) {
 						setShellCommandRunning(currentPtyId, true);
 						actState.recordOutput(currentPtyId);
@@ -726,7 +726,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	});
 
 	// A click in an already-focused terminal (e.g. scrolling without typing) should
-	// clear "waiting" → "idle". Focus-changes and keystrokes are handled elsewhere.
+	// clear "ready" → "idle". Focus-changes and keystrokes are handled elsewhere.
 	const onTermClick = () => {
 		if (managed.ptyId) {
 			const actStore = usePtyActivityStore.getState();

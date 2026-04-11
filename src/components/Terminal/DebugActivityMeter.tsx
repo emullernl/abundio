@@ -181,7 +181,7 @@ export function DebugActivityMeter({ paneId }: Props) {
 					color:
 						state === "active"
 							? "#f59e0b"
-							: state === "waiting"
+							: state === "ready"
 								? "#8b5cf6"
 								: state === "error"
 									? "var(--error)"

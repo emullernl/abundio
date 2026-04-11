@@ -91,7 +91,7 @@ export type PtyStatusType =
 	| { type: "running" }
 	| { type: "exited"; code: number | null };
 
-export type PtyActivityState = "idle" | "active" | "waiting" | "error";
+export type PtyActivityState = "idle" | "active" | "ready" | "error";
 
 export type PtyActivityType =
 	| { type: "commandStarted" }
