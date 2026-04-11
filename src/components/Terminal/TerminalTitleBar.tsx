@@ -17,7 +17,7 @@ function usePtyDotStatus(paneId: string): DotStatus {
 		switch (entry.state) {
 			case "active":
 				return "amber";
-			case "waiting":
+			case "ready":
 				return "purple";
 			case "error":
 				return "red";

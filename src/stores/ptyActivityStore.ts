@@ -1,4 +1,6 @@
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
+import { findPaneLocation } from "../lib/notificationRouter";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -25,7 +27,7 @@ export function getLastOutputAt(ptyId: string): number | null {
 }
 
 /** Refresh the last-output timestamp without triggering a Zustand state transition.
- *  Used in agent mode to keep the idle scanner from transitioning "active" → "waiting"
+ *  Used in agent mode to keep the idle scanner from transitioning "active" → "ready"
  *  while output is still flowing but below the byte-accumulation threshold. */
 export function touchLastOutput(ptyId: string, now?: number): void {
 	lastOutputTimestamps.set(ptyId, now ?? Date.now());
@@ -132,7 +134,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			const entry = get().activities[ptyId];
 			if (!entry || entry.state === "idle" || entry.state === "error") return;
 			// Agent mode: never cancel an in-progress "active" state. markIdle
-			// is meant to dismiss "waiting"/"error" alerts the user has
+			// is meant to dismiss "ready"/"error" alerts the user has
 			// acknowledged (focus, click, etc.); for an agent that's still
 			// streaming output, the work hasn't finished yet, so flipping the
 			// dot from amber to green would lie about what's happening.
@@ -177,7 +179,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			set((s) => ({
 				activities: {
 					...s.activities,
-					[ptyId]: { ...s.activities[ptyId], state: "waiting" },
+					[ptyId]: { ...s.activities[ptyId], state: "ready" },
 				},
 			}));
 		},
@@ -303,7 +305,7 @@ setInterval(() => {
 
 	const focusedPaneId = _getFocusedPaneId?.() ?? null;
 	// If the getter hasn't been injected yet, treat every pane as focused
-	// so we don't spam "waiting" transitions during startup.
+	// so we don't spam "ready" transitions during startup.
 	const focusGetterReady = _getFocusedPaneId !== null;
 	const appHasFocus = typeof document !== "undefined" && document.hasFocus();
 
@@ -319,10 +321,10 @@ setInterval(() => {
 			const isFocused =
 				!focusGetterReady ||
 				(appHasFocus && paneId != null && focusedPaneId === paneId);
-			// Agent mode always goes to "waiting" — the agent finished work and
-			// is waiting for user input, even when the terminal has focus.
+			// Agent mode always goes to "ready" — the agent finished work and
+			// is ready for user input, even when the terminal has focus.
 			const nextState =
-				isFocused && entry.detectionMode !== "agent" ? "idle" : "waiting";
+				isFocused && entry.detectionMode !== "agent" ? "idle" : "ready";
 			updates[ptyId] = {
 				...entry,
 				state: nextState,
@@ -337,6 +339,52 @@ setInterval(() => {
 		}));
 	}
 }, SCAN_INTERVAL_MS);
+
+// ── Notifications for state transitions ──
+
+usePtyActivityStore.subscribe((state, prevState) => {
+	if (typeof document !== "undefined" && document.hasFocus()) return;
+
+	const { activities, titles, panePtyMap } = state;
+	const prevActivities = prevState.activities;
+
+	for (const [ptyId, entry] of Object.entries(activities)) {
+		const prevEntry = prevActivities[ptyId];
+		if (!prevEntry || prevEntry.state === entry.state) continue;
+
+		if (entry.state === "ready" || entry.state === "error") {
+			const paneId = Object.entries(panePtyMap).find(
+				([, pid]) => pid === ptyId,
+			)?.[0];
+			const title = paneId ? titles[paneId] : undefined;
+			const label =
+				title || (entry.detectionMode === "agent" ? "Agent" : "Terminal");
+			const body =
+				entry.state === "error"
+					? `${label} encountered an error`
+					: `${label} is ready`;
+
+			const location = paneId ? findPaneLocation(paneId) : null;
+			try {
+				sendNotification({
+					title: "Abundio",
+					body,
+					extra:
+						location && paneId
+							? {
+									type: "pty",
+									paneId,
+									workspaceId: location.workspaceId,
+									tabId: location.tabId,
+								}
+							: { type: "pty" },
+				});
+			} catch {
+				// Notifications may not be permitted
+			}
+		}
+	}
+});
 
 // ── Helpers ──
 
@@ -377,7 +425,7 @@ export function computeWorkspaceDotStatus(
 	const entries = allPtyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "waiting")) return "purple";
+	if (entries.some((e) => e.state === "ready")) return "purple";
 	if (entries.some((e) => e.state === "active")) return "amber";
 
 	if (openedWorkspaceIds.has(workspaceId)) return "green";
@@ -402,7 +450,7 @@ export function computeTabDotStatus(
 	const entries = ptyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "waiting")) return "purple";
+	if (entries.some((e) => e.state === "ready")) return "purple";
 	if (entries.some((e) => e.state === "active")) return "amber";
 
 	// Tabs are only shown for the active workspace — default to green
@@ -419,7 +467,7 @@ export function computePtyDotStatus(
 	switch (entry.state) {
 		case "active":
 			return "amber";
-		case "waiting":
+		case "ready":
 			return "purple";
 		case "error":
 			return "red";

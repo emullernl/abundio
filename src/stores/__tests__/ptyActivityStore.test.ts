@@ -1,3 +1,4 @@
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode, Tab } from "../../lib/types";
 import {
@@ -10,6 +11,17 @@ import {
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
+
+vi.mock("@tauri-apps/plugin-notification", () => ({
+	sendNotification: vi.fn(),
+}));
+
+vi.mock("../../lib/notificationRouter", () => ({
+	findPaneLocation: vi.fn(() => ({
+		workspaceId: "ws-1",
+		tabId: "tab-1",
+	})),
+}));
 
 function resetStore() {
 	usePtyActivityStore.setState({
@@ -121,14 +133,14 @@ describe("store actions", () => {
 		);
 	});
 
-	it("markIdle still clears waiting state in agent mode", () => {
+	it("markIdle still clears ready state in agent mode", () => {
 		const { initPty, setAgentPty, recordExitSuccess, markIdle } =
 			usePtyActivityStore.getState();
 		initPty("pty-1");
 		setAgentPty("pty-1");
 		recordExitSuccess("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
-			"waiting",
+			"ready",
 		);
 		markIdle("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
@@ -259,13 +271,13 @@ describe("computeWorkspaceDotStatus", () => {
 		).toBe("amber");
 	});
 
-	it("returns orange when any waiting", () => {
+	it("returns orange when any ready", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
 			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
-				{ "pty-1": makeEntry("waiting") },
+				{ "pty-1": makeEntry("ready") },
 				new Set(),
 			),
 		).toBe("purple");
@@ -317,7 +329,7 @@ describe("computeWorkspaceDotStatus", () => {
 		).toBe("red");
 	});
 
-	it("waiting takes priority over active", () => {
+	it("ready takes priority over active", () => {
 		const layout: PaneNode = {
 			type: "split",
 			id: "s",
@@ -331,7 +343,7 @@ describe("computeWorkspaceDotStatus", () => {
 				"s1",
 				[layout],
 				{
-					"pty-1": makeEntry("waiting"),
+					"pty-1": makeEntry("ready"),
 					"pty-2": makeEntry("active"),
 				},
 				new Set(),
@@ -399,10 +411,10 @@ describe("computePtyDotStatus", () => {
 		);
 	});
 
-	it("returns orange for waiting", () => {
-		expect(
-			computePtyDotStatus("pty-1", { "pty-1": makeEntry("waiting") }),
-		).toBe("purple");
+	it("returns orange for ready", () => {
+		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("ready") })).toBe(
+			"purple",
+		);
 	});
 
 	it("returns red for error", () => {
@@ -446,12 +458,12 @@ describe("detection mode", () => {
 		expect(usePtyActivityStore.getState().agentPtyIds.size).toBe(1);
 	});
 
-	it("recordExitSuccess transitions to waiting", () => {
+	it("recordExitSuccess transitions to ready", () => {
 		usePtyActivityStore.getState().initPty("pty-1");
 		usePtyActivityStore.getState().recordOutput("pty-1");
 		usePtyActivityStore.getState().recordExitSuccess("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
-			"waiting",
+			"ready",
 		);
 	});
 
@@ -503,6 +515,111 @@ describe("detection mode", () => {
 		usePtyActivityStore.getState().setAgentPty("pty-1");
 		usePtyActivityStore.getState().removePty("pty-1");
 		expect(usePtyActivityStore.getState().agentPtyIds.has("pty-1")).toBe(false);
+	});
+});
+
+describe("notifications on state transitions", () => {
+	const mockSendNotification = vi.mocked(sendNotification);
+
+	beforeEach(() => {
+		mockSendNotification.mockClear();
+	});
+
+	it("sends notification when transitioning to error while app is unfocused", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		const { initPty, recordOutput, recordError, registerPane, setTitle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		registerPane("pane-1", "pty-1");
+		setTitle("pane-1", "bash");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordError("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith({
+			title: "Abundio",
+			body: "bash encountered an error",
+			extra: {
+				type: "pty",
+				paneId: "pane-1",
+				workspaceId: "ws-1",
+				tabId: "tab-1",
+			},
+		});
+		vi.restoreAllMocks();
+	});
+
+	it("sends notification when transitioning to ready while app is unfocused", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		const { initPty, recordOutput, recordExitSuccess, registerPane, setTitle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		registerPane("pane-1", "pty-1");
+		setTitle("pane-1", "zsh");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordExitSuccess("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith({
+			title: "Abundio",
+			body: "zsh is ready",
+			extra: {
+				type: "pty",
+				paneId: "pane-1",
+				workspaceId: "ws-1",
+				tabId: "tab-1",
+			},
+		});
+		vi.restoreAllMocks();
+	});
+
+	it("does not send notification when app is focused", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		const { initPty, recordOutput, recordError } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordError("pty-1");
+
+		expect(mockSendNotification).not.toHaveBeenCalled();
+		vi.restoreAllMocks();
+	});
+
+	it("does not send notification when state does not change", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		const { initPty, recordError } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordError("pty-1");
+		mockSendNotification.mockClear();
+
+		// Record error again — state is already "error", no transition
+		recordError("pty-1");
+
+		expect(mockSendNotification).not.toHaveBeenCalled();
+		vi.restoreAllMocks();
+	});
+
+	it("uses agent label when no title is available", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		const { initPty, setAgentPty, recordOutput, recordExitSuccess } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordExitSuccess("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith({
+			title: "Abundio",
+			body: "Agent is ready",
+			extra: { type: "pty" },
+		});
+		vi.restoreAllMocks();
 	});
 });
 

@@ -1,8 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
+import { initNotificationListener } from "./lib/notificationRouter";
 import { primaryFontFamily } from "./lib/terminalManager";
 import "./styles/globals.css";
+
+initNotificationListener();
 
 // Block React render until the configured terminal font is fully loaded.
 // createTerminal() also has its own preload as a safety net, but loading the
