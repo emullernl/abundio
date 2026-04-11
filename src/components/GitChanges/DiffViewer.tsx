@@ -1,17 +1,7 @@
-import {
-	defaultHighlightStyle,
-	syntaxHighlighting,
-} from "@codemirror/language";
-import { MergeView } from "@codemirror/merge";
-import { EditorState, type Extension } from "@codemirror/state";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { EditorView, lineNumbers } from "@codemirror/view";
-import { useEffect, useRef, useState } from "react";
-import {
-	abundioTheme,
-	detectLanguage,
-	getLanguageExtension,
-} from "../../lib/codemirrorShared";
+import { DiffEditor, type Monaco } from "@monaco-editor/react";
+import { useCallback, useState } from "react";
+import { defineAbundioTheme, detectLanguage } from "../../lib/monacoShared";
+import { setMonacoInstance } from "../../lib/themes";
 import type { GitFileDiff } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ArrowLeft } from "../Icons";
@@ -21,106 +11,18 @@ interface Props {
 	onBack: () => void;
 }
 
-const diffTheme = EditorView.theme({
-	"&": {
-		height: "100%",
-	},
-	".cm-scroller": {
-		overflow: "auto",
-	},
-	".cm-changedLine": {
-		backgroundColor:
-			"color-mix(in srgb, var(--warning) 8%, transparent) !important",
-	},
-	".cm-changedText": {
-		backgroundColor:
-			"color-mix(in srgb, var(--warning) 20%, transparent) !important",
-	},
-	".cm-insertedLine": {
-		backgroundColor:
-			"color-mix(in srgb, var(--success) 8%, transparent) !important",
-	},
-	".cm-insertedText": {
-		backgroundColor:
-			"color-mix(in srgb, var(--success) 20%, transparent) !important",
-	},
-	".cm-deletedLine": {
-		backgroundColor:
-			"color-mix(in srgb, var(--error) 8%, transparent) !important",
-	},
-	".cm-deletedText": {
-		backgroundColor:
-			"color-mix(in srgb, var(--error) 20%, transparent) !important",
-	},
-	".cm-mergeViewGutter": {
-		backgroundColor: "var(--bg-secondary)",
-	},
-});
-
 export function DiffViewer({ diff, onBack }: Props) {
-	const containerRef = useRef<HTMLDivElement>(null);
-	const viewRef = useRef<MergeView | null>(null);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
-	const orientation = "a-b" as const;
-	const [collapseUnchanged, setCollapseUnchanged] = useState(true);
-	const [langExt, setLangExt] = useState<Extension[] | null>(null);
+	const [hideUnchanged, setHideUnchanged] = useState(true);
 
 	const language = detectLanguage(diff.filePath);
 
-	// Load language extension asynchronously
-	useEffect(() => {
-		let cancelled = false;
-		setLangExt(null);
-		getLanguageExtension(language).then((ext) => {
-			if (!cancelled) setLangExt(ext);
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [language]);
-
-	// Build the MergeView once language is loaded (or resolved to empty)
-	useEffect(() => {
-		if (langExt === null || !containerRef.current) return;
-		const container = containerRef.current;
-		container.innerHTML = "";
-
-		const baseExtensions = [
-			lineNumbers(),
-			syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-			oneDark,
-			abundioTheme,
-			diffTheme,
-			EditorState.readOnly.of(true),
-			EditorView.editable.of(false),
-			...langExt,
-		];
-
-		const view = new MergeView({
-			a: {
-				doc: diff.original,
-				extensions: [...baseExtensions],
-			},
-			b: {
-				doc: diff.modified,
-				extensions: [...baseExtensions],
-			},
-			parent: container,
-			orientation,
-			collapseUnchanged: collapseUnchanged
-				? { margin: 3, minSize: 4 }
-				: undefined,
-			highlightChanges: true,
-			gutter: true,
-		});
-		viewRef.current = view;
-
-		return () => {
-			view.destroy();
-			viewRef.current = null;
-		};
-	}, [diff.original, diff.modified, langExt, orientation, collapseUnchanged]);
+	const handleMount = useCallback((_editor: unknown, m: Monaco) => {
+		defineAbundioTheme(m);
+		m.editor.setTheme("abundio");
+		setMonacoInstance(m);
+	}, []);
 
 	const fileName = diff.filePath.split("/").pop() ?? diff.filePath;
 
@@ -167,14 +69,12 @@ export function DiffViewer({ diff, onBack }: Props) {
 				>
 					<button
 						type="button"
-						onClick={() => setCollapseUnchanged((v) => !v)}
+						onClick={() => setHideUnchanged((v) => !v)}
 						className="px-2 py-0.5 transition-colors"
 						style={{
 							fontSize: 10,
-							color: collapseUnchanged
-								? "var(--accent)"
-								: "var(--fg-secondary)",
-							backgroundColor: collapseUnchanged
+							color: hideUnchanged ? "var(--accent)" : "var(--fg-secondary)",
+							backgroundColor: hideUnchanged
 								? "var(--bg-tertiary)"
 								: "transparent",
 						}}
@@ -184,17 +84,37 @@ export function DiffViewer({ diff, onBack }: Props) {
 				</div>
 			</div>
 			<div
-				ref={containerRef}
 				className="flex-1 min-h-0"
-				style={
-					{
-						backgroundColor: "var(--bg-primary)",
-						overflow: "auto",
-						"--cm-font-size": `${fontSize}px`,
-						"--cm-font-family": fontFamily,
-					} as React.CSSProperties
-				}
-			/>
+				style={{ backgroundColor: "var(--bg-primary)" }}
+			>
+				<DiffEditor
+					height="100%"
+					language={language}
+					original={diff.original}
+					modified={diff.modified}
+					theme="abundio"
+					onMount={handleMount}
+					options={{
+						fontFamily,
+						fontSize,
+						readOnly: true,
+						minimap: { enabled: false },
+						scrollBeyondLastLine: false,
+						renderSideBySide: true,
+						automaticLayout: true,
+						lineNumbers: "on",
+						overviewRulerLanes: 0,
+						padding: { top: 8 },
+						hideUnchangedRegions: {
+							enabled: hideUnchanged,
+						},
+						scrollbar: {
+							verticalScrollbarSize: 10,
+							horizontalScrollbarSize: 10,
+						},
+					}}
+				/>
+			</div>
 		</div>
 	);
 }
