@@ -19,7 +19,7 @@ function TerminalLoader({ paneId }: { paneId: string }) {
 				setVisible(false);
 				clearInterval(interval);
 			}
-		}, 80);
+		}, 250);
 
 		// Safety net: hide loader after 5s even if ready never fires
 		const timeout = setTimeout(() => {

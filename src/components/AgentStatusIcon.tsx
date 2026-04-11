@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { AlertTriangle, Check, Circle, Moon } from "lucide-react";
 import { memo } from "react";
 import type { DotStatus } from "../stores/ptyActivityStore";
@@ -33,14 +32,11 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 					className="flex-shrink-0 overflow-hidden relative"
 					style={{ width: size, height: size }}
 				>
-					<motion.div
+					<div
 						className="absolute inset-y-0 bg-gradient-to-r from-transparent via-amber-500/20 to-amber-400/90 border-r border-amber-300 shadow-[1px_0_4px_rgba(251,191,36,0.6)]"
-						style={{ width: size }}
-						animate={{ x: [-(size + 2), size] }}
-						transition={{
-							duration: 1.2,
-							repeat: Number.POSITIVE_INFINITY,
-							ease: "linear",
+						style={{
+							width: size,
+							animation: "agent-amber-slide 1.2s linear infinite",
 						}}
 					/>
 				</div>
@@ -48,32 +44,26 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 
 		case "purple":
 			return (
-				<motion.div
+				<div
 					className="flex-shrink-0 text-purple-400 drop-shadow-[0_0_3px_rgba(168,85,247,0.4)]"
-					animate={{ y: [0, -2, 0] }}
-					transition={{
-						duration: 1,
-						repeat: Number.POSITIVE_INFINITY,
-						ease: "easeInOut",
+					style={{
+						animation: "agent-purple-bounce 1s ease-in-out infinite",
 					}}
 				>
 					<Check size={size} strokeWidth={2.5} />
-				</motion.div>
+				</div>
 			);
 
 		case "red":
 			return (
-				<motion.div
+				<div
 					className="flex-shrink-0 text-rose-500 drop-shadow-[0_0_4px_rgba(244,63,94,0.6)]"
-					animate={{ x: [-1, 1, -1, 1, 0] }}
-					transition={{
-						duration: 0.4,
-						repeat: Number.POSITIVE_INFINITY,
-						repeatDelay: 2,
+					style={{
+						animation: "agent-red-shake 2.4s ease-in-out infinite",
 					}}
 				>
 					<AlertTriangle size={size} strokeWidth={2.5} />
-				</motion.div>
+				</div>
 			);
 	}
 });

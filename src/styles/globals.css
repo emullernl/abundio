@@ -316,6 +316,53 @@ body,
 	animation: shimmer 2s ease-in-out infinite;
 }
 
+/* Pause all animations when the app is not visible to save GPU cycles */
+.app-hidden *,
+.app-hidden *::before,
+.app-hidden *::after {
+	animation-play-state: paused !important;
+}
+
+/* Agent status icon animations — GPU-composited via transform */
+@keyframes agent-amber-slide {
+	0% {
+		transform: translateX(calc(-100% - 2px));
+	}
+	100% {
+		transform: translateX(100%);
+	}
+}
+
+@keyframes agent-purple-bounce {
+	0%,
+	100% {
+		transform: translateY(0);
+	}
+	50% {
+		transform: translateY(-2px);
+	}
+}
+
+@keyframes agent-red-shake {
+	/* Shake phase: 0–16.7% of 2.4s cycle (≈0.4s) */
+	0% {
+		transform: translateX(-1px);
+	}
+	4.2% {
+		transform: translateX(1px);
+	}
+	8.3% {
+		transform: translateX(-1px);
+	}
+	12.5% {
+		transform: translateX(1px);
+	}
+	16.7%,
+	100% {
+		transform: translateX(0);
+	}
+}
+
 /* Terminal loader — audio-bar wave */
 @keyframes terminal-bar-wave {
 	0%,
