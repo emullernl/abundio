@@ -16,6 +16,13 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 	sendNotification: vi.fn(),
 }));
 
+vi.mock("../../lib/notificationRouter", () => ({
+	findPaneLocation: vi.fn(() => ({
+		workspaceId: "ws-1",
+		tabId: "tab-1",
+	})),
+}));
+
 function resetStore() {
 	usePtyActivityStore.setState({
 		activities: {},
@@ -533,6 +540,12 @@ describe("notifications on state transitions", () => {
 		expect(mockSendNotification).toHaveBeenCalledWith({
 			title: "Abundio",
 			body: "bash encountered an error",
+			extra: {
+				type: "pty",
+				paneId: "pane-1",
+				workspaceId: "ws-1",
+				tabId: "tab-1",
+			},
 		});
 		vi.restoreAllMocks();
 	});
@@ -552,6 +565,12 @@ describe("notifications on state transitions", () => {
 		expect(mockSendNotification).toHaveBeenCalledWith({
 			title: "Abundio",
 			body: "zsh is ready",
+			extra: {
+				type: "pty",
+				paneId: "pane-1",
+				workspaceId: "ws-1",
+				tabId: "tab-1",
+			},
 		});
 		vi.restoreAllMocks();
 	});
@@ -598,6 +617,7 @@ describe("notifications on state transitions", () => {
 		expect(mockSendNotification).toHaveBeenCalledWith({
 			title: "Abundio",
 			body: "Agent is ready",
+			extra: { type: "pty" },
 		});
 		vi.restoreAllMocks();
 	});

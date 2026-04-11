@@ -1,5 +1,6 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
+import { findPaneLocation } from "../lib/notificationRouter";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -363,8 +364,21 @@ usePtyActivityStore.subscribe((state, prevState) => {
 					? `${label} encountered an error`
 					: `${label} is ready`;
 
+			const location = paneId ? findPaneLocation(paneId) : null;
 			try {
-				sendNotification({ title: "Abundio", body });
+				sendNotification({
+					title: "Abundio",
+					body,
+					extra:
+						location && paneId
+							? {
+									type: "pty",
+									paneId,
+									workspaceId: location.workspaceId,
+									tabId: location.tabId,
+								}
+							: { type: "pty" },
+				});
 			} catch {
 				// Notifications may not be permitted
 			}

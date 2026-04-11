@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { gh } from "../lib/ipc";
 import type { GhStatus, PullRequest } from "../lib/types";
+import { useWorkspaceStore } from "./workspaceStore";
 
 export type ReviewView = "review-all" | "review-repo";
 export type MyPrsView = "mine-all" | "mine-repo";
@@ -249,9 +250,17 @@ usePrStore.subscribe((state, prevState) => {
 		}
 	}
 
+	const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
 	for (const body of notifications) {
 		try {
-			sendNotification({ title: "Abundio", body });
+			sendNotification({
+				title: "Abundio",
+				body,
+				extra: {
+					type: "pr",
+					...(activeWorkspaceId && { workspaceId: activeWorkspaceId }),
+				},
+			});
 		} catch {
 			// Notifications may not be permitted
 		}

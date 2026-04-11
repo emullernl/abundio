@@ -22,6 +22,7 @@ import {
 	resetPrNotificationState,
 	usePrStore,
 } from "../prStore";
+import { useWorkspaceStore } from "../workspaceStore";
 
 const mockSendNotification = vi.mocked(sendNotification);
 
@@ -63,6 +64,7 @@ beforeEach(() => {
 		myPrsView: "mine-all",
 		myPrs: { prs: [], loading: false, error: null },
 	});
+	useWorkspaceStore.setState({ activeWorkspaceId: "ws-1" });
 });
 
 describe("prStore", () => {
@@ -278,6 +280,7 @@ describe("prStore", () => {
 			expect(mockSendNotification).toHaveBeenCalledWith({
 				title: "Abundio",
 				body: "Review requested: New PR (#2)",
+				extra: { type: "pr", workspaceId: "ws-1" },
 			});
 		});
 
@@ -293,6 +296,7 @@ describe("prStore", () => {
 			expect(mockSendNotification).toHaveBeenCalledWith({
 				title: "Abundio",
 				body: "#10 My PR — approved",
+				extra: { type: "pr", workspaceId: "ws-1" },
 			});
 		});
 
@@ -312,6 +316,7 @@ describe("prStore", () => {
 			expect(mockSendNotification).toHaveBeenCalledWith({
 				title: "Abundio",
 				body: "#10 My PR — has changes requested",
+				extra: { type: "pr", workspaceId: "ws-1" },
 			});
 		});
 
@@ -335,6 +340,7 @@ describe("prStore", () => {
 			expect(mockSendNotification).toHaveBeenCalledWith({
 				title: "Abundio",
 				body: "#5 CI PR — CI passed",
+				extra: { type: "pr", workspaceId: "ws-1" },
 			});
 		});
 
@@ -358,6 +364,7 @@ describe("prStore", () => {
 			expect(mockSendNotification).toHaveBeenCalledWith({
 				title: "Abundio",
 				body: "#5 CI PR — CI failed",
+				extra: { type: "pr", workspaceId: "ws-1" },
 			});
 		});
 
