@@ -1,3 +1,4 @@
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { gh } from "../lib/ipc";
@@ -139,3 +140,120 @@ export const usePrStore = create<PrState>()(
 		},
 	),
 );
+
+// ── PR state change notifications ──
+
+function prKey(pr: PullRequest): string {
+	return `${pr.repository}#${pr.number}`;
+}
+
+function buildPrMap(prs: PullRequest[]): Map<string, PullRequest> {
+	const map = new Map<string, PullRequest>();
+	for (const pr of prs) {
+		map.set(prKey(pr), pr);
+	}
+	return map;
+}
+
+let reviewHasLoaded = false;
+let myPrsHasLoaded = false;
+let skipNextReviewLoad = false;
+let skipNextMyPrsLoad = false;
+
+export function resetPrNotificationState() {
+	reviewHasLoaded = false;
+	myPrsHasLoaded = false;
+	skipNextReviewLoad = false;
+	skipNextMyPrsLoad = false;
+}
+
+usePrStore.subscribe((state, prevState) => {
+	// Reset loaded flags when store is cleared
+	if (
+		state.review.prs.length === 0 &&
+		!state.review.loading &&
+		state.myPrs.prs.length === 0 &&
+		!state.myPrs.loading &&
+		(prevState.review.prs.length > 0 || prevState.myPrs.prs.length > 0)
+	) {
+		reviewHasLoaded = false;
+		myPrsHasLoaded = false;
+		return;
+	}
+
+	// Track view changes — skip the next load after a view switch
+	if (prevState.reviewView !== state.reviewView) {
+		skipNextReviewLoad = true;
+	}
+	if (prevState.myPrsView !== state.myPrsView) {
+		skipNextMyPrsLoad = true;
+	}
+
+	if (typeof document !== "undefined" && document.hasFocus()) return;
+
+	const notifications: string[] = [];
+
+	// ── Review PRs: detect new review requests ──
+	const reviewJustLoaded = prevState.review.loading && !state.review.loading;
+	if (reviewJustLoaded) {
+		if (!reviewHasLoaded) {
+			reviewHasLoaded = true;
+		} else if (skipNextReviewLoad) {
+			skipNextReviewLoad = false;
+		} else {
+			const prevKeys = new Set(prevState.review.prs.map(prKey));
+			for (const pr of state.review.prs) {
+				if (!prevKeys.has(prKey(pr))) {
+					notifications.push(`Review requested: ${pr.title} (#${pr.number})`);
+				}
+			}
+		}
+	}
+
+	// ── My PRs: detect state transitions on existing PRs ──
+	const myPrsJustLoaded = prevState.myPrs.loading && !state.myPrs.loading;
+	if (myPrsJustLoaded) {
+		if (!myPrsHasLoaded) {
+			myPrsHasLoaded = true;
+		} else if (skipNextMyPrsLoad) {
+			skipNextMyPrsLoad = false;
+		} else {
+			const prevMap = buildPrMap(prevState.myPrs.prs);
+			for (const pr of state.myPrs.prs) {
+				const prev = prevMap.get(prKey(pr));
+				if (!prev) continue; // New PR in my list — skip per requirements
+
+				if (prev.reviewDecision !== pr.reviewDecision && pr.reviewDecision) {
+					const label =
+						pr.reviewDecision === "APPROVED"
+							? "approved"
+							: pr.reviewDecision === "CHANGES_REQUESTED"
+								? "has changes requested"
+								: `review: ${pr.reviewDecision.toLowerCase()}`;
+					notifications.push(`#${pr.number} ${pr.title} — ${label}`);
+				}
+
+				if (
+					prev.statusCheckRollup !== pr.statusCheckRollup &&
+					pr.statusCheckRollup
+				) {
+					const label =
+						pr.statusCheckRollup === "SUCCESS"
+							? "CI passed"
+							: pr.statusCheckRollup === "FAILURE"
+								? "CI failed"
+								: `CI: ${pr.statusCheckRollup.toLowerCase()}`;
+					notifications.push(`#${pr.number} ${pr.title} — ${label}`);
+				}
+			}
+		}
+	}
+
+	for (const body of notifications) {
+		try {
+			sendNotification({ title: "Abundio", body });
+		} catch {
+			// Notifications may not be permitted
+		}
+	}
+});

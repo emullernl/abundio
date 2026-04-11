@@ -1,4 +1,9 @@
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@tauri-apps/plugin-notification", () => ({
+	sendNotification: vi.fn(),
+}));
 
 vi.mock("../../lib/ipc", () => ({
 	gh: {
@@ -12,7 +17,13 @@ vi.mock("../../lib/ipc", () => ({
 
 import { gh } from "../../lib/ipc";
 import type { GhStatus, PullRequest } from "../../lib/types";
-import { PR_VIEW_LABELS, usePrStore } from "../prStore";
+import {
+	PR_VIEW_LABELS,
+	resetPrNotificationState,
+	usePrStore,
+} from "../prStore";
+
+const mockSendNotification = vi.mocked(sendNotification);
 
 const mockGh = vi.mocked(gh);
 
@@ -44,6 +55,7 @@ const makePr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	resetPrNotificationState();
 	usePrStore.setState({
 		ghStatus: null,
 		reviewView: "review-all",
@@ -221,6 +233,187 @@ describe("prStore", () => {
 				loading: false,
 				error: null,
 			});
+		});
+	});
+
+	describe("PR notifications", () => {
+		// Helper to simulate a loading -> loaded transition
+		function simulateReviewLoad(prs: PullRequest[]) {
+			usePrStore.setState((s) => ({
+				review: { ...s.review, loading: true },
+			}));
+			usePrStore.setState({
+				review: { prs, loading: false, error: null },
+			});
+		}
+
+		function simulateMyPrsLoad(prs: PullRequest[]) {
+			usePrStore.setState((s) => ({
+				myPrs: { ...s.myPrs, loading: true },
+			}));
+			usePrStore.setState({
+				myPrs: { prs, loading: false, error: null },
+			});
+		}
+
+		beforeEach(() => {
+			vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		});
+
+		it("does not notify on first load", () => {
+			simulateReviewLoad([makePr({ number: 1 })]);
+			simulateMyPrsLoad([makePr({ number: 2 })]);
+
+			expect(mockSendNotification).not.toHaveBeenCalled();
+		});
+
+		it("notifies on new review-requested PR", () => {
+			simulateReviewLoad([makePr({ number: 1, title: "First PR" })]);
+
+			simulateReviewLoad([
+				makePr({ number: 1, title: "First PR" }),
+				makePr({ number: 2, title: "New PR" }),
+			]);
+
+			expect(mockSendNotification).toHaveBeenCalledWith({
+				title: "Abundio",
+				body: "Review requested: New PR (#2)",
+			});
+		});
+
+		it("notifies when reviewDecision changes on my PR", () => {
+			simulateMyPrsLoad([
+				makePr({ number: 10, title: "My PR", reviewDecision: "" }),
+			]);
+
+			simulateMyPrsLoad([
+				makePr({ number: 10, title: "My PR", reviewDecision: "APPROVED" }),
+			]);
+
+			expect(mockSendNotification).toHaveBeenCalledWith({
+				title: "Abundio",
+				body: "#10 My PR — approved",
+			});
+		});
+
+		it("notifies when reviewDecision changes to CHANGES_REQUESTED", () => {
+			simulateMyPrsLoad([
+				makePr({ number: 10, title: "My PR", reviewDecision: "" }),
+			]);
+
+			simulateMyPrsLoad([
+				makePr({
+					number: 10,
+					title: "My PR",
+					reviewDecision: "CHANGES_REQUESTED",
+				}),
+			]);
+
+			expect(mockSendNotification).toHaveBeenCalledWith({
+				title: "Abundio",
+				body: "#10 My PR — has changes requested",
+			});
+		});
+
+		it("notifies when CI status changes on my PR", () => {
+			simulateMyPrsLoad([
+				makePr({
+					number: 5,
+					title: "CI PR",
+					statusCheckRollup: "PENDING",
+				}),
+			]);
+
+			simulateMyPrsLoad([
+				makePr({
+					number: 5,
+					title: "CI PR",
+					statusCheckRollup: "SUCCESS",
+				}),
+			]);
+
+			expect(mockSendNotification).toHaveBeenCalledWith({
+				title: "Abundio",
+				body: "#5 CI PR — CI passed",
+			});
+		});
+
+		it("notifies CI failed", () => {
+			simulateMyPrsLoad([
+				makePr({
+					number: 5,
+					title: "CI PR",
+					statusCheckRollup: "PENDING",
+				}),
+			]);
+
+			simulateMyPrsLoad([
+				makePr({
+					number: 5,
+					title: "CI PR",
+					statusCheckRollup: "FAILURE",
+				}),
+			]);
+
+			expect(mockSendNotification).toHaveBeenCalledWith({
+				title: "Abundio",
+				body: "#5 CI PR — CI failed",
+			});
+		});
+
+		it("does not notify for new PRs appearing in my PRs list", () => {
+			simulateMyPrsLoad([makePr({ number: 10, title: "Existing" })]);
+
+			simulateMyPrsLoad([
+				makePr({ number: 10, title: "Existing" }),
+				makePr({ number: 11, title: "Brand New" }),
+			]);
+
+			expect(mockSendNotification).not.toHaveBeenCalled();
+		});
+
+		it("does not notify when app is focused", () => {
+			vi.spyOn(document, "hasFocus").mockReturnValue(true);
+
+			simulateReviewLoad([makePr({ number: 1 })]);
+			simulateReviewLoad([
+				makePr({ number: 1 }),
+				makePr({ number: 2, title: "New" }),
+			]);
+
+			expect(mockSendNotification).not.toHaveBeenCalled();
+		});
+
+		it("does not notify when review view changes", () => {
+			simulateReviewLoad([makePr({ number: 1 })]);
+
+			// Change view, then fetch (separate setState calls, like the real code)
+			usePrStore.setState({ reviewView: "review-repo" as const });
+			usePrStore.setState((s) => ({
+				review: { ...s.review, loading: true },
+			}));
+			usePrStore.setState({
+				review: {
+					prs: [makePr({ number: 99, title: "Repo Only" })],
+					loading: false,
+					error: null,
+				},
+			});
+
+			expect(mockSendNotification).not.toHaveBeenCalled();
+		});
+
+		it("resets notification state on clear so next load does not notify", () => {
+			simulateReviewLoad([makePr({ number: 1 })]);
+			simulateMyPrsLoad([makePr({ number: 2 })]);
+
+			// Clear (workspace switch)
+			usePrStore.getState().clear();
+
+			// Next load should be treated as first load — no notification
+			simulateReviewLoad([makePr({ number: 99, title: "After Clear" })]);
+
+			expect(mockSendNotification).not.toHaveBeenCalled();
 		});
 	});
 });
