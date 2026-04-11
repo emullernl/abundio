@@ -67,6 +67,73 @@ function SidebarDivider({
 	);
 }
 
+const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_DEFAULT_WIDTH = 280;
+
+function SidebarEdgeHandle({
+	onResize,
+	onResizeEnd,
+}: {
+	onResize: (width: number) => void;
+	onResizeEnd: () => void;
+}) {
+	const onResizeEndRef = useRef(onResizeEnd);
+	onResizeEndRef.current = onResizeEnd;
+
+	const handleMouseDown = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			document.body.classList.add("dragging");
+
+			const startX = e.clientX;
+			const sidebar = (e.target as HTMLElement).parentElement;
+			if (!sidebar) return;
+			const startWidth = sidebar.getBoundingClientRect().width;
+
+			function onMouseMove(e: MouseEvent) {
+				const newWidth = Math.max(
+					SIDEBAR_MIN_WIDTH,
+					Math.min(SIDEBAR_MAX_WIDTH, startWidth + (e.clientX - startX)),
+				);
+				onResize(newWidth);
+			}
+
+			function onMouseUp() {
+				document.body.classList.remove("dragging");
+				document.removeEventListener("mousemove", onMouseMove);
+				document.removeEventListener("mouseup", onMouseUp);
+				onResizeEndRef.current();
+			}
+
+			document.addEventListener("mousemove", onMouseMove);
+			document.addEventListener("mouseup", onMouseUp);
+		},
+		[onResize],
+	);
+
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for sidebar width resize
+		<div
+			onMouseDown={handleMouseDown}
+			onDoubleClick={() => {
+				onResize(SIDEBAR_DEFAULT_WIDTH);
+				onResizeEndRef.current();
+			}}
+			style={{
+				position: "absolute",
+				top: 0,
+				right: 0,
+				width: 4,
+				height: "100%",
+				cursor: "col-resize",
+				zIndex: 10,
+			}}
+			className="hover:bg-[var(--accent)] transition-colors"
+		/>
+	);
+}
+
 function PanelTab({
 	active,
 	onClick,
@@ -99,6 +166,8 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 	const {
 		sidebarCollapsed,
 		toggleSidebar,
+		sidebarWidth,
+		setSidebarWidth,
 		sidebarSplitRatio,
 		setSidebarSplitRatio,
 		sidebarBottomPanel,
@@ -106,6 +175,9 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 	} = useSettingsStore();
 	const [creating, setCreating] = useState(false);
 	const [localRatio, setLocalRatio] = useState<number | null>(null);
+	const [localWidth, setLocalWidth] = useState<number | null>(null);
+
+	const currentWidth = localWidth ?? sidebarWidth;
 
 	const ratio = localRatio ?? sidebarSplitRatio;
 
@@ -119,6 +191,17 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 			setLocalRatio(null);
 		}
 	}, [localRatio, setSidebarSplitRatio]);
+
+	const handleWidthResize = useCallback((w: number) => {
+		setLocalWidth(w);
+	}, []);
+
+	const handleWidthResizeEnd = useCallback(() => {
+		if (localWidth !== null) {
+			setSidebarWidth(localWidth);
+			setLocalWidth(null);
+		}
+	}, [localWidth, setSidebarWidth]);
 
 	async function handleNewWorkspace() {
 		const folder = await open({ directory: true, multiple: false });
@@ -175,13 +258,17 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 
 	return (
 		<div
-			className="flex flex-col h-full"
+			className="flex flex-col h-full relative"
 			style={{
-				width: "var(--sidebar-width)",
+				width: currentWidth,
 				backgroundColor: "var(--bg-secondary)",
 				borderRight: "1px solid var(--border)",
 			}}
 		>
+			<SidebarEdgeHandle
+				onResize={handleWidthResize}
+				onResizeEnd={handleWidthResizeEnd}
+			/>
 			{/* Titlebar spacer */}
 			<div
 				data-tauri-drag-region

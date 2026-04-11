@@ -17,6 +17,7 @@ interface SettingsState {
 	uiFontSize: number;
 	theme: string;
 	sidebarCollapsed: boolean;
+	sidebarWidth: number;
 	sidebarSplitRatio: number;
 	gitPanelWidth: number;
 	gitPanelSplitRatio: number;
@@ -33,6 +34,7 @@ interface SettingsState {
 	setUiFontSize: (size: number) => void;
 	setTheme: (theme: string) => void;
 	toggleSidebar: () => void;
+	setSidebarWidth: (width: number) => void;
 	setSidebarSplitRatio: (ratio: number) => void;
 	setGitPanelWidth: (width: number) => void;
 	setGitPanelSplitRatio: (ratio: number) => void;
@@ -60,6 +62,7 @@ const PERSISTED_DEFAULTS: {
 	fontSize: number;
 	uiFontSize: number;
 	theme: string;
+	sidebarWidth: number;
 	sidebarSplitRatio: number;
 	gitPanelWidth: number;
 	gitPanelSplitRatio: number;
@@ -74,6 +77,7 @@ const PERSISTED_DEFAULTS: {
 		fontSize: 14,
 		uiFontSize: 14,
 		theme: "default",
+		sidebarWidth: 280,
 		sidebarSplitRatio: 0.4,
 		gitPanelWidth: 360,
 		gitPanelSplitRatio: 0.5,
@@ -101,6 +105,10 @@ const PERSISTED_DEFAULTS: {
 			uiFontSize:
 				typeof s.uiFontSize === "number" ? s.uiFontSize : defaults.uiFontSize,
 			theme: typeof s.theme === "string" ? s.theme : defaults.theme,
+			sidebarWidth:
+				typeof s.sidebarWidth === "number"
+					? s.sidebarWidth
+					: defaults.sidebarWidth,
 			sidebarSplitRatio:
 				typeof s.sidebarSplitRatio === "number"
 					? s.sidebarSplitRatio
@@ -147,6 +155,7 @@ export const useSettingsStore = create<SettingsState>()(
 			uiFontSize: PERSISTED_DEFAULTS.uiFontSize,
 			theme: PERSISTED_DEFAULTS.theme,
 			sidebarCollapsed: false,
+			sidebarWidth: PERSISTED_DEFAULTS.sidebarWidth,
 			sidebarSplitRatio: PERSISTED_DEFAULTS.sidebarSplitRatio,
 			gitPanelWidth: PERSISTED_DEFAULTS.gitPanelWidth,
 			gitPanelSplitRatio: PERSISTED_DEFAULTS.gitPanelSplitRatio,
@@ -185,6 +194,7 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			toggleSidebar: () =>
 				set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+			setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
 			setSidebarSplitRatio: (sidebarSplitRatio) => set({ sidebarSplitRatio }),
 			setGitPanelWidth: (gitPanelWidth) => set({ gitPanelWidth }),
 			setGitPanelSplitRatio: (gitPanelSplitRatio) =>
@@ -241,6 +251,7 @@ export const useSettingsStore = create<SettingsState>()(
 				fontSize: state.fontSize,
 				uiFontSize: state.uiFontSize,
 				theme: state.theme,
+				sidebarWidth: state.sidebarWidth,
 				sidebarSplitRatio: state.sidebarSplitRatio,
 				gitPanelWidth: state.gitPanelWidth,
 				gitPanelSplitRatio: state.gitPanelSplitRatio,
