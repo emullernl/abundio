@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { gh } from "../lib/ipc";
 import type { GhStatus, PullRequest } from "../lib/types";
+import { isAppWindowFocused } from "../lib/windowFocus";
 import { useWorkspaceStore } from "./workspaceStore";
 
 export type ReviewView = "review-all" | "review-repo";
@@ -190,7 +191,7 @@ usePrStore.subscribe((state, prevState) => {
 		skipNextMyPrsLoad = true;
 	}
 
-	if (typeof document !== "undefined" && document.hasFocus()) return;
+	if (isAppWindowFocused()) return;
 
 	const notifications: string[] = [];
 

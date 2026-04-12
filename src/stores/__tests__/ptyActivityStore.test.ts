@@ -23,6 +23,10 @@ vi.mock("../../lib/notificationRouter", () => ({
 	})),
 }));
 
+vi.mock("../../lib/windowFocus", () => ({
+	isAppWindowFocused: () => document.hasFocus(),
+}));
+
 function resetStore() {
 	usePtyActivityStore.setState({
 		activities: {},

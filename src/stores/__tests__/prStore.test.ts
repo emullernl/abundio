@@ -5,6 +5,10 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 	sendNotification: vi.fn(),
 }));
 
+vi.mock("../../lib/windowFocus", () => ({
+	isAppWindowFocused: () => document.hasFocus(),
+}));
+
 vi.mock("../../lib/ipc", () => ({
 	gh: {
 		status: vi.fn(),

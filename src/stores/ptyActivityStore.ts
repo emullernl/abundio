@@ -7,6 +7,7 @@ import type {
 	PtyDetectionMode,
 	Tab,
 } from "../lib/types";
+import { isAppWindowFocused } from "../lib/windowFocus";
 
 // ── Constants ──
 
@@ -307,7 +308,7 @@ setInterval(() => {
 	// If the getter hasn't been injected yet, treat every pane as focused
 	// so we don't spam "ready" transitions during startup.
 	const focusGetterReady = _getFocusedPaneId !== null;
-	const appHasFocus = typeof document !== "undefined" && document.hasFocus();
+	const appHasFocus = isAppWindowFocused();
 
 	for (const [ptyId, entry] of Object.entries(activities)) {
 		const lastOutput = lastOutputTimestamps.get(ptyId) ?? entry.lastOutputAt;
@@ -343,7 +344,7 @@ setInterval(() => {
 // ── Notifications for state transitions ──
 
 usePtyActivityStore.subscribe((state, prevState) => {
-	if (typeof document !== "undefined" && document.hasFocus()) return;
+	if (isAppWindowFocused()) return;
 
 	const { activities, titles, panePtyMap } = state;
 	const prevActivities = prevState.activities;

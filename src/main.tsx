@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { initNotificationListener } from "./lib/notificationRouter";
 import { primaryFontFamily } from "./lib/terminalManager";
+import "./lib/windowFocus";
 import "./styles/globals.css";
 
 initNotificationListener();
