@@ -181,6 +181,10 @@ export interface ManagedTerminal {
 	startupFlushScheduled: boolean;
 	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods) */
 	filterResets: boolean;
+	/** Handle for the pending filterResets=false timer so consecutive calls to
+	 *  beginResizeFilter can cancel the previous timer and properly extend the
+	 *  window instead of clobbering it. */
+	filterResetsTimer: ReturnType<typeof setTimeout> | null;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
 	startupShellReady: boolean;
 	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
@@ -434,6 +438,7 @@ export async function createTerminal(
 		ready: false,
 		settled: false,
 		filterResets: false,
+		filterResetsTimer: null,
 		startupBuffer: [],
 		startupFlushScheduled: false,
 		startupShellReady: false,
@@ -831,6 +836,13 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 	if (cleaned.length > 0) {
 		managed.term.write(cleaned);
 	}
+
+	// Re-arm the reset filter from *flush time*. For non-active tabs, the
+	// terminal sits in the 0×0 pool container until the user clicks its tab,
+	// so projectInto's beginResizeFilter window starts ticking ~200ms before
+	// we get here. Without this, ConPTY's resize-triggered repaint (which on
+	// Windows can arrive hundreds of ms later) slips past the filter.
+	armFilterResets(managed, 1500);
 }
 
 /** Mark terminal as visually settled — loader can now hide */
@@ -841,16 +853,28 @@ export function markSettled(paneId: string): void {
 	tryFlushStartup(managed);
 }
 
+/** Enable filterResets for `durationMs`, cancelling any previous timer so
+ *  consecutive calls properly extend (or restart) the window rather than
+ *  letting the earliest timer race ahead and turn the filter off early. */
+function armFilterResets(managed: ManagedTerminal, durationMs: number): void {
+	managed.filterResets = true;
+	if (managed.filterResetsTimer !== null) {
+		clearTimeout(managed.filterResetsTimer);
+	}
+	managed.filterResetsTimer = setTimeout(() => {
+		managed.filterResets = false;
+		managed.filterResetsTimer = null;
+	}, durationMs);
+}
+
 /** Temporarily filter terminal reset sequences from PTY output.
- *  Used around PTY resize during workspace switches to prevent the shell's
- *  resize-triggered redraw from wiping existing terminal content. */
+ *  Used around PTY resize during workspace switches and tab projections to
+ *  prevent the shell's resize-triggered redraw from wiping existing terminal
+ *  content. Safe to call repeatedly — each call resets the timer. */
 export function beginResizeFilter(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed) return;
-	managed.filterResets = true;
-	setTimeout(() => {
-		managed.filterResets = false;
-	}, 500);
+	armFilterResets(managed, 1500);
 }
 
 /** Update theme on all terminal instances */
