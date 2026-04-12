@@ -1,7 +1,7 @@
 // ── Pane layout tree (recursive) ──
 
 export type PaneNode =
-	| { type: "terminal"; id: string; ptyId: string }
+	| { type: "terminal"; id: string; ptyId: string; agentId?: string }
 	| {
 			type: "split";
 			id: string;

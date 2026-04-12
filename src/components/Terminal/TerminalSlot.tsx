@@ -212,12 +212,14 @@ export function TerminalSlot({
 	);
 
 	const handleLaunchAgent = useCallback(
-		(command: string, args: string[] | undefined) => {
+		(agent: { id: string; command: string; args?: string[] }) => {
 			const managed = getTerminal(paneId);
 			if (!managed?.ptyId) return;
-			const cmd = [command, ...(args ?? [])].join(" ");
+			const cmd = [agent.command, ...(agent.args ?? [])].join(" ");
 			pty.write(managed.ptyId, `${cmd}\n`);
 			usePtyActivityStore.getState().setAgentPty(managed.ptyId);
+			// Persist the agent identity onto the layout so it re-runs after restart.
+			useWorkspaceStore.getState().stampAgentOnPane(paneId, agent.id);
 		},
 		[paneId],
 	);
@@ -233,7 +235,7 @@ export function TerminalSlot({
 					) : (
 						<FallbackAgentIcon size={14} />
 					),
-					onClick: () => handleLaunchAgent(agent.command, agent.args),
+					onClick: () => handleLaunchAgent(agent),
 				};
 			}),
 		[enabledAgents, handleLaunchAgent],

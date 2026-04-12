@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+	collectAgentPanes,
 	collectPaneIds,
 	collectTerminals,
 	findNode,
 	removeNode,
 	replaceNode,
+	setAgentId,
 } from "../paneTree";
 import type { PaneNode } from "../types";
 
@@ -145,5 +147,62 @@ describe("collectPaneIds", () => {
 
 	it("returns all ids depth-first from a nested tree", () => {
 		expect(collectPaneIds(nestedSplit)).toEqual(["a", "b", "c"]);
+	});
+});
+
+describe("setAgentId", () => {
+	it("stamps agentId on the matching terminal leaf", () => {
+		const result = setAgentId(leafA, "a", "claude");
+		expect(result).toEqual({
+			type: "terminal",
+			id: "a",
+			ptyId: "pty-a",
+			agentId: "claude",
+		});
+	});
+
+	it("returns the original leaf when paneId does not match", () => {
+		const result = setAgentId(leafA, "z", "claude");
+		expect(result).toBe(leafA);
+	});
+
+	it("clears agentId when undefined is passed", () => {
+		const stamped: PaneNode = {
+			type: "terminal",
+			id: "a",
+			ptyId: "pty-a",
+			agentId: "claude",
+		};
+		const result = setAgentId(stamped, "a", undefined);
+		expect(result).toEqual({ type: "terminal", id: "a", ptyId: "pty-a" });
+	});
+
+	it("descends into splits and structurally shares unchanged branches", () => {
+		const result = setAgentId(nestedSplit, "c", "copilot");
+		expect(result).not.toBe(nestedSplit);
+		const found = findNode(result, "c");
+		expect(found).toMatchObject({ id: "c", agentId: "copilot" });
+		// Untouched branch is shared by reference
+		if (result.type === "split") {
+			expect(result.first).toBe(nestedSplit.first);
+		}
+	});
+});
+
+describe("collectAgentPanes", () => {
+	it("returns nothing for a layout with no agentIds", () => {
+		expect(collectAgentPanes(nestedSplit)).toEqual([]);
+	});
+
+	it("collects all panes that carry an agentId", () => {
+		const stamped = setAgentId(
+			setAgentId(nestedSplit, "a", "claude"),
+			"c",
+			"copilot",
+		);
+		expect(collectAgentPanes(stamped)).toEqual([
+			{ paneId: "a", agentId: "claude" },
+			{ paneId: "c", agentId: "copilot" },
+		]);
 	});
 });

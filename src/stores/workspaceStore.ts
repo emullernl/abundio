@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { pty, tabs as tabsApi, workspaces as workspacesApi } from "../lib/ipc";
+import { collectAgentPanes, setAgentId } from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { destroyTerminal } from "../lib/terminalManager";
 import type {
@@ -11,6 +12,7 @@ import type {
 } from "../lib/types";
 import { persistFileTabs } from "./explorerStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
+import { useSettingsStore } from "./settingsStore";
 
 interface WorkspaceState {
 	workspaces: WorkspaceWithTabs[];
@@ -47,6 +49,7 @@ interface WorkspaceState {
 
 	// Pane/layout actions
 	setFocusedPane: (paneId: string | null) => void;
+	stampAgentOnPane: (paneId: string, agentId: string | undefined) => void;
 	updateLayout: (tabId: string, layout: PaneNode) => Promise<void>;
 	updateLayoutLocal: (tabId: string, layout: PaneNode) => void;
 	persistLayout: (tabId: string) => Promise<void>;
@@ -93,6 +96,25 @@ function clearPtyIds(node: PaneNode): PaneNode {
 	};
 }
 
+/**
+ * For each terminal pane in the layout that has an agentId, look the agent up
+ * in settingsStore and seed pendingAgentRegistry so the agent re-runs the next
+ * time the pane spawns its PTY. Agents that no longer exist are skipped — the
+ * pane comes up as a plain shell.
+ */
+function seedPendingAgentsForLayout(layout: PaneNode): void {
+	const entries = collectAgentPanes(layout);
+	if (entries.length === 0) return;
+	const agents: CodingAgent[] = useSettingsStore.getState().agents;
+	for (const { paneId, agentId } of entries) {
+		const agent = agents.find((a) => a.id === agentId);
+		if (!agent) continue;
+		setPendingAgent(paneId, {
+			command: [agent.command, ...(agent.args ?? [])].join(" "),
+		});
+	}
+}
+
 /** Update a tab's layoutJson in the workspaces array (immutable). */
 function updateTabInWorkspaces(
 	workspaces: WorkspaceWithTabs[],
@@ -120,7 +142,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	loadWorkspaces: async () => {
 		const workspacesWithTabs = await workspacesApi.list();
-		// Clear stale ptyIds from all tabs' layouts
+		// Clear stale ptyIds from all tabs' layouts and re-seed pending agents
+		// for any pane whose layout remembers an agentId from a previous session.
 		const allPaneIds: string[] = [];
 		const cleaned = workspacesWithTabs.map((s) => ({
 			...s,
@@ -128,7 +151,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				try {
 					const layout = JSON.parse(t.layoutJson) as PaneNode;
 					allPaneIds.push(...collectPaneIds(layout));
-					return { ...t, layoutJson: JSON.stringify(clearPtyIds(layout)) };
+					const cleared = clearPtyIds(layout);
+					seedPendingAgentsForLayout(cleared);
+					return { ...t, layoutJson: JSON.stringify(cleared) };
 				} catch {
 					return t;
 				}
@@ -164,6 +189,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					setPendingAgent(paneId, {
 						command: [agent.command, ...(agent.args ?? [])].join(" "),
 					});
+					// Persist the agent identity into the layout so it survives restarts.
+					const stamped = setAgentId(layout, paneId, agent.id);
+					const stampedJson = JSON.stringify(stamped);
+					firstTab.layoutJson = stampedJson;
+					tabsApi
+						.update(firstTab.id, { layoutJson: stampedJson })
+						.catch(() => {});
 				}
 			} catch {
 				/* ignore */
@@ -235,7 +267,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Reset dot to grey
 		activityStore.unmarkWorkspaceOpened(id);
 
-		// Clear ptyIds from layouts so fresh PTYs spawn on next open
+		// Clear ptyIds from layouts so fresh PTYs spawn on next open, and re-seed
+		// pendingAgentRegistry for any pane that remembers an agent so the agent
+		// re-runs in the new PTY when the workspace is reopened.
 		const isActive = state.activeWorkspaceId === id;
 		set({
 			workspaces: state.workspaces.map((s) =>
@@ -245,9 +279,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 							tabs: s.tabs.map((t) => {
 								try {
 									const layout = JSON.parse(t.layoutJson) as PaneNode;
+									const cleared = clearPtyIds(layout);
+									seedPendingAgentsForLayout(cleared);
 									return {
 										...t,
-										layoutJson: JSON.stringify(clearPtyIds(layout)),
+										layoutJson: JSON.stringify(cleared),
 									};
 								} catch {
 									return t;
@@ -339,6 +375,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			setPendingAgent(initialFocus, {
 				command: [agent.command, ...(agent.args ?? [])].join(" "),
 			});
+			// Persist the agent identity into the layout so it survives restarts.
+			try {
+				const layout = JSON.parse(tab.layoutJson) as PaneNode;
+				const stamped = setAgentId(layout, initialFocus, agent.id);
+				const stampedJson = JSON.stringify(stamped);
+				tab.layoutJson = stampedJson;
+				tabsApi.update(tab.id, { layoutJson: stampedJson }).catch(() => {});
+			} catch {
+				/* ignore */
+			}
 		}
 		set((state) => ({
 			workspaces: state.workspaces.map((s) =>
@@ -474,6 +520,38 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	setFocusedPane: (paneId) => {
 		if (get().focusedPaneId === paneId) return;
 		set({ focusedPaneId: paneId });
+	},
+
+	// Persist an agent identity onto a terminal pane in its tab's layout.
+	// Used by paths that launch an agent into an already-running PTY (e.g. the
+	// terminal pane context menu) so the agent re-runs after an app restart.
+	stampAgentOnPane: (paneId, agentId) => {
+		const state = get();
+		let targetTabId: string | null = null;
+		let nextLayoutJson: string | null = null;
+		for (const ws of state.workspaces) {
+			for (const tab of ws.tabs) {
+				try {
+					const layout = JSON.parse(tab.layoutJson) as PaneNode;
+					const stamped = setAgentId(layout, paneId, agentId);
+					if (stamped !== layout) {
+						targetTabId = tab.id;
+						nextLayoutJson = JSON.stringify(stamped);
+						break;
+					}
+				} catch {
+					/* ignore */
+				}
+			}
+			if (targetTabId) break;
+		}
+		if (!targetTabId || nextLayoutJson === null) return;
+		const layoutJson = nextLayoutJson;
+		const tabId = targetTabId;
+		set((s) => ({
+			workspaces: updateTabInWorkspaces(s.workspaces, tabId, layoutJson),
+		}));
+		tabsApi.update(tabId, { layoutJson }).catch(() => {});
 	},
 
 	// Full update: local state + persist to SQLite
