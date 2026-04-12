@@ -191,6 +191,13 @@ export interface ManagedTerminal {
 	pendingWrites: Uint8Array[];
 	/** rAF handle for the pending write flush, or null if none scheduled */
 	writeRafId: number | null;
+	/** Deferred PTY init closure. Populated by createTerminal, consumed by the
+	 *  first projectInto callback (via ensurePtySpawned). We spawn the PTY at
+	 *  the real target dimensions rather than the xterm default 80×24 so the
+	 *  shell never sees a size change — this avoids PSReadLine on Windows
+	 *  emitting a resize-driven repaint whose absolute cursor positioning
+	 *  lands the caret on the wrong row after restored scrollback is applied. */
+	deferredInit: (() => void) | null;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -444,6 +451,7 @@ export async function createTerminal(
 		startupShellReady: false,
 		pendingWrites: [],
 		writeRafId: null,
+		deferredInit: null,
 	};
 
 	instances.set(paneId, managed);
@@ -459,10 +467,36 @@ export async function createTerminal(
 	// it, the data wouldn't be ready in time.
 	await loadScrollback(paneId, managed);
 
-	// Initialize PTY connection (listeners + spawn, fire-and-forget)
-	initPty(paneId, managed, cwd);
+	// Defer PTY init (listener registration + spawn) until the terminal is
+	// projected into a real, sized target. ensurePtySpawned() is called from
+	// projectInto's first ResizeObserver callback, which means the PTY gets
+	// spawned at the terminal's final grid dimensions — no resize required,
+	// and therefore no resize-driven shell repaint.
+	managed.deferredInit = () => initPty(paneId, managed, cwd);
 
 	return managed;
+}
+
+/** Run the deferred PTY init (listener registration + spawn) if it hasn't
+ *  run yet. Called from projectInto's first-callback path after fit() has
+ *  computed the real grid dimensions. Idempotent. */
+export function ensurePtySpawned(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed) return;
+	const init = managed.deferredInit;
+	if (!init) return;
+	managed.deferredInit = null;
+	init();
+}
+
+/** True if the PTY has been spawned (or is in the process of being spawned)
+ *  for this pane. projectInto uses this to decide whether to resize the PTY
+ *  (spawned → resize to match fit) or just let ensurePtySpawned handle the
+ *  initial sizing (not spawned → spawn at current fit dimensions). */
+export function isPtySpawned(paneId: string): boolean {
+	const managed = instances.get(paneId);
+	if (!managed) return false;
+	return managed.deferredInit === null;
 }
 
 /** Load scrollback from snapshot/log and park it on the managed terminal.

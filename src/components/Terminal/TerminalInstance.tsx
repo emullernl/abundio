@@ -5,8 +5,10 @@ import {
 	beginResizeFilter,
 	createTerminal,
 	destroyTerminal,
+	ensurePtySpawned,
 	ensureWebglLoaded,
 	getTerminal,
+	isPtySpawned,
 	markSettled,
 } from "../../lib/terminalManager";
 import { getTheme } from "../../lib/themes";
@@ -77,7 +79,15 @@ export const TerminalInstance = memo(function TerminalInstance({
 						// browsers refuse — if that failed, xterm silently fell back
 						// to its DOM renderer and we'd see wrong glyph metrics.
 						ensureWebglLoaded(id);
-						if (managed.ptyId) {
+						// Deferred-spawn path: for new PTYs, spawn is postponed
+						// until the terminal is projected into a real-sized
+						// container so the shell never observes a size change.
+						// For PTYs already spawned (reconnection or workspace
+						// switch), fall back to the original resize-on-project
+						// behavior under a filterResets grace window.
+						if (!isPtySpawned(id)) {
+							ensurePtySpawned(id);
+						} else if (managed.ptyId) {
 							beginResizeFilter(id);
 							pty
 								.resize(managed.ptyId, managed.term.cols, managed.term.rows)
