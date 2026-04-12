@@ -100,23 +100,39 @@ describe("stripResetSequences", () => {
 		expect(new TextDecoder().decode(result)).toBe("user@host:~$ ");
 	});
 
-	it("strips parameterized CUP (ESC [ <row> ; <col> H)", () => {
-		// ConPTY emits this to pin the first prompt to the bottom row.
-		const data = encode("\x1b[30;1H\x1b[10;20H");
-		const result = stripResetSequences(data);
-		expect(result.length).toBe(0);
+	it("strips explicit home CUP variants (1H, 1;1H, ;1H, ;, 1;)", () => {
+		const variants = [
+			"\x1b[1H",
+			"\x1b[1;1H",
+			"\x1b[;1H",
+			"\x1b[;H",
+			"\x1b[1;H",
+		];
+		for (const v of variants) {
+			const result = stripResetSequences(encode(v));
+			expect(result.length, `variant: ${JSON.stringify(v)}`).toBe(0);
+		}
 	});
 
-	it("strips HVP (ESC [ <row> ; <col> f) like CUP", () => {
-		const data = encode("\x1b[5;1f");
-		const result = stripResetSequences(data);
-		expect(result.length).toBe(0);
+	it("strips HVP home variants (ESC [ ... f)", () => {
+		expect(stripResetSequences(encode("\x1b[f")).length).toBe(0);
+		expect(stripResetSequences(encode("\x1b[1;1f")).length).toBe(0);
 	});
 
-	it("strips parameterized CUP interleaved with normal output", () => {
-		const data = encode("before\x1b[24;1Hprompt$ ");
+	it("preserves non-home parameterized CUP (shell cursor positioning)", () => {
+		// PowerShell / ConPTY use these when repainting the screen row by row
+		// on resize. Stripping them collapses the shell's paint into one row.
+		const data = encode("\x1b[30;1H\x1b[10;20H\x1b[2;5Hhi");
 		const result = stripResetSequences(data);
-		expect(new TextDecoder().decode(result)).toBe("beforeprompt$ ");
+		expect(new TextDecoder().decode(result)).toBe(
+			"\x1b[30;1H\x1b[10;20H\x1b[2;5Hhi",
+		);
+	});
+
+	it("preserves non-home HVP", () => {
+		const data = encode("\x1b[5;10f");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("\x1b[5;10f");
 	});
 
 	it("handles reset at the very end of output", () => {

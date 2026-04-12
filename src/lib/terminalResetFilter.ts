@@ -6,9 +6,15 @@
  *
  * Targeted sequences:
  *  - ESC c                    — RIS: Reset to Initial State
- *  - CSI [<params>] H         — CUP: Cursor Position (bare home and
- *                               parameterized variants like `ESC[30;1H`)
- *  - CSI [<params>] f         — HVP: Horizontal & Vertical Position (CUP twin)
+ *  - CSI [<params>] H         — CUP: Cursor Position — but ONLY home
+ *                               variants (no params, `1`, `1;1`, `;1`, `;`,
+ *                               `1;`). Non-home CUPs are legitimate shell
+ *                               cursor positioning (e.g. PowerShell / ConPTY
+ *                               repaints on resize) and are preserved —
+ *                               stripping them collapses the shell's screen
+ *                               paint into a single row.
+ *  - CSI [<params>] f         — HVP: Horizontal & Vertical Position (CUP twin,
+ *                               same home-only rule as CUP)
  *  - CSI 2 J                  — ED 2: Erase entire display
  *  - CSI 3 J                  — ED 3: Erase scrollback buffer
  *  - Runs of 3+ consecutive CRLF (`\r\n\r\n\r\n…`) — ConPTY (Git Bash /
@@ -21,6 +27,51 @@
  * the buffer are left untouched as literal bytes — this filter is stateless
  * across chunks.
  */
+/** True if the CSI param bytes (digits and ';') between `start` and
+ *  `start+len` describe a CUP/HVP that resolves to row 1 col 1. Omitted
+ *  params default to 1 per ECMA-48, so `""`, `"1"`, `"1;1"`, `";1"`, `";"`,
+ *  `"1;"` are all "home"; anything else (e.g. `"30;1"`, `"2"`) is not. */
+function isHomeCupParams(
+	data: Uint8Array,
+	start: number,
+	len: number,
+): boolean {
+	// Parse at most two semicolon-separated numeric components. Missing or
+	// zero-length components default to 1.
+	let row = -1;
+	let col = -1;
+	let current = 0;
+	let sawDigit = false;
+	let componentIdx = 0;
+	for (let k = 0; k < len; k++) {
+		const b = data[start + k];
+		if (b === 0x3b /* ; */) {
+			const value = sawDigit ? current : 1;
+			if (componentIdx === 0) row = value;
+			else if (componentIdx === 1) col = value;
+			componentIdx++;
+			current = 0;
+			sawDigit = false;
+			if (componentIdx > 1) {
+				// Ignore any extra components; they'd be a malformed CUP anyway
+				break;
+			}
+		} else {
+			// Digit (the CSI-param scanner already guarantees this)
+			current = current * 10 + (b - 0x30);
+			sawDigit = true;
+		}
+	}
+	// Finalize the last component
+	const lastValue = sawDigit ? current : 1;
+	if (componentIdx === 0) row = lastValue;
+	else if (componentIdx === 1) col = lastValue;
+	// Any component we never touched defaults to 1
+	if (row === -1) row = 1;
+	if (col === -1) col = 1;
+	return row === 1 && col === 1;
+}
+
 export function stripResetSequences(data: Uint8Array): Uint8Array {
 	const len = data.length;
 	if (len === 0) return data;
@@ -71,9 +122,13 @@ export function stripResetSequences(data: Uint8Array): Uint8Array {
 					const paramsLen = j - paramsStart;
 					let strip = false;
 
-					// CUP / HVP — strip all forms (bare home and parameterized)
+					// CUP / HVP — strip only home variants (row 1 col 1).
+					// Params default to 1 when omitted, so `ESC[H`, `ESC[;H`,
+					// `ESC[1H`, `ESC[1;1H`, `ESC[;1H`, `ESC[1;H`, `ESC[;H`
+					// all resolve to home. Any other params are legitimate
+					// cursor positioning and must be preserved.
 					if (final === 0x48 /* H */ || final === 0x66 /* f */) {
-						strip = true;
+						strip = isHomeCupParams(data, paramsStart, paramsLen);
 					}
 					// ED — only strip "erase entire display" (2) and
 					// "erase scrollback" (3). Preserve ED 0 / ED 1.
