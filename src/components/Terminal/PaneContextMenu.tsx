@@ -1,11 +1,14 @@
-import { useEffect, useRef } from "react";
+import { ChevronRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 export interface ContextMenuAction {
 	label: string;
 	shortcut?: string;
 	separator?: false;
 	disabled?: boolean;
-	onClick: () => void;
+	icon?: React.ReactNode;
+	onClick?: () => void;
+	submenu?: ContextMenuItem[];
 }
 
 export interface ContextMenuSeparator {
@@ -67,6 +70,37 @@ export function PaneContextMenu({ x, y, items, onClose }: Props) {
 				border: "1px solid var(--border)",
 			}}
 		>
+			<MenuItems items={items} onClose={onClose} />
+		</div>
+	);
+}
+
+function MenuItems({
+	items,
+	onClose,
+}: {
+	items: ContextMenuItem[];
+	onClose: () => void;
+}) {
+	const [openSubmenuKey, setOpenSubmenuKey] = useState<string | null>(null);
+	const closeTimerRef = useRef<number | null>(null);
+
+	const clearCloseTimer = () => {
+		if (closeTimerRef.current !== null) {
+			window.clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = null;
+		}
+	};
+
+	const scheduleClose = () => {
+		clearCloseTimer();
+		closeTimerRef.current = window.setTimeout(() => {
+			setOpenSubmenuKey(null);
+		}, 150);
+	};
+
+	return (
+		<>
 			{items.map((item, i) => {
 				if (item.separator) {
 					return (
@@ -82,32 +116,100 @@ export function PaneContextMenu({ x, y, items, onClose }: Props) {
 					);
 				}
 
+				const hasSubmenu = !!item.submenu && item.submenu.length > 0;
+				const isOpen = openSubmenuKey === item.label;
+				const rowRef = (el: HTMLButtonElement | null) => {
+					if (el && isOpen) {
+						// Force re-render not needed — submenu position computed from live rect
+					}
+				};
+
 				return (
-					<button
+					// biome-ignore lint/a11y/noStaticElementInteractions: hover wrapper for submenu — button inside is keyboard-accessible
+					<div
 						key={item.label}
-						type="button"
-						disabled={item.disabled}
-						onClick={() => {
-							item.onClick();
-							onClose();
+						style={{ position: "relative" }}
+						onMouseEnter={() => {
+							if (!item.disabled && hasSubmenu) {
+								clearCloseTimer();
+								setOpenSubmenuKey(item.label);
+							} else {
+								scheduleClose();
+							}
 						}}
-						className="w-full text-left flex items-center justify-between rounded-md hover:bg-[var(--accent)] hover:text-[var(--bg-primary)] transition-colors disabled:opacity-40 disabled:cursor-default"
-						style={{
-							color: "var(--fg-primary)",
-							fontSize: 14,
-							padding: "7px 12px",
-							gap: 20,
+						onMouseLeave={() => {
+							if (hasSubmenu) scheduleClose();
 						}}
 					>
-						<span>{item.label}</span>
-						{item.shortcut && (
-							<span style={{ color: "var(--fg-secondary)", fontSize: 13 }}>
-								{item.shortcut}
+						<button
+							ref={rowRef}
+							type="button"
+							disabled={item.disabled}
+							onClick={() => {
+								if (item.disabled) return;
+								if (hasSubmenu) return;
+								item.onClick?.();
+								onClose();
+							}}
+							className="w-full text-left flex items-center justify-between rounded-md hover:bg-[var(--accent)] hover:text-[var(--bg-primary)] transition-colors disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-[var(--fg-primary)]"
+							style={{
+								color: "var(--fg-primary)",
+								fontSize: 14,
+								padding: "7px 12px",
+								gap: 20,
+								backgroundColor:
+									isOpen && !item.disabled ? "var(--accent)" : undefined,
+							}}
+						>
+							<span className="flex items-center" style={{ gap: 10 }}>
+								{item.icon && (
+									<span
+										style={{
+											display: "inline-flex",
+											width: 16,
+											height: 16,
+											alignItems: "center",
+											justifyContent: "center",
+										}}
+									>
+										{item.icon}
+									</span>
+								)}
+								<span>{item.label}</span>
 							</span>
+							{hasSubmenu ? (
+								<ChevronRight size={14} />
+							) : item.shortcut ? (
+								<span style={{ color: "var(--fg-secondary)", fontSize: 13 }}>
+									{item.shortcut}
+								</span>
+							) : null}
+						</button>
+
+						{isOpen && hasSubmenu && !item.disabled && (
+							// biome-ignore lint/a11y/noStaticElementInteractions: submenu panel — contained buttons are keyboard-accessible
+							<div
+								className="rounded-xl shadow-2xl"
+								style={{
+									position: "absolute",
+									top: -5,
+									left: "100%",
+									marginLeft: 4,
+									minWidth: 220,
+									padding: 5,
+									backgroundColor: "var(--bg-secondary)",
+									border: "1px solid var(--border)",
+									zIndex: 1,
+								}}
+								onMouseEnter={clearCloseTimer}
+								onMouseLeave={scheduleClose}
+							>
+								<MenuItems items={item.submenu ?? []} onClose={onClose} />
+							</div>
 						)}
-					</button>
+					</div>
 				);
 			})}
-		</div>
+		</>
 	);
 }

@@ -1,3 +1,4 @@
+import { open } from "@tauri-apps/plugin-shell";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -5,7 +6,6 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
-import { open } from "@tauri-apps/plugin-shell";
 import {
 	setFocusedPaneIdGetter,
 	setShellCommandRunning,
@@ -18,6 +18,7 @@ import { recordThresholdHit } from "./activityGate";
 import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
+import { takePendingAgent } from "./pendingAgentRegistry";
 import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { stripResetSequences } from "./terminalResetFilter";
@@ -138,6 +139,7 @@ function setPtyIdInLayout(
 }
 
 export interface ManagedTerminal {
+	paneId: string;
 	term: Terminal;
 	fitAddon: FitAddon;
 	searchAddon: SearchAddon;
@@ -414,9 +416,11 @@ export async function createTerminal(
 	term.loadAddon(fitAddon);
 	term.loadAddon(searchAddon);
 	term.loadAddon(serializeAddon);
-	term.loadAddon(new WebLinksAddon((_event, url) => {
-		open(url);
-	}));
+	term.loadAddon(
+		new WebLinksAddon((_event, url) => {
+			open(url);
+		}),
+	);
 	const unicode11 = new Unicode11Addon();
 	term.loadAddon(unicode11);
 	term.unicode.activeVersion = "11";
@@ -427,6 +431,7 @@ export async function createTerminal(
 	}
 
 	const managed: ManagedTerminal = {
+		paneId,
 		term,
 		fitAddon,
 		searchAddon,
@@ -880,6 +885,15 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 	// we get here. Without this, ConPTY's resize-triggered repaint (which on
 	// Windows can arrive hundreds of ms later) slips past the filter.
 	armFilterResets(managed, 1500);
+
+	// If this pane was launched with an agent, type the agent command into
+	// the live shell now that the prompt is visible. Mirrors the pattern used
+	// by CommandPalette to launch agents into an existing terminal.
+	const pendingAgent = takePendingAgent(managed.paneId);
+	if (pendingAgent && managed.ptyId) {
+		pty.write(managed.ptyId, `${pendingAgent.command}\n`).catch(() => {});
+		usePtyActivityStore.getState().setAgentPty(managed.ptyId);
+	}
 }
 
 /** Mark terminal as visually settled — loader can now hide */

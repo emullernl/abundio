@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSplitPane } from "../hooks/useSplitPane";
 import { pty } from "../lib/ipc";
@@ -36,16 +35,20 @@ function fuzzyMatch(query: string, text: string): number {
 interface Props {
 	open: boolean;
 	onClose: () => void;
+	onRequestNewWorkspace: () => void;
 }
 
-export function CommandPalette({ open: isOpen, onClose }: Props) {
+export function CommandPalette({
+	open: isOpen,
+	onClose,
+	onRequestNewWorkspace,
+}: Props) {
 	const [query, setQuery] = useState("");
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
-	const { workspaces, setActiveWorkspace, createWorkspace, focusedPaneId } =
-		useWorkspaceStore();
+	const { workspaces, setActiveWorkspace, focusedPaneId } = useWorkspaceStore();
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
 	const { splitPane, closePane, toggleMaximize } = useSplitPane();
@@ -68,14 +71,7 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 			id: "action-new-workspace",
 			label: "New Workspace",
 			category: "Actions",
-			action: async () => {
-				const folder = await open({ directory: true, multiple: false });
-				if (!folder) return;
-				const folderPath = typeof folder === "string" ? folder : folder[0];
-				if (!folderPath) return;
-				const name = folderPath.split("/").pop() || "Untitled";
-				await createWorkspace(name, folderPath);
-			},
+			action: () => onRequestNewWorkspace(),
 		});
 
 		if (focusedPaneId) {
@@ -155,7 +151,7 @@ export function CommandPalette({ open: isOpen, onClose }: Props) {
 		workspaces,
 		focusedPaneId,
 		setActiveWorkspace,
-		createWorkspace,
+		onRequestNewWorkspace,
 		splitPane,
 		closePane,
 		toggleMaximize,

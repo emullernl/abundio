@@ -1,7 +1,5 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useRef, useState } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { Explorer } from "../Explorer/Explorer";
 import { ChevronLeft, ChevronRight, Folder, Plus, Search } from "../Icons";
 import { SearchPanel } from "../Search/SearchPanel";
@@ -9,6 +7,7 @@ import { WorkspaceList } from "./WorkspaceList";
 
 interface SidebarProps {
 	titlebarHeight: number;
+	onRequestNewWorkspace: () => void;
 }
 
 function SidebarDivider({
@@ -161,8 +160,10 @@ function PanelTab({
 	);
 }
 
-export function Sidebar({ titlebarHeight }: SidebarProps) {
-	const { createWorkspace } = useWorkspaceStore();
+export function Sidebar({
+	titlebarHeight,
+	onRequestNewWorkspace,
+}: SidebarProps) {
 	const {
 		sidebarCollapsed,
 		toggleSidebar,
@@ -173,7 +174,6 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 		sidebarBottomPanel,
 		setSidebarBottomPanel,
 	} = useSettingsStore();
-	const [creating, setCreating] = useState(false);
 	const [localRatio, setLocalRatio] = useState<number | null>(null);
 	const [localWidth, setLocalWidth] = useState<number | null>(null);
 
@@ -203,22 +203,8 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 		}
 	}, [localWidth, setSidebarWidth]);
 
-	async function handleNewWorkspace() {
-		const folder = await open({ directory: true, multiple: false });
-		if (!folder) return;
-
-		const folderPath = typeof folder === "string" ? folder : folder[0];
-		if (!folderPath) return;
-
-		const name = folderPath.split("/").pop() || "Untitled";
-		setCreating(true);
-		try {
-			await createWorkspace(name, folderPath);
-		} catch (err) {
-			console.error("Failed to create workspace:", err);
-		} finally {
-			setCreating(false);
-		}
+	function handleNewWorkspace() {
+		onRequestNewWorkspace();
 	}
 
 	if (sidebarCollapsed) {
@@ -302,7 +288,6 @@ export function Sidebar({ titlebarHeight }: SidebarProps) {
 					<button
 						type="button"
 						onClick={handleNewWorkspace}
-						disabled={creating}
 						className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
 						style={{ color: "var(--fg-secondary)" }}
 						title="New Workspace"
