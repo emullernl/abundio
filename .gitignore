@@ -3,5 +3,6 @@ dist/
 src-tauri/target/
 app-icon.png
 *.log
+*.tsbuildinfo
 .DS_Store
 .claude
