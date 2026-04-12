@@ -181,16 +181,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		usePtyActivityStore.getState().markWorkspaceOpened(workspaceWithTabs.id);
 		const firstTab = workspaceWithTabs.tabs[0];
 		const firstTabId = firstTab?.id;
-		if (agent && firstTab) {
+		let firstPaneId: string | null = null;
+		if (firstTab) {
 			try {
 				const layout = JSON.parse(firstTab.layoutJson) as PaneNode;
-				const paneId = firstTerminalId(layout);
-				if (paneId) {
-					setPendingAgent(paneId, {
+				firstPaneId = firstTerminalId(layout);
+				if (agent && firstPaneId) {
+					setPendingAgent(firstPaneId, {
 						command: [agent.command, ...(agent.args ?? [])].join(" "),
 					});
 					// Persist the agent identity into the layout so it survives restarts.
-					const stamped = setAgentId(layout, paneId, agent.id);
+					const stamped = setAgentId(layout, firstPaneId, agent.id);
 					const stampedJson = JSON.stringify(stamped);
 					firstTab.layoutJson = stampedJson;
 					tabsApi
@@ -208,6 +209,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				...state.activeTabByWorkspace,
 				[workspaceWithTabs.id]: firstTabId,
 			},
+			focusedPaneId: firstPaneId ?? state.focusedPaneId,
 		}));
 		return workspaceWithTabs;
 	},
