@@ -124,4 +124,35 @@ describe("stripResetSequences", () => {
 		const result = stripResetSequences(data);
 		expect(new TextDecoder().decode(result)).toBe("some output");
 	});
+
+	it("strips runs of 3+ CRLF (ConPTY viewport padding)", () => {
+		const data = encode("\r\n\r\n\r\n\r\n\r\n");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("preserves single and double CRLF (legit blank lines)", () => {
+		const single = encode("line1\r\nline2");
+		expect(new TextDecoder().decode(stripResetSequences(single))).toBe(
+			"line1\r\nline2",
+		);
+		const dbl = encode("para1\r\n\r\npara2");
+		expect(new TextDecoder().decode(stripResetSequences(dbl))).toBe(
+			"para1\r\n\r\npara2",
+		);
+	});
+
+	it("strips the full Git Bash / ConPTY startup paint block", () => {
+		// Actual bytes observed on Windows: hide cursor, ED 2, SGR, home,
+		// 33 × CRLF padding, home, OSC title, show cursor.
+		const padding = "\r\n".repeat(33);
+		const data = encode(
+			`\x1b[?25l\x1b[2J\x1b[m\x1b[H${padding}\x1b[H\x1b]0;title\x07\x1b[?25h`,
+		);
+		const result = stripResetSequences(data);
+		// The 33×CRLF block is gone; only the non-stripped control bits remain.
+		expect(new TextDecoder().decode(result)).toBe(
+			"\x1b[?25l\x1b[m\x1b]0;title\x07\x1b[?25h",
+		);
+	});
 });

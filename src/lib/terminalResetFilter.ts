@@ -1,37 +1,41 @@
 /**
- * Strips terminal reset/clear/positioning escape sequences from PTY output
- * during the shell startup grace period so that restored scrollback is not
- * wiped and the first prompt is not pinned to the bottom of the viewport.
+ * Strips terminal reset/clear/positioning escape sequences (and padding CRLF
+ * runs) from PTY output during the shell startup grace period so that
+ * restored scrollback is not wiped and the first prompt is not pinned to
+ * the bottom of the viewport.
  *
  * Targeted sequences:
  *  - ESC c                    — RIS: Reset to Initial State
- *  - CSI [<params>] H         — CUP: Cursor Position (includes bare home
- *                               `ESC[H`, `ESC[;H`, and parameterized variants
- *                               like `ESC[<row>;<col>H`). ConPTY emits the
- *                               parameterized form to place the cursor on the
- *                               visible bottom row before drawing the first
- *                               prompt, which is why we strip it here.
+ *  - CSI [<params>] H         — CUP: Cursor Position (bare home and
+ *                               parameterized variants like `ESC[30;1H`)
  *  - CSI [<params>] f         — HVP: Horizontal & Vertical Position (CUP twin)
  *  - CSI 2 J                  — ED 2: Erase entire display
  *  - CSI 3 J                  — ED 3: Erase scrollback buffer
+ *  - Runs of 3+ consecutive CRLF (`\r\n\r\n\r\n…`) — ConPTY (Git Bash /
+ *    mintty) "paints" a blank screen by emitting N CRLFs to fill the
+ *    viewport height. Left alone, these scroll the viewport down and
+ *    push the first prompt to the bottom row.
  *
- * Other CSI sequences (SGR, ED 0/1, non-H/f cursor ops, etc.) are preserved.
- * Partial sequences at the end of the buffer are left untouched as literal
- * bytes — this filter is stateless across chunks.
+ * Other CSI sequences (SGR, ED 0/1, non-H/f cursor ops, etc.) and ordinary
+ * single/double blank lines are preserved. Partial sequences at the end of
+ * the buffer are left untouched as literal bytes — this filter is stateless
+ * across chunks.
  */
 export function stripResetSequences(data: Uint8Array): Uint8Array {
 	const len = data.length;
 	if (len === 0) return data;
 
-	// Fast path: scan for any ESC byte first — if none, return original
-	let hasEsc = false;
+	// Fast path: if the buffer has no ESC and no CR bytes, there's nothing
+	// for us to strip — return the original reference.
+	let hasTrigger = false;
 	for (let i = 0; i < len; i++) {
-		if (data[i] === 0x1b) {
-			hasEsc = true;
+		const b = data[i];
+		if (b === 0x1b || b === 0x0d) {
+			hasTrigger = true;
 			break;
 		}
 	}
-	if (!hasEsc) return data;
+	if (!hasTrigger) return data;
 
 	// Collect kept regions as [start, end) pairs to avoid per-byte copies
 	const regions: [number, number][] = [];
@@ -88,6 +92,32 @@ export function stripResetSequences(data: Uint8Array): Uint8Array {
 					}
 				}
 			}
+		}
+
+		// Run of 3+ CRLF pairs — ConPTY viewport padding. A single or double
+		// CRLF is preserved (legitimate blank-line output). Three or more in
+		// a row is a screen-paint artifact and gets stripped entirely.
+		if (data[i] === 0x0d && i + 1 < len && data[i + 1] === 0x0a) {
+			let k = i;
+			let pairs = 0;
+			while (
+				k + 1 < len &&
+				data[k] === 0x0d &&
+				data[k + 1] === 0x0a
+			) {
+				pairs++;
+				k += 2;
+			}
+			if (pairs >= 3) {
+				if (i > regionStart) regions.push([regionStart, i]);
+				i = k;
+				regionStart = i;
+				continue;
+			}
+			// Not a padding run — skip past the pairs we counted so we don't
+			// re-scan them byte-by-byte.
+			i = k;
+			continue;
 		}
 
 		i++;
