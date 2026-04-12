@@ -384,31 +384,10 @@ fi
     // bash: wrapper rcfile that sources user config then adds hooks
     let bashrc = dir.join(".bashrc");
 
-    // On Windows (Git Bash / MSYS2), skip /etc/profile and /etc/bash.bashrc —
-    // these are MSYS2 system scripts that send terminal reset sequences which
-    // wipe restored scrollback. Git Bash already runs MSYS2 init before --rcfile.
-    #[cfg(target_os = "windows")]
-    let bashrc_content = r#"# Abundio shell integration — loaded via --rcfile
-if [ -f ~/.bash_profile ]; then
-  source ~/.bash_profile
-elif [ -f ~/.bash_login ]; then
-  source ~/.bash_login
-elif [ -f ~/.profile ]; then
-  source ~/.profile
-fi
-# Source the user's real bash config
-[ -f ~/.bashrc ] && source ~/.bashrc
-# Hooks
-__abundio_preexec() {
-  [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
-  printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
-}
-__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; }
-trap '__abundio_preexec' DEBUG
-PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
-"#;
-
-    #[cfg(not(target_os = "windows"))]
+    // The frontend now parks scrollback until after shell startup finishes
+    // (see terminalManager.ts flushStartupBuffer), so reset sequences from
+    // MSYS2 /etc/profile / /etc/bash.bashrc can no longer clobber restored
+    // scrollback. Use a single unified bashrc across all platforms.
     let bashrc_content = r#"# Abundio shell integration — loaded via --rcfile
 # Source login shell config files for parity (--rcfile replaces -l)
 [ -f /etc/profile ] && source /etc/profile
