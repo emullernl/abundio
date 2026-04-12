@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { pty } from "../../lib/ipc";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import { getTerminal, resetTerminal } from "../../lib/terminalManager";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DebugActivityMeter } from "./DebugActivityMeter";
@@ -193,6 +195,50 @@ export function TerminalSlot({
 
 	const searchAddon = getTerminal(paneId)?.searchAddon ?? null;
 
+	// Agents submenu — launches the selected agent into the current shell by
+	// typing its command, mirroring CommandPalette's existing agent flow.
+	// Only enabled when this terminal is running a plain shell; once an agent
+	// is active we hide the submenu entries to prevent double-launching.
+	const agents = useSettingsStore((s) => s.agents);
+	const enabledAgents = useMemo(
+		() => agents.filter((a) => a.enabled),
+		[agents],
+	);
+	const ptyIdForPane = getTerminal(paneId)?.ptyId ?? null;
+	const isAgentMode = usePtyActivityStore((s) =>
+		ptyIdForPane
+			? s.activities[ptyIdForPane]?.detectionMode === "agent"
+			: false,
+	);
+
+	const handleLaunchAgent = useCallback(
+		(command: string, args: string[] | undefined) => {
+			const managed = getTerminal(paneId);
+			if (!managed?.ptyId) return;
+			const cmd = [command, ...(args ?? [])].join(" ");
+			pty.write(managed.ptyId, `${cmd}\n`);
+			usePtyActivityStore.getState().setAgentPty(managed.ptyId);
+		},
+		[paneId],
+	);
+
+	const agentSubmenu: ContextMenuItem[] = useMemo(
+		() =>
+			enabledAgents.map((agent) => {
+				const BrandIcon = getAgentIconComponent(agent.id);
+				return {
+					label: agent.name,
+					icon: BrandIcon ? (
+						<BrandIcon size={14} />
+					) : (
+						<FallbackAgentIcon size={14} />
+					),
+					onClick: () => handleLaunchAgent(agent.command, agent.args),
+				};
+			}),
+		[enabledAgents, handleLaunchAgent],
+	);
+
 	const contextMenuItems: ContextMenuItem[] = [
 		{ label: "Copy", shortcut: "⌘C", onClick: handleCopy },
 		{ label: "Paste", shortcut: "⌘V", onClick: handlePaste },
@@ -200,6 +246,12 @@ export function TerminalSlot({
 		{ label: "Find", shortcut: "⇧⌘F", onClick: toggleSearch },
 		{ label: "Clear Terminal", onClick: handleClear },
 		{ label: "Reset Terminal", onClick: handleReset },
+		{ separator: true },
+		{
+			label: "Agents",
+			disabled: isAgentMode || enabledAgents.length === 0,
+			submenu: agentSubmenu,
+		},
 		{ separator: true },
 		{ label: "Split Right", shortcut: "⇧⌘V", onClick: onSplitVertical },
 		{ label: "Split Down", shortcut: "⇧⌘H", onClick: onSplitHorizontal },

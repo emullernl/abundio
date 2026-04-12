@@ -155,11 +155,7 @@ export function stripResetSequences(data: Uint8Array): Uint8Array {
 		if (data[i] === 0x0d && i + 1 < len && data[i + 1] === 0x0a) {
 			let k = i;
 			let pairs = 0;
-			while (
-				k + 1 < len &&
-				data[k] === 0x0d &&
-				data[k + 1] === 0x0a
-			) {
+			while (k + 1 < len && data[k] === 0x0d && data[k + 1] === 0x0a) {
 				pairs++;
 				k += 2;
 			}

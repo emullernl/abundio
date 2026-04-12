@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { pty, tabs as tabsApi, workspaces as workspacesApi } from "../lib/ipc";
+import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { destroyTerminal } from "../lib/terminalManager";
 import type {
+	CodingAgent,
 	PaneNode,
 	PtyStatusType,
 	Tab,
@@ -28,6 +30,7 @@ interface WorkspaceState {
 	createWorkspace: (
 		name: string,
 		rootFolder: string,
+		agent?: CodingAgent,
 	) => Promise<WorkspaceWithTabs>;
 	deleteWorkspace: (id: string) => Promise<void>;
 	closeWorkspace: (id: string) => Promise<void>;
@@ -37,7 +40,7 @@ interface WorkspaceState {
 	reorderWorkspaces: (ids: string[]) => void;
 
 	// Tab actions
-	createTab: (workspaceId: string) => Promise<Tab>;
+	createTab: (workspaceId: string, agent?: CodingAgent) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
 	renameTab: (tabId: string, name: string) => Promise<void>;
@@ -148,10 +151,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		pty.cleanupStaleLogs(allPaneIds).catch(() => {});
 	},
 
-	createWorkspace: async (name, rootFolder) => {
+	createWorkspace: async (name, rootFolder, agent) => {
 		const workspaceWithTabs = await workspacesApi.create(name, rootFolder);
 		usePtyActivityStore.getState().markWorkspaceOpened(workspaceWithTabs.id);
-		const firstTabId = workspaceWithTabs.tabs[0]?.id;
+		const firstTab = workspaceWithTabs.tabs[0];
+		const firstTabId = firstTab?.id;
+		if (agent && firstTab) {
+			try {
+				const layout = JSON.parse(firstTab.layoutJson) as PaneNode;
+				const paneId = firstTerminalId(layout);
+				if (paneId) {
+					setPendingAgent(paneId, {
+						command: [agent.command, ...(agent.args ?? [])].join(" "),
+					});
+				}
+			} catch {
+				/* ignore */
+			}
+		}
 		set((state) => ({
 			workspaces: [...state.workspaces, workspaceWithTabs],
 			activeWorkspaceId: workspaceWithTabs.id,
@@ -306,7 +323,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	// ── Tab actions ──
 
-	createTab: async (workspaceId) => {
+	createTab: async (workspaceId, agent) => {
 		const workspace = get().workspaces.find((s) => s.id === workspaceId);
 		const nextNum = (workspace?.tabs.length ?? 0) + 1;
 		const name = `Terminal ${nextNum}`;
@@ -317,6 +334,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			initialFocus = firstTerminalId(layout);
 		} catch {
 			/* ignore */
+		}
+		if (agent && initialFocus) {
+			setPendingAgent(initialFocus, {
+				command: [agent.command, ...(agent.args ?? [])].join(" "),
+			});
 		}
 		set((state) => ({
 			workspaces: state.workspaces.map((s) =>

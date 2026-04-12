@@ -5,6 +5,7 @@ import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
+import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar/Sidebar";
@@ -63,6 +64,46 @@ export function App() {
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
+	const [launchPicker, setLaunchPicker] = useState<
+		| { purpose: "tab"; workspaceId: string }
+		| {
+				purpose: "workspace";
+				pendingName: string;
+				folderPath: string;
+		  }
+		| null
+	>(null);
+
+	const requestNewTab = useCallback((workspaceId: string) => {
+		setLaunchPicker({ purpose: "tab", workspaceId });
+	}, []);
+
+	const requestNewWorkspace = useCallback(async () => {
+		const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+		const folder = await openDialog({ directory: true, multiple: false });
+		if (!folder) return;
+		const folderPath = typeof folder === "string" ? folder : folder[0];
+		if (!folderPath) return;
+		const name = folderPath.split(/[\\/]/).pop() || "Untitled";
+		setLaunchPicker({ purpose: "workspace", pendingName: name, folderPath });
+	}, []);
+
+	const handleLaunchSelect = useCallback(
+		(choice: LaunchChoice) => {
+			const picker = launchPicker;
+			if (!picker) return;
+			const agent = choice.kind === "agent" ? choice.agent : undefined;
+			if (picker.purpose === "tab") {
+				createTab(picker.workspaceId, agent);
+			} else {
+				createWorkspace(picker.pendingName, picker.folderPath, agent).catch(
+					(err) => console.error("Failed to create workspace:", err),
+				);
+			}
+		},
+		[launchPicker, createTab, createWorkspace],
+	);
 	const fileTabs = useExplorerStore((s) => s.fileTabs);
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
 	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
@@ -155,7 +196,10 @@ export function App() {
 		);
 		registerAction("new-tab", () => {
 			const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-			if (workspaceId) useWorkspaceStore.getState().createTab(workspaceId);
+			if (workspaceId) requestNewTab(workspaceId);
+		});
+		registerAction("new-workspace", () => {
+			requestNewWorkspace();
 		});
 		registerAction("close-tab", () => {
 			const tab = useWorkspaceStore.getState().getActiveTab();
@@ -208,14 +252,24 @@ export function App() {
 			settings.setSidebarBottomPanel("search");
 			// Focus is handled by SearchPanel's useEffect on sidebarBottomPanel change
 		});
-	}, [splitPane, closePane, navigatePane, toggleMaximize]);
+	}, [
+		splitPane,
+		closePane,
+		navigatePane,
+		toggleMaximize,
+		requestNewTab,
+		requestNewWorkspace,
+	]);
 
 	return (
 		<div className="flex flex-col h-full w-full">
 			{!workspacesInitialized && <AppLoader />}
 			<Titlebar />
 			<div className="flex flex-1 min-h-0">
-				<Sidebar titlebarHeight={TITLEBAR_HEIGHT} />
+				<Sidebar
+					titlebarHeight={TITLEBAR_HEIGHT}
+					onRequestNewWorkspace={requestNewWorkspace}
+				/>
 				<div
 					className="flex-1 min-w-0 flex flex-col"
 					style={{ paddingTop: TITLEBAR_HEIGHT }}
@@ -257,7 +311,7 @@ export function App() {
 											setActiveView(workspace.id, "terminal");
 										}}
 										onClose={(tabId) => closeTab(tabId)}
-										onNew={() => createTab(workspace.id)}
+										onNew={() => requestNewTab(workspace.id)}
 										onRename={(tabId, name) => renameTab(tabId, name)}
 										fileTabs={fileTabs.filter(
 											(ft) => ft.workspaceId === workspace.id,
@@ -309,6 +363,17 @@ export function App() {
 			<CommandPalette
 				open={paletteOpen}
 				onClose={() => setPaletteOpen(false)}
+				onRequestNewWorkspace={requestNewWorkspace}
+			/>
+			<LaunchPicker
+				isOpen={!!launchPicker}
+				subtitle={
+					launchPicker?.purpose === "workspace"
+						? `Choose what to run in ${launchPicker.pendingName}`
+						: undefined
+				}
+				onClose={() => setLaunchPicker(null)}
+				onSelect={handleLaunchSelect}
 			/>
 			<SettingsPanel
 				open={settingsOpen}
