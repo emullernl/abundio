@@ -100,10 +100,23 @@ describe("stripResetSequences", () => {
 		expect(new TextDecoder().decode(result)).toBe("user@host:~$ ");
 	});
 
-	it("preserves cursor movement to non-home positions", () => {
-		const data = encode("\x1b[5;1H\x1b[10;20H");
+	it("strips parameterized CUP (ESC [ <row> ; <col> H)", () => {
+		// ConPTY emits this to pin the first prompt to the bottom row.
+		const data = encode("\x1b[30;1H\x1b[10;20H");
 		const result = stripResetSequences(data);
-		expect(new TextDecoder().decode(result)).toBe("\x1b[5;1H\x1b[10;20H");
+		expect(result.length).toBe(0);
+	});
+
+	it("strips HVP (ESC [ <row> ; <col> f) like CUP", () => {
+		const data = encode("\x1b[5;1f");
+		const result = stripResetSequences(data);
+		expect(result.length).toBe(0);
+	});
+
+	it("strips parameterized CUP interleaved with normal output", () => {
+		const data = encode("before\x1b[24;1Hprompt$ ");
+		const result = stripResetSequences(data);
+		expect(new TextDecoder().decode(result)).toBe("beforeprompt$ ");
 	});
 
 	it("handles reset at the very end of output", () => {
