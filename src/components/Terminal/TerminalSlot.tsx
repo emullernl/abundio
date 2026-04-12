@@ -125,19 +125,28 @@ export function TerminalSlot({
 	});
 
 	useEffect(() => {
-		if (isFocused && activeView === "terminal") {
-			// Double rAF: first waits for display:none→block commit, second for layout
-			let innerRaf: number | null = null;
-			const outerRaf = requestAnimationFrame(() => {
-				innerRaf = requestAnimationFrame(() => {
-					getTerminal(paneId)?.term.focus();
-				});
-			});
-			return () => {
-				cancelAnimationFrame(outerRaf);
-				if (innerRaf !== null) cancelAnimationFrame(innerRaf);
-			};
-		}
+		if (!isFocused || activeView !== "terminal") return;
+		// Poll until the terminal exists and is ready, then focus. Polling
+		// handles two cases uniformly: a freshly-created tab where the
+		// ManagedTerminal hasn't been built yet, and a tab switch where the
+		// container just transitioned from display:none to block.
+		const tryFocus = () => {
+			const managed = getTerminal(paneId);
+			if (managed?.ready) {
+				managed.term.focus();
+				return true;
+			}
+			return false;
+		};
+		if (tryFocus()) return;
+		const interval = setInterval(() => {
+			if (tryFocus()) clearInterval(interval);
+		}, 16);
+		const timeout = setTimeout(() => clearInterval(interval), 5000);
+		return () => {
+			clearInterval(interval);
+			clearTimeout(timeout);
+		};
 	}, [isFocused, paneId, activeView]);
 
 	const handleFocus = useCallback(() => {

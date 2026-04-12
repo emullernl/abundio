@@ -147,8 +147,13 @@ export interface ManagedTerminal {
 	webglAddon: WebglAddon | null;
 	ptyId: string;
 	cleanup: (() => void) | null;
-	/** Deferred scrollback data to write after terminal is projected into a visible container */
-	pendingRestore: string | Uint8Array | null;
+	/** Scrollback data loaded from disk, waiting to be written. For new PTYs this
+	 *  is written as the first chunk of flushStartupBuffer so it lands in xterm's
+	 *  write queue before the shell's startup output — effectively "prepending"
+	 *  scrollback above the live shell prompt without any race where shell reset
+	 *  sequences could wipe restored content. For reconnections it's written
+	 *  immediately after listeners are registered. */
+	restoreData: string | Uint8Array | null;
 	/** True while replaying saved scrollback — suppresses forwarding xterm query responses to the PTY */
 	restoring: boolean;
 	/** True until the terminal receives its first focus — suppresses activity tracking during shell startup */
@@ -176,12 +181,23 @@ export interface ManagedTerminal {
 	startupFlushScheduled: boolean;
 	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods) */
 	filterResets: boolean;
+	/** Handle for the pending filterResets=false timer so consecutive calls to
+	 *  beginResizeFilter can cancel the previous timer and properly extend the
+	 *  window instead of clobbering it. */
+	filterResetsTimer: ReturnType<typeof setTimeout> | null;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
 	startupShellReady: boolean;
 	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
 	pendingWrites: Uint8Array[];
 	/** rAF handle for the pending write flush, or null if none scheduled */
 	writeRafId: number | null;
+	/** Deferred PTY init closure. Populated by createTerminal, consumed by the
+	 *  first projectInto callback (via ensurePtySpawned). We spawn the PTY at
+	 *  the real target dimensions rather than the xterm default 80×24 so the
+	 *  shell never sees a size change — this avoids PSReadLine on Windows
+	 *  emitting a resize-driven repaint whose absolute cursor positioning
+	 *  lands the caret on the wrong row after restored scrollback is applied. */
+	deferredInit: (() => void) | null;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -418,7 +434,7 @@ export async function createTerminal(
 		webglAddon: null,
 		ptyId: initialPtyId,
 		cleanup: null,
-		pendingRestore: null,
+		restoreData: null,
 		restoring: false,
 		suppressActivity: true,
 		focused: false,
@@ -429,12 +445,25 @@ export async function createTerminal(
 		ready: false,
 		settled: false,
 		filterResets: false,
+		filterResetsTimer: null,
 		startupBuffer: [],
 		startupFlushScheduled: false,
 		startupShellReady: false,
 		pendingWrites: [],
 		writeRafId: null,
+		deferredInit: null,
 	};
+
+	// Populate deferredInit BEFORE publishing `managed` via instances.set so
+	// any caller that looks it up (projectInto via onTargetChange, a racing
+	// StrictMode remount, etc.) observes a consistent "not yet spawned"
+	// state. If we set deferredInit after the `await loadScrollback` below,
+	// there's a window where isPtySpawned() returns true (because
+	// deferredInit is still null) but no PTY actually exists yet — and
+	// projectInto's first callback would take the "already spawned" branch,
+	// never call ensurePtySpawned, and leave the terminal with no listeners,
+	// no input handler, and a permanently black canvas.
+	managed.deferredInit = () => initPty(paneId, managed, cwd);
 
 	instances.set(paneId, managed);
 
@@ -444,19 +473,40 @@ export async function createTerminal(
 	// container, and the store subscription will retry on tab switch.
 	ensureWebglLoaded(paneId);
 
-	// Load scrollback BEFORE returning so it's available when projectInto
-	// calls flushPendingRestore. initPty is fire-and-forget, so if we read
-	// scrollback inside it, the data wouldn't be ready in time.
+	// Load scrollback so it's parked on managed before the PTY is eventually
+	// spawned. flushStartupBuffer will emit it as the first chunk of write.
 	await loadScrollback(paneId, managed);
-
-	// Initialize PTY connection (listeners + spawn, fire-and-forget)
-	initPty(paneId, managed, cwd);
 
 	return managed;
 }
 
-/** Load scrollback from snapshot/log and store it on the managed terminal.
- *  Called from createTerminal (awaited) so data is ready before projectInto. */
+/** Run the deferred PTY init (listener registration + spawn) if it hasn't
+ *  run yet. Called from projectInto's first-callback path after fit() has
+ *  computed the real grid dimensions. Idempotent. */
+export function ensurePtySpawned(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed) return;
+	const init = managed.deferredInit;
+	if (!init) return;
+	managed.deferredInit = null;
+	init();
+}
+
+/** True if the PTY has been spawned (or is in the process of being spawned)
+ *  for this pane. projectInto uses this to decide whether to resize the PTY
+ *  (spawned → resize to match fit) or just let ensurePtySpawned handle the
+ *  initial sizing (not spawned → spawn at current fit dimensions). */
+export function isPtySpawned(paneId: string): boolean {
+	const managed = instances.get(paneId);
+	if (!managed) return false;
+	return managed.deferredInit === null;
+}
+
+/** Load scrollback from snapshot/log and park it on the managed terminal.
+ *  Does NOT write into xterm — the write happens later, right before the
+ *  buffered shell startup output is flushed (new PTY) or immediately after
+ *  listener registration (reconnection). This ordering guarantees the shell
+ *  cannot clobber restored scrollback with reset/clear sequences on startup. */
 async function loadScrollback(
 	paneId: string,
 	managed: ManagedTerminal,
@@ -479,16 +529,26 @@ async function loadScrollback(
 		]);
 		restoreData = snapshot ?? log;
 	}
-	if (restoreData) {
-		if (managed.term.cols > 1 && managed.term.rows > 1) {
-			managed.restoring = true;
-			managed.term.write(restoreData, () => {
-				managed.restoring = false;
-			});
-		} else {
-			managed.pendingRestore = restoreData;
+	managed.restoreData = restoreData;
+}
+
+/** Write any parked scrollback into xterm now, under the `restoring` guard so
+ *  xterm query-response replies aren't echoed back to the PTY. Idempotent.
+ *  Re-focuses the terminal after the write settles if the pane is the
+ *  currently-focused pane — without this the cursor stays invisible because
+ *  xterm's internal focus state was established before the scrollback write
+ *  moved the cursor. */
+function writeRestoreData(managed: ManagedTerminal): void {
+	const data = managed.restoreData;
+	if (!data) return;
+	managed.restoreData = null;
+	managed.restoring = true;
+	managed.term.write(data, () => {
+		managed.restoring = false;
+		if (managed.focused) {
+			managed.term.focus();
 		}
-	}
+	});
 }
 
 async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
@@ -698,10 +758,17 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	// Safety timeout: flush the startup buffer even if shell integration
 	// hooks never fire (e.g. custom shell without integration support).
+	// The flush also emits the parked scrollback, so this doubles as the
+	// fallback for scrollback restoration on shells without integration.
 	if (isNewPty) {
 		setTimeout(() => {
 			flushStartupBuffer(managed);
 		}, 3000);
+	} else {
+		// Reconnection: the shell is already running so there's no startup
+		// buffer to flush. Write parked scrollback immediately — there's no
+		// race since no shell init will follow.
+		writeRestoreData(managed);
 	}
 
 	if (isNewPty) {
@@ -776,12 +843,19 @@ function tryFlushStartup(managed: ManagedTerminal): void {
 	setTimeout(() => flushStartupBuffer(managed), 200);
 }
 
-/** Flush the startup output buffer: concatenate all chunks, strip terminal
- *  reset/clear/home sequences, then write the cleaned result to the terminal. */
+/** Flush the startup output buffer: first write any parked scrollback so it
+ *  lands above the shell prompt, then concatenate the buffered chunks, strip
+ *  terminal reset/clear/home sequences, and write the cleaned result. Writing
+ *  scrollback here (rather than before PTY spawn) ensures shell startup cannot
+ *  clobber restored content — xterm's write queue preserves order, so the
+ *  scrollback is guaranteed to render above the shell's first prompt. */
 function flushStartupBuffer(managed: ManagedTerminal): void {
 	const chunks = managed.startupBuffer;
 	if (!chunks) return;
 	managed.startupBuffer = null;
+
+	// Emit parked scrollback first so it appears above the shell prompt.
+	writeRestoreData(managed);
 
 	if (chunks.length === 0) return;
 
@@ -799,6 +873,13 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 	if (cleaned.length > 0) {
 		managed.term.write(cleaned);
 	}
+
+	// Re-arm the reset filter from *flush time*. For non-active tabs, the
+	// terminal sits in the 0×0 pool container until the user clicks its tab,
+	// so projectInto's beginResizeFilter window starts ticking ~200ms before
+	// we get here. Without this, ConPTY's resize-triggered repaint (which on
+	// Windows can arrive hundreds of ms later) slips past the filter.
+	armFilterResets(managed, 1500);
 }
 
 /** Mark terminal as visually settled — loader can now hide */
@@ -809,27 +890,28 @@ export function markSettled(paneId: string): void {
 	tryFlushStartup(managed);
 }
 
+/** Enable filterResets for `durationMs`, cancelling any previous timer so
+ *  consecutive calls properly extend (or restart) the window rather than
+ *  letting the earliest timer race ahead and turn the filter off early. */
+function armFilterResets(managed: ManagedTerminal, durationMs: number): void {
+	managed.filterResets = true;
+	if (managed.filterResetsTimer !== null) {
+		clearTimeout(managed.filterResetsTimer);
+	}
+	managed.filterResetsTimer = setTimeout(() => {
+		managed.filterResets = false;
+		managed.filterResetsTimer = null;
+	}, durationMs);
+}
+
 /** Temporarily filter terminal reset sequences from PTY output.
- *  Used around PTY resize during workspace switches to prevent the shell's
- *  resize-triggered redraw from wiping existing terminal content. */
+ *  Used around PTY resize during workspace switches and tab projections to
+ *  prevent the shell's resize-triggered redraw from wiping existing terminal
+ *  content. Safe to call repeatedly — each call resets the timer. */
 export function beginResizeFilter(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed) return;
-	managed.filterResets = true;
-	setTimeout(() => {
-		managed.filterResets = false;
-	}, 500);
-}
-
-/** Write any deferred scrollback restore data now that the terminal has real dimensions */
-export function flushPendingRestore(paneId: string): void {
-	const managed = instances.get(paneId);
-	if (!managed?.pendingRestore) return;
-	managed.restoring = true;
-	managed.term.write(managed.pendingRestore, () => {
-		managed.restoring = false;
-	});
-	managed.pendingRestore = null;
+	armFilterResets(managed, 1500);
 }
 
 /** Update theme on all terminal instances */
@@ -914,7 +996,7 @@ export async function resetTerminal(paneId: string): Promise<void> {
 	managed.lastInputAt = 0;
 	managed.bytesSinceIdle = 0;
 	managed.lastOutputChunkAt = 0;
-	managed.pendingRestore = null;
+	managed.restoreData = null;
 	managed.restoring = false;
 
 	// Get cwd from the active workspace
