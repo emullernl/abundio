@@ -454,6 +454,17 @@ export async function createTerminal(
 		deferredInit: null,
 	};
 
+	// Populate deferredInit BEFORE publishing `managed` via instances.set so
+	// any caller that looks it up (projectInto via onTargetChange, a racing
+	// StrictMode remount, etc.) observes a consistent "not yet spawned"
+	// state. If we set deferredInit after the `await loadScrollback` below,
+	// there's a window where isPtySpawned() returns true (because
+	// deferredInit is still null) but no PTY actually exists yet — and
+	// projectInto's first callback would take the "already spawned" branch,
+	// never call ensurePtySpawned, and leave the terminal with no listeners,
+	// no input handler, and a permanently black canvas.
+	managed.deferredInit = () => initPty(paneId, managed, cwd);
+
 	instances.set(paneId, managed);
 
 	// First attempt — may no-op because the pane isn't in the active tab yet,
@@ -462,17 +473,9 @@ export async function createTerminal(
 	// container, and the store subscription will retry on tab switch.
 	ensureWebglLoaded(paneId);
 
-	// Load scrollback BEFORE returning so it's available when initPty needs
-	// to emit it. initPty is fire-and-forget, so if we read scrollback inside
-	// it, the data wouldn't be ready in time.
+	// Load scrollback so it's parked on managed before the PTY is eventually
+	// spawned. flushStartupBuffer will emit it as the first chunk of write.
 	await loadScrollback(paneId, managed);
-
-	// Defer PTY init (listener registration + spawn) until the terminal is
-	// projected into a real, sized target. ensurePtySpawned() is called from
-	// projectInto's first ResizeObserver callback, which means the PTY gets
-	// spawned at the terminal's final grid dimensions — no resize required,
-	// and therefore no resize-driven shell repaint.
-	managed.deferredInit = () => initPty(paneId, managed, cwd);
 
 	return managed;
 }
