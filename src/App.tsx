@@ -6,6 +6,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
+import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar/Sidebar";
@@ -65,28 +66,18 @@ export function App() {
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
-	const [launchPicker, setLaunchPicker] = useState<
-		| { purpose: "tab"; workspaceId: string }
-		| {
-				purpose: "workspace";
-				pendingName: string;
-				folderPath: string;
-		  }
-		| null
-	>(null);
+	const [launchPicker, setLaunchPicker] = useState<{
+		purpose: "tab";
+		workspaceId: string;
+	} | null>(null);
+	const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
 
 	const requestNewTab = useCallback((workspaceId: string) => {
 		setLaunchPicker({ purpose: "tab", workspaceId });
 	}, []);
 
-	const requestNewWorkspace = useCallback(async () => {
-		const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
-		const folder = await openDialog({ directory: true, multiple: false });
-		if (!folder) return;
-		const folderPath = typeof folder === "string" ? folder : folder[0];
-		if (!folderPath) return;
-		const name = folderPath.split(/[\\/]/).pop() || "Untitled";
-		setLaunchPicker({ purpose: "workspace", pendingName: name, folderPath });
+	const requestNewWorkspace = useCallback(() => {
+		setNewWorkspaceOpen(true);
 	}, []);
 
 	const handleLaunchSelect = useCallback(
@@ -94,15 +85,27 @@ export function App() {
 			const picker = launchPicker;
 			if (!picker) return;
 			const agent = choice.kind === "agent" ? choice.agent : undefined;
-			if (picker.purpose === "tab") {
-				createTab(picker.workspaceId, agent);
-			} else {
-				createWorkspace(picker.pendingName, picker.folderPath, agent).catch(
-					(err) => console.error("Failed to create workspace:", err),
-				);
-			}
+			createTab(picker.workspaceId, agent);
 		},
-		[launchPicker, createTab, createWorkspace],
+		[launchPicker, createTab],
+	);
+
+	const handleCreateWorkspace = useCallback(
+		({
+			name,
+			folderPath,
+			choice,
+		}: {
+			name: string;
+			folderPath: string;
+			choice: LaunchChoice;
+		}) => {
+			const agent = choice.kind === "agent" ? choice.agent : undefined;
+			createWorkspace(name, folderPath, agent).catch((err) =>
+				console.error("Failed to create workspace:", err),
+			);
+		},
+		[createWorkspace],
 	);
 	const fileTabs = useExplorerStore((s) => s.fileTabs);
 	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
@@ -367,13 +370,13 @@ export function App() {
 			/>
 			<LaunchPicker
 				isOpen={!!launchPicker}
-				subtitle={
-					launchPicker?.purpose === "workspace"
-						? `Choose what to run in ${launchPicker.pendingName}`
-						: undefined
-				}
 				onClose={() => setLaunchPicker(null)}
 				onSelect={handleLaunchSelect}
+			/>
+			<NewWorkspaceDialog
+				isOpen={newWorkspaceOpen}
+				onClose={() => setNewWorkspaceOpen(false)}
+				onSubmit={handleCreateWorkspace}
 			/>
 			<SettingsPanel
 				open={settingsOpen}
