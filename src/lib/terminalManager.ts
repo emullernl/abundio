@@ -147,8 +147,13 @@ export interface ManagedTerminal {
 	webglAddon: WebglAddon | null;
 	ptyId: string;
 	cleanup: (() => void) | null;
-	/** Deferred scrollback data to write after terminal is projected into a visible container */
-	pendingRestore: string | Uint8Array | null;
+	/** Scrollback data loaded from disk, waiting to be written. For new PTYs this
+	 *  is written as the first chunk of flushStartupBuffer so it lands in xterm's
+	 *  write queue before the shell's startup output — effectively "prepending"
+	 *  scrollback above the live shell prompt without any race where shell reset
+	 *  sequences could wipe restored content. For reconnections it's written
+	 *  immediately after listeners are registered. */
+	restoreData: string | Uint8Array | null;
 	/** True while replaying saved scrollback — suppresses forwarding xterm query responses to the PTY */
 	restoring: boolean;
 	/** True until the terminal receives its first focus — suppresses activity tracking during shell startup */
@@ -418,7 +423,7 @@ export async function createTerminal(
 		webglAddon: null,
 		ptyId: initialPtyId,
 		cleanup: null,
-		pendingRestore: null,
+		restoreData: null,
 		restoring: false,
 		suppressActivity: true,
 		focused: false,
@@ -444,9 +449,9 @@ export async function createTerminal(
 	// container, and the store subscription will retry on tab switch.
 	ensureWebglLoaded(paneId);
 
-	// Load scrollback BEFORE returning so it's available when projectInto
-	// calls flushPendingRestore. initPty is fire-and-forget, so if we read
-	// scrollback inside it, the data wouldn't be ready in time.
+	// Load scrollback BEFORE returning so it's available when initPty needs
+	// to emit it. initPty is fire-and-forget, so if we read scrollback inside
+	// it, the data wouldn't be ready in time.
 	await loadScrollback(paneId, managed);
 
 	// Initialize PTY connection (listeners + spawn, fire-and-forget)
@@ -455,8 +460,11 @@ export async function createTerminal(
 	return managed;
 }
 
-/** Load scrollback from snapshot/log and store it on the managed terminal.
- *  Called from createTerminal (awaited) so data is ready before projectInto. */
+/** Load scrollback from snapshot/log and park it on the managed terminal.
+ *  Does NOT write into xterm — the write happens later, right before the
+ *  buffered shell startup output is flushed (new PTY) or immediately after
+ *  listener registration (reconnection). This ordering guarantees the shell
+ *  cannot clobber restored scrollback with reset/clear sequences on startup. */
 async function loadScrollback(
 	paneId: string,
 	managed: ManagedTerminal,
@@ -479,16 +487,26 @@ async function loadScrollback(
 		]);
 		restoreData = snapshot ?? log;
 	}
-	if (restoreData) {
-		if (managed.term.cols > 1 && managed.term.rows > 1) {
-			managed.restoring = true;
-			managed.term.write(restoreData, () => {
-				managed.restoring = false;
-			});
-		} else {
-			managed.pendingRestore = restoreData;
+	managed.restoreData = restoreData;
+}
+
+/** Write any parked scrollback into xterm now, under the `restoring` guard so
+ *  xterm query-response replies aren't echoed back to the PTY. Idempotent.
+ *  Re-focuses the terminal after the write settles if the pane is the
+ *  currently-focused pane — without this the cursor stays invisible because
+ *  xterm's internal focus state was established before the scrollback write
+ *  moved the cursor. */
+function writeRestoreData(managed: ManagedTerminal): void {
+	const data = managed.restoreData;
+	if (!data) return;
+	managed.restoreData = null;
+	managed.restoring = true;
+	managed.term.write(data, () => {
+		managed.restoring = false;
+		if (managed.focused) {
+			managed.term.focus();
 		}
-	}
+	});
 }
 
 async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
@@ -698,10 +716,17 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	// Safety timeout: flush the startup buffer even if shell integration
 	// hooks never fire (e.g. custom shell without integration support).
+	// The flush also emits the parked scrollback, so this doubles as the
+	// fallback for scrollback restoration on shells without integration.
 	if (isNewPty) {
 		setTimeout(() => {
 			flushStartupBuffer(managed);
 		}, 3000);
+	} else {
+		// Reconnection: the shell is already running so there's no startup
+		// buffer to flush. Write parked scrollback immediately — there's no
+		// race since no shell init will follow.
+		writeRestoreData(managed);
 	}
 
 	if (isNewPty) {
@@ -776,12 +801,19 @@ function tryFlushStartup(managed: ManagedTerminal): void {
 	setTimeout(() => flushStartupBuffer(managed), 200);
 }
 
-/** Flush the startup output buffer: concatenate all chunks, strip terminal
- *  reset/clear/home sequences, then write the cleaned result to the terminal. */
+/** Flush the startup output buffer: first write any parked scrollback so it
+ *  lands above the shell prompt, then concatenate the buffered chunks, strip
+ *  terminal reset/clear/home sequences, and write the cleaned result. Writing
+ *  scrollback here (rather than before PTY spawn) ensures shell startup cannot
+ *  clobber restored content — xterm's write queue preserves order, so the
+ *  scrollback is guaranteed to render above the shell's first prompt. */
 function flushStartupBuffer(managed: ManagedTerminal): void {
 	const chunks = managed.startupBuffer;
 	if (!chunks) return;
 	managed.startupBuffer = null;
+
+	// Emit parked scrollback first so it appears above the shell prompt.
+	writeRestoreData(managed);
 
 	if (chunks.length === 0) return;
 
@@ -819,17 +851,6 @@ export function beginResizeFilter(paneId: string): void {
 	setTimeout(() => {
 		managed.filterResets = false;
 	}, 500);
-}
-
-/** Write any deferred scrollback restore data now that the terminal has real dimensions */
-export function flushPendingRestore(paneId: string): void {
-	const managed = instances.get(paneId);
-	if (!managed?.pendingRestore) return;
-	managed.restoring = true;
-	managed.term.write(managed.pendingRestore, () => {
-		managed.restoring = false;
-	});
-	managed.pendingRestore = null;
 }
 
 /** Update theme on all terminal instances */
@@ -914,7 +935,7 @@ export async function resetTerminal(paneId: string): Promise<void> {
 	managed.lastInputAt = 0;
 	managed.bytesSinceIdle = 0;
 	managed.lastOutputChunkAt = 0;
-	managed.pendingRestore = null;
+	managed.restoreData = null;
 	managed.restoring = false;
 
 	// Get cwd from the active workspace

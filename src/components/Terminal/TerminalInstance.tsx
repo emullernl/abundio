@@ -6,7 +6,6 @@ import {
 	createTerminal,
 	destroyTerminal,
 	ensureWebglLoaded,
-	flushPendingRestore,
 	getTerminal,
 	markSettled,
 } from "../../lib/terminalManager";
@@ -78,7 +77,6 @@ export const TerminalInstance = memo(function TerminalInstance({
 						// browsers refuse — if that failed, xterm silently fell back
 						// to its DOM renderer and we'd see wrong glyph metrics.
 						ensureWebglLoaded(id);
-						flushPendingRestore(id);
 						if (managed.ptyId) {
 							beginResizeFilter(id);
 							pty
