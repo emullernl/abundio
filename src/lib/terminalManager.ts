@@ -23,6 +23,34 @@ import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
 
+// TEMP DEBUG: tracks how many output chunks we've logged per PTY so we can
+// cap the volume during the Windows "prompt pinned to last row" investigation.
+const debugChunkCounts = new Map<string, number>();
+
+/** TEMP DEBUG: pretty-print a byte buffer as hex + a printable form where
+ *  ESC becomes \e, CR \r, LF \n, and other control bytes \xNN. Logged to the
+ *  webview devtools console so we can see exactly what Windows ConPTY sends
+ *  during shell startup. */
+function debugDumpBytes(label: string, data: Uint8Array): void {
+	const parts: string[] = [];
+	const hex: string[] = [];
+	for (let i = 0; i < data.length; i++) {
+		const b = data[i];
+		hex.push(b.toString(16).padStart(2, "0"));
+		if (b === 0x1b) parts.push("\\e");
+		else if (b === 0x0d) parts.push("\\r");
+		else if (b === 0x0a) parts.push("\\n");
+		else if (b === 0x09) parts.push("\\t");
+		else if (b >= 0x20 && b <= 0x7e) parts.push(String.fromCharCode(b));
+		else parts.push(`\\x${b.toString(16).padStart(2, "0")}`);
+	}
+	console.log(
+		`%c${label}%c len=${data.length}\n  printable: ${parts.join("")}\n  hex: ${hex.join(" ")}`,
+		"color: #f97316; font-weight: bold",
+		"color: inherit",
+	);
+}
+
 /** CSS generic family keywords — these have no @font-face and must never be
  *  passed to FontFaceSet.load() / .check() as the family to await on. */
 const CSS_GENERIC_FAMILIES =
@@ -560,6 +588,17 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			const entry = actState.activities[currentPtyId];
 			const isAgentMode = entry?.detectionMode === "agent";
 
+			// TEMP DEBUG: log the first N chunks arriving after PTY spawn so
+			// we can see exactly what bytes Windows shells + ConPTY send.
+			const dbgCount = debugChunkCounts.get(currentPtyId) ?? 0;
+			if (dbgCount < 40) {
+				debugDumpBytes(
+					`[pty ${currentPtyId.slice(0, 8)} #${dbgCount} buffered=${!!managed.startupBuffer} filterResets=${managed.filterResets}]`,
+					cleaned,
+				);
+				debugChunkCounts.set(currentPtyId, dbgCount + 1);
+			}
+
 			if (managed.startupBuffer) {
 				managed.startupBuffer.push(cleaned);
 			} else {
@@ -827,7 +866,16 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 		offset += chunk.length;
 	}
 
+	// TEMP DEBUG: show the combined startup buffer before and after filtering
+	debugDumpBytes(
+		`[flushStartup COMBINED pty=${managed.ptyId?.slice(0, 8) ?? "?"}]`,
+		combined,
+	);
 	const cleaned = stripResetSequences(combined);
+	debugDumpBytes(
+		`[flushStartup FILTERED pty=${managed.ptyId?.slice(0, 8) ?? "?"}]`,
+		cleaned,
+	);
 	if (cleaned.length > 0) {
 		managed.term.write(cleaned);
 	}
