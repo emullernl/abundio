@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { Explorer } from "../Explorer/Explorer";
 import { ChevronLeft, ChevronRight, Folder, Plus, Search } from "../Icons";
+import { RuntimePluginPanel } from "../Plugin/RuntimePluginPanel";
 import { SearchPanel } from "../Search/SearchPanel";
 import { WorkspaceList } from "./WorkspaceList";
 
@@ -173,6 +174,7 @@ export function Sidebar({
 		setSidebarSplitRatio,
 		sidebarBottomPanel,
 		setSidebarBottomPanel,
+		enabledPlugins,
 	} = useSettingsStore();
 	const [localRatio, setLocalRatio] = useState<number | null>(null);
 	const [localWidth, setLocalWidth] = useState<number | null>(null);
@@ -348,11 +350,27 @@ export function Sidebar({
 						>
 							<Search size={14} />
 						</PanelTab>
+						{enabledPlugins.includes("salesforce") && (
+							<PanelTab
+								active={sidebarBottomPanel === "salesforce"}
+								onClick={() => setSidebarBottomPanel("salesforce")}
+								title="Salesforce"
+							>
+								{/* TODO: Add Salesforce icon */}
+								<span>SF</span>
+							</PanelTab>
+						)}
 					</div>
 
 					{/* Panel content */}
 					<div className="flex-1 min-h-0">
-						{sidebarBottomPanel === "explorer" ? <Explorer /> : <SearchPanel />}
+						{sidebarBottomPanel === "explorer" ? (
+							<Explorer />
+						) : sidebarBottomPanel === "search" ? (
+							<SearchPanel />
+						) : sidebarBottomPanel === "salesforce" ? (
+							<RuntimePluginPanel pluginId="salesforce" />
+						) : null}
 					</div>
 				</div>
 			</div>

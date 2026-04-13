@@ -179,3 +179,33 @@ export interface SearchResult {
 	totalMatches: number;
 	truncated: boolean;
 }
+
+// ── Plugins ──
+
+export interface PluginManifest {
+	name: string;
+	version: string;
+	description: string;
+	commands: string[];
+	ui?: PluginUI;
+}
+
+export interface PluginUI {
+	panel?: string; // Path to component file
+}
+
+export interface Plugin {
+	id: string;
+	dir: string;
+	manifest: PluginManifest;
+}
+
+// ── Salesforce ──
+
+export interface SalesforceOrg {
+	orgId: string;
+	username: string;
+	alias?: string;
+	instanceUrl: string;
+	isDefault: boolean;
+}

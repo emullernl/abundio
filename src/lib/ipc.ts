@@ -9,9 +9,11 @@ import type {
 	GhStatus,
 	GitChangedFile,
 	GitFileDiff,
+	Plugin,
 	PtyActivityType,
 	PtyStatusType,
 	PullRequest,
+	SalesforceOrg,
 	SearchResult,
 	Tab,
 	TabUpdate,
@@ -220,4 +222,16 @@ export const fonts = {
 
 export const shells = {
 	listAvailable: () => invoke<AvailableShell[]>("list_available_shells"),
+};
+
+export const plugins = {
+	list: () => invoke<Plugin[]>("list_plugins"),
+	openDirectory: () => invoke<string>("open_plugins_directory"),
+};
+
+export const salesforce = {
+	orgList: () => invoke<SalesforceOrg[]>("sf_org_list"),
+	setDefaultOrg: (orgId: string) => invoke<void>("sf_set_default_org", { orgId }),
+	openOrg: (orgId: string) => invoke<void>("sf_open_org", { orgId }),
+	deploy: (sourcePath: string, orgId: string) => invoke<string>("sf_deploy", { sourcePath, orgId }),
 };

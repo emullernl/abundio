@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fonts as fontsIpc, shells as shellsIpc } from "../lib/ipc";
+import { fonts as fontsIpc, shells as shellsIpc, plugins as pluginsIpc } from "../lib/ipc";
 import {
 	type FontEntry,
 	systemFontToEntry,
@@ -7,11 +7,12 @@ import {
 } from "../lib/nerdFonts";
 import { setAllTerminalsFontSize } from "../lib/terminalManager";
 import { type AppTheme, themeList } from "../lib/themes";
-import type { AvailableShell, CodingAgent } from "../lib/types";
+import type { AvailableShell, CodingAgent, Plugin } from "../lib/types";
+import { isMac } from "../lib/platform";
 import { useSettingsStore } from "../stores/settingsStore";
 import { Check, Plus, X } from "./Icons";
 
-type Section = "theme" | "terminal-font" | "ui-font" | "shell" | "agents";
+type Section = "theme" | "terminal-font" | "ui-font" | "shell" | "agents" | "plugins";
 
 interface Props {
 	open: boolean;
@@ -491,6 +492,30 @@ function LayoutIcon() {
 	);
 }
 
+
+function PuzzleIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+			<polyline points="14,2 14,8 20,8" />
+			<path d="M16 13a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2" />
+			<path d="M8 13a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2" />
+			<path d="M10 9v2" />
+			<path d="M14 9v2" />
+		</svg>
+	);
+}
+
 /* ─── Toggle switch ─── */
 function Toggle({
 	checked,
@@ -617,6 +642,73 @@ function AgentRow({
 					<X size={13} />
 				</button>
 			) : null}
+		</div>
+	);
+}
+
+/* ─── Plugin row ─── */
+function PluginRow({
+	plugin,
+	isEnabled,
+	onToggle,
+}: {
+	plugin: Plugin;
+	isEnabled: boolean;
+	onToggle: () => void;
+}) {
+	return (
+		<div
+			className="flex items-center gap-3 rounded-lg group transition-colors"
+			style={{
+				padding: "9px 10px",
+				backgroundColor: isEnabled
+					? "transparent"
+					: "color-mix(in srgb, var(--bg-tertiary) 40%, transparent)",
+			}}
+		>
+			<Toggle checked={isEnabled} onChange={onToggle} />
+			<div
+				className="flex-1 min-w-0"
+				style={{
+					opacity: isEnabled ? 1 : 0.5,
+				}}
+			>
+				<div
+					className="truncate"
+					style={{
+						fontSize: 13,
+						color: "var(--fg-primary)",
+						lineHeight: 1.3,
+					}}
+				>
+					{plugin.manifest.name}
+				</div>
+				<div
+					className="truncate"
+					style={{
+						fontSize: 11,
+						color: "var(--fg-secondary)",
+						marginTop: 1,
+					}}
+				>
+					{plugin.manifest.description}
+				</div>
+			</div>
+			<span
+				className="flex-shrink-0 rounded"
+				style={{
+					fontSize: 9,
+					fontWeight: 600,
+					color: "var(--fg-secondary)",
+					letterSpacing: "0.05em",
+					textTransform: "uppercase",
+					padding: "2px 5px",
+					border: "1px solid var(--border)",
+					opacity: 0.6,
+				}}
+			>
+				v{plugin.manifest.version}
+			</span>
 		</div>
 	);
 }
@@ -879,6 +971,9 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const addAgent = useSettingsStore((s) => s.addAgent);
 	const removeAgent = useSettingsStore((s) => s.removeAgent);
 	const toggleAgent = useSettingsStore((s) => s.toggleAgent);
+	const enabledPlugins = useSettingsStore((s) => s.enabledPlugins);
+	const enablePlugin = useSettingsStore((s) => s.enablePlugin);
+	const disablePlugin = useSettingsStore((s) => s.disablePlugin);
 
 	const themes = useMemo(() => themeList(), []);
 
@@ -913,6 +1008,22 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 			});
 	}, [isOpen]);
 
+	const [plugins, setPlugins] = useState<Plugin[]>([]);
+	const [pluginsDirStatus, setPluginsDirStatus] = useState<string | null>(null);
+	const pluginsLoaded = useRef(false);
+	useEffect(() => {
+		if (!isOpen || pluginsLoaded.current) return;
+		pluginsIpc
+			.list()
+			.then((loadedPlugins) => {
+				setPlugins(loadedPlugins);
+				pluginsLoaded.current = true;
+			})
+			.catch(() => {
+				setPlugins([]);
+			});
+	}, [isOpen]);
+
 	useEffect(() => {
 		if (!isOpen) return;
 		const handleEscape = (e: KeyboardEvent) => {
@@ -940,6 +1051,21 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 		},
 		[setUiFontSize],
 	);
+
+	const handleOpenPluginsDirectory = useCallback(() => {
+		pluginsIpc
+			.openDirectory()
+			.then((path) => {
+				setPluginsDirStatus(`Opened: ${path}`);
+			})
+			.catch((err) => {
+				setPluginsDirStatus(
+					err instanceof Error
+						? `Failed to open plugins directory: ${err.message}`
+						: "Failed to open plugins directory",
+				);
+			});
+	}, []);
 
 	if (!isOpen) return null;
 
@@ -981,6 +1107,23 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 						Settings
 					</span>
 					<div className="flex items-center gap-3">
+						{!isMac && (
+							<button
+								type="button"
+								onClick={onClose}
+								className="rounded-md flex items-center justify-center transition-colors"
+								style={{
+									width: 24,
+									height: 24,
+									color: "var(--fg-secondary)",
+									border: "1px solid var(--border)",
+									backgroundColor: "transparent",
+								}}
+								title="Close settings"
+							>
+								<X size={12} />
+							</button>
+						)}
 						<span
 							className="font-mono"
 							style={{
@@ -1039,6 +1182,12 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 							icon={<AgentIcon />}
 							isActive={section === "agents"}
 							onClick={() => setSection("agents")}
+						/>
+						<NavItem
+							label="Plugins"
+							icon={<PuzzleIcon />}
+							isActive={section === "plugins"}
+							onClick={() => setSection("plugins")}
 						/>
 					</div>
 
@@ -1176,6 +1325,79 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 								</div>
 								<div className="flex-shrink-0">
 									<AddAgentForm onAdd={addAgent} />
+								</div>
+							</div>
+						)}
+
+						{section === "plugins" && (
+							<div className="flex flex-col gap-4 flex-1 min-h-0">
+								<div className="flex-1 min-h-0 overflow-y-auto">
+									<SectionLabel>Plugins</SectionLabel>
+									<div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+										<p
+											style={{
+												fontSize: 12,
+												color: "var(--fg-secondary)",
+												lineHeight: 1.5,
+												marginRight: 12,
+											}}
+										>
+											Enable or disable plugins. Plugins extend Abundio with additional features.
+										</p>
+										<button
+											type="button"
+											onClick={handleOpenPluginsDirectory}
+											className="rounded-md transition-colors"
+											style={{
+												padding: "6px 10px",
+												fontSize: 12,
+												fontWeight: 500,
+												color: "var(--fg-primary)",
+												backgroundColor: "var(--bg-tertiary)",
+												border: "1px solid var(--border)",
+												whiteSpace: "nowrap",
+											}}
+										>
+											Open Plugins Folder
+										</button>
+									</div>
+									<p
+										style={{
+											fontSize: 12,
+											color: "var(--fg-secondary)",
+											marginBottom: 8,
+											lineHeight: 1.5,
+										}}
+									>
+										{pluginsDirStatus ?? "Use the button to open the writable plugins directory and drop new plugins there."}
+									</p>
+									<div className="flex flex-col gap-0.5">
+										{plugins.length === 0 && (
+											<div
+												style={{
+													fontSize: 12,
+													color: "var(--fg-secondary)",
+													padding: "8px 0",
+												}}
+											>
+												No plugins found yet.
+											</div>
+										)}
+										{plugins.map((plugin) => (
+											<PluginRow
+												key={plugin.id}
+												plugin={plugin}
+												isEnabled={enabledPlugins.includes(plugin.id)}
+												onToggle={() => {
+													if (enabledPlugins.includes(plugin.id)) {
+														disablePlugin(plugin.id);
+													} else {
+														enablePlugin(plugin.id);
+													}
+												}}
+											/>
+										))}
+									</div>
 								</div>
 							</div>
 						)}

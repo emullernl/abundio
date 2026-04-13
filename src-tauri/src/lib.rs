@@ -7,6 +7,7 @@ pub mod file_watcher;
 pub mod gh_commands;
 pub mod git_commands;
 pub mod migrations;
+pub mod plugins;
 pub mod process_monitor;
 pub mod pty_manager;
 pub mod search;
@@ -162,6 +163,17 @@ pub fn run() {
             // Initialize search manager
             app.manage(search::SearchManager::new());
 
+            // Initialize plugins
+            let plugin_dirs = plugins::resolve_plugin_dirs();
+            let loaded_plugins = match plugins::load_plugins_from_dirs(&plugin_dirs) {
+                Ok(plugins) => plugins,
+                Err(e) => {
+                    eprintln!("Failed to load plugins: {}", e);
+                    Vec::new()
+                }
+            };
+            app.manage(loaded_plugins);
+
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -208,6 +220,12 @@ pub fn run() {
             commands::list_available_shells,
             search::fs_search,
             search::fs_search_cancel,
+            commands::list_plugins,
+            commands::open_plugins_directory,
+            commands::sf_org_list,
+            commands::sf_set_default_org,
+            commands::sf_open_org,
+            commands::sf_deploy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

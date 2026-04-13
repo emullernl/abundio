@@ -25,7 +25,8 @@ interface SettingsState {
 	activityByteThreshold: number;
 	shellPath: string | null;
 	agents: CodingAgent[];
-	sidebarBottomPanel: "explorer" | "search";
+	sidebarBottomPanel: "explorer" | "search" | "salesforce";
+	enabledPlugins: string[];
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -47,7 +48,9 @@ interface SettingsState {
 		id: string,
 		updates: Partial<Pick<CodingAgent, "name" | "command" | "args">>,
 	) => void;
-	setSidebarBottomPanel: (panel: "explorer" | "search") => void;
+	setSidebarBottomPanel: (panel: "explorer" | "search" | "salesforce") => void;
+	enablePlugin: (id: string) => void;
+	disablePlugin: (id: string) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -70,6 +73,7 @@ const PERSISTED_DEFAULTS: {
 	activityByteThreshold: number;
 	shellPath: string | null;
 	agents: CodingAgent[];
+	enabledPlugins: string[];
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -85,6 +89,7 @@ const PERSISTED_DEFAULTS: {
 		activityByteThreshold: 1024,
 		shellPath: null as string | null,
 		agents: BUILTIN_AGENTS as CodingAgent[],
+		enabledPlugins: [] as string[],
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -140,6 +145,9 @@ const PERSISTED_DEFAULTS: {
 			agents: Array.isArray(s.agents)
 				? mergeAgentsWithBuiltins(s.agents)
 				: defaults.agents,
+			enabledPlugins: Array.isArray(s.enabledPlugins)
+				? s.enabledPlugins
+				: defaults.enabledPlugins,
 		};
 	} catch {
 		return defaults;
@@ -164,6 +172,7 @@ export const useSettingsStore = create<SettingsState>()(
 			shellPath: PERSISTED_DEFAULTS.shellPath,
 			agents: PERSISTED_DEFAULTS.agents,
 			sidebarBottomPanel: "explorer",
+			enabledPlugins: PERSISTED_DEFAULTS.enabledPlugins,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -233,6 +242,16 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			setSidebarBottomPanel: (sidebarBottomPanel) =>
 				set({ sidebarBottomPanel }),
+			enablePlugin: (id) =>
+				set((s) => ({
+					enabledPlugins: s.enabledPlugins.includes(id)
+						? s.enabledPlugins
+						: [...s.enabledPlugins, id],
+				})),
+			disablePlugin: (id) =>
+				set((s) => ({
+					enabledPlugins: s.enabledPlugins.filter((p) => p !== id),
+				})),
 		}),
 		{
 			name: "abundio-settings",
