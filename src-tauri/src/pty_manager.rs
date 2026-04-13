@@ -151,6 +151,17 @@ impl PtyManager {
         // Suppress zsh's partial-line EOL marker (%) so it doesn't appear in replayed scrollback logs
         cmd.env("PROMPT_EOL_MARK", "");
 
+        // Per-pane shell history: point the shell at a history file keyed by log_id
+        // so each terminal has isolated Up-arrow recall. The wrapper rc files still
+        // dual-write each command to the user's real history file.
+        if let Some(id) = log_id {
+            let hist_dir = Self::history_dir();
+            if fs::create_dir_all(&hist_dir).is_ok() {
+                let hist_path = hist_dir.join(format!("{}.history", id));
+                cmd.env("ABUNDIO_HISTFILE", hist_path.to_string_lossy().as_ref());
+            }
+        }
+
         if Path::new(cwd).is_dir() {
             cmd.cwd(cwd);
         }
@@ -234,6 +245,13 @@ impl PtyManager {
             .join("pty-logs")
     }
 
+    fn history_dir() -> PathBuf {
+        dirs::data_dir()
+            .unwrap_or_else(|| Path::new("~").to_path_buf())
+            .join("abundio")
+            .join("shell-history")
+    }
+
     /// Read a PTY output log file, returning its contents as base64.
     pub fn read_log(log_id: &str) -> Result<Option<String>, AbundioError> {
         let log_path = Self::log_dir().join(format!("{}.log", log_id));
@@ -281,22 +299,27 @@ impl PtyManager {
         if snapshot_path.exists() {
             fs::remove_file(&snapshot_path)?;
         }
+        let history_path = Self::history_dir().join(format!("{}.history", log_id));
+        if history_path.exists() {
+            fs::remove_file(&history_path)?;
+        }
         Ok(())
     }
 
     /// Remove log and snapshot files that don't belong to any known pane ID.
     pub fn cleanup_stale_logs(valid_pane_ids: &[String]) -> Result<(), AbundioError> {
-        let log_dir = Self::log_dir();
-        if !log_dir.exists() {
-            return Ok(());
-        }
         let valid: HashSet<&str> = valid_pane_ids.iter().map(|s| s.as_str()).collect();
-        for entry in fs::read_dir(&log_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                if !valid.contains(stem) {
-                    let _ = fs::remove_file(&path);
+        for dir in [Self::log_dir(), Self::history_dir()] {
+            if !dir.exists() {
+                continue;
+            }
+            for entry in fs::read_dir(&dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if !valid.contains(stem) {
+                        let _ = fs::remove_file(&path);
+                    }
                 }
             }
         }
@@ -360,6 +383,21 @@ elif [ -f "$HOME/.zshrc" ]; then
   ZDOTDIR="$HOME"
   source "$HOME/.zshrc"
 fi
+# Per-pane history: isolate Up-arrow recall to this terminal. Runs after
+# user config so HISTSIZE/SAVEHIST are preserved.
+if [ -n "$ABUNDIO_HISTFILE" ]; then
+  # Capture the user's real HISTFILE before we override it, so we can
+  # dual-write each command into the global history too.
+  __abundio_global_histfile="${HISTFILE:-$HOME/.zsh_history}"
+  HISTFILE="$ABUNDIO_HISTFILE"
+  [ -f "$HISTFILE" ] && fc -R "$HISTFILE" 2>/dev/null
+  # Dual-write: every accepted command is appended to the user's global
+  # history file in addition to this pane's isolated file.
+  zshaddhistory() {
+    print -r -- "${1%$'\n'}" >>| "$__abundio_global_histfile"
+    return 0
+  }
+fi
 # Hooks
 __abundio_preexec() { printf '\e]7770;command_start;%s\a' "${1//$'\a'/ }" }
 __abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?" }
@@ -401,6 +439,26 @@ fi
 # Source the user's real bash config
 [ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
 [ -f ~/.bashrc ] && source ~/.bashrc
+# Per-pane history
+if [ -n "$ABUNDIO_HISTFILE" ]; then
+  __abundio_global_histfile="${HISTFILE:-$HOME/.bash_history}"
+  HISTFILE="$ABUNDIO_HISTFILE"
+  history -c
+  [ -f "$HISTFILE" ] && history -r
+  __abundio_last_histcmd=0
+  __abundio_dual_write() {
+    # Append any new command since last prompt to the user's global history.
+    local last_id cmd
+    last_id=$(HISTTIMEFORMAT='' history 1 | awk '{print $1}')
+    if [ -n "$last_id" ] && [ "$last_id" != "$__abundio_last_histcmd" ]; then
+      cmd=$(HISTTIMEFORMAT='' history 1)
+      cmd="${cmd#*[0-9]  }"
+      printf '%s\n' "$cmd" >> "$__abundio_global_histfile"
+      __abundio_last_histcmd="$last_id"
+    fi
+  }
+  PROMPT_COMMAND="__abundio_dual_write${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+fi
 # Hooks
 __abundio_preexec() {
   [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
@@ -459,6 +517,22 @@ if (Get-Module -Name PSReadLine) {
             $Host.UI.Write("$Global:__AbundioESC]7770;command_start;$escaped$Global:__AbundioBEL")
         }
         [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+    }
+}
+
+# Per-pane history: isolate PSReadLine history to this terminal, and
+# dual-write each accepted line into the user's original global file.
+if ($env:ABUNDIO_HISTFILE -and (Get-Module -Name PSReadLine)) {
+    $Global:__AbundioGlobalHistPath = (Get-PSReadLineOption).HistorySavePath
+    Set-PSReadLineOption -HistorySavePath $env:ABUNDIO_HISTFILE
+    Set-PSReadLineOption -AddToHistoryHandler {
+        param($line)
+        if ($line -and $Global:__AbundioGlobalHistPath) {
+            try {
+                Add-Content -LiteralPath $Global:__AbundioGlobalHistPath -Value $line -ErrorAction SilentlyContinue
+            } catch {}
+        }
+        return [Microsoft.PowerShell.AddToHistoryOption]::MemoryAndFile
     }
 }
 "#,
