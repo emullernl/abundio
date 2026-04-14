@@ -16,6 +16,7 @@ import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
 import { useConfirmCloseFileTab } from "./hooks/useConfirmCloseFileTab";
+import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { initKeybindings, registerAction } from "./lib/keybindings";
@@ -53,6 +54,7 @@ const TabTerminalContent = memo(function TabTerminalContent({
 
 export function App() {
 	useWorkspace();
+	useFileReloadWatcher();
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const activeTabByWorkspace = useWorkspaceStore((s) => s.activeTabByWorkspace);

@@ -131,7 +131,13 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 			);
 			useExplorerStore
 				.getState()
-				.openDiff(activeWorkspaceId, file.path, diff.original, diff.modified);
+				.openDiff(
+					activeWorkspaceId,
+					file.path,
+					diff.original,
+					diff.modified,
+					file.section,
+				);
 		} catch {
 			// Failed to load diff
 		}

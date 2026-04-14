@@ -98,6 +98,7 @@ export function DiffViewer({ diff, onBack }: Props) {
 					options={{
 						fontFamily,
 						fontSize: monacoFontSize,
+						contextmenu: true,
 						readOnly: true,
 						minimap: { enabled: false },
 						scrollBeyondLastLine: false,

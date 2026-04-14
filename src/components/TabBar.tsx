@@ -1,3 +1,4 @@
+import { AlertTriangle, FileX } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { Tab } from "../lib/types";
 import type { FileTab } from "../stores/explorerStore";
@@ -77,6 +78,7 @@ function TabItem({
 	icon,
 	isDirty,
 	statusDot,
+	warning,
 }: {
 	tab: Tab | { id: string; name: string };
 	isActive: boolean;
@@ -94,6 +96,7 @@ function TabItem({
 	icon?: React.ReactNode;
 	isDirty?: boolean;
 	statusDot?: React.ReactNode;
+	warning?: React.ReactNode;
 }) {
 	const [hovered, setHovered] = useState(false);
 	const isEditing = editingTabId === tab.id;
@@ -176,6 +179,15 @@ function TabItem({
 			)}
 
 			{statusDot}
+
+			{warning && (
+				<span
+					className="flex items-center shrink-0"
+					style={{ color: "var(--accent)" }}
+				>
+					{warning}
+				</span>
+			)}
 
 			{isDirty && (
 				<span
@@ -435,6 +447,13 @@ export function TabBar({
 								)
 							}
 							isDirty={ft.isDirty}
+							warning={
+								ft.deletedOnDisk ? (
+									<FileX size={12} />
+								) : ft.externallyChanged ? (
+									<AlertTriangle size={12} />
+								) : undefined
+							}
 						/>
 					);
 				})}

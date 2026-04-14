@@ -232,6 +232,7 @@ export function CodeEditor({
 				options={{
 					fontFamily,
 					fontSize: monacoFontSize,
+					contextmenu: true,
 					minimap: { enabled: false },
 					scrollBeyondLastLine: false,
 					lineNumbers: "on",
