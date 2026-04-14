@@ -36,6 +36,7 @@ export interface FileTab {
 interface ExplorerState {
 	fileTabs: FileTab[];
 	activeFileTabId: string | null;
+	activeFileTabByWorkspace: Record<string, string | null>;
 	expandedDirs: Record<string, boolean>;
 	dirContents: Record<string, DirEntry[]>;
 	pendingGotoLine: { filePath: string; line: number } | null;
@@ -172,6 +173,7 @@ export async function restoreFileTabs(
 export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	fileTabs: [],
 	activeFileTabId: null,
+	activeFileTabByWorkspace: {},
 	expandedDirs: {},
 	dirContents: {},
 	pendingGotoLine: null,
@@ -180,7 +182,13 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		// If already open, just activate it
 		const existing = get().fileTabs.find((t) => t.filePath === filePath);
 		if (existing) {
-			set({ activeFileTabId: existing.id });
+			set((s) => ({
+				activeFileTabId: existing.id,
+				activeFileTabByWorkspace: {
+					...s.activeFileTabByWorkspace,
+					[workspaceId]: existing.id,
+				},
+			}));
 			useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 			return;
 		}
@@ -192,7 +200,13 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			(t) => t.filePath === filePath,
 		);
 		if (existingAfterRead) {
-			set({ activeFileTabId: existingAfterRead.id });
+			set((s) => ({
+				activeFileTabId: existingAfterRead.id,
+				activeFileTabByWorkspace: {
+					...s.activeFileTabByWorkspace,
+					[workspaceId]: existingAfterRead.id,
+				},
+			}));
 			useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 			return;
 		}
@@ -223,6 +237,10 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		set((s) => ({
 			fileTabs: [...s.fileTabs, tab],
 			activeFileTabId: tab.id,
+			activeFileTabByWorkspace: {
+				...s.activeFileTabByWorkspace,
+				[workspaceId]: tab.id,
+			},
 		}));
 		useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 		persistFileTabs(workspaceId);
@@ -250,6 +268,10 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 						: t,
 				),
 				activeFileTabId: existing.id,
+				activeFileTabByWorkspace: {
+					...s.activeFileTabByWorkspace,
+					[workspaceId]: existing.id,
+				},
 			}));
 			useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 			return;
@@ -281,6 +303,10 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		set((s) => ({
 			fileTabs: [...s.fileTabs, tab],
 			activeFileTabId: tab.id,
+			activeFileTabByWorkspace: {
+				...s.activeFileTabByWorkspace,
+				[workspaceId]: tab.id,
+			},
 		}));
 		useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 	},
@@ -290,32 +316,46 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		const closedTab = get().fileTabs.find((t) => t.id === tabId);
 		set((s) => {
 			const idx = s.fileTabs.findIndex((t) => t.id === tabId);
+			const closedWorkspaceId = s.fileTabs[idx]?.workspaceId;
 			const newTabs = s.fileTabs.filter((t) => t.id !== tabId);
 			let newActiveId = s.activeFileTabId;
+			const activeFileTabByWorkspace = { ...s.activeFileTabByWorkspace };
 
-			if (s.activeFileTabId === tabId) {
-				const closedWorkspaceId = s.fileTabs[idx]?.workspaceId;
+			// If the closed tab was the active one for its workspace, pick a replacement.
+			if (
+				closedWorkspaceId &&
+				activeFileTabByWorkspace[closedWorkspaceId] === tabId
+			) {
 				const workspaceTabs = newTabs.filter(
 					(t) => t.workspaceId === closedWorkspaceId,
 				);
 				if (workspaceTabs.length === 0) {
-					newActiveId = null;
+					activeFileTabByWorkspace[closedWorkspaceId] = null;
 					// Switch back to terminal view
-					if (closedWorkspaceId) {
-						useWorkspaceStore
-							.getState()
-							.setActiveView(closedWorkspaceId, "terminal");
-					}
+					useWorkspaceStore
+						.getState()
+						.setActiveView(closedWorkspaceId, "terminal");
 				} else {
 					const oldIdx = s.fileTabs
 						.slice(0, idx)
 						.filter((t) => t.workspaceId === closedWorkspaceId).length;
 					const newIdx = Math.min(oldIdx, workspaceTabs.length - 1);
-					newActiveId = workspaceTabs[newIdx].id;
+					activeFileTabByWorkspace[closedWorkspaceId] = workspaceTabs[newIdx].id;
 				}
 			}
 
-			return { fileTabs: newTabs, activeFileTabId: newActiveId };
+			// Keep the globally-visible activeFileTabId in sync when the closed tab was it.
+			if (s.activeFileTabId === tabId) {
+				newActiveId = closedWorkspaceId
+					? (activeFileTabByWorkspace[closedWorkspaceId] ?? null)
+					: null;
+			}
+
+			return {
+				fileTabs: newTabs,
+				activeFileTabId: newActiveId,
+				activeFileTabByWorkspace,
+			};
 		});
 		if (closedTab) {
 			persistFileTabs(closedTab.workspaceId);
@@ -323,13 +363,18 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	},
 
 	setActiveFileTab: (tabId) => {
-		set({ activeFileTabId: tabId });
-		if (tabId) {
-			const tab = get().fileTabs.find((t) => t.id === tabId);
-			if (tab) {
-				useWorkspaceStore.getState().setActiveView(tab.workspaceId, "file");
-				persistFileTabs(tab.workspaceId);
-			}
+		const tab = tabId
+			? get().fileTabs.find((t) => t.id === tabId)
+			: undefined;
+		set((s) => ({
+			activeFileTabId: tabId,
+			activeFileTabByWorkspace: tab
+				? { ...s.activeFileTabByWorkspace, [tab.workspaceId]: tabId }
+				: s.activeFileTabByWorkspace,
+		}));
+		if (tab) {
+			useWorkspaceStore.getState().setActiveView(tab.workspaceId, "file");
+			persistFileTabs(tab.workspaceId);
 		}
 	},
 
@@ -410,9 +455,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		set((s) => {
 			const newTabs = s.fileTabs.filter((t) => t.workspaceId !== workspaceId);
 			const activeStillExists = newTabs.some((t) => t.id === s.activeFileTabId);
+			const { [workspaceId]: _removed, ...rest } = s.activeFileTabByWorkspace;
 			return {
 				fileTabs: newTabs,
 				activeFileTabId: activeStillExists ? s.activeFileTabId : null,
+				activeFileTabByWorkspace: rest,
 			};
 		});
 	},

@@ -10,7 +10,7 @@ import type {
 	Tab,
 	WorkspaceWithTabs,
 } from "../lib/types";
-import { persistFileTabs } from "./explorerStore";
+import { persistFileTabs, useExplorerStore } from "./explorerStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
 
@@ -312,6 +312,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	setActiveWorkspace: (id) => {
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
+		// Sync the globally-visible activeFileTabId to the new workspace's
+		// last-active file tab (defensive: only if it still exists).
+		{
+			const explorer = useExplorerStore.getState();
+			const candidate = id
+				? (explorer.activeFileTabByWorkspace[id] ?? null)
+				: null;
+			const valid =
+				candidate && explorer.fileTabs.some((t) => t.id === candidate)
+					? candidate
+					: null;
+			if (explorer.activeFileTabId !== valid) {
+				useExplorerStore.setState({ activeFileTabId: valid });
+			}
+		}
 		return set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
 			// Save current focused pane for the current tab
