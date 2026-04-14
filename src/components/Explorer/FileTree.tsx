@@ -67,7 +67,7 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 
 		let unlisten: (() => void) | null = null;
 		fsApi
-			.onFsChange(rootPath, (paths) => {
+			.onFsChange(rootPath, ({ paths }) => {
 				useExplorerStore.getState().refreshDirs(paths);
 			})
 			.then((fn) => {

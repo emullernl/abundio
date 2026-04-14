@@ -3,6 +3,7 @@ import { useExplorerStore } from "../../stores/explorerStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
 import { SaveConfirmDialog } from "../SaveConfirmDialog";
 import { CodeEditor } from "./CodeEditor";
+import { FileChangeBanner } from "./FileChangeBanner";
 import { ImageViewer } from "./ImageViewer";
 import { UnsupportedFile } from "./UnsupportedFile";
 
@@ -28,8 +29,15 @@ export function FileViewerContainer() {
 		);
 	}
 
+	const showBanner = activeTab.externallyChanged || activeTab.deletedOnDisk;
+
 	return (
 		<>
+			{showBanner && (
+				<div className="absolute left-0 right-0 top-0" style={{ zIndex: 10 }}>
+					<FileChangeBanner tab={activeTab} />
+				</div>
+			)}
 			{/* Render all text file editors and toggle visibility — keeps scroll/cursor alive */}
 			{fileTabs
 				.filter((t) => t.fileType === "text")

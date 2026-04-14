@@ -183,11 +183,24 @@ export const fs = {
 
 	onFsChange: (
 		rootPath: string,
-		callback: (paths: string[]) => void,
+		callback: (change: {
+			paths: string[];
+			changedFiles: string[];
+			removedFiles: string[];
+		}) => void,
 	): Promise<UnlistenFn> =>
-		listen<{ root: string; paths: string[] }>("fs-change", (event) => {
+		listen<{
+			root: string;
+			paths: string[];
+			changedFiles: string[];
+			removedFiles: string[];
+		}>("fs-change", (event) => {
 			if (event.payload.root === rootPath) {
-				callback(event.payload.paths);
+				callback({
+					paths: event.payload.paths,
+					changedFiles: event.payload.changedFiles,
+					removedFiles: event.payload.removedFiles,
+				});
 			}
 		}),
 
