@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
@@ -16,6 +17,7 @@ import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
 import { useConfirmCloseFileTab } from "./hooks/useConfirmCloseFileTab";
+import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -116,6 +118,10 @@ export function App() {
 		requestClose: requestCloseFileTab,
 		dialogProps: closeFileTabDialogProps,
 	} = useConfirmCloseFileTab();
+	const {
+		requestClose: requestCloseTerminalTab,
+		dialogProps: closeTerminalTabDialogProps,
+	} = useConfirmCloseTerminalTab();
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
 	const appWindowRef = useRef<Awaited<
 		ReturnType<typeof getCurrentWindow>
@@ -207,8 +213,19 @@ export function App() {
 			requestNewWorkspace();
 		});
 		registerAction("close-tab", () => {
-			const tab = useWorkspaceStore.getState().getActiveTab();
-			if (tab) useWorkspaceStore.getState().closeTab(tab.id);
+			const wsState = useWorkspaceStore.getState();
+			const wsId = wsState.activeWorkspaceId;
+			if (!wsId) return;
+			const view = wsState.activeView[wsId] ?? "terminal";
+			if (view === "file") {
+				const fileTabId = useExplorerStore.getState().activeFileTabId;
+				if (fileTabId) {
+					requestCloseFileTab(fileTabId);
+					return;
+				}
+			}
+			const tab = wsState.getActiveTab();
+			if (tab) requestCloseTerminalTab(tab.id);
 		});
 		registerAction("next-tab", () => {
 			const state = useWorkspaceStore.getState();
@@ -264,6 +281,8 @@ export function App() {
 		toggleMaximize,
 		requestNewTab,
 		requestNewWorkspace,
+		requestCloseFileTab,
+		requestCloseTerminalTab,
 	]);
 
 	return (
@@ -387,6 +406,9 @@ export function App() {
 			<TerminalPool />
 			{closeFileTabDialogProps && (
 				<SaveConfirmDialog {...closeFileTabDialogProps} />
+			)}
+			{closeTerminalTabDialogProps && (
+				<ConfirmDialog {...closeTerminalTabDialogProps} />
 			)}
 			{appCloseRequested &&
 				(() => {

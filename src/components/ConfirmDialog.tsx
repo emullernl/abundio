@@ -19,10 +19,10 @@ export function ConfirmDialog({
 	onConfirm,
 	onCancel,
 }: ConfirmDialogProps) {
-	const cancelRef = useRef<HTMLButtonElement>(null);
+	const confirmRef = useRef<HTMLButtonElement>(null);
 
 	useEffect(() => {
-		cancelRef.current?.focus();
+		confirmRef.current?.focus();
 	}, []);
 
 	const isDanger = confirmVariant === "danger";
@@ -100,6 +100,7 @@ export function ConfirmDialog({
 						}}
 					>
 						<button
+							ref={confirmRef}
 							type="button"
 							onClick={onConfirm}
 							className="w-full py-2.5 rounded-lg transition-all cursor-pointer font-medium"
@@ -118,7 +119,6 @@ export function ConfirmDialog({
 							{confirmLabel}
 						</button>
 						<button
-							ref={cancelRef}
 							type="button"
 							onClick={onCancel}
 							className="w-full py-2.5 rounded-lg transition-all cursor-pointer"
