@@ -880,7 +880,14 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const removeAgent = useSettingsStore((s) => s.removeAgent);
 	const toggleAgent = useSettingsStore((s) => s.toggleAgent);
 
-	const themes = useMemo(() => themeList(), []);
+	const darkThemes = useMemo(
+		() => themeList().filter((t) => t.variant === "dark"),
+		[],
+	);
+	const lightThemes = useMemo(
+		() => themeList().filter((t) => t.variant === "light"),
+		[],
+	);
 
 	const [systemFonts, setSystemFonts] = useState<FontEntry[]>([]);
 	const systemFontsLoaded = useRef(false);
@@ -1045,20 +1052,38 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 					{/* Right content */}
 					<div className="flex-1 min-w-0 min-h-0 flex flex-col p-5 overflow-hidden">
 						{section === "theme" && (
-							<div className="flex-1 min-h-0 overflow-y-auto">
-								<SectionLabel>Choose a theme</SectionLabel>
-								<div
-									className="grid gap-3"
-									style={{ gridTemplateColumns: "repeat(2, 1fr)" }}
-								>
-									{themes.map((theme) => (
-										<ThemeCard
-											key={theme.name}
-											theme={theme}
-											isActive={theme.name === currentTheme}
-											onSelect={() => setTheme(theme.name)}
-										/>
-									))}
+							<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-5">
+								<div>
+									<SectionLabel>Dark</SectionLabel>
+									<div
+										className="grid gap-3"
+										style={{ gridTemplateColumns: "repeat(2, 1fr)" }}
+									>
+										{darkThemes.map((theme) => (
+											<ThemeCard
+												key={theme.name}
+												theme={theme}
+												isActive={theme.name === currentTheme}
+												onSelect={() => setTheme(theme.name)}
+											/>
+										))}
+									</div>
+								</div>
+								<div>
+									<SectionLabel>Light</SectionLabel>
+									<div
+										className="grid gap-3"
+										style={{ gridTemplateColumns: "repeat(2, 1fr)" }}
+									>
+										{lightThemes.map((theme) => (
+											<ThemeCard
+												key={theme.name}
+												theme={theme}
+												isActive={theme.name === currentTheme}
+												onSelect={() => setTheme(theme.name)}
+											/>
+										))}
+									</div>
 								</div>
 							</div>
 						)}
