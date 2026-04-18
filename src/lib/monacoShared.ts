@@ -415,6 +415,8 @@ export function detectLanguage(filePath: string): string | undefined {
 		cls: "apex",
 		trigger: "apex",
 		apex: "apex",
+		page: "html",
+		component: "html",
 	};
 	return map[ext];
 }
