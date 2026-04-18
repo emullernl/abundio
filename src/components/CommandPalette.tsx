@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSplitPane } from "../hooks/useSplitPane";
+import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { triggerAction } from "../lib/keybindings";
 import { getTerminal } from "../lib/terminalManager";
@@ -13,23 +14,6 @@ interface PaletteItem {
 	label: string;
 	category: string;
 	action: () => void;
-}
-
-function fuzzyMatch(query: string, text: string): number {
-	const q = query.toLowerCase();
-	const t = text.toLowerCase();
-	if (q.length === 0) return 1;
-	if (t.includes(q)) return 2 + q.length / t.length;
-
-	let qi = 0;
-	let score = 0;
-	for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-		if (t[ti] === q[qi]) {
-			score += 1;
-			qi++;
-		}
-	}
-	return qi === q.length ? score / t.length : 0;
 }
 
 interface Props {

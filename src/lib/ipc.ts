@@ -6,6 +6,7 @@ import type {
 	BranchInfo,
 	DirEntry,
 	FileContent,
+	FileEntry,
 	GhStatus,
 	GitChangedFile,
 	GitFileDiff,
@@ -168,6 +169,9 @@ export const gh = {
 
 export const fs = {
 	listDir: (path: string) => invoke<DirEntry[]>("fs_list_dir", { path }),
+
+	listFiles: (rootPath: string, maxFiles?: number) =>
+		invoke<FileEntry[]>("fs_list_files", { rootPath, maxFiles }),
 
 	readFile: (path: string) => invoke<FileContent>("fs_read_file", { path }),
 

@@ -8,6 +8,7 @@ type KeyAction =
 	| "navigate-right"
 	| "maximize-pane"
 	| "command-palette"
+	| "open-file-search"
 	| "search-in-terminal"
 	| "search-in-workspace"
 	| "new-workspace"
@@ -45,6 +46,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"navigate-right",
 	"maximize-pane",
 	"command-palette",
+	"open-file-search",
 	"search-in-workspace",
 	"new-workspace",
 	"new-tab",
@@ -111,6 +113,13 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		shift: false,
 		ctrl: !isMac,
 		action: "command-palette",
+	},
+	{
+		key: "p",
+		meta: isMac,
+		shift: false,
+		ctrl: !isMac,
+		action: "open-file-search",
 	},
 	{
 		key: "f",
@@ -193,10 +202,7 @@ export function handleKeyDown(e: KeyboardEvent) {
 			// When Monaco is focused, let it handle any key that isn't a
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.
-			if (
-				isMonacoFocused() &&
-				!WORKSPACE_GLOBAL_ACTIONS.has(binding.action)
-			) {
+			if (isMonacoFocused() && !WORKSPACE_GLOBAL_ACTIONS.has(binding.action)) {
 				return;
 			}
 			// Always prevent default for registered bindings, even if no handler yet

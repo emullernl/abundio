@@ -85,6 +85,12 @@ export interface FileContent {
 	size: number;
 }
 
+export interface FileEntry {
+	name: string;
+	path: string;
+	relativePath: string;
+}
+
 // ── PTY ──
 
 export type PtyStatusType =

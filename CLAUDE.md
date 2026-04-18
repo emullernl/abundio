@@ -178,6 +178,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Navigate panes | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
 | Maximize/restore pane | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | Command palette | `Cmd+K` | `Ctrl+K` |
+| File quickopen | `Cmd+P` | `Ctrl+P` |
 | Find in terminal | `Cmd+F` | `Ctrl+F` |
 | Search workspace | `Cmd+Shift+F` | `Ctrl+Shift+F` |
 | Toggle git panel | `Cmd+Shift+G` | `Ctrl+Shift+G` |

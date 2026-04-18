@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { FileSearchPalette } from "./components/FileSearchPalette";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
@@ -68,6 +69,7 @@ export function App() {
 	const setActiveView = useWorkspaceStore((s) => s.setActiveView);
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
+	const [fileSearchOpen, setFileSearchOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
 	const [launchPicker, setLaunchPicker] = useState<{
@@ -196,7 +198,13 @@ export function App() {
 		registerAction("maximize-pane", () => toggleMaximize());
 		registerAction("command-palette", () => {
 			setSettingsOpen(false);
+			setFileSearchOpen(false);
 			setPaletteOpen((v) => !v);
+		});
+		registerAction("open-file-search", () => {
+			setSettingsOpen(false);
+			setPaletteOpen(false);
+			setFileSearchOpen((v) => !v);
 		});
 		registerAction("open-settings", () => {
 			setPaletteOpen(false);
@@ -388,6 +396,10 @@ export function App() {
 				open={paletteOpen}
 				onClose={() => setPaletteOpen(false)}
 				onRequestNewWorkspace={requestNewWorkspace}
+			/>
+			<FileSearchPalette
+				open={fileSearchOpen}
+				onClose={() => setFileSearchOpen(false)}
 			/>
 			<LaunchPicker
 				isOpen={!!launchPicker}

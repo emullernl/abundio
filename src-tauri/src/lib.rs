@@ -189,6 +189,7 @@ pub fn run() {
             commands::tab_update,
             commands::tab_delete,
             file_explorer::fs_list_dir,
+            file_explorer::fs_list_files,
             file_explorer::fs_read_file,
             file_explorer::fs_write_file,
             file_explorer::fs_file_exists,
