@@ -26,6 +26,7 @@ interface SettingsState {
 	shellPath: string | null;
 	agents: CodingAgent[];
 	sidebarBottomPanel: "explorer" | "search";
+	lastOpenedDevEnvId: string | null;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -48,6 +49,7 @@ interface SettingsState {
 		updates: Partial<Pick<CodingAgent, "name" | "command" | "args">>,
 	) => void;
 	setSidebarBottomPanel: (panel: "explorer" | "search") => void;
+	setLastOpenedDevEnvId: (id: string) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -70,6 +72,7 @@ const PERSISTED_DEFAULTS: {
 	activityByteThreshold: number;
 	shellPath: string | null;
 	agents: CodingAgent[];
+	lastOpenedDevEnvId: string | null;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -85,6 +88,7 @@ const PERSISTED_DEFAULTS: {
 		activityByteThreshold: 1024,
 		shellPath: null as string | null,
 		agents: BUILTIN_AGENTS as CodingAgent[],
+		lastOpenedDevEnvId: null as string | null,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -140,6 +144,10 @@ const PERSISTED_DEFAULTS: {
 			agents: Array.isArray(s.agents)
 				? mergeAgentsWithBuiltins(s.agents)
 				: defaults.agents,
+			lastOpenedDevEnvId:
+				typeof s.lastOpenedDevEnvId === "string"
+					? s.lastOpenedDevEnvId
+					: defaults.lastOpenedDevEnvId,
 		};
 	} catch {
 		return defaults;
@@ -164,6 +172,7 @@ export const useSettingsStore = create<SettingsState>()(
 			shellPath: PERSISTED_DEFAULTS.shellPath,
 			agents: PERSISTED_DEFAULTS.agents,
 			sidebarBottomPanel: "explorer",
+			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -233,6 +242,7 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			setSidebarBottomPanel: (sidebarBottomPanel) =>
 				set({ sidebarBottomPanel }),
+			setLastOpenedDevEnvId: (id) => set({ lastOpenedDevEnvId: id }),
 		}),
 		{
 			name: "abundio-settings",
@@ -259,6 +269,7 @@ export const useSettingsStore = create<SettingsState>()(
 				activityByteThreshold: state.activityByteThreshold,
 				shellPath: state.shellPath,
 				agents: state.agents,
+				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
 			}),
 			onRehydrateStorage: () => (state) => {
 				if (state?.activityByteThreshold != null) {

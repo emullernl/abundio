@@ -185,3 +185,17 @@ export interface SearchResult {
 	totalMatches: number;
 	truncated: boolean;
 }
+
+// ── Dev Environments ──
+
+export interface DetectedDevEnvironment {
+	id: string;
+	displayName: string;
+	iconName: string;
+}
+
+export interface LaunchFile {
+	path: string;
+	line?: number;
+	column?: number;
+}

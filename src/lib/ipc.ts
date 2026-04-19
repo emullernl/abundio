@@ -4,12 +4,14 @@ import { decodeBase64 } from "./base64";
 import type {
 	AvailableShell,
 	BranchInfo,
+	DetectedDevEnvironment,
 	DirEntry,
 	FileContent,
 	FileEntry,
 	GhStatus,
 	GitChangedFile,
 	GitFileDiff,
+	LaunchFile,
 	PtyActivityType,
 	PtyStatusType,
 	PullRequest,
@@ -237,4 +239,15 @@ export const fonts = {
 
 export const shells = {
 	listAvailable: () => invoke<AvailableShell[]>("list_available_shells"),
+};
+
+export const devEnvironments = {
+	list: () => invoke<DetectedDevEnvironment[]>("list_dev_environments"),
+
+	launch: (id: string, workspaceFolder: string, file: LaunchFile | null) =>
+		invoke<void>("launch_dev_environment", {
+			id,
+			workspaceFolder,
+			file,
+		}),
 };
