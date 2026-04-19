@@ -190,10 +190,23 @@ pub struct LaunchFile {
     pub column: Option<u32>,
 }
 
-/// Probe `$PATH` for an executable. On Windows, also probes common binary extensions.
+/// Probe `$PATH` + a few well-known dirs for an executable. On macOS,
+/// launching via the Tauri app bundle yields a minimal `$PATH` that excludes
+/// `/usr/local/bin` and `/opt/homebrew/bin` (where editor CLIs live), so we
+/// always include those as extras. On Windows, probes common binary extensions.
 fn find_in_path(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
+    #[cfg(target_os = "macos")]
+    {
+        for extra in ["/usr/local/bin", "/opt/homebrew/bin"] {
+            let p = PathBuf::from(extra);
+            if !dirs.iter().any(|d| d == &p) {
+                dirs.push(p);
+            }
+        }
+    }
+    for dir in dirs {
         let candidate = dir.join(name);
         if candidate.is_file() {
             return Some(candidate);
@@ -207,6 +220,57 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
                 }
             }
         }
+    }
+    None
+}
+
+/// On macOS, editors ship their CLI inside the `.app` bundle. Resolving the
+/// in-bundle path is a last-resort fallback for when the user never ran the
+/// "Install 'code' command in PATH" action and `$PATH` has no entry for the
+/// CLI. Deterministic — depends on the app bundle's internal layout, not
+/// user shell config.
+#[cfg(target_os = "macos")]
+fn find_cli_in_app_bundle(def: &DevEnvironmentDef, cli: &str) -> Option<PathBuf> {
+    // Known CLI locations relative to the .app root, in preference order.
+    // VSCode / Cursor / Windsurf: Electron-based, CLI under Resources/app/bin.
+    // Sublime: under SharedSupport/bin. JetBrains: under MacOS.
+    let subpaths = [
+        format!("Contents/Resources/app/bin/{}", cli),
+        format!("Contents/SharedSupport/bin/{}", cli),
+        format!("Contents/MacOS/{}", cli),
+    ];
+    for app_name in def.mac_app_names {
+        for sub in &subpaths {
+            let candidate = PathBuf::from(format!("/Applications/{}.app/{}", app_name, sub));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            if let Some(home) = dirs::home_dir() {
+                let candidate = home.join(format!("Applications/{}.app/{}", app_name, sub));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the CLI binary to use for this editor: `$PATH` first, then inside
+/// the `.app` bundle on macOS.
+fn resolve_cli(def: &DevEnvironmentDef, cli: &str) -> Option<PathBuf> {
+    if let Some(p) = find_in_path(cli) {
+        return Some(p);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(p) = find_cli_in_app_bundle(def, cli) {
+            return Some(p);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = def;
     }
     None
 }
@@ -247,7 +311,9 @@ pub fn detect_all() -> Vec<DetectedDevEnvironment> {
     results
 }
 
-fn goto_target(f: &LaunchFile) -> String {
+/// Build the `<file>:<line>:<col>` string used by VSCode-family and Zed/Sublime
+/// CLIs. Pure — so callers can test it without spawning anything.
+pub fn goto_target(f: &LaunchFile) -> String {
     match (f.line, f.column) {
         (Some(line), Some(col)) => format!("{}:{}:{}", f.path, line, col),
         (Some(line), None) => format!("{}:{}", f.path, line),
@@ -263,12 +329,9 @@ pub fn build_cli_args(
     file: Option<&LaunchFile>,
 ) -> Vec<String> {
     match style {
-        // VSCode / Cursor / Windsurf and Zed / Sublime share the same arg shape:
-        // `<cli> <folder> <file>:<line>:<col>`. We intentionally do NOT use
-        // `--goto` for VSCode-family CLIs — when a different folder's window is
-        // currently focused, `--goto` routes the file there and ignores the
-        // folder arg. Plain positional args make VSCode open (or focus) the
-        // specified folder as the workspace and open the file in that window.
+        // VSCode / Cursor / Windsurf and Zed / Sublime: plain positional args.
+        // `<cli> <folder> <file>:<line>:<col>` — folder first so the editor
+        // opens it as the workspace, then the file inside it.
         LaunchStyle::VSCodeLike | LaunchStyle::PositionalColon => {
             let mut args = vec![workspace_folder.to_string()];
             if let Some(f) = file {
@@ -321,7 +384,7 @@ pub fn launch(
         .ok_or_else(|| AbundioError::NotFound(format!("dev environment '{}'", id)))?;
 
     for cli in def.cli_names {
-        if let Some(bin) = find_in_path(cli) {
+        if let Some(bin) = resolve_cli(def, cli) {
             let args = build_cli_args(def.launch_style, workspace_folder, file);
             Command::new(bin)
                 .args(&args)
@@ -331,31 +394,8 @@ pub fn launch(
         }
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        for name in def.mac_app_names {
-            if find_mac_app(name).is_some() {
-                let mut cmd = Command::new("open");
-                cmd.arg("-a").arg(name);
-                // `open -a` can only accept one path arg reliably. Prefer the file
-                // if we have one (the folder will usually already be in the editor's
-                // MRU); otherwise open the folder itself.
-                match file {
-                    Some(f) => {
-                        cmd.arg(&f.path);
-                    }
-                    None => {
-                        cmd.arg(workspace_folder);
-                    }
-                }
-                cmd.spawn().map_err(AbundioError::Io)?;
-                return Ok(());
-            }
-        }
-    }
-
     Err(AbundioError::NotFound(format!(
-        "no launcher available for '{}'",
+        "no CLI found for '{}' on $PATH or inside its .app bundle",
         id
     )))
 }
@@ -396,9 +436,6 @@ mod tests {
     fn vscode_with_file_no_line() {
         let file = lf("/ws/a.rs", None, None);
         let args = build_cli_args(LaunchStyle::VSCodeLike, "/ws", Some(&file));
-        // Folder must come before the file so VSCode opens folder as workspace.
-        // No `--goto` — it causes VSCode to route the file to whatever window
-        // is currently focused, ignoring our folder arg.
         assert_eq!(args, vec!["/ws", "/ws/a.rs"]);
     }
 
@@ -414,6 +451,24 @@ mod tests {
         let file = lf("/ws/a.rs", Some(7), None);
         let args = build_cli_args(LaunchStyle::VSCodeLike, "/ws", Some(&file));
         assert_eq!(args, vec!["/ws", "/ws/a.rs:7"]);
+    }
+
+    #[test]
+    fn goto_target_with_line_and_col() {
+        let file = lf("/ws/a.rs", Some(12), Some(4));
+        assert_eq!(goto_target(&file), "/ws/a.rs:12:4");
+    }
+
+    #[test]
+    fn goto_target_with_line_only() {
+        let file = lf("/ws/a.rs", Some(7), None);
+        assert_eq!(goto_target(&file), "/ws/a.rs:7");
+    }
+
+    #[test]
+    fn goto_target_no_position() {
+        let file = lf("/ws/a.rs", None, None);
+        assert_eq!(goto_target(&file), "/ws/a.rs");
     }
 
     #[test]
