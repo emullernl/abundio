@@ -361,7 +361,7 @@ export function TabBar({
 
 	return (
 		<div
-			className="flex items-end shrink-0"
+			className="flex items-end flex-1 min-w-0"
 			style={{
 				height: 38,
 				backgroundColor: "var(--bg-secondary)",

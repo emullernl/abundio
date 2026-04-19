@@ -9,6 +9,7 @@ import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
+import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar/Sidebar";
@@ -27,6 +28,7 @@ import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import type { PaneNode } from "./lib/types";
+import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { persistAllFileTabs, useExplorerStore } from "./stores/explorerStore";
 import { useGitChangesStore } from "./stores/gitChangesStore";
 import { usePtyActivityStore } from "./stores/ptyActivityStore";
@@ -136,6 +138,11 @@ export function App() {
 	useEffect(() => {
 		const cleanup = initKeybindings();
 		return cleanup;
+	}, []);
+
+	// Detect installed dev environments once at startup.
+	useEffect(() => {
+		useDevEnvironmentsStore.getState().load();
 	}, []);
 
 	const proceedWithClose = useCallback(async () => {
@@ -335,24 +342,49 @@ export function App() {
 									className="flex-1 min-h-0 flex flex-col"
 									style={{ display: isActive ? "flex" : "none" }}
 								>
-									<TabBar
-										tabs={workspace.tabs}
-										activeTabId={activeTabId}
-										onActivate={(tabId) => {
-											setActiveTab(workspace.id, tabId);
-											setActiveView(workspace.id, "terminal");
+									<div
+										className="flex items-end shrink-0"
+										style={{
+											height: 38,
+											backgroundColor: "var(--bg-primary)",
+											gap: 8,
+											paddingRight: 8,
 										}}
-										onClose={(tabId) => closeTab(tabId)}
-										onNew={() => requestNewTab(workspace.id)}
-										onRename={(tabId, name) => renameTab(tabId, name)}
-										fileTabs={fileTabs.filter(
-											(ft) => ft.workspaceId === workspace.id,
-										)}
-										activeFileTabId={activeFileTabId}
-										activeView={activeView[workspace.id] ?? "terminal"}
-										onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
-										onCloseFileTab={(tabId) => requestCloseFileTab(tabId)}
-									/>
+									>
+										<TabBar
+											tabs={workspace.tabs}
+											activeTabId={activeTabId}
+											onActivate={(tabId) => {
+												setActiveTab(workspace.id, tabId);
+												setActiveView(workspace.id, "terminal");
+											}}
+											onClose={(tabId) => closeTab(tabId)}
+											onNew={() => requestNewTab(workspace.id)}
+											onRename={(tabId, name) => renameTab(tabId, name)}
+											fileTabs={fileTabs.filter(
+												(ft) => ft.workspaceId === workspace.id,
+											)}
+											activeFileTabId={activeFileTabId}
+											activeView={activeView[workspace.id] ?? "terminal"}
+											onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
+											onCloseFileTab={(tabId) => requestCloseFileTab(tabId)}
+										/>
+										<OpenInDevEnvButton
+											workspaceFolder={workspace.rootFolder}
+											activeFilePath={
+												(activeView[workspace.id] ?? "terminal") === "file"
+													? (() => {
+															const t = fileTabs.find(
+																(ft) => ft.id === activeFileTabId,
+															);
+															return t && t.fileType !== "diff"
+																? t.filePath
+																: null;
+														})()
+													: null
+											}
+										/>
+									</div>
 									<div className="flex-1 min-h-0 relative">
 										<div
 											className="absolute inset-0"
