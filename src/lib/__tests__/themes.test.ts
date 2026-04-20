@@ -16,8 +16,21 @@ describe("getTheme", () => {
 });
 
 describe("themeList", () => {
-	it("returns all 12 themes", () => {
-		expect(themeList()).toHaveLength(12);
+	it("returns all 19 themes", () => {
+		expect(themeList()).toHaveLength(19);
+	});
+
+	it("contains 12 dark and 7 light themes", () => {
+		const dark = themeList().filter((t) => t.variant === "dark");
+		const light = themeList().filter((t) => t.variant === "light");
+		expect(dark).toHaveLength(12);
+		expect(light).toHaveLength(7);
+	});
+
+	it("every theme has a variant of 'dark' or 'light'", () => {
+		for (const theme of themeList()) {
+			expect(["dark", "light"]).toContain(theme.variant);
+		}
 	});
 
 	it("every theme has required shape", () => {
@@ -84,6 +97,13 @@ describe("themeList", () => {
 			"rosePine",
 			"moonlight",
 			"vesper",
+			"abundioLight",
+			"catppuccinLatte",
+			"rosePineDawn",
+			"solarizedLight",
+			"gruvboxLight",
+			"tokyoNightDay",
+			"githubLight",
 		]) {
 			expect(names).toContain(name);
 		}

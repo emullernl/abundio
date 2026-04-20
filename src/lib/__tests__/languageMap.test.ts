@@ -75,6 +75,11 @@ describe("getLanguage", () => {
 		expect(getLanguage("sql")).toBe("sql");
 	});
 
+	it("maps Visualforce page/component to html", () => {
+		expect(getLanguage("page")).toBe("html");
+		expect(getLanguage("component")).toBe("html");
+	});
+
 	it("supports additional Monaco languages", () => {
 		expect(getLanguage("go")).toBe("go");
 		expect(getLanguage("rb")).toBe("ruby");

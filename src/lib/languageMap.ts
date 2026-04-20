@@ -44,6 +44,8 @@ const extensionToLanguage: Record<string, string> = {
 	cls: "apex",
 	trigger: "apex",
 	apex: "apex",
+	page: "html",
+	component: "html",
 };
 
 export function getLanguage(extension: string | null): string | null {

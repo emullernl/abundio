@@ -4,11 +4,14 @@ import { decodeBase64 } from "./base64";
 import type {
 	AvailableShell,
 	BranchInfo,
+	DetectedDevEnvironment,
 	DirEntry,
 	FileContent,
+	FileEntry,
 	GhStatus,
 	GitChangedFile,
 	GitFileDiff,
+	LaunchFile,
 	Plugin,
 	PtyActivityType,
 	PtyStatusType,
@@ -170,6 +173,9 @@ export const gh = {
 export const fs = {
 	listDir: (path: string) => invoke<DirEntry[]>("fs_list_dir", { path }),
 
+	listFiles: (rootPath: string, maxFiles?: number) =>
+		invoke<FileEntry[]>("fs_list_files", { rootPath, maxFiles }),
+
 	readFile: (path: string) => invoke<FileContent>("fs_read_file", { path }),
 
 	writeFile: (path: string, content: string) =>
@@ -184,11 +190,24 @@ export const fs = {
 
 	onFsChange: (
 		rootPath: string,
-		callback: (paths: string[]) => void,
+		callback: (change: {
+			paths: string[];
+			changedFiles: string[];
+			removedFiles: string[];
+		}) => void,
 	): Promise<UnlistenFn> =>
-		listen<{ root: string; paths: string[] }>("fs-change", (event) => {
+		listen<{
+			root: string;
+			paths: string[];
+			changedFiles: string[];
+			removedFiles: string[];
+		}>("fs-change", (event) => {
 			if (event.payload.root === rootPath) {
-				callback(event.payload.paths);
+				callback({
+					paths: event.payload.paths,
+					changedFiles: event.payload.changedFiles,
+					removedFiles: event.payload.removedFiles,
+				});
 			}
 		}),
 
@@ -231,4 +250,15 @@ export const plugins = {
 		commandId: string,
 		args?: Record<string, string>,
 	) => invoke<string>("plugin_invoke", { pluginId, commandId, args }),
+};
+
+export const devEnvironments = {
+	list: () => invoke<DetectedDevEnvironment[]>("list_dev_environments"),
+
+	launch: (id: string, workspaceFolder: string, file: LaunchFile | null) =>
+		invoke<void>("launch_dev_environment", {
+			id,
+			workspaceFolder,
+			file,
+		}),
 };

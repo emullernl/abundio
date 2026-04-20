@@ -85,6 +85,12 @@ export interface FileContent {
 	size: number;
 }
 
+export interface FileEntry {
+	name: string;
+	path: string;
+	relativePath: string;
+}
+
 // ── PTY ──
 
 export type PtyStatusType =
@@ -206,4 +212,18 @@ export interface Plugin {
 	id: string;
 	dir: string;
 	manifest: PluginManifest;
+}
+
+// ── Dev Environments ──
+
+export interface DetectedDevEnvironment {
+	id: string;
+	displayName: string;
+	iconName: string;
+}
+
+export interface LaunchFile {
+	path: string;
+	line?: number;
+	column?: number;
 }

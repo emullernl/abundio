@@ -20,6 +20,14 @@ vi.mock("../../lib/ipc", () => ({
 
 vi.mock("../explorerStore", () => ({
 	persistFileTabs: vi.fn(),
+	useExplorerStore: {
+		getState: vi.fn(() => ({
+			activeFileTabId: null,
+			activeFileTabByWorkspace: {},
+			fileTabs: [],
+		})),
+		setState: vi.fn(),
+	},
 }));
 
 vi.mock("../ptyActivityStore", () => ({

@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod config;
+pub mod dev_environments;
 pub mod error;
 pub mod events;
 pub mod file_explorer;
@@ -201,6 +202,7 @@ pub fn run() {
             commands::tab_update,
             commands::tab_delete,
             file_explorer::fs_list_dir,
+            file_explorer::fs_list_files,
             file_explorer::fs_read_file,
             file_explorer::fs_write_file,
             file_explorer::fs_file_exists,
@@ -223,6 +225,8 @@ pub fn run() {
             commands::list_plugins,
             commands::open_plugins_directory,
             commands::plugin_invoke,
+            dev_environments::list_dev_environments,
+            dev_environments::launch_dev_environment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

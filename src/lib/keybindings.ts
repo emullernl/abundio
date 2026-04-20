@@ -8,6 +8,7 @@ type KeyAction =
 	| "navigate-right"
 	| "maximize-pane"
 	| "command-palette"
+	| "open-file-search"
 	| "search-in-terminal"
 	| "search-in-workspace"
 	| "new-workspace"
@@ -30,6 +31,36 @@ interface KeyBinding {
 }
 
 import { isMac } from "./platform";
+
+// Actions that must always fire even when Monaco is focused — workspace/pane/tab
+// management shortcuts that Monaco does not claim. Every other binding falls
+// through to Monaco when the editor has focus, so Monaco's built-in shortcuts
+// (Find, Replace, multi-cursor, line ops, Go to Definition, etc.) all work.
+const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
+	"split-horizontal",
+	"split-vertical",
+	"close-pane",
+	"navigate-up",
+	"navigate-down",
+	"navigate-left",
+	"navigate-right",
+	"maximize-pane",
+	"command-palette",
+	"open-file-search",
+	"search-in-workspace",
+	"new-workspace",
+	"new-tab",
+	"close-tab",
+	"next-tab",
+	"prev-tab",
+	"toggle-git-panel",
+	"open-settings",
+]);
+
+function isMonacoFocused(): boolean {
+	const el = document.activeElement;
+	return !!el && (el as Element).closest?.(".monaco-editor") !== null;
+}
 
 const DEFAULT_BINDINGS: KeyBinding[] = [
 	{
@@ -82,6 +113,13 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		shift: false,
 		ctrl: !isMac,
 		action: "command-palette",
+	},
+	{
+		key: "p",
+		meta: isMac,
+		shift: false,
+		ctrl: !isMac,
+		action: "open-file-search",
 	},
 	{
 		key: "f",
@@ -161,6 +199,12 @@ function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
 export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of DEFAULT_BINDINGS) {
 		if (matchesBinding(e, binding)) {
+			// When Monaco is focused, let it handle any key that isn't a
+			// workspace-global shortcut so its built-in bindings (Find, Replace,
+			// multi-cursor, line ops, etc.) work.
+			if (isMonacoFocused() && !WORKSPACE_GLOBAL_ACTIONS.has(binding.action)) {
+				return;
+			}
 			// Always prevent default for registered bindings, even if no handler yet
 			e.preventDefault();
 			e.stopPropagation();

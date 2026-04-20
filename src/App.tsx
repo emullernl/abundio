@@ -3,10 +3,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
+import { ConfirmDialog } from "./components/ConfirmDialog";
+import { FileSearchPalette } from "./components/FileSearchPalette";
 import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
+import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar/Sidebar";
@@ -16,6 +19,8 @@ import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
 import { useConfirmCloseFileTab } from "./hooks/useConfirmCloseFileTab";
+import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
+import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { initKeybindings, registerAction } from "./lib/keybindings";
@@ -23,6 +28,7 @@ import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import type { PaneNode } from "./lib/types";
+import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { persistAllFileTabs, useExplorerStore } from "./stores/explorerStore";
 import { useGitChangesStore } from "./stores/gitChangesStore";
 import { usePtyActivityStore } from "./stores/ptyActivityStore";
@@ -53,6 +59,7 @@ const TabTerminalContent = memo(function TabTerminalContent({
 
 export function App() {
 	useWorkspace();
+	useFileReloadWatcher();
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const activeTabByWorkspace = useWorkspaceStore((s) => s.activeTabByWorkspace);
@@ -64,6 +71,7 @@ export function App() {
 	const setActiveView = useWorkspaceStore((s) => s.setActiveView);
 	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
+	const [fileSearchOpen, setFileSearchOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
 	const [launchPicker, setLaunchPicker] = useState<{
@@ -114,6 +122,10 @@ export function App() {
 		requestClose: requestCloseFileTab,
 		dialogProps: closeFileTabDialogProps,
 	} = useConfirmCloseFileTab();
+	const {
+		requestClose: requestCloseTerminalTab,
+		dialogProps: closeTerminalTabDialogProps,
+	} = useConfirmCloseTerminalTab();
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
 	const appWindowRef = useRef<Awaited<
 		ReturnType<typeof getCurrentWindow>
@@ -126,6 +138,11 @@ export function App() {
 	useEffect(() => {
 		const cleanup = initKeybindings();
 		return cleanup;
+	}, []);
+
+	// Detect installed dev environments once at startup.
+	useEffect(() => {
+		useDevEnvironmentsStore.getState().load();
 	}, []);
 
 	const proceedWithClose = useCallback(async () => {
@@ -188,7 +205,13 @@ export function App() {
 		registerAction("maximize-pane", () => toggleMaximize());
 		registerAction("command-palette", () => {
 			setSettingsOpen(false);
+			setFileSearchOpen(false);
 			setPaletteOpen((v) => !v);
+		});
+		registerAction("open-file-search", () => {
+			setSettingsOpen(false);
+			setPaletteOpen(false);
+			setFileSearchOpen((v) => !v);
 		});
 		registerAction("open-settings", () => {
 			setPaletteOpen(false);
@@ -205,8 +228,19 @@ export function App() {
 			requestNewWorkspace();
 		});
 		registerAction("close-tab", () => {
-			const tab = useWorkspaceStore.getState().getActiveTab();
-			if (tab) useWorkspaceStore.getState().closeTab(tab.id);
+			const wsState = useWorkspaceStore.getState();
+			const wsId = wsState.activeWorkspaceId;
+			if (!wsId) return;
+			const view = wsState.activeView[wsId] ?? "terminal";
+			if (view === "file") {
+				const fileTabId = useExplorerStore.getState().activeFileTabId;
+				if (fileTabId) {
+					requestCloseFileTab(fileTabId);
+					return;
+				}
+			}
+			const tab = wsState.getActiveTab();
+			if (tab) requestCloseTerminalTab(tab.id);
 		});
 		registerAction("next-tab", () => {
 			const state = useWorkspaceStore.getState();
@@ -262,6 +296,8 @@ export function App() {
 		toggleMaximize,
 		requestNewTab,
 		requestNewWorkspace,
+		requestCloseFileTab,
+		requestCloseTerminalTab,
 	]);
 
 	return (
@@ -306,24 +342,49 @@ export function App() {
 									className="flex-1 min-h-0 flex flex-col"
 									style={{ display: isActive ? "flex" : "none" }}
 								>
-									<TabBar
-										tabs={workspace.tabs}
-										activeTabId={activeTabId}
-										onActivate={(tabId) => {
-											setActiveTab(workspace.id, tabId);
-											setActiveView(workspace.id, "terminal");
+									<div
+										className="flex items-end shrink-0"
+										style={{
+											height: 38,
+											backgroundColor: "var(--bg-primary)",
+											gap: 8,
+											paddingRight: 8,
 										}}
-										onClose={(tabId) => closeTab(tabId)}
-										onNew={() => requestNewTab(workspace.id)}
-										onRename={(tabId, name) => renameTab(tabId, name)}
-										fileTabs={fileTabs.filter(
-											(ft) => ft.workspaceId === workspace.id,
-										)}
-										activeFileTabId={activeFileTabId}
-										activeView={activeView[workspace.id] ?? "terminal"}
-										onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
-										onCloseFileTab={(tabId) => requestCloseFileTab(tabId)}
-									/>
+									>
+										<TabBar
+											tabs={workspace.tabs}
+											activeTabId={activeTabId}
+											onActivate={(tabId) => {
+												setActiveTab(workspace.id, tabId);
+												setActiveView(workspace.id, "terminal");
+											}}
+											onClose={(tabId) => closeTab(tabId)}
+											onNew={() => requestNewTab(workspace.id)}
+											onRename={(tabId, name) => renameTab(tabId, name)}
+											fileTabs={fileTabs.filter(
+												(ft) => ft.workspaceId === workspace.id,
+											)}
+											activeFileTabId={activeFileTabId}
+											activeView={activeView[workspace.id] ?? "terminal"}
+											onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
+											onCloseFileTab={(tabId) => requestCloseFileTab(tabId)}
+										/>
+										<OpenInDevEnvButton
+											workspaceFolder={workspace.rootFolder}
+											activeFilePath={
+												(activeView[workspace.id] ?? "terminal") === "file"
+													? (() => {
+															const t = fileTabs.find(
+																(ft) => ft.id === activeFileTabId,
+															);
+															return t && t.fileType !== "diff"
+																? t.filePath
+																: null;
+														})()
+													: null
+											}
+										/>
+									</div>
 									<div className="flex-1 min-h-0 relative">
 										<div
 											className="absolute inset-0"
@@ -368,6 +429,10 @@ export function App() {
 				onClose={() => setPaletteOpen(false)}
 				onRequestNewWorkspace={requestNewWorkspace}
 			/>
+			<FileSearchPalette
+				open={fileSearchOpen}
+				onClose={() => setFileSearchOpen(false)}
+			/>
 			<LaunchPicker
 				isOpen={!!launchPicker}
 				onClose={() => setLaunchPicker(null)}
@@ -385,6 +450,9 @@ export function App() {
 			<TerminalPool />
 			{closeFileTabDialogProps && (
 				<SaveConfirmDialog {...closeFileTabDialogProps} />
+			)}
+			{closeTerminalTabDialogProps && (
+				<ConfirmDialog {...closeTerminalTabDialogProps} />
 			)}
 			{appCloseRequested &&
 				(() => {

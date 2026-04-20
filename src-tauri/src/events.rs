@@ -29,6 +29,8 @@ pub enum PtyActivity {
 pub struct FsChange {
     pub root: String,
     pub paths: Vec<String>,
+    pub changed_files: Vec<String>,
+    pub removed_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

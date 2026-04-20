@@ -1,4 +1,5 @@
 use base64::Engine;
+use ignore::WalkBuilder;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -6,6 +7,7 @@ use std::path::Path;
 use crate::error::AbundioError;
 
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
+const DEFAULT_MAX_FILES: usize = 50_000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +18,14 @@ pub struct DirEntry {
 	pub is_symlink: bool,
 	pub size: u64,
 	pub extension: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+	pub name: String,
+	pub path: String,
+	pub relative_path: String,
 }
 
 #[derive(Serialize)]
@@ -201,6 +211,54 @@ pub async fn fs_file_exists(path: String) -> Result<bool, AbundioError> {
 	Ok(Path::new(&path).exists())
 }
 
+#[tauri::command]
+pub async fn fs_list_files(
+	root_path: String,
+	max_files: Option<usize>,
+) -> Result<Vec<FileEntry>, AbundioError> {
+	let max = max_files.unwrap_or(DEFAULT_MAX_FILES);
+	tokio::task::spawn_blocking(move || list_files_inner(&root_path, max))
+		.await
+		.map_err(|e| AbundioError::Search(format!("File listing task failed: {}", e)))?
+}
+
+fn list_files_inner(root_path: &str, max_files: usize) -> Result<Vec<FileEntry>, AbundioError> {
+	let root = Path::new(root_path);
+	let walker = WalkBuilder::new(root)
+		.hidden(true)
+		.git_ignore(true)
+		.git_global(true)
+		.git_exclude(true)
+		.build();
+
+	let mut out = Vec::new();
+	for entry in walker {
+		if out.len() >= max_files {
+			break;
+		}
+		let entry = match entry {
+			Ok(e) => e,
+			Err(_) => continue,
+		};
+		if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+			continue;
+		}
+		let path = entry.path();
+		let rel = path.strip_prefix(root).unwrap_or(path);
+		let relative_path = rel.to_string_lossy().to_string();
+		let name = path
+			.file_name()
+			.map(|n| n.to_string_lossy().to_string())
+			.unwrap_or_default();
+		out.push(FileEntry {
+			name,
+			path: path.to_string_lossy().to_string(),
+			relative_path,
+		});
+	}
+	Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -263,5 +321,81 @@ mod tests {
 	fn has_null_bytes_false() {
 		assert!(!has_null_bytes(b"hello"));
 		assert!(!has_null_bytes(b""));
+	}
+
+	fn make_file(dir: &Path, rel: &str, body: &str) {
+		let full = dir.join(rel);
+		if let Some(parent) = full.parent() {
+			fs::create_dir_all(parent).unwrap();
+		}
+		fs::write(full, body).unwrap();
+	}
+
+	#[test]
+	fn list_files_returns_all_plain_files() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		make_file(tmp.path(), "a.txt", "a");
+		make_file(tmp.path(), "sub/b.txt", "b");
+		make_file(tmp.path(), "sub/nested/c.txt", "c");
+
+		let files = list_files_inner(tmp.path().to_str().unwrap(), 100).unwrap();
+		let rels: Vec<String> = files.iter().map(|f| f.relative_path.clone()).collect();
+		assert_eq!(rels.len(), 3);
+		assert!(rels.iter().any(|r| r == "a.txt"));
+		assert!(rels.iter().any(|r| r.ends_with("b.txt") && r.contains("sub")));
+		assert!(rels.iter().any(|r| r.ends_with("c.txt")));
+	}
+
+	#[test]
+	fn list_files_respects_gitignore() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		// WalkBuilder only applies gitignore inside a git repo, so mark it as one.
+		fs::create_dir_all(tmp.path().join(".git")).unwrap();
+		make_file(tmp.path(), ".gitignore", "ignored.txt\nbuild/\n");
+		make_file(tmp.path(), "kept.txt", "k");
+		make_file(tmp.path(), "ignored.txt", "x");
+		make_file(tmp.path(), "build/out.txt", "x");
+
+		let files = list_files_inner(tmp.path().to_str().unwrap(), 100).unwrap();
+		let rels: Vec<String> = files.iter().map(|f| f.relative_path.clone()).collect();
+		assert!(rels.iter().any(|r| r == "kept.txt"));
+		assert!(!rels.iter().any(|r| r == "ignored.txt"));
+		assert!(!rels.iter().any(|r| r.starts_with("build")));
+	}
+
+	#[test]
+	fn list_files_skips_hidden_and_git_dir() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		fs::create_dir_all(tmp.path().join(".git")).unwrap();
+		make_file(tmp.path(), ".git/HEAD", "ref: refs/heads/main");
+		make_file(tmp.path(), ".env", "SECRET=1");
+		make_file(tmp.path(), "visible.txt", "v");
+
+		let files = list_files_inner(tmp.path().to_str().unwrap(), 100).unwrap();
+		let rels: Vec<String> = files.iter().map(|f| f.relative_path.clone()).collect();
+		assert!(rels.iter().any(|r| r == "visible.txt"));
+		assert!(!rels.iter().any(|r| r.starts_with(".git")));
+		assert!(!rels.iter().any(|r| r == ".env"));
+	}
+
+	#[test]
+	fn list_files_respects_max_cap() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		for i in 0..20 {
+			make_file(tmp.path(), &format!("f{}.txt", i), "x");
+		}
+		let files = list_files_inner(tmp.path().to_str().unwrap(), 5).unwrap();
+		assert_eq!(files.len(), 5);
+	}
+
+	#[test]
+	fn list_files_relative_path_is_relative() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		make_file(tmp.path(), "dir/x.txt", "x");
+		let files = list_files_inner(tmp.path().to_str().unwrap(), 100).unwrap();
+		let entry = files.iter().find(|f| f.name == "x.txt").unwrap();
+		assert!(entry.path.contains("x.txt"));
+		assert!(!entry.relative_path.starts_with('/'));
+		assert!(entry.relative_path.contains("x.txt"));
 	}
 }

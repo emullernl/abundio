@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use crossbeam_channel::{bounded, unbounded, Sender};
 use dashmap::DashMap;
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::event::{ModifyKind, RenameMode};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
 
 use crate::error::AbundioError;
@@ -122,6 +123,8 @@ fn debounce_loop(
     stop_rx: &crossbeam_channel::Receiver<()>,
 ) {
     let mut pending: HashSet<String> = HashSet::new();
+    let mut changed_files: HashSet<String> = HashSet::new();
+    let mut removed_files: HashSet<String> = HashSet::new();
     let mut git_changed = false;
     let timeout = Duration::from_millis(DEBOUNCE_MS);
 
@@ -131,7 +134,13 @@ fn debounce_loop(
             recv(stop_rx) -> _ => break,
             recv(event_rx) -> msg => {
                 if let Ok(event) = msg {
-                    collect_parents(&event, &mut pending, &mut git_changed);
+                    collect_parents(
+                        &event,
+                        &mut pending,
+                        &mut changed_files,
+                        &mut removed_files,
+                        &mut git_changed,
+                    );
                 }
             }
         }
@@ -142,7 +151,13 @@ fn debounce_loop(
                 recv(stop_rx) -> _ => return,
                 recv(event_rx) -> msg => {
                     if let Ok(event) = msg {
-                        collect_parents(&event, &mut pending, &mut git_changed);
+                        collect_parents(
+                            &event,
+                            &mut pending,
+                            &mut changed_files,
+                            &mut removed_files,
+                            &mut git_changed,
+                        );
                     }
                 }
                 default(timeout) => break,
@@ -150,13 +165,22 @@ fn debounce_loop(
         }
 
         // Emit batched event with root in payload (avoids invalid chars in event name)
-        if !pending.is_empty() {
+        if !pending.is_empty() || !changed_files.is_empty() || !removed_files.is_empty() {
             let paths: Vec<String> = pending.drain().collect();
+            // A path removed in this window can also appear in changed (e.g. create+delete).
+            // Prefer "removed" semantics: strip any removed path from the changed set.
+            for p in &removed_files {
+                changed_files.remove(p);
+            }
+            let changed: Vec<String> = changed_files.drain().collect();
+            let removed: Vec<String> = removed_files.drain().collect();
             let _ = app.emit(
                 "fs-change",
                 FsChange {
                     root: root_path.to_string(),
                     paths,
+                    changed_files: changed,
+                    removed_files: removed,
                 },
             );
         }
@@ -175,7 +199,42 @@ fn debounce_loop(
     }
 }
 
-fn collect_parents(event: &Event, pending: &mut HashSet<String>, git_changed: &mut bool) {
+/// Classifies an `EventKind` into how it should affect the changed/removed
+/// file sets. `None` means the event should not touch either set (e.g. a
+/// metadata-only touch we don't want to treat as a content change).
+fn classify_kind(kind: &EventKind) -> Option<FileChangeClass> {
+    match kind {
+        EventKind::Create(_) => Some(FileChangeClass::Changed),
+        EventKind::Remove(_) => Some(FileChangeClass::Removed),
+        EventKind::Modify(ModifyKind::Name(mode)) => match mode {
+            RenameMode::From => Some(FileChangeClass::Removed),
+            RenameMode::To => Some(FileChangeClass::Changed),
+            // `Both` and `Any` carry both source and dest in event.paths;
+            // treat as changed and let the consumer handle the pair.
+            _ => Some(FileChangeClass::Changed),
+        },
+        EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Any) => {
+            Some(FileChangeClass::Changed)
+        }
+        // Metadata-only or other noisy kinds: only dir-listing refresh.
+        _ => None,
+    }
+}
+
+#[derive(Copy, Clone)]
+enum FileChangeClass {
+    Changed,
+    Removed,
+}
+
+fn collect_parents(
+    event: &Event,
+    pending: &mut HashSet<String>,
+    changed_files: &mut HashSet<String>,
+    removed_files: &mut HashSet<String>,
+    git_changed: &mut bool,
+) {
+    let class = classify_kind(&event.kind);
     for path in &event.paths {
         if is_ignored(path) {
             continue;
@@ -189,6 +248,18 @@ fn collect_parents(event: &Event, pending: &mut HashSet<String>, git_changed: &m
         // Add the parent directory (the directory whose listing changed)
         if let Some(parent) = path.parent() {
             pending.insert(parent.to_string_lossy().to_string());
+        }
+        // Route the file path itself
+        if let Some(class) = class {
+            let s = path.to_string_lossy().to_string();
+            match class {
+                FileChangeClass::Changed => {
+                    changed_files.insert(s);
+                }
+                FileChangeClass::Removed => {
+                    removed_files.insert(s);
+                }
+            }
         }
     }
 }
@@ -234,25 +305,29 @@ mod tests {
         assert!(!is_ignored(Path::new("/projects/myapp/src/components/App.tsx")));
     }
 
+    fn empty_sets() -> (HashSet<String>, HashSet<String>, HashSet<String>, bool) {
+        (HashSet::new(), HashSet::new(), HashSet::new(), false)
+    }
+
     #[test]
     fn collect_parents_adds_parent_dirs() {
-        let mut pending = HashSet::new();
-        let mut git_changed = false;
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
         let event = Event {
             kind: EventKind::Create(notify::event::CreateKind::File),
             paths: vec![PathBuf::from("/projects/myapp/src/main.rs")],
             attrs: Default::default(),
         };
-        collect_parents(&event, &mut pending, &mut git_changed);
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
         assert!(pending.contains("/projects/myapp/src"));
         assert_eq!(pending.len(), 1);
+        assert!(changed.contains("/projects/myapp/src/main.rs"));
+        assert!(removed.is_empty());
         assert!(!git_changed);
     }
 
     #[test]
     fn collect_parents_deduplicates() {
-        let mut pending = HashSet::new();
-        let mut git_changed = false;
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
         let event = Event {
             kind: EventKind::Create(notify::event::CreateKind::File),
             paths: vec![
@@ -261,15 +336,15 @@ mod tests {
             ],
             attrs: Default::default(),
         };
-        collect_parents(&event, &mut pending, &mut git_changed);
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
         assert_eq!(pending.len(), 1);
         assert!(pending.contains("/projects/myapp/src"));
+        assert_eq!(changed.len(), 2);
     }
 
     #[test]
     fn collect_parents_routes_git_changes() {
-        let mut pending = HashSet::new();
-        let mut git_changed = false;
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
         let event = Event {
             kind: EventKind::Modify(notify::event::ModifyKind::Data(
                 notify::event::DataChange::Content,
@@ -280,24 +355,96 @@ mod tests {
             ],
             attrs: Default::default(),
         };
-        collect_parents(&event, &mut pending, &mut git_changed);
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
         assert_eq!(pending.len(), 1);
         assert!(pending.contains("/projects/myapp/src"));
+        assert!(changed.contains("/projects/myapp/src/main.rs"));
+        assert!(!changed.iter().any(|p| p.contains(".git")));
         assert!(git_changed);
     }
 
     #[test]
     fn collect_parents_handles_root_path() {
-        let mut pending = HashSet::new();
-        let mut git_changed = false;
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
         let event = Event {
             kind: EventKind::Create(notify::event::CreateKind::File),
             paths: vec![PathBuf::from("/file.txt")],
             attrs: Default::default(),
         };
-        collect_parents(&event, &mut pending, &mut git_changed);
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
         assert!(pending.contains("/"));
+        assert!(changed.contains("/file.txt"));
         assert!(!git_changed);
+    }
+
+    #[test]
+    fn collect_parents_modify_data_is_changed() {
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
+        let event = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
+            paths: vec![PathBuf::from("/projects/myapp/src/main.rs")],
+            attrs: Default::default(),
+        };
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
+        assert!(changed.contains("/projects/myapp/src/main.rs"));
+        assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn collect_parents_remove_is_removed() {
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
+        let event = Event {
+            kind: EventKind::Remove(notify::event::RemoveKind::File),
+            paths: vec![PathBuf::from("/projects/myapp/src/main.rs")],
+            attrs: Default::default(),
+        };
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
+        assert!(removed.contains("/projects/myapp/src/main.rs"));
+        assert!(changed.is_empty());
+        // Parent dir refresh still happens.
+        assert!(pending.contains("/projects/myapp/src"));
+    }
+
+    #[test]
+    fn collect_parents_rename_from_is_removed() {
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
+        let event = Event {
+            kind: EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+            paths: vec![PathBuf::from("/projects/myapp/src/old.rs")],
+            attrs: Default::default(),
+        };
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
+        assert!(removed.contains("/projects/myapp/src/old.rs"));
+        assert!(changed.is_empty());
+    }
+
+    #[test]
+    fn collect_parents_rename_to_is_changed() {
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
+        let event = Event {
+            kind: EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            paths: vec![PathBuf::from("/projects/myapp/src/new.rs")],
+            attrs: Default::default(),
+        };
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
+        assert!(changed.contains("/projects/myapp/src/new.rs"));
+        assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn collect_parents_ignored_paths_skipped() {
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![PathBuf::from("/projects/myapp/node_modules/lodash/index.js")],
+            attrs: Default::default(),
+        };
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
+        assert!(pending.is_empty());
+        assert!(changed.is_empty());
+        assert!(removed.is_empty());
     }
 
     #[test]
