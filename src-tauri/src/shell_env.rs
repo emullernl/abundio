@@ -219,23 +219,70 @@ fn find_powershell(name: &str) -> Option<String> {
 }
 
 fn where_command(exe: &str) -> Option<String> {
+    where_command_with_path(exe, None)
+}
+
+fn where_command_with_path(exe: &str, path_override: Option<&str>) -> Option<String> {
     let mut cmd = Command::new(if cfg!(target_os = "windows") { "where" } else { "which" });
     cmd.arg(exe);
+    if let Some(path) = path_override {
+        cmd.env("PATH", path);
+    }
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
     let output = cmd.output().ok()?;
     if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout)
+        let candidates: Vec<String> = String::from_utf8_lossy(&output.stdout)
             .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if !path.is_empty() {
-            return Some(path);
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect();
+
+        #[cfg(target_os = "windows")]
+        {
+            return choose_windows_executable(candidates);
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            return candidates.first().cloned();
         }
     }
     None
+}
+
+#[cfg(target_os = "windows")]
+fn choose_windows_executable(candidates: Vec<String>) -> Option<String> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let score = |path: &str| -> u8 {
+        let lower = path.to_ascii_lowercase();
+        if lower.ends_with(".exe") {
+            0
+        } else if lower.ends_with(".com") {
+            1
+        } else if lower.ends_with(".cmd") {
+            2
+        } else if lower.ends_with(".bat") {
+            3
+        } else {
+            4
+        }
+    };
+
+    candidates.into_iter().min_by_key(|path| score(path))
+}
+
+pub fn resolve_command_path(exe: &str) -> Option<String> {
+    let path = Path::new(exe);
+    if path.components().count() > 1 && path.exists() {
+        return Some(exe.to_string());
+    }
+
+    where_command_with_path(exe, Some(shell_path())).or_else(|| where_command(exe))
 }
 
 #[cfg(test)]

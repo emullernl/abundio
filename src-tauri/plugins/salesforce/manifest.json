@@ -1,9 +1,0 @@
-{
-	"name": "Salesforce CLI",
-	"version": "1.0.0",
-	"description": "Integrate Salesforce CLI commands into Abundio's UI",
-	"commands": ["sf_org_list", "sf_set_default_org", "sf_open_org", "sf_deploy"],
-	"ui": {
-		"panel": "SalesforcePanel.tsx"
-	}
-}

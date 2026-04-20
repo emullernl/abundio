@@ -5,12 +5,26 @@ use std::path::{Path, PathBuf};
 
 /// Plugin manifest structure loaded from plugins/*/manifest.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginManifest {
     pub name: String,
     pub version: String,
     pub description: String,
-    pub commands: Vec<String>, // List of command names exposed by the plugin
+    pub commands: Vec<PluginCommand>,
     pub ui: Option<PluginUI>,  // Optional UI configuration
+}
+
+/// Backend command definition for an external plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCommand {
+    pub id: String,
+    pub executable: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub run_in_shell: bool,
 }
 
 /// UI configuration for plugins
@@ -118,7 +132,13 @@ mod tests {
             name: "Valid Plugin".to_string(),
             version: "1.0.0".to_string(),
             description: "Test".to_string(),
-            commands: vec!["cmd".to_string()],
+            commands: vec![PluginCommand {
+                id: "cmd".to_string(),
+                executable: "echo".to_string(),
+                args: vec!["hello".to_string()],
+                cwd: None,
+                run_in_shell: false,
+            }],
             ui: None,
         };
         assert!(validate_plugin(&manifest).is_ok());

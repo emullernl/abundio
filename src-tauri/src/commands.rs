@@ -1,10 +1,11 @@
 use tauri::{AppHandle, State};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::collections::HashMap;
 
 use crate::error::AbundioError;
 use crate::file_watcher::FileWatcher;
-use crate::plugins::{self, Plugin};
+use crate::plugins::{self, Plugin, PluginCommand};
 use crate::pty_manager::PtyManager;
 use crate::workspace_store::{WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs, Tab, TabUpdate};
 use crate::shell_env;
@@ -229,53 +230,167 @@ pub async fn open_plugins_directory() -> Result<String, AbundioError> {
     Ok(dir.to_string_lossy().to_string())
 }
 
-// ── Salesforce commands ──
-
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
-pub struct SalesforceOrg {
-    pub org_id: String,
-    pub username: String,
-    pub alias: Option<String>,
-    pub instance_url: String,
-    pub is_default: bool,
-}
-
 #[tauri::command]
-pub async fn sf_org_list() -> Result<Vec<SalesforceOrg>, AbundioError> {
-    let output = run_sf_command(&["org:list", "--json"])?;
-    let orgs: Vec<SalesforceOrg> = serde_json::from_str(&output)
-        .map_err(|e| AbundioError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())))?;
-    Ok(orgs)
+pub async fn plugin_invoke(
+    plugins: State<'_, Vec<Plugin>>,
+    plugin_id: String,
+    command_id: String,
+    args: Option<HashMap<String, String>>,
+) -> Result<String, AbundioError> {
+    let Some(plugin) = plugins.iter().find(|plugin| plugin.id == plugin_id) else {
+        return Err(AbundioError::NotFound(format!("plugin {}", plugin_id)));
+    };
+
+    let Some(command) = plugin
+        .manifest
+        .commands
+        .iter()
+        .find(|command| command.id == command_id)
+    else {
+        return Err(AbundioError::NotFound(format!(
+            "plugin command {}.{}",
+            plugin_id, command_id
+        )));
+    };
+
+    run_plugin_command(plugin, command, args.unwrap_or_default())
 }
 
-#[tauri::command]
-pub async fn sf_set_default_org(org_id: String) -> Result<(), AbundioError> {
-    run_sf_command(&["config:set", &format!("target-org={}", org_id)])?;
-    Ok(())
-}
+fn run_plugin_command(
+    plugin: &Plugin,
+    command: &PluginCommand,
+    args: HashMap<String, String>,
+) -> Result<String, AbundioError> {
+    let executable = interpolate_template(&command.executable, plugin, &args)?;
+    let resolved_executable = crate::shell_env::resolve_command_path(&executable)
+        .unwrap_or(executable.clone());
+    let resolved_args: Result<Vec<_>, _> = command
+        .args
+        .iter()
+        .map(|value| interpolate_template(value, plugin, &args))
+        .collect();
+    let resolved_args = resolved_args?;
 
-#[tauri::command]
-pub async fn sf_open_org(org_id: String) -> Result<(), AbundioError> {
-    run_sf_command(&["org:open", "--target-org", &org_id])?;
-    Ok(())
-}
+    let mut process = if command.run_in_shell {
+        let shell = crate::shell_env::default_shell();
+        let mut shell_cmd = std::process::Command::new(&shell);
 
-#[tauri::command]
-pub async fn sf_deploy(source_path: String, org_id: String) -> Result<String, AbundioError> {
-    let output = run_sf_command(&["project:deploy:start", "--source-dir", &source_path, "--target-org", &org_id, "--json"])?;
-    Ok(output)
-}
+        #[cfg(target_os = "windows")]
+        {
+            let lower = shell.to_ascii_lowercase();
+            let command_line = shell_command_line(&resolved_executable, &resolved_args, true);
+            if lower.contains("bash") {
+                shell_cmd.arg("-l").arg("-i").arg("-c").arg(command_line);
+            } else if lower.ends_with("pwsh.exe") || lower.ends_with("powershell.exe") {
+                shell_cmd.arg("-Command").arg(command_line);
+            } else {
+                shell_cmd.arg("/C").arg(command_line);
+            }
+        }
 
-fn run_sf_command(args: &[&str]) -> Result<String, AbundioError> {
-    use std::process::Command;
-    let output = Command::new("sf")
-        .args(args)
-        .output()
-        .map_err(|e| AbundioError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, format!("sf command not found: {}", e))))?;
+        #[cfg(not(target_os = "windows"))]
+        {
+            let command_line = shell_command_line(&resolved_executable, &resolved_args, false);
+            shell_cmd.arg("-l").arg("-i").arg("-c").arg(command_line);
+        }
+
+        shell_cmd
+    } else {
+        let mut direct = std::process::Command::new(&resolved_executable);
+
+        #[cfg(target_os = "windows")]
+        {
+            let lower = resolved_executable.to_ascii_lowercase();
+            if lower.ends_with(".cmd") || lower.ends_with(".bat") {
+                direct = std::process::Command::new("cmd.exe");
+                direct.arg("/C").arg(&resolved_executable).args(&resolved_args);
+            } else {
+                direct.args(&resolved_args);
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            direct.args(&resolved_args);
+        }
+
+        direct
+    };
+
+    process.env("PATH", crate::shell_env::shell_path());
+
+    if let Some(cwd) = &command.cwd {
+        process.current_dir(interpolate_template(cwd, plugin, &args)?);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        process.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
+    }
+
+    let output = process.output().map_err(|error| {
+        AbundioError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("failed to start plugin command {}: {}", command.id, error),
+        ))
+    })?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(AbundioError::Io(std::io::Error::new(std::io::ErrorKind::Other, String::from_utf8_lossy(&output.stderr))))
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let message = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("plugin command {} failed with status {}", command.id, output.status)
+        };
+
+        Err(AbundioError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            message,
+        )))
     }
+}
+
+fn shell_command_line(executable: &str, args: &[String], windows: bool) -> String {
+    let mut parts = Vec::with_capacity(args.len() + 1);
+    parts.push(shell_escape(executable, windows));
+    for arg in args {
+        parts.push(shell_escape(arg, windows));
+    }
+    parts.join(" ")
+}
+
+fn shell_escape(value: &str, windows: bool) -> String {
+    if windows {
+        let escaped = value.replace('"', "\\\"");
+        format!("\"{}\"", escaped)
+    } else {
+        let escaped = value.replace('\'', "'\\''");
+        format!("'{}'", escaped)
+    }
+}
+
+fn interpolate_template(
+    template: &str,
+    plugin: &Plugin,
+    args: &HashMap<String, String>,
+) -> Result<String, AbundioError> {
+    let mut resolved = template.replace("{{pluginDir}}", &plugin.dir);
+
+    for (key, value) in args {
+        resolved = resolved.replace(&format!("{{{{{}}}}}", key), value);
+    }
+
+    if resolved.contains("{{") {
+        return Err(AbundioError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("unresolved template value in '{}'", template),
+        )));
+    }
+
+    Ok(resolved)
 }

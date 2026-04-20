@@ -222,10 +222,7 @@ pub fn run() {
             search::fs_search_cancel,
             commands::list_plugins,
             commands::open_plugins_directory,
-            commands::sf_org_list,
-            commands::sf_set_default_org,
-            commands::sf_open_org,
-            commands::sf_deploy,
+            commands::plugin_invoke,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

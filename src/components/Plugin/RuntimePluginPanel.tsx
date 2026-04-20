@@ -1,17 +1,13 @@
 import * as ReactNS from "react";
 import { useEffect, useState } from "react";
 import * as ts from "typescript";
-import { fs, plugins as pluginsIpc, salesforce as salesforceIpc } from "../../lib/ipc";
+import { fs, plugins as pluginsIpc } from "../../lib/ipc";
+import type { RuntimePluginApi } from "../../lib/pluginRuntimeApi";
 import type { Plugin } from "../../lib/types";
-
-type RuntimeApi = {
-	react: typeof ReactNS;
-	salesforce: typeof salesforceIpc;
-};
 
 declare global {
 	interface Window {
-		__abundioPluginApi?: RuntimeApi;
+		__abundioPluginApi?: RuntimePluginApi;
 	}
 }
 
@@ -24,13 +20,22 @@ function rewritePluginImports(source: string): string {
 	let out = source;
 
 	out = out.replace(
-		/import\s+\{\s*useEffect\s*,\s*useState\s*\}\s+from\s+["']react["'];?/g,
-		"const { useEffect, useState } = window.__abundioPluginApi.react;",
+		/import\s+\{([^}]*)\}\s+from\s+["']react["'];?/g,
+		(_match, bindings: string) =>
+			`const { ${bindings.trim()} } = window.__abundioPluginApi.react;`,
 	);
 
 	out = out.replace(
-		/import\s+\{\s*salesforce\s+as\s+sfIpc\s*\}\s+from\s+["'][^"']+["'];?/g,
-		"const { salesforce: sfIpc } = window.__abundioPluginApi;",
+		/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+["']react["'];?/g,
+		(_match, nsAlias: string) => `const ${nsAlias} = window.__abundioPluginApi.react;`,
+	);
+
+	out = out.replace(
+		/import\s+\{\s*plugin(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*\}\s+from\s+["'][^"']+["'];?/g,
+		(_match, alias: string | undefined) => {
+			const binding = alias ?? "plugin";
+			return `const { plugin: ${binding} } = window.__abundioPluginApi;`;
+		},
 	);
 
 	// Drop type-only imports from plugin source.
@@ -50,7 +55,13 @@ export function RuntimePluginPanel({ pluginId }: { pluginId: string }) {
 
 		window.__abundioPluginApi = {
 			react: ReactNS,
-			salesforce: salesforceIpc,
+			plugin: {
+				invoke: (commandId: string, args?: Record<string, string>) =>
+					pluginsIpc.invoke(pluginId, commandId, args),
+				getInfo: () => ({
+					pluginId,
+				}),
+			},
 		};
 
 		const load = async () => {
