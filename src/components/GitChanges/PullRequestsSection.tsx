@@ -30,14 +30,18 @@ export function PullRequestsSection() {
 	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
 	const cwd = activeWorkspace?.rootFolder ?? null;
 
+	// Clear immediately when the workspace changes — avoids showing stale PRs
+	// from the previous workspace while the new fetch is in flight.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: cwd drives the reset
+	useEffect(() => {
+		clear();
+	}, [cwd, clear]);
+
 	// Check gh status on mount / session change
 	useEffect(() => {
-		if (!cwd) {
-			clear();
-			return;
-		}
+		if (!cwd) return;
 		checkGhStatus(cwd);
-	}, [cwd, checkGhStatus, clear]);
+	}, [cwd, checkGhStatus]);
 
 	// Fetch review PRs when gh is ready, view changes, or session changes
 	useEffect(() => {

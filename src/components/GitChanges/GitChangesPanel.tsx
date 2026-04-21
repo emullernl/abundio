@@ -45,14 +45,18 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 	const cwd = activeWorkspace?.rootFolder ?? null;
 	const workspaceBaseBranch = activeWorkspace?.baseBranch ?? null;
 
+	// Clear immediately on cwd/panel change so the fetch window shows a loading
+	// skeleton instead of the previous workspace's files/branch.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: panelOpen/cwd drive the reset
+	useEffect(() => {
+		clear();
+	}, [panelOpen, cwd, clear]);
+
 	// Fetch changes when session changes or panel opens
 	useEffect(() => {
-		if (!panelOpen || !cwd) {
-			clear();
-			return;
-		}
+		if (!panelOpen || !cwd) return;
 		fetchChanges(cwd, workspaceBaseBranch);
-	}, [panelOpen, cwd, workspaceBaseBranch, fetchChanges, clear]);
+	}, [panelOpen, cwd, workspaceBaseBranch, fetchChanges]);
 
 	// Re-fetch on file system or git changes (throttled)
 	// FS events use lightweight fingerprint check; git events do a full refresh

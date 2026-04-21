@@ -11,15 +11,13 @@ import { WorkspaceItem } from "./WorkspaceItem";
 const DRAG_THRESHOLD = 5;
 
 export function WorkspaceList() {
-	const {
-		workspaces,
-		activeWorkspaceId,
-		setActiveWorkspace,
-		deleteWorkspace,
-		closeWorkspace,
-		renameWorkspace,
-		reorderWorkspaces,
-	} = useWorkspaceStore();
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+	const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
+	const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
+	const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
+	const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
 
 	const [draggedId, setDraggedId] = useState<string | null>(null);
 	const [mousePos, setMousePos] = useState<{ x: number; y: number }>({
