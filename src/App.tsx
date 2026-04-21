@@ -133,7 +133,47 @@ export function App() {
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
 	);
+	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+
+	// Lazy-mount tabs. A tab's TabTerminalContent (SplitContainer → PTYs) only
+	// mounts once the tab has been in this set. The active tab of the active
+	// workspace is added immediately; remaining tabs get added after the
+	// workspace switch has painted so the new workspace feels instant even when
+	// it has many tabs.
+	const [mountedTabIds, setMountedTabIds] = useState<Set<string>>(
+		() => new Set(),
+	);
+
+	useEffect(() => {
+		const targetWorkspaceId = switchingWorkspaceId ?? activeWorkspaceId;
+		if (!targetWorkspaceId) return;
+		const activeTabId = activeTabByWorkspace[targetWorkspaceId];
+		if (!activeTabId) return;
+		setMountedTabIds((prev) => {
+			if (prev.has(activeTabId)) return prev;
+			const next = new Set(prev);
+			next.add(activeTabId);
+			return next;
+		});
+	}, [activeWorkspaceId, switchingWorkspaceId, activeTabByWorkspace]);
+
+	useEffect(() => {
+		if (switchingWorkspaceId !== null) return;
+		if (!activeWorkspaceId) return;
+		const workspace = workspaces.find((w) => w.id === activeWorkspaceId);
+		if (!workspace) return;
+		const hasUnmounted = workspace.tabs.some((t) => !mountedTabIds.has(t.id));
+		if (!hasUnmounted) return;
+		const timeout = setTimeout(() => {
+			setMountedTabIds((prev) => {
+				const next = new Set(prev);
+				for (const t of workspace.tabs) next.add(t.id);
+				return next;
+			});
+		}, 150);
+		return () => clearTimeout(timeout);
+	}, [activeWorkspaceId, switchingWorkspaceId, workspaces, mountedTabIds]);
 
 	useEffect(() => {
 		const cleanup = initKeybindings();
@@ -310,7 +350,7 @@ export function App() {
 					onRequestNewWorkspace={requestNewWorkspace}
 				/>
 				<div
-					className="flex-1 min-w-0 flex flex-col"
+					className="flex-1 min-w-0 flex flex-col relative"
 					style={{ paddingTop: TITLEBAR_HEIGHT }}
 				>
 					{!activeWorkspaceId && (
@@ -399,6 +439,7 @@ export function App() {
 											<FileViewerContainer />
 										</div>
 										{workspace.tabs.map((tab) => {
+											if (!mountedTabIds.has(tab.id)) return null;
 											const isTabActive = tab.id === activeTabId;
 											const showTerminal =
 												(activeView[workspace.id] ?? "terminal") ===
@@ -420,6 +461,31 @@ export function App() {
 								</div>
 							);
 						})}
+					{switchingWorkspaceId !== null && (
+						<div
+							className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"
+							style={{
+								backgroundColor: "var(--bg-primary)",
+								paddingTop: TITLEBAR_HEIGHT,
+							}}
+						>
+							<div className="flex gap-[3px]">
+								{[0, 1, 2, 3, 4].map((i) => (
+									<div
+										key={i}
+										style={{
+											width: 3,
+											height: 14,
+											borderRadius: 1,
+											backgroundColor: "var(--accent)",
+											opacity: 0.15,
+											animation: `terminal-bar-wave 1.2s ease-in-out ${i * 0.12}s infinite`,
+										}}
+									/>
+								))}
+							</div>
+						</div>
+					)}
 				</div>
 				<GitChangesPanel titlebarHeight={TITLEBAR_HEIGHT} />
 			</div>

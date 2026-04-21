@@ -13,7 +13,8 @@ const DRAG_THRESHOLD = 5;
 export function WorkspaceList() {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-	const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
+	const beginWorkspaceSwitch = useWorkspaceStore((s) => s.beginWorkspaceSwitch);
 	const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
 	const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
 	const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
@@ -195,12 +196,14 @@ export function WorkspaceList() {
 					{nearestSlot === i && <DropIndicator />}
 					<WorkspaceItem
 						workspace={workspace}
-						isActive={workspace.id === activeWorkspaceId}
+						isActive={
+							workspace.id === (switchingWorkspaceId ?? activeWorkspaceId)
+						}
 						isDragging={workspace.id === draggedId}
 						isRenaming={workspace.id === renamingId}
 						onClick={() => {
 							if (draggedId) return;
-							setActiveWorkspace(workspace.id);
+							beginWorkspaceSwitch(workspace.id);
 						}}
 						onDelete={() => setPendingDeleteId(workspace.id)}
 						onContextMenu={(e) => {

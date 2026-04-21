@@ -87,6 +87,7 @@ beforeEach(() => {
 	useWorkspaceStore.setState({
 		workspaces: [],
 		activeWorkspaceId: null,
+		switchingWorkspaceId: null,
 		activeTabByWorkspace: {},
 		focusedPaneId: null,
 		focusedPaneByTab: {},
@@ -166,6 +167,43 @@ describe("workspaceStore", () => {
 			expect(useWorkspaceStore.getState().focusedPaneByTab["tab-1"]).toBe(
 				"pane-focused",
 			);
+		});
+	});
+
+	describe("beginWorkspaceSwitch", () => {
+		it("sets switchingWorkspaceId immediately and defers activeWorkspaceId", () => {
+			vi.useFakeTimers();
+
+			useWorkspaceStore.setState({ activeWorkspaceId: "s1" });
+			useWorkspaceStore.getState().beginWorkspaceSwitch("s2");
+
+			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBe("s2");
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s1");
+
+			// First timeout: apply the actual switch.
+			vi.advanceTimersToNextTimer();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s2");
+			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBe("s2");
+
+			// Second timeout: clear the placeholder.
+			vi.advanceTimersToNextTimer();
+			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBeNull();
+
+			vi.useRealTimers();
+		});
+
+		it("is a no-op when target equals current active workspace", () => {
+			vi.useFakeTimers();
+			const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+			useWorkspaceStore.setState({ activeWorkspaceId: "s1" });
+			useWorkspaceStore.getState().beginWorkspaceSwitch("s1");
+
+			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBeNull();
+			expect(timeoutSpy).not.toHaveBeenCalled();
+
+			timeoutSpy.mockRestore();
+			vi.useRealTimers();
 		});
 	});
 

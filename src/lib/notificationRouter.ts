@@ -70,7 +70,7 @@ export function handleNotificationClick(
 		);
 		if (!workspace) return;
 
-		wsStore.setActiveWorkspace(workspaceId);
+		wsStore.beginWorkspaceSwitch(workspaceId);
 		wsStore.setActiveTab(workspaceId, tabId);
 		if (paneId) {
 			wsStore.setFocusedPane(paneId);
@@ -85,7 +85,7 @@ export function handleNotificationClick(
 		);
 		if (!workspace) return;
 
-		wsStore.setActiveWorkspace(workspaceId);
+		wsStore.beginWorkspaceSwitch(workspaceId);
 		useGitChangesStore.getState().setPanel(true);
 	}
 }
