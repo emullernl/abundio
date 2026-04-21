@@ -59,26 +59,25 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 		}
 	}, [rootPath, entries, loadDir]);
 
-	// File system watcher: start on mount, stop on unmount
+	// Dir-refresh listener. The Rust watcher itself is owned by
+	// useFileReloadWatcher so it survives workspace switches.
 	useEffect(() => {
-		fsApi.watchStart(rootPath).catch((err) => {
-			console.error("[FileTree] fs_watch_start failed:", err);
-		});
-
 		let unlisten: (() => void) | null = null;
+		let cancelled = false;
 		fsApi
 			.onFsChange(rootPath, ({ paths }) => {
 				useExplorerStore.getState().refreshDirs(paths);
 			})
 			.then((fn) => {
-				unlisten = fn;
+				if (cancelled) fn();
+				else unlisten = fn;
 			})
 			.catch((err) => {
 				console.error("[FileTree] onFsChange listen failed:", err);
 			});
 
 		return () => {
-			fsApi.watchStop(rootPath);
+			cancelled = true;
 			unlisten?.();
 		};
 	}, [rootPath]);

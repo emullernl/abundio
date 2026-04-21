@@ -231,6 +231,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			}
 		}
 		await workspacesApi.delete(id);
+		usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
 		set((state) => ({
 			workspaces: state.workspaces.filter((s) => s.id !== id),
 			activeWorkspaceId:

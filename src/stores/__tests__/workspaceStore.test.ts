@@ -30,9 +30,14 @@ vi.mock("../explorerStore", () => ({
 	},
 }));
 
+const markWorkspaceOpened = vi.fn();
+const unmarkWorkspaceOpened = vi.fn();
 vi.mock("../ptyActivityStore", () => ({
 	usePtyActivityStore: {
-		getState: vi.fn(() => ({ markWorkspaceOpened: vi.fn() })),
+		getState: vi.fn(() => ({
+			markWorkspaceOpened,
+			unmarkWorkspaceOpened,
+		})),
 	},
 }));
 
@@ -77,6 +82,8 @@ function makeWorkspace(
 }
 
 beforeEach(() => {
+	markWorkspaceOpened.mockClear();
+	unmarkWorkspaceOpened.mockClear();
 	useWorkspaceStore.setState({
 		workspaces: [],
 		activeWorkspaceId: null,
@@ -393,6 +400,18 @@ describe("workspaceStore", () => {
 			expect(
 				useWorkspaceStore.getState().getTabsForWorkspace("unknown"),
 			).toEqual([]);
+		});
+	});
+
+	describe("deleteWorkspace", () => {
+		it("unmarks the workspace as opened so its fs watcher stops", async () => {
+			const workspace = makeWorkspace();
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+
+			await useWorkspaceStore.getState().deleteWorkspace("workspace-1");
+
+			expect(unmarkWorkspaceOpened).toHaveBeenCalledWith("workspace-1");
+			expect(useWorkspaceStore.getState().workspaces).toHaveLength(0);
 		});
 	});
 });
