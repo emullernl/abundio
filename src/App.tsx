@@ -37,6 +37,43 @@ import { useWorkspaceStore } from "./stores/workspaceStore";
 
 const TITLEBAR_HEIGHT = isMac ? 52 : 0;
 
+/** Workspace-switch overlay. Memoized with no props so it never re-renders
+ *  while the switch is in flight — the wave bars stay on their own compositor
+ *  layers (will-change + contain) so the animation keeps running smoothly
+ *  even while the main thread is busy mounting the new workspace. */
+const SwitchingOverlay = memo(function SwitchingOverlay() {
+	return (
+		<div
+			className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"
+			style={{
+				backgroundColor: "var(--bg-primary)",
+				paddingTop: TITLEBAR_HEIGHT,
+				isolation: "isolate",
+				contain: "layout paint",
+			}}
+		>
+			<div
+				className="flex gap-[3px]"
+				style={{ width: 27, height: 14, contain: "layout paint" }}
+			>
+				{[0, 1, 2, 3, 4].map((i) => (
+					<div
+						key={i}
+						style={{
+							width: 3,
+							height: 14,
+							borderRadius: 1,
+							backgroundColor: "var(--accent)",
+							willChange: "transform, opacity",
+							animation: `terminal-bar-wave 1.2s ease-in-out ${i * 0.12}s infinite`,
+						}}
+					/>
+				))}
+			</div>
+		</div>
+	);
+});
+
 /** Memoized tab content — only re-renders when layoutJson string changes. */
 const TabTerminalContent = memo(function TabTerminalContent({
 	layoutJson,
@@ -461,31 +498,7 @@ export function App() {
 								</div>
 							);
 						})}
-					{switchingWorkspaceId !== null && (
-						<div
-							className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"
-							style={{
-								backgroundColor: "var(--bg-primary)",
-								paddingTop: TITLEBAR_HEIGHT,
-							}}
-						>
-							<div className="flex gap-[3px]">
-								{[0, 1, 2, 3, 4].map((i) => (
-									<div
-										key={i}
-										style={{
-											width: 3,
-											height: 14,
-											borderRadius: 1,
-											backgroundColor: "var(--accent)",
-											opacity: 0.15,
-											animation: `terminal-bar-wave 1.2s ease-in-out ${i * 0.12}s infinite`,
-										}}
-									/>
-								))}
-							</div>
-						</div>
-					)}
+					{switchingWorkspaceId !== null && <SwitchingOverlay />}
 				</div>
 				<GitChangesPanel titlebarHeight={TITLEBAR_HEIGHT} />
 			</div>
