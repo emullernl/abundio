@@ -32,7 +32,8 @@ export function CommandPalette({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
-	const { workspaces, setActiveWorkspace, focusedPaneId } = useWorkspaceStore();
+	const { workspaces, beginWorkspaceSwitch, focusedPaneId } =
+		useWorkspaceStore();
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
 	const { splitPane, closePane, toggleMaximize } = useSplitPane();
@@ -46,7 +47,7 @@ export function CommandPalette({
 				id: `workspace-${s.id}`,
 				label: s.name,
 				category: "Workspaces",
-				action: () => setActiveWorkspace(s.id),
+				action: () => beginWorkspaceSwitch(s.id),
 			});
 		}
 
@@ -134,7 +135,7 @@ export function CommandPalette({
 	}, [
 		workspaces,
 		focusedPaneId,
-		setActiveWorkspace,
+		beginWorkspaceSwitch,
 		onRequestNewWorkspace,
 		splitPane,
 		closePane,

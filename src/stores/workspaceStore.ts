@@ -17,6 +17,7 @@ import { useSettingsStore } from "./settingsStore";
 interface WorkspaceState {
 	workspaces: WorkspaceWithTabs[];
 	activeWorkspaceId: string | null;
+	switchingWorkspaceId: string | null;
 	activeTabByWorkspace: Record<string, string>; // workspaceId → active tabId
 	focusedPaneId: string | null;
 	focusedPaneByTab: Record<string, string>; // tabId → last focused paneId
@@ -38,6 +39,7 @@ interface WorkspaceState {
 	closeWorkspace: (id: string) => Promise<void>;
 	renameWorkspace: (id: string, name: string) => Promise<void>;
 	setActiveWorkspace: (id: string | null) => void;
+	beginWorkspaceSwitch: (id: string | null) => void;
 
 	reorderWorkspaces: (ids: string[]) => void;
 
@@ -130,6 +132,7 @@ function updateTabInWorkspaces(
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	workspaces: [],
 	activeWorkspaceId: null,
+	switchingWorkspaceId: null,
 	activeTabByWorkspace: {},
 	focusedPaneId: null,
 	focusedPaneByTab: {},
@@ -231,6 +234,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			}
 		}
 		await workspacesApi.delete(id);
+		usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
 		set((state) => ({
 			workspaces: state.workspaces.filter((s) => s.id !== id),
 			activeWorkspaceId:
@@ -362,6 +366,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				savedLayout: null,
 			};
 		});
+	},
+
+	beginWorkspaceSwitch: (id) => {
+		if (id === get().activeWorkspaceId) return;
+		// Pre-mount the target workspace's DOM subtree behind the overlay. Its
+		// div is filtered by openedWorkspaceIds, so opening it now lets React
+		// mount SplitContainer/TerminalPane while the old workspace is still
+		// visible underneath the overlay — a double-buffer. When we flip the
+		// display below, the new workspace is already rendered.
+		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
+		set({ switchingWorkspaceId: id });
+		setTimeout(() => {
+			if (get().switchingWorkspaceId !== id) return;
+			get().setActiveWorkspace(id);
+			setTimeout(() => {
+				if (get().switchingWorkspaceId === id) {
+					set({ switchingWorkspaceId: null });
+				}
+			}, 50);
+		}, 120);
 	},
 
 	reorderWorkspaces: (ids) => {

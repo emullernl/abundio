@@ -70,7 +70,7 @@ describe("handleNotificationClick", () => {
 	it("navigates to pane for PTY notification", () => {
 		const setActiveWorkspace = vi.spyOn(
 			useWorkspaceStore.getState(),
-			"setActiveWorkspace",
+			"beginWorkspaceSwitch",
 		);
 		const setActiveTab = vi.spyOn(useWorkspaceStore.getState(), "setActiveTab");
 		const setFocusedPane = vi.spyOn(
@@ -99,7 +99,7 @@ describe("handleNotificationClick", () => {
 	it("opens git panel for PR notification", () => {
 		const setActiveWorkspace = vi.spyOn(
 			useWorkspaceStore.getState(),
-			"setActiveWorkspace",
+			"beginWorkspaceSwitch",
 		);
 
 		handleNotificationClick({

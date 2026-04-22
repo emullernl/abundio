@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { PaneNode, WorkspaceWithTabs } from "../../lib/types";
 import {
 	computeWorkspaceDotStatus,
@@ -58,7 +58,7 @@ function useWorkspaceDotStatus(workspace: WorkspaceWithTabs): DotStatus {
 	});
 }
 
-export function WorkspaceItem({
+export const WorkspaceItem = memo(function WorkspaceItem({
 	workspace,
 	isActive,
 	isDragging,
@@ -170,4 +170,4 @@ export function WorkspaceItem({
 			</button>
 		</div>
 	);
-}
+});
