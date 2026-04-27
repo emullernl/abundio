@@ -32,8 +32,9 @@ export function CommandPalette({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
-	const { workspaces, beginWorkspaceSwitch, focusedPaneId } =
-		useWorkspaceStore();
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const beginWorkspaceSwitch = useWorkspaceStore((s) => s.beginWorkspaceSwitch);
+	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
 	const { splitPane, closePane, toggleMaximize } = useSplitPane();

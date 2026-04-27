@@ -202,14 +202,14 @@ export function App() {
 		if (!workspace) return;
 		const hasUnmounted = workspace.tabs.some((t) => !mountedTabIds.has(t.id));
 		if (!hasUnmounted) return;
-		const timeout = setTimeout(() => {
+		const rafId = requestAnimationFrame(() => {
 			setMountedTabIds((prev) => {
 				const next = new Set(prev);
 				for (const t of workspace.tabs) next.add(t.id);
 				return next;
 			});
-		}, 150);
-		return () => clearTimeout(timeout);
+		});
+		return () => cancelAnimationFrame(rafId);
 	}, [activeWorkspaceId, switchingWorkspaceId, workspaces, mountedTabIds]);
 
 	useEffect(() => {

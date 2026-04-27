@@ -23,10 +23,21 @@ function Separator() {
 }
 
 export function StatusBar() {
-	const { getActiveWorkspace, getActiveTab, focusedPaneId } =
-		useWorkspaceStore();
-	const workspace = getActiveWorkspace();
-	const tab = getActiveTab();
+	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const workspace = useWorkspaceStore((s) =>
+		s.activeWorkspaceId
+			? (s.workspaces.find((w) => w.id === s.activeWorkspaceId) ?? null)
+			: null,
+	);
+	const tab = useWorkspaceStore((s) => {
+		if (!s.activeWorkspaceId) return null;
+		const tabId = s.activeTabByWorkspace[s.activeWorkspaceId];
+		return (
+			s.workspaces
+				.find((w) => w.id === s.activeWorkspaceId)
+				?.tabs.find((t) => t.id === tabId) ?? null
+		);
+	});
 
 	return (
 		<div

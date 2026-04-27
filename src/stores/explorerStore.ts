@@ -31,6 +31,8 @@ export interface FileTab {
 	// External-change tracking (file changed on disk while open)
 	externallyChanged: boolean;
 	deletedOnDisk: boolean;
+	// True while the initial file read is in-flight (optimistic insertion)
+	loading?: boolean;
 }
 
 interface ExplorerState {
@@ -79,7 +81,7 @@ function buildFileTabsPayload(workspaceId: string): string {
 		useWorkspaceStore.getState().activeView[workspaceId] ?? "terminal";
 
 	const workspaceTabs = fileTabs.filter(
-		(t) => t.workspaceId === workspaceId && t.fileType !== "diff",
+		(t) => t.workspaceId === workspaceId && t.fileType !== "diff" && !t.loading,
 	);
 	return JSON.stringify({
 		tabs: workspaceTabs.map((t) => ({
@@ -193,56 +195,75 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			return;
 		}
 
-		const result = await fsApi.readFile(filePath);
-
-		// Re-check after async gap — a concurrent call may have added it
-		const existingAfterRead = get().fileTabs.find(
-			(t) => t.filePath === filePath,
-		);
-		if (existingAfterRead) {
-			set((s) => ({
-				activeFileTabId: existingAfterRead.id,
-				activeFileTabByWorkspace: {
-					...s.activeFileTabByWorkspace,
-					[workspaceId]: existingAfterRead.id,
-				},
-			}));
-			useWorkspaceStore.getState().setActiveView(workspaceId, "file");
-			return;
-		}
-
+		// Optimistically insert a loading tab so the pill appears instantly.
 		const fileName = filePath.split("/").pop() || "Untitled";
 		const ext = fileName.includes(".")
 			? fileName.split(".").pop() || null
 			: null;
-
-		const tab: FileTab = {
-			id: crypto.randomUUID(),
-			workspaceId,
-			filePath,
-			fileName,
-			fileType: result.fileType,
-			content: result.content,
-			mime: result.mime,
-			isDirty: false,
-			language: getLanguage(ext),
-			initialEditorState: editorState ?? null,
-			diffOriginal: null,
-			diffModified: null,
-			diffSection: null,
-			externallyChanged: false,
-			deletedOnDisk: false,
-		};
+		const tabId = crypto.randomUUID();
 
 		set((s) => ({
-			fileTabs: [...s.fileTabs, tab],
-			activeFileTabId: tab.id,
+			fileTabs: [
+				...s.fileTabs,
+				{
+					id: tabId,
+					workspaceId,
+					filePath,
+					fileName,
+					fileType: "text" as const,
+					content: null,
+					mime: null,
+					isDirty: false,
+					language: getLanguage(ext),
+					initialEditorState: editorState ?? null,
+					diffOriginal: null,
+					diffModified: null,
+					diffSection: null,
+					externallyChanged: false,
+					deletedOnDisk: false,
+					loading: true,
+				},
+			],
+			activeFileTabId: tabId,
 			activeFileTabByWorkspace: {
 				...s.activeFileTabByWorkspace,
-				[workspaceId]: tab.id,
+				[workspaceId]: tabId,
 			},
 		}));
 		useWorkspaceStore.getState().setActiveView(workspaceId, "file");
+
+		try {
+			const result = await fsApi.readFile(filePath);
+
+			// Guard: tab may have been closed while loading
+			if (!get().fileTabs.some((t) => t.id === tabId)) return;
+
+			set((s) => ({
+				fileTabs: s.fileTabs.map((t) =>
+					t.id === tabId
+						? {
+								...t,
+								fileType: result.fileType,
+								content: result.content,
+								mime: result.mime,
+								loading: false,
+							}
+						: t,
+				),
+			}));
+		} catch {
+			// Read failed — remove the placeholder tab
+			set((s) => {
+				const remaining = s.fileTabs.filter((t) => t.id !== tabId);
+				const fallbackActive =
+					s.activeFileTabId === tabId
+						? (remaining.find((t) => t.workspaceId === workspaceId)?.id ?? null)
+						: s.activeFileTabId;
+				return { fileTabs: remaining, activeFileTabId: fallbackActive };
+			});
+			return;
+		}
+
 		persistFileTabs(workspaceId);
 	},
 
