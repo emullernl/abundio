@@ -5,11 +5,13 @@ import type { DotStatus } from "../stores/ptyActivityStore";
 interface AgentStatusIconProps {
 	status: DotStatus;
 	size?: number;
+	bgColor?: string;
 }
 
 export const AgentStatusIcon = memo(function AgentStatusIcon({
 	status,
 	size = 14,
+	bgColor = "var(--bg-primary)",
 }: AgentStatusIconProps) {
 	switch (status) {
 		case "grey":
@@ -33,10 +35,17 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 					style={{ width: size, height: size }}
 				>
 					<div
-						className="absolute inset-y-0 bg-gradient-to-r from-transparent via-amber-500/20 to-amber-400/90 border-r border-amber-300 shadow-[1px_0_4px_rgba(251,191,36,0.6)]"
+						className="absolute inset-y-0 border-r border-amber-300 shadow-[1px_0_4px_rgba(251,191,36,0.6)]"
 						style={{
 							width: size,
-							animation: "agent-amber-slide 1.2s linear infinite",
+							background: "linear-gradient(to right, transparent, rgba(251,191,36,0.15), rgba(251,191,36,0.9))",
+							animation: "agent-amber-slide 2s ease-in-out infinite",
+						}}
+					/>
+					<div
+						className="absolute inset-0 pointer-events-none"
+						style={{
+							background: `repeating-linear-gradient(90deg, ${bgColor} 0px, ${bgColor} 1px, transparent 1px, transparent 3px)`,
 						}}
 					/>
 				</div>

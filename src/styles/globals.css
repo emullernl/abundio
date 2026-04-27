@@ -328,8 +328,11 @@ body,
 	0% {
 		transform: translateX(calc(-100% - 2px));
 	}
-	100% {
+	50% {
 		transform: translateX(100%);
+	}
+	100% {
+		transform: translateX(calc(-100% - 2px));
 	}
 }
 
