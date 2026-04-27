@@ -23,7 +23,6 @@ function Separator() {
 }
 
 export function StatusBar() {
-	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
 	const workspace = useWorkspaceStore((s) =>
 		s.activeWorkspaceId
 			? (s.workspaces.find((w) => w.id === s.activeWorkspaceId) ?? null)
@@ -73,14 +72,10 @@ export function StatusBar() {
 							{shortenPath(workspace.rootFolder)}
 						</span>
 					</div>
-					{focusedPaneId && (
-						<span className="flex items-center gap-1.5">
-							<Grid size={12} />
-							<span className="font-mono" style={{ fontSize: 11 }}>
-								{focusedPaneId.slice(0, 8)}
-							</span>
-						</span>
-					)}
+					<span className="flex items-center gap-1.5">
+						<Grid size={12} />
+						{workspace.name}
+					</span>
 				</>
 			) : (
 				<span>No active workspace</span>
