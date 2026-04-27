@@ -101,7 +101,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			onClick={onClick}
 			onKeyDown={(e) => e.key === "Enter" && onClick()}
 			onContextMenu={onContextMenu}
-			className="group flex items-start gap-2.5 pr-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+			className="group flex items-start gap-2.5 pr-3 py-2.5 rounded-lg cursor-pointer transition-colors select-none"
 			style={{
 				paddingLeft: 20,
 				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
