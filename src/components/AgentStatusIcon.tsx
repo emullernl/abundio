@@ -38,7 +38,8 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 						className="absolute inset-y-0 border-r border-amber-300 shadow-[1px_0_4px_rgba(251,191,36,0.6)]"
 						style={{
 							width: size,
-							background: "linear-gradient(to right, transparent, rgba(251,191,36,0.15), rgba(251,191,36,0.9))",
+							background:
+								"linear-gradient(to right, transparent, rgba(251,191,36,0.15), rgba(251,191,36,0.9))",
 							animation: "agent-amber-slide 2s ease-in-out infinite",
 						}}
 					/>

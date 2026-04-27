@@ -225,9 +225,7 @@ export function App() {
 
 	// Detect installed agent CLIs once at startup.
 	useEffect(() => {
-		const commands = useSettingsStore
-			.getState()
-			.agents.map((a) => a.command);
+		const commands = useSettingsStore.getState().agents.map((a) => a.command);
 		useAgentRegistryStore.getState().load(commands);
 	}, []);
 

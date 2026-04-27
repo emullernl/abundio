@@ -361,7 +361,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 						.slice(0, idx)
 						.filter((t) => t.workspaceId === closedWorkspaceId).length;
 					const newIdx = Math.min(oldIdx, workspaceTabs.length - 1);
-					activeFileTabByWorkspace[closedWorkspaceId] = workspaceTabs[newIdx].id;
+					activeFileTabByWorkspace[closedWorkspaceId] =
+						workspaceTabs[newIdx].id;
 				}
 			}
 
@@ -384,9 +385,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	},
 
 	setActiveFileTab: (tabId) => {
-		const tab = tabId
-			? get().fileTabs.find((t) => t.id === tabId)
-			: undefined;
+		const tab = tabId ? get().fileTabs.find((t) => t.id === tabId) : undefined;
 		set((s) => ({
 			activeFileTabId: tabId,
 			activeFileTabByWorkspace: tab

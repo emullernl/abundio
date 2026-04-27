@@ -18,7 +18,11 @@ export const useAgentRegistryStore = create<AgentRegistryState>((set, get) => ({
 		set({ loading: true });
 		try {
 			const installed = await agentRegistryApi.listInstalled(commands);
-			set({ installedCommands: new Set(installed), loaded: true, loading: false });
+			set({
+				installedCommands: new Set(installed),
+				loaded: true,
+				loading: false,
+			});
 		} catch {
 			set({ installedCommands: new Set(), loaded: true, loading: false });
 		}
