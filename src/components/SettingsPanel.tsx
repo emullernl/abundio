@@ -8,6 +8,7 @@ import {
 import { setAllTerminalsFontSize } from "../lib/terminalManager";
 import { type AppTheme, themeList } from "../lib/themes";
 import type { AvailableShell, CodingAgent } from "../lib/types";
+import { useAgentRegistryStore } from "../stores/agentRegistryStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { Check, Plus, X } from "./Icons";
 
@@ -529,10 +530,12 @@ function Toggle({
 /* ─── Agent row ─── */
 function AgentRow({
 	agent,
+	installed,
 	onToggle,
 	onRemove,
 }: {
 	agent: CodingAgent;
+	installed: boolean;
 	onToggle: () => void;
 	onRemove?: () => void;
 }) {
@@ -576,6 +579,22 @@ function AgentRow({
 					{agent.args?.length ? ` ${agent.args.join(" ")}` : ""}
 				</div>
 			</div>
+			{installed && (
+				<span
+					className="flex-shrink-0 rounded"
+					style={{
+						fontSize: 9,
+						fontWeight: 600,
+						color: "var(--success, #4ade80)",
+						letterSpacing: "0.05em",
+						textTransform: "uppercase",
+						padding: "2px 5px",
+						border: "1px solid color-mix(in srgb, var(--success, #4ade80) 40%, transparent)",
+					}}
+				>
+					Installed
+				</span>
+			)}
 			{agent.builtin ? (
 				<span
 					className="flex-shrink-0 rounded"
@@ -879,6 +898,7 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const addAgent = useSettingsStore((s) => s.addAgent);
 	const removeAgent = useSettingsStore((s) => s.removeAgent);
 	const toggleAgent = useSettingsStore((s) => s.toggleAgent);
+	const installedCommands = useAgentRegistryStore((s) => s.installedCommands);
 
 	const darkThemes = useMemo(
 		() => themeList().filter((t) => t.variant === "dark"),
@@ -1189,6 +1209,7 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 											<AgentRow
 												key={agent.id}
 												agent={agent}
+												installed={installedCommands.has(agent.command)}
 												onToggle={() => toggleAgent(agent.id)}
 												onRemove={
 													agent.builtin

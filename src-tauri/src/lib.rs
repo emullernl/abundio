@@ -1,3 +1,4 @@
+pub mod agent_registry;
 pub mod commands;
 pub mod config;
 pub mod dev_environments;
@@ -212,6 +213,7 @@ pub fn run() {
             search::fs_search_cancel,
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
+            agent_registry::list_installed_agent_commands,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

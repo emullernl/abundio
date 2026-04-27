@@ -28,6 +28,7 @@ import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import type { PaneNode } from "./lib/types";
+import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { persistAllFileTabs, useExplorerStore } from "./stores/explorerStore";
 import { useGitChangesStore } from "./stores/gitChangesStore";
@@ -220,6 +221,14 @@ export function App() {
 	// Detect installed dev environments once at startup.
 	useEffect(() => {
 		useDevEnvironmentsStore.getState().load();
+	}, []);
+
+	// Detect installed agent CLIs once at startup.
+	useEffect(() => {
+		const commands = useSettingsStore
+			.getState()
+			.agents.map((a) => a.command);
+		useAgentRegistryStore.getState().load(commands);
 	}, []);
 
 	const proceedWithClose = useCallback(async () => {

@@ -5,6 +5,7 @@ import codexIconUrl from "../assets/agent-icons/codex.svg";
 import geminiIconUrl from "../assets/agent-icons/gemini.svg";
 import githubIconUrl from "../assets/agent-icons/github.svg";
 import opencodeIconUrl from "../assets/agent-icons/opencode.svg";
+import qwenIconUrl from "../assets/agent-icons/qwen.svg";
 import terminalIconUrl from "../assets/agent-icons/terminal.jpg";
 
 // Real brand assets pulled from each vendor's official site and bundled as
@@ -18,6 +19,7 @@ import terminalIconUrl from "../assets/agent-icons/terminal.jpg";
 //   - codex.svg        → developers.openai.com
 //   - aider.ico        → aider.chat
 //   - opencode.svg     → opencode.ai
+//   - qwen.svg         → upload.wikimedia.org/wikipedia/commons/6/69/Qwen_logo.svg (CC0)
 //   - terminal.jpg     → iterm2.com (for the "New Terminal" option)
 
 interface IconProps {
@@ -52,6 +54,7 @@ const GeminiIcon = brandImg(geminiIconUrl, "Google Gemini");
 const CodexIcon = brandImg(codexIconUrl, "Codex");
 const AiderIcon = brandImg(aiderIconUrl, "Aider");
 const OpenCodeIcon = brandImg(opencodeIconUrl, "OpenCode");
+const QwenIcon = brandImg(qwenIconUrl, "Qwen");
 
 export const TerminalBrandIcon = brandImg(terminalIconUrl, "New Terminal");
 
@@ -74,6 +77,8 @@ export function getAgentIconComponent(
 			return AiderIcon;
 		case "opencode":
 			return OpenCodeIcon;
+		case "qwen":
+			return QwenIcon;
 		default:
 			return undefined;
 	}

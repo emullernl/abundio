@@ -271,12 +271,20 @@ export const useSettingsStore = create<SettingsState>()(
 				agents: state.agents,
 				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
 			}),
+			// Merge persisted state into current state. Applied during rehydration
+			// so new builtins (agents, etc.) added in app updates are always present
+			// even when localStorage has an older snapshot without them.
+			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque
+			merge: (persistedState: any, currentState) => ({
+				...currentState,
+				...persistedState,
+				agents: Array.isArray(persistedState?.agents)
+					? mergeAgentsWithBuiltins(persistedState.agents)
+					: currentState.agents,
+			}),
 			onRehydrateStorage: () => (state) => {
 				if (state?.activityByteThreshold != null) {
 					setTerminalActivityByteThreshold(state.activityByteThreshold);
-				}
-				if (state?.agents) {
-					state.agents = mergeAgentsWithBuiltins(state.agents);
 				}
 				// Fix race: terminals created before rehydration have default font/theme.
 				if (state?.terminalFontFamily) {
