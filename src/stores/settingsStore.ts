@@ -4,6 +4,7 @@ import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
 import {
 	setAllTerminalsFontFamily,
 	setAllTerminalsFontSize,
+	setAllTerminalsScrollback,
 	setAllTerminalsTheme,
 	setActivityByteThreshold as setTerminalActivityByteThreshold,
 } from "../lib/terminalManager";
@@ -23,6 +24,7 @@ interface SettingsState {
 	gitPanelSplitRatio: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
+	terminalScrollback: number;
 	shellPath: string | null;
 	agents: CodingAgent[];
 	sidebarBottomPanel: "explorer" | "search";
@@ -41,6 +43,7 @@ interface SettingsState {
 	setGitPanelSplitRatio: (ratio: number) => void;
 	toggleDebugActivityMeter: () => void;
 	setActivityByteThreshold: (n: number) => void;
+	setTerminalScrollback: (n: number) => void;
 	addAgent: (name: string, command: string, args?: string[]) => void;
 	removeAgent: (id: string) => void;
 	toggleAgent: (id: string) => void;
@@ -70,6 +73,7 @@ const PERSISTED_DEFAULTS: {
 	gitPanelSplitRatio: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
+	terminalScrollback: number;
 	shellPath: string | null;
 	agents: CodingAgent[];
 	lastOpenedDevEnvId: string | null;
@@ -86,6 +90,7 @@ const PERSISTED_DEFAULTS: {
 		gitPanelSplitRatio: 0.5,
 		debugActivityMeter: false,
 		activityByteThreshold: 1024,
+		terminalScrollback: 1000,
 		shellPath: null as string | null,
 		agents: BUILTIN_AGENTS as CodingAgent[],
 		lastOpenedDevEnvId: null as string | null,
@@ -137,6 +142,10 @@ const PERSISTED_DEFAULTS: {
 						? 1024
 						: s.activityByteThreshold
 					: defaults.activityByteThreshold,
+			terminalScrollback:
+				typeof s.terminalScrollback === "number"
+					? s.terminalScrollback
+					: defaults.terminalScrollback,
 			shellPath:
 				typeof s.shellPath === "string" || s.shellPath === null
 					? s.shellPath
@@ -169,6 +178,7 @@ export const useSettingsStore = create<SettingsState>()(
 			gitPanelSplitRatio: PERSISTED_DEFAULTS.gitPanelSplitRatio,
 			debugActivityMeter: PERSISTED_DEFAULTS.debugActivityMeter,
 			activityByteThreshold: PERSISTED_DEFAULTS.activityByteThreshold,
+			terminalScrollback: PERSISTED_DEFAULTS.terminalScrollback,
 			shellPath: PERSISTED_DEFAULTS.shellPath,
 			agents: PERSISTED_DEFAULTS.agents,
 			sidebarBottomPanel: "explorer",
@@ -213,6 +223,10 @@ export const useSettingsStore = create<SettingsState>()(
 			setActivityByteThreshold: (n) => {
 				setTerminalActivityByteThreshold(n);
 				set({ activityByteThreshold: n });
+			},
+			setTerminalScrollback: (n) => {
+				setAllTerminalsScrollback(n);
+				set({ terminalScrollback: n });
 			},
 			addAgent: (name, command, args) => {
 				const id = `custom-${crypto.randomUUID()}`;
@@ -267,16 +281,28 @@ export const useSettingsStore = create<SettingsState>()(
 				gitPanelSplitRatio: state.gitPanelSplitRatio,
 				debugActivityMeter: state.debugActivityMeter,
 				activityByteThreshold: state.activityByteThreshold,
+				terminalScrollback: state.terminalScrollback,
 				shellPath: state.shellPath,
 				agents: state.agents,
 				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
+			}),
+			// Merge persisted state into current state. Applied during rehydration
+			// so new builtins (agents, etc.) added in app updates are always present
+			// even when localStorage has an older snapshot without them.
+			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque
+			merge: (persistedState: any, currentState) => ({
+				...currentState,
+				...persistedState,
+				agents: Array.isArray(persistedState?.agents)
+					? mergeAgentsWithBuiltins(persistedState.agents)
+					: currentState.agents,
 			}),
 			onRehydrateStorage: () => (state) => {
 				if (state?.activityByteThreshold != null) {
 					setTerminalActivityByteThreshold(state.activityByteThreshold);
 				}
-				if (state?.agents) {
-					state.agents = mergeAgentsWithBuiltins(state.agents);
+				if (state?.terminalScrollback != null) {
+					setAllTerminalsScrollback(state.terminalScrollback);
 				}
 				// Fix race: terminals created before rehydration have default font/theme.
 				if (state?.terminalFontFamily) {

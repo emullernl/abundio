@@ -370,22 +370,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	beginWorkspaceSwitch: (id) => {
 		if (id === get().activeWorkspaceId) return;
-		// Pre-mount the target workspace's DOM subtree behind the overlay. Its
-		// div is filtered by openedWorkspaceIds, so opening it now lets React
-		// mount SplitContainer/TerminalPane while the old workspace is still
-		// visible underneath the overlay — a double-buffer. When we flip the
-		// display below, the new workspace is already rendered.
+		// Fast path: already mounted — switch instantly with no overlay.
+		if (id && usePtyActivityStore.getState().openedWorkspaceIds.has(id)) {
+			get().setActiveWorkspace(id);
+			return;
+		}
+		// Slow path: pre-mount the target workspace's DOM behind the overlay,
+		// then flip once React has committed the new subtree (~2 frames).
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set({ switchingWorkspaceId: id });
-		setTimeout(() => {
-			if (get().switchingWorkspaceId !== id) return;
-			get().setActiveWorkspace(id);
-			setTimeout(() => {
-				if (get().switchingWorkspaceId === id) {
-					set({ switchingWorkspaceId: null });
-				}
-			}, 50);
-		}, 120);
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				if (get().switchingWorkspaceId !== id) return;
+				get().setActiveWorkspace(id);
+				set({ switchingWorkspaceId: null });
+			});
+		});
 	},
 
 	reorderWorkspaces: (ids) => {

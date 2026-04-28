@@ -8,6 +8,7 @@ import {
 import { setAllTerminalsFontSize } from "../lib/terminalManager";
 import { type AppTheme, themeList } from "../lib/themes";
 import type { AvailableShell, CodingAgent } from "../lib/types";
+import { useAgentRegistryStore } from "../stores/agentRegistryStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { Check, Plus, X } from "./Icons";
 
@@ -398,6 +399,88 @@ function FontSizeControl({
 	);
 }
 
+function ScrollbackControl({
+	value,
+	onChange,
+}: {
+	value: number;
+	onChange: (n: number) => void;
+}) {
+	const MIN = 500;
+	const MAX = 100000;
+	const STEP = 500;
+	const clamp = (n: number) => Math.min(MAX, Math.max(MIN, n));
+	return (
+		<div
+			className="flex items-center gap-4 rounded-lg"
+			style={{
+				padding: "10px 14px",
+				backgroundColor: "var(--bg-primary)",
+				border: "1px solid var(--border)",
+			}}
+		>
+			<span
+				className="flex-shrink-0"
+				style={{ fontSize: 11, color: "var(--fg-secondary)" }}
+			>
+				Lines
+			</span>
+			<input
+				type="range"
+				min={MIN}
+				max={MAX}
+				step={STEP}
+				value={value}
+				onChange={(e) => onChange(clamp(Number(e.target.value)))}
+				className="flex-1 accent-[var(--accent)]"
+				style={{ height: 3 }}
+			/>
+			<div className="flex items-center gap-1 flex-shrink-0">
+				<button
+					type="button"
+					onClick={() => onChange(clamp(value - STEP))}
+					className="rounded flex items-center justify-center transition-colors"
+					style={{
+						width: 22,
+						height: 22,
+						color: "var(--fg-secondary)",
+						backgroundColor: "var(--bg-tertiary)",
+						fontSize: 14,
+						lineHeight: 1,
+					}}
+				>
+					-
+				</button>
+				<span
+					className="font-mono text-center"
+					style={{
+						fontSize: 12,
+						color: "var(--fg-primary)",
+						width: 48,
+					}}
+				>
+					{value.toLocaleString()}
+				</span>
+				<button
+					type="button"
+					onClick={() => onChange(clamp(value + STEP))}
+					className="rounded flex items-center justify-center transition-colors"
+					style={{
+						width: 22,
+						height: 22,
+						color: "var(--fg-secondary)",
+						backgroundColor: "var(--bg-tertiary)",
+						fontSize: 14,
+						lineHeight: 1,
+					}}
+				>
+					+
+				</button>
+			</div>
+		</div>
+	);
+}
+
 /* ─── Nav item in the left sidebar ─── */
 function NavItem({
 	label,
@@ -529,10 +612,12 @@ function Toggle({
 /* ─── Agent row ─── */
 function AgentRow({
 	agent,
+	installed,
 	onToggle,
 	onRemove,
 }: {
 	agent: CodingAgent;
+	installed: boolean;
 	onToggle: () => void;
 	onRemove?: () => void;
 }) {
@@ -576,6 +661,23 @@ function AgentRow({
 					{agent.args?.length ? ` ${agent.args.join(" ")}` : ""}
 				</div>
 			</div>
+			{installed && (
+				<span
+					className="flex-shrink-0 rounded"
+					style={{
+						fontSize: 9,
+						fontWeight: 600,
+						color: "var(--success, #4ade80)",
+						letterSpacing: "0.05em",
+						textTransform: "uppercase",
+						padding: "2px 5px",
+						border:
+							"1px solid color-mix(in srgb, var(--success, #4ade80) 40%, transparent)",
+					}}
+				>
+					Installed
+				</span>
+			)}
 			{agent.builtin ? (
 				<span
 					className="flex-shrink-0 rounded"
@@ -871,6 +973,10 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const setUiFontFamily = useSettingsStore((s) => s.setUiFontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const setFontSize = useSettingsStore((s) => s.setFontSize);
+	const terminalScrollback = useSettingsStore((s) => s.terminalScrollback);
+	const setTerminalScrollback = useSettingsStore(
+		(s) => s.setTerminalScrollback,
+	);
 	const uiFontSize = useSettingsStore((s) => s.uiFontSize);
 	const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
 	const shellPath = useSettingsStore((s) => s.shellPath);
@@ -879,6 +985,7 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const addAgent = useSettingsStore((s) => s.addAgent);
 	const removeAgent = useSettingsStore((s) => s.removeAgent);
 	const toggleAgent = useSettingsStore((s) => s.toggleAgent);
+	const installedCommands = useAgentRegistryStore((s) => s.installedCommands);
 
 	const darkThemes = useMemo(
 		() => themeList().filter((t) => t.variant === "dark"),
@@ -1091,6 +1198,13 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 						{section === "terminal-font" && (
 							<div className="flex flex-col gap-4 flex-1 min-h-0">
 								<div className="flex-shrink-0">
+									<SectionLabel>Scrollback Lines</SectionLabel>
+									<ScrollbackControl
+										value={terminalScrollback}
+										onChange={setTerminalScrollback}
+									/>
+								</div>
+								<div className="flex-shrink-0">
 									<SectionLabel>Terminal Font Size</SectionLabel>
 									<FontSizeControl
 										value={fontSize}
@@ -1189,6 +1303,7 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 											<AgentRow
 												key={agent.id}
 												agent={agent}
+												installed={installedCommands.has(agent.command)}
 												onToggle={() => toggleAgent(agent.id)}
 												onRemove={
 													agent.builtin

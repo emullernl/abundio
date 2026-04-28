@@ -337,12 +337,19 @@ function registerApexLanguage(monaco: Monaco) {
 
 /* ── Theme ───────────────────────────────────────────────────────────── */
 
+let themeKey: string | null = null;
+
 /**
  * (Re-)define the "abundio" Monaco theme from the current CSS variables.
  * Call this once on init and again whenever the app theme changes.
+ * Cached by a fingerprint of key CSS vars — subsequent calls within the same
+ * theme are near-free (2 getComputedStyle reads instead of ~20).
  */
 export function defineAbundioTheme(monaco: Monaco) {
 	registerApexLanguage(monaco);
+	const key = resolve("--bg-primary") + resolve("--accent");
+	if (key === themeKey) return;
+	themeKey = key;
 	monaco.editor.defineTheme("abundio", {
 		base: "vs-dark",
 		inherit: true,

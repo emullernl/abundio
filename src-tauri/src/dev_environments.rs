@@ -194,7 +194,7 @@ pub struct LaunchFile {
 /// launching via the Tauri app bundle yields a minimal `$PATH` that excludes
 /// `/usr/local/bin` and `/opt/homebrew/bin` (where editor CLIs live), so we
 /// always include those as extras. On Windows, probes common binary extensions.
-fn find_in_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
     #[cfg(target_os = "macos")]

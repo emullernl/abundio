@@ -17,6 +17,7 @@ describe("BUILTIN_AGENTS", () => {
 		expect(commands).toContain("aider");
 		expect(commands).toContain("codex");
 		expect(commands).toContain("opencode");
+		expect(commands).toContain("qwen");
 	});
 
 	it("all builtins are enabled by default", () => {

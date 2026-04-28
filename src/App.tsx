@@ -28,6 +28,7 @@ import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import type { PaneNode } from "./lib/types";
+import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { persistAllFileTabs, useExplorerStore } from "./stores/explorerStore";
 import { useGitChangesStore } from "./stores/gitChangesStore";
@@ -202,14 +203,14 @@ export function App() {
 		if (!workspace) return;
 		const hasUnmounted = workspace.tabs.some((t) => !mountedTabIds.has(t.id));
 		if (!hasUnmounted) return;
-		const timeout = setTimeout(() => {
+		const rafId = requestAnimationFrame(() => {
 			setMountedTabIds((prev) => {
 				const next = new Set(prev);
 				for (const t of workspace.tabs) next.add(t.id);
 				return next;
 			});
-		}, 150);
-		return () => clearTimeout(timeout);
+		});
+		return () => cancelAnimationFrame(rafId);
 	}, [activeWorkspaceId, switchingWorkspaceId, workspaces, mountedTabIds]);
 
 	useEffect(() => {
@@ -220,6 +221,12 @@ export function App() {
 	// Detect installed dev environments once at startup.
 	useEffect(() => {
 		useDevEnvironmentsStore.getState().load();
+	}, []);
+
+	// Detect installed agent CLIs once at startup.
+	useEffect(() => {
+		const commands = useSettingsStore.getState().agents.map((a) => a.command);
+		useAgentRegistryStore.getState().load(commands);
 	}, []);
 
 	const proceedWithClose = useCallback(async () => {

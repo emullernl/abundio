@@ -379,7 +379,12 @@ export async function createTerminal(
 	initialPtyId: string,
 	cwd: string,
 	container: HTMLElement,
-	options: { fontSize: number; fontFamily: string; theme: ITheme },
+	options: {
+		fontSize: number;
+		fontFamily: string;
+		theme: ITheme;
+		scrollback: number;
+	},
 ): Promise<ManagedTerminal> {
 	// Ensure the configured font is loaded before xterm rasterizes glyphs into its
 	// texture atlas. We must check the *primary* family in isolation: stored fontFamily
@@ -405,6 +410,7 @@ export async function createTerminal(
 	const term = new Terminal({
 		fontSize: options.fontSize,
 		fontFamily: options.fontFamily,
+		scrollback: options.scrollback,
 		cursorBlink: false,
 		allowProposedApi: true,
 		theme: options.theme,
@@ -926,6 +932,13 @@ export function beginResizeFilter(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed) return;
 	armFilterResets(managed, 1500);
+}
+
+/** Update scrollback buffer depth on all terminal instances */
+export function setAllTerminalsScrollback(scrollback: number): void {
+	for (const managed of instances.values()) {
+		managed.term.options.scrollback = scrollback;
+	}
 }
 
 /** Update theme on all terminal instances */

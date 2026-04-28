@@ -60,7 +60,11 @@ export function TerminalTitleBar({ paneId }: Props) {
 			</span>
 
 			<div className="shrink-0" style={{ marginLeft: 8 }}>
-				<AgentStatusIcon status={dotStatus} size={12} />
+				<AgentStatusIcon
+					status={dotStatus}
+					size={12}
+					bgColor="var(--bg-primary)"
+				/>
 			</div>
 		</div>
 	);

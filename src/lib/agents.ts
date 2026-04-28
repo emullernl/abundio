@@ -43,6 +43,13 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		builtin: true,
 		enabled: true,
 	},
+	{
+		id: "qwen",
+		name: "Qwen Code",
+		command: "qwen",
+		builtin: true,
+		enabled: true,
+	},
 ];
 
 /**

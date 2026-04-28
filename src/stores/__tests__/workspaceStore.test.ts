@@ -32,11 +32,13 @@ vi.mock("../explorerStore", () => ({
 
 const markWorkspaceOpened = vi.fn();
 const unmarkWorkspaceOpened = vi.fn();
+let mockOpenedWorkspaceIds = new Set<string>();
 vi.mock("../ptyActivityStore", () => ({
 	usePtyActivityStore: {
 		getState: vi.fn(() => ({
 			markWorkspaceOpened,
 			unmarkWorkspaceOpened,
+			openedWorkspaceIds: mockOpenedWorkspaceIds,
 		})),
 	},
 }));
@@ -84,6 +86,7 @@ function makeWorkspace(
 beforeEach(() => {
 	markWorkspaceOpened.mockClear();
 	unmarkWorkspaceOpened.mockClear();
+	mockOpenedWorkspaceIds = new Set();
 	useWorkspaceStore.setState({
 		workspaces: [],
 		activeWorkspaceId: null,
@@ -171,38 +174,50 @@ describe("workspaceStore", () => {
 	});
 
 	describe("beginWorkspaceSwitch", () => {
-		it("sets switchingWorkspaceId immediately and defers activeWorkspaceId", () => {
+		it("slow path: shows overlay and switches after double rAF for fresh workspaces", () => {
 			vi.useFakeTimers();
 
+			// s2 is NOT in openedWorkspaceIds → slow path
 			useWorkspaceStore.setState({ activeWorkspaceId: "s1" });
 			useWorkspaceStore.getState().beginWorkspaceSwitch("s2");
 
 			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBe("s2");
 			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s1");
 
-			// First timeout: apply the actual switch.
+			// First rAF: nothing changes yet
 			vi.advanceTimersToNextTimer();
-			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s2");
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s1");
 			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBe("s2");
 
-			// Second timeout: clear the placeholder.
+			// Second rAF: switches and clears overlay in one step
 			vi.advanceTimersToNextTimer();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s2");
 			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBeNull();
 
 			vi.useRealTimers();
 		});
 
+		it("fast path: switches instantly with no overlay for already-opened workspaces", () => {
+			mockOpenedWorkspaceIds = new Set(["s2"]);
+
+			useWorkspaceStore.setState({ activeWorkspaceId: "s1" });
+			useWorkspaceStore.getState().beginWorkspaceSwitch("s2");
+
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s2");
+			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBeNull();
+		});
+
 		it("is a no-op when target equals current active workspace", () => {
 			vi.useFakeTimers();
-			const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+			const rafSpy = vi.spyOn(globalThis, "requestAnimationFrame");
 
 			useWorkspaceStore.setState({ activeWorkspaceId: "s1" });
 			useWorkspaceStore.getState().beginWorkspaceSwitch("s1");
 
 			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBeNull();
-			expect(timeoutSpy).not.toHaveBeenCalled();
+			expect(rafSpy).not.toHaveBeenCalled();
 
-			timeoutSpy.mockRestore();
+			rafSpy.mockRestore();
 			vi.useRealTimers();
 		});
 	});

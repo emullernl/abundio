@@ -241,6 +241,11 @@ export const shells = {
 	listAvailable: () => invoke<AvailableShell[]>("list_available_shells"),
 };
 
+export const agentRegistry = {
+	listInstalled: (commands: string[]) =>
+		invoke<string[]>("list_installed_agent_commands", { commands }),
+};
+
 export const devEnvironments = {
 	list: () => invoke<DetectedDevEnvironment[]>("list_dev_environments"),
 

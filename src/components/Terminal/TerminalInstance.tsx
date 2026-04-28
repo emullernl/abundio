@@ -152,12 +152,14 @@ export const TerminalInstance = memo(function TerminalInstance({
 				const {
 					terminalFontFamily,
 					fontSize,
+					terminalScrollback,
 					theme: themeName,
 				} = useSettingsStore.getState();
 				const currentTheme = getTheme(themeName);
 				await createTerminal(paneId, ptyIdRef.current, cwd, stableRef.current, {
 					fontSize,
 					fontFamily: terminalFontFamily,
+					scrollback: terminalScrollback,
 					theme: currentTheme.terminal,
 				});
 			}
