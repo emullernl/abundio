@@ -2,6 +2,7 @@ import { memo } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import type { PaneNode } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { FilePane } from "../FileViewer/FilePane";
 import { PaneResizer } from "./PaneResizer";
 import { TerminalSlot } from "./TerminalSlot";
 
@@ -13,24 +14,48 @@ interface Props {
 /** Leaf component for terminal nodes — subscribes to focus/maximize state. */
 const TerminalLeaf = memo(function TerminalLeaf({
 	nodeId,
+	agentId,
 }: {
 	nodeId: string;
+	agentId?: string;
 }) {
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
 	const maximizedPaneId = useWorkspaceStore((s) => s.maximizedPaneId);
-	const { splitPane, closePane, toggleMaximize } = useSplitPane();
+	const { splitPaneWithPicker, closePane, toggleMaximize } = useSplitPane();
 
 	return (
 		<TerminalSlot
 			paneId={nodeId}
+			agentId={agentId}
 			isFocused={focusedPaneId === nodeId}
 			isMaximized={maximizedPaneId === nodeId}
 			onFocus={() => setFocusedPane(nodeId)}
-			onSplitHorizontal={() => splitPane(nodeId, "horizontal")}
-			onSplitVertical={() => splitPane(nodeId, "vertical")}
+			onSplitHorizontal={() => splitPaneWithPicker(nodeId, "horizontal")}
+			onSplitVertical={() => splitPaneWithPicker(nodeId, "vertical")}
 			onClose={() => closePane(nodeId)}
 			onMaximize={toggleMaximize}
+		/>
+	);
+});
+
+/** Leaf component for file nodes. */
+const FileLeaf = memo(function FileLeaf({
+	node,
+}: {
+	node: PaneNode & { type: "file" };
+}) {
+	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
+
+	return (
+		<FilePane
+			paneId={node.id}
+			filePath={node.filePath}
+			isDiff={node.isDiff}
+			diffSection={node.diffSection}
+			isFocused={focusedPaneId === node.id}
+			onFocus={() => setFocusedPane(node.id)}
 		/>
 	);
 });
@@ -87,8 +112,10 @@ function SplitNode({
 
 export function SplitContainer({ node, cwd }: Props) {
 	if (node.type === "terminal") {
-		return <TerminalLeaf nodeId={node.id} />;
+		return <TerminalLeaf nodeId={node.id} agentId={node.agentId} />;
 	}
-
+	if (node.type === "file") {
+		return <FileLeaf node={node} />;
+	}
 	return <SplitNode node={node} cwd={cwd} />;
 }

@@ -30,7 +30,6 @@ export function SearchResultFile({
 		useExplorerStore
 			.getState()
 			.setPendingGotoLine({ filePath: fileResult.filePath, line: lineNumber });
-		useWorkspaceStore.getState().setActiveView(workspaceId, "file");
 	};
 
 	return (

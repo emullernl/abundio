@@ -1,41 +1,45 @@
 import { useCallback, useState } from "react";
 import { useExplorerStore } from "../stores/explorerStore";
+import { useSplitPane } from "./useSplitPane";
 
 export function useConfirmCloseFileTab() {
-	const [pendingTabId, setPendingTabId] = useState<string | null>(null);
+	const [pendingPaneId, setPendingPaneId] = useState<string | null>(null);
+	const { closePane } = useSplitPane();
 
-	const requestClose = useCallback((tabId: string) => {
-		const tab = useExplorerStore
-			.getState()
-			.fileTabs.find((t) => t.id === tabId);
-		if (!tab || !tab.isDirty) {
-			useExplorerStore.getState().closeFileTab(tabId);
-			return;
-		}
-		setPendingTabId(tabId);
-	}, []);
-
-	const pendingTab = pendingTabId
-		? useExplorerStore.getState().fileTabs.find((t) => t.id === pendingTabId)
-		: null;
-
-	const dialogProps = pendingTab
-		? {
-				fileName: pendingTab.fileName,
-				onSave: async () => {
-					await useExplorerStore.getState().saveFile(pendingTab.id);
-					useExplorerStore.getState().closeFileTab(pendingTab.id);
-					setPendingTabId(null);
-				},
-				onDontSave: () => {
-					useExplorerStore.getState().closeFileTab(pendingTab.id);
-					setPendingTabId(null);
-				},
-				onCancel: () => {
-					setPendingTabId(null);
-				},
+	const requestClose = useCallback(
+		(paneId: string) => {
+			const pane = useExplorerStore.getState().filePanes[paneId];
+			if (!pane?.isDirty) {
+				closePane(paneId);
+				return;
 			}
+			setPendingPaneId(paneId);
+		},
+		[closePane],
+	);
+
+	const pendingPane = pendingPaneId
+		? useExplorerStore.getState().filePanes[pendingPaneId]
 		: null;
+
+	const dialogProps =
+		pendingPane && pendingPaneId
+			? {
+					fileName: pendingPane.fileName,
+					onSave: async () => {
+						await useExplorerStore.getState().saveFile(pendingPaneId);
+						await closePane(pendingPaneId);
+						setPendingPaneId(null);
+					},
+					onDontSave: async () => {
+						await closePane(pendingPaneId);
+						setPendingPaneId(null);
+					},
+					onCancel: () => {
+						setPendingPaneId(null);
+					},
+				}
+			: null;
 
 	return { requestClose, dialogProps };
 }

@@ -25,7 +25,7 @@ export function replaceNode(
 }
 
 export function removeNode(tree: PaneNode, id: string): PaneNode | null {
-	if (tree.type === "terminal") {
+	if (tree.type !== "split") {
 		return tree.id === id ? null : tree;
 	}
 	if (tree.first.id === id) return tree.second;
@@ -49,6 +49,7 @@ export function collectTerminals(
 	tree: PaneNode,
 ): { id: string; ptyId: string }[] {
 	if (tree.type === "terminal") return [{ id: tree.id, ptyId: tree.ptyId }];
+	if (tree.type === "file") return [];
 	return [...collectTerminals(tree.first), ...collectTerminals(tree.second)];
 }
 
@@ -69,6 +70,7 @@ export function setAgentId(
 		}
 		return { ...tree, agentId };
 	}
+	if (tree.type === "file") return tree;
 	const first = setAgentId(tree.first, paneId, agentId);
 	const second = setAgentId(tree.second, paneId, agentId);
 	if (first === tree.first && second === tree.second) return tree;
@@ -82,11 +84,41 @@ export function collectAgentPanes(
 	if (tree.type === "terminal") {
 		return tree.agentId ? [{ paneId: tree.id, agentId: tree.agentId }] : [];
 	}
+	if (tree.type === "file") return [];
 	return [...collectAgentPanes(tree.first), ...collectAgentPanes(tree.second)];
 }
 
-/** Collect just the terminal pane IDs in tree order (depth-first). */
+/** Collect all leaf pane IDs (terminal + file) in tree order (depth-first). */
 export function collectPaneIds(tree: PaneNode): string[] {
-	if (tree.type === "terminal") return [tree.id];
+	if (tree.type === "terminal" || tree.type === "file") return [tree.id];
 	return [...collectPaneIds(tree.first), ...collectPaneIds(tree.second)];
+}
+
+/** Collect only terminal pane IDs (depth-first). */
+export function collectTerminalIds(tree: PaneNode): string[] {
+	if (tree.type === "terminal") return [tree.id];
+	if (tree.type === "file") return [];
+	return [...collectTerminalIds(tree.first), ...collectTerminalIds(tree.second)];
+}
+
+/** Return the first file leaf in the tree, or null. */
+export function findFilePaneInTree(
+	tree: PaneNode,
+): (PaneNode & { type: "file" }) | null {
+	if (tree.type === "file") return tree;
+	if (tree.type === "terminal") return null;
+	return findFilePaneInTree(tree.first) ?? findFilePaneInTree(tree.second);
+}
+
+/** Return the first file leaf with the given filePath, or null. */
+export function findFilePaneByPath(
+	tree: PaneNode,
+	filePath: string,
+): (PaneNode & { type: "file" }) | null {
+	if (tree.type === "file") return tree.filePath === filePath ? tree : null;
+	if (tree.type === "terminal") return null;
+	return (
+		findFilePaneByPath(tree.first, filePath) ??
+		findFilePaneByPath(tree.second, filePath)
+	);
 }

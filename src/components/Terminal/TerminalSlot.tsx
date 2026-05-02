@@ -77,6 +77,7 @@ function TerminalLoader({ paneId }: { paneId: string }) {
 
 interface Props {
 	paneId: string;
+	agentId?: string;
 	isFocused: boolean;
 	onFocus: () => void;
 	onSplitHorizontal: () => void;
@@ -88,6 +89,7 @@ interface Props {
 
 export function TerminalSlot({
 	paneId,
+	agentId,
 	isFocused,
 	onFocus,
 	onSplitHorizontal,
@@ -113,12 +115,6 @@ export function TerminalSlot({
 		return () => unregisterTarget(paneId);
 	}, [paneId]);
 
-	const activeView = useWorkspaceStore((s) => {
-		const activeWorkspaceId = s.activeWorkspaceId;
-		return activeWorkspaceId
-			? (s.activeView[activeWorkspaceId] ?? "terminal")
-			: "terminal";
-	});
 	// @ts-expect-error intentionally unused — Zustand subscription triggers re-render
 	// biome-ignore lint/correctness/noUnusedVariables: subscription trigger for re-render on tab switch
 	const activeTabId = useWorkspaceStore((s) => {
@@ -127,7 +123,7 @@ export function TerminalSlot({
 	});
 
 	useEffect(() => {
-		if (!isFocused || activeView !== "terminal") return;
+		if (!isFocused) return;
 		// Poll until the terminal exists and is ready, then focus. Polling
 		// handles two cases uniformly: a freshly-created tab where the
 		// ManagedTerminal hasn't been built yet, and a tab switch where the
@@ -149,7 +145,7 @@ export function TerminalSlot({
 			clearInterval(interval);
 			clearTimeout(timeout);
 		};
-	}, [isFocused, paneId, activeView]);
+	}, [isFocused, paneId]);
 
 	const handleFocus = useCallback(() => {
 		onFocus();
@@ -283,7 +279,13 @@ export function TerminalSlot({
 			onMouseDown={handleFocus}
 			onContextMenu={handleContextMenu}
 		>
-			<TerminalTitleBar paneId={paneId} />
+			<TerminalTitleBar
+				paneId={paneId}
+				agentId={agentId}
+				onSplitDown={onSplitHorizontal}
+				onSplitRight={onSplitVertical}
+				onClose={onClose}
+			/>
 			{debugMeterEnabled && <DebugActivityMeter paneId={paneId} />}
 			<TerminalLoader paneId={paneId} />
 			<div

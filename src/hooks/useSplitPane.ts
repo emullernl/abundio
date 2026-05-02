@@ -6,8 +6,11 @@ import {
 	removeNode,
 	replaceNode,
 } from "../lib/paneTree";
+import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { destroyTerminal } from "../lib/terminalManager";
-import type { PaneNode } from "../lib/types";
+import type { CodingAgent, PaneNode } from "../lib/types";
+import { useExplorerStore } from "../stores/explorerStore";
+import { requestPaneClose } from "../stores/paneCloseConfirmStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 function generateId(): string {
@@ -22,17 +25,25 @@ export function useSplitPane() {
 	const persistLayout = useWorkspaceStore((s) => s.persistLayout);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
 	const setMaximized = useWorkspaceStore((s) => s.setMaximized);
+	const closeTab = useWorkspaceStore((s) => s.closeTab);
 
-	const splitPane = useCallback(
-		async (paneId: string, direction: "horizontal" | "vertical") => {
+	/** Split with an explicit choice (called by LaunchPicker handler in App.tsx). */
+	const splitPaneWithChoice = useCallback(
+		async (
+			paneId: string,
+			direction: "horizontal" | "vertical",
+			agent?: CodingAgent,
+		) => {
 			const tab = getActiveTab();
 			const layout = getActiveLayout();
 			if (!tab || !layout) return;
 
+			const newPaneId = generateId();
 			const newTerminal: PaneNode = {
 				type: "terminal",
-				id: generateId(),
+				id: newPaneId,
 				ptyId: "",
+				agentId: agent?.id,
 			};
 
 			const target = findNode(layout, paneId);
@@ -49,12 +60,33 @@ export function useSplitPane() {
 
 			const newLayout = replaceNode(layout, paneId, splitNode);
 			await updateLayout(tab.id, newLayout);
-			setFocusedPane(newTerminal.id);
+			setFocusedPane(newPaneId);
+
+			if (agent) {
+				setPendingAgent(newPaneId, {
+					command: [agent.command, ...(agent.args ?? [])].join(" "),
+				});
+			}
 		},
 		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane],
 	);
 
-	const closePane = useCallback(
+	/**
+	 * Split with picker (called by keybindings/buttons).
+	 * Opens LaunchPicker via a custom event so App.tsx can intercept it.
+	 */
+	const splitPaneWithPicker = useCallback(
+		(paneId: string, direction: "horizontal" | "vertical") => {
+			window.dispatchEvent(
+				new CustomEvent("abundio:split-with-picker", {
+					detail: { paneId, direction },
+				}),
+			);
+		},
+		[],
+	);
+
+	const closePaneNow = useCallback(
 		async (paneId: string) => {
 			const tab = getActiveTab();
 			const layout = getActiveLayout();
@@ -68,16 +100,23 @@ export function useSplitPane() {
 					pty.kill(node.ptyId).catch(() => {});
 				}
 				pty.deleteLog(paneId).catch(() => {});
+			} else if (node?.type === "file") {
+				useExplorerStore.getState().unregisterFilePane(paneId);
 			}
 
 			const newLayout = removeNode(layout, paneId);
 			if (newLayout) {
 				await updateLayout(tab.id, newLayout);
-				// Focus the first terminal in the remaining tree
+				// Focus the first terminal or file leaf in the remaining tree
 				const terminals = collectTerminals(newLayout);
 				if (terminals.length > 0) {
 					setFocusedPane(terminals[0].id);
+				} else {
+					setFocusedPane(null);
 				}
+			} else {
+				// Last pane removed — close the tab itself
+				await closeTab(tab.id);
 			}
 
 			// Clear maximize state if the maximized pane was closed
@@ -85,8 +124,12 @@ export function useSplitPane() {
 				setMaximized(null, null);
 			}
 		},
-		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, setMaximized],
+		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, setMaximized, closeTab],
 	);
+
+	const closePane = useCallback((paneId: string, label?: string) => {
+		requestPaneClose(paneId, label);
+	}, []);
 
 	/** Local-only ratio update (no DB persist) — call during drag. */
 	const updateRatioLocal = useCallback(
@@ -154,9 +197,9 @@ export function useSplitPane() {
 			}
 			setMaximized(null, null);
 		} else {
-			// Maximize: find the focused terminal and make it the only pane
+			// Maximize: find the focused pane and make it the only pane
 			const node = findNode(layout, focusedPaneId);
-			if (!node || node.type !== "terminal") return;
+			if (!node || node.type === "split") return;
 
 			setMaximized(focusedPaneId, layout);
 			const maximizedLayout: PaneNode = { ...node };
@@ -165,8 +208,12 @@ export function useSplitPane() {
 	}, [getActiveTab, getActiveLayout, updateLayout, setMaximized]);
 
 	return {
-		splitPane,
+		splitPaneWithChoice,
+		splitPaneWithPicker,
+		// Legacy alias used by tests / code that hasn't migrated
+		splitPane: splitPaneWithPicker,
 		closePane,
+		closePaneNow,
 		updateRatioLocal,
 		persistCurrentLayout,
 		navigatePane,

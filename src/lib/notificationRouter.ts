@@ -42,7 +42,7 @@ export function findPaneLocation(
 }
 
 function containsPane(node: PaneNode, paneId: string): boolean {
-	if (node.type === "terminal") return node.id === paneId;
+	if (node.type !== "split") return node.id === paneId;
 	return containsPane(node.first, paneId) || containsPane(node.second, paneId);
 }
 
@@ -75,7 +75,6 @@ export function handleNotificationClick(
 		if (paneId) {
 			wsStore.setFocusedPane(paneId);
 		}
-		wsStore.setActiveView(workspaceId, "terminal");
 	} else if (extra.type === "pr") {
 		const { workspaceId } = extra;
 		if (!workspaceId) return;

@@ -11,6 +11,7 @@ interface TerminalInfo {
 
 function collectTerminals(node: PaneNode): TerminalInfo[] {
 	if (node.type === "terminal") return [{ paneId: node.id, ptyId: node.ptyId }];
+	if (node.type === "file") return [];
 	return [...collectTerminals(node.first), ...collectTerminals(node.second)];
 }
 
