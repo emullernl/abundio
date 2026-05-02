@@ -5,6 +5,7 @@ import {
 	isShellCommandRunning,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
+import { requestTabCloseWithDirtyCheck } from "../stores/tabCloseConfirmStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 export interface RunningSignals {
@@ -72,7 +73,9 @@ export function useConfirmCloseTerminalTab() {
 	const requestClose = useCallback((tabId: string) => {
 		const signals = detectRunningForTab(tabId);
 		if (!signals.hasAgent && !signals.hasCommand) {
-			useWorkspaceStore.getState().closeTab(tabId);
+			requestTabCloseWithDirtyCheck(tabId, () =>
+				useWorkspaceStore.getState().closeTab(tabId),
+			);
 			return;
 		}
 		setPending({ tabId, signals });
@@ -85,8 +88,11 @@ export function useConfirmCloseTerminalTab() {
 				confirmLabel: "Close tab",
 				confirmVariant: "danger" as const,
 				onConfirm: () => {
-					useWorkspaceStore.getState().closeTab(pending.tabId);
+					const tabId = pending.tabId;
 					setPending(null);
+					requestTabCloseWithDirtyCheck(tabId, () =>
+						useWorkspaceStore.getState().closeTab(tabId),
+					);
 				},
 				onCancel: () => {
 					setPending(null);

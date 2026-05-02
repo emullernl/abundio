@@ -204,6 +204,7 @@ export function FilePane({
 				<FilePaneTitleBar
 					fileName={paneState.fileName}
 					fileType={paneState.fileType}
+					isDirty={paneState.isDirty}
 					onSplitDown={() => splitPaneWithPicker(paneId, "horizontal")}
 					onSplitRight={() => splitPaneWithPicker(paneId, "vertical")}
 					onClose={() => closePane(paneId, paneState.fileName)}

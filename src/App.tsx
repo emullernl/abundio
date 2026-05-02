@@ -23,6 +23,7 @@ import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { initKeybindings, registerAction } from "./lib/keybindings";
+import { collectFilePaneIds } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
@@ -37,6 +38,11 @@ import {
 } from "./stores/paneCloseConfirmStore";
 import { usePtyActivityStore } from "./stores/ptyActivityStore";
 import { useSettingsStore } from "./stores/settingsStore";
+import {
+	clearTabClose,
+	requestTabCloseWithDirtyCheck,
+	useTabCloseConfirmStore,
+} from "./stores/tabCloseConfirmStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 
 const TITLEBAR_HEIGHT = isMac ? 52 : 0;
@@ -225,8 +231,16 @@ export function App() {
 		requestClose: requestCloseTerminalTab,
 		dialogProps: closeTerminalTabDialogProps,
 	} = useConfirmCloseTerminalTab();
-	const { pendingPaneId: closePanePendingId, pendingLabel: closePaneLabel } =
-		usePaneCloseConfirmStore();
+	const {
+		pendingPaneId: closePanePendingId,
+		pendingLabel: closePaneLabel,
+		pendingDirtyFileName: closePaneDirtyFileName,
+	} = usePaneCloseConfirmStore();
+	const {
+		pendingTabId: tabClosePendingId,
+		pendingDirtyFileName: tabCloseDirtyFileName,
+		pendingOnClean: tabCloseOnClean,
+	} = useTabCloseConfirmStore();
 
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
 	const appWindowRef = useRef<Awaited<
@@ -511,7 +525,11 @@ export function App() {
 											tabs={workspace.tabs}
 											activeTabId={activeTabId}
 											onActivate={(tabId) => setActiveTab(workspace.id, tabId)}
-											onClose={(tabId) => closeTab(tabId)}
+											onClose={(tabId) =>
+												requestTabCloseWithDirtyCheck(tabId, () =>
+													closeTab(tabId),
+												)
+											}
 											onNew={() => requestNewTab(workspace.id)}
 											onRename={(tabId, name) => renameTab(tabId, name)}
 										/>
@@ -578,36 +596,90 @@ export function App() {
 			{closeTerminalTabDialogProps && (
 				<ConfirmDialog {...closeTerminalTabDialogProps} />
 			)}
-			{closePanePendingId && (
-				<ConfirmDialog
-					title="Close pane?"
-					message={`Close ${closePaneLabel ?? "this pane"}?`}
-					confirmLabel="Close pane"
-					confirmVariant="danger"
-					onConfirm={() => {
-						const id = closePanePendingId;
-						clearPaneClose();
-						closePaneNow(id);
+			{closePanePendingId &&
+				(closePaneDirtyFileName ? (
+					<SaveConfirmDialog
+						fileName={closePaneDirtyFileName}
+						onSave={async () => {
+							const id = closePanePendingId;
+							clearPaneClose();
+							await useExplorerStore.getState().saveFile(id);
+							await closePaneNow(id);
+						}}
+						onDontSave={async () => {
+							const id = closePanePendingId;
+							clearPaneClose();
+							await closePaneNow(id);
+						}}
+						onCancel={clearPaneClose}
+					/>
+				) : (
+					<ConfirmDialog
+						title="Close pane?"
+						message={`Close ${closePaneLabel ?? "this pane"}?`}
+						confirmLabel="Close pane"
+						confirmVariant="danger"
+						onConfirm={() => {
+							const id = closePanePendingId;
+							clearPaneClose();
+							closePaneNow(id);
+						}}
+						onCancel={clearPaneClose}
+					/>
+				))}
+			{tabClosePendingId && tabCloseDirtyFileName && (
+				<SaveConfirmDialog
+					fileName={tabCloseDirtyFileName}
+					onSave={async () => {
+						const id = tabClosePendingId;
+						const onClean = tabCloseOnClean;
+						clearTabClose();
+						const tab = useWorkspaceStore
+							.getState()
+							.workspaces.flatMap((w) => w.tabs)
+							.find((t) => t.id === id);
+						if (tab) {
+							try {
+								const layout = JSON.parse(tab.layoutJson);
+								const filePanes = useExplorerStore.getState().filePanes;
+								const dirtyIds = collectFilePaneIds(layout).filter(
+									(pid) => filePanes[pid]?.isDirty,
+								);
+								await Promise.all(
+									dirtyIds.map((pid) =>
+										useExplorerStore.getState().saveFile(pid),
+									),
+								);
+							} catch {
+								// ignore parse errors
+							}
+						}
+						onClean?.();
 					}}
-					onCancel={clearPaneClose}
+					onDontSave={() => {
+						const onClean = tabCloseOnClean;
+						clearTabClose();
+						onClean?.();
+					}}
+					onCancel={clearTabClose}
 				/>
 			)}
 			{appCloseRequested &&
 				(() => {
-					const dirtyPanes = Object.values(
+					const dirtyEntries = Object.entries(
 						useExplorerStore.getState().filePanes,
-					).filter((p) => p.isDirty);
+					).filter(([, p]) => p.isDirty);
 					const name =
-						dirtyPanes.length === 1
-							? dirtyPanes[0].fileName
-							: `${dirtyPanes.length} files`;
+						dirtyEntries.length === 1
+							? (dirtyEntries[0][1].fileName ?? "file")
+							: `${dirtyEntries.length} files`;
 					return (
 						<SaveConfirmDialog
 							fileName={name}
 							onSave={async () => {
 								await Promise.all(
-									dirtyPanes.map((p) =>
-										useExplorerStore.getState().saveFile(p.filePath),
+									dirtyEntries.map(([paneId]) =>
+										useExplorerStore.getState().saveFile(paneId),
 									),
 								);
 								setAppCloseRequested(false);

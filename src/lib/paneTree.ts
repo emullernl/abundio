@@ -104,6 +104,16 @@ export function collectTerminalIds(tree: PaneNode): string[] {
 	];
 }
 
+/** Collect only file pane IDs (depth-first). */
+export function collectFilePaneIds(tree: PaneNode): string[] {
+	if (tree.type === "file") return [tree.id];
+	if (tree.type === "terminal") return [];
+	return [
+		...collectFilePaneIds(tree.first),
+		...collectFilePaneIds(tree.second),
+	];
+}
+
 /** Return the first file leaf in the tree, or null. */
 export function findFilePaneInTree(
 	tree: PaneNode,

@@ -1,5 +1,7 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
-import type { Tab } from "../lib/types";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { collectFilePaneIds } from "../lib/paneTree";
+import type { PaneNode, Tab } from "../lib/types";
+import { useExplorerStore } from "../stores/explorerStore";
 import {
 	computeTabDotStatus,
 	usePtyActivityStore,
@@ -32,6 +34,35 @@ function CloseIcon({ size = 14 }: { size?: number }) {
 				strokeLinecap="round"
 			/>
 		</svg>
+	);
+}
+
+function DirtyDot() {
+	return (
+		<svg
+			width={8}
+			height={8}
+			viewBox="0 0 8 8"
+			fill="none"
+			aria-label="unsaved changes"
+		>
+			<circle cx={4} cy={4} r={3.5} fill="#60a5fa" />
+		</svg>
+	);
+}
+
+function useTabIsDirty(tab: Tab): boolean {
+	const fileIds = useMemo(() => {
+		try {
+			const layout = JSON.parse(tab.layoutJson) as PaneNode;
+			return collectFilePaneIds(layout);
+		} catch {
+			return [];
+		}
+	}, [tab.layoutJson]);
+
+	return useExplorerStore((s) =>
+		fileIds.some((id) => s.filePanes[id]?.isDirty),
 	);
 }
 
@@ -88,6 +119,7 @@ function TabItem({
 	statusDot?: React.ReactNode;
 }) {
 	const [hovered, setHovered] = useState(false);
+	const dirty = useTabIsDirty(tab);
 	const isEditing = editingTabId === tab.id;
 	const showClose = isActive || hovered;
 
@@ -195,8 +227,23 @@ function TabItem({
 				<span className="truncate select-none">{tab.name}</span>
 			)}
 
-			{/* Close button */}
-			<CloseButton visible={showClose} onClick={onClose} />
+			{/* Close button / dirty indicator */}
+			{dirty && !hovered ? (
+				<button
+					type="button"
+					className="flex items-center justify-center flex-shrink-0 rounded-sm"
+					style={{ width: 20, height: 20, backgroundColor: "transparent" }}
+					aria-label="Close tab (unsaved changes)"
+					onClick={(e) => {
+						e.stopPropagation();
+						onClose();
+					}}
+				>
+					<DirtyDot />
+				</button>
+			) : (
+				<CloseButton visible={showClose || dirty} onClick={onClose} />
+			)}
 		</div>
 	);
 }

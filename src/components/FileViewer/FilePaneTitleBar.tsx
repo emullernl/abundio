@@ -6,6 +6,7 @@ type FileType = "text" | "image" | "binary" | "diff";
 interface Props {
 	fileName: string;
 	fileType?: FileType;
+	isDirty?: boolean;
 	onSplitDown: () => void;
 	onSplitRight: () => void;
 	onClose: () => void;
@@ -103,6 +104,7 @@ function getFileIconColor(ext: string | null): string {
 export function FilePaneTitleBar({
 	fileName,
 	fileType,
+	isDirty,
 	onSplitDown,
 	onSplitRight,
 	onClose,
@@ -151,6 +153,18 @@ export function FilePaneTitleBar({
 			>
 				{fileName}
 			</span>
+			{isDirty && (
+				<svg
+					width={7}
+					height={7}
+					viewBox="0 0 8 8"
+					fill="none"
+					aria-label="unsaved changes"
+					style={{ flexShrink: 0, marginLeft: 5, marginRight: 3 }}
+				>
+					<circle cx={4} cy={4} r={3.5} fill="#60a5fa" />
+				</svg>
+			)}
 			<TitleBarButton
 				icon={SquareSplitVertical}
 				onClick={onSplitDown}
