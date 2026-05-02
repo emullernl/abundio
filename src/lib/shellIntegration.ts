@@ -1,7 +1,8 @@
 export interface ShellCommand {
-	type: "command_start" | "command_end";
+	type: "command_start" | "command_end" | "cwd_change";
 	exitCode?: number;
 	commandText?: string;
+	path?: string;
 }
 
 const ESC = 0x1b;
@@ -69,6 +70,11 @@ export function parseShellIntegration(data: Uint8Array): {
 					commands.push({
 						type: "command_end",
 						exitCode: Number.isNaN(parsed) ? undefined : parsed,
+					});
+				} else if (payload.startsWith("cwd;")) {
+					commands.push({
+						type: "cwd_change",
+						path: payload.slice("cwd;".length),
 					});
 				}
 

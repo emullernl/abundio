@@ -30,6 +30,10 @@ import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
 import { useGitChangesStore } from "./stores/gitChangesStore";
+import {
+	clearPaneClose,
+	usePaneCloseConfirmStore,
+} from "./stores/paneCloseConfirmStore";
 import { usePtyActivityStore } from "./stores/ptyActivityStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
@@ -101,8 +105,14 @@ export function App() {
 	const closeTab = useWorkspaceStore((s) => s.closeTab);
 	const renameTab = useWorkspaceStore((s) => s.renameTab);
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
-	const { splitPaneWithPicker, splitPaneWithChoice, closePane, navigatePane, toggleMaximize } =
-		useSplitPane();
+	const {
+		splitPaneWithPicker,
+		splitPaneWithChoice,
+		closePane,
+		closePaneNow,
+		navigatePane,
+		toggleMaximize,
+	} = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
@@ -161,6 +171,8 @@ export function App() {
 		requestClose: requestCloseTerminalTab,
 		dialogProps: closeTerminalTabDialogProps,
 	} = useConfirmCloseTerminalTab();
+	const { pendingPaneId: closePanePendingId, pendingLabel: closePaneLabel } =
+		usePaneCloseConfirmStore();
 
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
 	const appWindowRef = useRef<Awaited<
@@ -227,14 +239,17 @@ export function App() {
 	// Listen for split-with-picker events dispatched by useSplitPane
 	useEffect(() => {
 		const handler = (e: Event) => {
-			const { paneId, direction } = (e as CustomEvent<{
-				paneId: string;
-				direction: "horizontal" | "vertical";
-			}>).detail;
+			const { paneId, direction } = (
+				e as CustomEvent<{
+					paneId: string;
+					direction: "horizontal" | "vertical";
+				}>
+			).detail;
 			setLaunchPicker({ purpose: "split", paneId, direction });
 		};
 		window.addEventListener("abundio:split-with-picker", handler);
-		return () => window.removeEventListener("abundio:split-with-picker", handler);
+		return () =>
+			window.removeEventListener("abundio:split-with-picker", handler);
 	}, []);
 
 	const proceedWithClose = useCallback(async () => {
@@ -508,6 +523,20 @@ export function App() {
 			<TerminalPool />
 			{closeTerminalTabDialogProps && (
 				<ConfirmDialog {...closeTerminalTabDialogProps} />
+			)}
+			{closePanePendingId && (
+				<ConfirmDialog
+					title="Close pane?"
+					message={`Close ${closePaneLabel ?? "this pane"}?`}
+					confirmLabel="Close pane"
+					confirmVariant="danger"
+					onConfirm={() => {
+						const id = closePanePendingId;
+						clearPaneClose();
+						closePaneNow(id);
+					}}
+					onCancel={clearPaneClose}
+				/>
 			)}
 			{appCloseRequested &&
 				(() => {

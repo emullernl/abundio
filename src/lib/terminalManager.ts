@@ -588,6 +588,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	const actStore = usePtyActivityStore.getState();
 	actStore.initPty(currentPtyId);
 	actStore.registerPane(paneId, currentPtyId);
+	actStore.setCwd(currentPtyId, cwd);
 
 	term.onData((data) => {
 		if (managed.restoring) return;
@@ -623,6 +624,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 			// Process shell integration commands (agent detection + shell activity)
 			for (const cmd of commands) {
+				if (cmd.type === "cwd_change") {
+					actState.setCwd(currentPtyId, cmd.path ?? "");
+					continue;
+				}
 				if (cmd.type === "command_start") {
 					// Agent detection from command text. setAgentPty mutates
 					// the store, so we have to track the transition with a
@@ -631,10 +636,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					let nowIsAgent = isAgentMode;
 					if (cmd.commandText) {
 						const agents = useSettingsStore.getState().agents;
-						if (matchTitleToAgent(cmd.commandText, agents)) {
-							actState.setAgentPty(currentPtyId);
+						const matched = matchTitleToAgent(cmd.commandText, agents);
+						if (matched) {
+							actState.setAgentPty(currentPtyId, matched.id);
 							nowIsAgent = true;
 						}
+					}
+					if (!nowIsAgent) {
+						actState.setRunningCommand(currentPtyId, cmd.commandText ?? "");
 					}
 					// Critical: the !nowIsAgent guard keeps us from setting
 					// shellCommandRunning=true for the agent's own command_start.
@@ -645,6 +654,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						actState.recordOutput(currentPtyId);
 					}
 				} else if (cmd.type === "command_end") {
+					actState.setRunningCommand(currentPtyId, null);
 					managed.startupShellReady = true;
 					tryFlushStartup(managed);
 					// Exit agent mode when the command finishes — re-fetch

@@ -1,8 +1,8 @@
 import { memo } from "react";
-import { FilePane } from "../FileViewer/FilePane";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import type { PaneNode } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { FilePane } from "../FileViewer/FilePane";
 import { PaneResizer } from "./PaneResizer";
 import { TerminalSlot } from "./TerminalSlot";
 
@@ -14,8 +14,10 @@ interface Props {
 /** Leaf component for terminal nodes — subscribes to focus/maximize state. */
 const TerminalLeaf = memo(function TerminalLeaf({
 	nodeId,
+	agentId,
 }: {
 	nodeId: string;
+	agentId?: string;
 }) {
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
@@ -25,6 +27,7 @@ const TerminalLeaf = memo(function TerminalLeaf({
 	return (
 		<TerminalSlot
 			paneId={nodeId}
+			agentId={agentId}
 			isFocused={focusedPaneId === nodeId}
 			isMaximized={maximizedPaneId === nodeId}
 			onFocus={() => setFocusedPane(nodeId)}
@@ -109,7 +112,7 @@ function SplitNode({
 
 export function SplitContainer({ node, cwd }: Props) {
 	if (node.type === "terminal") {
-		return <TerminalLeaf nodeId={node.id} />;
+		return <TerminalLeaf nodeId={node.id} agentId={node.agentId} />;
 	}
 	if (node.type === "file") {
 		return <FileLeaf node={node} />;

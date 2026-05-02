@@ -10,6 +10,7 @@ import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { destroyTerminal } from "../lib/terminalManager";
 import type { CodingAgent, PaneNode } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
+import { requestPaneClose } from "../stores/paneCloseConfirmStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 function generateId(): string {
@@ -24,10 +25,15 @@ export function useSplitPane() {
 	const persistLayout = useWorkspaceStore((s) => s.persistLayout);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
 	const setMaximized = useWorkspaceStore((s) => s.setMaximized);
+	const closeTab = useWorkspaceStore((s) => s.closeTab);
 
 	/** Split with an explicit choice (called by LaunchPicker handler in App.tsx). */
 	const splitPaneWithChoice = useCallback(
-		async (paneId: string, direction: "horizontal" | "vertical", agent?: CodingAgent) => {
+		async (
+			paneId: string,
+			direction: "horizontal" | "vertical",
+			agent?: CodingAgent,
+		) => {
 			const tab = getActiveTab();
 			const layout = getActiveLayout();
 			if (!tab || !layout) return;
@@ -72,13 +78,15 @@ export function useSplitPane() {
 	const splitPaneWithPicker = useCallback(
 		(paneId: string, direction: "horizontal" | "vertical") => {
 			window.dispatchEvent(
-				new CustomEvent("abundio:split-with-picker", { detail: { paneId, direction } }),
+				new CustomEvent("abundio:split-with-picker", {
+					detail: { paneId, direction },
+				}),
 			);
 		},
 		[],
 	);
 
-	const closePane = useCallback(
+	const closePaneNow = useCallback(
 		async (paneId: string) => {
 			const tab = getActiveTab();
 			const layout = getActiveLayout();
@@ -106,6 +114,9 @@ export function useSplitPane() {
 				} else {
 					setFocusedPane(null);
 				}
+			} else {
+				// Last pane removed — close the tab itself
+				await closeTab(tab.id);
 			}
 
 			// Clear maximize state if the maximized pane was closed
@@ -113,8 +124,12 @@ export function useSplitPane() {
 				setMaximized(null, null);
 			}
 		},
-		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, setMaximized],
+		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, setMaximized, closeTab],
 	);
+
+	const closePane = useCallback((paneId: string, label?: string) => {
+		requestPaneClose(paneId, label);
+	}, []);
 
 	/** Local-only ratio update (no DB persist) — call during drag. */
 	const updateRatioLocal = useCallback(
@@ -198,6 +213,7 @@ export function useSplitPane() {
 		// Legacy alias used by tests / code that hasn't migrated
 		splitPane: splitPaneWithPicker,
 		closePane,
+		closePaneNow,
 		updateRatioLocal,
 		persistCurrentLayout,
 		navigatePane,

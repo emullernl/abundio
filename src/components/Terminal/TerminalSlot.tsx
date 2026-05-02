@@ -77,6 +77,7 @@ function TerminalLoader({ paneId }: { paneId: string }) {
 
 interface Props {
 	paneId: string;
+	agentId?: string;
 	isFocused: boolean;
 	onFocus: () => void;
 	onSplitHorizontal: () => void;
@@ -88,6 +89,7 @@ interface Props {
 
 export function TerminalSlot({
 	paneId,
+	agentId,
 	isFocused,
 	onFocus,
 	onSplitHorizontal,
@@ -277,7 +279,13 @@ export function TerminalSlot({
 			onMouseDown={handleFocus}
 			onContextMenu={handleContextMenu}
 		>
-			<TerminalTitleBar paneId={paneId} />
+			<TerminalTitleBar
+				paneId={paneId}
+				agentId={agentId}
+				onSplitDown={onSplitHorizontal}
+				onSplitRight={onSplitVertical}
+				onClose={onClose}
+			/>
 			{debugMeterEnabled && <DebugActivityMeter paneId={paneId} />}
 			<TerminalLoader paneId={paneId} />
 			<div

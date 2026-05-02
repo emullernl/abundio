@@ -84,4 +84,23 @@ describe("parseShellIntegration", () => {
 		expect(cleanedStr).toBe("hello\x1b]7770;command_st");
 		expect(result.commands).toEqual([]);
 	});
+
+	it("parses cwd_change sequence", () => {
+		const data = encode("\x1b]7770;cwd;/Users/foo/bar\x07");
+		const result = parseShellIntegration(data);
+		expect(result.cleaned.length).toBe(0);
+		expect(result.commands).toEqual([{ type: "cwd_change", path: "/Users/foo/bar" }]);
+	});
+
+	it("parses cwd_change interleaved with other sequences", () => {
+		const data = encode(
+			"\x1b]7770;command_end;0\x07\x1b]7770;cwd;/home/user/project\x07",
+		);
+		const result = parseShellIntegration(data);
+		expect(result.cleaned.length).toBe(0);
+		expect(result.commands).toEqual([
+			{ type: "command_end", exitCode: 0 },
+			{ type: "cwd_change", path: "/home/user/project" },
+		]);
+	});
 });

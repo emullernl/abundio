@@ -8,9 +8,9 @@ import type {
 	Tab,
 } from "../lib/types";
 import {
-	NOTIFICATION_BLUR_THRESHOLD_MS,
 	getWindowBlurredMs,
 	isAppWindowFocused,
+	NOTIFICATION_BLUR_THRESHOLD_MS,
 } from "../lib/windowFocus";
 
 // ── Constants ──
@@ -59,8 +59,11 @@ interface PtyActivityState_Store {
 	activities: Record<string, PtyActivityEntry>;
 	titles: Record<string, string>;
 	panePtyMap: Record<string, string>; // paneId → ptyId
+	runningCommands: Record<string, string>; // ptyId → command text (empty when idle)
+	cwds: Record<string, string>; // ptyId → live cwd path
 	openedWorkspaceIds: Set<string>;
 	agentPtyIds: Set<string>;
+	detectedAgentIds: Record<string, string>; // ptyId → agentId detected via command_start
 
 	initPty: (ptyId: string, mode?: PtyDetectionMode) => void;
 	recordOutput: (ptyId: string) => void;
@@ -68,9 +71,11 @@ interface PtyActivityState_Store {
 	recordExitSuccess: (ptyId: string) => void;
 	markIdle: (ptyId: string) => void;
 	clearError: (ptyId: string) => void;
-	setAgentPty: (ptyId: string) => void;
+	setAgentPty: (ptyId: string, agentId?: string) => void;
 	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
+	setRunningCommand: (ptyId: string, text: string | null) => void;
+	setCwd: (ptyId: string, path: string) => void;
 	registerPane: (paneId: string, ptyId: string) => void;
 	markWorkspaceOpened: (workspaceId: string) => void;
 	unmarkWorkspaceOpened: (workspaceId: string) => void;
@@ -85,8 +90,11 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		activities: {},
 		titles: {},
 		panePtyMap: {},
+		runningCommands: {},
+		cwds: {},
 		openedWorkspaceIds: new Set(),
 		agentPtyIds: new Set(),
+		detectedAgentIds: {},
 
 		initPty: (ptyId, mode) => {
 			const existing = get().activities[ptyId];
@@ -189,7 +197,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			}));
 		},
 
-		setAgentPty: (ptyId) => {
+		setAgentPty: (ptyId, agentId) => {
 			const s = get();
 			if (s.agentPtyIds.has(ptyId)) return;
 			const newSet = new Set(s.agentPtyIds);
@@ -198,6 +206,9 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			// sequences, so command_end will never fire to clear this flag.
 			shellCommandRunning.delete(ptyId);
 			const entry = s.activities[ptyId];
+			const detectedUpdate = agentId
+				? { detectedAgentIds: { ...s.detectedAgentIds, [ptyId]: agentId } }
+				: {};
 			if (entry) {
 				set({
 					agentPtyIds: newSet,
@@ -205,9 +216,10 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 						...s.activities,
 						[ptyId]: { ...entry, detectionMode: "agent" },
 					},
+					...detectedUpdate,
 				});
 			} else {
-				set({ agentPtyIds: newSet });
+				set({ agentPtyIds: newSet, ...detectedUpdate });
 			}
 		},
 
@@ -216,17 +228,19 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			if (!s.agentPtyIds.has(ptyId)) return;
 			const newSet = new Set(s.agentPtyIds);
 			newSet.delete(ptyId);
+			const { [ptyId]: _, ...restDetected } = s.detectedAgentIds;
 			const entry = s.activities[ptyId];
 			if (entry) {
 				set({
 					agentPtyIds: newSet,
+					detectedAgentIds: restDetected,
 					activities: {
 						...s.activities,
 						[ptyId]: { ...entry, detectionMode: "shell" },
 					},
 				});
 			} else {
-				set({ agentPtyIds: newSet });
+				set({ agentPtyIds: newSet, detectedAgentIds: restDetected });
 			}
 		},
 
@@ -238,6 +252,19 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		setTitle: (paneId, title) => {
 			if (get().titles[paneId] === title) return;
 			set((s) => ({ titles: { ...s.titles, [paneId]: title } }));
+		},
+
+		setRunningCommand: (ptyId, text) => {
+			const next = text ?? "";
+			if (get().runningCommands[ptyId] === next) return;
+			set((s) => ({
+				runningCommands: { ...s.runningCommands, [ptyId]: next },
+			}));
+		},
+
+		setCwd: (ptyId, path) => {
+			if (get().cwds[ptyId] === path) return;
+			set((s) => ({ cwds: { ...s.cwds, [ptyId]: path } }));
 		},
 
 		markWorkspaceOpened: (workspaceId) => {
@@ -261,11 +288,18 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			shellCommandRunning.delete(ptyId);
 			set((s) => {
 				const { [ptyId]: _, ...rest } = s.activities;
+				const { [ptyId]: _rc, ...restRunning } = s.runningCommands;
+				const { [ptyId]: _cwd, ...restCwds } = s.cwds;
 				const newAgentIds = new Set(s.agentPtyIds);
 				const changed = newAgentIds.delete(ptyId);
 				return changed
-					? { activities: rest, agentPtyIds: newAgentIds }
-					: { activities: rest };
+					? {
+							activities: rest,
+							agentPtyIds: newAgentIds,
+							runningCommands: restRunning,
+							cwds: restCwds,
+						}
+					: { activities: rest, runningCommands: restRunning, cwds: restCwds };
 			});
 		},
 

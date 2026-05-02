@@ -362,7 +362,7 @@ elif [ -f "$HOME/.zshrc" ]; then
 fi
 # Hooks
 __abundio_preexec() { printf '\e]7770;command_start;%s\a' "${1//$'\a'/ }" }
-__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?" }
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD" }
 precmd_functions+=(__abundio_precmd)
 preexec_functions+=(__abundio_preexec)
 "#,
@@ -406,7 +406,7 @@ __abundio_preexec() {
   [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
   printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
 }
-__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; }
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD"; }
 trap '__abundio_preexec' DEBUG
 PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 "#;
@@ -440,6 +440,8 @@ function Global:prompt {
         $Host.UI.Write("$Global:__AbundioESC]7770;command_end;$lastExit$Global:__AbundioBEL")
     }
     if ($lastEntry) { $Global:__AbundioLastHistoryId = $lastEntry.Id }
+    # Emit current working directory
+    $Host.UI.Write("$Global:__AbundioESC]7770;cwd;$($executionContext.SessionState.Path.CurrentLocation)$Global:__AbundioBEL")
     # Call the original prompt function
     if ($Global:__AbundioOriginalPrompt) {
         & $Global:__AbundioOriginalPrompt

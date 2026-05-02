@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
-import type { GitChangedFile } from "../../lib/types";
 import { useSplitPane } from "../../hooks/useSplitPane";
+import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
-import { PaneContextMenu, type ContextMenuItem } from "../Terminal/PaneContextMenu";
+import {
+	type ContextMenuItem,
+	PaneContextMenu,
+} from "../Terminal/PaneContextMenu";
 import { CodeEditor, focusEditor, triggerEditorAction } from "./CodeEditor";
 import { FileChangeBanner } from "./FileChangeBanner";
+import { FilePaneTitleBar } from "./FilePaneTitleBar";
 import { ImageViewer } from "./ImageViewer";
 import { UnsupportedFile } from "./UnsupportedFile";
 
@@ -32,13 +36,18 @@ export function FilePane({
 	const paneState = useExplorerStore((s) => s.filePanes[paneId]);
 	const updateFileContent = useExplorerStore((s) => s.updateFileContent);
 	const reloadPaneFromDisk = useExplorerStore((s) => s.reloadPaneFromDisk);
-	const dismissExternalChange = useExplorerStore((s) => s.dismissExternalChange);
+	const dismissExternalChange = useExplorerStore(
+		(s) => s.dismissExternalChange,
+	);
 	const saveFile = useExplorerStore((s) => s.saveFile);
 
 	const { splitPaneWithPicker, closePane, toggleMaximize } = useSplitPane();
 	const isMaximized = useWorkspaceStore((s) => s.maximizedPaneId === paneId);
 
-	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+	} | null>(null);
 
 	// Register/unregister with the store when filePath changes
 	useEffect(() => {
@@ -46,8 +55,8 @@ export function FilePane({
 		return () => {
 			unregisterFilePane(paneId);
 		};
-	// Re-register when filePath changes (e.g. user opened a different file in this pane slot)
-	// eslint-disable-next-line react-hooks/exhaustive-deps
+		// Re-register when filePath changes (e.g. user opened a different file in this pane slot)
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [paneId, filePath, isDiff]);
 
 	const handleContextMenu = (e: React.MouseEvent) => {
@@ -60,7 +69,10 @@ export function FilePane({
 		return (
 			<div
 				className="flex items-center justify-center h-full w-full"
-				style={{ backgroundColor: "var(--bg-primary)", color: "var(--fg-secondary)" }}
+				style={{
+					backgroundColor: "var(--bg-primary)",
+					color: "var(--fg-secondary)",
+				}}
 			>
 				Loading…
 			</div>
@@ -71,7 +83,10 @@ export function FilePane({
 		return (
 			<div
 				className="flex items-center justify-center h-full w-full"
-				style={{ backgroundColor: "var(--bg-primary)", color: "var(--fg-secondary)" }}
+				style={{
+					backgroundColor: "var(--bg-primary)",
+					color: "var(--fg-secondary)",
+				}}
 			>
 				Loading…
 			</div>
@@ -87,22 +102,59 @@ export function FilePane({
 		});
 	};
 
-	const editorItems: ContextMenuItem[] = paneState.fileType === "text" ? [
-		{ label: "Copy", shortcut: "⌘C", onClick: action("editor.action.clipboardCopyAction") },
-		{ label: "Cut", shortcut: "⌘X", onClick: action("editor.action.clipboardCutAction") },
-		{ label: "Paste", shortcut: "⌘V", onClick: action("editor.action.clipboardPasteAction") },
-		{ label: "Select All", shortcut: "⌘A", onClick: action("editor.action.selectAll") },
-		{ separator: true },
-		{ label: "Format Document", onClick: action("editor.action.formatDocument") },
-		{ label: "Toggle Word Wrap", onClick: action("abundio.toggleWordWrap") },
-		{ label: "Find", shortcut: "⌘F", onClick: action("actions.find") },
-		{ label: "Command Palette", shortcut: "F1", onClick: action("editor.action.quickCommand") },
-		{ separator: true },
-	] : [];
+	const editorItems: ContextMenuItem[] =
+		paneState.fileType === "text"
+			? [
+					{
+						label: "Copy",
+						shortcut: "⌘C",
+						onClick: action("editor.action.clipboardCopyAction"),
+					},
+					{
+						label: "Cut",
+						shortcut: "⌘X",
+						onClick: action("editor.action.clipboardCutAction"),
+					},
+					{
+						label: "Paste",
+						shortcut: "⌘V",
+						onClick: action("editor.action.clipboardPasteAction"),
+					},
+					{
+						label: "Select All",
+						shortcut: "⌘A",
+						onClick: action("editor.action.selectAll"),
+					},
+					{ separator: true },
+					{
+						label: "Format Document",
+						onClick: action("editor.action.formatDocument"),
+					},
+					{
+						label: "Toggle Word Wrap",
+						onClick: action("abundio.toggleWordWrap"),
+					},
+					{ label: "Find", shortcut: "⌘F", onClick: action("actions.find") },
+					{
+						label: "Command Palette",
+						shortcut: "F1",
+						onClick: action("editor.action.quickCommand"),
+					},
+					{ separator: true },
+				]
+			: [];
 
 	const paneItems: ContextMenuItem[] = [
-		{ label: "Split Right", shortcut: "⇧⌘V", onClick: () => splitPaneWithPicker(paneId, "vertical") },
-		{ label: "Split Down", shortcut: "⇧⌘H", onClick: () => splitPaneWithPicker(paneId, "horizontal") },
+		{
+			label: "Split Right",
+			shortcut: "⇧⌘V",
+			onClick: () => splitPaneWithPicker(paneId, "vertical"),
+		},
+		{
+			label: "Split Down",
+			shortcut: "⇧⌘H",
+			onClick: () => splitPaneWithPicker(paneId, "horizontal"),
+		},
 		{ separator: true },
 		{
 			label: isMaximized ? "Restore Pane" : "Maximize Pane",
@@ -122,6 +174,15 @@ export function FilePane({
 			onClick={onFocus}
 			onContextMenu={handleContextMenu}
 		>
+			{paneState && (
+				<FilePaneTitleBar
+					fileName={paneState.fileName}
+					fileType={paneState.fileType}
+					onSplitDown={() => splitPaneWithPicker(paneId, "horizontal")}
+					onSplitRight={() => splitPaneWithPicker(paneId, "vertical")}
+					onClose={() => closePane(paneId, paneState.fileName)}
+				/>
+			)}
 			{showBanner && (
 				<div className="relative z-10" style={{ flexShrink: 0 }}>
 					<FileChangeBanner
