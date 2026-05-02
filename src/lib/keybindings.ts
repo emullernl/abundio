@@ -62,6 +62,11 @@ function isMonacoFocused(): boolean {
 	return !!el && (el as Element).closest?.(".monaco-editor") !== null;
 }
 
+function isMarkdownEditorFocused(): boolean {
+	const el = document.activeElement;
+	return !!el && (el as Element).closest?.(".mdxeditor") !== null;
+}
+
 const DEFAULT_BINDINGS: KeyBinding[] = [
 	{
 		key: "h",
@@ -203,6 +208,14 @@ export function handleKeyDown(e: KeyboardEvent) {
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.
 			if (isMonacoFocused() && !WORKSPACE_GLOBAL_ACTIONS.has(binding.action)) {
+				return;
+			}
+			// Let the markdown editor handle zoom shortcuts itself
+			if (
+				isMarkdownEditorFocused() &&
+				(binding.action === "font-size-increase" ||
+					binding.action === "font-size-decrease")
+			) {
 				return;
 			}
 			// Always prevent default for registered bindings, even if no handler yet

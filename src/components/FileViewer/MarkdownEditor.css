@@ -1,0 +1,221 @@
+/* Map MDXEditor semantic variables to Abundio theme variables */
+.abundio-theme {
+	--baseBgSubtle: var(--bg-primary);
+	--baseBg: var(--bg-secondary);
+	--baseBase: var(--bg-primary);
+	--baseBgHover: var(--bg-tertiary);
+	--baseBgActive: var(--bg-tertiary);
+	--baseText: var(--fg-primary);
+	--baseTextContrast: var(--fg-primary);
+	--baseSolid: var(--fg-secondary);
+	--baseSolidHover: var(--fg-primary);
+	--baseBorder: var(--border);
+	--baseBorderHover: var(--border);
+	--baseLine: var(--border);
+	--accentBase: var(--bg-secondary);
+	--accentBgSubtle: var(--bg-secondary);
+	--accentBg: var(--bg-tertiary);
+	--accentBgHover: var(--bg-tertiary);
+	--accentBgActive: var(--bg-tertiary);
+	--accentBorder: var(--border);
+	--accentBorderHover: var(--accent);
+	--accentSolid: var(--accent);
+	--accentSolidHover: var(--accent-hover);
+	--accentText: var(--accent);
+	--accentTextContrast: var(--fg-primary);
+	--accentLine: var(--accent);
+	--font-body: var(--font-ui);
+	/* Override hardcoded white that MDXEditor sets on _editorRoot_ */
+	--basePageBg: var(--bg-primary);
+}
+
+/* Compact sticky toolbar to match Abundio's tight chrome */
+.abundio-theme [role="toolbar"] {
+	padding: 3px 6px;
+	min-height: 34px;
+	border-bottom: 1px solid var(--border);
+	border-radius: 0;
+	top: 0;
+}
+
+.abundio-theme [role="toolbar"] button,
+.abundio-theme [role="toolbar"] [role="group"] > * {
+	height: 26px;
+	min-height: 26px;
+}
+
+.abundio-theme [role="toolbar"] svg {
+	width: 14px;
+	height: 14px;
+}
+
+/* Zoom controls — absolutely centered within the sticky toolbar */
+.mdx-zoom-controls {
+	position: absolute;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	z-index: 1;
+	pointer-events: auto;
+}
+
+.mdx-zoom-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border: none;
+	background: transparent;
+	color: var(--fg-secondary);
+	border-radius: 3px;
+	cursor: pointer;
+	padding: 0;
+}
+
+.mdx-zoom-btn:hover:not(:disabled) {
+	background: var(--bg-tertiary);
+	color: var(--fg-primary);
+}
+
+.mdx-zoom-btn:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.mdx-zoom-label {
+	font-size: 11px;
+	color: var(--fg-secondary);
+	min-width: 30px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Prose content area */
+.abundio-prose {
+	color: var(--fg-primary);
+	max-width: 72ch;
+	margin: 0 auto;
+	padding: 1.5rem 1rem;
+	font-size: calc(15px * var(--md-zoom, 1));
+	line-height: 1.7;
+}
+
+.abundio-prose h1,
+.abundio-prose h2,
+.abundio-prose h3,
+.abundio-prose h4,
+.abundio-prose h5,
+.abundio-prose h6 {
+	color: var(--fg-primary);
+	margin-top: 1.5em;
+	margin-bottom: 0.5em;
+	font-weight: 600;
+}
+
+.abundio-prose a {
+	color: var(--accent);
+}
+
+.abundio-prose code {
+	background: var(--bg-tertiary);
+	border-radius: 3px;
+	padding: 0.15em 0.4em;
+	font-family: var(--font-mono);
+	font-size: 0.875em;
+}
+
+.abundio-prose pre {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	overflow-x: auto;
+}
+
+.abundio-prose blockquote {
+	border-left: 3px solid var(--accent);
+	padding-left: 1em;
+	color: var(--fg-secondary);
+	margin-left: 0;
+}
+
+.abundio-prose hr {
+	border-color: var(--border);
+}
+
+.abundio-prose table {
+	border-collapse: collapse;
+	width: 100%;
+}
+
+.abundio-prose th,
+.abundio-prose td {
+	border: 1px solid var(--border);
+	padding: 0.5em 0.75em;
+}
+
+.abundio-prose th {
+	background: var(--bg-secondary);
+}
+
+/* CodeMirror areas: source view, diff view, inline code blocks */
+.abundio-theme .cm-editor {
+	background-color: var(--bg-secondary);
+	color: var(--fg-primary);
+}
+
+.abundio-theme .cm-content {
+	caret-color: var(--accent);
+	color: var(--fg-primary);
+}
+
+/*
+ * MDXEditor locks source/diff font-size with 3-class specificity selectors.
+ * Match that specificity here (later in file wins) and tie the values to --md-zoom.
+ * --text-xs = 0.75rem, --text-xxs = 0.6rem (from MDXEditor's own variables).
+ */
+.abundio-theme .cm-sourceView .cm-scroller,
+.abundio-theme .cm-mergeView .cm-scroller {
+	font-size: calc(0.75rem * var(--md-zoom, 1));
+	line-height: calc(1.3rem * var(--md-zoom, 1));
+}
+
+.abundio-theme .cm-gutters {
+	background-color: var(--bg-primary);
+	border-right: 1px solid var(--border);
+	color: var(--fg-secondary);
+	/* Match MDXEditor's 2-class .mdxeditor .cm-gutters rule */
+	font-size: calc(0.6rem * var(--md-zoom, 1));
+}
+
+.abundio-theme .cm-cursor,
+.abundio-theme .cm-dropCursor {
+	border-left-color: var(--fg-primary);
+}
+
+.abundio-theme .cm-selectionBackground,
+.abundio-theme .cm-focused .cm-selectionBackground {
+	background-color: color-mix(in srgb, var(--accent) 25%, transparent) !important;
+}
+
+.abundio-theme .cm-activeLine {
+	background-color: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
+}
+
+.abundio-theme .cm-activeLineGutter {
+	background-color: var(--bg-secondary);
+}
+
+/* Mermaid diagram container */
+.mdx-mermaid {
+	display: flex;
+	justify-content: flex-start;
+	margin: 1em 0;
+}
+
+.mdx-mermaid svg {
+	max-width: 100%;
+	height: auto;
+}

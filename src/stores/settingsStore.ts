@@ -30,6 +30,7 @@ interface SettingsState {
 	sidebarBottomPanel: "explorer" | "search";
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
+	markdownZoom: number;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -55,6 +56,7 @@ interface SettingsState {
 	setSidebarBottomPanel: (panel: "explorer" | "search") => void;
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
+	setMarkdownZoom: (zoom: number) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -80,6 +82,7 @@ const PERSISTED_DEFAULTS: {
 	agents: CodingAgent[];
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
+	markdownZoom: number;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -98,6 +101,7 @@ const PERSISTED_DEFAULTS: {
 		agents: BUILTIN_AGENTS as CodingAgent[],
 		lastOpenedDevEnvId: null as string | null,
 		editorWordWrap: true,
+		markdownZoom: 1,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -165,6 +169,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.editorWordWrap === "boolean"
 					? s.editorWordWrap
 					: defaults.editorWordWrap,
+			markdownZoom:
+				typeof s.markdownZoom === "number"
+					? Math.min(Math.max(s.markdownZoom, 0.5), 2)
+					: defaults.markdownZoom,
 		};
 	} catch {
 		return defaults;
@@ -192,6 +200,7 @@ export const useSettingsStore = create<SettingsState>()(
 			sidebarBottomPanel: "explorer",
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
+			markdownZoom: PERSISTED_DEFAULTS.markdownZoom,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -268,6 +277,7 @@ export const useSettingsStore = create<SettingsState>()(
 			setLastOpenedDevEnvId: (id) => set({ lastOpenedDevEnvId: id }),
 			toggleEditorWordWrap: () =>
 				set((s) => ({ editorWordWrap: !s.editorWordWrap })),
+			setMarkdownZoom: (markdownZoom) => set({ markdownZoom }),
 		}),
 		{
 			name: "abundio-settings",
@@ -297,6 +307,7 @@ export const useSettingsStore = create<SettingsState>()(
 				agents: state.agents,
 				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
 				editorWordWrap: state.editorWordWrap,
+				markdownZoom: state.markdownZoom,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
