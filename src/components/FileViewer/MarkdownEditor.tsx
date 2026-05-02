@@ -31,6 +31,8 @@ import {
 	thematicBreakPlugin,
 	toolbarPlugin,
 } from "@mdxeditor/editor";
+import { search, searchKeymap } from "@codemirror/search";
+import { keymap } from "@codemirror/view";
 import mermaid from "mermaid";
 import { Printer, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -39,6 +41,8 @@ import { getTheme } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { MermaidBlock } from "./MermaidBlock";
+
+const sourceViewExtensions = [search({ top: true }), keymap.of(searchKeymap)];
 
 const mermaidDescriptor: CodeBlockEditorDescriptor = {
 	priority: 100,
@@ -131,6 +135,15 @@ export default function MarkdownEditor({
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const lastEmittedRef = useRef(content);
 
+	// When the MDX parser fails, fall back to source mode automatically.
+	const [parseError, setParseError] = useState(false);
+	const parseErrorRef = useRef(false);
+
+	const handleError = useCallback(() => {
+		parseErrorRef.current = true;
+		setParseError(true);
+	}, []);
+
 	const [zoom, setZoom] = useState(savedZoom);
 	const zoomRef = useRef(savedZoom);
 	const zoomEmitterRef = useRef<((pct: number) => void) | null>(null);
@@ -152,8 +165,11 @@ export default function MarkdownEditor({
 	}, [setMarkdownZoom]);
 
 	const handlePrint = useCallback(() => {
-		if (wrapperRef.current) printMarkdownProse(wrapperRef.current);
-	}, []);
+		if (wrapperRef.current) {
+			const liveTheme = getTheme(themeName).variant === "light" ? "default" : "dark";
+			printMarkdownProse(wrapperRef.current, liveTheme);
+		}
+	}, [themeName]);
 
 	useEffect(() => {
 		const variant = getTheme(themeName).variant;
@@ -178,9 +194,16 @@ export default function MarkdownEditor({
 	}, [zoom]);
 
 	useEffect(() => {
-		if (content !== lastEmittedRef.current && editorRef.current) {
+		if (content !== lastEmittedRef.current) {
 			lastEmittedRef.current = content;
-			editorRef.current.setMarkdown(content);
+			if (parseErrorRef.current) {
+				// Content changed while in error/source mode — give it a fresh parse
+				// attempt by clearing the error flag; the key change remounts the editor.
+				parseErrorRef.current = false;
+				setParseError(false);
+			} else {
+				editorRef.current?.setMarkdown(content);
+			}
 		}
 	}, [content]);
 
@@ -243,7 +266,10 @@ export default function MarkdownEditor({
 			}),
 			frontmatterPlugin(),
 			markdownShortcutPlugin(),
-			diffSourcePlugin({ viewMode: "rich-text" }),
+			diffSourcePlugin({
+				viewMode: parseError ? "source" : "rich-text",
+				codeMirrorExtensions: sourceViewExtensions,
+			}),
 			toolbarPlugin({
 				toolbarContents: () => (
 					<>
@@ -287,7 +313,7 @@ export default function MarkdownEditor({
 				),
 			}),
 		],
-		[onZoomIn, onZoomOut, handlePrint],
+		[onZoomIn, onZoomOut, handlePrint, parseError],
 	);
 
 	return (
@@ -304,9 +330,10 @@ export default function MarkdownEditor({
 		>
 			<MDXEditor
 				ref={editorRef}
-				key={themeName}
+				key={`${themeName}-${parseError}`}
 				markdown={content}
 				onChange={handleChange}
+				onError={handleError}
 				className="abundio-theme"
 				contentEditableClassName="abundio-prose"
 				plugins={plugins}

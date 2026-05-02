@@ -1,7 +1,12 @@
+import mermaid from "mermaid";
+
 const PRINT_DIV_ID = "abundio-md-print";
 const PRINT_STYLE_ID = "abundio-md-print-style";
 
-export function printMarkdownProse(container: Element): void {
+export async function printMarkdownProse(
+	container: Element,
+	liveTheme: "default" | "dark" = "default",
+): Promise<void> {
 	const proseEl = container.querySelector<HTMLElement>(".abundio-prose");
 	if (!proseEl) return;
 
@@ -75,6 +80,24 @@ export function printMarkdownProse(container: Element): void {
 		(el as HTMLElement).removeAttribute("contenteditable");
 	}
 	document.body.appendChild(div);
+
+	// Re-render mermaid diagrams with the default (light) theme for print
+	const mermaidEls = Array.from(
+		div.querySelectorAll<HTMLElement>(".mdx-mermaid[data-mermaid-source]"),
+	);
+	if (mermaidEls.length > 0) {
+		mermaid.initialize({ startOnLoad: false, theme: "default" });
+		await Promise.allSettled(
+			mermaidEls.map(async (el, i) => {
+				const source = el.getAttribute("data-mermaid-source");
+				if (!source?.trim()) return;
+				const { svg } = await mermaid.render(`mermaid-print-${i}`, source);
+				el.innerHTML = svg;
+			}),
+		);
+		// Restore the live theme so subsequent diagram renders in the editor are unaffected
+		mermaid.initialize({ startOnLoad: false, theme: liveTheme });
+	}
 
 	const cleanup = () => {
 		document.getElementById(PRINT_DIV_ID)?.remove();

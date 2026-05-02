@@ -59,6 +59,7 @@ export function MermaidBlock({ code, nodeKey }: CodeBlockEditorProps) {
 	return (
 		<div
 			className="mdx-mermaid"
+			data-mermaid-source={code}
 			// biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid SVG output is sanitized by mermaid itself
 			dangerouslySetInnerHTML={{ __html: svg }}
 		/>
