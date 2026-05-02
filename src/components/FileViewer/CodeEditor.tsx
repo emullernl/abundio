@@ -88,6 +88,7 @@ export function CodeEditor({
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const monacoFontSize = fontSize - 1;
+	const editorWordWrap = useSettingsStore((s) => s.editorWordWrap);
 	const monaco = useMonaco();
 
 	// Focus editor when it becomes the active visible tab
@@ -128,6 +129,11 @@ export function CodeEditor({
 	useEffect(() => {
 		editorRef.current?.updateOptions({ fontFamily, fontSize: monacoFontSize });
 	}, [fontFamily, monacoFontSize]);
+
+	// Update word-wrap on live editors when the global setting changes
+	useEffect(() => {
+		editorRef.current?.updateOptions({ wordWrap: editorWordWrap ? "on" : "off" });
+	}, [editorWordWrap]);
 
 	// Re-define theme when it might have changed (monaco instance available)
 	useEffect(() => {
@@ -192,6 +198,15 @@ export function CodeEditor({
 				setFontSize(newSize);
 				setAllTerminalsFontSize(newSize);
 			});
+
+			// Toggle word-wrap (right-click menu + F1 palette)
+			ed.addAction({
+				id: "abundio.toggleWordWrap",
+				label: "Toggle Word Wrap",
+				contextMenuGroupId: "view",
+				contextMenuOrder: 1.5,
+				run: () => useSettingsStore.getState().toggleEditorWordWrap(),
+			});
 		},
 		[initialEditorState],
 	);
@@ -232,6 +247,7 @@ export function CodeEditor({
 				options={{
 					fontFamily,
 					fontSize: monacoFontSize,
+					wordWrap: editorWordWrap ? "on" : "off",
 					contextmenu: true,
 					minimap: { enabled: false },
 					scrollBeyondLastLine: false,

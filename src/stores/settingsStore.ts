@@ -29,6 +29,7 @@ interface SettingsState {
 	agents: CodingAgent[];
 	sidebarBottomPanel: "explorer" | "search";
 	lastOpenedDevEnvId: string | null;
+	editorWordWrap: boolean;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -53,6 +54,7 @@ interface SettingsState {
 	) => void;
 	setSidebarBottomPanel: (panel: "explorer" | "search") => void;
 	setLastOpenedDevEnvId: (id: string) => void;
+	toggleEditorWordWrap: () => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -77,6 +79,7 @@ const PERSISTED_DEFAULTS: {
 	shellPath: string | null;
 	agents: CodingAgent[];
 	lastOpenedDevEnvId: string | null;
+	editorWordWrap: boolean;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -94,6 +97,7 @@ const PERSISTED_DEFAULTS: {
 		shellPath: null as string | null,
 		agents: BUILTIN_AGENTS as CodingAgent[],
 		lastOpenedDevEnvId: null as string | null,
+		editorWordWrap: true,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -157,6 +161,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.lastOpenedDevEnvId === "string"
 					? s.lastOpenedDevEnvId
 					: defaults.lastOpenedDevEnvId,
+			editorWordWrap:
+				typeof s.editorWordWrap === "boolean"
+					? s.editorWordWrap
+					: defaults.editorWordWrap,
 		};
 	} catch {
 		return defaults;
@@ -183,6 +191,7 @@ export const useSettingsStore = create<SettingsState>()(
 			agents: PERSISTED_DEFAULTS.agents,
 			sidebarBottomPanel: "explorer",
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
+			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -257,6 +266,8 @@ export const useSettingsStore = create<SettingsState>()(
 			setSidebarBottomPanel: (sidebarBottomPanel) =>
 				set({ sidebarBottomPanel }),
 			setLastOpenedDevEnvId: (id) => set({ lastOpenedDevEnvId: id }),
+			toggleEditorWordWrap: () =>
+				set((s) => ({ editorWordWrap: !s.editorWordWrap })),
 		}),
 		{
 			name: "abundio-settings",
@@ -285,6 +296,7 @@ export const useSettingsStore = create<SettingsState>()(
 				shellPath: state.shellPath,
 				agents: state.agents,
 				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
+				editorWordWrap: state.editorWordWrap,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
