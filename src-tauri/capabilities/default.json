@@ -13,6 +13,7 @@
     "shell:allow-stdin-write",
     "shell:allow-open",
     "dialog:allow-open",
-    "notification:default"
+    "notification:default",
+    "core:webview:allow-print"
   ]
 }

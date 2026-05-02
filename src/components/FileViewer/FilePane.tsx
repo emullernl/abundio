@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
+import { isMarkdownFile } from "../../lib/isMarkdownFile";
+import { printMarkdownProse } from "../../lib/markdownPrint";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -13,6 +15,10 @@ import { FileChangeBanner } from "./FileChangeBanner";
 import { FilePaneTitleBar } from "./FilePaneTitleBar";
 import { ImageViewer } from "./ImageViewer";
 import { UnsupportedFile } from "./UnsupportedFile";
+
+// Start downloading the markdown editor chunk immediately so it's ready before first use
+const markdownEditorPromise = import("./MarkdownEditor");
+const LazyMarkdownEditor = lazy(() => markdownEditorPromise);
 
 interface FilePaneProps {
 	paneId: string;
@@ -43,6 +49,8 @@ export function FilePane({
 
 	const { splitPaneWithPicker, closePane, toggleMaximize } = useSplitPane();
 	const isMaximized = useWorkspaceStore((s) => s.maximizedPaneId === paneId);
+
+	const paneDivRef = useRef<HTMLDivElement>(null);
 
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
@@ -79,7 +87,7 @@ export function FilePane({
 		);
 	}
 
-	if (paneState.loading) {
+	if (paneState.loading && !isMarkdownFile(paneState.fileName)) {
 		return (
 			<div
 				className="flex items-center justify-center h-full w-full"
@@ -102,8 +110,21 @@ export function FilePane({
 		});
 	};
 
+	const markdownItems: ContextMenuItem[] =
+		paneState.fileType === "text" && isMarkdownFile(paneState.fileName)
+			? [
+					{
+						label: "Print",
+						onClick: () => {
+							if (paneDivRef.current) printMarkdownProse(paneDivRef.current);
+						},
+					},
+					{ separator: true },
+				]
+			: [];
+
 	const editorItems: ContextMenuItem[] =
-		paneState.fileType === "text"
+		paneState.fileType === "text" && !isMarkdownFile(paneState.fileName)
 			? [
 					{
 						label: "Copy",
@@ -164,11 +185,12 @@ export function FilePane({
 		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: () => closePane(paneId) },
 	];
 
-	const contextMenuItems: ContextMenuItem[] = [...editorItems, ...paneItems];
+	const contextMenuItems: ContextMenuItem[] = [...markdownItems, ...editorItems, ...paneItems];
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container
 		<div
+			ref={paneDivRef}
 			className="relative w-full h-full flex flex-col"
 			style={{ backgroundColor: "var(--bg-primary)" }}
 			onClick={onFocus}
@@ -195,16 +217,28 @@ export function FilePane({
 				</div>
 			)}
 			<div className="flex-1 min-h-0 relative">
-				{paneState.fileType === "text" && (
-					<CodeEditor
-						tabId={paneId}
-						isActive={isFocused}
-						content={paneState.content ?? ""}
-						language={paneState.language}
-						initialEditorState={null}
-						onChange={(content) => updateFileContent(paneId, content)}
-					/>
-				)}
+				{paneState.fileType === "text" &&
+					isMarkdownFile(paneState.fileName) && (
+						<Suspense fallback={null}>
+							<LazyMarkdownEditor
+								paneId={paneId}
+								isActive={isFocused}
+								content={paneState.content ?? ""}
+								onChange={(content) => updateFileContent(paneId, content)}
+							/>
+						</Suspense>
+					)}
+				{paneState.fileType === "text" &&
+					!isMarkdownFile(paneState.fileName) && (
+						<CodeEditor
+							tabId={paneId}
+							isActive={isFocused}
+							content={paneState.content ?? ""}
+							language={paneState.language}
+							initialEditorState={null}
+							onChange={(content) => updateFileContent(paneId, content)}
+						/>
+					)}
 				{paneState.fileType === "diff" &&
 					paneState.diffOriginal != null &&
 					paneState.diffModified != null && (
