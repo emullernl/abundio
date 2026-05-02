@@ -1,13 +1,11 @@
-import { AlertTriangle, FileX } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { Tab } from "../lib/types";
-import type { FileTab } from "../stores/explorerStore";
 import {
 	computeTabDotStatus,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
 import { AgentStatusIcon } from "./AgentStatusIcon";
-import { File, GitCompare, Terminal } from "./Icons";
+import { Terminal } from "./Icons";
 
 interface TabBarProps {
 	tabs: Tab[];
@@ -16,11 +14,6 @@ interface TabBarProps {
 	onClose: (tabId: string) => void;
 	onNew: () => void;
 	onRename: (tabId: string, name: string) => void;
-	fileTabs?: FileTab[];
-	activeFileTabId?: string | null;
-	activeView?: "terminal" | "file";
-	onActivateFileTab?: (tabId: string) => void;
-	onCloseFileTab?: (tabId: string) => void;
 }
 
 function CloseIcon({ size = 14 }: { size?: number }) {
@@ -76,11 +69,9 @@ function TabItem({
 	commitRename,
 	cancelRename,
 	icon,
-	isDirty,
 	statusDot,
-	warning,
 }: {
-	tab: Tab | { id: string; name: string };
+	tab: Tab;
 	isActive: boolean;
 	showSeparator: boolean;
 	onActivate: () => void;
@@ -94,9 +85,7 @@ function TabItem({
 	commitRename: () => void;
 	cancelRename: () => void;
 	icon?: React.ReactNode;
-	isDirty?: boolean;
 	statusDot?: React.ReactNode;
-	warning?: React.ReactNode;
 }) {
 	const [hovered, setHovered] = useState(false);
 	const isEditing = editingTabId === tab.id;
@@ -142,8 +131,6 @@ function TabItem({
 				marginTop: "auto",
 			}}
 			onMouseDown={(e) => {
-				// Prevent browser from moving focus to the tab element,
-				// so our programmatic focus on terminal/editor works
 				if (!isEditing) e.preventDefault();
 			}}
 			onClick={onActivate}
@@ -179,27 +166,6 @@ function TabItem({
 			)}
 
 			{statusDot}
-
-			{warning && (
-				<span
-					className="flex items-center shrink-0"
-					style={{ color: "var(--accent)" }}
-				>
-					{warning}
-				</span>
-			)}
-
-			{isDirty && (
-				<span
-					style={{
-						width: 6,
-						height: 6,
-						borderRadius: "50%",
-						backgroundColor: "var(--accent)",
-						flexShrink: 0,
-					}}
-				/>
-			)}
 
 			{isEditing ? (
 				<input
@@ -282,6 +248,7 @@ const TabStatusDot = memo(function TabStatusDot({
 	const tabDot = usePtyActivityStore((s) =>
 		computeTabDotStatus(tab, s.activities, s.panePtyMap),
 	);
+	if (tabDot === "grey") return null;
 	return (
 		<AgentStatusIcon
 			status={tabDot}
@@ -298,11 +265,6 @@ export function TabBar({
 	onClose,
 	onNew,
 	onRename,
-	fileTabs = [],
-	activeFileTabId,
-	activeView = "terminal",
-	onActivateFileTab,
-	onCloseFileTab,
 }: TabBarProps) {
 	const [editingTabId, setEditingTabId] = useState<string | null>(null);
 	const [editValue, setEditValue] = useState("");
@@ -389,11 +351,8 @@ export function TabBar({
 				role="tablist"
 			>
 				{tabs.map((tab, index) => {
-					const isActive = activeView === "terminal" && tab.id === activeTabId;
-					const prevIsActive =
-						index > 0 &&
-						activeView === "terminal" &&
-						tabs[index - 1]?.id === activeTabId;
+					const isActive = tab.id === activeTabId;
+					const prevIsActive = index > 0 && tabs[index - 1]?.id === activeTabId;
 					const showSeparator = !isActive && index > 0 && !prevIsActive;
 
 					return (
@@ -417,55 +376,6 @@ export function TabBar({
 							cancelRename={cancelRename}
 							icon={<Terminal size={12} />}
 							statusDot={<TabStatusDot tab={tab} isActive={isActive} />}
-						/>
-					);
-				})}
-				{fileTabs.length > 0 && (
-					<div
-						style={{
-							width: 1,
-							height: 16,
-							backgroundColor: "var(--border)",
-							alignSelf: "center",
-							flexShrink: 0,
-							margin: "0 4px",
-							opacity: 0.6,
-						}}
-					/>
-				)}
-				{fileTabs.map((ft, index) => {
-					const isActive = activeView === "file" && ft.id === activeFileTabId;
-					return (
-						<TabItem
-							key={ft.id}
-							tab={{ id: ft.id, name: ft.fileName }}
-							isActive={isActive}
-							showSeparator={!isActive && index > 0}
-							onActivate={() => onActivateFileTab?.(ft.id)}
-							onClose={() => onCloseFileTab?.(ft.id)}
-							onDoubleClick={() => {}}
-							onContextMenu={(e) => e.preventDefault()}
-							editingTabId={null}
-							editValue=""
-							setEditValue={() => {}}
-							inputRef={inputRef}
-							commitRename={() => {}}
-							cancelRename={() => {}}
-							icon={
-								ft.fileType === "diff" ? (
-									<GitCompare size={12} />
-								) : (
-									<File size={12} />
-								)
-							}
-							isDirty={ft.isDirty}
-							warning={
-								ft.deletedOnDisk ? (
-									<FileX size={12} />
-								) : ft.externallyChanged ? (
-									<AlertTriangle size={12} />
-								) : undefined
-							}
 						/>
 					);
 				})}

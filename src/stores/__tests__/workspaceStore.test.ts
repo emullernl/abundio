@@ -98,7 +98,6 @@ beforeEach(() => {
 		savedLayout: null,
 		ptyStatuses: {},
 		searchPaneId: null,
-		activeView: {},
 		workspacesInitialized: false,
 	});
 });
@@ -361,13 +360,6 @@ describe("workspaceStore", () => {
 			useWorkspaceStore.setState({ focusedPaneId: "p1", searchPaneId: "p1" });
 			useWorkspaceStore.getState().toggleSearch();
 			expect(useWorkspaceStore.getState().searchPaneId).toBeNull();
-		});
-	});
-
-	describe("setActiveView", () => {
-		it("updates activeView for workspace", () => {
-			useWorkspaceStore.getState().setActiveView("s1", "file");
-			expect(useWorkspaceStore.getState().activeView.s1).toBe("file");
 		});
 	});
 

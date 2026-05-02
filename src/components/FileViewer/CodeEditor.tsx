@@ -6,7 +6,6 @@ import { setAllTerminalsFontSize } from "../../lib/terminalManager";
 import { setMonacoInstance } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
 
 interface CodeEditorProps {
 	tabId: string;
@@ -32,6 +31,10 @@ export interface SerializedEditorState {
 
 export function focusEditor(tabId: string) {
 	liveEditors.get(tabId)?.focus();
+}
+
+export function triggerEditorAction(tabId: string, actionId: string): void {
+	liveEditors.get(tabId)?.trigger("contextmenu", actionId, null);
 }
 
 export function clearEditorStateCache(tabId: string) {
@@ -91,31 +94,23 @@ export function CodeEditor({
 	const editorWordWrap = useSettingsStore((s) => s.editorWordWrap);
 	const monaco = useMonaco();
 
-	// Focus editor when it becomes the active visible tab
-	const isFileView = useWorkspaceStore((s) => {
-		const sid = s.activeWorkspaceId;
-		return sid ? (s.activeView[sid] ?? "terminal") === "file" : false;
-	});
-
 	const pendingGotoLine = useExplorerStore((s) => s.pendingGotoLine);
 
+	// Focus editor when this pane becomes active
 	useEffect(() => {
-		if (isActive && isFileView && editorRef.current) {
+		if (isActive && editorRef.current) {
 			const ed = editorRef.current;
 			requestAnimationFrame(() => {
 				requestAnimationFrame(() => ed.focus());
 			});
 		}
-	}, [isActive, isFileView]);
+	}, [isActive]);
 
 	// Handle pending go-to-line from search results
 	useEffect(() => {
-		if (!isActive || !isFileView || !pendingGotoLine || !editorRef.current)
-			return;
-		const tab = useExplorerStore
-			.getState()
-			.fileTabs.find((t) => t.id === tabId);
-		if (!tab || tab.filePath !== pendingGotoLine.filePath) return;
+		if (!isActive || !pendingGotoLine || !editorRef.current) return;
+		const pane = useExplorerStore.getState().filePanes[tabId];
+		if (!pane || pane.filePath !== pendingGotoLine.filePath) return;
 
 		const ed = editorRef.current;
 		const line = pendingGotoLine.line;
@@ -123,7 +118,7 @@ export function CodeEditor({
 		ed.setPosition({ lineNumber: line, column: 1 });
 		ed.focus();
 		useExplorerStore.getState().setPendingGotoLine(null);
-	}, [isActive, isFileView, pendingGotoLine, tabId]);
+	}, [isActive, pendingGotoLine, tabId]);
 
 	// Update font when settings change
 	useEffect(() => {
@@ -177,10 +172,7 @@ export function CodeEditor({
 
 			// Cmd+S → save file
 			ed.addCommand(KeyMod.CtrlCmd | KeyCode.KeyS, () => {
-				const { activeFileTabId } = useExplorerStore.getState();
-				if (activeFileTabId) {
-					useExplorerStore.getState().saveFile(activeFileTabId);
-				}
+				useExplorerStore.getState().saveFile(tabIdRef.current);
 			});
 
 			// Cmd+= → zoom in
@@ -248,7 +240,7 @@ export function CodeEditor({
 					fontFamily,
 					fontSize: monacoFontSize,
 					wordWrap: editorWordWrap ? "on" : "off",
-					contextmenu: true,
+					contextmenu: false,
 					minimap: { enabled: false },
 					scrollBeyondLastLine: false,
 					lineNumbers: "on",

@@ -402,6 +402,7 @@ export function collectPtyIds(
 		const ptyId = node.ptyId || panePtyMap?.[node.id] || "";
 		return ptyId ? [ptyId] : [];
 	}
+	if (node.type === "file") return [];
 	return [
 		...collectPtyIds(node.first, panePtyMap),
 		...collectPtyIds(node.second, panePtyMap),
@@ -451,7 +452,7 @@ export function computeTabDotStatus(
 	}
 
 	const ptyIds = collectPtyIds(layout, panePtyMap);
-	if (ptyIds.length === 0) return "green";
+	if (ptyIds.length === 0) return "grey";
 
 	const entries = ptyIds.map((id) => activities[id]).filter(Boolean);
 

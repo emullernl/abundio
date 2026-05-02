@@ -5,7 +5,6 @@ import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { FileSearchPalette } from "./components/FileSearchPalette";
-import { FileViewerContainer } from "./components/FileViewer/FileViewerContainer";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
@@ -18,7 +17,6 @@ import { TabBar } from "./components/TabBar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
-import { useConfirmCloseFileTab } from "./hooks/useConfirmCloseFileTab";
 import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useSplitPane } from "./hooks/useSplitPane";
@@ -30,7 +28,7 @@ import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import type { PaneNode } from "./lib/types";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
-import { persistAllFileTabs, useExplorerStore } from "./stores/explorerStore";
+import { useExplorerStore } from "./stores/explorerStore";
 import { useGitChangesStore } from "./stores/gitChangesStore";
 import { usePtyActivityStore } from "./stores/ptyActivityStore";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -38,10 +36,7 @@ import { useWorkspaceStore } from "./stores/workspaceStore";
 
 const TITLEBAR_HEIGHT = isMac ? 52 : 0;
 
-/** Workspace-switch overlay. Memoized with no props so it never re-renders
- *  while the switch is in flight — the wave bars stay on their own compositor
- *  layers (will-change + contain) so the animation keeps running smoothly
- *  even while the main thread is busy mounting the new workspace. */
+/** Workspace-switch overlay. */
 const SwitchingOverlay = memo(function SwitchingOverlay() {
 	return (
 		<div
@@ -76,7 +71,7 @@ const SwitchingOverlay = memo(function SwitchingOverlay() {
 });
 
 /** Memoized tab content — only re-renders when layoutJson string changes. */
-const TabTerminalContent = memo(function TabTerminalContent({
+const TabContent = memo(function TabContent({
 	layoutJson,
 	cwd,
 }: {
@@ -105,17 +100,21 @@ export function App() {
 	const createTab = useWorkspaceStore((s) => s.createTab);
 	const closeTab = useWorkspaceStore((s) => s.closeTab);
 	const renameTab = useWorkspaceStore((s) => s.renameTab);
-	const activeView = useWorkspaceStore((s) => s.activeView);
-	const setActiveView = useWorkspaceStore((s) => s.setActiveView);
-	const { splitPane, closePane, navigatePane, toggleMaximize } = useSplitPane();
+	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const { splitPaneWithPicker, splitPaneWithChoice, closePane, navigatePane, toggleMaximize } =
+		useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
-	const [launchPicker, setLaunchPicker] = useState<{
-		purpose: "tab";
-		workspaceId: string;
-	} | null>(null);
+
+	// LaunchPicker is shared for new-tab and split flows
+	const [launchPicker, setLaunchPicker] = useState<
+		| { purpose: "tab"; workspaceId: string }
+		| { purpose: "split"; paneId: string; direction: "horizontal" | "vertical" }
+		| null
+	>(null);
+
 	const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
 
 	const requestNewTab = useCallback((workspaceId: string) => {
@@ -131,9 +130,13 @@ export function App() {
 			const picker = launchPicker;
 			if (!picker) return;
 			const agent = choice.kind === "agent" ? choice.agent : undefined;
-			createTab(picker.workspaceId, agent);
+			if (picker.purpose === "tab") {
+				createTab(picker.workspaceId, agent);
+			} else {
+				splitPaneWithChoice(picker.paneId, picker.direction, agent);
+			}
 		},
-		[launchPicker, createTab],
+		[launchPicker, createTab, splitPaneWithChoice],
 	);
 
 	const handleCreateWorkspace = useCallback(
@@ -153,17 +156,12 @@ export function App() {
 		},
 		[createWorkspace],
 	);
-	const fileTabs = useExplorerStore((s) => s.fileTabs);
-	const activeFileTabId = useExplorerStore((s) => s.activeFileTabId);
-	const setActiveFileTab = useExplorerStore((s) => s.setActiveFileTab);
-	const {
-		requestClose: requestCloseFileTab,
-		dialogProps: closeFileTabDialogProps,
-	} = useConfirmCloseFileTab();
+
 	const {
 		requestClose: requestCloseTerminalTab,
 		dialogProps: closeTerminalTabDialogProps,
 	} = useConfirmCloseTerminalTab();
+
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
 	const appWindowRef = useRef<Awaited<
 		ReturnType<typeof getCurrentWindow>
@@ -174,11 +172,8 @@ export function App() {
 	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 
-	// Lazy-mount tabs. A tab's TabTerminalContent (SplitContainer → PTYs) only
-	// mounts once the tab has been in this set. The active tab of the active
-	// workspace is added immediately; remaining tabs get added after the
-	// workspace switch has painted so the new workspace feels instant even when
-	// it has many tabs.
+	// Lazy-mount tabs. Active tab mounts immediately; others mount after workspace
+	// switch has painted so the new workspace feels instant.
 	const [mountedTabIds, setMountedTabIds] = useState<Set<string>>(
 		() => new Set(),
 	);
@@ -229,10 +224,23 @@ export function App() {
 		useAgentRegistryStore.getState().load(commands);
 	}, []);
 
+	// Listen for split-with-picker events dispatched by useSplitPane
+	useEffect(() => {
+		const handler = (e: Event) => {
+			const { paneId, direction } = (e as CustomEvent<{
+				paneId: string;
+				direction: "horizontal" | "vertical";
+			}>).detail;
+			setLaunchPicker({ purpose: "split", paneId, direction });
+		};
+		window.addEventListener("abundio:split-with-picker", handler);
+		return () => window.removeEventListener("abundio:split-with-picker", handler);
+	}, []);
+
 	const proceedWithClose = useCallback(async () => {
 		const appWindow = appWindowRef.current ?? getCurrentWindow();
 		await Promise.race([
-			Promise.all([saveAllSnapshots(), persistAllFileTabs()]),
+			saveAllSnapshots(),
 			new Promise((r) => setTimeout(r, 2000)),
 		]);
 		appWindow.destroy();
@@ -244,10 +252,10 @@ export function App() {
 		appWindowRef.current = appWindow;
 		const unlisten = appWindow.onCloseRequested(async (event) => {
 			event.preventDefault();
-			const dirtyTabs = useExplorerStore
-				.getState()
-				.fileTabs.filter((t) => t.isDirty);
-			if (dirtyTabs.length > 0) {
+			const dirtyPanes = Object.values(
+				useExplorerStore.getState().filePanes,
+			).filter((p) => p.isDirty);
+			if (dirtyPanes.length > 0) {
 				setAppCloseRequested(true);
 				return;
 			}
@@ -272,11 +280,11 @@ export function App() {
 	useEffect(() => {
 		registerAction("split-horizontal", () => {
 			const paneId = useWorkspaceStore.getState().focusedPaneId;
-			if (paneId) splitPane(paneId, "horizontal");
+			if (paneId) splitPaneWithPicker(paneId, "horizontal");
 		});
 		registerAction("split-vertical", () => {
 			const paneId = useWorkspaceStore.getState().focusedPaneId;
-			if (paneId) splitPane(paneId, "vertical");
+			if (paneId) splitPaneWithPicker(paneId, "vertical");
 		});
 		registerAction("close-pane", () => {
 			const paneId = useWorkspaceStore.getState().focusedPaneId;
@@ -312,18 +320,7 @@ export function App() {
 			requestNewWorkspace();
 		});
 		registerAction("close-tab", () => {
-			const wsState = useWorkspaceStore.getState();
-			const wsId = wsState.activeWorkspaceId;
-			if (!wsId) return;
-			const view = wsState.activeView[wsId] ?? "terminal";
-			if (view === "file") {
-				const fileTabId = useExplorerStore.getState().activeFileTabId;
-				if (fileTabId) {
-					requestCloseFileTab(fileTabId);
-					return;
-				}
-			}
-			const tab = wsState.getActiveTab();
+			const tab = useWorkspaceStore.getState().getActiveTab();
 			if (tab) requestCloseTerminalTab(tab.id);
 		});
 		registerAction("next-tab", () => {
@@ -357,9 +354,9 @@ export function App() {
 			setAllTerminalsFontSize(newSize);
 		});
 		registerAction("save-file", () => {
-			const { activeFileTabId } = useExplorerStore.getState();
-			if (activeFileTabId) {
-				useExplorerStore.getState().saveFile(activeFileTabId);
+			const focusedId = useWorkspaceStore.getState().focusedPaneId;
+			if (focusedId && useExplorerStore.getState().filePanes[focusedId]) {
+				useExplorerStore.getState().saveFile(focusedId);
 			}
 		});
 		registerAction("toggle-git-panel", () => {
@@ -371,18 +368,24 @@ export function App() {
 				settings.toggleSidebar();
 			}
 			settings.setSidebarBottomPanel("search");
-			// Focus is handled by SearchPanel's useEffect on sidebarBottomPanel change
 		});
 	}, [
-		splitPane,
+		splitPaneWithPicker,
 		closePane,
 		navigatePane,
 		toggleMaximize,
 		requestNewTab,
 		requestNewWorkspace,
-		requestCloseFileTab,
 		requestCloseTerminalTab,
 	]);
+
+	// Derive the active file path for the OpenInDevEnvButton from the focused pane
+	const activeFocusedFilePath = useMemo(() => {
+		if (!focusedPaneId) return null;
+		const pane = useExplorerStore.getState().filePanes[focusedPaneId];
+		if (!pane || pane.fileType === "diff") return null;
+		return pane.filePath;
+	}, [focusedPaneId]);
 
 	return (
 		<div className="flex flex-col h-full w-full">
@@ -438,63 +441,27 @@ export function App() {
 										<TabBar
 											tabs={workspace.tabs}
 											activeTabId={activeTabId}
-											onActivate={(tabId) => {
-												setActiveTab(workspace.id, tabId);
-												setActiveView(workspace.id, "terminal");
-											}}
+											onActivate={(tabId) => setActiveTab(workspace.id, tabId)}
 											onClose={(tabId) => closeTab(tabId)}
 											onNew={() => requestNewTab(workspace.id)}
 											onRename={(tabId, name) => renameTab(tabId, name)}
-											fileTabs={fileTabs.filter(
-												(ft) => ft.workspaceId === workspace.id,
-											)}
-											activeFileTabId={activeFileTabId}
-											activeView={activeView[workspace.id] ?? "terminal"}
-											onActivateFileTab={(tabId) => setActiveFileTab(tabId)}
-											onCloseFileTab={(tabId) => requestCloseFileTab(tabId)}
 										/>
 										<OpenInDevEnvButton
 											workspaceFolder={workspace.rootFolder}
-											activeFilePath={
-												(activeView[workspace.id] ?? "terminal") === "file"
-													? (() => {
-															const t = fileTabs.find(
-																(ft) => ft.id === activeFileTabId,
-															);
-															return t && t.fileType !== "diff"
-																? t.filePath
-																: null;
-														})()
-													: null
-											}
+											activeFilePath={isActive ? activeFocusedFilePath : null}
 										/>
 									</div>
 									<div className="flex-1 min-h-0 relative">
-										<div
-											className="absolute inset-0"
-											style={{
-												display:
-													(activeView[workspace.id] ?? "terminal") === "file" &&
-													activeFileTabId
-														? "block"
-														: "none",
-											}}
-										>
-											<FileViewerContainer />
-										</div>
 										{workspace.tabs.map((tab) => {
 											if (!mountedTabIds.has(tab.id)) return null;
 											const isTabActive = tab.id === activeTabId;
-											const showTerminal =
-												(activeView[workspace.id] ?? "terminal") ===
-													"terminal" && isTabActive;
 											return (
 												<div
 													key={tab.id}
 													className="absolute inset-0"
-													style={{ display: showTerminal ? "block" : "none" }}
+													style={{ display: isTabActive ? "block" : "none" }}
 												>
-													<TabTerminalContent
+													<TabContent
 														layoutJson={tab.layoutJson}
 														cwd={workspace.rootFolder}
 													/>
@@ -521,6 +488,11 @@ export function App() {
 			/>
 			<LaunchPicker
 				isOpen={!!launchPicker}
+				title={
+					launchPicker?.purpose === "split"
+						? "Split pane with…"
+						: "Start a new session"
+				}
 				onClose={() => setLaunchPicker(null)}
 				onSelect={handleLaunchSelect}
 			/>
@@ -534,26 +506,25 @@ export function App() {
 				onClose={() => setSettingsOpen(false)}
 			/>
 			<TerminalPool />
-			{closeFileTabDialogProps && (
-				<SaveConfirmDialog {...closeFileTabDialogProps} />
-			)}
 			{closeTerminalTabDialogProps && (
 				<ConfirmDialog {...closeTerminalTabDialogProps} />
 			)}
 			{appCloseRequested &&
 				(() => {
-					const dirtyTabs = fileTabs.filter((t) => t.isDirty);
+					const dirtyPanes = Object.values(
+						useExplorerStore.getState().filePanes,
+					).filter((p) => p.isDirty);
 					const name =
-						dirtyTabs.length === 1
-							? dirtyTabs[0].fileName
-							: `${dirtyTabs.length} files`;
+						dirtyPanes.length === 1
+							? dirtyPanes[0].fileName
+							: `${dirtyPanes.length} files`;
 					return (
 						<SaveConfirmDialog
 							fileName={name}
 							onSave={async () => {
 								await Promise.all(
-									dirtyTabs.map((t) =>
-										useExplorerStore.getState().saveFile(t.id),
+									dirtyPanes.map((p) =>
+										useExplorerStore.getState().saveFile(p.filePath),
 									),
 								);
 								setAppCloseRequested(false);

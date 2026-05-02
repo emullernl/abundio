@@ -79,14 +79,11 @@ export function unloadWebgl(paneId: string): void {
 	managed.webglAddon = null;
 }
 
-/** Returns true if `paneId` belongs to the active tab of the active workspace
- *  (and the active view is the terminal view). Used to gate WebGL loading. */
+/** Returns true if `paneId` belongs to the active tab of the active workspace. */
 function isPaneInActiveTab(paneId: string): boolean {
 	const state = useWorkspaceStore.getState();
 	const workspaceId = state.activeWorkspaceId;
 	if (!workspaceId) return false;
-	if ((state.activeView[workspaceId] ?? "terminal") !== "terminal")
-		return false;
 	const tabId = state.activeTabByWorkspace[workspaceId];
 	if (!tabId) return false;
 	const workspace = state.workspaces.find((s) => s.id === workspaceId);
@@ -116,7 +113,7 @@ export function primaryFontFamily(fontFamily: string): string | null {
 }
 
 function containsPaneId(node: PaneNode, targetPaneId: string): boolean {
-	if (node.type === "terminal") return node.id === targetPaneId;
+	if (node.type !== "split") return node.id === targetPaneId;
 	return (
 		containsPaneId(node.first, targetPaneId) ||
 		containsPaneId(node.second, targetPaneId)
@@ -131,6 +128,7 @@ function setPtyIdInLayout(
 	if (node.type === "terminal") {
 		return node.id === targetPaneId ? { ...node, ptyId } : node;
 	}
+	if (node.type === "file") return node;
 	return {
 		...node,
 		first: setPtyIdInLayout(node.first, targetPaneId, ptyId),
@@ -325,10 +323,8 @@ setTimeout(() => {
 	if (!useWorkspaceStore?.subscribe) return;
 	setFocusedPaneIdGetter(() => useWorkspaceStore.getState().focusedPaneId);
 	useWorkspaceStore.subscribe((state) => {
-		const { activeWorkspaceId, activeView, focusedPaneId } = state;
+		const { activeWorkspaceId, focusedPaneId } = state;
 		if (!activeWorkspaceId) return;
-		const view = activeView[activeWorkspaceId] ?? "terminal";
-		const isTerminalView = view === "terminal";
 
 		// Compute the set of paneIds in the currently active tab so we can
 		// keep WebGL contexts only for panes the user is actually looking at.
@@ -340,7 +336,7 @@ setTimeout(() => {
 		);
 		const activeTab = activeWorkspace?.tabs.find((t) => t.id === activeTabId);
 		let activePaneIds: Set<string> | null = null;
-		if (activeTab && isTerminalView) {
+		if (activeTab) {
 			try {
 				const layout = JSON.parse(activeTab.layoutJson) as PaneNode;
 				activePaneIds = new Set(collectPaneIds(layout));
@@ -351,7 +347,7 @@ setTimeout(() => {
 
 		const activityStore = usePtyActivityStore.getState();
 		for (const [paneId, managed] of instances) {
-			managed.focused = isTerminalView && focusedPaneId === paneId;
+			managed.focused = focusedPaneId === paneId;
 			managed.term.options.cursorBlink = managed.focused;
 			if (managed.focused) {
 				managed.suppressActivity = false;

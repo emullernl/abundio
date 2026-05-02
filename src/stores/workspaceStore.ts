@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { pty, tabs as tabsApi, workspaces as workspacesApi } from "../lib/ipc";
-import { collectAgentPanes, setAgentId } from "../lib/paneTree";
+import {
+	collectAgentPanes,
+	collectPaneIds,
+	collectTerminalIds,
+	setAgentId,
+} from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { destroyTerminal } from "../lib/terminalManager";
 import type {
@@ -10,7 +15,7 @@ import type {
 	Tab,
 	WorkspaceWithTabs,
 } from "../lib/types";
-import { persistFileTabs, useExplorerStore } from "./explorerStore";
+import { useExplorerStore } from "./explorerStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
 
@@ -25,7 +30,6 @@ interface WorkspaceState {
 	savedLayout: PaneNode | null;
 	ptyStatuses: Record<string, PtyStatusType>; // ptyId → status
 	searchPaneId: string | null; // pane currently showing search bar
-	activeView: Record<string, "terminal" | "file">; // workspaceId → current view
 	workspacesInitialized: boolean; // true after initial loadWorkspaces() completes
 
 	// Workspace actions
@@ -44,7 +48,7 @@ interface WorkspaceState {
 	reorderWorkspaces: (ids: string[]) => void;
 
 	// Tab actions
-	createTab: (workspaceId: string, agent?: CodingAgent) => Promise<Tab>;
+	createTab: (workspaceId: string, agent?: CodingAgent, seedLayout?: PaneNode) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
 	renameTab: (tabId: string, name: string) => Promise<void>;
@@ -58,7 +62,6 @@ interface WorkspaceState {
 	setMaximized: (paneId: string | null, savedLayout: PaneNode | null) => void;
 	setPtyStatus: (ptyId: string, status: PtyStatusType) => void;
 	toggleSearch: () => void;
-	setActiveView: (workspaceId: string, view: "terminal" | "file") => void;
 	setWorkspaceBaseBranch: (
 		workspaceId: string,
 		baseBranch: string | null,
@@ -75,15 +78,15 @@ function defaultLayout(): PaneNode {
 	return { type: "terminal", id: crypto.randomUUID(), ptyId: "" };
 }
 
-function firstTerminalId(node: PaneNode): string | null {
-	if (node.type === "terminal") return node.id;
-	return firstTerminalId(node.first) ?? firstTerminalId(node.second);
+function firstLeafId(node: PaneNode): string | null {
+	if (node.type !== "split") return node.id;
+	return firstLeafId(node.first) ?? firstLeafId(node.second);
 }
 
-/** Collect all terminal pane IDs from a layout tree. */
-function collectPaneIds(node: PaneNode): string[] {
-	if (node.type === "terminal") return [node.id];
-	return [...collectPaneIds(node.first), ...collectPaneIds(node.second)];
+function firstTerminalId(node: PaneNode): string | null {
+	if (node.type === "terminal") return node.id;
+	if (node.type === "file") return null;
+	return firstTerminalId(node.first) ?? firstTerminalId(node.second);
 }
 
 /** Clear all ptyIds in a layout tree so fresh PTYs get spawned on render. */
@@ -91,6 +94,7 @@ function clearPtyIds(node: PaneNode): PaneNode {
 	if (node.type === "terminal") {
 		return { ...node, ptyId: "" };
 	}
+	if (node.type === "file") return node;
 	return {
 		...node,
 		first: clearPtyIds(node.first),
@@ -129,6 +133,16 @@ function updateTabInWorkspaces(
 	}));
 }
 
+interface PersistedFileTab {
+	id: string;
+	filePath: string;
+	fileName: string;
+}
+interface PersistedFileTabState {
+	tabs: PersistedFileTab[];
+	activeFileTabId: string | null;
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	workspaces: [],
 	activeWorkspaceId: null,
@@ -140,7 +154,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	savedLayout: null,
 	ptyStatuses: {},
 	searchPaneId: null,
-	activeView: {},
 	workspacesInitialized: false,
 
 	loadWorkspaces: async () => {
@@ -177,6 +190,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			workspacesInitialized: true,
 		});
 		pty.cleanupStaleLogs(allPaneIds).catch(() => {});
+
+		// One-time migration: convert old fileTabsJson into file-leaf tabs
+		for (const s of workspacesWithTabs) {
+			if (!s.fileTabsJson || s.fileTabsJson === "{}") continue;
+			try {
+				const persisted: PersistedFileTabState = JSON.parse(s.fileTabsJson);
+				if (!persisted.tabs?.length) continue;
+				// Create a new tab for each previously-open file
+				for (const ft of persisted.tabs) {
+					const seedLayout: PaneNode = {
+						type: "file",
+						id: crypto.randomUUID(),
+						filePath: ft.filePath,
+					};
+					await get().createTab(s.id, undefined, seedLayout);
+				}
+				// Clear fileTabsJson so migration doesn't re-run
+				workspacesApi.update(s.id, { fileTabsJson: "" }).catch(() => {});
+			} catch {
+				// Malformed JSON — skip
+			}
+		}
 	},
 
 	createWorkspace: async (name, rootFolder, agent) => {
@@ -224,7 +259,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			for (const tab of workspace.tabs) {
 				try {
 					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					const paneIds = collectPaneIds(layout);
+					const paneIds = collectTerminalIds(layout);
 					for (const paneId of paneIds) {
 						pty.deleteLog(paneId).catch(() => {});
 					}
@@ -250,8 +285,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		const activityStore = usePtyActivityStore.getState();
 
 		// Destroy terminal instances, kill PTYs, and clean up activity state.
-		// App.tsx only renders content for opened workspaces, so React will
-		// unmount the components after unmarkWorkspaceOpened below.
 		for (const tab of workspace.tabs) {
 			try {
 				const layout = JSON.parse(tab.layoutJson) as PaneNode;
@@ -265,6 +298,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					}
 					activityStore.removePane(paneId);
 				}
+				// Clean up file pane state
+				useExplorerStore.getState().clearWorkspaceFilePanes(id);
 			} catch {
 				// Layout parse failure — skip
 			}
@@ -274,8 +309,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		activityStore.unmarkWorkspaceOpened(id);
 
 		// Clear ptyIds from layouts so fresh PTYs spawn on next open, and re-seed
-		// pendingAgentRegistry for any pane that remembers an agent so the agent
-		// re-runs in the new PTY when the workspace is reopened.
+		// pendingAgentRegistry for any pane that remembers an agent.
 		const isActive = state.activeWorkspaceId === id;
 		set({
 			workspaces: state.workspaces.map((s) =>
@@ -316,21 +350,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	setActiveWorkspace: (id) => {
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
-		// Sync the globally-visible activeFileTabId to the new workspace's
-		// last-active file tab (defensive: only if it still exists).
-		{
-			const explorer = useExplorerStore.getState();
-			const candidate = id
-				? (explorer.activeFileTabByWorkspace[id] ?? null)
-				: null;
-			const valid =
-				candidate && explorer.fileTabs.some((t) => t.id === candidate)
-					? candidate
-					: null;
-			if (explorer.activeFileTabId !== valid) {
-				useExplorerStore.setState({ activeFileTabId: valid });
-			}
-		}
 		return set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
 			// Save current focused pane for the current tab
@@ -352,7 +371,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				if (tab) {
 					try {
 						const layout = JSON.parse(tab.layoutJson) as PaneNode;
-						restoredFocus = firstTerminalId(layout);
+						restoredFocus = firstLeafId(layout);
 					} catch {
 						/* ignore */
 					}
@@ -400,33 +419,51 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	// ── Tab actions ──
 
-	createTab: async (workspaceId, agent) => {
+	createTab: async (workspaceId, agent, seedLayout) => {
 		const workspace = get().workspaces.find((s) => s.id === workspaceId);
 		const nextNum = (workspace?.tabs.length ?? 0) + 1;
-		const name = `Terminal ${nextNum}`;
-		const tab = await tabsApi.create(workspaceId, name);
-		let initialFocus: string | null = null;
-		try {
-			const layout = JSON.parse(tab.layoutJson) as PaneNode;
-			initialFocus = firstTerminalId(layout);
-		} catch {
-			/* ignore */
+
+		let name = `Terminal ${nextNum}`;
+		if (seedLayout?.type === "file") {
+			name = seedLayout.filePath.split("/").pop() || "file";
+		} else if (agent) {
+			name = agent.name;
 		}
-		if (agent && initialFocus) {
-			setPendingAgent(initialFocus, {
-				command: [agent.command, ...(agent.args ?? [])].join(" "),
-			});
-			// Persist the agent identity into the layout so it survives restarts.
+
+		const tab = await tabsApi.create(workspaceId, name);
+
+		// If caller provided a seed layout (e.g. a file leaf), override the default terminal layout.
+		let finalLayout: PaneNode;
+		if (seedLayout) {
+			finalLayout = seedLayout;
+			const layoutJson = JSON.stringify(finalLayout);
+			tab.layoutJson = layoutJson;
+			tabsApi.update(tab.id, { layoutJson }).catch(() => {});
+		} else {
 			try {
-				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				const stamped = setAgentId(layout, initialFocus, agent.id);
+				finalLayout = JSON.parse(tab.layoutJson) as PaneNode;
+			} catch {
+				finalLayout = defaultLayout();
+			}
+		}
+
+		let initialFocus: string | null = firstLeafId(finalLayout);
+
+		if (agent && !seedLayout) {
+			const terminalFocus = firstTerminalId(finalLayout);
+			if (terminalFocus) {
+				setPendingAgent(terminalFocus, {
+					command: [agent.command, ...(agent.args ?? [])].join(" "),
+				});
+				// Persist the agent identity into the layout so it survives restarts.
+				const stamped = setAgentId(finalLayout, terminalFocus, agent.id);
 				const stampedJson = JSON.stringify(stamped);
 				tab.layoutJson = stampedJson;
 				tabsApi.update(tab.id, { layoutJson: stampedJson }).catch(() => {});
-			} catch {
-				/* ignore */
+				initialFocus = terminalFocus;
 			}
 		}
+
 		set((state) => ({
 			workspaces: state.workspaces.map((s) =>
 				s.id === workspaceId ? { ...s, tabs: [...s.tabs, tab] } : s,
@@ -457,9 +494,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		if (tab) {
 			try {
 				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				const paneIds = collectPaneIds(layout);
-				for (const paneId of paneIds) {
+				const termIds = collectTerminalIds(layout);
+				for (const paneId of termIds) {
 					pty.deleteLog(paneId).catch(() => {});
+				}
+				// Clean up file pane states for file leaves
+				for (const paneId of collectPaneIds(layout)) {
+					useExplorerStore.getState().unregisterFilePane(paneId);
 				}
 			} catch {
 				// ignore
@@ -520,7 +561,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			if (oldTabId && state.focusedPaneId) {
 				focusedPaneByTab[oldTabId] = state.focusedPaneId;
 			}
-			// Restore focused pane for the new tab, falling back to first pane in layout
+			// Restore focused pane for the new tab, falling back to first leaf in layout
 			let restoredFocus: string | null = focusedPaneByTab[tabId] ?? null;
 			if (!restoredFocus) {
 				const workspace = state.workspaces.find((s) => s.id === workspaceId);
@@ -528,7 +569,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				if (tab) {
 					try {
 						const layout = JSON.parse(tab.layoutJson) as PaneNode;
-						restoredFocus = firstTerminalId(layout);
+						restoredFocus = firstLeafId(layout);
 					} catch {
 						/* ignore */
 					}
@@ -564,8 +605,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	// Persist an agent identity onto a terminal pane in its tab's layout.
-	// Used by paths that launch an agent into an already-running PTY (e.g. the
-	// terminal pane context menu) so the agent re-runs after an app restart.
 	stampAgentOnPane: (paneId, agentId) => {
 		const state = get();
 		let targetTabId: string | null = null;
@@ -637,13 +676,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			searchPaneId:
 				state.searchPaneId === state.focusedPaneId ? null : state.focusedPaneId,
 		})),
-
-	setActiveView: (workspaceId, view) => {
-		set((state) => ({
-			activeView: { ...state.activeView, [workspaceId]: view },
-		}));
-		persistFileTabs(workspaceId);
-	},
 
 	setWorkspaceBaseBranch: (workspaceId, baseBranch) =>
 		set((state) => ({

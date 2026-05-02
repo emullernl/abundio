@@ -77,10 +77,6 @@ describe("handleNotificationClick", () => {
 			useWorkspaceStore.getState(),
 			"setFocusedPane",
 		);
-		const setActiveView = vi.spyOn(
-			useWorkspaceStore.getState(),
-			"setActiveView",
-		);
 
 		handleNotificationClick({
 			type: "pty",
@@ -93,7 +89,6 @@ describe("handleNotificationClick", () => {
 		expect(setActiveWorkspace).toHaveBeenCalledWith("ws-1");
 		expect(setActiveTab).toHaveBeenCalledWith("ws-1", "tab-1");
 		expect(setFocusedPane).toHaveBeenCalledWith("pane-1");
-		expect(setActiveView).toHaveBeenCalledWith("ws-1", "terminal");
 	});
 
 	it("opens git panel for PR notification", () => {

@@ -3,6 +3,13 @@
 export type PaneNode =
 	| { type: "terminal"; id: string; ptyId: string; agentId?: string }
 	| {
+			type: "file";
+			id: string;
+			filePath: string;
+			isDiff?: boolean;
+			diffSection?: GitChangedFile["section"];
+	  }
+	| {
 			type: "split";
 			id: string;
 			direction: "horizontal" | "vertical";

@@ -1,31 +1,31 @@
 import { AlertTriangle, FileX } from "lucide-react";
-import type { FileTab } from "../../stores/explorerStore";
-import { useExplorerStore } from "../../stores/explorerStore";
+import type { FilePaneState } from "../../stores/explorerStore";
 
 interface FileChangeBannerProps {
-	tab: FileTab;
+	paneId: string;
+	paneState: FilePaneState;
+	onReload: () => void;
+	onKeepEdits: () => void;
+	onSave: () => void;
 }
 
 /**
- * Inline banner shown at the top of the file viewer when a file was changed
- * or deleted on disk while open. Four visual states, driven by the tab's
- * `externallyChanged`, `deletedOnDisk`, and `isDirty` flags.
+ * Inline banner shown at the top of the file pane when a file was changed
+ * or deleted on disk while open.
  */
-export function FileChangeBanner({ tab }: FileChangeBannerProps) {
-	const reloadTabFromDisk = useExplorerStore((s) => s.reloadTabFromDisk);
-	const dismissExternalChange = useExplorerStore(
-		(s) => s.dismissExternalChange,
-	);
-	const saveFile = useExplorerStore((s) => s.saveFile);
-	const closeFileTab = useExplorerStore((s) => s.closeFileTab);
+export function FileChangeBanner({
+	paneId: _paneId,
+	paneState,
+	onReload,
+	onKeepEdits,
+	onSave,
+}: FileChangeBannerProps) {
+	if (!paneState.externallyChanged && !paneState.deletedOnDisk) return null;
 
-	if (!tab.externallyChanged && !tab.deletedOnDisk) return null;
-
-	const { icon, message, actions } = buildContent(tab, {
-		onReload: () => reloadTabFromDisk(tab.id),
-		onKeepEdits: () => dismissExternalChange(tab.id),
-		onSave: () => saveFile(tab.id),
-		onClose: () => closeFileTab(tab.id),
+	const { icon, message, actions } = buildContent(paneState, {
+		onReload,
+		onKeepEdits,
+		onSave,
 	});
 
 	return (
@@ -89,34 +89,32 @@ interface BannerContent {
 }
 
 function buildContent(
-	tab: FileTab,
+	pane: FilePaneState,
 	handlers: {
 		onReload: () => void;
 		onKeepEdits: () => void;
 		onSave: () => void;
-		onClose: () => void;
 	},
 ): BannerContent {
-	if (tab.deletedOnDisk && tab.isDirty) {
+	if (pane.deletedOnDisk && pane.isDirty) {
 		return {
 			icon: <FileX size={16} />,
 			message: "This file was deleted on disk. You have unsaved changes.",
 			actions: [
 				{ label: "Save to re-create", onClick: handlers.onSave, primary: true },
-				{ label: "Close tab (discard)", onClick: handlers.onClose },
+				{ label: "Close pane (discard)", onClick: () => {} },
 			],
 		};
 	}
-	if (tab.deletedOnDisk) {
+	if (pane.deletedOnDisk) {
 		return {
 			icon: <FileX size={16} />,
 			message: "This file was deleted on disk.",
 			actions: [
-				{ label: "Close tab", onClick: handlers.onClose, primary: true },
+				{ label: "Close pane", onClick: () => {}, primary: true },
 			],
 		};
 	}
-	// externallyChanged && isDirty (externallyChanged with clean tab auto-reloads)
 	return {
 		icon: <AlertTriangle size={16} />,
 		message: "This file has changed on disk. You have unsaved changes.",
