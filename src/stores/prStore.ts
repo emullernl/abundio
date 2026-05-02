@@ -3,7 +3,10 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { gh } from "../lib/ipc";
 import type { GhStatus, PullRequest } from "../lib/types";
-import { isAppWindowFocused } from "../lib/windowFocus";
+import {
+	NOTIFICATION_BLUR_THRESHOLD_MS,
+	getWindowBlurredMs,
+} from "../lib/windowFocus";
 import { useWorkspaceStore } from "./workspaceStore";
 
 export type ReviewView = "review-all" | "review-repo";
@@ -191,7 +194,8 @@ usePrStore.subscribe((state, prevState) => {
 		skipNextMyPrsLoad = true;
 	}
 
-	if (isAppWindowFocused()) return;
+	const blurredMs = getWindowBlurredMs();
+	if (blurredMs === null || blurredMs < NOTIFICATION_BLUR_THRESHOLD_MS) return;
 
 	const notifications: string[] = [];
 

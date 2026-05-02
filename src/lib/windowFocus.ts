@@ -8,20 +8,27 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Default to `true` so we don't spam notifications during the brief window
 // between module init and the first `onFocusChanged` event.
 let isWindowFocused = true;
+let blurredAt: number | null = null;
+
+function setFocused(focused: boolean) {
+	if (isWindowFocused === focused) return;
+	isWindowFocused = focused;
+	blurredAt = focused ? null : Date.now();
+}
 
 try {
 	const win = getCurrentWindow();
 	win
 		.isFocused()
 		.then((focused) => {
-			isWindowFocused = focused;
+			setFocused(focused);
 		})
 		.catch(() => {
 			// Non-Tauri environment (tests) — keep the default.
 		});
 	win
 		.onFocusChanged(({ payload: focused }) => {
-			isWindowFocused = focused;
+			setFocused(focused);
 		})
 		.catch(() => {
 			// Non-Tauri environment (tests) — keep the default.
@@ -33,10 +40,18 @@ try {
 		typeof document !== "undefined" &&
 		typeof document.hasFocus === "function"
 	) {
-		isWindowFocused = document.hasFocus();
+		setFocused(document.hasFocus());
 	}
 }
 
+export const NOTIFICATION_BLUR_THRESHOLD_MS = 3000;
+
 export function isAppWindowFocused(): boolean {
 	return isWindowFocused;
+}
+
+// Returns how long the window has been continuously unfocused, in milliseconds.
+// Returns null when the window is currently focused.
+export function getWindowBlurredMs(): number | null {
+	return blurredAt === null ? null : Date.now() - blurredAt;
 }

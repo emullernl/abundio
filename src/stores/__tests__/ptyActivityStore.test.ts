@@ -23,8 +23,11 @@ vi.mock("../../lib/notificationRouter", () => ({
 	})),
 }));
 
+const focusMock = vi.hoisted(() => ({ blurredMs: 10_000 as number | null }));
 vi.mock("../../lib/windowFocus", () => ({
 	isAppWindowFocused: () => document.hasFocus(),
+	getWindowBlurredMs: () => (document.hasFocus() ? null : focusMock.blurredMs),
+	NOTIFICATION_BLUR_THRESHOLD_MS: 3000,
 }));
 
 function resetStore() {
@@ -624,6 +627,34 @@ describe("notifications on state transitions", () => {
 			extra: { type: "pty" },
 		});
 		vi.restoreAllMocks();
+	});
+
+	it("does not send notification when blurred for less than the threshold", () => {
+		focusMock.blurredMs = 1500;
+		const { initPty, recordOutput, recordError } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordError("pty-1");
+
+		expect(mockSendNotification).not.toHaveBeenCalled();
+		focusMock.blurredMs = 10_000;
+	});
+
+	it("sends notification when blurred for more than the threshold", () => {
+		focusMock.blurredMs = 4000;
+		const { initPty, recordOutput, recordError } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordError("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalled();
+		focusMock.blurredMs = 10_000;
 	});
 });
 

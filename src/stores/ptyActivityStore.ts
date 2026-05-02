@@ -7,7 +7,11 @@ import type {
 	PtyDetectionMode,
 	Tab,
 } from "../lib/types";
-import { isAppWindowFocused } from "../lib/windowFocus";
+import {
+	NOTIFICATION_BLUR_THRESHOLD_MS,
+	getWindowBlurredMs,
+	isAppWindowFocused,
+} from "../lib/windowFocus";
 
 // ── Constants ──
 
@@ -344,7 +348,8 @@ setInterval(() => {
 // ── Notifications for state transitions ──
 
 usePtyActivityStore.subscribe((state, prevState) => {
-	if (isAppWindowFocused()) return;
+	const blurredMs = getWindowBlurredMs();
+	if (blurredMs === null || blurredMs < NOTIFICATION_BLUR_THRESHOLD_MS) return;
 
 	const { activities, titles, panePtyMap } = state;
 	const prevActivities = prevState.activities;

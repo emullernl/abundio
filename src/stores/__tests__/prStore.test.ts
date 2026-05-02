@@ -5,8 +5,11 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 	sendNotification: vi.fn(),
 }));
 
+const focusMock = vi.hoisted(() => ({ blurredMs: 10_000 as number | null }));
 vi.mock("../../lib/windowFocus", () => ({
 	isAppWindowFocused: () => document.hasFocus(),
+	getWindowBlurredMs: () => (document.hasFocus() ? null : focusMock.blurredMs),
+	NOTIFICATION_BLUR_THRESHOLD_MS: 3000,
 }));
 
 vi.mock("../../lib/ipc", () => ({
@@ -393,6 +396,34 @@ describe("prStore", () => {
 			]);
 
 			expect(mockSendNotification).not.toHaveBeenCalled();
+		});
+
+		it("does not notify when blurred for less than the threshold", () => {
+			focusMock.blurredMs = 1500;
+
+			simulateReviewLoad([makePr({ number: 1 })]);
+			simulateReviewLoad([
+				makePr({ number: 1 }),
+				makePr({ number: 2, title: "New" }),
+			]);
+
+			expect(mockSendNotification).not.toHaveBeenCalled();
+			focusMock.blurredMs = 10_000;
+		});
+
+		it("notifies when blurred for more than the threshold", () => {
+			focusMock.blurredMs = 4000;
+
+			simulateReviewLoad([makePr({ number: 1 })]);
+			simulateReviewLoad([
+				makePr({ number: 1 }),
+				makePr({ number: 2, title: "New" }),
+			]);
+
+			expect(mockSendNotification).toHaveBeenCalledWith(
+				expect.objectContaining({ body: "Review requested: New (#2)" }),
+			);
+			focusMock.blurredMs = 10_000;
 		});
 
 		it("does not notify when review view changes", () => {
