@@ -1,5 +1,6 @@
 import { DiffEditor, type Monaco } from "@monaco-editor/react";
-import { useCallback, useState } from "react";
+import type { editor } from "monaco-editor";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { defineAbundioTheme, detectLanguage } from "../../lib/monacoShared";
 import { setMonacoInstance } from "../../lib/themes";
 import type { GitFileDiff } from "../../lib/types";
@@ -15,15 +16,35 @@ export function DiffViewer({ diff, onBack }: Props) {
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const monacoFontSize = fontSize - 1;
+	const editorWordWrap = useSettingsStore((s) => s.editorWordWrap);
 	const [hideUnchanged, setHideUnchanged] = useState(true);
+	const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
 
 	const language = detectLanguage(diff.filePath);
 
-	const handleMount = useCallback((_editor: unknown, m: Monaco) => {
+	const handleMount = useCallback((ed: editor.IStandaloneDiffEditor, m: Monaco) => {
+		diffEditorRef.current = ed;
 		defineAbundioTheme(m);
 		m.editor.setTheme("abundio");
 		setMonacoInstance(m);
+		const action = {
+			id: "abundio.toggleWordWrap",
+			label: "Toggle Word Wrap",
+			contextMenuGroupId: "view",
+			contextMenuOrder: 1.5,
+			run: () => useSettingsStore.getState().toggleEditorWordWrap(),
+		};
+		ed.getOriginalEditor().addAction(action);
+		ed.getModifiedEditor().addAction(action);
 	}, []);
+
+	useEffect(() => {
+		const de = diffEditorRef.current;
+		if (!de) return;
+		const ww = editorWordWrap ? "on" : "off";
+		de.getOriginalEditor().updateOptions({ wordWrap: ww });
+		de.getModifiedEditor().updateOptions({ wordWrap: ww });
+	}, [editorWordWrap]);
 
 	const fileName = diff.filePath.split("/").pop() ?? diff.filePath;
 
@@ -98,6 +119,7 @@ export function DiffViewer({ diff, onBack }: Props) {
 					options={{
 						fontFamily,
 						fontSize: monacoFontSize,
+						wordWrap: editorWordWrap ? "on" : "off",
 						contextmenu: true,
 						readOnly: true,
 						minimap: { enabled: false },

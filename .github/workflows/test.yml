@@ -1,9 +1,9 @@
 name: Tests
 
 on:
-  workflow_dispatch: # Temporarily disabled automatic triggers
-  # pull_request:
-  #   branches: [main, develop]
+  workflow_dispatch:
+  pull_request:
+    branches: [main, develop]
   # push:
   #   branches: [main, develop]
 
@@ -34,6 +34,8 @@ jobs:
         run: pnpm build
 
   rust:
+    # do not run rust tests yet
+    if: false
     strategy:
       fail-fast: false
       matrix:

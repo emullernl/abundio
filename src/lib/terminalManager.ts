@@ -318,8 +318,11 @@ function flushWrites(managed: ManagedTerminal): void {
 	managed.pendingWrites = [];
 }
 
-// Deferred subscription — runs after all modules are initialized
+// Deferred subscription — runs after all modules are initialized.
+// Guard against the case where the module context is torn down before the
+// timer fires (e.g. in the Vitest jsdom environment after a test finishes).
 setTimeout(() => {
+	if (!useWorkspaceStore?.subscribe) return;
 	setFocusedPaneIdGetter(() => useWorkspaceStore.getState().focusedPaneId);
 	useWorkspaceStore.subscribe((state) => {
 		const { activeWorkspaceId, activeView, focusedPaneId } = state;
