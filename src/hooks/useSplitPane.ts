@@ -124,7 +124,14 @@ export function useSplitPane() {
 				setMaximized(null, null);
 			}
 		},
-		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, setMaximized, closeTab],
+		[
+			getActiveTab,
+			getActiveLayout,
+			updateLayout,
+			setFocusedPane,
+			setMaximized,
+			closeTab,
+		],
 	);
 
 	const closePane = useCallback((paneId: string, label?: string) => {

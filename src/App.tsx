@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
@@ -91,7 +92,60 @@ const TabContent = memo(function TabContent({
 	}, [layoutJson]);
 
 	if (!layout) return null;
-	return <SplitContainer node={layout} cwd={cwd} />;
+	return (
+		<ErrorBoundary
+			fallback={(error, reset) => (
+				<div
+					className="flex flex-col items-center justify-center h-full w-full gap-3"
+					style={{
+						backgroundColor: "var(--bg-primary)",
+						color: "var(--fg-secondary)",
+					}}
+				>
+					<div
+						className="flex flex-col items-center gap-2 p-5 rounded-lg max-w-sm text-center"
+						style={{
+							backgroundColor: "var(--bg-secondary)",
+							border: "1px solid var(--border)",
+						}}
+					>
+						<span
+							style={{ color: "var(--error)", fontSize: 13, fontWeight: 600 }}
+						>
+							This tab couldn't be displayed
+						</span>
+						<span
+							style={{ fontSize: 12, opacity: 0.7, wordBreak: "break-word" }}
+						>
+							{error.message || "Unknown render error"}
+						</span>
+						<button
+							type="button"
+							onClick={reset}
+							style={{
+								marginTop: 4,
+								padding: "4px 14px",
+								borderRadius: 4,
+								background: "var(--accent)",
+								color: "var(--bg-primary)",
+								border: "none",
+								fontSize: 12,
+								cursor: "pointer",
+								fontWeight: 500,
+							}}
+						>
+							Retry
+						</button>
+						<span style={{ fontSize: 11, opacity: 0.5 }}>
+							Try closing this tab or switching workspaces.
+						</span>
+					</div>
+				</div>
+			)}
+		>
+			<SplitContainer node={layout} cwd={cwd} />
+		</ErrorBoundary>
+	);
 });
 
 export function App() {

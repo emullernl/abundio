@@ -4,8 +4,8 @@ import { persist } from "zustand/middleware";
 import { gh } from "../lib/ipc";
 import type { GhStatus, PullRequest } from "../lib/types";
 import {
-	NOTIFICATION_BLUR_THRESHOLD_MS,
 	getWindowBlurredMs,
+	NOTIFICATION_BLUR_THRESHOLD_MS,
 } from "../lib/windowFocus";
 import { useWorkspaceStore } from "./workspaceStore";
 

@@ -93,14 +93,24 @@
 	font-variant-numeric: tabular-nums;
 }
 
-/* Prose content area */
+/* Outer scroll container — "desk" behind the page */
+.mdx-page-wrapper {
+	background-color: var(--bg-secondary);
+}
+
+/* Prose content area — A4 document page */
 .abundio-prose {
 	color: var(--fg-primary);
-	max-width: 72ch;
-	margin: 0 auto;
-	padding: 1.5rem 1rem;
-	font-size: calc(15px * var(--md-zoom, 1));
+	max-width: calc(760px * var(--md-zoom, 1));
+	margin: 1.5rem auto;
+	padding: 2.5rem 3.5rem;
+	font-size: calc(12px * var(--md-zoom, 1));
 	line-height: 1.7;
+	background: var(--bg-primary);
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent),
+		0 2px 12px rgba(0, 0, 0, 0.1);
+	border-radius: 2px;
 }
 
 .abundio-prose h1,
@@ -197,7 +207,11 @@
 
 .abundio-theme .cm-selectionBackground,
 .abundio-theme .cm-focused .cm-selectionBackground {
-	background-color: color-mix(in srgb, var(--accent) 25%, transparent) !important;
+	background-color: color-mix(
+		in srgb,
+		var(--accent) 25%,
+		transparent
+	) !important;
 }
 
 .abundio-theme .cm-activeLine {

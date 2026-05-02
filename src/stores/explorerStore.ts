@@ -170,7 +170,14 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	dirContents: {},
 	pendingGotoLine: null,
 
-	registerFilePane: (paneId, filePath, isDiff, diffSection, diffOriginal, diffModified) => {
+	registerFilePane: (
+		paneId,
+		filePath,
+		isDiff,
+		diffSection,
+		diffOriginal,
+		diffModified,
+	) => {
 		const existing = get().filePanes[paneId];
 		// If already registered for same file, no-op
 		if (existing && existing.filePath === filePath) return;
@@ -179,7 +186,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			const realPath = filePath.startsWith("diff:")
 				? filePath.slice("diff:".length)
 				: filePath;
-			const ext = realPath.includes(".") ? realPath.split(".").pop() || null : null;
+			const ext = realPath.includes(".")
+				? realPath.split(".").pop() || null
+				: null;
 			const fileName = `${realPath.split("/").pop() || "file"} (diff)`;
 			set((s) => ({
 				filePanes: {
@@ -252,7 +261,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			id: crypto.randomUUID(),
 			filePath,
 		};
-		await useWorkspaceStore.getState().createTab(workspaceId, undefined, seedLayout);
+		await useWorkspaceStore
+			.getState()
+			.createTab(workspaceId, undefined, seedLayout);
 	},
 
 	openDiff: (workspaceId, filePath, original, modified, section) => {
@@ -285,7 +296,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		// Seed diff content eagerly so FilePane has it when it mounts
 		const newPaneId = crypto.randomUUID();
 		const realPath = filePath;
-		const ext = realPath.includes(".") ? realPath.split(".").pop() || null : null;
+		const ext = realPath.includes(".")
+			? realPath.split(".").pop() || null
+			: null;
 		set((s) => ({
 			filePanes: {
 				...s.filePanes,
@@ -319,7 +332,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		if (ctx) {
 			const { tabId, layout } = ctx;
 			const focusedPaneId = wsStore.focusedPaneId;
-			const focusedNode = focusedPaneId ? findNode(layout, focusedPaneId) : null;
+			const focusedNode = focusedPaneId
+				? findNode(layout, focusedPaneId)
+				: null;
 
 			const install = (targetPaneId: string) => {
 				const newLeaf: PaneNode = { ...seedLayout, id: targetPaneId };
@@ -328,9 +343,18 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				wsStore.setFocusedPane(targetPaneId);
 				// Adopt the pre-seeded pane state under the target pane's ID
 				set((s) => {
-					const { [newPaneId]: seeded, [targetPaneId]: _old, ...rest } = s.filePanes;
+					const {
+						[newPaneId]: seeded,
+						[targetPaneId]: _old,
+						...rest
+					} = s.filePanes;
 					if (!seeded) return s;
-					return { filePanes: { ...rest, [targetPaneId]: { ...seeded, filePath: diffKey } } };
+					return {
+						filePanes: {
+							...rest,
+							[targetPaneId]: { ...seeded, filePath: diffKey },
+						},
+					};
 				});
 			};
 
@@ -456,9 +480,12 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		for (const [paneId, pane] of Object.entries(filePanes)) {
 			if (!workspacePaneIds.has(paneId)) continue;
 
-			const realPath = pane.fileType === "diff"
-				? pane.filePath.startsWith("diff:") ? pane.filePath.slice("diff:".length) : pane.filePath
-				: pane.filePath;
+			const realPath =
+				pane.fileType === "diff"
+					? pane.filePath.startsWith("diff:")
+						? pane.filePath.slice("diff:".length)
+						: pane.filePath
+					: pane.filePath;
 
 			// ── Deletions ──
 			if (removedSet.has(realPath)) {
@@ -485,7 +512,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 							set((s) => ({
 								filePanes: {
 									...s.filePanes,
-									[paneId]: { ...s.filePanes[paneId], externallyChanged: false, deletedOnDisk: false },
+									[paneId]: {
+										...s.filePanes[paneId],
+										externallyChanged: false,
+										deletedOnDisk: false,
+									},
 								},
 							}));
 						}
@@ -496,7 +527,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 						set((s) => ({
 							filePanes: {
 								...s.filePanes,
-								[paneId]: { ...s.filePanes[paneId], externallyChanged: true, deletedOnDisk: false },
+								[paneId]: {
+									...s.filePanes[paneId],
+									externallyChanged: true,
+									deletedOnDisk: false,
+								},
 							},
 						}));
 					} else {
@@ -614,11 +649,17 @@ export async function persistAllFilePanes() {
 						return node;
 					}
 					if (node.type === "terminal") return node;
-					return { ...node, first: persist(node.first), second: persist(node.second) };
+					return {
+						...node,
+						first: persist(node.first),
+						second: persist(node.second),
+					};
 				};
 				const updated = persist(layout);
 				if (mutated) {
-					tabsApi.update(tab.id, { layoutJson: JSON.stringify(updated) }).catch(() => {});
+					tabsApi
+						.update(tab.id, { layoutJson: JSON.stringify(updated) })
+						.catch(() => {});
 				}
 			} catch {
 				// ignore

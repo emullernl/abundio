@@ -127,7 +127,9 @@ export function CodeEditor({
 
 	// Update word-wrap on live editors when the global setting changes
 	useEffect(() => {
-		editorRef.current?.updateOptions({ wordWrap: editorWordWrap ? "on" : "off" });
+		editorRef.current?.updateOptions({
+			wordWrap: editorWordWrap ? "on" : "off",
+		});
 	}, [editorWordWrap]);
 
 	// Re-define theme when it might have changed (monaco instance available)

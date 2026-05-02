@@ -98,7 +98,10 @@ export function collectPaneIds(tree: PaneNode): string[] {
 export function collectTerminalIds(tree: PaneNode): string[] {
 	if (tree.type === "terminal") return [tree.id];
 	if (tree.type === "file") return [];
-	return [...collectTerminalIds(tree.first), ...collectTerminalIds(tree.second)];
+	return [
+		...collectTerminalIds(tree.first),
+		...collectTerminalIds(tree.second),
+	];
 }
 
 /** Return the first file leaf in the tree, or null. */

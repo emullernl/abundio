@@ -89,7 +89,9 @@ describe("parseShellIntegration", () => {
 		const data = encode("\x1b]7770;cwd;/Users/foo/bar\x07");
 		const result = parseShellIntegration(data);
 		expect(result.cleaned.length).toBe(0);
-		expect(result.commands).toEqual([{ type: "cwd_change", path: "/Users/foo/bar" }]);
+		expect(result.commands).toEqual([
+			{ type: "cwd_change", path: "/Users/foo/bar" },
+		]);
 	});
 
 	it("parses cwd_change interleaved with other sequences", () => {

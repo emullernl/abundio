@@ -22,21 +22,24 @@ export function DiffViewer({ diff, onBack }: Props) {
 
 	const language = detectLanguage(diff.filePath);
 
-	const handleMount = useCallback((ed: editor.IStandaloneDiffEditor, m: Monaco) => {
-		diffEditorRef.current = ed;
-		defineAbundioTheme(m);
-		m.editor.setTheme("abundio");
-		setMonacoInstance(m);
-		const action = {
-			id: "abundio.toggleWordWrap",
-			label: "Toggle Word Wrap",
-			contextMenuGroupId: "view",
-			contextMenuOrder: 1.5,
-			run: () => useSettingsStore.getState().toggleEditorWordWrap(),
-		};
-		ed.getOriginalEditor().addAction(action);
-		ed.getModifiedEditor().addAction(action);
-	}, []);
+	const handleMount = useCallback(
+		(ed: editor.IStandaloneDiffEditor, m: Monaco) => {
+			diffEditorRef.current = ed;
+			defineAbundioTheme(m);
+			m.editor.setTheme("abundio");
+			setMonacoInstance(m);
+			const action = {
+				id: "abundio.toggleWordWrap",
+				label: "Toggle Word Wrap",
+				contextMenuGroupId: "view",
+				contextMenuOrder: 1.5,
+				run: () => useSettingsStore.getState().toggleEditorWordWrap(),
+			};
+			ed.getOriginalEditor().addAction(action);
+			ed.getModifiedEditor().addAction(action);
+		},
+		[],
+	);
 
 	useEffect(() => {
 		const de = diffEditorRef.current;

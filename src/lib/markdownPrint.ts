@@ -76,7 +76,10 @@ export async function printMarkdownProse(
 	div.style.display = "none";
 	div.innerHTML = proseEl.innerHTML;
 	// Strip contenteditable so the browser doesn't show editing indicators
-	for (const el of [div, ...Array.from(div.querySelectorAll("[contenteditable]"))]) {
+	for (const el of [
+		div,
+		...Array.from(div.querySelectorAll("[contenteditable]")),
+	]) {
 		(el as HTMLElement).removeAttribute("contenteditable");
 	}
 	document.body.appendChild(div);

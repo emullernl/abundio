@@ -1,14 +1,11 @@
 import { SquareSplitHorizontal, SquareSplitVertical, X } from "lucide-react";
-import {
-	FallbackAgentIcon,
-	getAgentIconComponent,
-} from "../../lib/agentIcons";
+import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { getTerminal } from "../../lib/terminalManager";
 import type { DotStatus } from "../../stores/ptyActivityStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { Terminal } from "../Icons";
 import { AgentStatusIcon } from "../AgentStatusIcon";
+import { Terminal } from "../Icons";
 
 interface Props {
 	paneId: string;

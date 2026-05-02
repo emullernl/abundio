@@ -213,7 +213,10 @@ export function handleKeyDown(e: KeyboardEvent) {
 			// When the MDX editor is focused let it (and its CodeMirror source view)
 			// handle any shortcut that isn't a workspace-global action so that
 			// search (Cmd+F), replace (Cmd+H), zoom, save, etc. all work.
-			if (isMarkdownEditorFocused() && !WORKSPACE_GLOBAL_ACTIONS.has(binding.action)) {
+			if (
+				isMarkdownEditorFocused() &&
+				!WORKSPACE_GLOBAL_ACTIONS.has(binding.action)
+			) {
 				return;
 			}
 			// Always prevent default for registered bindings, even if no handler yet

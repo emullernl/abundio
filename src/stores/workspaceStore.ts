@@ -48,7 +48,11 @@ interface WorkspaceState {
 	reorderWorkspaces: (ids: string[]) => void;
 
 	// Tab actions
-	createTab: (workspaceId: string, agent?: CodingAgent, seedLayout?: PaneNode) => Promise<Tab>;
+	createTab: (
+		workspaceId: string,
+		agent?: CodingAgent,
+		seedLayout?: PaneNode,
+	) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
 	renameTab: (tabId: string, name: string) => Promise<void>;

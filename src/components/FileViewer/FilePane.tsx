@@ -185,7 +185,11 @@ export function FilePane({
 		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: () => closePane(paneId) },
 	];
 
-	const contextMenuItems: ContextMenuItem[] = [...markdownItems, ...editorItems, ...paneItems];
+	const contextMenuItems: ContextMenuItem[] = [
+		...markdownItems,
+		...editorItems,
+		...paneItems,
+	];
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container

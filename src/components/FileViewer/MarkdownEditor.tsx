@@ -1,40 +1,41 @@
+import "./prismGlobal";
 import "@mdxeditor/editor/style.css";
 import "./MarkdownEditor.css";
+import { search, searchKeymap } from "@codemirror/search";
+import { keymap } from "@codemirror/view";
 import {
-	BoldItalicUnderlineToggles,
 	BlockTypeSelect,
+	BoldItalicUnderlineToggles,
 	ChangeCodeMirrorLanguage,
-	CodeToggle,
 	type CodeBlockEditorDescriptor,
+	CodeToggle,
 	ConditionalContents,
 	CreateLink,
-	DiffSourceToggleWrapper,
-	InsertImage,
-	InsertTable,
-	ListsToggle,
-	MDXEditor,
-	type MDXEditorMethods,
-	Separator,
-	UndoRedo,
 	codeBlockPlugin,
 	codeMirrorPlugin,
+	DiffSourceToggleWrapper,
 	diffSourcePlugin,
 	frontmatterPlugin,
 	headingsPlugin,
+	InsertImage,
+	InsertTable,
 	imagePlugin,
+	ListsToggle,
 	linkDialogPlugin,
 	linkPlugin,
 	listsPlugin,
+	MDXEditor,
+	type MDXEditorMethods,
 	markdownShortcutPlugin,
 	quotePlugin,
+	Separator,
 	tablePlugin,
 	thematicBreakPlugin,
 	toolbarPlugin,
+	UndoRedo,
 } from "@mdxeditor/editor";
-import { search, searchKeymap } from "@codemirror/search";
-import { keymap } from "@codemirror/view";
-import mermaid from "mermaid";
 import { Printer, ZoomIn, ZoomOut } from "lucide-react";
+import mermaid from "mermaid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { printMarkdownProse } from "../../lib/markdownPrint";
 import { getTheme } from "../../lib/themes";
@@ -166,7 +167,8 @@ export default function MarkdownEditor({
 
 	const handlePrint = useCallback(() => {
 		if (wrapperRef.current) {
-			const liveTheme = getTheme(themeName).variant === "light" ? "default" : "dark";
+			const liveTheme =
+				getTheme(themeName).variant === "light" ? "default" : "dark";
 			printMarkdownProse(wrapperRef.current, liveTheme);
 		}
 	}, [themeName]);
@@ -185,7 +187,9 @@ export default function MarkdownEditor({
 		const wrapper = wrapperRef.current;
 		if (!wrapper) return;
 		requestAnimationFrame(() => {
-			for (const scroller of wrapper.querySelectorAll<HTMLElement>(".cm-scroller")) {
+			for (const scroller of wrapper.querySelectorAll<HTMLElement>(
+				".cm-scroller",
+			)) {
 				const prev = scroller.scrollTop;
 				scroller.scrollTop = prev + 1;
 				scroller.scrollTop = prev;
@@ -319,13 +323,8 @@ export default function MarkdownEditor({
 	return (
 		<div
 			ref={wrapperRef}
-			className="absolute inset-0 overflow-y-auto"
-			style={
-				{
-					"--md-zoom": zoom,
-					backgroundColor: "var(--bg-primary)",
-				} as React.CSSProperties
-			}
+			className="absolute inset-0 overflow-y-auto mdx-page-wrapper"
+			style={{ "--md-zoom": zoom } as React.CSSProperties}
 			onKeyDown={handleKeyDown}
 		>
 			<MDXEditor

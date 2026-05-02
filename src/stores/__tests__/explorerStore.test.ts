@@ -38,9 +38,7 @@ vi.mock("../workspaceStore", () => ({
 					id: "ws-1",
 					rootFolder: "/tmp/ws1",
 					baseBranch: "main",
-					tabs: [
-						{ id: "tab-1", layoutJson: PANE_LAYOUT },
-					],
+					tabs: [{ id: "tab-1", layoutJson: PANE_LAYOUT }],
 				},
 			],
 			activeTabByWorkspace: { "ws-1": "tab-1" },
@@ -166,7 +164,14 @@ describe("handleFsChange — text panes", () => {
 	});
 
 	it("clears externallyChanged flag when disk matches after self-save", async () => {
-		setPane("pane-1", makeTextPane({ content: "same", externallyChanged: true, isDirty: false }));
+		setPane(
+			"pane-1",
+			makeTextPane({
+				content: "same",
+				externallyChanged: true,
+				isDirty: false,
+			}),
+		);
 		readFile.mockResolvedValue({
 			fileType: "text",
 			content: "same",
@@ -177,7 +182,9 @@ describe("handleFsChange — text panes", () => {
 			.getState()
 			.handleFsChange("ws-1", ["/tmp/ws1/src/main.ts"], []);
 
-		expect(useExplorerStore.getState().filePanes["pane-1"].externallyChanged).toBe(false);
+		expect(
+			useExplorerStore.getState().filePanes["pane-1"].externallyChanged,
+		).toBe(false);
 	});
 });
 
@@ -278,7 +285,14 @@ describe("handleFsChange — diff panes", () => {
 
 describe("reloadPaneFromDisk", () => {
 	it("overwrites content and clears dirty + externallyChanged", async () => {
-		setPane("pane-1", makeTextPane({ content: "unsaved edits", isDirty: true, externallyChanged: true }));
+		setPane(
+			"pane-1",
+			makeTextPane({
+				content: "unsaved edits",
+				isDirty: true,
+				externallyChanged: true,
+			}),
+		);
 		readFile.mockResolvedValue({
 			fileType: "text",
 			content: "disk content",
@@ -296,7 +310,14 @@ describe("reloadPaneFromDisk", () => {
 
 describe("dismissExternalChange", () => {
 	it("clears flags without touching content", () => {
-		setPane("pane-1", makeTextPane({ content: "my edits", isDirty: true, externallyChanged: true }));
+		setPane(
+			"pane-1",
+			makeTextPane({
+				content: "my edits",
+				isDirty: true,
+				externallyChanged: true,
+			}),
+		);
 
 		useExplorerStore.getState().dismissExternalChange("pane-1");
 

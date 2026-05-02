@@ -110,6 +110,21 @@ function SplitNode({
 	);
 }
 
+function UnknownPaneFallback({ type }: { type?: string }) {
+	return (
+		<div
+			className="flex items-center justify-center w-full h-full"
+			style={{
+				backgroundColor: "var(--bg-primary)",
+				color: "var(--fg-secondary)",
+				fontSize: 12,
+			}}
+		>
+			Unsupported pane type: {type ?? "(none)"}
+		</div>
+	);
+}
+
 export function SplitContainer({ node, cwd }: Props) {
 	if (node.type === "terminal") {
 		return <TerminalLeaf nodeId={node.id} agentId={node.agentId} />;
@@ -117,5 +132,8 @@ export function SplitContainer({ node, cwd }: Props) {
 	if (node.type === "file") {
 		return <FileLeaf node={node} />;
 	}
-	return <SplitNode node={node} cwd={cwd} />;
+	if (node.type === "split") {
+		return <SplitNode node={node} cwd={cwd} />;
+	}
+	return <UnknownPaneFallback type={(node as { type?: string }).type} />;
 }
