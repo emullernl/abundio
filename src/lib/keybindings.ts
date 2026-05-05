@@ -64,7 +64,11 @@ function isMonacoFocused(): boolean {
 
 function isMarkdownEditorFocused(): boolean {
 	const el = document.activeElement;
-	return !!el && (el as Element).closest?.(".mdxeditor") !== null;
+	return (
+		!!el &&
+		((el as Element).closest?.(".mdxeditor") !== null ||
+			(el as Element).closest?.(".mdx-find-bar") !== null)
+	);
 }
 
 const DEFAULT_BINDINGS: KeyBinding[] = [

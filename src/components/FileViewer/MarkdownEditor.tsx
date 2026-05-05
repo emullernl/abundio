@@ -34,14 +34,15 @@ import {
 	toolbarPlugin,
 	UndoRedo,
 } from "@mdxeditor/editor";
-import { Printer, ZoomIn, ZoomOut } from "lucide-react";
+import { Palette, Printer, ZoomIn, ZoomOut } from "lucide-react";
 import mermaid from "mermaid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { printMarkdownProse } from "../../lib/markdownPrint";
 import { getTheme } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { MermaidBlock } from "./MermaidBlock";
+import { MermaidBlock, notifyMermaidThemeChange } from "./MermaidBlock";
+import { MarkdownFindBar } from "./MarkdownFindBar";
 
 const sourceViewExtensions = [search({ top: true }), keymap.of(searchKeymap)];
 
@@ -116,6 +117,25 @@ function PrintButton({ onPrint }: { onPrint: () => void }) {
 	);
 }
 
+function ThemeColorsButton({
+	enabled,
+	onToggle,
+}: {
+	enabled: boolean;
+	onToggle: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onToggle}
+			title={enabled ? "Disable theme colors" : "Enable theme colors"}
+			className={`mdx-zoom-btn${enabled ? " mdx-theme-btn--active" : ""}`}
+		>
+			<Palette size={13} />
+		</button>
+	);
+}
+
 interface MarkdownEditorProps {
 	paneId: string;
 	isActive: boolean;
@@ -132,6 +152,10 @@ export default function MarkdownEditor({
 	const themeName = useSettingsStore((s) => s.theme);
 	const savedZoom = useSettingsStore((s) => s.markdownZoom);
 	const setMarkdownZoom = useSettingsStore((s) => s.setMarkdownZoom);
+	const markdownThemeColors = useSettingsStore((s) => s.markdownThemeColors);
+	const toggleMarkdownThemeColors = useSettingsStore(
+		(s) => s.toggleMarkdownThemeColors,
+	);
 	const editorRef = useRef<MDXEditorMethods>(null);
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const lastEmittedRef = useRef(content);
@@ -145,6 +169,7 @@ export default function MarkdownEditor({
 		setParseError(true);
 	}, []);
 
+	const [findOpen, setFindOpen] = useState(false);
 	const [zoom, setZoom] = useState(savedZoom);
 	const zoomRef = useRef(savedZoom);
 	const zoomEmitterRef = useRef<((pct: number) => void) | null>(null);
@@ -175,11 +200,11 @@ export default function MarkdownEditor({
 
 	useEffect(() => {
 		const variant = getTheme(themeName).variant;
-		mermaid.initialize({
-			startOnLoad: false,
-			theme: variant === "light" ? "default" : "dark",
-		});
-	}, [themeName]);
+		const mermaidTheme =
+			markdownThemeColors && variant !== "light" ? "dark" : "default";
+		mermaid.initialize({ startOnLoad: false, theme: mermaidTheme });
+		notifyMermaidThemeChange();
+	}, [themeName, markdownThemeColors]);
 
 	// After zoom CSS updates, nudge CodeMirror scrollers so they re-measure
 	// line heights and character widths against the new font size.
@@ -222,6 +247,12 @@ export default function MarkdownEditor({
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "f") {
+				// Let CodeMirror handle Cmd+F in source/diff view
+				if (document.activeElement?.closest(".cm-content")) return;
+				e.preventDefault();
+				setFindOpen(true);
+			}
 			if ((e.metaKey || e.ctrlKey) && e.key === "s") {
 				e.preventDefault();
 				useExplorerStore.getState().saveFile(paneId);
@@ -235,7 +266,7 @@ export default function MarkdownEditor({
 				onZoomOut();
 			}
 		},
-		[paneId, onZoomIn, onZoomOut],
+		[paneId, onZoomIn, onZoomOut, setFindOpen],
 	);
 
 	// Plugins are memoized with stable deps so MDXEditor never resets due to zoom changes.
@@ -301,6 +332,10 @@ export default function MarkdownEditor({
 												<InsertTable />
 												<Separator />
 												<PrintButton onPrint={handlePrint} />
+												<ThemeColorsButton
+													enabled={markdownThemeColors}
+													onToggle={toggleMarkdownThemeColors}
+												/>
 											</>
 										),
 									},
@@ -322,20 +357,29 @@ export default function MarkdownEditor({
 
 	return (
 		<div
-			ref={wrapperRef}
-			className="absolute inset-0 overflow-y-auto mdx-page-wrapper"
+			className={`absolute inset-0${markdownThemeColors ? "" : " md-plain-colors"}`}
 			style={{ "--md-zoom": zoom } as React.CSSProperties}
 			onKeyDown={handleKeyDown}
 		>
-			<MDXEditor
-				ref={editorRef}
-				key={`${themeName}-${parseError}`}
-				markdown={content}
-				onChange={handleChange}
-				onError={handleError}
-				className="abundio-theme"
-				contentEditableClassName="abundio-prose"
-				plugins={plugins}
+			<div
+				ref={wrapperRef}
+				className="absolute inset-0 overflow-y-auto mdx-page-wrapper"
+			>
+				<MDXEditor
+					ref={editorRef}
+					key={`${themeName}-${parseError}`}
+					markdown={content}
+					onChange={handleChange}
+					onError={handleError}
+					className="abundio-theme"
+					contentEditableClassName="abundio-prose"
+					plugins={plugins}
+				/>
+			</div>
+			<MarkdownFindBar
+				containerRef={wrapperRef}
+				open={findOpen}
+				onClose={() => setFindOpen(false)}
 			/>
 		</div>
 	);
