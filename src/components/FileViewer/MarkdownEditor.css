@@ -113,16 +113,58 @@
 	border-radius: 2px;
 }
 
-.abundio-prose h1,
-.abundio-prose h2,
-.abundio-prose h3,
-.abundio-prose h4,
-.abundio-prose h5,
-.abundio-prose h6 {
+.abundio-prose h1 {
 	color: var(--fg-primary);
-	margin-top: 1.5em;
+	font-size: 2.25em;
+	font-weight: 700;
+	line-height: 1.2;
+	margin-top: 0;
 	margin-bottom: 0.5em;
+}
+
+.abundio-prose h2 {
+	color: var(--fg-primary);
+	font-size: 1.75em;
+	font-weight: 700;
+	line-height: 1.2;
+	margin-top: 1.6em;
+	margin-bottom: 0.5em;
+}
+
+.abundio-prose h3 {
+	color: var(--fg-primary);
+	font-size: 1.4em;
 	font-weight: 600;
+	margin-top: 1.4em;
+	margin-bottom: 0.5em;
+}
+
+.abundio-prose h4 {
+	color: var(--fg-primary);
+	font-size: 1.15em;
+	font-weight: 600;
+	margin-top: 1.2em;
+	margin-bottom: 0.5em;
+}
+
+.abundio-prose h5 {
+	color: var(--fg-primary);
+	font-size: 1em;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin-top: 1em;
+	margin-bottom: 0.5em;
+}
+
+.abundio-prose h6 {
+	color: var(--fg-secondary);
+	font-size: 0.9em;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin-top: 1em;
+	margin-bottom: 0.5em;
 }
 
 .abundio-prose a {
@@ -301,4 +343,132 @@
 .mdx-mermaid svg {
 	max-width: 100%;
 	height: auto;
+}
+
+/* --- Image controls --- */
+
+/* Hide the edit/delete toolbar until the image is hovered or selected */
+.abundio-theme [class*="_imageWrapper_"] [class*="_editImageToolbar_"] {
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.abundio-theme [class*="_imageWrapper_"]:hover [class*="_editImageToolbar_"],
+.abundio-theme [class*="_imageWrapper_"]:focus-within [class*="_editImageToolbar_"] {
+	opacity: 1;
+}
+
+/* Fix asymmetric south-edge resize handles (library ships bottom: -2px, others use -6px) */
+.abundio-theme [class*="_imageResizerS_"],
+.abundio-theme [class*="_imageResizerSe_"],
+.abundio-theme [class*="_imageResizerSw_"] {
+	bottom: -6px;
+}
+
+/* --- Table controls --- */
+
+/*
+ * Table tool buttons — all scaled with --md-zoom.
+ *
+ * Top tools row (column triggers): give it a real height so the absolutely-positioned
+ * buttons land inside the cell. position:absolute works fine on thead cells.
+ *
+ * Left tools column (row triggers): position:absolute on tbody td is unreliable in
+ * Chromium — all buttons collapse to the same spot. Use inline-flex + table-cell
+ * alignment (text-align:center + vertical-align:middle) instead; that works in every row.
+ */
+
+/*
+ * Both column triggers (thead tools row) and row triggers (tbody _toolCell_) use
+ * the same _tableColumnEditorTrigger_ class (confirmed in TableEditor.js:445).
+ *
+ * Column triggers: absolutely positioned inside their thead cells (works in <th>).
+ * Row triggers: normal-flow inline-flex centered by the td's table-cell alignment
+ *               — WebKit (macOS) doesn't support position:absolute in <td> reliably.
+ */
+
+/* Top tools row: proper height for the column trigger buttons */
+.abundio-theme [class*="_tableEditor_"] tr:first-child > * {
+	height: calc(20px * var(--md-zoom, 1)) !important;
+	padding: 0 !important;
+	position: relative;
+	overflow: visible;
+	text-align: center;
+}
+
+/* Shared sizing for all _tableColumnEditorTrigger_ buttons (column + row triggers) */
+.abundio-theme [class*="_tableColumnEditorTrigger_"] {
+	width: calc(20px * var(--md-zoom, 1)) !important;
+	height: calc(20px * var(--md-zoom, 1)) !important;
+	padding: 0 !important;
+	display: inline-flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+	box-sizing: border-box !important;
+}
+
+.abundio-theme [class*="_tableColumnEditorTrigger_"] svg {
+	width: calc(12px * var(--md-zoom, 1)) !important;
+	height: calc(12px * var(--md-zoom, 1)) !important;
+	flex-shrink: 0;
+}
+
+/* Column triggers only: absolute within their thead cells */
+.abundio-theme [class*="_tableEditor_"] tr:first-child [class*="_tableColumnEditorTrigger_"] {
+	position: absolute !important;
+	left: 50% !important;
+	top: 50% !important;
+	transform: translate(-50%, -50%) !important;
+}
+
+/* Row trigger cells (_toolCell_): small width, centered via table-cell alignment */
+.abundio-theme [class*="_tableToolsColumn_"],
+.abundio-theme [class*="_toolCell_"] {
+	width: calc(20px * var(--md-zoom, 1)) !important;
+	min-width: 0 !important;
+	padding: 0 !important;
+	text-align: center;
+	vertical-align: middle !important;
+	overflow: visible;
+}
+
+/* Row triggers stay in normal flow (position:static) — no override needed, just ensure
+   they're not accidentally absolute from the general rule above */
+.abundio-theme [class*="_toolCell_"] [class*="_tableColumnEditorTrigger_"] {
+	position: static !important;
+	transform: none !important;
+}
+
+/* Hide column/row triggers until table is hovered, then show clearly */
+.abundio-theme [class*="_tableColumnEditorTrigger_"],
+.abundio-theme [class*="_tableRowEditorTrigger_"] {
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.abundio-theme [class*="_tableEditor_"]:hover [class*="_tableColumnEditorTrigger_"],
+.abundio-theme [class*="_tableEditor_"]:hover [class*="_tableRowEditorTrigger_"],
+.abundio-theme [class*="_tableEditor_"]:focus-within [class*="_tableColumnEditorTrigger_"],
+.abundio-theme [class*="_tableEditor_"]:focus-within [class*="_tableRowEditorTrigger_"] {
+	opacity: 0.9;
+}
+
+/* Fade add-row/add-col buttons until the table is hovered */
+.abundio-theme [class*="_tableEditor_"] [class*="_addRowButton_"],
+.abundio-theme [class*="_tableEditor_"] [class*="_addColumnButton_"] {
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.abundio-theme [class*="_tableEditor_"]:hover [class*="_addRowButton_"],
+.abundio-theme [class*="_tableEditor_"]:hover [class*="_addColumnButton_"],
+.abundio-theme [class*="_tableEditor_"]:focus-within [class*="_addRowButton_"],
+.abundio-theme [class*="_tableEditor_"]:focus-within [class*="_addColumnButton_"] {
+	opacity: 0.8;
+}
+
+/* --- Find highlights (CSS Custom Highlight API) --- */
+::highlight(md-find) {
+	background-color: rgba(255, 213, 0, 0.35);
+}
+::highlight(md-find-active) {
+	background-color: rgba(255, 153, 0, 0.7);
+	color: #000;
 }

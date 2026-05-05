@@ -42,6 +42,7 @@ import { getTheme } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { MermaidBlock } from "./MermaidBlock";
+import { MarkdownFindBar } from "./MarkdownFindBar";
 
 const sourceViewExtensions = [search({ top: true }), keymap.of(searchKeymap)];
 
@@ -145,6 +146,7 @@ export default function MarkdownEditor({
 		setParseError(true);
 	}, []);
 
+	const [findOpen, setFindOpen] = useState(false);
 	const [zoom, setZoom] = useState(savedZoom);
 	const zoomRef = useRef(savedZoom);
 	const zoomEmitterRef = useRef<((pct: number) => void) | null>(null);
@@ -222,6 +224,12 @@ export default function MarkdownEditor({
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "f") {
+				// Let CodeMirror handle Cmd+F in source/diff view
+				if (document.activeElement?.closest(".cm-content")) return;
+				e.preventDefault();
+				setFindOpen(true);
+			}
 			if ((e.metaKey || e.ctrlKey) && e.key === "s") {
 				e.preventDefault();
 				useExplorerStore.getState().saveFile(paneId);
@@ -235,7 +243,7 @@ export default function MarkdownEditor({
 				onZoomOut();
 			}
 		},
-		[paneId, onZoomIn, onZoomOut],
+		[paneId, onZoomIn, onZoomOut, setFindOpen],
 	);
 
 	// Plugins are memoized with stable deps so MDXEditor never resets due to zoom changes.
@@ -322,20 +330,29 @@ export default function MarkdownEditor({
 
 	return (
 		<div
-			ref={wrapperRef}
-			className="absolute inset-0 overflow-y-auto mdx-page-wrapper"
+			className="absolute inset-0"
 			style={{ "--md-zoom": zoom } as React.CSSProperties}
 			onKeyDown={handleKeyDown}
 		>
-			<MDXEditor
-				ref={editorRef}
-				key={`${themeName}-${parseError}`}
-				markdown={content}
-				onChange={handleChange}
-				onError={handleError}
-				className="abundio-theme"
-				contentEditableClassName="abundio-prose"
-				plugins={plugins}
+			<div
+				ref={wrapperRef}
+				className="absolute inset-0 overflow-y-auto mdx-page-wrapper"
+			>
+				<MDXEditor
+					ref={editorRef}
+					key={`${themeName}-${parseError}`}
+					markdown={content}
+					onChange={handleChange}
+					onError={handleError}
+					className="abundio-theme"
+					contentEditableClassName="abundio-prose"
+					plugins={plugins}
+				/>
+			</div>
+			<MarkdownFindBar
+				containerRef={wrapperRef}
+				open={findOpen}
+				onClose={() => setFindOpen(false)}
 			/>
 		</div>
 	);

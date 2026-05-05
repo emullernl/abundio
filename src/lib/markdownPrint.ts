@@ -43,10 +43,12 @@ export async function printMarkdownProse(
     margin: 0;
     padding: 0;
   }
-  #${PRINT_DIV_ID} h1, #${PRINT_DIV_ID} h2, #${PRINT_DIV_ID} h3,
-  #${PRINT_DIV_ID} h4, #${PRINT_DIV_ID} h5, #${PRINT_DIV_ID} h6 {
-    margin-top: 1.5em; margin-bottom: 0.5em; font-weight: 600; color: #000;
-  }
+  #${PRINT_DIV_ID} h1 { font-size: 2.25em; font-weight: 700; line-height: 1.2; margin-top: 0; margin-bottom: 0.5em; color: #000; }
+  #${PRINT_DIV_ID} h2 { font-size: 1.75em; font-weight: 700; line-height: 1.2; margin-top: 1.6em; margin-bottom: 0.5em; color: #000; }
+  #${PRINT_DIV_ID} h3 { font-size: 1.4em; font-weight: 600; margin-top: 1.4em; margin-bottom: 0.5em; color: #000; }
+  #${PRINT_DIV_ID} h4 { font-size: 1.15em; font-weight: 600; margin-top: 1.2em; margin-bottom: 0.5em; color: #000; }
+  #${PRINT_DIV_ID} h5 { font-size: 1em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 1em; margin-bottom: 0.5em; color: #000; }
+  #${PRINT_DIV_ID} h6 { font-size: 0.9em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 1em; margin-bottom: 0.5em; color: #555; }
   #${PRINT_DIV_ID} a { color: #2563eb; }
   #${PRINT_DIV_ID} code {
     background: #f3f4f6; border-radius: 3px;
