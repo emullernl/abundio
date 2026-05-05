@@ -93,6 +93,54 @@
 	font-variant-numeric: tabular-nums;
 }
 
+/* Active state for the theme-colors toggle button */
+.mdx-theme-btn--active {
+	color: var(--accent) !important;
+}
+
+/* Plain (no theme colors) mode — page + text use defaults; desk and toolbar stay themed.
+   We override both the Abundio CSS vars AND MDXEditor's own semantic vars so that inline
+   code, interactive control buttons, and all other editor-rendered elements also use
+   plain colors within the prose area. */
+.md-plain-colors .abundio-prose {
+	/* Abundio theme vars */
+	--bg-primary: #ffffff;
+	--bg-secondary: #f3f4f6;
+	--bg-tertiary: #e5e7eb;
+	--fg-primary: #111827;
+	--fg-secondary: #6b7280;
+	--accent: #2563eb;
+	--accent-hover: #1d4ed8;
+	--border: #d1d5db;
+	/* MDXEditor semantic vars — used by inline code spans, code block controls,
+	   link/image overlays, and other editor elements rendered inside the contenteditable */
+	--baseBgSubtle: #f9fafb;
+	--baseBg: #f3f4f6;
+	--baseBase: #ffffff;
+	--baseBgHover: #f0f0f0;
+	--baseBgActive: #e5e7eb;
+	--baseText: #111827;
+	--baseTextContrast: #000000;
+	--baseSolid: #555555;
+	--baseSolidHover: #111827;
+	--baseBorder: #d1d5db;
+	--baseBorderHover: #9ca3af;
+	--baseLine: #d1d5db;
+	--accentBase: #eff6ff;
+	--accentBgSubtle: #eff6ff;
+	--accentBg: #dbeafe;
+	--accentBgHover: #bfdbfe;
+	--accentBgActive: #93c5fd;
+	--accentBorder: #93c5fd;
+	--accentBorderHover: #2563eb;
+	--accentSolid: #2563eb;
+	--accentSolidHover: #1d4ed8;
+	--accentText: #2563eb;
+	--accentTextContrast: #ffffff;
+	--accentLine: #2563eb;
+	--basePageBg: #ffffff;
+}
+
 /* Outer scroll container — "desk" behind the page */
 .mdx-page-wrapper {
 	background-color: var(--bg-secondary);

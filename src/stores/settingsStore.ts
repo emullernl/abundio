@@ -31,6 +31,7 @@ interface SettingsState {
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownZoom: number;
+	markdownThemeColors: boolean;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -57,6 +58,7 @@ interface SettingsState {
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
 	setMarkdownZoom: (zoom: number) => void;
+	toggleMarkdownThemeColors: () => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -83,6 +85,7 @@ const PERSISTED_DEFAULTS: {
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownZoom: number;
+	markdownThemeColors: boolean;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -102,6 +105,7 @@ const PERSISTED_DEFAULTS: {
 		lastOpenedDevEnvId: null as string | null,
 		editorWordWrap: true,
 		markdownZoom: 1,
+		markdownThemeColors: true,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -173,6 +177,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.markdownZoom === "number"
 					? Math.min(Math.max(s.markdownZoom, 0.5), 2)
 					: defaults.markdownZoom,
+			markdownThemeColors:
+				typeof s.markdownThemeColors === "boolean"
+					? s.markdownThemeColors
+					: defaults.markdownThemeColors,
 		};
 	} catch {
 		return defaults;
@@ -201,6 +209,7 @@ export const useSettingsStore = create<SettingsState>()(
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
 			markdownZoom: PERSISTED_DEFAULTS.markdownZoom,
+			markdownThemeColors: PERSISTED_DEFAULTS.markdownThemeColors,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -278,6 +287,8 @@ export const useSettingsStore = create<SettingsState>()(
 			toggleEditorWordWrap: () =>
 				set((s) => ({ editorWordWrap: !s.editorWordWrap })),
 			setMarkdownZoom: (markdownZoom) => set({ markdownZoom }),
+			toggleMarkdownThemeColors: () =>
+				set((s) => ({ markdownThemeColors: !s.markdownThemeColors })),
 		}),
 		{
 			name: "abundio-settings",
@@ -308,6 +319,7 @@ export const useSettingsStore = create<SettingsState>()(
 				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
 				editorWordWrap: state.editorWordWrap,
 				markdownZoom: state.markdownZoom,
+				markdownThemeColors: state.markdownThemeColors,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present

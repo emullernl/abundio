@@ -34,14 +34,14 @@ import {
 	toolbarPlugin,
 	UndoRedo,
 } from "@mdxeditor/editor";
-import { Printer, ZoomIn, ZoomOut } from "lucide-react";
+import { Palette, Printer, ZoomIn, ZoomOut } from "lucide-react";
 import mermaid from "mermaid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { printMarkdownProse } from "../../lib/markdownPrint";
 import { getTheme } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { MermaidBlock } from "./MermaidBlock";
+import { MermaidBlock, notifyMermaidThemeChange } from "./MermaidBlock";
 import { MarkdownFindBar } from "./MarkdownFindBar";
 
 const sourceViewExtensions = [search({ top: true }), keymap.of(searchKeymap)];
@@ -117,6 +117,25 @@ function PrintButton({ onPrint }: { onPrint: () => void }) {
 	);
 }
 
+function ThemeColorsButton({
+	enabled,
+	onToggle,
+}: {
+	enabled: boolean;
+	onToggle: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onToggle}
+			title={enabled ? "Disable theme colors" : "Enable theme colors"}
+			className={`mdx-zoom-btn${enabled ? " mdx-theme-btn--active" : ""}`}
+		>
+			<Palette size={13} />
+		</button>
+	);
+}
+
 interface MarkdownEditorProps {
 	paneId: string;
 	isActive: boolean;
@@ -133,6 +152,10 @@ export default function MarkdownEditor({
 	const themeName = useSettingsStore((s) => s.theme);
 	const savedZoom = useSettingsStore((s) => s.markdownZoom);
 	const setMarkdownZoom = useSettingsStore((s) => s.setMarkdownZoom);
+	const markdownThemeColors = useSettingsStore((s) => s.markdownThemeColors);
+	const toggleMarkdownThemeColors = useSettingsStore(
+		(s) => s.toggleMarkdownThemeColors,
+	);
 	const editorRef = useRef<MDXEditorMethods>(null);
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const lastEmittedRef = useRef(content);
@@ -177,11 +200,11 @@ export default function MarkdownEditor({
 
 	useEffect(() => {
 		const variant = getTheme(themeName).variant;
-		mermaid.initialize({
-			startOnLoad: false,
-			theme: variant === "light" ? "default" : "dark",
-		});
-	}, [themeName]);
+		const mermaidTheme =
+			markdownThemeColors && variant !== "light" ? "dark" : "default";
+		mermaid.initialize({ startOnLoad: false, theme: mermaidTheme });
+		notifyMermaidThemeChange();
+	}, [themeName, markdownThemeColors]);
 
 	// After zoom CSS updates, nudge CodeMirror scrollers so they re-measure
 	// line heights and character widths against the new font size.
@@ -309,6 +332,10 @@ export default function MarkdownEditor({
 												<InsertTable />
 												<Separator />
 												<PrintButton onPrint={handlePrint} />
+												<ThemeColorsButton
+													enabled={markdownThemeColors}
+													onToggle={toggleMarkdownThemeColors}
+												/>
 											</>
 										),
 									},
@@ -330,7 +357,7 @@ export default function MarkdownEditor({
 
 	return (
 		<div
-			className="absolute inset-0"
+			className={`absolute inset-0${markdownThemeColors ? "" : " md-plain-colors"}`}
 			style={{ "--md-zoom": zoom } as React.CSSProperties}
 			onKeyDown={handleKeyDown}
 		>
