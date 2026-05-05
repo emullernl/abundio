@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
+import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { pty } from "../../lib/ipc";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import { getTerminal, resetTerminal } from "../../lib/terminalManager";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { PaneDropIndicator } from "../PaneDropIndicator";
 import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { SearchBar } from "./SearchBar";
@@ -185,6 +187,10 @@ export function TerminalSlot({
 		resetTerminal(paneId);
 	}, [paneId]);
 
+	const isDragSource = useDragPaneStore(
+		(s) => s.isDragging && s.sourcePaneId === paneId,
+	);
+
 	const searchAddon = getTerminal(paneId)?.searchAddon ?? null;
 
 	// Agents submenu — launches the selected agent into the current shell by
@@ -258,12 +264,13 @@ export function TerminalSlot({
 		<div
 			ref={containerRef}
 			className="w-full h-full relative flex flex-col"
+			data-pane-id={paneId}
 			style={{
 				padding: "0 0 0 8px",
 				overflow: "hidden",
 				boxShadow: "none",
 				background: "var(--bg-primary)",
-				opacity: isFocused ? 1 : 0.75,
+				opacity: isDragSource ? 0.35 : isFocused ? 1 : 0.75,
 				transition: "opacity 150ms ease",
 			}}
 			onFocus={handleFocus}
@@ -295,6 +302,7 @@ export function TerminalSlot({
 					onClose={() => setContextMenu(null)}
 				/>
 			)}
+			<PaneDropIndicator paneId={paneId} />
 		</div>
 	);
 }

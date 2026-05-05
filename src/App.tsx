@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { DragPanePreview } from "./components/DragPanePreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
@@ -690,6 +691,7 @@ export function App() {
 						/>
 					);
 				})()}
+			<DragPanePreview />
 		</div>
 	);
 }

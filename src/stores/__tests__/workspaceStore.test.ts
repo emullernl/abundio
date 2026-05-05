@@ -226,7 +226,6 @@ describe("workspaceStore", () => {
 				useWorkspaceStore.getState().activeTabByWorkspace["workspace-1"],
 			).toBe("tab-2");
 		});
-
 	});
 
 	describe("reorderWorkspaces", () => {

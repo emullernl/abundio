@@ -1,4 +1,5 @@
 import { SquareSplitHorizontal, SquareSplitVertical, X } from "lucide-react";
+import { usePaneDrag } from "../../hooks/usePaneDrag";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { getTerminal } from "../../lib/terminalManager";
 import type { DotStatus } from "../../stores/ptyActivityStore";
@@ -123,7 +124,10 @@ export function TerminalTitleBar({
 		: undefined;
 	const showAgentIcon = !!effectiveAgentId;
 
+	const { handleMouseDown } = usePaneDrag(paneId);
+
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for pane repositioning
 		<div
 			className="flex items-center shrink-0"
 			style={{
@@ -132,7 +136,9 @@ export function TerminalTitleBar({
 				background: "color-mix(in srgb, var(--bg-primary) 85%, transparent)",
 				borderBottom:
 					"1px solid color-mix(in srgb, var(--border) 40%, transparent)",
+				cursor: "grab",
 			}}
+			onMouseDown={handleMouseDown}
 		>
 			{/* Left icon */}
 			<span

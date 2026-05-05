@@ -4,6 +4,8 @@ import {
 	collectAgentPanes,
 	collectPaneIds,
 	collectTerminalIds,
+	extractNode,
+	insertBesideNode,
 	setAgentId,
 } from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
@@ -67,6 +69,19 @@ interface WorkspaceState {
 		workspaceId: string,
 		baseBranch: string | null,
 	) => void;
+
+	movePaneToTarget: (
+		sourceTabId: string,
+		sourcePaneId: string,
+		target:
+			| {
+					kind: "pane-edge";
+					tabId: string;
+					paneId: string;
+					edge: "top" | "right" | "bottom" | "left";
+			  }
+			| { kind: "new-tab" },
+	) => Promise<void>;
 
 	// Derived
 	getActiveWorkspace: () => WorkspaceWithTabs | undefined;
@@ -667,6 +682,185 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				s.id === workspaceId ? { ...s, baseBranch } : s,
 			),
 		})),
+
+	movePaneToTarget: async (sourceTabId, sourcePaneId, target) => {
+		const state = get();
+		const workspace = state.workspaces.find((ws) =>
+			ws.tabs.some((t) => t.id === sourceTabId),
+		);
+		if (!workspace) return;
+
+		const sourceTab = workspace.tabs.find((t) => t.id === sourceTabId);
+		if (!sourceTab) return;
+
+		let sourceLayout: PaneNode;
+		try {
+			sourceLayout = JSON.parse(sourceTab.layoutJson) as PaneNode;
+		} catch {
+			return;
+		}
+
+		const { remaining: sourceRemaining, removed: movedNode } = extractNode(
+			sourceLayout,
+			sourcePaneId,
+		);
+		if (!movedNode) return;
+
+		if (target.kind === "pane-edge") {
+			const { tabId: destTabId, paneId: targetPaneId, edge } = target;
+
+			if (destTabId === sourceTabId) {
+				// Same-tab move: insert beside in the post-extract remaining tree
+				if (!sourceRemaining) return;
+				const newLayout = insertBesideNode(
+					sourceRemaining,
+					targetPaneId,
+					movedNode,
+					edge,
+				);
+				await get().updateLayout(sourceTabId, newLayout);
+				get().setFocusedPane(sourcePaneId);
+			} else {
+				// Cross-tab move
+				const destTab = workspace.tabs.find((t) => t.id === destTabId);
+				if (!destTab) return;
+				let destLayout: PaneNode;
+				try {
+					destLayout = JSON.parse(destTab.layoutJson) as PaneNode;
+				} catch {
+					return;
+				}
+				const newDestLayout = insertBesideNode(
+					destLayout,
+					targetPaneId,
+					movedNode,
+					edge,
+				);
+				const destJson = JSON.stringify(newDestLayout);
+
+				if (sourceRemaining) {
+					const srcJson = JSON.stringify(sourceRemaining);
+					await tabsApi.update(sourceTabId, { layoutJson: srcJson });
+					await tabsApi.update(destTabId, { layoutJson: destJson });
+					set((s) => ({
+						workspaces: s.workspaces.map((ws) =>
+							ws.id !== workspace.id
+								? ws
+								: {
+										...ws,
+										tabs: ws.tabs.map((t) => {
+											if (t.id === sourceTabId)
+												return { ...t, layoutJson: srcJson };
+											if (t.id === destTabId)
+												return { ...t, layoutJson: destJson };
+											return t;
+										}),
+									},
+						),
+						activeTabByWorkspace: {
+							...s.activeTabByWorkspace,
+							[workspace.id]: destTabId,
+						},
+						focusedPaneId: sourcePaneId,
+					}));
+				} else {
+					// Source tab becomes empty — do NOT call closeTab (it would
+					// pty.deleteLog the moved pane). Do all DB writes first, then
+					// a single atomic set so the pane is never in both layouts.
+					await tabsApi.update(destTabId, { layoutJson: destJson });
+					await tabsApi.delete(sourceTabId);
+
+					set((s) => ({
+						workspaces: s.workspaces.map((ws) =>
+							ws.id !== workspace.id
+								? ws
+								: {
+										...ws,
+										tabs: ws.tabs
+											.filter((t) => t.id !== sourceTabId)
+											.map((t) =>
+												t.id === destTabId
+													? { ...t, layoutJson: destJson }
+													: t,
+											),
+									},
+						),
+						activeTabByWorkspace: {
+							...s.activeTabByWorkspace,
+							[workspace.id]: destTabId,
+						},
+						focusedPaneId: sourcePaneId,
+					}));
+				}
+			}
+		} else if (target.kind === "new-tab") {
+			// Build the new tab name from the moved node type
+			const tabName =
+				movedNode.type === "file"
+					? (movedNode.filePath.split("/").pop() ?? "file")
+					: `Terminal ${(workspace.tabs.length + 1).toString()}`;
+
+			// Do all DB writes BEFORE any state update so React never sees
+			// the moved paneId in two layouts at the same time (which would
+			// cause TerminalPool duplicate-key unmount + deferred destroy).
+			const newTab = await tabsApi.create(workspace.id, tabName);
+			const movedJson = JSON.stringify(movedNode);
+			newTab.layoutJson = movedJson;
+			await tabsApi.update(newTab.id, { layoutJson: movedJson });
+
+			if (sourceRemaining) {
+				const srcJson = JSON.stringify(sourceRemaining);
+				await tabsApi.update(sourceTabId, { layoutJson: srcJson });
+
+				// Single atomic set: source shrinks + new tab appears
+				set((s) => ({
+					workspaces: s.workspaces.map((ws) =>
+						ws.id !== workspace.id
+							? ws
+							: {
+									...ws,
+									tabs: [
+										...ws.tabs.map((t) =>
+											t.id === sourceTabId
+												? { ...t, layoutJson: srcJson }
+												: t,
+										),
+										newTab,
+									],
+								},
+					),
+					activeTabByWorkspace: {
+						...s.activeTabByWorkspace,
+						[workspace.id]: newTab.id,
+					},
+					focusedPaneId: sourcePaneId,
+				}));
+			} else {
+				// Source tab had only the moved pane — delete it.
+				// Do NOT call closeTab (which would pty.deleteLog the moved pane).
+				await tabsApi.delete(sourceTabId);
+
+				set((s) => ({
+					workspaces: s.workspaces.map((ws) =>
+						ws.id !== workspace.id
+							? ws
+							: {
+									...ws,
+									tabs: [
+										...ws.tabs.filter((t) => t.id !== sourceTabId),
+										newTab,
+									],
+								},
+					),
+					activeTabByWorkspace: {
+						...s.activeTabByWorkspace,
+						[workspace.id]: newTab.id,
+					},
+					focusedPaneId: sourcePaneId,
+				}));
+			}
+		}
+	},
 
 	// ── Derived ──
 

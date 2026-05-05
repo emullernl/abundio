@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDragPaneStore } from "../lib/dragPaneStore";
 import { collectFilePaneIds } from "../lib/paneTree";
 import type { PaneNode, Tab } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
@@ -123,12 +124,20 @@ function TabItem({
 	const isEditing = editingTabId === tab.id;
 	const showClose = isActive || hovered;
 
+	const isDragDwellTarget = useDragPaneStore(
+		(s) =>
+			s.isDragging &&
+			s.hoverTarget?.kind === "tab" &&
+			(s.hoverTarget as { tabId: string }).tabId === tab.id,
+	);
+
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard navigation handled at tab container level
 		<div
 			className="flex items-center shrink-0 cursor-pointer relative"
 			role="tab"
 			tabIndex={0}
+			data-tab-id={tab.id}
 			style={{
 				height: isActive ? 32 : 28,
 				paddingLeft: 14,
@@ -180,6 +189,18 @@ function TabItem({
 						height: 14,
 						backgroundColor: "var(--border)",
 						opacity: 0.6,
+					}}
+				/>
+			)}
+
+			{/* Drag-dwell indicator: accent pulse when a pane is hovered over this tab */}
+			{isDragDwellTarget && (
+				<div
+					className="absolute inset-0 pointer-events-none rounded-t"
+					style={{
+						background: "color-mix(in srgb, var(--accent) 12%, transparent)",
+						borderTop: "2px solid var(--accent)",
+						animation: "drag-dwell-pulse 0.7s ease-in-out infinite alternate",
 					}}
 				/>
 			)}
@@ -380,9 +401,14 @@ export function TabBar({
 		setEditingTabId(null);
 	}, []);
 
+	const isNewTabDropTarget = useDragPaneStore(
+		(s) => s.isDragging && s.hoverTarget?.kind === "new-tab",
+	);
+
 	return (
 		<div
 			className="flex items-end flex-1 min-w-0"
+			data-tab-strip
 			style={{
 				height: 38,
 				backgroundColor: "var(--bg-secondary)",
@@ -429,7 +455,7 @@ export function TabBar({
 			</div>
 
 			{/* New tab button */}
-			<NewTabButton onClick={onNew} />
+			<NewTabButton onClick={onNew} isDropTarget={isNewTabDropTarget} />
 
 			{/* Context menu */}
 			{contextMenu && (
@@ -474,22 +500,36 @@ export function TabBar({
 	);
 }
 
-function NewTabButton({ onClick }: { onClick: () => void }) {
+function NewTabButton({
+	onClick,
+	isDropTarget,
+}: {
+	onClick: () => void;
+	isDropTarget?: boolean;
+}) {
 	const [hovered, setHovered] = useState(false);
 
 	return (
 		<button
 			type="button"
 			onClick={onClick}
+			data-new-tab-button
 			className="flex items-center justify-center flex-shrink-0 rounded-md self-center"
 			style={{
 				width: 26,
 				height: 26,
-				color: hovered ? "var(--fg-primary)" : "var(--fg-secondary)",
-				backgroundColor: hovered ? "var(--bg-tertiary)" : "transparent",
+				color:
+					isDropTarget || hovered ? "var(--accent)" : "var(--fg-secondary)",
+				backgroundColor: isDropTarget
+					? "color-mix(in srgb, var(--accent) 15%, transparent)"
+					: hovered
+						? "var(--bg-tertiary)"
+						: "transparent",
 				marginLeft: 4,
 				marginBottom: 4,
 				transition: "all 120ms ease-out",
+				outline: isDropTarget ? "1.5px solid var(--accent)" : "none",
+				outlineOffset: 1,
 			}}
 			onMouseEnter={() => setHovered(true)}
 			onMouseLeave={() => setHovered(false)}

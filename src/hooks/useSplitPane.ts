@@ -109,13 +109,7 @@ export function useSplitPane() {
 				await closeTab(tab.id);
 			}
 		},
-		[
-			getActiveTab,
-			getActiveLayout,
-			updateLayout,
-			setFocusedPane,
-			closeTab,
-		],
+		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, closeTab],
 	);
 
 	const closePane = useCallback((paneId: string, label?: string) => {
