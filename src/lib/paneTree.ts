@@ -123,6 +123,29 @@ export function findFilePaneInTree(
 	return findFilePaneInTree(tree.first) ?? findFilePaneInTree(tree.second);
 }
 
+/**
+ * Wrap the target node in a new split, placing `newLeaf` as the second child.
+ * Returns a new tree. If `targetPaneId` is not found, returns the original tree.
+ */
+export function wrapInSplit(
+	tree: PaneNode,
+	targetPaneId: string,
+	newLeaf: PaneNode,
+	direction: "horizontal" | "vertical",
+): PaneNode {
+	const target = findNode(tree, targetPaneId);
+	if (!target) return tree;
+	const splitNode: PaneNode = {
+		type: "split",
+		id: crypto.randomUUID(),
+		direction,
+		ratio: 0.5,
+		first: target,
+		second: newLeaf,
+	};
+	return replaceNode(tree, targetPaneId, splitNode);
+}
+
 /** Return the first file leaf with the given filePath, or null. */
 export function findFilePaneByPath(
 	tree: PaneNode,

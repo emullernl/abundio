@@ -5,6 +5,7 @@ import {
 	findNode,
 	removeNode,
 	replaceNode,
+	wrapInSplit,
 } from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { destroyTerminal } from "../lib/terminalManager";
@@ -46,19 +47,9 @@ export function useSplitPane() {
 				agentId: agent?.id,
 			};
 
-			const target = findNode(layout, paneId);
-			if (!target) return;
+			if (!findNode(layout, paneId)) return;
 
-			const splitNode: PaneNode = {
-				type: "split",
-				id: generateId(),
-				direction,
-				ratio: 0.5,
-				first: target,
-				second: newTerminal,
-			};
-
-			const newLayout = replaceNode(layout, paneId, splitNode);
+			const newLayout = wrapInSplit(layout, paneId, newTerminal, direction);
 			await updateLayout(tab.id, newLayout);
 			setFocusedPane(newPaneId);
 

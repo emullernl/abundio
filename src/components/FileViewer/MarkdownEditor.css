@@ -401,7 +401,9 @@
 	transition: opacity 120ms ease;
 }
 .abundio-theme [class*="_imageWrapper_"]:hover [class*="_editImageToolbar_"],
-.abundio-theme [class*="_imageWrapper_"]:focus-within [class*="_editImageToolbar_"] {
+.abundio-theme
+	[class*="_imageWrapper_"]:focus-within
+	[class*="_editImageToolbar_"] {
 	opacity: 1;
 }
 
@@ -461,7 +463,9 @@
 }
 
 /* Column triggers only: absolute within their thead cells */
-.abundio-theme [class*="_tableEditor_"] tr:first-child [class*="_tableColumnEditorTrigger_"] {
+.abundio-theme [class*="_tableEditor_"]
+	tr:first-child
+	[class*="_tableColumnEditorTrigger_"] {
 	position: absolute !important;
 	left: 50% !important;
 	top: 50% !important;
@@ -492,10 +496,18 @@
 	opacity: 0;
 	transition: opacity 120ms ease;
 }
-.abundio-theme [class*="_tableEditor_"]:hover [class*="_tableColumnEditorTrigger_"],
-.abundio-theme [class*="_tableEditor_"]:hover [class*="_tableRowEditorTrigger_"],
-.abundio-theme [class*="_tableEditor_"]:focus-within [class*="_tableColumnEditorTrigger_"],
-.abundio-theme [class*="_tableEditor_"]:focus-within [class*="_tableRowEditorTrigger_"] {
+.abundio-theme
+	[class*="_tableEditor_"]:hover
+	[class*="_tableColumnEditorTrigger_"],
+.abundio-theme
+	[class*="_tableEditor_"]:hover
+	[class*="_tableRowEditorTrigger_"],
+.abundio-theme
+	[class*="_tableEditor_"]:focus-within
+	[class*="_tableColumnEditorTrigger_"],
+.abundio-theme
+	[class*="_tableEditor_"]:focus-within
+	[class*="_tableRowEditorTrigger_"] {
 	opacity: 0.9;
 }
 
@@ -508,7 +520,9 @@
 .abundio-theme [class*="_tableEditor_"]:hover [class*="_addRowButton_"],
 .abundio-theme [class*="_tableEditor_"]:hover [class*="_addColumnButton_"],
 .abundio-theme [class*="_tableEditor_"]:focus-within [class*="_addRowButton_"],
-.abundio-theme [class*="_tableEditor_"]:focus-within [class*="_addColumnButton_"] {
+.abundio-theme
+	[class*="_tableEditor_"]:focus-within
+	[class*="_addColumnButton_"] {
 	opacity: 0.8;
 }
 

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { DirEntry } from "../../lib/types";
+import { useExplorerStore } from "../../stores/explorerStore";
 import { ChevronDown, ChevronRight, File, FolderOpen, Image } from "../Icons";
+import { EditingRow } from "./EditingRow";
 
 interface FileTreeItemProps {
 	entry: DirEntry;
@@ -8,6 +10,8 @@ interface FileTreeItemProps {
 	isExpanded: boolean;
 	onToggleDir: (path: string) => void;
 	onOpenFile: (filePath: string) => void;
+	onContextMenu: (x: number, y: number, entry: DirEntry) => void;
+	pendingRename: boolean;
 	children?: React.ReactNode;
 }
 
@@ -65,9 +69,13 @@ export function FileTreeItem({
 	isExpanded,
 	onToggleDir,
 	onOpenFile,
+	onContextMenu,
+	pendingRename,
 	children,
 }: FileTreeItemProps) {
 	const [hovered, setHovered] = useState(false);
+	const commitEdit = useExplorerStore((s) => s.commitEdit);
+	const cancelEdit = useExplorerStore((s) => s.cancelEdit);
 	const isImage =
 		entry.extension &&
 		["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp"].includes(
@@ -94,11 +102,34 @@ export function FileTreeItem({
 		? "var(--accent)"
 		: getFileColor(entry.extension);
 
+	if (pendingRename) {
+		return (
+			<>
+				<EditingRow
+					depth={depth}
+					mode={entry.isDir ? "folder" : "file"}
+					initialValue={entry.name}
+					onCommit={commitEdit}
+					onCancel={cancelEdit}
+				/>
+				{entry.isDir && isExpanded && children}
+			</>
+		);
+	}
+
 	return (
 		<>
 			<button
 				type="button"
 				onClick={handleClick}
+				onMouseDown={(e) => {
+					if (e.button === 2) e.preventDefault();
+				}}
+				onContextMenu={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					onContextMenu(e.clientX, e.clientY, entry);
+				}}
 				onMouseEnter={() => setHovered(true)}
 				onMouseLeave={() => setHovered(false)}
 				className="w-full flex items-center gap-1 text-left rounded-sm"
@@ -110,6 +141,7 @@ export function FileTreeItem({
 					color: "var(--fg-primary)",
 					backgroundColor: hovered ? "var(--bg-tertiary)" : "transparent",
 					transition: "background-color 80ms ease-out",
+					userSelect: "none",
 				}}
 			>
 				{entry.isDir ? (

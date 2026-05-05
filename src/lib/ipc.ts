@@ -231,6 +231,17 @@ export const fs = {
 
 	searchCancel: (searchId: string) =>
 		invoke<void>("fs_search_cancel", { searchId }),
+
+	createFile: (path: string) => invoke<void>("fs_create_file", { path }),
+
+	createFolder: (path: string) => invoke<void>("fs_create_folder", { path }),
+
+	rename: (from: string, to: string) => invoke<void>("fs_rename", { from, to }),
+
+	deletePath: (path: string) => invoke<void>("fs_delete", { path }),
+
+	revealInFolder: (path: string) =>
+		invoke<void>("fs_reveal_in_folder", { path }),
 };
 
 export const fonts = {

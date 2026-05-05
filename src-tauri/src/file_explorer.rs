@@ -2,7 +2,10 @@ use base64::Engine;
 use ignore::WalkBuilder;
 use serde::Serialize;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io;
 use std::path::Path;
+use std::process::Command;
 
 use crate::error::AbundioError;
 
@@ -259,6 +262,96 @@ fn list_files_inner(root_path: &str, max_files: usize) -> Result<Vec<FileEntry>,
 	Ok(out)
 }
 
+#[tauri::command]
+pub async fn fs_create_file(path: String) -> Result<(), AbundioError> {
+    if Path::new(&path).exists() {
+        return Err(AbundioError::Io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("file already exists: {}", path),
+        )));
+    }
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn fs_create_folder(path: String) -> Result<(), AbundioError> {
+    if Path::new(&path).exists() {
+        return Err(AbundioError::Io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("folder already exists: {}", path),
+        )));
+    }
+    fs::create_dir(&path)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn fs_rename(from: String, to: String) -> Result<(), AbundioError> {
+    let from_path = Path::new(&from);
+    let to_path = Path::new(&to);
+
+    // Allow case-only renames (e.g. "Foo.ts" → "foo.ts" on macOS APFS).
+    // On case-insensitive filesystems, `to_path.exists()` returns true even
+    // when the only difference is case, so we skip the exists check in that case.
+    let is_case_only = from.to_lowercase() == to.to_lowercase();
+    if !is_case_only && to_path.exists() {
+        return Err(AbundioError::Io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("target already exists: {}", to),
+        )));
+    }
+
+    if is_case_only && from_path.exists() {
+        // Two-step rename to work around case-insensitive filesystems.
+        let mut tmp = to.clone();
+        tmp.push_str(".__abundio_tmp");
+        fs::rename(&from, &tmp)?;
+        fs::rename(&tmp, &to)?;
+    } else {
+        fs::rename(&from, &to)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn fs_delete(path: String) -> Result<(), AbundioError> {
+    // Use symlink_metadata to avoid following symlinks.
+    let meta = fs::symlink_metadata(&path)?;
+    if meta.file_type().is_dir() {
+        fs::remove_dir_all(&path)?;
+    } else {
+        fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn fs_reveal_in_folder(path: String) -> Result<(), AbundioError> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").args(["-R", &path]).spawn()?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let parent = Path::new(&path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string());
+        Command::new("xdg-open").arg(&parent).spawn()?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -397,5 +490,132 @@ mod tests {
 		assert!(entry.path.contains("x.txt"));
 		assert!(!entry.relative_path.starts_with('/'));
 		assert!(entry.relative_path.contains("x.txt"));
+	}
+
+	// ── fs_create_file tests ──
+
+	#[tokio::test]
+	async fn create_file_creates_empty_file() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp.path().join("new.txt").to_string_lossy().to_string();
+		fs_create_file(path.clone()).await.unwrap();
+		assert!(Path::new(&path).exists());
+		assert_eq!(fs::read_to_string(&path).unwrap(), "");
+	}
+
+	#[tokio::test]
+	async fn create_file_rejects_existing() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp.path().join("existing.txt").to_string_lossy().to_string();
+		fs::write(&path, "content").unwrap();
+		let result = fs_create_file(path).await;
+		assert!(result.is_err());
+	}
+
+	#[tokio::test]
+	async fn create_file_rejects_under_missing_parent() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp
+			.path()
+			.join("missing_dir/new.txt")
+			.to_string_lossy()
+			.to_string();
+		let result = fs_create_file(path).await;
+		assert!(result.is_err());
+	}
+
+	// ── fs_create_folder tests ──
+
+	#[tokio::test]
+	async fn create_folder_creates_dir() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp.path().join("newdir").to_string_lossy().to_string();
+		fs_create_folder(path.clone()).await.unwrap();
+		assert!(Path::new(&path).is_dir());
+	}
+
+	#[tokio::test]
+	async fn create_folder_rejects_existing() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp.path().join("existing").to_string_lossy().to_string();
+		fs::create_dir(&path).unwrap();
+		let result = fs_create_folder(path).await;
+		assert!(result.is_err());
+	}
+
+	// ── fs_rename tests ──
+
+	#[tokio::test]
+	async fn rename_file_moves_content() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let from = tmp.path().join("old.txt").to_string_lossy().to_string();
+		let to = tmp.path().join("new.txt").to_string_lossy().to_string();
+		fs::write(&from, "hello").unwrap();
+		fs_rename(from.clone(), to.clone()).await.unwrap();
+		assert!(!Path::new(&from).exists());
+		assert_eq!(fs::read_to_string(&to).unwrap(), "hello");
+	}
+
+	#[tokio::test]
+	async fn rename_folder_with_contents() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let from_dir = tmp.path().join("oldfolder");
+		let to_dir = tmp.path().join("newfolder");
+		fs::create_dir(&from_dir).unwrap();
+		fs::write(from_dir.join("child.txt"), "data").unwrap();
+		fs_rename(
+			from_dir.to_string_lossy().to_string(),
+			to_dir.to_string_lossy().to_string(),
+		)
+		.await
+		.unwrap();
+		assert!(!from_dir.exists());
+		assert!(to_dir.join("child.txt").exists());
+	}
+
+	#[tokio::test]
+	async fn rename_rejects_when_target_exists() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let from = tmp.path().join("a.txt").to_string_lossy().to_string();
+		let to = tmp.path().join("b.txt").to_string_lossy().to_string();
+		fs::write(&from, "a").unwrap();
+		fs::write(&to, "b").unwrap();
+		let result = fs_rename(from, to).await;
+		assert!(result.is_err());
+	}
+
+	// ── fs_delete tests ──
+
+	#[tokio::test]
+	async fn delete_file_removes_it() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp.path().join("del.txt").to_string_lossy().to_string();
+		fs::write(&path, "x").unwrap();
+		fs_delete(path.clone()).await.unwrap();
+		assert!(!Path::new(&path).exists());
+	}
+
+	#[tokio::test]
+	async fn delete_folder_recursive() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let dir = tmp.path().join("subtree");
+		fs::create_dir_all(dir.join("nested")).unwrap();
+		fs::write(dir.join("nested/file.txt"), "x").unwrap();
+		fs_delete(dir.to_string_lossy().to_string()).await.unwrap();
+		assert!(!dir.exists());
+	}
+
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn delete_symlink_removes_link_not_target() {
+		use std::os::unix::fs::symlink;
+		let tmp = tempfile::TempDir::new().unwrap();
+		let target = tmp.path().join("target.txt");
+		let link = tmp.path().join("link.txt");
+		fs::write(&target, "real").unwrap();
+		symlink(&target, &link).unwrap();
+		fs_delete(link.to_string_lossy().to_string()).await.unwrap();
+		assert!(!link.exists());
+		assert!(target.exists());
 	}
 }

@@ -35,8 +35,7 @@ function collectTextRanges(root: Element, query: string): Range[] {
 	return ranges;
 }
 
-const supportsHighlights =
-	typeof CSS !== "undefined" && "highlights" in CSS;
+const supportsHighlights = typeof CSS !== "undefined" && "highlights" in CSS;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const cssHighlights = supportsHighlights ? (CSS as any).highlights : null;
@@ -134,8 +133,11 @@ export function MarkdownFindBar({ containerRef, open, onClose }: Props) {
 
 	if (!open) return null;
 
-	const countLabel =
-		!query ? "" : matchCount === 0 ? "No results" : `${activeIdx + 1} / ${matchCount}`;
+	const countLabel = !query
+		? ""
+		: matchCount === 0
+			? "No results"
+			: `${activeIdx + 1} / ${matchCount}`;
 
 	return (
 		<div

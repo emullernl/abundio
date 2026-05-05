@@ -41,8 +41,8 @@ import { printMarkdownProse } from "../../lib/markdownPrint";
 import { getTheme } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { MermaidBlock, notifyMermaidThemeChange } from "./MermaidBlock";
 import { MarkdownFindBar } from "./MarkdownFindBar";
+import { MermaidBlock, notifyMermaidThemeChange } from "./MermaidBlock";
 
 const sourceViewExtensions = [search({ top: true }), keymap.of(searchKeymap)];
 
