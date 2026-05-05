@@ -7,7 +7,11 @@ export function hitTest(
 	paneTabMap: Record<string, string>,
 ): DropTarget {
 	// 1. Tab strip has priority — any cursor y within the strip handles tab/new-tab drops
-	const tabStripEl = document.querySelector<HTMLElement>("[data-tab-strip]");
+	// Use querySelectorAll + visibility check because multiple workspaces render their
+	// tab strips simultaneously (inactive ones are hidden via display:none on a parent).
+	const tabStripEl = Array.from(
+		document.querySelectorAll<HTMLElement>("[data-tab-strip]"),
+	).find((el) => el.offsetWidth > 0 && el.offsetHeight > 0);
 	if (tabStripEl) {
 		const rect = tabStripEl.getBoundingClientRect();
 		if (
