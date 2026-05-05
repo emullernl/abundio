@@ -83,8 +83,6 @@ interface Props {
 	onSplitHorizontal: () => void;
 	onSplitVertical: () => void;
 	onClose: () => void;
-	onMaximize: () => void;
-	isMaximized: boolean;
 }
 
 export function TerminalSlot({
@@ -95,8 +93,6 @@ export function TerminalSlot({
 	onSplitHorizontal,
 	onSplitVertical,
 	onClose,
-	onMaximize,
-	isMaximized,
 }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
@@ -254,11 +250,6 @@ export function TerminalSlot({
 		{ label: "Split Right", shortcut: "⇧⌘V", onClick: onSplitVertical },
 		{ label: "Split Down", shortcut: "⇧⌘H", onClick: onSplitHorizontal },
 		{ separator: true },
-		{
-			label: isMaximized ? "Restore Pane" : "Maximize Pane",
-			shortcut: "⇧⌘M",
-			onClick: onMaximize,
-		},
 		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: onClose },
 	];
 

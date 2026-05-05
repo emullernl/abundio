@@ -94,8 +94,6 @@ beforeEach(() => {
 		activeTabByWorkspace: {},
 		focusedPaneId: null,
 		focusedPaneByTab: {},
-		maximizedPaneId: null,
-		savedLayout: null,
 		ptyStatuses: {},
 		searchPaneId: null,
 		workspacesInitialized: false,
@@ -126,16 +124,6 @@ describe("workspaceStore", () => {
 		it("sets activeWorkspaceId", () => {
 			useWorkspaceStore.getState().setActiveWorkspace("s1");
 			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s1");
-		});
-
-		it("clears maximize state", () => {
-			useWorkspaceStore.setState({
-				maximizedPaneId: "p1",
-				savedLayout: { type: "terminal", id: "p1", ptyId: "" },
-			});
-			useWorkspaceStore.getState().setActiveWorkspace("s1");
-			expect(useWorkspaceStore.getState().maximizedPaneId).toBeNull();
-			expect(useWorkspaceStore.getState().savedLayout).toBeNull();
 		});
 
 		it("falls back to first terminal when no saved focus exists", () => {
@@ -239,17 +227,6 @@ describe("workspaceStore", () => {
 			).toBe("tab-2");
 		});
 
-		it("clears maximize state", () => {
-			const workspace = makeWorkspace();
-			useWorkspaceStore.setState({
-				workspaces: [workspace],
-				activeTabByWorkspace: { "workspace-1": "tab-1" },
-				maximizedPaneId: "p1",
-			});
-
-			useWorkspaceStore.getState().setActiveTab("workspace-1", "tab-1");
-			expect(useWorkspaceStore.getState().maximizedPaneId).toBeNull();
-		});
 	});
 
 	describe("reorderWorkspaces", () => {
@@ -319,24 +296,6 @@ describe("workspaceStore", () => {
 
 			const tab = useWorkspaceStore.getState().workspaces[0].tabs[0];
 			expect(JSON.parse(tab.layoutJson)).toEqual(newLayout);
-		});
-	});
-
-	describe("setMaximized", () => {
-		it("sets maximizedPaneId and savedLayout", () => {
-			const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "" };
-			useWorkspaceStore.getState().setMaximized("p1", layout);
-			expect(useWorkspaceStore.getState().maximizedPaneId).toBe("p1");
-			expect(useWorkspaceStore.getState().savedLayout).toEqual(layout);
-		});
-
-		it("clears with null", () => {
-			useWorkspaceStore
-				.getState()
-				.setMaximized("p1", { type: "terminal", id: "p1", ptyId: "" });
-			useWorkspaceStore.getState().setMaximized(null, null);
-			expect(useWorkspaceStore.getState().maximizedPaneId).toBeNull();
-			expect(useWorkspaceStore.getState().savedLayout).toBeNull();
 		});
 	});
 

@@ -171,7 +171,6 @@ export function App() {
 		closePane,
 		closePaneNow,
 		navigatePane,
-		toggleMaximize,
 	} = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
@@ -377,7 +376,6 @@ export function App() {
 		registerAction("navigate-down", () => navigatePane("down"));
 		registerAction("navigate-left", () => navigatePane("left"));
 		registerAction("navigate-right", () => navigatePane("right"));
-		registerAction("maximize-pane", () => toggleMaximize());
 		registerAction("command-palette", () => {
 			setSettingsOpen(false);
 			setFileSearchOpen(false);
@@ -456,7 +454,6 @@ export function App() {
 		splitPaneWithPicker,
 		closePane,
 		navigatePane,
-		toggleMaximize,
 		requestNewTab,
 		requestNewWorkspace,
 		requestCloseTerminalTab,

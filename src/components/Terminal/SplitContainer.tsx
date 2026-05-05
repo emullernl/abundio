@@ -11,7 +11,7 @@ interface Props {
 	cwd: string;
 }
 
-/** Leaf component for terminal nodes — subscribes to focus/maximize state. */
+/** Leaf component for terminal nodes — subscribes to focus state. */
 const TerminalLeaf = memo(function TerminalLeaf({
 	nodeId,
 	agentId,
@@ -21,20 +21,17 @@ const TerminalLeaf = memo(function TerminalLeaf({
 }) {
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
-	const maximizedPaneId = useWorkspaceStore((s) => s.maximizedPaneId);
-	const { splitPaneWithPicker, closePane, toggleMaximize } = useSplitPane();
+	const { splitPaneWithPicker, closePane } = useSplitPane();
 
 	return (
 		<TerminalSlot
 			paneId={nodeId}
 			agentId={agentId}
 			isFocused={focusedPaneId === nodeId}
-			isMaximized={maximizedPaneId === nodeId}
 			onFocus={() => setFocusedPane(nodeId)}
 			onSplitHorizontal={() => splitPaneWithPicker(nodeId, "horizontal")}
 			onSplitVertical={() => splitPaneWithPicker(nodeId, "vertical")}
 			onClose={() => closePane(nodeId)}
-			onMaximize={toggleMaximize}
 		/>
 	);
 });
@@ -60,7 +57,7 @@ const FileLeaf = memo(function FileLeaf({
 	);
 });
 
-/** Split node — only handles layout, no store subscriptions for focus/maximize. */
+/** Split node — only handles layout, no store subscriptions. */
 function SplitNode({
 	node,
 	cwd,

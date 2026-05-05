@@ -4,7 +4,6 @@ import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { printMarkdownProse } from "../../lib/markdownPrint";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
 import {
 	type ContextMenuItem,
@@ -47,8 +46,7 @@ export function FilePane({
 	);
 	const saveFile = useExplorerStore((s) => s.saveFile);
 
-	const { splitPaneWithPicker, closePane, toggleMaximize } = useSplitPane();
-	const isMaximized = useWorkspaceStore((s) => s.maximizedPaneId === paneId);
+	const { splitPaneWithPicker, closePane } = useSplitPane();
 
 	const paneDivRef = useRef<HTMLDivElement>(null);
 
@@ -177,11 +175,6 @@ export function FilePane({
 			onClick: () => splitPaneWithPicker(paneId, "horizontal"),
 		},
 		{ separator: true },
-		{
-			label: isMaximized ? "Restore Pane" : "Maximize Pane",
-			shortcut: "⇧⌘M",
-			onClick: toggleMaximize,
-		},
 		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: () => closePane(paneId) },
 	];
 

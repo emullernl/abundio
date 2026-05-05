@@ -26,8 +26,6 @@ interface WorkspaceState {
 	activeTabByWorkspace: Record<string, string>; // workspaceId → active tabId
 	focusedPaneId: string | null;
 	focusedPaneByTab: Record<string, string>; // tabId → last focused paneId
-	maximizedPaneId: string | null;
-	savedLayout: PaneNode | null;
 	ptyStatuses: Record<string, PtyStatusType>; // ptyId → status
 	searchPaneId: string | null; // pane currently showing search bar
 	workspacesInitialized: boolean; // true after initial loadWorkspaces() completes
@@ -63,7 +61,6 @@ interface WorkspaceState {
 	updateLayout: (tabId: string, layout: PaneNode) => Promise<void>;
 	updateLayoutLocal: (tabId: string, layout: PaneNode) => void;
 	persistLayout: (tabId: string) => Promise<void>;
-	setMaximized: (paneId: string | null, savedLayout: PaneNode | null) => void;
 	setPtyStatus: (ptyId: string, status: PtyStatusType) => void;
 	toggleSearch: () => void;
 	setWorkspaceBaseBranch: (
@@ -154,8 +151,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	activeTabByWorkspace: {},
 	focusedPaneId: null,
 	focusedPaneByTab: {},
-	maximizedPaneId: null,
-	savedLayout: null,
 	ptyStatuses: {},
 	searchPaneId: null,
 	workspacesInitialized: false,
@@ -338,8 +333,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			),
 			activeWorkspaceId: isActive ? null : state.activeWorkspaceId,
 			focusedPaneId: isActive ? null : state.focusedPaneId,
-			maximizedPaneId: isActive ? null : state.maximizedPaneId,
-			savedLayout: isActive ? null : state.savedLayout,
 		});
 	},
 
@@ -385,8 +378,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				activeWorkspaceId: id,
 				focusedPaneId: restoredFocus,
 				focusedPaneByTab,
-				maximizedPaneId: null,
-				savedLayout: null,
 			};
 		});
 	},
@@ -477,8 +468,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				[workspaceId]: tab.id,
 			},
 			focusedPaneId: initialFocus,
-			maximizedPaneId: null,
-			savedLayout: null,
 		}));
 		return tab;
 	},
@@ -524,8 +513,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					[workspace.id]: newTab.id,
 				},
 				focusedPaneId: null,
-				maximizedPaneId: null,
-				savedLayout: null,
 			}));
 			return;
 		}
@@ -552,8 +539,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				...state.activeTabByWorkspace,
 				[workspace.id]: newActiveTabId,
 			},
-			maximizedPaneId: null,
-			savedLayout: null,
 		}));
 	},
 
@@ -586,8 +571,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				},
 				focusedPaneId: restoredFocus,
 				focusedPaneByTab,
-				maximizedPaneId: null,
-				savedLayout: null,
 			};
 		}),
 
@@ -666,9 +649,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		if (!tab) return;
 		await tabsApi.update(tabId, { layoutJson: tab.layoutJson });
 	},
-
-	setMaximized: (paneId, savedLayout) =>
-		set({ maximizedPaneId: paneId, savedLayout }),
 
 	setPtyStatus: (ptyId, status) =>
 		set((state) => ({
