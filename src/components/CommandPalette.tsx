@@ -37,7 +37,7 @@ export function CommandPalette({
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
-	const { splitPane, closePane, toggleMaximize } = useSplitPane();
+	const { splitPane, closePane } = useSplitPane();
 
 	const items = useMemo<PaletteItem[]>(() => {
 		const result: PaletteItem[] = [];
@@ -79,12 +79,6 @@ export function CommandPalette({
 					label: "Close Pane",
 					category: "Actions",
 					action: () => closePane(focusedPaneId),
-				},
-				{
-					id: "action-maximize",
-					label: "Maximize / Restore Pane",
-					category: "Actions",
-					action: () => toggleMaximize(),
 				},
 			);
 		}
@@ -140,7 +134,6 @@ export function CommandPalette({
 		onRequestNewWorkspace,
 		splitPane,
 		closePane,
-		toggleMaximize,
 		setTheme,
 		debugActivityMeter,
 		toggleDebugActivityMeter,

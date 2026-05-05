@@ -3,7 +3,9 @@ import {
 	collectAgentPanes,
 	collectPaneIds,
 	collectTerminals,
+	extractNode,
 	findNode,
+	insertBesideNode,
 	removeNode,
 	replaceNode,
 	setAgentId,
@@ -204,5 +206,108 @@ describe("collectAgentPanes", () => {
 			{ paneId: "a", agentId: "claude" },
 			{ paneId: "c", agentId: "copilot" },
 		]);
+	});
+});
+
+describe("extractNode", () => {
+	it("returns removed leaf and remaining sibling", () => {
+		const { remaining, removed } = extractNode(simpleSplit, "a");
+		expect(removed).toEqual(leafA);
+		expect(remaining).toEqual(leafB);
+	});
+
+	it("returns null remaining when extracting the only node", () => {
+		const { remaining, removed } = extractNode(leafA, "a");
+		expect(removed).toEqual(leafA);
+		expect(remaining).toBeNull();
+	});
+
+	it("returns original tree and null removed when id not found", () => {
+		const { remaining, removed } = extractNode(simpleSplit, "nonexistent");
+		expect(remaining).toEqual(simpleSplit);
+		expect(removed).toBeNull();
+	});
+
+	it("preserves all ids in the removed subtree", () => {
+		const { removed } = extractNode(nestedSplit, "s1");
+		expect(removed).toEqual(simpleSplit);
+	});
+
+	it("remaining tree still contains untouched nodes", () => {
+		const { remaining } = extractNode(nestedSplit, "a");
+		expect(findNode(remaining!, "b")).toEqual(leafB);
+		expect(findNode(remaining!, "c")).toEqual(leafC);
+		expect(findNode(remaining!, "a")).toBeNull();
+	});
+});
+
+describe("insertBesideNode", () => {
+	const leafX: PaneNode = { type: "terminal", id: "x", ptyId: "pty-x" };
+
+	it("inserts above target with top edge (horizontal split, new node first)", () => {
+		const result = insertBesideNode(leafA, "a", leafX, "top");
+		expect(result.type).toBe("split");
+		if (result.type === "split") {
+			expect(result.direction).toBe("horizontal");
+			expect(result.first).toEqual(leafX);
+			expect(result.second).toEqual(leafA);
+		}
+	});
+
+	it("inserts below target with bottom edge (horizontal split, target first)", () => {
+		const result = insertBesideNode(leafA, "a", leafX, "bottom");
+		expect(result.type).toBe("split");
+		if (result.type === "split") {
+			expect(result.direction).toBe("horizontal");
+			expect(result.first).toEqual(leafA);
+			expect(result.second).toEqual(leafX);
+		}
+	});
+
+	it("inserts left of target with left edge (vertical split, new node first)", () => {
+		const result = insertBesideNode(leafA, "a", leafX, "left");
+		expect(result.type).toBe("split");
+		if (result.type === "split") {
+			expect(result.direction).toBe("vertical");
+			expect(result.first).toEqual(leafX);
+			expect(result.second).toEqual(leafA);
+		}
+	});
+
+	it("inserts right of target with right edge (vertical split, target first)", () => {
+		const result = insertBesideNode(leafA, "a", leafX, "right");
+		expect(result.type).toBe("split");
+		if (result.type === "split") {
+			expect(result.direction).toBe("vertical");
+			expect(result.first).toEqual(leafA);
+			expect(result.second).toEqual(leafX);
+		}
+	});
+
+	it("inserts beside a nested node, preserving all other nodes", () => {
+		const result = insertBesideNode(nestedSplit, "c", leafX, "right");
+		expect(findNode(result, "a")).toEqual(leafA);
+		expect(findNode(result, "b")).toEqual(leafB);
+		expect(findNode(result, "c")).toEqual(leafC);
+		expect(findNode(result, "x")).toEqual(leafX);
+	});
+
+	it("inserts with ratio 0.5 on the new split", () => {
+		const result = insertBesideNode(leafA, "a", leafX, "top");
+		if (result.type === "split") {
+			expect(result.ratio).toBe(0.5);
+		}
+	});
+
+	it("returns original tree when targetPaneId not found", () => {
+		const result = insertBesideNode(leafA, "nonexistent", leafX, "top");
+		expect(result).toEqual(leafA);
+	});
+
+	it("preserves stable ids: existing node ids unchanged after insert", () => {
+		const result = insertBesideNode(nestedSplit, "b", leafX, "left");
+		expect(findNode(result, "a")?.id).toBe("a");
+		expect(findNode(result, "b")?.id).toBe("b");
+		expect(findNode(result, "c")?.id).toBe("c");
 	});
 });

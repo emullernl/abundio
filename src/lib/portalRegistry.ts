@@ -24,6 +24,10 @@ export function getTarget(paneId: string): HTMLDivElement | null {
 	return targets.get(paneId) ?? null;
 }
 
+export function listTargets(): [string, HTMLDivElement][] {
+	return [...targets.entries()];
+}
+
 export function onTargetChange(
 	paneId: string,
 	cb: TargetChangeCallback,

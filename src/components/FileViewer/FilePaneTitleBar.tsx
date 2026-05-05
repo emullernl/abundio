@@ -1,9 +1,11 @@
 import { SquareSplitHorizontal, SquareSplitVertical, X } from "lucide-react";
+import { usePaneDrag } from "../../hooks/usePaneDrag";
 import { File, GitCompare, Image } from "../Icons";
 
 type FileType = "text" | "image" | "binary" | "diff";
 
 interface Props {
+	paneId: string;
 	fileName: string;
 	fileType?: FileType;
 	isDirty?: boolean;
@@ -102,6 +104,7 @@ function getFileIconColor(ext: string | null): string {
 }
 
 export function FilePaneTitleBar({
+	paneId,
 	fileName,
 	fileType,
 	isDirty,
@@ -110,6 +113,7 @@ export function FilePaneTitleBar({
 	onClose,
 }: Props) {
 	const ext = getExtension(fileName);
+	const { handleMouseDown } = usePaneDrag(paneId);
 
 	let FileIcon: React.ComponentType<{ size?: number }>;
 	let iconColor: string;
@@ -126,6 +130,7 @@ export function FilePaneTitleBar({
 	}
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for pane repositioning
 		<div
 			className="flex items-center shrink-0"
 			style={{
@@ -134,7 +139,9 @@ export function FilePaneTitleBar({
 				background: "color-mix(in srgb, var(--bg-primary) 85%, transparent)",
 				borderBottom:
 					"1px solid color-mix(in srgb, var(--border) 40%, transparent)",
+				cursor: "grab",
 			}}
+			onMouseDown={handleMouseDown}
 		>
 			<span
 				className="shrink-0 flex items-center"

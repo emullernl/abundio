@@ -123,6 +123,72 @@ export function findFilePaneInTree(
 	return findFilePaneInTree(tree.first) ?? findFilePaneInTree(tree.second);
 }
 
+/**
+ * Wrap the target node in a new split, placing `newLeaf` as the second child.
+ * Returns a new tree. If `targetPaneId` is not found, returns the original tree.
+ */
+export function wrapInSplit(
+	tree: PaneNode,
+	targetPaneId: string,
+	newLeaf: PaneNode,
+	direction: "horizontal" | "vertical",
+): PaneNode {
+	const target = findNode(tree, targetPaneId);
+	if (!target) return tree;
+	const splitNode: PaneNode = {
+		type: "split",
+		id: crypto.randomUUID(),
+		direction,
+		ratio: 0.5,
+		first: target,
+		second: newLeaf,
+	};
+	return replaceNode(tree, targetPaneId, splitNode);
+}
+
+/**
+ * Extract a node from the tree by id. Returns the removed node and the
+ * remaining tree. If id is not found, remaining is the original tree and
+ * removed is null. If the tree becomes empty, remaining is null.
+ */
+export function extractNode(
+	tree: PaneNode,
+	id: string,
+): { remaining: PaneNode | null; removed: PaneNode | null } {
+	const removed = findNode(tree, id);
+	if (!removed) return { remaining: tree, removed: null };
+	const remaining = removeNode(tree, id);
+	return { remaining, removed };
+}
+
+/**
+ * Insert newNode beside the target pane, creating a split at the given edge.
+ * top/bottom → horizontal split; left/right → vertical split.
+ * "top" and "left" place the new node first (above/left of target).
+ */
+export function insertBesideNode(
+	tree: PaneNode,
+	targetPaneId: string,
+	newNode: PaneNode,
+	edge: "top" | "right" | "bottom" | "left",
+): PaneNode {
+	const target = findNode(tree, targetPaneId);
+	if (!target) return tree;
+	const direction =
+		edge === "top" || edge === "bottom" ? "horizontal" : "vertical";
+	const first = edge === "top" || edge === "left" ? newNode : target;
+	const second = edge === "top" || edge === "left" ? target : newNode;
+	const splitNode: PaneNode = {
+		type: "split",
+		id: crypto.randomUUID(),
+		direction,
+		ratio: 0.5,
+		first,
+		second,
+	};
+	return replaceNode(tree, targetPaneId, splitNode);
+}
+
 /** Return the first file leaf with the given filePath, or null. */
 export function findFilePaneByPath(
 	tree: PaneNode,

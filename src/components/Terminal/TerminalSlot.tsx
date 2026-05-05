@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
+import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { pty } from "../../lib/ipc";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
-import { getTerminal, resetTerminal } from "../../lib/terminalManager";
+import { getTerminal, getPaneRevision, subscribePaneRevision, resetTerminal } from "../../lib/terminalManager";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { PaneDropIndicator } from "../PaneDropIndicator";
 import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { SearchBar } from "./SearchBar";
@@ -83,8 +85,6 @@ interface Props {
 	onSplitHorizontal: () => void;
 	onSplitVertical: () => void;
 	onClose: () => void;
-	onMaximize: () => void;
-	isMaximized: boolean;
 }
 
 export function TerminalSlot({
@@ -95,8 +95,6 @@ export function TerminalSlot({
 	onSplitHorizontal,
 	onSplitVertical,
 	onClose,
-	onMaximize,
-	isMaximized,
 }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const innerRef = useRef<HTMLDivElement>(null);
@@ -115,12 +113,14 @@ export function TerminalSlot({
 		return () => unregisterTarget(paneId);
 	}, [paneId]);
 
-	// @ts-expect-error intentionally unused — Zustand subscription triggers re-render
-	// biome-ignore lint/correctness/noUnusedVariables: subscription trigger for re-render on tab switch
-	const activeTabId = useWorkspaceStore((s) => {
-		const activeWorkspaceId = s.activeWorkspaceId;
-		return activeWorkspaceId ? s.activeTabByWorkspace[activeWorkspaceId] : null;
-	});
+	// Re-render only when THIS pane's ManagedTerminal is created / gets its ptyId
+	// / becomes ready, so derived values (searchAddon, ptyIdForPane) update without
+	// subscribing to global tab/workspace state.
+	useSyncExternalStore(
+		useCallback((onChange) => subscribePaneRevision(paneId, onChange), [paneId]),
+		useCallback(() => getPaneRevision(paneId), [paneId]),
+		useCallback(() => getPaneRevision(paneId), [paneId]),
+	);
 
 	useEffect(() => {
 		if (!isFocused) return;
@@ -189,6 +189,10 @@ export function TerminalSlot({
 		resetTerminal(paneId);
 	}, [paneId]);
 
+	const isDragSource = useDragPaneStore(
+		(s) => s.isDragging && s.sourcePaneId === paneId,
+	);
+
 	const searchAddon = getTerminal(paneId)?.searchAddon ?? null;
 
 	// Agents submenu — launches the selected agent into the current shell by
@@ -254,11 +258,6 @@ export function TerminalSlot({
 		{ label: "Split Right", shortcut: "⇧⌘V", onClick: onSplitVertical },
 		{ label: "Split Down", shortcut: "⇧⌘H", onClick: onSplitHorizontal },
 		{ separator: true },
-		{
-			label: isMaximized ? "Restore Pane" : "Maximize Pane",
-			shortcut: "⇧⌘M",
-			onClick: onMaximize,
-		},
 		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: onClose },
 	];
 
@@ -267,12 +266,13 @@ export function TerminalSlot({
 		<div
 			ref={containerRef}
 			className="w-full h-full relative flex flex-col"
+			data-pane-id={paneId}
 			style={{
 				padding: "0 0 0 8px",
 				overflow: "hidden",
 				boxShadow: "none",
 				background: "var(--bg-primary)",
-				opacity: isFocused ? 1 : 0.75,
+				opacity: isDragSource ? 0.35 : isFocused ? 1 : 0.75,
 				transition: "opacity 150ms ease",
 			}}
 			onFocus={handleFocus}
@@ -304,6 +304,7 @@ export function TerminalSlot({
 					onClose={() => setContextMenu(null)}
 				/>
 			)}
+			<PaneDropIndicator paneId={paneId} />
 		</div>
 	);
 }

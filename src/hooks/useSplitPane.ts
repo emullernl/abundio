@@ -5,6 +5,7 @@ import {
 	findNode,
 	removeNode,
 	replaceNode,
+	wrapInSplit,
 } from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { destroyTerminal } from "../lib/terminalManager";
@@ -24,7 +25,6 @@ export function useSplitPane() {
 	const updateLayoutLocal = useWorkspaceStore((s) => s.updateLayoutLocal);
 	const persistLayout = useWorkspaceStore((s) => s.persistLayout);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
-	const setMaximized = useWorkspaceStore((s) => s.setMaximized);
 	const closeTab = useWorkspaceStore((s) => s.closeTab);
 
 	/** Split with an explicit choice (called by LaunchPicker handler in App.tsx). */
@@ -46,19 +46,9 @@ export function useSplitPane() {
 				agentId: agent?.id,
 			};
 
-			const target = findNode(layout, paneId);
-			if (!target) return;
+			if (!findNode(layout, paneId)) return;
 
-			const splitNode: PaneNode = {
-				type: "split",
-				id: generateId(),
-				direction,
-				ratio: 0.5,
-				first: target,
-				second: newTerminal,
-			};
-
-			const newLayout = replaceNode(layout, paneId, splitNode);
+			const newLayout = wrapInSplit(layout, paneId, newTerminal, direction);
 			await updateLayout(tab.id, newLayout);
 			setFocusedPane(newPaneId);
 
@@ -118,20 +108,8 @@ export function useSplitPane() {
 				// Last pane removed — close the tab itself
 				await closeTab(tab.id);
 			}
-
-			// Clear maximize state if the maximized pane was closed
-			if (useWorkspaceStore.getState().maximizedPaneId === paneId) {
-				setMaximized(null, null);
-			}
 		},
-		[
-			getActiveTab,
-			getActiveLayout,
-			updateLayout,
-			setFocusedPane,
-			setMaximized,
-			closeTab,
-		],
+		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, closeTab],
 	);
 
 	const closePane = useCallback((paneId: string, label?: string) => {
@@ -189,31 +167,6 @@ export function useSplitPane() {
 		[getActiveLayout, setFocusedPane],
 	);
 
-	/** Toggle maximize/restore for the focused pane. */
-	const toggleMaximize = useCallback(async () => {
-		const tab = getActiveTab();
-		const layout = getActiveLayout();
-		const { focusedPaneId, maximizedPaneId, savedLayout } =
-			useWorkspaceStore.getState();
-		if (!tab || !layout || !focusedPaneId) return;
-
-		if (maximizedPaneId) {
-			// Restore: put back the saved layout
-			if (savedLayout) {
-				await updateLayout(tab.id, savedLayout);
-			}
-			setMaximized(null, null);
-		} else {
-			// Maximize: find the focused pane and make it the only pane
-			const node = findNode(layout, focusedPaneId);
-			if (!node || node.type === "split") return;
-
-			setMaximized(focusedPaneId, layout);
-			const maximizedLayout: PaneNode = { ...node };
-			await updateLayout(tab.id, maximizedLayout);
-		}
-	}, [getActiveTab, getActiveLayout, updateLayout, setMaximized]);
-
 	return {
 		splitPaneWithChoice,
 		splitPaneWithPicker,
@@ -224,6 +177,5 @@ export function useSplitPane() {
 		updateRatioLocal,
 		persistCurrentLayout,
 		navigatePane,
-		toggleMaximize,
 	};
 }

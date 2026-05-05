@@ -11,6 +11,7 @@ import {
 	findFilePaneInTree,
 	findNode,
 	replaceNode,
+	wrapInSplit,
 } from "../lib/paneTree";
 import type { DirEntry, GitChangedFile, PaneNode } from "../lib/types";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -59,6 +60,7 @@ interface ExplorerState {
 	expandedDirs: Record<string, boolean>;
 	dirContents: Record<string, DirEntry[]>;
 	pendingGotoLine: { filePath: string; line: number } | null;
+	pendingEdit: PendingEditMode | null;
 
 	// Called by FilePane on mount — triggers content load
 	registerFilePane: (
@@ -83,6 +85,19 @@ interface ExplorerState {
 		modified: string,
 		section?: GitChangedFile["section"] | null,
 	) => void;
+
+	// Inline create / rename in the file tree
+	startCreate: (parentDir: string, kind: "file" | "folder") => void;
+	startRename: (targetPath: string, isDir: boolean) => void;
+	cancelEdit: () => void;
+	commitEdit: (name: string) => Promise<void>;
+
+	// Open a file by splitting the focused pane in the given direction
+	openFileInSplit: (
+		workspaceId: string,
+		filePath: string,
+		direction: "horizontal" | "vertical",
+	) => Promise<void>;
 
 	updateFileContent: (paneId: string, content: string) => void;
 	saveFile: (paneId: string) => Promise<void>;
@@ -110,6 +125,17 @@ interface ExplorerState {
 	setActiveFileTab: (paneId: string | null) => void;
 }
 
+// ── Pending edit state for inline create / rename in the file tree ──
+
+export type PendingEditMode =
+	| { kind: "create"; type: "file" | "folder"; parentDir: string }
+	| {
+			kind: "rename";
+			targetPath: string;
+			isDir: boolean;
+			initialName: string;
+	  };
+
 // ── Internal helpers ──
 
 function getActiveTabLayout(workspaceId: string): {
@@ -126,6 +152,25 @@ function getActiveTabLayout(workspaceId: string): {
 	} catch {
 		return null;
 	}
+}
+
+function renameFileInLayout(
+	node: PaneNode,
+	oldPath: string,
+	newPath: string,
+): PaneNode {
+	if (node.type === "file") {
+		if (node.filePath === oldPath) return { ...node, filePath: newPath };
+		const diffKey = `diff:${oldPath}`;
+		if (node.filePath === diffKey)
+			return { ...node, filePath: `diff:${newPath}` };
+		return node;
+	}
+	if (node.type === "terminal") return node;
+	const first = renameFileInLayout(node.first, oldPath, newPath);
+	const second = renameFileInLayout(node.second, oldPath, newPath);
+	if (first === node.first && second === node.second) return node;
+	return { ...node, first, second };
 }
 
 async function loadFilePaneContent(paneId: string, filePath: string) {
@@ -169,6 +214,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	expandedDirs: {},
 	dirContents: {},
 	pendingGotoLine: null,
+	pendingEdit: null,
 
 	registerFilePane: (
 		paneId,
@@ -251,7 +297,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				clearEditorStateCache(id);
 				delete filePanes[id];
 			}
-			return { filePanes };
+			return { filePanes, pendingEdit: null };
 		});
 	},
 
@@ -374,6 +420,129 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			.getState()
 			.createTab(workspaceId, undefined, seedLayout)
 			.catch(() => {});
+	},
+
+	startCreate: async (parentDir, kind) => {
+		const { expandedDirs, loadDir } = get();
+		if (!expandedDirs[parentDir]) {
+			await loadDir(parentDir);
+			set((s) => ({
+				expandedDirs: { ...s.expandedDirs, [parentDir]: true },
+			}));
+		}
+		set({ pendingEdit: { kind: "create", type: kind, parentDir } });
+	},
+
+	startRename: (targetPath, isDir) => {
+		const { dirContents } = get();
+		const parentDir = targetPath.substring(0, targetPath.lastIndexOf("/"));
+		const entries = dirContents[parentDir] ?? [];
+		const entry = entries.find((e) => e.path === targetPath);
+		const initialName = entry?.name ?? targetPath.split("/").pop() ?? "";
+		set({
+			pendingEdit: { kind: "rename", targetPath, isDir, initialName },
+		});
+	},
+
+	cancelEdit: () => set({ pendingEdit: null }),
+
+	commitEdit: async (name) => {
+		const trimmed = name.trim();
+		const { pendingEdit } = get();
+		if (!pendingEdit) return;
+
+		// Validate: empty or contains path separators
+		if (!trimmed || /[/\\:]/.test(trimmed)) {
+			set({ pendingEdit: null });
+			return;
+		}
+
+		try {
+			if (pendingEdit.kind === "create") {
+				const { parentDir, type } = pendingEdit;
+				const newPath = `${parentDir}/${trimmed}`;
+				if (type === "file") {
+					await fsApi.createFile(newPath);
+				} else {
+					await fsApi.createFolder(newPath);
+				}
+				await get().refreshDirs([parentDir]);
+			} else {
+				// rename
+				const { targetPath, initialName } = pendingEdit;
+				if (trimmed === initialName) {
+					set({ pendingEdit: null });
+					return;
+				}
+				const parentDir = targetPath.substring(0, targetPath.lastIndexOf("/"));
+				const newPath = `${parentDir}/${trimmed}`;
+				await fsApi.rename(targetPath, newPath);
+				await get().refreshDirs([parentDir]);
+
+				// Update any open file panes pointing at the old path
+				set((s) => {
+					const updatedPanes: Record<string, FilePaneState> = {};
+					for (const [paneId, pane] of Object.entries(s.filePanes)) {
+						const realPath = pane.filePath.startsWith("diff:")
+							? pane.filePath.slice("diff:".length)
+							: pane.filePath;
+						if (realPath === targetPath) {
+							const isDiffPane = pane.filePath.startsWith("diff:");
+							updatedPanes[paneId] = {
+								...pane,
+								filePath: isDiffPane ? `diff:${newPath}` : newPath,
+								fileName: trimmed,
+								deletedOnDisk: false,
+							};
+						} else {
+							updatedPanes[paneId] = pane;
+						}
+					}
+					return { filePanes: updatedPanes };
+				});
+
+				// Update pane layouts in all workspaces so file leaves reflect new path
+				const wsStore = useWorkspaceStore.getState();
+				for (const workspace of wsStore.workspaces) {
+					for (const tab of workspace.tabs) {
+						try {
+							const layout = JSON.parse(tab.layoutJson) as PaneNode;
+							const updated = renameFileInLayout(layout, targetPath, newPath);
+							if (updated !== layout) {
+								wsStore.updateLayout(tab.id, updated).catch(() => {});
+							}
+						} catch {
+							// ignore malformed layout
+						}
+					}
+				}
+			}
+		} finally {
+			set({ pendingEdit: null });
+		}
+	},
+
+	openFileInSplit: async (workspaceId, filePath, direction) => {
+		const ctx = getActiveTabLayout(workspaceId);
+		const wsStore = useWorkspaceStore.getState();
+		const focusedPaneId = wsStore.focusedPaneId;
+
+		if (!ctx || !focusedPaneId || !findNode(ctx.layout, focusedPaneId)) {
+			// Fall back to opening as a new tab
+			await get().openFile(workspaceId, filePath);
+			return;
+		}
+
+		const newPaneId = crypto.randomUUID();
+		const newLeaf: PaneNode = { type: "file", id: newPaneId, filePath };
+		const newLayout = wrapInSplit(
+			ctx.layout,
+			focusedPaneId,
+			newLeaf,
+			direction,
+		);
+		await wsStore.updateLayout(ctx.tabId, newLayout);
+		wsStore.setFocusedPane(newPaneId);
 	},
 
 	updateFileContent: (paneId, content) => {

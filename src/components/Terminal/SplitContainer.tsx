@@ -11,7 +11,7 @@ interface Props {
 	cwd: string;
 }
 
-/** Leaf component for terminal nodes — subscribes to focus/maximize state. */
+/** Leaf component for terminal nodes — subscribes to focus state. */
 const TerminalLeaf = memo(function TerminalLeaf({
 	nodeId,
 	agentId,
@@ -19,22 +19,19 @@ const TerminalLeaf = memo(function TerminalLeaf({
 	nodeId: string;
 	agentId?: string;
 }) {
-	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === nodeId);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
-	const maximizedPaneId = useWorkspaceStore((s) => s.maximizedPaneId);
-	const { splitPaneWithPicker, closePane, toggleMaximize } = useSplitPane();
+	const { splitPaneWithPicker, closePane } = useSplitPane();
 
 	return (
 		<TerminalSlot
 			paneId={nodeId}
 			agentId={agentId}
-			isFocused={focusedPaneId === nodeId}
-			isMaximized={maximizedPaneId === nodeId}
+			isFocused={isFocused}
 			onFocus={() => setFocusedPane(nodeId)}
 			onSplitHorizontal={() => splitPaneWithPicker(nodeId, "horizontal")}
 			onSplitVertical={() => splitPaneWithPicker(nodeId, "vertical")}
 			onClose={() => closePane(nodeId)}
-			onMaximize={toggleMaximize}
 		/>
 	);
 });
@@ -45,7 +42,7 @@ const FileLeaf = memo(function FileLeaf({
 }: {
 	node: PaneNode & { type: "file" };
 }) {
-	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === node.id);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
 
 	return (
@@ -54,13 +51,13 @@ const FileLeaf = memo(function FileLeaf({
 			filePath={node.filePath}
 			isDiff={node.isDiff}
 			diffSection={node.diffSection}
-			isFocused={focusedPaneId === node.id}
+			isFocused={isFocused}
 			onFocus={() => setFocusedPane(node.id)}
 		/>
 	);
 });
 
-/** Split node — only handles layout, no store subscriptions for focus/maximize. */
+/** Split node — only handles layout, no store subscriptions. */
 function SplitNode({
 	node,
 	cwd,

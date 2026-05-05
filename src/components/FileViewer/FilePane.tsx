@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
+import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { printMarkdownProse } from "../../lib/markdownPrint";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
+import { PaneDropIndicator } from "../PaneDropIndicator";
 import {
 	type ContextMenuItem,
 	PaneContextMenu,
@@ -47,8 +48,11 @@ export function FilePane({
 	);
 	const saveFile = useExplorerStore((s) => s.saveFile);
 
-	const { splitPaneWithPicker, closePane, toggleMaximize } = useSplitPane();
-	const isMaximized = useWorkspaceStore((s) => s.maximizedPaneId === paneId);
+	const { splitPaneWithPicker, closePane } = useSplitPane();
+
+	const isDragSource = useDragPaneStore(
+		(s) => s.isDragging && s.sourcePaneId === paneId,
+	);
 
 	const paneDivRef = useRef<HTMLDivElement>(null);
 
@@ -177,11 +181,6 @@ export function FilePane({
 			onClick: () => splitPaneWithPicker(paneId, "horizontal"),
 		},
 		{ separator: true },
-		{
-			label: isMaximized ? "Restore Pane" : "Maximize Pane",
-			shortcut: "⇧⌘M",
-			onClick: toggleMaximize,
-		},
 		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: () => closePane(paneId) },
 	];
 
@@ -196,12 +195,18 @@ export function FilePane({
 		<div
 			ref={paneDivRef}
 			className="relative w-full h-full flex flex-col"
-			style={{ backgroundColor: "var(--bg-primary)" }}
+			data-pane-id={paneId}
+			style={{
+				backgroundColor: "var(--bg-primary)",
+				opacity: isDragSource ? 0.35 : 1,
+				transition: "opacity 150ms ease",
+			}}
 			onClick={onFocus}
 			onContextMenu={handleContextMenu}
 		>
 			{paneState && (
 				<FilePaneTitleBar
+					paneId={paneId}
 					fileName={paneState.fileName}
 					fileType={paneState.fileType}
 					isDirty={paneState.isDirty}
@@ -280,6 +285,7 @@ export function FilePane({
 					onClose={() => setContextMenu(null)}
 				/>
 			)}
+			<PaneDropIndicator paneId={paneId} />
 		</div>
 	);
 }

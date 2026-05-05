@@ -6,7 +6,6 @@ type KeyAction =
 	| "navigate-down"
 	| "navigate-left"
 	| "navigate-right"
-	| "maximize-pane"
 	| "command-palette"
 	| "open-file-search"
 	| "search-in-terminal"
@@ -44,7 +43,6 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"navigate-down",
 	"navigate-left",
 	"navigate-right",
-	"maximize-pane",
 	"command-palette",
 	"open-file-search",
 	"search-in-workspace",
@@ -115,7 +113,6 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		ctrl: !isMac,
 		action: "navigate-right",
 	},
-	{ key: "m", meta: isMac, shift: true, ctrl: !isMac, action: "maximize-pane" },
 	{
 		key: "k",
 		meta: isMac,

@@ -55,7 +55,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 
 #### Hooks
 
-- `hooks/useSplitPane.ts` — Split, close, navigate, maximize pane operations.
+- `hooks/useSplitPane.ts` — Split, close, navigate pane operations.
 - `hooks/usePty.ts` — PTY connection lifecycle.
 - `hooks/useWorkspace.ts` — Workspace loading and management.
 - `hooks/useConfirmCloseFileTab.ts` — Confirm dialog for unsaved file tabs.
@@ -176,7 +176,6 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Split vertical | `Cmd+Shift+V` | `Ctrl+Shift+V` |
 | Close pane | `Cmd+Shift+W` | `Ctrl+Shift+W` |
 | Navigate panes | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
-| Maximize/restore pane | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | Command palette | `Cmd+K` | `Ctrl+K` |
 | File quickopen | `Cmd+P` | `Ctrl+P` |
 | Find in terminal | `Cmd+F` | `Ctrl+F` |

@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { DragPanePreview } from "./components/DragPanePreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
 import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
@@ -171,7 +172,6 @@ export function App() {
 		closePane,
 		closePaneNow,
 		navigatePane,
-		toggleMaximize,
 	} = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
@@ -377,7 +377,6 @@ export function App() {
 		registerAction("navigate-down", () => navigatePane("down"));
 		registerAction("navigate-left", () => navigatePane("left"));
 		registerAction("navigate-right", () => navigatePane("right"));
-		registerAction("maximize-pane", () => toggleMaximize());
 		registerAction("command-palette", () => {
 			setSettingsOpen(false);
 			setFileSearchOpen(false);
@@ -456,7 +455,6 @@ export function App() {
 		splitPaneWithPicker,
 		closePane,
 		navigatePane,
-		toggleMaximize,
 		requestNewTab,
 		requestNewWorkspace,
 		requestCloseTerminalTab,
@@ -693,6 +691,7 @@ export function App() {
 						/>
 					);
 				})()}
+			<DragPanePreview />
 		</div>
 	);
 }
