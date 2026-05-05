@@ -19,7 +19,7 @@ const TerminalLeaf = memo(function TerminalLeaf({
 	nodeId: string;
 	agentId?: string;
 }) {
-	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === nodeId);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
@@ -27,7 +27,7 @@ const TerminalLeaf = memo(function TerminalLeaf({
 		<TerminalSlot
 			paneId={nodeId}
 			agentId={agentId}
-			isFocused={focusedPaneId === nodeId}
+			isFocused={isFocused}
 			onFocus={() => setFocusedPane(nodeId)}
 			onSplitHorizontal={() => splitPaneWithPicker(nodeId, "horizontal")}
 			onSplitVertical={() => splitPaneWithPicker(nodeId, "vertical")}
@@ -42,7 +42,7 @@ const FileLeaf = memo(function FileLeaf({
 }: {
 	node: PaneNode & { type: "file" };
 }) {
-	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === node.id);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
 
 	return (
@@ -51,7 +51,7 @@ const FileLeaf = memo(function FileLeaf({
 			filePath={node.filePath}
 			isDiff={node.isDiff}
 			diffSection={node.diffSection}
-			isFocused={focusedPaneId === node.id}
+			isFocused={isFocused}
 			onFocus={() => setFocusedPane(node.id)}
 		/>
 	);

@@ -202,6 +202,41 @@ export interface ManagedTerminal {
 
 const instances = new Map<string, ManagedTerminal>();
 
+// Per-pane revision counters + listener set so React components can subscribe
+// to "my pane's ManagedTerminal changed" without falling back to global
+// store subscriptions. Bumped only at lifecycle transitions, never on output.
+const paneRevisions = new Map<string, number>();
+const paneListeners = new Map<string, Set<() => void>>();
+
+export function getPaneRevision(paneId: string): number {
+	return paneRevisions.get(paneId) ?? 0;
+}
+
+export function subscribePaneRevision(
+	paneId: string,
+	listener: () => void,
+): () => void {
+	let set = paneListeners.get(paneId);
+	if (!set) {
+		set = new Set();
+		paneListeners.set(paneId, set);
+	}
+	set.add(listener);
+	return () => {
+		const s = paneListeners.get(paneId);
+		if (!s) return;
+		s.delete(listener);
+		if (s.size === 0) paneListeners.delete(paneId);
+	};
+}
+
+function bumpPaneRevision(paneId: string): void {
+	paneRevisions.set(paneId, (paneRevisions.get(paneId) ?? 0) + 1);
+	const set = paneListeners.get(paneId);
+	if (!set) return;
+	for (const l of set) l();
+}
+
 // Background activity listeners for PTYs whose terminals have been destroyed (workspace switch)
 // These keep tracking activity so workspace/tab dots update for inactive workspaces
 const backgroundTrackers = new Map<
@@ -476,6 +511,7 @@ export async function createTerminal(
 	managed.deferredInit = () => initPty(paneId, managed, cwd);
 
 	instances.set(paneId, managed);
+	bumpPaneRevision(paneId);
 
 	// First attempt — may no-op because the pane isn't in the active tab yet,
 	// or because the container is still hidden/0×0. projectInto() will retry
@@ -579,6 +615,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	if (isNewPty) {
 		currentPtyId = crypto.randomUUID();
 		managed.ptyId = currentPtyId;
+		bumpPaneRevision(paneId);
 	}
 
 	// Stop background tracker if one exists — full listener takes over
@@ -850,6 +887,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	};
 
 	managed.ready = true;
+	bumpPaneRevision(paneId);
 }
 
 /** Try to flush the startup buffer. Only flushes once BOTH the terminal is
@@ -1027,6 +1065,7 @@ export async function resetTerminal(paneId: string): Promise<void> {
 	// Reset xterm content
 	managed.term.reset();
 	managed.ptyId = "";
+	bumpPaneRevision(paneId);
 	managed.ready = false;
 	managed.suppressActivity = true;
 	managed.lastInputAt = 0;
@@ -1059,6 +1098,7 @@ export function destroyTerminal(paneId: string): void {
 	managed.cleanup?.();
 	managed.term.dispose();
 	instances.delete(paneId);
+	bumpPaneRevision(paneId);
 	// Start background tracking so activity dots update for inactive workspaces
 	if (managed.ptyId) {
 		startBackgroundTracking(managed.ptyId);

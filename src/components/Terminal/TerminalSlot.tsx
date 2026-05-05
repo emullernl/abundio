@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { pty } from "../../lib/ipc";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
-import { getTerminal, resetTerminal } from "../../lib/terminalManager";
+import { getTerminal, getPaneRevision, subscribePaneRevision, resetTerminal } from "../../lib/terminalManager";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -113,12 +113,14 @@ export function TerminalSlot({
 		return () => unregisterTarget(paneId);
 	}, [paneId]);
 
-	// @ts-expect-error intentionally unused — Zustand subscription triggers re-render
-	// biome-ignore lint/correctness/noUnusedVariables: subscription trigger for re-render on tab switch
-	const activeTabId = useWorkspaceStore((s) => {
-		const activeWorkspaceId = s.activeWorkspaceId;
-		return activeWorkspaceId ? s.activeTabByWorkspace[activeWorkspaceId] : null;
-	});
+	// Re-render only when THIS pane's ManagedTerminal is created / gets its ptyId
+	// / becomes ready, so derived values (searchAddon, ptyIdForPane) update without
+	// subscribing to global tab/workspace state.
+	useSyncExternalStore(
+		useCallback((onChange) => subscribePaneRevision(paneId, onChange), [paneId]),
+		useCallback(() => getPaneRevision(paneId), [paneId]),
+		useCallback(() => getPaneRevision(paneId), [paneId]),
+	);
 
 	useEffect(() => {
 		if (!isFocused) return;
