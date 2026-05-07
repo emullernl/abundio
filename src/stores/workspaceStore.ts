@@ -21,6 +21,7 @@ import type {
 import { useExplorerStore } from "./explorerStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
+import { useWorkspaceGitStore } from "./workspaceGitStore";
 
 interface WorkspaceState {
 	workspaces: WorkspaceWithTabs[];
@@ -207,6 +208,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		});
 		pty.cleanupStaleLogs(allPaneIds).catch(() => {});
 
+		// Pre-populate branch chips from the persisted lastBranch so chips appear
+		// immediately. The real branch name is fetched the first time each
+		// workspace is activated (see setActiveWorkspace).
+		const initialGitInfo: Record<string, import("./workspaceGitStore").WorkspaceGitInfo> = {};
+		for (const ws of cleaned) {
+			if (ws.lastBranch) {
+				initialGitInfo[ws.id] = {
+					isGitRepo: true,
+					currentBranch: ws.lastBranch,
+					changedFileCount: 0,
+					additions: 0,
+					deletions: 0,
+				};
+			}
+		}
+		if (Object.keys(initialGitInfo).length > 0) {
+			useWorkspaceGitStore.setState((s) => ({
+				byWorkspaceId: { ...s.byWorkspaceId, ...initialGitInfo },
+			}));
+		}
+
 		// One-time migration: convert old fileTabsJson into file-leaf tabs
 		for (const s of workspacesWithTabs) {
 			if (!s.fileTabsJson || s.fileTabsJson === "{}") continue;
@@ -265,6 +287,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			},
 			focusedPaneId: firstPaneId ?? state.focusedPaneId,
 		}));
+		useWorkspaceGitStore
+			.getState()
+			.fetch(workspaceWithTabs.id, rootFolder, null)
+			.catch(() => {});
 		return workspaceWithTabs;
 	},
 
@@ -286,6 +312,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 		await workspacesApi.delete(id);
 		usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
+		useWorkspaceGitStore.getState().remove(id);
 		set((state) => ({
 			workspaces: state.workspaces.filter((s) => s.id !== id),
 			activeWorkspaceId:
@@ -364,7 +391,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	setActiveWorkspace: (id) => {
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
-		return set((state) => {
+		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
 			// Save current focused pane for the current tab
 			const currentWorkspaceId = state.activeWorkspaceId;
@@ -397,6 +424,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				focusedPaneByTab,
 			};
 		});
+		// Fetch real branch name and change stats for the newly active workspace.
+		// Deferred so the workspace UI (terminals, layout) renders first.
+		if (id) {
+			setTimeout(() => {
+				const ws = get().workspaces.find((s) => s.id === id);
+				if (ws) {
+					useWorkspaceGitStore
+						.getState()
+						.fetch(id, ws.rootFolder, ws.baseBranch)
+						.catch(() => {});
+				}
+			}, 500);
+		}
 	},
 
 	beginWorkspaceSwitch: (id) => {

@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { git, workspaces as workspacesApi } from "../lib/ipc";
 import type { GitChangedFile } from "../lib/types";
 import { useWorkspaceStore } from "./workspaceStore";
+import { useWorkspaceGitStore } from "./workspaceGitStore";
 
 let fetchGeneration = 0;
 let lastFingerprint: string | null = null;
@@ -103,13 +104,43 @@ export const useGitChangesStore = create<GitChangesState>()(
 						updates.currentBranch = branchInfo.currentBranch;
 					}
 					set(updates);
+					// Keep sidebar chip and stats in sync without extra IPC calls
+					const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+					if (activeId) {
+						const totalAdd = files.reduce((s, f) => s + f.additions, 0);
+						const totalDel = files.reduce((s, f) => s + f.deletions, 0);
+						useWorkspaceGitStore.getState().setInfo(activeId, {
+							isGitRepo: true,
+							currentBranch: branchInfo.currentBranch,
+							changedFileCount: files.length,
+							additions: totalAdd,
+							deletions: totalDel,
+						});
+						workspacesApi
+							.update(activeId, { lastBranch: branchInfo.currentBranch })
+							.catch(() => {});
+					}
 				} catch (e) {
 					if (gen !== fetchGeneration) return; // stale response
+					const errMsg = e instanceof Error ? e.message : String(e);
 					set({
 						loading: false,
-						error: e instanceof Error ? e.message : String(e),
+						error: errMsg,
 						changedFiles: [],
 					});
+					// Sync non-git status so sidebar chip and panel stay consistent
+					if (/not a git repository/i.test(errMsg)) {
+						const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+						if (activeId) {
+							useWorkspaceGitStore.getState().setInfo(activeId, {
+								isGitRepo: false,
+								currentBranch: null,
+								changedFileCount: 0,
+								additions: 0,
+								deletions: 0,
+							});
+						}
+					}
 				}
 			},
 

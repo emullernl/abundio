@@ -20,6 +20,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "006_rename_sessions_to_workspaces",
         include_str!("../migrations/006_rename_sessions_to_workspaces.sql"),
     ),
+    (
+        "007_add_last_branch",
+        include_str!("../migrations/007_add_last_branch.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -97,7 +101,7 @@ mod tests {
         let count: i32 = conn
             .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 6);
+        assert_eq!(count, 7);
     }
 }
 

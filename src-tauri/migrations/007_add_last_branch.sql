@@ -1,0 +1,1 @@
+ALTER TABLE workspaces ADD COLUMN last_branch TEXT DEFAULT NULL;

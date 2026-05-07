@@ -14,6 +14,7 @@ pub struct Workspace {
     pub agent_presets_json: String,
     pub file_tabs_json: String,
     pub base_branch: Option<String>,
+    pub last_branch: Option<String>,
     pub position: i32,
     pub created_at: i64,
     pub updated_at: i64,
@@ -28,6 +29,7 @@ pub struct WorkspaceUpdate {
     pub agent_presets_json: Option<String>,
     pub file_tabs_json: Option<String>,
     pub base_branch: Option<Option<String>>,
+    pub last_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,7 +109,7 @@ impl WorkspaceStore {
     pub fn list(&self) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.name, s.root_folder, s.env_json, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.position, s.created_at, s.updated_at,
+            "SELECT s.id, s.name, s.root_folder, s.env_json, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.created_at, s.updated_at,
                     t.id, t.workspace_id, t.name, t.layout_json, t.position, t.created_at, t.updated_at
              FROM workspaces s
              LEFT JOIN tabs t ON t.workspace_id = s.id
@@ -132,9 +134,10 @@ impl WorkspaceStore {
                         agent_presets_json: row.get(4)?,
                         file_tabs_json: row.get(5)?,
                         base_branch: row.get(6)?,
-                        position: row.get(7)?,
-                        created_at: row.get(8)?,
-                        updated_at: row.get(9)?,
+                        last_branch: row.get(7)?,
+                        position: row.get(8)?,
+                        created_at: row.get(9)?,
+                        updated_at: row.get(10)?,
                     },
                     tabs: Vec::new(),
                 });
@@ -142,17 +145,17 @@ impl WorkspaceStore {
             }
 
             // Append tab if present (LEFT JOIN may produce NULL tab columns)
-            let tab_id: Option<String> = row.get(10)?;
+            let tab_id: Option<String> = row.get(11)?;
             if let Some(tid) = tab_id {
                 if let Some(entry) = result.last_mut() {
                     entry.tabs.push(Tab {
                         id: tid,
-                        workspace_id: row.get(11)?,
-                        name: row.get(12)?,
-                        layout_json: row.get(13)?,
-                        position: row.get(14)?,
-                        created_at: row.get(15)?,
-                        updated_at: row.get(16)?,
+                        workspace_id: row.get(12)?,
+                        name: row.get(13)?,
+                        layout_json: row.get(14)?,
+                        position: row.get(15)?,
+                        created_at: row.get(16)?,
+                        updated_at: row.get(17)?,
                     });
                 }
             }
@@ -190,6 +193,10 @@ impl WorkspaceStore {
         if let Some(ref base_branch) = updates.base_branch {
             sets.push(format!("base_branch = ?{}", params.len() + 1));
             params.push(Box::new(base_branch.clone()));
+        }
+        if let Some(ref last_branch) = updates.last_branch {
+            sets.push(format!("last_branch = ?{}", params.len() + 1));
+            params.push(Box::new(last_branch.clone()));
         }
 
         let idx = params.len() + 1;
@@ -294,7 +301,7 @@ impl WorkspaceStore {
 
     fn get_workspace_with_conn(conn: &Connection, id: &str) -> Result<Workspace, AbundioError> {
         conn.query_row(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, base_branch, position, created_at, updated_at
+            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, base_branch, last_branch, position, created_at, updated_at
              FROM workspaces WHERE id = ?1",
             [id],
             |row| {
@@ -306,9 +313,10 @@ impl WorkspaceStore {
                     agent_presets_json: row.get(4)?,
                     file_tabs_json: row.get(5)?,
                     base_branch: row.get(6)?,
-                    position: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
+                    last_branch: row.get(7)?,
+                    position: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             },
         )
@@ -425,6 +433,7 @@ mod tests {
                     agent_presets_json: None,
                     file_tabs_json: None,
                     base_branch: None,
+                    last_branch: None,
                 },
             )
             .unwrap();

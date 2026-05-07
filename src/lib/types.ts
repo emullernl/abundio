@@ -28,6 +28,7 @@ export interface Workspace {
 	agentPresetsJson: string;
 	fileTabsJson: string;
 	baseBranch: string | null;
+	lastBranch: string | null;
 	position: number;
 	createdAt: number;
 	updatedAt: number;
@@ -40,6 +41,7 @@ export interface WorkspaceUpdate {
 	agentPresetsJson?: string;
 	fileTabsJson?: string;
 	baseBranch?: string | null;
+	lastBranch?: string;
 }
 
 export interface WorkspaceWithTabs {
@@ -50,6 +52,7 @@ export interface WorkspaceWithTabs {
 	agentPresetsJson: string;
 	fileTabsJson: string;
 	baseBranch: string | null;
+	lastBranch: string | null;
 	position: number;
 	createdAt: number;
 	updatedAt: number;
