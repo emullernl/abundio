@@ -7,10 +7,12 @@ import { TerminalInstance } from "./TerminalInstance";
 interface TerminalInfo {
 	paneId: string;
 	ptyId: string;
+	cwd?: string;
 }
 
 function collectTerminals(node: PaneNode): TerminalInfo[] {
-	if (node.type === "terminal") return [{ paneId: node.id, ptyId: node.ptyId }];
+	if (node.type === "terminal")
+		return [{ paneId: node.id, ptyId: node.ptyId, cwd: node.cwd }];
 	if (node.type === "file") return [];
 	return [...collectTerminals(node.first), ...collectTerminals(node.second)];
 }
@@ -39,7 +41,7 @@ export function TerminalPool() {
 				try {
 					const layout = JSON.parse(tab.layoutJson) as PaneNode;
 					for (const t of collectTerminals(layout)) {
-						result.push({ ...t, cwd: workspace.rootFolder });
+						result.push({ ...t, cwd: t.cwd ?? workspace.rootFolder });
 					}
 				} catch {
 					// Skip unparseable layouts

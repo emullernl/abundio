@@ -77,6 +77,31 @@ export function setAgentId(
 	return { ...tree, first, second };
 }
 
+/**
+ * Set the cwd on the terminal node with the given paneId.
+ * Pass `undefined` or empty string to clear it. Returns a new tree with structural sharing.
+ */
+export function setCwd(
+	tree: PaneNode,
+	paneId: string,
+	cwd: string | undefined,
+): PaneNode {
+	if (tree.type === "terminal") {
+		if (tree.id !== paneId) return tree;
+		if (!cwd) {
+			const { cwd: _drop, ...rest } = tree;
+			return rest;
+		}
+		if (tree.cwd === cwd) return tree;
+		return { ...tree, cwd };
+	}
+	if (tree.type === "file") return tree;
+	const first = setCwd(tree.first, paneId, cwd);
+	const second = setCwd(tree.second, paneId, cwd);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
 /** Collect all terminal nodes that have a non-empty agentId. */
 export function collectAgentPanes(
 	tree: PaneNode,

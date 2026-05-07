@@ -7,6 +7,7 @@ import {
 	extractNode,
 	insertBesideNode,
 	setAgentId,
+	setCwd,
 } from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { destroyTerminal } from "../lib/terminalManager";
@@ -60,6 +61,7 @@ interface WorkspaceState {
 	// Pane/layout actions
 	setFocusedPane: (paneId: string | null) => void;
 	stampAgentOnPane: (paneId: string, agentId: string | undefined) => void;
+	stampCwdOnPane: (paneId: string, cwd: string) => void;
 	updateLayout: (tabId: string, layout: PaneNode) => Promise<void>;
 	updateLayoutLocal: (tabId: string, layout: PaneNode) => void;
 	persistLayout: (tabId: string) => Promise<void>;
@@ -616,6 +618,35 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				try {
 					const layout = JSON.parse(tab.layoutJson) as PaneNode;
 					const stamped = setAgentId(layout, paneId, agentId);
+					if (stamped !== layout) {
+						targetTabId = tab.id;
+						nextLayoutJson = JSON.stringify(stamped);
+						break;
+					}
+				} catch {
+					/* ignore */
+				}
+			}
+			if (targetTabId) break;
+		}
+		if (!targetTabId || nextLayoutJson === null) return;
+		const layoutJson = nextLayoutJson;
+		const tabId = targetTabId;
+		set((s) => ({
+			workspaces: updateTabInWorkspaces(s.workspaces, tabId, layoutJson),
+		}));
+		tabsApi.update(tabId, { layoutJson }).catch(() => {});
+	},
+
+	stampCwdOnPane: (paneId, cwd) => {
+		const state = get();
+		let targetTabId: string | null = null;
+		let nextLayoutJson: string | null = null;
+		for (const ws of state.workspaces) {
+			for (const tab of ws.tabs) {
+				try {
+					const layout = JSON.parse(tab.layoutJson) as PaneNode;
+					const stamped = setCwd(layout, paneId, cwd);
 					if (stamped !== layout) {
 						targetTabId = tab.id;
 						nextLayoutJson = JSON.stringify(stamped);

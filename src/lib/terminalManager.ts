@@ -663,6 +663,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			for (const cmd of commands) {
 				if (cmd.type === "cwd_change") {
 					actState.setCwd(currentPtyId, cmd.path ?? "");
+					if (cmd.path) {
+						useWorkspaceStore.getState().stampCwdOnPane(paneId, cmd.path);
+					}
 					continue;
 				}
 				if (cmd.type === "command_start") {
