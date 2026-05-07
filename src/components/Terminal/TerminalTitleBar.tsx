@@ -87,7 +87,6 @@ function basename(path: string): string {
 
 export function TerminalTitleBar({
 	paneId,
-	agentId,
 	onSplitDown,
 	onSplitRight,
 	onClose,
@@ -103,8 +102,9 @@ export function TerminalTitleBar({
 	);
 	const dotStatus = usePtyDotStatus(paneId);
 
-	// The effective agent ID: prefer the stamped prop, fall back to runtime detection
-	const effectiveAgentId = agentId ?? detectedAgentId;
+	// Only show agent identity while the agent is actively running (detectedAgentId set).
+	// Once it exits and detection clears, fall back to plain terminal title.
+	const effectiveAgentId = detectedAgentId;
 
 	const agentName = useSettingsStore((s) =>
 		effectiveAgentId
