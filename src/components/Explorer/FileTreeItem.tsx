@@ -128,6 +128,7 @@ export function FileTreeItem({
 				onContextMenu={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
+					window.getSelection()?.removeAllRanges();
 					onContextMenu(e.clientX, e.clientY, entry);
 				}}
 				onMouseEnter={() => setHovered(true)}
