@@ -327,40 +327,63 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	},
 
 	openFile: async (workspaceId, filePath) => {
+		const wsStore = useWorkspaceStore.getState();
+		const workspace = wsStore.workspaces.find((w) => w.id === workspaceId);
+		if (workspace) {
+			for (const tab of workspace.tabs) {
+				try {
+					const layout = JSON.parse(tab.layoutJson) as PaneNode;
+					const existing = findFilePaneByPath(layout, filePath);
+					if (existing) {
+						wsStore.setActiveTab(workspaceId, tab.id);
+						wsStore.setFocusedPane(existing.id);
+						return;
+					}
+				} catch {
+					/* ignore malformed layout */
+				}
+			}
+		}
 		const seedLayout: PaneNode = {
 			type: "file",
 			id: crypto.randomUUID(),
 			filePath,
 		};
-		await useWorkspaceStore
-			.getState()
-			.createTab(workspaceId, undefined, seedLayout);
+		await wsStore.createTab(workspaceId, undefined, seedLayout);
 	},
 
 	openDiff: (workspaceId, filePath, original, modified, section) => {
 		const diffKey = `diff:${filePath}`;
 
-		const ctx = getActiveTabLayout(workspaceId);
 		const wsStore = useWorkspaceStore.getState();
+		const workspace = wsStore.workspaces.find((w) => w.id === workspaceId);
 
-		// Check if diff pane already exists
-		if (ctx) {
-			const existing = findFilePaneByPath(ctx.layout, diffKey);
-			if (existing) {
-				// Update diff content and focus
-				set((s) => ({
-					filePanes: {
-						...s.filePanes,
-						[existing.id]: {
-							...s.filePanes[existing.id],
-							diffOriginal: original,
-							diffModified: modified,
-							diffSection: section ?? null,
-						},
-					},
-				}));
-				wsStore.setFocusedPane(existing.id);
-				return;
+		// Check if diff pane already exists in any tab
+		if (workspace) {
+			for (const tab of workspace.tabs) {
+				try {
+					const layout = JSON.parse(tab.layoutJson) as PaneNode;
+					const existing = findFilePaneByPath(layout, diffKey);
+					if (existing) {
+						// Update diff content, activate the tab, and focus
+						set((s) => ({
+							filePanes: {
+								...s.filePanes,
+								[existing.id]: {
+									...s.filePanes[existing.id],
+									diffOriginal: original,
+									diffModified: modified,
+									diffSection: section ?? null,
+								},
+							},
+						}));
+						wsStore.setActiveTab(workspaceId, tab.id);
+						wsStore.setFocusedPane(existing.id);
+						return;
+					}
+				} catch {
+					/* ignore malformed layout */
+				}
 			}
 		}
 
