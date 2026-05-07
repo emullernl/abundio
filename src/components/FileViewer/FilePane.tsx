@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
@@ -47,6 +47,11 @@ export function FilePane({
 		(s) => s.dismissExternalChange,
 	);
 	const saveFile = useExplorerStore((s) => s.saveFile);
+
+	const handleEditorChange = useCallback(
+		(content: string) => updateFileContent(paneId, content),
+		[paneId, updateFileContent],
+	);
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
@@ -234,7 +239,7 @@ export function FilePane({
 								paneId={paneId}
 								isActive={isFocused}
 								content={paneState.content ?? ""}
-								onChange={(content) => updateFileContent(paneId, content)}
+								onChange={handleEditorChange}
 							/>
 						</Suspense>
 					)}
@@ -246,7 +251,7 @@ export function FilePane({
 							content={paneState.content ?? ""}
 							language={paneState.language}
 							initialEditorState={null}
-							onChange={(content) => updateFileContent(paneId, content)}
+							onChange={handleEditorChange}
 						/>
 					)}
 				{paneState.fileType === "diff" &&

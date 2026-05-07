@@ -1,6 +1,6 @@
 import Editor, { type Monaco, useMonaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
-import { useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { defineAbundioTheme } from "../../lib/monacoShared";
 import { setAllTerminalsFontSize } from "../../lib/terminalManager";
 import { setMonacoInstance } from "../../lib/themes";
@@ -74,7 +74,7 @@ export function getSerializableEditorState(
 	};
 }
 
-export function CodeEditor({
+export const CodeEditor = memo(function CodeEditor({
 	tabId,
 	isActive,
 	content,
@@ -222,6 +222,35 @@ export function CodeEditor({
 
 	const monacoLanguage = language ?? undefined;
 
+	const handleChange = useCallback((value: string | undefined) => {
+		if (value !== undefined) {
+			onChangeRef.current(value);
+		}
+	}, []);
+
+	const editorOptions = useMemo<editor.IStandaloneEditorConstructionOptions>(
+		() => ({
+			fontFamily,
+			fontSize: monacoFontSize,
+			wordWrap: editorWordWrap ? "on" : "off",
+			contextmenu: false,
+			minimap: { enabled: false },
+			scrollBeyondLastLine: false,
+			lineNumbers: "on",
+			renderLineHighlight: "line",
+			matchBrackets: "always",
+			automaticLayout: true,
+			padding: { top: 8 },
+			overviewRulerLanes: 0,
+			hideCursorInOverviewRuler: true,
+			scrollbar: {
+				verticalScrollbarSize: 10,
+				horizontalScrollbarSize: 10,
+			},
+		}),
+		[fontFamily, monacoFontSize, editorWordWrap],
+	);
+
 	return (
 		<div
 			className="h-full w-full overflow-hidden"
@@ -232,32 +261,10 @@ export function CodeEditor({
 				language={monacoLanguage}
 				value={content}
 				theme="abundio"
-				onChange={(value) => {
-					if (value !== undefined) {
-						onChangeRef.current(value);
-					}
-				}}
+				onChange={handleChange}
 				onMount={handleMount}
-				options={{
-					fontFamily,
-					fontSize: monacoFontSize,
-					wordWrap: editorWordWrap ? "on" : "off",
-					contextmenu: false,
-					minimap: { enabled: false },
-					scrollBeyondLastLine: false,
-					lineNumbers: "on",
-					renderLineHighlight: "line",
-					matchBrackets: "always",
-					automaticLayout: true,
-					padding: { top: 8 },
-					overviewRulerLanes: 0,
-					hideCursorInOverviewRuler: true,
-					scrollbar: {
-						verticalScrollbarSize: 10,
-						horizontalScrollbarSize: 10,
-					},
-				}}
+				options={editorOptions}
 			/>
 		</div>
 	);
-}
+});
