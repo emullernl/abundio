@@ -8,13 +8,18 @@ import { getLanguage } from "../lib/languageMap";
 import {
 	collectPaneIds,
 	findFilePaneByPath,
-	findFilePaneInTree,
 	findNode,
-	replaceNode,
 	wrapInSplit,
 } from "../lib/paneTree";
 import type { DirEntry, GitChangedFile, PaneNode } from "../lib/types";
 import { useWorkspaceStore } from "./workspaceStore";
+
+// Cache to survive unregisterFilePane calls (React Strict Mode unmount/remount and
+// async updateLayout causing filePath prop changes). Keyed by paneId.
+const diffContentCache = new Map<
+	string,
+	{ original: string; modified: string; filePath: string }
+>();
 
 // ── FilePaneState — runtime state for a file leaf, keyed by paneId ──
 
@@ -236,6 +241,14 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				? realPath.split(".").pop() || null
 				: null;
 			const fileName = `${realPath.split("/").pop() || "file"} (diff)`;
+			// Recover diff content from cache (survives unregisterFilePane due to
+			// React Strict Mode unmount/remount or async layout updates).
+			const cached = diffContentCache.get(paneId);
+			if (cached?.filePath === filePath) diffContentCache.delete(paneId);
+			const resolvedOriginal =
+				diffOriginal ?? (cached?.filePath === filePath ? cached.original : null);
+			const resolvedModified =
+				diffModified ?? (cached?.filePath === filePath ? cached.modified : null);
 			set((s) => ({
 				filePanes: {
 					...s.filePanes,
@@ -250,8 +263,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 						externallyChanged: false,
 						deletedOnDisk: false,
 						loading: false,
-						diffOriginal: diffOriginal ?? null,
-						diffModified: diffModified ?? null,
+						diffOriginal: resolvedOriginal,
+						diffModified: resolvedModified,
 						diffSection: diffSection ?? null,
 					},
 				},
@@ -268,6 +281,18 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	},
 
 	unregisterFilePane: (paneId) => {
+		const pane = get().filePanes[paneId];
+		if (
+			pane?.fileType === "diff" &&
+			pane.diffOriginal != null &&
+			pane.diffModified != null
+		) {
+			diffContentCache.set(paneId, {
+				original: pane.diffOriginal,
+				modified: pane.diffModified,
+				filePath: pane.filePath,
+			});
+		}
 		clearEditorStateCache(paneId);
 		set((s) => {
 			const { [paneId]: _removed, ...rest } = s.filePanes;
@@ -374,48 +399,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			diffSection: section || undefined,
 		};
 
-		// Try to place in existing layout
-		if (ctx) {
-			const { tabId, layout } = ctx;
-			const focusedPaneId = wsStore.focusedPaneId;
-			const focusedNode = focusedPaneId
-				? findNode(layout, focusedPaneId)
-				: null;
-
-			const install = (targetPaneId: string) => {
-				const newLeaf: PaneNode = { ...seedLayout, id: targetPaneId };
-				const newLayout = replaceNode(layout, targetPaneId, newLeaf);
-				wsStore.updateLayout(tabId, newLayout).catch(() => {});
-				wsStore.setFocusedPane(targetPaneId);
-				// Adopt the pre-seeded pane state under the target pane's ID
-				set((s) => {
-					const {
-						[newPaneId]: seeded,
-						[targetPaneId]: _old,
-						...rest
-					} = s.filePanes;
-					if (!seeded) return s;
-					return {
-						filePanes: {
-							...rest,
-							[targetPaneId]: { ...seeded, filePath: diffKey },
-						},
-					};
-				});
-			};
-
-			if (focusedNode?.type === "file") {
-				install(focusedNode.id);
-				return;
-			}
-			const anyFile = findFilePaneInTree(layout);
-			if (anyFile) {
-				install(anyFile.id);
-				return;
-			}
-		}
-
-		// No suitable pane — create a new tab
+		// Always open diff in a new tab
 		useWorkspaceStore
 			.getState()
 			.createTab(workspaceId, undefined, seedLayout)
