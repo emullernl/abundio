@@ -156,6 +156,19 @@ export const useGitChangesStore = create<GitChangesState>()(
 					if (!filesEqual(state.changedFiles, files)) {
 						set({ changedFiles: files });
 					}
+					// Keep sidebar chip and stats in sync
+					const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+					if (activeId) {
+						const totalAdd = files.reduce((s, f) => s + f.additions, 0);
+						const totalDel = files.reduce((s, f) => s + f.deletions, 0);
+						useWorkspaceGitStore.getState().setInfo(activeId, {
+							isGitRepo: true,
+							currentBranch: state.currentBranch,
+							changedFileCount: files.length,
+							additions: totalAdd,
+							deletions: totalDel,
+						});
+					}
 				} catch {
 					// Fingerprint/refresh failures are non-critical
 				}
