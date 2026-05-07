@@ -317,7 +317,7 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: context menu on container — buttons inside are keyboard-accessible
 		<div
-			className="py-1 min-h-full"
+			className="py-1 min-h-full select-none"
 			onContextMenu={(e) => {
 				if ((e.target as HTMLElement).closest("button")) return;
 				e.preventDefault();

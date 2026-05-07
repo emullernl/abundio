@@ -1,6 +1,6 @@
 use crate::error::AbundioError;
 use dashmap::DashMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Command;
 #[cfg(target_os = "windows")]
@@ -420,6 +420,66 @@ pub async fn git_list_branches(cwd: String) -> Result<Vec<String>, AbundioError>
     })
     .await
     .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitRequest {
+    pub workspace_id: String,
+    pub cwd: String,
+    pub base_branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitSummary {
+    pub workspace_id: String,
+    pub is_git_repo: bool,
+    pub current_branch: Option<String>,
+    pub changed_file_count: i32,
+    pub additions: i32,
+    pub deletions: i32,
+}
+
+/// Resolves just the current branch name for a workspace — one `git rev-parse`
+/// subprocess per workspace. Change stats are intentionally excluded here;
+/// they are expensive (multiple `git diff --numstat` calls) and are already
+/// computed by `git_changed_files` whenever the active workspace opens its git
+/// panel, which syncs back to the workspace chip store via the frontend.
+fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummary {
+    let current_branch = run_git(&req.cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map(|out| out.trim().to_string())
+        .ok();
+    WorkspaceGitSummary {
+        workspace_id: req.workspace_id,
+        is_git_repo: current_branch.is_some(),
+        current_branch,
+        changed_file_count: 0,
+        additions: 0,
+        deletions: 0,
+    }
+}
+
+/// Fetch the current branch for every workspace in a single IPC call.
+/// Runs inside `spawn_blocking` so the tokio runtime is never blocked.
+/// Intentionally limited to branch detection only (one subprocess per
+/// workspace) — running diff commands for all workspaces at startup causes
+/// too many concurrent process forks and degrades overall app responsiveness.
+#[tauri::command]
+pub async fn git_workspaces_summary(
+    requests: Vec<WorkspaceGitRequest>,
+) -> Vec<WorkspaceGitSummary> {
+    if requests.is_empty() {
+        return Vec::new();
+    }
+    tokio::task::spawn_blocking(move || {
+        requests
+            .into_iter()
+            .map(compute_workspace_git_summary)
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[cfg(test)]

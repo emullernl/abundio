@@ -5,8 +5,9 @@ import {
 	type DotStatus,
 	usePtyActivityStore,
 } from "../../stores/ptyActivityStore";
+import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
-import { X } from "../Icons";
+import { GitBranch, X } from "../Icons";
 
 interface Props {
 	workspace: WorkspaceWithTabs;
@@ -71,6 +72,11 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 	onMouseDown,
 }: Props) {
 	const dotStatus = useWorkspaceDotStatus(workspace);
+	const gitInfo = useWorkspaceGitStore((s) => s.byWorkspaceId[workspace.id]);
+	// A workspace is "loaded" once it has been opened in this session.
+	// Loaded (but not active) workspaces keep the accent chip and change stats.
+	// Workspaces that have never been opened only show the cached branch name, dimmed.
+	const isLoaded = usePtyActivityStore((s) => s.openedWorkspaceIds.has(workspace.id));
 
 	const [renameValue, setRenameValue] = useState(workspace.name);
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -146,18 +152,73 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 						}}
 					/>
 				) : (
-					<span
-						className="truncate font-medium"
-						style={{ color: "var(--fg-primary)", fontSize: 13 }}
-					>
-						{workspace.name}
-					</span>
+					<div className="flex items-center justify-between gap-2 min-w-0">
+						<span
+							className="truncate font-medium flex-shrink-0 max-w-[50%]"
+							style={{ color: "var(--fg-primary)", fontSize: 13 }}
+							title={workspace.name}
+						>
+							{workspace.name}
+						</span>
+						{gitInfo?.isGitRepo && gitInfo.currentBranch && (
+							<div
+								className="inline-flex items-center gap-1 rounded flex-shrink-0 min-w-0 max-w-[50%]"
+								style={{
+									backgroundColor: isLoaded
+										? "color-mix(in srgb, var(--accent) 12%, transparent)"
+										: "color-mix(in srgb, var(--fg-secondary) 8%, transparent)",
+									border: isLoaded
+										? "1px solid color-mix(in srgb, var(--accent) 22%, transparent)"
+										: "1px solid color-mix(in srgb, var(--fg-secondary) 15%, transparent)",
+									color: isLoaded ? "var(--accent)" : "var(--fg-secondary)",
+									fontSize: 10,
+									lineHeight: 1,
+									paddingTop: 3,
+									paddingBottom: 3,
+									paddingLeft: 5,
+									paddingRight: 5,
+									fontFamily:
+										"var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)",
+								}}
+								title={gitInfo.currentBranch}
+							>
+								<GitBranch
+									size={9}
+									strokeWidth={2.5}
+									style={{ flexShrink: 0 }}
+								/>
+								<span className="truncate">{gitInfo.currentBranch}</span>
+							</div>
+						)}
+					</div>
 				)}
-				<div
-					className="truncate mt-0.5"
-					style={{ color: "var(--fg-secondary)", fontSize: 11 }}
-				>
-					{shortenPath(workspace.rootFolder)}
+				<div className="flex items-center justify-between gap-2 mt-0.5 min-w-0">
+					<span
+						className="truncate"
+						style={{ color: "var(--fg-secondary)", fontSize: 11 }}
+					>
+						{shortenPath(workspace.rootFolder)}
+					</span>
+					{isLoaded && gitInfo?.isGitRepo && (gitInfo.changedFileCount > 0) && (
+						<span
+							className="flex items-center gap-1 flex-shrink-0"
+							style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}
+						>
+							<span style={{ color: "var(--fg-secondary)" }}>
+								{gitInfo.changedFileCount}F
+							</span>
+							{gitInfo.additions > 0 && (
+								<span style={{ color: "var(--success)" }}>
+									+{gitInfo.additions}
+								</span>
+							)}
+							{gitInfo.deletions > 0 && (
+								<span style={{ color: "var(--error)" }}>
+									-{gitInfo.deletions}
+								</span>
+							)}
+						</span>
+					)}
 				</div>
 			</div>
 			<button

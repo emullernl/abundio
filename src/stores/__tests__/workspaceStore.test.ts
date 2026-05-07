@@ -75,6 +75,7 @@ function makeWorkspace(
 		agentPresetsJson: "{}",
 		fileTabsJson: "{}",
 		baseBranch: null,
+		lastBranch: null,
 		position: 0,
 		createdAt: 0,
 		updatedAt: 0,

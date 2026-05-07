@@ -153,6 +153,20 @@ export const git = {
 
 	statusFingerprint: (cwd: string) =>
 		invoke<string>("git_status_fingerprint", { cwd }),
+
+	workspacesSummary: (
+		requests: { workspaceId: string; cwd: string; baseBranch: string | null }[],
+	) =>
+		invoke<WorkspaceGitSummary[]>("git_workspaces_summary", { requests }),
+};
+
+export type WorkspaceGitSummary = {
+	workspaceId: string;
+	isGitRepo: boolean;
+	currentBranch: string | null;
+	changedFileCount: number;
+	additions: number;
+	deletions: number;
 };
 
 export const gh = {

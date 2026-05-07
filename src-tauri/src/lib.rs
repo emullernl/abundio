@@ -207,6 +207,7 @@ pub fn run() {
             git_commands::git_branch_info,
             git_commands::git_list_branches,
             git_commands::git_status_fingerprint,
+            git_commands::git_workspaces_summary,
             gh_commands::gh_status,
             gh_commands::gh_review_requests,
             gh_commands::gh_review_requests_all,

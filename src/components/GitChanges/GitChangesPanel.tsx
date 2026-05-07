@@ -5,11 +5,13 @@ import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { GitCompare, PanelRight, RefreshCw } from "../Icons";
 import { BranchSelector } from "./BranchSelector";
 import { GitChangesFileList } from "./GitChangesFileList";
 import { GitChangesResizer } from "./GitChangesResizer";
 import { GitPanelDivider } from "./GitPanelDivider";
+import { NotAGitRepoEmpty } from "./NotAGitRepoEmpty";
 import { PullRequestsSection } from "./PullRequestsSection";
 
 interface Props {
@@ -44,6 +46,9 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
 	const cwd = activeWorkspace?.rootFolder ?? null;
 	const workspaceBaseBranch = activeWorkspace?.baseBranch ?? null;
+	const isGitRepo = useWorkspaceGitStore(
+		(s) => (activeWorkspaceId ? s.byWorkspaceId[activeWorkspaceId]?.isGitRepo : undefined),
+	);
 
 	// Clear immediately on cwd/panel change so the fetch window shows a loading
 	// skeleton instead of the previous workspace's files/branch.
@@ -195,6 +200,66 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 		);
 	}
 
+	// When we know the folder isn't a git repo, show a unified empty state
+	// for the whole panel (both changes and PR sections).
+	if (isGitRepo === false) {
+		return (
+			<>
+				<GitChangesResizer />
+				<div
+					className="flex flex-col flex-shrink-0 h-full"
+					style={{
+						width: gitPanelWidth,
+						backgroundColor: "var(--bg-secondary)",
+						borderLeft: "1px solid var(--border)",
+						paddingTop: titlebarHeight,
+					}}
+				>
+					<div
+						className="flex items-center gap-2 py-2 flex-shrink-0"
+						style={{
+							borderBottom: "1px solid var(--border)",
+							paddingLeft: 12,
+							paddingRight: 12,
+						}}
+					>
+						<GitCompare
+							size={14}
+							style={{ color: "var(--accent)", flexShrink: 0 }}
+						/>
+						<span
+							className="font-medium truncate"
+							style={{ fontSize: 12, color: "var(--fg-primary)" }}
+						>
+							Changes
+						</span>
+						<div className="flex-1" />
+						<button
+							type="button"
+							onClick={togglePanel}
+							className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
+							style={{ color: "var(--fg-secondary)" }}
+							onMouseEnter={(e) => {
+								e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+								e.currentTarget.style.color = "var(--fg-primary)";
+							}}
+							onMouseLeave={(e) => {
+								e.currentTarget.style.backgroundColor = "transparent";
+								e.currentTarget.style.color = "var(--fg-secondary)";
+							}}
+							title="Close panel"
+						>
+							<PanelRight size={12} />
+						</button>
+					</div>
+					<div className="flex-1 min-h-0">
+						<NotAGitRepoEmpty />
+					</div>
+				</div>
+			</>
+		);
+	}
+
 	const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
 	const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
 
@@ -341,10 +406,7 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 								className="flex items-center justify-center h-32 px-4 text-center"
 								style={{ color: "var(--fg-secondary)", fontSize: 12 }}
 							>
-								{error.includes("Not a git repository") ||
-								error.includes("not a git repository")
-									? "Not a git repository"
-									: error}
+								{error}
 							</div>
 						) : !cwd ? (
 							<div
