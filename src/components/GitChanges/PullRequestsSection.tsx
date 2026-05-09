@@ -10,8 +10,6 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
 
-const REFRESH_INTERVAL = 60_000;
-
 export function PullRequestsSection() {
 	const ghStatus = usePrStore((s) => s.ghStatus);
 	const reviewView = usePrStore((s) => s.reviewView);
@@ -23,53 +21,11 @@ export function PullRequestsSection() {
 	const fetchMyPrs = usePrStore((s) => s.fetchMyPrs);
 	const setReviewView = usePrStore((s) => s.setReviewView);
 	const setMyPrsView = usePrStore((s) => s.setMyPrsView);
-	const clear = usePrStore((s) => s.clear);
 
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
 	const cwd = activeWorkspace?.rootFolder ?? null;
-
-	// Clear immediately when the workspace changes — avoids showing stale PRs
-	// from the previous workspace while the new fetch is in flight.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: cwd drives the reset
-	useEffect(() => {
-		clear();
-	}, [cwd, clear]);
-
-	// Check gh status on mount / session change
-	useEffect(() => {
-		if (!cwd) return;
-		checkGhStatus(cwd);
-	}, [cwd, checkGhStatus]);
-
-	// Fetch review PRs when gh is ready, view changes, or session changes
-	useEffect(() => {
-		if (!cwd || !ghStatus?.available || !ghStatus?.authenticated) return;
-		fetchReviewPrs(cwd);
-	}, [cwd, ghStatus?.available, ghStatus?.authenticated, fetchReviewPrs]);
-
-	// Fetch my PRs when gh is ready, view changes, or session changes
-	useEffect(() => {
-		if (!cwd || !ghStatus?.available || !ghStatus?.authenticated) return;
-		fetchMyPrs(cwd);
-	}, [cwd, ghStatus?.available, ghStatus?.authenticated, fetchMyPrs]);
-
-	// Auto-refresh both sections
-	useEffect(() => {
-		if (!cwd || !ghStatus?.available || !ghStatus?.authenticated) return;
-		const interval = setInterval(() => {
-			fetchReviewPrs(cwd);
-			fetchMyPrs(cwd);
-		}, REFRESH_INTERVAL);
-		return () => clearInterval(interval);
-	}, [
-		cwd,
-		ghStatus?.available,
-		ghStatus?.authenticated,
-		fetchReviewPrs,
-		fetchMyPrs,
-	]);
 
 	const handleRefresh = useCallback(async () => {
 		if (cwd) {

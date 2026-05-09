@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
-import { fs, git } from "../../lib/ipc";
+import { useCallback, useState } from "react";
+import { git } from "../../lib/ipc";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { GitCompare, PanelRight, RefreshCw } from "../Icons";
 import { BranchSelector } from "./BranchSelector";
 import { GitChangesFileList } from "./GitChangesFileList";
@@ -27,8 +27,6 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 	const loading = useGitChangesStore((s) => s.loading);
 	const error = useGitChangesStore((s) => s.error);
 	const fetchChanges = useGitChangesStore((s) => s.fetchChanges);
-	const refreshChanges = useGitChangesStore((s) => s.refreshChanges);
-	const clear = useGitChangesStore((s) => s.clear);
 
 	const gitPanelWidth = useSettingsStore((s) => s.gitPanelWidth);
 	const gitPanelSplitRatio = useSettingsStore((s) => s.gitPanelSplitRatio);
@@ -49,84 +47,6 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 	const isGitRepo = useWorkspaceGitStore(
 		(s) => (activeWorkspaceId ? s.byWorkspaceId[activeWorkspaceId]?.isGitRepo : undefined),
 	);
-
-	// Clear immediately on cwd/panel change so the fetch window shows a loading
-	// skeleton instead of the previous workspace's files/branch.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: panelOpen/cwd drive the reset
-	useEffect(() => {
-		clear();
-	}, [panelOpen, cwd, clear]);
-
-	// Fetch changes when session changes or panel opens
-	useEffect(() => {
-		if (!panelOpen || !cwd) return;
-		fetchChanges(cwd, workspaceBaseBranch);
-	}, [panelOpen, cwd, workspaceBaseBranch, fetchChanges]);
-
-	// Re-fetch on file system or git changes (throttled)
-	// FS events use lightweight fingerprint check; git events do a full refresh
-	useEffect(() => {
-		if (!panelOpen || !cwd) return;
-		let unlistenFs: (() => void) | null = null;
-		let unlistenGit: (() => void) | null = null;
-		let cancelled = false;
-		let fsTrailingTimer: ReturnType<typeof setTimeout> | null = null;
-		let gitTrailingTimer: ReturnType<typeof setTimeout> | null = null;
-		let lastFsAt = 0;
-		let lastGitAt = 0;
-		const MIN_INTERVAL = 500;
-
-		const throttledFsRefresh = () => {
-			const now = Date.now();
-			const elapsed = now - lastFsAt;
-			if (elapsed >= MIN_INTERVAL) {
-				lastFsAt = now;
-				refreshChanges(cwd, workspaceBaseBranch);
-			} else if (!fsTrailingTimer) {
-				fsTrailingTimer = setTimeout(() => {
-					fsTrailingTimer = null;
-					lastFsAt = Date.now();
-					refreshChanges(cwd, workspaceBaseBranch);
-				}, MIN_INTERVAL - elapsed);
-			}
-		};
-
-		const throttledGitFetch = () => {
-			const now = Date.now();
-			const elapsed = now - lastGitAt;
-			if (elapsed >= MIN_INTERVAL) {
-				lastGitAt = now;
-				fetchChanges(cwd, workspaceBaseBranch);
-			} else if (!gitTrailingTimer) {
-				gitTrailingTimer = setTimeout(() => {
-					gitTrailingTimer = null;
-					lastGitAt = Date.now();
-					fetchChanges(cwd, workspaceBaseBranch);
-				}, MIN_INTERVAL - elapsed);
-			}
-		};
-
-		Promise.all([
-			fs.onFsChange(cwd, throttledFsRefresh),
-			fs.onGitChange(cwd, throttledGitFetch),
-		]).then(([unlistenFsResult, unlistenGitResult]) => {
-			if (cancelled) {
-				unlistenFsResult();
-				unlistenGitResult();
-			} else {
-				unlistenFs = unlistenFsResult;
-				unlistenGit = unlistenGitResult;
-			}
-		});
-
-		return () => {
-			cancelled = true;
-			unlistenFs?.();
-			unlistenGit?.();
-			if (fsTrailingTimer) clearTimeout(fsTrailingTimer);
-			if (gitTrailingTimer) clearTimeout(gitTrailingTimer);
-		};
-	}, [panelOpen, cwd, workspaceBaseBranch, fetchChanges, refreshChanges]);
 
 	async function handleSelectFile(file: GitChangedFile) {
 		if (!cwd || !activeWorkspaceId) return;

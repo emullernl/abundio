@@ -27,6 +27,14 @@ function resetStore() {
 	useWorkspaceGitStore.setState({ byWorkspaceId: {}, inFlight: new Set() });
 }
 
+const baseInfo = {
+	isGitRepo: true as const,
+	currentBranch: "main",
+	changedFileCount: 0,
+	additions: 0,
+	deletions: 0,
+};
+
 beforeEach(() => {
 	resetStore();
 	vi.clearAllMocks();
@@ -189,6 +197,56 @@ describe("workspaceGitStore", () => {
 		expect(
 			useWorkspaceGitStore.getState().byWorkspaceId["ws-y"],
 		).toBeUndefined();
+	});
+
+	describe("refreshWorkspace", () => {
+		it("updates counts on every call", async () => {
+			useWorkspaceGitStore.setState({ byWorkspaceId: { "ws-rw1": { ...baseInfo } }, inFlight: new Set() });
+			vi.mocked(git.changedFiles).mockImplementation(twoFiles);
+			await useWorkspaceGitStore.getState().refreshWorkspace("ws-rw1", "/repo");
+			const info = useWorkspaceGitStore.getState().byWorkspaceId["ws-rw1"];
+			expect(info?.changedFileCount).toBe(2);
+			expect(info?.additions).toBe(15);
+			expect(info?.deletions).toBe(4);
+		});
+
+		it("updates on repeated calls (picks up additions/deletions changes)", async () => {
+			useWorkspaceGitStore.setState({ byWorkspaceId: { "ws-rw2": { ...baseInfo } }, inFlight: new Set() });
+			vi.mocked(git.changedFiles)
+				.mockImplementationOnce(noFiles)
+				.mockImplementationOnce(twoFiles);
+			await useWorkspaceGitStore.getState().refreshWorkspace("ws-rw2", "/repo");
+			await useWorkspaceGitStore.getState().refreshWorkspace("ws-rw2", "/repo");
+			const info = useWorkspaceGitStore.getState().byWorkspaceId["ws-rw2"];
+			expect(info?.changedFileCount).toBe(2);
+			expect(git.changedFiles).toHaveBeenCalledTimes(2);
+		});
+
+		it("preserves currentBranch and isGitRepo", async () => {
+			useWorkspaceGitStore.setState({
+				byWorkspaceId: { "ws-rw3": { ...baseInfo, currentBranch: "feature-x" } },
+				inFlight: new Set(),
+			});
+			vi.mocked(git.changedFiles).mockImplementation(noFiles);
+			await useWorkspaceGitStore.getState().refreshWorkspace("ws-rw3", "/repo");
+			const info = useWorkspaceGitStore.getState().byWorkspaceId["ws-rw3"];
+			expect(info?.currentBranch).toBe("feature-x");
+			expect(info?.isGitRepo).toBe(true);
+		});
+
+		it("skips update when entry does not exist", async () => {
+			useWorkspaceGitStore.setState({ byWorkspaceId: {}, inFlight: new Set() });
+			vi.mocked(git.changedFiles).mockImplementation(twoFiles);
+			await useWorkspaceGitStore.getState().refreshWorkspace("ws-rw4-missing", "/repo");
+			expect(useWorkspaceGitStore.getState().byWorkspaceId["ws-rw4-missing"]).toBeUndefined();
+		});
+
+		it("swallows errors silently", async () => {
+			vi.mocked(git.changedFiles).mockRejectedValue(new Error("git gone"));
+			await expect(
+				useWorkspaceGitStore.getState().refreshWorkspace("ws-rw5", "/repo"),
+			).resolves.toBeUndefined();
+		});
 	});
 
 	it("remove leaves other entries intact", () => {

@@ -16,6 +16,7 @@ interface WorkspaceGitState {
 	fetchAll: (
 		workspaces: { id: string; rootFolder: string; baseBranch?: string | null }[],
 	) => Promise<void>;
+	refreshWorkspace: (workspaceId: string, cwd: string, baseBranch?: string | null) => Promise<void>;
 	setInfo: (workspaceId: string, info: WorkspaceGitInfo) => void;
 	remove: (workspaceId: string) => void;
 }
@@ -111,14 +112,35 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		}
 	},
 
+	refreshWorkspace: async (workspaceId, cwd, baseBranch) => {
+		try {
+			const files = await git.changedFiles(cwd, baseBranch ?? null);
+			const additions = files.reduce((s, f) => s + f.additions, 0);
+			const deletions = files.reduce((s, f) => s + f.deletions, 0);
+			set((s) => {
+				const existing = s.byWorkspaceId[workspaceId];
+				if (!existing) return s;
+				return {
+					byWorkspaceId: {
+						...s.byWorkspaceId,
+						[workspaceId]: { ...existing, changedFileCount: files.length, additions, deletions },
+					},
+				};
+			});
+		} catch {
+			// Background refresh failures are non-critical
+		}
+	},
+
 	setInfo: (workspaceId, info) =>
 		set((s) => ({
 			byWorkspaceId: { ...s.byWorkspaceId, [workspaceId]: info },
 		})),
 
-	remove: (workspaceId) =>
+	remove: (workspaceId) => {
 		set((s) => {
 			const { [workspaceId]: _removed, ...rest } = s.byWorkspaceId;
 			return { byWorkspaceId: rest };
-		}),
+		});
+	},
 }));
