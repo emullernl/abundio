@@ -7,6 +7,7 @@ interface FileChangeBannerProps {
 	onReload: () => void;
 	onKeepEdits: () => void;
 	onSave: () => void;
+	onClose: () => void;
 }
 
 /**
@@ -19,6 +20,7 @@ export function FileChangeBanner({
 	onReload,
 	onKeepEdits,
 	onSave,
+	onClose,
 }: FileChangeBannerProps) {
 	if (!paneState.externallyChanged && !paneState.deletedOnDisk) return null;
 
@@ -26,6 +28,7 @@ export function FileChangeBanner({
 		onReload,
 		onKeepEdits,
 		onSave,
+		onClose,
 	});
 
 	return (
@@ -94,6 +97,7 @@ function buildContent(
 		onReload: () => void;
 		onKeepEdits: () => void;
 		onSave: () => void;
+		onClose: () => void;
 	},
 ): BannerContent {
 	if (pane.deletedOnDisk && pane.isDirty) {
@@ -102,7 +106,7 @@ function buildContent(
 			message: "This file was deleted on disk. You have unsaved changes.",
 			actions: [
 				{ label: "Save to re-create", onClick: handlers.onSave, primary: true },
-				{ label: "Close pane (discard)", onClick: () => {} },
+				{ label: "Close pane (discard)", onClick: handlers.onClose },
 			],
 		};
 	}
@@ -110,7 +114,7 @@ function buildContent(
 		return {
 			icon: <FileX size={16} />,
 			message: "This file was deleted on disk.",
-			actions: [{ label: "Close pane", onClick: () => {}, primary: true }],
+			actions: [{ label: "Close pane", onClick: handlers.onClose, primary: true }],
 		};
 	}
 	return {

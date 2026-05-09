@@ -228,6 +228,7 @@ export function FilePane({
 						onReload={() => reloadPaneFromDisk(paneId)}
 						onKeepEdits={() => dismissExternalChange(paneId)}
 						onSave={() => saveFile(paneId)}
+						onClose={() => closePane(paneId)}
 					/>
 				</div>
 			)}
