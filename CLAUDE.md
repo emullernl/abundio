@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v2. It manages workspaces (each bound to a folder), supports split panes with tabs, and has first-class support for AI coding CLI agents (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, OpenCode). It includes a built-in file explorer, code editor (Monaco), git integration, GitHub PR panel, and full-text workspace search.
 
+> **Domain language**: see `CONTEXT.md` for canonical term definitions (Workspace, Pane, PTY, Tab, Agent, etc.) and flagged ambiguities to avoid.
+
 ## Tech Stack
 
 - **Framework**: Tauri v2 (with plugins: shell, notification, dialog, window-state, os)
@@ -38,6 +40,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `search.rs` — Full-text workspace search with cancellation support (`fs_search`, `fs_search_cancel`).
 - `git_commands.rs` — Git operations: changed files, file diffs, branch info, list branches, status fingerprint.
 - `gh_commands.rs` — GitHub CLI integration: PR status, review requests, user's PRs.
+- `dev_environments.rs` — Desktop IDE detection and launch (VS Code, Cursor, JetBrains, etc.). Pure Rust, no app state.
 - `process_monitor.rs` — Process monitoring for PTY child processes.
 - `lib.rs` — App entry with `Builder::setup()` that initializes DB, PTY manager, agent registry, and file watcher via `app.manage()`.
 
@@ -51,14 +54,17 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `components/FileViewer/` — `FileViewerContainer`, `CodeEditor` (Monaco), `ImageViewer`, `UnsupportedFile`.
 - `components/GitChanges/` — `GitChangesPanel`, `GitChangesFileList`, `GitChangesFileItem`, `DiffViewer`, `BranchSelector`, `PullRequestsSection`, `PullRequestItem`, `GitChangesResizer`, `GitPanelDivider`.
 - `components/Search/` — `SearchPanel`, `SearchResultFile`, `SearchResultMatch`.
-- Top-level: `CommandPalette`, `SettingsPanel`, `TabBar`, `StatusBar`, `Titlebar`, `AppLoader`, `AgentStatusIcon`, `ConfirmDialog`, `SaveConfirmDialog`.
+- Top-level: `CommandPalette`, `FileSearchPalette`, `SettingsPanel`, `TabBar`, `StatusBar`, `Titlebar`, `AppLoader`, `AgentStatusIcon`, `ConfirmDialog`, `SaveConfirmDialog`, `ErrorBoundary`, `LaunchPicker`, `NewWorkspaceDialog`, `OpenInDevEnvButton`, `DragPanePreview`, `PaneDropIndicator`.
 
 #### Hooks
 
 - `hooks/useSplitPane.ts` — Split, close, navigate pane operations.
 - `hooks/usePty.ts` — PTY connection lifecycle.
 - `hooks/useWorkspace.ts` — Workspace loading and management.
-- `hooks/useConfirmCloseFileTab.ts` — Confirm dialog for unsaved file tabs.
+- `hooks/useConfirmCloseTerminalTab.ts` — Confirm dialog for unsaved terminal tabs.
+- `hooks/useFileReloadWatcher.ts` — Watches open files for external changes and prompts reload.
+- `hooks/useGitDataSync.ts` — Syncs git data for active and opened workspaces.
+- `hooks/usePaneDrag.ts` — Drag-and-drop pane reordering logic.
 
 #### Stores
 
@@ -69,6 +75,11 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `stores/prStore.ts` — GitHub pull requests: review requests, user's PRs, view modes.
 - `stores/searchStore.ts` — Full-text search state and results.
 - `stores/ptyActivityStore.ts` — PTY activity tracking per workspace.
+- `stores/agentRegistryStore.ts` — Detected agents available in `$PATH`.
+- `stores/devEnvironmentsStore.ts` — Detected desktop IDE dev environments.
+- `stores/workspaceGitStore.ts` — Per-workspace git summary (branch, change counts) for sidebar chips.
+- `stores/paneCloseConfirmStore.ts` — Confirm state for closing a pane.
+- `stores/tabCloseConfirmStore.ts` — Confirm state for closing a tab.
 
 #### Lib
 
@@ -89,6 +100,16 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/terminalResetFilter.ts` — Filters terminal reset sequences.
 - `lib/base64.ts` — Base64 encoding/decoding utilities.
 - `lib/types.ts` — Shared TypeScript type definitions.
+- `lib/agentIcons.tsx` — Icon components for each supported agent.
+- `lib/devEnvironments.ts` — IPC helpers and types for dev environment detection/launch.
+- `lib/dragPaneHitTest.ts` — Hit-testing logic for drag-and-drop pane reordering.
+- `lib/dragPaneStore.ts` — Ephemeral drag state (not a Zustand store — plain module).
+- `lib/fuzzyMatch.ts` — Fuzzy matching utility for file quick-open.
+- `lib/isMarkdownFile.ts` — Predicate for markdown file detection.
+- `lib/markdownPrint.ts` — Markdown rendering helpers.
+- `lib/notificationRouter.ts` — Routes Tauri notifications to the correct workspace.
+- `lib/pendingAgentRegistry.ts` — Tracks agents awaiting PTY attachment.
+- `lib/windowFocus.ts` — Window focus/blur detection for activity gating.
 
 ### Data Flow
 
