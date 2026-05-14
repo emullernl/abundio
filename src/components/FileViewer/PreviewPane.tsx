@@ -1,5 +1,6 @@
 import MarkdownPreview from "@uiw/react-markdown-preview";
 import "@uiw/react-markdown-preview/markdown.css";
+import "./PreviewPane.css";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
@@ -10,8 +11,13 @@ import {
 } from "../../lib/markdownPreviewPrint";
 import { printMarkdownPreview } from "../../lib/markdownPrint";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { makeMarkdownCodeComponent } from "./MermaidCode";
 import { PreviewPaneTitleBar } from "./PreviewPaneTitleBar";
+
+// Base editor font size — the preview zoom is computed relative to this so
+// Cmd+= / Cmd+- scales the preview alongside the Monaco editor.
+const BASE_FONT_SIZE = 14;
 
 interface PreviewPaneProps {
 	paneId: string;
@@ -27,6 +33,9 @@ export function PreviewPane({
 	onFocus,
 }: PreviewPaneProps) {
 	const sourceState = useExplorerStore((s) => s.filePanes[sourcePaneId]);
+	// Shares the editor's font-size setting (driven by Cmd+= / Cmd+-).
+	const fontSize = useSettingsStore((s) => s.fontSize);
+	const zoom = fontSize / BASE_FONT_SIZE;
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -90,7 +99,11 @@ export function PreviewPane({
 				style={{ padding: "28px 36px", background: "#ffffff" }}
 			>
 				{sourceIsMarkdown && (
-					<MarkdownPreview source={content} components={components} />
+					<MarkdownPreview
+						source={content}
+						components={components}
+						style={{ zoom }}
+					/>
 				)}
 			</div>
 		</div>

@@ -1,0 +1,6 @@
+/* @uiw/react-markdown-preview bakes rehype-autolink-headings into its default
+   plugins (not overridable via props), which prepends an anchor-link icon to
+   every heading. We don't surface heading anchors, so hide it. */
+.abundio-md-preview .wmde-markdown .anchor {
+	display: none;
+}

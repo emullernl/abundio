@@ -75,6 +75,11 @@ export async function printMarkdownPreview(container: Element): Promise<void> {
   #${PRINT_DIV_ID} th { background: #f9fafb; font-weight: 600; }
   #${PRINT_DIV_ID} hr { border-color: #e5e7eb; }
   #${PRINT_DIV_ID} img, #${PRINT_DIV_ID} svg { max-width: 100%; }
+  /* Strip interactive chrome from the printed page: the autolink-headings
+     anchor icon, the code-block copy buttons, and any other buttons. */
+  #${PRINT_DIV_ID} .anchor,
+  #${PRINT_DIV_ID} .copied,
+  #${PRINT_DIV_ID} button { display: none !important; }
 }`;
 	document.head.appendChild(style);
 
