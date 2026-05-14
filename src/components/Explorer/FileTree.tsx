@@ -114,29 +114,6 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 		}
 	}, [rootPath, entries, loadDir]);
 
-	// Dir-refresh listener. The Rust watcher itself is owned by
-	// useFileReloadWatcher so it survives workspace switches.
-	useEffect(() => {
-		let unlisten: (() => void) | null = null;
-		let cancelled = false;
-		fsApi
-			.onFsChange(rootPath, ({ paths }) => {
-				useExplorerStore.getState().refreshDirs(paths);
-			})
-			.then((fn) => {
-				if (cancelled) fn();
-				else unlisten = fn;
-			})
-			.catch((err) => {
-				console.error("[FileTree] onFsChange listen failed:", err);
-			});
-
-		return () => {
-			cancelled = true;
-			unlisten?.();
-		};
-	}, [rootPath]);
-
 	const handleContextMenu = (x: number, y: number, entry: DirEntry) => {
 		setMenu({ x, y, entry });
 	};

@@ -29,6 +29,24 @@ export function computeDesiredRoots(
 }
 
 /**
+ * Decide how an `fs-change` payload should be routed into the explorer store.
+ * `refreshPaths` are parent dirs whose listing must be re-fetched; `reload` is
+ * whether open file panes need a content reload / conflict check. The two are
+ * independent: a metadata-only touch yields `refreshPaths` but no `reload`.
+ * Exported for testing.
+ */
+export function routeFsChange(change: {
+	paths: string[];
+	changedFiles: string[];
+	removedFiles: string[];
+}): { refreshPaths: string[]; reload: boolean } {
+	return {
+		refreshPaths: change.paths,
+		reload: change.changedFiles.length > 0 || change.removedFiles.length > 0,
+	};
+}
+
+/**
  * Given the currently-active roots and the desired roots, return which roots
  * to start watching and which to stop. Exported for testing.
  */
@@ -50,14 +68,14 @@ export function diffRoots(
 /**
  * Owns the Rust `fs_watch_start` / `fs_watch_stop` lifecycle for every
  * currently-opened workspace, and routes `fs-change` events into the explorer
- * store so open tabs auto-reload (clean tabs) or surface a conflict banner
- * (dirty tabs).
+ * store: directory listings are refreshed (`refreshDirs`) and open tabs
+ * auto-reload (clean tabs) or surface a conflict banner (dirty tabs).
  *
  * The watcher set is driven by `ptyActivityStore.openedWorkspaceIds`, not by
  * which workspace is visible. Switching workspaces is a no-op for this hook —
  * opened workspaces keep their watchers alive in the background, so edits
- * made elsewhere are still picked up. Closing or deleting a workspace stops
- * its watcher.
+ * made elsewhere are still picked up, including their explorer-tree listings.
+ * Closing or deleting a workspace stops its watcher.
  */
 export function useFileReloadWatcher() {
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
@@ -92,11 +110,27 @@ export function useFileReloadWatcher() {
 				console.error("[useFileReloadWatcher] watchStart failed:", err);
 			});
 			fsApi
-				.onFsChange(root, ({ changedFiles, removedFiles }) => {
-					if (changedFiles.length === 0 && removedFiles.length === 0) return;
+				.onFsChange(root, (change) => {
+					const { refreshPaths, reload } = routeFsChange(change);
+					if (refreshPaths.length > 0) {
+						useExplorerStore
+							.getState()
+							.refreshDirs(refreshPaths)
+							.catch((err) => {
+								console.error(
+									"[useFileReloadWatcher] refreshDirs failed:",
+									err,
+								);
+							});
+					}
+					if (!reload) return;
 					useExplorerStore
 						.getState()
-						.handleFsChange(entry.workspaceId, changedFiles, removedFiles)
+						.handleFsChange(
+							entry.workspaceId,
+							change.changedFiles,
+							change.removedFiles,
+						)
 						.catch((err) => {
 							console.error(
 								"[useFileReloadWatcher] handleFsChange failed:",
