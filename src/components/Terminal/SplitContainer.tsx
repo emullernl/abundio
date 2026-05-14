@@ -1,10 +1,14 @@
-import { memo } from "react";
+import { lazy, memo, Suspense } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import type { PaneNode } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FilePane } from "../FileViewer/FilePane";
 import { PaneResizer } from "./PaneResizer";
 import { TerminalSlot } from "./TerminalSlot";
+
+const LazyPreviewPane = lazy(() =>
+	import("../FileViewer/PreviewPane").then((m) => ({ default: m.PreviewPane })),
+);
 
 interface Props {
 	node: PaneNode;
@@ -54,6 +58,27 @@ const FileLeaf = memo(function FileLeaf({
 			isFocused={isFocused}
 			onFocus={() => setFocusedPane(node.id)}
 		/>
+	);
+});
+
+/** Leaf component for preview nodes. */
+const PreviewLeaf = memo(function PreviewLeaf({
+	node,
+}: {
+	node: PaneNode & { type: "preview" };
+}) {
+	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === node.id);
+	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
+
+	return (
+		<Suspense fallback={null}>
+			<LazyPreviewPane
+				paneId={node.id}
+				sourcePaneId={node.sourcePaneId}
+				isFocused={isFocused}
+				onFocus={() => setFocusedPane(node.id)}
+			/>
+		</Suspense>
 	);
 });
 
@@ -128,6 +153,9 @@ export function SplitContainer({ node, cwd }: Props) {
 	}
 	if (node.type === "file") {
 		return <FileLeaf node={node} />;
+	}
+	if (node.type === "preview") {
+		return <PreviewLeaf node={node} />;
 	}
 	if (node.type === "split") {
 		return <SplitNode node={node} cwd={cwd} />;

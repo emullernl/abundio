@@ -49,7 +49,7 @@ export function collectTerminals(
 	tree: PaneNode,
 ): { id: string; ptyId: string }[] {
 	if (tree.type === "terminal") return [{ id: tree.id, ptyId: tree.ptyId }];
-	if (tree.type === "file") return [];
+	if (tree.type !== "split") return [];
 	return [...collectTerminals(tree.first), ...collectTerminals(tree.second)];
 }
 
@@ -70,7 +70,7 @@ export function setAgentId(
 		}
 		return { ...tree, agentId };
 	}
-	if (tree.type === "file") return tree;
+	if (tree.type !== "split") return tree;
 	const first = setAgentId(tree.first, paneId, agentId);
 	const second = setAgentId(tree.second, paneId, agentId);
 	if (first === tree.first && second === tree.second) return tree;
@@ -95,7 +95,7 @@ export function setCwd(
 		if (tree.cwd === cwd) return tree;
 		return { ...tree, cwd };
 	}
-	if (tree.type === "file") return tree;
+	if (tree.type !== "split") return tree;
 	const first = setCwd(tree.first, paneId, cwd);
 	const second = setCwd(tree.second, paneId, cwd);
 	if (first === tree.first && second === tree.second) return tree;
@@ -109,20 +109,20 @@ export function collectAgentPanes(
 	if (tree.type === "terminal") {
 		return tree.agentId ? [{ paneId: tree.id, agentId: tree.agentId }] : [];
 	}
-	if (tree.type === "file") return [];
+	if (tree.type !== "split") return [];
 	return [...collectAgentPanes(tree.first), ...collectAgentPanes(tree.second)];
 }
 
-/** Collect all leaf pane IDs (terminal + file) in tree order (depth-first). */
+/** Collect all leaf pane IDs (terminal + file + preview) in tree order (depth-first). */
 export function collectPaneIds(tree: PaneNode): string[] {
-	if (tree.type === "terminal" || tree.type === "file") return [tree.id];
+	if (tree.type !== "split") return [tree.id];
 	return [...collectPaneIds(tree.first), ...collectPaneIds(tree.second)];
 }
 
 /** Collect only terminal pane IDs (depth-first). */
 export function collectTerminalIds(tree: PaneNode): string[] {
 	if (tree.type === "terminal") return [tree.id];
-	if (tree.type === "file") return [];
+	if (tree.type !== "split") return [];
 	return [
 		...collectTerminalIds(tree.first),
 		...collectTerminalIds(tree.second),
@@ -132,7 +132,7 @@ export function collectTerminalIds(tree: PaneNode): string[] {
 /** Collect only file pane IDs (depth-first). */
 export function collectFilePaneIds(tree: PaneNode): string[] {
 	if (tree.type === "file") return [tree.id];
-	if (tree.type === "terminal") return [];
+	if (tree.type !== "split") return [];
 	return [
 		...collectFilePaneIds(tree.first),
 		...collectFilePaneIds(tree.second),
@@ -144,7 +144,7 @@ export function findFilePaneInTree(
 	tree: PaneNode,
 ): (PaneNode & { type: "file" }) | null {
 	if (tree.type === "file") return tree;
-	if (tree.type === "terminal") return null;
+	if (tree.type !== "split") return null;
 	return findFilePaneInTree(tree.first) ?? findFilePaneInTree(tree.second);
 }
 
@@ -220,9 +220,57 @@ export function findFilePaneByPath(
 	filePath: string,
 ): (PaneNode & { type: "file" }) | null {
 	if (tree.type === "file") return tree.filePath === filePath ? tree : null;
-	if (tree.type === "terminal") return null;
+	if (tree.type !== "split") return null;
 	return (
 		findFilePaneByPath(tree.first, filePath) ??
 		findFilePaneByPath(tree.second, filePath)
 	);
+}
+
+/** Return the preview leaf bound to the given source pane, or null. */
+export function findPreviewForSource(
+	tree: PaneNode,
+	sourcePaneId: string,
+): (PaneNode & { type: "preview" }) | null {
+	if (tree.type === "preview")
+		return tree.sourcePaneId === sourcePaneId ? tree : null;
+	if (tree.type !== "split") return null;
+	return (
+		findPreviewForSource(tree.first, sourcePaneId) ??
+		findPreviewForSource(tree.second, sourcePaneId)
+	);
+}
+
+/** Collect preview leaves whose sourcePaneId does not resolve to a node in the tree. */
+export function findOrphanPreviews(
+	tree: PaneNode,
+): (PaneNode & { type: "preview" })[] {
+	const orphans: (PaneNode & { type: "preview" })[] = [];
+	const walk = (node: PaneNode) => {
+		if (node.type === "preview") {
+			if (!findNode(tree, node.sourcePaneId)) orphans.push(node);
+			return;
+		}
+		if (node.type !== "split") return;
+		walk(node.first);
+		walk(node.second);
+	};
+	walk(tree);
+	return orphans;
+}
+
+/**
+ * Remove every preview node whose sourcePaneId does not resolve in the tree,
+ * collapsing splits as needed. Returns a new tree (or null if it empties out),
+ * or the original tree if there were no orphans.
+ */
+export function pruneOrphanPreviews(tree: PaneNode): PaneNode | null {
+	const orphans = findOrphanPreviews(tree);
+	if (orphans.length === 0) return tree;
+	let result: PaneNode | null = tree;
+	for (const orphan of orphans) {
+		if (!result) break;
+		result = removeNode(result, orphan.id);
+	}
+	return result;
 }

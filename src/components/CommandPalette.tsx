@@ -90,6 +90,13 @@ export function CommandPalette({
 			action: () => triggerAction("open-settings"),
 		});
 
+		result.push({
+			id: "action-toggle-markdown-preview",
+			label: "Toggle Markdown Preview",
+			category: "Actions",
+			action: () => triggerAction("toggle-markdown-preview"),
+		});
+
 		// Agents
 		if (focusedPaneId) {
 			for (const agent of agents.filter((a) => a.enabled)) {

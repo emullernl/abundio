@@ -3,11 +3,16 @@ import mermaid from "mermaid";
 const PRINT_DIV_ID = "abundio-md-print";
 const PRINT_STYLE_ID = "abundio-md-print-style";
 
-export async function printMarkdownProse(
-	container: Element,
-	liveTheme: "default" | "dark" = "default",
-): Promise<void> {
-	const proseEl = container.querySelector<HTMLElement>(".abundio-prose");
+/**
+ * Print the rendered markdown inside a preview pane. `container` is the
+ * preview pane's scroll container; the rendered document lives in its
+ * `.wmde-markdown` child (produced by @uiw/react-markdown-preview).
+ *
+ * The preview always renders light, so the printed output — including Mermaid
+ * diagrams — is light too; nothing about the on-screen state needs restoring.
+ */
+export async function printMarkdownPreview(container: Element): Promise<void> {
+	const proseEl = container.querySelector<HTMLElement>(".wmde-markdown");
 	if (!proseEl) return;
 
 	// Remove any leftovers from a previous cancelled print
@@ -69,7 +74,12 @@ export async function printMarkdownProse(
   }
   #${PRINT_DIV_ID} th { background: #f9fafb; font-weight: 600; }
   #${PRINT_DIV_ID} hr { border-color: #e5e7eb; }
-  #${PRINT_DIV_ID} img { max-width: 100%; }
+  #${PRINT_DIV_ID} img, #${PRINT_DIV_ID} svg { max-width: 100%; }
+  /* Strip interactive chrome from the printed page: the autolink-headings
+     anchor icon, the code-block copy buttons, and any other buttons. */
+  #${PRINT_DIV_ID} .anchor,
+  #${PRINT_DIV_ID} .copied,
+  #${PRINT_DIV_ID} button { display: none !important; }
 }`;
 	document.head.appendChild(style);
 
@@ -77,21 +87,14 @@ export async function printMarkdownProse(
 	div.id = PRINT_DIV_ID;
 	div.style.display = "none";
 	div.innerHTML = proseEl.innerHTML;
-	// Strip contenteditable so the browser doesn't show editing indicators
-	for (const el of [
-		div,
-		...Array.from(div.querySelectorAll("[contenteditable]")),
-	]) {
-		(el as HTMLElement).removeAttribute("contenteditable");
-	}
 	document.body.appendChild(div);
 
-	// Re-render mermaid diagrams with the default (light) theme for print
+	// Re-render mermaid diagrams into the cloned print DOM. The preview's
+	// on-screen Mermaid theme is already "default" (light), so no restore needed.
 	const mermaidEls = Array.from(
-		div.querySelectorAll<HTMLElement>(".mdx-mermaid[data-mermaid-source]"),
+		div.querySelectorAll<HTMLElement>(".abundio-mermaid[data-mermaid-source]"),
 	);
 	if (mermaidEls.length > 0) {
-		mermaid.initialize({ startOnLoad: false, theme: "default" });
 		await Promise.allSettled(
 			mermaidEls.map(async (el, i) => {
 				const source = el.getAttribute("data-mermaid-source");
@@ -100,8 +103,6 @@ export async function printMarkdownProse(
 				el.innerHTML = svg;
 			}),
 		);
-		// Restore the live theme so subsequent diagram renders in the editor are unaffected
-		mermaid.initialize({ startOnLoad: false, theme: liveTheme });
 	}
 
 	const cleanup = () => {

@@ -1,8 +1,10 @@
 import { useCallback } from "react";
 import { pty } from "../lib/ipc";
+import { suppressMarkdownPreview } from "../lib/markdownPreview";
 import {
 	collectTerminals,
 	findNode,
+	findPreviewForSource,
 	removeNode,
 	replaceNode,
 	wrapInSplit,
@@ -84,6 +86,8 @@ export function useSplitPane() {
 
 			// Destroy terminal instance, kill PTY, and clean up log file
 			const node = findNode(layout, paneId);
+			// A file pane's bound preview pane is closed alongside it.
+			let cascadePreviewId: string | null = null;
 			if (node?.type === "terminal") {
 				destroyTerminal(paneId);
 				if (node.ptyId) {
@@ -92,9 +96,17 @@ export function useSplitPane() {
 				pty.deleteLog(paneId).catch(() => {});
 			} else if (node?.type === "file") {
 				useExplorerStore.getState().unregisterFilePane(paneId);
+				cascadePreviewId = findPreviewForSource(layout, paneId)?.id ?? null;
+			} else if (node?.type === "preview") {
+				// Manually closing a preview suppresses auto-open for its source
+				// pane until the user reopens it.
+				suppressMarkdownPreview(node.sourcePaneId);
 			}
 
-			const newLayout = removeNode(layout, paneId);
+			let newLayout = removeNode(layout, paneId);
+			if (newLayout && cascadePreviewId) {
+				newLayout = removeNode(newLayout, cascadePreviewId);
+			}
 			if (newLayout) {
 				await updateLayout(tab.id, newLayout);
 				// Focus the first terminal or file leaf in the remaining tree

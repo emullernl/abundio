@@ -15,8 +15,16 @@ _Avoid_: loaded workspace, mounted workspace
 
 **Background workspace**: An Opened workspace that is not currently the Active workspace. Not a separate state — derived as `openedWorkspaceIds \ {activeWorkspaceId}`.
 
-**Pane**: A single terminal slot within a Workspace tab. Panes form a recursive binary split tree (`PaneNode`).
+**Pane**: A leaf slot within a Workspace tab. Panes form a recursive binary split tree (`PaneNode`). A Pane is one of: a **terminal pane** (holds a PTY), a **file pane** (holds an open file), or a **preview pane** (renders another pane's content).
 _Avoid_: panel, window, split
+
+**File pane**: A Pane that holds one open file — rendered as a Monaco editor (text), diff view, or image viewer depending on file type. Identified by its `filePath`.
+_Avoid_: editor, viewer
+
+**Preview pane**: A Pane that renders a live, read-only rendering of its **source pane**'s markdown buffer — including Mermaid diagrams. Owns no file of its own; it mirrors. Created beside a file pane when a markdown file is opened.
+_Avoid_: render pane, markdown viewer
+
+**Source pane**: The file pane a preview pane is bound to (`sourcePaneId`). The preview reflects this pane's unsaved buffer and follows it when a new markdown file is opened in it.
 
 **Tab**: A named pane layout within a Workspace. Each tab has its own root `PaneNode`.
 _Avoid_: view, screen
@@ -32,7 +40,8 @@ _Avoid_: terminal process, shell
 - A Workspace shown in the sidebar may be neither Active nor Opened — it has not been activated this session.
 - **Closing** a Workspace removes it from Opened; deleting also removes it from the sidebar.
 - Each **Tab** belongs to exactly one **Workspace**.
-- Each **Pane** belongs to exactly one **Tab** and holds at most one **PTY**.
+- Each **Pane** belongs to exactly one **Tab**. A terminal pane holds at most one **PTY**; a file pane holds at most one open file; a preview pane holds neither — it references a **source pane**.
+- A **preview pane** and its **source pane** always live in the same **Tab**.
 
 ## Flagged ambiguities
 

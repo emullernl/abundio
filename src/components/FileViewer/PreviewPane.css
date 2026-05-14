@@ -1,0 +1,113 @@
+/* @uiw/react-markdown-preview bakes rehype-autolink-headings into its default
+   plugins (not overridable via props), which prepends an anchor-link icon to
+   every heading. We don't surface heading anchors, so hide it. */
+.abundio-md-preview .wmde-markdown .anchor {
+	display: none;
+}
+
+/* ── Mermaid diagrams: expand-to-fullscreen affordance ── */
+.abundio-mermaid {
+	position: relative;
+}
+.abundio-mermaid-svg {
+	cursor: zoom-in;
+}
+/* @uiw injects a copy button into every <pre>; it's meaningless over a
+   rendered diagram and overlaps our expand control — hide it for mermaid. */
+.abundio-md-preview .wmde-markdown pre:has(.abundio-mermaid) .copied {
+	display: none;
+}
+.abundio-mermaid-expand {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border: 1px solid rgba(0, 0, 0, 0.15);
+	border-radius: 4px;
+	background: rgba(255, 255, 255, 0.92);
+	color: #333;
+	cursor: pointer;
+	opacity: 0.55;
+	transition: opacity 120ms ease;
+}
+.abundio-mermaid:hover .abundio-mermaid-expand {
+	opacity: 1;
+}
+.abundio-mermaid-expand:hover {
+	background: #fff;
+}
+
+/* ── Mermaid fullscreen viewer (portaled to <body>) ── */
+.abundio-mermaid-modal {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	background: rgba(0, 0, 0, 0.8);
+}
+.abundio-mermaid-modal-viewport {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	cursor: grab;
+}
+.abundio-mermaid-modal-viewport:active {
+	cursor: grabbing;
+}
+.abundio-mermaid-modal-canvas {
+	background: #fff;
+	padding: 24px;
+	border-radius: 6px;
+	transform-origin: center center;
+	user-select: none;
+}
+.abundio-mermaid-modal-canvas svg {
+	display: block;
+}
+.abundio-mermaid-modal-toolbar {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 4px;
+	border-radius: 6px;
+	background: rgba(28, 28, 28, 0.92);
+}
+.abundio-mermaid-modal-toolbar button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: #ddd;
+	cursor: pointer;
+	transition:
+		background 100ms ease,
+		color 100ms ease;
+}
+.abundio-mermaid-modal-toolbar button:hover {
+	background: rgba(255, 255, 255, 0.14);
+	color: #fff;
+}
+.abundio-mermaid-modal-scale {
+	min-width: 42px;
+	padding: 0 4px;
+	color: #bbb;
+	font-size: 11px;
+	font-family: var(--font-mono);
+	text-align: center;
+	user-select: none;
+}

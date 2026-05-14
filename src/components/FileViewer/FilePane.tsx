@@ -1,10 +1,13 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
-import { printMarkdownProse } from "../../lib/markdownPrint";
+import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
+import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
+import { findPreviewForSource } from "../../lib/paneTree";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
 import { PaneDropIndicator } from "../PaneDropIndicator";
 import {
@@ -16,10 +19,6 @@ import { FileChangeBanner } from "./FileChangeBanner";
 import { FilePaneTitleBar } from "./FilePaneTitleBar";
 import { ImageViewer } from "./ImageViewer";
 import { UnsupportedFile } from "./UnsupportedFile";
-
-// Start downloading the markdown editor chunk immediately so it's ready before first use
-const markdownEditorPromise = import("./MarkdownEditor");
-const LazyMarkdownEditor = lazy(() => markdownEditorPromise);
 
 interface FilePaneProps {
 	paneId: string;
@@ -59,8 +58,6 @@ export function FilePane({
 		(s) => s.isDragging && s.sourcePaneId === paneId,
 	);
 
-	const paneDivRef = useRef<HTMLDivElement>(null);
-
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -96,7 +93,7 @@ export function FilePane({
 		);
 	}
 
-	if (paneState.loading && !isMarkdownFile(paneState.fileName)) {
+	if (paneState.loading) {
 		return (
 			<div
 				className="flex items-center justify-center h-full w-full"
@@ -119,21 +116,40 @@ export function FilePane({
 		});
 	};
 
-	const markdownItems: ContextMenuItem[] =
-		paneState.fileType === "text" && isMarkdownFile(paneState.fileName)
-			? [
-					{
-						label: "Print",
-						onClick: () => {
-							if (paneDivRef.current) printMarkdownProse(paneDivRef.current);
-						},
+	const isMarkdown =
+		paneState.fileType === "text" && isMarkdownFile(paneState.fileName);
+
+	const handlePrintMarkdown = async () => {
+		const ws = useWorkspaceStore.getState();
+		const layout = ws.getActiveLayout();
+		const hasPreview = layout ? !!findPreviewForSource(layout, paneId) : false;
+		// Printing operates on the preview pane's rendered DOM — open one first
+		// if this file pane doesn't have a preview yet.
+		if (!hasPreview) await toggleMarkdownPreviewForPane(paneId);
+		requestPreviewPrint(paneId);
+	};
+
+	const markdownItems: ContextMenuItem[] = isMarkdown
+		? [
+				{
+					label: "Toggle Preview",
+					shortcut: "⇧⌘M",
+					onClick: () => {
+						toggleMarkdownPreviewForPane(paneId);
 					},
-					{ separator: true },
-				]
-			: [];
+				},
+				{
+					label: "Print",
+					onClick: () => {
+						handlePrintMarkdown();
+					},
+				},
+				{ separator: true },
+			]
+		: [];
 
 	const editorItems: ContextMenuItem[] =
-		paneState.fileType === "text" && !isMarkdownFile(paneState.fileName)
+		paneState.fileType === "text"
 			? [
 					{
 						label: "Copy",
@@ -198,7 +214,6 @@ export function FilePane({
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container
 		<div
-			ref={paneDivRef}
 			className="relative w-full h-full flex flex-col"
 			data-pane-id={paneId}
 			style={{
@@ -233,28 +248,17 @@ export function FilePane({
 				</div>
 			)}
 			<div className="flex-1 min-h-0 relative">
-				{paneState.fileType === "text" &&
-					isMarkdownFile(paneState.fileName) && (
-						<Suspense fallback={null}>
-							<LazyMarkdownEditor
-								paneId={paneId}
-								isActive={isFocused}
-								content={paneState.content ?? ""}
-								onChange={handleEditorChange}
-							/>
-						</Suspense>
-					)}
-				{paneState.fileType === "text" &&
-					!isMarkdownFile(paneState.fileName) && (
-						<CodeEditor
-							tabId={paneId}
-							isActive={isFocused}
-							content={paneState.content ?? ""}
-							language={paneState.language}
-							initialEditorState={null}
-							onChange={handleEditorChange}
-						/>
-					)}
+				{paneState.fileType === "text" && (
+					<CodeEditor
+						tabId={paneId}
+						isActive={isFocused}
+						content={paneState.content ?? ""}
+						language={paneState.language}
+						initialEditorState={null}
+						onChange={handleEditorChange}
+						forceWordWrap={isMarkdown}
+					/>
+				)}
 				{paneState.fileType === "diff" &&
 					paneState.diffOriginal != null &&
 					paneState.diffModified != null && (

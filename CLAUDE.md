@@ -202,6 +202,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Find in terminal | `Cmd+F` | `Ctrl+F` |
 | Search workspace | `Cmd+Shift+F` | `Ctrl+Shift+F` |
 | Toggle git panel | `Cmd+Shift+G` | `Ctrl+Shift+G` |
+| Toggle markdown preview | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | New workspace | `Cmd+Shift+N` | `Ctrl+Shift+N` |
 | New tab | `Cmd+T` | `Ctrl+T` |
 | Close tab | `Cmd+W` | `Ctrl+W` |

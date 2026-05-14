@@ -1,5 +1,48 @@
 import { describe, expect, it } from "vitest";
-import { computeDesiredRoots, diffRoots } from "../useFileReloadWatcher";
+import {
+	computeDesiredRoots,
+	diffRoots,
+	routeFsChange,
+} from "../useFileReloadWatcher";
+
+describe("routeFsChange", () => {
+	it("forwards parent dirs to refresh and flags reload on file changes", () => {
+		const result = routeFsChange({
+			paths: ["/a/src"],
+			changedFiles: ["/a/src/main.ts"],
+			removedFiles: [],
+		});
+		expect(result).toEqual({ refreshPaths: ["/a/src"], reload: true });
+	});
+
+	it("flags reload on removals", () => {
+		const result = routeFsChange({
+			paths: ["/a/src"],
+			changedFiles: [],
+			removedFiles: ["/a/src/old.ts"],
+		});
+		expect(result.reload).toBe(true);
+	});
+
+	it("refreshes dirs without reload for metadata-only changes", () => {
+		// A metadata-only touch yields a parent dir but no changed/removed files.
+		const result = routeFsChange({
+			paths: ["/a/src"],
+			changedFiles: [],
+			removedFiles: [],
+		});
+		expect(result).toEqual({ refreshPaths: ["/a/src"], reload: false });
+	});
+
+	it("is inert when the payload is empty", () => {
+		const result = routeFsChange({
+			paths: [],
+			changedFiles: [],
+			removedFiles: [],
+		});
+		expect(result).toEqual({ refreshPaths: [], reload: false });
+	});
+});
 
 describe("computeDesiredRoots", () => {
 	it("includes only opened workspaces with a rootFolder", () => {

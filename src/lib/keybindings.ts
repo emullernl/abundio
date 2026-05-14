@@ -19,6 +19,7 @@ type KeyAction =
 	| "font-size-decrease"
 	| "save-file"
 	| "toggle-git-panel"
+	| "toggle-markdown-preview"
 	| "open-settings";
 
 interface KeyBinding {
@@ -52,21 +53,13 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"next-tab",
 	"prev-tab",
 	"toggle-git-panel",
+	"toggle-markdown-preview",
 	"open-settings",
 ]);
 
 function isMonacoFocused(): boolean {
 	const el = document.activeElement;
 	return !!el && (el as Element).closest?.(".monaco-editor") !== null;
-}
-
-function isMarkdownEditorFocused(): boolean {
-	const el = document.activeElement;
-	return (
-		!!el &&
-		((el as Element).closest?.(".mdxeditor") !== null ||
-			(el as Element).closest?.(".mdx-find-bar") !== null)
-	);
 }
 
 const DEFAULT_BINDINGS: KeyBinding[] = [
@@ -169,6 +162,13 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		action: "toggle-git-panel",
 	},
 	{
+		key: "m",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "toggle-markdown-preview",
+	},
+	{
 		key: ",",
 		meta: isMac,
 		shift: false,
@@ -209,15 +209,6 @@ export function handleKeyDown(e: KeyboardEvent) {
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.
 			if (isMonacoFocused() && !WORKSPACE_GLOBAL_ACTIONS.has(binding.action)) {
-				return;
-			}
-			// When the MDX editor is focused let it (and its CodeMirror source view)
-			// handle any shortcut that isn't a workspace-global action so that
-			// search (Cmd+F), replace (Cmd+H), zoom, save, etc. all work.
-			if (
-				isMarkdownEditorFocused() &&
-				!WORKSPACE_GLOBAL_ACTIONS.has(binding.action)
-			) {
 				return;
 			}
 			// Always prevent default for registered bindings, even if no handler yet
