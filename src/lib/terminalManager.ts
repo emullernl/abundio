@@ -128,7 +128,7 @@ function setPtyIdInLayout(
 	if (node.type === "terminal") {
 		return node.id === targetPaneId ? { ...node, ptyId } : node;
 	}
-	if (node.type === "file") return node;
+	if (node.type !== "split") return node;
 	return {
 		...node,
 		first: setPtyIdInLayout(node.first, targetPaneId, ptyId),

@@ -1,13 +1,26 @@
 // ── Pane layout tree (recursive) ──
 
 export type PaneNode =
-	| { type: "terminal"; id: string; ptyId: string; agentId?: string; cwd?: string }
+	| {
+			type: "terminal";
+			id: string;
+			ptyId: string;
+			agentId?: string;
+			cwd?: string;
+	  }
 	| {
 			type: "file";
 			id: string;
 			filePath: string;
 			isDiff?: boolean;
 			diffSection?: GitChangedFile["section"];
+	  }
+	| {
+			// A live markdown preview bound to a file pane (its "source pane").
+			// Owns no file of its own — mirrors the source pane's unsaved buffer.
+			type: "preview";
+			id: string;
+			sourcePaneId: string;
 	  }
 	| {
 			type: "split";

@@ -14,6 +14,9 @@ interface CodeEditorProps {
 	language: string | null;
 	initialEditorState: SerializedEditorState | null;
 	onChange: (content: string) => void;
+	// Markdown is prose — long logical lines — so it always wraps, overriding
+	// the global editorWordWrap setting.
+	forceWordWrap?: boolean;
 }
 
 // Cache view state per tab so switching tabs preserves cursor/scroll
@@ -81,6 +84,7 @@ export const CodeEditor = memo(function CodeEditor({
 	language,
 	initialEditorState,
 	onChange,
+	forceWordWrap = false,
 }: CodeEditorProps) {
 	const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 	const onChangeRef = useRef(onChange);
@@ -92,6 +96,7 @@ export const CodeEditor = memo(function CodeEditor({
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const monacoFontSize = fontSize - 1;
 	const editorWordWrap = useSettingsStore((s) => s.editorWordWrap);
+	const effectiveWordWrap = forceWordWrap || editorWordWrap;
 	const monaco = useMonaco();
 
 	const pendingGotoLine = useExplorerStore((s) => s.pendingGotoLine);
@@ -125,12 +130,12 @@ export const CodeEditor = memo(function CodeEditor({
 		editorRef.current?.updateOptions({ fontFamily, fontSize: monacoFontSize });
 	}, [fontFamily, monacoFontSize]);
 
-	// Update word-wrap on live editors when the global setting changes
+	// Update word-wrap on live editors when the effective setting changes
 	useEffect(() => {
 		editorRef.current?.updateOptions({
-			wordWrap: editorWordWrap ? "on" : "off",
+			wordWrap: effectiveWordWrap ? "on" : "off",
 		});
-	}, [editorWordWrap]);
+	}, [effectiveWordWrap]);
 
 	// Re-define theme when it might have changed (monaco instance available)
 	useEffect(() => {
@@ -232,7 +237,7 @@ export const CodeEditor = memo(function CodeEditor({
 		() => ({
 			fontFamily,
 			fontSize: monacoFontSize,
-			wordWrap: editorWordWrap ? "on" : "off",
+			wordWrap: effectiveWordWrap ? "on" : "off",
 			contextmenu: false,
 			minimap: { enabled: false },
 			scrollBeyondLastLine: false,
@@ -248,7 +253,7 @@ export const CodeEditor = memo(function CodeEditor({
 				horizontalScrollbarSize: 10,
 			},
 		}),
-		[fontFamily, monacoFontSize, editorWordWrap],
+		[fontFamily, monacoFontSize, effectiveWordWrap],
 	);
 
 	return (

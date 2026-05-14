@@ -6,6 +6,10 @@ import {
 import { fs as fsApi, git as gitApi } from "../lib/ipc";
 import { getLanguage } from "../lib/languageMap";
 import {
+	buildFilePaneLayout,
+	pruneNonMarkdownPreviews,
+} from "../lib/markdownPreview";
+import {
 	collectPaneIds,
 	findFilePaneByPath,
 	findNode,
@@ -171,7 +175,7 @@ function renameFileInLayout(
 			return { ...node, filePath: `diff:${newPath}` };
 		return node;
 	}
-	if (node.type === "terminal") return node;
+	if (node.type !== "split") return node;
 	const first = renameFileInLayout(node.first, oldPath, newPath);
 	const second = renameFileInLayout(node.second, oldPath, newPath);
 	if (first === node.first && second === node.second) return node;
@@ -246,9 +250,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			const cached = diffContentCache.get(paneId);
 			if (cached?.filePath === filePath) diffContentCache.delete(paneId);
 			const resolvedOriginal =
-				diffOriginal ?? (cached?.filePath === filePath ? cached.original : null);
+				diffOriginal ??
+				(cached?.filePath === filePath ? cached.original : null);
 			const resolvedModified =
-				diffModified ?? (cached?.filePath === filePath ? cached.modified : null);
+				diffModified ??
+				(cached?.filePath === filePath ? cached.modified : null);
 			set((s) => ({
 				filePanes: {
 					...s.filePanes,
@@ -344,11 +350,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				}
 			}
 		}
-		const seedLayout: PaneNode = {
-			type: "file",
-			id: crypto.randomUUID(),
-			filePath,
-		};
+		// Markdown files open with a live preview pane beside them (auto-open).
+		const { layout: seedLayout } = buildFilePaneLayout(filePath);
 		await wsStore.createTab(workspaceId, undefined, seedLayout);
 	},
 
@@ -514,7 +517,10 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 					for (const tab of workspace.tabs) {
 						try {
 							const layout = JSON.parse(tab.layoutJson) as PaneNode;
-							const updated = renameFileInLayout(layout, targetPath, newPath);
+							const renamed = renameFileInLayout(layout, targetPath, newPath);
+							// A markdown file renamed to a non-markdown extension drops
+							// its preview pane.
+							const updated = pruneNonMarkdownPreviews(renamed);
 							if (updated !== layout) {
 								wsStore.updateLayout(tab.id, updated).catch(() => {});
 							}
@@ -540,8 +546,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			return;
 		}
 
-		const newPaneId = crypto.randomUUID();
-		const newLeaf: PaneNode = { type: "file", id: newPaneId, filePath };
+		const { layout: newLeaf, filePaneId } = buildFilePaneLayout(filePath);
 		const newLayout = wrapInSplit(
 			ctx.layout,
 			focusedPaneId,
@@ -549,7 +554,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			direction,
 		);
 		await wsStore.updateLayout(ctx.tabId, newLayout);
-		wsStore.setFocusedPane(newPaneId);
+		wsStore.setFocusedPane(filePaneId);
 	},
 
 	updateFileContent: (paneId, content) => {
@@ -824,7 +829,7 @@ export async function persistAllFilePanes() {
 						}
 						return node;
 					}
-					if (node.type === "terminal") return node;
+					if (node.type !== "split") return node;
 					return {
 						...node,
 						first: persist(node.first),

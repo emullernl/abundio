@@ -25,6 +25,7 @@ import { useGitDataSync } from "./hooks/useGitDataSync";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { initKeybindings, registerAction } from "./lib/keybindings";
+import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
@@ -445,6 +446,10 @@ export function App() {
 		});
 		registerAction("toggle-git-panel", () => {
 			useGitChangesStore.getState().togglePanel();
+		});
+		registerAction("toggle-markdown-preview", () => {
+			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			if (paneId) toggleMarkdownPreviewForPane(paneId);
 		});
 		registerAction("search-in-workspace", () => {
 			const settings = useSettingsStore.getState();

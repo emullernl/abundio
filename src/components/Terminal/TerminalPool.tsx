@@ -13,7 +13,7 @@ interface TerminalInfo {
 function collectTerminals(node: PaneNode): TerminalInfo[] {
 	if (node.type === "terminal")
 		return [{ paneId: node.id, ptyId: node.ptyId, cwd: node.cwd }];
-	if (node.type === "file") return [];
+	if (node.type !== "split") return [];
 	return [...collectTerminals(node.first), ...collectTerminals(node.second)];
 }
 

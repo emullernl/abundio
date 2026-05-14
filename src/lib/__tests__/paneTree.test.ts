@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
 	collectAgentPanes,
+	collectFilePaneIds,
 	collectPaneIds,
+	collectTerminalIds,
 	collectTerminals,
 	extractNode,
 	findNode,
+	findOrphanPreviews,
+	findPreviewForSource,
 	insertBesideNode,
+	pruneOrphanPreviews,
 	removeNode,
 	replaceNode,
 	setAgentId,
@@ -309,5 +314,93 @@ describe("insertBesideNode", () => {
 		expect(findNode(result, "a")?.id).toBe("a");
 		expect(findNode(result, "b")?.id).toBe("b");
 		expect(findNode(result, "c")?.id).toBe("c");
+	});
+});
+
+describe("preview panes", () => {
+	const fileLeaf: PaneNode = {
+		type: "file",
+		id: "f1",
+		filePath: "/a/README.md",
+	};
+	const previewLeaf: PaneNode = {
+		type: "preview",
+		id: "p1",
+		sourcePaneId: "f1",
+	};
+	// File pane + its bound preview, side by side.
+	const editorWithPreview: PaneNode = {
+		type: "split",
+		id: "sp",
+		direction: "vertical",
+		ratio: 0.5,
+		first: fileLeaf,
+		second: previewLeaf,
+	};
+
+	it("treats a preview as a leaf for tree traversal", () => {
+		expect(findNode(editorWithPreview, "p1")).toBe(previewLeaf);
+		expect(collectPaneIds(editorWithPreview)).toEqual(["f1", "p1"]);
+		expect(collectTerminals(editorWithPreview)).toEqual([]);
+		expect(collectTerminalIds(editorWithPreview)).toEqual([]);
+		expect(collectFilePaneIds(editorWithPreview)).toEqual(["f1"]);
+	});
+
+	it("does not crash collectTerminals on a tree mixing terminals and previews", () => {
+		const mixed: PaneNode = {
+			type: "split",
+			id: "m",
+			direction: "horizontal",
+			ratio: 0.5,
+			first: editorWithPreview,
+			second: leafA,
+		};
+		expect(collectTerminals(mixed)).toEqual([{ id: "a", ptyId: "pty-a" }]);
+	});
+
+	it("findPreviewForSource locates the preview bound to a source pane", () => {
+		expect(findPreviewForSource(editorWithPreview, "f1")).toBe(previewLeaf);
+		expect(findPreviewForSource(editorWithPreview, "nonexistent")).toBeNull();
+		expect(findPreviewForSource(simpleSplit, "a")).toBeNull();
+	});
+
+	it("findOrphanPreviews returns nothing when the source resolves", () => {
+		expect(findOrphanPreviews(editorWithPreview)).toEqual([]);
+	});
+
+	it("findOrphanPreviews flags a preview whose source is gone", () => {
+		const orphaned: PaneNode = {
+			type: "split",
+			id: "o",
+			direction: "vertical",
+			ratio: 0.5,
+			first: leafA,
+			second: previewLeaf, // sourcePaneId "f1" not present
+		};
+		expect(findOrphanPreviews(orphaned)).toEqual([previewLeaf]);
+	});
+
+	it("pruneOrphanPreviews drops orphans and collapses the split", () => {
+		const orphaned: PaneNode = {
+			type: "split",
+			id: "o",
+			direction: "vertical",
+			ratio: 0.5,
+			first: leafA,
+			second: previewLeaf,
+		};
+		expect(pruneOrphanPreviews(orphaned)).toEqual(leafA);
+	});
+
+	it("pruneOrphanPreviews returns the original tree when there are no orphans", () => {
+		expect(pruneOrphanPreviews(editorWithPreview)).toBe(editorWithPreview);
+	});
+
+	it("removeNode of a source file pane leaves the preview as an orphan to prune", () => {
+		const afterFileClose = removeNode(editorWithPreview, "f1");
+		expect(afterFileClose).toEqual(previewLeaf);
+		expect(findOrphanPreviews(afterFileClose as PaneNode)).toEqual([
+			previewLeaf,
+		]);
 	});
 });

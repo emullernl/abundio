@@ -5,7 +5,9 @@ import {
 	collectPaneIds,
 	collectTerminalIds,
 	extractNode,
+	findFilePaneInTree,
 	insertBesideNode,
+	pruneOrphanPreviews,
 	setAgentId,
 	setCwd,
 } from "../lib/paneTree";
@@ -104,7 +106,7 @@ function firstLeafId(node: PaneNode): string | null {
 
 function firstTerminalId(node: PaneNode): string | null {
 	if (node.type === "terminal") return node.id;
-	if (node.type === "file") return null;
+	if (node.type !== "split") return null;
 	return firstTerminalId(node.first) ?? firstTerminalId(node.second);
 }
 
@@ -113,7 +115,7 @@ function clearPtyIds(node: PaneNode): PaneNode {
 	if (node.type === "terminal") {
 		return { ...node, ptyId: "" };
 	}
-	if (node.type === "file") return node;
+	if (node.type !== "split") return node;
 	return {
 		...node,
 		first: clearPtyIds(node.first),
@@ -183,8 +185,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			tabs: s.tabs.map((t) => {
 				try {
 					const layout = JSON.parse(t.layoutJson) as PaneNode;
-					allPaneIds.push(...collectPaneIds(layout));
-					const cleared = clearPtyIds(layout);
+					// Prune preview panes orphaned across sessions (their source pane
+					// no longer exists) before clearing stale ptyIds.
+					const pruned = pruneOrphanPreviews(layout) ?? layout;
+					allPaneIds.push(...collectPaneIds(pruned));
+					const cleared = clearPtyIds(pruned);
 					seedPendingAgentsForLayout(cleared);
 					return { ...t, layoutJson: JSON.stringify(cleared) };
 				} catch {
@@ -211,7 +216,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Pre-populate branch chips from the persisted lastBranch so chips appear
 		// immediately. The real branch name is fetched the first time each
 		// workspace is activated (see setActiveWorkspace).
-		const initialGitInfo: Record<string, import("./workspaceGitStore").WorkspaceGitInfo> = {};
+		const initialGitInfo: Record<
+			string,
+			import("./workspaceGitStore").WorkspaceGitInfo
+		> = {};
 		for (const ws of cleaned) {
 			if (ws.lastBranch) {
 				initialGitInfo[ws.id] = {
@@ -475,9 +483,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		const workspace = get().workspaces.find((s) => s.id === workspaceId);
 		const nextNum = (workspace?.tabs.length ?? 0) + 1;
 
+		// The seed layout may be a bare file leaf, or — for markdown files opened
+		// with an auto-opened preview — a split containing the file pane.
 		let name = `Terminal ${nextNum}`;
-		if (seedLayout?.type === "file") {
-			name = seedLayout.filePath.split("/").pop() || "file";
+		const seedFilePane = seedLayout ? findFilePaneInTree(seedLayout) : null;
+		if (seedFilePane) {
+			name = seedFilePane.filePath.split("/").pop() || "file";
 		} else if (agent) {
 			name = agent.name;
 		}
@@ -850,9 +861,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 										tabs: ws.tabs
 											.filter((t) => t.id !== sourceTabId)
 											.map((t) =>
-												t.id === destTabId
-													? { ...t, layoutJson: destJson }
-													: t,
+												t.id === destTabId ? { ...t, layoutJson: destJson } : t,
 											),
 									},
 						),
@@ -892,9 +901,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 									...ws,
 									tabs: [
 										...ws.tabs.map((t) =>
-											t.id === sourceTabId
-												? { ...t, layoutJson: srcJson }
-												: t,
+											t.id === sourceTabId ? { ...t, layoutJson: srcJson } : t,
 										),
 										newTab,
 									],

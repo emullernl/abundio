@@ -436,7 +436,7 @@ export function collectPtyIds(
 		const ptyId = node.ptyId || panePtyMap?.[node.id] || "";
 		return ptyId ? [ptyId] : [];
 	}
-	if (node.type === "file") return [];
+	if (node.type !== "split") return [];
 	return [
 		...collectPtyIds(node.first, panePtyMap),
 		...collectPtyIds(node.second, panePtyMap),
