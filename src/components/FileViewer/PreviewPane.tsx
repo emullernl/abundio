@@ -1,7 +1,7 @@
 import MarkdownPreview from "@uiw/react-markdown-preview";
 import "@uiw/react-markdown-preview/markdown.css";
 import "./PreviewPane.css";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import {
@@ -18,6 +18,10 @@ import { PreviewPaneTitleBar } from "./PreviewPaneTitleBar";
 // Base editor font size — the preview zoom is computed relative to this so
 // Cmd+= / Cmd+- scales the preview alongside the Monaco editor.
 const BASE_FONT_SIZE = 14;
+
+// Re-rendering the markdown (parse + Mermaid) on every keystroke lags the
+// editor, so the preview only re-renders after a typing pause.
+const RENDER_DEBOUNCE_MS = 250;
 
 interface PreviewPaneProps {
 	paneId: string;
@@ -44,9 +48,33 @@ export function PreviewPane({
 	const sourceName = sourceState?.fileName ?? "";
 	const sourceIsMarkdown = sourceName ? isMarkdownFile(sourceName) : true;
 
+	// Debounced copy of the source buffer — what actually feeds the renderer.
+	const [renderedContent, setRenderedContent] = useState(content);
+	useEffect(() => {
+		const t = setTimeout(() => setRenderedContent(content), RENDER_DEBOUNCE_MS);
+		return () => clearTimeout(t);
+	}, [content]);
+
 	// The preview always renders light — a "printed paper" look — regardless of
 	// the app theme.
 	const components = useMemo(() => ({ code: makeMarkdownCodeComponent() }), []);
+
+	// react-markdown does NO internal memoization — every render re-parses the
+	// whole document and re-runs every rehype plugin. PreviewPane re-renders on
+	// each keystroke (the source pane's store entry changes), so the rendered
+	// element is memoized here: between debounce flushes React reuses it and
+	// skips the parse entirely.
+	const preview = useMemo(
+		() =>
+			sourceIsMarkdown ? (
+				<MarkdownPreview
+					source={renderedContent}
+					components={components}
+					style={{ zoom }}
+				/>
+			) : null,
+		[sourceIsMarkdown, renderedContent, components, zoom],
+	);
 
 	const doPrint = useCallback(() => {
 		if (contentRef.current) printMarkdownPreview(contentRef.current);
@@ -59,13 +87,13 @@ export function PreviewPane({
 		return () => unregisterPreviewPrinter(sourcePaneId);
 	}, [sourcePaneId, doPrint]);
 
-	// If a print was requested before this pane mounted, run it once content
-	// is on screen (give Mermaid a beat to settle first).
+	// If a print was requested before this pane mounted, run it once the
+	// (debounced) content is on screen — give Mermaid a beat to settle first.
 	useEffect(() => {
-		if (!content || !consumePendingPrint(sourcePaneId)) return;
+		if (!renderedContent || !consumePendingPrint(sourcePaneId)) return;
 		const t = setTimeout(doPrint, 200);
 		return () => clearTimeout(t);
-	}, [content, sourcePaneId, doPrint]);
+	}, [renderedContent, sourcePaneId, doPrint]);
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container
@@ -98,13 +126,7 @@ export function PreviewPane({
 				data-color-mode="light"
 				style={{ padding: "28px 36px", background: "#ffffff" }}
 			>
-				{sourceIsMarkdown && (
-					<MarkdownPreview
-						source={content}
-						components={components}
-						style={{ zoom }}
-					/>
-				)}
+				{preview}
 			</div>
 		</div>
 	);

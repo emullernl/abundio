@@ -1,5 +1,8 @@
+import { Maximize2 } from "lucide-react";
 import mermaid from "mermaid";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { MermaidModal } from "./MermaidModal";
 
 // The markdown preview always renders light ("printed paper" look), so Mermaid
 // uses the light theme too.
@@ -19,6 +22,7 @@ function getCodeText(node: any): string {
 function MermaidDiagram({ code }: { code: string }) {
 	const [svg, setSvg] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	const [expanded, setExpanded] = useState(false);
 	const renderIdRef = useRef(0);
 
 	useEffect(() => {
@@ -78,12 +82,30 @@ function MermaidDiagram({ code }: { code: string }) {
 	}
 
 	return (
-		<div
-			className="abundio-mermaid"
-			data-mermaid-source={code}
-			// biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid sanitizes its own SVG output
-			dangerouslySetInnerHTML={{ __html: svg }}
-		/>
+		<div className="abundio-mermaid" data-mermaid-source={code}>
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: the expand button below is the keyboard-accessible control */}
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: click-to-expand convenience over the diagram */}
+			<div
+				className="abundio-mermaid-svg"
+				onClick={() => setExpanded(true)}
+				// biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid sanitizes its own SVG output
+				dangerouslySetInnerHTML={{ __html: svg }}
+			/>
+			<button
+				type="button"
+				className="abundio-mermaid-expand"
+				title="Expand diagram"
+				aria-label="Expand diagram"
+				onClick={() => setExpanded(true)}
+			>
+				<Maximize2 size={13} />
+			</button>
+			{expanded &&
+				createPortal(
+					<MermaidModal svg={svg} onClose={() => setExpanded(false)} />,
+					document.body,
+				)}
+		</div>
 	);
 }
 
