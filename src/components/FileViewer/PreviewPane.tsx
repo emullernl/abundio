@@ -10,6 +10,11 @@ import {
 	unregisterPreviewPrinter,
 } from "../../lib/markdownPreviewPrint";
 import { printMarkdownPreview } from "../../lib/markdownPrint";
+import { rehypeSourceLines } from "../../lib/rehypeSourceLines";
+import {
+	registerSyncPreview,
+	unregisterSyncPreview,
+} from "../../lib/scrollSync";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { makeMarkdownCodeComponent } from "./MermaidCode";
@@ -22,6 +27,9 @@ const BASE_FONT_SIZE = 14;
 // Re-rendering the markdown (parse + Mermaid) on every keystroke lags the
 // editor, so the preview only re-renders after a typing pause.
 const RENDER_DEBOUNCE_MS = 250;
+
+// Stamps `data-source-line` onto elements — anchors for editor↔preview sync.
+const REHYPE_PLUGINS = [rehypeSourceLines];
 
 interface PreviewPaneProps {
 	paneId: string;
@@ -70,6 +78,7 @@ export function PreviewPane({
 				<MarkdownPreview
 					source={renderedContent}
 					components={components}
+					rehypePlugins={REHYPE_PLUGINS}
 					style={{ zoom }}
 				/>
 			) : null,
@@ -94,6 +103,14 @@ export function PreviewPane({
 		const t = setTimeout(doPrint, 200);
 		return () => clearTimeout(t);
 	}, [renderedContent, sourcePaneId, doPrint]);
+
+	// Link this preview's scroll container to its source editor for scroll sync.
+	useEffect(() => {
+		const el = contentRef.current;
+		if (!el) return;
+		registerSyncPreview(sourcePaneId, el);
+		return () => unregisterSyncPreview(sourcePaneId);
+	}, [sourcePaneId]);
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container

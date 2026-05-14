@@ -2,6 +2,7 @@ import Editor, { type Monaco, useMonaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { defineAbundioTheme } from "../../lib/monacoShared";
+import { registerSyncEditor, unregisterSyncEditor } from "../../lib/scrollSync";
 import { setAllTerminalsFontSize } from "../../lib/terminalManager";
 import { setMonacoInstance } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -149,6 +150,9 @@ export const CodeEditor = memo(function CodeEditor({
 		(ed: editor.IStandaloneCodeEditor, m: Monaco) => {
 			editorRef.current = ed;
 			liveEditors.set(tabIdRef.current, ed);
+			// Markdown panes have a preview pane; this lets the two scroll-sync.
+			// Harmless for non-markdown files — no preview ever registers a pair.
+			registerSyncEditor(tabIdRef.current, ed);
 
 			// Define and apply theme, store Monaco instance for theme sync
 			defineAbundioTheme(m);
@@ -222,6 +226,7 @@ export const CodeEditor = memo(function CodeEditor({
 				}
 				liveEditors.delete(currentTabId);
 			}
+			unregisterSyncEditor(currentTabId);
 		};
 	}, []);
 
