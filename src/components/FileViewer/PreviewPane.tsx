@@ -2,6 +2,7 @@ import MarkdownPreview from "@uiw/react-markdown-preview";
 import "@uiw/react-markdown-preview/markdown.css";
 import "./PreviewPane.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import rehypeSanitize from "rehype-sanitize";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import {
@@ -10,6 +11,7 @@ import {
 	unregisterPreviewPrinter,
 } from "../../lib/markdownPreviewPrint";
 import { printMarkdownPreview } from "../../lib/markdownPrint";
+import { markdownSanitizeSchema } from "../../lib/markdownSanitizeSchema";
 import { rehypeSourceLines } from "../../lib/rehypeSourceLines";
 import {
 	registerSyncPreview,
@@ -28,8 +30,18 @@ const BASE_FONT_SIZE = 14;
 // editor, so the preview only re-renders after a typing pause.
 const RENDER_DEBOUNCE_MS = 250;
 
-// Stamps `data-source-line` onto elements — anchors for editor↔preview sync.
-const REHYPE_PLUGINS = [rehypeSourceLines];
+// `rehypeSourceLines` stamps `data-source-line` anchors for editor↔preview
+// sync. `rehypeSanitize` strips dangerous raw HTML (@uiw bakes in `rehype-raw`
+// with no sanitizer) — it must run after both `rehype-raw` and
+// `rehypeSourceLines`, which it does: @uiw appends `props.rehypePlugins` after
+// its own `rehype-raw`, and the array order is preserved within that.
+const REHYPE_PLUGINS = [
+	rehypeSourceLines,
+	[rehypeSanitize, markdownSanitizeSchema] as [
+		typeof rehypeSanitize,
+		typeof markdownSanitizeSchema,
+	],
+];
 
 interface PreviewPaneProps {
 	paneId: string;
