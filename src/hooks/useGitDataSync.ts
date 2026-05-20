@@ -191,11 +191,14 @@ export function useGitDataSync() {
 				// Cache is fresh — file watchers and PR polling will keep it that way.
 				return;
 			}
-			lastSyncByWorkspaceId.set(wsId, Date.now());
 		}
 		let cancelled = false;
 		const rafId = requestAnimationFrame(() => {
 			if (cancelled) return;
+			// Record freshness only once the fetch genuinely starts. Setting it in
+			// the effect body would also mark a cancelled rAF (rapid A→B→A) fresh,
+			// leaving a workspace that never fetched stuck on stale/empty data.
+			if (wsId) lastSyncByWorkspaceId.set(wsId, Date.now());
 			useGitChangesStore.getState().fetchChanges(cwd, baseBranch);
 			usePrStore
 				.getState()

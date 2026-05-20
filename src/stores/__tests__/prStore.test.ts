@@ -311,6 +311,10 @@ describe("prStore", () => {
 			resolveA(aPrs);
 			await aFetch;
 
+			// A's late response must NOT be written into the singleton while B is
+			// the active workspace — that would contaminate B's panel.
+			expect(usePrStore.getState().review.prs).not.toEqual(aPrs);
+
 			// Hydrating ws-A should still recover aPrs even though it was no longer
 			// active when the response arrived.
 			usePrStore.getState().hydrateFromWorkspace("ws-A");

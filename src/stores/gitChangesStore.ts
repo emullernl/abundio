@@ -131,6 +131,14 @@ export const useGitChangesStore = create<GitChangesState>()(
 						fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
 					}
 					if (gen !== fetchGeneration) return; // stale singleton
+					// Don't write A's changes into the singleton if the user has
+					// switched to B and B's fetch was skipped by the freshness gate
+					// (so fetchGeneration was never bumped past A's gen).
+					if (
+						startedForWorkspaceId !==
+						useWorkspaceStore.getState().activeWorkspaceId
+					)
+						return;
 					lastFingerprint = fingerprint;
 					const state = get();
 					const updates: Partial<GitChangesState> = { loading: false };
@@ -202,6 +210,13 @@ export const useGitChangesStore = create<GitChangesState>()(
 						fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
 					}
 					if (gen !== fetchGeneration) return;
+					// See fetchChanges: guard against contaminating another
+					// workspace's panel when its fetch was skipped as fresh.
+					if (
+						startedForWorkspaceId !==
+						useWorkspaceStore.getState().activeWorkspaceId
+					)
+						return;
 					lastFingerprint = fingerprint; // only commit once fetch succeeded
 					const state = get();
 					if (!filesEqual(state.changedFiles, files)) {

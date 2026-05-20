@@ -121,6 +121,14 @@ export const usePrStore = create<PrState>()(
 							});
 						}
 						if (gen !== reviewGeneration) return;
+						// Don't write A's PRs into the singleton if the user has since
+						// switched to B and B's own fetch was skipped by the freshness
+						// gate (so reviewGeneration was never bumped past A's gen).
+						if (
+							startedForWorkspaceId !==
+							useWorkspaceStore.getState().activeWorkspaceId
+						)
+							return;
 						set({ review: section });
 					} catch (e) {
 						if (gen !== reviewGeneration) return;
@@ -162,6 +170,13 @@ export const usePrStore = create<PrState>()(
 							});
 						}
 						if (gen !== myPrsGeneration) return;
+						// See fetchReviewPrs: guard against contaminating another
+						// workspace's panel when its fetch was skipped as fresh.
+						if (
+							startedForWorkspaceId !==
+							useWorkspaceStore.getState().activeWorkspaceId
+						)
+							return;
 						set({ myPrs: section });
 					} catch (e) {
 						if (gen !== myPrsGeneration) return;
