@@ -55,6 +55,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"toggle-git-panel",
 	"toggle-markdown-preview",
 	"open-settings",
+	"save-file",
 ]);
 
 function isMonacoFocused(): boolean {

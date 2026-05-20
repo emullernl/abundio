@@ -34,6 +34,23 @@ interface PrState {
 	setReviewView: (view: ReviewView) => void;
 	setMyPrsView: (view: MyPrsView) => void;
 	clear: () => void;
+	hydrateFromWorkspace: (workspaceId: string | null) => void;
+}
+
+// Per-workspace PR cache so workspace switches can hydrate the singleton from
+// prior data instead of clearing the panel back to empty.
+interface PrCacheEntry {
+	review: PrSectionState;
+	myPrs: PrSectionState;
+}
+
+const prCacheByWorkspaceId = new Map<string, PrCacheEntry>();
+
+function emptyPrCacheEntry(): PrCacheEntry {
+	return {
+		review: { prs: [], loading: false, error: null },
+		myPrs: { prs: [], loading: false, error: null },
+	};
 }
 
 export const PR_VIEW_LABELS: Record<PrView, string> = {
@@ -77,6 +94,8 @@ export const usePrStore = create<PrState>()(
 				},
 
 				fetchReviewPrs: async (cwd) => {
+					const startedForWorkspaceId =
+						useWorkspaceStore.getState().activeWorkspaceId;
 					const gen = ++reviewGeneration;
 					set({ review: { ...get().review, loading: true, error: null } });
 
@@ -87,8 +106,30 @@ export const usePrStore = create<PrState>()(
 								? await gh.reviewRequests(cwd)
 								: await gh.reviewRequestsAll(cwd);
 
+						const section: PrSectionState = {
+							prs,
+							loading: false,
+							error: null,
+						};
+						if (startedForWorkspaceId) {
+							const existing =
+								prCacheByWorkspaceId.get(startedForWorkspaceId) ??
+								emptyPrCacheEntry();
+							prCacheByWorkspaceId.set(startedForWorkspaceId, {
+								...existing,
+								review: section,
+							});
+						}
 						if (gen !== reviewGeneration) return;
-						set({ review: { prs, loading: false, error: null } });
+						// Don't write A's PRs into the singleton if the user has since
+						// switched to B and B's own fetch was skipped by the freshness
+						// gate (so reviewGeneration was never bumped past A's gen).
+						if (
+							startedForWorkspaceId !==
+							useWorkspaceStore.getState().activeWorkspaceId
+						)
+							return;
+						set({ review: section });
 					} catch (e) {
 						if (gen !== reviewGeneration) return;
 						set({
@@ -102,6 +143,8 @@ export const usePrStore = create<PrState>()(
 				},
 
 				fetchMyPrs: async (cwd) => {
+					const startedForWorkspaceId =
+						useWorkspaceStore.getState().activeWorkspaceId;
 					const gen = ++myPrsGeneration;
 					set({ myPrs: { ...get().myPrs, loading: true, error: null } });
 
@@ -112,8 +155,29 @@ export const usePrStore = create<PrState>()(
 								? await gh.myPrs(cwd)
 								: await gh.myPrsAll(cwd);
 
+						const section: PrSectionState = {
+							prs,
+							loading: false,
+							error: null,
+						};
+						if (startedForWorkspaceId) {
+							const existing =
+								prCacheByWorkspaceId.get(startedForWorkspaceId) ??
+								emptyPrCacheEntry();
+							prCacheByWorkspaceId.set(startedForWorkspaceId, {
+								...existing,
+								myPrs: section,
+							});
+						}
 						if (gen !== myPrsGeneration) return;
-						set({ myPrs: { prs, loading: false, error: null } });
+						// See fetchReviewPrs: guard against contaminating another
+						// workspace's panel when its fetch was skipped as fresh.
+						if (
+							startedForWorkspaceId !==
+							useWorkspaceStore.getState().activeWorkspaceId
+						)
+							return;
+						set({ myPrs: section });
 					} catch (e) {
 						if (gen !== myPrsGeneration) return;
 						set({
@@ -134,6 +198,17 @@ export const usePrStore = create<PrState>()(
 						review: { ...EMPTY_SECTION },
 						myPrs: { ...EMPTY_SECTION },
 					}),
+
+				hydrateFromWorkspace: (workspaceId) => {
+					const entry = workspaceId
+						? prCacheByWorkspaceId.get(workspaceId)
+						: undefined;
+					set({
+						review: entry?.review ?? { ...EMPTY_SECTION },
+						myPrs: entry?.myPrs ?? { ...EMPTY_SECTION },
+					});
+				},
+
 			};
 		},
 		{

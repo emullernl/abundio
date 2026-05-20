@@ -8,6 +8,28 @@ import { useWorkspaceGitStore } from "./workspaceGitStore";
 let fetchGeneration = 0;
 let lastFingerprint: string | null = null;
 
+// Per-workspace cache so that switching workspaces can hydrate the singleton
+// instantly from prior data instead of clearing-then-refetching. Kept in
+// module memory (not persisted) — data is refetched on next switch anyway.
+interface GitChangesCacheEntry {
+	changedFiles: GitChangedFile[];
+	baseBranch: string | null;
+	currentBranch: string | null;
+	availableBranches: string[];
+}
+
+const gitChangesCache = new Map<string, GitChangesCacheEntry>();
+const fingerprintByWorkspaceId = new Map<string, string>();
+
+function emptyCacheEntry(): GitChangesCacheEntry {
+	return {
+		changedFiles: [],
+		baseBranch: null,
+		currentBranch: null,
+		availableBranches: [],
+	};
+}
+
 // Order-sensitive comparison — relies on the backend returning files in a
 // stable order (against_base → staged → unstaged → untracked). This is
 // guaranteed by the sequential section fetches in git_changed_files().
@@ -57,6 +79,7 @@ interface GitChangesState {
 	closeBranchSelector: () => void;
 	fetchBranches: (cwd: string) => Promise<void>;
 	clear: () => void;
+	hydrateFromWorkspace: (workspaceId: string | null) => void;
 }
 
 export const useGitChangesStore = create<GitChangesState>()(
@@ -76,6 +99,12 @@ export const useGitChangesStore = create<GitChangesState>()(
 			setPanel: (open) => set({ panelOpen: open }),
 
 			fetchChanges: async (cwd, workspaceBaseBranch) => {
+				// Capture the workspace that owns this fetch. The cache is keyed by
+				// this id so a fetch that started for A still populates cache[A]
+				// even if the user has since switched to B (the gen check guards
+				// the singleton update, not the cache write).
+				const startedForWorkspaceId =
+					useWorkspaceStore.getState().activeWorkspaceId;
 				const gen = ++fetchGeneration;
 				// Only show loading spinner on first fetch — avoid flicker on refreshes
 				if (get().changedFiles.length === 0 && !get().currentBranch) {
@@ -89,10 +118,29 @@ export const useGitChangesStore = create<GitChangesState>()(
 						git.branchInfo(cwd),
 						git.statusFingerprint(cwd),
 					]);
-					if (gen !== fetchGeneration) return; // stale response
+					const newBaseBranch = workspaceBaseBranch || branchInfo.defaultBranch;
+					if (startedForWorkspaceId) {
+						const existing =
+							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
+						gitChangesCache.set(startedForWorkspaceId, {
+							...existing,
+							changedFiles: files,
+							baseBranch: newBaseBranch,
+							currentBranch: branchInfo.currentBranch,
+						});
+						fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
+					}
+					if (gen !== fetchGeneration) return; // stale singleton
+					// Don't write A's changes into the singleton if the user has
+					// switched to B and B's fetch was skipped by the freshness gate
+					// (so fetchGeneration was never bumped past A's gen).
+					if (
+						startedForWorkspaceId !==
+						useWorkspaceStore.getState().activeWorkspaceId
+					)
+						return;
 					lastFingerprint = fingerprint;
 					const state = get();
-					const newBaseBranch = workspaceBaseBranch || branchInfo.defaultBranch;
 					const updates: Partial<GitChangesState> = { loading: false };
 					if (!filesEqual(state.changedFiles, files)) {
 						updates.changedFiles = files;
@@ -145,12 +193,30 @@ export const useGitChangesStore = create<GitChangesState>()(
 			},
 
 			refreshChanges: async (cwd, workspaceBaseBranch) => {
+				const startedForWorkspaceId =
+					useWorkspaceStore.getState().activeWorkspaceId;
 				try {
 					const fingerprint = await git.statusFingerprint(cwd);
 					if (fingerprint === lastFingerprint) return;
 					const gen = ++fetchGeneration;
 					const files = await git.changedFiles(cwd, workspaceBaseBranch);
+					if (startedForWorkspaceId) {
+						const existing =
+							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
+						gitChangesCache.set(startedForWorkspaceId, {
+							...existing,
+							changedFiles: files,
+						});
+						fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
+					}
 					if (gen !== fetchGeneration) return;
+					// See fetchChanges: guard against contaminating another
+					// workspace's panel when its fetch was skipped as fresh.
+					if (
+						startedForWorkspaceId !==
+						useWorkspaceStore.getState().activeWorkspaceId
+					)
+						return;
 					lastFingerprint = fingerprint; // only commit once fetch succeeded
 					const state = get();
 					if (!filesEqual(state.changedFiles, files)) {
@@ -195,8 +261,18 @@ export const useGitChangesStore = create<GitChangesState>()(
 			closeBranchSelector: () => set({ branchSelectorOpen: false }),
 
 			fetchBranches: async (cwd) => {
+				const startedForWorkspaceId =
+					useWorkspaceStore.getState().activeWorkspaceId;
 				try {
 					const branches = await git.listBranches(cwd);
+					if (startedForWorkspaceId) {
+						const existing =
+							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
+						gitChangesCache.set(startedForWorkspaceId, {
+							...existing,
+							availableBranches: branches,
+						});
+					}
 					set({ availableBranches: branches });
 				} catch {
 					set({ availableBranches: [] });
@@ -215,6 +291,25 @@ export const useGitChangesStore = create<GitChangesState>()(
 					branchSelectorOpen: false,
 				});
 			},
+
+			hydrateFromWorkspace: (workspaceId) => {
+				const entry = workspaceId
+					? gitChangesCache.get(workspaceId)
+					: undefined;
+				lastFingerprint = workspaceId
+					? (fingerprintByWorkspaceId.get(workspaceId) ?? null)
+					: null;
+				set({
+					changedFiles: entry?.changedFiles ?? [],
+					baseBranch: entry?.baseBranch ?? null,
+					currentBranch: entry?.currentBranch ?? null,
+					availableBranches: entry?.availableBranches ?? [],
+					loading: false,
+					error: null,
+					branchSelectorOpen: false,
+				});
+			},
+
 		}),
 		{
 			name: "abundio-git-panel",

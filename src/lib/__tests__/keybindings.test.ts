@@ -86,6 +86,33 @@ describe("handleKeyDown", () => {
 	});
 });
 
+describe("Monaco focus delegation", () => {
+	afterEach(() => {
+		unregisterAction("save-file");
+		document.body.innerHTML = "";
+	});
+
+	function focusMonaco(): void {
+		const editor = document.createElement("div");
+		editor.className = "monaco-editor";
+		const input = document.createElement("textarea");
+		editor.appendChild(input);
+		document.body.appendChild(editor);
+		input.focus();
+	}
+
+	it("fires save-file even when a Monaco editor is focused", () => {
+		const handler = vi.fn();
+		registerAction("save-file", handler);
+		focusMonaco();
+
+		const e = makeKeyEvent({ key: "s", [modKey]: true });
+		handleKeyDown(e);
+
+		expect(handler).toHaveBeenCalledOnce();
+	});
+});
+
 describe("initKeybindings", () => {
 	it("returns a cleanup function that removes the listener", () => {
 		const handler = vi.fn();

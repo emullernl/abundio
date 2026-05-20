@@ -439,9 +439,18 @@ export function App() {
 			setAllTerminalsFontSize(newSize);
 		});
 		registerAction("save-file", () => {
+			const explorer = useExplorerStore.getState();
 			const focusedId = useWorkspaceStore.getState().focusedPaneId;
-			if (focusedId && useExplorerStore.getState().filePanes[focusedId]) {
-				useExplorerStore.getState().saveFile(focusedId);
+			if (focusedId && explorer.filePanes[focusedId]) {
+				explorer.saveFile(focusedId);
+				return;
+			}
+			// Focus is outside a file pane (e.g. a terminal) — save every dirty
+			// file pane in the active tab so Cmd+S still works.
+			const layout = useWorkspaceStore.getState().getActiveLayout();
+			if (!layout) return;
+			for (const pid of collectFilePaneIds(layout)) {
+				if (explorer.filePanes[pid]?.isDirty) explorer.saveFile(pid);
 			}
 		});
 		registerAction("toggle-git-panel", () => {
@@ -514,8 +523,16 @@ export function App() {
 							return (
 								<div
 									key={workspace.id}
-									className="flex-1 min-h-0 flex flex-col"
-									style={{ display: isActive ? "flex" : "none" }}
+									data-workspace-active={isActive ? "true" : undefined}
+									className="absolute flex flex-col"
+									style={{
+										top: TITLEBAR_HEIGHT,
+										left: 0,
+										right: 0,
+										bottom: 0,
+										visibility: isActive ? "visible" : "hidden",
+										pointerEvents: isActive ? "auto" : "none",
+									}}
 								>
 									<div
 										className="flex items-end shrink-0"

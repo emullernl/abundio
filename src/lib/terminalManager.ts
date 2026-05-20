@@ -54,18 +54,15 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 	}
 }
 
-/** Ensure the WebGL renderer is loaded on a terminal. Called from projectInto
- *  once the container is visible and sized — the first attempt in createTerminal
- *  runs while the canvas is still 0×0 and offscreen, which some browsers refuse.
- *
- *  Bails out for panes that aren't in the currently active tab: WebGL contexts
- *  are capped per page (~16 in Chromium), so we only ever hold contexts for
- *  panes the user is actually looking at. The store subscription below
- *  reattaches WebGL on tab/workspace switch. */
+/** Ensure the WebGL renderer is loaded on a terminal. The store subscription
+ *  below is the authoritative gate that decides which panes get WebGL; this
+ *  function trusts its caller and just no-ops if the addon is already present
+ *  or the pane isn't tracked. The actual WebGL context creation may still fail
+ *  silently for a 0×0 / offscreen container — projectInto retries once the
+ *  container is sized. */
 export function ensureWebglLoaded(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed || managed.webglAddon) return;
-	if (!isPaneInActiveTab(paneId)) return;
 	tryLoadWebgl(managed);
 }
 
@@ -77,24 +74,6 @@ export function unloadWebgl(paneId: string): void {
 	if (!managed?.webglAddon) return;
 	managed.webglAddon.dispose();
 	managed.webglAddon = null;
-}
-
-/** Returns true if `paneId` belongs to the active tab of the active workspace. */
-function isPaneInActiveTab(paneId: string): boolean {
-	const state = useWorkspaceStore.getState();
-	const workspaceId = state.activeWorkspaceId;
-	if (!workspaceId) return false;
-	const tabId = state.activeTabByWorkspace[workspaceId];
-	if (!tabId) return false;
-	const workspace = state.workspaces.find((s) => s.id === workspaceId);
-	const tab = workspace?.tabs.find((t) => t.id === tabId);
-	if (!tab) return false;
-	try {
-		const layout = JSON.parse(tab.layoutJson) as PaneNode;
-		return collectPaneIds(layout).includes(paneId);
-	} catch {
-		return false;
-	}
 }
 
 /** Strip the comma-separated fallback list and any quotes from a CSS font-family
@@ -361,22 +340,29 @@ setTimeout(() => {
 		const { activeWorkspaceId, focusedPaneId } = state;
 		if (!activeWorkspaceId) return;
 
-		// Compute the set of paneIds in the currently active tab so we can
-		// keep WebGL contexts only for panes the user is actually looking at.
-		// Browsers cap WebGL contexts at ~16 per page; without this gate, a
-		// user with many tabs/workspaces hits "too many active WebGL contexts".
-		const activeTabId = state.activeTabByWorkspace[activeWorkspaceId];
-		const activeWorkspace = state.workspaces.find(
-			(s) => s.id === activeWorkspaceId,
-		);
-		const activeTab = activeWorkspace?.tabs.find((t) => t.id === activeTabId);
-		let activePaneIds: Set<string> | null = null;
-		if (activeTab) {
-			try {
-				const layout = JSON.parse(activeTab.layoutJson) as PaneNode;
-				activePaneIds = new Set(collectPaneIds(layout));
-			} catch {
-				activePaneIds = null;
+		// Compute the set of paneIds that should keep a WebGL context — every
+		// pane belonging to any opened workspace. Previous policy gated on
+		// "active tab only" to stay under the browser's ~16 WebGL contexts per
+		// page cap, but that meant disposing + recreating contexts on every
+		// workspace/tab switch, which is the dominant cost during the
+		// commit→paint window (measured ~3s for warm switches with multiple
+		// panes). Keeping contexts loaded across switches makes the common case
+		// (well under 16 panes total) instant; overflow falls back to xterm's
+		// DOM renderer via tryLoadWebgl's catch.
+		const openedIds = usePtyActivityStore.getState().openedWorkspaceIds;
+		const liveWebglPaneIds = new Set<string>();
+		for (const workspace of state.workspaces) {
+			if (!openedIds.has(workspace.id)) continue;
+			for (const tab of workspace.tabs) {
+				try {
+					const layout = JSON.parse(tab.layoutJson) as PaneNode;
+					for (const id of collectPaneIds(layout)) {
+						liveWebglPaneIds.add(id);
+					}
+				} catch {
+					// Skip unparseable layouts — terminals there won't be reconciled
+					// this tick, which is the same behavior as before this change.
+				}
 			}
 		}
 
@@ -394,8 +380,11 @@ setTimeout(() => {
 			if (managed.ptyId) {
 				activityStore.initPty(managed.ptyId);
 			}
-			// Reconcile WebGL: load for panes in the active tab, unload for the rest.
-			if (activePaneIds?.has(paneId)) {
+			// Reconcile WebGL: load for panes in any opened workspace; unload for
+			// any orphans (paneId still in `instances` but no longer referenced
+			// by any opened workspace's layout — rare; happens during tear-down
+			// races).
+			if (liveWebglPaneIds.has(paneId)) {
 				ensureWebglLoaded(paneId);
 			} else {
 				unloadWebgl(paneId);
@@ -448,6 +437,10 @@ export async function createTerminal(
 		cursorBlink: false,
 		allowProposedApi: true,
 		theme: options.theme,
+		// Auto-adjust foreground when a cell's fg/bg contrast is too low, so
+		// prompt segments that paint light text on a light ANSI colour (common
+		// in powerline themes) stay readable. 4.5 = WCAG AA for normal text.
+		minimumContrastRatio: 4.5,
 	});
 
 	const fitAddon = new FitAddon();

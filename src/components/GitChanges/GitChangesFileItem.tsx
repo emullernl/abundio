@@ -69,7 +69,7 @@ export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
 					fontSize: 10,
 					color,
 					backgroundColor: `color-mix(in srgb, ${color} 15%, transparent)`,
-					fontFamily: "var(--font-mono)",
+					fontFamily: "var(--font-ui)",
 				}}
 			>
 				{label}
@@ -79,7 +79,7 @@ export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
 				style={{
 					fontSize: 12,
 					color: "var(--fg-primary)",
-					fontFamily: "var(--font-mono)",
+					fontFamily: "var(--font-ui)",
 				}}
 			>
 				{fileName(file.path)}
@@ -91,7 +91,7 @@ export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
 			</span>
 			<span
 				className="flex-shrink-0 flex items-center gap-1"
-				style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}
+				style={{ fontSize: 11, fontFamily: "var(--font-ui)" }}
 			>
 				{file.additions > 0 && (
 					<span style={{ color: "var(--success)" }}>+{file.additions}</span>

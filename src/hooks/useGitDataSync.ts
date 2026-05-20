@@ -9,6 +9,12 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 const MIN_INTERVAL = 500;
 const GH_OPEN_MS = 60_000;
 const GH_COLLAPSED_MS = 60_000;
+// Skip the on-switch background fetch when this workspace was refreshed
+// less than this many ms ago. File watchers and PR polling keep the cache
+// fresh between switches, so re-fetching on every toggle is wasted work and
+// blocks the main thread for ~2s on git repos (measured).
+const SWITCH_REFRESH_FRESHNESS_MS = 30_000;
+const lastSyncByWorkspaceId = new Map<string, number>();
 
 interface ActiveWatcher {
 	workspaceId: string;
@@ -165,21 +171,51 @@ export function useGitDataSync() {
 	const activeCwd = activeWorkspace?.rootFolder ?? null;
 	const activeBaseBranch = activeWorkspace?.baseBranch ?? null;
 
-	// Clear singletons and kick off initial fetches on workspace switch.
+	// Hydrate singletons from per-workspace cache (instant). For the background
+	// refresh: skip entirely if this workspace was refreshed less than
+	// SWITCH_REFRESH_FRESHNESS_MS ago — file watchers (useFileReloadWatcher)
+	// and the 60s gh polling interval below keep the cache up to date between
+	// switches, so re-fetching on every workspace toggle is wasted work. The
+	// rAF wrap on the fetch kickoffs is a defensive belt-and-suspenders: even
+	// if the freshness gate misses, the visible switch paints first.
 	useEffect(() => {
-		useGitChangesStore.getState().clear();
-		usePrStore.getState().clear();
+		useGitChangesStore.getState().hydrateFromWorkspace(activeWorkspaceId);
+		usePrStore.getState().hydrateFromWorkspace(activeWorkspaceId);
 		if (!activeCwd) return;
 		const cwd = activeCwd;
 		const baseBranch = activeBaseBranch;
-		useGitChangesStore.getState().fetchChanges(cwd, baseBranch);
-		usePrStore.getState().checkGhStatus(cwd).then(() => {
-			const { ghStatus: status } = usePrStore.getState();
-			if (status?.available && status?.authenticated) {
-				usePrStore.getState().fetchReviewPrs(cwd);
-				usePrStore.getState().fetchMyPrs(cwd);
+		const wsId = activeWorkspaceId;
+		if (wsId) {
+			const lastSync = lastSyncByWorkspaceId.get(wsId) ?? 0;
+			if (Date.now() - lastSync < SWITCH_REFRESH_FRESHNESS_MS) {
+				// Cache is fresh — file watchers and PR polling will keep it that way.
+				return;
 			}
+		}
+		let cancelled = false;
+		const rafId = requestAnimationFrame(() => {
+			if (cancelled) return;
+			// Record freshness only once the fetch genuinely starts. Setting it in
+			// the effect body would also mark a cancelled rAF (rapid A→B→A) fresh,
+			// leaving a workspace that never fetched stuck on stale/empty data.
+			if (wsId) lastSyncByWorkspaceId.set(wsId, Date.now());
+			useGitChangesStore.getState().fetchChanges(cwd, baseBranch);
+			usePrStore
+				.getState()
+				.checkGhStatus(cwd)
+				.then(() => {
+					if (cancelled) return;
+					const { ghStatus: status } = usePrStore.getState();
+					if (status?.available && status?.authenticated) {
+						usePrStore.getState().fetchReviewPrs(cwd);
+						usePrStore.getState().fetchMyPrs(cwd);
+					}
+				});
 		});
+		return () => {
+			cancelled = true;
+			cancelAnimationFrame(rafId);
+		};
 	}, [activeWorkspaceId, activeCwd, activeBaseBranch]);
 
 	// Fetch when the panel opens so the panel always shows current data even if
