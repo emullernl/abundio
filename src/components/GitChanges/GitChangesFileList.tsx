@@ -105,7 +105,7 @@ export function GitChangesFileList({
 									minWidth: 18,
 									height: 18,
 									padding: "0 5px",
-									fontFamily: "var(--font-mono)",
+									fontFamily: "var(--font-ui)",
 								}}
 							>
 								{group.files.length}
@@ -113,7 +113,7 @@ export function GitChangesFileList({
 							{(totalAdditions > 0 || totalDeletions > 0) && (
 								<span
 									className="flex-shrink-0 flex items-center gap-1"
-									style={{ fontSize: 10, fontFamily: "var(--font-mono)" }}
+									style={{ fontSize: 10, fontFamily: "var(--font-ui)" }}
 								>
 									{totalAdditions > 0 && (
 										<span style={{ color: "var(--success)" }}>
