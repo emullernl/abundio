@@ -437,6 +437,10 @@ export async function createTerminal(
 		cursorBlink: false,
 		allowProposedApi: true,
 		theme: options.theme,
+		// Auto-adjust foreground when a cell's fg/bg contrast is too low, so
+		// prompt segments that paint light text on a light ANSI colour (common
+		// in powerline themes) stay readable. 4.5 = WCAG AA for normal text.
+		minimumContrastRatio: 4.5,
 	});
 
 	const fitAddon = new FitAddon();
