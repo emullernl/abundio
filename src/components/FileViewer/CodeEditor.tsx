@@ -181,11 +181,6 @@ export const CodeEditor = memo(function CodeEditor({
 			// biome-ignore lint/style/noNonNullAssertion: Monaco KeyMod/KeyCode exist at runtime
 			const KeyCode = m.KeyCode!;
 
-			// Cmd+S → save file
-			ed.addCommand(KeyMod.CtrlCmd | KeyCode.KeyS, () => {
-				useExplorerStore.getState().saveFile(tabIdRef.current);
-			});
-
 			// Cmd+= → zoom in
 			ed.addCommand(KeyMod.CtrlCmd | KeyCode.Equal, () => {
 				const { fontSize: fs, setFontSize } = useSettingsStore.getState();

@@ -439,9 +439,18 @@ export function App() {
 			setAllTerminalsFontSize(newSize);
 		});
 		registerAction("save-file", () => {
+			const explorer = useExplorerStore.getState();
 			const focusedId = useWorkspaceStore.getState().focusedPaneId;
-			if (focusedId && useExplorerStore.getState().filePanes[focusedId]) {
-				useExplorerStore.getState().saveFile(focusedId);
+			if (focusedId && explorer.filePanes[focusedId]) {
+				explorer.saveFile(focusedId);
+				return;
+			}
+			// Focus is outside a file pane (e.g. a terminal) — save every dirty
+			// file pane in the active tab so Cmd+S still works.
+			const layout = useWorkspaceStore.getState().getActiveLayout();
+			if (!layout) return;
+			for (const pid of collectFilePaneIds(layout)) {
+				if (explorer.filePanes[pid]?.isDirty) explorer.saveFile(pid);
 			}
 		});
 		registerAction("toggle-git-panel", () => {
