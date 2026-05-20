@@ -514,8 +514,16 @@ export function App() {
 							return (
 								<div
 									key={workspace.id}
-									className="flex-1 min-h-0 flex flex-col"
-									style={{ display: isActive ? "flex" : "none" }}
+									data-workspace-active={isActive ? "true" : undefined}
+									className="absolute flex flex-col"
+									style={{
+										top: TITLEBAR_HEIGHT,
+										left: 0,
+										right: 0,
+										bottom: 0,
+										visibility: isActive ? "visible" : "hidden",
+										pointerEvents: isActive ? "auto" : "none",
+									}}
 								>
 									<div
 										className="flex items-end shrink-0"

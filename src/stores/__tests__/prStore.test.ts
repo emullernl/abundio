@@ -245,6 +245,79 @@ describe("prStore", () => {
 		});
 	});
 
+	describe("hydrateFromWorkspace", () => {
+		it("restores cached PRs after a prior fetch for that workspace", async () => {
+			const aPrs = [makePr({ number: 11 })];
+			mockGh.reviewRequestsAll.mockResolvedValue(aPrs);
+
+			useWorkspaceStore.setState({ activeWorkspaceId: "ws-A" });
+			await usePrStore.getState().fetchReviewPrs("/repo-a");
+
+			// Simulate switching to another workspace and that workspace fetching
+			useWorkspaceStore.setState({ activeWorkspaceId: "ws-B" });
+			const bPrs = [makePr({ number: 22 })];
+			mockGh.reviewRequestsAll.mockResolvedValue(bPrs);
+			await usePrStore.getState().fetchReviewPrs("/repo-b");
+			expect(usePrStore.getState().review.prs).toEqual(bPrs);
+
+			// Switch back: hydrate from ws-A's cache should restore aPrs
+			useWorkspaceStore.setState({ activeWorkspaceId: "ws-A" });
+			usePrStore.getState().hydrateFromWorkspace("ws-A");
+			expect(usePrStore.getState().review.prs).toEqual(aPrs);
+		});
+
+		it("shows empty sections for a workspace with no cached data", () => {
+			usePrStore.setState({
+				review: { prs: [makePr()], loading: false, error: null },
+				myPrs: { prs: [makePr({ number: 9 })], loading: false, error: null },
+			});
+
+			usePrStore.getState().hydrateFromWorkspace("never-fetched");
+			expect(usePrStore.getState().review).toEqual({
+				prs: [],
+				loading: false,
+				error: null,
+			});
+			expect(usePrStore.getState().myPrs).toEqual({
+				prs: [],
+				loading: false,
+				error: null,
+			});
+		});
+
+		it("clears the singleton when called with null", () => {
+			usePrStore.setState({
+				review: { prs: [makePr()], loading: false, error: null },
+			});
+			usePrStore.getState().hydrateFromWorkspace(null);
+			expect(usePrStore.getState().review.prs).toEqual([]);
+		});
+
+		it("writes cache against the workspaceId captured at fetch start, not the current one", async () => {
+			let resolveA: (prs: PullRequest[]) => void = () => {};
+			mockGh.reviewRequestsAll.mockReturnValueOnce(
+				new Promise<PullRequest[]>((res) => {
+					resolveA = res;
+				}),
+			);
+
+			useWorkspaceStore.setState({ activeWorkspaceId: "ws-A" });
+			const aFetch = usePrStore.getState().fetchReviewPrs("/repo-a");
+
+			// User switches before the in-flight fetch completes
+			useWorkspaceStore.setState({ activeWorkspaceId: "ws-B" });
+
+			const aPrs = [makePr({ number: 99 })];
+			resolveA(aPrs);
+			await aFetch;
+
+			// Hydrating ws-A should still recover aPrs even though it was no longer
+			// active when the response arrived.
+			usePrStore.getState().hydrateFromWorkspace("ws-A");
+			expect(usePrStore.getState().review.prs).toEqual(aPrs);
+		});
+	});
+
 	describe("PR notifications", () => {
 		// Helper to simulate a loading -> loaded transition
 		function simulateReviewLoad(prs: PullRequest[]) {
