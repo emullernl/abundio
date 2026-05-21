@@ -34,6 +34,12 @@ _Avoid_: terminal process, shell
 
 **Agent**: A detected AI coding CLI tool (Claude Code, Copilot, Gemini CLI, Aider, Codex, OpenCode) that can be launched inside a Pane. Detected by scanning `$PATH`; not spawned until the user requests one.
 
+**Agent hook**: A lifecycle event an Agent emits — prompt submitted, permission requested, turn finished, turn failed — that Abundio observes (via the Agent's own hook system) to drive the status indicator. Abundio only observes; it never alters the Agent's behaviour.
+_Avoid_: callback, event listener
+
+**Waiting**: An Agent state in which the Agent has emitted a permission- or input-request hook and the user has not yet responded in its terminal. Distinct from a finished turn ("ready") — the Agent is stalled mid-turn, not done.
+_Avoid_: blocked, idle, stuck
+
 ## Relationships
 
 - The **Active workspace** is always also an **Opened workspace**.
@@ -42,6 +48,7 @@ _Avoid_: terminal process, shell
 - Each **Tab** belongs to exactly one **Workspace**.
 - Each **Pane** belongs to exactly one **Tab**. A terminal pane holds at most one **PTY**; a file pane holds at most one open file; a preview pane holds neither — it references a **source pane**.
 - A **preview pane** and its **source pane** always live in the same **Tab**.
+- Abundio derives an **Agent**'s status by observing its **Agent hooks**; a permission-request hook puts the Agent into the **Waiting** state, which clears when the user types into that **Pane**'s terminal.
 
 ## Flagged ambiguities
 

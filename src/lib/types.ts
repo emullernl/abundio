@@ -120,11 +120,23 @@ export type PtyStatusType =
 	| { type: "running" }
 	| { type: "exited"; code: number | null };
 
-export type PtyActivityState = "idle" | "active" | "ready" | "error";
+export type PtyActivityState =
+	| "idle"
+	| "active"
+	| "ready"
+	| "error"
+	| "waiting";
 
 export type PtyActivityType =
 	| { type: "commandStarted" }
 	| { type: "commandFinished" };
+
+/** A lifecycle hook event emitted by an Agent, relayed in via the hook server. */
+export interface AgentHookEvent {
+	agent: string;
+	event: string;
+	payload: string;
+}
 
 export type PtyDetectionMode = "agent" | "shell";
 

@@ -15,6 +15,7 @@ import {
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { recordThresholdHit } from "./activityGate";
+import { mapHookEvent } from "./agentHookMap";
 import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
@@ -23,6 +24,20 @@ import { parseShellIntegration } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
+
+/**
+ * True when xterm `onData` carries a terminal-reported focus or mouse event
+ * rather than a genuine keypress. Apps that enable focus/mouse reporting make
+ * the terminal emit these on focus or click — they must NOT count as the user
+ * "answering" a waiting agent prompt.
+ */
+function isReportSequence(data: string): boolean {
+	// Focus in / focus out reports
+	if (data === "\x1b[I" || data === "\x1b[O") return true;
+	// SGR mouse (\x1b[<…M/m) and legacy X10 mouse (\x1b[M…)
+	if (data.startsWith("\x1b[<") || data.startsWith("\x1b[M")) return true;
+	return false;
+}
 
 /** CSS generic family keywords — these have no @font-face and must never be
  *  passed to FontFaceSet.load() / .check() as the family to await on. */
@@ -625,189 +640,228 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		managed.lastInputAt = Date.now();
 		managed.bytesSinceIdle = 0;
 		const actStore = usePtyActivityStore.getState();
-		actStore.clearError(currentPtyId);
-		actStore.markIdle(currentPtyId);
+		const entry = actStore.activities[currentPtyId];
+		if (entry?.state === "waiting" && entry.detectionMode === "agent") {
+			// A waiting agent is cleared ONLY by genuine keyboard input — the
+			// user answering its prompt. Focus/mouse report sequences (which
+			// xterm also delivers via onData) leave it waiting. Agent-mode
+			// panes only — terminal-mode panes keep the normal behaviour.
+			if (!isReportSequence(data)) {
+				actStore.applyHookEvent(currentPtyId, "active");
+			}
+		} else {
+			actStore.clearError(currentPtyId);
+			actStore.markIdle(currentPtyId);
+		}
 		pty.write(currentPtyId, data);
 	});
 
 	// Register all event listeners and spawn PTY in parallel — each is an async
 	// IPC round-trip, so running them concurrently cuts init time significantly.
-	const [unlistenOutput, unlistenActivity, unlistenStatus] = await Promise.all([
-		pty.onOutput(currentPtyId, (data) => {
-			// Always parse and strip shell integration sequences in both modes,
-			// so command_end is detected even while in agent mode.
-			const { cleaned, commands } = parseShellIntegration(data);
+	const [unlistenOutput, unlistenActivity, unlistenStatus, unlistenHook] =
+		await Promise.all([
+			pty.onOutput(currentPtyId, (data) => {
+				// Always parse and strip shell integration sequences in both modes,
+				// so command_end is detected even while in agent mode.
+				const { cleaned, commands } = parseShellIntegration(data);
 
-			// Cache store state once per chunk to avoid repeated getState() calls
-			const actState = usePtyActivityStore.getState();
-			const entry = actState.activities[currentPtyId];
-			const isAgentMode = entry?.detectionMode === "agent";
+				// Cache store state once per chunk to avoid repeated getState() calls
+				const actState = usePtyActivityStore.getState();
+				const entry = actState.activities[currentPtyId];
+				const isAgentMode = entry?.detectionMode === "agent";
 
-			if (managed.startupBuffer) {
-				managed.startupBuffer.push(cleaned);
-			} else {
-				const output = managed.filterResets
-					? stripResetSequences(cleaned)
-					: cleaned;
-				scheduleWrite(managed, output);
-			}
-
-			// Process shell integration commands (agent detection + shell activity)
-			for (const cmd of commands) {
-				if (cmd.type === "cwd_change") {
-					actState.setCwd(currentPtyId, cmd.path ?? "");
-					if (cmd.path) {
-						useWorkspaceStore.getState().stampCwdOnPane(paneId, cmd.path);
-					}
-					continue;
+				if (managed.startupBuffer) {
+					managed.startupBuffer.push(cleaned);
+				} else {
+					const output = managed.filterResets
+						? stripResetSequences(cleaned)
+						: cleaned;
+					scheduleWrite(managed, output);
 				}
-				if (cmd.type === "command_start") {
-					// Agent detection from command text. setAgentPty mutates
-					// the store, so we have to track the transition with a
-					// local flag — the captured `isAgentMode` from the top of
-					// this chunk is now stale.
-					let nowIsAgent = isAgentMode;
-					if (cmd.commandText) {
-						const agents = useSettingsStore.getState().agents;
-						const matched = matchTitleToAgent(cmd.commandText, agents);
-						if (matched) {
-							actState.setAgentPty(currentPtyId, matched.id);
-							nowIsAgent = true;
+
+				// Process shell integration commands (agent detection + shell activity)
+				for (const cmd of commands) {
+					if (cmd.type === "cwd_change") {
+						actState.setCwd(currentPtyId, cmd.path ?? "");
+						if (cmd.path) {
+							useWorkspaceStore.getState().stampCwdOnPane(paneId, cmd.path);
 						}
+						continue;
 					}
-					if (!nowIsAgent) {
-						actState.setRunningCommand(currentPtyId, cmd.commandText ?? "");
-					}
-					// Critical: the !nowIsAgent guard keeps us from setting
-					// shellCommandRunning=true for the agent's own command_start.
-					// If that flag stays true, the idle scanner will never
-					// transition active → ready (purple) for the agent.
-					if (!managed.suppressActivity && !nowIsAgent) {
-						setShellCommandRunning(currentPtyId, true);
-						actState.recordOutput(currentPtyId);
-					}
-				} else if (cmd.type === "command_end") {
-					actState.setRunningCommand(currentPtyId, null);
-					managed.startupShellReady = true;
-					tryFlushStartup(managed);
-					// Exit agent mode when the command finishes — re-fetch
-					// state since setAgentPty above may have mutated it
-					const freshState = usePtyActivityStore.getState();
-					const currentEntry = freshState.activities[currentPtyId];
-					if (currentEntry?.detectionMode === "agent") {
-						freshState.clearAgentPty(currentPtyId);
-					}
-					const wasAgentMode = currentEntry?.detectionMode === "agent";
-					if (!managed.suppressActivity && !wasAgentMode) {
-						setShellCommandRunning(currentPtyId, false);
-						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
-							freshState.recordError(currentPtyId);
-						} else {
-							const isFocused =
-								document.hasFocus() &&
-								useWorkspaceStore.getState().focusedPaneId === paneId;
-							if (isFocused) {
-								freshState.markIdle(currentPtyId);
+					if (cmd.type === "command_start") {
+						// Agent detection from command text. setAgentPty mutates
+						// the store, so we have to track the transition with a
+						// local flag — the captured `isAgentMode` from the top of
+						// this chunk is now stale.
+						let nowIsAgent = isAgentMode;
+						if (cmd.commandText) {
+							const agents = useSettingsStore.getState().agents;
+							const matched = matchTitleToAgent(cmd.commandText, agents);
+							if (matched) {
+								actState.setAgentPty(currentPtyId, matched.id);
+								nowIsAgent = true;
+							}
+						}
+						if (!nowIsAgent) {
+							actState.setRunningCommand(currentPtyId, cmd.commandText ?? "");
+						}
+						// Critical: the !nowIsAgent guard keeps us from setting
+						// shellCommandRunning=true for the agent's own command_start.
+						// If that flag stays true, the idle scanner will never
+						// transition active → ready (purple) for the agent.
+						if (!managed.suppressActivity && !nowIsAgent) {
+							setShellCommandRunning(currentPtyId, true);
+							actState.recordOutput(currentPtyId);
+						}
+					} else if (cmd.type === "command_end") {
+						actState.setRunningCommand(currentPtyId, null);
+						managed.startupShellReady = true;
+						tryFlushStartup(managed);
+						// Exit agent mode when the command finishes — re-fetch
+						// state since setAgentPty above may have mutated it
+						const freshState = usePtyActivityStore.getState();
+						const currentEntry = freshState.activities[currentPtyId];
+						if (currentEntry?.detectionMode === "agent") {
+							freshState.clearAgentPty(currentPtyId);
+						}
+						const wasAgentMode = currentEntry?.detectionMode === "agent";
+						if (!managed.suppressActivity && !wasAgentMode) {
+							setShellCommandRunning(currentPtyId, false);
+							if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
+								freshState.recordError(currentPtyId);
 							} else {
-								freshState.recordExitSuccess(currentPtyId);
+								const isFocused =
+									document.hasFocus() &&
+									useWorkspaceStore.getState().focusedPaneId === paneId;
+								if (isFocused) {
+									freshState.markIdle(currentPtyId);
+								} else {
+									freshState.recordExitSuccess(currentPtyId);
+								}
 							}
 						}
 					}
 				}
-			}
 
-			// Agent mode: byte accumulation activity tracking
-			if (isAgentMode) {
-				const now = Date.now();
-				if (
-					!managed.suppressActivity &&
-					now - managed.lastInputAt > INPUT_GATE_MS
-				) {
-					if (
-						managed.lastOutputChunkAt &&
-						now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
-					) {
-						managed.bytesSinceIdle = 0;
-						// Note: do NOT clear thresholdHitTimes here. Agents
-						// naturally pause for several seconds between bursts
-						// while thinking; the sliding window in
-						// recordThresholdHit handles pruning at its own
-						// (longer) cadence. Wiping hits on every 3s gap would
-						// prevent the count from ever reaching the threshold.
-					}
-					managed.lastOutputChunkAt = now;
-					managed.bytesSinceIdle += cleaned.length;
-
-					if (entry?.state === "active") {
+				// Agent mode: activity tracking
+				if (isAgentMode) {
+					const now = Date.now();
+					if (entry?.hookDriven) {
+						// Hook-driven PTYs trust hook events for state transitions.
+						// Just keep lastOutput fresh so the idle-scanner backstop
+						// only fires on a genuinely stuck agent (a dropped Stop).
 						touchLastOutput(currentPtyId, now);
-					} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
-						managed.bytesSinceIdle = 0;
-						const result = recordThresholdHit(managed.thresholdHitTimes, now);
-						managed.thresholdHitTimes = result.hitTimes;
-						if (result.fire) {
-							usePtyActivityStore.getState().recordOutput(currentPtyId);
+					} else if (
+						!managed.suppressActivity &&
+						now - managed.lastInputAt > INPUT_GATE_MS
+					) {
+						if (
+							managed.lastOutputChunkAt &&
+							now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
+						) {
+							managed.bytesSinceIdle = 0;
+							// Note: do NOT clear thresholdHitTimes here. Agents
+							// naturally pause for several seconds between bursts
+							// while thinking; the sliding window in
+							// recordThresholdHit handles pruning at its own
+							// (longer) cadence. Wiping hits on every 3s gap would
+							// prevent the count from ever reaching the threshold.
+						}
+						managed.lastOutputChunkAt = now;
+						managed.bytesSinceIdle += cleaned.length;
+
+						if (entry?.state === "active") {
+							touchLastOutput(currentPtyId, now);
+						} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+							managed.bytesSinceIdle = 0;
+							const result = recordThresholdHit(managed.thresholdHitTimes, now);
+							managed.thresholdHitTimes = result.hitTimes;
+							if (result.fire) {
+								usePtyActivityStore.getState().recordOutput(currentPtyId);
+							}
 						}
 					}
 				}
-			}
-		}),
+			}),
 
-		pty.onActivity(currentPtyId, (activity) => {
-			if (managed.suppressActivity) return;
+			pty.onActivity(currentPtyId, (activity) => {
+				if (managed.suppressActivity) return;
 
-			const actStore = usePtyActivityStore.getState();
+				const actStore = usePtyActivityStore.getState();
 
-			// Shell command tracking — only applies in shell mode
-			const entry = actStore.activities[currentPtyId];
-			if (entry?.detectionMode !== "shell") return;
-			if (activity.type === "commandStarted") {
-				setShellCommandRunning(currentPtyId, true);
-				actStore.recordOutput(currentPtyId);
-			} else if (activity.type === "commandFinished") {
-				setShellCommandRunning(currentPtyId, false);
-				if (entry.state === "active") {
-					const isFocused =
-						document.hasFocus() &&
-						useWorkspaceStore.getState().focusedPaneId === paneId;
-					if (isFocused) {
-						actStore.markIdle(currentPtyId);
+				// Shell command tracking — only applies in shell mode
+				const entry = actStore.activities[currentPtyId];
+				if (entry?.detectionMode !== "shell") return;
+				if (activity.type === "commandStarted") {
+					setShellCommandRunning(currentPtyId, true);
+					actStore.recordOutput(currentPtyId);
+				} else if (activity.type === "commandFinished") {
+					setShellCommandRunning(currentPtyId, false);
+					if (entry.state === "active") {
+						const isFocused =
+							document.hasFocus() &&
+							useWorkspaceStore.getState().focusedPaneId === paneId;
+						if (isFocused) {
+							actStore.markIdle(currentPtyId);
+						} else {
+							actStore.recordExitSuccess(currentPtyId);
+						}
+					}
+				}
+			}),
+
+			pty.onStatus(currentPtyId, (status) => {
+				if (status.type === "exited") {
+					// Set activity state BEFORE setPtyStatus to avoid subscriber race
+					const actStore = usePtyActivityStore.getState();
+					if (status.code !== 0 && status.code !== null) {
+						actStore.recordError(currentPtyId);
 					} else {
 						actStore.recordExitSuccess(currentPtyId);
 					}
 				}
-			}
-		}),
+				useWorkspaceStore.getState().setPtyStatus(currentPtyId, status);
+			}),
 
-		pty.onStatus(currentPtyId, (status) => {
-			if (status.type === "exited") {
-				// Set activity state BEFORE setPtyStatus to avoid subscriber race
+			pty.onHook(currentPtyId, (hookEvent) => {
+				const transition = mapHookEvent(hookEvent.agent, hookEvent.event);
+				// Temporary: log every incoming hook event for verification.
+				console.log("[abundio:hook]", {
+					pty: currentPtyId,
+					agent: hookEvent.agent,
+					event: hookEvent.event,
+					transition: transition ?? "(unmapped)",
+					payload: hookEvent.payload,
+				});
+				if (!transition) return;
 				const actStore = usePtyActivityStore.getState();
-				if (status.code !== 0 && status.code !== null) {
-					actStore.recordError(currentPtyId);
-				} else {
-					actStore.recordExitSuccess(currentPtyId);
+				// A hook event proves an agent runs in this PTY — adopt agent mode
+				// even if title-based detection missed it.
+				actStore.setAgentPty(currentPtyId, hookEvent.agent);
+				if (transition === "clear") {
+					actStore.clearAgentPty(currentPtyId);
+					return;
 				}
-			}
-			useWorkspaceStore.getState().setPtyStatus(currentPtyId, status);
-		}),
+				actStore.applyHookEvent(currentPtyId, transition);
+			}),
 
-		// Spawn PTY concurrently with listener registration — listeners use
-		// event names that include the ptyId, so they won't miss output even
-		// if spawn completes first (Tauri buffers events until listen resolves).
-		...(isNewPty
-			? [
-					pty.spawn(
-						cwd,
-						term.cols,
-						term.rows,
-						undefined,
-						useSettingsStore.getState().shellPath ?? undefined,
-						paneId,
-						currentPtyId,
-					),
-				]
-			: []),
-	]);
+			// Spawn PTY concurrently with listener registration — listeners use
+			// event names that include the ptyId, so they won't miss output even
+			// if spawn completes first (Tauri buffers events until listen resolves).
+			...(isNewPty
+				? [
+						pty.spawn(
+							cwd,
+							term.cols,
+							term.rows,
+							undefined,
+							useSettingsStore.getState().shellPath ?? undefined,
+							paneId,
+							currentPtyId,
+						),
+					]
+				: []),
+		]);
 
 	// Safety timeout: flush the startup buffer even if shell integration
 	// hooks never fire (e.g. custom shell without integration support).
@@ -875,6 +929,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenOutput();
 		unlistenActivity();
 		unlistenStatus();
+		unlistenHook();
 		term.element?.removeEventListener("mousedown", onTermClick);
 		if (managed.writeRafId !== null) {
 			cancelAnimationFrame(managed.writeRafId);

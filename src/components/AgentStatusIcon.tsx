@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Circle, Moon } from "lucide-react";
+import { AlertTriangle, Check, Circle, HelpCircle, Moon } from "lucide-react";
 import { memo } from "react";
 import type { DotStatus } from "../stores/ptyActivityStore";
 
@@ -73,6 +73,18 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 					}}
 				>
 					<AlertTriangle size={size} strokeWidth={2.5} />
+				</div>
+			);
+
+		case "skyblue":
+			return (
+				<div
+					className="flex-shrink-0 text-sky-400 drop-shadow-[0_0_4px_rgba(56,189,248,0.6)]"
+					style={{
+						animation: "agent-skyblue-pulse 1.6s ease-in-out infinite",
+					}}
+				>
+					<HelpCircle size={size} strokeWidth={2.5} />
 				</div>
 			);
 	}

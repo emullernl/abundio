@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
+import { agentHooks } from "../lib/ipc";
 import {
 	setAllTerminalsFontFamily,
 	setAllTerminalsFontSize,
@@ -31,6 +32,7 @@ interface SettingsState {
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
+	agentHooksEnabled: boolean;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -57,6 +59,7 @@ interface SettingsState {
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
 	toggleMarkdownPreviewAutoOpen: () => void;
+	setAgentHooksEnabled: (enabled: boolean) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -83,6 +86,7 @@ const PERSISTED_DEFAULTS: {
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
+	agentHooksEnabled: boolean;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -102,6 +106,7 @@ const PERSISTED_DEFAULTS: {
 		lastOpenedDevEnvId: null as string | null,
 		editorWordWrap: true,
 		markdownPreviewAutoOpen: true,
+		agentHooksEnabled: false,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -173,6 +178,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.markdownPreviewAutoOpen === "boolean"
 					? s.markdownPreviewAutoOpen
 					: defaults.markdownPreviewAutoOpen,
+			agentHooksEnabled:
+				typeof s.agentHooksEnabled === "boolean"
+					? s.agentHooksEnabled
+					: defaults.agentHooksEnabled,
 		};
 	} catch {
 		return defaults;
@@ -201,6 +210,7 @@ export const useSettingsStore = create<SettingsState>()(
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
 			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
+			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -281,6 +291,11 @@ export const useSettingsStore = create<SettingsState>()(
 				set((s) => ({
 					markdownPreviewAutoOpen: !s.markdownPreviewAutoOpen,
 				})),
+			setAgentHooksEnabled: (agentHooksEnabled) => {
+				// Provision/unprovision agent hook configs to match the setting.
+				agentHooks.provision(agentHooksEnabled).catch(() => {});
+				set({ agentHooksEnabled });
+			},
 		}),
 		{
 			name: "abundio-settings",
@@ -311,6 +326,7 @@ export const useSettingsStore = create<SettingsState>()(
 				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
 				editorWordWrap: state.editorWordWrap,
 				markdownPreviewAutoOpen: state.markdownPreviewAutoOpen,
+				agentHooksEnabled: state.agentHooksEnabled,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
@@ -339,6 +355,11 @@ export const useSettingsStore = create<SettingsState>()(
 				}
 				if (state?.theme) {
 					setAllTerminalsTheme(getTheme(state.theme).terminal);
+				}
+				// Re-sync agent hook provisioning with the persisted setting
+				// (also refreshes the relay scripts after an app update).
+				if (state?.agentHooksEnabled) {
+					agentHooks.provision(true).catch(() => {});
 				}
 			},
 		},

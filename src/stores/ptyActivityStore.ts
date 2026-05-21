@@ -1,6 +1,6 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
-import { findPaneLocation } from "../lib/notificationRouter";
+import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -17,6 +17,10 @@ import {
 
 export const IDLE_THRESHOLD_MS = 2000;
 const SCAN_INTERVAL_MS = 2000;
+// Hook-driven PTYs trust hook events for transitions; the idle scanner is
+// only a backstop for a genuinely stuck "active" dot (a dropped Stop event),
+// so it uses a far longer threshold than the heuristic's 2s.
+const HOOK_IDLE_BACKSTOP_MS = 30000;
 
 // Hot-path optimization: track last output timestamps outside Zustand state
 // to avoid triggering re-renders on every output chunk.
@@ -53,6 +57,9 @@ export interface PtyActivityEntry {
 	lastOutputAt: number | null;
 	hasEverReceivedOutput: boolean;
 	detectionMode: PtyDetectionMode;
+	// True once an Agent hook event has driven this PTY's state. Hook events
+	// are authoritative, so the byte-accumulation heuristic backs off.
+	hookDriven: boolean;
 }
 
 interface PtyActivityState_Store {
@@ -71,6 +78,10 @@ interface PtyActivityState_Store {
 	recordExitSuccess: (ptyId: string) => void;
 	markIdle: (ptyId: string) => void;
 	clearError: (ptyId: string) => void;
+	applyHookEvent: (
+		ptyId: string,
+		transition: "active" | "waiting" | "ready" | "error",
+	) => void;
 	setAgentPty: (ptyId: string, agentId?: string) => void;
 	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
@@ -118,6 +129,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 						lastOutputAt: null,
 						hasEverReceivedOutput: true,
 						detectionMode: mode ?? "shell",
+						hookDriven: false,
 					},
 				},
 			}));
@@ -138,6 +150,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 						lastOutputAt: Date.now(),
 						hasEverReceivedOutput: true,
 						detectionMode: s.activities[ptyId]?.detectionMode ?? "shell",
+						hookDriven: s.activities[ptyId]?.hookDriven ?? false,
 					},
 				},
 			}));
@@ -145,7 +158,17 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 
 		markIdle: (ptyId) => {
 			const entry = get().activities[ptyId];
-			if (!entry || entry.state === "idle" || entry.state === "error") return;
+			if (
+				!entry ||
+				entry.state === "idle" ||
+				entry.state === "error" ||
+				// An agent waiting on the user is cleared only by a keystroke or
+				// the next hook event — never by focus/click. Agent mode only;
+				// a stale "waiting" on a terminal-mode pane falls through to be
+				// cleared normally.
+				(entry.state === "waiting" && entry.detectionMode === "agent")
+			)
+				return;
 			// Agent mode: never cancel an in-progress "active" state. markIdle
 			// is meant to dismiss "ready"/"error" alerts the user has
 			// acknowledged (focus, click, etc.); for an agent that's still
@@ -181,6 +204,29 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 						hasEverReceivedOutput:
 							s.activities[ptyId]?.hasEverReceivedOutput ?? false,
 						detectionMode: s.activities[ptyId]?.detectionMode ?? "shell",
+						hookDriven: s.activities[ptyId]?.hookDriven ?? false,
+					},
+				},
+			}));
+		},
+
+		applyHookEvent: (ptyId, transition) => {
+			const entry = get().activities[ptyId];
+			if (!entry) return;
+			if (transition === "active") {
+				lastOutputTimestamps.set(ptyId, Date.now());
+			}
+			set((s) => ({
+				activities: {
+					...s.activities,
+					[ptyId]: {
+						...s.activities[ptyId],
+						state: transition,
+						hookDriven: true,
+						lastOutputAt:
+							transition === "active"
+								? Date.now()
+								: s.activities[ptyId].lastOutputAt,
 					},
 				},
 			}));
@@ -236,7 +282,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 					detectedAgentIds: restDetected,
 					activities: {
 						...s.activities,
-						[ptyId]: { ...entry, detectionMode: "shell" },
+						[ptyId]: { ...entry, detectionMode: "shell", hookDriven: false },
 					},
 				});
 			} else {
@@ -353,7 +399,10 @@ setInterval(() => {
 		if (lastOutput === null) continue;
 		const elapsed = now - lastOutput;
 
-		if (entry.state === "active" && elapsed > IDLE_THRESHOLD_MS) {
+		const threshold = entry.hookDriven
+			? HOOK_IDLE_BACKSTOP_MS
+			: IDLE_THRESHOLD_MS;
+		if (entry.state === "active" && elapsed > threshold) {
 			// Don't transition to idle if a shell command is still running
 			if (shellCommandRunning.get(ptyId)) continue;
 			const paneId = _cachedPtyToPaneMap[ptyId];
@@ -382,46 +431,62 @@ setInterval(() => {
 // ── Notifications for state transitions ──
 
 usePtyActivityStore.subscribe((state, prevState) => {
-	const blurredMs = getWindowBlurredMs();
-	if (blurredMs === null || blurredMs < NOTIFICATION_BLUR_THRESHOLD_MS) return;
-
 	const { activities, titles, panePtyMap } = state;
 	const prevActivities = prevState.activities;
+	const blurredMs = getWindowBlurredMs();
+	const windowAwayLongEnough =
+		blurredMs !== null && blurredMs >= NOTIFICATION_BLUR_THRESHOLD_MS;
 
 	for (const [ptyId, entry] of Object.entries(activities)) {
 		const prevEntry = prevActivities[ptyId];
 		if (!prevEntry || prevEntry.state === entry.state) continue;
+		if (
+			entry.state !== "ready" &&
+			entry.state !== "error" &&
+			entry.state !== "waiting"
+		)
+			continue;
 
-		if (entry.state === "ready" || entry.state === "error") {
-			const paneId = Object.entries(panePtyMap).find(
-				([, pid]) => pid === ptyId,
-			)?.[0];
-			const title = paneId ? titles[paneId] : undefined;
-			const label =
-				title || (entry.detectionMode === "agent" ? "Agent" : "Terminal");
-			const body =
-				entry.state === "error"
-					? `${label} encountered an error`
+		const paneId = Object.entries(panePtyMap).find(
+			([, pid]) => pid === ptyId,
+		)?.[0];
+
+		// "waiting" (agent blocked on the user) notifies whenever the pane is
+		// not on screen — window blurred OR the pane is in a background
+		// tab/workspace. "ready"/"error" keep the blurred-only gate.
+		const shouldNotify =
+			entry.state === "waiting"
+				? windowAwayLongEnough || !paneId || !isPaneVisible(paneId)
+				: windowAwayLongEnough;
+		if (!shouldNotify) continue;
+
+		const title = paneId ? titles[paneId] : undefined;
+		const label =
+			title || (entry.detectionMode === "agent" ? "Agent" : "Terminal");
+		const body =
+			entry.state === "error"
+				? `${label} encountered an error`
+				: entry.state === "waiting"
+					? `${label} needs your input`
 					: `${label} is ready`;
 
-			const location = paneId ? findPaneLocation(paneId) : null;
-			try {
-				sendNotification({
-					title: "Abundio",
-					body,
-					extra:
-						location && paneId
-							? {
-									type: "pty",
-									paneId,
-									workspaceId: location.workspaceId,
-									tabId: location.tabId,
-								}
-							: { type: "pty" },
-				});
-			} catch {
-				// Notifications may not be permitted
-			}
+		const location = paneId ? findPaneLocation(paneId) : null;
+		try {
+			sendNotification({
+				title: "Abundio",
+				body,
+				extra:
+					location && paneId
+						? {
+								type: "pty",
+								paneId,
+								workspaceId: location.workspaceId,
+								tabId: location.tabId,
+							}
+						: { type: "pty" },
+			});
+		} catch {
+			// Notifications may not be permitted
 		}
 	}
 });
@@ -445,7 +510,13 @@ export function collectPtyIds(
 
 // ── Aggregation ──
 
-export type DotStatus = "grey" | "green" | "amber" | "purple" | "red";
+export type DotStatus =
+	| "grey"
+	| "green"
+	| "amber"
+	| "purple"
+	| "red"
+	| "skyblue";
 
 export function computeWorkspaceDotStatus(
 	workspaceId: string,
@@ -466,6 +537,7 @@ export function computeWorkspaceDotStatus(
 	const entries = allPtyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
+	if (entries.some((e) => e.state === "waiting")) return "skyblue";
 	if (entries.some((e) => e.state === "ready")) return "purple";
 	if (entries.some((e) => e.state === "active")) return "amber";
 
@@ -491,6 +563,7 @@ export function computeTabDotStatus(
 	const entries = ptyIds.map((id) => activities[id]).filter(Boolean);
 
 	if (entries.some((e) => e.state === "error")) return "red";
+	if (entries.some((e) => e.state === "waiting")) return "skyblue";
 	if (entries.some((e) => e.state === "ready")) return "purple";
 	if (entries.some((e) => e.state === "active")) return "amber";
 
@@ -508,6 +581,8 @@ export function computePtyDotStatus(
 	switch (entry.state) {
 		case "active":
 			return "amber";
+		case "waiting":
+			return "skyblue";
 		case "ready":
 			return "purple";
 		case "error":

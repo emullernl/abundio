@@ -11,7 +11,7 @@ use base64::Engine;
 use crossbeam_channel::{self, Receiver, Sender};
 use dashmap::DashMap;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AbundioError;
 use crate::events::{PtyActivity, PtyOutput, PtyStatus};
@@ -150,6 +150,14 @@ impl PtyManager {
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         // Suppress zsh's partial-line EOL marker (%) so it doesn't appear in replayed scrollback logs
         cmd.env("PROMPT_EOL_MARK", "");
+
+        // Agent hook correlation: the agent and its hook commands inherit these,
+        // letting the abundio-hook relay attribute hook events to this PTY.
+        if let Some(hook_server) = app.try_state::<crate::hook_server::HookServer>() {
+            cmd.env("ABUNDIO_PTY_ID", &pty_id);
+            cmd.env("ABUNDIO_HOOK_PORT", hook_server.port.to_string());
+            cmd.env("ABUNDIO_HOOK_TOKEN", &hook_server.token);
+        }
 
         if Path::new(cwd).is_dir() {
             cmd.cwd(cwd);

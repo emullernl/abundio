@@ -21,6 +21,7 @@ vi.mock("../../lib/notificationRouter", () => ({
 		workspaceId: "ws-1",
 		tabId: "tab-1",
 	})),
+	isPaneVisible: vi.fn(() => false),
 }));
 
 const focusMock = vi.hoisted(() => ({ blurredMs: 10_000 as number | null }));
@@ -248,6 +249,7 @@ describe("computeWorkspaceDotStatus", () => {
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
 		detectionMode: "shell",
+		hookDriven: false,
 	});
 
 	it("returns grey when no ptyIds", () => {
@@ -365,6 +367,7 @@ describe("computeTabDotStatus", () => {
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
 		detectionMode: "shell",
+		hookDriven: false,
 	});
 
 	const makeTab = (layoutJson: string): Tab => ({
@@ -406,6 +409,7 @@ describe("computePtyDotStatus", () => {
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
 		detectionMode: "shell",
+		hookDriven: false,
 	});
 
 	it("returns green for unknown ptyId", () => {
@@ -681,5 +685,107 @@ describe("touchLastOutput", () => {
 		const ts = getLastOutputAt("pty-1");
 		expect(ts).toBeGreaterThanOrEqual(before);
 		expect(ts).toBeLessThanOrEqual(after);
+	});
+});
+
+describe("hook-driven status", () => {
+	const makeEntry = (state: string): PtyActivityEntry => ({
+		state: state as PtyActivityEntry["state"],
+		lastOutputAt: 0,
+		hasEverReceivedOutput: true,
+		detectionMode: "shell",
+		hookDriven: false,
+	});
+
+	const split = (): PaneNode => ({
+		type: "split",
+		id: "s",
+		direction: "horizontal",
+		ratio: 0.5,
+		first: { type: "terminal", id: "p1", ptyId: "pty-1" },
+		second: { type: "terminal", id: "p2", ptyId: "pty-2" },
+	});
+
+	it("applyHookEvent waiting sets waiting state and hookDriven", () => {
+		const { initPty, applyHookEvent } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		const entry = usePtyActivityStore.getState().activities["pty-1"];
+		expect(entry.state).toBe("waiting");
+		expect(entry.hookDriven).toBe(true);
+	});
+
+	it("markIdle does not clear waiting for an agent-mode pane", () => {
+		const { initPty, setAgentPty, applyHookEvent, markIdle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"waiting",
+		);
+	});
+
+	it("markIdle clears a stale waiting on a terminal-mode pane", () => {
+		// A pane left "waiting" after its agent exited (clearAgentPty reverts
+		// detectionMode to "shell") must behave like a normal terminal again.
+		const { initPty, applyHookEvent, markIdle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		applyHookEvent("pty-1", "waiting"); // shell mode — no setAgentPty
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("applyHookEvent active clears waiting (user responded)", () => {
+		const { initPty, applyHookEvent } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		applyHookEvent("pty-1", "active");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+	});
+
+	it("applyHookEvent is a no-op for an unknown ptyId", () => {
+		usePtyActivityStore.getState().applyHookEvent("ghost", "ready");
+		expect(usePtyActivityStore.getState().activities.ghost).toBeUndefined();
+	});
+
+	it("computePtyDotStatus maps waiting to skyblue", () => {
+		expect(
+			computePtyDotStatus("pty-1", { "pty-1": makeEntry("waiting") }),
+		).toBe("skyblue");
+	});
+
+	it("waiting takes priority over ready and active", () => {
+		expect(
+			computeWorkspaceDotStatus(
+				"s1",
+				[split()],
+				{
+					"pty-1": makeEntry("waiting"),
+					"pty-2": makeEntry("ready"),
+				},
+				new Set(),
+			),
+		).toBe("skyblue");
+	});
+
+	it("error takes priority over waiting", () => {
+		expect(
+			computeWorkspaceDotStatus(
+				"s1",
+				[split()],
+				{
+					"pty-1": makeEntry("error"),
+					"pty-2": makeEntry("waiting"),
+				},
+				new Set(),
+			),
+		).toBe("red");
 	});
 });

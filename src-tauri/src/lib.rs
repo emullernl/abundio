@@ -1,3 +1,4 @@
+pub mod agent_hooks;
 pub mod agent_registry;
 pub mod commands;
 pub mod config;
@@ -8,6 +9,7 @@ pub mod file_explorer;
 pub mod file_watcher;
 pub mod gh_commands;
 pub mod git_commands;
+pub mod hook_server;
 pub mod migrations;
 pub mod process_monitor;
 pub mod pty_manager;
@@ -164,6 +166,17 @@ pub fn run() {
             // Initialize search manager
             app.manage(search::SearchManager::new());
 
+            // Initialize the agent hook server (loopback HTTP receiver for
+            // Agent lifecycle hooks). Non-fatal if it fails to bind.
+            match hook_server::HookServer::start(app.handle().clone()) {
+                Ok(server) => {
+                    app.manage(server);
+                }
+                Err(e) => {
+                    eprintln!("[abundio] agent hook server failed to start: {e}");
+                }
+            }
+
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -220,6 +233,7 @@ pub fn run() {
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
             agent_registry::list_installed_agent_commands,
+            commands::agent_hooks_provision,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -46,6 +46,19 @@ function containsPane(node: PaneNode, paneId: string): boolean {
 	return containsPane(node.first, paneId) || containsPane(node.second, paneId);
 }
 
+/**
+ * True when a pane is on screen — i.e. it lives in the active tab of the
+ * active workspace. Does not consider window focus (callers gate on that
+ * separately). Used to decide whether a "waiting" agent needs a notification.
+ */
+export function isPaneVisible(paneId: string): boolean {
+	const loc = findPaneLocation(paneId);
+	if (!loc) return false;
+	const ws = useWorkspaceStore.getState();
+	if (ws.activeWorkspaceId !== loc.workspaceId) return false;
+	return ws.getActiveTab()?.id === loc.tabId;
+}
+
 function isNotificationExtra(value: unknown): value is NotificationExtra {
 	if (typeof value !== "object" || value === null) return false;
 	const obj = value as Record<string, unknown>;
