@@ -68,6 +68,13 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 // Qwen Code is a Gemini CLI fork — identical hook events.
 HOOK_EVENT_MAP.qwen = HOOK_EVENT_MAP.gemini;
 
+// Copilot tools whose preToolUse IS the act of blocking on the user: running
+// the tool presents a plan / question and waits for an answer. They must stay
+// "waiting" rather than letting the default preToolUse → active pull the dot
+// back. Copilot emits no permissionRequest for these — preToolUse is the only
+// signal — so the tool name is the discriminator.
+const COPILOT_WAITING_TOOLS = new Set(["exit_plan_mode", "ask_user"]);
+
 /**
  * Resolve an Agent hook event to a status transition, or `null` when the
  * event is not one we drive status from.
@@ -81,13 +88,15 @@ export function mapHookEvent(
 	toolName?: string,
 ): HookTransition | null {
 	// Copilot's preToolUse normally pulls the dot back to "active" once a tool
-	// clears the permission gate. exit_plan_mode is the exception: running it
-	// IS presenting the plan and blocking on the user's review decision, so it
-	// must stay "waiting" until they answer (a keystroke then clears it).
+	// clears the permission gate. The exceptions are tools whose execution IS a
+	// prompt blocking on the user (exit_plan_mode's plan review, ask_user's
+	// multiple-choice question) — those stay "waiting" until the user answers
+	// (a keystroke then clears it).
 	if (
 		agentId === "copilot" &&
 		eventName === "preToolUse" &&
-		toolName === "exit_plan_mode"
+		toolName !== undefined &&
+		COPILOT_WAITING_TOOLS.has(toolName)
 	) {
 		return "waiting";
 	}

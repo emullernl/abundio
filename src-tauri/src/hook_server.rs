@@ -80,7 +80,14 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     // Always answer the relay so it can exit cleanly.
     let _ = request.respond(tiny_http::Response::from_string("{}"));
 
-    eprintln!("[abundio:hook] received agent={agent} event={event} pty={pty}");
+    // `toolName` (when the payload carries it) disambiguates tool-scoped events
+    // like Copilot's preToolUse — the frontend uses it to special-case tools
+    // that block on the user (exit_plan_mode, multiple-choice questions).
+    let tool = serde_json::from_str::<serde_json::Value>(&payload)
+        .ok()
+        .and_then(|v| v.get("toolName")?.as_str().map(str::to_owned))
+        .unwrap_or_default();
+    eprintln!("[abundio:hook] received agent={agent} event={event} tool={tool} pty={pty}");
 
     if pty.is_empty() || event.is_empty() {
         eprintln!("[abundio:hook] dropped — empty pty or event");
