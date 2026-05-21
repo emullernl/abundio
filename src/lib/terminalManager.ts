@@ -846,15 +846,22 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onHook(currentPtyId, (hookEvent) => {
-				const transition = mapHookEvent(hookEvent.agent, hookEvent.event);
-				// Temporary: log every incoming hook event for verification.
-				console.log("[abundio:hook]", {
-					pty: currentPtyId,
-					agent: hookEvent.agent,
-					event: hookEvent.event,
-					transition: transition ?? "(unmapped)",
-					payload: hookEvent.payload,
-				});
+				// The payload carries `toolName` on tool-scoped events; it lets
+				// mapHookEvent special-case tools like exit_plan_mode.
+				let toolName: string | undefined;
+				try {
+					const parsed = JSON.parse(hookEvent.payload);
+					if (typeof parsed?.toolName === "string") {
+						toolName = parsed.toolName;
+					}
+				} catch {
+					// payload is not JSON — leave toolName undefined
+				}
+				const transition = mapHookEvent(
+					hookEvent.agent,
+					hookEvent.event,
+					toolName,
+				);
 				if (!transition) return;
 				const actStore = usePtyActivityStore.getState();
 				// A hook event proves an agent runs in this PTY — adopt agent mode

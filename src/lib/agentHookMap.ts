@@ -65,10 +65,25 @@ HOOK_EVENT_MAP.qwen = HOOK_EVENT_MAP.gemini;
 /**
  * Resolve an Agent hook event to a status transition, or `null` when the
  * event is not one we drive status from.
+ *
+ * `toolName` (from the hook payload, when present) lets a specific tool
+ * override the event's default transition — see the exit_plan_mode case.
  */
 export function mapHookEvent(
 	agentId: string,
 	eventName: string,
+	toolName?: string,
 ): HookTransition | null {
+	// Copilot's preToolUse normally pulls the dot back to "active" once a tool
+	// clears the permission gate. exit_plan_mode is the exception: running it
+	// IS presenting the plan and blocking on the user's review decision, so it
+	// must stay "waiting" until they answer (a keystroke then clears it).
+	if (
+		agentId === "copilot" &&
+		eventName === "preToolUse" &&
+		toolName === "exit_plan_mode"
+	) {
+		return "waiting";
+	}
 	return HOOK_EVENT_MAP[agentId]?.[eventName] ?? null;
 }

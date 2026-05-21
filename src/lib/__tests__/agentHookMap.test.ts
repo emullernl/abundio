@@ -18,6 +18,20 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("copilot", "errorOccurred")).toBe("error");
 	});
 
+	it("keeps Copilot exit_plan_mode in waiting despite preToolUse", () => {
+		// exit_plan_mode blocks on the user's plan-review decision — preToolUse
+		// must NOT flip the dot back to active for this tool.
+		expect(mapHookEvent("copilot", "preToolUse", "exit_plan_mode")).toBe(
+			"waiting",
+		);
+		// Any other tool keeps the default preToolUse → active.
+		expect(mapHookEvent("copilot", "preToolUse", "bash")).toBe("active");
+		// The override is Copilot-specific and event-specific.
+		expect(
+			mapHookEvent("claude", "preToolUse", "exit_plan_mode"),
+		).toBeNull();
+	});
+
 	it("maps Gemini events and shares the map with Qwen", () => {
 		expect(mapHookEvent("gemini", "BeforeAgent")).toBe("active");
 		expect(mapHookEvent("gemini", "AfterAgent")).toBe("ready");
