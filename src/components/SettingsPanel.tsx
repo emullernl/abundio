@@ -988,6 +988,10 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const installedCommands = useAgentRegistryStore((s) => s.installedCommands);
 	const agentHooksEnabled = useSettingsStore((s) => s.agentHooksEnabled);
 	const setAgentHooksEnabled = useSettingsStore((s) => s.setAgentHooksEnabled);
+	const gpuAccelerationEnabled = useSettingsStore(
+		(s) => s.gpuAccelerationEnabled,
+	);
+	const setGpuAcceleration = useSettingsStore((s) => s.setGpuAcceleration);
 
 	const darkThemes = useMemo(
 		() => themeList().filter((t) => t.variant === "dark"),
@@ -1199,6 +1203,45 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 
 						{section === "terminal-font" && (
 							<div className="flex flex-col gap-4 flex-1 min-h-0">
+								<div className="flex-shrink-0">
+									<SectionLabel>GPU Acceleration</SectionLabel>
+									<div
+										className="flex items-center gap-3 rounded-lg"
+										style={{
+											padding: "10px 12px",
+											backgroundColor: "var(--bg-primary)",
+											border: "1px solid var(--border)",
+										}}
+									>
+										<Toggle
+											checked={gpuAccelerationEnabled}
+											onChange={setGpuAcceleration}
+										/>
+										<div className="flex-1 min-w-0">
+											<div
+												style={{
+													fontSize: 13,
+													color: "var(--fg-primary)",
+													lineHeight: 1.3,
+												}}
+											>
+												Render terminals on the GPU
+											</div>
+											<div
+												style={{
+													fontSize: 11,
+													color: "var(--fg-secondary)",
+													marginTop: 2,
+													lineHeight: 1.4,
+												}}
+											>
+												Smoother scrolling and faster paint on heavy output.
+												When many panes are open at once, some fall back to CPU
+												rendering automatically.
+											</div>
+										</div>
+									</div>
+								</div>
 								<div className="flex-shrink-0">
 									<SectionLabel>Scrollback Lines</SectionLabel>
 									<ScrollbackControl

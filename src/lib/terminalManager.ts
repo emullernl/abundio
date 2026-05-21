@@ -69,6 +69,27 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 	}
 }
 
+/** Master switch for GPU rendering, mirrored from the persisted
+ *  `gpuAccelerationEnabled` setting. While false, ensureWebglLoaded is a no-op
+ *  and every terminal uses xterm's DOM renderer. Defaults to true; the settings
+ *  store calls setWebglEnabled(false) on rehydration if the user disabled it. */
+let webglEnabled = true;
+
+/** Flip GPU rendering on/off and reconcile every live terminal: enabling loads
+ *  a WebGL context on each pane, disabling disposes them. Called by the
+ *  settings store when the user toggles GPU acceleration. */
+export function setWebglEnabled(enabled: boolean): void {
+	if (webglEnabled === enabled) return;
+	webglEnabled = enabled;
+	for (const paneId of instances.keys()) {
+		if (enabled) {
+			ensureWebglLoaded(paneId);
+		} else {
+			unloadWebgl(paneId);
+		}
+	}
+}
+
 /** Ensure the WebGL renderer is loaded on a terminal. The store subscription
  *  below is the authoritative gate that decides which panes get WebGL; this
  *  function trusts its caller and just no-ops if the addon is already present
@@ -76,6 +97,7 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
  *  silently for a 0×0 / offscreen container — projectInto retries once the
  *  container is sized. */
 export function ensureWebglLoaded(paneId: string): void {
+	if (!webglEnabled) return;
 	const managed = instances.get(paneId);
 	if (!managed || managed.webglAddon) return;
 	tryLoadWebgl(managed);

@@ -8,6 +8,7 @@ import {
 	setAllTerminalsScrollback,
 	setAllTerminalsTheme,
 	setActivityByteThreshold as setTerminalActivityByteThreshold,
+	setWebglEnabled,
 } from "../lib/terminalManager";
 import { applyTheme, getTheme } from "../lib/themes";
 import type { CodingAgent } from "../lib/types";
@@ -33,6 +34,7 @@ interface SettingsState {
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
 	agentHooksEnabled: boolean;
+	gpuAccelerationEnabled: boolean;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -60,6 +62,7 @@ interface SettingsState {
 	toggleEditorWordWrap: () => void;
 	toggleMarkdownPreviewAutoOpen: () => void;
 	setAgentHooksEnabled: (enabled: boolean) => void;
+	setGpuAcceleration: (enabled: boolean) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -87,6 +90,7 @@ const PERSISTED_DEFAULTS: {
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
 	agentHooksEnabled: boolean;
+	gpuAccelerationEnabled: boolean;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -107,6 +111,7 @@ const PERSISTED_DEFAULTS: {
 		editorWordWrap: true,
 		markdownPreviewAutoOpen: true,
 		agentHooksEnabled: false,
+		gpuAccelerationEnabled: true,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -182,6 +187,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.agentHooksEnabled === "boolean"
 					? s.agentHooksEnabled
 					: defaults.agentHooksEnabled,
+			gpuAccelerationEnabled:
+				typeof s.gpuAccelerationEnabled === "boolean"
+					? s.gpuAccelerationEnabled
+					: defaults.gpuAccelerationEnabled,
 		};
 	} catch {
 		return defaults;
@@ -211,6 +220,7 @@ export const useSettingsStore = create<SettingsState>()(
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
 			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
+			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -296,6 +306,10 @@ export const useSettingsStore = create<SettingsState>()(
 				agentHooks.provision(agentHooksEnabled).catch(() => {});
 				set({ agentHooksEnabled });
 			},
+			setGpuAcceleration: (gpuAccelerationEnabled) => {
+				setWebglEnabled(gpuAccelerationEnabled);
+				set({ gpuAccelerationEnabled });
+			},
 		}),
 		{
 			name: "abundio-settings",
@@ -327,6 +341,7 @@ export const useSettingsStore = create<SettingsState>()(
 				editorWordWrap: state.editorWordWrap,
 				markdownPreviewAutoOpen: state.markdownPreviewAutoOpen,
 				agentHooksEnabled: state.agentHooksEnabled,
+				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
@@ -360,6 +375,11 @@ export const useSettingsStore = create<SettingsState>()(
 				// (also refreshes the relay scripts after an app update).
 				if (state?.agentHooksEnabled) {
 					agentHooks.provision(true).catch(() => {});
+				}
+				// The module flag in terminalManager defaults to true — only
+				// push a change when the user has disabled GPU acceleration.
+				if (state?.gpuAccelerationEnabled === false) {
+					setWebglEnabled(false);
 				}
 			},
 		},
