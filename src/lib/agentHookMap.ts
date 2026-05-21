@@ -54,6 +54,11 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		"message.part.delta": "active",
 		"permission.replied": "active",
 		"permission.asked": "waiting",
+		// OpenCode raises a separate `question.*` event when the agent asks the
+		// user a free-form question (distinct from a tool-permission gate).
+		// Both block on the user, so they mirror the `permission.*` transitions.
+		"question.replied": "active",
+		"question.asked": "waiting",
 		"session.idle": "ready",
 		"session.error": "error",
 		"session.deleted": "clear",

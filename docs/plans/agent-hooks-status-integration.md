@@ -23,7 +23,7 @@ See `CONTEXT.md` for the canonical terms **Agent hook** and **Waiting**, and
 | Copilot CLI | `userPromptSubmitted` | `permissionRequest` | `agentStop` | `errorOccurred` |
 | Gemini / Qwen | `BeforeAgent` | `Notification` (permission matcher) | `AfterAgent` | *(none)* |
 | Codex CLI | `UserPromptSubmit` | `PermissionRequest` | `Stop` | *(none)* |
-| OpenCode | `message.updated` | `permission.asked` / `permission.replied` | `session.idle` | `session.error` |
+| OpenCode | `message.updated` | `permission.asked` / `question.asked` | `session.idle` | `session.error` |
 | Aider | — out of scope (no hook system) — | | | |
 
 ## Scope
@@ -143,8 +143,8 @@ gated by a per-launch random token passed as the `ABUNDIO_HOOK_TOKEN` env var.
 
 | transition | Claude | Copilot | Gemini/Qwen | Codex | OpenCode |
 |---|---|---|---|---|---|
-| active | UserPromptSubmit | userPromptSubmitted, preToolUse | BeforeAgent | UserPromptSubmit | message.part.delta, permission.replied |
-| waiting | PermissionRequest | permissionRequest | Notification (perm matcher) | PermissionRequest | permission.asked |
+| active | UserPromptSubmit | userPromptSubmitted, preToolUse | BeforeAgent | UserPromptSubmit | message.part.delta, permission.replied, question.replied |
+| waiting | PermissionRequest | permissionRequest | Notification (perm matcher) | PermissionRequest | permission.asked, question.asked |
 | ready | Stop | agentStop | AfterAgent | Stop | session.idle |
 | error | StopFailure | errorOccurred | — | — | session.error |
 | clear | SessionEnd | sessionEnd | SessionEnd | — | session.deleted |

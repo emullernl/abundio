@@ -50,6 +50,8 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("opencode", "message.part.delta")).toBe("active");
 		expect(mapHookEvent("opencode", "permission.asked")).toBe("waiting");
 		expect(mapHookEvent("opencode", "permission.replied")).toBe("active");
+		expect(mapHookEvent("opencode", "question.asked")).toBe("waiting");
+		expect(mapHookEvent("opencode", "question.replied")).toBe("active");
 		expect(mapHookEvent("opencode", "session.idle")).toBe("ready");
 		expect(mapHookEvent("opencode", "session.error")).toBe("error");
 		expect(mapHookEvent("opencode", "session.deleted")).toBe("clear");
