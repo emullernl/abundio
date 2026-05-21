@@ -669,7 +669,17 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			// xterm also delivers via onData) leave it waiting. Agent-mode
 			// panes only — terminal-mode panes keep the normal behaviour.
 			if (!isReportSequence(data)) {
-				actStore.applyHookEvent(currentPtyId, "active");
+				if (data === "\x1b") {
+					// Bare ESC dismisses the prompt without a choice — the
+					// agent goes back to idle, not busy.
+					actStore.clearWaiting(currentPtyId);
+				} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
+					// Enter or a 0-9 choice answers the prompt — the agent
+					// resumes working, so show it as busy right away. Any
+					// other key (typing a rejection reason, navigation, etc.)
+					// leaves the dot waiting.
+					actStore.applyHookEvent(currentPtyId, "active");
+				}
 			}
 		} else {
 			actStore.clearError(currentPtyId);
@@ -846,6 +856,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onHook(currentPtyId, (hookEvent) => {
+				console.debug(
+					"[abundio:hook] frontend received",
+					hookEvent.agent,
+					hookEvent.event,
+					"pty=",
+					currentPtyId,
+				);
 				// The payload carries `toolName` on tool-scoped events; it lets
 				// mapHookEvent special-case tools like exit_plan_mode.
 				let toolName: string | undefined;
@@ -862,7 +879,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					hookEvent.event,
 					toolName,
 				);
-				if (!transition) return;
+				if (!transition) {
+					console.debug(
+						"[abundio:hook] no status mapping for",
+						hookEvent.agent,
+						hookEvent.event,
+					);
+					return;
+				}
 				const actStore = usePtyActivityStore.getState();
 				// A hook event proves an agent runs in this PTY — adopt agent mode
 				// even if title-based detection missed it.

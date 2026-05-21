@@ -82,6 +82,7 @@ interface PtyActivityState_Store {
 		ptyId: string,
 		transition: "active" | "waiting" | "ready" | "error",
 	) => void;
+	clearWaiting: (ptyId: string) => void;
 	setAgentPty: (ptyId: string, agentId?: string) => void;
 	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
@@ -228,6 +229,23 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 								? Date.now()
 								: s.activities[ptyId].lastOutputAt,
 					},
+				},
+			}));
+		},
+
+		clearWaiting: (ptyId) => {
+			// A keystroke answering an agent's permission prompt clears the
+			// "waiting" dot. It goes to "idle", not "active": at this moment
+			// the user is typing, not the agent working — showing amber would
+			// lie. The next hook (Stop → ready, or another PermissionRequest)
+			// drives the dot from here; agent output flips it back via the
+			// idle scanner / recordOutput if work resumes before then.
+			const entry = get().activities[ptyId];
+			if (!entry || entry.state !== "waiting") return;
+			set((s) => ({
+				activities: {
+					...s.activities,
+					[ptyId]: { ...s.activities[ptyId], state: "idle" },
 				},
 			}));
 		},

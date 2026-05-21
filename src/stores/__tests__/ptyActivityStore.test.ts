@@ -750,6 +750,29 @@ describe("hook-driven status", () => {
 		);
 	});
 
+	it("clearWaiting drops a waiting agent to idle, not active", () => {
+		const { initPty, setAgentPty, applyHookEvent, clearWaiting } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		clearWaiting("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("clearWaiting is a no-op when the pane is not waiting", () => {
+		const { initPty, recordOutput, clearWaiting } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		clearWaiting("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+	});
+
 	it("applyHookEvent is a no-op for an unknown ptyId", () => {
 		usePtyActivityStore.getState().applyHookEvent("ghost", "ready");
 		expect(usePtyActivityStore.getState().activities.ghost).toBeUndefined();

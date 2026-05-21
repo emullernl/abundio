@@ -63,6 +63,7 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
         .iter()
         .any(|h| h.field.equiv("X-Abundio-Token") && h.value.as_str() == token);
     if !authorized {
+        eprintln!("[abundio:hook] 403 — rejected request with bad/missing token");
         let _ = request.respond(tiny_http::Response::empty(403));
         return;
     }
@@ -79,7 +80,10 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     // Always answer the relay so it can exit cleanly.
     let _ = request.respond(tiny_http::Response::from_string("{}"));
 
+    eprintln!("[abundio:hook] received agent={agent} event={event} pty={pty}");
+
     if pty.is_empty() || event.is_empty() {
+        eprintln!("[abundio:hook] dropped — empty pty or event");
         return;
     }
     let _ = app.emit(

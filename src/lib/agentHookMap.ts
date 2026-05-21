@@ -26,8 +26,9 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		//
 		// Other agents deliberately OMIT this pairing: Claude/Codex
 		// PermissionRequest and Gemini Notification fire only on a genuine
-		// prompt, and the user's keystroke answering it clears waiting →
-		// active. Don't add a preToolUse mapping to them.
+		// prompt, and the user's keystroke answering it clears the waiting
+		// dot (ESC → idle, Enter/0-9 → active). Don't add a preToolUse
+		// mapping to them.
 		permissionRequest: "waiting",
 		preToolUse: "active",
 		agentStop: "ready",
