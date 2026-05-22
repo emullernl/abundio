@@ -18,6 +18,22 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("copilot", "errorOccurred")).toBe("error");
 	});
 
+	it("maps Copilot postToolUse/postToolUseFailure back to active", () => {
+		// A tool that has run proves its permissionRequest was granted, so the
+		// dot must leave "waiting". A non-zero exit (postToolUseFailure) is
+		// normal agent flow — active, not error.
+		expect(mapHookEvent("copilot", "postToolUse")).toBe("active");
+		expect(mapHookEvent("copilot", "postToolUseFailure")).toBe("active");
+		// Tool-scoped: a blocking tool's postToolUse still resumes work — the
+		// user has answered the plan review / question by the time it fires.
+		expect(mapHookEvent("copilot", "postToolUse", "bash")).toBe("active");
+		expect(mapHookEvent("copilot", "postToolUse", "exit_plan_mode")).toBe(
+			"active",
+		);
+		// Copilot-specific — not leaked to other agents.
+		expect(mapHookEvent("claude", "postToolUse")).toBeNull();
+	});
+
 	it("keeps Copilot blocking tools in waiting despite preToolUse", () => {
 		// exit_plan_mode blocks on the user's plan-review decision and ask_user
 		// blocks on a multiple-choice answer — preToolUse must NOT flip the dot

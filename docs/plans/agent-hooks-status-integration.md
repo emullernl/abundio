@@ -95,6 +95,15 @@ gated by a per-launch random token passed as the `ABUNDIO_HOOK_TOKEN` env var.
     Keep it for Gemini/Qwen — their only permission signal — wired with a matcher scoped to the
     tool-permission notification type.
 11. **Aider / custom Agents** — out of scope, heuristic fallback (see Scope).
+12. **Copilot `postToolUse` clears an auto-approved `permissionRequest`.** Copilot fires
+    `permissionRequest` for every tool with no approval/mode field (GitHub hooks reference),
+    so an auto-approved tool is indistinguishable from a genuine prompt at request time.
+    Abundio provisions `postToolUse` + `postToolUseFailure` (both → `active`): the tool having
+    run proves permission was granted; a genuinely blocked tool never fires them and stays
+    `waiting`. `postToolUseFailure` (non-zero exit, e.g. `grep` no-match) is `active`, not
+    `error` — a failed tool is normal agent flow. Residual: the dot shows `waiting` during an
+    auto-approved tool's own execution — accepted over a debounce timer or the `notification`
+    hook.
 
 ## Implementation
 
@@ -143,7 +152,7 @@ gated by a per-launch random token passed as the `ABUNDIO_HOOK_TOKEN` env var.
 
 | transition | Claude | Copilot | Gemini/Qwen | Codex | OpenCode |
 |---|---|---|---|---|---|
-| active | UserPromptSubmit | userPromptSubmitted, preToolUse | BeforeAgent | UserPromptSubmit | message.part.delta, permission.replied, question.replied |
+| active | UserPromptSubmit | userPromptSubmitted, preToolUse, postToolUse, postToolUseFailure | BeforeAgent | UserPromptSubmit | message.part.delta, permission.replied, question.replied |
 | waiting | PermissionRequest | permissionRequest | Notification (perm matcher) | PermissionRequest | permission.asked, question.asked |
 | ready | Stop | agentStop | AfterAgent | Stop | session.idle |
 | error | StopFailure | errorOccurred | — | — | session.error |
@@ -177,8 +186,11 @@ gated by a per-launch random token passed as the `ABUNDIO_HOOK_TOKEN` env var.
   parse-merge-atomic-write, abort-on-unparseable, clean removal (ADR-0003, Decision 7).
 - Gemini/Codex lack a clean error event — those Agents get partial coverage; the heuristic
   backstop covers the gaps.
-- Copilot's `permissionRequest` fires for *every* tool (before the permission service), so an
-  auto-approved tool briefly flashes the sky-blue dot until `preToolUse` pulls it back to
-  active. Accepted — a sub-100ms flicker, no timer.
+- Copilot's `permissionRequest` fires for *every* tool and carries no approval/mode field
+  (GitHub hooks reference), so an auto-approved tool cannot be told from a genuine prompt at
+  request time. `postToolUse` / `postToolUseFailure` (the tool actually ran → permission was
+  granted) pull the dot back to active; a genuinely blocked tool never reaches them and stays
+  `waiting`. Accepted residual: the dot is `waiting` for the duration of an auto-approved
+  tool's own execution — see Decision 12.
 - Gemini runs hooks synchronously in its loop — the relay POSTs fire-and-forget with a tight
   timeout so it never adds latency.

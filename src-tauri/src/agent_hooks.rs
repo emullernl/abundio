@@ -287,6 +287,12 @@ fn copilot_config(relay: &RelayPaths) -> Result<String, AbundioError> {
         "userPromptSubmitted",
         "permissionRequest",
         "preToolUse",
+        // postToolUse / postToolUseFailure fire once a tool has actually run —
+        // proof the permission was granted (auto or by the user). They pull
+        // the dot back from "waiting" to "active"; a genuinely blocked tool
+        // never reaches them. See Decision 12 in the plan doc.
+        "postToolUse",
+        "postToolUseFailure",
         "agentStop",
         "errorOccurred",
         "sessionEnd",

@@ -19,18 +19,24 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 	},
 	copilot: {
 		userPromptSubmitted: "active",
-		// Copilot's permissionRequest fires before the permission service for
-		// EVERY tool — not just user-prompted ones — so it needs preToolUse to
-		// pull the dot back to active once a tool is cleared to run. An auto-
-		// approved tool briefly flashes sky-blue between the two (accepted).
+		// Copilot fires permissionRequest for EVERY tool with no approval/mode
+		// field, so an auto-approved tool can't be told from a genuine prompt
+		// at request time. postToolUse / postToolUseFailure (the tool actually
+		// ran → permission was granted) pull the dot back to active; a
+		// genuinely blocked tool never fires them and stays "waiting". The dot
+		// shows "waiting" for the duration of an auto-approved tool's own
+		// execution — accepted (Decision 12, agent-hooks-status-integration).
+		// postToolUseFailure (non-zero exit, e.g. grep no-match) is "active",
+		// not "error": a failed tool is normal agent flow.
 		//
-		// Other agents deliberately OMIT this pairing: Claude/Codex
-		// PermissionRequest and Gemini Notification fire only on a genuine
-		// prompt, and the user's keystroke answering it clears the waiting
-		// dot (ESC → idle, Enter/0-9 → active). Don't add a preToolUse
-		// mapping to them.
+		// Other agents deliberately OMIT this: Claude/Codex PermissionRequest
+		// and Gemini Notification fire only on a genuine prompt, cleared by the
+		// user's keystroke (ESC → idle, Enter/0-9 → active). Don't add a
+		// preToolUse/postToolUse mapping to them.
 		permissionRequest: "waiting",
 		preToolUse: "active",
+		postToolUse: "active",
+		postToolUseFailure: "active",
 		agentStop: "ready",
 		errorOccurred: "error",
 		sessionEnd: "clear",
