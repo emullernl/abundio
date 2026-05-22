@@ -124,6 +124,10 @@ describe("settingsStore", () => {
 		expect(useSettingsStore.getState().gpuAccelerationEnabled).toBe(true);
 	});
 
+	it("agentHooksEnabled defaults to true", () => {
+		expect(useSettingsStore.getState().agentHooksEnabled).toBe(true);
+	});
+
 	it("setGpuAcceleration updates store and reconciles terminals", () => {
 		useSettingsStore.getState().setGpuAcceleration(false);
 		expect(useSettingsStore.getState().gpuAccelerationEnabled).toBe(false);

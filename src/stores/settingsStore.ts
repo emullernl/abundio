@@ -110,7 +110,7 @@ const PERSISTED_DEFAULTS: {
 		lastOpenedDevEnvId: null as string | null,
 		editorWordWrap: true,
 		markdownPreviewAutoOpen: true,
-		agentHooksEnabled: false,
+		agentHooksEnabled: true,
 		gpuAccelerationEnabled: true,
 	};
 	try {
@@ -313,14 +313,20 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 1,
+			version: 2,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
-				if (version < 1 && persistedState.activityByteThreshold === 512) {
-					return { ...persistedState, activityByteThreshold: 1024 };
+				let state = persistedState;
+				if (version < 1 && state.activityByteThreshold === 512) {
+					state = { ...state, activityByteThreshold: 1024 };
 				}
-				return persistedState;
+				// v2: agent status hooks became on-by-default. Existing users who
+				// only ever saw the beta-era off default are flipped on.
+				if (version < 2) {
+					state = { ...state, agentHooksEnabled: true };
+				}
+				return state;
 			},
 			partialize: (state) => ({
 				terminalFontFamily: state.terminalFontFamily,

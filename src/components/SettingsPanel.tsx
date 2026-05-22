@@ -1353,7 +1353,7 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 													lineHeight: 1.3,
 												}}
 											>
-												Agent status hooks (beta)
+												Agent status hooks
 											</div>
 											<div
 												style={{
