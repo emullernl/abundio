@@ -35,6 +35,7 @@ interface SettingsState {
 	markdownPreviewAutoOpen: boolean;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
+	shellActivityStatus: boolean;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -63,6 +64,7 @@ interface SettingsState {
 	toggleMarkdownPreviewAutoOpen: () => void;
 	setAgentHooksEnabled: (enabled: boolean) => void;
 	setGpuAcceleration: (enabled: boolean) => void;
+	setShellActivityStatus: (enabled: boolean) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -91,6 +93,7 @@ const PERSISTED_DEFAULTS: {
 	markdownPreviewAutoOpen: boolean;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
+	shellActivityStatus: boolean;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -112,6 +115,7 @@ const PERSISTED_DEFAULTS: {
 		markdownPreviewAutoOpen: true,
 		agentHooksEnabled: true,
 		gpuAccelerationEnabled: true,
+		shellActivityStatus: false,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -191,6 +195,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.gpuAccelerationEnabled === "boolean"
 					? s.gpuAccelerationEnabled
 					: defaults.gpuAccelerationEnabled,
+			shellActivityStatus:
+				typeof s.shellActivityStatus === "boolean"
+					? s.shellActivityStatus
+					: defaults.shellActivityStatus,
 		};
 	} catch {
 		return defaults;
@@ -221,6 +229,7 @@ export const useSettingsStore = create<SettingsState>()(
 			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
+			shellActivityStatus: PERSISTED_DEFAULTS.shellActivityStatus,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -310,6 +319,8 @@ export const useSettingsStore = create<SettingsState>()(
 				setWebglEnabled(gpuAccelerationEnabled);
 				set({ gpuAccelerationEnabled });
 			},
+			setShellActivityStatus: (shellActivityStatus) =>
+				set({ shellActivityStatus }),
 		}),
 		{
 			name: "abundio-settings",
@@ -348,6 +359,7 @@ export const useSettingsStore = create<SettingsState>()(
 				markdownPreviewAutoOpen: state.markdownPreviewAutoOpen,
 				agentHooksEnabled: state.agentHooksEnabled,
 				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
+				shellActivityStatus: state.shellActivityStatus,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present

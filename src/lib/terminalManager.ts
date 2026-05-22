@@ -14,7 +14,7 @@ import {
 } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { recordThresholdHit } from "./activityGate";
+import { classifyShellExit, recordThresholdHit } from "./activityGate";
 import { mapHookEvent } from "./agentHookMap";
 import { matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
@@ -741,7 +741,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// shellCommandRunning=true for the agent's own command_start.
 						// If that flag stays true, the idle scanner will never
 						// transition active → ready (purple) for the agent.
-						if (!managed.suppressActivity && !nowIsAgent) {
+						if (
+							!managed.suppressActivity &&
+							!nowIsAgent &&
+							useSettingsStore.getState().shellActivityStatus
+						) {
 							setShellCommandRunning(currentPtyId, true);
 							actState.recordOutput(currentPtyId);
 						}
@@ -759,9 +763,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						const wasAgentMode = currentEntry?.detectionMode === "agent";
 						if (!managed.suppressActivity && !wasAgentMode) {
 							setShellCommandRunning(currentPtyId, false);
-							if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
+							const outcome = classifyShellExit(
+								cmd.exitCode,
+								useSettingsStore.getState().shellActivityStatus,
+							);
+							if (outcome === "error") {
 								freshState.recordError(currentPtyId);
-							} else {
+							} else if (outcome === "success") {
 								const isFocused =
 									document.hasFocus() &&
 									useWorkspaceStore.getState().focusedPaneId === paneId;
@@ -825,8 +833,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				const entry = actStore.activities[currentPtyId];
 				if (entry?.detectionMode !== "shell") return;
 				if (activity.type === "commandStarted") {
-					setShellCommandRunning(currentPtyId, true);
-					actStore.recordOutput(currentPtyId);
+					if (useSettingsStore.getState().shellActivityStatus) {
+						setShellCommandRunning(currentPtyId, true);
+						actStore.recordOutput(currentPtyId);
+					}
 				} else if (activity.type === "commandFinished") {
 					setShellCommandRunning(currentPtyId, false);
 					if (entry.state === "active") {
@@ -846,9 +856,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				if (status.type === "exited") {
 					// Set activity state BEFORE setPtyStatus to avoid subscriber race
 					const actStore = usePtyActivityStore.getState();
-					if (status.code !== 0 && status.code !== null) {
+					const outcome = classifyShellExit(
+						status.code,
+						useSettingsStore.getState().shellActivityStatus,
+					);
+					if (outcome === "error") {
 						actStore.recordError(currentPtyId);
-					} else {
+					} else if (outcome === "success") {
 						actStore.recordExitSuccess(currentPtyId);
 					}
 				}
