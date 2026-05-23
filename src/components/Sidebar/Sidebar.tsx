@@ -210,7 +210,7 @@ export function Sidebar({
 	if (sidebarCollapsed) {
 		return (
 			<div
-				className="flex flex-col items-center gap-2"
+				className="flex flex-col h-full"
 				style={{
 					width: 56,
 					paddingTop: titlebarHeight + 8,
@@ -218,26 +218,29 @@ export function Sidebar({
 					borderRight: "1px solid var(--border)",
 				}}
 			>
-				<button
-					type="button"
-					onClick={toggleSidebar}
-					className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
-					style={{ color: "var(--fg-secondary)" }}
-				>
-					<ChevronRight size={14} />
-				</button>
-				<button
-					type="button"
-					onClick={() => {
-						toggleSidebar();
-						setSidebarBottomPanel("search");
+				<div className="flex flex-col items-center flex-shrink-0 pb-2">
+					<button
+						type="button"
+						onClick={toggleSidebar}
+						className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
+						style={{ color: "var(--fg-secondary)" }}
+					>
+						<ChevronRight size={14} />
+					</button>
+				</div>
+				<div
+					className="flex-shrink-0"
+					style={{
+						height: 1,
+						marginLeft: 8,
+						marginRight: 8,
+						backgroundColor: "var(--border)",
+						opacity: 0.6,
 					}}
-					className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
-					style={{ color: "var(--fg-secondary)" }}
-					title="Search in workspace"
-				>
-					<Search size={14} />
-				</button>
+				/>
+				<div className="flex-1 overflow-y-auto pt-1">
+					<WorkspaceList variant="collapsed" />
+				</div>
 			</div>
 		);
 	}
