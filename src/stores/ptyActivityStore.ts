@@ -12,6 +12,7 @@ import {
 	isAppWindowFocused,
 	NOTIFICATION_BLUR_THRESHOLD_MS,
 } from "../lib/windowFocus";
+import { useWorkspaceStore } from "./workspaceStore";
 
 // ── Constants ──
 
@@ -506,9 +507,14 @@ usePtyActivityStore.subscribe((state, prevState) => {
 					: `${label} is ready`;
 
 		const location = paneId ? findPaneLocation(paneId) : null;
+		const workspaceName = location
+			? useWorkspaceStore
+					.getState()
+					.workspaces.find((w) => w.id === location.workspaceId)?.name
+			: undefined;
 		try {
 			sendNotification({
-				title: "Abundio",
+				title: workspaceName ?? "Abundio",
 				body,
 				extra:
 					location && paneId

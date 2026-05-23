@@ -1,6 +1,6 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PaneNode, Tab } from "../../lib/types";
+import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
 import {
 	collectPtyIds,
 	computePtyDotStatus,
@@ -11,6 +11,7 @@ import {
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
+import { useWorkspaceStore } from "../workspaceStore";
 
 vi.mock("@tauri-apps/plugin-notification", () => ({
 	sendNotification: vi.fn(),
@@ -41,8 +42,27 @@ function resetStore() {
 	});
 }
 
+function seedWorkspace(id: string, name: string) {
+	const ws: WorkspaceWithTabs = {
+		id,
+		name,
+		rootFolder: `/tmp/${id}`,
+		envJson: "{}",
+		agentPresetsJson: "{}",
+		fileTabsJson: "[]",
+		baseBranch: null,
+		lastBranch: null,
+		position: 0,
+		createdAt: 0,
+		updatedAt: 0,
+		tabs: [],
+	};
+	useWorkspaceStore.setState({ workspaces: [ws] });
+}
+
 beforeEach(() => {
 	resetStore();
+	useWorkspaceStore.setState({ workspaces: [] });
 });
 
 describe("store actions", () => {
@@ -538,6 +558,7 @@ describe("notifications on state transitions", () => {
 
 	it("sends notification when transitioning to error while app is unfocused", () => {
 		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		seedWorkspace("ws-1", "my-project");
 		const { initPty, recordOutput, recordError, registerPane, setTitle } =
 			usePtyActivityStore.getState();
 		initPty("pty-1");
@@ -549,7 +570,7 @@ describe("notifications on state transitions", () => {
 		recordError("pty-1");
 
 		expect(mockSendNotification).toHaveBeenCalledWith({
-			title: "Abundio",
+			title: "my-project",
 			body: "bash encountered an error",
 			extra: {
 				type: "pty",
@@ -563,6 +584,7 @@ describe("notifications on state transitions", () => {
 
 	it("sends notification when transitioning to ready while app is unfocused", () => {
 		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		seedWorkspace("ws-1", "my-project");
 		const { initPty, recordOutput, recordExitSuccess, registerPane, setTitle } =
 			usePtyActivityStore.getState();
 		initPty("pty-1");
@@ -574,7 +596,7 @@ describe("notifications on state transitions", () => {
 		recordExitSuccess("pty-1");
 
 		expect(mockSendNotification).toHaveBeenCalledWith({
-			title: "Abundio",
+			title: "my-project",
 			body: "zsh is ready",
 			extra: {
 				type: "pty",
@@ -583,6 +605,25 @@ describe("notifications on state transitions", () => {
 				tabId: "tab-1",
 			},
 		});
+		vi.restoreAllMocks();
+	});
+
+	it("falls back to 'Abundio' when the originating workspace cannot be resolved", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		// workspaces store is empty — findPaneLocation returns ws-1 but lookup misses
+		const { initPty, recordOutput, recordError, registerPane, setTitle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		registerPane("pane-1", "pty-1");
+		setTitle("pane-1", "bash");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordError("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith(
+			expect.objectContaining({ title: "Abundio" }),
+		);
 		vi.restoreAllMocks();
 	});
 
