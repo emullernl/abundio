@@ -238,7 +238,7 @@ export function Sidebar({
 						opacity: 0.6,
 					}}
 				/>
-				<div className="flex-1 overflow-y-auto pt-1">
+				<div className="flex-1 overflow-y-auto overflow-x-hidden pt-1">
 					<WorkspaceList variant="collapsed" />
 				</div>
 			</div>
