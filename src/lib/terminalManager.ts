@@ -16,7 +16,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
 import { mapHookEvent } from "./agentHookMap";
-import { matchTitleToAgent } from "./agents";
+import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
 import { takePendingAgent } from "./pendingAgentRegistry";
@@ -259,6 +259,20 @@ const backgroundTrackers = new Map<
 	string,
 	{ unlistenOutput: () => void; unlistenStatus: () => void }
 >();
+
+/** Window in which two ESC presses count as a double-ESC cancel for agents
+ *  that don't interrupt on a single press (copilot, aider, codex, opencode).
+ *  Sized to mirror the rhythm of a deliberate ESC-ESC tap — long enough not
+ *  to demand a sprint, short enough that it can't be triggered by accident
+ *  during a normal editing session. */
+const ESC_DOUBLE_PRESS_WINDOW_MS = 750;
+
+/** Per-PTY timestamp of the most recent ESC press while the agent was active.
+ *  Stored outside Zustand because it's purely transient input-rhythm state;
+ *  the dot doesn't need to re-render when this changes. Cleared on cancel,
+ *  on any non-ESC input (so "ESC, x, ESC" doesn't accidentally fire), and
+ *  on PTY removal. */
+const escPressTimestamps = new Map<string, number>();
 
 let ACTIVITY_BYTE_THRESHOLD = 1024;
 
@@ -681,6 +695,30 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					actStore.applyHookEvent(currentPtyId, "active");
 				}
 			}
+		} else if (entry?.state === "active" && entry.detectionMode === "agent") {
+			// ESC is the user's cancel keystroke for an in-flight agent task.
+			// Claude/Gemini/Qwen interrupt on a single press; the others
+			// (Copilot, Aider, Codex, OpenCode) require a deliberate double-ESC
+			// within ESC_DOUBLE_PRESS_WINDOW_MS. Any other key resets the
+			// double-ESC tracker so "ESC, x, ESC" can't fire it by accident.
+			// Multi-byte ESC-prefixed sequences (arrows, focus reports) are
+			// longer than one byte and naturally bypass this branch.
+			if (data === "\x1b") {
+				const agentId = actStore.detectedAgentIds[currentPtyId];
+				const required = escPressesToCancelAgent(agentId);
+				const now = Date.now();
+				const lastEsc = escPressTimestamps.get(currentPtyId);
+				const isFollowUp =
+					lastEsc !== undefined && now - lastEsc <= ESC_DOUBLE_PRESS_WINDOW_MS;
+				if (required === 1 || isFollowUp) {
+					actStore.clearActive(currentPtyId);
+					escPressTimestamps.delete(currentPtyId);
+				} else {
+					escPressTimestamps.set(currentPtyId, now);
+				}
+			} else {
+				escPressTimestamps.delete(currentPtyId);
+			}
 		} else {
 			actStore.clearError(currentPtyId);
 			actStore.markIdle(currentPtyId);
@@ -998,6 +1036,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenStatus();
 		unlistenHook();
 		term.element?.removeEventListener("mousedown", onTermClick);
+		escPressTimestamps.delete(currentPtyId);
 		if (managed.writeRafId !== null) {
 			cancelAnimationFrame(managed.writeRafId);
 			flushWrites(managed);

@@ -773,6 +773,43 @@ describe("hook-driven status", () => {
 		);
 	});
 
+	it("clearActive transitions an active agent to idle", () => {
+		const { initPty, setAgentPty, applyHookEvent, clearActive } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		applyHookEvent("pty-1", "active");
+		clearActive("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("clearActive is a no-op for a shell-mode active PTY", () => {
+		const { initPty, recordOutput, clearActive } =
+			usePtyActivityStore.getState();
+		initPty("pty-1"); // defaults to detectionMode: "shell"
+		recordOutput("pty-1");
+		clearActive("pty-1");
+		// Shell-mode active state must not be cancellable by the agent cancel
+		// path — only markIdle (focus/click) clears it.
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+	});
+
+	it("clearActive is a no-op when the agent is not active", () => {
+		const { initPty, setAgentPty, applyHookEvent, clearActive } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		clearActive("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"waiting",
+		);
+	});
+
 	it("applyHookEvent is a no-op for an unknown ptyId", () => {
 		usePtyActivityStore.getState().applyHookEvent("ghost", "ready");
 		expect(usePtyActivityStore.getState().activities.ghost).toBeUndefined();

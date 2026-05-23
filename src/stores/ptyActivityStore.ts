@@ -83,6 +83,7 @@ interface PtyActivityState_Store {
 		transition: "active" | "waiting" | "ready" | "error",
 	) => void;
 	clearWaiting: (ptyId: string) => void;
+	clearActive: (ptyId: string) => void;
 	setAgentPty: (ptyId: string, agentId?: string) => void;
 	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
@@ -242,6 +243,22 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			// idle scanner / recordOutput if work resumes before then.
 			const entry = get().activities[ptyId];
 			if (!entry || entry.state !== "waiting") return;
+			set((s) => ({
+				activities: {
+					...s.activities,
+					[ptyId]: { ...s.activities[ptyId], state: "idle" },
+				},
+			}));
+		},
+
+		clearActive: (ptyId) => {
+			// Counterpart to clearWaiting for the "user pressed ESC to cancel
+			// an in-flight agent task" case. markIdle deliberately refuses to
+			// move an agent's "active" → "idle" (focus/clicks must not lie
+			// about agent progress); this is the explicit cancel path.
+			const entry = get().activities[ptyId];
+			if (!entry || entry.state !== "active" || entry.detectionMode !== "agent")
+				return;
 			set((s) => ({
 				activities: {
 					...s.activities,

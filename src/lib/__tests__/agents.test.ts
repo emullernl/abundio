@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	BUILTIN_AGENTS,
+	escPressesToCancelAgent,
 	getEnabledAgentCommands,
 	matchProcessToAgent,
 	matchTitleToAgent,
@@ -25,6 +26,26 @@ describe("BUILTIN_AGENTS", () => {
 			expect(agent.enabled).toBe(true);
 			expect(agent.builtin).toBe(true);
 		}
+	});
+});
+
+describe("escPressesToCancelAgent", () => {
+	it("returns 1 for agents that interrupt on a single ESC", () => {
+		expect(escPressesToCancelAgent("claude")).toBe(1);
+		expect(escPressesToCancelAgent("gemini")).toBe(1);
+		expect(escPressesToCancelAgent("qwen")).toBe(1);
+	});
+
+	it("returns 2 for agents that require double-ESC", () => {
+		expect(escPressesToCancelAgent("copilot")).toBe(2);
+		expect(escPressesToCancelAgent("aider")).toBe(2);
+		expect(escPressesToCancelAgent("codex")).toBe(2);
+		expect(escPressesToCancelAgent("opencode")).toBe(2);
+	});
+
+	it("defaults to 2 for unknown or undefined agents", () => {
+		expect(escPressesToCancelAgent(undefined)).toBe(2);
+		expect(escPressesToCancelAgent("some-custom-agent")).toBe(2);
 	});
 });
 
