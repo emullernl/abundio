@@ -340,15 +340,9 @@ body,
 }
 
 /* Agent status icon animations — GPU-composited via transform */
-@keyframes agent-amber-slide {
-	0% {
-		transform: translateX(calc(-100% - 2px));
-	}
-	50% {
-		transform: translateX(100%);
-	}
-	100% {
-		transform: translateX(calc(-100% - 2px));
+@keyframes agent-amber-spin {
+	to {
+		transform: rotate(360deg);
 	}
 }
 

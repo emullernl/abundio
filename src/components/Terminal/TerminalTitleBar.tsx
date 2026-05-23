@@ -157,11 +157,7 @@ export function TerminalTitleBar({
 				{title}
 			</span>
 			<div className="shrink-0" style={{ marginLeft: 8, marginRight: 12 }}>
-				<AgentStatusIcon
-					status={dotStatus}
-					size={12}
-					bgColor="var(--bg-primary)"
-				/>
+				<AgentStatusIcon status={dotStatus} size={12} />
 			</div>
 			<TitleBarButton
 				icon={SquareSplitVertical}

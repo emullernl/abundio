@@ -126,10 +126,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			}}
 		>
 			<div style={{ marginTop: 3 }}>
-				<AgentStatusIcon
-					status={dotStatus}
-					bgColor={isActive ? "var(--bg-tertiary)" : "var(--bg-secondary)"}
-				/>
+				<AgentStatusIcon status={dotStatus} />
 			</div>
 			<div className="flex-1 min-w-0">
 				{isRenaming ? (
