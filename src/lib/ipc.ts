@@ -198,6 +198,9 @@ export const fs = {
 	listFiles: (rootPath: string, maxFiles?: number) =>
 		invoke<FileEntry[]>("fs_list_files", { rootPath, maxFiles }),
 
+	indexWorkspaceFiles: (rootPath: string) =>
+		invoke<string[]>("fs_index_workspace_files", { rootPath }),
+
 	readFile: (path: string) => invoke<FileContent>("fs_read_file", { path }),
 
 	writeFile: (path: string, content: string) =>

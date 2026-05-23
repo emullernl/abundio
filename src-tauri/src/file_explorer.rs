@@ -262,6 +262,54 @@ fn list_files_inner(root_path: &str, max_files: usize) -> Result<Vec<FileEntry>,
 	Ok(out)
 }
 
+/// Walk the workspace tree and return every file's absolute path as a flat list,
+/// suitable for building an in-memory index. Mirrors the `file_watcher` ignore
+/// set (skip `node_modules`, `target`, `.git`, `.DS_Store`) but otherwise
+/// includes everything — hidden files like `.env` or `.github/workflows/*.yml`
+/// are returned, unlike `fs_list_files` which honours `.gitignore` and skips
+/// hidden entries. The terminal-file-link feature uses this to decide whether
+/// a path mentioned in a PTY's output should become a clickable link.
+#[tauri::command]
+pub async fn fs_index_workspace_files(
+	root_path: String,
+) -> Result<Vec<String>, AbundioError> {
+	tokio::task::spawn_blocking(move || index_workspace_files_inner(&root_path))
+		.await
+		.map_err(|e| AbundioError::Search(format!("Index task failed: {}", e)))?
+}
+
+fn index_workspace_files_inner(root_path: &str) -> Result<Vec<String>, AbundioError> {
+	let root = Path::new(root_path);
+	let walker = WalkBuilder::new(root)
+		.hidden(false)
+		.git_ignore(false)
+		.git_global(false)
+		.git_exclude(false)
+		.ignore(false)
+		.parents(false)
+		.filter_entry(|entry| {
+			let name = match entry.file_name().to_str() {
+				Some(n) => n,
+				None => return true,
+			};
+			!matches!(name, "node_modules" | "target" | ".git" | ".DS_Store")
+		})
+		.build();
+
+	let mut out = Vec::new();
+	for entry in walker {
+		let entry = match entry {
+			Ok(e) => e,
+			Err(_) => continue,
+		};
+		if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+			continue;
+		}
+		out.push(entry.path().to_string_lossy().to_string());
+	}
+	Ok(out)
+}
+
 #[tauri::command]
 pub async fn fs_create_file(path: String) -> Result<(), AbundioError> {
     if Path::new(&path).exists() {
@@ -479,6 +527,46 @@ mod tests {
 		}
 		let files = list_files_inner(tmp.path().to_str().unwrap(), 5).unwrap();
 		assert_eq!(files.len(), 5);
+	}
+
+	#[test]
+	fn index_workspace_files_includes_hidden_and_skips_watcher_ignores() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		// gitignore + .git so a regular walker would respect them — the index
+		// walker must NOT, except for the watcher-aligned set.
+		fs::create_dir_all(tmp.path().join(".git")).unwrap();
+		make_file(tmp.path(), ".git/HEAD", "ref");
+		make_file(tmp.path(), ".gitignore", "ignored.txt\n");
+		make_file(tmp.path(), ".env", "X=1");
+		make_file(tmp.path(), "ignored.txt", "x");
+		make_file(tmp.path(), "kept.txt", "k");
+		make_file(tmp.path(), "node_modules/dep/index.js", "x");
+		make_file(tmp.path(), "target/debug/build", "x");
+		make_file(tmp.path(), ".DS_Store", "x");
+		make_file(tmp.path(), "src/main.rs", "x");
+
+		let paths = index_workspace_files_inner(tmp.path().to_str().unwrap()).unwrap();
+
+		// Hidden files like .env are included — terminal links must reach them
+		assert!(paths.iter().any(|p| p.ends_with("/.env")), "{:?}", paths);
+		// .gitignored entries are NOT skipped (the walker doesn't honour .gitignore)
+		assert!(paths.iter().any(|p| p.ends_with("/ignored.txt")));
+		// Watcher's ignore set IS skipped
+		assert!(!paths.iter().any(|p| p.contains("/node_modules/")));
+		assert!(!paths.iter().any(|p| p.contains("/target/")));
+		assert!(!paths.iter().any(|p| p.contains("/.git/")));
+		assert!(!paths.iter().any(|p| p.ends_with("/.DS_Store")));
+		// Normal files come through
+		assert!(paths.iter().any(|p| p.ends_with("/kept.txt")));
+		assert!(paths.iter().any(|p| p.ends_with("/src/main.rs")));
+	}
+
+	#[test]
+	fn index_workspace_files_returns_absolute_paths() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		make_file(tmp.path(), "a.txt", "a");
+		let paths = index_workspace_files_inner(tmp.path().to_str().unwrap()).unwrap();
+		assert!(paths.iter().all(|p| Path::new(p).is_absolute()));
 	}
 
 	#[test]

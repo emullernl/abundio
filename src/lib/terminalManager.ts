@@ -20,10 +20,12 @@ import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
 import { takePendingAgent } from "./pendingAgentRegistry";
-import { parseShellIntegration } from "./shellIntegration";
+import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
+import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
+import { addWindowFocusListener } from "./windowFocus";
 
 /**
  * True when xterm `onData` carries a terminal-reported focus or mouse event
@@ -32,11 +34,27 @@ import type { PaneNode } from "./types";
  * "answering" a waiting agent prompt.
  */
 function isReportSequence(data: string): boolean {
-	// Focus in / focus out reports
-	if (data === "\x1b[I" || data === "\x1b[O") return true;
+	if (isFocusReport(data)) return true;
 	// SGR mouse (\x1b[<…M/m) and legacy X10 mouse (\x1b[M…)
 	if (data.startsWith("\x1b[<") || data.startsWith("\x1b[M")) return true;
 	return false;
+}
+
+/**
+ * `\x1b[I` (focus-in) / `\x1b[O` (focus-out) — emitted by xterm when the
+ * terminal element gains or loses focus, *if* the running app has enabled
+ * DECSET 1004 focus reporting. Prompt frameworks like Powerlevel10k turn
+ * 1004 on so they can re-render the prompt when focus changes — but they
+ * (or their ZLE bindings) sometimes fail to consume the reports, leaving
+ * the bytes to be inserted into the line editor where they render as
+ * `^[[I` / `^[[O` before the next prompt redraw clobbers them. Filtering
+ * these reports from the PTY input stream removes the visible artifact at
+ * the cost of breaking focus-driven features in TUI apps (vim's autoread,
+ * some IDE-like terminals). Mouse reports are deliberately kept — vim's
+ * mouse mode and similar still work.
+ */
+function isFocusReport(data: string): boolean {
+	return data === "\x1b[I" || data === "\x1b[O";
 }
 
 /** CSS generic family keywords — these have no @font-face and must never be
@@ -381,6 +399,28 @@ function flushWrites(managed: ManagedTerminal): void {
 	managed.pendingWrites = [];
 }
 
+// When the OS window regains focus, the browser doesn't automatically
+// re-focus the element that had focus before — so xterm stays in its
+// unfocused (outlined) cursor state until the user clicks back into the
+// terminal. Restore the focus that the windowing system took from us:
+// look at `focusedPaneId` (the pane the user last focused inside Abundio)
+// and call `term.focus()` on its terminal, if any.
+//
+// Only terminal panes are in `instances`, so file/preview/diff panes are
+// naturally skipped — we don't yank focus toward the terminal from a
+// non-terminal pane the user was actually editing in.
+addWindowFocusListener((focused) => {
+	if (!focused) return;
+	const focusedPaneId = useWorkspaceStore.getState().focusedPaneId;
+	if (!focusedPaneId) return;
+	const managed = instances.get(focusedPaneId);
+	if (!managed) return;
+	managed.term.focus();
+	// Re-assert on the next frame in case the browser was still mid-transition
+	// when the Tauri focus event fired and ignored our first focus() call.
+	requestAnimationFrame(() => managed.term.focus());
+});
+
 // Deferred subscription — runs after all modules are initialized.
 // Guard against the case where the module context is torn down before the
 // timer fires (e.g. in the Vitest jsdom environment after a test finishes).
@@ -500,11 +540,17 @@ export async function createTerminal(
 	term.loadAddon(fitAddon);
 	term.loadAddon(searchAddon);
 	term.loadAddon(serializeAddon);
+	// Plain-click activates both URLs and file links (ADR-0004). xterm's link
+	// layer intercepts the click on a linked range before it reaches the
+	// selection / focus / mouse-reporting paths, so there's no collision —
+	// the cost is that text selections starting inside a linked path must
+	// begin outside the link's hot zone.
 	term.loadAddon(
 		new WebLinksAddon((_event, url) => {
 			open(url);
 		}),
 	);
+	installFileLinkProvider(term, paneId);
 	const unicode11 = new Unicode11Addon();
 	term.loadAddon(unicode11);
 	term.unicode.activeVersion = "11";
@@ -646,6 +692,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	let currentPtyId = managed.ptyId;
 	const isNewPty = !currentPtyId;
 
+	// One parser per PTY so partial OSC sequences (the `\x1b]7770;…\x07`
+	// shell-integration framing) are buffered across chunk boundaries instead
+	// of leaking visible bytes to xterm. The stateless `parseShellIntegration`
+	// wrapper used to drop the event AND forward the partial bytes — fixed
+	// here by keeping a Parser alive for the PTY's lifetime.
+	const shellIntegration = new ShellIntegrationParser();
+
 	const { setPtyStatus } = useWorkspaceStore.getState();
 
 	// No grace period needed for reconnections — the shell has already started
@@ -673,6 +726,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	term.onData((data) => {
 		if (managed.restoring) return;
+		// Drop focus-in/out reports before they touch any of the activity
+		// bookkeeping below — they're not user input. See isFocusReport's
+		// docstring for the user-visible regression this fixes (p10k +
+		// screenshot/alt-tab leaving `^[[O` in the line editor).
+		if (isFocusReport(data)) return;
 		managed.lastInputAt = Date.now();
 		managed.bytesSinceIdle = 0;
 		const actStore = usePtyActivityStore.getState();
@@ -733,7 +791,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			pty.onOutput(currentPtyId, (data) => {
 				// Always parse and strip shell integration sequences in both modes,
 				// so command_end is detected even while in agent mode.
-				const { cleaned, commands } = parseShellIntegration(data);
+				const { cleaned, commands } = shellIntegration.parse(data);
 
 				// Cache store state once per chunk to avoid repeated getState() calls
 				const actState = usePtyActivityStore.getState();

@@ -10,10 +10,26 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 let isWindowFocused = true;
 let blurredAt: number | null = null;
 
+type Listener = (focused: boolean) => void;
+const listeners = new Set<Listener>();
+
 function setFocused(focused: boolean) {
 	if (isWindowFocused === focused) return;
 	isWindowFocused = focused;
 	blurredAt = focused ? null : Date.now();
+	for (const l of listeners) l(focused);
+}
+
+/**
+ * Subscribe to OS-level window focus transitions. The listener fires only on
+ * actual changes (true→false or false→true), not on every poll. Returns an
+ * unsubscribe function.
+ */
+export function addWindowFocusListener(listener: Listener): () => void {
+	listeners.add(listener);
+	return () => {
+		listeners.delete(listener);
+	};
 }
 
 try {

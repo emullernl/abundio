@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
 import { fs as fsApi } from "../lib/ipc";
+import {
+	applyFsChange as applyIndexFsChange,
+	dropWorkspaceIndex,
+	loadWorkspaceIndex,
+} from "../lib/workspaceFileIndex";
 import { useExplorerStore } from "../stores/explorerStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -92,6 +97,7 @@ export function useFileReloadWatcher() {
 			if (entry) {
 				entry.cancelled = true;
 				entry.unlisten?.();
+				dropWorkspaceIndex(entry.workspaceId);
 				active.delete(root);
 			}
 			fsApi.watchStop(root).catch(() => {});
@@ -109,8 +115,20 @@ export function useFileReloadWatcher() {
 			fsApi.watchStart(root).catch((err) => {
 				console.error("[useFileReloadWatcher] watchStart failed:", err);
 			});
+			// The terminal-file-link feature needs a sync membership check on
+			// every link-provider hover. Build the index here, in parallel with
+			// watchStart, so subsequent fs-change events arrive at a populated
+			// set. Watcher and index then drift together.
+			loadWorkspaceIndex(workspaceId, root).catch((err) => {
+				console.error("[useFileReloadWatcher] loadWorkspaceIndex failed:", err);
+			});
 			fsApi
 				.onFsChange(root, (change) => {
+					applyIndexFsChange(
+						entry.workspaceId,
+						change.changedFiles,
+						change.removedFiles,
+					);
 					const { refreshPaths, reload } = routeFsChange(change);
 					if (refreshPaths.length > 0) {
 						useExplorerStore
@@ -157,6 +175,7 @@ export function useFileReloadWatcher() {
 			for (const [root, entry] of active) {
 				entry.cancelled = true;
 				entry.unlisten?.();
+				dropWorkspaceIndex(entry.workspaceId);
 				fsApi.watchStop(root).catch(() => {});
 			}
 			active.clear();

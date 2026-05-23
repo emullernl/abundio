@@ -9,6 +9,7 @@ const focusMock = vi.hoisted(() => ({ blurredMs: 10_000 as number | null }));
 vi.mock("../../lib/windowFocus", () => ({
 	isAppWindowFocused: () => document.hasFocus(),
 	getWindowBlurredMs: () => (document.hasFocus() ? null : focusMock.blurredMs),
+	addWindowFocusListener: () => () => {},
 	NOTIFICATION_BLUR_THRESHOLD_MS: 3000,
 }));
 
