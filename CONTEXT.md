@@ -34,6 +34,20 @@ _Avoid_: terminal process, shell
 
 **Agent**: A detected AI coding CLI tool (Claude Code, Copilot, Gemini CLI, Aider, Codex, OpenCode) that can be launched inside a Pane. Detected by scanning `$PATH`; not spawned until the user requests one.
 
+**Agent hook**: A lifecycle event an Agent emits — prompt submitted, permission requested, turn finished, turn failed — that Abundio observes (via the Agent's own hook system) to drive the status indicator. Abundio only observes; it never alters the Agent's behaviour.
+_Avoid_: callback, event listener
+
+**Waiting**: An Agent state in which the Agent has emitted a permission- or input-request hook and the user has not yet responded in its terminal. Distinct from a finished turn ("ready") — the Agent is stalled mid-turn, not done.
+_Avoid_: blocked, idle, stuck
+
+**Working**: An Agent state in which the Agent is mid-turn — has emitted a turn-started hook and has neither finished nor blocked on a permission/input request. Distinct from **Waiting** (blocked on the user) and from a finished turn. Shown as the amber spinner status indicator.
+_Avoid_: active (collides with **Active workspace**), busy, running
+
+**Status indicator**: The coloured dot Abundio shows for a Pane — and aggregated up to its Tab and Workspace — reflecting its PTY's current state.
+
+**Shell-mode PTY**: A PTY that Abundio has not currently detected as running an Agent — a plain shell. Its counterpart, an **agent-mode PTY**, has its status indicator driven by Agent hooks. A single PTY flips between the two as Agents are launched in it and exit.
+_Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
+
 ## Relationships
 
 - The **Active workspace** is always also an **Opened workspace**.
@@ -42,8 +56,11 @@ _Avoid_: terminal process, shell
 - Each **Tab** belongs to exactly one **Workspace**.
 - Each **Pane** belongs to exactly one **Tab**. A terminal pane holds at most one **PTY**; a file pane holds at most one open file; a preview pane holds neither — it references a **source pane**.
 - A **preview pane** and its **source pane** always live in the same **Tab**.
+- Abundio derives an **Agent**'s status by observing its **Agent hooks**; a permission-request hook puts the Agent into the **Waiting** state, which clears when the user types into that **Pane**'s terminal.
 
 ## Flagged ambiguities
 
 - "background loaded workspace" was used to mean both "every sidebar workspace" and "opened-but-not-active workspace" — resolved to the latter (an Opened workspace that is not Active).
 - "panel" is used colloquially to mean both a **Pane** and the git-changes side panel — in code, the git-changes side panel is always referred to as "git panel" or "git changes panel", never "pane".
+- "shell mode" / "terminal mode" were both used for a PTY not running an Agent — resolved to **shell-mode PTY**; the mode belongs to the PTY, not the Pane.
+- The amber Agent state is canonically **Working** in this doc, but `DotStatus`/PTY state in code still uses the string `"active"`. Renaming the code value to `"working"` would remove the collision with **Active workspace**; deferred as a follow-up.

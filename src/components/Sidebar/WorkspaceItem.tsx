@@ -1,13 +1,24 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import type { PaneNode, WorkspaceWithTabs } from "../../lib/types";
-import {
-	computeWorkspaceDotStatus,
-	type DotStatus,
-	usePtyActivityStore,
-} from "../../stores/ptyActivityStore";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useWorkspaceDotStatus } from "../../hooks/useWorkspaceDotStatus";
+import type { WorkspaceWithTabs } from "../../lib/types";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
 import { GitBranch, X } from "../Icons";
+
+// Fallback height for the collapsed sidebar's strip when no expanded
+// WorkspaceItem has mounted yet to measure. Replaced at runtime by the
+// `--workspace-item-height` CSS var written below.
+export const WORKSPACE_ITEM_HEIGHT_FALLBACK = 56;
+
+// Singleton ownership of the height-probe ResizeObserver. With N workspaces
+// every instance previously mounted its own observer and re-wrote the same
+// CSS variable — wasteful on every layout change and on every UI-font-size
+// tweak. Only the first instance to mount claims ownership; later mounts
+// no-op. If the owner unmounts, the next mounting instance reclaims; in
+// the gap the CSS var retains its last-good value (correct until the next
+// font/density change).
+let heightObserverOwner: HTMLElement | null = null;
 
 interface Props {
 	workspace: WorkspaceWithTabs;
@@ -35,30 +46,6 @@ function shortenPath(fullPath: string): string {
 	return fullPath;
 }
 
-function useWorkspaceDotStatus(workspace: WorkspaceWithTabs): DotStatus {
-	const tabLayouts = useMemo(() => {
-		const layouts: PaneNode[] = [];
-		for (const tab of workspace.tabs) {
-			try {
-				layouts.push(JSON.parse(tab.layoutJson) as PaneNode);
-			} catch {
-				// ignore
-			}
-		}
-		return layouts;
-	}, [workspace.tabs]);
-
-	return usePtyActivityStore((s) => {
-		return computeWorkspaceDotStatus(
-			workspace.id,
-			tabLayouts,
-			s.activities,
-			s.openedWorkspaceIds,
-			s.panePtyMap,
-		);
-	});
-}
-
 export const WorkspaceItem = memo(function WorkspaceItem({
 	workspace,
 	isActive,
@@ -76,10 +63,13 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 	// A workspace is "loaded" once it has been opened in this session.
 	// Loaded (but not active) workspaces keep the accent chip and change stats.
 	// Workspaces that have never been opened only show the cached branch name, dimmed.
-	const isLoaded = usePtyActivityStore((s) => s.openedWorkspaceIds.has(workspace.id));
+	const isLoaded = usePtyActivityStore((s) =>
+		s.openedWorkspaceIds.has(workspace.id),
+	);
 
 	const [renameValue, setRenameValue] = useState(workspace.name);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const rootRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		if (isRenaming) {
@@ -88,6 +78,28 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			requestAnimationFrame(() => inputRef.current?.select());
 		}
 	}, [isRenaming, workspace.name]);
+
+	// Publish the rendered height so CollapsedStrip can match it exactly.
+	// Single-owner pattern — see `heightObserverOwner` at module scope.
+	useLayoutEffect(() => {
+		const el = rootRef.current;
+		if (!el) return;
+		if (heightObserverOwner !== null) return;
+		heightObserverOwner = el;
+		const write = () => {
+			document.documentElement.style.setProperty(
+				"--workspace-item-height",
+				`${el.offsetHeight}px`,
+			);
+		};
+		write();
+		const ro = new ResizeObserver(write);
+		ro.observe(el);
+		return () => {
+			ro.disconnect();
+			if (heightObserverOwner === el) heightObserverOwner = null;
+		};
+	}, []);
 
 	const commitRename = () => {
 		const trimmed = renameValue.trim();
@@ -101,6 +113,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: div used intentionally for styling
 		<div
+			ref={rootRef}
 			role="button"
 			tabIndex={0}
 			onMouseDown={onMouseDown}
@@ -109,7 +122,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			onContextMenu={onContextMenu}
 			className="group flex items-start gap-2.5 pr-3 py-2.5 rounded-lg cursor-pointer transition-colors select-none"
 			style={{
-				paddingLeft: 20,
+				paddingLeft: 8,
 				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
 				borderLeft: isActive
 					? "2px solid var(--accent)"
@@ -126,10 +139,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			}}
 		>
 			<div style={{ marginTop: 3 }}>
-				<AgentStatusIcon
-					status={dotStatus}
-					bgColor={isActive ? "var(--bg-tertiary)" : "var(--bg-secondary)"}
-				/>
+				<AgentStatusIcon status={dotStatus} />
 			</div>
 			<div className="flex-1 min-w-0">
 				{isRenaming ? (
@@ -199,7 +209,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 					>
 						{shortenPath(workspace.rootFolder)}
 					</span>
-					{isLoaded && gitInfo?.isGitRepo && (gitInfo.changedFileCount > 0) && (
+					{isLoaded && gitInfo?.isGitRepo && gitInfo.changedFileCount > 0 && (
 						<span
 							className="flex items-center gap-1 flex-shrink-0"
 							style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}

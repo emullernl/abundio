@@ -28,6 +28,15 @@ export const TerminalInstance = memo(function TerminalInstance({
 }: Props) {
 	const stableRef = useRef<HTMLDivElement>(null);
 	const ptyIdRef = useRef(ptyId);
+	// `cwd` is only consumed at PTY spawn time. After that, the shell tracks
+	// its own working directory and reports changes via the cwd_change shell-
+	// integration event. Hold it in a ref instead of letting it gate the
+	// effect — otherwise every `cd` stamps a new cwd into the layout
+	// (`stampCwdOnPane`), the prop changes, the effect re-runs, projectInto
+	// re-projects, and the visibility-hidden flicker during projection drops
+	// keyboard focus from the textarea in WKWebView. That's how the cursor
+	// was going hollow on every cd.
+	const cwdRef = useRef(cwd);
 	const destroyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -156,12 +165,18 @@ export const TerminalInstance = memo(function TerminalInstance({
 					theme: themeName,
 				} = useSettingsStore.getState();
 				const currentTheme = getTheme(themeName);
-				await createTerminal(paneId, ptyIdRef.current, cwd, stableRef.current, {
-					fontSize,
-					fontFamily: terminalFontFamily,
-					scrollback: terminalScrollback,
-					theme: currentTheme.terminal,
-				});
+				await createTerminal(
+					paneId,
+					ptyIdRef.current,
+					cwdRef.current,
+					stableRef.current,
+					{
+						fontSize,
+						fontFamily: terminalFontFamily,
+						scrollback: terminalScrollback,
+						theme: currentTheme.terminal,
+					},
+				);
 			}
 
 			if (cancelled) return;
@@ -200,11 +215,15 @@ export const TerminalInstance = memo(function TerminalInstance({
 			// On real unmount the timeout fires and the terminal is destroyed.
 			destroyTimerRef.current = setTimeout(() => destroyTerminal(paneId), 0);
 		};
-		// ptyId intentionally excluded — it's an initial value captured in ptyIdRef.
-		// Including it would cause a destroy+recreate cycle when initPty writes the
-		// generated UUID back to the layout store.
+		// ptyId and cwd intentionally excluded — they're initial values captured
+		// in refs (ptyIdRef / cwdRef). Including ptyId would cause a
+		// destroy+recreate cycle when initPty writes the generated UUID back to
+		// the layout store. Including cwd would cause every `cd` (which stamps a
+		// new cwd onto the layout) to tear down the effect and re-project the
+		// terminal, briefly toggling visibility:hidden — which drops keyboard
+		// focus from the textarea in WKWebView and shows the unfocused cursor.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [paneId, cwd, projectInto, retract, cleanupResizeObserver]);
+	}, [paneId, projectInto, retract, cleanupResizeObserver]);
 
 	return (
 		<div

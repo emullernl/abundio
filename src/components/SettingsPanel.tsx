@@ -986,6 +986,16 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const removeAgent = useSettingsStore((s) => s.removeAgent);
 	const toggleAgent = useSettingsStore((s) => s.toggleAgent);
 	const installedCommands = useAgentRegistryStore((s) => s.installedCommands);
+	const agentHooksEnabled = useSettingsStore((s) => s.agentHooksEnabled);
+	const setAgentHooksEnabled = useSettingsStore((s) => s.setAgentHooksEnabled);
+	const gpuAccelerationEnabled = useSettingsStore(
+		(s) => s.gpuAccelerationEnabled,
+	);
+	const setGpuAcceleration = useSettingsStore((s) => s.setGpuAcceleration);
+	const shellActivityStatus = useSettingsStore((s) => s.shellActivityStatus);
+	const setShellActivityStatus = useSettingsStore(
+		(s) => s.setShellActivityStatus,
+	);
 
 	const darkThemes = useMemo(
 		() => themeList().filter((t) => t.variant === "dark"),
@@ -1198,6 +1208,45 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 						{section === "terminal-font" && (
 							<div className="flex flex-col gap-4 flex-1 min-h-0">
 								<div className="flex-shrink-0">
+									<SectionLabel>GPU Acceleration</SectionLabel>
+									<div
+										className="flex items-center gap-3 rounded-lg"
+										style={{
+											padding: "10px 12px",
+											backgroundColor: "var(--bg-primary)",
+											border: "1px solid var(--border)",
+										}}
+									>
+										<Toggle
+											checked={gpuAccelerationEnabled}
+											onChange={setGpuAcceleration}
+										/>
+										<div className="flex-1 min-w-0">
+											<div
+												style={{
+													fontSize: 13,
+													color: "var(--fg-primary)",
+													lineHeight: 1.3,
+												}}
+											>
+												Render terminals on the GPU
+											</div>
+											<div
+												style={{
+													fontSize: 11,
+													color: "var(--fg-secondary)",
+													marginTop: 2,
+													lineHeight: 1.4,
+												}}
+											>
+												Smoother scrolling and faster paint on heavy output.
+												When many panes are open at once, some fall back to CPU
+												rendering automatically.
+											</div>
+										</div>
+									</div>
+								</div>
+								<div className="flex-shrink-0">
 									<SectionLabel>Scrollback Lines</SectionLabel>
 									<ScrollbackControl
 										value={terminalScrollback}
@@ -1248,6 +1297,44 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 
 						{section === "shell" && (
 							<div className="flex flex-col flex-1 min-h-0">
+								<SectionLabel>Status Indicator</SectionLabel>
+								<div
+									className="flex items-center gap-3 rounded-lg"
+									style={{
+										padding: "10px 12px",
+										marginBottom: 18,
+										backgroundColor: "var(--bg-primary)",
+										border: "1px solid var(--border)",
+									}}
+								>
+									<Toggle
+										checked={shellActivityStatus}
+										onChange={setShellActivityStatus}
+									/>
+									<div className="flex-1 min-w-0">
+										<div
+											style={{
+												fontSize: 13,
+												color: "var(--fg-primary)",
+												lineHeight: 1.3,
+											}}
+										>
+											Terminal activity status
+										</div>
+										<div
+											style={{
+												fontSize: 11,
+												color: "var(--fg-secondary)",
+												marginTop: 2,
+												lineHeight: 1.4,
+											}}
+										>
+											Show busy and finished states in the status dot for shell
+											commands. When off, the dot stays neutral and only turns
+											red when a command fails. Agents are unaffected.
+										</div>
+									</div>
+								</div>
 								<SectionLabel>Default Shell</SectionLabel>
 								<p
 									style={{
@@ -1286,6 +1373,46 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 						{section === "agents" && (
 							<div className="flex flex-col gap-4 flex-1 min-h-0">
 								<div className="flex-1 min-h-0 overflow-y-auto">
+									<SectionLabel>Status Hooks</SectionLabel>
+									<div
+										className="flex items-center gap-3 rounded-lg"
+										style={{
+											padding: "10px 12px",
+											marginBottom: 18,
+											backgroundColor: "var(--bg-primary)",
+											border: "1px solid var(--border)",
+										}}
+									>
+										<Toggle
+											checked={agentHooksEnabled}
+											onChange={setAgentHooksEnabled}
+										/>
+										<div className="flex-1 min-w-0">
+											<div
+												style={{
+													fontSize: 13,
+													color: "var(--fg-primary)",
+													lineHeight: 1.3,
+												}}
+											>
+												Agent status hooks
+											</div>
+											<div
+												style={{
+													fontSize: 11,
+													color: "var(--fg-secondary)",
+													marginTop: 2,
+													lineHeight: 1.4,
+												}}
+											>
+												Registers hooks in Claude Code, Codex, Gemini, Qwen,
+												Copilot and OpenCode so the status dot reflects real
+												agent state — including a distinct dot when an agent is
+												waiting for your input. Edits each agent's global
+												config; turning this off removes those entries.
+											</div>
+										</div>
+									</div>
 									<SectionLabel>Coding Agents</SectionLabel>
 									<p
 										style={{

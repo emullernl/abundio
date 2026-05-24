@@ -26,3 +26,28 @@ export function recordThresholdHit(
 	}
 	return { hitTimes: pruned, fire: false };
 }
+
+/** Shell exit codes produced by a user-initiated stop — Ctrl+C (128 + SIGINT)
+ *  and SIGTERM (128 + SIGTERM). These are deliberate, not failures. */
+export const SHELL_USER_STOP_CODES = [130, 143];
+
+/** Classify a finished shell command (or an exited shell-mode PTY) into the
+ *  status transition it should drive.
+ *
+ *  `"error"` is returned regardless of `showActivity` — a failed command
+ *  always turns the dot red. `"success"` (a clean finish) is only surfaced
+ *  when terminal activity status is enabled; otherwise `"none"` keeps the dot
+ *  neutral. A user-initiated stop (Ctrl+C → 130, SIGTERM → 143) counts as a
+ *  clean finish, not an error.
+ */
+export function classifyShellExit(
+	exitCode: number | null | undefined,
+	showActivity: boolean,
+): "error" | "success" | "none" {
+	const isFailure =
+		typeof exitCode === "number" &&
+		exitCode !== 0 &&
+		!SHELL_USER_STOP_CODES.includes(exitCode);
+	if (isFailure) return "error";
+	return showActivity ? "success" : "none";
+}

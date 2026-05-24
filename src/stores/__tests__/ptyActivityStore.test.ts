@@ -1,6 +1,6 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PaneNode, Tab } from "../../lib/types";
+import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
 import {
 	collectPtyIds,
 	computePtyDotStatus,
@@ -11,6 +11,7 @@ import {
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
+import { useWorkspaceStore } from "../workspaceStore";
 
 vi.mock("@tauri-apps/plugin-notification", () => ({
 	sendNotification: vi.fn(),
@@ -21,12 +22,14 @@ vi.mock("../../lib/notificationRouter", () => ({
 		workspaceId: "ws-1",
 		tabId: "tab-1",
 	})),
+	isPaneVisible: vi.fn(() => false),
 }));
 
 const focusMock = vi.hoisted(() => ({ blurredMs: 10_000 as number | null }));
 vi.mock("../../lib/windowFocus", () => ({
 	isAppWindowFocused: () => document.hasFocus(),
 	getWindowBlurredMs: () => (document.hasFocus() ? null : focusMock.blurredMs),
+	addWindowFocusListener: () => () => {},
 	NOTIFICATION_BLUR_THRESHOLD_MS: 3000,
 }));
 
@@ -40,8 +43,27 @@ function resetStore() {
 	});
 }
 
+function seedWorkspace(id: string, name: string) {
+	const ws: WorkspaceWithTabs = {
+		id,
+		name,
+		rootFolder: `/tmp/${id}`,
+		envJson: "{}",
+		agentPresetsJson: "{}",
+		fileTabsJson: "[]",
+		baseBranch: null,
+		lastBranch: null,
+		position: 0,
+		createdAt: 0,
+		updatedAt: 0,
+		tabs: [],
+	};
+	useWorkspaceStore.setState({ workspaces: [ws] });
+}
+
 beforeEach(() => {
 	resetStore();
+	useWorkspaceStore.setState({ workspaces: [] });
 });
 
 describe("store actions", () => {
@@ -248,6 +270,7 @@ describe("computeWorkspaceDotStatus", () => {
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
 		detectionMode: "shell",
+		hookDriven: false,
 	});
 
 	it("returns grey when no ptyIds", () => {
@@ -365,6 +388,7 @@ describe("computeTabDotStatus", () => {
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
 		detectionMode: "shell",
+		hookDriven: false,
 	});
 
 	const makeTab = (layoutJson: string): Tab => ({
@@ -406,6 +430,7 @@ describe("computePtyDotStatus", () => {
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
 		detectionMode: "shell",
+		hookDriven: false,
 	});
 
 	it("returns green for unknown ptyId", () => {
@@ -534,6 +559,7 @@ describe("notifications on state transitions", () => {
 
 	it("sends notification when transitioning to error while app is unfocused", () => {
 		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		seedWorkspace("ws-1", "my-project");
 		const { initPty, recordOutput, recordError, registerPane, setTitle } =
 			usePtyActivityStore.getState();
 		initPty("pty-1");
@@ -545,7 +571,7 @@ describe("notifications on state transitions", () => {
 		recordError("pty-1");
 
 		expect(mockSendNotification).toHaveBeenCalledWith({
-			title: "Abundio",
+			title: "my-project",
 			body: "bash encountered an error",
 			extra: {
 				type: "pty",
@@ -559,6 +585,7 @@ describe("notifications on state transitions", () => {
 
 	it("sends notification when transitioning to ready while app is unfocused", () => {
 		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		seedWorkspace("ws-1", "my-project");
 		const { initPty, recordOutput, recordExitSuccess, registerPane, setTitle } =
 			usePtyActivityStore.getState();
 		initPty("pty-1");
@@ -570,7 +597,7 @@ describe("notifications on state transitions", () => {
 		recordExitSuccess("pty-1");
 
 		expect(mockSendNotification).toHaveBeenCalledWith({
-			title: "Abundio",
+			title: "my-project",
 			body: "zsh is ready",
 			extra: {
 				type: "pty",
@@ -579,6 +606,25 @@ describe("notifications on state transitions", () => {
 				tabId: "tab-1",
 			},
 		});
+		vi.restoreAllMocks();
+	});
+
+	it("falls back to 'Abundio' when the originating workspace cannot be resolved", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		// workspaces store is empty — findPaneLocation returns ws-1 but lookup misses
+		const { initPty, recordOutput, recordError, registerPane, setTitle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		registerPane("pane-1", "pty-1");
+		setTitle("pane-1", "bash");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordError("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith(
+			expect.objectContaining({ title: "Abundio" }),
+		);
 		vi.restoreAllMocks();
 	});
 
@@ -681,5 +727,167 @@ describe("touchLastOutput", () => {
 		const ts = getLastOutputAt("pty-1");
 		expect(ts).toBeGreaterThanOrEqual(before);
 		expect(ts).toBeLessThanOrEqual(after);
+	});
+});
+
+describe("hook-driven status", () => {
+	const makeEntry = (state: string): PtyActivityEntry => ({
+		state: state as PtyActivityEntry["state"],
+		lastOutputAt: 0,
+		hasEverReceivedOutput: true,
+		detectionMode: "shell",
+		hookDriven: false,
+	});
+
+	const split = (): PaneNode => ({
+		type: "split",
+		id: "s",
+		direction: "horizontal",
+		ratio: 0.5,
+		first: { type: "terminal", id: "p1", ptyId: "pty-1" },
+		second: { type: "terminal", id: "p2", ptyId: "pty-2" },
+	});
+
+	it("applyHookEvent waiting sets waiting state and hookDriven", () => {
+		const { initPty, applyHookEvent } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		const entry = usePtyActivityStore.getState().activities["pty-1"];
+		expect(entry.state).toBe("waiting");
+		expect(entry.hookDriven).toBe(true);
+	});
+
+	it("markIdle does not clear waiting for an agent-mode pane", () => {
+		const { initPty, setAgentPty, applyHookEvent, markIdle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"waiting",
+		);
+	});
+
+	it("markIdle clears a stale waiting on a terminal-mode pane", () => {
+		// A pane left "waiting" after its agent exited (clearAgentPty reverts
+		// detectionMode to "shell") must behave like a normal terminal again.
+		const { initPty, applyHookEvent, markIdle } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		applyHookEvent("pty-1", "waiting"); // shell mode — no setAgentPty
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("applyHookEvent active clears waiting (user responded)", () => {
+		const { initPty, applyHookEvent } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		applyHookEvent("pty-1", "active");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+	});
+
+	it("clearWaiting drops a waiting agent to idle, not active", () => {
+		const { initPty, setAgentPty, applyHookEvent, clearWaiting } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		clearWaiting("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("clearWaiting is a no-op when the pane is not waiting", () => {
+		const { initPty, recordOutput, clearWaiting } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		clearWaiting("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+	});
+
+	it("clearActive transitions an active agent to idle", () => {
+		const { initPty, setAgentPty, applyHookEvent, clearActive } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		applyHookEvent("pty-1", "active");
+		clearActive("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("clearActive is a no-op for a shell-mode active PTY", () => {
+		const { initPty, recordOutput, clearActive } =
+			usePtyActivityStore.getState();
+		initPty("pty-1"); // defaults to detectionMode: "shell"
+		recordOutput("pty-1");
+		clearActive("pty-1");
+		// Shell-mode active state must not be cancellable by the agent cancel
+		// path — only markIdle (focus/click) clears it.
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+	});
+
+	it("clearActive is a no-op when the agent is not active", () => {
+		const { initPty, setAgentPty, applyHookEvent, clearActive } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		applyHookEvent("pty-1", "waiting");
+		clearActive("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"waiting",
+		);
+	});
+
+	it("applyHookEvent is a no-op for an unknown ptyId", () => {
+		usePtyActivityStore.getState().applyHookEvent("ghost", "ready");
+		expect(usePtyActivityStore.getState().activities.ghost).toBeUndefined();
+	});
+
+	it("computePtyDotStatus maps waiting to skyblue", () => {
+		expect(
+			computePtyDotStatus("pty-1", { "pty-1": makeEntry("waiting") }),
+		).toBe("skyblue");
+	});
+
+	it("waiting takes priority over ready and active", () => {
+		expect(
+			computeWorkspaceDotStatus(
+				"s1",
+				[split()],
+				{
+					"pty-1": makeEntry("waiting"),
+					"pty-2": makeEntry("ready"),
+				},
+				new Set(),
+			),
+		).toBe("skyblue");
+	});
+
+	it("error takes priority over waiting", () => {
+		expect(
+			computeWorkspaceDotStatus(
+				"s1",
+				[split()],
+				{
+					"pty-1": makeEntry("error"),
+					"pty-2": makeEntry("waiting"),
+				},
+				new Set(),
+			),
+		).toBe("red");
 	});
 });

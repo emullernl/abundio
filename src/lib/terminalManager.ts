@@ -14,15 +14,48 @@ import {
 } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { recordThresholdHit } from "./activityGate";
-import { matchTitleToAgent } from "./agents";
+import { classifyShellExit, recordThresholdHit } from "./activityGate";
+import { mapHookEvent } from "./agentHookMap";
+import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
 import { takePendingAgent } from "./pendingAgentRegistry";
-import { parseShellIntegration } from "./shellIntegration";
+import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
+import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
+import { addWindowFocusListener } from "./windowFocus";
+
+/**
+ * True when xterm `onData` carries a terminal-reported focus or mouse event
+ * rather than a genuine keypress. Apps that enable focus/mouse reporting make
+ * the terminal emit these on focus or click — they must NOT count as the user
+ * "answering" a waiting agent prompt.
+ */
+function isReportSequence(data: string): boolean {
+	if (isFocusReport(data)) return true;
+	// SGR mouse (\x1b[<…M/m) and legacy X10 mouse (\x1b[M…)
+	if (data.startsWith("\x1b[<") || data.startsWith("\x1b[M")) return true;
+	return false;
+}
+
+/**
+ * `\x1b[I` (focus-in) / `\x1b[O` (focus-out) — emitted by xterm when the
+ * terminal element gains or loses focus, *if* the running app has enabled
+ * DECSET 1004 focus reporting. Prompt frameworks like Powerlevel10k turn
+ * 1004 on so they can re-render the prompt when focus changes — but they
+ * (or their ZLE bindings) sometimes fail to consume the reports, leaving
+ * the bytes to be inserted into the line editor where they render as
+ * `^[[I` / `^[[O` before the next prompt redraw clobbers them. Filtering
+ * these reports from the PTY input stream removes the visible artifact at
+ * the cost of breaking focus-driven features in TUI apps (vim's autoread,
+ * some IDE-like terminals). Mouse reports are deliberately kept — vim's
+ * mouse mode and similar still work.
+ */
+function isFocusReport(data: string): boolean {
+	return data === "\x1b[I" || data === "\x1b[O";
+}
 
 /** CSS generic family keywords — these have no @font-face and must never be
  *  passed to FontFaceSet.load() / .check() as the family to await on. */
@@ -54,6 +87,27 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 	}
 }
 
+/** Master switch for GPU rendering, mirrored from the persisted
+ *  `gpuAccelerationEnabled` setting. While false, ensureWebglLoaded is a no-op
+ *  and every terminal uses xterm's DOM renderer. Defaults to true; the settings
+ *  store calls setWebglEnabled(false) on rehydration if the user disabled it. */
+let webglEnabled = true;
+
+/** Flip GPU rendering on/off and reconcile every live terminal: enabling loads
+ *  a WebGL context on each pane, disabling disposes them. Called by the
+ *  settings store when the user toggles GPU acceleration. */
+export function setWebglEnabled(enabled: boolean): void {
+	if (webglEnabled === enabled) return;
+	webglEnabled = enabled;
+	for (const paneId of instances.keys()) {
+		if (enabled) {
+			ensureWebglLoaded(paneId);
+		} else {
+			unloadWebgl(paneId);
+		}
+	}
+}
+
 /** Ensure the WebGL renderer is loaded on a terminal. The store subscription
  *  below is the authoritative gate that decides which panes get WebGL; this
  *  function trusts its caller and just no-ops if the addon is already present
@@ -61,6 +115,7 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
  *  silently for a 0×0 / offscreen container — projectInto retries once the
  *  container is sized. */
 export function ensureWebglLoaded(paneId: string): void {
+	if (!webglEnabled) return;
 	const managed = instances.get(paneId);
 	if (!managed || managed.webglAddon) return;
 	tryLoadWebgl(managed);
@@ -223,6 +278,20 @@ const backgroundTrackers = new Map<
 	{ unlistenOutput: () => void; unlistenStatus: () => void }
 >();
 
+/** Window in which two ESC presses count as a double-ESC cancel for agents
+ *  that don't interrupt on a single press (copilot, aider, codex, opencode).
+ *  Sized to mirror the rhythm of a deliberate ESC-ESC tap — long enough not
+ *  to demand a sprint, short enough that it can't be triggered by accident
+ *  during a normal editing session. */
+const ESC_DOUBLE_PRESS_WINDOW_MS = 750;
+
+/** Per-PTY timestamp of the most recent ESC press while the agent was active.
+ *  Stored outside Zustand because it's purely transient input-rhythm state;
+ *  the dot doesn't need to re-render when this changes. Cleared on cancel,
+ *  on any non-ESC input (so "ESC, x, ESC" doesn't accidentally fire), and
+ *  on PTY removal. */
+const escPressTimestamps = new Map<string, number>();
+
 let ACTIVITY_BYTE_THRESHOLD = 1024;
 
 export function getActivityByteThreshold(): number {
@@ -329,6 +398,42 @@ function flushWrites(managed: ManagedTerminal): void {
 	}
 	managed.pendingWrites = [];
 }
+
+// When the OS window regains focus, the browser doesn't automatically
+// re-focus the element that had focus before — so xterm stays in its
+// unfocused (outlined) cursor state until the user clicks back into the
+// terminal. Restore the focus that the windowing system took from us:
+// look at `focusedPaneId` (the pane the user last focused inside Abundio)
+// and call `term.focus()` on its terminal, if any.
+//
+// Only terminal panes are in `instances`, so file/preview/diff panes are
+// naturally skipped — we don't yank focus toward the terminal from a
+// non-terminal pane the user was actually editing in.
+addWindowFocusListener((focused) => {
+	if (!focused) return;
+	// Don't steal focus from a modal/input the user is actively typing in
+	// (settings font search, command palette, file quickopen, workspace
+	// rename, confirm dialogs). `focusedPaneId` is the last terminal pane
+	// the user focused, not what's focused *right now* — without this guard,
+	// alt-tabbing back to the app yanks focus out from under an open input.
+	// xterm's own helper textarea isn't an <input> / <textarea>, so this
+	// guard skips the steal without blocking the legitimate "user was in a
+	// terminal" case.
+	const active = document.activeElement;
+	const isInteractiveInput =
+		active instanceof HTMLInputElement ||
+		active instanceof HTMLTextAreaElement ||
+		(active instanceof HTMLElement && active.isContentEditable);
+	if (isInteractiveInput) return;
+	const focusedPaneId = useWorkspaceStore.getState().focusedPaneId;
+	if (!focusedPaneId) return;
+	const managed = instances.get(focusedPaneId);
+	if (!managed) return;
+	managed.term.focus();
+	// Re-assert on the next frame in case the browser was still mid-transition
+	// when the Tauri focus event fired and ignored our first focus() call.
+	requestAnimationFrame(() => managed.term.focus());
+});
 
 // Deferred subscription — runs after all modules are initialized.
 // Guard against the case where the module context is torn down before the
@@ -449,11 +554,17 @@ export async function createTerminal(
 	term.loadAddon(fitAddon);
 	term.loadAddon(searchAddon);
 	term.loadAddon(serializeAddon);
+	// Plain-click activates both URLs and file links (ADR-0004). xterm's link
+	// layer intercepts the click on a linked range before it reaches the
+	// selection / focus / mouse-reporting paths, so there's no collision —
+	// the cost is that text selections starting inside a linked path must
+	// begin outside the link's hot zone.
 	term.loadAddon(
 		new WebLinksAddon((_event, url) => {
 			open(url);
 		}),
 	);
+	installFileLinkProvider(term, paneId);
 	const unicode11 = new Unicode11Addon();
 	term.loadAddon(unicode11);
 	term.unicode.activeVersion = "11";
@@ -595,6 +706,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	let currentPtyId = managed.ptyId;
 	const isNewPty = !currentPtyId;
 
+	// One parser per PTY so partial OSC sequences (the `\x1b]7770;…\x07`
+	// shell-integration framing) are buffered across chunk boundaries instead
+	// of leaking visible bytes to xterm. The stateless `parseShellIntegration`
+	// wrapper used to drop the event AND forward the partial bytes — fixed
+	// here by keeping a Parser alive for the PTY's lifetime.
+	const shellIntegration = new ShellIntegrationParser();
+
 	const { setPtyStatus } = useWorkspaceStore.getState();
 
 	// No grace period needed for reconnections — the shell has already started
@@ -622,192 +740,305 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	term.onData((data) => {
 		if (managed.restoring) return;
+		// Drop focus-in/out reports before they touch any of the activity
+		// bookkeeping below — they're not user input. See isFocusReport's
+		// docstring for the user-visible regression this fixes (p10k +
+		// screenshot/alt-tab leaving `^[[O` in the line editor).
+		if (isFocusReport(data)) return;
 		managed.lastInputAt = Date.now();
 		managed.bytesSinceIdle = 0;
 		const actStore = usePtyActivityStore.getState();
-		actStore.clearError(currentPtyId);
-		actStore.markIdle(currentPtyId);
+		const entry = actStore.activities[currentPtyId];
+		if (entry?.state === "waiting" && entry.detectionMode === "agent") {
+			// A waiting agent is cleared ONLY by genuine keyboard input — the
+			// user answering its prompt. Focus/mouse report sequences (which
+			// xterm also delivers via onData) leave it waiting. Agent-mode
+			// panes only — terminal-mode panes keep the normal behaviour.
+			if (!isReportSequence(data)) {
+				if (data === "\x1b") {
+					// Bare ESC dismisses the prompt without a choice — the
+					// agent goes back to idle, not busy.
+					actStore.clearWaiting(currentPtyId);
+				} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
+					// Enter or a 0-9 choice answers the prompt — the agent
+					// resumes working, so show it as busy right away. Any
+					// other key (typing a rejection reason, navigation, etc.)
+					// leaves the dot waiting.
+					actStore.applyHookEvent(currentPtyId, "active");
+				}
+			}
+		} else if (entry?.state === "active" && entry.detectionMode === "agent") {
+			// ESC is the user's cancel keystroke for an in-flight agent task.
+			// Claude/Gemini/Qwen interrupt on a single press; the others
+			// (Copilot, Aider, Codex, OpenCode) require a deliberate double-ESC
+			// within ESC_DOUBLE_PRESS_WINDOW_MS. Any other key resets the
+			// double-ESC tracker so "ESC, x, ESC" can't fire it by accident.
+			// Multi-byte ESC-prefixed sequences (arrows, focus reports) are
+			// longer than one byte and naturally bypass this branch.
+			if (data === "\x1b") {
+				const agentId = actStore.detectedAgentIds[currentPtyId];
+				const required = escPressesToCancelAgent(agentId);
+				const now = Date.now();
+				const lastEsc = escPressTimestamps.get(currentPtyId);
+				const isFollowUp =
+					lastEsc !== undefined && now - lastEsc <= ESC_DOUBLE_PRESS_WINDOW_MS;
+				if (required === 1 || isFollowUp) {
+					actStore.clearActive(currentPtyId);
+					escPressTimestamps.delete(currentPtyId);
+				} else {
+					escPressTimestamps.set(currentPtyId, now);
+				}
+			} else {
+				escPressTimestamps.delete(currentPtyId);
+			}
+		} else {
+			actStore.clearError(currentPtyId);
+			actStore.markIdle(currentPtyId);
+		}
 		pty.write(currentPtyId, data);
 	});
 
 	// Register all event listeners and spawn PTY in parallel — each is an async
 	// IPC round-trip, so running them concurrently cuts init time significantly.
-	const [unlistenOutput, unlistenActivity, unlistenStatus] = await Promise.all([
-		pty.onOutput(currentPtyId, (data) => {
-			// Always parse and strip shell integration sequences in both modes,
-			// so command_end is detected even while in agent mode.
-			const { cleaned, commands } = parseShellIntegration(data);
+	const [unlistenOutput, unlistenActivity, unlistenStatus, unlistenHook] =
+		await Promise.all([
+			pty.onOutput(currentPtyId, (data) => {
+				// Always parse and strip shell integration sequences in both modes,
+				// so command_end is detected even while in agent mode.
+				const { cleaned, commands } = shellIntegration.parse(data);
 
-			// Cache store state once per chunk to avoid repeated getState() calls
-			const actState = usePtyActivityStore.getState();
-			const entry = actState.activities[currentPtyId];
-			const isAgentMode = entry?.detectionMode === "agent";
+				// Cache store state once per chunk to avoid repeated getState() calls
+				const actState = usePtyActivityStore.getState();
+				const entry = actState.activities[currentPtyId];
+				const isAgentMode = entry?.detectionMode === "agent";
 
-			if (managed.startupBuffer) {
-				managed.startupBuffer.push(cleaned);
-			} else {
-				const output = managed.filterResets
-					? stripResetSequences(cleaned)
-					: cleaned;
-				scheduleWrite(managed, output);
-			}
-
-			// Process shell integration commands (agent detection + shell activity)
-			for (const cmd of commands) {
-				if (cmd.type === "cwd_change") {
-					actState.setCwd(currentPtyId, cmd.path ?? "");
-					if (cmd.path) {
-						useWorkspaceStore.getState().stampCwdOnPane(paneId, cmd.path);
-					}
-					continue;
+				if (managed.startupBuffer) {
+					managed.startupBuffer.push(cleaned);
+				} else {
+					const output = managed.filterResets
+						? stripResetSequences(cleaned)
+						: cleaned;
+					scheduleWrite(managed, output);
 				}
-				if (cmd.type === "command_start") {
-					// Agent detection from command text. setAgentPty mutates
-					// the store, so we have to track the transition with a
-					// local flag — the captured `isAgentMode` from the top of
-					// this chunk is now stale.
-					let nowIsAgent = isAgentMode;
-					if (cmd.commandText) {
-						const agents = useSettingsStore.getState().agents;
-						const matched = matchTitleToAgent(cmd.commandText, agents);
-						if (matched) {
-							actState.setAgentPty(currentPtyId, matched.id);
-							nowIsAgent = true;
+
+				// Process shell integration commands (agent detection + shell activity)
+				for (const cmd of commands) {
+					if (cmd.type === "cwd_change") {
+						actState.setCwd(currentPtyId, cmd.path ?? "");
+						if (cmd.path) {
+							useWorkspaceStore.getState().stampCwdOnPane(paneId, cmd.path);
 						}
+						continue;
 					}
-					if (!nowIsAgent) {
-						actState.setRunningCommand(currentPtyId, cmd.commandText ?? "");
-					}
-					// Critical: the !nowIsAgent guard keeps us from setting
-					// shellCommandRunning=true for the agent's own command_start.
-					// If that flag stays true, the idle scanner will never
-					// transition active → ready (purple) for the agent.
-					if (!managed.suppressActivity && !nowIsAgent) {
-						setShellCommandRunning(currentPtyId, true);
-						actState.recordOutput(currentPtyId);
-					}
-				} else if (cmd.type === "command_end") {
-					actState.setRunningCommand(currentPtyId, null);
-					managed.startupShellReady = true;
-					tryFlushStartup(managed);
-					// Exit agent mode when the command finishes — re-fetch
-					// state since setAgentPty above may have mutated it
-					const freshState = usePtyActivityStore.getState();
-					const currentEntry = freshState.activities[currentPtyId];
-					if (currentEntry?.detectionMode === "agent") {
-						freshState.clearAgentPty(currentPtyId);
-					}
-					const wasAgentMode = currentEntry?.detectionMode === "agent";
-					if (!managed.suppressActivity && !wasAgentMode) {
-						setShellCommandRunning(currentPtyId, false);
-						if (cmd.exitCode !== undefined && cmd.exitCode !== 0) {
-							freshState.recordError(currentPtyId);
-						} else {
-							const isFocused =
-								document.hasFocus() &&
-								useWorkspaceStore.getState().focusedPaneId === paneId;
-							if (isFocused) {
-								freshState.markIdle(currentPtyId);
-							} else {
-								freshState.recordExitSuccess(currentPtyId);
+					if (cmd.type === "command_start") {
+						// Agent detection from command text. setAgentPty mutates
+						// the store, so we have to track the transition with a
+						// local flag — the captured `isAgentMode` from the top of
+						// this chunk is now stale.
+						let nowIsAgent = isAgentMode;
+						if (cmd.commandText) {
+							const agents = useSettingsStore.getState().agents;
+							const matched = matchTitleToAgent(cmd.commandText, agents);
+							if (matched) {
+								actState.setAgentPty(currentPtyId, matched.id);
+								nowIsAgent = true;
+							}
+						}
+						if (!nowIsAgent) {
+							actState.setRunningCommand(currentPtyId, cmd.commandText ?? "");
+						}
+						// Critical: the !nowIsAgent guard keeps us from setting
+						// shellCommandRunning=true for the agent's own command_start.
+						// If that flag stays true, the idle scanner will never
+						// transition active → ready (purple) for the agent.
+						if (
+							!managed.suppressActivity &&
+							!nowIsAgent &&
+							useSettingsStore.getState().shellActivityStatus
+						) {
+							setShellCommandRunning(currentPtyId, true);
+							actState.recordOutput(currentPtyId);
+						}
+					} else if (cmd.type === "command_end") {
+						actState.setRunningCommand(currentPtyId, null);
+						managed.startupShellReady = true;
+						tryFlushStartup(managed);
+						// Exit agent mode when the command finishes — re-fetch
+						// state since setAgentPty above may have mutated it
+						const freshState = usePtyActivityStore.getState();
+						const currentEntry = freshState.activities[currentPtyId];
+						if (currentEntry?.detectionMode === "agent") {
+							freshState.clearAgentPty(currentPtyId);
+						}
+						const wasAgentMode = currentEntry?.detectionMode === "agent";
+						if (!managed.suppressActivity && !wasAgentMode) {
+							setShellCommandRunning(currentPtyId, false);
+							const outcome = classifyShellExit(
+								cmd.exitCode,
+								useSettingsStore.getState().shellActivityStatus,
+							);
+							if (outcome === "error") {
+								freshState.recordError(currentPtyId);
+							} else if (outcome === "success") {
+								const isFocused =
+									document.hasFocus() &&
+									useWorkspaceStore.getState().focusedPaneId === paneId;
+								if (isFocused) {
+									freshState.markIdle(currentPtyId);
+								} else {
+									freshState.recordExitSuccess(currentPtyId);
+								}
 							}
 						}
 					}
 				}
-			}
 
-			// Agent mode: byte accumulation activity tracking
-			if (isAgentMode) {
-				const now = Date.now();
-				if (
-					!managed.suppressActivity &&
-					now - managed.lastInputAt > INPUT_GATE_MS
-				) {
-					if (
-						managed.lastOutputChunkAt &&
-						now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
-					) {
-						managed.bytesSinceIdle = 0;
-						// Note: do NOT clear thresholdHitTimes here. Agents
-						// naturally pause for several seconds between bursts
-						// while thinking; the sliding window in
-						// recordThresholdHit handles pruning at its own
-						// (longer) cadence. Wiping hits on every 3s gap would
-						// prevent the count from ever reaching the threshold.
-					}
-					managed.lastOutputChunkAt = now;
-					managed.bytesSinceIdle += cleaned.length;
-
-					if (entry?.state === "active") {
+				// Agent mode: activity tracking
+				if (isAgentMode) {
+					const now = Date.now();
+					if (entry?.hookDriven) {
+						// Hook-driven PTYs trust hook events for state transitions.
+						// Just keep lastOutput fresh so the idle-scanner backstop
+						// only fires on a genuinely stuck agent (a dropped Stop).
 						touchLastOutput(currentPtyId, now);
-					} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
-						managed.bytesSinceIdle = 0;
-						const result = recordThresholdHit(managed.thresholdHitTimes, now);
-						managed.thresholdHitTimes = result.hitTimes;
-						if (result.fire) {
-							usePtyActivityStore.getState().recordOutput(currentPtyId);
+					} else if (
+						!managed.suppressActivity &&
+						now - managed.lastInputAt > INPUT_GATE_MS
+					) {
+						if (
+							managed.lastOutputChunkAt &&
+							now - managed.lastOutputChunkAt > INACTIVITY_RESET_MS
+						) {
+							managed.bytesSinceIdle = 0;
+							// Note: do NOT clear thresholdHitTimes here. Agents
+							// naturally pause for several seconds between bursts
+							// while thinking; the sliding window in
+							// recordThresholdHit handles pruning at its own
+							// (longer) cadence. Wiping hits on every 3s gap would
+							// prevent the count from ever reaching the threshold.
+						}
+						managed.lastOutputChunkAt = now;
+						managed.bytesSinceIdle += cleaned.length;
+
+						if (entry?.state === "active") {
+							touchLastOutput(currentPtyId, now);
+						} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+							managed.bytesSinceIdle = 0;
+							const result = recordThresholdHit(managed.thresholdHitTimes, now);
+							managed.thresholdHitTimes = result.hitTimes;
+							if (result.fire) {
+								usePtyActivityStore.getState().recordOutput(currentPtyId);
+							}
 						}
 					}
 				}
-			}
-		}),
+			}),
 
-		pty.onActivity(currentPtyId, (activity) => {
-			if (managed.suppressActivity) return;
+			pty.onActivity(currentPtyId, (activity) => {
+				if (managed.suppressActivity) return;
 
-			const actStore = usePtyActivityStore.getState();
+				const actStore = usePtyActivityStore.getState();
 
-			// Shell command tracking — only applies in shell mode
-			const entry = actStore.activities[currentPtyId];
-			if (entry?.detectionMode !== "shell") return;
-			if (activity.type === "commandStarted") {
-				setShellCommandRunning(currentPtyId, true);
-				actStore.recordOutput(currentPtyId);
-			} else if (activity.type === "commandFinished") {
-				setShellCommandRunning(currentPtyId, false);
-				if (entry.state === "active") {
-					const isFocused =
-						document.hasFocus() &&
-						useWorkspaceStore.getState().focusedPaneId === paneId;
-					if (isFocused) {
-						actStore.markIdle(currentPtyId);
-					} else {
+				// Shell command tracking — only applies in shell mode
+				const entry = actStore.activities[currentPtyId];
+				if (entry?.detectionMode !== "shell") return;
+				if (activity.type === "commandStarted") {
+					if (useSettingsStore.getState().shellActivityStatus) {
+						setShellCommandRunning(currentPtyId, true);
+						actStore.recordOutput(currentPtyId);
+					}
+				} else if (activity.type === "commandFinished") {
+					setShellCommandRunning(currentPtyId, false);
+					if (entry.state === "active") {
+						const isFocused =
+							document.hasFocus() &&
+							useWorkspaceStore.getState().focusedPaneId === paneId;
+						if (isFocused) {
+							actStore.markIdle(currentPtyId);
+						} else {
+							actStore.recordExitSuccess(currentPtyId);
+						}
+					}
+				}
+			}),
+
+			pty.onStatus(currentPtyId, (status) => {
+				if (status.type === "exited") {
+					// Set activity state BEFORE setPtyStatus to avoid subscriber race
+					const actStore = usePtyActivityStore.getState();
+					const outcome = classifyShellExit(
+						status.code,
+						useSettingsStore.getState().shellActivityStatus,
+					);
+					if (outcome === "error") {
+						actStore.recordError(currentPtyId);
+					} else if (outcome === "success") {
 						actStore.recordExitSuccess(currentPtyId);
 					}
 				}
-			}
-		}),
+				useWorkspaceStore.getState().setPtyStatus(currentPtyId, status);
+			}),
 
-		pty.onStatus(currentPtyId, (status) => {
-			if (status.type === "exited") {
-				// Set activity state BEFORE setPtyStatus to avoid subscriber race
-				const actStore = usePtyActivityStore.getState();
-				if (status.code !== 0 && status.code !== null) {
-					actStore.recordError(currentPtyId);
-				} else {
-					actStore.recordExitSuccess(currentPtyId);
+			pty.onHook(currentPtyId, (hookEvent) => {
+				console.debug(
+					"[abundio:hook] frontend received",
+					hookEvent.agent,
+					hookEvent.event,
+					"pty=",
+					currentPtyId,
+				);
+				// The payload carries `toolName` on tool-scoped events; it lets
+				// mapHookEvent special-case tools like exit_plan_mode.
+				let toolName: string | undefined;
+				try {
+					const parsed = JSON.parse(hookEvent.payload);
+					if (typeof parsed?.toolName === "string") {
+						toolName = parsed.toolName;
+					}
+				} catch {
+					// payload is not JSON — leave toolName undefined
 				}
-			}
-			useWorkspaceStore.getState().setPtyStatus(currentPtyId, status);
-		}),
+				const transition = mapHookEvent(
+					hookEvent.agent,
+					hookEvent.event,
+					toolName,
+				);
+				if (!transition) {
+					console.debug(
+						"[abundio:hook] no status mapping for",
+						hookEvent.agent,
+						hookEvent.event,
+					);
+					return;
+				}
+				const actStore = usePtyActivityStore.getState();
+				// A hook event proves an agent runs in this PTY — adopt agent mode
+				// even if title-based detection missed it.
+				actStore.setAgentPty(currentPtyId, hookEvent.agent);
+				if (transition === "clear") {
+					actStore.clearAgentPty(currentPtyId);
+					return;
+				}
+				actStore.applyHookEvent(currentPtyId, transition);
+			}),
 
-		// Spawn PTY concurrently with listener registration — listeners use
-		// event names that include the ptyId, so they won't miss output even
-		// if spawn completes first (Tauri buffers events until listen resolves).
-		...(isNewPty
-			? [
-					pty.spawn(
-						cwd,
-						term.cols,
-						term.rows,
-						undefined,
-						useSettingsStore.getState().shellPath ?? undefined,
-						paneId,
-						currentPtyId,
-					),
-				]
-			: []),
-	]);
+			// Spawn PTY concurrently with listener registration — listeners use
+			// event names that include the ptyId, so they won't miss output even
+			// if spawn completes first (Tauri buffers events until listen resolves).
+			...(isNewPty
+				? [
+						pty.spawn(
+							cwd,
+							term.cols,
+							term.rows,
+							undefined,
+							useSettingsStore.getState().shellPath ?? undefined,
+							paneId,
+							currentPtyId,
+						),
+					]
+				: []),
+		]);
 
 	// Safety timeout: flush the startup buffer even if shell integration
 	// hooks never fire (e.g. custom shell without integration support).
@@ -875,7 +1106,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenOutput();
 		unlistenActivity();
 		unlistenStatus();
+		unlistenHook();
 		term.element?.removeEventListener("mousedown", onTermClick);
+		escPressTimestamps.delete(currentPtyId);
 		if (managed.writeRafId !== null) {
 			cancelAnimationFrame(managed.writeRafId);
 			flushWrites(managed);

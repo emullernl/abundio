@@ -24,6 +24,17 @@ pub enum PtyActivity {
     CommandFinished,
 }
 
+/// A lifecycle hook event emitted by an Agent (Claude Code, Copilot, etc.),
+/// relayed into Abundio via the loopback hook server. Drives the status
+/// indicator. `payload` is the raw JSON the agent sent on the hook's stdin.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentHookEvent {
+    pub agent: String,
+    pub event: String,
+    pub payload: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FsChange {

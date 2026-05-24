@@ -89,6 +89,19 @@ export function matchProcessToAgent(
 }
 
 /**
+ * Number of ESC presses required to cancel an in-flight agent task.
+ * Claude, Gemini, and Qwen treat a single ESC as the cancellation key;
+ * the others require a deliberate double-ESC. Unknown agents default to
+ * double-ESC — the safer choice when we can't identify the CLI.
+ */
+export function escPressesToCancelAgent(agentId: string | undefined): number {
+	if (agentId === "claude" || agentId === "gemini" || agentId === "qwen") {
+		return 1;
+	}
+	return 2;
+}
+
+/**
  * Returns the command strings of all enabled agents.
  */
 export function getEnabledAgentCommands(agents: CodingAgent[]): string[] {

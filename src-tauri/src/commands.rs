@@ -193,3 +193,14 @@ pub async fn list_system_fonts() -> Result<Vec<String>, AbundioError> {
     .map_err(|e| AbundioError::Font(e.to_string()))??;
     Ok(families)
 }
+
+// ── Agent hooks ──
+
+/// Enable or disable Agent status hooks by (un)provisioning hook configs in
+/// each installed Agent's global config directory.
+#[tauri::command]
+pub async fn agent_hooks_provision(enabled: bool) -> Result<(), AbundioError> {
+    tauri::async_runtime::spawn_blocking(move || crate::agent_hooks::provision(enabled))
+        .await
+        .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
+}

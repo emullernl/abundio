@@ -3,7 +3,10 @@ import { usePaneDrag } from "../../hooks/usePaneDrag";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { getTerminal } from "../../lib/terminalManager";
 import type { DotStatus } from "../../stores/ptyActivityStore";
-import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import {
+	computePtyDotStatus,
+	usePtyActivityStore,
+} from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
 import { Terminal } from "../Icons";
@@ -64,20 +67,7 @@ function TitleBarButton({ icon: Icon, onClick, label }: ButtonProps) {
 function usePtyDotStatus(paneId: string): DotStatus {
 	const panePtyId = usePtyActivityStore((s) => s.panePtyMap[paneId] ?? "");
 	const ptyId = getTerminal(paneId)?.ptyId || panePtyId;
-	return usePtyActivityStore((s) => {
-		const entry = s.activities[ptyId];
-		if (!entry) return "green";
-		switch (entry.state) {
-			case "active":
-				return "amber";
-			case "ready":
-				return "purple";
-			case "error":
-				return "red";
-			default:
-				return "green";
-		}
-	});
+	return usePtyActivityStore((s) => computePtyDotStatus(ptyId, s.activities));
 }
 
 function basename(path: string): string {
@@ -167,11 +157,7 @@ export function TerminalTitleBar({
 				{title}
 			</span>
 			<div className="shrink-0" style={{ marginLeft: 8, marginRight: 12 }}>
-				<AgentStatusIcon
-					status={dotStatus}
-					size={12}
-					bgColor="var(--bg-primary)"
-				/>
+				<AgentStatusIcon status={dotStatus} size={12} />
 			</div>
 			<TitleBarButton
 				icon={SquareSplitVertical}

@@ -14,12 +14,14 @@ vi.mock("../../lib/terminalManager", () => ({
 	setAllTerminalsTheme: vi.fn(),
 	setAllTerminalsFontFamily: vi.fn(),
 	setActivityByteThreshold: vi.fn(),
+	setWebglEnabled: vi.fn(),
 }));
 
 import {
 	setActivityByteThreshold,
 	setAllTerminalsFontFamily,
 	setAllTerminalsTheme,
+	setWebglEnabled,
 } from "../../lib/terminalManager";
 import { applyTheme, getTheme } from "../../lib/themes";
 import { useSettingsStore } from "../settingsStore";
@@ -29,6 +31,7 @@ const mockGetTheme = vi.mocked(getTheme);
 const mockSetAllTerminalsTheme = vi.mocked(setAllTerminalsTheme);
 const mockSetAllTerminalsFontFamily = vi.mocked(setAllTerminalsFontFamily);
 const mockSetActivityByteThreshold = vi.mocked(setActivityByteThreshold);
+const mockSetWebglEnabled = vi.mocked(setWebglEnabled);
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -115,5 +118,23 @@ describe("settingsStore", () => {
 		useSettingsStore.getState().setActivityByteThreshold(256);
 		expect(useSettingsStore.getState().activityByteThreshold).toBe(256);
 		expect(mockSetActivityByteThreshold).toHaveBeenCalledWith(256);
+	});
+
+	it("gpuAccelerationEnabled defaults to true", () => {
+		expect(useSettingsStore.getState().gpuAccelerationEnabled).toBe(true);
+	});
+
+	it("agentHooksEnabled defaults to true", () => {
+		expect(useSettingsStore.getState().agentHooksEnabled).toBe(true);
+	});
+
+	it("setGpuAcceleration updates store and reconciles terminals", () => {
+		useSettingsStore.getState().setGpuAcceleration(false);
+		expect(useSettingsStore.getState().gpuAccelerationEnabled).toBe(false);
+		expect(mockSetWebglEnabled).toHaveBeenCalledWith(false);
+
+		useSettingsStore.getState().setGpuAcceleration(true);
+		expect(useSettingsStore.getState().gpuAccelerationEnabled).toBe(true);
+		expect(mockSetWebglEnabled).toHaveBeenCalledWith(true);
 	});
 });

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { decodeBase64 } from "./base64";
 import type {
+	AgentHookEvent,
 	AvailableShell,
 	BranchInfo,
 	DetectedDevEnvironment,
@@ -83,6 +84,15 @@ export const pty = {
 			callback(event.payload),
 		),
 
+	/** Agent lifecycle hook events relayed in via the loopback hook server. */
+	onHook: (
+		ptyId: string,
+		callback: (hookEvent: AgentHookEvent) => void,
+	): Promise<UnlistenFn> =>
+		listen<AgentHookEvent>(`agent-hook-${ptyId}`, (event) =>
+			callback(event.payload),
+		),
+
 	readLog: async (logId: string): Promise<Uint8Array | null> => {
 		const data = await invoke<string | null>("pty_read_log", { logId });
 		if (!data) return null;
@@ -156,8 +166,7 @@ export const git = {
 
 	workspacesSummary: (
 		requests: { workspaceId: string; cwd: string; baseBranch: string | null }[],
-	) =>
-		invoke<WorkspaceGitSummary[]>("git_workspaces_summary", { requests }),
+	) => invoke<WorkspaceGitSummary[]>("git_workspaces_summary", { requests }),
 };
 
 export type WorkspaceGitSummary = {
@@ -188,6 +197,9 @@ export const fs = {
 
 	listFiles: (rootPath: string, maxFiles?: number) =>
 		invoke<FileEntry[]>("fs_list_files", { rootPath, maxFiles }),
+
+	indexWorkspaceFiles: (rootPath: string) =>
+		invoke<string[]>("fs_index_workspace_files", { rootPath }),
 
 	readFile: (path: string) => invoke<FileContent>("fs_read_file", { path }),
 
@@ -269,6 +281,12 @@ export const shells = {
 export const agentRegistry = {
 	listInstalled: (commands: string[]) =>
 		invoke<string[]>("list_installed_agent_commands", { commands }),
+};
+
+export const agentHooks = {
+	/** Enable/disable Agent status hooks by (un)provisioning agent configs. */
+	provision: (enabled: boolean) =>
+		invoke<void>("agent_hooks_provision", { enabled }),
 };
 
 export const devEnvironments = {

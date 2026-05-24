@@ -306,24 +306,12 @@ function CloseButton({
 }
 
 /** Per-tab status dot that only re-renders when this tab's computed status changes. */
-const TabStatusDot = memo(function TabStatusDot({
-	tab,
-	isActive,
-}: {
-	tab: Tab;
-	isActive: boolean;
-}) {
+const TabStatusDot = memo(function TabStatusDot({ tab }: { tab: Tab }) {
 	const tabDot = usePtyActivityStore((s) =>
 		computeTabDotStatus(tab, s.activities, s.panePtyMap),
 	);
 	if (tabDot === "grey") return null;
-	return (
-		<AgentStatusIcon
-			status={tabDot}
-			size={12}
-			bgColor={isActive ? "var(--bg-primary)" : "var(--bg-secondary)"}
-		/>
-	);
+	return <AgentStatusIcon status={tabDot} size={12} />;
 });
 
 export function TabBar({
@@ -448,7 +436,7 @@ export function TabBar({
 							commitRename={commitRename}
 							cancelRename={cancelRename}
 							icon={<Terminal size={12} />}
-							statusDot={<TabStatusDot tab={tab} isActive={isActive} />}
+							statusDot={<TabStatusDot tab={tab} />}
 						/>
 					);
 				})}

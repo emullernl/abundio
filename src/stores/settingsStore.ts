@@ -1,12 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
+import { agentHooks } from "../lib/ipc";
 import {
 	setAllTerminalsFontFamily,
 	setAllTerminalsFontSize,
 	setAllTerminalsScrollback,
 	setAllTerminalsTheme,
 	setActivityByteThreshold as setTerminalActivityByteThreshold,
+	setWebglEnabled,
 } from "../lib/terminalManager";
 import { applyTheme, getTheme } from "../lib/themes";
 import type { CodingAgent } from "../lib/types";
@@ -31,6 +33,9 @@ interface SettingsState {
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
+	agentHooksEnabled: boolean;
+	gpuAccelerationEnabled: boolean;
+	shellActivityStatus: boolean;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -57,6 +62,9 @@ interface SettingsState {
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
 	toggleMarkdownPreviewAutoOpen: () => void;
+	setAgentHooksEnabled: (enabled: boolean) => void;
+	setGpuAcceleration: (enabled: boolean) => void;
+	setShellActivityStatus: (enabled: boolean) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -83,6 +91,9 @@ const PERSISTED_DEFAULTS: {
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
+	agentHooksEnabled: boolean;
+	gpuAccelerationEnabled: boolean;
+	shellActivityStatus: boolean;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -102,6 +113,9 @@ const PERSISTED_DEFAULTS: {
 		lastOpenedDevEnvId: null as string | null,
 		editorWordWrap: true,
 		markdownPreviewAutoOpen: true,
+		agentHooksEnabled: true,
+		gpuAccelerationEnabled: true,
+		shellActivityStatus: false,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -173,6 +187,18 @@ const PERSISTED_DEFAULTS: {
 				typeof s.markdownPreviewAutoOpen === "boolean"
 					? s.markdownPreviewAutoOpen
 					: defaults.markdownPreviewAutoOpen,
+			agentHooksEnabled:
+				typeof s.agentHooksEnabled === "boolean"
+					? s.agentHooksEnabled
+					: defaults.agentHooksEnabled,
+			gpuAccelerationEnabled:
+				typeof s.gpuAccelerationEnabled === "boolean"
+					? s.gpuAccelerationEnabled
+					: defaults.gpuAccelerationEnabled,
+			shellActivityStatus:
+				typeof s.shellActivityStatus === "boolean"
+					? s.shellActivityStatus
+					: defaults.shellActivityStatus,
 		};
 	} catch {
 		return defaults;
@@ -201,6 +227,9 @@ export const useSettingsStore = create<SettingsState>()(
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
 			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
+			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
+			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
+			shellActivityStatus: PERSISTED_DEFAULTS.shellActivityStatus,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -281,17 +310,40 @@ export const useSettingsStore = create<SettingsState>()(
 				set((s) => ({
 					markdownPreviewAutoOpen: !s.markdownPreviewAutoOpen,
 				})),
+			setAgentHooksEnabled: (agentHooksEnabled) => {
+				// Provision/unprovision agent hook configs to match the setting.
+				// The Rust side accumulates per-agent errors into a single message
+				// (e.g. unparseable ~/.claude/settings.json, missing curl, read-only
+				// hook file). Surface them to the devtools so a user reporting "the
+				// status dot doesn't work for Claude" has a breadcrumb to follow.
+				agentHooks.provision(agentHooksEnabled).catch((err) => {
+					console.error("[agentHooks] provision failed:", err);
+				});
+				set({ agentHooksEnabled });
+			},
+			setGpuAcceleration: (gpuAccelerationEnabled) => {
+				setWebglEnabled(gpuAccelerationEnabled);
+				set({ gpuAccelerationEnabled });
+			},
+			setShellActivityStatus: (shellActivityStatus) =>
+				set({ shellActivityStatus }),
 		}),
 		{
 			name: "abundio-settings",
-			version: 1,
+			version: 2,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
-				if (version < 1 && persistedState.activityByteThreshold === 512) {
-					return { ...persistedState, activityByteThreshold: 1024 };
+				let state = persistedState;
+				if (version < 1 && state.activityByteThreshold === 512) {
+					state = { ...state, activityByteThreshold: 1024 };
 				}
-				return persistedState;
+				// v2: agent status hooks became on-by-default. Existing users who
+				// only ever saw the beta-era off default are flipped on.
+				if (version < 2) {
+					state = { ...state, agentHooksEnabled: true };
+				}
+				return state;
 			},
 			partialize: (state) => ({
 				terminalFontFamily: state.terminalFontFamily,
@@ -311,6 +363,9 @@ export const useSettingsStore = create<SettingsState>()(
 				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
 				editorWordWrap: state.editorWordWrap,
 				markdownPreviewAutoOpen: state.markdownPreviewAutoOpen,
+				agentHooksEnabled: state.agentHooksEnabled,
+				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
+				shellActivityStatus: state.shellActivityStatus,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
@@ -339,6 +394,18 @@ export const useSettingsStore = create<SettingsState>()(
 				}
 				if (state?.theme) {
 					setAllTerminalsTheme(getTheme(state.theme).terminal);
+				}
+				// Re-sync agent hook provisioning with the persisted setting
+				// (also refreshes the relay scripts after an app update).
+				if (state?.agentHooksEnabled) {
+					agentHooks.provision(true).catch((err) => {
+						console.error("[agentHooks] provision failed:", err);
+					});
+				}
+				// The module flag in terminalManager defaults to true — only
+				// push a change when the user has disabled GPU acceleration.
+				if (state?.gpuAccelerationEnabled === false) {
+					setWebglEnabled(false);
 				}
 			},
 		},

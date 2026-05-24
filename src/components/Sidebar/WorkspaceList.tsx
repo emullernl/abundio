@@ -6,11 +6,19 @@ import {
 	type ContextMenuItem,
 	PaneContextMenu,
 } from "../Terminal/PaneContextMenu";
+import { CollapsedStrip } from "./CollapsedStrip";
 import { WorkspaceItem } from "./WorkspaceItem";
 
 const DRAG_THRESHOLD = 5;
 
-export function WorkspaceList() {
+interface WorkspaceListProps {
+	variant?: "expanded" | "collapsed";
+}
+
+export function WorkspaceList({
+	variant = "expanded",
+}: WorkspaceListProps = {}) {
+	const collapsed = variant === "collapsed";
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
@@ -59,6 +67,7 @@ export function WorkspaceList() {
 	}, []);
 
 	useEffect(() => {
+		if (collapsed) return;
 		const onMouseMove = (e: MouseEvent) => {
 			if (!startPos.current) return;
 			const dx = e.clientX - startPos.current.x;
@@ -83,10 +92,11 @@ export function WorkspaceList() {
 			document.removeEventListener("mousemove", onMouseMove);
 			document.removeEventListener("mouseup", onMouseUp);
 		};
-	}, []);
+	}, [collapsed]);
 
 	// While dragging, track mouse position and compute nearest drop slot
 	useEffect(() => {
+		if (collapsed) return;
 		if (draggedId === null) return;
 		const draggedIndex = workspaces.findIndex((s) => s.id === draggedId);
 
@@ -151,7 +161,7 @@ export function WorkspaceList() {
 			document.removeEventListener("mousemove", onMouseMove);
 			document.removeEventListener("mouseup", onMouseUp);
 		};
-	}, [draggedId, workspaces, reorderWorkspaces]);
+	}, [collapsed, draggedId, workspaces, reorderWorkspaces]);
 
 	const draggedWorkspace = draggedId
 		? workspaces.find((s) => s.id === draggedId)
@@ -177,7 +187,7 @@ export function WorkspaceList() {
 
 	return (
 		<div className="flex flex-col" ref={containerRef}>
-			{workspaces.length === 0 && (
+			{workspaces.length === 0 && !collapsed && (
 				<div
 					className="px-3 py-4 text-center text-xs"
 					style={{ color: "var(--fg-secondary)" }}
@@ -185,48 +195,70 @@ export function WorkspaceList() {
 					No workspaces yet
 				</div>
 			)}
-			{workspaces.map((workspace, i) => (
-				<div
-					key={workspace.id}
-					ref={(el) => {
-						if (el) itemRefs.current.set(i, el);
-						else itemRefs.current.delete(i);
-					}}
-				>
-					{nearestSlot === i && <DropIndicator />}
-					<WorkspaceItem
-						workspace={workspace}
-						isActive={
-							workspace.id === (switchingWorkspaceId ?? activeWorkspaceId)
-						}
-						isDragging={workspace.id === draggedId}
-						isRenaming={workspace.id === renamingId}
-						onClick={() => {
-							if (draggedId) return;
-							beginWorkspaceSwitch(workspace.id);
-						}}
-						onDelete={() => setPendingDeleteId(workspace.id)}
-						onContextMenu={(e) => {
-							e.preventDefault();
-							setContextMenu({
-								x: e.clientX,
-								y: e.clientY,
-								workspaceId: workspace.id,
-							});
-						}}
-						onRename={(name) => {
-							renameWorkspace(workspace.id, name);
-							setRenamingId(null);
-						}}
-						onRenameCancel={() => setRenamingId(null)}
-						onMouseDown={(e) => handleMouseDown(e, workspace.id)}
-					/>
-				</div>
-			))}
-			{nearestSlot === workspaces.length && <DropIndicator />}
+			{workspaces.map((workspace, i) => {
+				const isActive =
+					workspace.id === (switchingWorkspaceId ?? activeWorkspaceId);
+				const isRenaming = workspace.id === renamingId;
+				const onClick = () => {
+					if (draggedId) return;
+					beginWorkspaceSwitch(workspace.id);
+				};
+				const onDelete = () => setPendingDeleteId(workspace.id);
+				const onContextMenu = (e: React.MouseEvent) => {
+					e.preventDefault();
+					setContextMenu({
+						x: e.clientX,
+						y: e.clientY,
+						workspaceId: workspace.id,
+					});
+				};
+				const onRename = (name: string) => {
+					renameWorkspace(workspace.id, name);
+					setRenamingId(null);
+				};
+				const onRenameCancel = () => setRenamingId(null);
 
-			{/* Floating ghost following the cursor */}
-			{draggedWorkspace && (
+				return (
+					<div
+						key={workspace.id}
+						ref={(el) => {
+							if (el) itemRefs.current.set(i, el);
+							else itemRefs.current.delete(i);
+						}}
+					>
+						{!collapsed && nearestSlot === i && <DropIndicator />}
+						{collapsed ? (
+							<CollapsedStrip
+								workspace={workspace}
+								isActive={isActive}
+								isRenaming={isRenaming}
+								onClick={onClick}
+								onDelete={onDelete}
+								onContextMenu={onContextMenu}
+								onRename={onRename}
+								onRenameCancel={onRenameCancel}
+							/>
+						) : (
+							<WorkspaceItem
+								workspace={workspace}
+								isActive={isActive}
+								isDragging={workspace.id === draggedId}
+								isRenaming={isRenaming}
+								onClick={onClick}
+								onDelete={onDelete}
+								onContextMenu={onContextMenu}
+								onRename={onRename}
+								onRenameCancel={onRenameCancel}
+								onMouseDown={(e) => handleMouseDown(e, workspace.id)}
+							/>
+						)}
+					</div>
+				);
+			})}
+			{!collapsed && nearestSlot === workspaces.length && <DropIndicator />}
+
+			{/* Floating ghost following the cursor (expanded only) */}
+			{!collapsed && draggedWorkspace && (
 				<DragGhost
 					workspace={draggedWorkspace}
 					mousePos={mousePos}
