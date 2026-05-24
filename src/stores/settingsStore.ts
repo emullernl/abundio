@@ -312,7 +312,13 @@ export const useSettingsStore = create<SettingsState>()(
 				})),
 			setAgentHooksEnabled: (agentHooksEnabled) => {
 				// Provision/unprovision agent hook configs to match the setting.
-				agentHooks.provision(agentHooksEnabled).catch(() => {});
+				// The Rust side accumulates per-agent errors into a single message
+				// (e.g. unparseable ~/.claude/settings.json, missing curl, read-only
+				// hook file). Surface them to the devtools so a user reporting "the
+				// status dot doesn't work for Claude" has a breadcrumb to follow.
+				agentHooks.provision(agentHooksEnabled).catch((err) => {
+					console.error("[agentHooks] provision failed:", err);
+				});
 				set({ agentHooksEnabled });
 			},
 			setGpuAcceleration: (gpuAccelerationEnabled) => {
@@ -392,7 +398,9 @@ export const useSettingsStore = create<SettingsState>()(
 				// Re-sync agent hook provisioning with the persisted setting
 				// (also refreshes the relay scripts after an app update).
 				if (state?.agentHooksEnabled) {
-					agentHooks.provision(true).catch(() => {});
+					agentHooks.provision(true).catch((err) => {
+						console.error("[agentHooks] provision failed:", err);
+					});
 				}
 				// The module flag in terminalManager defaults to true — only
 				// push a change when the user has disabled GPU acceleration.

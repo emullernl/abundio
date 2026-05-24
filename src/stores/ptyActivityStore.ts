@@ -404,18 +404,18 @@ export function setFocusedPaneIdGetter(getter: () => string | null): void {
 	_getFocusedPaneId = getter;
 }
 
-// Cached reverse map: only rebuilt when panePtyMap reference changes
+// Cached reverse map: only rebuilt when panePtyMap reference changes.
+// Shared by the idle scanner (hot, every 2s) and the notifications subscriber
+// (hottest path — fires on every recordOutput / setCwd / setTitle /
+// setRunningCommand). The previous Object.entries(...).find(...) reverse
+// lookup in the subscriber was O(panes) per state change.
 let _cachedPanePtyMapRef: Record<string, string> | null = null;
 let _cachedPtyToPaneMap: Record<string, string> = {};
 
-setInterval(() => {
-	const { activities, panePtyMap } = usePtyActivityStore.getState();
-	const now = Date.now();
-	const updates: Record<string, PtyActivityEntry> = {};
-	let hasChanges = false;
-
-	// Rebuild reverse map only when panePtyMap has changed (Zustand produces
-	// a new object reference on mutation, so === is sufficient)
+function getPtyToPaneMap(
+	panePtyMap: Record<string, string>,
+): Record<string, string> {
+	// Zustand produces a new object reference on mutation, so === is sufficient.
 	if (panePtyMap !== _cachedPanePtyMapRef) {
 		_cachedPanePtyMapRef = panePtyMap;
 		_cachedPtyToPaneMap = {};
@@ -423,6 +423,16 @@ setInterval(() => {
 			_cachedPtyToPaneMap[ptyId] = paneId;
 		}
 	}
+	return _cachedPtyToPaneMap;
+}
+
+setInterval(() => {
+	const { activities, panePtyMap } = usePtyActivityStore.getState();
+	const now = Date.now();
+	const updates: Record<string, PtyActivityEntry> = {};
+	let hasChanges = false;
+
+	const ptyToPane = getPtyToPaneMap(panePtyMap);
 
 	const focusedPaneId = _getFocusedPaneId?.() ?? null;
 	// If the getter hasn't been injected yet, treat every pane as focused
@@ -441,7 +451,7 @@ setInterval(() => {
 		if (entry.state === "active" && elapsed > threshold) {
 			// Don't transition to idle if a shell command is still running
 			if (shellCommandRunning.get(ptyId)) continue;
-			const paneId = _cachedPtyToPaneMap[ptyId];
+			const paneId = ptyToPane[ptyId];
 			const isFocused =
 				!focusGetterReady ||
 				(appHasFocus && paneId != null && focusedPaneId === paneId);
@@ -472,6 +482,7 @@ usePtyActivityStore.subscribe((state, prevState) => {
 	const blurredMs = getWindowBlurredMs();
 	const windowAwayLongEnough =
 		blurredMs !== null && blurredMs >= NOTIFICATION_BLUR_THRESHOLD_MS;
+	const ptyToPane = getPtyToPaneMap(panePtyMap);
 
 	for (const [ptyId, entry] of Object.entries(activities)) {
 		const prevEntry = prevActivities[ptyId];
@@ -483,9 +494,7 @@ usePtyActivityStore.subscribe((state, prevState) => {
 		)
 			continue;
 
-		const paneId = Object.entries(panePtyMap).find(
-			([, pid]) => pid === ptyId,
-		)?.[0];
+		const paneId = ptyToPane[ptyId];
 
 		// "waiting" (agent blocked on the user) notifies whenever the pane is
 		// not on screen — window blurred OR the pane is in a background

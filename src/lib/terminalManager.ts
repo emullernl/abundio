@@ -411,6 +411,20 @@ function flushWrites(managed: ManagedTerminal): void {
 // non-terminal pane the user was actually editing in.
 addWindowFocusListener((focused) => {
 	if (!focused) return;
+	// Don't steal focus from a modal/input the user is actively typing in
+	// (settings font search, command palette, file quickopen, workspace
+	// rename, confirm dialogs). `focusedPaneId` is the last terminal pane
+	// the user focused, not what's focused *right now* — without this guard,
+	// alt-tabbing back to the app yanks focus out from under an open input.
+	// xterm's own helper textarea isn't an <input> / <textarea>, so this
+	// guard skips the steal without blocking the legitimate "user was in a
+	// terminal" case.
+	const active = document.activeElement;
+	const isInteractiveInput =
+		active instanceof HTMLInputElement ||
+		active instanceof HTMLTextAreaElement ||
+		(active instanceof HTMLElement && active.isContentEditable);
+	if (isInteractiveInput) return;
 	const focusedPaneId = useWorkspaceStore.getState().focusedPaneId;
 	if (!focusedPaneId) return;
 	const managed = instances.get(focusedPaneId);

@@ -11,6 +11,15 @@ import { GitBranch, X } from "../Icons";
 // `--workspace-item-height` CSS var written below.
 export const WORKSPACE_ITEM_HEIGHT_FALLBACK = 56;
 
+// Singleton ownership of the height-probe ResizeObserver. With N workspaces
+// every instance previously mounted its own observer and re-wrote the same
+// CSS variable — wasteful on every layout change and on every UI-font-size
+// tweak. Only the first instance to mount claims ownership; later mounts
+// no-op. If the owner unmounts, the next mounting instance reclaims; in
+// the gap the CSS var retains its last-good value (correct until the next
+// font/density change).
+let heightObserverOwner: HTMLElement | null = null;
+
 interface Props {
 	workspace: WorkspaceWithTabs;
 	isActive: boolean;
@@ -71,11 +80,12 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 	}, [isRenaming, workspace.name]);
 
 	// Publish the rendered height so CollapsedStrip can match it exactly.
-	// All WorkspaceItem instances write the same value (idempotent), and the
-	// ResizeObserver catches changes from font swaps or settings updates.
+	// Single-owner pattern — see `heightObserverOwner` at module scope.
 	useLayoutEffect(() => {
 		const el = rootRef.current;
 		if (!el) return;
+		if (heightObserverOwner !== null) return;
+		heightObserverOwner = el;
 		const write = () => {
 			document.documentElement.style.setProperty(
 				"--workspace-item-height",
@@ -85,7 +95,10 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 		write();
 		const ro = new ResizeObserver(write);
 		ro.observe(el);
-		return () => ro.disconnect();
+		return () => {
+			ro.disconnect();
+			if (heightObserverOwner === el) heightObserverOwner = null;
+		};
 	}, []);
 
 	const commitRename = () => {

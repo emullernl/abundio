@@ -56,12 +56,30 @@ fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
     })
 }
 
+/// Constant-time equality for the token comparison. A naive `==` short-circuits
+/// on the first mismatching byte, leaking the prefix byte-by-byte to a local
+/// attacker who can hammer the loopback port. The listener is already locked
+/// down (loopback + UUID token + custom header), but defense-in-depth: a
+/// timing leak here would hand a same-user process the token after a few
+/// hundred thousand requests, which is enough to drive arbitrary
+/// `agent-hook-*` events into the renderer.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request) {
-    // Token check — reject anything that doesn't present the per-launch secret.
-    let authorized = request
-        .headers()
-        .iter()
-        .any(|h| h.field.equiv("X-Abundio-Token") && h.value.as_str() == token);
+    let token_bytes = token.as_bytes();
+    let authorized = request.headers().iter().any(|h| {
+        h.field.equiv("X-Abundio-Token")
+            && constant_time_eq(h.value.as_str().as_bytes(), token_bytes)
+    });
     if !authorized {
         eprintln!("[abundio:hook] 403 — rejected request with bad/missing token");
         let _ = request.respond(tiny_http::Response::empty(403));
@@ -119,5 +137,14 @@ mod tests {
     #[test]
     fn query_value_handles_empty() {
         assert_eq!(query_value("", "event"), None);
+    }
+
+    #[test]
+    fn constant_time_eq_matches_only_on_full_byte_equality() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(!constant_time_eq(b"abc", b"abcd"));
+        assert!(constant_time_eq(b"", b""));
     }
 }

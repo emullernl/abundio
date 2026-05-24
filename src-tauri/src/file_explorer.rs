@@ -269,16 +269,25 @@ fn list_files_inner(root_path: &str, max_files: usize) -> Result<Vec<FileEntry>,
 /// are returned, unlike `fs_list_files` which honours `.gitignore` and skips
 /// hidden entries. The terminal-file-link feature uses this to decide whether
 /// a path mentioned in a PTY's output should become a clickable link.
+///
+/// Capped at `DEFAULT_MAX_FILES`. A workspace rooted at `$HOME` or a huge
+/// monorepo would otherwise serialize millions of strings over IPC and pin
+/// each one in a JS `Set`; once the cap is hit, the link provider just
+/// returns no link for paths past the boundary (graceful degradation —
+/// hover stays silent rather than slowly OOM-ing the renderer).
 #[tauri::command]
 pub async fn fs_index_workspace_files(
 	root_path: String,
 ) -> Result<Vec<String>, AbundioError> {
-	tokio::task::spawn_blocking(move || index_workspace_files_inner(&root_path))
+	tokio::task::spawn_blocking(move || index_workspace_files_inner(&root_path, DEFAULT_MAX_FILES))
 		.await
 		.map_err(|e| AbundioError::Search(format!("Index task failed: {}", e)))?
 }
 
-fn index_workspace_files_inner(root_path: &str) -> Result<Vec<String>, AbundioError> {
+fn index_workspace_files_inner(
+	root_path: &str,
+	max_files: usize,
+) -> Result<Vec<String>, AbundioError> {
 	let root = Path::new(root_path);
 	let walker = WalkBuilder::new(root)
 		.hidden(false)
@@ -297,7 +306,12 @@ fn index_workspace_files_inner(root_path: &str) -> Result<Vec<String>, AbundioEr
 		.build();
 
 	let mut out = Vec::new();
+	let mut truncated = false;
 	for entry in walker {
+		if out.len() >= max_files {
+			truncated = true;
+			break;
+		}
 		let entry = match entry {
 			Ok(e) => e,
 			Err(_) => continue,
@@ -306,6 +320,12 @@ fn index_workspace_files_inner(root_path: &str) -> Result<Vec<String>, AbundioEr
 			continue;
 		}
 		out.push(entry.path().to_string_lossy().to_string());
+	}
+	if truncated {
+		eprintln!(
+			"[abundio:fs_index_workspace_files] reached {} file cap at {} — terminal file links will be partial",
+			max_files, root_path
+		);
 	}
 	Ok(out)
 }
@@ -545,7 +565,7 @@ mod tests {
 		make_file(tmp.path(), ".DS_Store", "x");
 		make_file(tmp.path(), "src/main.rs", "x");
 
-		let paths = index_workspace_files_inner(tmp.path().to_str().unwrap()).unwrap();
+		let paths = index_workspace_files_inner(tmp.path().to_str().unwrap(), DEFAULT_MAX_FILES).unwrap();
 
 		// Hidden files like .env are included — terminal links must reach them
 		assert!(paths.iter().any(|p| p.ends_with("/.env")), "{:?}", paths);
@@ -565,8 +585,18 @@ mod tests {
 	fn index_workspace_files_returns_absolute_paths() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		make_file(tmp.path(), "a.txt", "a");
-		let paths = index_workspace_files_inner(tmp.path().to_str().unwrap()).unwrap();
+		let paths = index_workspace_files_inner(tmp.path().to_str().unwrap(), DEFAULT_MAX_FILES).unwrap();
 		assert!(paths.iter().all(|p| Path::new(p).is_absolute()));
+	}
+
+	#[test]
+	fn index_workspace_files_respects_max_cap() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		for i in 0..30 {
+			make_file(tmp.path(), &format!("f{}.txt", i), "x");
+		}
+		let paths = index_workspace_files_inner(tmp.path().to_str().unwrap(), 10).unwrap();
+		assert_eq!(paths.len(), 10);
 	}
 
 	#[test]

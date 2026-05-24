@@ -12,7 +12,9 @@
 //! relay-script path in the hook `command`.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde_json::{json, Value};
 
@@ -104,7 +106,15 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), AbundioError> {
         fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("abundio-tmp");
-    fs::write(&tmp, content)?;
+    // fsync before rename: without this, a power loss between rename and the
+    // kernel's page flush can leave the published file empty or partial,
+    // which the next launch sees as unparseable and aborts on. Cost is one
+    // fsync per provision (only on toggle changes).
+    {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(content.as_bytes())?;
+        f.sync_all()?;
+    }
     fs::rename(&tmp, path)?;
     Ok(())
 }
@@ -338,6 +348,19 @@ export const AbundioStatus = async () => {
     .to_string()
 }
 
+/// True when a callable `curl` is on PATH. The Unix relay script POSTs via
+/// curl; without it the script silently no-ops (`|| true`), so the user gets
+/// "hooks installed but never fire" with no diagnostic. Several minimal Linux
+/// installs (Debian/Ubuntu minimal, Alpine, base Arch) ship without it.
+#[cfg(not(windows))]
+fn curl_available() -> bool {
+    Command::new("sh")
+        .args(["-c", "command -v curl >/dev/null 2>&1"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Enable or disable Agent status hooks across every installed Agent.
 ///
 /// Per-agent failures are collected and reported but do not abort the rest —
@@ -346,6 +369,19 @@ pub fn provision(enabled: bool) -> Result<(), AbundioError> {
     let home = dirs::home_dir().ok_or_else(|| io_err("no home directory".into()))?;
     let relay = write_relay_scripts()?;
     let mut errors: Vec<String> = Vec::new();
+
+    // Surface the missing-curl case once, up front, only when actually enabling.
+    // Disable still runs so stale entries get cleaned up even on a system where
+    // curl was uninstalled after provisioning.
+    #[cfg(not(windows))]
+    if enabled && !curl_available() {
+        errors.push(
+            "`curl` was not found on PATH — Agent status hooks were registered \
+             but won't fire. Install curl (e.g. `apt install curl`) and toggle \
+             the setting off and on again."
+                .to_string(),
+        );
+    }
 
     // Only touch an Agent's config when it already has a config directory —
     // avoids littering the home dir for Agents the user hasn't installed.

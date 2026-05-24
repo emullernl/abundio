@@ -44,6 +44,12 @@ homeDir()
 // is what makes `ls` / `git status` / agent output light up, since most of
 // those formats print bare basenames (`Cargo.toml`, `README.md`, `src`)
 // rather than slash-separated paths.
+// Use `String.matchAll` rather than `RegExp.exec` in a loop so that each call
+// gets its own internal iterator — no shared `lastIndex` to reset or corrupt
+// if `findPathMatches` ever ends up re-entrantly called (e.g. a future
+// callback that hovers from inside the loop body). V8 caches the compiled
+// pattern, so per-call construction would be cheap, but `matchAll` is even
+// cleaner since the regex literal can stay module-level.
 const PATH_PATTERN =
 	/(?:(?<=^)|(?<=[\s"'`([<>,]))([\w.+\-@/~]+)(?::(\d+)(?::(\d+))?|\((\d+),(\d+)\))?/g;
 
@@ -58,10 +64,7 @@ type Match = {
 
 export function findPathMatches(lineText: string): Match[] {
 	const out: Match[] = [];
-	PATH_PATTERN.lastIndex = 0;
-	for (;;) {
-		const m = PATH_PATTERN.exec(lineText);
-		if (!m) break;
+	for (const m of lineText.matchAll(PATH_PATTERN)) {
 		const pathOnly = m[1];
 		const line = m[2] ?? m[4];
 		const col = m[3] ?? m[5];

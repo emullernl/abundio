@@ -76,7 +76,12 @@ export class ShellIntegrationParser {
 			// while we wait for the rest, which is what kills the visible-
 			// flicker / typing-eaten regression.
 			if (i + 1 >= input.length) {
-				this.residual = input.subarray(i);
+				const partial = input.subarray(i);
+				if (partial.length > MAX_PARTIAL) {
+					i++;
+					continue;
+				}
+				this.residual = partial;
 				break;
 			}
 			if (input[i + 1] !== BRACKET) {
@@ -102,8 +107,16 @@ export class ShellIntegrationParser {
 
 			if (prefixPartial) {
 				// Hold the partial ESC] sequence for the next chunk so xterm
-				// doesn't get a chance to render it as text.
-				this.residual = input.subarray(i);
+				// doesn't get a chance to render it as text — but only if the
+				// residual isn't already pathologically large (a malformed
+				// stream emitting `\x1b]7` repeatedly without ever completing
+				// the prefix would otherwise grow the buffer without bound).
+				const partial = input.subarray(i);
+				if (partial.length > MAX_PARTIAL) {
+					i++;
+					continue;
+				}
+				this.residual = partial;
 				break;
 			}
 			if (!prefixMatch) {
