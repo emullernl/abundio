@@ -71,6 +71,8 @@ beforeEach(() => {
 		review: { prs: [], loading: false, error: null },
 		myPrsView: "mine-all",
 		myPrs: { prs: [], loading: false, error: null },
+		globalReviewCount: 0,
+		globalMyPrsCount: 0,
 	});
 	useWorkspaceStore.setState({ activeWorkspaceId: "ws-1" });
 });
@@ -127,6 +129,8 @@ describe("prStore", () => {
 		it("fetches review requests for review-repo view", async () => {
 			const prs = [makePr({ number: 42 })];
 			mockGh.reviewRequests.mockResolvedValue(prs);
+			// Piggyback -all fetch for the Overview bar count (see ADR 0005)
+			mockGh.reviewRequestsAll.mockResolvedValue([]);
 
 			usePrStore.setState({ reviewView: "review-repo" });
 			await usePrStore.getState().fetchReviewPrs("/test");
@@ -145,6 +149,92 @@ describe("prStore", () => {
 
 			expect(mockGh.reviewRequestsAll).toHaveBeenCalledWith("/test");
 			expect(usePrStore.getState().review.prs).toEqual(prs);
+		});
+
+		it("updates globalReviewCount from the -all variant in review-all view", async () => {
+			const prs = [
+				makePr({ number: 1, repository: "org/a" }),
+				makePr({ number: 2, repository: "org/b" }),
+				makePr({ number: 3, repository: "org/c" }),
+			];
+			mockGh.reviewRequestsAll.mockResolvedValue(prs);
+
+			usePrStore.setState({ reviewView: "review-all", globalReviewCount: 0 });
+			await usePrStore.getState().fetchReviewPrs("/test");
+
+			expect(usePrStore.getState().globalReviewCount).toBe(3);
+		});
+
+		it("updates globalReviewCount via piggyback fetch when view is review-repo", async () => {
+			// Panel shows only this repo, but the Overview bar must reflect all repos.
+			const repoPrs = [makePr({ number: 42 })];
+			const allPrs = [
+				makePr({ number: 42 }),
+				makePr({ number: 88, repository: "org/other" }),
+				makePr({ number: 99, repository: "org/third" }),
+			];
+			mockGh.reviewRequests.mockResolvedValue(repoPrs);
+			mockGh.reviewRequestsAll.mockResolvedValue(allPrs);
+
+			usePrStore.setState({ reviewView: "review-repo", globalReviewCount: 0 });
+			await usePrStore.getState().fetchReviewPrs("/test");
+
+			// Panel section reflects repo-scoped fetch
+			expect(usePrStore.getState().review.prs).toEqual(repoPrs);
+			// Overview bar count reflects the piggyback -all fetch
+			expect(usePrStore.getState().globalReviewCount).toBe(3);
+			expect(mockGh.reviewRequests).toHaveBeenCalledWith("/test");
+			expect(mockGh.reviewRequestsAll).toHaveBeenCalledWith("/test");
+		});
+
+		it("does not double-fetch -all when view is review-all", async () => {
+			mockGh.reviewRequestsAll.mockResolvedValue([makePr()]);
+
+			usePrStore.setState({ reviewView: "review-all" });
+			await usePrStore.getState().fetchReviewPrs("/test");
+
+			// Single gh call: the panel fetch IS the -all fetch; both consumers
+			// await the same promise.
+			expect(mockGh.reviewRequestsAll).toHaveBeenCalledTimes(1);
+			expect(mockGh.reviewRequests).not.toHaveBeenCalled();
+		});
+
+		it("does not poison the panel when the piggyback -all fetch fails (review-repo view)", async () => {
+			// Panel fetch succeeds, piggyback fails — the panel must commit
+			// cleanly and the global count must stay at its last-known value.
+			const repoPrs = [makePr({ number: 42 })];
+			mockGh.reviewRequests.mockResolvedValue(repoPrs);
+			mockGh.reviewRequestsAll.mockRejectedValue(new Error("rate limited"));
+
+			usePrStore.setState({
+				reviewView: "review-repo",
+				globalReviewCount: 7, // last-known value
+			});
+			await usePrStore.getState().fetchReviewPrs("/test");
+
+			expect(usePrStore.getState().review.prs).toEqual(repoPrs);
+			expect(usePrStore.getState().review.error).toBe(null);
+			expect(usePrStore.getState().review.loading).toBe(false);
+			// globalReviewCount stays at the prior value — a transient gh failure
+			// shouldn't zero the chip.
+			expect(usePrStore.getState().globalReviewCount).toBe(7);
+		});
+
+		it("commits the panel error independently when the panel fetch fails (review-repo view)", async () => {
+			// Inverse of the above: panel fails, piggyback succeeds.
+			mockGh.reviewRequests.mockRejectedValue(new Error("panel boom"));
+			mockGh.reviewRequestsAll.mockResolvedValue([makePr(), makePr()]);
+
+			usePrStore.setState({
+				reviewView: "review-repo",
+				globalReviewCount: 0,
+			});
+			await usePrStore.getState().fetchReviewPrs("/test");
+
+			expect(usePrStore.getState().review.error).toBe("panel boom");
+			expect(usePrStore.getState().review.prs).toEqual([]);
+			// Piggyback succeeded — chip still updates.
+			expect(usePrStore.getState().globalReviewCount).toBe(2);
 		});
 
 		it("sets error on failure", async () => {
@@ -178,6 +268,8 @@ describe("prStore", () => {
 		it("fetches my PRs for mine-repo view", async () => {
 			const prs = [makePr({ number: 10 })];
 			mockGh.myPrs.mockResolvedValue(prs);
+			// Piggyback -all fetch for the Overview bar count (see ADR 0005)
+			mockGh.myPrsAll.mockResolvedValue([]);
 
 			usePrStore.setState({ myPrsView: "mine-repo" });
 			await usePrStore.getState().fetchMyPrs("/test");
@@ -185,6 +277,54 @@ describe("prStore", () => {
 			expect(mockGh.myPrs).toHaveBeenCalledWith("/test");
 			expect(usePrStore.getState().myPrs.prs).toEqual(prs);
 			expect(usePrStore.getState().myPrs.loading).toBe(false);
+		});
+
+		it("updates globalMyPrsCount via piggyback fetch when view is mine-repo", async () => {
+			const repoPrs = [makePr({ number: 10 })];
+			const allPrs = [
+				makePr({ number: 10 }),
+				makePr({ number: 20, repository: "org/other" }),
+			];
+			mockGh.myPrs.mockResolvedValue(repoPrs);
+			mockGh.myPrsAll.mockResolvedValue(allPrs);
+
+			usePrStore.setState({ myPrsView: "mine-repo", globalMyPrsCount: 0 });
+			await usePrStore.getState().fetchMyPrs("/test");
+
+			expect(usePrStore.getState().myPrs.prs).toEqual(repoPrs);
+			expect(usePrStore.getState().globalMyPrsCount).toBe(2);
+		});
+
+		it("does not poison the panel when the piggyback -all fetch fails (mine-repo view)", async () => {
+			const repoPrs = [makePr({ number: 10 })];
+			mockGh.myPrs.mockResolvedValue(repoPrs);
+			mockGh.myPrsAll.mockRejectedValue(new Error("rate limited"));
+
+			usePrStore.setState({
+				myPrsView: "mine-repo",
+				globalMyPrsCount: 5, // last-known value
+			});
+			await usePrStore.getState().fetchMyPrs("/test");
+
+			expect(usePrStore.getState().myPrs.prs).toEqual(repoPrs);
+			expect(usePrStore.getState().myPrs.error).toBe(null);
+			expect(usePrStore.getState().globalMyPrsCount).toBe(5);
+		});
+
+		it("updates globalMyPrsCount from the -all fetch in mine-all view", async () => {
+			mockGh.myPrsAll.mockResolvedValue([
+				makePr({ number: 1 }),
+				makePr({ number: 2 }),
+				makePr({ number: 3 }),
+				makePr({ number: 4 }),
+			]);
+
+			usePrStore.setState({ myPrsView: "mine-all", globalMyPrsCount: 0 });
+			await usePrStore.getState().fetchMyPrs("/test");
+
+			expect(usePrStore.getState().globalMyPrsCount).toBe(4);
+			expect(mockGh.myPrsAll).toHaveBeenCalledTimes(1);
+			expect(mockGh.myPrs).not.toHaveBeenCalled();
 		});
 
 		it("fetches all my PRs for mine-all view", async () => {

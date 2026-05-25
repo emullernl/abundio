@@ -28,6 +28,19 @@ interface PrState {
 	myPrsView: MyPrsView;
 	myPrs: PrSectionState;
 
+	/**
+	 * Count of PRs awaiting the user's review across ALL repos — the
+	 * `gh search prs --review-requested=@me` total. Independent of
+	 * `reviewView`; the Overview bar surfaces this count regardless of
+	 * which view the side panel is in. Piggybacks on `fetchReviewPrs`.
+	 */
+	globalReviewCount: number;
+	/**
+	 * Count of the user's own open PRs across ALL repos. Same
+	 * piggyback pattern as `globalReviewCount`; independent of `myPrsView`.
+	 */
+	globalMyPrsCount: number;
+
 	checkGhStatus: (cwd: string) => Promise<void>;
 	fetchReviewPrs: (cwd: string) => Promise<void>;
 	fetchMyPrs: (cwd: string) => Promise<void>;
@@ -77,6 +90,8 @@ export const usePrStore = create<PrState>()(
 				review: { ...EMPTY_SECTION },
 				myPrsView: "mine-all",
 				myPrs: { ...EMPTY_SECTION },
+				globalReviewCount: 0,
+				globalMyPrsCount: 0,
 
 				checkGhStatus: async (cwd) => {
 					try {
@@ -99,13 +114,26 @@ export const usePrStore = create<PrState>()(
 					const gen = ++reviewGeneration;
 					set({ review: { ...get().review, loading: true, error: null } });
 
-					try {
-						const view = get().reviewView;
-						const prs =
-							view === "review-repo"
-								? await gh.reviewRequests(cwd)
-								: await gh.reviewRequestsAll(cwd);
+					const view = get().reviewView;
+					// The Overview bar chip always shows the -all count regardless of
+					// the panel view (see ADR 0005). When the panel is in -all mode
+					// the panel fetch IS the -all fetch — both names reference the
+					// same promise, so awaiting twice is free. When the panel is in
+					// -repo mode, the two fetches run in parallel. We commit them
+					// INDEPENDENTLY: a piggyback failure must not poison the panel
+					// (and vice versa).
+					const panelPrsPromise =
+						view === "review-repo"
+							? gh.reviewRequests(cwd)
+							: gh.reviewRequestsAll(cwd);
+					const allPrsPromise =
+						view === "review-repo"
+							? gh.reviewRequestsAll(cwd)
+							: panelPrsPromise;
 
+					// ── Panel section commit ──
+					try {
+						const prs = await panelPrsPromise;
 						const section: PrSectionState = {
 							prs,
 							loading: false,
@@ -125,20 +153,34 @@ export const usePrStore = create<PrState>()(
 						// switched to B and B's own fetch was skipped by the freshness
 						// gate (so reviewGeneration was never bumped past A's gen).
 						if (
-							startedForWorkspaceId !==
+							startedForWorkspaceId ===
 							useWorkspaceStore.getState().activeWorkspaceId
-						)
-							return;
-						set({ review: section });
+						) {
+							set({ review: section });
+						}
 					} catch (e) {
-						if (gen !== reviewGeneration) return;
-						set({
-							review: {
-								prs: [],
-								loading: false,
-								error: e instanceof Error ? e.message : String(e),
-							},
-						});
+						if (gen === reviewGeneration) {
+							set({
+								review: {
+									prs: [],
+									loading: false,
+									error: e instanceof Error ? e.message : String(e),
+								},
+							});
+						}
+					}
+
+					// ── Overview bar count commit (piggyback) ──
+					// Failure leaves the last-known count alone — a transient gh hiccup
+					// shouldn't zero out the chip and keep it stuck at 0 until the
+					// next poll.
+					try {
+						const allPrs = await allPrsPromise;
+						if (gen === reviewGeneration) {
+							set({ globalReviewCount: allPrs.length });
+						}
+					} catch {
+						// keep last-known globalReviewCount
 					}
 				},
 
@@ -148,13 +190,18 @@ export const usePrStore = create<PrState>()(
 					const gen = ++myPrsGeneration;
 					set({ myPrs: { ...get().myPrs, loading: true, error: null } });
 
-					try {
-						const view = get().myPrsView;
-						const prs =
-							view === "mine-repo"
-								? await gh.myPrs(cwd)
-								: await gh.myPrsAll(cwd);
+					const view = get().myPrsView;
+					// Mirror fetchReviewPrs: piggyback the -all variant for the
+					// Overview bar chip when the panel is in -repo mode. Commits
+					// are decoupled so a piggyback failure can't poison the panel.
+					const panelPrsPromise =
+						view === "mine-repo" ? gh.myPrs(cwd) : gh.myPrsAll(cwd);
+					const allPrsPromise =
+						view === "mine-repo" ? gh.myPrsAll(cwd) : panelPrsPromise;
 
+					// ── Panel section commit ──
+					try {
+						const prs = await panelPrsPromise;
 						const section: PrSectionState = {
 							prs,
 							loading: false,
@@ -173,20 +220,31 @@ export const usePrStore = create<PrState>()(
 						// See fetchReviewPrs: guard against contaminating another
 						// workspace's panel when its fetch was skipped as fresh.
 						if (
-							startedForWorkspaceId !==
+							startedForWorkspaceId ===
 							useWorkspaceStore.getState().activeWorkspaceId
-						)
-							return;
-						set({ myPrs: section });
+						) {
+							set({ myPrs: section });
+						}
 					} catch (e) {
-						if (gen !== myPrsGeneration) return;
-						set({
-							myPrs: {
-								prs: [],
-								loading: false,
-								error: e instanceof Error ? e.message : String(e),
-							},
-						});
+						if (gen === myPrsGeneration) {
+							set({
+								myPrs: {
+									prs: [],
+									loading: false,
+									error: e instanceof Error ? e.message : String(e),
+								},
+							});
+						}
+					}
+
+					// ── Overview bar count commit (piggyback) ──
+					try {
+						const allPrs = await allPrsPromise;
+						if (gen === myPrsGeneration) {
+							set({ globalMyPrsCount: allPrs.length });
+						}
+					} catch {
+						// keep last-known globalMyPrsCount
 					}
 				},
 
@@ -194,6 +252,12 @@ export const usePrStore = create<PrState>()(
 				setMyPrsView: (view) => set({ myPrsView: view }),
 
 				clear: () =>
+					// Don't reset globalReviewCount / globalMyPrsCount — they're
+					// account-wide (not workspace-scoped), same as
+					// hydrateFromWorkspace deliberately leaves them alone. A future
+					// caller wiring this into a logout / "no workspace" flow
+					// shouldn't have the Overview bar's PR chips zero out and
+					// stay zero until the next 60s poll.
 					set({
 						review: { ...EMPTY_SECTION },
 						myPrs: { ...EMPTY_SECTION },

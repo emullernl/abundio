@@ -11,6 +11,7 @@ import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
+import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar/Sidebar";
@@ -39,7 +40,19 @@ import {
 	clearPaneClose,
 	usePaneCloseConfirmStore,
 } from "./stores/paneCloseConfirmStore";
-import { usePtyActivityStore } from "./stores/ptyActivityStore";
+import {
+	selectErrorAgentCount,
+	selectErrorShellCount,
+	selectIdleAgentCount,
+	selectIdleShellCount,
+	selectReadyAgentCount,
+	selectReadyShellCount,
+	selectWaitingAgentCount,
+	selectWorkingAgentCount,
+	selectWorkingShellCount,
+	usePtyActivityStore,
+} from "./stores/ptyActivityStore";
+import { usePrStore } from "./stores/prStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import {
 	clearTabClose,
@@ -81,6 +94,51 @@ const SwitchingOverlay = memo(function SwitchingOverlay() {
 				))}
 			</div>
 		</div>
+	);
+});
+
+/** Subscribes to the stores feeding the Overview bar so App itself doesn't
+ *  re-render on every agent-state transition. Each selector returns a
+ *  primitive; Zustand's default Object.is equality bails re-render unless
+ *  the specific count it watches has changed. */
+const OverviewBarWired = memo(function OverviewBarWired() {
+	const openedWorkspaces = usePtyActivityStore(
+		(s) => s.openedWorkspaceIds.size,
+	);
+	const totalWorkspaces = useWorkspaceStore((s) => s.workspaces.length);
+	const idleAgents = usePtyActivityStore(selectIdleAgentCount);
+	const workingAgents = usePtyActivityStore(selectWorkingAgentCount);
+	const waitingAgents = usePtyActivityStore(selectWaitingAgentCount);
+	const readyAgents = usePtyActivityStore(selectReadyAgentCount);
+	const errorAgents = usePtyActivityStore(selectErrorAgentCount);
+	const idleShells = usePtyActivityStore(selectIdleShellCount);
+	const workingShells = usePtyActivityStore(selectWorkingShellCount);
+	const readyShells = usePtyActivityStore(selectReadyShellCount);
+	const errorShells = usePtyActivityStore(selectErrorShellCount);
+	const reviewRequestedPrs = usePrStore((s) => s.globalReviewCount);
+	const myOpenPrs = usePrStore((s) => s.globalMyPrsCount);
+	const showAgentWaiting = useSettingsStore((s) => s.agentHooksEnabled);
+	const showShellActivityDetail = useSettingsStore(
+		(s) => s.shellActivityStatus,
+	);
+	return (
+		<OverviewBar
+			openedWorkspaces={openedWorkspaces}
+			totalWorkspaces={totalWorkspaces}
+			idleAgents={idleAgents}
+			workingAgents={workingAgents}
+			waitingAgents={waitingAgents}
+			readyAgents={readyAgents}
+			errorAgents={errorAgents}
+			idleShells={idleShells}
+			workingShells={workingShells}
+			readyShells={readyShells}
+			errorShells={errorShells}
+			reviewRequestedPrs={reviewRequestedPrs}
+			myOpenPrs={myOpenPrs}
+			showAgentWaiting={showAgentWaiting}
+			showShellActivityDetail={showShellActivityDetail}
+		/>
 	);
 });
 
@@ -495,8 +553,19 @@ export function App() {
 				/>
 				<div
 					className="flex-1 min-w-0 flex flex-col relative"
-					style={{ paddingTop: TITLEBAR_HEIGHT }}
+					style={{ paddingTop: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT }}
 				>
+					<div
+						style={{
+							position: "absolute",
+							top: TITLEBAR_HEIGHT,
+							left: 0,
+							right: 0,
+							zIndex: 40,
+						}}
+					>
+						<OverviewBarWired />
+					</div>
 					{!activeWorkspaceId && (
 						<div
 							className="flex items-center justify-center flex-1"
@@ -526,7 +595,7 @@ export function App() {
 									data-workspace-active={isActive ? "true" : undefined}
 									className="absolute flex flex-col"
 									style={{
-										top: TITLEBAR_HEIGHT,
+										top: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT,
 										left: 0,
 										right: 0,
 										bottom: 0,

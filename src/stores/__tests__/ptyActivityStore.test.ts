@@ -8,6 +8,15 @@ import {
 	computeWorkspaceDotStatus,
 	getLastOutputAt,
 	type PtyActivityEntry,
+	selectErrorAgentCount,
+	selectErrorShellCount,
+	selectIdleAgentCount,
+	selectIdleShellCount,
+	selectReadyAgentCount,
+	selectReadyShellCount,
+	selectWaitingAgentCount,
+	selectWorkingAgentCount,
+	selectWorkingShellCount,
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
@@ -889,5 +898,106 @@ describe("hook-driven status", () => {
 				new Set(),
 			),
 		).toBe("red");
+	});
+
+	describe("Agent count selectors", () => {
+		it("count only agent-mode PTYs (shell PTYs are ignored)", () => {
+			const state = {
+				agentPtyIds: new Set(["pty-1", "pty-2"]),
+				activities: {
+					"pty-1": makeEntry("active"),
+					"pty-2": makeEntry("waiting"),
+					// Shell PTY in active state — must NOT be counted as a Working agent
+					"pty-shell": makeEntry("active"),
+				},
+			};
+			expect(selectWorkingAgentCount(state)).toBe(1);
+			expect(selectWaitingAgentCount(state)).toBe(1);
+		});
+
+		it("returns zero for states with no matching agents", () => {
+			const state = {
+				agentPtyIds: new Set(["pty-1"]),
+				activities: { "pty-1": makeEntry("idle") },
+			};
+			expect(selectErrorAgentCount(state)).toBe(0);
+			expect(selectReadyAgentCount(state)).toBe(0);
+			expect(selectWaitingAgentCount(state)).toBe(0);
+			expect(selectIdleAgentCount(state)).toBe(1);
+		});
+
+		it("buckets a mix of agent states", () => {
+			const state = {
+				agentPtyIds: new Set(["a", "b", "c", "d", "e", "f", "g"]),
+				activities: {
+					a: makeEntry("idle"),
+					b: makeEntry("idle"),
+					c: makeEntry("active"),
+					d: makeEntry("waiting"),
+					e: makeEntry("ready"),
+					f: makeEntry("ready"),
+					g: makeEntry("error"),
+				},
+			};
+			expect(selectIdleAgentCount(state)).toBe(2);
+			expect(selectWorkingAgentCount(state)).toBe(1);
+			expect(selectWaitingAgentCount(state)).toBe(1);
+			expect(selectReadyAgentCount(state)).toBe(2);
+			expect(selectErrorAgentCount(state)).toBe(1);
+		});
+
+		it("ignores agent ids whose activity entry is missing", () => {
+			// agentPtyIds can momentarily list a pty that hasn't been initPty'd yet
+			const state = {
+				agentPtyIds: new Set(["pty-1", "ghost"]),
+				activities: { "pty-1": makeEntry("active") },
+			};
+			expect(selectWorkingAgentCount(state)).toBe(1);
+		});
+	});
+
+	describe("Shell count selectors", () => {
+		it("count only shell-mode PTYs (agent PTYs are ignored)", () => {
+			const state = {
+				agentPtyIds: new Set(["pty-agent"]),
+				activities: {
+					"pty-agent": makeEntry("active"),
+					"pty-shell-1": makeEntry("active"),
+					"pty-shell-2": makeEntry("idle"),
+				},
+			};
+			// Agent in active state must NOT count as a Working shell
+			expect(selectWorkingShellCount(state)).toBe(1);
+			expect(selectIdleShellCount(state)).toBe(1);
+		});
+
+		it("buckets a mix of shell states", () => {
+			const state = {
+				agentPtyIds: new Set<string>(),
+				activities: {
+					a: makeEntry("idle"),
+					b: makeEntry("active"),
+					c: makeEntry("active"),
+					d: makeEntry("ready"),
+					e: makeEntry("error"),
+				},
+			};
+			expect(selectIdleShellCount(state)).toBe(1);
+			expect(selectWorkingShellCount(state)).toBe(2);
+			expect(selectReadyShellCount(state)).toBe(1);
+			expect(selectErrorShellCount(state)).toBe(1);
+		});
+
+		it("returns zero when all PTYs are agent-mode", () => {
+			const state = {
+				agentPtyIds: new Set(["a", "b"]),
+				activities: {
+					a: makeEntry("active"),
+					b: makeEntry("idle"),
+				},
+			};
+			expect(selectIdleShellCount(state)).toBe(0);
+			expect(selectWorkingShellCount(state)).toBe(0);
+		});
 	});
 });

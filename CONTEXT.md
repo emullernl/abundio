@@ -43,7 +43,19 @@ _Avoid_: blocked, idle, stuck
 **Working**: An Agent state in which the Agent is mid-turn — has emitted a turn-started hook and has neither finished nor blocked on a permission/input request. Distinct from **Waiting** (blocked on the user) and from a finished turn. Shown as the amber spinner status indicator.
 _Avoid_: active (collides with **Active workspace**), busy, running
 
+**Ready**: An Agent state in which the Agent finished its turn cleanly and the user has not yet acknowledged it (by focusing or typing in its pane). Shown as the purple status indicator. Distinct from **Idle** — Ready is a notification, Idle is the rested state after acknowledgement.
+_Avoid_: finished, done, complete
+
+**Idle**: The Agent's resting state — no turn in progress, and the last completed turn has been acknowledged by the user. Also the default state for a freshly initialised PTY. Shown as the green status indicator.
+_Avoid_: inactive, asleep
+
+**Error**: An Agent state in which the Agent's most recent turn failed (emitted an error hook or exited non-zero in agent mode). Shown as the red status indicator. Cleared by user focus/click.
+_Avoid_: failed, broken, crashed
+
 **Status indicator**: The coloured dot Abundio shows for a Pane — and aggregated up to its Tab and Workspace — reflecting its PTY's current state.
+
+**Overview bar**: A horizontal strip across the top of the app window, between the **Titlebar** and the per-workspace tab row, showing glanceable global counts: **Opened workspaces** (out of total), each of the five **Agent** states (Idle, Working, Waiting, Ready, Error) aggregated across all opened workspaces, and the user's pending GitHub PR counts (review-requested and own open PRs, both account-wide). Always visible; read-only. The only piece of global chrome that lives between the Titlebar and the workspace stack.
+_Avoid_: dashboard (implies interactivity), metrics bar, status bar (already taken — bottom of window), header
 
 **Shell-mode PTY**: A PTY that Abundio has not currently detected as running an Agent — a plain shell. Its counterpart, an **agent-mode PTY**, has its status indicator driven by Agent hooks. A single PTY flips between the two as Agents are launched in it and exit.
 _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
@@ -60,6 +72,7 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 
 ## Flagged ambiguities
 
+- "active workspaces" (plural) does not exist — **Active workspace** is a singleton. Colloquial use of the plural is resolved to **Opened workspaces** (the set of workspaces activated this session and still open). The **Overview bar** uses "Opened" as its label for this reason.
 - "background loaded workspace" was used to mean both "every sidebar workspace" and "opened-but-not-active workspace" — resolved to the latter (an Opened workspace that is not Active).
 - "panel" is used colloquially to mean both a **Pane** and the git-changes side panel — in code, the git-changes side panel is always referred to as "git panel" or "git changes panel", never "pane".
 - "shell mode" / "terminal mode" were both used for a PTY not running an Agent — resolved to **shell-mode PTY**; the mode belongs to the PTY, not the Pane.
