@@ -12,12 +12,16 @@ A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https:/
 * **Split panes** — Horizontal and vertical splits with recursive nesting
 * **Tabs** — Multiple tabs per workspace, each with its own pane layout
 * **Workspace management** — Persistent workspaces tied to project directories, stored in SQLite
-* **AI agent detection** — Automatically detects installed AI coding agents on your `$PATH`
+* **AI agent support** — Auto-detects installed agents (Claude Code, Copilot, Gemini, Aider, Codex, OpenCode) on your `$PATH`, supports user-defined custom agents, and shows live activity status as agents work
+* **Overview bar** — At-a-glance counts of workspaces, agents, terminals, and open PRs
 * **Built-in code editor** — Monaco-powered editor for viewing and editing files
+* **Live Markdown preview** — Side-by-side preview pane with Mermaid diagram rendering
 * **File explorer** — Tree view with Nerd Font icons, image preview, and file operations
+* **Clickable file links in terminal** — Open file paths printed by tools (compilers, test runners, agents) directly in the editor
 * **Git integration** — Changed files panel, branch selector, inline diff viewer
 * **GitHub PR panel** — Review requests and your PRs via GitHub CLI
 * **Workspace search** — Full-text search across project files with cancellation
+* **External editor integration** — Detects and launches VS Code, Cursor, JetBrains IDEs, and others for the current workspace
 * **Theming** — Multiple built-in dark themes with live switching
 * **Scrollback persistence** — Terminal scrollback is saved and restored across sessions
 * **Native macOS integration** — Overlay titlebar with traffic light controls
@@ -28,26 +32,27 @@ A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https:/
 
 Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 
-| Action             | macOS             | Windows/Linux      |
-| ------------------ | ----------------- | :----------------- |
-| Split horizontal   | `Cmd+Shift+H`     | `Ctrl+Shift+H`     |
-| Split vertical     | `Cmd+Shift+V`     | `Ctrl+Shift+V`     |
-| Close pane         | `Cmd+Shift+W`     | `Ctrl+Shift+W`     |
-| Navigate panes     | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
-| Maximize/restore   | `Cmd+Shift+M`     | `Ctrl+Shift+M`     |
-| Command palette    | `Cmd+K`           | `Ctrl+K`           |
-| Find in terminal   | `Cmd+F`           | `Ctrl+F`           |
-| Search workspace   | `Cmd+Shift+F`     | `Ctrl+Shift+F`     |
-| Toggle git panel   | `Cmd+Shift+G`     | `Ctrl+Shift+G`     |
-| New workspace      | `Cmd+Shift+N`     | `Ctrl+Shift+N`     |
-| New tab            | `Cmd+T`           | `Ctrl+T`           |
-| Close tab          | `Cmd+W`           | `Ctrl+W`           |
-| Next tab           | `Cmd+Shift+]`     | `Ctrl+Shift+]`     |
-| Previous tab       | `Cmd+Shift+[`     | `Ctrl+Shift+[`     |
-| Increase font size | `Cmd+=`           | `Ctrl+=`           |
-| Decrease font size | `Cmd+-`           | `Ctrl+-`           |
-| Save file          | `Cmd+S`           | `Ctrl+S`           |
-| Open settings      | `Cmd+,`           | `Ctrl+,`           |
+| Action                  | macOS             | Windows/Linux      |
+| ----------------------- | ----------------- | :----------------- |
+| Split horizontal        | `Cmd+Shift+H`     | `Ctrl+Shift+H`     |
+| Split vertical          | `Cmd+Shift+V`     | `Ctrl+Shift+V`     |
+| Close pane              | `Cmd+Shift+W`     | `Ctrl+Shift+W`     |
+| Navigate panes          | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
+| Command palette         | `Cmd+K`           | `Ctrl+K`           |
+| File quickopen          | `Cmd+P`           | `Ctrl+P`           |
+| Find in terminal        | `Cmd+F`           | `Ctrl+F`           |
+| Search workspace        | `Cmd+Shift+F`     | `Ctrl+Shift+F`     |
+| Toggle git panel        | `Cmd+Shift+G`     | `Ctrl+Shift+G`     |
+| Toggle markdown preview | `Cmd+Shift+M`     | `Ctrl+Shift+M`     |
+| New workspace           | `Cmd+Shift+N`     | `Ctrl+Shift+N`     |
+| New tab                 | `Cmd+T`           | `Ctrl+T`           |
+| Close tab               | `Cmd+W`           | `Ctrl+W`           |
+| Next tab                | `Cmd+Shift+]`     | `Ctrl+Shift+]`     |
+| Previous tab            | `Cmd+Shift+[`     | `Ctrl+Shift+[`     |
+| Increase font size      | `Cmd+=`           | `Ctrl+=`           |
+| Decrease font size      | `Cmd+-`           | `Ctrl+-`           |
+| Save file               | `Cmd+S`           | `Ctrl+S`           |
+| Open settings           | `Cmd+,`           | `Ctrl+,`           |
 
 ## Prerequisites
 
@@ -111,40 +116,23 @@ cd src-tauri && cargo test test_name  # Run a single Rust test
 
 ```
 abundio/
-├── src/                        # Frontend (React + TypeScript)
-│   ├── components/
-│   │   ├── Terminal/           # TerminalInstance, SplitContainer, TerminalPool
-│   │   ├── Sidebar/            # Sidebar, WorkspaceList, WorkspaceItem
-│   │   ├── Explorer/           # File tree browser
-│   │   ├── FileViewer/         # CodeEditor (Monaco), ImageViewer
-│   │   ├── GitChanges/         # Git panel, diff viewer, PR section
-│   │   └── Search/             # Full-text workspace search
-│   ├── hooks/                  # useSplitPane, usePty, useWorkspace
-│   ├── lib/                    # ipc, themes, terminalManager, agents, keybindings
-│   ├── stores/                 # Zustand stores (workspace, settings, git, search, explorer)
-│   └── App.tsx
-├── src-tauri/                  # Backend (Rust)
-│   └── src/
-│       ├── pty_manager.rs      # PTY lifecycle on dedicated OS threads
-│       ├── workspace_store.rs  # SQLite CRUD for workspaces/layouts/tabs
-│       ├── commands.rs         # Tauri command handlers
-│       ├── file_explorer.rs    # File system operations
-│       ├── file_watcher.rs     # File system watcher
-│       ├── search.rs           # Full-text search with cancellation
-│       ├── git_commands.rs     # Git operations
-│       ├── gh_commands.rs      # GitHub CLI integration
-│       ├── process_monitor.rs  # PTY process monitoring
-│       ├── config.rs           # App configuration
-│       ├── error.rs            # AbundioError enum
-│       ├── events.rs           # PTY output/status events
-│       ├── migrations.rs       # Auto-applied DB migrations
-│       ├── shell_env.rs        # Default shell detection
-│       └── lib.rs              # App entry point
-├── .github/workflows/          # CI: build, test, PR review, security
-├── CLAUDE.md                   # AI coding agent context
+├── src/                # Frontend — React 19 + TypeScript
+│   ├── components/     # UI: Terminal, Sidebar, Explorer, FileViewer, GitChanges, Search, OverviewBar, …
+│   ├── hooks/          # React hooks (split pane, PTY lifecycle, workspace, drag-and-drop)
+│   ├── lib/            # IPC, themes, terminal manager, keybindings, agent registry, file links
+│   └── stores/         # Zustand stores (workspace, settings, git, search, explorer, agents, PRs)
+├── src-tauri/          # Backend — Rust + Tauri v2
+│   └── src/            # PTY manager, workspace store, agent registry + hooks, git/GitHub/search/file commands, dev-env detection
+├── docs/               # Architecture decision records (ADRs) and design plans
+├── scripts/            # Release helper (`pnpm run release`)
+├── .github/workflows/  # CI: build, test, PR review, security scan
+├── CLAUDE.md           # Reference for AI coding agents working in the repo
+├── CONTEXT.md          # Canonical domain-language definitions
 ├── package.json
 └── biome.json
 ```
+
+For a full module-by-module map, see [`CLAUDE.md`](CLAUDE.md).
 
 ### Tech Stack
 
@@ -218,12 +206,13 @@ The first build will take a few minutes while Cargo compiles all Rust dependenci
 
 ### 3. Where to Start Reading
 
-1. **`CLAUDE.md`** — Full architecture reference. Read this first.
-2. **`src-tauri/src/lib.rs`** — App bootstrap: DB init, PTY manager, agent registry, file watcher.
-3. **`src-tauri/src/commands.rs`** — All IPC commands the frontend can call.
-4. **`src/lib/ipc.ts`** — Frontend-side typed wrappers for those commands.
-5. **`src/components/Terminal/TerminalInstance.tsx`** — The core terminal component.
-6. **`src/stores/workspaceStore.ts`** — Central state for workspaces, tabs, and pane layout.
+1. **`CONTEXT.md`** — Canonical domain language (Workspace, Pane, PTY, Tab, Agent, …). Read this first so terms aren't ambiguous later.
+2. **`CLAUDE.md`** — Full architecture reference and module map.
+3. **`src-tauri/src/lib.rs`** — App bootstrap: DB init, PTY manager, agent registry, file watcher.
+4. **`src-tauri/src/commands.rs`** — All IPC commands the frontend can call.
+5. **`src/lib/ipc.ts`** — Frontend-side typed wrappers for those commands.
+6. **`src/components/Terminal/TerminalInstance.tsx`** — The core terminal component.
+7. **`src/stores/workspaceStore.ts`** — Central state for workspaces, tabs, and pane layout.
 
 ### 4. Common Tasks
 
@@ -263,4 +252,11 @@ This creates a draft [GitHub Release](../../releases) with macOS, Linux, and Win
 
 ## License
 
-TBD
+Abundio is dual-licensed under either of:
+
+- [MIT License](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+
+at your option. See [LICENSE.md](LICENSE.md) for details.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Abundio shall be dual-licensed as above, without any additional terms or conditions.
