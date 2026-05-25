@@ -1,9 +1,10 @@
 [package]
 name = "abundio"
-version = "0.1.0"
+version = "1.0.0"
 description = "A GPU-accelerated terminal multiplexer with AI agent support"
-authors = []
+authors = ["Emil Müller"]
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [lib]
 name = "abundio_lib"

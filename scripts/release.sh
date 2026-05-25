@@ -50,11 +50,17 @@ node -e "
   fs.writeFileSync(p, JSON.stringify(conf, null, '\t') + '\n');
 "
 
-# 3. src-tauri/Cargo.toml
-if [[ "$(uname)" == "Darwin" ]]; then
-  sed -i '' "0,/^version = .*/s//version = \"$VERSION\"/" "$ROOT/src-tauri/Cargo.toml"
-else
-  sed -i "0,/^version = .*/s//version = \"$VERSION\"/" "$ROOT/src-tauri/Cargo.toml"
+# 3. src-tauri/Cargo.toml — replace version only inside the [package] table
+CARGO_TOML="$ROOT/src-tauri/Cargo.toml"
+awk -v ver="$VERSION" '
+  /^\[/ { in_pkg = ($0 == "[package]") }
+  in_pkg && /^version = / { sub(/"[^"]*"/, "\"" ver "\"") }
+  { print }
+' "$CARGO_TOML" > "$CARGO_TOML.tmp" && mv "$CARGO_TOML.tmp" "$CARGO_TOML"
+
+if ! grep -q "^version = \"$VERSION\"$" "$CARGO_TOML"; then
+  echo "Error: failed to update version in $CARGO_TOML"
+  exit 1
 fi
 
 # Update Cargo.lock without re-resolving transitive dependencies
