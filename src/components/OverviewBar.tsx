@@ -336,8 +336,23 @@ const AGENT_DEFINITIONS: Record<AgentKind, AgentDef> = {
 	},
 };
 
-function AgentTile({ kind, count }: { kind: AgentKind; count: number }) {
-	const def = AGENT_DEFINITIONS[kind];
+/**
+ * Renders a tile for any PTY-derived state count (agent OR shell). The
+ * glyph + animation come from `AGENT_DEFINITIONS[agentKind]`; the tooltip
+ * comes from the caller. Sharing the glyph-selection branch keeps the
+ * visual vocabulary drift-resistant — agent and shell tiles can't get
+ * out of sync if one of them gets an animation tweak later.
+ */
+function StateTile({
+	agentKind,
+	count,
+	title,
+}: {
+	agentKind: AgentKind;
+	count: number;
+	title: string;
+}) {
+	const def = AGENT_DEFINITIONS[agentKind];
 	const active = count > 0;
 	const glyph =
 		active && def.animatedStatus !== null ? (
@@ -346,10 +361,16 @@ function AgentTile({ kind, count }: { kind: AgentKind; count: number }) {
 			staticGlyph(def.StaticGlyph, active ? def.color : "var(--fg-secondary)")
 		);
 	return (
-		<TileShell
-			glyph={glyph}
-			active={active}
-			primary={count}
+		<TileShell glyph={glyph} active={active} primary={count} title={title} />
+	);
+}
+
+function AgentTile({ kind, count }: { kind: AgentKind; count: number }) {
+	const def = AGENT_DEFINITIONS[kind];
+	return (
+		<StateTile
+			agentKind={kind}
+			count={count}
 			title={`${def.label} agents — ${def.description} (${count})`}
 		/>
 	);
@@ -390,19 +411,10 @@ const SHELL_DEFINITIONS: Record<
 
 function ShellTile({ kind, count }: { kind: ShellKind; count: number }) {
 	const shellDef = SHELL_DEFINITIONS[kind];
-	const def = AGENT_DEFINITIONS[shellDef.agentKind];
-	const active = count > 0;
-	const glyph =
-		active && def.animatedStatus !== null ? (
-			<AgentStatusIcon status={def.animatedStatus} size={GLYPH_SIZE} />
-		) : (
-			staticGlyph(def.StaticGlyph, active ? def.color : "var(--fg-secondary)")
-		);
 	return (
-		<TileShell
-			glyph={glyph}
-			active={active}
-			primary={count}
+		<StateTile
+			agentKind={shellDef.agentKind}
+			count={count}
 			title={`${shellDef.label} — ${shellDef.description} (${count})`}
 		/>
 	);
