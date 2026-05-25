@@ -641,3 +641,50 @@ export function computePtyDotStatus(
 			return "green";
 	}
 }
+
+// ── Agent state count selectors ──
+// One per Agent state, returning a primitive so Zustand's default Object.is
+// equality bails re-render unless the count actually changed. Used by the
+// Overview bar. The internal state string `"active"` maps to the glossary
+// term Working (see CONTEXT.md).
+
+type AgentCountSelectorState = {
+	agentPtyIds: Set<string>;
+	activities: Record<string, PtyActivityEntry>;
+};
+
+function makeAgentCountSelector(target: PtyActivityState) {
+	return (s: AgentCountSelectorState): number => {
+		let n = 0;
+		for (const id of s.agentPtyIds) {
+			if (s.activities[id]?.state === target) n++;
+		}
+		return n;
+	};
+}
+
+export const selectIdleAgentCount = makeAgentCountSelector("idle");
+export const selectWorkingAgentCount = makeAgentCountSelector("active");
+export const selectWaitingAgentCount = makeAgentCountSelector("waiting");
+export const selectReadyAgentCount = makeAgentCountSelector("ready");
+export const selectErrorAgentCount = makeAgentCountSelector("error");
+
+// Shell-mode counterparts: a PTY is shell-mode iff it's NOT in agentPtyIds.
+// Iterating the activities map and skipping agents covers shell PTYs whether
+// or not they've ever flipped through agent mode this session.
+
+function makeShellCountSelector(target: PtyActivityState) {
+	return (s: AgentCountSelectorState): number => {
+		let n = 0;
+		for (const ptyId of Object.keys(s.activities)) {
+			if (s.agentPtyIds.has(ptyId)) continue;
+			if (s.activities[ptyId]?.state === target) n++;
+		}
+		return n;
+	};
+}
+
+export const selectIdleShellCount = makeShellCountSelector("idle");
+export const selectWorkingShellCount = makeShellCountSelector("active");
+export const selectReadyShellCount = makeShellCountSelector("ready");
+export const selectErrorShellCount = makeShellCountSelector("error");

@@ -28,6 +28,19 @@ interface PrState {
 	myPrsView: MyPrsView;
 	myPrs: PrSectionState;
 
+	/**
+	 * Count of PRs awaiting the user's review across ALL repos — the
+	 * `gh search prs --review-requested=@me` total. Independent of
+	 * `reviewView`; the Overview bar surfaces this count regardless of
+	 * which view the side panel is in. Piggybacks on `fetchReviewPrs`.
+	 */
+	globalReviewCount: number;
+	/**
+	 * Count of the user's own open PRs across ALL repos. Same
+	 * piggyback pattern as `globalReviewCount`; independent of `myPrsView`.
+	 */
+	globalMyPrsCount: number;
+
 	checkGhStatus: (cwd: string) => Promise<void>;
 	fetchReviewPrs: (cwd: string) => Promise<void>;
 	fetchMyPrs: (cwd: string) => Promise<void>;
@@ -77,6 +90,8 @@ export const usePrStore = create<PrState>()(
 				review: { ...EMPTY_SECTION },
 				myPrsView: "mine-all",
 				myPrs: { ...EMPTY_SECTION },
+				globalReviewCount: 0,
+				globalMyPrsCount: 0,
 
 				checkGhStatus: async (cwd) => {
 					try {
@@ -101,10 +116,24 @@ export const usePrStore = create<PrState>()(
 
 					try {
 						const view = get().reviewView;
-						const prs =
+						// The Overview bar chip always shows the -all count regardless
+						// of the panel view (see ADR 0005). When the panel is in -all
+						// mode the panel fetch IS the -all fetch, so we reuse its
+						// promise; in -repo mode we fire a parallel -all fetch just
+						// for the count. Promise.all of the same promise twice is
+						// free — it resolves with the same value, no second gh call.
+						const panelPrsPromise =
 							view === "review-repo"
-								? await gh.reviewRequests(cwd)
-								: await gh.reviewRequestsAll(cwd);
+								? gh.reviewRequests(cwd)
+								: gh.reviewRequestsAll(cwd);
+						const allPrsPromise =
+							view === "review-repo"
+								? gh.reviewRequestsAll(cwd)
+								: panelPrsPromise;
+						const [prs, allPrs] = await Promise.all([
+							panelPrsPromise,
+							allPrsPromise,
+						]);
 
 						const section: PrSectionState = {
 							prs,
@@ -129,7 +158,7 @@ export const usePrStore = create<PrState>()(
 							useWorkspaceStore.getState().activeWorkspaceId
 						)
 							return;
-						set({ review: section });
+						set({ review: section, globalReviewCount: allPrs.length });
 					} catch (e) {
 						if (gen !== reviewGeneration) return;
 						set({
@@ -150,10 +179,16 @@ export const usePrStore = create<PrState>()(
 
 					try {
 						const view = get().myPrsView;
-						const prs =
-							view === "mine-repo"
-								? await gh.myPrs(cwd)
-								: await gh.myPrsAll(cwd);
+						// Mirror fetchReviewPrs: piggyback the -all variant for the
+						// Overview bar chip when the panel is in -repo mode.
+						const panelPrsPromise =
+							view === "mine-repo" ? gh.myPrs(cwd) : gh.myPrsAll(cwd);
+						const allPrsPromise =
+							view === "mine-repo" ? gh.myPrsAll(cwd) : panelPrsPromise;
+						const [prs, allPrs] = await Promise.all([
+							panelPrsPromise,
+							allPrsPromise,
+						]);
 
 						const section: PrSectionState = {
 							prs,
@@ -177,7 +212,7 @@ export const usePrStore = create<PrState>()(
 							useWorkspaceStore.getState().activeWorkspaceId
 						)
 							return;
-						set({ myPrs: section });
+						set({ myPrs: section, globalMyPrsCount: allPrs.length });
 					} catch (e) {
 						if (gen !== myPrsGeneration) return;
 						set({
@@ -197,6 +232,8 @@ export const usePrStore = create<PrState>()(
 					set({
 						review: { ...EMPTY_SECTION },
 						myPrs: { ...EMPTY_SECTION },
+						globalReviewCount: 0,
+						globalMyPrsCount: 0,
 					}),
 
 				hydrateFromWorkspace: (workspaceId) => {
