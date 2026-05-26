@@ -306,6 +306,14 @@ body,
 	background: var(--fg-secondary);
 }
 
+/* OverviewBar overflows horizontally when the workspace area is narrow;
+   it scrolls but never shows a WebKit scrollbar — the bar's height
+   (40px) is small enough that the global 8px scrollbar would consume a
+   fifth of it. */
+[data-overview-bar]::-webkit-scrollbar {
+	display: none;
+}
+
 /* Shimmer text animation — silver-white gradient sweep */
 @keyframes shimmer {
 	0% {

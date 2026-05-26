@@ -153,7 +153,7 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 	return (
 		<div
 			data-overview-bar
-			className="flex items-center select-none"
+			className="flex items-center select-none overflow-x-auto overflow-y-hidden"
 			style={{
 				height: OVERVIEW_BAR_HEIGHT,
 				backgroundColor: "var(--bg-secondary)",
@@ -161,6 +161,7 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 				paddingLeft: 10,
 				paddingRight: 10,
 				gap: 4,
+				scrollbarWidth: "none",
 			}}
 		>
 			<WorkspaceTile opened={openedWorkspaces} total={totalWorkspaces} />
