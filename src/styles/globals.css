@@ -314,6 +314,25 @@ body,
 	display: none;
 }
 
+/* xterm's custom scrollbar slider is promoted to its own compositor layer
+   (setLayerHinting(true) + contain:strict inside xterm.js). On macOS WKWebView,
+   ancestor `visibility: hidden` does NOT reliably hide composite-promoted layers
+   — opening App.tsx switches workspaces via `visibility: hidden` to preserve
+   layout dimensions for fast warm switching, so without this rule the scrollbar
+   of any background terminal flashes through the active workspace whenever its
+   PTY emits output. `display: none` removes the slider from the layout tree
+   entirely, which the compositor cannot bypass. The native viewport scrollbar
+   is hidden in parallel — it's redundant since xterm draws its own. */
+[data-workspace-active="false"] .xterm-scrollable-element > .scrollbar {
+	display: none !important;
+}
+.xterm-viewport::-webkit-scrollbar {
+	display: none;
+}
+.xterm-viewport {
+	scrollbar-width: none;
+}
+
 /* Shimmer text animation — silver-white gradient sweep */
 @keyframes shimmer {
 	0% {

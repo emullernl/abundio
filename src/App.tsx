@@ -616,7 +616,7 @@ export function App() {
 							return (
 								<div
 									key={workspace.id}
-									data-workspace-active={isActive ? "true" : undefined}
+									data-workspace-active={isActive ? "true" : "false"}
 									className="absolute flex flex-col"
 									style={{
 										top: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT,
