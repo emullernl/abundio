@@ -2,7 +2,14 @@ import { useCallback, useRef, useState } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { Explorer } from "../Explorer/Explorer";
-import { ChevronLeft, ChevronRight, Folder, Plus, Search } from "../Icons";
+import {
+	ChevronLeft,
+	ChevronRight,
+	Folder,
+	Grid,
+	Plus,
+	Search,
+} from "../Icons";
 import { SearchPanel } from "../Search/SearchPanel";
 import { WorkspaceList } from "./WorkspaceList";
 
@@ -273,11 +280,12 @@ export function Sidebar({
 				style={{
 					borderBottom: "1px solid var(--border)",
 					height: 40,
-					paddingLeft: 24,
+					paddingLeft: 14,
 					paddingRight: 16,
 				}}
 			>
 				<div className="flex items-center gap-2">
+					<Grid size={12} style={{ color: "var(--fg-secondary)" }} />
 					<span
 						className="font-semibold"
 						style={{
