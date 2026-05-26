@@ -63,10 +63,15 @@ export interface OverviewBarProps {
 }
 
 const TILE_WIDTH = 44;
-const TILE_HEIGHT = 32;
+const TILE_HEIGHT = 24;
 const GLYPH_SIZE = 12;
 const GLYPH_STROKE = 2.5;
 const NUMBER_FONT_SIZE = 13;
+const SECTION_TITLE_FONT_SIZE = 7;
+// Gap between the section title and its row of tiles.
+const SECTION_TITLE_GAP = 3;
+// Gap between adjacent sections in the bar.
+const SECTION_GAP = 14;
 
 /** Tile face shows up to two digits; everything past 99 collapses to "99+".
  *  Tooltips keep the real count. */
@@ -160,53 +165,70 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 				borderBottom: "1px solid var(--border)",
 				paddingLeft: 10,
 				paddingRight: 10,
-				gap: 4,
+				paddingTop: 2,
+				paddingBottom: 2,
+				gap: SECTION_GAP,
 				scrollbarWidth: "none",
 			}}
 		>
-			<WorkspaceTile opened={openedWorkspaces} total={totalWorkspaces} />
+			<Section title="Workspaces">
+				<WorkspaceTile opened={openedWorkspaces} total={totalWorkspaces} />
+			</Section>
 
-			<Divider />
+			<Section title="Agents">
+				<AgentTile kind="idle" count={idleAgents} />
+				<AgentTile kind="working" count={workingAgents} />
+				{showAgentWaiting && <AgentTile kind="waiting" count={waitingAgents} />}
+				<AgentTile kind="ready" count={readyAgents} />
+				<AgentTile kind="error" count={errorAgents} />
+			</Section>
 
-			<AgentTile kind="idle" count={idleAgents} />
-			<AgentTile kind="working" count={workingAgents} />
-			{showAgentWaiting && <AgentTile kind="waiting" count={waitingAgents} />}
-			<AgentTile kind="ready" count={readyAgents} />
-			<AgentTile kind="error" count={errorAgents} />
+			<Section title="Terminals">
+				<ShellTile kind="idle" count={idleShells} />
+				{showShellActivityDetail && (
+					<ShellTile kind="working" count={workingShells} />
+				)}
+				{showShellActivityDetail && (
+					<ShellTile kind="ready" count={readyShells} />
+				)}
+				<ShellTile kind="error" count={errorShells} />
+			</Section>
 
-			<Divider />
-
-			<ShellTile kind="idle" count={idleShells} />
-			{showShellActivityDetail && (
-				<ShellTile kind="working" count={workingShells} />
-			)}
-			{showShellActivityDetail && (
-				<ShellTile kind="ready" count={readyShells} />
-			)}
-			<ShellTile kind="error" count={errorShells} />
-
-			<Divider />
-
-			<PrTile kind="review" count={reviewRequestedPrs} />
-			<PrTile kind="mine" count={myOpenPrs} />
+			<Section title="Pull requests">
+				<PrTile kind="review" count={reviewRequestedPrs} />
+				<PrTile kind="mine" count={myOpenPrs} />
+			</Section>
 		</div>
 	);
 });
 
-function Divider() {
+function Section({
+	title,
+	children,
+}: {
+	title: string;
+	children: ReactNode;
+}) {
 	return (
-		<div
-			aria-hidden="true"
-			style={{
-				width: 1,
-				height: 20,
-				backgroundColor: "var(--border)",
-				marginLeft: 3,
-				marginRight: 3,
-				opacity: 0.6,
-				flexShrink: 0,
-			}}
-		/>
+		<div className="flex flex-col flex-shrink-0" style={{ gap: SECTION_TITLE_GAP }}>
+			<div
+				style={{
+					fontSize: SECTION_TITLE_FONT_SIZE,
+					textTransform: "uppercase",
+					letterSpacing: "0.12em",
+					color: "var(--fg-secondary)",
+					fontWeight: 400,
+					lineHeight: 1,
+					paddingLeft: 2,
+					whiteSpace: "nowrap",
+				}}
+			>
+				{title}
+			</div>
+			<div className="flex items-center" style={{ gap: 4 }}>
+				{children}
+			</div>
+		</div>
 	);
 }
 
