@@ -19,7 +19,6 @@ interface SettingsState {
 	fontSize: number;
 	uiFontSize: number;
 	theme: string;
-	sidebarCollapsed: boolean;
 	sidebarWidth: number;
 	sidebarSplitRatio: number;
 	gitPanelWidth: number;
@@ -43,7 +42,6 @@ interface SettingsState {
 	setFontSize: (size: number) => void;
 	setUiFontSize: (size: number) => void;
 	setTheme: (theme: string) => void;
-	toggleSidebar: () => void;
 	setSidebarWidth: (width: number) => void;
 	setSidebarSplitRatio: (ratio: number) => void;
 	setGitPanelWidth: (width: number) => void;
@@ -213,7 +211,6 @@ export const useSettingsStore = create<SettingsState>()(
 			fontSize: PERSISTED_DEFAULTS.fontSize,
 			uiFontSize: PERSISTED_DEFAULTS.uiFontSize,
 			theme: PERSISTED_DEFAULTS.theme,
-			sidebarCollapsed: false,
 			sidebarWidth: PERSISTED_DEFAULTS.sidebarWidth,
 			sidebarSplitRatio: PERSISTED_DEFAULTS.sidebarSplitRatio,
 			gitPanelWidth: PERSISTED_DEFAULTS.gitPanelWidth,
@@ -258,8 +255,6 @@ export const useSettingsStore = create<SettingsState>()(
 				setAllTerminalsTheme(fullTheme.terminal);
 				set({ theme: themeName });
 			},
-			toggleSidebar: () =>
-				set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 			setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
 			setSidebarSplitRatio: (sidebarSplitRatio) => set({ sidebarSplitRatio }),
 			setGitPanelWidth: (gitPanelWidth) => set({ gitPanelWidth }),
@@ -393,7 +388,30 @@ export const useSettingsStore = create<SettingsState>()(
 					setAllTerminalsFontSize(state.fontSize);
 				}
 				if (state?.theme) {
+					// applyTheme writes CSS variables to :root — without this,
+					// rehydrate (e.g. cross-window theme sync after the user
+					// picks a new theme in the Settings window) would update
+					// the in-memory `theme` value but leave UI colours frozen.
+					applyTheme(getTheme(state.theme));
 					setAllTerminalsTheme(getTheme(state.theme).terminal);
+				}
+				if (state?.uiFontFamily) {
+					document.documentElement.style.setProperty(
+						"--font-ui",
+						state.uiFontFamily,
+					);
+				}
+				if (state?.terminalFontFamily) {
+					document.documentElement.style.setProperty(
+						"--font-mono",
+						state.terminalFontFamily,
+					);
+				}
+				if (state?.uiFontSize) {
+					document.documentElement.style.setProperty(
+						"--ui-font-size",
+						`${state.uiFontSize}px`,
+					);
 				}
 				// Re-sync agent hook provisioning with the persisted setting
 				// (also refreshes the relay scripts after an app update).

@@ -1,9 +1,8 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import { git, workspaces as workspacesApi } from "../lib/ipc";
 import type { GitChangedFile } from "../lib/types";
-import { useWorkspaceStore } from "./workspaceStore";
 import { useWorkspaceGitStore } from "./workspaceGitStore";
+import { useWorkspaceStore } from "./workspaceStore";
 
 let fetchGeneration = 0;
 let lastFingerprint: string | null = null;
@@ -49,7 +48,6 @@ function filesEqual(a: GitChangedFile[], b: GitChangedFile[]): boolean {
 }
 
 interface GitChangesState {
-	panelOpen: boolean;
 	changedFiles: GitChangedFile[];
 	baseBranch: string | null;
 	currentBranch: string | null;
@@ -58,9 +56,6 @@ interface GitChangesState {
 	error: string | null;
 	collapsedSections: Record<string, boolean>;
 	branchSelectorOpen: boolean;
-
-	togglePanel: () => void;
-	setPanel: (open: boolean) => void;
 	fetchChanges: (
 		cwd: string,
 		workspaceBaseBranch?: string | null,
@@ -83,9 +78,7 @@ interface GitChangesState {
 }
 
 export const useGitChangesStore = create<GitChangesState>()(
-	persist(
-		(set, get) => ({
-			panelOpen: false,
+	(set, get) => ({
 			changedFiles: [],
 			baseBranch: null,
 			currentBranch: null,
@@ -94,9 +87,6 @@ export const useGitChangesStore = create<GitChangesState>()(
 			error: null,
 			collapsedSections: {},
 			branchSelectorOpen: false,
-
-			togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
-			setPanel: (open) => set({ panelOpen: open }),
 
 			fetchChanges: async (cwd, workspaceBaseBranch) => {
 				// Capture the workspace that owns this fetch. The cache is keyed by
@@ -309,11 +299,5 @@ export const useGitChangesStore = create<GitChangesState>()(
 					branchSelectorOpen: false,
 				});
 			},
-
 		}),
-		{
-			name: "abundio-git-panel",
-			partialize: (state) => ({ panelOpen: state.panelOpen }),
-		},
-	),
 );

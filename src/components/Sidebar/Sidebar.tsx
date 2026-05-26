@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 import { Explorer } from "../Explorer/Explorer";
 import { ChevronLeft, ChevronRight, Folder, Plus, Search } from "../Icons";
 import { SearchPanel } from "../Search/SearchPanel";
@@ -165,8 +166,6 @@ export function Sidebar({
 	onRequestNewWorkspace,
 }: SidebarProps) {
 	const {
-		sidebarCollapsed,
-		toggleSidebar,
 		sidebarWidth,
 		setSidebarWidth,
 		sidebarSplitRatio,
@@ -174,6 +173,10 @@ export function Sidebar({
 		sidebarBottomPanel,
 		setSidebarBottomPanel,
 	} = useSettingsStore();
+	// Sidebar collapsed state is per-Window (each OS window remembers its own
+	// layout). See windowUiStore + ADR-0007.
+	const sidebarCollapsed = useWindowUiStore((s) => s.sidebarCollapsed);
+	const toggleSidebar = useWindowUiStore((s) => s.toggleSidebar);
 	const [localRatio, setLocalRatio] = useState<number | null>(null);
 	const [localWidth, setLocalWidth] = useState<number | null>(null);
 

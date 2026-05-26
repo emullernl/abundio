@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { onAction } from "@tauri-apps/plugin-notification";
-import { useGitChangesStore } from "../stores/gitChangesStore";
+import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { PaneNode } from "./types";
 
@@ -98,7 +98,7 @@ export function handleNotificationClick(
 		if (!workspace) return;
 
 		wsStore.beginWorkspaceSwitch(workspaceId);
-		useGitChangesStore.getState().setPanel(true);
+		useWindowUiStore.getState().setGitPanelOpen(true);
 	}
 }
 

@@ -63,6 +63,7 @@ function seedWorkspace(id: string, name: string) {
 		baseBranch: null,
 		lastBranch: null,
 		position: 0,
+		profileId: "p-default",
 		createdAt: 0,
 		updatedAt: 0,
 		tabs: [],
@@ -579,9 +580,13 @@ describe("notifications on state transitions", () => {
 
 		recordError("pty-1");
 
+		// Title now uses profile-qualified format (ADR-0007 follow-up); since
+		// no profile is loaded in this test, currentNotificationTitle falls
+		// back to plain "Abundio". The workspace name moved into the body so
+		// the context isn't lost.
 		expect(mockSendNotification).toHaveBeenCalledWith({
-			title: "my-project",
-			body: "bash encountered an error",
+			title: "Abundio",
+			body: "my-project: bash encountered an error",
 			extra: {
 				type: "pty",
 				paneId: "pane-1",
@@ -606,8 +611,8 @@ describe("notifications on state transitions", () => {
 		recordExitSuccess("pty-1");
 
 		expect(mockSendNotification).toHaveBeenCalledWith({
-			title: "my-project",
-			body: "zsh is ready",
+			title: "Abundio",
+			body: "my-project: zsh is ready",
 			extra: {
 				type: "pty",
 				paneId: "pane-1",

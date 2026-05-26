@@ -4,6 +4,7 @@ import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { GitCompare, PanelRight, RefreshCw } from "../Icons";
@@ -19,8 +20,9 @@ interface Props {
 }
 
 export function GitChangesPanel({ titlebarHeight }: Props) {
-	const panelOpen = useGitChangesStore((s) => s.panelOpen);
-	const togglePanel = useGitChangesStore((s) => s.togglePanel);
+	// Panel open/closed state is per-Window (see windowUiStore + ADR-0007).
+	const panelOpen = useWindowUiStore((s) => s.gitPanelOpen);
+	const togglePanel = useWindowUiStore((s) => s.toggleGitPanel);
 	const changedFiles = useGitChangesStore((s) => s.changedFiles);
 	const baseBranch = useGitChangesStore((s) => s.baseBranch);
 	const currentBranch = useGitChangesStore((s) => s.currentBranch);
@@ -44,8 +46,10 @@ export function GitChangesPanel({ titlebarHeight }: Props) {
 	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
 	const cwd = activeWorkspace?.rootFolder ?? null;
 	const workspaceBaseBranch = activeWorkspace?.baseBranch ?? null;
-	const isGitRepo = useWorkspaceGitStore(
-		(s) => (activeWorkspaceId ? s.byWorkspaceId[activeWorkspaceId]?.isGitRepo : undefined),
+	const isGitRepo = useWorkspaceGitStore((s) =>
+		activeWorkspaceId
+			? s.byWorkspaceId[activeWorkspaceId]?.isGitRepo
+			: undefined,
 	);
 
 	async function handleSelectFile(file: GitChangedFile) {

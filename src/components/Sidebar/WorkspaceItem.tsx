@@ -11,6 +11,30 @@ import { GitBranch, X } from "../Icons";
 // `--workspace-item-height` CSS var written below.
 export const WORKSPACE_ITEM_HEIGHT_FALLBACK = 56;
 
+const WORKSPACE_ITEM_HEIGHT_LS_KEY = "abundio-workspace-item-height";
+
+// Apply any persisted measurement IMMEDIATELY at module load so CollapsedStrip
+// renders with the correct height even when the sidebar starts collapsed and
+// no expanded WorkspaceItem mounts to measure. The runtime ResizeObserver
+// inside WorkspaceItem keeps the CSS var fresh when one does mount (e.g. after
+// the user expands the sidebar) — so font-size changes still update it.
+if (typeof window !== "undefined") {
+	try {
+		const persisted = localStorage.getItem(WORKSPACE_ITEM_HEIGHT_LS_KEY);
+		if (persisted) {
+			const px = Number.parseInt(persisted, 10);
+			if (Number.isFinite(px) && px > 0) {
+				document.documentElement.style.setProperty(
+					"--workspace-item-height",
+					`${px}px`,
+				);
+			}
+		}
+	} catch {
+		// no-op
+	}
+}
+
 // Singleton ownership of the height-probe ResizeObserver. With N workspaces
 // every instance previously mounted its own observer and re-wrote the same
 // CSS variable — wasteful on every layout change and on every UI-font-size
@@ -81,16 +105,30 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 
 	// Publish the rendered height so CollapsedStrip can match it exactly.
 	// Single-owner pattern — see `heightObserverOwner` at module scope.
+	//
+	// Also persists the measurement to localStorage. When the app restarts
+	// with the sidebar already collapsed, no WorkspaceItem ever mounts to
+	// take a measurement, so CollapsedStrips would fall back to the constant
+	// 56 — wrong for any non-default font density. The persisted value is
+	// applied to the CSS variable at module load (below) so collapsed
+	// strips have the right height on first paint.
 	useLayoutEffect(() => {
 		const el = rootRef.current;
 		if (!el) return;
 		if (heightObserverOwner !== null) return;
 		heightObserverOwner = el;
 		const write = () => {
+			const px = el.offsetHeight;
 			document.documentElement.style.setProperty(
 				"--workspace-item-height",
-				`${el.offsetHeight}px`,
+				`${px}px`,
 			);
+			try {
+				localStorage.setItem(WORKSPACE_ITEM_HEIGHT_LS_KEY, String(px));
+			} catch {
+				// localStorage quota / privacy mode — measurement still works
+				// in-session, just won't survive restart.
+			}
 		};
 		write();
 		const ro = new ResizeObserver(write);

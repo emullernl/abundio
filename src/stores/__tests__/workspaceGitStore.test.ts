@@ -19,8 +19,20 @@ const noFiles = () => Promise.resolve([] as any[]);
 // biome-ignore lint/suspicious/noExplicitAny: mock data
 const twoFiles = () =>
 	Promise.resolve([
-		{ path: "a.ts", status: "M", additions: 10, deletions: 3, section: "staged" },
-		{ path: "b.ts", status: "M", additions: 5, deletions: 1, section: "unstaged" },
+		{
+			path: "a.ts",
+			status: "M",
+			additions: 10,
+			deletions: 3,
+			section: "staged",
+		},
+		{
+			path: "b.ts",
+			status: "M",
+			additions: 5,
+			deletions: 1,
+			section: "unstaged",
+		},
 	] as any[]);
 
 function resetStore() {
@@ -201,7 +213,10 @@ describe("workspaceGitStore", () => {
 
 	describe("refreshWorkspace", () => {
 		it("updates counts on every call", async () => {
-			useWorkspaceGitStore.setState({ byWorkspaceId: { "ws-rw1": { ...baseInfo } }, inFlight: new Set() });
+			useWorkspaceGitStore.setState({
+				byWorkspaceId: { "ws-rw1": { ...baseInfo } },
+				inFlight: new Set(),
+			});
 			vi.mocked(git.changedFiles).mockImplementation(twoFiles);
 			await useWorkspaceGitStore.getState().refreshWorkspace("ws-rw1", "/repo");
 			const info = useWorkspaceGitStore.getState().byWorkspaceId["ws-rw1"];
@@ -211,7 +226,10 @@ describe("workspaceGitStore", () => {
 		});
 
 		it("updates on repeated calls (picks up additions/deletions changes)", async () => {
-			useWorkspaceGitStore.setState({ byWorkspaceId: { "ws-rw2": { ...baseInfo } }, inFlight: new Set() });
+			useWorkspaceGitStore.setState({
+				byWorkspaceId: { "ws-rw2": { ...baseInfo } },
+				inFlight: new Set(),
+			});
 			vi.mocked(git.changedFiles)
 				.mockImplementationOnce(noFiles)
 				.mockImplementationOnce(twoFiles);
@@ -224,7 +242,9 @@ describe("workspaceGitStore", () => {
 
 		it("preserves currentBranch and isGitRepo", async () => {
 			useWorkspaceGitStore.setState({
-				byWorkspaceId: { "ws-rw3": { ...baseInfo, currentBranch: "feature-x" } },
+				byWorkspaceId: {
+					"ws-rw3": { ...baseInfo, currentBranch: "feature-x" },
+				},
 				inFlight: new Set(),
 			});
 			vi.mocked(git.changedFiles).mockImplementation(noFiles);
@@ -237,8 +257,12 @@ describe("workspaceGitStore", () => {
 		it("skips update when entry does not exist", async () => {
 			useWorkspaceGitStore.setState({ byWorkspaceId: {}, inFlight: new Set() });
 			vi.mocked(git.changedFiles).mockImplementation(twoFiles);
-			await useWorkspaceGitStore.getState().refreshWorkspace("ws-rw4-missing", "/repo");
-			expect(useWorkspaceGitStore.getState().byWorkspaceId["ws-rw4-missing"]).toBeUndefined();
+			await useWorkspaceGitStore
+				.getState()
+				.refreshWorkspace("ws-rw4-missing", "/repo");
+			expect(
+				useWorkspaceGitStore.getState().byWorkspaceId["ws-rw4-missing"],
+			).toBeUndefined();
 		});
 
 		it("swallows errors silently", async () => {

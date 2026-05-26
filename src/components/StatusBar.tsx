@@ -1,3 +1,5 @@
+import { User } from "lucide-react";
+import { useProfileStore } from "../stores/profileStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Folder, Grid, Terminal } from "./Icons";
 
@@ -37,6 +39,11 @@ export function StatusBar() {
 				?.tabs.find((t) => t.id === tabId) ?? null
 		);
 	});
+	const activeProfile = useProfileStore((s) =>
+		s.activeProfileId
+			? (s.profiles.find((p) => p.id === s.activeProfileId) ?? null)
+			: null,
+	);
 
 	return (
 		<div
@@ -72,13 +79,32 @@ export function StatusBar() {
 							{shortenPath(workspace.rootFolder)}
 						</span>
 					</div>
-					<span className="flex items-center gap-1.5">
-						<Grid size={12} />
-						{workspace.name}
-					</span>
+					<div className="flex items-center gap-3">
+						<span className="flex items-center gap-1.5">
+							<Grid size={12} />
+							{workspace.name}
+						</span>
+						{activeProfile && (
+							<>
+								<Separator />
+								<span className="flex items-center gap-1.5">
+									<User size={12} />
+									{activeProfile.name}
+								</span>
+							</>
+						)}
+					</div>
 				</>
 			) : (
-				<span>No active workspace</span>
+				<div className="flex items-center justify-between w-full">
+					<span>No active workspace</span>
+					{activeProfile && (
+						<span className="flex items-center gap-1.5">
+							<User size={12} />
+							{activeProfile.name}
+						</span>
+					)}
+				</div>
 			)}
 		</div>
 	);

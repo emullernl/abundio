@@ -77,6 +77,7 @@ function makeWorkspace(
 		baseBranch: null,
 		lastBranch: null,
 		position: 0,
+		profileId: "p-default",
 		createdAt: 0,
 		updatedAt: 0,
 		tabs: [makeTab()],

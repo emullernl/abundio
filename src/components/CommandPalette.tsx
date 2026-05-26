@@ -5,6 +5,9 @@ import { pty } from "../lib/ipc";
 import { triggerAction } from "../lib/keybindings";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
+import { invoke } from "@tauri-apps/api/core";
+import { useProfileStore } from "../stores/profileStore";
+import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -35,6 +38,8 @@ export function CommandPalette({
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const beginWorkspaceSwitch = useWorkspaceStore((s) => s.beginWorkspaceSwitch);
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	const profilesList = useProfileStore((s) => s.profiles);
+	const activeProfileId = useProfileStore((s) => s.activeProfileId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
 	const { splitPane, closePane } = useSplitPane();
@@ -51,6 +56,30 @@ export function CommandPalette({
 				action: () => beginWorkspaceSwitch(s.id),
 			});
 		}
+
+		// Profiles — flat entries, active one omitted.
+		for (const p of profilesList) {
+			if (p.id === activeProfileId) continue;
+			result.push({
+				id: `profile-${p.id}`,
+				label: `Switch to Profile: ${p.name}`,
+				category: "Profiles",
+				action: () => {
+					requestSwitchProfile(p.id).catch(() => {});
+				},
+			});
+		}
+		result.push({
+			id: "action-manage-profiles",
+			label: "Manage Profiles…",
+			category: "Profiles",
+			action: () => {
+				// Open the singleton Settings window deep-linked to Profiles.
+				invoke("open_settings_window", { section: "profiles" }).catch(
+					() => {},
+				);
+			},
+		});
 
 		// Actions
 		result.push({
@@ -145,6 +174,8 @@ export function CommandPalette({
 		debugActivityMeter,
 		toggleDebugActivityMeter,
 		agents,
+		profilesList,
+		activeProfileId,
 	]);
 
 	const filtered = useMemo(() => {

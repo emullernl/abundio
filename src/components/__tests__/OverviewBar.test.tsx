@@ -82,9 +82,9 @@ describe("OverviewBar", () => {
 			);
 		});
 		// Count chips: title attributes reliably identify each chip kind.
-		const tooltipTexts = Array.from(
-			container.querySelectorAll("[title]"),
-		).map((el) => el.getAttribute("title") ?? "");
+		const tooltipTexts = Array.from(container.querySelectorAll("[title]")).map(
+			(el) => el.getAttribute("title") ?? "",
+		);
 		expect(tooltipTexts.some((t) => t.startsWith("Idle agents"))).toBe(true);
 		expect(tooltipTexts.some((t) => t.startsWith("Working agents"))).toBe(true);
 		expect(tooltipTexts.some((t) => t.startsWith("Waiting agents"))).toBe(true);
@@ -195,9 +195,9 @@ describe("OverviewBar", () => {
 				/>,
 			);
 		});
-		const tooltipTexts = Array.from(
-			container.querySelectorAll("[title]"),
-		).map((el) => el.getAttribute("title") ?? "");
+		const tooltipTexts = Array.from(container.querySelectorAll("[title]")).map(
+			(el) => el.getAttribute("title") ?? "",
+		);
 		expect(tooltipTexts.some((t) => t.startsWith("Idle terminals"))).toBe(true);
 		expect(tooltipTexts.some((t) => t.startsWith("Busy terminals"))).toBe(true);
 		expect(tooltipTexts.some((t) => t.startsWith("Finished terminals"))).toBe(
@@ -218,9 +218,9 @@ describe("OverviewBar", () => {
 				/>,
 			);
 		});
-		const tooltipTexts = Array.from(
-			container.querySelectorAll("[title]"),
-		).map((el) => el.getAttribute("title") ?? "");
+		const tooltipTexts = Array.from(container.querySelectorAll("[title]")).map(
+			(el) => el.getAttribute("title") ?? "",
+		);
 		// Idle agent tile still present, Waiting tile gone.
 		expect(tooltipTexts.some((t) => t.startsWith("Idle agents"))).toBe(true);
 		expect(tooltipTexts.some((t) => t.startsWith("Waiting agents"))).toBe(
@@ -241,9 +241,9 @@ describe("OverviewBar", () => {
 				/>,
 			);
 		});
-		const tooltipTexts = Array.from(
-			container.querySelectorAll("[title]"),
-		).map((el) => el.getAttribute("title") ?? "");
+		const tooltipTexts = Array.from(container.querySelectorAll("[title]")).map(
+			(el) => el.getAttribute("title") ?? "",
+		);
 		expect(tooltipTexts.some((t) => t.startsWith("Idle terminals"))).toBe(true);
 		expect(tooltipTexts.some((t) => t.startsWith("Error terminals"))).toBe(
 			true,

@@ -269,10 +269,7 @@ function WorkspaceTile({ opened, total }: { opened: number; total: number }) {
 			: `${opened} of ${total} workspace${total === 1 ? "" : "s"} opened`;
 	return (
 		<TileShell
-			glyph={staticGlyph(
-				LayoutGrid,
-				active ? SILVER : "var(--fg-secondary)",
-			)}
+			glyph={staticGlyph(LayoutGrid, active ? SILVER : "var(--fg-secondary)")}
 			active={active}
 			primary={opened}
 			title={title}

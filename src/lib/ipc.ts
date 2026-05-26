@@ -13,6 +13,8 @@ import type {
 	GitChangedFile,
 	GitFileDiff,
 	LaunchFile,
+	Profile,
+	ProfileUpdate,
 	PtyActivityType,
 	PtyStatusType,
 	PullRequest,
@@ -112,10 +114,15 @@ export const pty = {
 };
 
 export const workspaces = {
-	create: (name: string, rootFolder: string) =>
-		invoke<WorkspaceWithTabs>("workspace_create", { name, rootFolder }),
+	create: (name: string, rootFolder: string, profileId: string) =>
+		invoke<WorkspaceWithTabs>("workspace_create", {
+			name,
+			rootFolder,
+			profileId,
+		}),
 
-	list: () => invoke<WorkspaceWithTabs[]>("workspace_list"),
+	list: (profileId: string) =>
+		invoke<WorkspaceWithTabs[]>("workspace_list", { profileId }),
 
 	update: (id: string, updates: WorkspaceUpdate) =>
 		invoke<void>("workspace_update", { id, updates }),
@@ -123,6 +130,46 @@ export const workspaces = {
 	delete: (id: string) => invoke<void>("workspace_delete", { id }),
 
 	reorder: (ids: string[]) => invoke<void>("workspace_reorder", { ids }),
+};
+
+export const profiles = {
+	list: () => invoke<Profile[]>("profile_list"),
+
+	create: (name: string) => invoke<Profile>("profile_create", { name }),
+
+	update: (id: string, updates: ProfileUpdate) =>
+		invoke<void>("profile_update", { id, updates }),
+
+	delete: (id: string) => invoke<void>("profile_delete", { id }),
+
+	reorder: (ids: string[]) => invoke<void>("profile_reorder", { ids }),
+
+	/** Notify the Rust side of the active profile id for the calling window
+	 *  (Tauri injects the window automatically). The Rust side updates its
+	 *  per-window ownership map, rebuilds the native menu, and emits
+	 *  `profile-ownership-changed` to all windows. */
+	setActiveProfileId: (profileId: string | null) =>
+		invoke<void>("set_active_profile_id", { profileId }),
+
+	/** Returns the profile id this window was spawned with, or null if the
+	 *  Rust map has no entry for this window. */
+	getActiveProfileForWindow: () =>
+		invoke<string | null>("get_active_profile_for_window"),
+
+	/** Returns a profileId → windowLabel map. Used by Settings to compute
+	 *  "open in another window" disabled states. */
+	getOwnershipMap: () =>
+		invoke<Record<string, string>>("get_profile_ownership_map"),
+
+	/** Opens a new application Window with the given profile. Rejects if the
+	 *  profile is already open in another window. */
+	openWindowWithProfile: (profileId: string) =>
+		invoke<string>("open_window_with_profile", { profileId }),
+
+	/** Creates a fresh "Untitled" profile (auto-numbered on collision) and
+	 *  opens it in a new application Window. */
+	createUntitledProfileInNewWindow: () =>
+		invoke<string>("create_untitled_profile_in_new_window"),
 };
 
 export const tabs = {

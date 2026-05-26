@@ -7,6 +7,7 @@ import {
 	getWindowBlurredMs,
 	NOTIFICATION_BLUR_THRESHOLD_MS,
 } from "../lib/windowFocus";
+import { currentNotificationTitle } from "./profileStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
 export type ReviewView = "review-all" | "review-repo";
@@ -272,7 +273,6 @@ export const usePrStore = create<PrState>()(
 						myPrs: entry?.myPrs ?? { ...EMPTY_SECTION },
 					});
 				},
-
 			};
 		},
 		{
@@ -398,7 +398,7 @@ usePrStore.subscribe((state, prevState) => {
 	for (const body of notifications) {
 		try {
 			sendNotification({
-				title: "Abundio",
+				title: currentNotificationTitle(),
 				body,
 				extra: {
 					type: "pr",

@@ -1,16 +1,35 @@
 # Abundio
 
-GPU-accelerated terminal multiplexer. The user organizes work into Workspaces; each Workspace runs its own pane layout and PTY processes.
+GPU-accelerated terminal multiplexer. The user opens one or more application Windows; each Window shows one Profile; each Profile owns a set of Workspaces; each Workspace runs its own pane layout and PTY processes.
 
 ## Language
 
-**Workspace**: A folder-bound container with its own pane layout, tabs, and PTY processes.
+**Window**: A single OS-level application window (Tauri `WebviewWindow`). Windows come in two kinds:
+- **Profile-bound window**: owns exactly one **Profile** (one-to-one, exclusive — a Profile is open in at most one such Window at a time). Created via File → New Window with Profile. Appears in `windows.json` for restoration across launches and counts toward the "last-window-closing quits the app" rule. Labels follow the pattern `main` (the first window) or `window-<uuid>` (additional windows).
+- **Auxiliary window**: serves a global purpose unrelated to any single Profile. Currently only the **Settings window**. Does not own a Profile, is not persisted in `windows.json`, and does not count toward the quit rule. Uses a stable singleton label (`settings`).
+
+The label is the stable identifier across launches — both Abundio's own `windows.json` and `tauri-plugin-window-state` key per-window data by it.
+_Avoid_: viewport, app instance, frame; do **not** use "window" to mean a **Pane** (see Pane).
+
+**Settings window**: The singleton auxiliary **Window** labelled `settings`. Opens (or focuses if already open) via File menu, Cmd+,, or the "Manage Profiles…" deep-link. Edits the *global* profile registry — has no active Profile of its own. Theme, font, and agent changes here propagate live to all open Profile-bound windows via a Tauri event broadcast. See ADR-0008.
+_Avoid_: preferences window, options dialog.
+
+**Profile**: A top-level grouping of Workspaces — a named bundle the user uses to organize unrelated bodies of work (e.g. "Work", "Personal"). Each **Workspace** belongs to exactly one Profile and cannot be moved between Profiles after creation. The only per-Profile data today is the Workspace list; appearance, custom agents, env vars and GitHub identity remain global. Scope is intentionally narrow so the term may broaden later. A Profile is bound to at most one **Window** at any moment.
+_Avoid_: space, group, namespace, context
+
+**Active profile**: The single Profile currently shown in a given Window. Per-Window singleton — Window A's active profile is independent of Window B's, but a Profile cannot be active in two Windows at the same time. Switching Profile closes every Opened workspace in the previous Active profile of *that Window* (with a confirm dialog when any are open). Persisted across restarts per-Window.
+_Avoid_: current profile, selected profile, focused profile
+
+**Default profile**: The Profile created at migration time to host pre-existing Workspaces. After migration it has no permanent specialness: it can be renamed, and it can be deleted as long as another Profile exists. The system invariant is "at least one Profile must always exist" — not "the Default must exist".
+_Avoid_: primary profile, root profile, main profile
+
+**Workspace**: A folder-bound container with its own pane layout, tabs, and PTY processes. Belongs to exactly one **Profile**.
 _Avoid_: project, folder
 
-**Active workspace**: The single Workspace currently selected and visible to the user. Singleton state (`useWorkspaceStore.activeWorkspaceId`).
+**Active workspace**: The single Workspace currently selected and visible to the user *within a Window*. Per-Window singleton (`useWorkspaceStore.activeWorkspaceId` — each Window has its own JS context and so its own store instance).
 _Avoid_: selected workspace, current workspace, focused workspace
 
-**Opened workspace**: A Workspace the user has activated at least once this session and has not closed. Tracked by `usePtyActivityStore.openedWorkspaceIds`. PTY processes and file watchers stay alive for these even when not active.
+**Opened workspace**: A Workspace the user has activated at least once *in its Window* and has not closed. Tracked per-Window by `usePtyActivityStore.openedWorkspaceIds`. PTY processes and file watchers stay alive for these even when not the Active workspace.
 _Avoid_: loaded workspace, mounted workspace
 
 **Background workspace**: An Opened workspace that is not currently the Active workspace. Not a separate state — derived as `openedWorkspaceIds \ {activeWorkspaceId}`.
@@ -62,6 +81,12 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 
 ## Relationships
 
+- Every **Workspace** belongs to exactly one **Profile**; the Workspace ↔ Profile assignment is set at creation and not editable afterwards.
+- Each **Profile-bound Window** shows exactly one **Profile**, and each Profile is shown in at most one Window. Opening a new Window requires picking a Profile that is not already shown elsewhere (or creating a new "Untitled" Profile inline from the File menu).
+- **Auxiliary windows** (e.g. the **Settings window**) do not own a Profile, are not persisted in `windows.json`, and do not count toward the "last window closing quits the app" rule. Closing every Profile-bound window quits the app even when the Settings window is still open.
+- The sidebar of a Window shows only Workspaces in *that Window's* **Active profile**.
+- The set of **Opened workspaces** is always a subset of the Window's **Active profile**'s Workspaces — switching Profile *within a Window* closes every Opened workspace in that Window's previous Active profile.
+- At least one **Profile** must always exist. Deleting the **Active profile** auto-switches the Window to the first remaining Profile in position order that is not already open in another Window. A Profile cannot be deleted while it is open in another Window; the active Profile cannot be deleted if no unowned profile is available to auto-switch into. Deleting any Profile cascade-deletes its Workspaces.
 - The **Active workspace** is always also an **Opened workspace**.
 - A Workspace shown in the sidebar may be neither Active nor Opened — it has not been activated this session.
 - **Closing** a Workspace removes it from Opened; deleting also removes it from the sidebar.
@@ -72,6 +97,8 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 
 ## Flagged ambiguities
 
+- "Window" has two meanings in Abundio code and conversation, and they are unrelated: the **Window** entity (OS-level application window — a Tauri `WebviewWindow`) is canonical; the historical use of "window" to mean a **Pane** is forbidden. When discussing Panes, use "pane" or "split"; when discussing Windows, capitalise to disambiguate where ambiguity would arise.
+- "Profile" in Abundio refers exclusively to the top-level grouping entity. Despite borrowing the word from VS Code / browser conventions (where it bundles identity + settings), Abundio's Profile currently only groups Workspaces — appearance, agents and GitHub identity remain global. The term was kept against the narrower fit of "Space" or "Group" so that the scope may widen later without renaming.
 - "active workspaces" (plural) does not exist — **Active workspace** is a singleton. Colloquial use of the plural is resolved to **Opened workspaces** (the set of workspaces activated this session and still open). The **Overview bar** uses "Opened" as its label for this reason.
 - "background loaded workspace" was used to mean both "every sidebar workspace" and "opened-but-not-active workspace" — resolved to the latter (an Opened workspace that is not Active).
 - "panel" is used colloquially to mean both a **Pane** and the git-changes side panel — in code, the git-changes side panel is always referred to as "git panel" or "git changes panel", never "pane".

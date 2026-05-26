@@ -1,6 +1,7 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
+import { currentNotificationTitle } from "./profileStore";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -508,7 +509,7 @@ usePtyActivityStore.subscribe((state, prevState) => {
 		const title = paneId ? titles[paneId] : undefined;
 		const label =
 			title || (entry.detectionMode === "agent" ? "Agent" : "Terminal");
-		const body =
+		const baseBody =
 			entry.state === "error"
 				? `${label} encountered an error`
 				: entry.state === "waiting"
@@ -521,9 +522,13 @@ usePtyActivityStore.subscribe((state, prevState) => {
 					.getState()
 					.workspaces.find((w) => w.id === location.workspaceId)?.name
 			: undefined;
+		// Title uses the profile-qualified format (matches the window title);
+		// workspace context that previously lived in the title is folded into
+		// the body so it isn't lost.
+		const body = workspaceName ? `${workspaceName}: ${baseBody}` : baseBody;
 		try {
 			sendNotification({
-				title: workspaceName ?? "Abundio",
+				title: currentNotificationTitle(),
 				body,
 				extra:
 					location && paneId

@@ -176,8 +176,21 @@ git push --follow-tags         # triggers CI build for all platforms
 - Shell is spawned with `-l -i` flags (login + interactive) to source `.zshrc`. `TERM_PROGRAM=Abundio` is set.
 - Keybindings use capture phase (`addEventListener(..., true)`) to intercept before xterm.js.
 - Themes apply to both CSS variables (UI) and xterm.js terminal options.
-- macOS uses native titlebar with `titleBarStyle: "Overlay"` — content extends behind traffic lights.
+- macOS uses native titlebar with `titleBarStyle: "Overlay"` — content extends behind traffic lights. The React `Titlebar` component renders a 28px strip (`bg-secondary`) with the title text aligned to the traffic-light row.
 - Cross-platform keybindings: `Cmd` on macOS, `Ctrl` on Windows/Linux.
+
+## Multi-window gotchas
+
+The app spawns multiple Tauri windows at runtime — see ADR-0007 and ADR-0008. Several Tauri 2 / WKWebView behaviours bit us during implementation; capture them before next time:
+
+- **Capabilities are scoped by window label.** Every window spawned programmatically must have its label listed in `src-tauri/capabilities/default.json`'s `windows` array or it gets **zero** permissions, and IPC/event calls (`listen`, `emit`, `getCurrentWindow().close()`, `dialog:allow-open`, `core:default`, etc.) silently fail. Patterns currently allowed: `main`, `window-*`, `settings`.
+- **`PRAGMA foreign_keys` is a no-op inside a transaction.** Migrations that need FK enforcement disabled (e.g. table-rebuild patterns where a cascade-FK child table would lose data) must place the PRAGMA at the very start/end of the SQL. The migration framework (`migrations::apply_one` + `split_fk_pragmas`) extracts those statements and runs them outside the SAVEPOINT.
+- **`RunEvent::ExitRequested` fires AFTER the last window's `Destroyed`**, not before, when triggered by Cmd+Q or `[NSApp terminate:]`. To run code *before* windows start tearing down on quit, use a custom Quit `MenuItem` (id `quit-app`) which routes through `on_menu_event` — see `lib.rs` and ADR-0007.
+- **`localStorage` is isolated per Tauri webview on macOS.** Cross-window state sync cannot rely on the browser `storage` event. Use Tauri events (`emit`/`listen`) with the changed data shipped *in the payload*, then have receivers write to their own localStorage + call `useSettingsStore.persist.rehydrate()`. See `SettingsApp.tsx`.
+- **DOM-measurement-derived CSS variables don't survive when the measuring component is unmounted.** When `CollapsedStrip` needs `--workspace-item-height` but the sidebar starts collapsed at launch (no `WorkspaceItem` mounted), the value is missing. Pattern: persist the last-measured value to localStorage and re-apply at module load — see `WorkspaceItem.tsx`.
+- **Settings is its own OS-level window, not a modal.** Open it via the `open_settings_window` IPC, never a per-window `setSettingsOpen(true)`. Reading settings state from the settings window must NOT use `profileStore.loadProfiles()` (it pushes an `activeProfileId` claim into the per-window ownership map and pollutes it); fetch via `profilesApi.list()` + `setState` instead.
+- **App-wide Tauri event listeners must be registered in every root.** Both `App.tsx` (Profile-bound windows) and `SettingsApp.tsx` (Settings window) need their own `listen("profile-ownership-changed", ...)` etc. — there's no implicit propagation between roots.
+- **Cross-platform window-label assumptions.** New windows go through `window_management::generate_window_label()` (returns `window-<uuid>`). If you add a different label pattern, also update `is_profile_window_label`, the capabilities allowlist, and `windows.json` restoration filtering — these all depend on the predicate.
 
 ## Testing
 

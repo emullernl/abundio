@@ -15,7 +15,7 @@ vi.mock("../ipc", () => ({
 	workspaces: { update: vi.fn(() => Promise.resolve()) },
 }));
 
-import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { handleNotificationClick } from "../notificationRouter";
 
@@ -33,6 +33,7 @@ beforeEach(() => {
 				baseBranch: null,
 				lastBranch: null,
 				position: 0,
+				profileId: "p-default",
 				createdAt: 0,
 				updatedAt: 0,
 				tabs: [
@@ -54,7 +55,7 @@ beforeEach(() => {
 		],
 		activeWorkspaceId: "ws-1",
 	});
-	useGitChangesStore.setState({ panelOpen: false });
+	useWindowUiStore.setState({ gitPanelOpen: false });
 });
 
 describe("handleNotificationClick", () => {
@@ -105,7 +106,7 @@ describe("handleNotificationClick", () => {
 
 		expect(mockSetFocus).toHaveBeenCalled();
 		expect(setActiveWorkspace).toHaveBeenCalledWith("ws-1");
-		expect(useGitChangesStore.getState().panelOpen).toBe(true);
+		expect(useWindowUiStore.getState().gitPanelOpen).toBe(true);
 	});
 
 	it("only focuses window when PTY workspace no longer exists", () => {
@@ -127,7 +128,7 @@ describe("handleNotificationClick", () => {
 		});
 
 		expect(mockSetFocus).toHaveBeenCalled();
-		expect(useGitChangesStore.getState().panelOpen).toBe(false);
+		expect(useWindowUiStore.getState().gitPanelOpen).toBe(false);
 	});
 
 	it("only focuses window when PTY extra has no workspaceId", () => {
@@ -140,7 +141,7 @@ describe("handleNotificationClick", () => {
 		handleNotificationClick({ type: "pr" });
 
 		expect(mockSetFocus).toHaveBeenCalled();
-		expect(useGitChangesStore.getState().panelOpen).toBe(false);
+		expect(useWindowUiStore.getState().gitPanelOpen).toBe(false);
 	});
 });
 
@@ -168,8 +169,9 @@ describe("findPaneLocation", () => {
 					agentPresetsJson: "{}",
 					fileTabsJson: "[]",
 					baseBranch: null,
-				lastBranch: null,
+					lastBranch: null,
 					position: 0,
+					profileId: "p-default",
 					createdAt: 0,
 					updatedAt: 0,
 					tabs: [

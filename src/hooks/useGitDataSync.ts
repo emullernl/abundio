@@ -3,6 +3,7 @@ import { fs } from "../lib/ipc";
 import { useGitChangesStore } from "../stores/gitChangesStore";
 import { usePrStore } from "../stores/prStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
+import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
@@ -39,7 +40,8 @@ export function useGitDataSync() {
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-	const panelOpen = useGitChangesStore((s) => s.panelOpen);
+	// Per-Window panel state — see windowUiStore + ADR-0007.
+	const panelOpen = useWindowUiStore((s) => s.gitPanelOpen);
 	const ghStatus = usePrStore((s) => s.ghStatus);
 
 	const activeRef = useRef<Map<string, ActiveWatcher>>(new Map());
@@ -93,7 +95,11 @@ export function useGitDataSync() {
 				} else {
 					useWorkspaceGitStore
 						.getState()
-						.refreshWorkspace(wsId, workspace.rootFolder, workspace.baseBranch ?? null);
+						.refreshWorkspace(
+							wsId,
+							workspace.rootFolder,
+							workspace.baseBranch ?? null,
+						);
 				}
 			};
 
@@ -235,5 +241,11 @@ export function useGitDataSync() {
 			usePrStore.getState().fetchMyPrs(cwd);
 		}, ms);
 		return () => clearInterval(interval);
-	}, [activeCwd, activeWorkspaceId, panelOpen, ghStatus?.available, ghStatus?.authenticated]);
+	}, [
+		activeCwd,
+		activeWorkspaceId,
+		panelOpen,
+		ghStatus?.available,
+		ghStatus?.authenticated,
+	]);
 }

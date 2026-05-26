@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +14,6 @@ import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
-import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
@@ -35,11 +35,18 @@ import type { PaneNode } from "./lib/types";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
-import { useGitChangesStore } from "./stores/gitChangesStore";
 import {
 	clearPaneClose,
 	usePaneCloseConfirmStore,
 } from "./stores/paneCloseConfirmStore";
+import { useProfileStore } from "./stores/profileStore";
+import {
+	cancelProfileSwitch,
+	confirmProfileSwitch,
+	requestSwitchProfile,
+	useProfileSwitchConfirmStore,
+} from "./stores/profileSwitchConfirmStore";
+import { usePrStore } from "./stores/prStore";
 import {
 	selectErrorAgentCount,
 	selectErrorShellCount,
@@ -52,8 +59,8 @@ import {
 	selectWorkingShellCount,
 	usePtyActivityStore,
 } from "./stores/ptyActivityStore";
-import { usePrStore } from "./stores/prStore";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useWindowUiStore } from "./stores/windowUiStore";
 import {
 	clearTabClose,
 	requestTabCloseWithDirtyCheck,
@@ -61,7 +68,10 @@ import {
 } from "./stores/tabCloseConfirmStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 
-const TITLEBAR_HEIGHT = isMac ? 52 : 0;
+// Matches the native macOS title bar height. The React Titlebar component
+// renders a single-row strip of this exact height; all other layout (sidebar,
+// OverviewBar, content) butts up against it with no gap.
+const TITLEBAR_HEIGHT = isMac ? 28 : 0;
 
 /** Workspace-switch overlay. */
 const SwitchingOverlay = memo(function SwitchingOverlay() {
@@ -236,7 +246,6 @@ export function App() {
 	} = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
-	const [settingsOpen, setSettingsOpen] = useState(false);
 	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
 
 	// LaunchPicker is shared for new-tab and split flows
@@ -302,6 +311,7 @@ export function App() {
 		pendingDirtyFileName: tabCloseDirtyFileName,
 		pendingOnClean: tabCloseOnClean,
 	} = useTabCloseConfirmStore();
+	const pendingProfileSwitch = useProfileSwitchConfirmStore((s) => s.pending);
 
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
 	const appWindowRef = useRef<Awaited<
@@ -410,12 +420,27 @@ export function App() {
 		};
 	}, [proceedWithClose]);
 
-	// Listen for native menu "Settings..." click
+	// Settings menu is now handled entirely in Rust — it opens the singleton
+	// `settings` window via window_management::open_or_focus_settings_window.
+	// No frontend listener needed in profile windows for that path.
+
+	// Listen for native menu "Switch Profile" submenu clicks.
 	useEffect(() => {
-		const unlisten = listen("open-settings", () => {
-			setPaletteOpen(false);
-			setSettingsOpen(true);
+		const unlisten = listen<string>("switch-profile-request", (event) => {
+			requestSwitchProfile(event.payload).catch(() => {});
 		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
+	// Refresh the ownership map whenever any window opens/closes/switches
+	// profile so the Settings panel's disabled-states stay accurate.
+	useEffect(() => {
+		const refresh = () => {
+			useProfileStore.getState().refreshOwnershipMap().catch(() => {});
+		};
+		const unlisten = listen("profile-ownership-changed", refresh);
 		return () => {
 			unlisten.then((fn) => fn());
 		};
@@ -439,18 +464,19 @@ export function App() {
 		registerAction("navigate-left", () => navigatePane("left"));
 		registerAction("navigate-right", () => navigatePane("right"));
 		registerAction("command-palette", () => {
-			setSettingsOpen(false);
 			setFileSearchOpen(false);
 			setPaletteOpen((v) => !v);
 		});
 		registerAction("open-file-search", () => {
-			setSettingsOpen(false);
 			setPaletteOpen(false);
 			setFileSearchOpen((v) => !v);
 		});
 		registerAction("open-settings", () => {
 			setPaletteOpen(false);
-			setSettingsOpen(true);
+			// Settings is now a singleton OS window (ADR-0007). The Rust
+			// command opens or focuses it; the panel renders inside that
+			// dedicated window, not as a modal here.
+			invoke("open_settings_window").catch(() => {});
 		});
 		registerAction("search-in-terminal", () =>
 			useWorkspaceStore.getState().toggleSearch(),
@@ -512,18 +538,16 @@ export function App() {
 			}
 		});
 		registerAction("toggle-git-panel", () => {
-			useGitChangesStore.getState().togglePanel();
+			useWindowUiStore.getState().toggleGitPanel();
 		});
 		registerAction("toggle-markdown-preview", () => {
 			const paneId = useWorkspaceStore.getState().focusedPaneId;
 			if (paneId) toggleMarkdownPreviewForPane(paneId);
 		});
 		registerAction("search-in-workspace", () => {
-			const settings = useSettingsStore.getState();
-			if (settings.sidebarCollapsed) {
-				settings.toggleSidebar();
-			}
-			settings.setSidebarBottomPanel("search");
+			const ui = useWindowUiStore.getState();
+			if (ui.sidebarCollapsed) ui.toggleSidebar();
+			useSettingsStore.getState().setSidebarBottomPanel("search");
 		});
 	}, [
 		splitPaneWithPicker,
@@ -679,10 +703,8 @@ export function App() {
 				onClose={() => setNewWorkspaceOpen(false)}
 				onSubmit={handleCreateWorkspace}
 			/>
-			<SettingsPanel
-				open={settingsOpen}
-				onClose={() => setSettingsOpen(false)}
-			/>
+			{/* Settings is now a dedicated OS-level window (label="settings"),
+			    not a modal here. See ADR-0007 + SettingsApp.tsx. */}
 			<TerminalPool />
 			{closeTerminalTabDialogProps && (
 				<ConfirmDialog {...closeTerminalTabDialogProps} />
@@ -718,6 +740,18 @@ export function App() {
 						onCancel={clearPaneClose}
 					/>
 				))}
+			{pendingProfileSwitch && (
+				<ConfirmDialog
+					title={`Switch to "${pendingProfileSwitch.targetProfileName}"?`}
+					message={`This will close ${pendingProfileSwitch.openedWorkspaceCount} opened workspace${pendingProfileSwitch.openedWorkspaceCount === 1 ? "" : "s"} in the current profile and terminate any running agents and PTY processes.`}
+					confirmLabel="Switch profile"
+					confirmVariant="danger"
+					onConfirm={() => {
+						confirmProfileSwitch().catch(() => {});
+					}}
+					onCancel={cancelProfileSwitch}
+				/>
+			)}
 			{tabClosePendingId && tabCloseDirtyFileName && (
 				<SaveConfirmDialog
 					fileName={tabCloseDirtyFileName}

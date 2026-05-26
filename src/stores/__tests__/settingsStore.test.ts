@@ -41,7 +41,6 @@ beforeEach(() => {
 		fontSize: 14,
 		uiFontSize: 14,
 		theme: "default",
-		sidebarCollapsed: false,
 		sidebarSplitRatio: 0.4,
 		debugActivityMeter: false,
 		activityByteThreshold: 1024,
@@ -55,7 +54,6 @@ describe("settingsStore", () => {
 		expect(state.uiFontFamily).toContain("system-ui");
 		expect(state.fontSize).toBe(14);
 		expect(state.theme).toBe("default");
-		expect(state.sidebarCollapsed).toBe(false);
 		expect(state.sidebarSplitRatio).toBe(0.4);
 	});
 
@@ -91,14 +89,6 @@ describe("settingsStore", () => {
 		expect(mockApplyTheme).toHaveBeenCalled();
 		expect(mockSetAllTerminalsTheme).toHaveBeenCalled();
 		expect(useSettingsStore.getState().theme).toBe("dracula");
-	});
-
-	it("toggleSidebar flips sidebarCollapsed", () => {
-		expect(useSettingsStore.getState().sidebarCollapsed).toBe(false);
-		useSettingsStore.getState().toggleSidebar();
-		expect(useSettingsStore.getState().sidebarCollapsed).toBe(true);
-		useSettingsStore.getState().toggleSidebar();
-		expect(useSettingsStore.getState().sidebarCollapsed).toBe(false);
 	});
 
 	it("setSidebarSplitRatio updates ratio", () => {
