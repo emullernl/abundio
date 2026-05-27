@@ -408,6 +408,15 @@ pub fn run() {
                 }
             }
 
+            // Always refresh the relay scripts on disk so they match this
+            // binary's RELAY_SH/RELAY_PS1. Independent of the user's
+            // hooks-enabled setting — those scripts are inert no-ops outside
+            // an Abundio-spawned PTY. The frontend's rehydrate path still
+            // owns provisioning hook entries into user agent configs.
+            if let Err(e) = agent_hooks::refresh_relay_scripts() {
+                eprintln!("[abundio] relay script refresh failed: {e}");
+            }
+
             // Restore windows from windows.json. The tauri.conf-spawned main
             // window is already mounting; we seed its profile from the
             // persisted entry if present (else first profile in position

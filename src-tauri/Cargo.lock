@@ -7,6 +7,7 @@ name = "abundio"
 version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "crossbeam-channel",
  "dashmap",
  "dirs 5.0.1",

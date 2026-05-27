@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-shell";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -1035,6 +1036,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							useSettingsStore.getState().shellPath ?? undefined,
 							paneId,
 							currentPtyId,
+							useWorkspaceStore.getState().getActiveWorkspace()?.name,
+							getCurrentWindow().label,
 						),
 					]
 				: []),

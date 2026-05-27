@@ -20,8 +20,21 @@ pub async fn pty_spawn(
     shell: Option<String>,
     log_id: Option<String>,
     pty_id: Option<String>,
+    workspace_name: Option<String>,
+    window_label: Option<String>,
 ) -> Result<String, AbundioError> {
-    pty_mgr.spawn(app, &cwd, command.as_deref(), shell.as_deref(), cols, rows, log_id.as_deref(), pty_id.as_deref())
+    pty_mgr.spawn(
+        app,
+        &cwd,
+        command.as_deref(),
+        shell.as_deref(),
+        cols,
+        rows,
+        log_id.as_deref(),
+        pty_id.as_deref(),
+        workspace_name.as_deref(),
+        window_label.as_deref(),
+    )
 }
 
 #[tauri::command]

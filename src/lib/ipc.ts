@@ -34,6 +34,8 @@ export const pty = {
 		shell?: string,
 		logId?: string,
 		ptyId?: string,
+		workspaceName?: string,
+		windowLabel?: string,
 	) =>
 		invoke<string>("pty_spawn", {
 			cwd,
@@ -43,6 +45,8 @@ export const pty = {
 			shell,
 			logId,
 			ptyId,
+			workspaceName,
+			windowLabel,
 		}),
 
 	write: (ptyId: string, data: string) =>

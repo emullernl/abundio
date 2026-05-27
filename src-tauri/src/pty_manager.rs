@@ -63,6 +63,8 @@ impl PtyManager {
         rows: u16,
         log_id: Option<&str>,
         pty_id: Option<&str>,
+        workspace_name: Option<&str>,
+        window_label: Option<&str>,
     ) -> Result<String, AbundioError> {
         let pty_id = pty_id
             .map(|s| s.to_string())
@@ -157,6 +159,11 @@ impl PtyManager {
             cmd.env("ABUNDIO_PTY_ID", &pty_id);
             cmd.env("ABUNDIO_HOOK_PORT", hook_server.port.to_string());
             cmd.env("ABUNDIO_HOOK_TOKEN", &hook_server.token);
+            // Debug context for the hook server's log — these go out as request
+            // headers (see RELAY_SH / RELAY_PS1). Captured at spawn time, so a
+            // workspace rename after launch will not update them.
+            cmd.env("ABUNDIO_WORKSPACE_NAME", workspace_name.unwrap_or(""));
+            cmd.env("ABUNDIO_WINDOW_LABEL", window_label.unwrap_or(""));
         }
 
         if Path::new(cwd).is_dir() {

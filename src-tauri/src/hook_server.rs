@@ -74,6 +74,20 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
+/// Read a header value off a tiny_http request without consuming the request.
+/// `name` is `&'static str` because `tiny_http::HeaderField::equiv` requires it.
+fn header_value<'a>(request: &'a tiny_http::Request, name: &'static str) -> Option<&'a str> {
+    request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv(name))
+        .map(|h| h.value.as_str())
+}
+
+/// Max payload size we'll inline in the debug log. Larger payloads get truncated
+/// with a marker — we still log the head so toolName/args are visible.
+const MAX_LOGGED_PAYLOAD: usize = 8 * 1024;
+
 fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request) {
     let token_bytes = token.as_bytes();
     let authorized = request.headers().iter().any(|h| {
@@ -81,7 +95,10 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
             && constant_time_eq(h.value.as_str().as_bytes(), token_bytes)
     });
     if !authorized {
-        eprintln!("[abundio:hook] 403 — rejected request with bad/missing token");
+        eprintln!(
+            "[{}] [abundio:hook] 403 — rejected request with bad/missing token",
+            chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+        );
         let _ = request.respond(tiny_http::Response::empty(403));
         return;
     }
@@ -91,6 +108,13 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     let event = query_value(query, "event").unwrap_or("").to_string();
     let agent = query_value(query, "agent").unwrap_or("").to_string();
     let pty = query_value(query, "pty").unwrap_or("").to_string();
+
+    let workspace = header_value(&request, "X-Abundio-Workspace")
+        .unwrap_or("?")
+        .to_string();
+    let window = header_value(&request, "X-Abundio-Window-Label")
+        .unwrap_or("?")
+        .to_string();
 
     let mut payload = String::new();
     let _ = request.as_reader().read_to_string(&mut payload);
@@ -105,10 +129,25 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
         .ok()
         .and_then(|v| v.get("toolName")?.as_str().map(str::to_owned))
         .unwrap_or_default();
-    eprintln!("[abundio:hook] received agent={agent} event={event} tool={tool} pty={pty}");
+
+    let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
+    let payload_for_log = if payload.len() > MAX_LOGGED_PAYLOAD {
+        format!(
+            "{}… <truncated, {} bytes total>",
+            &payload[..MAX_LOGGED_PAYLOAD],
+            payload.len()
+        )
+    } else if payload.is_empty() {
+        "<empty>".to_string()
+    } else {
+        payload.clone()
+    };
+    eprintln!(
+        "[{ts}] [abundio:hook] workspace={workspace:?} window={window} agent={agent} event={event} tool={tool} pty={pty}\n  payload: {payload_for_log}"
+    );
 
     if pty.is_empty() || event.is_empty() {
-        eprintln!("[abundio:hook] dropped — empty pty or event");
+        eprintln!("[{ts}] [abundio:hook] dropped — empty pty or event");
         return;
     }
     let _ = app.emit(
