@@ -518,11 +518,14 @@ describe("computeTabDotStatus", () => {
 });
 
 describe("computePtyDotStatus", () => {
-	const makeEntry = (state: string): PtyActivityEntry => ({
+	const makeEntry = (
+		state: string,
+		mode: "agent" | "shell" = "shell",
+	): PtyActivityEntry => ({
 		state: state as PtyActivityEntry["state"],
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
-		detectionMode: "shell",
+		detectionMode: mode,
 		hookDriven: false,
 	});
 
@@ -530,13 +533,23 @@ describe("computePtyDotStatus", () => {
 		expect(computePtyDotStatus("unknown", {})).toBe("green");
 	});
 
-	it("returns blue for active", () => {
-		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("active") })).toBe(
-			"amber",
-		);
+	it("returns amber for an agent-mode active PTY (mid-turn)", () => {
+		expect(
+			computePtyDotStatus("pty-1", {
+				"pty-1": makeEntry("active", "agent"),
+			}),
+		).toBe("amber");
 	});
 
-	it("returns orange for ready", () => {
+	it("returns cyan for a shell-mode active PTY (running a command) — ADR-0009", () => {
+		expect(
+			computePtyDotStatus("pty-1", {
+				"pty-1": makeEntry("active", "shell"),
+			}),
+		).toBe("cyan");
+	});
+
+	it("returns purple for ready", () => {
 		expect(computePtyDotStatus("pty-1", { "pty-1": makeEntry("ready") })).toBe(
 			"purple",
 		);

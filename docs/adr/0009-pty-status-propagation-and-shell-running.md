@@ -1,4 +1,4 @@
-# PTY status: shell-mode is Idle/Working/Error only, asymmetric propagation, distinct Working visual
+# PTY status: shell-mode is Idle/Working/Error only, asymmetric propagation, cyan Working visual
 
 The five PTY status terms — **Idle, Working, Ready, Error, Waiting** — were originally defined as Agent states. They now describe any PTY, but with **different state sets per mode**: an agent-mode PTY uses Agent hooks to enter Working/Ready/Error/Waiting; a shell-mode PTY uses the shell-integration `command_start` / `command_end` OSC markers and is limited to **Idle / Working / Error** — a clean exit returns to Idle directly, with no Ready hop and no completion notification. The previous `shellActivityStatus` opt-in toggle is removed; shell-mode status is always tracked, degrading silently to permanent Idle when shell integration isn't sourced.
 
@@ -6,7 +6,7 @@ The five PTY status terms — **Idle, Working, Ready, Error, Waiting** — were 
 
 **Propagation is asymmetric.** Agent-mode PTYs propagate every state to their Tab and Workspace dot. Shell-mode PTYs propagate **only Error**; Working contributes as Idle for rollup. So a Tab whose only non-idle pane is a shell running a long-lived watcher reads green at the Tab level (and at the pane level shows the breathing chevrons); the same shell exiting non-zero turns its Tab red. The per-pane indicator is the always-true signal — the Tab dot is a *summary* tuned to "is anything I should look at happening?", and a healthy long-running shell isn't.
 
-**Working amber diverges visually by mode.** Agent-Working keeps the broken double-ring spinner. Shell-Working renders as a breathing triple-chevron `>>>` (SVG) at the pane title bar and in the Overview bar's `Terminals → Working` tile. The color is identical; the glyph is not. This is intentional: at-a-glance you can tell whether amber belongs to an agent (chewing through a turn) or a shell (running your command).
+**Working diverges in both colour and glyph by mode.** Agent-Working keeps the warm amber broken double-ring spinner — agent activity is attention-worthy, and amber is the palette's "watch this" channel. Shell-Working renders as a **cool cyan breathing triple-chevron `>>>`** (SVG) at the pane title bar and in the Overview bar's `Terminals → Working` tile. The colour shift is deliberate: a shell running a command is throughput you initiated, not an alarm — overloading the amber/warning channel with routine command execution diluted its meaning. Cyan reads as "data flowing", pairs naturally with the forward-chevron glyph, and stays clearly tellable apart from sky-blue Waiting and emerald-green Idle.
 
 ## Considered alternatives
 
@@ -15,6 +15,7 @@ The five PTY status terms — **Idle, Working, Ready, Error, Waiting** — were 
 - **Always-propagate shell states.** Tabs would light up amber for every running command. Rejected because a workspace with a backgrounded `npm run dev` would never sit at Idle, defeating the Tab dot's purpose as a "needs attention?" summary.
 - **Exclude shell-mode PTYs from rollup entirely (not even Error).** Cleanest rule, but it hides genuine failure — a `git push` that errored in a background pane should still surface on the Tab. Rejected.
 - **Retire the spinner and use `>>>` for both agent and shell Working.** Single visual vocabulary, but loses mode disambiguation at the pane level — and Agent-Working is well-established. Rejected.
+- **Keep amber for shell-Working, distinguish only by glyph.** What we shipped first. Re-evaluated because reusing amber overloaded the palette's "attention" channel with routine shell throughput: every running command was screaming "look at me" in the same colour as a mid-turn agent. Cyan reframes shell-Working as neutral motion. Rejected in favour of the colour split.
 
 ## Consequences
 

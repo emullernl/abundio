@@ -560,6 +560,7 @@ export type DotStatus =
 	| "grey"
 	| "green"
 	| "amber"
+	| "cyan"
 	| "purple"
 	| "red"
 	| "skyblue";
@@ -642,7 +643,10 @@ export function computePtyDotStatus(
 
 	switch (entry.state) {
 		case "active":
-			return "amber";
+			// Working amber for an Agent (attention-worthy mid-turn), cyan for a
+			// shell-mode PTY (neutral throughput — you started the command, no
+			// alarm needed). See ADR-0009.
+			return entry.detectionMode === "agent" ? "amber" : "cyan";
 		case "waiting":
 			return "skyblue";
 		case "ready":

@@ -5,17 +5,11 @@ import type { DotStatus } from "../stores/ptyActivityStore";
 interface AgentStatusIconProps {
 	status: DotStatus;
 	size?: number;
-	/** Selects the visual variant for amber: "agent" renders the broken
-	 *  double-ring spinner; "shell" renders the breathing triple chevron.
-	 *  Only affects rendering when `status === "amber"`. Defaults to "agent"
-	 *  because rolled-up tab/workspace amber only ever comes from an agent. */
-	mode?: "agent" | "shell";
 }
 
 export const AgentStatusIcon = memo(function AgentStatusIcon({
 	status,
 	size = 14,
-	mode = "agent",
 }: AgentStatusIconProps) {
 	switch (status) {
 		case "grey":
@@ -33,18 +27,6 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 			);
 
 		case "amber":
-			if (mode === "shell") {
-				return (
-					<span
-						className="flex-shrink-0 text-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.5)]"
-						style={{
-							animation: "shell-amber-breathe 1.6s ease-in-out infinite",
-						}}
-					>
-						<ShellChevronGlyph size={size} />
-					</span>
-				);
-			}
 			return (
 				<span className="flex-shrink-0 text-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.5)]">
 					<svg
@@ -78,6 +60,18 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 							transform="rotate(180 12 12)"
 						/>
 					</svg>
+				</span>
+			);
+
+		case "cyan":
+			return (
+				<span
+					className="flex-shrink-0 text-cyan-400 drop-shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+					style={{
+						animation: "shell-running-breathe 1.6s ease-in-out infinite",
+					}}
+				>
+					<ShellChevronGlyph size={size} />
 				</span>
 			);
 

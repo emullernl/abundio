@@ -407,6 +407,10 @@ const SHELL_DEFINITIONS: Record<
 	},
 };
 
+// Shell-Working uses cyan, not amber — distinct from agent-Working to convey
+// "neutral throughput" rather than "attention-needed". See ADR-0009.
+const SHELL_WORKING_COLOR = "rgb(34 211 238)"; // cyan-400
+
 function ShellTile({ kind, count }: { kind: ShellKind; count: number }) {
 	const shellDef = SHELL_DEFINITIONS[kind];
 	const title = `${shellDef.label} — ${shellDef.description} (${count})`;
@@ -415,13 +419,11 @@ function ShellTile({ kind, count }: { kind: ShellKind; count: number }) {
 		const glyph = (
 			<span
 				style={{
-					color: active
-						? AGENT_DEFINITIONS.working.color
-						: "var(--fg-secondary)",
+					color: active ? SHELL_WORKING_COLOR : "var(--fg-secondary)",
 					display: "inline-flex",
 					flexShrink: 0,
 					animation: active
-						? "shell-amber-breathe 1.6s ease-in-out infinite"
+						? "shell-running-breathe 1.6s ease-in-out infinite"
 						: undefined,
 				}}
 			>

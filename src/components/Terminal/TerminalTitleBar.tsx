@@ -64,19 +64,10 @@ function TitleBarButton({ icon: Icon, onClick, label }: ButtonProps) {
 	);
 }
 
-function usePtyDotStatus(paneId: string): {
-	dotStatus: DotStatus;
-	mode: "agent" | "shell";
-} {
+function usePtyDotStatus(paneId: string): DotStatus {
 	const panePtyId = usePtyActivityStore((s) => s.panePtyMap[paneId] ?? "");
 	const ptyId = getTerminal(paneId)?.ptyId || panePtyId;
-	const dotStatus = usePtyActivityStore((s) =>
-		computePtyDotStatus(ptyId, s.activities),
-	);
-	const mode = usePtyActivityStore(
-		(s) => s.activities[ptyId]?.detectionMode ?? "shell",
-	);
-	return { dotStatus, mode };
+	return usePtyActivityStore((s) => computePtyDotStatus(ptyId, s.activities));
 }
 
 function basename(path: string): string {
@@ -99,7 +90,7 @@ export function TerminalTitleBar({
 	const detectedAgentId = usePtyActivityStore((s) =>
 		ptyId ? s.detectedAgentIds[ptyId] : undefined,
 	);
-	const { dotStatus, mode } = usePtyDotStatus(paneId);
+	const dotStatus = usePtyDotStatus(paneId);
 
 	// Only show agent identity while the agent is actively running (detectedAgentId set).
 	// Once it exits and detection clears, fall back to plain terminal title.
@@ -166,7 +157,7 @@ export function TerminalTitleBar({
 				{title}
 			</span>
 			<div className="shrink-0" style={{ marginLeft: 8, marginRight: 12 }}>
-				<AgentStatusIcon status={dotStatus} size={12} mode={mode} />
+				<AgentStatusIcon status={dotStatus} size={12} />
 			</div>
 			<TitleBarButton
 				icon={SquareSplitVertical}
