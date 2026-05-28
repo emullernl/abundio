@@ -178,6 +178,13 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			// streaming output, the work hasn't finished yet, so flipping the
 			// dot from amber to green would lie about what's happening.
 			if (entry.state === "active" && entry.detectionMode === "agent") return;
+			// Shell mode: same principle — don't drop "active" while a shell
+			// command is still in flight (between command_start and command_end).
+			// Focus reassertion on workspace switch, mousedown, and keystrokes
+			// all funnel through here; without this guard a long-running command
+			// gets a misleading idle dot whenever the user clicks back into the
+			// pane. Mirrors the idle scanner's shellCommandRunning check.
+			if (entry.state === "active" && shellCommandRunning.get(ptyId)) return;
 			set((s) => ({
 				activities: {
 					...s.activities,

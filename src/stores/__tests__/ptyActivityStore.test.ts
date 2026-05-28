@@ -16,6 +16,7 @@ import {
 	selectWaitingAgentCount,
 	selectWorkingAgentCount,
 	selectWorkingShellCount,
+	setShellCommandRunning,
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
@@ -168,6 +169,25 @@ describe("store actions", () => {
 		markIdle("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
 			"active",
+		);
+	});
+
+	it("markIdle does not override active state while a shell command is running", () => {
+		const { initPty, recordOutput, markIdle } = usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		setShellCommandRunning("pty-1", true);
+		// Workspace-switch focus reassertion / mousedown / keystroke must not
+		// flip a long-running shell command's dot back to idle.
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+		// And once the command actually finishes, markIdle works again.
+		setShellCommandRunning("pty-1", false);
+		markIdle("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
 		);
 	});
 
