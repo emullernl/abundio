@@ -3,6 +3,17 @@ import { create } from "zustand";
 import { profiles as profilesApi } from "../lib/ipc";
 import type { Profile } from "../lib/types";
 import { DEFAULT_PROFILE_ID } from "../lib/types";
+// Static cycle with workspaceStore / ptyActivityStore: both import
+// `fallbackProfileId` / `currentNotificationTitle` from this module, and we
+// import their stores here. ES-module live bindings make the cycle benign
+// because all cross-store references are used inside function bodies, never
+// at module top-level — by the time `switchProfile` runs, every module has
+// finished initializing. Previously these were dynamic imports for that
+// reason, but they triggered Rolldown's INEFFECTIVE_DYNAMIC_IMPORT warning
+// (the modules are statically imported elsewhere, so the dynamic version
+// wasn't actually splitting any chunks).
+import { usePtyActivityStore } from "./ptyActivityStore";
+import { useWorkspaceStore } from "./workspaceStore";
 
 /** Window-title format — must match `window_title_for` on the Rust side
  *  (window_management.rs). Also used as the notification title (see
@@ -178,10 +189,6 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 	switchProfile: async (id: string) => {
 		const { activeProfileId } = get();
 		if (id === activeProfileId) return;
-
-		// Dynamic import avoids a circular dependency at module-load time.
-		const { useWorkspaceStore } = await import("./workspaceStore");
-		const { usePtyActivityStore } = await import("./ptyActivityStore");
 
 		const openedIds = Array.from(
 			usePtyActivityStore.getState().openedWorkspaceIds,

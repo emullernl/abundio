@@ -3,7 +3,7 @@ import {
 	clearEditorStateCache,
 	getSerializableEditorState,
 } from "../components/FileViewer/CodeEditor";
-import { fs as fsApi, git as gitApi } from "../lib/ipc";
+import { fs as fsApi, git as gitApi, tabs as tabsApi } from "../lib/ipc";
 import { getLanguage } from "../lib/languageMap";
 import {
 	buildFilePaneLayout,
@@ -813,7 +813,6 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 /** Persist editor state into the active tab's layout for all open file panes. */
 export async function persistAllFilePanes() {
 	const wsStore = useWorkspaceStore.getState();
-	const tabsApi = (await import("../lib/ipc")).tabs;
 	for (const workspace of wsStore.workspaces) {
 		for (const tab of workspace.tabs) {
 			try {
