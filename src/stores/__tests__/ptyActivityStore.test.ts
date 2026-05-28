@@ -13,7 +13,6 @@ import {
 	selectIdleAgentCount,
 	selectIdleShellCount,
 	selectReadyAgentCount,
-	selectReadyShellCount,
 	selectWaitingAgentCount,
 	selectWorkingAgentCount,
 	selectWorkingShellCount,
@@ -275,11 +274,14 @@ describe("collectPtyIds", () => {
 });
 
 describe("computeWorkspaceDotStatus", () => {
-	const makeEntry = (state: string): PtyActivityEntry => ({
+	const makeEntry = (
+		state: string,
+		mode: "agent" | "shell" = "shell",
+	): PtyActivityEntry => ({
 		state: state as PtyActivityEntry["state"],
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
-		detectionMode: "shell",
+		detectionMode: mode,
 		hookDriven: false,
 	});
 
@@ -287,37 +289,50 @@ describe("computeWorkspaceDotStatus", () => {
 		expect(computeWorkspaceDotStatus("s1", [], {}, new Set())).toBe("grey");
 	});
 
-	it("returns red when any error", () => {
+	it("returns red when any PTY is in error (shell or agent — Error always propagates)", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
 			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
-				{ "pty-1": makeEntry("error") },
+				{ "pty-1": makeEntry("error", "shell") },
 				new Set(),
 			),
 		).toBe("red");
 	});
 
-	it("returns blue when any active", () => {
+	it("returns amber when an agent-mode PTY is active", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
 			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
-				{ "pty-1": makeEntry("active") },
+				{ "pty-1": makeEntry("active", "agent") },
 				new Set(),
 			),
 		).toBe("amber");
 	});
 
-	it("returns orange when any ready", () => {
+	it("does NOT roll up a shell-mode active to amber — shell Working stays at the pane (ADR-0009)", () => {
+		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
+		// Workspace is opened (in the set) so the green/grey fallback returns green.
+		expect(
+			computeWorkspaceDotStatus(
+				"s1",
+				[layout],
+				{ "pty-1": makeEntry("active", "shell") },
+				new Set(["s1"]),
+			),
+		).toBe("green");
+	});
+
+	it("returns purple when an agent-mode PTY is ready", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
 			computeWorkspaceDotStatus(
 				"s1",
 				[layout],
-				{ "pty-1": makeEntry("ready") },
+				{ "pty-1": makeEntry("ready", "agent") },
 				new Set(),
 			),
 		).toBe("purple");
@@ -347,7 +362,7 @@ describe("computeWorkspaceDotStatus", () => {
 		).toBe("grey");
 	});
 
-	it("error takes priority over active", () => {
+	it("error takes priority over active across agent-mode panes", () => {
 		const layout: PaneNode = {
 			type: "split",
 			id: "s",
@@ -361,15 +376,16 @@ describe("computeWorkspaceDotStatus", () => {
 				"s1",
 				[layout],
 				{
-					"pty-1": makeEntry("error"),
-					"pty-2": makeEntry("active"),
+					"pty-1": makeEntry("error", "agent"),
+					"pty-2": makeEntry("active", "agent"),
 				},
 				new Set(),
 			),
 		).toBe("red");
 	});
 
-	it("ready takes priority over active", () => {
+	it("a shell-mode error still rolls up over an agent in active state", () => {
+		// Confirms shell Error breaks through even when an agent is busy.
 		const layout: PaneNode = {
 			type: "split",
 			id: "s",
@@ -383,8 +399,54 @@ describe("computeWorkspaceDotStatus", () => {
 				"s1",
 				[layout],
 				{
-					"pty-1": makeEntry("ready"),
-					"pty-2": makeEntry("active"),
+					"pty-1": makeEntry("error", "shell"),
+					"pty-2": makeEntry("active", "agent"),
+				},
+				new Set(),
+			),
+		).toBe("red");
+	});
+
+	it("agent activity overrides a backgrounded shell command's would-be amber", () => {
+		// [agent: active, shell: active] — only the agent contributes to the
+		// rollup, but its active state is what the user sees.
+		const layout: PaneNode = {
+			type: "split",
+			id: "s",
+			direction: "horizontal",
+			ratio: 0.5,
+			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
+			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
+		};
+		expect(
+			computeWorkspaceDotStatus(
+				"s1",
+				[layout],
+				{
+					"pty-1": makeEntry("active", "agent"),
+					"pty-2": makeEntry("active", "shell"),
+				},
+				new Set(),
+			),
+		).toBe("amber");
+	});
+
+	it("ready takes priority over active across agent-mode panes", () => {
+		const layout: PaneNode = {
+			type: "split",
+			id: "s",
+			direction: "horizontal",
+			ratio: 0.5,
+			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
+			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
+		};
+		expect(
+			computeWorkspaceDotStatus(
+				"s1",
+				[layout],
+				{
+					"pty-1": makeEntry("ready", "agent"),
+					"pty-2": makeEntry("active", "agent"),
 				},
 				new Set(),
 			),
@@ -393,11 +455,14 @@ describe("computeWorkspaceDotStatus", () => {
 });
 
 describe("computeTabDotStatus", () => {
-	const makeEntry = (state: string): PtyActivityEntry => ({
+	const makeEntry = (
+		state: string,
+		mode: "agent" | "shell" = "shell",
+	): PtyActivityEntry => ({
 		state: state as PtyActivityEntry["state"],
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
-		detectionMode: "shell",
+		detectionMode: mode,
 		hookDriven: false,
 	});
 
@@ -415,13 +480,31 @@ describe("computeTabDotStatus", () => {
 		expect(computeTabDotStatus(makeTab("invalid"), {})).toBe("green");
 	});
 
-	it("returns blue when active", () => {
+	it("returns amber when an agent-mode PTY is active", () => {
 		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
 		expect(
 			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
-				"pty-1": makeEntry("active"),
+				"pty-1": makeEntry("active", "agent"),
 			}),
 		).toBe("amber");
+	});
+
+	it("returns green when a shell-mode PTY is running a command — Working doesn't propagate (ADR-0009)", () => {
+		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
+		expect(
+			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
+				"pty-1": makeEntry("active", "shell"),
+			}),
+		).toBe("green");
+	});
+
+	it("returns red when a shell-mode PTY errored — Error always propagates", () => {
+		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
+		expect(
+			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
+				"pty-1": makeEntry("error", "shell"),
+			}),
+		).toBe("red");
 	});
 
 	it("returns green when all idle", () => {
@@ -500,12 +583,24 @@ describe("detection mode", () => {
 		expect(usePtyActivityStore.getState().agentPtyIds.size).toBe(1);
 	});
 
-	it("recordExitSuccess transitions to ready", () => {
+	it("recordExitSuccess transitions an agent-mode PTY to ready", () => {
 		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().setAgentPty("pty-1");
 		usePtyActivityStore.getState().recordOutput("pty-1");
 		usePtyActivityStore.getState().recordExitSuccess("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
 			"ready",
+		);
+	});
+
+	it("recordExitSuccess transitions a shell-mode PTY straight to idle (skips ready)", () => {
+		// Shells skip the Ready hop entirely — a clean command exit is silent.
+		// See ADR-0009.
+		usePtyActivityStore.getState().initPty("pty-1");
+		usePtyActivityStore.getState().recordOutput("pty-1");
+		usePtyActivityStore.getState().recordExitSuccess("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
 		);
 	});
 
@@ -597,7 +692,45 @@ describe("notifications on state transitions", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("sends notification when transitioning to ready while app is unfocused", () => {
+	it("sends notification when an agent transitions to ready while app is unfocused", () => {
+		// Shells skip Ready entirely (ADR-0009), so only agents reach this
+		// notification path. Set the PTY to agent-mode so recordExitSuccess
+		// routes through "ready" instead of "idle".
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		seedWorkspace("ws-1", "my-project");
+		const {
+			initPty,
+			setAgentPty,
+			recordOutput,
+			recordExitSuccess,
+			registerPane,
+			setTitle,
+		} = usePtyActivityStore.getState();
+		initPty("pty-1");
+		setAgentPty("pty-1");
+		registerPane("pane-1", "pty-1");
+		setTitle("pane-1", "claude");
+		recordOutput("pty-1");
+		mockSendNotification.mockClear();
+
+		recordExitSuccess("pty-1");
+
+		expect(mockSendNotification).toHaveBeenCalledWith({
+			title: "Abundio",
+			body: "my-project: claude is ready",
+			extra: {
+				type: "pty",
+				paneId: "pane-1",
+				workspaceId: "ws-1",
+				tabId: "tab-1",
+			},
+		});
+		vi.restoreAllMocks();
+	});
+
+	it("does not send notification when a shell-mode PTY exits cleanly (success is silent)", () => {
+		// ADR-0009: shell-mode recordExitSuccess routes to "idle", which is
+		// not a notification state. No notification should fire.
 		vi.spyOn(document, "hasFocus").mockReturnValue(false);
 		seedWorkspace("ws-1", "my-project");
 		const { initPty, recordOutput, recordExitSuccess, registerPane, setTitle } =
@@ -610,16 +743,7 @@ describe("notifications on state transitions", () => {
 
 		recordExitSuccess("pty-1");
 
-		expect(mockSendNotification).toHaveBeenCalledWith({
-			title: "Abundio",
-			body: "my-project: zsh is ready",
-			extra: {
-				type: "pty",
-				paneId: "pane-1",
-				workspaceId: "ws-1",
-				tabId: "tab-1",
-			},
-		});
+		expect(mockSendNotification).not.toHaveBeenCalled();
 		vi.restoreAllMocks();
 	});
 
@@ -745,11 +869,18 @@ describe("touchLastOutput", () => {
 });
 
 describe("hook-driven status", () => {
-	const makeEntry = (state: string): PtyActivityEntry => ({
+	// Hook-driven states (Waiting, Ready) only originate from Agent hooks, so
+	// fixtures default to agent-mode — that's the realistic detectionMode at
+	// the point a hook event lands. Tests that exercise the shell path
+	// override mode explicitly.
+	const makeEntry = (
+		state: string,
+		mode: "agent" | "shell" = "agent",
+	): PtyActivityEntry => ({
 		state: state as PtyActivityEntry["state"],
 		lastOutputAt: 0,
 		hasEverReceivedOutput: true,
-		detectionMode: "shell",
+		detectionMode: mode,
 		hookDriven: false,
 	});
 
@@ -976,20 +1107,18 @@ describe("hook-driven status", () => {
 			expect(selectIdleShellCount(state)).toBe(1);
 		});
 
-		it("buckets a mix of shell states", () => {
+		it("buckets a mix of shell states (no Ready selector — shells skip Ready per ADR-0009)", () => {
 			const state = {
 				agentPtyIds: new Set<string>(),
 				activities: {
 					a: makeEntry("idle"),
 					b: makeEntry("active"),
 					c: makeEntry("active"),
-					d: makeEntry("ready"),
 					e: makeEntry("error"),
 				},
 			};
 			expect(selectIdleShellCount(state)).toBe(1);
 			expect(selectWorkingShellCount(state)).toBe(2);
-			expect(selectReadyShellCount(state)).toBe(1);
 			expect(selectErrorShellCount(state)).toBe(1);
 		});
 

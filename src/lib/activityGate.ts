@@ -34,20 +34,18 @@ export const SHELL_USER_STOP_CODES = [130, 143];
 /** Classify a finished shell command (or an exited shell-mode PTY) into the
  *  status transition it should drive.
  *
- *  `"error"` is returned regardless of `showActivity` — a failed command
- *  always turns the dot red. `"success"` (a clean finish) is only surfaced
- *  when terminal activity status is enabled; otherwise `"none"` keeps the dot
- *  neutral. A user-initiated stop (Ctrl+C → 130, SIGTERM → 143) counts as a
- *  clean finish, not an error.
+ *  A failure exit (non-zero, excluding user-stop codes) returns `"error"`; a
+ *  clean exit (zero, or a user-initiated stop) returns `"success"`. The
+ *  caller decides what to do with `"success"` — for an active shell-mode PTY
+ *  the right thing is to drop straight to Idle (shells skip Ready per
+ *  ADR-0009); for an exited agent the caller routes to the Ready hop.
  */
 export function classifyShellExit(
 	exitCode: number | null | undefined,
-	showActivity: boolean,
-): "error" | "success" | "none" {
+): "error" | "success" {
 	const isFailure =
 		typeof exitCode === "number" &&
 		exitCode !== 0 &&
 		!SHELL_USER_STOP_CODES.includes(exitCode);
-	if (isFailure) return "error";
-	return showActivity ? "success" : "none";
+	return isFailure ? "error" : "success";
 }

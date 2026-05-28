@@ -1,8 +1,5 @@
 import { isMac } from "../lib/platform";
-import {
-	profileQualifiedTitle,
-	useProfileStore,
-} from "../stores/profileStore";
+import { profileQualifiedTitle, useProfileStore } from "../stores/profileStore";
 
 interface Props {
 	/** Optional override. When set, the chrome shows this string verbatim

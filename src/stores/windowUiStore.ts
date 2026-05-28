@@ -45,8 +45,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 			gitPanelOpen: false,
 			toggleSidebar: () =>
 				set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-			setSidebarCollapsed: (collapsed) =>
-				set({ sidebarCollapsed: collapsed }),
+			setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
 			toggleGitPanel: () => set((s) => ({ gitPanelOpen: !s.gitPanelOpen })),
 			setGitPanelOpen: (open) => set({ gitPanelOpen: open }),
 		}),

@@ -59,19 +59,19 @@ _Avoid_: callback, event listener
 **Waiting**: An Agent state in which the Agent has emitted a permission- or input-request hook and the user has not yet responded in its terminal. Distinct from a finished turn ("ready") — the Agent is stalled mid-turn, not done.
 _Avoid_: blocked, idle, stuck
 
-**Working**: An Agent state in which the Agent is mid-turn — has emitted a turn-started hook and has neither finished nor blocked on a permission/input request. Distinct from **Waiting** (blocked on the user) and from a finished turn. Shown as the amber spinner status indicator.
+**Working**: A PTY state in which work is in progress — an **Agent** mid-turn (between turn-start and turn-end hooks, not blocked on a permission/input request) or a **shell-mode PTY** between the shell-integration `command_start` and `command_end` markers. Distinct from **Waiting** (agent-only — blocked on the user) and from a finished turn/command. Shown as the amber status indicator: the broken double-ring spinner for an Agent, the breathing triple-chevron `>>>` for a shell.
 _Avoid_: active (collides with **Active workspace**), busy, running
 
-**Ready**: An Agent state in which the Agent finished its turn cleanly and the user has not yet acknowledged it (by focusing or typing in its pane). Shown as the purple status indicator. Distinct from **Idle** — Ready is a notification, Idle is the rested state after acknowledgement.
+**Ready**: An **Agent** state in which the Agent finished its turn cleanly and the user has not yet acknowledged it (by focusing or typing in its pane). Shown as the purple status indicator. Distinct from **Idle** — Ready is a notification, Idle is the rested state after acknowledgement. **Shell-mode PTYs do not have a Ready state**: a clean command exit transitions straight to **Idle** — for a shell, the output that just rendered is itself the "you have something to look at" signal, and a separate notification state would be redundant. Only the **Error** state is surfaced for shells.
 _Avoid_: finished, done, complete
 
-**Idle**: The Agent's resting state — no turn in progress, and the last completed turn has been acknowledged by the user. Also the default state for a freshly initialised PTY. Shown as the green status indicator.
+**Idle**: A PTY's resting state — no work in progress, and the last finished turn or command (if any) has been acknowledged by the user. Also the default state for a freshly initialised PTY. Shown as the green status indicator.
 _Avoid_: inactive, asleep
 
-**Error**: An Agent state in which the Agent's most recent turn failed (emitted an error hook or exited non-zero in agent mode). Shown as the red status indicator. Cleared by user focus/click.
+**Error**: A PTY state in which the most recent work failed — an **Agent** emitted an error hook (or its turn exited non-zero in agent mode), or a **shell-mode PTY**'s last command exited with a non-zero code that isn't a user-stop (130/143). Shown as the red status indicator. Cleared by user focus/click.
 _Avoid_: failed, broken, crashed
 
-**Status indicator**: The coloured dot Abundio shows for a Pane — and aggregated up to its Tab and Workspace — reflecting its PTY's current state.
+**Status indicator**: The coloured dot Abundio shows for a Pane — and aggregated up to its Tab and Workspace — reflecting its PTY's current state. The state set differs by **PTY mode**: an **agent-mode PTY** can be Idle / Working / Waiting / Ready / Error; a **shell-mode PTY** can only be Idle / Working / Error (no Ready, no Waiting). Aggregation is also asymmetric: an agent-mode PTY propagates every state to its Tab and Workspace; a shell-mode PTY propagates only Error and otherwise contributes as Idle. So a tab whose only non-idle pane is a shell running a command reads green at the Tab level; a shell whose command errored turns its tab red. The Working amber visual differs by mode: spinner for an Agent, breathing triple-chevron `>>>` for a shell.
 
 **Overview bar**: A horizontal strip across the top of the app window, between the **Titlebar** and the per-workspace tab row, showing glanceable global counts: **Opened workspaces** (out of total), each of the five **Agent** states (Idle, Working, Waiting, Ready, Error) aggregated across all opened workspaces, and the user's pending GitHub PR counts (review-requested and own open PRs, both account-wide). Always visible; read-only. The only piece of global chrome that lives between the Titlebar and the workspace stack.
 _Avoid_: dashboard (implies interactivity), metrics bar, status bar (already taken — bottom of window), header
@@ -94,6 +94,7 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 - Each **Pane** belongs to exactly one **Tab**. A terminal pane holds at most one **PTY**; a file pane holds at most one open file; a preview pane holds neither — it references a **source pane**.
 - A **preview pane** and its **source pane** always live in the same **Tab**.
 - Abundio derives an **Agent**'s status by observing its **Agent hooks**; a permission-request hook puts the Agent into the **Waiting** state, which clears when the user types into that **Pane**'s terminal.
+- Abundio derives a **shell-mode PTY**'s status from shell-integration OSC markers (`command_start` / `command_end`) emitted by Abundio's startup hooks; **Working** and **Error** for shells are detected this way (a clean exit returns to **Idle**, with no Ready hop). Without working shell integration the PTY degrades silently to permanent **Idle** (no false signal).
 
 ## Flagged ambiguities
 
@@ -103,4 +104,4 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 - "background loaded workspace" was used to mean both "every sidebar workspace" and "opened-but-not-active workspace" — resolved to the latter (an Opened workspace that is not Active).
 - "panel" is used colloquially to mean both a **Pane** and the git-changes side panel — in code, the git-changes side panel is always referred to as "git panel" or "git changes panel", never "pane".
 - "shell mode" / "terminal mode" were both used for a PTY not running an Agent — resolved to **shell-mode PTY**; the mode belongs to the PTY, not the Pane.
-- The amber Agent state is canonically **Working** in this doc, but `DotStatus`/PTY state in code still uses the string `"active"`. Renaming the code value to `"working"` would remove the collision with **Active workspace**; deferred as a follow-up.
+- The amber state is canonically **Working** in this doc — applying to both agent-mode and shell-mode PTYs — but `PtyActivityState` in code still uses the string `"active"`. Renaming the code value to `"working"` would remove the collision with **Active workspace** and align with the broadened glossary; deferred as a follow-up.

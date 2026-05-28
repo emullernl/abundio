@@ -140,7 +140,6 @@ if (typeof window !== "undefined") {
 				agents: state.agents,
 				agentHooksEnabled: state.agentHooksEnabled,
 				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
-				shellActivityStatus: state.shellActivityStatus,
 				terminalScrollback: state.terminalScrollback,
 			};
 			const json = JSON.stringify(partial);

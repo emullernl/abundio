@@ -8,7 +8,6 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import {
-	setFocusedPaneIdGetter,
 	setShellCommandRunning,
 	touchLastOutput,
 	usePtyActivityStore,
@@ -441,7 +440,6 @@ addWindowFocusListener((focused) => {
 // timer fires (e.g. in the Vitest jsdom environment after a test finishes).
 setTimeout(() => {
 	if (!useWorkspaceStore?.subscribe) return;
-	setFocusedPaneIdGetter(() => useWorkspaceStore.getState().focusedPaneId);
 	useWorkspaceStore.subscribe((state) => {
 		const { activeWorkspaceId, focusedPaneId } = state;
 		if (!activeWorkspaceId) return;
@@ -852,11 +850,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// shellCommandRunning=true for the agent's own command_start.
 						// If that flag stays true, the idle scanner will never
 						// transition active → ready (purple) for the agent.
-						if (
-							!managed.suppressActivity &&
-							!nowIsAgent &&
-							useSettingsStore.getState().shellActivityStatus
-						) {
+						if (!managed.suppressActivity && !nowIsAgent) {
 							setShellCommandRunning(currentPtyId, true);
 							actState.recordOutput(currentPtyId);
 						}
@@ -874,21 +868,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						const wasAgentMode = currentEntry?.detectionMode === "agent";
 						if (!managed.suppressActivity && !wasAgentMode) {
 							setShellCommandRunning(currentPtyId, false);
-							const outcome = classifyShellExit(
-								cmd.exitCode,
-								useSettingsStore.getState().shellActivityStatus,
-							);
+							const outcome = classifyShellExit(cmd.exitCode);
 							if (outcome === "error") {
 								freshState.recordError(currentPtyId);
-							} else if (outcome === "success") {
-								const isFocused =
-									document.hasFocus() &&
-									useWorkspaceStore.getState().focusedPaneId === paneId;
-								if (isFocused) {
-									freshState.markIdle(currentPtyId);
-								} else {
-									freshState.recordExitSuccess(currentPtyId);
-								}
+							} else {
+								// Shell-mode success: skip the Ready hop entirely.
+								// recordExitSuccess routes shells straight to Idle.
+								freshState.recordExitSuccess(currentPtyId);
 							}
 						}
 					}
@@ -944,21 +930,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				const entry = actStore.activities[currentPtyId];
 				if (entry?.detectionMode !== "shell") return;
 				if (activity.type === "commandStarted") {
-					if (useSettingsStore.getState().shellActivityStatus) {
-						setShellCommandRunning(currentPtyId, true);
-						actStore.recordOutput(currentPtyId);
-					}
+					setShellCommandRunning(currentPtyId, true);
+					actStore.recordOutput(currentPtyId);
 				} else if (activity.type === "commandFinished") {
 					setShellCommandRunning(currentPtyId, false);
 					if (entry.state === "active") {
-						const isFocused =
-							document.hasFocus() &&
-							useWorkspaceStore.getState().focusedPaneId === paneId;
-						if (isFocused) {
-							actStore.markIdle(currentPtyId);
-						} else {
-							actStore.recordExitSuccess(currentPtyId);
-						}
+						// Shells skip the Ready hop — recordExitSuccess routes a
+						// shell-mode PTY straight to Idle regardless of focus.
+						actStore.recordExitSuccess(currentPtyId);
 					}
 				}
 			}),
@@ -967,13 +946,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				if (status.type === "exited") {
 					// Set activity state BEFORE setPtyStatus to avoid subscriber race
 					const actStore = usePtyActivityStore.getState();
-					const outcome = classifyShellExit(
-						status.code,
-						useSettingsStore.getState().shellActivityStatus,
-					);
+					const outcome = classifyShellExit(status.code);
 					if (outcome === "error") {
 						actStore.recordError(currentPtyId);
-					} else if (outcome === "success") {
+					} else {
+						// Clean exit: shell goes to Idle, agent (if this PTY was in
+						// agent mode at exit time) goes to Ready. recordExitSuccess
+						// branches per detectionMode.
 						actStore.recordExitSuccess(currentPtyId);
 					}
 				}

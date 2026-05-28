@@ -1,7 +1,6 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
-import { currentNotificationTitle } from "./profileStore";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -10,9 +9,9 @@ import type {
 } from "../lib/types";
 import {
 	getWindowBlurredMs,
-	isAppWindowFocused,
 	NOTIFICATION_BLUR_THRESHOLD_MS,
 } from "../lib/windowFocus";
+import { currentNotificationTitle } from "./profileStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
 // ── Constants ──
@@ -272,10 +271,15 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		recordExitSuccess: (ptyId) => {
 			const entry = get().activities[ptyId];
 			if (!entry) return;
+			// Shells skip Ready entirely — a clean command exit is silent. Agents
+			// keep the Ready hop so the user gets a notification + purple dot
+			// they must acknowledge. See ADR-0009.
+			const nextState: PtyActivityState =
+				entry.detectionMode === "agent" ? "ready" : "idle";
 			set((s) => ({
 				activities: {
 					...s.activities,
-					[ptyId]: { ...s.activities[ptyId], state: "ready" },
+					[ptyId]: { ...s.activities[ptyId], state: nextState },
 				},
 			}));
 		},
@@ -398,18 +402,11 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 
 // ── Idle scanner ──
 
-// Injected by terminalManager after module init to avoid circular imports
-let _getFocusedPaneId: (() => string | null) | null = null;
-
-export function setFocusedPaneIdGetter(getter: () => string | null): void {
-	_getFocusedPaneId = getter;
-}
-
-// Cached reverse map: only rebuilt when panePtyMap reference changes.
-// Shared by the idle scanner (hot, every 2s) and the notifications subscriber
-// (hottest path — fires on every recordOutput / setCwd / setTitle /
-// setRunningCommand). The previous Object.entries(...).find(...) reverse
-// lookup in the subscriber was O(panes) per state change.
+// Cached reverse map: only rebuilt when panePtyMap reference changes. Used
+// by the notifications subscriber (hottest path — fires on every recordOutput
+// / setCwd / setTitle / setRunningCommand). The previous
+// Object.entries(...).find(...) reverse lookup in the subscriber was
+// O(panes) per state change.
 let _cachedPanePtyMapRef: Record<string, string> | null = null;
 let _cachedPtyToPaneMap: Record<string, string> = {};
 
@@ -428,18 +425,10 @@ function getPtyToPaneMap(
 }
 
 setInterval(() => {
-	const { activities, panePtyMap } = usePtyActivityStore.getState();
+	const { activities } = usePtyActivityStore.getState();
 	const now = Date.now();
 	const updates: Record<string, PtyActivityEntry> = {};
 	let hasChanges = false;
-
-	const ptyToPane = getPtyToPaneMap(panePtyMap);
-
-	const focusedPaneId = _getFocusedPaneId?.() ?? null;
-	// If the getter hasn't been injected yet, treat every pane as focused
-	// so we don't spam "ready" transitions during startup.
-	const focusGetterReady = _getFocusedPaneId !== null;
-	const appHasFocus = isAppWindowFocused();
 
 	for (const [ptyId, entry] of Object.entries(activities)) {
 		const lastOutput = lastOutputTimestamps.get(ptyId) ?? entry.lastOutputAt;
@@ -452,14 +441,16 @@ setInterval(() => {
 		if (entry.state === "active" && elapsed > threshold) {
 			// Don't transition to idle if a shell command is still running
 			if (shellCommandRunning.get(ptyId)) continue;
-			const paneId = ptyToPane[ptyId];
-			const isFocused =
-				!focusGetterReady ||
-				(appHasFocus && paneId != null && focusedPaneId === paneId);
-			// Agent mode always goes to "ready" — the agent finished work and
-			// is ready for user input, even when the terminal has focus.
-			const nextState =
-				isFocused && entry.detectionMode !== "agent" ? "idle" : "ready";
+			// Agent mode: blurred-or-focused, go to "ready" — the agent finished
+			// work and is ready for user input, even when the terminal has focus.
+			// Shell mode: go straight to "idle" regardless of focus — shells skip
+			// the Ready hop entirely (ADR-0009).
+			let nextState: PtyActivityState;
+			if (entry.detectionMode === "agent") {
+				nextState = "ready";
+			} else {
+				nextState = "idle";
+			}
 			updates[ptyId] = {
 				...entry,
 				state: nextState,
@@ -573,6 +564,16 @@ export type DotStatus =
 	| "red"
 	| "skyblue";
 
+/** Asymmetric rollup: agent-mode PTYs propagate every state to the
+ *  Tab/Workspace dot; shell-mode PTYs propagate only Error. Working, Ready
+ *  (unreachable for shells but defensive) and Waiting from a shell are
+ *  suppressed so a backgrounded `npm run dev` doesn't permanently colour its
+ *  Tab dot. See ADR-0009. */
+function rollsUp(entry: PtyActivityEntry): boolean {
+	if (entry.detectionMode === "agent") return true;
+	return entry.state === "error";
+}
+
 export function computeWorkspaceDotStatus(
 	workspaceId: string,
 	tabLayouts: PaneNode[],
@@ -589,7 +590,10 @@ export function computeWorkspaceDotStatus(
 		return openedWorkspaceIds.has(workspaceId) ? "green" : "grey";
 	}
 
-	const entries = allPtyIds.map((id) => activities[id]).filter(Boolean);
+	const entries = allPtyIds
+		.map((id) => activities[id])
+		.filter((e): e is PtyActivityEntry => Boolean(e))
+		.filter(rollsUp);
 
 	if (entries.some((e) => e.state === "error")) return "red";
 	if (entries.some((e) => e.state === "waiting")) return "skyblue";
@@ -615,7 +619,10 @@ export function computeTabDotStatus(
 	const ptyIds = collectPtyIds(layout, panePtyMap);
 	if (ptyIds.length === 0) return "grey";
 
-	const entries = ptyIds.map((id) => activities[id]).filter(Boolean);
+	const entries = ptyIds
+		.map((id) => activities[id])
+		.filter((e): e is PtyActivityEntry => Boolean(e))
+		.filter(rollsUp);
 
 	if (entries.some((e) => e.state === "error")) return "red";
 	if (entries.some((e) => e.state === "waiting")) return "skyblue";
@@ -689,7 +696,8 @@ function makeShellCountSelector(target: PtyActivityState) {
 	};
 }
 
+// Shell-mode PTYs only ever occupy Idle / Working / Error — Ready is
+// agent-only (see ADR-0009). No `selectReadyShellCount` exists.
 export const selectIdleShellCount = makeShellCountSelector("idle");
 export const selectWorkingShellCount = makeShellCountSelector("active");
-export const selectReadyShellCount = makeShellCountSelector("ready");
 export const selectErrorShellCount = makeShellCountSelector("error");

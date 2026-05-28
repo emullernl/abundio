@@ -53,7 +53,6 @@ import {
 	selectIdleAgentCount,
 	selectIdleShellCount,
 	selectReadyAgentCount,
-	selectReadyShellCount,
 	selectWaitingAgentCount,
 	selectWorkingAgentCount,
 	selectWorkingShellCount,
@@ -123,14 +122,10 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 	const errorAgents = usePtyActivityStore(selectErrorAgentCount);
 	const idleShells = usePtyActivityStore(selectIdleShellCount);
 	const workingShells = usePtyActivityStore(selectWorkingShellCount);
-	const readyShells = usePtyActivityStore(selectReadyShellCount);
 	const errorShells = usePtyActivityStore(selectErrorShellCount);
 	const reviewRequestedPrs = usePrStore((s) => s.globalReviewCount);
 	const myOpenPrs = usePrStore((s) => s.globalMyPrsCount);
 	const showAgentWaiting = useSettingsStore((s) => s.agentHooksEnabled);
-	const showShellActivityDetail = useSettingsStore(
-		(s) => s.shellActivityStatus,
-	);
 	return (
 		<OverviewBar
 			openedWorkspaces={openedWorkspaces}
@@ -142,12 +137,10 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 			errorAgents={errorAgents}
 			idleShells={idleShells}
 			workingShells={workingShells}
-			readyShells={readyShells}
 			errorShells={errorShells}
 			reviewRequestedPrs={reviewRequestedPrs}
 			myOpenPrs={myOpenPrs}
 			showAgentWaiting={showAgentWaiting}
-			showShellActivityDetail={showShellActivityDetail}
 		/>
 	);
 });

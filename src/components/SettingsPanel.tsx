@@ -1250,11 +1250,6 @@ export function SettingsPanel({ onClose }: Props) {
 		(s) => s.gpuAccelerationEnabled,
 	);
 	const setGpuAcceleration = useSettingsStore((s) => s.setGpuAcceleration);
-	const shellActivityStatus = useSettingsStore((s) => s.shellActivityStatus);
-	const setShellActivityStatus = useSettingsStore(
-		(s) => s.setShellActivityStatus,
-	);
-
 	const darkThemes = useMemo(
 		() => themeList().filter((t) => t.variant === "dark"),
 		[],
@@ -1324,19 +1319,18 @@ export function SettingsPanel({ onClose }: Props) {
 
 	return (
 		<>
-		{/* Renders as the entire content of the dedicated Settings window
+			{/* Renders as the entire content of the dedicated Settings window
 		    (label="settings"). No modal overlay — the OS window IS the frame.
 		    The Fragment wraps the panel + an optional ConfirmDialog used for
 		    profile-delete confirmation. */}
-		<div
-			role="dialog"
-			aria-label="Settings"
-			className="flex flex-col w-full h-full"
-			style={{
-				backgroundColor: "var(--bg-secondary)",
-			}}
-		>
-
+			<div
+				role="dialog"
+				aria-label="Settings"
+				className="flex flex-col w-full h-full"
+				style={{
+					backgroundColor: "var(--bg-secondary)",
+				}}
+			>
 				{/* Header */}
 				<div
 					className="flex items-center justify-between flex-shrink-0"
@@ -1550,44 +1544,6 @@ export function SettingsPanel({ onClose }: Props) {
 
 						{section === "shell" && (
 							<div className="flex flex-col flex-1 min-h-0">
-								<SectionLabel>Status Indicator</SectionLabel>
-								<div
-									className="flex items-center gap-3 rounded-lg"
-									style={{
-										padding: "10px 12px",
-										marginBottom: 18,
-										backgroundColor: "var(--bg-primary)",
-										border: "1px solid var(--border)",
-									}}
-								>
-									<Toggle
-										checked={shellActivityStatus}
-										onChange={setShellActivityStatus}
-									/>
-									<div className="flex-1 min-w-0">
-										<div
-											style={{
-												fontSize: 13,
-												color: "var(--fg-primary)",
-												lineHeight: 1.3,
-											}}
-										>
-											Terminal activity status
-										</div>
-										<div
-											style={{
-												fontSize: 11,
-												color: "var(--fg-secondary)",
-												marginTop: 2,
-												lineHeight: 1.4,
-											}}
-										>
-											Show busy and finished states in the status dot for shell
-											commands. When off, the dot stays neutral and only turns
-											red when a command fails. Agents are unaffected.
-										</div>
-									</div>
-								</div>
 								<SectionLabel>Default Shell</SectionLabel>
 								<p
 									style={{

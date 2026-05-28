@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSplitPane } from "../hooks/useSplitPane";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
@@ -5,7 +6,6 @@ import { pty } from "../lib/ipc";
 import { triggerAction } from "../lib/keybindings";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
-import { invoke } from "@tauri-apps/api/core";
 import { useProfileStore } from "../stores/profileStore";
 import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
@@ -75,9 +75,7 @@ export function CommandPalette({
 			category: "Profiles",
 			action: () => {
 				// Open the singleton Settings window deep-linked to Profiles.
-				invoke("open_settings_window", { section: "profiles" }).catch(
-					() => {},
-				);
+				invoke("open_settings_window", { section: "profiles" }).catch(() => {});
 			},
 		});
 

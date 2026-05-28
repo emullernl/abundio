@@ -77,227 +77,219 @@ interface GitChangesState {
 	hydrateFromWorkspace: (workspaceId: string | null) => void;
 }
 
-export const useGitChangesStore = create<GitChangesState>()(
-	(set, get) => ({
+export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
+	changedFiles: [],
+	baseBranch: null,
+	currentBranch: null,
+	availableBranches: [],
+	loading: false,
+	error: null,
+	collapsedSections: {},
+	branchSelectorOpen: false,
+
+	fetchChanges: async (cwd, workspaceBaseBranch) => {
+		// Capture the workspace that owns this fetch. The cache is keyed by
+		// this id so a fetch that started for A still populates cache[A]
+		// even if the user has since switched to B (the gen check guards
+		// the singleton update, not the cache write).
+		const startedForWorkspaceId =
+			useWorkspaceStore.getState().activeWorkspaceId;
+		const gen = ++fetchGeneration;
+		// Only show loading spinner on first fetch — avoid flicker on refreshes
+		if (get().changedFiles.length === 0 && !get().currentBranch) {
+			set({ loading: true, error: null });
+		} else {
+			set({ error: null });
+		}
+		try {
+			const [files, branchInfo, fingerprint] = await Promise.all([
+				git.changedFiles(cwd, workspaceBaseBranch),
+				git.branchInfo(cwd),
+				git.statusFingerprint(cwd),
+			]);
+			const newBaseBranch = workspaceBaseBranch || branchInfo.defaultBranch;
+			if (startedForWorkspaceId) {
+				const existing =
+					gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
+				gitChangesCache.set(startedForWorkspaceId, {
+					...existing,
+					changedFiles: files,
+					baseBranch: newBaseBranch,
+					currentBranch: branchInfo.currentBranch,
+				});
+				fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
+			}
+			if (gen !== fetchGeneration) return; // stale singleton
+			// Don't write A's changes into the singleton if the user has
+			// switched to B and B's fetch was skipped by the freshness gate
+			// (so fetchGeneration was never bumped past A's gen).
+			if (
+				startedForWorkspaceId !== useWorkspaceStore.getState().activeWorkspaceId
+			)
+				return;
+			lastFingerprint = fingerprint;
+			const state = get();
+			const updates: Partial<GitChangesState> = { loading: false };
+			if (!filesEqual(state.changedFiles, files)) {
+				updates.changedFiles = files;
+			}
+			if (state.baseBranch !== newBaseBranch) {
+				updates.baseBranch = newBaseBranch;
+			}
+			if (state.currentBranch !== branchInfo.currentBranch) {
+				updates.currentBranch = branchInfo.currentBranch;
+			}
+			set(updates);
+			// Keep sidebar chip and stats in sync without extra IPC calls
+			const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+			if (activeId) {
+				const totalAdd = files.reduce((s, f) => s + f.additions, 0);
+				const totalDel = files.reduce((s, f) => s + f.deletions, 0);
+				useWorkspaceGitStore.getState().setInfo(activeId, {
+					isGitRepo: true,
+					currentBranch: branchInfo.currentBranch,
+					changedFileCount: files.length,
+					additions: totalAdd,
+					deletions: totalDel,
+				});
+				workspacesApi
+					.update(activeId, { lastBranch: branchInfo.currentBranch })
+					.catch(() => {});
+			}
+		} catch (e) {
+			if (gen !== fetchGeneration) return; // stale response
+			const errMsg = e instanceof Error ? e.message : String(e);
+			set({
+				loading: false,
+				error: errMsg,
+				changedFiles: [],
+			});
+			// Sync non-git status so sidebar chip and panel stay consistent
+			if (/not a git repository/i.test(errMsg)) {
+				const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+				if (activeId) {
+					useWorkspaceGitStore.getState().setInfo(activeId, {
+						isGitRepo: false,
+						currentBranch: null,
+						changedFileCount: 0,
+						additions: 0,
+						deletions: 0,
+					});
+				}
+			}
+		}
+	},
+
+	refreshChanges: async (cwd, workspaceBaseBranch) => {
+		const startedForWorkspaceId =
+			useWorkspaceStore.getState().activeWorkspaceId;
+		try {
+			const fingerprint = await git.statusFingerprint(cwd);
+			if (fingerprint === lastFingerprint) return;
+			const gen = ++fetchGeneration;
+			const files = await git.changedFiles(cwd, workspaceBaseBranch);
+			if (startedForWorkspaceId) {
+				const existing =
+					gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
+				gitChangesCache.set(startedForWorkspaceId, {
+					...existing,
+					changedFiles: files,
+				});
+				fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
+			}
+			if (gen !== fetchGeneration) return;
+			// See fetchChanges: guard against contaminating another
+			// workspace's panel when its fetch was skipped as fresh.
+			if (
+				startedForWorkspaceId !== useWorkspaceStore.getState().activeWorkspaceId
+			)
+				return;
+			lastFingerprint = fingerprint; // only commit once fetch succeeded
+			const state = get();
+			if (!filesEqual(state.changedFiles, files)) {
+				set({ changedFiles: files });
+			}
+			// Keep sidebar chip and stats in sync
+			const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+			if (activeId) {
+				const totalAdd = files.reduce((s, f) => s + f.additions, 0);
+				const totalDel = files.reduce((s, f) => s + f.deletions, 0);
+				useWorkspaceGitStore.getState().setInfo(activeId, {
+					isGitRepo: true,
+					currentBranch: state.currentBranch,
+					changedFileCount: files.length,
+					additions: totalAdd,
+					deletions: totalDel,
+				});
+			}
+		} catch {
+			// Fingerprint/refresh failures are non-critical
+		}
+	},
+
+	toggleSection: (section) =>
+		set((s) => ({
+			collapsedSections: {
+				...s.collapsedSections,
+				[section]: !s.collapsedSections[section],
+			},
+		})),
+
+	setBaseBranch: async (workspaceId, branch, cwd) => {
+		await workspacesApi.update(workspaceId, { baseBranch: branch });
+		useWorkspaceStore.getState().setWorkspaceBaseBranch(workspaceId, branch);
+		await get().fetchChanges(cwd, branch);
+	},
+
+	toggleBranchSelector: () =>
+		set((s) => ({ branchSelectorOpen: !s.branchSelectorOpen })),
+	closeBranchSelector: () => set({ branchSelectorOpen: false }),
+
+	fetchBranches: async (cwd) => {
+		const startedForWorkspaceId =
+			useWorkspaceStore.getState().activeWorkspaceId;
+		try {
+			const branches = await git.listBranches(cwd);
+			if (startedForWorkspaceId) {
+				const existing =
+					gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
+				gitChangesCache.set(startedForWorkspaceId, {
+					...existing,
+					availableBranches: branches,
+				});
+			}
+			set({ availableBranches: branches });
+		} catch {
+			set({ availableBranches: [] });
+		}
+	},
+
+	clear: () => {
+		lastFingerprint = null;
+		set({
 			changedFiles: [],
 			baseBranch: null,
 			currentBranch: null,
 			availableBranches: [],
 			loading: false,
 			error: null,
-			collapsedSections: {},
 			branchSelectorOpen: false,
+		});
+	},
 
-			fetchChanges: async (cwd, workspaceBaseBranch) => {
-				// Capture the workspace that owns this fetch. The cache is keyed by
-				// this id so a fetch that started for A still populates cache[A]
-				// even if the user has since switched to B (the gen check guards
-				// the singleton update, not the cache write).
-				const startedForWorkspaceId =
-					useWorkspaceStore.getState().activeWorkspaceId;
-				const gen = ++fetchGeneration;
-				// Only show loading spinner on first fetch — avoid flicker on refreshes
-				if (get().changedFiles.length === 0 && !get().currentBranch) {
-					set({ loading: true, error: null });
-				} else {
-					set({ error: null });
-				}
-				try {
-					const [files, branchInfo, fingerprint] = await Promise.all([
-						git.changedFiles(cwd, workspaceBaseBranch),
-						git.branchInfo(cwd),
-						git.statusFingerprint(cwd),
-					]);
-					const newBaseBranch = workspaceBaseBranch || branchInfo.defaultBranch;
-					if (startedForWorkspaceId) {
-						const existing =
-							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
-						gitChangesCache.set(startedForWorkspaceId, {
-							...existing,
-							changedFiles: files,
-							baseBranch: newBaseBranch,
-							currentBranch: branchInfo.currentBranch,
-						});
-						fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
-					}
-					if (gen !== fetchGeneration) return; // stale singleton
-					// Don't write A's changes into the singleton if the user has
-					// switched to B and B's fetch was skipped by the freshness gate
-					// (so fetchGeneration was never bumped past A's gen).
-					if (
-						startedForWorkspaceId !==
-						useWorkspaceStore.getState().activeWorkspaceId
-					)
-						return;
-					lastFingerprint = fingerprint;
-					const state = get();
-					const updates: Partial<GitChangesState> = { loading: false };
-					if (!filesEqual(state.changedFiles, files)) {
-						updates.changedFiles = files;
-					}
-					if (state.baseBranch !== newBaseBranch) {
-						updates.baseBranch = newBaseBranch;
-					}
-					if (state.currentBranch !== branchInfo.currentBranch) {
-						updates.currentBranch = branchInfo.currentBranch;
-					}
-					set(updates);
-					// Keep sidebar chip and stats in sync without extra IPC calls
-					const activeId = useWorkspaceStore.getState().activeWorkspaceId;
-					if (activeId) {
-						const totalAdd = files.reduce((s, f) => s + f.additions, 0);
-						const totalDel = files.reduce((s, f) => s + f.deletions, 0);
-						useWorkspaceGitStore.getState().setInfo(activeId, {
-							isGitRepo: true,
-							currentBranch: branchInfo.currentBranch,
-							changedFileCount: files.length,
-							additions: totalAdd,
-							deletions: totalDel,
-						});
-						workspacesApi
-							.update(activeId, { lastBranch: branchInfo.currentBranch })
-							.catch(() => {});
-					}
-				} catch (e) {
-					if (gen !== fetchGeneration) return; // stale response
-					const errMsg = e instanceof Error ? e.message : String(e);
-					set({
-						loading: false,
-						error: errMsg,
-						changedFiles: [],
-					});
-					// Sync non-git status so sidebar chip and panel stay consistent
-					if (/not a git repository/i.test(errMsg)) {
-						const activeId = useWorkspaceStore.getState().activeWorkspaceId;
-						if (activeId) {
-							useWorkspaceGitStore.getState().setInfo(activeId, {
-								isGitRepo: false,
-								currentBranch: null,
-								changedFileCount: 0,
-								additions: 0,
-								deletions: 0,
-							});
-						}
-					}
-				}
-			},
-
-			refreshChanges: async (cwd, workspaceBaseBranch) => {
-				const startedForWorkspaceId =
-					useWorkspaceStore.getState().activeWorkspaceId;
-				try {
-					const fingerprint = await git.statusFingerprint(cwd);
-					if (fingerprint === lastFingerprint) return;
-					const gen = ++fetchGeneration;
-					const files = await git.changedFiles(cwd, workspaceBaseBranch);
-					if (startedForWorkspaceId) {
-						const existing =
-							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
-						gitChangesCache.set(startedForWorkspaceId, {
-							...existing,
-							changedFiles: files,
-						});
-						fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
-					}
-					if (gen !== fetchGeneration) return;
-					// See fetchChanges: guard against contaminating another
-					// workspace's panel when its fetch was skipped as fresh.
-					if (
-						startedForWorkspaceId !==
-						useWorkspaceStore.getState().activeWorkspaceId
-					)
-						return;
-					lastFingerprint = fingerprint; // only commit once fetch succeeded
-					const state = get();
-					if (!filesEqual(state.changedFiles, files)) {
-						set({ changedFiles: files });
-					}
-					// Keep sidebar chip and stats in sync
-					const activeId = useWorkspaceStore.getState().activeWorkspaceId;
-					if (activeId) {
-						const totalAdd = files.reduce((s, f) => s + f.additions, 0);
-						const totalDel = files.reduce((s, f) => s + f.deletions, 0);
-						useWorkspaceGitStore.getState().setInfo(activeId, {
-							isGitRepo: true,
-							currentBranch: state.currentBranch,
-							changedFileCount: files.length,
-							additions: totalAdd,
-							deletions: totalDel,
-						});
-					}
-				} catch {
-					// Fingerprint/refresh failures are non-critical
-				}
-			},
-
-			toggleSection: (section) =>
-				set((s) => ({
-					collapsedSections: {
-						...s.collapsedSections,
-						[section]: !s.collapsedSections[section],
-					},
-				})),
-
-			setBaseBranch: async (workspaceId, branch, cwd) => {
-				await workspacesApi.update(workspaceId, { baseBranch: branch });
-				useWorkspaceStore
-					.getState()
-					.setWorkspaceBaseBranch(workspaceId, branch);
-				await get().fetchChanges(cwd, branch);
-			},
-
-			toggleBranchSelector: () =>
-				set((s) => ({ branchSelectorOpen: !s.branchSelectorOpen })),
-			closeBranchSelector: () => set({ branchSelectorOpen: false }),
-
-			fetchBranches: async (cwd) => {
-				const startedForWorkspaceId =
-					useWorkspaceStore.getState().activeWorkspaceId;
-				try {
-					const branches = await git.listBranches(cwd);
-					if (startedForWorkspaceId) {
-						const existing =
-							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
-						gitChangesCache.set(startedForWorkspaceId, {
-							...existing,
-							availableBranches: branches,
-						});
-					}
-					set({ availableBranches: branches });
-				} catch {
-					set({ availableBranches: [] });
-				}
-			},
-
-			clear: () => {
-				lastFingerprint = null;
-				set({
-					changedFiles: [],
-					baseBranch: null,
-					currentBranch: null,
-					availableBranches: [],
-					loading: false,
-					error: null,
-					branchSelectorOpen: false,
-				});
-			},
-
-			hydrateFromWorkspace: (workspaceId) => {
-				const entry = workspaceId
-					? gitChangesCache.get(workspaceId)
-					: undefined;
-				lastFingerprint = workspaceId
-					? (fingerprintByWorkspaceId.get(workspaceId) ?? null)
-					: null;
-				set({
-					changedFiles: entry?.changedFiles ?? [],
-					baseBranch: entry?.baseBranch ?? null,
-					currentBranch: entry?.currentBranch ?? null,
-					availableBranches: entry?.availableBranches ?? [],
-					loading: false,
-					error: null,
-					branchSelectorOpen: false,
-				});
-			},
-		}),
-);
+	hydrateFromWorkspace: (workspaceId) => {
+		const entry = workspaceId ? gitChangesCache.get(workspaceId) : undefined;
+		lastFingerprint = workspaceId
+			? (fingerprintByWorkspaceId.get(workspaceId) ?? null)
+			: null;
+		set({
+			changedFiles: entry?.changedFiles ?? [],
+			baseBranch: entry?.baseBranch ?? null,
+			currentBranch: entry?.currentBranch ?? null,
+			availableBranches: entry?.availableBranches ?? [],
+			loading: false,
+			error: null,
+			branchSelectorOpen: false,
+		});
+	},
+}));

@@ -373,6 +373,19 @@ body,
 	}
 }
 
+/* Shell-mode "running a command" breathing pulse for the triple-chevron glyph.
+   Distinct from the agent spinner so amber from a shell vs. an agent is
+   tellable apart at a glance. */
+@keyframes shell-amber-breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.4;
+	}
+}
+
 @keyframes agent-purple-bounce {
 	0%,
 	100% {

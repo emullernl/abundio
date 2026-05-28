@@ -14,12 +14,10 @@ function baseProps(): OverviewBarProps {
 		errorAgents: 0,
 		idleShells: 0,
 		workingShells: 0,
-		readyShells: 0,
 		errorShells: 0,
 		reviewRequestedPrs: 0,
 		myOpenPrs: 0,
 		showAgentWaiting: true,
-		showShellActivityDetail: true,
 	};
 }
 
@@ -183,14 +181,13 @@ describe("OverviewBar", () => {
 		expect(workingTile?.getAttribute("title")).toContain("(100)");
 	});
 
-	it("renders the four shell tiles and labels them as terminals", () => {
+	it("renders three shell tiles (Idle, Busy, Error) and no Finished tile — shells skip Ready (ADR-0009)", () => {
 		act(() => {
 			root.render(
 				<OverviewBar
 					{...baseProps()}
 					idleShells={2}
 					workingShells={1}
-					readyShells={3}
 					errorShells={1}
 				/>,
 			);
@@ -200,11 +197,12 @@ describe("OverviewBar", () => {
 		);
 		expect(tooltipTexts.some((t) => t.startsWith("Idle terminals"))).toBe(true);
 		expect(tooltipTexts.some((t) => t.startsWith("Busy terminals"))).toBe(true);
-		expect(tooltipTexts.some((t) => t.startsWith("Finished terminals"))).toBe(
-			true,
-		);
 		expect(tooltipTexts.some((t) => t.startsWith("Error terminals"))).toBe(
 			true,
+		);
+		// No "Finished terminals" tile — shell-mode PTYs never enter Ready.
+		expect(tooltipTexts.some((t) => t.startsWith("Finished terminals"))).toBe(
+			false,
 		);
 	});
 
@@ -224,34 +222,6 @@ describe("OverviewBar", () => {
 		// Idle agent tile still present, Waiting tile gone.
 		expect(tooltipTexts.some((t) => t.startsWith("Idle agents"))).toBe(true);
 		expect(tooltipTexts.some((t) => t.startsWith("Waiting agents"))).toBe(
-			false,
-		);
-	});
-
-	it("hides Busy and Finished shell tiles when showShellActivityDetail is false, keeps Idle and Error", () => {
-		act(() => {
-			root.render(
-				<OverviewBar
-					{...baseProps()}
-					showShellActivityDetail={false}
-					idleShells={2}
-					workingShells={1}
-					readyShells={3}
-					errorShells={1}
-				/>,
-			);
-		});
-		const tooltipTexts = Array.from(container.querySelectorAll("[title]")).map(
-			(el) => el.getAttribute("title") ?? "",
-		);
-		expect(tooltipTexts.some((t) => t.startsWith("Idle terminals"))).toBe(true);
-		expect(tooltipTexts.some((t) => t.startsWith("Error terminals"))).toBe(
-			true,
-		);
-		expect(tooltipTexts.some((t) => t.startsWith("Busy terminals"))).toBe(
-			false,
-		);
-		expect(tooltipTexts.some((t) => t.startsWith("Finished terminals"))).toBe(
 			false,
 		);
 	});
