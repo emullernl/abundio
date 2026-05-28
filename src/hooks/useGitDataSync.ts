@@ -1,60 +1,44 @@
 import { useEffect, useRef } from "react";
-import { fs } from "../lib/ipc";
-import { useGitChangesStore } from "../stores/gitChangesStore";
+import { git } from "../lib/ipc";
+import {
+	hasGitDataCachedFor,
+	useGitChangesStore,
+} from "../stores/gitChangesStore";
 import { usePrStore } from "../stores/prStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
-import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
-const MIN_INTERVAL = 500;
 const GH_OPEN_MS = 60_000;
 const GH_COLLAPSED_MS = 60_000;
-// Skip the on-switch background fetch when this workspace was refreshed
-// less than this many ms ago. File watchers and PR polling keep the cache
-// fresh between switches, so re-fetching on every toggle is wasted work and
-// blocks the main thread for ~2s on git repos (measured).
-const SWITCH_REFRESH_FRESHNESS_MS = 30_000;
-const lastSyncByWorkspaceId = new Map<string, number>();
 
-interface ActiveWatcher {
+interface SchedulerEntry {
 	workspaceId: string;
-	unlistenFs: (() => void) | null;
-	unlistenGit: (() => void) | null;
+	unlisten: (() => void) | null;
 	cancelled: boolean;
-	fsTrailingTimer: ReturnType<typeof setTimeout> | null;
-	gitTrailingTimer: ReturnType<typeof setTimeout> | null;
-	lastFsAt: number;
-	lastGitAt: number;
 }
 
-function teardown(entry: ActiveWatcher) {
-	entry.cancelled = true;
-	entry.unlistenFs?.();
-	entry.unlistenGit?.();
-	if (entry.fsTrailingTimer) clearTimeout(entry.fsTrailingTimer);
-	if (entry.gitTrailingTimer) clearTimeout(entry.gitTrailingTimer);
-}
-
+/** Owns the per-opened-workspace `GitScheduler` lifecycle on the Rust side
+ *  and the `git-state-<workspaceId>` listener that consumes the pushed
+ *  bundles. Replaces the prior fs/git event-driven `fetchChanges`-on-every-event
+ *  pattern that froze the JS main thread on `git stash` (because every
+ *  `invoke` carries ~100-600ms of WKWebView main-thread overhead).
+ *
+ *  The lifecycle tracks `openedWorkspaceIds` — schedulers are started for
+ *  every Opened workspace (per the CONTEXT.md definition: a Workspace that
+ *  has been activated at least once this session) and stopped when the
+ *  workspace closes. */
 export function useGitDataSync() {
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-	// Per-Window sidebar state — see windowUiStore + ADR-0007/0010. The Git
-	// tab's "fetch when visible" trigger fires when the right sidebar is open
-	// AND the active tab is Git. Switching to Explorer/Search doesn't refetch
-	// because the Git data is already cached and isn't visible.
 	const rightSidebarOpen = useWindowUiStore((s) => s.rightSidebarOpen);
 	const activeTab = useWindowUiStore((s) => s.rightSidebarActiveTab);
 	const panelOpen = rightSidebarOpen && activeTab === "git";
 	const ghStatus = usePrStore((s) => s.ghStatus);
 
-	const activeRef = useRef<Map<string, ActiveWatcher>>(new Map());
+	const activeRef = useRef<Map<string, SchedulerEntry>>(new Map());
 
-	// Per-opened-workspace fs/git event subscriptions. Lifecycle mirrors
-	// useFileReloadWatcher: Map<workspaceId, ActiveWatcher> ref + set diff.
-	// Callbacks read activeWorkspaceId fresh so routing (active vs background)
-	// stays correct across workspace switches without restarting listeners.
 	useEffect(() => {
 		const active = activeRef.current;
 
@@ -64,115 +48,62 @@ export function useGitDataSync() {
 			if (ws?.rootFolder) desiredIds.add(wsId);
 		}
 
+		// Stop schedulers and unlisten for workspaces that are no longer Opened.
 		for (const [wsId, entry] of active) {
 			if (!desiredIds.has(wsId)) {
-				teardown(entry);
+				entry.cancelled = true;
+				entry.unlisten?.();
+				git.schedulerStop(wsId).catch(() => {});
 				active.delete(wsId);
 			}
 		}
 
+		// Start schedulers + register listeners for newly-Opened workspaces.
 		for (const wsId of desiredIds) {
 			if (active.has(wsId)) continue;
 			const ws = workspaces.find((w) => w.id === wsId);
 			if (!ws?.rootFolder) continue;
 			const cwd = ws.rootFolder;
+			const baseBranch = ws.baseBranch ?? null;
 
-			const entry: ActiveWatcher = {
+			const entry: SchedulerEntry = {
 				workspaceId: wsId,
-				unlistenFs: null,
-				unlistenGit: null,
+				unlisten: null,
 				cancelled: false,
-				fsTrailingTimer: null,
-				gitTrailingTimer: null,
-				lastFsAt: 0,
-				lastGitAt: 0,
 			};
 			active.set(wsId, entry);
 
-			const fireFsRefresh = () => {
-				const store = useWorkspaceStore.getState();
-				const workspace = store.workspaces.find((w) => w.id === wsId);
-				if (!workspace?.rootFolder) return;
-				if (store.activeWorkspaceId === wsId) {
-					useGitChangesStore
-						.getState()
-						.fetchChanges(workspace.rootFolder, workspace.baseBranch ?? null);
-				} else {
-					useWorkspaceGitStore
-						.getState()
-						.refreshWorkspace(
-							wsId,
-							workspace.rootFolder,
-							workspace.baseBranch ?? null,
-						);
-				}
-			};
-
-			const fireGitFetch = () => {
-				const store = useWorkspaceStore.getState();
-				const workspace = store.workspaces.find((w) => w.id === wsId);
-				if (!workspace?.rootFolder) return;
-				if (store.activeWorkspaceId === wsId) {
-					useGitChangesStore
-						.getState()
-						.fetchChanges(workspace.rootFolder, workspace.baseBranch ?? null);
-				} else {
-					useWorkspaceGitStore
-						.getState()
-						.fetch(wsId, workspace.rootFolder, workspace.baseBranch ?? null);
-				}
-			};
-
-			const throttledFsRefresh = () => {
-				const now = Date.now();
-				const elapsed = now - entry.lastFsAt;
-				if (elapsed >= MIN_INTERVAL) {
-					entry.lastFsAt = now;
-					fireFsRefresh();
-				} else if (!entry.fsTrailingTimer) {
-					entry.fsTrailingTimer = setTimeout(() => {
-						entry.fsTrailingTimer = null;
-						entry.lastFsAt = Date.now();
-						fireFsRefresh();
-					}, MIN_INTERVAL - elapsed);
-				}
-			};
-
-			const throttledGitFetch = () => {
-				const now = Date.now();
-				const elapsed = now - entry.lastGitAt;
-				if (elapsed >= MIN_INTERVAL) {
-					entry.lastGitAt = now;
-					fireGitFetch();
-				} else if (!entry.gitTrailingTimer) {
-					entry.gitTrailingTimer = setTimeout(() => {
-						entry.gitTrailingTimer = null;
-						entry.lastGitAt = Date.now();
-						fireGitFetch();
-					}, MIN_INTERVAL - elapsed);
-				}
-			};
-
-			Promise.all([
-				fs.onFsChange(cwd, throttledFsRefresh),
-				fs.onGitChange(cwd, throttledGitFetch),
-			]).then(([unlistenFsResult, unlistenGitResult]) => {
-				if (entry.cancelled) {
-					unlistenFsResult();
-					unlistenGitResult();
-				} else {
-					entry.unlistenFs = unlistenFsResult;
-					entry.unlistenGit = unlistenGitResult;
-				}
+			git.schedulerStart(wsId, cwd, baseBranch).catch((err) => {
+				console.error("[useGitDataSync] schedulerStart failed:", err);
 			});
+
+			git
+				.onGitState(wsId, (event) => {
+					const store = useGitChangesStore.getState();
+					if (event.kind === "bundle") {
+						store.applyBundle(wsId, event.bundle);
+					} else {
+						store.applyError(wsId, event.message, event.notGitRepo);
+					}
+				})
+				.then((unlisten) => {
+					if (entry.cancelled) unlisten();
+					else entry.unlisten = unlisten;
+				})
+				.catch((err) => {
+					console.error("[useGitDataSync] onGitState listen failed:", err);
+				});
 		}
 	}, [openedWorkspaceIds, workspaces]);
 
+	// Cleanup on hook unmount — important for tests and for clean window-close.
 	useEffect(() => {
 		const active = activeRef.current;
 		return () => {
-			for (const entry of active.values()) {
-				teardown(entry);
+			for (const [wsId, entry] of active) {
+				entry.cancelled = true;
+				entry.unlisten?.();
+				git.schedulerStop(wsId).catch(() => {});
 			}
 			active.clear();
 		};
@@ -182,13 +113,11 @@ export function useGitDataSync() {
 	const activeCwd = activeWorkspace?.rootFolder ?? null;
 	const activeBaseBranch = activeWorkspace?.baseBranch ?? null;
 
-	// Hydrate singletons from per-workspace cache (instant). For the background
-	// refresh: skip entirely if this workspace was refreshed less than
-	// SWITCH_REFRESH_FRESHNESS_MS ago — file watchers (useFileReloadWatcher)
-	// and the 60s gh polling interval below keep the cache up to date between
-	// switches, so re-fetching on every workspace toggle is wasted work. The
-	// rAF wrap on the fetch kickoffs is a defensive belt-and-suspenders: even
-	// if the freshness gate misses, the visible switch paints first.
+	// Workspace-switch effect — hydrate the singleton from cache.
+	// Falls back to a one-shot `fetchChanges` only when no cache exists yet
+	// (truly cold start: scheduler was just started and hasn't pushed yet, or
+	// the scheduler crashed and never pushed). Per-Q4 of the plan: this is
+	// the cache-presence gate that replaces the prior 30 s freshness window.
 	useEffect(() => {
 		useGitChangesStore.getState().hydrateFromWorkspace(activeWorkspaceId);
 		usePrStore.getState().hydrateFromWorkspace(activeWorkspaceId);
@@ -196,21 +125,19 @@ export function useGitDataSync() {
 		const cwd = activeCwd;
 		const baseBranch = activeBaseBranch;
 		const wsId = activeWorkspaceId;
-		if (wsId) {
-			const lastSync = lastSyncByWorkspaceId.get(wsId) ?? 0;
-			if (Date.now() - lastSync < SWITCH_REFRESH_FRESHNESS_MS) {
-				// Cache is fresh — file watchers and PR polling will keep it that way.
-				return;
-			}
-		}
+		const cached = wsId ? hasGitDataCachedFor(wsId) : false;
+
 		let cancelled = false;
 		const rafId = requestAnimationFrame(() => {
 			if (cancelled) return;
-			// Record freshness only once the fetch genuinely starts. Setting it in
-			// the effect body would also mark a cancelled rAF (rapid A→B→A) fresh,
-			// leaving a workspace that never fetched stuck on stale/empty data.
-			if (wsId) lastSyncByWorkspaceId.set(wsId, Date.now());
-			useGitChangesStore.getState().fetchChanges(cwd, baseBranch);
+			if (!cached) {
+				// Cold-start fallback. Rare in practice — the scheduler will be
+				// running (or about to be) for this workspace, and its initial
+				// trigger covers the same data within ~500ms. This `fetchChanges`
+				// only matters when the scheduler hasn't pushed even once.
+				useGitChangesStore.getState().fetchChanges(cwd, baseBranch);
+			}
+			// PR data is orthogonal to the git scheduler — keep the invoke path.
 			usePrStore
 				.getState()
 				.checkGhStatus(cwd)
@@ -229,13 +156,6 @@ export function useGitDataSync() {
 		};
 	}, [activeWorkspaceId, activeCwd, activeBaseBranch]);
 
-	// Fetch when the panel opens so the panel always shows current data even if
-	// an event-driven refresh was missed while it was collapsed.
-	useEffect(() => {
-		if (!panelOpen || !activeCwd) return;
-		useGitChangesStore.getState().fetchChanges(activeCwd, activeBaseBranch);
-	}, [panelOpen, activeCwd, activeBaseBranch]);
-
 	// Adaptive gh polling: 60s when panel open, 300s when collapsed.
 	useEffect(() => {
 		if (!activeCwd || !ghStatus?.available || !ghStatus?.authenticated) return;
@@ -246,11 +166,5 @@ export function useGitDataSync() {
 			usePrStore.getState().fetchMyPrs(cwd);
 		}, ms);
 		return () => clearInterval(interval);
-	}, [
-		activeCwd,
-		activeWorkspaceId,
-		panelOpen,
-		ghStatus?.available,
-		ghStatus?.authenticated,
-	]);
+	}, [activeCwd, panelOpen, ghStatus?.available, ghStatus?.authenticated]);
 }

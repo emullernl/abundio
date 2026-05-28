@@ -188,9 +188,33 @@ export const tabs = {
 	delete: (id: string) => invoke<void>("tab_delete", { id }),
 };
 
+export interface GitFetchBundle {
+	changedFiles: GitChangedFile[];
+	branchInfo: BranchInfo;
+	statusFingerprint: string;
+}
+
+/** Discriminated union pushed by the Rust `GitScheduler` on every refresh.
+ *  Single channel for success and failure — keeps state-update ordering
+ *  trivial on the frontend (one listener, one switch). */
+export type GitStateEvent =
+	| { kind: "bundle"; bundle: GitFetchBundle }
+	| { kind: "error"; message: string; notGitRepo: boolean };
+
 export const git = {
 	changedFiles: (cwd: string, baseBranch?: string | null) =>
 		invoke<GitChangedFile[]>("git_changed_files", {
+			cwd,
+			baseBranch: baseBranch ?? null,
+		}),
+
+	/** Single-IPC bundle replacing the 3 separate calls (changedFiles +
+	 *  branchInfo + statusFingerprint). Internally runs them in parallel
+	 *  via scoped threads — see `git_fetch_bundle` in src-tauri. The
+	 *  single round-trip is the dominant cost savings on macOS/WKWebView
+	 *  where each `invoke` has significant per-call main-thread overhead. */
+	fetchBundle: (cwd: string, baseBranch?: string | null) =>
+		invoke<GitFetchBundle>("git_fetch_bundle", {
 			cwd,
 			baseBranch: baseBranch ?? null,
 		}),
@@ -218,6 +242,35 @@ export const git = {
 	workspacesSummary: (
 		requests: { workspaceId: string; cwd: string; baseBranch: string | null }[],
 	) => invoke<WorkspaceGitSummary[]>("git_workspaces_summary", { requests }),
+
+	/** Start the per-workspace Rust GitScheduler. Fires an immediate refresh
+	 *  on start, then pushes a `git-state-<workspaceId>` event on every
+	 *  meaningful change. Idempotent — calling twice with the same id is a no-op.
+	 *  To change `baseBranch`, call `schedulerStop` then `schedulerStart` again. */
+	schedulerStart: (
+		workspaceId: string,
+		rootPath: string,
+		baseBranch?: string | null,
+	) =>
+		invoke<void>("git_scheduler_start", {
+			workspaceId,
+			rootPath,
+			baseBranch: baseBranch ?? null,
+		}),
+
+	schedulerStop: (workspaceId: string) =>
+		invoke<void>("git_scheduler_stop", { workspaceId }),
+
+	/** Subscribe to the per-workspace state stream pushed by the Rust scheduler.
+	 *  Replaces the JS-driven `fetchChanges`-on-every-event loop that caused
+	 *  the WKWebView `invoke()` freeze on `git stash`. */
+	onGitState: (
+		workspaceId: string,
+		callback: (event: GitStateEvent) => void,
+	): Promise<UnlistenFn> =>
+		listen<GitStateEvent>(`git-state-${workspaceId}`, (event) => {
+			callback(event.payload);
+		}),
 };
 
 export type WorkspaceGitSummary = {

@@ -2,6 +2,7 @@ use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use crate::error::AbundioError;
 use crate::file_watcher::FileWatcher;
+use crate::git_scheduler::GitScheduler;
 use crate::profile_store::{ActiveProfileState, Profile, ProfileStore, ProfileUpdate};
 use crate::pty_manager::PtyManager;
 use crate::workspace_store::{WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs, Tab, TabUpdate};
@@ -370,6 +371,35 @@ pub async fn fs_watch_stop(
     root_path: String,
 ) -> Result<(), AbundioError> {
     watcher.stop_watching(&root_path);
+    Ok(())
+}
+
+// ── Git scheduler commands ──
+//
+// Per-workspace Rust-initiated git refresh. The frontend calls `start` on
+// workspace open and `stop` on close; in between, the scheduler emits
+// `git-state-<workspaceId>` events whenever the file watcher detects
+// meaningful change. This replaces the JS-side `fetchChanges`-on-every-event
+// pattern that froze the main thread during `git stash` (see git_scheduler.rs).
+
+#[tauri::command]
+pub async fn git_scheduler_start(
+    app: AppHandle,
+    scheduler: State<'_, GitScheduler>,
+    workspace_id: String,
+    root_path: String,
+    base_branch: Option<String>,
+) -> Result<(), AbundioError> {
+    scheduler.start(app, workspace_id, root_path, base_branch);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_scheduler_stop(
+    scheduler: State<'_, GitScheduler>,
+    workspace_id: String,
+) -> Result<(), AbundioError> {
+    scheduler.stop(&workspace_id);
     Ok(())
 }
 

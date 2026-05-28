@@ -9,6 +9,8 @@ pub mod file_explorer;
 pub mod file_watcher;
 pub mod gh_commands;
 pub mod git_commands;
+pub mod git_libgit2;
+pub mod git_scheduler;
 pub mod hook_server;
 pub mod migrations;
 pub mod process_monitor;
@@ -393,6 +395,7 @@ pub fn run() {
 
             // Initialize file watcher
             app.manage(file_watcher::FileWatcher::new());
+            app.manage(git_scheduler::GitScheduler::new());
 
             // Initialize search manager
             app.manage(search::SearchManager::new());
@@ -724,7 +727,10 @@ pub fn run() {
             file_explorer::fs_reveal_in_folder,
             commands::fs_watch_start,
             commands::fs_watch_stop,
+            commands::git_scheduler_start,
+            commands::git_scheduler_stop,
             git_commands::git_changed_files,
+            git_commands::git_fetch_bundle,
             git_commands::git_file_diff,
             git_commands::git_branch_info,
             git_commands::git_list_branches,
