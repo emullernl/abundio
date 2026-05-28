@@ -1,77 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
-import { Explorer } from "../Explorer/Explorer";
-import {
-	ChevronLeft,
-	ChevronRight,
-	Folder,
-	Grid,
-	Plus,
-	Search,
-} from "../Icons";
-import { SearchPanel } from "../Search/SearchPanel";
+import { ChevronLeft, ChevronRight, Grid, Plus } from "../Icons";
 import { WorkspaceList } from "./WorkspaceList";
 
 interface SidebarProps {
 	titlebarHeight: number;
 	onRequestNewWorkspace: () => void;
-}
-
-function SidebarDivider({
-	onResize,
-	onResizeEnd,
-}: {
-	onResize: (ratio: number) => void;
-	onResizeEnd: () => void;
-}) {
-	const dividerRef = useRef<HTMLDivElement>(null);
-	const onResizeEndRef = useRef(onResizeEnd);
-	onResizeEndRef.current = onResizeEnd;
-
-	const handleMouseDown = useCallback(
-		(e: React.MouseEvent) => {
-			e.preventDefault();
-			document.body.classList.add("dragging");
-
-			const parent = dividerRef.current?.parentElement;
-			if (!parent) return;
-
-			const parentRect = parent.getBoundingClientRect();
-
-			function onMouseMove(e: MouseEvent) {
-				let ratio = (e.clientY - parentRect.top) / parentRect.height;
-				ratio = Math.max(0.15, Math.min(0.85, ratio));
-				onResize(ratio);
-			}
-
-			function onMouseUp() {
-				document.body.classList.remove("dragging");
-				document.removeEventListener("mousemove", onMouseMove);
-				document.removeEventListener("mouseup", onMouseUp);
-				onResizeEndRef.current();
-			}
-
-			document.addEventListener("mousemove", onMouseMove);
-			document.addEventListener("mouseup", onMouseUp);
-		},
-		[onResize],
-	);
-
-	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for sidebar resize
-		<div
-			ref={dividerRef}
-			onMouseDown={handleMouseDown}
-			className="flex-shrink-0 bg-[var(--border)] hover:bg-[var(--accent)] transition-colors"
-			style={{
-				height: 4,
-				width: "100%",
-				cursor: "row-resize",
-				transitionDuration: "var(--transition-fast)",
-			}}
-		/>
-	);
 }
 
 const SIDEBAR_MIN_WIDTH = 180;
@@ -141,66 +76,18 @@ function SidebarEdgeHandle({
 	);
 }
 
-function PanelTab({
-	active,
-	onClick,
-	title,
-	children,
-}: {
-	active: boolean;
-	onClick: () => void;
-	title: string;
-	children: React.ReactNode;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			title={title}
-			className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-colors"
-			style={{
-				color: active ? "var(--accent)" : "var(--fg-secondary)",
-				transitionDuration: "var(--transition-fast)",
-			}}
-		>
-			{children}
-		</button>
-	);
-}
-
 export function Sidebar({
 	titlebarHeight,
 	onRequestNewWorkspace,
 }: SidebarProps) {
-	const {
-		sidebarWidth,
-		setSidebarWidth,
-		sidebarSplitRatio,
-		setSidebarSplitRatio,
-		sidebarBottomPanel,
-		setSidebarBottomPanel,
-	} = useSettingsStore();
+	const { sidebarWidth, setSidebarWidth } = useSettingsStore();
 	// Sidebar collapsed state is per-Window (each OS window remembers its own
 	// layout). See windowUiStore + ADR-0007.
 	const sidebarCollapsed = useWindowUiStore((s) => s.sidebarCollapsed);
 	const toggleSidebar = useWindowUiStore((s) => s.toggleSidebar);
-	const [localRatio, setLocalRatio] = useState<number | null>(null);
 	const [localWidth, setLocalWidth] = useState<number | null>(null);
 
 	const currentWidth = localWidth ?? sidebarWidth;
-
-	const ratio = localRatio ?? sidebarSplitRatio;
-
-	const handleResize = useCallback((r: number) => {
-		setLocalRatio(r);
-	}, []);
-
-	const handleResizeEnd = useCallback(() => {
-		if (localRatio !== null) {
-			setSidebarSplitRatio(localRatio);
-			setLocalRatio(null);
-		}
-	}, [localRatio, setSidebarSplitRatio]);
 
 	const handleWidthResize = useCallback((w: number) => {
 		setLocalWidth(w);
@@ -320,55 +207,10 @@ export function Sidebar({
 				</div>
 			</div>
 
-			{/* Split area: Workspaces + Bottom Panel */}
-			<div className="flex flex-col flex-1 min-h-0">
-				{/* Workspace list */}
-				<div
-					className="overflow-y-auto px-4 py-2 min-h-0"
-					style={{ flex: `${ratio} 1 0%` }}
-				>
-					<WorkspaceList />
-				</div>
-
-				{/* Draggable divider */}
-				<SidebarDivider onResize={handleResize} onResizeEnd={handleResizeEnd} />
-
-				{/* Bottom panel with tab selector */}
-				<div
-					className="min-h-0 flex flex-col"
-					style={{ flex: `${1 - ratio} 1 0%` }}
-				>
-					{/* Panel tabs */}
-					<div
-						className="flex items-center gap-1 flex-shrink-0"
-						style={{
-							height: 32,
-							paddingLeft: 16,
-							paddingRight: 8,
-							borderBottom: "1px solid var(--border)",
-						}}
-					>
-						<PanelTab
-							active={sidebarBottomPanel === "explorer"}
-							onClick={() => setSidebarBottomPanel("explorer")}
-							title="Explorer"
-						>
-							<Folder size={14} />
-						</PanelTab>
-						<PanelTab
-							active={sidebarBottomPanel === "search"}
-							onClick={() => setSidebarBottomPanel("search")}
-							title="Search"
-						>
-							<Search size={14} />
-						</PanelTab>
-					</div>
-
-					{/* Panel content */}
-					<div className="flex-1 min-h-0">
-						{sidebarBottomPanel === "explorer" ? <Explorer /> : <SearchPanel />}
-					</div>
-				</div>
+			{/* Workspace list — fills the rest of the sidebar (the bottom split
+			 *  + Explorer/Search tab strip moved to the right sidebar per ADR-0010). */}
+			<div className="overflow-y-auto px-4 py-2 flex-1 min-h-0">
+				<WorkspaceList />
 			</div>
 		</div>
 	);

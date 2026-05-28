@@ -40,8 +40,13 @@ export function useGitDataSync() {
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-	// Per-Window panel state — see windowUiStore + ADR-0007.
-	const panelOpen = useWindowUiStore((s) => s.gitPanelOpen);
+	// Per-Window sidebar state — see windowUiStore + ADR-0007/0010. The Git
+	// tab's "fetch when visible" trigger fires when the right sidebar is open
+	// AND the active tab is Git. Switching to Explorer/Search doesn't refetch
+	// because the Git data is already cached and isn't visible.
+	const rightSidebarOpen = useWindowUiStore((s) => s.rightSidebarOpen);
+	const activeTab = useWindowUiStore((s) => s.rightSidebarActiveTab);
+	const panelOpen = rightSidebarOpen && activeTab === "git";
 	const ghStatus = usePrStore((s) => s.ghStatus);
 
 	const activeRef = useRef<Map<string, ActiveWatcher>>(new Map());

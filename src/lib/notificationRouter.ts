@@ -98,7 +98,14 @@ export function handleNotificationClick(
 		if (!workspace) return;
 
 		wsStore.beginWorkspaceSwitch(workspaceId);
-		useWindowUiStore.getState().setGitPanelOpen(true);
+		// PR notification was clicked — open the right sidebar and route to the
+		// Git tab so the PR section becomes visible. The PR section's own
+		// collapsed state is preserved; if the user keeps PRs collapsed, the
+		// section header is still pinned at the bottom, hinting at where the PR
+		// list lives.
+		const ui = useWindowUiStore.getState();
+		ui.setRightSidebarOpen(true);
+		ui.setRightSidebarActiveTab("git");
 	}
 }
 

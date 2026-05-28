@@ -8,11 +8,11 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DragPanePreview } from "./components/DragPanePreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
-import { GitChangesPanel } from "./components/GitChanges/GitChangesPanel";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
+import { RightSidebar } from "./components/RightSidebar/RightSidebar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -548,17 +548,18 @@ export function App() {
 				if (explorer.filePanes[pid]?.isDirty) explorer.saveFile(pid);
 			}
 		});
-		registerAction("toggle-git-panel", () => {
-			useWindowUiStore.getState().toggleGitPanel();
+		registerAction("toggle-right-sidebar-git", () => {
+			useWindowUiStore.getState().toggleRightSidebarTab("git");
+		});
+		registerAction("toggle-right-sidebar-explorer", () => {
+			useWindowUiStore.getState().toggleRightSidebarTab("explorer");
 		});
 		registerAction("toggle-markdown-preview", () => {
 			const paneId = useWorkspaceStore.getState().focusedPaneId;
 			if (paneId) toggleMarkdownPreviewForPane(paneId);
 		});
 		registerAction("search-in-workspace", () => {
-			const ui = useWindowUiStore.getState();
-			if (ui.sidebarCollapsed) ui.toggleSidebar();
-			useSettingsStore.getState().setSidebarBottomPanel("search");
+			useWindowUiStore.getState().toggleRightSidebarTab("search");
 		});
 	}, [
 		splitPaneWithPicker,
@@ -687,7 +688,7 @@ export function App() {
 						})}
 					{switchingWorkspaceId !== null && <SwitchingOverlay />}
 				</div>
-				<GitChangesPanel titlebarHeight={TITLEBAR_HEIGHT} />
+				<RightSidebar titlebarHeight={TITLEBAR_HEIGHT} />
 			</div>
 			<StatusBar />
 			<CommandPalette

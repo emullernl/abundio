@@ -5,7 +5,10 @@ interface Props {
 	onResizeEnd: () => void;
 }
 
-export function GitPanelDivider({ onResize, onResizeEnd }: Props) {
+/** Horizontal drag handle between the active tab content and the PR section.
+ *  Renders only when the PR section is expanded — when collapsed, the PR
+ *  section pins itself at its header height and the divider has no role. */
+export function SectionDivider({ onResize, onResizeEnd }: Props) {
 	const dividerRef = useRef<HTMLDivElement>(null);
 	const onResizeEndRef = useRef(onResizeEnd);
 	onResizeEndRef.current = onResizeEnd;
@@ -40,7 +43,7 @@ export function GitPanelDivider({ onResize, onResizeEnd }: Props) {
 	);
 
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for panel resize
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for split resize
 		<div
 			ref={dividerRef}
 			onMouseDown={handleMouseDown}

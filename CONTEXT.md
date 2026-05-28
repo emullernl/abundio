@@ -76,6 +76,13 @@ _Avoid_: failed, broken, crashed
 **Overview bar**: A horizontal strip across the top of the app window, between the **Titlebar** and the per-workspace tab row, showing glanceable global counts: **Opened workspaces** (out of total), each of the five **Agent** states (Idle, Working, Waiting, Ready, Error) aggregated across all opened workspaces, and the user's pending GitHub PR counts (review-requested and own open PRs, both account-wide). Always visible; read-only. The only piece of global chrome that lives between the Titlebar and the workspace stack.
 _Avoid_: dashboard (implies interactivity), metrics bar, status bar (already taken — bottom of window), header
 
+**Sidebar**: A collapsible vertical strip of chrome flanking the workspace stack. Two instances, one on each side, with different responsibilities:
+- **Left sidebar**: cross-workspace navigation — the **Workspace** list for the Window's **Active profile**. Belongs to the Window, not the Workspace.
+- **Right sidebar**: in-workspace tooling for the **Active workspace** — three tabs (**Git changes**, **Explorer**, **Search**) plus an always-anchored **Pull Requests** section underneath the tabs. The tab strip and PR section are independent: the PR section is shared chrome across all three tabs and can be collapsed independently.
+
+Both sidebars collapse to a 44px icon strip. Open/closed state and (for the right sidebar) the active tab + PR-collapsed state are per-Window. Width is global.
+_Avoid_: panel (collides with **Pane** colloquially), drawer, rail.
+
 **Shell-mode PTY**: A PTY that Abundio has not currently detected as running an Agent — a plain shell. Its counterpart, an **agent-mode PTY**, has its status indicator driven by Agent hooks. A single PTY flips between the two as Agents are launched in it and exit.
 _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 
@@ -102,6 +109,6 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 - "Profile" in Abundio refers exclusively to the top-level grouping entity. Despite borrowing the word from VS Code / browser conventions (where it bundles identity + settings), Abundio's Profile currently only groups Workspaces — appearance, agents and GitHub identity remain global. The term was kept against the narrower fit of "Space" or "Group" so that the scope may widen later without renaming.
 - "active workspaces" (plural) does not exist — **Active workspace** is a singleton. Colloquial use of the plural is resolved to **Opened workspaces** (the set of workspaces activated this session and still open). The **Overview bar** uses "Opened" as its label for this reason.
 - "background loaded workspace" was used to mean both "every sidebar workspace" and "opened-but-not-active workspace" — resolved to the latter (an Opened workspace that is not Active).
-- "panel" is used colloquially to mean both a **Pane** and the git-changes side panel — in code, the git-changes side panel is always referred to as "git panel" or "git changes panel", never "pane".
+- "panel" is used colloquially to mean both a **Pane** and a **Sidebar** — resolved by retiring "panel" from canonical use. Side chrome is always a **Left sidebar** or **Right sidebar**; the historical names "git panel" / "git changes panel" no longer fit because the right sidebar hosts Git changes, Explorer, Search, and PRs together. When referring to a section *within* the right sidebar, use its tab name ("Git changes tab", "Explorer tab", "Search tab") or "PR section".
 - "shell mode" / "terminal mode" were both used for a PTY not running an Agent — resolved to **shell-mode PTY**; the mode belongs to the PTY, not the Pane.
 - The amber state is canonically **Working** in this doc — applying to both agent-mode and shell-mode PTYs — but `PtyActivityState` in code still uses the string `"active"`. Renaming the code value to `"working"` would remove the collision with **Active workspace** and align with the broadened glossary; deferred as a follow-up.

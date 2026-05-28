@@ -20,15 +20,13 @@ interface SettingsState {
 	uiFontSize: number;
 	theme: string;
 	sidebarWidth: number;
-	sidebarSplitRatio: number;
-	gitPanelWidth: number;
-	gitPanelSplitRatio: number;
+	rightSidebarWidth: number;
+	rightSidebarPrRatio: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 	terminalScrollback: number;
 	shellPath: string | null;
 	agents: CodingAgent[];
-	sidebarBottomPanel: "explorer" | "search";
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
@@ -42,9 +40,8 @@ interface SettingsState {
 	setUiFontSize: (size: number) => void;
 	setTheme: (theme: string) => void;
 	setSidebarWidth: (width: number) => void;
-	setSidebarSplitRatio: (ratio: number) => void;
-	setGitPanelWidth: (width: number) => void;
-	setGitPanelSplitRatio: (ratio: number) => void;
+	setRightSidebarWidth: (width: number) => void;
+	setRightSidebarPrRatio: (ratio: number) => void;
 	toggleDebugActivityMeter: () => void;
 	setActivityByteThreshold: (n: number) => void;
 	setTerminalScrollback: (n: number) => void;
@@ -55,7 +52,6 @@ interface SettingsState {
 		id: string,
 		updates: Partial<Pick<CodingAgent, "name" | "command" | "args">>,
 	) => void;
-	setSidebarBottomPanel: (panel: "explorer" | "search") => void;
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
 	toggleMarkdownPreviewAutoOpen: () => void;
@@ -76,9 +72,8 @@ const PERSISTED_DEFAULTS: {
 	uiFontSize: number;
 	theme: string;
 	sidebarWidth: number;
-	sidebarSplitRatio: number;
-	gitPanelWidth: number;
-	gitPanelSplitRatio: number;
+	rightSidebarWidth: number;
+	rightSidebarPrRatio: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 	terminalScrollback: number;
@@ -97,9 +92,8 @@ const PERSISTED_DEFAULTS: {
 		uiFontSize: 14,
 		theme: "default",
 		sidebarWidth: 280,
-		sidebarSplitRatio: 0.4,
-		gitPanelWidth: 360,
-		gitPanelSplitRatio: 0.5,
+		rightSidebarWidth: 360,
+		rightSidebarPrRatio: 0.5,
 		debugActivityMeter: false,
 		activityByteThreshold: 1024,
 		terminalScrollback: 1000,
@@ -117,6 +111,22 @@ const PERSISTED_DEFAULTS: {
 		const parsed = JSON.parse(raw);
 		const s = parsed?.state;
 		if (!s) return defaults;
+		// Accept either the new keys or the pre-ADR-0010 keys so the synchronous
+		// read here matches what the persist middleware's migrate function will
+		// produce a microtask later. Without this, the very first render uses
+		// the default width/ratio even though the user has older values stored.
+		const rawRightSidebarWidth =
+			typeof s.rightSidebarWidth === "number"
+				? s.rightSidebarWidth
+				: typeof s.gitPanelWidth === "number"
+					? s.gitPanelWidth
+					: defaults.rightSidebarWidth;
+		const rawRightSidebarPrRatio =
+			typeof s.rightSidebarPrRatio === "number"
+				? s.rightSidebarPrRatio
+				: typeof s.gitPanelSplitRatio === "number"
+					? s.gitPanelSplitRatio
+					: defaults.rightSidebarPrRatio;
 		return {
 			terminalFontFamily:
 				typeof s.terminalFontFamily === "string"
@@ -134,18 +144,8 @@ const PERSISTED_DEFAULTS: {
 				typeof s.sidebarWidth === "number"
 					? s.sidebarWidth
 					: defaults.sidebarWidth,
-			sidebarSplitRatio:
-				typeof s.sidebarSplitRatio === "number"
-					? s.sidebarSplitRatio
-					: defaults.sidebarSplitRatio,
-			gitPanelWidth:
-				typeof s.gitPanelWidth === "number"
-					? s.gitPanelWidth
-					: defaults.gitPanelWidth,
-			gitPanelSplitRatio:
-				typeof s.gitPanelSplitRatio === "number"
-					? s.gitPanelSplitRatio
-					: defaults.gitPanelSplitRatio,
+			rightSidebarWidth: rawRightSidebarWidth,
+			rightSidebarPrRatio: rawRightSidebarPrRatio,
 			debugActivityMeter:
 				typeof s.debugActivityMeter === "boolean"
 					? s.debugActivityMeter
@@ -204,15 +204,13 @@ export const useSettingsStore = create<SettingsState>()(
 			uiFontSize: PERSISTED_DEFAULTS.uiFontSize,
 			theme: PERSISTED_DEFAULTS.theme,
 			sidebarWidth: PERSISTED_DEFAULTS.sidebarWidth,
-			sidebarSplitRatio: PERSISTED_DEFAULTS.sidebarSplitRatio,
-			gitPanelWidth: PERSISTED_DEFAULTS.gitPanelWidth,
-			gitPanelSplitRatio: PERSISTED_DEFAULTS.gitPanelSplitRatio,
+			rightSidebarWidth: PERSISTED_DEFAULTS.rightSidebarWidth,
+			rightSidebarPrRatio: PERSISTED_DEFAULTS.rightSidebarPrRatio,
 			debugActivityMeter: PERSISTED_DEFAULTS.debugActivityMeter,
 			activityByteThreshold: PERSISTED_DEFAULTS.activityByteThreshold,
 			terminalScrollback: PERSISTED_DEFAULTS.terminalScrollback,
 			shellPath: PERSISTED_DEFAULTS.shellPath,
 			agents: PERSISTED_DEFAULTS.agents,
-			sidebarBottomPanel: "explorer",
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
 			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
@@ -247,10 +245,9 @@ export const useSettingsStore = create<SettingsState>()(
 				set({ theme: themeName });
 			},
 			setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
-			setSidebarSplitRatio: (sidebarSplitRatio) => set({ sidebarSplitRatio }),
-			setGitPanelWidth: (gitPanelWidth) => set({ gitPanelWidth }),
-			setGitPanelSplitRatio: (gitPanelSplitRatio) =>
-				set({ gitPanelSplitRatio }),
+			setRightSidebarWidth: (rightSidebarWidth) => set({ rightSidebarWidth }),
+			setRightSidebarPrRatio: (rightSidebarPrRatio) =>
+				set({ rightSidebarPrRatio }),
 			toggleDebugActivityMeter: () =>
 				set((state) => ({ debugActivityMeter: !state.debugActivityMeter })),
 			setActivityByteThreshold: (n) => {
@@ -287,8 +284,6 @@ export const useSettingsStore = create<SettingsState>()(
 					agents: s.agents.map((a) => (a.id === id ? { ...a, ...updates } : a)),
 				}));
 			},
-			setSidebarBottomPanel: (sidebarBottomPanel) =>
-				set({ sidebarBottomPanel }),
 			setLastOpenedDevEnvId: (id) => set({ lastOpenedDevEnvId: id }),
 			toggleEditorWordWrap: () =>
 				set((s) => ({ editorWordWrap: !s.editorWordWrap })),
@@ -314,7 +309,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 3,
+			version: 4,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -334,6 +329,26 @@ export const useSettingsStore = create<SettingsState>()(
 					const { shellActivityStatus: _drop, ...rest } = state;
 					state = rest;
 				}
+				// v4: right sidebar restructure (ADR-0010). The git panel became
+				// one of three tabs in the right sidebar, so its width/ratio keys
+				// rename. The left sidebar lost its bottom panel entirely, so
+				// sidebarSplitRatio and sidebarBottomPanel are dropped.
+				if (version < 4) {
+					const {
+						gitPanelWidth,
+						gitPanelSplitRatio,
+						sidebarSplitRatio: _dropSplit,
+						sidebarBottomPanel: _dropBottom,
+						...rest
+					} = state;
+					state = {
+						...rest,
+						rightSidebarWidth:
+							typeof gitPanelWidth === "number" ? gitPanelWidth : 360,
+						rightSidebarPrRatio:
+							typeof gitPanelSplitRatio === "number" ? gitPanelSplitRatio : 0.5,
+					};
+				}
 				return state;
 			},
 			partialize: (state) => ({
@@ -343,9 +358,8 @@ export const useSettingsStore = create<SettingsState>()(
 				uiFontSize: state.uiFontSize,
 				theme: state.theme,
 				sidebarWidth: state.sidebarWidth,
-				sidebarSplitRatio: state.sidebarSplitRatio,
-				gitPanelWidth: state.gitPanelWidth,
-				gitPanelSplitRatio: state.gitPanelSplitRatio,
+				rightSidebarWidth: state.rightSidebarWidth,
+				rightSidebarPrRatio: state.rightSidebarPrRatio,
 				debugActivityMeter: state.debugActivityMeter,
 				activityByteThreshold: state.activityByteThreshold,
 				terminalScrollback: state.terminalScrollback,

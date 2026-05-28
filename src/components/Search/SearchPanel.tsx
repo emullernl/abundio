@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useSearchStore } from "../../stores/searchStore";
-import { useSettingsStore } from "../../stores/settingsStore";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	CaseSensitive,
@@ -51,7 +51,9 @@ export function SearchPanel() {
 		return id ? s.workspaces.find((w) => w.id === id) : null;
 	});
 	const rootPath = workspace?.rootFolder ?? null;
-	const sidebarBottomPanel = useSettingsStore((s) => s.sidebarBottomPanel);
+	const rightSidebarOpen = useWindowUiStore((s) => s.rightSidebarOpen);
+	const activeTab = useWindowUiStore((s) => s.rightSidebarActiveTab);
+	const isVisible = rightSidebarOpen && activeTab === "search";
 
 	const query = useSearchStore((s) => s.query);
 	const caseSensitive = useSearchStore((s) => s.caseSensitive);
@@ -75,12 +77,12 @@ export function SearchPanel() {
 	const toggleFilters = useSearchStore((s) => s.toggleFilters);
 	const clear = useSearchStore((s) => s.clear);
 
-	// Focus input when search panel becomes visible
+	// Focus input when search tab becomes visible in the right sidebar.
 	useEffect(() => {
-		if (sidebarBottomPanel === "search") {
+		if (isVisible) {
 			requestAnimationFrame(() => inputRef.current?.focus());
 		}
-	}, [sidebarBottomPanel]);
+	}, [isVisible]);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {

@@ -18,7 +18,8 @@ type KeyAction =
 	| "font-size-increase"
 	| "font-size-decrease"
 	| "save-file"
-	| "toggle-git-panel"
+	| "toggle-right-sidebar-git"
+	| "toggle-right-sidebar-explorer"
 	| "toggle-markdown-preview"
 	| "open-settings";
 
@@ -52,7 +53,8 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"close-tab",
 	"next-tab",
 	"prev-tab",
-	"toggle-git-panel",
+	"toggle-right-sidebar-git",
+	"toggle-right-sidebar-explorer",
 	"toggle-markdown-preview",
 	"open-settings",
 	"save-file",
@@ -160,7 +162,14 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		meta: isMac,
 		shift: true,
 		ctrl: !isMac,
-		action: "toggle-git-panel",
+		action: "toggle-right-sidebar-git",
+	},
+	{
+		key: "e",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "toggle-right-sidebar-explorer",
 	},
 	{
 		key: "m",

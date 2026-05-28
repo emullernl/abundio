@@ -4,8 +4,8 @@ import { useSettingsStore } from "../../stores/settingsStore";
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 800;
 
-export function GitChangesResizer() {
-	const setGitPanelWidth = useSettingsStore((s) => s.setGitPanelWidth);
+export function RightSidebarResizer() {
+	const setRightSidebarWidth = useSettingsStore((s) => s.setRightSidebarWidth);
 	const isDragging = useRef(false);
 
 	const onMouseDown = useCallback(
@@ -16,12 +16,11 @@ export function GitChangesResizer() {
 
 			const onMouseMove = (ev: MouseEvent) => {
 				if (!isDragging.current) return;
-				// Panel is on the right, so width = window width - mouseX
 				const width = Math.min(
 					MAX_WIDTH,
 					Math.max(MIN_WIDTH, window.innerWidth - ev.clientX),
 				);
-				setGitPanelWidth(width);
+				setRightSidebarWidth(width);
 			};
 
 			const onMouseUp = () => {
@@ -34,11 +33,11 @@ export function GitChangesResizer() {
 			document.addEventListener("mousemove", onMouseMove);
 			document.addEventListener("mouseup", onMouseUp);
 		},
-		[setGitPanelWidth],
+		[setRightSidebarWidth],
 	);
 
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for panel resize
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for sidebar resize
 		<div
 			onMouseDown={onMouseDown}
 			className="flex-shrink-0 transition-colors"

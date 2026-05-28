@@ -3,27 +3,34 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 /** Per-window UI state — collapse/expand of the left sidebar and the right
- *  git panel. Persisted to `localStorage` keyed by the window's Tauri label,
+ *  sidebar, plus the right sidebar's active tab and PR-section collapsed
+ *  state. Persisted to `localStorage` keyed by the window's Tauri label,
  *  so each application Window remembers its own layout independent of any
  *  other Window.
  *
- *  The label is read once at module load via `getCurrentWindow().label`.
- *  Each window has its own JS context (separate localStorage origin sharing
- *  but a separate zustand instance), so the persist `name` is unique per
- *  window even though localStorage is one shared keystore.
- *
- *  See ADR-0007: window-scoped state belongs here; profile-scoped state
- *  lives in profileStore; truly global state (theme, fonts) stays in
- *  settingsStore. */
+ *  See ADR-0007 (per-Window state) and ADR-0010 (right sidebar as
+ *  in-workspace toolbox). */
+
+export type RightSidebarTab = "git" | "explorer" | "search";
 
 interface WindowUiState {
 	sidebarCollapsed: boolean;
-	gitPanelOpen: boolean;
+	rightSidebarOpen: boolean;
+	rightSidebarActiveTab: RightSidebarTab;
+	prSectionCollapsed: boolean;
 
 	toggleSidebar: () => void;
 	setSidebarCollapsed: (collapsed: boolean) => void;
-	toggleGitPanel: () => void;
-	setGitPanelOpen: (open: boolean) => void;
+	toggleRightSidebar: () => void;
+	setRightSidebarOpen: (open: boolean) => void;
+	setRightSidebarActiveTab: (tab: RightSidebarTab) => void;
+	/** Smart toggle: if the sidebar is open and `tab` is already active, close
+	 *  it; otherwise open the sidebar and switch to `tab`. This powers the
+	 *  Cmd+Shift+G/E/F shortcuts so the same key both opens-and-switches and
+	 *  closes when pressed again on the active tab. */
+	toggleRightSidebarTab: (tab: RightSidebarTab) => void;
+	togglePrSectionCollapsed: () => void;
+	setPrSectionCollapsed: (collapsed: boolean) => void;
 }
 
 /** Synchronously resolved window label. Falls back to "main" when running
@@ -40,20 +47,54 @@ const persistKey = `abundio-window-ui-${currentWindowLabel()}`;
 
 export const useWindowUiStore = create<WindowUiState>()(
 	persist(
-		(set) => ({
+		(set, get) => ({
 			sidebarCollapsed: false,
-			gitPanelOpen: false,
+			rightSidebarOpen: false,
+			rightSidebarActiveTab: "git",
+			prSectionCollapsed: false,
 			toggleSidebar: () =>
 				set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 			setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-			toggleGitPanel: () => set((s) => ({ gitPanelOpen: !s.gitPanelOpen })),
-			setGitPanelOpen: (open) => set({ gitPanelOpen: open }),
+			toggleRightSidebar: () =>
+				set((s) => ({ rightSidebarOpen: !s.rightSidebarOpen })),
+			setRightSidebarOpen: (open) => set({ rightSidebarOpen: open }),
+			setRightSidebarActiveTab: (rightSidebarActiveTab) =>
+				set({ rightSidebarActiveTab }),
+			toggleRightSidebarTab: (tab) => {
+				const s = get();
+				if (s.rightSidebarOpen && s.rightSidebarActiveTab === tab) {
+					set({ rightSidebarOpen: false });
+				} else {
+					set({ rightSidebarOpen: true, rightSidebarActiveTab: tab });
+				}
+			},
+			togglePrSectionCollapsed: () =>
+				set((s) => ({ prSectionCollapsed: !s.prSectionCollapsed })),
+			setPrSectionCollapsed: (collapsed) =>
+				set({ prSectionCollapsed: collapsed }),
 		}),
 		{
 			name: persistKey,
+			version: 1,
+			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
+			migrate: (persistedState: any, version: number) => {
+				if (!persistedState) return persistedState;
+				let state = persistedState as Record<string, unknown>;
+				// v1: gitPanelOpen → rightSidebarOpen (see ADR-0010).
+				if (version < 1) {
+					if (typeof state.gitPanelOpen === "boolean") {
+						state = { ...state, rightSidebarOpen: state.gitPanelOpen };
+					}
+					const { gitPanelOpen: _drop, ...rest } = state;
+					state = rest;
+				}
+				return state;
+			},
 			partialize: (s) => ({
 				sidebarCollapsed: s.sidebarCollapsed,
-				gitPanelOpen: s.gitPanelOpen,
+				rightSidebarOpen: s.rightSidebarOpen,
+				rightSidebarActiveTab: s.rightSidebarActiveTab,
+				prSectionCollapsed: s.prSectionCollapsed,
 			}),
 		},
 	),
