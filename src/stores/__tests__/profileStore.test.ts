@@ -141,6 +141,56 @@ describe("createProfile", () => {
 	});
 });
 
+describe("refreshProfiles", () => {
+	it("pulls the latest list from Rust and stores it", async () => {
+		useProfileStore.setState({
+			profiles: [
+				{
+					id: "p-default",
+					name: "Default",
+					position: 0,
+					createdAt: 0,
+					updatedAt: 0,
+				},
+			],
+			activeProfileId: "p-default",
+		});
+		vi.mocked(profilesApi.list).mockResolvedValueOnce([
+			{
+				id: "p-default",
+				name: "Renamed",
+				position: 0,
+				createdAt: 0,
+				updatedAt: 1,
+			},
+			{ id: "p-work", name: "Work", position: 1, createdAt: 0, updatedAt: 0 },
+		]);
+		await useProfileStore.getState().refreshProfiles();
+		const list = useProfileStore.getState().profiles;
+		expect(list).toHaveLength(2);
+		expect(list[0].name).toBe("Renamed");
+	});
+
+	it("is a no-op when the IPC list call rejects", async () => {
+		const initial = [
+			{
+				id: "p-default",
+				name: "Default",
+				position: 0,
+				createdAt: 0,
+				updatedAt: 0,
+			},
+		];
+		useProfileStore.setState({
+			profiles: initial,
+			activeProfileId: "p-default",
+		});
+		vi.mocked(profilesApi.list).mockRejectedValueOnce(new Error("boom"));
+		await useProfileStore.getState().refreshProfiles();
+		expect(useProfileStore.getState().profiles).toEqual(initial);
+	});
+});
+
 describe("deleteProfile", () => {
 	it("removes the profile from the store list", async () => {
 		useProfileStore.setState({

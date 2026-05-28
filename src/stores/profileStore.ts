@@ -44,6 +44,11 @@ interface ProfileState {
 	ownershipMap: Record<string, string>;
 
 	loadProfiles: () => Promise<void>;
+	/** Pulls the latest profile list from Rust and re-applies this window's
+	 *  title from the (possibly renamed) active profile's name. Called from
+	 *  every root on the `profiles-changed` Tauri event so a rename in one
+	 *  window updates the title chrome of the window that owns the profile. */
+	refreshProfiles: () => Promise<void>;
 	createProfile: (name: string) => Promise<Profile>;
 	renameProfile: (id: string, name: string) => Promise<void>;
 	deleteProfile: (id: string) => Promise<void>;
@@ -80,7 +85,9 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 		// The Rust side seeds this window's profile during app setup (from
 		// windows.json or the first-profile fallback). Pull it down so this
 		// frontend store reflects the canonical value.
-		const fromRust = await profilesApi.getActiveProfileForWindow().catch(() => null);
+		const fromRust = await profilesApi
+			.getActiveProfileForWindow()
+			.catch(() => null);
 
 		// Reconcile: if Rust has an id for us, use it; otherwise fall back to
 		// the first unowned profile and push it back to Rust.
@@ -99,7 +106,8 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 					.filter(([_pid, _label]) => true)
 					.map(([pid]) => pid),
 			);
-			next = list.find((p) => !ownedByOthers.has(p.id))?.id ?? list[0]?.id ?? null;
+			next =
+				list.find((p) => !ownedByOthers.has(p.id))?.id ?? list[0]?.id ?? null;
 		}
 
 		set({ activeProfileId: next });
@@ -113,6 +121,15 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 		// the frontend to be the source of truth.
 		const activeProfile = list.find((p) => p.id === next);
 		applyWindowTitle(activeProfile?.name ?? null);
+	},
+
+	refreshProfiles: async () => {
+		const list = await profilesApi.list().catch(() => null);
+		if (!list) return;
+		set({ profiles: list });
+		const activeId = get().activeProfileId;
+		const active = list.find((p) => p.id === activeId);
+		applyWindowTitle(active?.name ?? null);
 	},
 
 	createProfile: async (name: string) => {

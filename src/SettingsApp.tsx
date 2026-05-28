@@ -39,7 +39,10 @@ export function SettingsApp() {
 			} catch {
 				/* ignore */
 			}
-			useProfileStore.getState().refreshOwnershipMap().catch(() => {});
+			useProfileStore
+				.getState()
+				.refreshOwnershipMap()
+				.catch(() => {});
 		})();
 	}, []);
 
@@ -50,14 +53,15 @@ export function SettingsApp() {
 	// delete-confirm message reflect reality.
 	useEffect(() => {
 		const unlistenOwnership = listen("profile-ownership-changed", () => {
-			useProfileStore.getState().refreshOwnershipMap().catch(() => {});
+			useProfileStore
+				.getState()
+				.refreshOwnershipMap()
+				.catch(() => {});
 		});
 		const unlistenProfiles = listen("profiles-changed", () => {
-			profilesApi
-				.list()
-				.then((list) => {
-					useProfileStore.setState({ profiles: list });
-				})
+			useProfileStore
+				.getState()
+				.refreshProfiles()
 				.catch(() => {});
 		});
 		return () => {
@@ -67,7 +71,9 @@ export function SettingsApp() {
 	}, []);
 
 	function handleClose() {
-		getCurrentWindow().close().catch(() => {});
+		getCurrentWindow()
+			.close()
+			.catch(() => {});
 	}
 
 	return (

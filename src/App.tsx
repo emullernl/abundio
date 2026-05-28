@@ -60,12 +60,12 @@ import {
 	usePtyActivityStore,
 } from "./stores/ptyActivityStore";
 import { useSettingsStore } from "./stores/settingsStore";
-import { useWindowUiStore } from "./stores/windowUiStore";
 import {
 	clearTabClose,
 	requestTabCloseWithDirtyCheck,
 	useTabCloseConfirmStore,
 } from "./stores/tabCloseConfirmStore";
+import { useWindowUiStore } from "./stores/windowUiStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 
 // Matches the native macOS title bar height. The React Titlebar component
@@ -438,9 +438,27 @@ export function App() {
 	// profile so the Settings panel's disabled-states stay accurate.
 	useEffect(() => {
 		const refresh = () => {
-			useProfileStore.getState().refreshOwnershipMap().catch(() => {});
+			useProfileStore
+				.getState()
+				.refreshOwnershipMap()
+				.catch(() => {});
 		};
 		const unlisten = listen("profile-ownership-changed", refresh);
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
+	// A profile rename (or create/delete/reorder) in any window — typically
+	// the Settings window — needs to update this window's profile list AND
+	// re-apply the window title from the (possibly renamed) active profile.
+	useEffect(() => {
+		const unlisten = listen("profiles-changed", () => {
+			useProfileStore
+				.getState()
+				.refreshProfiles()
+				.catch(() => {});
+		});
 		return () => {
 			unlisten.then((fn) => fn());
 		};
