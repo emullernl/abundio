@@ -23,10 +23,12 @@ const PANE_LAYOUT = JSON.stringify({
 	id: "pane-1",
 	filePath: "/tmp/ws1/src/main.ts",
 });
+// Diff panes track a repo-relative path (git requires it), unlike text panes
+// which use an absolute path. The fs watcher emits absolute paths regardless.
 const PANE_LAYOUT_DIFF = JSON.stringify({
 	type: "file",
 	id: "pane-diff",
-	filePath: "diff:/tmp/ws1/src/main.ts",
+	filePath: "diff:src/main.ts",
 	isDiff: true,
 });
 
@@ -74,7 +76,7 @@ function makeTextPane(overrides: Partial<FilePaneState> = {}): FilePaneState {
 
 function makeDiffPane(overrides: Partial<FilePaneState> = {}): FilePaneState {
 	return {
-		filePath: "diff:/tmp/ws1/src/main.ts",
+		filePath: "diff:src/main.ts",
 		fileName: "main.ts (diff)",
 		fileType: "diff",
 		content: null,
@@ -246,7 +248,7 @@ describe("handleFsChange — diff panes", () => {
 
 		expect(fileDiff).toHaveBeenCalledWith(
 			"/tmp/ws1",
-			"/tmp/ws1/src/main.ts",
+			"src/main.ts",
 			"unstaged",
 			"main",
 		);

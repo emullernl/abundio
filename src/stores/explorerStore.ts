@@ -668,8 +668,17 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 						: pane.filePath
 					: pane.filePath;
 
+			// The fs watcher emits absolute paths, but a diff pane tracks a
+			// repo-relative path (git requires it). Resolve to an absolute path
+			// for set membership while keeping the relative `realPath` for the
+			// git diff re-fetch below.
+			const matchPath =
+				pane.fileType === "diff" && !realPath.startsWith("/")
+					? `${(workspace?.rootFolder ?? "").replace(/\/$/, "")}/${realPath}`
+					: realPath;
+
 			// ── Deletions ──
-			if (removedSet.has(realPath)) {
+			if (removedSet.has(matchPath)) {
 				set((s) => ({
 					filePanes: {
 						...s.filePanes,
@@ -680,7 +689,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			}
 
 			// ── Changes ──
-			if (!changedSet.has(realPath)) continue;
+			if (!changedSet.has(matchPath)) continue;
 
 			if (pane.fileType === "text") {
 				try {
