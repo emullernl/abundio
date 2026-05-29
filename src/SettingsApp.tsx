@@ -101,71 +101,102 @@ export function SettingsApp() {
  * The browser-native `storage` event is documented to fire across same-origin
  * browsing contexts, but in practice on Tauri 2 (WKWebView on macOS) it
  * doesn't propagate reliably between WebviewWindows. So we use Tauri's own
- * event system instead:
+ * event system instead.
  *
- * - The settings window subscribes to its own zustand store. On every state
- *   change, it emits `settings-store-changed` to every other window.
- * - Every other window listens for the event and calls
- *   `useSettingsStore.persist.rehydrate()`, which re-reads localStorage (where
- *   the settings window's `persist` middleware just wrote the new value) and
- *   pushes the change into the local zustand store. The store's
- *   `onRehydrateStorage` hook then re-applies CSS variables and xterm themes.
+ * The bridge is SYMMETRIC — every window both publishes and applies changes:
+ * - Each window subscribes to its own zustand store and, on every change to the
+ *   shared appearance slice, emits `settings-store-changed` to all windows.
+ * - Each window listens for that event, writes the payload into THIS window's
+ *   localStorage in the shape zustand's `persist` middleware expects (other
+ *   windows can't read our localStorage — Tauri 2 isolates it per WKWebView on
+ *   macOS, so the data rides in the payload), then calls `rehydrate()`. The
+ *   store's `onRehydrateStorage` hook re-applies theme CSS variables, xterm
+ *   theme, and fonts.
  *
- * This runs in two halves keyed off the window label:
- * - SettingsApp window publishes
- * - Every other window subscribes
+ * Symmetry is what lets a theme picked via the command palette (which runs in a
+ * normal Profile window, not the Settings window) reach its siblings — the old
+ * design only let the Settings window publish.
+ *
+ * `lastSerialized` breaks the echo loop. Tauri's `emit` also delivers to the
+ * emitting window, and an applied change triggers rehydrate → store update →
+ * our own subscribe. We compare a CANONICAL fingerprint produced by
+ * `stableStringify` (recursive key sort) rather than `JSON.stringify`: Tauri
+ * round-trips payloads through serde_json, which re-orders object keys
+ * alphabetically — including the keys INSIDE each agent object. A key-order-
+ * sensitive comparison would never match what we sent (locally rebuilt in
+ * insertion order by `mergeAgentsWithBuiltins`), so the fingerprint would
+ * flip-flop and the self-echo would spin forever, freezing the UI.
  */
 if (typeof window !== "undefined") {
-	const isSettingsWindow = (() => {
-		try {
-			return getCurrentWindow().label === "settings";
-		} catch {
-			return false;
+	type SettingsSlice = {
+		terminalFontFamily: unknown;
+		uiFontFamily: unknown;
+		fontSize: unknown;
+		uiFontSize: unknown;
+		theme: unknown;
+		agents: unknown;
+		agentHooksEnabled: unknown;
+		gpuAccelerationEnabled: unknown;
+		terminalScrollback: unknown;
+	};
+	const sliceOf = (s: Record<string, unknown>): SettingsSlice => ({
+		terminalFontFamily: s.terminalFontFamily,
+		uiFontFamily: s.uiFontFamily,
+		fontSize: s.fontSize,
+		uiFontSize: s.uiFontSize,
+		theme: s.theme,
+		agents: s.agents,
+		agentHooksEnabled: s.agentHooksEnabled,
+		gpuAccelerationEnabled: s.gpuAccelerationEnabled,
+		terminalScrollback: s.terminalScrollback,
+	});
+	// Fully order-independent serialization: sorts object keys recursively so a
+	// payload that round-tripped through serde_json (alphabetized keys, incl.
+	// inside agent objects) fingerprints identically to the locally-built slice.
+	const stableStringify = (value: unknown): string => {
+		if (Array.isArray(value)) {
+			return `[${value.map(stableStringify).join(",")}]`;
 		}
-	})();
+		if (value && typeof value === "object") {
+			const obj = value as Record<string, unknown>;
+			return `{${Object.keys(obj)
+				.sort()
+				.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+				.join(",")}}`;
+		}
+		return JSON.stringify(value) ?? "null";
+	};
+	const canonical = (slice: SettingsSlice) => stableStringify(slice);
 
-	if (isSettingsWindow) {
-		// Subscribe to the store and broadcast the persisted slice as an
-		// event PAYLOAD on every change. Other windows can't read this
-		// window's localStorage (Tauri 2 isolates localStorage per
-		// WKWebView on macOS), so we have to ship the data itself.
-		let lastSerialized = "";
-		useSettingsStore.subscribe((state) => {
-			const partial = {
-				terminalFontFamily: state.terminalFontFamily,
-				uiFontFamily: state.uiFontFamily,
-				fontSize: state.fontSize,
-				uiFontSize: state.uiFontSize,
-				theme: state.theme,
-				agents: state.agents,
-				agentHooksEnabled: state.agentHooksEnabled,
-				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
-				terminalScrollback: state.terminalScrollback,
-			};
-			const json = JSON.stringify(partial);
-			if (json === lastSerialized) return;
-			lastSerialized = json;
-			emit("settings-store-changed", partial).catch(() => {});
-		});
-	} else {
-		// Receive the payload, write it into THIS window's localStorage in
-		// the exact shape zustand's persist middleware expects, then call
-		// rehydrate(). The rehydrate triggers onRehydrateStorage which
-		// re-applies theme CSS variables, xterm theme, fonts — all the
-		// visual side effects that don't happen automatically on setState.
-		listen<Record<string, unknown>>("settings-store-changed", (event) => {
-			const partial = event.payload;
-			if (!partial || typeof partial !== "object") return;
-			try {
-				localStorage.setItem(
-					"abundio-settings",
-					JSON.stringify({ state: partial, version: 2 }),
-				);
-			} catch {
-				// localStorage write failure — best effort, rehydrate may
-				// pick up stale data but at least won't crash.
-			}
-			useSettingsStore.persist.rehydrate();
-		}).catch(() => {});
-	}
+	let lastSerialized = "";
+
+	// Publish local changes to every window.
+	useSettingsStore.subscribe((state) => {
+		const slice = sliceOf(state as unknown as Record<string, unknown>);
+		const json = canonical(slice);
+		if (json === lastSerialized) return;
+		lastSerialized = json;
+		emit("settings-store-changed", slice).catch(() => {});
+	});
+
+	// Apply changes broadcast by any window (including our own echo, which the
+	// canonical guard short-circuits).
+	listen<Record<string, unknown>>("settings-store-changed", (event) => {
+		const partial = event.payload;
+		if (!partial || typeof partial !== "object") return;
+		const json = canonical(sliceOf(partial));
+		if (json === lastSerialized) return;
+		// Record BEFORE rehydrate so the resulting store update doesn't echo.
+		lastSerialized = json;
+		try {
+			localStorage.setItem(
+				"abundio-settings",
+				JSON.stringify({ state: partial, version: 2 }),
+			);
+		} catch {
+			// localStorage write failure — best effort, rehydrate may
+			// pick up stale data but at least won't crash.
+		}
+		useSettingsStore.persist.rehydrate();
+	}).catch(() => {});
 }
