@@ -19,6 +19,7 @@ import type {
 	PtyActivityType,
 	PtyStatusType,
 	PullRequest,
+	SearchFileResult,
 	SearchResult,
 	Tab,
 	TabUpdate,
@@ -368,6 +369,15 @@ export const fs = {
 		maxResults?: number;
 		searchId: string;
 	}) => invoke<SearchResult>("fs_search", { params }),
+
+	/** Subscribe to files streamed by an in-flight `fs_search`, as they're found. */
+	onSearchProgress: (
+		searchId: string,
+		callback: (file: SearchFileResult) => void,
+	): Promise<UnlistenFn> =>
+		listen<SearchFileResult>(`search-progress-${searchId}`, (event) =>
+			callback(event.payload),
+		),
 
 	searchCancel: (searchId: string) =>
 		invoke<void>("fs_search_cancel", { searchId }),
