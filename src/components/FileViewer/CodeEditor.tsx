@@ -258,7 +258,7 @@ export const CodeEditor = memo(function CodeEditor({
 
 	return (
 		<div
-			className="h-full w-full overflow-hidden"
+			className="h-full w-full"
 			style={{ backgroundColor: "var(--bg-primary)" }}
 		>
 			<Editor

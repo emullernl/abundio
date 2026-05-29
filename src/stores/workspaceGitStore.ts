@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import { git, workspaces as workspacesApi, type WorkspaceGitSummary } from "../lib/ipc";
+import {
+	git,
+	type WorkspaceGitSummary,
+	workspaces as workspacesApi,
+} from "../lib/ipc";
 
 export type WorkspaceGitInfo = {
 	isGitRepo: boolean;
@@ -12,11 +16,23 @@ export type WorkspaceGitInfo = {
 interface WorkspaceGitState {
 	byWorkspaceId: Record<string, WorkspaceGitInfo>;
 	inFlight: Set<string>;
-	fetch: (workspaceId: string, cwd: string, baseBranch?: string | null) => Promise<void>;
-	fetchAll: (
-		workspaces: { id: string; rootFolder: string; baseBranch?: string | null }[],
+	fetch: (
+		workspaceId: string,
+		cwd: string,
+		baseBranch?: string | null,
 	) => Promise<void>;
-	refreshWorkspace: (workspaceId: string, cwd: string, baseBranch?: string | null) => Promise<void>;
+	fetchAll: (
+		workspaces: {
+			id: string;
+			rootFolder: string;
+			baseBranch?: string | null;
+		}[],
+	) => Promise<void>;
+	refreshWorkspace: (
+		workspaceId: string,
+		cwd: string,
+		baseBranch?: string | null,
+	) => Promise<void>;
 	setInfo: (workspaceId: string, info: WorkspaceGitInfo) => void;
 	remove: (workspaceId: string) => void;
 }
@@ -56,18 +72,20 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 				set((s) => ({
 					byWorkspaceId: {
 						...s.byWorkspaceId,
-						[workspaceId]: { isGitRepo: false, currentBranch: null, changedFileCount: 0, additions: 0, deletions: 0 },
+						[workspaceId]: {
+							isGitRepo: false,
+							currentBranch: null,
+							changedFileCount: 0,
+							additions: 0,
+							deletions: 0,
+						},
 					},
-					inFlight: new Set(
-						[...s.inFlight].filter((id) => id !== workspaceId),
-					),
+					inFlight: new Set([...s.inFlight].filter((id) => id !== workspaceId)),
 				}));
 			} else {
 				// Non-git error (e.g. git not installed) — leave existing entry, clear inFlight
 				set((s) => ({
-					inFlight: new Set(
-						[...s.inFlight].filter((id) => id !== workspaceId),
-					),
+					inFlight: new Set([...s.inFlight].filter((id) => id !== workspaceId)),
 				}));
 			}
 		}
@@ -123,7 +141,12 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 				return {
 					byWorkspaceId: {
 						...s.byWorkspaceId,
-						[workspaceId]: { ...existing, changedFileCount: files.length, additions, deletions },
+						[workspaceId]: {
+							...existing,
+							changedFileCount: files.length,
+							additions,
+							deletions,
+						},
 					},
 				};
 			});

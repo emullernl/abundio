@@ -22,6 +22,8 @@ pub enum AbundioError {
     Font(String),
     #[error("Search error: {0}")]
     Search(String),
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
 }
 
 impl Serialize for AbundioError {

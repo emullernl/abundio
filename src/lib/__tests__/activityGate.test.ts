@@ -44,29 +44,23 @@ describe("recordThresholdHit", () => {
 });
 
 describe("classifyShellExit", () => {
-	it("reports a non-zero exit as an error regardless of the activity setting", () => {
-		expect(classifyShellExit(1, false)).toBe("error");
-		expect(classifyShellExit(1, true)).toBe("error");
-		expect(classifyShellExit(127, false)).toBe("error");
-		expect(classifyShellExit(139, false)).toBe("error");
+	it("reports a non-zero exit as an error", () => {
+		expect(classifyShellExit(1)).toBe("error");
+		expect(classifyShellExit(127)).toBe("error");
+		expect(classifyShellExit(139)).toBe("error");
 	});
 
 	it("treats Ctrl+C (130) and SIGTERM (143) as a clean stop, not an error", () => {
-		expect(classifyShellExit(130, false)).toBe("none");
-		expect(classifyShellExit(143, false)).toBe("none");
-		expect(classifyShellExit(130, true)).toBe("success");
-		expect(classifyShellExit(143, true)).toBe("success");
+		expect(classifyShellExit(130)).toBe("success");
+		expect(classifyShellExit(143)).toBe("success");
 	});
 
-	it("surfaces a clean (zero) exit as success only when activity status is on", () => {
-		expect(classifyShellExit(0, true)).toBe("success");
-		expect(classifyShellExit(0, false)).toBe("none");
+	it("classifies a clean (zero) exit as success", () => {
+		expect(classifyShellExit(0)).toBe("success");
 	});
 
-	it("treats a missing or null exit code as a clean exit, gated by the setting", () => {
-		expect(classifyShellExit(undefined, true)).toBe("success");
-		expect(classifyShellExit(undefined, false)).toBe("none");
-		expect(classifyShellExit(null, true)).toBe("success");
-		expect(classifyShellExit(null, false)).toBe("none");
+	it("treats a missing or null exit code as a clean exit", () => {
+		expect(classifyShellExit(undefined)).toBe("success");
+		expect(classifyShellExit(null)).toBe("success");
 	});
 });

@@ -114,7 +114,9 @@ function buildContent(
 		return {
 			icon: <FileX size={16} />,
 			message: "This file was deleted on disk.",
-			actions: [{ label: "Close pane", onClick: handlers.onClose, primary: true }],
+			actions: [
+				{ label: "Close pane", onClick: handlers.onClose, primary: true },
+			],
 		};
 	}
 	return {

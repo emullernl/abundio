@@ -33,10 +33,23 @@ crossbeam-channel = "0.5"
 thiserror = "2"
 log = "0.4"
 notify = "7"
+# libgit2 bindings for in-process git operations. Used by the GitScheduler
+# (see `git_scheduler.rs`) to avoid subprocess spawn overhead — each
+# `git status` / `git diff` shell-out previously took ~200-500 ms on macOS,
+# which kept the WKWebView's host process busy long enough to noticeably
+# stall the JS main thread during a `git stash` burst. Using libgit2 cuts
+# each operation to ~10-50 ms.
+git2 = { version = "0.19", default-features = false, features = ["vendored-libgit2"] }
 font-kit = "0.14"
 ignore = "0.4"
 regex = "1"
 tiny_http = "0.12"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# System metrics (CPU + memory) for the status bar's app-usage readout.
+# `app_metrics.rs` samples the whole Abundio process tree on a background
+# thread and pushes an `app-metrics` event to the frontend. Only the `system`
+# feature is needed (processes + CPU); disk/network/component are excluded.
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 tempfile = "3"

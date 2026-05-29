@@ -30,6 +30,8 @@ if [ -z "$ABUNDIO_PTY_ID" ] || [ -z "$ABUNDIO_HOOK_PORT" ]; then
 fi
 curl -s -m 2 -X POST \
   -H "X-Abundio-Token: ${ABUNDIO_HOOK_TOKEN}" \
+  -H "X-Abundio-Workspace: ${ABUNDIO_WORKSPACE_NAME}" \
+  -H "X-Abundio-Window-Label: ${ABUNDIO_WINDOW_LABEL}" \
   --data-binary @- \
   "http://127.0.0.1:${ABUNDIO_HOOK_PORT}/hook?event=$1&agent=$2&pty=${ABUNDIO_PTY_ID}" \
   >/dev/null 2>&1 || true
@@ -44,7 +46,11 @@ $body = [Console]::In.ReadToEnd()
 $uri = "http://127.0.0.1:$($env:ABUNDIO_HOOK_PORT)/hook?event=$($args[0])&agent=$($args[1])&pty=$($env:ABUNDIO_PTY_ID)"
 try {
   Invoke-RestMethod -Uri $uri -Method Post -Body $body -TimeoutSec 2 `
-    -Headers @{ "X-Abundio-Token" = "$($env:ABUNDIO_HOOK_TOKEN)" } | Out-Null
+    -Headers @{
+      "X-Abundio-Token" = "$($env:ABUNDIO_HOOK_TOKEN)"
+      "X-Abundio-Workspace" = "$($env:ABUNDIO_WORKSPACE_NAME)"
+      "X-Abundio-Window-Label" = "$($env:ABUNDIO_WINDOW_LABEL)"
+    } | Out-Null
 } catch { }
 '{}'
 exit 0
@@ -83,6 +89,16 @@ fn relay_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("abundio")
         .join("hooks")
+}
+
+/// Refresh the relay scripts on disk to match this binary's `RELAY_SH` /
+/// `RELAY_PS1`. Safe to call unconditionally on startup — the scripts are
+/// pure functions of the binary, contain no user data, and overwriting them
+/// is the only way to roll out a relay change without making users toggle
+/// the setting off and on. Does **not** touch user-config hook entries —
+/// those stay driven by `provision()` (the toggle path).
+pub fn refresh_relay_scripts() -> Result<(), AbundioError> {
+    write_relay_scripts().map(|_| ())
 }
 
 /// Write both relay scripts; make the shell script executable on Unix.

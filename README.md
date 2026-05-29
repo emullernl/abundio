@@ -1,6 +1,10 @@
 # Abundio
 
-A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https://v2.tauri.app). Abundio manages workspaces (each bound to a folder), supports split panes with tabs, and has first-class support for AI coding CLI agents like Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode.
+A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https://v2.tauri.app). Abundio is a home base for project-centric, AI-assisted development — a place to run your shells, your editor, your git workflow, and your AI coding agents side by side, all scoped to the project you're working on.
+
+Each **workspace** is bound to a project folder. Inside it you get a fast WebGL-rendered terminal that you can split into as many horizontal and vertical panes as you like and organize across multiple tabs — run a dev server in one pane, tail logs in another, and drive an AI agent in a third. Abundio has **first-class support for AI coding CLI agents** (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode): it auto-detects the ones installed on your `$PATH`, lets you define your own, and surfaces live activity status so you can see at a glance which agents are working.
+
+Around the terminal sits a full development surface: a **file explorer** and Monaco-powered **code editor** for viewing and editing files, **git integration** with a changed-files panel and inline diffs, a **GitHub PR panel**, **full-text workspace search**, live **Markdown preview**, and a **notes** panel — plus the ability to hand the current workspace off to VS Code, Cursor, or a JetBrains IDE when you want a heavier editor. Terminal output is clickable (file paths printed by compilers, test runners, and agents open straight in the editor), scrollback is persisted across sessions, and an overview bar keeps a running count of your workspaces, agents, terminals, and open PRs. Abundio runs natively on macOS, Windows, and Linux.
 
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple\&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows\&logoColor=white)
@@ -17,12 +21,13 @@ A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https:/
 * **Built-in code editor** — Monaco-powered editor for viewing and editing files
 * **Live Markdown preview** — Side-by-side preview pane with Mermaid diagram rendering
 * **File explorer** — Tree view with Nerd Font icons, image preview, and file operations
+* **Notes** — Per-workspace notes editor in the side panel
 * **Clickable file links in terminal** — Open file paths printed by tools (compilers, test runners, agents) directly in the editor
 * **Git integration** — Changed files panel, branch selector, inline diff viewer
 * **GitHub PR panel** — Review requests and your PRs via GitHub CLI
 * **Workspace search** — Full-text search across project files with cancellation
 * **External editor integration** — Detects and launches VS Code, Cursor, JetBrains IDEs, and others for the current workspace
-* **Theming** — Multiple built-in dark themes with live switching
+* **Theming** — Multiple built-in themes (dark and light) with live switching
 * **Scrollback persistence** — Terminal scrollback is saved and restored across sessions
 * **Native macOS integration** — Overlay titlebar with traffic light controls
 * **Cross-platform** — macOS, Windows, and Linux support
@@ -43,6 +48,8 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Find in terminal        | `Cmd+F`           | `Ctrl+F`           |
 | Search workspace        | `Cmd+Shift+F`     | `Ctrl+Shift+F`     |
 | Toggle git panel        | `Cmd+Shift+G`     | `Ctrl+Shift+G`     |
+| Toggle explorer panel   | `Cmd+Shift+E`     | `Ctrl+Shift+E`     |
+| Toggle notes panel      | `Cmd+Shift+K`     | `Ctrl+Shift+K`     |
 | Toggle markdown preview | `Cmd+Shift+M`     | `Ctrl+Shift+M`     |
 | New workspace           | `Cmd+Shift+N`     | `Ctrl+Shift+N`     |
 | New tab                 | `Cmd+T`           | `Ctrl+T`           |
@@ -56,7 +63,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 
 ## Prerequisites
 
-* **Node.js** >\= 18
+* **Node.js** >\= 20.19 (required by Vite 8)
 * **pnpm** — `npm install -g pnpm`
 * **Rust** — Install via [rustup](https://rustup.rs/)
 * **Tauri v2 system dependencies** — See [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform (Xcode Command Line Tools on macOS, `webkit2gtk` + `libappindicator` on Linux)
@@ -139,7 +146,7 @@ For a full module-by-module map, see [`CLAUDE.md`](CLAUDE.md).
 | Layer     | Technology                                                        |
 | --------- | ----------------------------------------------------------------- |
 | Framework | Tauri v2                                                          |
-| Backend   | Rust — portable-pty, rusqlite, crossbeam, dashmap, notify, ignore |
+| Backend   | Rust — portable-pty, rusqlite, crossbeam-channel, dashmap, notify, ignore |
 | Frontend  | React 19, TypeScript 6, Vite 8                                    |
 | Terminal  | xterm.js 6.x with WebGL addon                                     |
 | Editor    | Monaco Editor                                                     |

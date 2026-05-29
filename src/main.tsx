@@ -1,12 +1,35 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { initNotificationListener } from "./lib/notificationRouter";
 import { primaryFontFamily } from "./lib/terminalManager";
+import { SettingsApp, setupCrossWindowSync } from "./SettingsApp";
 import "./lib/windowFocus";
 import "./styles/globals.css";
 
-initNotificationListener();
+// The cross-window settings bridge runs in every window (App and Settings) so
+// theme/font changes propagate live. Registered explicitly here — once per
+// window — rather than as a module-eval side effect. (See SettingsApp.tsx.)
+setupCrossWindowSync();
+
+/** Which OS-level Abundio window is hosting this React app. The string is
+ *  evaluated synchronously at module load; safe to compare against literals. */
+function currentWindowLabel(): string {
+	try {
+		return getCurrentWindow().label;
+	} catch {
+		return "main";
+	}
+}
+
+const IS_SETTINGS_WINDOW = currentWindowLabel() === "settings";
+
+// The settings window doesn't need the workspace notification router — it
+// has no workspaces / PTYs / notification routing of its own.
+if (!IS_SETTINGS_WINDOW) {
+	initNotificationListener();
+}
 
 // Pause all CSS animations when the app is hidden to reduce GPU usage.
 document.addEventListener("visibilitychange", () => {
@@ -52,10 +75,21 @@ async function preloadTerminalFont(): Promise<void> {
 	]).catch(() => {});
 }
 
-preloadTerminalFont().finally(() => {
-	ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+function renderRoot() {
+	const root = ReactDOM.createRoot(
+		document.getElementById("root") as HTMLElement,
+	);
+	root.render(
 		<React.StrictMode>
-			<App />
+			{IS_SETTINGS_WINDOW ? <SettingsApp /> : <App />}
 		</React.StrictMode>,
 	);
-});
+}
+
+if (IS_SETTINGS_WINDOW) {
+	// Settings window doesn't render terminals — skip the heavyweight font
+	// preload and mount immediately.
+	renderRoot();
+} else {
+	preloadTerminalFont().finally(renderRoot);
+}

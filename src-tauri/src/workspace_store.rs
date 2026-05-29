@@ -16,6 +16,7 @@ pub struct Workspace {
     pub base_branch: Option<String>,
     pub last_branch: Option<String>,
     pub position: i32,
+    pub profile_id: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -73,19 +74,24 @@ impl WorkspaceStore {
 
     // ── Workspace CRUD ──
 
-    pub fn create(&self, name: &str, root_folder: &str) -> Result<WorkspaceWithTabs, AbundioError> {
+    pub fn create(
+        &self,
+        name: &str,
+        root_folder: &str,
+        profile_id: &str,
+    ) -> Result<WorkspaceWithTabs, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let workspace_id = uuid::Uuid::new_v4().to_string();
 
         let position: i32 = conn.query_row(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM workspaces",
-            [],
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM workspaces WHERE profile_id = ?1",
+            [profile_id],
             |row| row.get(0),
         )?;
 
         conn.execute(
-            "INSERT INTO workspaces (id, name, root_folder, position) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![workspace_id, name, root_folder, position],
+            "INSERT INTO workspaces (id, name, root_folder, position, profile_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![workspace_id, name, root_folder, position, profile_id],
         )?;
 
         // Create default first tab
@@ -106,20 +112,21 @@ impl WorkspaceStore {
         Ok(WorkspaceWithTabs { workspace, tabs })
     }
 
-    pub fn list(&self) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
+    pub fn list(&self, profile_id: &str) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.name, s.root_folder, s.env_json, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.created_at, s.updated_at,
+            "SELECT s.id, s.name, s.root_folder, s.env_json, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.profile_id, s.created_at, s.updated_at,
                     t.id, t.workspace_id, t.name, t.layout_json, t.position, t.created_at, t.updated_at
              FROM workspaces s
              LEFT JOIN tabs t ON t.workspace_id = s.id
+             WHERE s.profile_id = ?1
              ORDER BY s.position ASC, t.position ASC",
         )?;
 
         let mut result: Vec<WorkspaceWithTabs> = Vec::new();
         let mut last_workspace_id: Option<String> = None;
 
-        let mut rows = stmt.query([])?;
+        let mut rows = stmt.query([profile_id])?;
         while let Some(row) = rows.next()? {
             let workspace_id: String = row.get(0)?;
 
@@ -136,8 +143,9 @@ impl WorkspaceStore {
                         base_branch: row.get(6)?,
                         last_branch: row.get(7)?,
                         position: row.get(8)?,
-                        created_at: row.get(9)?,
-                        updated_at: row.get(10)?,
+                        profile_id: row.get(9)?,
+                        created_at: row.get(10)?,
+                        updated_at: row.get(11)?,
                     },
                     tabs: Vec::new(),
                 });
@@ -145,17 +153,17 @@ impl WorkspaceStore {
             }
 
             // Append tab if present (LEFT JOIN may produce NULL tab columns)
-            let tab_id: Option<String> = row.get(11)?;
+            let tab_id: Option<String> = row.get(12)?;
             if let Some(tid) = tab_id {
                 if let Some(entry) = result.last_mut() {
                     entry.tabs.push(Tab {
                         id: tid,
-                        workspace_id: row.get(12)?,
-                        name: row.get(13)?,
-                        layout_json: row.get(14)?,
-                        position: row.get(15)?,
-                        created_at: row.get(16)?,
-                        updated_at: row.get(17)?,
+                        workspace_id: row.get(13)?,
+                        name: row.get(14)?,
+                        layout_json: row.get(15)?,
+                        position: row.get(16)?,
+                        created_at: row.get(17)?,
+                        updated_at: row.get(18)?,
                     });
                 }
             }
@@ -284,6 +292,37 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    // ── Notes ──
+    //
+    // Each workspace has at most one Note — a rich-text scratchpad stored as
+    // opaque TipTap JSON. The store never parses `content`; it's a plain string
+    // round-tripped to the frontend editor. A missing row means "no note yet",
+    // surfaced as an empty string.
+
+    pub fn get_note(&self, workspace_id: &str) -> Result<String, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT content FROM notes WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(String::new()),
+            other => Err(AbundioError::Db(other)),
+        })
+    }
+
+    pub fn set_note(&self, workspace_id: &str, content: &str) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO notes (workspace_id, content, updated_at)
+             VALUES (?1, ?2, unixepoch())
+             ON CONFLICT(workspace_id) DO UPDATE SET content = ?2, updated_at = unixepoch()",
+            rusqlite::params![workspace_id, content],
+        )?;
+        Ok(())
+    }
+
     pub fn reorder_workspaces(&self, ids: &[String]) -> Result<(), AbundioError> {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
@@ -301,7 +340,7 @@ impl WorkspaceStore {
 
     fn get_workspace_with_conn(conn: &Connection, id: &str) -> Result<Workspace, AbundioError> {
         conn.query_row(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, base_branch, last_branch, position, created_at, updated_at
+            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, base_branch, last_branch, position, profile_id, created_at, updated_at
              FROM workspaces WHERE id = ?1",
             [id],
             |row| {
@@ -315,8 +354,9 @@ impl WorkspaceStore {
                     base_branch: row.get(6)?,
                     last_branch: row.get(7)?,
                     position: row.get(8)?,
-                    created_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                    profile_id: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             },
         )
@@ -388,12 +428,15 @@ mod tests {
         WorkspaceStore::new(conn)
     }
 
+    const DEFAULT_PID: &str = "00000000-0000-0000-0000-000000000001";
+
     #[test]
     fn create_workspace_returns_workspace_with_tab() {
         let store = test_store();
-        let result = store.create("Test", "/tmp").unwrap();
+        let result = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
         assert_eq!(result.workspace.name, "Test");
         assert_eq!(result.workspace.root_folder, "/tmp");
+        assert_eq!(result.workspace.profile_id, DEFAULT_PID);
         assert_eq!(result.tabs.len(), 1);
         assert_eq!(result.tabs[0].name, "Terminal 1");
     }
@@ -401,20 +444,43 @@ mod tests {
     #[test]
     fn list_workspaces_returns_created() {
         let store = test_store();
-        store.create("A", "/a").unwrap();
-        store.create("B", "/b").unwrap();
-        let workspaces = store.list().unwrap();
+        store.create("A", "/a", DEFAULT_PID).unwrap();
+        store.create("B", "/b", DEFAULT_PID).unwrap();
+        let workspaces = store.list(DEFAULT_PID).unwrap();
         assert_eq!(workspaces.len(), 2);
         assert_eq!(workspaces[0].workspace.name, "A");
         assert_eq!(workspaces[1].workspace.name, "B");
     }
 
     #[test]
+    fn list_filters_by_profile() {
+        let store = test_store();
+        // Create another profile by inserting directly
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO profiles (id, name, position) VALUES ('p2', 'Other', 1)",
+                [],
+            )
+            .unwrap();
+        store.create("Default-A", "/a", DEFAULT_PID).unwrap();
+        store.create("Other-A", "/a", "p2").unwrap();
+        store.create("Other-B", "/b", "p2").unwrap();
+        let default_list = store.list(DEFAULT_PID).unwrap();
+        let other_list = store.list("p2").unwrap();
+        assert_eq!(default_list.len(), 1);
+        assert_eq!(other_list.len(), 2);
+        assert_eq!(default_list[0].workspace.name, "Default-A");
+    }
+
+    #[test]
     fn list_workspaces_ordered_by_position() {
         let store = test_store();
-        store.create("First", "/a").unwrap();
-        store.create("Second", "/b").unwrap();
-        let workspaces = store.list().unwrap();
+        store.create("First", "/a", DEFAULT_PID).unwrap();
+        store.create("Second", "/b", DEFAULT_PID).unwrap();
+        let workspaces = store.list(DEFAULT_PID).unwrap();
         assert_eq!(workspaces[0].workspace.position, 0);
         assert_eq!(workspaces[1].workspace.position, 1);
     }
@@ -422,7 +488,7 @@ mod tests {
     #[test]
     fn update_workspace_name() {
         let store = test_store();
-        let created = store.create("Old", "/tmp").unwrap();
+        let created = store.create("Old", "/tmp", DEFAULT_PID).unwrap();
         store
             .update(
                 &created.workspace.id,
@@ -437,23 +503,23 @@ mod tests {
                 },
             )
             .unwrap();
-        let workspaces = store.list().unwrap();
+        let workspaces = store.list(DEFAULT_PID).unwrap();
         assert_eq!(workspaces[0].workspace.name, "New");
     }
 
     #[test]
     fn delete_workspace() {
         let store = test_store();
-        let created = store.create("ToDelete", "/tmp").unwrap();
+        let created = store.create("ToDelete", "/tmp", DEFAULT_PID).unwrap();
         store.delete(&created.workspace.id).unwrap();
-        let workspaces = store.list().unwrap();
+        let workspaces = store.list(DEFAULT_PID).unwrap();
         assert_eq!(workspaces.len(), 0);
     }
 
     #[test]
     fn delete_workspace_cascades_to_tabs() {
         let store = test_store();
-        let created = store.create("Test", "/tmp").unwrap();
+        let created = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
         let workspace_id = created.workspace.id.clone();
         store.create_tab(&workspace_id, "Tab 2").unwrap();
         store.delete(&workspace_id).unwrap();
@@ -465,7 +531,7 @@ mod tests {
     #[test]
     fn create_tab() {
         let store = test_store();
-        let workspace = store.create("Test", "/tmp").unwrap();
+        let workspace = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
         let tab = store.create_tab(&workspace.workspace.id, "Tab 2").unwrap();
         assert_eq!(tab.name, "Tab 2");
         assert_eq!(tab.position, 1);
@@ -474,7 +540,7 @@ mod tests {
     #[test]
     fn list_tabs_ordered() {
         let store = test_store();
-        let workspace = store.create("Test", "/tmp").unwrap();
+        let workspace = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
         store.create_tab(&workspace.workspace.id, "Tab 2").unwrap();
         store.create_tab(&workspace.workspace.id, "Tab 3").unwrap();
         let tabs = store.list_tabs(&workspace.workspace.id).unwrap();
@@ -487,7 +553,7 @@ mod tests {
     #[test]
     fn update_tab_name() {
         let store = test_store();
-        let workspace = store.create("Test", "/tmp").unwrap();
+        let workspace = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
         let tab_id = workspace.tabs[0].id.clone();
         store
             .update_tab(
@@ -506,7 +572,7 @@ mod tests {
     #[test]
     fn update_tab_layout() {
         let store = test_store();
-        let workspace = store.create("Test", "/tmp").unwrap();
+        let workspace = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
         let tab_id = workspace.tabs[0].id.clone();
         let new_layout = r#"{"type":"terminal","id":"new","ptyId":""}"#;
         store
@@ -526,7 +592,7 @@ mod tests {
     #[test]
     fn delete_tab() {
         let store = test_store();
-        let workspace = store.create("Test", "/tmp").unwrap();
+        let workspace = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
         let tab_id = workspace.tabs[0].id.clone();
         store.delete_tab(&tab_id).unwrap();
         let tabs = store.list_tabs(&workspace.workspace.id).unwrap();
@@ -536,9 +602,9 @@ mod tests {
     #[test]
     fn reorder_workspaces() {
         let store = test_store();
-        let s1 = store.create("A", "/a").unwrap();
-        let s2 = store.create("B", "/b").unwrap();
-        let s3 = store.create("C", "/c").unwrap();
+        let s1 = store.create("A", "/a", DEFAULT_PID).unwrap();
+        let s2 = store.create("B", "/b", DEFAULT_PID).unwrap();
+        let s3 = store.create("C", "/c", DEFAULT_PID).unwrap();
 
         store
             .reorder_workspaces(&[
@@ -548,9 +614,64 @@ mod tests {
             ])
             .unwrap();
 
-        let workspaces = store.list().unwrap();
+        let workspaces = store.list(DEFAULT_PID).unwrap();
         assert_eq!(workspaces[0].workspace.name, "C");
         assert_eq!(workspaces[1].workspace.name, "A");
         assert_eq!(workspaces[2].workspace.name, "B");
+    }
+
+    #[test]
+    fn get_note_returns_empty_when_absent() {
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        assert_eq!(store.get_note(&ws.workspace.id).unwrap(), "");
+    }
+
+    #[test]
+    fn set_then_get_note_round_trips() {
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        let json = r#"{"type":"doc","content":[{"type":"paragraph"}]}"#;
+        store.set_note(&ws.workspace.id, json).unwrap();
+        assert_eq!(store.get_note(&ws.workspace.id).unwrap(), json);
+    }
+
+    #[test]
+    fn set_note_upserts_without_duplicates() {
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        store.set_note(&ws.workspace.id, "first").unwrap();
+        store.set_note(&ws.workspace.id, "second").unwrap();
+        assert_eq!(store.get_note(&ws.workspace.id).unwrap(), "second");
+        let count: i32 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE workspace_id = ?1",
+                [&ws.workspace.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn delete_workspace_cascades_to_note() {
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        store.set_note(&ws.workspace.id, "keep notes").unwrap();
+        store.delete(&ws.workspace.id).unwrap();
+        let count: i32 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE workspace_id = ?1",
+                [&ws.workspace.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

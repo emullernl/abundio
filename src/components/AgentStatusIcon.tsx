@@ -63,6 +63,18 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 				</span>
 			);
 
+		case "cyan":
+			return (
+				<span
+					className="flex-shrink-0 text-cyan-400 drop-shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+					style={{
+						animation: "shell-running-breathe 1.6s ease-in-out infinite",
+					}}
+				>
+					<ShellChevronGlyph size={size} />
+				</span>
+			);
+
 		case "purple":
 			return (
 				<div
@@ -100,3 +112,40 @@ export const AgentStatusIcon = memo(function AgentStatusIcon({
 			);
 	}
 });
+
+/** Three rightward chevrons in a tight horizontal stack — the "running a
+ *  command" glyph for a shell-mode PTY. The outer span animates opacity for
+ *  the breathing effect; the SVG itself is static. */
+export function ShellChevronGlyph({ size = 14 }: { size?: number }) {
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			aria-hidden="true"
+		>
+			<path
+				d="M5 7l4 5-4 5"
+				stroke="currentColor"
+				strokeWidth="2.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M11 7l4 5-4 5"
+				stroke="currentColor"
+				strokeWidth="2.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M17 7l4 5-4 5"
+				stroke="currentColor"
+				strokeWidth="2.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}

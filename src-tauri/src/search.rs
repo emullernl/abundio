@@ -1,14 +1,15 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use ignore::overrides::OverrideBuilder;
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, EventTarget, State};
 
 use crate::error::AbundioError;
+use crate::window_management::is_profile_window_label;
 
 pub struct SearchManager {
     cancel_flags: DashMap<String, Arc<AtomicBool>>,
@@ -130,6 +131,7 @@ fn search_file_contents(path: &str, re: &Regex, max_remaining: usize) -> Result<
 
 #[tauri::command]
 pub async fn fs_search(
+    app: tauri::AppHandle,
     params: SearchQuery,
     manager: State<'_, SearchManager>,
 ) -> Result<SearchResult, AbundioError> {
@@ -138,6 +140,9 @@ pub async fn fs_search(
     let search_id = params.search_id.clone();
 
     let result = tokio::task::spawn_blocking(move || {
+        // Each matched file is streamed to the frontend on this channel as it is
+        // found, so results populate incrementally instead of all at once.
+        let progress_channel = format!("search-progress-{}", params.search_id);
         let re = build_regex(&params.query, params.case_sensitive, params.is_regex, params.whole_word)?;
         let max_results = params.max_results.unwrap_or(DEFAULT_MAX_RESULTS);
 
@@ -161,42 +166,76 @@ pub async fn fs_search(
         let walker = WalkBuilder::new(&params.root_path)
             .overrides(overrides)
             .hidden(false)
-            .build();
+            // hidden(false) lets us search dotfiles (.env etc.), but we never want
+            // to descend into .git — it's large, binary, and irrelevant to search.
+            .filter_entry(|entry| entry.file_name() != ".git")
+            .build_parallel();
 
-        let mut files: Vec<SearchFileResult> = Vec::new();
-        let mut total_matches: usize = 0;
-        let mut truncated = false;
+        // Shared across worker threads: matched files, a running match count
+        // (used to enforce max_results without locking), and a truncation flag.
+        let files: Arc<Mutex<Vec<SearchFileResult>>> = Arc::new(Mutex::new(Vec::new()));
+        let total_matches = Arc::new(AtomicUsize::new(0));
+        let truncated = Arc::new(AtomicBool::new(false));
 
-        for entry in walker {
-            if cancel.load(Ordering::Relaxed) {
-                break;
-            }
+        walker.run(|| {
+            // Per-thread visitor. Regex clones are cheap (Arc-backed internally).
+            let re = re.clone();
+            let files = Arc::clone(&files);
+            let total_matches = Arc::clone(&total_matches);
+            let truncated = Arc::clone(&truncated);
+            let cancel = Arc::clone(&cancel);
+            let app = app.clone();
+            let progress_channel = progress_channel.clone();
 
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            if !entry.file_type().map_or(false, |ft| ft.is_file()) {
-                continue;
-            }
-
-            let path = entry.path().to_string_lossy().to_string();
-            let remaining = max_results.saturating_sub(total_matches);
-            if remaining == 0 {
-                truncated = true;
-                break;
-            }
-
-            match search_file_contents(&path, &re, remaining) {
-                Ok(Some(file_result)) => {
-                    total_matches += file_result.matches.len();
-                    files.push(file_result);
+            Box::new(move |entry| {
+                if cancel.load(Ordering::Relaxed) {
+                    return WalkState::Quit;
                 }
-                Ok(None) => {}
-                Err(_) => continue,
-            }
-        }
+
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => return WalkState::Continue,
+                };
+
+                if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+                    return WalkState::Continue;
+                }
+
+                let remaining = max_results.saturating_sub(total_matches.load(Ordering::Relaxed));
+                if remaining == 0 {
+                    truncated.store(true, Ordering::Relaxed);
+                    return WalkState::Quit;
+                }
+
+                let path = entry.path().to_string_lossy().to_string();
+                if let Ok(Some(file_result)) = search_file_contents(&path, &re, remaining) {
+                    total_matches.fetch_add(file_result.matches.len(), Ordering::Relaxed);
+                    // Stream this file to the UI immediately, then retain it for the
+                    // authoritative (sorted) result returned when the walk finishes.
+                    // Skip the Settings window — it runs no searches, so it would
+                    // just deserialize-and-drop every streamed file.
+                    let _ = app.emit_filter(&progress_channel, &file_result, |target| {
+                        match target {
+                            EventTarget::Window { label }
+                            | EventTarget::Webview { label }
+                            | EventTarget::WebviewWindow { label }
+                            | EventTarget::AnyLabel { label } => is_profile_window_label(label),
+                            _ => true,
+                        }
+                    });
+                    files.lock().unwrap().push(file_result);
+                }
+
+                WalkState::Continue
+            })
+        });
+
+        // Workers complete out of order; sort by path for stable, deterministic output.
+        let mut files = std::mem::take(&mut *files.lock().unwrap());
+        files.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+
+        let total_matches = total_matches.load(Ordering::Relaxed);
+        let truncated = truncated.load(Ordering::Relaxed) || total_matches >= max_results;
 
         Ok(SearchResult {
             files,

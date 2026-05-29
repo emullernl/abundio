@@ -31,6 +31,23 @@ export type PaneNode =
 			second: PaneNode;
 	  };
 
+// ── Profile ──
+
+export interface Profile {
+	id: string;
+	name: string;
+	position: number;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface ProfileUpdate {
+	name?: string;
+}
+
+/** Well-known id for the migration-created "Default" profile. */
+export const DEFAULT_PROFILE_ID = "00000000-0000-0000-0000-000000000001";
+
 // ── Workspace ──
 
 export interface Workspace {
@@ -43,6 +60,7 @@ export interface Workspace {
 	baseBranch: string | null;
 	lastBranch: string | null;
 	position: number;
+	profileId: string;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -67,6 +85,7 @@ export interface WorkspaceWithTabs {
 	baseBranch: string | null;
 	lastBranch: string | null;
 	position: number;
+	profileId: string;
 	createdAt: number;
 	updatedAt: number;
 	tabs: Tab[];
@@ -136,6 +155,18 @@ export interface AgentHookEvent {
 	agent: string;
 	event: string;
 	payload: string;
+}
+
+/**
+ * System-wide resource usage (whole machine, not Abundio-specific — see
+ * ADR-0011). Pushed on the `app-metrics` event. `cpuPercent` is total CPU load
+ * 0–100; the memory fields are used/total bytes (≈ Activity Monitor's "Memory
+ * Used" on macOS).
+ */
+export interface AppMetrics {
+	cpuPercent: number;
+	memoryUsedBytes: number;
+	memoryTotalBytes: number;
 }
 
 export type PtyDetectionMode = "agent" | "shell";

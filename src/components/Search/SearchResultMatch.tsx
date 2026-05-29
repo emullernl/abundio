@@ -1,12 +1,19 @@
+import { memo } from "react";
+import { SEARCH_ROW_HEIGHT } from "../../lib/searchRows";
 import type { SearchMatch } from "../../lib/types";
 
 interface SearchResultMatchProps {
 	match: SearchMatch;
-	rootPath: string;
-	onClick: () => void;
+	filePath: string;
+	/** Stable handler so the memoized row only re-renders when `match` changes. */
+	onOpen: (filePath: string, lineNumber: number) => void;
 }
 
-export function SearchResultMatch({ match, onClick }: SearchResultMatchProps) {
+export const SearchResultMatch = memo(function SearchResultMatch({
+	match,
+	filePath,
+	onOpen,
+}: SearchResultMatchProps) {
 	const before = match.lineContent.slice(0, match.matchStart);
 	const matched = match.lineContent.slice(match.matchStart, match.matchEnd);
 	const after = match.lineContent.slice(match.matchEnd);
@@ -15,10 +22,11 @@ export function SearchResultMatch({ match, onClick }: SearchResultMatchProps) {
 		// biome-ignore lint/a11y/useKeyWithClickEvents: search result item
 		// biome-ignore lint/a11y/noStaticElementInteractions: clickable search result
 		<div
-			onClick={onClick}
-			className="flex items-start gap-2 cursor-pointer hover:bg-[var(--bg-tertiary)] transition-colors"
+			onClick={() => onOpen(filePath, match.lineNumber)}
+			className="flex items-center gap-2 cursor-pointer hover:bg-[var(--bg-tertiary)] transition-colors"
 			style={{
-				padding: "2px 8px 2px 28px",
+				height: SEARCH_ROW_HEIGHT,
+				padding: "0 8px 0 28px",
 				fontSize: 12,
 				transitionDuration: "var(--transition-fast)",
 			}}
@@ -55,4 +63,4 @@ export function SearchResultMatch({ match, onClick }: SearchResultMatchProps) {
 			</span>
 		</div>
 	);
-}
+});

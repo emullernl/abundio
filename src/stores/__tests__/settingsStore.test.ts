@@ -41,8 +41,7 @@ beforeEach(() => {
 		fontSize: 14,
 		uiFontSize: 14,
 		theme: "default",
-		sidebarCollapsed: false,
-		sidebarSplitRatio: 0.4,
+		rightSidebarPrRatio: 0.5,
 		debugActivityMeter: false,
 		activityByteThreshold: 1024,
 	});
@@ -55,8 +54,7 @@ describe("settingsStore", () => {
 		expect(state.uiFontFamily).toContain("system-ui");
 		expect(state.fontSize).toBe(14);
 		expect(state.theme).toBe("default");
-		expect(state.sidebarCollapsed).toBe(false);
-		expect(state.sidebarSplitRatio).toBe(0.4);
+		expect(state.rightSidebarPrRatio).toBe(0.5);
 	});
 
 	it("setTerminalFontFamily updates terminalFontFamily", () => {
@@ -93,17 +91,9 @@ describe("settingsStore", () => {
 		expect(useSettingsStore.getState().theme).toBe("dracula");
 	});
 
-	it("toggleSidebar flips sidebarCollapsed", () => {
-		expect(useSettingsStore.getState().sidebarCollapsed).toBe(false);
-		useSettingsStore.getState().toggleSidebar();
-		expect(useSettingsStore.getState().sidebarCollapsed).toBe(true);
-		useSettingsStore.getState().toggleSidebar();
-		expect(useSettingsStore.getState().sidebarCollapsed).toBe(false);
-	});
-
-	it("setSidebarSplitRatio updates ratio", () => {
-		useSettingsStore.getState().setSidebarSplitRatio(0.6);
-		expect(useSettingsStore.getState().sidebarSplitRatio).toBe(0.6);
+	it("setRightSidebarPrRatio updates ratio", () => {
+		useSettingsStore.getState().setRightSidebarPrRatio(0.6);
+		expect(useSettingsStore.getState().rightSidebarPrRatio).toBe(0.6);
 	});
 
 	it("toggleDebugActivityMeter flips the flag", () => {

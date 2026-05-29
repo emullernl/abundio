@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flattenSearchRows, SEARCH_ROW_HEIGHT } from "../../lib/searchRows";
+import { useExplorerStore } from "../../stores/explorerStore";
 import { useSearchStore } from "../../stores/searchStore";
-import { useSettingsStore } from "../../stores/settingsStore";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	CaseSensitive,
@@ -12,7 +14,11 @@ import {
 	WholeWord,
 	X,
 } from "../Icons";
-import { SearchResultFile } from "./SearchResultFile";
+import { SearchResultFileHeader } from "./SearchResultFileHeader";
+import { SearchResultMatch } from "./SearchResultMatch";
+
+/** Rows to render beyond the viewport on each side, to mask fast scrolling. */
+const OVERSCAN = 8;
 
 function ToggleButton({
 	active,
@@ -51,7 +57,9 @@ export function SearchPanel() {
 		return id ? s.workspaces.find((w) => w.id === id) : null;
 	});
 	const rootPath = workspace?.rootFolder ?? null;
-	const sidebarBottomPanel = useSettingsStore((s) => s.sidebarBottomPanel);
+	const rightSidebarOpen = useWindowUiStore((s) => s.rightSidebarOpen);
+	const activeTab = useWindowUiStore((s) => s.rightSidebarActiveTab);
+	const isVisible = rightSidebarOpen && activeTab === "search";
 
 	const query = useSearchStore((s) => s.query);
 	const caseSensitive = useSearchStore((s) => s.caseSensitive);
@@ -65,6 +73,8 @@ export function SearchPanel() {
 	const truncated = useSearchStore((s) => s.truncated);
 	const loading = useSearchStore((s) => s.loading);
 	const error = useSearchStore((s) => s.error);
+	const collapsedFiles = useSearchStore((s) => s.collapsedFiles);
+	const toggleFileCollapsed = useSearchStore((s) => s.toggleFileCollapsed);
 
 	const setQuery = useSearchStore((s) => s.setQuery);
 	const setCaseSensitive = useSearchStore((s) => s.setCaseSensitive);
@@ -74,25 +84,86 @@ export function SearchPanel() {
 	const setExcludePattern = useSearchStore((s) => s.setExcludePattern);
 	const toggleFilters = useSearchStore((s) => s.toggleFilters);
 	const clear = useSearchStore((s) => s.clear);
+	const cancelSearch = useSearchStore((s) => s.cancelSearch);
+	const rescope = useSearchStore((s) => s.rescope);
 
-	// Focus input when search panel becomes visible
+	// Re-point the search at the active workspace whenever it changes (and on
+	// mount, in case the workspace switched while this panel was closed). The
+	// store no-ops when the root is unchanged, so toggling the panel keeps results.
 	useEffect(() => {
-		if (sidebarBottomPanel === "search") {
+		rescope(rootPath);
+	}, [rootPath, rescope]);
+
+	// Focus input when search tab becomes visible in the right sidebar.
+	useEffect(() => {
+		if (isVisible) {
 			requestAnimationFrame(() => inputRef.current?.focus());
 		}
-	}, [sidebarBottomPanel]);
+	}, [isVisible]);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			if (e.key === "Escape") {
-				if (query) {
+				// Escalate: cancel an in-flight search first (keeping the results
+				// found so far); only clear the query once nothing is running.
+				if (loading) {
+					cancelSearch();
+				} else if (query) {
 					clear();
 				}
 				e.stopPropagation();
 			}
 		},
-		[query, clear],
+		[loading, query, cancelSearch, clear],
 	);
+
+	// Stable handler: opens the file and jumps to the match line. Passing this
+	// (rather than an inline closure) keeps the memoized match rows from
+	// re-rendering when the panel does.
+	const openMatch = useCallback((filePath: string, lineNumber: number) => {
+		const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+		if (!workspaceId) return;
+		useExplorerStore.getState().openFile(workspaceId, filePath);
+		useExplorerStore
+			.getState()
+			.setPendingGotoLine({ filePath, line: lineNumber });
+	}, []);
+
+	// --- Virtualized result list ---------------------------------------------
+	// The grouped results are flattened to a single fixed-height row list so we
+	// can render only the slice intersecting the viewport. This keeps the DOM at
+	// ~viewport-size regardless of how many thousands of matches exist.
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const [scrollTop, setScrollTop] = useState(0);
+	const [viewportHeight, setViewportHeight] = useState(0);
+
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (!el) return;
+		setViewportHeight(el.clientHeight);
+		const observer = new ResizeObserver(() => {
+			setViewportHeight(el.clientHeight);
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
+
+	const rows = useMemo(
+		() => flattenSearchRows(results, collapsedFiles),
+		[results, collapsedFiles],
+	);
+
+	const totalHeight = rows.length * SEARCH_ROW_HEIGHT;
+	const startIndex = Math.max(
+		0,
+		Math.floor(scrollTop / SEARCH_ROW_HEIGHT) - OVERSCAN,
+	);
+	const endIndex = Math.min(
+		rows.length,
+		Math.ceil((scrollTop + viewportHeight) / SEARCH_ROW_HEIGHT) + OVERSCAN,
+	);
+	const visibleRows = rows.slice(startIndex, endIndex);
+	const offsetY = startIndex * SEARCH_ROW_HEIGHT;
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: keyboard handler for search panel
@@ -230,18 +301,17 @@ export function SearchPanel() {
 				)}
 			</div>
 
-			{/* Results area */}
-			<div className="flex-1 min-h-0 overflow-y-auto">
-				{/* Loading indicator */}
+			{/* Status bar — pinned above the scroll area so it stays visible while
+			 *  scrolling thousands of results. */}
+			<div className="flex-shrink-0">
+				{/* Loading indicator — stays visible for the whole walk, alongside any
+				 *  results already streamed in, and advertises Esc-to-cancel. */}
 				{loading && (
 					<div
 						className="shimmer-text"
-						style={{
-							padding: "8px 12px",
-							fontSize: 11,
-						}}
+						style={{ padding: "8px 12px", fontSize: 11 }}
 					>
-						Searching...
+						Searching... (Esc to cancel)
 					</div>
 				)}
 
@@ -259,8 +329,8 @@ export function SearchPanel() {
 					</div>
 				)}
 
-				{/* Result count */}
-				{!loading && !error && totalMatches > 0 && (
+				{/* Result count — updates live as matches stream in. */}
+				{!error && totalMatches > 0 && (
 					<div
 						style={{
 							padding: "4px 12px",
@@ -288,17 +358,47 @@ export function SearchPanel() {
 						No results found.
 					</div>
 				)}
+			</div>
 
-				{/* File results */}
-				{!loading &&
-					rootPath &&
-					results.map((fileResult) => (
-						<SearchResultFile
-							key={fileResult.filePath}
-							fileResult={fileResult}
-							rootPath={rootPath}
-						/>
-					))}
+			{/* Virtualized result list — only the rows intersecting the viewport
+			 *  are mounted, so DOM size stays constant as results grow. */}
+			<div
+				ref={scrollRef}
+				onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+				className="flex-1 min-h-0 overflow-y-auto"
+			>
+				{rootPath && rows.length > 0 && (
+					<div style={{ height: totalHeight, position: "relative" }}>
+						<div
+							style={{
+								position: "absolute",
+								top: 0,
+								left: 0,
+								right: 0,
+								transform: `translateY(${offsetY}px)`,
+							}}
+						>
+							{visibleRows.map((row) =>
+								row.kind === "file" ? (
+									<SearchResultFileHeader
+										key={row.key}
+										file={row.file}
+										rootPath={rootPath}
+										collapsed={!!collapsedFiles[row.file.filePath]}
+										onToggle={toggleFileCollapsed}
+									/>
+								) : (
+									<SearchResultMatch
+										key={row.key}
+										match={row.match}
+										filePath={row.filePath}
+										onOpen={openMatch}
+									/>
+								),
+							)}
+						</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);

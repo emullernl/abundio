@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default capability for Abundio",
-  "windows": ["main"],
+  "windows": ["main", "window-*", "settings"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

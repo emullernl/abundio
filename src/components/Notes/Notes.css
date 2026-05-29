@@ -1,0 +1,87 @@
+/* Styling for the per-Workspace Note's TipTap editor. TipTap is headless, so
+ * the look is entirely defined here using the app's theme variables — a prose
+ * notepad (UI font, not monospace) that blends into the right sidebar. */
+
+.notes-prosemirror {
+	min-height: 100%;
+	padding: 10px 14px;
+	outline: none;
+	color: var(--fg-primary);
+	font-family: var(--font-ui);
+	font-size: 13px;
+	line-height: 1.6;
+	caret-color: var(--accent);
+}
+
+.notes-prosemirror p {
+	margin: 0 0 0.5em 0;
+}
+
+.notes-prosemirror p:last-child {
+	margin-bottom: 0;
+}
+
+.notes-prosemirror strong {
+	font-weight: 600;
+}
+
+/* Placeholder shown when the note is empty (Placeholder extension). */
+.notes-prosemirror p.is-editor-empty:first-child::before {
+	content: attr(data-placeholder);
+	color: var(--fg-secondary);
+	opacity: 0.7;
+	float: left;
+	height: 0;
+	pointer-events: none;
+}
+
+/* Bullet lists. */
+.notes-prosemirror ul:not([data-type="taskList"]) {
+	padding-left: 1.25em;
+	margin: 0 0 0.5em 0;
+	list-style: disc;
+}
+
+.notes-prosemirror ul:not([data-type="taskList"]) li {
+	margin: 0.1em 0;
+}
+
+/* Checklists (taskList / taskItem). */
+.notes-prosemirror ul[data-type="taskList"] {
+	list-style: none;
+	padding: 0;
+	margin: 0 0 0.5em 0;
+}
+
+.notes-prosemirror ul[data-type="taskList"] li {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin: 0.15em 0;
+}
+
+.notes-prosemirror ul[data-type="taskList"] li > label {
+	margin-top: 0.2em;
+	user-select: none;
+}
+
+.notes-prosemirror ul[data-type="taskList"] li > div {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.notes-prosemirror ul[data-type="taskList"] input[type="checkbox"] {
+	accent-color: var(--accent);
+	cursor: pointer;
+}
+
+/* Checked items: strike through + dim, in place (no reordering). */
+.notes-prosemirror ul[data-type="taskList"] li[data-checked="true"] > div {
+	text-decoration: line-through;
+	opacity: 0.5;
+}
+
+/* Nested checklists indent. */
+.notes-prosemirror ul[data-type="taskList"] ul[data-type="taskList"] {
+	margin-left: 1.25em;
+}

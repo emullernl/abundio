@@ -1,9 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { pty } from "../../lib/ipc";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
-import { getTerminal, getPaneRevision, subscribePaneRevision, resetTerminal } from "../../lib/terminalManager";
+import {
+	getPaneRevision,
+	getTerminal,
+	resetTerminal,
+	subscribePaneRevision,
+} from "../../lib/terminalManager";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -117,7 +129,10 @@ export function TerminalSlot({
 	// / becomes ready, so derived values (searchAddon, ptyIdForPane) update without
 	// subscribing to global tab/workspace state.
 	useSyncExternalStore(
-		useCallback((onChange) => subscribePaneRevision(paneId, onChange), [paneId]),
+		useCallback(
+			(onChange) => subscribePaneRevision(paneId, onChange),
+			[paneId],
+		),
 		useCallback(() => getPaneRevision(paneId), [paneId]),
 		useCallback(() => getPaneRevision(paneId), [paneId]),
 	);

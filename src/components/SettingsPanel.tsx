@@ -9,13 +9,24 @@ import { setAllTerminalsFontSize } from "../lib/terminalManager";
 import { type AppTheme, themeList } from "../lib/themes";
 import type { AvailableShell, CodingAgent } from "../lib/types";
 import { useAgentRegistryStore } from "../stores/agentRegistryStore";
+import { useProfileStore } from "../stores/profileStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { consumeRequestedSection } from "../stores/settingsUiStore";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Check, Plus, X } from "./Icons";
 
-type Section = "theme" | "terminal-font" | "ui-font" | "shell" | "agents";
+type Section =
+	| "theme"
+	| "terminal-font"
+	| "ui-font"
+	| "shell"
+	| "agents"
+	| "profiles";
 
 interface Props {
-	open: boolean;
+	/** Called when the user clicks the panel's X button. The settings window
+	 *  itself handles all closes (Cmd+W, traffic-light X) — this prop is for
+	 *  the explicit in-panel close affordance. */
 	onClose: () => void;
 }
 
@@ -839,6 +850,25 @@ function AgentIcon() {
 	);
 }
 
+function ProfileIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+			<circle cx="12" cy="7" r="4" />
+		</svg>
+	);
+}
+
 /* ═══════════════════════════════════════════════
    Main SettingsPanel
    ═══════════════════════════════════════════════ */
@@ -960,8 +990,236 @@ function ShellRow({
 	);
 }
 
-export function SettingsPanel({ open: isOpen, onClose }: Props) {
+/* ─── Profile row ─── */
+function ProfileRow({
+	name,
+	canDelete,
+	onRename,
+	onDelete,
+}: {
+	name: string;
+	/** True when the "at least one profile must exist" rule allows deletion.
+	 *  False only for the last remaining profile. */
+	canDelete: boolean;
+	onRename: (name: string) => void;
+	onDelete: () => void;
+}) {
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState(name);
+
+	useEffect(() => {
+		setDraft(name);
+	}, [name]);
+
+	function commit() {
+		const trimmed = draft.trim();
+		setEditing(false);
+		if (trimmed && trimmed !== name) {
+			onRename(trimmed);
+		} else {
+			setDraft(name);
+		}
+	}
+
+	return (
+		<div
+			className="flex items-center gap-3 rounded-lg group transition-colors"
+			style={{
+				padding: "9px 10px",
+				backgroundColor: "transparent",
+				border: "1px solid transparent",
+			}}
+		>
+			<div className="flex-1 min-w-0">
+				{editing ? (
+					<input
+						value={draft}
+						onChange={(e) => setDraft(e.target.value)}
+						onBlur={commit}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") commit();
+							else if (e.key === "Escape") {
+								setEditing(false);
+								setDraft(name);
+							}
+						}}
+						// biome-ignore lint/a11y/noAutofocus: rename UI focuses on click
+						autoFocus
+						style={{
+							width: "100%",
+							fontSize: 13,
+							color: "var(--fg-primary)",
+							backgroundColor: "var(--bg-primary)",
+							border: "1px solid var(--border)",
+							borderRadius: 4,
+							padding: "3px 6px",
+							outline: "none",
+						}}
+					/>
+				) : (
+					<button
+						type="button"
+						onClick={() => setEditing(true)}
+						className="truncate text-left"
+						style={{
+							width: "100%",
+							fontSize: 13,
+							color: "var(--fg-primary)",
+							lineHeight: 1.3,
+							background: "transparent",
+							border: "none",
+							padding: 0,
+							cursor: "text",
+						}}
+						title="Click to rename"
+					>
+						{name}
+					</button>
+				)}
+			</div>
+			{canDelete ? (
+				<button
+					type="button"
+					onClick={onDelete}
+					className="flex-shrink-0 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+					style={{
+						width: 24,
+						height: 24,
+						color: "var(--fg-secondary)",
+					}}
+					onMouseEnter={(e) => {
+						(e.currentTarget as HTMLElement).style.color = "var(--error)";
+						(e.currentTarget as HTMLElement).style.backgroundColor =
+							"color-mix(in srgb, var(--error) 10%, transparent)";
+					}}
+					onMouseLeave={(e) => {
+						(e.currentTarget as HTMLElement).style.color =
+							"var(--fg-secondary)";
+						(e.currentTarget as HTMLElement).style.backgroundColor =
+							"transparent";
+					}}
+					title="Delete profile (and all its workspaces)"
+				>
+					<X size={13} />
+				</button>
+			) : (
+				// Last remaining profile — explicitly disabled per ADR-0007's
+				// "at least one profile must exist" invariant.
+				<button
+					type="button"
+					disabled
+					className="flex-shrink-0 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+					style={{
+						width: 24,
+						height: 24,
+						color: "var(--fg-secondary)",
+						opacity: 0.4,
+						cursor: "not-allowed",
+					}}
+					title="Cannot delete the last profile"
+				>
+					<X size={13} />
+				</button>
+			)}
+		</div>
+	);
+}
+
+/* ─── Add profile form ─── */
+function AddProfileForm({ onAdd }: { onAdd: (name: string) => void }) {
+	const [name, setName] = useState("");
+
+	function handleSubmit(e: React.FormEvent) {
+		e.preventDefault();
+		const trimmed = name.trim();
+		if (!trimmed) return;
+		onAdd(trimmed);
+		setName("");
+	}
+
+	return (
+		<form onSubmit={handleSubmit} className="flex items-center gap-2">
+			<input
+				type="text"
+				placeholder="Profile name"
+				value={name}
+				onChange={(e) => setName(e.target.value)}
+				style={{
+					flex: 1,
+					fontSize: 13,
+					color: "var(--fg-primary)",
+					backgroundColor: "var(--bg-primary)",
+					border: "1px solid var(--border)",
+					borderRadius: 6,
+					padding: "7px 10px",
+					outline: "none",
+				}}
+			/>
+			<button
+				type="submit"
+				disabled={!name.trim()}
+				className="rounded-md flex items-center gap-1.5 transition-colors"
+				style={{
+					fontSize: 12,
+					color: name.trim() ? "var(--fg-primary)" : "var(--fg-secondary)",
+					padding: "7px 12px",
+					backgroundColor: name.trim() ? "var(--accent)" : "var(--bg-tertiary)",
+					border: "none",
+					cursor: name.trim() ? "pointer" : "not-allowed",
+					opacity: name.trim() ? 1 : 0.5,
+				}}
+			>
+				<Plus size={12} />
+				Add Profile
+			</button>
+		</form>
+	);
+}
+
+export function SettingsPanel({ onClose }: Props) {
 	const [section, setSection] = useState<Section>("theme");
+
+	const profiles = useProfileStore((s) => s.profiles);
+	const ownershipMap = useProfileStore((s) => s.ownershipMap);
+	const createProfile = useProfileStore((s) => s.createProfile);
+	const renameProfile = useProfileStore((s) => s.renameProfile);
+	const deleteProfile = useProfileStore((s) => s.deleteProfile);
+	// Pending profile-delete confirmation. When non-null, the ConfirmDialog
+	// is mounted asking the user to confirm. If the profile is open in some
+	// window, the dialog message also warns that the window will close.
+	const [pendingDelete, setPendingDelete] = useState<{
+		id: string;
+		name: string;
+		ownerLabel: string | null;
+	} | null>(null);
+
+	// Honor "Manage Profiles…" / File menu deep-links by landing on the right
+	// section when the panel opens.
+	useEffect(() => {
+		const requested = consumeRequestedSection();
+		if (requested) setSection(requested as Section);
+		// Listen for `settings-set-section` events from Rust — fired by
+		// open_or_focus_settings_window when the user clicks "Manage Profiles…"
+		// and the settings window is already open.
+		const unlisten = import("@tauri-apps/api/event").then(({ listen }) =>
+			listen<string>("settings-set-section", (event) => {
+				const s = event.payload;
+				if (
+					s === "theme" ||
+					s === "terminal-font" ||
+					s === "ui-font" ||
+					s === "shell" ||
+					s === "agents" ||
+					s === "profiles"
+				) {
+					setSection(s);
+				}
+			}),
+		);
+		return () => {
+			unlisten.then((fn) => fn()).catch(() => {});
+		};
+	}, []);
 
 	const currentTheme = useSettingsStore((s) => s.theme);
 	const setTheme = useSettingsStore((s) => s.setTheme);
@@ -992,11 +1250,6 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 		(s) => s.gpuAccelerationEnabled,
 	);
 	const setGpuAcceleration = useSettingsStore((s) => s.setGpuAcceleration);
-	const shellActivityStatus = useSettingsStore((s) => s.shellActivityStatus);
-	const setShellActivityStatus = useSettingsStore(
-		(s) => s.setShellActivityStatus,
-	);
-
 	const darkThemes = useMemo(
 		() => themeList().filter((t) => t.variant === "dark"),
 		[],
@@ -1009,7 +1262,7 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 	const [systemFonts, setSystemFonts] = useState<FontEntry[]>([]);
 	const systemFontsLoaded = useRef(false);
 	useEffect(() => {
-		if (!isOpen || systemFontsLoaded.current) return;
+		if (systemFontsLoaded.current) return;
 		fontsIpc
 			.listSystemFonts()
 			.then((families) => {
@@ -1020,12 +1273,12 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 			.catch(() => {
 				setSystemFonts([]);
 			});
-	}, [isOpen]);
+	}, []);
 
 	const [availableShells, setAvailableShells] = useState<AvailableShell[]>([]);
 	const shellsLoaded = useRef(false);
 	useEffect(() => {
-		if (!isOpen || shellsLoaded.current) return;
+		if (shellsLoaded.current) return;
 		shellsIpc
 			.listAvailable()
 			.then((shells) => {
@@ -1035,10 +1288,9 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 			.catch(() => {
 				setAvailableShells([]);
 			});
-	}, [isOpen]);
+	}, []);
 
 	useEffect(() => {
-		if (!isOpen) return;
 		const handleEscape = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
 				e.preventDefault();
@@ -1048,7 +1300,7 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 		};
 		document.addEventListener("keydown", handleEscape, true);
 		return () => document.removeEventListener("keydown", handleEscape, true);
-	}, [isOpen, onClose]);
+	}, [onClose]);
 
 	const handleTerminalFontSizeChange = useCallback(
 		(size: number) => {
@@ -1065,30 +1317,19 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 		[setUiFontSize],
 	);
 
-	if (!isOpen) return null;
-
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: modal backdrop dismiss
-		<div
-			role="presentation"
-			className="fixed inset-0 z-[200] flex items-center justify-center"
-			style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
-			onClick={onClose}
-			onKeyDown={(e) => e.key === "Escape" && onClose()}
-		>
-			{/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation only, keyboard handled by parent */}
+		<>
+			{/* Renders as the entire content of the dedicated Settings window
+		    (label="settings"). No modal overlay — the OS window IS the frame.
+		    The Fragment wraps the panel + an optional ConfirmDialog used for
+		    profile-delete confirmation. */}
 			<div
 				role="dialog"
-				className="rounded-xl shadow-2xl overflow-hidden flex flex-col"
+				aria-label="Settings"
+				className="flex flex-col w-full h-full"
 				style={{
-					width: 840,
-					height: 620,
 					backgroundColor: "var(--bg-secondary)",
-					border: "1px solid var(--border)",
-					boxShadow:
-						"0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03) inset",
 				}}
-				onClick={(e) => e.stopPropagation()}
 			>
 				{/* Header */}
 				<div
@@ -1163,6 +1404,12 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 							icon={<AgentIcon />}
 							isActive={section === "agents"}
 							onClick={() => setSection("agents")}
+						/>
+						<NavItem
+							label="Profiles"
+							icon={<ProfileIcon />}
+							isActive={section === "profiles"}
+							onClick={() => setSection("profiles")}
 						/>
 					</div>
 
@@ -1297,44 +1544,6 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 
 						{section === "shell" && (
 							<div className="flex flex-col flex-1 min-h-0">
-								<SectionLabel>Status Indicator</SectionLabel>
-								<div
-									className="flex items-center gap-3 rounded-lg"
-									style={{
-										padding: "10px 12px",
-										marginBottom: 18,
-										backgroundColor: "var(--bg-primary)",
-										border: "1px solid var(--border)",
-									}}
-								>
-									<Toggle
-										checked={shellActivityStatus}
-										onChange={setShellActivityStatus}
-									/>
-									<div className="flex-1 min-w-0">
-										<div
-											style={{
-												fontSize: 13,
-												color: "var(--fg-primary)",
-												lineHeight: 1.3,
-											}}
-										>
-											Terminal activity status
-										</div>
-										<div
-											style={{
-												fontSize: 11,
-												color: "var(--fg-secondary)",
-												marginTop: 2,
-												lineHeight: 1.4,
-											}}
-										>
-											Show busy and finished states in the status dot for shell
-											commands. When off, the dot stays neutral and only turns
-											red when a command fails. Agents are unaffected.
-										</div>
-									</div>
-								</div>
 								<SectionLabel>Default Shell</SectionLabel>
 								<p
 									style={{
@@ -1446,9 +1655,77 @@ export function SettingsPanel({ open: isOpen, onClose }: Props) {
 								</div>
 							</div>
 						)}
+
+						{section === "profiles" && (
+							<div className="flex flex-col gap-4 flex-1 min-h-0">
+								<div className="flex-1 min-h-0 overflow-y-auto">
+									<SectionLabel>Profiles</SectionLabel>
+									<p
+										style={{
+											fontSize: 12,
+											color: "var(--fg-secondary)",
+											marginBottom: 12,
+											lineHeight: 1.5,
+										}}
+									>
+										Profiles group your workspaces into separate contexts.
+										Switching profiles closes the current profile's opened
+										workspaces. Click a name to rename it.
+									</p>
+									<div className="flex flex-col gap-0.5">
+										{profiles.map((p) => (
+											<ProfileRow
+												key={p.id}
+												name={p.name}
+												canDelete={profiles.length > 1}
+												onRename={(newName) =>
+													renameProfile(p.id, newName).catch(() => {})
+												}
+												onDelete={() =>
+													setPendingDelete({
+														id: p.id,
+														name: p.name,
+														ownerLabel: ownershipMap[p.id] ?? null,
+													})
+												}
+											/>
+										))}
+									</div>
+								</div>
+								<div className="flex-shrink-0">
+									<AddProfileForm
+										onAdd={(name) => {
+											createProfile(name).catch((err) => {
+												console.error("[profiles] create failed:", err);
+											});
+										}}
+									/>
+								</div>
+							</div>
+						)}
 					</div>
 				</div>
 			</div>
-		</div>
+			{pendingDelete && (
+				<ConfirmDialog
+					title={`Delete "${pendingDelete.name}"?`}
+					message={
+						pendingDelete.ownerLabel
+							? "This profile is currently open in another window. Deleting it will close that window and permanently remove all of its workspaces, tabs, and saved layouts."
+							: "This permanently removes the profile and all of its workspaces, tabs, and saved layouts."
+					}
+					confirmLabel="Delete profile"
+					confirmVariant="danger"
+					onConfirm={() => {
+						const target = pendingDelete;
+						setPendingDelete(null);
+						deleteProfile(target.id).catch((err) => {
+							console.error("[profiles] delete failed:", err);
+						});
+					}}
+					onCancel={() => setPendingDelete(null)}
+				/>
+			)}
+		</>
 	);
 }

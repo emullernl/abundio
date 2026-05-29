@@ -306,6 +306,33 @@ body,
 	background: var(--fg-secondary);
 }
 
+/* OverviewBar overflows horizontally when the workspace area is narrow;
+   it scrolls but never shows a WebKit scrollbar — the bar's height
+   (40px) is small enough that the global 8px scrollbar would consume a
+   fifth of it. */
+[data-overview-bar]::-webkit-scrollbar {
+	display: none;
+}
+
+/* xterm's custom scrollbar slider is promoted to its own compositor layer
+   (setLayerHinting(true) + contain:strict inside xterm.js). On macOS WKWebView,
+   ancestor `visibility: hidden` does NOT reliably hide composite-promoted layers
+   — opening App.tsx switches workspaces via `visibility: hidden` to preserve
+   layout dimensions for fast warm switching, so without this rule the scrollbar
+   of any background terminal flashes through the active workspace whenever its
+   PTY emits output. `display: none` removes the slider from the layout tree
+   entirely, which the compositor cannot bypass. The native viewport scrollbar
+   is hidden in parallel — it's redundant since xterm draws its own. */
+[data-workspace-active="false"] .xterm-scrollable-element > .scrollbar {
+	display: none !important;
+}
+.xterm-viewport::-webkit-scrollbar {
+	display: none;
+}
+.xterm-viewport {
+	scrollbar-width: none;
+}
+
 /* Shimmer text animation — silver-white gradient sweep */
 @keyframes shimmer {
 	0% {
@@ -343,6 +370,19 @@ body,
 @keyframes agent-amber-spin {
 	to {
 		transform: rotate(360deg);
+	}
+}
+
+/* Shell-mode "running a command" breathing pulse for the cyan triple-chevron
+   glyph. Distinct color *and* motion from the agent amber spinner so the two
+   "in progress" indicators are tellable apart at a glance. */
+@keyframes shell-running-breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.4;
 	}
 }
 

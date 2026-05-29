@@ -21,6 +21,8 @@ import type {
 	WorkspaceWithTabs,
 } from "../lib/types";
 import { useExplorerStore } from "./explorerStore";
+import { useNotesStore } from "./notesStore";
+import { fallbackProfileId } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
 import { useWorkspaceGitStore } from "./workspaceGitStore";
@@ -176,7 +178,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	workspacesInitialized: false,
 
 	loadWorkspaces: async () => {
-		const workspacesWithTabs = await workspacesApi.list();
+		const profileId = fallbackProfileId();
+		const workspacesWithTabs = await workspacesApi.list(profileId);
 		// Clear stale ptyIds from all tabs' layouts and re-seed pending agents
 		// for any pane whose layout remembers an agentId from a previous session.
 		const allPaneIds: string[] = [];
@@ -206,11 +209,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			}
 		}
 
-		set({
+		// Drop any active-workspace state that points at a workspace not in the
+		// newly-loaded list. This is what makes profile switching clean: when
+		// the new profile has different workspaces, the old active id is stale
+		// and would otherwise leave the StatusBar / focused pane referencing a
+		// workspace no longer in the store.
+		const newIds = new Set(cleaned.map((w) => w.id));
+		set((state) => ({
 			workspaces: cleaned,
 			activeTabByWorkspace,
 			workspacesInitialized: true,
-		});
+			activeWorkspaceId:
+				state.activeWorkspaceId && newIds.has(state.activeWorkspaceId)
+					? state.activeWorkspaceId
+					: null,
+			focusedPaneId: null,
+		}));
 		pty.cleanupStaleLogs(allPaneIds).catch(() => {});
 
 		// Pre-populate branch chips from the persisted lastBranch so chips appear
@@ -261,7 +275,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	createWorkspace: async (name, rootFolder, agent) => {
-		const workspaceWithTabs = await workspacesApi.create(name, rootFolder);
+		const profileId = fallbackProfileId();
+		const workspaceWithTabs = await workspacesApi.create(
+			name,
+			rootFolder,
+			profileId,
+		);
 		usePtyActivityStore.getState().markWorkspaceOpened(workspaceWithTabs.id);
 		const firstTab = workspaceWithTabs.tabs[0];
 		const firstTabId = firstTab?.id;
@@ -318,6 +337,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				}
 			}
 		}
+		// Drop any pending debounced note save — the note row is cascade-deleted
+		// with the workspace, so letting the timer fire would error on a missing FK.
+		useNotesStore.getState().cancelPendingSave(id);
 		await workspacesApi.delete(id);
 		usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
 		useWorkspaceGitStore.getState().remove(id);

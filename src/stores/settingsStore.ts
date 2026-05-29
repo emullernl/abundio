@@ -19,23 +19,19 @@ interface SettingsState {
 	fontSize: number;
 	uiFontSize: number;
 	theme: string;
-	sidebarCollapsed: boolean;
 	sidebarWidth: number;
-	sidebarSplitRatio: number;
-	gitPanelWidth: number;
-	gitPanelSplitRatio: number;
+	rightSidebarWidth: number;
+	rightSidebarPrRatio: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 	terminalScrollback: number;
 	shellPath: string | null;
 	agents: CodingAgent[];
-	sidebarBottomPanel: "explorer" | "search";
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
-	shellActivityStatus: boolean;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -43,11 +39,9 @@ interface SettingsState {
 	setFontSize: (size: number) => void;
 	setUiFontSize: (size: number) => void;
 	setTheme: (theme: string) => void;
-	toggleSidebar: () => void;
 	setSidebarWidth: (width: number) => void;
-	setSidebarSplitRatio: (ratio: number) => void;
-	setGitPanelWidth: (width: number) => void;
-	setGitPanelSplitRatio: (ratio: number) => void;
+	setRightSidebarWidth: (width: number) => void;
+	setRightSidebarPrRatio: (ratio: number) => void;
 	toggleDebugActivityMeter: () => void;
 	setActivityByteThreshold: (n: number) => void;
 	setTerminalScrollback: (n: number) => void;
@@ -58,13 +52,11 @@ interface SettingsState {
 		id: string,
 		updates: Partial<Pick<CodingAgent, "name" | "command" | "args">>,
 	) => void;
-	setSidebarBottomPanel: (panel: "explorer" | "search") => void;
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
 	toggleMarkdownPreviewAutoOpen: () => void;
 	setAgentHooksEnabled: (enabled: boolean) => void;
 	setGpuAcceleration: (enabled: boolean) => void;
-	setShellActivityStatus: (enabled: boolean) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -80,9 +72,8 @@ const PERSISTED_DEFAULTS: {
 	uiFontSize: number;
 	theme: string;
 	sidebarWidth: number;
-	sidebarSplitRatio: number;
-	gitPanelWidth: number;
-	gitPanelSplitRatio: number;
+	rightSidebarWidth: number;
+	rightSidebarPrRatio: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 	terminalScrollback: number;
@@ -93,7 +84,6 @@ const PERSISTED_DEFAULTS: {
 	markdownPreviewAutoOpen: boolean;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
-	shellActivityStatus: boolean;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -102,9 +92,8 @@ const PERSISTED_DEFAULTS: {
 		uiFontSize: 14,
 		theme: "default",
 		sidebarWidth: 280,
-		sidebarSplitRatio: 0.4,
-		gitPanelWidth: 360,
-		gitPanelSplitRatio: 0.5,
+		rightSidebarWidth: 360,
+		rightSidebarPrRatio: 0.5,
 		debugActivityMeter: false,
 		activityByteThreshold: 1024,
 		terminalScrollback: 1000,
@@ -115,7 +104,6 @@ const PERSISTED_DEFAULTS: {
 		markdownPreviewAutoOpen: true,
 		agentHooksEnabled: true,
 		gpuAccelerationEnabled: true,
-		shellActivityStatus: false,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -123,6 +111,22 @@ const PERSISTED_DEFAULTS: {
 		const parsed = JSON.parse(raw);
 		const s = parsed?.state;
 		if (!s) return defaults;
+		// Accept either the new keys or the pre-ADR-0010 keys so the synchronous
+		// read here matches what the persist middleware's migrate function will
+		// produce a microtask later. Without this, the very first render uses
+		// the default width/ratio even though the user has older values stored.
+		const rawRightSidebarWidth =
+			typeof s.rightSidebarWidth === "number"
+				? s.rightSidebarWidth
+				: typeof s.gitPanelWidth === "number"
+					? s.gitPanelWidth
+					: defaults.rightSidebarWidth;
+		const rawRightSidebarPrRatio =
+			typeof s.rightSidebarPrRatio === "number"
+				? s.rightSidebarPrRatio
+				: typeof s.gitPanelSplitRatio === "number"
+					? s.gitPanelSplitRatio
+					: defaults.rightSidebarPrRatio;
 		return {
 			terminalFontFamily:
 				typeof s.terminalFontFamily === "string"
@@ -140,18 +144,8 @@ const PERSISTED_DEFAULTS: {
 				typeof s.sidebarWidth === "number"
 					? s.sidebarWidth
 					: defaults.sidebarWidth,
-			sidebarSplitRatio:
-				typeof s.sidebarSplitRatio === "number"
-					? s.sidebarSplitRatio
-					: defaults.sidebarSplitRatio,
-			gitPanelWidth:
-				typeof s.gitPanelWidth === "number"
-					? s.gitPanelWidth
-					: defaults.gitPanelWidth,
-			gitPanelSplitRatio:
-				typeof s.gitPanelSplitRatio === "number"
-					? s.gitPanelSplitRatio
-					: defaults.gitPanelSplitRatio,
+			rightSidebarWidth: rawRightSidebarWidth,
+			rightSidebarPrRatio: rawRightSidebarPrRatio,
 			debugActivityMeter:
 				typeof s.debugActivityMeter === "boolean"
 					? s.debugActivityMeter
@@ -195,10 +189,6 @@ const PERSISTED_DEFAULTS: {
 				typeof s.gpuAccelerationEnabled === "boolean"
 					? s.gpuAccelerationEnabled
 					: defaults.gpuAccelerationEnabled,
-			shellActivityStatus:
-				typeof s.shellActivityStatus === "boolean"
-					? s.shellActivityStatus
-					: defaults.shellActivityStatus,
 		};
 	} catch {
 		return defaults;
@@ -213,23 +203,19 @@ export const useSettingsStore = create<SettingsState>()(
 			fontSize: PERSISTED_DEFAULTS.fontSize,
 			uiFontSize: PERSISTED_DEFAULTS.uiFontSize,
 			theme: PERSISTED_DEFAULTS.theme,
-			sidebarCollapsed: false,
 			sidebarWidth: PERSISTED_DEFAULTS.sidebarWidth,
-			sidebarSplitRatio: PERSISTED_DEFAULTS.sidebarSplitRatio,
-			gitPanelWidth: PERSISTED_DEFAULTS.gitPanelWidth,
-			gitPanelSplitRatio: PERSISTED_DEFAULTS.gitPanelSplitRatio,
+			rightSidebarWidth: PERSISTED_DEFAULTS.rightSidebarWidth,
+			rightSidebarPrRatio: PERSISTED_DEFAULTS.rightSidebarPrRatio,
 			debugActivityMeter: PERSISTED_DEFAULTS.debugActivityMeter,
 			activityByteThreshold: PERSISTED_DEFAULTS.activityByteThreshold,
 			terminalScrollback: PERSISTED_DEFAULTS.terminalScrollback,
 			shellPath: PERSISTED_DEFAULTS.shellPath,
 			agents: PERSISTED_DEFAULTS.agents,
-			sidebarBottomPanel: "explorer",
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
 			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
-			shellActivityStatus: PERSISTED_DEFAULTS.shellActivityStatus,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -258,13 +244,10 @@ export const useSettingsStore = create<SettingsState>()(
 				setAllTerminalsTheme(fullTheme.terminal);
 				set({ theme: themeName });
 			},
-			toggleSidebar: () =>
-				set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 			setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
-			setSidebarSplitRatio: (sidebarSplitRatio) => set({ sidebarSplitRatio }),
-			setGitPanelWidth: (gitPanelWidth) => set({ gitPanelWidth }),
-			setGitPanelSplitRatio: (gitPanelSplitRatio) =>
-				set({ gitPanelSplitRatio }),
+			setRightSidebarWidth: (rightSidebarWidth) => set({ rightSidebarWidth }),
+			setRightSidebarPrRatio: (rightSidebarPrRatio) =>
+				set({ rightSidebarPrRatio }),
 			toggleDebugActivityMeter: () =>
 				set((state) => ({ debugActivityMeter: !state.debugActivityMeter })),
 			setActivityByteThreshold: (n) => {
@@ -301,8 +284,6 @@ export const useSettingsStore = create<SettingsState>()(
 					agents: s.agents.map((a) => (a.id === id ? { ...a, ...updates } : a)),
 				}));
 			},
-			setSidebarBottomPanel: (sidebarBottomPanel) =>
-				set({ sidebarBottomPanel }),
 			setLastOpenedDevEnvId: (id) => set({ lastOpenedDevEnvId: id }),
 			toggleEditorWordWrap: () =>
 				set((s) => ({ editorWordWrap: !s.editorWordWrap })),
@@ -325,12 +306,10 @@ export const useSettingsStore = create<SettingsState>()(
 				setWebglEnabled(gpuAccelerationEnabled);
 				set({ gpuAccelerationEnabled });
 			},
-			setShellActivityStatus: (shellActivityStatus) =>
-				set({ shellActivityStatus }),
 		}),
 		{
 			name: "abundio-settings",
-			version: 2,
+			version: 4,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -343,6 +322,33 @@ export const useSettingsStore = create<SettingsState>()(
 				if (version < 2) {
 					state = { ...state, agentHooksEnabled: true };
 				}
+				// v3: the shellActivityStatus toggle is gone — shell-mode status
+				// is always tracked. Drop the stale key so the in-memory shape
+				// matches the TypeScript type. See ADR-0009.
+				if (version < 3) {
+					const { shellActivityStatus: _drop, ...rest } = state;
+					state = rest;
+				}
+				// v4: right sidebar restructure (ADR-0010). The git panel became
+				// one of three tabs in the right sidebar, so its width/ratio keys
+				// rename. The left sidebar lost its bottom panel entirely, so
+				// sidebarSplitRatio and sidebarBottomPanel are dropped.
+				if (version < 4) {
+					const {
+						gitPanelWidth,
+						gitPanelSplitRatio,
+						sidebarSplitRatio: _dropSplit,
+						sidebarBottomPanel: _dropBottom,
+						...rest
+					} = state;
+					state = {
+						...rest,
+						rightSidebarWidth:
+							typeof gitPanelWidth === "number" ? gitPanelWidth : 360,
+						rightSidebarPrRatio:
+							typeof gitPanelSplitRatio === "number" ? gitPanelSplitRatio : 0.5,
+					};
+				}
 				return state;
 			},
 			partialize: (state) => ({
@@ -352,9 +358,8 @@ export const useSettingsStore = create<SettingsState>()(
 				uiFontSize: state.uiFontSize,
 				theme: state.theme,
 				sidebarWidth: state.sidebarWidth,
-				sidebarSplitRatio: state.sidebarSplitRatio,
-				gitPanelWidth: state.gitPanelWidth,
-				gitPanelSplitRatio: state.gitPanelSplitRatio,
+				rightSidebarWidth: state.rightSidebarWidth,
+				rightSidebarPrRatio: state.rightSidebarPrRatio,
 				debugActivityMeter: state.debugActivityMeter,
 				activityByteThreshold: state.activityByteThreshold,
 				terminalScrollback: state.terminalScrollback,
@@ -365,7 +370,6 @@ export const useSettingsStore = create<SettingsState>()(
 				markdownPreviewAutoOpen: state.markdownPreviewAutoOpen,
 				agentHooksEnabled: state.agentHooksEnabled,
 				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
-				shellActivityStatus: state.shellActivityStatus,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
@@ -393,7 +397,30 @@ export const useSettingsStore = create<SettingsState>()(
 					setAllTerminalsFontSize(state.fontSize);
 				}
 				if (state?.theme) {
+					// applyTheme writes CSS variables to :root — without this,
+					// rehydrate (e.g. cross-window theme sync after the user
+					// picks a new theme in the Settings window) would update
+					// the in-memory `theme` value but leave UI colours frozen.
+					applyTheme(getTheme(state.theme));
 					setAllTerminalsTheme(getTheme(state.theme).terminal);
+				}
+				if (state?.uiFontFamily) {
+					document.documentElement.style.setProperty(
+						"--font-ui",
+						state.uiFontFamily,
+					);
+				}
+				if (state?.terminalFontFamily) {
+					document.documentElement.style.setProperty(
+						"--font-mono",
+						state.terminalFontFamily,
+					);
+				}
+				if (state?.uiFontSize) {
+					document.documentElement.style.setProperty(
+						"--ui-font-size",
+						`${state.uiFontSize}px`,
+					);
 				}
 				// Re-sync agent hook provisioning with the persisted setting
 				// (also refreshes the relay scripts after an app update).

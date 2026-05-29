@@ -15,7 +15,7 @@ import {
 	type ReactNode,
 } from "react";
 import type { DotStatus } from "../stores/ptyActivityStore";
-import { AgentStatusIcon } from "./AgentStatusIcon";
+import { AgentStatusIcon, ShellChevronGlyph } from "./AgentStatusIcon";
 
 // Matches the sidebar's WORKSPACES header height so the bar's bottom border
 // sits on the same horizontal line as the sidebar header's border-bottom.
@@ -38,10 +38,8 @@ export interface OverviewBarProps {
 	errorAgents: number;
 	/** Shell-mode PTYs at rest. */
 	idleShells: number;
-	/** Shell-mode PTYs running a command. Tile hidden when `showShellActivityDetail` is false. */
+	/** Shell-mode PTYs running a command. */
 	workingShells: number;
-	/** Shell-mode PTYs whose last command finished. Tile hidden when `showShellActivityDetail` is false. */
-	readyShells: number;
 	/** Shell-mode PTYs whose last command errored. */
 	errorShells: number;
 	/** PRs across all repos where the user is a requested reviewer. */
@@ -54,19 +52,18 @@ export interface OverviewBarProps {
 	 * can't be detected, so showing the tile would be misleading.
 	 */
 	showAgentWaiting: boolean;
-	/**
-	 * When false, the Working and Ready shell tiles are hidden. Driven by
-	 * `settingsStore.shellActivityStatus`. Idle and Error shell tiles stay
-	 * visible either way.
-	 */
-	showShellActivityDetail: boolean;
 }
 
 const TILE_WIDTH = 44;
-const TILE_HEIGHT = 32;
+const TILE_HEIGHT = 24;
 const GLYPH_SIZE = 12;
 const GLYPH_STROKE = 2.5;
 const NUMBER_FONT_SIZE = 13;
+const SECTION_TITLE_FONT_SIZE = 7;
+// Gap between the section title and its row of tiles.
+const SECTION_TITLE_GAP = 3;
+// Gap between adjacent sections in the bar.
+const SECTION_GAP = 14;
 
 /** Tile face shows up to two digits; everything past 99 collapses to "99+".
  *  Tooltips keep the real count. */
@@ -142,70 +139,78 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 		errorAgents,
 		idleShells,
 		workingShells,
-		readyShells,
 		errorShells,
 		reviewRequestedPrs,
 		myOpenPrs,
 		showAgentWaiting,
-		showShellActivityDetail,
 	} = props;
 
 	return (
 		<div
 			data-overview-bar
-			className="flex items-center select-none"
+			className="flex items-center select-none overflow-x-auto overflow-y-hidden"
 			style={{
 				height: OVERVIEW_BAR_HEIGHT,
 				backgroundColor: "var(--bg-secondary)",
 				borderBottom: "1px solid var(--border)",
 				paddingLeft: 10,
 				paddingRight: 10,
-				gap: 4,
+				paddingTop: 2,
+				paddingBottom: 2,
+				gap: SECTION_GAP,
+				scrollbarWidth: "none",
 			}}
 		>
-			<WorkspaceTile opened={openedWorkspaces} total={totalWorkspaces} />
+			<Section title="Workspaces">
+				<WorkspaceTile opened={openedWorkspaces} total={totalWorkspaces} />
+			</Section>
 
-			<Divider />
+			<Section title="Agents">
+				<AgentTile kind="idle" count={idleAgents} />
+				<AgentTile kind="working" count={workingAgents} />
+				{showAgentWaiting && <AgentTile kind="waiting" count={waitingAgents} />}
+				<AgentTile kind="ready" count={readyAgents} />
+				<AgentTile kind="error" count={errorAgents} />
+			</Section>
 
-			<AgentTile kind="idle" count={idleAgents} />
-			<AgentTile kind="working" count={workingAgents} />
-			{showAgentWaiting && <AgentTile kind="waiting" count={waitingAgents} />}
-			<AgentTile kind="ready" count={readyAgents} />
-			<AgentTile kind="error" count={errorAgents} />
-
-			<Divider />
-
-			<ShellTile kind="idle" count={idleShells} />
-			{showShellActivityDetail && (
+			<Section title="Terminals">
+				<ShellTile kind="idle" count={idleShells} />
 				<ShellTile kind="working" count={workingShells} />
-			)}
-			{showShellActivityDetail && (
-				<ShellTile kind="ready" count={readyShells} />
-			)}
-			<ShellTile kind="error" count={errorShells} />
+				<ShellTile kind="error" count={errorShells} />
+			</Section>
 
-			<Divider />
-
-			<PrTile kind="review" count={reviewRequestedPrs} />
-			<PrTile kind="mine" count={myOpenPrs} />
+			<Section title="Pull requests">
+				<PrTile kind="review" count={reviewRequestedPrs} />
+				<PrTile kind="mine" count={myOpenPrs} />
+			</Section>
 		</div>
 	);
 });
 
-function Divider() {
+function Section({ title, children }: { title: string; children: ReactNode }) {
 	return (
 		<div
-			aria-hidden="true"
-			style={{
-				width: 1,
-				height: 20,
-				backgroundColor: "var(--border)",
-				marginLeft: 3,
-				marginRight: 3,
-				opacity: 0.6,
-				flexShrink: 0,
-			}}
-		/>
+			className="flex flex-col flex-shrink-0"
+			style={{ gap: SECTION_TITLE_GAP }}
+		>
+			<div
+				style={{
+					fontSize: SECTION_TITLE_FONT_SIZE,
+					textTransform: "uppercase",
+					letterSpacing: "0.12em",
+					color: "var(--fg-secondary)",
+					fontWeight: 400,
+					lineHeight: 1,
+					paddingLeft: 2,
+					whiteSpace: "nowrap",
+				}}
+			>
+				{title}
+			</div>
+			<div className="flex items-center" style={{ gap: 4 }}>
+				{children}
+			</div>
+		</div>
 	);
 }
 
@@ -269,10 +274,7 @@ function WorkspaceTile({ opened, total }: { opened: number; total: number }) {
 			: `${opened} of ${total} workspace${total === 1 ? "" : "s"} opened`;
 	return (
 		<TileShell
-			glyph={staticGlyph(
-				LayoutGrid,
-				active ? SILVER : "var(--fg-secondary)",
-			)}
+			glyph={staticGlyph(LayoutGrid, active ? SILVER : "var(--fg-secondary)")}
 			active={active}
 			primary={opened}
 			title={title}
@@ -376,12 +378,13 @@ function AgentTile({ kind, count }: { kind: AgentKind; count: number }) {
 	);
 }
 
-type ShellKind = "idle" | "working" | "ready" | "error";
+type ShellKind = "idle" | "working" | "error";
 
 /**
- * Shell tiles reuse the agent definitions' glyph + colour + animation —
- * the *state* is the unit of meaning, not whether an agent or a plain shell
- * produced it. Tooltips and the section divider distinguish the two groups.
+ * Shell tiles reuse the agent definitions' glyph + colour for Idle and Error,
+ * but the Working tile diverges: shells use the breathing triple-chevron
+ * glyph (matching the per-pane indicator), not the agent spinner. Shells
+ * never reach Ready — see ADR-0009.
  */
 const SHELL_DEFINITIONS: Record<
 	ShellKind,
@@ -397,11 +400,6 @@ const SHELL_DEFINITIONS: Record<
 		label: "Busy terminals",
 		description: "running a command",
 	},
-	ready: {
-		agentKind: "ready",
-		label: "Finished terminals",
-		description: "last command finished — needs acknowledgement",
-	},
 	error: {
 		agentKind: "error",
 		label: "Error terminals",
@@ -409,14 +407,35 @@ const SHELL_DEFINITIONS: Record<
 	},
 };
 
+// Shell-Working uses cyan, not amber — distinct from agent-Working to convey
+// "neutral throughput" rather than "attention-needed". See ADR-0009.
+const SHELL_WORKING_COLOR = "rgb(34 211 238)"; // cyan-400
+
 function ShellTile({ kind, count }: { kind: ShellKind; count: number }) {
 	const shellDef = SHELL_DEFINITIONS[kind];
+	const title = `${shellDef.label} — ${shellDef.description} (${count})`;
+	if (kind === "working") {
+		const active = count > 0;
+		const glyph = (
+			<span
+				style={{
+					color: active ? SHELL_WORKING_COLOR : "var(--fg-secondary)",
+					display: "inline-flex",
+					flexShrink: 0,
+					animation: active
+						? "shell-running-breathe 1.6s ease-in-out infinite"
+						: undefined,
+				}}
+			>
+				<ShellChevronGlyph size={GLYPH_SIZE} />
+			</span>
+		);
+		return (
+			<TileShell glyph={glyph} active={active} primary={count} title={title} />
+		);
+	}
 	return (
-		<StateTile
-			agentKind={shellDef.agentKind}
-			count={count}
-			title={`${shellDef.label} — ${shellDef.description} (${count})`}
-		/>
+		<StateTile agentKind={shellDef.agentKind} count={count} title={title} />
 	);
 }
 

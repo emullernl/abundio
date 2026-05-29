@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-shell";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -7,7 +8,6 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import {
-	setFocusedPaneIdGetter,
 	setShellCommandRunning,
 	touchLastOutput,
 	usePtyActivityStore,
@@ -440,7 +440,6 @@ addWindowFocusListener((focused) => {
 // timer fires (e.g. in the Vitest jsdom environment after a test finishes).
 setTimeout(() => {
 	if (!useWorkspaceStore?.subscribe) return;
-	setFocusedPaneIdGetter(() => useWorkspaceStore.getState().focusedPaneId);
 	useWorkspaceStore.subscribe((state) => {
 		const { activeWorkspaceId, focusedPaneId } = state;
 		if (!activeWorkspaceId) return;
@@ -548,20 +547,42 @@ export async function createTerminal(
 		minimumContrastRatio: 4.5,
 	});
 
+	// Open a URL in the OS browser — unless the foreground app is reporting
+	// mouse events. Full-screen TUIs like the GitHub Copilot CLI enable mouse
+	// tracking and handle clicks on their own hyperlinks themselves (that's why
+	// they look "already clickable"). xterm activates its link layer on the
+	// SAME click without suppressing the mouse report, so the app and our link
+	// layer would each open the URL — two browser tabs. When the app is tracking
+	// the mouse we stand down and let it own the click; in the normal shell
+	// buffer (no mouse tracking) our detection is the only thing that opens it.
+	const openExternalUrl = (url: string) => {
+		if (term.modes.mouseTrackingMode !== "none") return;
+		open(url);
+	};
+
+	// Route OSC 8 hyperlinks (emitted by CLIs like GitHub Copilot) through the
+	// same opener as bare URLs. Without an explicit linkHandler, xterm's built-in
+	// OSC link provider falls back to its default (a confirm() + bare
+	// window.open()), which in WKWebView leaks the URL to the system browser.
+	term.options.linkHandler = {
+		activate: (_event, uri) => openExternalUrl(uri),
+	};
+
 	const fitAddon = new FitAddon();
 	const searchAddon = new SearchAddon();
 	const serializeAddon = new SerializeAddon();
 	term.loadAddon(fitAddon);
 	term.loadAddon(searchAddon);
 	term.loadAddon(serializeAddon);
-	// Plain-click activates both URLs and file links (ADR-0004). xterm's link
-	// layer intercepts the click on a linked range before it reaches the
-	// selection / focus / mouse-reporting paths, so there's no collision —
-	// the cost is that text selections starting inside a linked path must
-	// begin outside the link's hot zone.
+	// Plain-click activates URLs, OSC 8 hyperlinks, and file links (ADR-0004).
+	// xterm's link layer intercepts the click for selection / focus, but NOT for
+	// mouse reporting — when a TUI app has mouse tracking on it receives the
+	// click too, so URL opens are gated through openExternalUrl to avoid
+	// double-opening. The cost of plain-click activation is that text selections
+	// starting inside a linked path must begin outside the link's hot zone.
 	term.loadAddon(
 		new WebLinksAddon((_event, url) => {
-			open(url);
+			openExternalUrl(url);
 		}),
 	);
 	installFileLinkProvider(term, paneId);
@@ -851,11 +872,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// shellCommandRunning=true for the agent's own command_start.
 						// If that flag stays true, the idle scanner will never
 						// transition active → ready (purple) for the agent.
-						if (
-							!managed.suppressActivity &&
-							!nowIsAgent &&
-							useSettingsStore.getState().shellActivityStatus
-						) {
+						if (!managed.suppressActivity && !nowIsAgent) {
 							setShellCommandRunning(currentPtyId, true);
 							actState.recordOutput(currentPtyId);
 						}
@@ -873,21 +890,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						const wasAgentMode = currentEntry?.detectionMode === "agent";
 						if (!managed.suppressActivity && !wasAgentMode) {
 							setShellCommandRunning(currentPtyId, false);
-							const outcome = classifyShellExit(
-								cmd.exitCode,
-								useSettingsStore.getState().shellActivityStatus,
-							);
+							const outcome = classifyShellExit(cmd.exitCode);
 							if (outcome === "error") {
 								freshState.recordError(currentPtyId);
-							} else if (outcome === "success") {
-								const isFocused =
-									document.hasFocus() &&
-									useWorkspaceStore.getState().focusedPaneId === paneId;
-								if (isFocused) {
-									freshState.markIdle(currentPtyId);
-								} else {
-									freshState.recordExitSuccess(currentPtyId);
-								}
+							} else {
+								// Shell-mode success: skip the Ready hop entirely.
+								// recordExitSuccess routes shells straight to Idle.
+								freshState.recordExitSuccess(currentPtyId);
 							}
 						}
 					}
@@ -943,21 +952,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				const entry = actStore.activities[currentPtyId];
 				if (entry?.detectionMode !== "shell") return;
 				if (activity.type === "commandStarted") {
-					if (useSettingsStore.getState().shellActivityStatus) {
-						setShellCommandRunning(currentPtyId, true);
-						actStore.recordOutput(currentPtyId);
-					}
+					setShellCommandRunning(currentPtyId, true);
+					actStore.recordOutput(currentPtyId);
 				} else if (activity.type === "commandFinished") {
 					setShellCommandRunning(currentPtyId, false);
 					if (entry.state === "active") {
-						const isFocused =
-							document.hasFocus() &&
-							useWorkspaceStore.getState().focusedPaneId === paneId;
-						if (isFocused) {
-							actStore.markIdle(currentPtyId);
-						} else {
-							actStore.recordExitSuccess(currentPtyId);
-						}
+						// Shells skip the Ready hop — recordExitSuccess routes a
+						// shell-mode PTY straight to Idle regardless of focus.
+						actStore.recordExitSuccess(currentPtyId);
 					}
 				}
 			}),
@@ -966,13 +968,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				if (status.type === "exited") {
 					// Set activity state BEFORE setPtyStatus to avoid subscriber race
 					const actStore = usePtyActivityStore.getState();
-					const outcome = classifyShellExit(
-						status.code,
-						useSettingsStore.getState().shellActivityStatus,
-					);
+					const outcome = classifyShellExit(status.code);
 					if (outcome === "error") {
 						actStore.recordError(currentPtyId);
-					} else if (outcome === "success") {
+					} else {
+						// Clean exit: shell goes to Idle, agent (if this PTY was in
+						// agent mode at exit time) goes to Ready. recordExitSuccess
+						// branches per detectionMode.
 						actStore.recordExitSuccess(currentPtyId);
 					}
 				}
@@ -1035,6 +1037,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							useSettingsStore.getState().shellPath ?? undefined,
 							paneId,
 							currentPtyId,
+							useWorkspaceStore.getState().getActiveWorkspace()?.name,
+							getCurrentWindow().label,
 						),
 					]
 				: []),

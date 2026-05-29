@@ -3,7 +3,7 @@ import {
 	clearEditorStateCache,
 	getSerializableEditorState,
 } from "../components/FileViewer/CodeEditor";
-import { fs as fsApi, git as gitApi } from "../lib/ipc";
+import { fs as fsApi, git as gitApi, tabs as tabsApi } from "../lib/ipc";
 import { getLanguage } from "../lib/languageMap";
 import {
 	buildFilePaneLayout,
@@ -668,8 +668,17 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 						: pane.filePath
 					: pane.filePath;
 
+			// The fs watcher emits absolute paths, but a diff pane tracks a
+			// repo-relative path (git requires it). Resolve to an absolute path
+			// for set membership while keeping the relative `realPath` for the
+			// git diff re-fetch below.
+			const matchPath =
+				pane.fileType === "diff" && !realPath.startsWith("/")
+					? `${(workspace?.rootFolder ?? "").replace(/\/$/, "")}/${realPath}`
+					: realPath;
+
 			// ── Deletions ──
-			if (removedSet.has(realPath)) {
+			if (removedSet.has(matchPath)) {
 				set((s) => ({
 					filePanes: {
 						...s.filePanes,
@@ -680,7 +689,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			}
 
 			// ── Changes ──
-			if (!changedSet.has(realPath)) continue;
+			if (!changedSet.has(matchPath)) continue;
 
 			if (pane.fileType === "text") {
 				try {
@@ -813,7 +822,6 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 /** Persist editor state into the active tab's layout for all open file panes. */
 export async function persistAllFilePanes() {
 	const wsStore = useWorkspaceStore.getState();
-	const tabsApi = (await import("../lib/ipc")).tabs;
 	for (const workspace of wsStore.workspaces) {
 		for (const tab of workspace.tabs) {
 			try {

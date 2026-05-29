@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { decodeBase64 } from "./base64";
 import type {
 	AgentHookEvent,
+	AppMetrics,
 	AvailableShell,
 	BranchInfo,
 	DetectedDevEnvironment,
@@ -13,9 +14,12 @@ import type {
 	GitChangedFile,
 	GitFileDiff,
 	LaunchFile,
+	Profile,
+	ProfileUpdate,
 	PtyActivityType,
 	PtyStatusType,
 	PullRequest,
+	SearchFileResult,
 	SearchResult,
 	Tab,
 	TabUpdate,
@@ -32,6 +36,8 @@ export const pty = {
 		shell?: string,
 		logId?: string,
 		ptyId?: string,
+		workspaceName?: string,
+		windowLabel?: string,
 	) =>
 		invoke<string>("pty_spawn", {
 			cwd,
@@ -41,6 +47,8 @@ export const pty = {
 			shell,
 			logId,
 			ptyId,
+			workspaceName,
+			windowLabel,
 		}),
 
 	write: (ptyId: string, data: string) =>
@@ -112,10 +120,15 @@ export const pty = {
 };
 
 export const workspaces = {
-	create: (name: string, rootFolder: string) =>
-		invoke<WorkspaceWithTabs>("workspace_create", { name, rootFolder }),
+	create: (name: string, rootFolder: string, profileId: string) =>
+		invoke<WorkspaceWithTabs>("workspace_create", {
+			name,
+			rootFolder,
+			profileId,
+		}),
 
-	list: () => invoke<WorkspaceWithTabs[]>("workspace_list"),
+	list: (profileId: string) =>
+		invoke<WorkspaceWithTabs[]>("workspace_list", { profileId }),
 
 	update: (id: string, updates: WorkspaceUpdate) =>
 		invoke<void>("workspace_update", { id, updates }),
@@ -123,6 +136,55 @@ export const workspaces = {
 	delete: (id: string) => invoke<void>("workspace_delete", { id }),
 
 	reorder: (ids: string[]) => invoke<void>("workspace_reorder", { ids }),
+};
+
+export const notes = {
+	/** Fetch a workspace's note (TipTap JSON string). `""` means no note yet. */
+	get: (workspaceId: string) => invoke<string>("note_get", { workspaceId }),
+
+	/** Upsert a workspace's note. `content` is an opaque TipTap JSON string. */
+	set: (workspaceId: string, content: string) =>
+		invoke<void>("note_set", { workspaceId, content }),
+};
+
+export const profiles = {
+	list: () => invoke<Profile[]>("profile_list"),
+
+	create: (name: string) => invoke<Profile>("profile_create", { name }),
+
+	update: (id: string, updates: ProfileUpdate) =>
+		invoke<void>("profile_update", { id, updates }),
+
+	delete: (id: string) => invoke<void>("profile_delete", { id }),
+
+	reorder: (ids: string[]) => invoke<void>("profile_reorder", { ids }),
+
+	/** Notify the Rust side of the active profile id for the calling window
+	 *  (Tauri injects the window automatically). The Rust side updates its
+	 *  per-window ownership map, rebuilds the native menu, and emits
+	 *  `profile-ownership-changed` to all windows. */
+	setActiveProfileId: (profileId: string | null) =>
+		invoke<void>("set_active_profile_id", { profileId }),
+
+	/** Returns the profile id this window was spawned with, or null if the
+	 *  Rust map has no entry for this window. */
+	getActiveProfileForWindow: () =>
+		invoke<string | null>("get_active_profile_for_window"),
+
+	/** Returns a profileId → windowLabel map. Used by Settings to compute
+	 *  "open in another window" disabled states. */
+	getOwnershipMap: () =>
+		invoke<Record<string, string>>("get_profile_ownership_map"),
+
+	/** Opens a new application Window with the given profile. Rejects if the
+	 *  profile is already open in another window. */
+	openWindowWithProfile: (profileId: string) =>
+		invoke<string>("open_window_with_profile", { profileId }),
+
+	/** Creates a fresh "Untitled" profile (auto-numbered on collision) and
+	 *  opens it in a new application Window. */
+	createUntitledProfileInNewWindow: () =>
+		invoke<string>("create_untitled_profile_in_new_window"),
 };
 
 export const tabs = {
@@ -137,9 +199,33 @@ export const tabs = {
 	delete: (id: string) => invoke<void>("tab_delete", { id }),
 };
 
+export interface GitFetchBundle {
+	changedFiles: GitChangedFile[];
+	branchInfo: BranchInfo;
+	statusFingerprint: string;
+}
+
+/** Discriminated union pushed by the Rust `GitScheduler` on every refresh.
+ *  Single channel for success and failure — keeps state-update ordering
+ *  trivial on the frontend (one listener, one switch). */
+export type GitStateEvent =
+	| { kind: "bundle"; bundle: GitFetchBundle }
+	| { kind: "error"; message: string; notGitRepo: boolean };
+
 export const git = {
 	changedFiles: (cwd: string, baseBranch?: string | null) =>
 		invoke<GitChangedFile[]>("git_changed_files", {
+			cwd,
+			baseBranch: baseBranch ?? null,
+		}),
+
+	/** Single-IPC bundle replacing the 3 separate calls (changedFiles +
+	 *  branchInfo + statusFingerprint). Internally runs them in parallel
+	 *  via scoped threads — see `git_fetch_bundle` in src-tauri. The
+	 *  single round-trip is the dominant cost savings on macOS/WKWebView
+	 *  where each `invoke` has significant per-call main-thread overhead. */
+	fetchBundle: (cwd: string, baseBranch?: string | null) =>
+		invoke<GitFetchBundle>("git_fetch_bundle", {
 			cwd,
 			baseBranch: baseBranch ?? null,
 		}),
@@ -167,6 +253,35 @@ export const git = {
 	workspacesSummary: (
 		requests: { workspaceId: string; cwd: string; baseBranch: string | null }[],
 	) => invoke<WorkspaceGitSummary[]>("git_workspaces_summary", { requests }),
+
+	/** Start the per-workspace Rust GitScheduler. Fires an immediate refresh
+	 *  on start, then pushes a `git-state-<workspaceId>` event on every
+	 *  meaningful change. Idempotent — calling twice with the same id is a no-op.
+	 *  To change `baseBranch`, call `schedulerStop` then `schedulerStart` again. */
+	schedulerStart: (
+		workspaceId: string,
+		rootPath: string,
+		baseBranch?: string | null,
+	) =>
+		invoke<void>("git_scheduler_start", {
+			workspaceId,
+			rootPath,
+			baseBranch: baseBranch ?? null,
+		}),
+
+	schedulerStop: (workspaceId: string) =>
+		invoke<void>("git_scheduler_stop", { workspaceId }),
+
+	/** Subscribe to the per-workspace state stream pushed by the Rust scheduler.
+	 *  Replaces the JS-driven `fetchChanges`-on-every-event loop that caused
+	 *  the WKWebView `invoke()` freeze on `git stash`. */
+	onGitState: (
+		workspaceId: string,
+		callback: (event: GitStateEvent) => void,
+	): Promise<UnlistenFn> =>
+		listen<GitStateEvent>(`git-state-${workspaceId}`, (event) => {
+			callback(event.payload);
+		}),
 };
 
 export type WorkspaceGitSummary = {
@@ -255,6 +370,15 @@ export const fs = {
 		searchId: string;
 	}) => invoke<SearchResult>("fs_search", { params }),
 
+	/** Subscribe to files streamed by an in-flight `fs_search`, as they're found. */
+	onSearchProgress: (
+		searchId: string,
+		callback: (file: SearchFileResult) => void,
+	): Promise<UnlistenFn> =>
+		listen<SearchFileResult>(`search-progress-${searchId}`, (event) =>
+			callback(event.payload),
+		),
+
 	searchCancel: (searchId: string) =>
 		invoke<void>("fs_search_cancel", { searchId }),
 
@@ -287,6 +411,17 @@ export const agentHooks = {
 	/** Enable/disable Agent status hooks by (un)provisioning agent configs. */
 	provision: (enabled: boolean) =>
 		invoke<void>("agent_hooks_provision", { enabled }),
+};
+
+export const metrics = {
+	/**
+	 * Subscribe to system-wide CPU + memory load, pushed from Rust
+	 * (`app_metrics.rs`) roughly every 1.5s. One global event for all windows.
+	 */
+	onAppMetrics: (
+		callback: (metrics: AppMetrics) => void,
+	): Promise<UnlistenFn> =>
+		listen<AppMetrics>("app-metrics", (event) => callback(event.payload)),
 };
 
 export const devEnvironments = {

@@ -1,12 +1,21 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-import { git, workspaces as workspacesApi } from "../lib/ipc";
+import {
+	type GitFetchBundle,
+	git,
+	workspaces as workspacesApi,
+} from "../lib/ipc";
 import type { GitChangedFile } from "../lib/types";
-import { useWorkspaceStore } from "./workspaceStore";
 import { useWorkspaceGitStore } from "./workspaceGitStore";
+import { useWorkspaceStore } from "./workspaceStore";
 
 let fetchGeneration = 0;
-let lastFingerprint: string | null = null;
+
+// Single-flight guards. With WKWebView IPC having ~100-200ms per-call
+// main-thread overhead, firing concurrent fetches (e.g. fs-change AND
+// git-change both triggering during a `git stash`) compounds the freeze.
+// These ensure at most one of each is in flight; concurrent callers reuse
+// the in-flight promise instead of starting a new fetch.
+let inFlightFetch: Promise<void> | null = null;
 
 // Per-workspace cache so that switching workspaces can hydrate the singleton
 // instantly from prior data instead of clearing-then-refetching. Kept in
@@ -19,7 +28,14 @@ interface GitChangesCacheEntry {
 }
 
 const gitChangesCache = new Map<string, GitChangesCacheEntry>();
-const fingerprintByWorkspaceId = new Map<string, string>();
+
+/** Cache-presence probe used by `useGitDataSync`'s workspace-switch effect.
+ *  Returns true when we've previously stored a bundle for this workspace —
+ *  meaning the scheduler has pushed at least once and the cache will hydrate
+ *  the singleton without a fallback `fetchChanges` invoke. */
+export function hasGitDataCachedFor(workspaceId: string): boolean {
+	return gitChangesCache.has(workspaceId);
+}
 
 function emptyCacheEntry(): GitChangesCacheEntry {
 	return {
@@ -49,7 +65,6 @@ function filesEqual(a: GitChangedFile[], b: GitChangedFile[]): boolean {
 }
 
 interface GitChangesState {
-	panelOpen: boolean;
 	changedFiles: GitChangedFile[];
 	baseBranch: string | null;
 	currentBranch: string | null;
@@ -58,17 +73,22 @@ interface GitChangesState {
 	error: string | null;
 	collapsedSections: Record<string, boolean>;
 	branchSelectorOpen: boolean;
-
-	togglePanel: () => void;
-	setPanel: (open: boolean) => void;
 	fetchChanges: (
 		cwd: string,
 		workspaceBaseBranch?: string | null,
 	) => Promise<void>;
-	refreshChanges: (
-		cwd: string,
-		workspaceBaseBranch?: string | null,
-	) => Promise<void>;
+	/** Apply a Rust-pushed bundle to the per-workspace caches and (if it's
+	 *  for the active workspace) the singleton store. The primary update path
+	 *  in the new push architecture — see `git_scheduler.rs` and the
+	 *  `git-state-<workspaceId>` event handler in `useGitDataSync`. */
+	applyBundle: (workspaceId: string, bundle: GitFetchBundle) => void;
+	/** Apply a Rust-pushed error. `notGitRepo === true` triggers the
+	 *  `NotAGitRepoEmpty` empty state via `workspaceGitStore.setInfo`. */
+	applyError: (
+		workspaceId: string,
+		message: string,
+		notGitRepo: boolean,
+	) => void;
 	toggleSection: (section: string) => void;
 	setBaseBranch: (
 		workspaceId: string,
@@ -82,238 +102,257 @@ interface GitChangesState {
 	hydrateFromWorkspace: (workspaceId: string | null) => void;
 }
 
-export const useGitChangesStore = create<GitChangesState>()(
-	persist(
-		(set, get) => ({
-			panelOpen: false,
+export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
+	changedFiles: [],
+	baseBranch: null,
+	currentBranch: null,
+	availableBranches: [],
+	loading: false,
+	error: null,
+	collapsedSections: {},
+	branchSelectorOpen: false,
+
+	fetchChanges: async (cwd, workspaceBaseBranch) => {
+		if (inFlightFetch) {
+			return inFlightFetch;
+		}
+		let resolveInFlight: () => void = () => {};
+		inFlightFetch = new Promise<void>((res) => {
+			resolveInFlight = res;
+		});
+		// Capture the workspace that owns this fetch. The cache is keyed by
+		// this id so a fetch that started for A still populates cache[A]
+		// even if the user has since switched to B (the gen check guards
+		// the singleton update, not the cache write).
+		const startedForWorkspaceId =
+			useWorkspaceStore.getState().activeWorkspaceId;
+		const gen = ++fetchGeneration;
+		// Only show loading spinner on first fetch — avoid flicker on refreshes
+		if (get().changedFiles.length === 0 && !get().currentBranch) {
+			set({ loading: true, error: null });
+		} else {
+			set({ error: null });
+		}
+		try {
+			const bundle = await git.fetchBundle(cwd, workspaceBaseBranch);
+			const files = bundle.changedFiles;
+			const branchInfo = bundle.branchInfo;
+			const newBaseBranch = workspaceBaseBranch || branchInfo.defaultBranch;
+			if (startedForWorkspaceId) {
+				const existing =
+					gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
+				gitChangesCache.set(startedForWorkspaceId, {
+					...existing,
+					changedFiles: files,
+					baseBranch: newBaseBranch,
+					currentBranch: branchInfo.currentBranch,
+				});
+			}
+			if (gen !== fetchGeneration) return; // stale singleton
+			// Don't write A's changes into the singleton if the user has
+			// switched to B and B's fetch was skipped by the freshness gate
+			// (so fetchGeneration was never bumped past A's gen).
+			if (
+				startedForWorkspaceId !== useWorkspaceStore.getState().activeWorkspaceId
+			)
+				return;
+			const state = get();
+			const updates: Partial<GitChangesState> = { loading: false };
+			if (!filesEqual(state.changedFiles, files)) {
+				updates.changedFiles = files;
+			}
+			if (state.baseBranch !== newBaseBranch) {
+				updates.baseBranch = newBaseBranch;
+			}
+			if (state.currentBranch !== branchInfo.currentBranch) {
+				updates.currentBranch = branchInfo.currentBranch;
+			}
+			set(updates);
+			// Keep sidebar chip and stats in sync without extra IPC calls
+			const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+			if (activeId) {
+				const totalAdd = files.reduce((s, f) => s + f.additions, 0);
+				const totalDel = files.reduce((s, f) => s + f.deletions, 0);
+				useWorkspaceGitStore.getState().setInfo(activeId, {
+					isGitRepo: true,
+					currentBranch: branchInfo.currentBranch,
+					changedFileCount: files.length,
+					additions: totalAdd,
+					deletions: totalDel,
+				});
+				workspacesApi
+					.update(activeId, { lastBranch: branchInfo.currentBranch })
+					.catch(() => {});
+			}
+		} catch (e) {
+			if (gen !== fetchGeneration) return; // stale response
+			const errMsg = e instanceof Error ? e.message : String(e);
+			set({
+				loading: false,
+				error: errMsg,
+				changedFiles: [],
+			});
+			// Sync non-git status so sidebar chip and panel stay consistent
+			if (/not a git repository/i.test(errMsg)) {
+				const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+				if (activeId) {
+					useWorkspaceGitStore.getState().setInfo(activeId, {
+						isGitRepo: false,
+						currentBranch: null,
+						changedFileCount: 0,
+						additions: 0,
+						deletions: 0,
+					});
+				}
+			}
+		} finally {
+			inFlightFetch = null;
+			resolveInFlight();
+		}
+	},
+
+	applyBundle: (workspaceId, bundle) => {
+		const files = bundle.changedFiles;
+		const branchInfo = bundle.branchInfo;
+		const wsState = useWorkspaceStore.getState();
+		const workspace = wsState.workspaces.find((w) => w.id === workspaceId);
+		const workspaceBaseBranch = workspace?.baseBranch ?? null;
+		const newBaseBranch = workspaceBaseBranch || branchInfo.defaultBranch;
+
+		// Always: cache + fingerprint, so hydrateFromWorkspace works correctly
+		// when this workspace becomes active later.
+		const existing = gitChangesCache.get(workspaceId) ?? emptyCacheEntry();
+		const prevCurrentBranch = existing.currentBranch;
+		gitChangesCache.set(workspaceId, {
+			...existing,
+			changedFiles: files,
+			baseBranch: newBaseBranch,
+			currentBranch: branchInfo.currentBranch,
+		});
+
+		// Always: sidebar chip — keeps WorkspaceItem accurate for background
+		// workspaces too (per the unified-dispatch decision in the plan).
+		const totalAdd = files.reduce((s, f) => s + f.additions, 0);
+		const totalDel = files.reduce((s, f) => s + f.deletions, 0);
+		useWorkspaceGitStore.getState().setInfo(workspaceId, {
+			isGitRepo: true,
+			currentBranch: branchInfo.currentBranch,
+			changedFileCount: files.length,
+			additions: totalAdd,
+			deletions: totalDel,
+		});
+		// Persist the branch to the workspace_store, but ONLY when it actually
+		// changed. Every `invoke` carries ~100-1000 ms of WKWebView main-thread
+		// overhead in this app, and the scheduler pushes a bundle on every
+		// fs/git event during a `git stash` burst — firing this on every
+		// push was the residual freeze after the architectural pivot. The
+		// branch rarely changes; gating on diff drops this to ~0 invokes/burst.
+		if (branchInfo.currentBranch !== prevCurrentBranch) {
+			workspacesApi
+				.update(workspaceId, { lastBranch: branchInfo.currentBranch })
+				.catch(() => {});
+		}
+
+		// Singleton: only when this bundle is for the active workspace.
+		// Background-workspace pushes update the per-workspace caches above
+		// without disturbing what's currently visible in the Git changes tab.
+		if (workspaceId !== wsState.activeWorkspaceId) {
+			return;
+		}
+		const state = get();
+		const updates: Partial<GitChangesState> = { loading: false, error: null };
+		if (!filesEqual(state.changedFiles, files)) {
+			updates.changedFiles = files;
+		}
+		if (state.baseBranch !== newBaseBranch) {
+			updates.baseBranch = newBaseBranch;
+		}
+		if (state.currentBranch !== branchInfo.currentBranch) {
+			updates.currentBranch = branchInfo.currentBranch;
+		}
+		set(updates);
+	},
+
+	applyError: (workspaceId, message, notGitRepo) => {
+		if (notGitRepo) {
+			useWorkspaceGitStore.getState().setInfo(workspaceId, {
+				isGitRepo: false,
+				currentBranch: null,
+				changedFileCount: 0,
+				additions: 0,
+				deletions: 0,
+			});
+		}
+		const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+		if (workspaceId !== activeId) return;
+		set({ loading: false, error: message, changedFiles: [] });
+	},
+
+	toggleSection: (section) =>
+		set((s) => ({
+			collapsedSections: {
+				...s.collapsedSections,
+				[section]: !s.collapsedSections[section],
+			},
+		})),
+
+	setBaseBranch: async (workspaceId, branch, cwd) => {
+		await workspacesApi.update(workspaceId, { baseBranch: branch });
+		useWorkspaceStore.getState().setWorkspaceBaseBranch(workspaceId, branch);
+		// Restart the per-workspace scheduler with the new baseBranch.
+		// The scheduler holds baseBranch immutable for its lifetime — restart
+		// is the supported way to change it (no internal mutex/setter), and
+		// `start` fires an immediate fetch so the panel refreshes without
+		// going through the slow `invoke`-based path.
+		await git.schedulerStop(workspaceId);
+		await git.schedulerStart(workspaceId, cwd, branch);
+	},
+
+	toggleBranchSelector: () =>
+		set((s) => ({ branchSelectorOpen: !s.branchSelectorOpen })),
+	closeBranchSelector: () => set({ branchSelectorOpen: false }),
+
+	fetchBranches: async (cwd) => {
+		const startedForWorkspaceId =
+			useWorkspaceStore.getState().activeWorkspaceId;
+		try {
+			const branches = await git.listBranches(cwd);
+			if (startedForWorkspaceId) {
+				const existing =
+					gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
+				gitChangesCache.set(startedForWorkspaceId, {
+					...existing,
+					availableBranches: branches,
+				});
+			}
+			set({ availableBranches: branches });
+		} catch {
+			set({ availableBranches: [] });
+		}
+	},
+
+	clear: () => {
+		set({
 			changedFiles: [],
 			baseBranch: null,
 			currentBranch: null,
 			availableBranches: [],
 			loading: false,
 			error: null,
-			collapsedSections: {},
 			branchSelectorOpen: false,
+		});
+	},
 
-			togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
-			setPanel: (open) => set({ panelOpen: open }),
-
-			fetchChanges: async (cwd, workspaceBaseBranch) => {
-				// Capture the workspace that owns this fetch. The cache is keyed by
-				// this id so a fetch that started for A still populates cache[A]
-				// even if the user has since switched to B (the gen check guards
-				// the singleton update, not the cache write).
-				const startedForWorkspaceId =
-					useWorkspaceStore.getState().activeWorkspaceId;
-				const gen = ++fetchGeneration;
-				// Only show loading spinner on first fetch — avoid flicker on refreshes
-				if (get().changedFiles.length === 0 && !get().currentBranch) {
-					set({ loading: true, error: null });
-				} else {
-					set({ error: null });
-				}
-				try {
-					const [files, branchInfo, fingerprint] = await Promise.all([
-						git.changedFiles(cwd, workspaceBaseBranch),
-						git.branchInfo(cwd),
-						git.statusFingerprint(cwd),
-					]);
-					const newBaseBranch = workspaceBaseBranch || branchInfo.defaultBranch;
-					if (startedForWorkspaceId) {
-						const existing =
-							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
-						gitChangesCache.set(startedForWorkspaceId, {
-							...existing,
-							changedFiles: files,
-							baseBranch: newBaseBranch,
-							currentBranch: branchInfo.currentBranch,
-						});
-						fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
-					}
-					if (gen !== fetchGeneration) return; // stale singleton
-					// Don't write A's changes into the singleton if the user has
-					// switched to B and B's fetch was skipped by the freshness gate
-					// (so fetchGeneration was never bumped past A's gen).
-					if (
-						startedForWorkspaceId !==
-						useWorkspaceStore.getState().activeWorkspaceId
-					)
-						return;
-					lastFingerprint = fingerprint;
-					const state = get();
-					const updates: Partial<GitChangesState> = { loading: false };
-					if (!filesEqual(state.changedFiles, files)) {
-						updates.changedFiles = files;
-					}
-					if (state.baseBranch !== newBaseBranch) {
-						updates.baseBranch = newBaseBranch;
-					}
-					if (state.currentBranch !== branchInfo.currentBranch) {
-						updates.currentBranch = branchInfo.currentBranch;
-					}
-					set(updates);
-					// Keep sidebar chip and stats in sync without extra IPC calls
-					const activeId = useWorkspaceStore.getState().activeWorkspaceId;
-					if (activeId) {
-						const totalAdd = files.reduce((s, f) => s + f.additions, 0);
-						const totalDel = files.reduce((s, f) => s + f.deletions, 0);
-						useWorkspaceGitStore.getState().setInfo(activeId, {
-							isGitRepo: true,
-							currentBranch: branchInfo.currentBranch,
-							changedFileCount: files.length,
-							additions: totalAdd,
-							deletions: totalDel,
-						});
-						workspacesApi
-							.update(activeId, { lastBranch: branchInfo.currentBranch })
-							.catch(() => {});
-					}
-				} catch (e) {
-					if (gen !== fetchGeneration) return; // stale response
-					const errMsg = e instanceof Error ? e.message : String(e);
-					set({
-						loading: false,
-						error: errMsg,
-						changedFiles: [],
-					});
-					// Sync non-git status so sidebar chip and panel stay consistent
-					if (/not a git repository/i.test(errMsg)) {
-						const activeId = useWorkspaceStore.getState().activeWorkspaceId;
-						if (activeId) {
-							useWorkspaceGitStore.getState().setInfo(activeId, {
-								isGitRepo: false,
-								currentBranch: null,
-								changedFileCount: 0,
-								additions: 0,
-								deletions: 0,
-							});
-						}
-					}
-				}
-			},
-
-			refreshChanges: async (cwd, workspaceBaseBranch) => {
-				const startedForWorkspaceId =
-					useWorkspaceStore.getState().activeWorkspaceId;
-				try {
-					const fingerprint = await git.statusFingerprint(cwd);
-					if (fingerprint === lastFingerprint) return;
-					const gen = ++fetchGeneration;
-					const files = await git.changedFiles(cwd, workspaceBaseBranch);
-					if (startedForWorkspaceId) {
-						const existing =
-							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
-						gitChangesCache.set(startedForWorkspaceId, {
-							...existing,
-							changedFiles: files,
-						});
-						fingerprintByWorkspaceId.set(startedForWorkspaceId, fingerprint);
-					}
-					if (gen !== fetchGeneration) return;
-					// See fetchChanges: guard against contaminating another
-					// workspace's panel when its fetch was skipped as fresh.
-					if (
-						startedForWorkspaceId !==
-						useWorkspaceStore.getState().activeWorkspaceId
-					)
-						return;
-					lastFingerprint = fingerprint; // only commit once fetch succeeded
-					const state = get();
-					if (!filesEqual(state.changedFiles, files)) {
-						set({ changedFiles: files });
-					}
-					// Keep sidebar chip and stats in sync
-					const activeId = useWorkspaceStore.getState().activeWorkspaceId;
-					if (activeId) {
-						const totalAdd = files.reduce((s, f) => s + f.additions, 0);
-						const totalDel = files.reduce((s, f) => s + f.deletions, 0);
-						useWorkspaceGitStore.getState().setInfo(activeId, {
-							isGitRepo: true,
-							currentBranch: state.currentBranch,
-							changedFileCount: files.length,
-							additions: totalAdd,
-							deletions: totalDel,
-						});
-					}
-				} catch {
-					// Fingerprint/refresh failures are non-critical
-				}
-			},
-
-			toggleSection: (section) =>
-				set((s) => ({
-					collapsedSections: {
-						...s.collapsedSections,
-						[section]: !s.collapsedSections[section],
-					},
-				})),
-
-			setBaseBranch: async (workspaceId, branch, cwd) => {
-				await workspacesApi.update(workspaceId, { baseBranch: branch });
-				useWorkspaceStore
-					.getState()
-					.setWorkspaceBaseBranch(workspaceId, branch);
-				await get().fetchChanges(cwd, branch);
-			},
-
-			toggleBranchSelector: () =>
-				set((s) => ({ branchSelectorOpen: !s.branchSelectorOpen })),
-			closeBranchSelector: () => set({ branchSelectorOpen: false }),
-
-			fetchBranches: async (cwd) => {
-				const startedForWorkspaceId =
-					useWorkspaceStore.getState().activeWorkspaceId;
-				try {
-					const branches = await git.listBranches(cwd);
-					if (startedForWorkspaceId) {
-						const existing =
-							gitChangesCache.get(startedForWorkspaceId) ?? emptyCacheEntry();
-						gitChangesCache.set(startedForWorkspaceId, {
-							...existing,
-							availableBranches: branches,
-						});
-					}
-					set({ availableBranches: branches });
-				} catch {
-					set({ availableBranches: [] });
-				}
-			},
-
-			clear: () => {
-				lastFingerprint = null;
-				set({
-					changedFiles: [],
-					baseBranch: null,
-					currentBranch: null,
-					availableBranches: [],
-					loading: false,
-					error: null,
-					branchSelectorOpen: false,
-				});
-			},
-
-			hydrateFromWorkspace: (workspaceId) => {
-				const entry = workspaceId
-					? gitChangesCache.get(workspaceId)
-					: undefined;
-				lastFingerprint = workspaceId
-					? (fingerprintByWorkspaceId.get(workspaceId) ?? null)
-					: null;
-				set({
-					changedFiles: entry?.changedFiles ?? [],
-					baseBranch: entry?.baseBranch ?? null,
-					currentBranch: entry?.currentBranch ?? null,
-					availableBranches: entry?.availableBranches ?? [],
-					loading: false,
-					error: null,
-					branchSelectorOpen: false,
-				});
-			},
-
-		}),
-		{
-			name: "abundio-git-panel",
-			partialize: (state) => ({ panelOpen: state.panelOpen }),
-		},
-	),
-);
+	hydrateFromWorkspace: (workspaceId) => {
+		const entry = workspaceId ? gitChangesCache.get(workspaceId) : undefined;
+		set({
+			changedFiles: entry?.changedFiles ?? [],
+			baseBranch: entry?.baseBranch ?? null,
+			currentBranch: entry?.currentBranch ?? null,
+			availableBranches: entry?.availableBranches ?? [],
+			loading: false,
+			error: null,
+			branchSelectorOpen: false,
+		});
+	},
+}));
