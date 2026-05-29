@@ -547,20 +547,42 @@ export async function createTerminal(
 		minimumContrastRatio: 4.5,
 	});
 
+	// Open a URL in the OS browser — unless the foreground app is reporting
+	// mouse events. Full-screen TUIs like the GitHub Copilot CLI enable mouse
+	// tracking and handle clicks on their own hyperlinks themselves (that's why
+	// they look "already clickable"). xterm activates its link layer on the
+	// SAME click without suppressing the mouse report, so the app and our link
+	// layer would each open the URL — two browser tabs. When the app is tracking
+	// the mouse we stand down and let it own the click; in the normal shell
+	// buffer (no mouse tracking) our detection is the only thing that opens it.
+	const openExternalUrl = (url: string) => {
+		if (term.modes.mouseTrackingMode !== "none") return;
+		open(url);
+	};
+
+	// Route OSC 8 hyperlinks (emitted by CLIs like GitHub Copilot) through the
+	// same opener as bare URLs. Without an explicit linkHandler, xterm's built-in
+	// OSC link provider falls back to its default (a confirm() + bare
+	// window.open()), which in WKWebView leaks the URL to the system browser.
+	term.options.linkHandler = {
+		activate: (_event, uri) => openExternalUrl(uri),
+	};
+
 	const fitAddon = new FitAddon();
 	const searchAddon = new SearchAddon();
 	const serializeAddon = new SerializeAddon();
 	term.loadAddon(fitAddon);
 	term.loadAddon(searchAddon);
 	term.loadAddon(serializeAddon);
-	// Plain-click activates both URLs and file links (ADR-0004). xterm's link
-	// layer intercepts the click on a linked range before it reaches the
-	// selection / focus / mouse-reporting paths, so there's no collision —
-	// the cost is that text selections starting inside a linked path must
-	// begin outside the link's hot zone.
+	// Plain-click activates URLs, OSC 8 hyperlinks, and file links (ADR-0004).
+	// xterm's link layer intercepts the click for selection / focus, but NOT for
+	// mouse reporting — when a TUI app has mouse tracking on it receives the
+	// click too, so URL opens are gated through openExternalUrl to avoid
+	// double-opening. The cost of plain-click activation is that text selections
+	// starting inside a linked path must begin outside the link's hot zone.
 	term.loadAddon(
 		new WebLinksAddon((_event, url) => {
-			open(url);
+			openExternalUrl(url);
 		}),
 	);
 	installFileLinkProvider(term, paneId);
