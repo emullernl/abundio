@@ -327,6 +327,25 @@ pub async fn tab_delete(
     store.delete_tab(&id)
 }
 
+// ── Note commands ──
+
+#[tauri::command]
+pub async fn note_get(
+    store: State<'_, WorkspaceStore>,
+    workspace_id: String,
+) -> Result<String, AbundioError> {
+    store.get_note(&workspace_id)
+}
+
+#[tauri::command]
+pub async fn note_set(
+    store: State<'_, WorkspaceStore>,
+    workspace_id: String,
+    content: String,
+) -> Result<(), AbundioError> {
+    store.set_note(&workspace_id, &content)
+}
+
 // ── PTY log commands ──
 
 #[tauri::command]

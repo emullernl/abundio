@@ -720,6 +720,8 @@ pub fn run() {
             commands::tab_list,
             commands::tab_update,
             commands::tab_delete,
+            commands::note_get,
+            commands::note_set,
             file_explorer::fs_list_dir,
             file_explorer::fs_list_files,
             file_explorer::fs_index_workspace_files,

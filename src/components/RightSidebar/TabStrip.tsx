@@ -2,7 +2,7 @@ import {
 	type RightSidebarTab,
 	useWindowUiStore,
 } from "../../stores/windowUiStore";
-import { Folder, GitCompare, PanelRight, Search } from "../Icons";
+import { Folder, GitCompare, PanelRight, Search, StickyNote } from "../Icons";
 
 interface TabDef {
 	id: RightSidebarTab;
@@ -15,6 +15,7 @@ const TABS: TabDef[] = [
 	{ id: "git", label: "Git changes", icon: GitCompare, shortcut: "⇧⌘G" },
 	{ id: "explorer", label: "Explorer", icon: Folder, shortcut: "⇧⌘E" },
 	{ id: "search", label: "Search", icon: Search, shortcut: "⇧⌘F" },
+	{ id: "notes", label: "Notes", icon: StickyNote, shortcut: "⇧⌘K" },
 ];
 
 /** Horizontal tab strip at the top of the expanded right sidebar.

@@ -271,3 +271,55 @@ export function Ellipsis({ size, ...props }: IconProps) {
 		</svg>
 	);
 }
+
+export function StickyNote({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M15.5 3H5a2 2 0 00-2 2v14a2 2 0 002 2h9l6-6V5a2 2 0 00-2-2z" />
+			<path d="M14 21v-5a2 2 0 012-2h5" />
+		</svg>
+	);
+}
+
+export function Bold({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M6 4h7a4 4 0 010 8H6zM6 12h8a4 4 0 010 8H6z" />
+		</svg>
+	);
+}
+
+export function Italic({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M19 4h-9M14 20H5M15 4L9 20" />
+		</svg>
+	);
+}
+
+export function Strikethrough({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M16 4H9a3 3 0 00-2.83 4M14 12a4 4 0 010 8H6M4 12h16" />
+		</svg>
+	);
+}
+
+export function ListBullet({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M8 6h13M8 12h13M8 18h13" />
+			<circle cx="3.5" cy="6" r="1" fill="currentColor" stroke="none" />
+			<circle cx="3.5" cy="12" r="1" fill="currentColor" stroke="none" />
+			<circle cx="3.5" cy="18" r="1" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
+export function ListChecks({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M3 6l1.5 1.5L7 5M3 13l1.5 1.5L7 12M11 6h10M11 13h10M11 19h10" />
+		</svg>
+	);
+}

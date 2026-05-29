@@ -35,6 +35,7 @@ import type { PaneNode } from "./lib/types";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
+import { useNotesStore } from "./stores/notesStore";
 import {
 	clearPaneClose,
 	usePaneCloseConfirmStore,
@@ -357,6 +358,40 @@ export function App() {
 		return cleanup;
 	}, []);
 
+	// Per-Workspace Notes: load the active workspace's note, and flush the
+	// previous one's pending edit before swapping (the editor only debounces).
+	const prevNoteWorkspaceId = useRef<string | null>(null);
+	useEffect(() => {
+		const prev = prevNoteWorkspaceId.current;
+		if (prev && prev !== activeWorkspaceId) {
+			useNotesStore
+				.getState()
+				.flushNote(prev)
+				.catch(() => {});
+		}
+		if (activeWorkspaceId) {
+			useNotesStore
+				.getState()
+				.loadNote(activeWorkspaceId)
+				.catch(() => {});
+		}
+		prevNoteWorkspaceId.current = activeWorkspaceId;
+	}, [activeWorkspaceId]);
+
+	// Flush the active note on window close so the last keystroke survives quit.
+	useEffect(() => {
+		const flush = () => {
+			const id = useWorkspaceStore.getState().activeWorkspaceId;
+			if (id)
+				useNotesStore
+					.getState()
+					.flushNote(id)
+					.catch(() => {});
+		};
+		window.addEventListener("beforeunload", flush);
+		return () => window.removeEventListener("beforeunload", flush);
+	}, []);
+
 	// Detect installed dev environments once at startup.
 	useEffect(() => {
 		useDevEnvironmentsStore.getState().load();
@@ -553,6 +588,9 @@ export function App() {
 		});
 		registerAction("toggle-right-sidebar-explorer", () => {
 			useWindowUiStore.getState().toggleRightSidebarTab("explorer");
+		});
+		registerAction("toggle-right-sidebar-notes", () => {
+			useWindowUiStore.getState().toggleRightSidebarTab("notes");
 		});
 		registerAction("toggle-markdown-preview", () => {
 			const paneId = useWorkspaceStore.getState().focusedPaneId;

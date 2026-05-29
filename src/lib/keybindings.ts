@@ -20,6 +20,7 @@ type KeyAction =
 	| "save-file"
 	| "toggle-right-sidebar-git"
 	| "toggle-right-sidebar-explorer"
+	| "toggle-right-sidebar-notes"
 	| "toggle-markdown-preview"
 	| "open-settings";
 
@@ -55,6 +56,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"prev-tab",
 	"toggle-right-sidebar-git",
 	"toggle-right-sidebar-explorer",
+	"toggle-right-sidebar-notes",
 	"toggle-markdown-preview",
 	"open-settings",
 	"save-file",
@@ -170,6 +172,13 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		shift: true,
 		ctrl: !isMac,
 		action: "toggle-right-sidebar-explorer",
+	},
+	{
+		key: "k",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "toggle-right-sidebar-notes",
 	},
 	{
 		key: "m",

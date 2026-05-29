@@ -292,6 +292,37 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    // ── Notes ──
+    //
+    // Each workspace has at most one Note — a rich-text scratchpad stored as
+    // opaque TipTap JSON. The store never parses `content`; it's a plain string
+    // round-tripped to the frontend editor. A missing row means "no note yet",
+    // surfaced as an empty string.
+
+    pub fn get_note(&self, workspace_id: &str) -> Result<String, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT content FROM notes WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(String::new()),
+            other => Err(AbundioError::Db(other)),
+        })
+    }
+
+    pub fn set_note(&self, workspace_id: &str, content: &str) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO notes (workspace_id, content, updated_at)
+             VALUES (?1, ?2, unixepoch())
+             ON CONFLICT(workspace_id) DO UPDATE SET content = ?2, updated_at = unixepoch()",
+            rusqlite::params![workspace_id, content],
+        )?;
+        Ok(())
+    }
+
     pub fn reorder_workspaces(&self, ids: &[String]) -> Result<(), AbundioError> {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
@@ -587,5 +618,60 @@ mod tests {
         assert_eq!(workspaces[0].workspace.name, "C");
         assert_eq!(workspaces[1].workspace.name, "A");
         assert_eq!(workspaces[2].workspace.name, "B");
+    }
+
+    #[test]
+    fn get_note_returns_empty_when_absent() {
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        assert_eq!(store.get_note(&ws.workspace.id).unwrap(), "");
+    }
+
+    #[test]
+    fn set_then_get_note_round_trips() {
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        let json = r#"{"type":"doc","content":[{"type":"paragraph"}]}"#;
+        store.set_note(&ws.workspace.id, json).unwrap();
+        assert_eq!(store.get_note(&ws.workspace.id).unwrap(), json);
+    }
+
+    #[test]
+    fn set_note_upserts_without_duplicates() {
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        store.set_note(&ws.workspace.id, "first").unwrap();
+        store.set_note(&ws.workspace.id, "second").unwrap();
+        assert_eq!(store.get_note(&ws.workspace.id).unwrap(), "second");
+        let count: i32 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE workspace_id = ?1",
+                [&ws.workspace.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn delete_workspace_cascades_to_note() {
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        store.set_note(&ws.workspace.id, "keep notes").unwrap();
+        store.delete(&ws.workspace.id).unwrap();
+        let count: i32 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE workspace_id = ?1",
+                [&ws.workspace.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

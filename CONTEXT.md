@@ -48,6 +48,9 @@ _Avoid_: render pane, markdown viewer
 **Tab**: A named pane layout within a Workspace. Each tab has its own root `PaneNode`.
 _Avoid_: view, screen
 
+**Note**: A single per-Workspace rich-text scratchpad (free text + checklists), edited in the right sidebar's Notes tab and stored as TipTap JSON. Exactly one per Workspace; autosaved. See ADR-0012.
+_Avoid_: memo, scratchpad, comment
+
 **PTY**: A pseudo-terminal process bound to a Pane. Identified by a `ptyId` string. Spawned on first render; IDs from previous sessions are cleared on load.
 _Avoid_: terminal process, shell
 
@@ -101,6 +104,7 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 - A Workspace shown in the sidebar may be neither Active nor Opened — it has not been activated this session.
 - **Closing** a Workspace removes it from Opened; deleting also removes it from the sidebar.
 - Each **Tab** belongs to exactly one **Workspace**.
+- Each **Workspace** has at most one **Note** (one-to-zero-or-one); the Note is deleted with its Workspace.
 - Each **Pane** belongs to exactly one **Tab**. A terminal pane holds at most one **PTY**; a file pane holds at most one open file; a preview pane holds neither — it references a **source pane**.
 - A **preview pane** and its **source pane** always live in the same **Tab**.
 - Abundio derives an **Agent**'s status by observing its **Agent hooks**; a permission-request hook puts the Agent into the **Waiting** state, which clears when the user types into that **Pane**'s terminal.

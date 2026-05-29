@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { Explorer } from "../Explorer/Explorer";
+import { NotesPanel } from "../Notes/NotesPanel";
 import { SearchPanel } from "../Search/SearchPanel";
 import { RightSidebarCollapsedStrip } from "./CollapsedStrip";
 import { GitChangesTab } from "./GitChangesTab";
@@ -68,6 +69,7 @@ export function RightSidebar({ titlebarHeight }: Props) {
 					{activeTab === "git" && <GitChangesTab />}
 					{activeTab === "explorer" && <Explorer />}
 					{activeTab === "search" && <SearchPanel />}
+					{activeTab === "notes" && <NotesPanel />}
 				</div>
 
 				{!prCollapsed && (

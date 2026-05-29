@@ -137,6 +137,15 @@ export const workspaces = {
 	reorder: (ids: string[]) => invoke<void>("workspace_reorder", { ids }),
 };
 
+export const notes = {
+	/** Fetch a workspace's note (TipTap JSON string). `""` means no note yet. */
+	get: (workspaceId: string) => invoke<string>("note_get", { workspaceId }),
+
+	/** Upsert a workspace's note. `content` is an opaque TipTap JSON string. */
+	set: (workspaceId: string, content: string) =>
+		invoke<void>("note_set", { workspaceId, content }),
+};
+
 export const profiles = {
 	list: () => invoke<Profile[]>("profile_list"),
 

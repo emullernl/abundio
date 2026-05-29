@@ -11,7 +11,7 @@ import { persist } from "zustand/middleware";
  *  See ADR-0007 (per-Window state) and ADR-0010 (right sidebar as
  *  in-workspace toolbox). */
 
-export type RightSidebarTab = "git" | "explorer" | "search";
+export type RightSidebarTab = "git" | "explorer" | "search" | "notes";
 
 interface WindowUiState {
 	sidebarCollapsed: boolean;
