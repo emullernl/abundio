@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@tauri-apps/api/window", () => ({
+	getCurrentWindow: () => ({
+		label: "window-self",
+		setTitle: vi.fn(() => Promise.resolve()),
+	}),
+}));
+
 vi.mock("../../lib/ipc", () => ({
 	profiles: {
 		list: vi.fn(() =>
@@ -79,6 +86,20 @@ describe("loadProfiles", () => {
 		);
 		await useProfileStore.getState().loadProfiles();
 		expect(useProfileStore.getState().activeProfileId).toBe("p-default");
+	});
+
+	it("skips other-window-owned profiles but keeps our own stale entry as a candidate", async () => {
+		// No Rust id for us; the ownership map shows p-default held by another
+		// window and p-work held by US (a stale id we're about to overwrite).
+		vi.mocked(profilesApi.getOwnershipMap).mockResolvedValueOnce({
+			"p-default": "window-other",
+			"p-work": "window-self",
+		});
+		await useProfileStore.getState().loadProfiles();
+		// p-default is taken by another window; p-work is ours, so it's the
+		// valid fallback. The old always-true filter wrongly classified p-work
+		// as taken and fell through to the other-owned p-default.
+		expect(useProfileStore.getState().activeProfileId).toBe("p-work");
 	});
 
 	it("populates ownershipMap from Rust", async () => {

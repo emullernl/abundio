@@ -113,14 +113,6 @@ pub fn open_window_with_profile_and_label(
         .try_state::<ActiveProfileState>()
         .ok_or_else(|| AbundioError::InvalidOperation("ActiveProfileState missing".into()))?;
 
-    // Refuse if another window already owns this profile.
-    if let Some(existing_owner) = state.owner_of_profile(profile_id) {
-        return Err(AbundioError::InvalidOperation(format!(
-            "Profile is already open in window '{}'",
-            existing_owner
-        )));
-    }
-
     // Refuse if the profile doesn't exist (avoids a window that immediately
     // can't load). Also captures the profile name for the window title.
     let profile_store = app
@@ -147,9 +139,16 @@ pub fn open_window_with_profile_and_label(
         _ => generate_window_label(),
     };
 
-    // Claim ownership BEFORE the window mounts. The frontend will call
-    // get_active_profile_for_window during startup and read this back.
-    state.set_for_window(&label, profile_id);
+    // Atomically check-and-claim ownership BEFORE the window mounts (the
+    // frontend reads it back via get_active_profile_for_window during startup).
+    // try_claim folds the "already owned?" check and the insert under one lock
+    // so two racing callers can't both build a window for the same profile.
+    if let Some(existing_owner) = state.try_claim(&label, profile_id) {
+        return Err(AbundioError::InvalidOperation(format!(
+            "Profile is already open in window '{}'",
+            existing_owner
+        )));
+    }
 
     // Match the main window's chrome on macOS: native title bar is overlaid
     // by transparent drag region, traffic lights float on top of content, no

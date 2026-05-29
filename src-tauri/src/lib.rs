@@ -563,34 +563,27 @@ pub fn run() {
 
                 // User-initiated close of a single window (the other windows
                 // remain open). Save the post-removal state so this window
-                // disappears from the next launch's restoration.
+                // disappears from the next launch's restoration. Both the
+                // last-window and windows-remain paths persist the same
+                // snapshot — only the last-window case additionally exits — so
+                // do the save once up front.
+                if let Some(state) =
+                    app_handle.try_state::<profile_store::ActiveProfileState>()
+                {
+                    let remaining = window_persistence::snapshot_from_state(&state);
+                    if let Err(e) = window_persistence::save(&remaining) {
+                        eprintln!("[abundio] failed to persist windows.json: {e}");
+                    }
+                }
                 if no_profile_windows_open(&app_handle) {
-                    // Last window closed by user — equivalent to "quit". Save
-                    // the snapshot that EXCLUDES this window (it's been
-                    // explicitly closed, so the user wants it gone next run)
-                    // and exit. NOTE: this snapshot is empty, meaning next
-                    // launch starts fresh with just the main window on first
-                    // profile. That's the right semantics — if the user has
-                    // intentionally closed every window, they're saying
-                    // "start over."
-                    if let Some(state) =
-                        app_handle.try_state::<profile_store::ActiveProfileState>()
-                    {
-                        let remaining = window_persistence::snapshot_from_state(&state);
-                        if let Err(e) = window_persistence::save(&remaining) {
-                            eprintln!("[abundio] failed to persist windows.json: {e}");
-                        }
-                    }
+                    // Last window closed by user — equivalent to "quit". The
+                    // snapshot just saved EXCLUDES this window (it's been
+                    // explicitly closed, so the user wants it gone next run);
+                    // it's empty, meaning next launch starts fresh with just
+                    // the main window on first profile. That's the right
+                    // semantics — if the user has intentionally closed every
+                    // window, they're saying "start over."
                     app_handle.exit(0);
-                } else {
-                    if let Some(state) =
-                        app_handle.try_state::<profile_store::ActiveProfileState>()
-                    {
-                        let remaining = window_persistence::snapshot_from_state(&state);
-                        if let Err(e) = window_persistence::save(&remaining) {
-                            eprintln!("[abundio] failed to persist windows.json: {e}");
-                        }
-                    }
                 }
             }
             _ => {}

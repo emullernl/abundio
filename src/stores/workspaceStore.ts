@@ -21,6 +21,7 @@ import type {
 	WorkspaceWithTabs,
 } from "../lib/types";
 import { useExplorerStore } from "./explorerStore";
+import { useNotesStore } from "./notesStore";
 import { fallbackProfileId } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
@@ -336,6 +337,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				}
 			}
 		}
+		// Drop any pending debounced note save — the note row is cascade-deleted
+		// with the workspace, so letting the timer fire would error on a missing FK.
+		useNotesStore.getState().cancelPendingSave(id);
 		await workspacesApi.delete(id);
 		usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
 		useWorkspaceGitStore.getState().remove(id);

@@ -22,7 +22,10 @@ SELECT
         hex(randomblob(4)) || '-' ||
         hex(randomblob(2)) || '-4' ||
         substr(hex(randomblob(2)), 2) || '-' ||
-        substr('89ab', abs(random()) % 4 + 1, 1) ||
+        -- Variant nibble (8/9/a/b). Mask the low 2 bits rather than abs()%4:
+        -- abs(random()) is undefined for the minimum signed integer (SQLite
+        -- returns NULL), which would poison the UUID; (random() & 3) is 0..3.
+        substr('89ab', (random() & 3) + 1, 1) ||
         substr(hex(randomblob(2)), 2) || '-' ||
         hex(randomblob(6))
     ),
@@ -35,7 +38,8 @@ SELECT
         hex(randomblob(4)) || '-' ||
         hex(randomblob(2)) || '-4' ||
         substr(hex(randomblob(2)), 2) || '-' ||
-        substr('89ab', abs(random()) % 4 + 1, 1) ||
+        -- See note above: (random() & 3) avoids the abs() overflow footgun.
+        substr('89ab', (random() & 3) + 1, 1) ||
         substr(hex(randomblob(2)), 2) || '-' ||
         hex(randomblob(6))
     ) || '","ptyId":""}',

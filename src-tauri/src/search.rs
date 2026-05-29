@@ -6,9 +6,10 @@ use ignore::overrides::OverrideBuilder;
 use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, State};
+use tauri::{Emitter, EventTarget, State};
 
 use crate::error::AbundioError;
+use crate::window_management::is_profile_window_label;
 
 pub struct SearchManager {
     cancel_flags: DashMap<String, Arc<AtomicBool>>,
@@ -211,7 +212,17 @@ pub async fn fs_search(
                     total_matches.fetch_add(file_result.matches.len(), Ordering::Relaxed);
                     // Stream this file to the UI immediately, then retain it for the
                     // authoritative (sorted) result returned when the walk finishes.
-                    let _ = app.emit(&progress_channel, &file_result);
+                    // Skip the Settings window — it runs no searches, so it would
+                    // just deserialize-and-drop every streamed file.
+                    let _ = app.emit_filter(&progress_channel, &file_result, |target| {
+                        match target {
+                            EventTarget::Window { label }
+                            | EventTarget::Webview { label }
+                            | EventTarget::WebviewWindow { label }
+                            | EventTarget::AnyLabel { label } => is_profile_window_label(label),
+                            _ => true,
+                        }
+                    });
                     files.lock().unwrap().push(file_result);
                 }
 

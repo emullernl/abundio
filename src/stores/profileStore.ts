@@ -110,11 +110,17 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 		if (!valid) {
 			// Either the Rust seed pointed at a profile that no longer exists,
 			// or there was no seed. Pick the first profile not owned by another
-			// window (the current window may itself be in the ownership map
-			// with a stale id we're about to overwrite).
+			// window. Exclude our own window's entry from the "owned" set since
+			// any id we hold here is the stale value we're about to overwrite.
+			let ownLabel: string | null = null;
+			try {
+				ownLabel = getCurrentWindow().label;
+			} catch {
+				// jsdom / outside Tauri — no label to exclude.
+			}
 			const ownedByOthers = new Set(
 				Object.entries(ownership)
-					.filter(([_pid, _label]) => true)
+					.filter(([_pid, label]) => label !== ownLabel)
 					.map(([pid]) => pid),
 			);
 			next =

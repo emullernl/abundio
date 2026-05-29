@@ -35,6 +35,10 @@ interface NotesState {
 	persistNote: (workspaceId: string) => Promise<void>;
 	/** Cancel any pending debounce and persist right now (blur / switch / close). */
 	flushNote: (workspaceId: string) => Promise<void>;
+	/** Drop any pending debounced save without persisting. Call when the
+	 *  workspace is being deleted — its note row is cascade-deleted, so a
+	 *  pending `notesApi.set` would hit a now-missing FK and error. */
+	cancelPendingSave: (workspaceId: string) => void;
 }
 
 export const useNotesStore = create<NotesState>((set, get) => ({
@@ -98,5 +102,13 @@ export const useNotesStore = create<NotesState>((set, get) => ({
 			saveTimers.delete(workspaceId);
 		}
 		await get().persistNote(workspaceId);
+	},
+
+	cancelPendingSave: (workspaceId) => {
+		const existing = saveTimers.get(workspaceId);
+		if (existing) {
+			clearTimeout(existing);
+			saveTimers.delete(workspaceId);
+		}
 	},
 }));

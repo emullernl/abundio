@@ -126,8 +126,16 @@ export function SettingsApp() {
  * sensitive comparison would never match what we sent (locally rebuilt in
  * insertion order by `mergeAgentsWithBuiltins`), so the fingerprint would
  * flip-flop and the self-echo would spin forever, freezing the UI.
+ *
+ * Exposed as an explicit, idempotent setup function (called once per window
+ * from main.tsx) rather than a module-eval side effect, so the registration is
+ * observable and repeated imports (HMR / tests importing this module) don't
+ * fan out duplicate subscribers and listeners. No-op outside a webview.
  */
-if (typeof window !== "undefined") {
+let crossWindowSyncInstalled = false;
+export function setupCrossWindowSync(): void {
+	if (typeof window === "undefined" || crossWindowSyncInstalled) return;
+	crossWindowSyncInstalled = true;
 	type SettingsSlice = {
 		terminalFontFamily: unknown;
 		uiFontFamily: unknown;

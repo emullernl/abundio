@@ -17,9 +17,10 @@ use std::thread;
 use std::time::Duration;
 
 use sysinfo::System;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, EventTarget};
 
 use crate::events::AppMetrics;
+use crate::window_management::is_profile_window_label;
 
 /// How often the machine is sampled. Comfortably above sysinfo's minimum CPU
 /// delta window, and slow enough to be negligible overhead while still feeling
@@ -47,7 +48,17 @@ pub fn start_metrics_sampler(app: AppHandle) {
                 memory_used_bytes: sys.used_memory(),
                 memory_total_bytes: sys.total_memory(),
             };
-            if app.emit("app-metrics", &metrics).is_err() {
+            // Only profile-bound windows render the status bar; the Settings
+            // window has no metrics consumer, so skip it rather than waking its
+            // webview every 1.5s to deserialize-and-drop the payload.
+            let emit_result = app.emit_filter("app-metrics", &metrics, |target| match target {
+                EventTarget::Window { label }
+                | EventTarget::Webview { label }
+                | EventTarget::WebviewWindow { label }
+                | EventTarget::AnyLabel { label } => is_profile_window_label(label),
+                _ => true,
+            });
+            if emit_result.is_err() {
                 // No receivers / invalid handle — the app is shutting down.
                 break;
             }

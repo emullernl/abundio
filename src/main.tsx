@@ -4,12 +4,14 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { initNotificationListener } from "./lib/notificationRouter";
 import { primaryFontFamily } from "./lib/terminalManager";
-import { SettingsApp } from "./SettingsApp";
-// Side-effect import: the storage-event bridge inside SettingsApp.tsx
-// registers in every window so theme/font changes from the settings window
-// propagate live. (See the bottom of SettingsApp.tsx.)
+import { SettingsApp, setupCrossWindowSync } from "./SettingsApp";
 import "./lib/windowFocus";
 import "./styles/globals.css";
+
+// The cross-window settings bridge runs in every window (App and Settings) so
+// theme/font changes propagate live. Registered explicitly here — once per
+// window — rather than as a module-eval side effect. (See SettingsApp.tsx.)
+setupCrossWindowSync();
 
 /** Which OS-level Abundio window is hosting this React app. The string is
  *  evaluated synchronously at module load; safe to compare against literals. */

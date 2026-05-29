@@ -65,4 +65,14 @@ describe("notesStore", () => {
 		vi.advanceTimersByTime(500);
 		expect(notes.set).toHaveBeenCalledTimes(1);
 	});
+
+	it("cancelPendingSave drops the pending debounce without persisting", () => {
+		vi.useFakeTimers();
+		useNotesStore.getState().updateNoteLocal("w1", "typed");
+		// Workspace is being deleted — its note row is cascade-deleted, so the
+		// pending save must not fire (it would error on a missing FK).
+		useNotesStore.getState().cancelPendingSave("w1");
+		vi.advanceTimersByTime(500);
+		expect(notes.set).not.toHaveBeenCalled();
+	});
 });

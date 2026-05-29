@@ -382,8 +382,15 @@ pub fn detect_default_branch_uncached(cwd: &str) -> Result<String, AbundioError>
 
 fn untracked_files(repo: &Repository) -> Vec<GitChangedFile> {
     let mut opts = StatusOptions::new();
+    // Don't recurse into untracked directories: a single un-gitignored tree
+    // (a fresh node_modules/ or target/) would make libgit2 walk every file
+    // beneath it before our MAX_UNTRACKED cap can break the loop — the cap only
+    // short-circuits the user-side iteration, not libgit2's enumeration. With
+    // recursion off, libgit2 surfaces the directory itself as one untracked
+    // entry (git's default `git status` behaviour), matching
+    // compute_status_fingerprint_sync. See PR #94 review.
     opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
+        .recurse_untracked_dirs(false)
         .include_ignored(false);
     let statuses = match repo.statuses(Some(&mut opts)) {
         Ok(s) => s,

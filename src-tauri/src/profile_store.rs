@@ -68,6 +68,26 @@ impl ActiveProfileState {
         self.0.lock().unwrap().remove(window_label)
     }
 
+    /// Atomically claims `profile_id` for `window_label`. Returns `None` on a
+    /// successful claim (the window now owns the profile), or `Some(owner)` if a
+    /// *different* window already owns it (claim refused, nothing mutated).
+    ///
+    /// Folding the owner-check and the insert under one lock closes the TOCTOU
+    /// window where two concurrent callers (e.g. two restoration paths, or a
+    /// fast double-click) could both pass a separate `owner_of_profile` check
+    /// and then both `set_for_window`, ending in two windows that briefly think
+    /// they own the same profile. See PR #94 review.
+    pub fn try_claim(&self, window_label: &str, profile_id: &str) -> Option<String> {
+        let mut map = self.0.lock().unwrap();
+        if let Some(owner) = map.iter().find_map(|(label, pid)| {
+            (pid == profile_id && label != window_label).then(|| label.clone())
+        }) {
+            return Some(owner);
+        }
+        map.insert(window_label.to_string(), profile_id.to_string());
+        None
+    }
+
     /// Returns the window label currently showing `profile_id`, if any.
     /// Used by the strict-delete check and the "open elsewhere" menu dimming.
     pub fn owner_of_profile(&self, profile_id: &str) -> Option<String> {
@@ -142,13 +162,31 @@ impl ProfileStore {
     /// Cascades to workspaces (and their tabs) via the FK ON DELETE CASCADE.
     pub fn delete(&self, id: &str) -> Result<(), AbundioError> {
         let conn = self.conn.lock().unwrap();
-        let total: i32 = conn.query_row("SELECT COUNT(*) FROM profiles", [], |r| r.get(0))?;
-        if total <= 1 {
-            return Err(AbundioError::InvalidOperation(
-                "Cannot delete the only remaining profile".into(),
-            ));
+        // Guard the "at least one profile must exist" invariant atomically: the
+        // COUNT subquery and the DELETE evaluate under a single statement-level
+        // write lock, so a concurrent delete on another connection (ProfileStore
+        // and WorkspaceStore hold separate connections) cannot drive the count to
+        // 1 between a separate check and delete and let us remove the last
+        // profile. See PR #94 review.
+        let affected = conn.execute(
+            "DELETE FROM profiles WHERE id = ?1 AND (SELECT COUNT(*) FROM profiles) > 1",
+            [id],
+        )?;
+        if affected == 0 {
+            // Nothing deleted: either the id doesn't exist (idempotent no-op,
+            // matching the prior behaviour) or it's the only profile left.
+            // Distinguish so the invariant violation is surfaced as an error.
+            let still_exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM profiles WHERE id = ?1)",
+                [id],
+                |r| r.get(0),
+            )?;
+            if still_exists {
+                return Err(AbundioError::InvalidOperation(
+                    "Cannot delete the only remaining profile".into(),
+                ));
+            }
         }
-        conn.execute("DELETE FROM profiles WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -265,6 +303,25 @@ mod tests {
         assert_eq!(state.get_for_window("main").as_deref(), Some("p1"));
         assert_eq!(state.get_for_window("window-2").as_deref(), Some("p2"));
         assert_eq!(state.get_for_window("window-3"), None);
+    }
+
+    #[test]
+    fn try_claim_is_atomic_check_and_set() {
+        let state = ActiveProfileState::default();
+        // First claim succeeds and records ownership.
+        assert_eq!(state.try_claim("window-1", "p1"), None);
+        assert_eq!(state.get_for_window("window-1").as_deref(), Some("p1"));
+        // A different window claiming the same profile is refused with the owner.
+        assert_eq!(
+            state.try_claim("window-2", "p1").as_deref(),
+            Some("window-1")
+        );
+        // window-2 didn't get an entry from the refused claim.
+        assert_eq!(state.get_for_window("window-2"), None);
+        // The same window re-claiming its own profile is a no-op success.
+        assert_eq!(state.try_claim("window-1", "p1"), None);
+        // A distinct profile claims fine.
+        assert_eq!(state.try_claim("window-2", "p2"), None);
     }
 
     #[test]
