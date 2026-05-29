@@ -653,7 +653,9 @@ export function App() {
 									Abundio
 								</div>
 								<div className="text-base">
-									Create a workspace to get started
+									{workspaces.length > 0
+										? "Create or select a workspace to get started"
+										: "Create a workspace to get started"}
 								</div>
 							</div>
 						</div>
