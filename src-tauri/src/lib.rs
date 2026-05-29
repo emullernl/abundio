@@ -1,5 +1,6 @@
 pub mod agent_hooks;
 pub mod agent_registry;
+pub mod app_metrics;
 pub mod commands;
 pub mod config;
 pub mod dev_environments;
@@ -399,6 +400,11 @@ pub fn run() {
 
             // Initialize search manager
             app.manage(search::SearchManager::new());
+
+            // Start the resource-usage sampler. Pushes `app-metrics` events
+            // (whole-tree CPU + memory) to the status bar on a background
+            // thread; see app_metrics.rs for why this is a push, not an invoke.
+            app_metrics::start_metrics_sampler(app.handle().clone());
 
             // Initialize the agent hook server (loopback HTTP receiver for
             // Agent lifecycle hooks). Non-fatal if it fails to bind.

@@ -50,6 +50,19 @@ pub struct GitChange {
     pub root: String,
 }
 
+/// System-wide resource usage (whole machine, not Abundio-specific — see
+/// ADR-0011). Emitted on the `app-metrics` event by the sampler in
+/// `app_metrics.rs`. `cpuPercent` is total CPU load 0–100; the memory fields
+/// are used/total bytes (sysinfo's `used_memory`/`total_memory`, which track
+/// Activity Monitor's "Memory Used" on macOS).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppMetrics {
+    pub cpu_percent: f32,
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

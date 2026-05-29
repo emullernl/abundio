@@ -157,6 +157,18 @@ export interface AgentHookEvent {
 	payload: string;
 }
 
+/**
+ * System-wide resource usage (whole machine, not Abundio-specific — see
+ * ADR-0011). Pushed on the `app-metrics` event. `cpuPercent` is total CPU load
+ * 0–100; the memory fields are used/total bytes (≈ Activity Monitor's "Memory
+ * Used" on macOS).
+ */
+export interface AppMetrics {
+	cpuPercent: number;
+	memoryUsedBytes: number;
+	memoryTotalBytes: number;
+}
+
 export type PtyDetectionMode = "agent" | "shell";
 
 export interface CodingAgent {

@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { decodeBase64 } from "./base64";
 import type {
 	AgentHookEvent,
+	AppMetrics,
 	AvailableShell,
 	BranchInfo,
 	DetectedDevEnvironment,
@@ -391,6 +392,17 @@ export const agentHooks = {
 	/** Enable/disable Agent status hooks by (un)provisioning agent configs. */
 	provision: (enabled: boolean) =>
 		invoke<void>("agent_hooks_provision", { enabled }),
+};
+
+export const metrics = {
+	/**
+	 * Subscribe to system-wide CPU + memory load, pushed from Rust
+	 * (`app_metrics.rs`) roughly every 1.5s. One global event for all windows.
+	 */
+	onAppMetrics: (
+		callback: (metrics: AppMetrics) => void,
+	): Promise<UnlistenFn> =>
+		listen<AppMetrics>("app-metrics", (event) => callback(event.payload)),
 };
 
 export const devEnvironments = {
