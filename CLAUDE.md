@@ -54,7 +54,8 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `components/FileViewer/` — `FileViewerContainer`, `CodeEditor` (Monaco), `ImageViewer`, `UnsupportedFile`.
 - `components/GitChanges/` — `GitChangesPanel`, `GitChangesFileList`, `GitChangesFileItem`, `DiffViewer`, `BranchSelector`, `PullRequestsSection`, `PullRequestItem`, `GitChangesResizer`, `GitPanelDivider`.
 - `components/Search/` — `SearchPanel`, `SearchResultFile`, `SearchResultMatch`.
-- Top-level: `CommandPalette`, `FileSearchPalette`, `SettingsPanel`, `TabBar`, `StatusBar`, `Titlebar`, `AppLoader`, `AgentStatusIcon`, `ConfirmDialog`, `SaveConfirmDialog`, `ErrorBoundary`, `LaunchPicker`, `NewWorkspaceDialog`, `OpenInDevEnvButton`, `DragPanePreview`, `PaneDropIndicator`.
+- `components/Notes/` — Per-workspace notes editor: `NotesPanel`, `NotesEditor`, `NotesToolbar`.
+- Top-level: `CommandPalette`, `FileSearchPalette`, `SettingsPanel`, `TabBar`, `StatusBar`, `Titlebar`, `OverviewBar`, `AppLoader`, `AgentStatusIcon`, `ConfirmDialog`, `SaveConfirmDialog`, `ErrorBoundary`, `LaunchPicker`, `NewWorkspaceDialog`, `OpenInDevEnvButton`, `DragPanePreview`, `PaneDropIndicator`.
 
 #### Hooks
 
@@ -215,6 +216,8 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Find in terminal | `Cmd+F` | `Ctrl+F` |
 | Search workspace | `Cmd+Shift+F` | `Ctrl+Shift+F` |
 | Toggle git panel | `Cmd+Shift+G` | `Ctrl+Shift+G` |
+| Toggle explorer panel | `Cmd+Shift+E` | `Ctrl+Shift+E` |
+| Toggle notes panel | `Cmd+Shift+K` | `Ctrl+Shift+K` |
 | Toggle markdown preview | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | New workspace | `Cmd+Shift+N` | `Ctrl+Shift+N` |
 | New tab | `Cmd+T` | `Ctrl+T` |
