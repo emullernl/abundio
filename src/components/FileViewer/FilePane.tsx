@@ -69,9 +69,16 @@ export function FilePane({
 		return () => {
 			unregisterFilePane(paneId);
 		};
-		// Re-register when filePath changes (e.g. user opened a different file in this pane slot)
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [paneId, filePath, isDiff]);
+		// Re-register when filePath changes (e.g. user opened a different file in this pane slot).
+		// register/unregisterFilePane are stable Zustand selectors, so listing them is free.
+	}, [
+		paneId,
+		filePath,
+		isDiff,
+		diffSection,
+		registerFilePane,
+		unregisterFilePane,
+	]);
 
 	const handleContextMenu = (e: React.MouseEvent) => {
 		e.preventDefault();
@@ -213,6 +220,7 @@ export function FilePane({
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container
+		// biome-ignore lint/a11y/noStaticElementInteractions: layout container, click-to-focus only
 		<div
 			className="relative w-full h-full flex flex-col"
 			data-pane-id={paneId}
