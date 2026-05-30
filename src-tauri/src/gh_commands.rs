@@ -1,7 +1,6 @@
 use crate::error::AbundioError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -173,26 +172,6 @@ fn check_gh_auth() -> (bool, bool) {
 	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
 	let authenticated = cmd.output().map(|o| o.status.success()).unwrap_or(false);
 	(available, authenticated)
-}
-
-/// Check if any git remote points to github.com (local operation, no network).
-fn has_github_remote(cwd: &str) -> bool {
-	if !Path::new(cwd).join(".git").exists() {
-		return false;
-	}
-	let mut cmd = Command::new("git");
-	cmd.args(["remote", "-v"]).current_dir(cwd);
-	#[cfg(target_os = "windows")]
-	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
-	cmd.output()
-		.map(|o| {
-			let stdout = String::from_utf8_lossy(&o.stdout);
-			stdout.lines().any(|l| {
-				let url = l.split_whitespace().nth(1).unwrap_or("");
-				url.contains("github.com/") || url.contains("github.com:")
-			})
-		})
-		.unwrap_or(false)
 }
 
 /// Derive a single rollup status from an array of check contexts.
@@ -479,7 +458,7 @@ fn gh_status_sync(cwd: &str) -> Result<GhStatus, AbundioError> {
 	}
 
 	// Local check: just scan git remotes for github.com (no network call).
-	let has_remote = has_github_remote(cwd);
+	let has_remote = crate::git_libgit2::has_github_remote(cwd);
 
 	Ok(GhStatus {
 		available: true,

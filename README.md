@@ -65,7 +65,19 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Save file               | `Cmd+S`           | `Ctrl+S`           |
 | Open settings           | `Cmd+,`           | `Ctrl+,`           |
 
+## Runtime requirements
+
+Abundio shells out to a few external command-line tools at runtime. Only a shell is strictly required — the rest light up individual features and the app runs fine without them (those panels simply stay empty).
+
+* **A login shell** (required) — the terminal spawns your `$SHELL` (defaults to `/bin/zsh`). This is the only hard requirement.
+* **[`gh`](https://cli.github.com/) (GitHub CLI)** (optional) — powers the GitHub PR panel (review requests and your open PRs). Must be authenticated (`gh auth login`).
+
+> **Note:** Abundio does **not** require the `git` CLI. All git functionality — the changes panel, branch selector, inline diffs, sidebar git chips, and GitHub-remote detection — runs in-process via a bundled libgit2.
+* **AI coding agent CLIs** (optional) — any of [Claude Code](https://docs.claude.com/en/docs/claude-code), [GitHub Copilot CLI](https://github.com/github/gh-copilot), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat/), [Codex](https://github.com/openai/codex), or [OpenCode](https://opencode.ai/). Abundio auto-detects whichever are on your `$PATH`; you can also define custom agents in Settings.
+
 ## Prerequisites
+
+These are the tools needed to **build and run Abundio from source** (in addition to the runtime requirements above):
 
 * **Node.js** >\= 20.19 (required by Vite 8)
 * **pnpm** — `npm install -g pnpm`
