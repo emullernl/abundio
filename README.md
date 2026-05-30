@@ -2,7 +2,9 @@
 
 A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https://v2.tauri.app). Abundio is a home base for project-centric, AI-assisted development — a place to run your shells, your editor, your git workflow, and your AI coding agents side by side, all scoped to the project you're working on.
 
-The name comes from the Latin _abundō_ ("to overflow, abound") — Abundio is built for an **abundance of productivity**, giving you room to run an abundance of terminals, agents, and parallel work without leaving your project.
+![Abundio screenshot](.github/assets/abundio-screenshot.png)
+
+*The name comes from the Latin _abundō_ ("to overflow, abound") — Abundio is built for an **abundance of productivity**, giving you room to run an abundance of terminals, agents, and parallel work without leaving your project.*
 
 Each **workspace** is bound to a project folder. Inside it you get a fast WebGL-rendered terminal that you can split into as many horizontal and vertical panes as you like and organize across multiple tabs — run a dev server in one pane, tail logs in another, and drive an AI agent in a third. Abundio has **first-class support for AI coding CLI agents** (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode): it auto-detects the ones installed on your `$PATH`, lets you define your own, and surfaces live activity status so you can see at a glance which agents are working.
 
