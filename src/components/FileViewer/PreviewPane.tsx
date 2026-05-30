@@ -49,9 +49,6 @@ const REHYPE_PLUGINS = [
 interface PreviewPaneProps {
 	paneId: string;
 	sourcePaneId: string;
-	// Accepted for parity with other pane types but unused: the preview shows no
-	// focus outline (it would read as a stray border on the themed title bar).
-	isFocused: boolean;
 	onFocus: () => void;
 }
 
