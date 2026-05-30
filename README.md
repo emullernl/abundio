@@ -2,6 +2,10 @@
 
 A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https://v2.tauri.app). Abundio is a home base for project-centric, AI-assisted development — a place to run your shells, your editor, your git workflow, and your AI coding agents side by side, all scoped to the project you're working on.
 
+![Abundio screenshot](.github/assets/abundio-screenshot.png)
+
+*The name comes from the Latin _abundō_ ("to overflow, abound") — Abundio is built for an **abundance of productivity**, giving you room to run an abundance of terminals, agents, and parallel work without leaving your project.*
+
 Each **workspace** is bound to a project folder. Inside it you get a fast WebGL-rendered terminal that you can split into as many horizontal and vertical panes as you like and organize across multiple tabs — run a dev server in one pane, tail logs in another, and drive an AI agent in a third. Abundio has **first-class support for AI coding CLI agents** (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode): it auto-detects the ones installed on your `$PATH`, lets you define your own, and surfaces live activity status so you can see at a glance which agents are working.
 
 Around the terminal sits a full development surface: a **file explorer** and Monaco-powered **code editor** for viewing and editing files, **git integration** with a changed-files panel and inline diffs, a **GitHub PR panel**, **full-text workspace search**, live **Markdown preview**, and a **notes** panel — plus the ability to hand the current workspace off to VS Code, Cursor, or a JetBrains IDE when you want a heavier editor. Terminal output is clickable (file paths printed by compilers, test runners, and agents open straight in the editor), scrollback is persisted across sessions, and an overview bar keeps a running count of your workspaces, agents, terminals, and open PRs. Abundio runs natively on macOS, Windows, and Linux.
@@ -61,7 +65,19 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Save file               | `Cmd+S`           | `Ctrl+S`           |
 | Open settings           | `Cmd+,`           | `Ctrl+,`           |
 
+## Runtime requirements
+
+Abundio shells out to a few external command-line tools at runtime. Only a shell is strictly required — the rest light up individual features and the app runs fine without them (those panels simply stay empty).
+
+* **A login shell** (required) — the terminal spawns your `$SHELL` (defaults to `/bin/zsh`). This is the only hard requirement.
+* **[`gh`](https://cli.github.com/) (GitHub CLI)** (optional) — powers the GitHub PR panel (review requests and your open PRs). Must be authenticated (`gh auth login`).
+
+> **Note:** Abundio does **not** require the `git` CLI. All git functionality — the changes panel, branch selector, inline diffs, sidebar git chips, and GitHub-remote detection — runs in-process via a bundled libgit2.
+* **AI coding agent CLIs** (optional) — any of [Claude Code](https://docs.claude.com/en/docs/claude-code), [GitHub Copilot CLI](https://github.com/github/gh-copilot), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat/), [Codex](https://github.com/openai/codex), or [OpenCode](https://opencode.ai/). Abundio auto-detects whichever are on your `$PATH`; you can also define custom agents in Settings.
+
 ## Prerequisites
+
+These are the tools needed to **build and run Abundio from source** (in addition to the runtime requirements above):
 
 * **Node.js** >\= 20.19 (required by Vite 8)
 * **pnpm** — `npm install -g pnpm`
@@ -118,6 +134,21 @@ cd src-tauri && cargo check           # Rust type check
 cd src-tauri && cargo test            # Run all Rust tests
 cd src-tauri && cargo test test_name  # Run a single Rust test
 ```
+
+### Demo mode
+
+Demo mode runs the app against in-memory mock fixtures instead of touching real
+PTYs, git, GitHub, or the filesystem — useful for screenshots, screen
+recordings, or contributor onboarding. It serves a curated set of workspaces,
+agents, transcripts, and git state so the UI looks "alive" without any setup.
+
+```bash
+pnpm demo       # Tauri app with mock fixtures
+pnpm demo:web   # Browser-only (Vite, no Tauri backend)
+```
+
+Both set `VITE_ABUNDIO_DEMO=true`. The mock layer lives in `src/lib/demo/`
+(`mockInvoke`, `mockListen`, and the `fixtures`/`transcripts` it serves).
 
 ### Project Structure
 

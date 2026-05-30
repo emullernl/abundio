@@ -6,6 +6,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
+		"demo": "VITE_ABUNDIO_DEMO=true tauri dev",
+		"demo:web": "VITE_ABUNDIO_DEMO=true vite",
 		"build": "tsc && vite build",
 		"preview": "vite preview",
 		"tauri": "tauri",

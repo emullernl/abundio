@@ -19,6 +19,7 @@ import {
 } from "../../lib/scrollSync";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { makeMarkdownImageComponent } from "./MarkdownImage";
 import { makeMarkdownCodeComponent } from "./MermaidCode";
 import { PreviewPaneTitleBar } from "./PreviewPaneTitleBar";
 
@@ -68,6 +69,10 @@ export function PreviewPane({
 	const sourceName = sourceState?.fileName ?? "";
 	const sourceIsMarkdown = sourceName ? isMarkdownFile(sourceName) : true;
 
+	// Directory of the source markdown file — relative image srcs resolve
+	// against it so local images can be read off disk and inlined.
+	const baseDir = (sourceState?.filePath ?? "").replace(/\/[^/]*$/, "");
+
 	// Debounced copy of the source buffer — what actually feeds the renderer.
 	const [renderedContent, setRenderedContent] = useState(content);
 	useEffect(() => {
@@ -77,7 +82,13 @@ export function PreviewPane({
 
 	// The preview always renders light — a "printed paper" look — regardless of
 	// the app theme.
-	const components = useMemo(() => ({ code: makeMarkdownCodeComponent() }), []);
+	const components = useMemo(
+		() => ({
+			code: makeMarkdownCodeComponent(),
+			img: makeMarkdownImageComponent(baseDir),
+		}),
+		[baseDir],
+	);
 
 	// react-markdown does NO internal memoization — every render re-parses the
 	// whole document and re-runs every rehype plugin. PreviewPane re-renders on

@@ -344,6 +344,30 @@ pub fn is_git_repo(cwd: &str) -> bool {
     Repository::discover(cwd).is_ok()
 }
 
+/// True if any remote's fetch or push URL points to github.com. Used by
+/// `gh_status` to decide whether to show the PR panel. Purely local — reads
+/// the repo's configured remotes, no network.
+pub fn has_github_remote(cwd: &str) -> bool {
+    let Ok(repo) = open_repo(cwd) else {
+        return false;
+    };
+    let Ok(remotes) = repo.remotes() else {
+        return false;
+    };
+    remotes.iter().flatten().any(|name| {
+        repo.find_remote(name).is_ok_and(|remote| {
+            [remote.url(), remote.pushurl()]
+                .into_iter()
+                .flatten()
+                .any(url_is_github)
+        })
+    })
+}
+
+fn url_is_github(url: &str) -> bool {
+    url.contains("github.com/") || url.contains("github.com:")
+}
+
 /// Current branch shortname, or None if HEAD can't be resolved (detached,
 /// unborn, or not a repo). Used by `compute_workspace_git_summary` to drive
 /// the sidebar branch chip.

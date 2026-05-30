@@ -332,6 +332,45 @@ mod tests {
         dir
     }
 
+    #[test]
+    fn has_github_remote_false_without_remote() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+        assert!(!crate::git_libgit2::has_github_remote(cwd));
+    }
+
+    #[test]
+    fn has_github_remote_false_for_non_github_remote() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://gitlab.com/me/repo.git"]);
+        assert!(!crate::git_libgit2::has_github_remote(cwd));
+    }
+
+    #[test]
+    fn has_github_remote_true_for_https_and_ssh() {
+        for url in [
+            "https://github.com/me/repo.git",
+            "git@github.com:me/repo.git",
+        ] {
+            let dir = setup_temp_git_repo();
+            let cwd = dir.path().to_str().unwrap();
+            run_git_test(cwd, &["remote", "add", "origin", url]);
+            assert!(
+                crate::git_libgit2::has_github_remote(cwd),
+                "expected github remote detected for {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn has_github_remote_false_for_non_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!crate::git_libgit2::has_github_remote(
+            dir.path().to_str().unwrap()
+        ));
+    }
+
     #[tokio::test]
     async fn git_changed_files_includes_untracked() {
         let dir = setup_temp_git_repo();
