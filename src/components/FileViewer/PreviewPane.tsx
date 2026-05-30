@@ -12,11 +12,13 @@ import {
 } from "../../lib/markdownPreviewPrint";
 import { printMarkdownPreview } from "../../lib/markdownPrint";
 import { markdownSanitizeSchema } from "../../lib/markdownSanitizeSchema";
+import { resolvePreviewColorMode } from "../../lib/previewColorMode";
 import { rehypeSourceLines } from "../../lib/rehypeSourceLines";
 import {
 	registerSyncPreview,
 	unregisterSyncPreview,
 } from "../../lib/scrollSync";
+import { getTheme } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { makeMarkdownImageComponent } from "./MarkdownImage";
@@ -47,6 +49,8 @@ const REHYPE_PLUGINS = [
 interface PreviewPaneProps {
 	paneId: string;
 	sourcePaneId: string;
+	// Accepted for parity with other pane types but unused: the preview shows no
+	// focus outline (it would read as a stray border on the themed title bar).
 	isFocused: boolean;
 	onFocus: () => void;
 }
@@ -54,13 +58,27 @@ interface PreviewPaneProps {
 export function PreviewPane({
 	paneId,
 	sourcePaneId,
-	isFocused,
 	onFocus,
 }: PreviewPaneProps) {
 	const sourceState = useExplorerStore((s) => s.filePanes[sourcePaneId]);
 	// Shares the editor's font-size setting (driven by Cmd+= / Cmd+-).
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const zoom = fontSize / BASE_FONT_SIZE;
+
+	// Preview color: "auto" follows the active theme's variant, "light" forces
+	// the pure-white "printed paper" look regardless of theme. See ADR-0013.
+	const colorMode = useSettingsStore((s) => s.markdownPreviewColorMode);
+	const toggleColorMode = useSettingsStore(
+		(s) => s.toggleMarkdownPreviewColorMode,
+	);
+	const themeVariant = useSettingsStore((s) => getTheme(s.theme).variant);
+	const resolvedMode = resolvePreviewColorMode(colorMode, themeVariant);
+	// In "auto" the preview adopts the app theme's actual colours (canvas, text,
+	// borders, links — see PreviewPane.css `[data-themed]` overrides); "light"
+	// forces the pure-white "printed paper" look. `resolvedMode` still drives
+	// @uiw's base (incl. code-syntax token colours) so a dark theme gets a
+	// dark-appropriate base. See ADR-0013.
+	const followTheme = colorMode === "auto";
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -80,14 +98,12 @@ export function PreviewPane({
 		return () => clearTimeout(t);
 	}, [content]);
 
-	// The preview always renders light — a "printed paper" look — regardless of
-	// the app theme.
 	const components = useMemo(
 		() => ({
-			code: makeMarkdownCodeComponent(),
+			code: makeMarkdownCodeComponent(resolvedMode === "dark"),
 			img: makeMarkdownImageComponent(baseDir),
 		}),
-		[baseDir],
+		[baseDir, resolvedMode],
 	);
 
 	// react-markdown does NO internal memoization — every render re-parses the
@@ -102,10 +118,15 @@ export function PreviewPane({
 					source={renderedContent}
 					components={components}
 					rehypePlugins={REHYPE_PLUGINS}
+					// @uiw's dark CSS keys off `.wmde-markdown[data-color-mode*='dark']`
+					// — the attribute must sit on the rendered root element, which
+					// `wrapperElement` controls. (The outer container's matching
+					// attribute only drives our own CSS, e.g. the Mermaid card.)
+					wrapperElement={{ "data-color-mode": resolvedMode }}
 					style={{ zoom }}
 				/>
 			) : null,
-		[sourceIsMarkdown, renderedContent, components, zoom],
+		[sourceIsMarkdown, renderedContent, components, zoom, resolvedMode],
 	);
 
 	const doPrint = useCallback(() => {
@@ -143,28 +164,33 @@ export function PreviewPane({
 			data-pane-id={paneId}
 			style={{
 				backgroundColor: "var(--bg-primary)",
-				outline: isFocused
-					? "1px solid color-mix(in srgb, var(--accent) 50%, transparent)"
-					: "none",
-				outlineOffset: -1,
 			}}
 			onClick={onFocus}
 		>
 			<PreviewPaneTitleBar
 				paneId={paneId}
 				sourceName={sourceName}
+				colorMode={colorMode}
+				onToggleColorMode={toggleColorMode}
 				onPrint={doPrint}
 				onSplitDown={() => splitPaneWithPicker(paneId, "horizontal")}
 				onSplitRight={() => splitPaneWithPicker(paneId, "vertical")}
 				onClose={() => closePane(paneId)}
 			/>
-			{/* The whole scroll area is white so the padding around the rendered
-			    document matches the document's own canvas. */}
+			{/* The scroll area's padding matches the document's canvas: the theme's
+			    own background when following the theme, pure white for the "printed
+			    paper" override. `data-color-mode` drives @uiw's light/dark base;
+			    `data-themed` switches on the app-theme colour overrides in
+			    PreviewPane.css. */}
 			<div
 				ref={contentRef}
 				className="flex-1 min-h-0 overflow-auto abundio-md-preview"
-				data-color-mode="light"
-				style={{ padding: "28px 36px", background: "#ffffff" }}
+				data-color-mode={resolvedMode}
+				data-themed={followTheme ? "true" : undefined}
+				style={{
+					padding: "28px 36px",
+					background: followTheme ? "var(--bg-primary)" : "#ffffff",
+				}}
 			>
 				{preview}
 			</div>

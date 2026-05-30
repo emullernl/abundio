@@ -40,8 +40,11 @@ _Avoid_: panel, window, split
 **File pane**: A Pane that holds one open file — rendered as a Monaco editor (text), diff view, or image viewer depending on file type. Identified by its `filePath`.
 _Avoid_: editor, viewer
 
-**Preview pane**: A Pane that renders a live, read-only rendering of its **source pane**'s markdown buffer — including Mermaid diagrams. Owns no file of its own; it mirrors. Created beside a file pane when a markdown file is opened.
+**Preview pane**: A Pane that renders a live, read-only rendering of its **source pane**'s markdown buffer — including Mermaid diagrams. Owns no file of its own; it mirrors. Created beside a file pane when a markdown file is opened. Its appearance is governed by the **Preview color mode**.
 _Avoid_: render pane, markdown viewer
+
+**Preview color mode**: A global, persisted user preference governing every **Preview pane**'s appearance. Binary: **follow theme** (the default — the preview adopts the active theme's *actual colours*: its canvas, text, borders, links and accents match the rest of the UI) or **printed paper** (forced pure-white "document" look regardless of theme). There is no forced-*dark* state — a dark preview arises only because the active theme is dark. Toggled from the preview's title bar. Follow-theme remaps the document **surface** only; code-block **syntax-highlighting** token colours stay at the rendering library's light/dark defaults (themes carry no syntax palette). **Print** always renders on white paper, ignoring this preference. See ADR-0013.
+_Avoid_: preview theme, dark mode
 
 **Source pane**: The file pane a preview pane is bound to (`sourcePaneId`). The preview reflects this pane's unsaved buffer and follows it when a new markdown file is opened in it.
 

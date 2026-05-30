@@ -5,6 +5,37 @@
 	display: none;
 }
 
+/* ── "Follow theme" colour overrides (ADR-0013, option B/i) ──
+   When the preview follows the app theme, remap @uiw's GitHub-palette CSS
+   variables to Abundio's theme variables so the document surface, text, chrome
+   and links match the rest of the UI. @uiw defines these vars on
+   `.wmde-markdown[data-color-mode*='…']` (specificity 0,2,0); this selector is
+   (0,3,0) so it wins, and the cascade still leaves the code-syntax token vars
+   (`--color-prettylights-syntax-*`) at @uiw's variant defaults — we don't remap
+   those (option i), since themes carry no full syntax palette. Gated by
+   `data-themed` on the container so the forced-white "printed paper" mode keeps
+   @uiw's untouched light palette. */
+.abundio-md-preview[data-themed="true"] .wmde-markdown {
+	--color-canvas-default: var(--bg-primary);
+	--color-canvas-subtle: var(--bg-secondary);
+	--color-fg-default: var(--fg-primary);
+	--color-fg-muted: var(--fg-secondary);
+	--color-fg-subtle: var(--fg-secondary);
+	--color-border-default: var(--border);
+	--color-border-muted: var(--border);
+	--color-accent-fg: var(--accent);
+	--color-accent-emphasis: var(--accent);
+	--color-danger-fg: var(--error);
+	--color-success-fg: var(--success);
+	--color-neutral-muted: color-mix(
+		in srgb,
+		var(--fg-secondary) 22%,
+		transparent
+	);
+	background-color: var(--bg-primary);
+	color: var(--fg-primary);
+}
+
 /* Tailwind v4's Preflight resets `ol, ul { list-style: none }` (specificity
    0,0,1). @uiw's markdown.css never sets a *top-level* `list-style-type`, so
    that reset wins for top-level lists and their markers vanish. Restore them
@@ -30,6 +61,9 @@
 .abundio-mermaid {
 	position: relative;
 }
+/* When the preview is dark, the diagram is rendered with Mermaid's dark theme
+   (see MermaidDiagram), so it reads natively against the dark surface — no white
+   card needed. Light mode renders the light diagram flush on the light page. */
 .abundio-mermaid-svg {
 	cursor: zoom-in;
 }

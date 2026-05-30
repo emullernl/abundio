@@ -22,9 +22,11 @@ const clamp = (n: number, lo: number, hi: number) =>
  */
 export function MermaidModal({
 	svg,
+	dark,
 	onClose,
 }: {
 	svg: string;
+	dark: boolean;
 	onClose: () => void;
 }) {
 	const [scale, setScale] = useState(1);
@@ -156,7 +158,12 @@ export function MermaidModal({
 				<div
 					ref={canvasRef}
 					className="abundio-mermaid-modal-canvas"
-					style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }}
+					style={{
+						transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+						// A dark-themed diagram has light strokes/text, so it needs a dark
+						// canvas behind it; light diagrams keep the white paper.
+						background: dark ? "var(--bg-secondary)" : "#fff",
+					}}
 					// biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid sanitizes its own SVG output
 					dangerouslySetInnerHTML={{ __html: svg }}
 				/>

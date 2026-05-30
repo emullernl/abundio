@@ -146,6 +146,7 @@ export function setupCrossWindowSync(): void {
 		agentHooksEnabled: unknown;
 		gpuAccelerationEnabled: unknown;
 		terminalScrollback: unknown;
+		markdownPreviewColorMode: unknown;
 	};
 	const sliceOf = (s: Record<string, unknown>): SettingsSlice => ({
 		terminalFontFamily: s.terminalFontFamily,
@@ -157,6 +158,7 @@ export function setupCrossWindowSync(): void {
 		agentHooksEnabled: s.agentHooksEnabled,
 		gpuAccelerationEnabled: s.gpuAccelerationEnabled,
 		terminalScrollback: s.terminalScrollback,
+		markdownPreviewColorMode: s.markdownPreviewColorMode,
 	});
 	// Fully order-independent serialization: sorts object keys recursively so a
 	// payload that round-tripped through serde_json (alphabetized keys, incl.

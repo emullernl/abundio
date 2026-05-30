@@ -8,8 +8,11 @@ const PRINT_STYLE_ID = "abundio-md-print-style";
  * preview pane's scroll container; the rendered document lives in its
  * `.wmde-markdown` child (produced by @uiw/react-markdown-preview).
  *
- * The preview always renders light, so the printed output — including Mermaid
- * diagrams — is light too; nothing about the on-screen state needs restoring.
+ * Print always renders on white paper regardless of the preview's on-screen
+ * color mode (ADR-0013): the `@media print` block below forces `#fff`/`#000`,
+ * and Mermaid always renders with its light theme, so the printed output —
+ * including diagrams — is light too. Nothing about the on-screen state needs
+ * restoring.
  */
 export async function printMarkdownPreview(container: Element): Promise<void> {
 	const proseEl = container.querySelector<HTMLElement>(".wmde-markdown");
@@ -89,8 +92,9 @@ export async function printMarkdownPreview(container: Element): Promise<void> {
 	div.innerHTML = proseEl.innerHTML;
 	document.body.appendChild(div);
 
-	// Re-render mermaid diagrams into the cloned print DOM. The preview's
-	// on-screen Mermaid theme is already "default" (light), so no restore needed.
+	// Re-render mermaid diagrams into the cloned print DOM. Mermaid's theme is
+	// always "default" (light) regardless of preview color mode, so no restore
+	// needed.
 	const mermaidEls = Array.from(
 		div.querySelectorAll<HTMLElement>(".abundio-mermaid[data-mermaid-source]"),
 	);

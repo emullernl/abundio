@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
 import { agentHooks } from "../lib/ipc";
+import type { PreviewColorMode } from "../lib/previewColorMode";
+import { nextPreviewColorMode } from "../lib/previewColorMode";
 import {
 	setAllTerminalsFontFamily,
 	setAllTerminalsFontSize,
@@ -30,6 +32,7 @@ interface SettingsState {
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
+	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
 
@@ -55,6 +58,7 @@ interface SettingsState {
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
 	toggleMarkdownPreviewAutoOpen: () => void;
+	toggleMarkdownPreviewColorMode: () => void;
 	setAgentHooksEnabled: (enabled: boolean) => void;
 	setGpuAcceleration: (enabled: boolean) => void;
 }
@@ -82,6 +86,7 @@ const PERSISTED_DEFAULTS: {
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
 	markdownPreviewAutoOpen: boolean;
+	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
 } = (() => {
@@ -102,6 +107,7 @@ const PERSISTED_DEFAULTS: {
 		lastOpenedDevEnvId: null as string | null,
 		editorWordWrap: true,
 		markdownPreviewAutoOpen: true,
+		markdownPreviewColorMode: "auto" as PreviewColorMode,
 		agentHooksEnabled: true,
 		gpuAccelerationEnabled: true,
 	};
@@ -181,6 +187,11 @@ const PERSISTED_DEFAULTS: {
 				typeof s.markdownPreviewAutoOpen === "boolean"
 					? s.markdownPreviewAutoOpen
 					: defaults.markdownPreviewAutoOpen,
+			markdownPreviewColorMode:
+				s.markdownPreviewColorMode === "light" ||
+				s.markdownPreviewColorMode === "auto"
+					? s.markdownPreviewColorMode
+					: defaults.markdownPreviewColorMode,
 			agentHooksEnabled:
 				typeof s.agentHooksEnabled === "boolean"
 					? s.agentHooksEnabled
@@ -214,6 +225,7 @@ export const useSettingsStore = create<SettingsState>()(
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
 			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
+			markdownPreviewColorMode: PERSISTED_DEFAULTS.markdownPreviewColorMode,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
 
@@ -290,6 +302,12 @@ export const useSettingsStore = create<SettingsState>()(
 			toggleMarkdownPreviewAutoOpen: () =>
 				set((s) => ({
 					markdownPreviewAutoOpen: !s.markdownPreviewAutoOpen,
+				})),
+			toggleMarkdownPreviewColorMode: () =>
+				set((s) => ({
+					markdownPreviewColorMode: nextPreviewColorMode(
+						s.markdownPreviewColorMode,
+					),
 				})),
 			setAgentHooksEnabled: (agentHooksEnabled) => {
 				// Provision/unprovision agent hook configs to match the setting.
@@ -368,6 +386,7 @@ export const useSettingsStore = create<SettingsState>()(
 				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
 				editorWordWrap: state.editorWordWrap,
 				markdownPreviewAutoOpen: state.markdownPreviewAutoOpen,
+				markdownPreviewColorMode: state.markdownPreviewColorMode,
 				agentHooksEnabled: state.agentHooksEnabled,
 				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
 			}),
