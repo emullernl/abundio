@@ -1,12 +1,22 @@
 import { Maximize2 } from "lucide-react";
 import mermaid from "mermaid";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { MermaidModal } from "./MermaidModal";
 
-// The markdown preview always renders light ("printed paper" look), so Mermaid
-// uses the light theme too.
+// Global theme stays light ("default"); a dark preview renders each diagram
+// dark via a per-diagram init directive (see MermaidDiagram). Keeping the global
+// light means the print re-render (markdownPrint.ts), which uses the original
+// source, stays light without any theme juggling.
 mermaid.initialize({ startOnLoad: false, theme: "default" });
+
+// Mermaid derives the SVG's internal element IDs (arrowhead markers, gradients,
+// clip-paths) from the id passed to `render`. A per-instance counter would reset
+// to the same values across diagrams and across re-renders (e.g. toggling the
+// preview colour mode remounts every diagram), so stale/duplicate IDs collide
+// and `url(#…)` refs resolve to the wrong or removed defs — broken diagrams. A
+// module-level, never-reused counter guarantees each render gets a unique id.
+let mermaidRenderSeq = 0;
 
 /** Walk a hast node collecting text — code children may be highlighted spans. */
 // biome-ignore lint/suspicious/noExplicitAny: hast node shape from react-markdown
@@ -19,11 +29,10 @@ function getCodeText(node: any): string {
 }
 
 /** Renders one ```mermaid fenced block as an SVG diagram. */
-function MermaidDiagram({ code }: { code: string }) {
+function MermaidDiagram({ code, dark }: { code: string; dark: boolean }) {
 	const [svg, setSvg] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [expanded, setExpanded] = useState(false);
-	const renderIdRef = useRef(0);
 
 	useEffect(() => {
 		if (!code.trim()) {
@@ -32,9 +41,17 @@ function MermaidDiagram({ code }: { code: string }) {
 			return;
 		}
 		let cancelled = false;
-		const renderId = `mermaid-preview-${++renderIdRef.current}`;
+		const renderId = `mermaid-preview-${++mermaidRenderSeq}`;
+		// Theme per-render via an init directive rather than `mermaid.initialize`,
+		// so a dark on-screen diagram doesn't make the global theme dark — that
+		// keeps print (which re-renders from the original `code`) light. See
+		// ADR-0013. Note: Mermaid merges init directives key-by-key with later
+		// ones winning, so a diagram that declares its own `%%{init:{'theme':…}}%%`
+		// overrides this prepended `dark` — the author's explicit theme is
+		// respected, and the colour-mode toggle is a no-op for that diagram.
+		const renderSource = dark ? `%%{init: {'theme':'dark'}}%%\n${code}` : code;
 		mermaid
-			.render(renderId, code)
+			.render(renderId, renderSource)
 			.then(({ svg: rendered }) => {
 				if (cancelled) return;
 				setSvg(rendered);
@@ -46,7 +63,7 @@ function MermaidDiagram({ code }: { code: string }) {
 		return () => {
 			cancelled = true;
 		};
-	}, [code]);
+	}, [code, dark]);
 
 	if (error) {
 		return (
@@ -102,7 +119,11 @@ function MermaidDiagram({ code }: { code: string }) {
 			</button>
 			{expanded &&
 				createPortal(
-					<MermaidModal svg={svg} onClose={() => setExpanded(false)} />,
+					<MermaidModal
+						svg={svg}
+						dark={dark}
+						onClose={() => setExpanded(false)}
+					/>,
 					document.body,
 				)}
 		</div>
@@ -114,7 +135,7 @@ function MermaidDiagram({ code }: { code: string }) {
  * and renders them as diagrams; everything else falls through to the default
  * (syntax-highlighted) rendering.
  */
-export function makeMarkdownCodeComponent() {
+export function makeMarkdownCodeComponent(dark: boolean) {
 	return function MarkdownCode({
 		className,
 		children,
@@ -128,7 +149,7 @@ export function makeMarkdownCodeComponent() {
 	}) {
 		if (className && /\blanguage-mermaid\b/i.test(className)) {
 			const code = getCodeText(node).replace(/\n$/, "");
-			return <MermaidDiagram code={code} />;
+			return <MermaidDiagram code={code} dark={dark} />;
 		}
 		return (
 			<code className={className} {...props}>

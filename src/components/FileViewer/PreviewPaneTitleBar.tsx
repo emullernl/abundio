@@ -1,14 +1,19 @@
 import {
+	Monitor,
 	Printer,
 	SquareSplitHorizontal,
 	SquareSplitVertical,
+	Sun,
 	X,
 } from "lucide-react";
 import { usePaneDrag } from "../../hooks/usePaneDrag";
+import type { PreviewColorMode } from "../../lib/previewColorMode";
 
 interface Props {
 	paneId: string;
 	sourceName: string;
+	colorMode: PreviewColorMode;
+	onToggleColorMode: () => void;
 	onPrint: () => void;
 	onSplitDown: () => void;
 	onSplitRight: () => void;
@@ -63,12 +68,20 @@ function TitleBarButton({ icon: Icon, onClick, label }: ButtonProps) {
 export function PreviewPaneTitleBar({
 	paneId,
 	sourceName,
+	colorMode,
+	onToggleColorMode,
 	onPrint,
 	onSplitDown,
 	onSplitRight,
 	onClose,
 }: Props) {
 	const { handleMouseDown } = usePaneDrag(paneId);
+
+	// The icon reflects the TARGET (what clicking switches to): when following the
+	// theme, show the sun (click → white paper); when on white, show the monitor
+	// (click → follow theme). Tooltip names the current state and the action. See
+	// ADR-0013.
+	const followingTheme = colorMode === "auto";
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for pane repositioning
@@ -95,6 +108,15 @@ export function PreviewPaneTitleBar({
 			>
 				Preview{sourceName ? ` · ${sourceName}` : ""}
 			</span>
+			<TitleBarButton
+				icon={followingTheme ? Sun : Monitor}
+				onClick={onToggleColorMode}
+				label={
+					followingTheme
+						? "Preview: follows theme — click for white paper"
+						: "Preview: white paper — click to follow theme"
+				}
+			/>
 			<TitleBarButton icon={Printer} onClick={onPrint} label="Print" />
 			<TitleBarButton
 				icon={SquareSplitVertical}
