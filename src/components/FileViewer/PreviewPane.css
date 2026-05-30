@@ -5,6 +5,24 @@
 	display: none;
 }
 
+/* Tailwind v4's Preflight resets `ol, ul { list-style: none }`. @uiw's
+   markdown.css never sets a top-level `list-style-type` (it relies on the UA
+   default), so the reset wins and list markers vanish. Restore them here —
+   markdown.css's own nested rules (`ol ol` → lower-roman, etc.) are more
+   specific and still take precedence for nested lists. */
+.abundio-md-preview .wmde-markdown ul {
+	list-style-type: disc;
+}
+.abundio-md-preview .wmde-markdown ul ul {
+	list-style-type: circle;
+}
+.abundio-md-preview .wmde-markdown ul ul ul {
+	list-style-type: square;
+}
+.abundio-md-preview .wmde-markdown ol {
+	list-style-type: decimal;
+}
+
 /* ── Mermaid diagrams: expand-to-fullscreen affordance ── */
 .abundio-mermaid {
 	position: relative;
