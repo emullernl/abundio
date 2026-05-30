@@ -62,7 +62,12 @@ rejected as fragile and often worse-looking.
   white) but aren't identical; the toggle is most meaningful on dark themes.
 - **Print** is unaffected: it always renders on white paper regardless of this
   preference.
-- Mermaid diagrams always render with the light theme; in a dark-surface preview
-  they sit on a white card (`PreviewPane.css`) so they stay readable.
+- Mermaid diagrams: on-screen, the diagram is themed to match the preview's
+  resolved mode (light on a light preview, dark on a dark preview) via a
+  per-diagram `%%{init: {'theme': 'dark'}}%%` directive. The global Mermaid
+  theme stays `"default"` (light) so the print re-render — which uses the
+  original source unmodified — always produces a light diagram. The fullscreen
+  Mermaid viewer's canvas background mirrors the surface (dark when the
+  diagram is dark, white otherwise).
 - Adding/removing a theme variable consumed by the preview means revisiting the
   `[data-themed]` override block.

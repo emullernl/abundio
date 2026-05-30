@@ -45,7 +45,10 @@ function MermaidDiagram({ code, dark }: { code: string; dark: boolean }) {
 		// Theme per-render via an init directive rather than `mermaid.initialize`,
 		// so a dark on-screen diagram doesn't make the global theme dark — that
 		// keeps print (which re-renders from the original `code`) light. See
-		// ADR-0013.
+		// ADR-0013. Note: Mermaid merges init directives key-by-key with later
+		// ones winning, so a diagram that declares its own `%%{init:{'theme':…}}%%`
+		// overrides this prepended `dark` — the author's explicit theme is
+		// respected, and the colour-mode toggle is a no-op for that diagram.
 		const renderSource = dark ? `%%{init: {'theme':'dark'}}%%\n${code}` : code;
 		mermaid
 			.render(renderId, renderSource)
