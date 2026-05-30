@@ -11,15 +11,30 @@
 import * as fixtures from "./fixtures";
 import { publish } from "./mockBus";
 import { seedPaneActivity } from "./seed";
-import { encodeBase64, TRANSCRIPTS } from "./transcripts";
+import { DEMO_FALLBACK, encodeBase64, TRANSCRIPTS } from "./transcripts";
 
 type Args = Record<string, unknown> | undefined;
+
+const warned = new Set<string>();
+/** Log a dev-facing warning at most once per key, so a contributor poking at a
+ *  demo-disabled command isn't spammed (or left wondering why nothing happens). */
+function warnOnce(key: string, message: string): void {
+	if (warned.has(key)) return;
+	warned.add(key);
+	console.warn(message);
+}
 
 function seedPane(paneId: string, ptyId: string): void {
 	publish(`pty-status-${ptyId}`, { type: "running" });
 
+	// Panes the user creates at runtime (new tab, split, launch picker) aren't
+	// in the fixtures — show a "demo mode" banner instead of a blank terminal
+	// that reports `running` forever.
 	const spec = fixtures.agentPanes[paneId];
-	if (!spec) return;
+	if (!spec) {
+		publish(`pty-output-${ptyId}`, { data: encodeBase64(DEMO_FALLBACK) });
+		return;
+	}
 
 	const transcript = TRANSCRIPTS[spec.transcript];
 	if (transcript) {
@@ -130,6 +145,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "fs_file_exists":
 			return true;
 		case "fs_search":
+			warnOnce("fs_search", "[demo] workspace search is disabled");
 			return { files: [], totalMatches: 0, truncated: false };
 
 		// ── Filesystem (mutations / side effects) — inert ──

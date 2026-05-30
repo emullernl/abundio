@@ -109,6 +109,14 @@ const v = (r: number, x: PaneDef, y: PaneDef): PaneDef => ({
 });
 const one = (name: string, pane: PaneDef): TabDef[] => [{ name, pane }];
 
+// Pane DSL legend — the terse helpers above keep each `WS_DEFS` row to one line:
+//   a(agent, state, transcript)  — agent pane
+//   sh(state, transcript)        — shell pane
+//   fl(path)                     — file pane
+//   h(ratio, left, right)        — horizontal split
+//   v(ratio, top, bottom)        — vertical split
+//   one(name, pane)              — single-tab shorthand
+// PaneDef fields: t=type, st=state, tx=transcript, r=split ratio.
 const WS_DEFS: WsDef[] = [
 	// 1 — acme-web: agent tab + dev split + code split with a file pane
 	{
@@ -558,9 +566,8 @@ function buildPane(
 ): PaneNode {
 	const id = `${wsId}-p${ctr.n++}`;
 	const recordPane = () => {
-		const list = panesByWorkspace[wsId] ?? [];
-		list.push(id);
-		panesByWorkspace[wsId] = list;
+		panesByWorkspace[wsId] ??= [];
+		panesByWorkspace[wsId].push(id);
 	};
 	switch (def.t) {
 		case "agent":

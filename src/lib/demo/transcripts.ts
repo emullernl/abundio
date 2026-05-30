@@ -234,6 +234,21 @@ const sqlRun = [
 	`${DIM}~/code/data-warehouse${RESET} ${GREEN}❯${RESET} `,
 ].join("\r\n");
 
+/**
+ * Shown in panes the user creates at runtime (new tab, split, launch picker) —
+ * these pane ids aren't in `fixtures.agentPanes`, so there's no canned
+ * transcript to replay. A friendly banner is clearer than a blank terminal
+ * that reports `running` forever.
+ */
+export const DEMO_FALLBACK = [
+	"",
+	`  ${BOLD}${ORANGE}Abundio — demo mode${RESET}`,
+	"",
+	`  ${DIM}Interactive panes are disabled while running with mock fixtures.${RESET}`,
+	`  ${DIM}Restart without ${RESET}${CYAN}VITE_ABUNDIO_DEMO${RESET}${DIM} to use a real shell.${RESET}`,
+	"",
+].join("\r\n");
+
 /** Transcripts keyed by name; referenced from `fixtures.agentPanes`. */
 export const TRANSCRIPTS: Record<string, string> = {
 	claudeSession,

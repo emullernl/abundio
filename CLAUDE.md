@@ -111,6 +111,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/notificationRouter.ts` — Routes Tauri notifications to the correct workspace.
 - `lib/pendingAgentRegistry.ts` — Tracks agents awaiting PTY attachment.
 - `lib/windowFocus.ts` — Window focus/blur detection for activity gating.
+- `lib/demo/` — Demo/simulation mode (`VITE_ABUNDIO_DEMO=true`, run via `pnpm demo` / `pnpm demo:web`). `mockInvoke`/`mockListen` stand in for Tauri `invoke`/`listen`, serving in-memory `fixtures` and `transcripts` (real PTYs, git, GitHub, filesystem are never touched). `useDemoBootstrap` opens a curated set of workspaces on launch.
 
 ### Data Flow
 

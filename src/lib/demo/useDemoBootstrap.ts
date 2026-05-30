@@ -47,9 +47,16 @@ export function useDemoBootstrap(): void {
 		};
 
 		if (open()) return;
-		const unsub = useWorkspaceStore.subscribe(() => {
-			if (open()) unsub();
+		// Assign `unsub` before subscribing so the callback can't observe it as
+		// undefined — Zustand doesn't fire synchronously on subscribe today, but
+		// this keeps the teardown safe regardless.
+		let unsub: (() => void) | null = null;
+		unsub = useWorkspaceStore.subscribe(() => {
+			if (open() && unsub) {
+				unsub();
+				unsub = null;
+			}
 		});
-		return unsub;
+		return () => unsub?.();
 	}, []);
 }

@@ -35,6 +35,15 @@ export function subscribe(event: string, listener: Listener): () => void {
 	};
 }
 
+/**
+ * Publish-once contract: each channel (`pty-output-<id>` / `pty-status-<id>`)
+ * is expected to receive a small, fixed number of payloads — the canned
+ * transcript and status. Retained history is therefore bounded *in practice*.
+ * If you ever add a streaming caller (e.g. simulated output animated over time
+ * for a screencast), cap `hist` here (`if (hist.length > N) hist.shift()`) or
+ * store only the last payload, otherwise the history map grows unbounded per
+ * channel for the lifetime of the demo session.
+ */
 export function publish(event: string, payload: unknown): void {
 	let hist = history.get(event);
 	if (!hist) {

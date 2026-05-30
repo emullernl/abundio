@@ -34,6 +34,10 @@ export function mockListen<T>(
 				? { kind: "error", message: "not a git repository", notGitRepo: true }
 				: { kind: "bundle", bundle: fixtures.gitBundleForCwd(cwd) };
 			queueMicrotask(() => cb({ payload: payload as T }));
+		} else {
+			// No fixture root for this workspace — the listener never fires, which
+			// would otherwise look like a hung git panel. Flag it for contributors.
+			console.warn(`[demo] no fixture root for git-state-${workspaceId}`);
 		}
 		return Promise.resolve(noop);
 	}

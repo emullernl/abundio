@@ -121,6 +121,21 @@ cd src-tauri && cargo test            # Run all Rust tests
 cd src-tauri && cargo test test_name  # Run a single Rust test
 ```
 
+### Demo mode
+
+Demo mode runs the app against in-memory mock fixtures instead of touching real
+PTYs, git, GitHub, or the filesystem — useful for screenshots, screen
+recordings, or contributor onboarding. It serves a curated set of workspaces,
+agents, transcripts, and git state so the UI looks "alive" without any setup.
+
+```bash
+pnpm demo       # Tauri app with mock fixtures
+pnpm demo:web   # Browser-only (Vite, no Tauri backend)
+```
+
+Both set `VITE_ABUNDIO_DEMO=true`. The mock layer lives in `src/lib/demo/`
+(`mockInvoke`, `mockListen`, and the `fixtures`/`transcripts` it serves).
+
 ### Project Structure
 
 ```
