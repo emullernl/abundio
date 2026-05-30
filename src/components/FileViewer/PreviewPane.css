@@ -5,21 +5,24 @@
 	display: none;
 }
 
-/* Tailwind v4's Preflight resets `ol, ul { list-style: none }`. @uiw's
-   markdown.css never sets a top-level `list-style-type` (it relies on the UA
-   default), so the reset wins and list markers vanish. Restore them here —
-   markdown.css's own nested rules (`ol ol` → lower-roman, etc.) are more
-   specific and still take precedence for nested lists. */
-.abundio-md-preview .wmde-markdown ul {
+/* Tailwind v4's Preflight resets `ol, ul { list-style: none }` (specificity
+   0,0,1). @uiw's markdown.css never sets a *top-level* `list-style-type`, so
+   that reset wins for top-level lists and their markers vanish. Restore them
+   here — but keep these rules at (0,1,1) so upstream's nested rules still win:
+   `.wmde-markdown ol ol` → lower-roman is (0,1,2), which must override our
+   top-level `ol`. We wrap `.abundio-md-preview` in `:where()` (specificity 0)
+   to drop the extra class — a plain `.abundio-md-preview .wmde-markdown ol`
+   would be (0,2,1) and clobber upstream's nested ordered-list styling. */
+:where(.abundio-md-preview) .wmde-markdown ul {
 	list-style-type: disc;
 }
-.abundio-md-preview .wmde-markdown ul ul {
+:where(.abundio-md-preview) .wmde-markdown ul ul {
 	list-style-type: circle;
 }
-.abundio-md-preview .wmde-markdown ul ul ul {
+:where(.abundio-md-preview) .wmde-markdown ul ul ul {
 	list-style-type: square;
 }
-.abundio-md-preview .wmde-markdown ol {
+:where(.abundio-md-preview) .wmde-markdown ol {
 	list-style-type: decimal;
 }
 
