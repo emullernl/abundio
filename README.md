@@ -14,6 +14,18 @@ Around the terminal sits a full development surface: a **file explorer** and Mon
 ![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows\&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux\&logoColor=black)
 
+## Install
+
+Download a pre-built binary for your platform from the [**latest release**](https://github.com/emullernl/abundio/releases/latest):
+
+* **macOS** — grab the `.dmg`, open it, and drag Abundio into your Applications folder.
+* **Windows** — run the `.msi` installer (or the `.exe` from the NSIS bundle).
+* **Linux** — install the `.deb` (`sudo dpkg -i abundio_*.deb`) or run the `.AppImage` directly (`chmod +x` first).
+
+See [all releases](https://github.com/emullernl/abundio/releases) for previous versions and changelogs. Prefer to build from source? See [Getting Started](#getting-started) below.
+
+> **Note:** Abundio is not yet code-signed. On macOS, right-click the app and choose **Open** the first time to bypass Gatekeeper; on Windows, click **More info → Run anyway** if SmartScreen warns you.
+
 ## Features
 
 * **GPU-accelerated rendering** — WebGL-powered terminal via xterm.js with canvas fallback
