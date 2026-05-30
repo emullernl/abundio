@@ -25,6 +25,7 @@ import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
+import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds } from "./lib/paneTree";
@@ -221,6 +222,7 @@ const TabContent = memo(function TabContent({
 
 export function App() {
 	useWorkspace();
+	useDemoBootstrap();
 	useFileReloadWatcher();
 	useGitDataSync();
 	const workspaces = useWorkspaceStore((s) => s.workspaces);

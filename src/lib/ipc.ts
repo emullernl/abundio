@@ -1,6 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke as realInvoke } from "@tauri-apps/api/core";
+import { listen as realListen, type UnlistenFn } from "@tauri-apps/api/event";
 import { decodeBase64 } from "./base64";
+import { isDemoMode } from "./demo";
+import { mockInvoke } from "./demo/mockInvoke";
+import { mockListen } from "./demo/mockListen";
 import type {
 	AgentHookEvent,
 	AppMetrics,
@@ -26,6 +29,22 @@ import type {
 	WorkspaceUpdate,
 	WorkspaceWithTabs,
 } from "./types";
+
+// Demo-mode chokepoint. In normal builds these are zero-overhead pass-throughs
+// to Tauri; when `VITE_ABUNDIO_DEMO=true` they route every command/event to
+// in-memory fixtures so the whole app renders fictional data. Every IPC call
+// in this file funnels through these, so no call site below needs to change.
+function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+	return isDemoMode() ? mockInvoke<T>(cmd, args) : realInvoke<T>(cmd, args);
+}
+function listen<T>(
+	event: string,
+	cb: (e: { payload: T }) => void,
+): Promise<UnlistenFn> {
+	return isDemoMode()
+		? mockListen<T>(event, cb)
+		: (realListen<T>(event, cb) as Promise<UnlistenFn>);
+}
 
 export const pty = {
 	spawn: (
