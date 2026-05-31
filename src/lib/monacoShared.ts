@@ -335,6 +335,306 @@ function registerApexLanguage(monaco: Monaco) {
 	});
 }
 
+/* ── Astro language registration ─────────────────────────────────────── */
+
+let astroRegistered = false;
+
+// TypeScript/JavaScript keywords used inside the frontmatter fence and `{}`
+// expressions. Astro frontmatter is TS; templates embed TS expressions.
+const astroTsKeywords = [
+	"abstract",
+	"any",
+	"as",
+	"asserts",
+	"async",
+	"await",
+	"boolean",
+	"break",
+	"case",
+	"catch",
+	"class",
+	"const",
+	"continue",
+	"debugger",
+	"declare",
+	"default",
+	"delete",
+	"do",
+	"else",
+	"enum",
+	"export",
+	"extends",
+	"false",
+	"finally",
+	"for",
+	"from",
+	"function",
+	"get",
+	"if",
+	"implements",
+	"import",
+	"in",
+	"infer",
+	"instanceof",
+	"interface",
+	"is",
+	"keyof",
+	"let",
+	"namespace",
+	"never",
+	"new",
+	"null",
+	"number",
+	"object",
+	"of",
+	"private",
+	"protected",
+	"public",
+	"readonly",
+	"return",
+	"satisfies",
+	"set",
+	"static",
+	"string",
+	"super",
+	"switch",
+	"symbol",
+	"this",
+	"throw",
+	"true",
+	"try",
+	"type",
+	"typeof",
+	"undefined",
+	"unknown",
+	"var",
+	"void",
+	"while",
+	"yield",
+];
+
+function registerAstroLanguage(monaco: Monaco) {
+	if (astroRegistered) return;
+	astroRegistered = true;
+
+	monaco.languages.register({
+		id: "astro",
+		extensions: [".astro"],
+		aliases: ["Astro", "astro"],
+	});
+
+	monaco.languages.setLanguageConfiguration("astro", {
+		comments: { blockComment: ["<!--", "-->"] },
+		brackets: [
+			["<!--", "-->"],
+			["<", ">"],
+			["{", "}"],
+			["(", ")"],
+		],
+		autoClosingPairs: [
+			{ open: "{", close: "}" },
+			{ open: "[", close: "]" },
+			{ open: "(", close: ")" },
+			{ open: '"', close: '"' },
+			{ open: "'", close: "'" },
+			{ open: "`", close: "`" },
+		],
+		surroundingPairs: [
+			{ open: "{", close: "}" },
+			{ open: "[", close: "]" },
+			{ open: "(", close: ")" },
+			{ open: '"', close: '"' },
+			{ open: "'", close: "'" },
+			{ open: "`", close: "`" },
+			{ open: "<", close: ">" },
+		],
+	});
+
+	monaco.languages.setMonarchTokensProvider("astro", {
+		defaultToken: "",
+		tokenPostfix: ".astro",
+		keywords: astroTsKeywords,
+
+		tokenizer: {
+			// Initial state. The `---` frontmatter fence is only meaningful as the
+			// very first line; once any other content is seen we switch to @markup
+			// permanently so a stray `---` line in the body can't re-trigger it.
+			root: [
+				[/^---\s*$/, { token: "keyword", next: "@frontmatter" }],
+				[/^/, { token: "@rematch", switchTo: "@markup" }],
+			],
+
+			frontmatter: [
+				[/^---\s*$/, { token: "keyword", switchTo: "@markup" }],
+				{ include: "@ts" },
+			],
+
+			markup: [
+				[/\{/, { token: "delimiter.bracket", next: "@expression" }],
+				[/<!--/, "comment", "@comment"],
+				[/<!DOCTYPE/i, "metatag", "@doctype"],
+				// `<script>` / `<style>` carry TS / CSS — handle their bodies.
+				[
+					/(<)(script)(?=[\s/>])/,
+					["delimiter", { token: "tag", next: "@scriptTag" }],
+				],
+				[
+					/(<)(style)(?=[\s/>])/,
+					["delimiter", { token: "tag", next: "@styleTag" }],
+				],
+				// Closing tag — @closeTag tolerates anything up to `>`
+				[/(<\/)([\w-]+)/, ["delimiter", { token: "tag", next: "@closeTag" }]],
+				// Opening tag — enter @tag to tokenize attributes
+				[/(<)([\w-]+)/, ["delimiter", { token: "tag", next: "@tag" }]],
+				[/</, "delimiter"],
+				[/[^<{]+/, ""],
+			],
+
+			comment: [
+				[/-->/, "comment", "@pop"],
+				[/[^-]+/, "comment"],
+				[/./, "comment"],
+			],
+
+			doctype: [
+				[/[^>]+/, "metatag.content"],
+				[/>/, "metatag", "@pop"],
+			],
+
+			tag: [
+				[/\/?>/, { token: "delimiter", next: "@pop" }],
+				[/\s+/, ""],
+				[/=/, "delimiter"],
+				// Attribute value as a `{}` expression
+				[/\{/, { token: "delimiter.bracket", next: "@expression" }],
+				[/"([^"]*)"/, "attribute.value"],
+				[/'([^']*)'/, "attribute.value"],
+				[/[\w-]+/, "attribute.name"],
+			],
+
+			closeTag: [
+				[/>/, { token: "delimiter", next: "@pop" }],
+				[/[^>]+/, ""],
+			],
+
+			// `<script>` attributes, then its body tokenized as TS.
+			scriptTag: [
+				[/\/>/, { token: "delimiter", next: "@pop" }],
+				[/>/, { token: "delimiter", switchTo: "@scriptBody" }],
+				[/\s+/, ""],
+				[/=/, "delimiter"],
+				[/\{/, { token: "delimiter.bracket", next: "@expression" }],
+				[/"([^"]*)"/, "attribute.value"],
+				[/'([^']*)'/, "attribute.value"],
+				[/[\w-]+/, "attribute.name"],
+			],
+			scriptBody: [
+				[/<\/script\s*>/, { token: "tag", next: "@pop" }],
+				{ include: "@ts" },
+			],
+
+			// `<style>` attributes, then its body tokenized as CSS.
+			styleTag: [
+				[/\/>/, { token: "delimiter", next: "@pop" }],
+				[/>/, { token: "delimiter", switchTo: "@styleBody" }],
+				[/\s+/, ""],
+				[/=/, "delimiter"],
+				[/\{/, { token: "delimiter.bracket", next: "@expression" }],
+				[/"([^"]*)"/, "attribute.value"],
+				[/'([^']*)'/, "attribute.value"],
+				[/[\w-]+/, "attribute.name"],
+			],
+			styleBody: [
+				[/<\/style\s*>/, { token: "tag", next: "@pop" }],
+				{ include: "@css" },
+			],
+
+			// `{ ... }` template expression — TS, with balanced nested braces.
+			expression: [
+				[/\}/, { token: "delimiter.bracket", next: "@pop" }],
+				[/\{/, { token: "delimiter.bracket", next: "@expression" }],
+				{ include: "@ts" },
+			],
+
+			// Shared TypeScript token rules (frontmatter + expressions).
+			ts: [
+				[
+					/[a-zA-Z_$][\w$]*/,
+					{
+						cases: {
+							"@keywords": "keyword",
+							"@default": "identifier",
+						},
+					},
+				],
+				{ include: "@whitespace" },
+				[/\d+(\.\d+)?([eE][-+]?\d+)?/, "number"],
+				[/"/, "string", "@string_double"],
+				[/'/, "string", "@string_single"],
+				[/`/, "string", "@string_backtick"],
+				[/[()[\]]/, "@brackets"],
+				[/[;,.]/, "delimiter"],
+				[/[=+\-*/%<>!&|^~?:]+/, "operator"],
+			],
+
+			// Minimal CSS ruleset for `<style>` bodies — selectors, properties,
+			// values, comments and strings. Not a full grammar, but enough that
+			// styles aren't shown as untokenized plain text.
+			css: [
+				[/\/\*/, "comment", "@csscomment"],
+				[/[{}]/, "delimiter.bracket"],
+				[/[#.][\w-]+/, "tag"],
+				[/[\w-]+(?=\s*:)/, "attribute.name"],
+				[/#[0-9a-fA-F]{3,8}\b/, "number.hex"],
+				[
+					/-?\d+(\.\d+)?(px|em|rem|%|vh|vw|s|ms|fr|deg|pt|ex|ch|vmin|vmax)?/,
+					"number",
+				],
+				[/"/, "string", "@string_double"],
+				[/'/, "string", "@string_single"],
+				[/[:;,()]/, "delimiter"],
+				[/!important\b/, "keyword"],
+				[/@[\w-]+/, "keyword"],
+				[/[a-zA-Z][\w-]*/, "attribute.value"],
+				[/\s+/, ""],
+			],
+			csscomment: [
+				[/[^*/]+/, "comment"],
+				[/\*\//, "comment", "@pop"],
+				[/[*/]/, "comment"],
+			],
+
+			whitespace: [
+				[/[ \t\r\n]+/, ""],
+				[/\/\*/, "comment", "@tscomment"],
+				[/\/\/.*$/, "comment"],
+			],
+			tscomment: [
+				[/[^*/]+/, "comment"],
+				[/\*\//, "comment", "@pop"],
+				[/[*/]/, "comment"],
+			],
+			string_double: [
+				[/[^\\"]+/, "string"],
+				[/\\./, "string.escape"],
+				[/"/, "string", "@pop"],
+			],
+			string_single: [
+				[/[^\\']+/, "string"],
+				[/\\./, "string.escape"],
+				[/'/, "string", "@pop"],
+			],
+			string_backtick: [
+				[/\$\{/, { token: "delimiter.bracket", next: "@expression" }],
+				[/[^\\`$]+/, "string"],
+				[/\\./, "string.escape"],
+				[/`/, "string", "@pop"],
+				[/[$]/, "string"],
+			],
+		},
+	});
+}
+
 /* ── Theme ───────────────────────────────────────────────────────────── */
 
 let themeKey: string | null = null;
@@ -347,6 +647,7 @@ let themeKey: string | null = null;
  */
 export function defineAbundioTheme(monaco: Monaco) {
 	registerApexLanguage(monaco);
+	registerAstroLanguage(monaco);
 	const key = resolve("--bg-primary") + resolve("--accent");
 	if (key === themeKey) return;
 	themeKey = key;
@@ -422,6 +723,7 @@ export function detectLanguage(filePath: string): string | undefined {
 		cls: "apex",
 		trigger: "apex",
 		apex: "apex",
+		astro: "astro",
 		page: "html",
 		component: "html",
 	};
