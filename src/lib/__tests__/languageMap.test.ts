@@ -75,6 +75,11 @@ describe("getLanguage", () => {
 		expect(getLanguage("sql")).toBe("sql");
 	});
 
+	it("maps astro files to the astro language", () => {
+		expect(getLanguage("astro")).toBe("astro");
+		expect(getLanguage("ASTRO")).toBe("astro");
+	});
+
 	it("maps Visualforce page/component to html", () => {
 		expect(getLanguage("page")).toBe("html");
 		expect(getLanguage("component")).toBe("html");

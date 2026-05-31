@@ -44,6 +44,7 @@ const extensionToLanguage: Record<string, string> = {
 	cls: "apex",
 	trigger: "apex",
 	apex: "apex",
+	astro: "astro",
 	page: "html",
 	component: "html",
 };
