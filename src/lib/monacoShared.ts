@@ -456,14 +456,16 @@ function registerAstroLanguage(monaco: Monaco) {
 		keywords: astroTsKeywords,
 
 		tokenizer: {
-			// A `.astro` file may open with a `---` frontmatter fence (TS code).
+			// Initial state. The `---` frontmatter fence is only meaningful as the
+			// very first line; once any other content is seen we switch to @markup
+			// permanently so a stray `---` line in the body can't re-trigger it.
 			root: [
 				[/^---\s*$/, { token: "keyword", next: "@frontmatter" }],
-				{ include: "@markup" },
+				[/^/, { token: "@rematch", switchTo: "@markup" }],
 			],
 
 			frontmatter: [
-				[/^---\s*$/, { token: "keyword", next: "@pop" }],
+				[/^---\s*$/, { token: "keyword", switchTo: "@markup" }],
 				{ include: "@ts" },
 			],
 
@@ -471,11 +473,17 @@ function registerAstroLanguage(monaco: Monaco) {
 				[/\{/, { token: "delimiter.bracket", next: "@expression" }],
 				[/<!--/, "comment", "@comment"],
 				[/<!DOCTYPE/i, "metatag", "@doctype"],
-				// Closing tag
+				// `<script>` / `<style>` carry TS / CSS — handle their bodies.
 				[
-					/(<\/)([\w-]+)(\s*)(>)/,
-					["delimiter", "tag", "", "delimiter"],
+					/(<)(script)(?=[\s/>])/,
+					["delimiter", { token: "tag", next: "@scriptTag" }],
 				],
+				[
+					/(<)(style)(?=[\s/>])/,
+					["delimiter", { token: "tag", next: "@styleTag" }],
+				],
+				// Closing tag — @closeTag tolerates anything up to `>`
+				[/(<\/)([\w-]+)/, ["delimiter", { token: "tag", next: "@closeTag" }]],
 				// Opening tag — enter @tag to tokenize attributes
 				[/(<)([\w-]+)/, ["delimiter", { token: "tag", next: "@tag" }]],
 				[/</, "delimiter"],
@@ -504,6 +512,43 @@ function registerAstroLanguage(monaco: Monaco) {
 				[/[\w-]+/, "attribute.name"],
 			],
 
+			closeTag: [
+				[/>/, { token: "delimiter", next: "@pop" }],
+				[/[^>]+/, ""],
+			],
+
+			// `<script>` attributes, then its body tokenized as TS.
+			scriptTag: [
+				[/\/>/, { token: "delimiter", next: "@pop" }],
+				[/>/, { token: "delimiter", switchTo: "@scriptBody" }],
+				[/\s+/, ""],
+				[/=/, "delimiter"],
+				[/\{/, { token: "delimiter.bracket", next: "@expression" }],
+				[/"([^"]*)"/, "attribute.value"],
+				[/'([^']*)'/, "attribute.value"],
+				[/[\w-]+/, "attribute.name"],
+			],
+			scriptBody: [
+				[/<\/script\s*>/, { token: "tag", next: "@pop" }],
+				{ include: "@ts" },
+			],
+
+			// `<style>` attributes, then its body tokenized as CSS.
+			styleTag: [
+				[/\/>/, { token: "delimiter", next: "@pop" }],
+				[/>/, { token: "delimiter", switchTo: "@styleBody" }],
+				[/\s+/, ""],
+				[/=/, "delimiter"],
+				[/\{/, { token: "delimiter.bracket", next: "@expression" }],
+				[/"([^"]*)"/, "attribute.value"],
+				[/'([^']*)'/, "attribute.value"],
+				[/[\w-]+/, "attribute.name"],
+			],
+			styleBody: [
+				[/<\/style\s*>/, { token: "tag", next: "@pop" }],
+				{ include: "@css" },
+			],
+
 			// `{ ... }` template expression — TS, with balanced nested braces.
 			expression: [
 				[/\}/, { token: "delimiter.bracket", next: "@pop" }],
@@ -530,6 +575,33 @@ function registerAstroLanguage(monaco: Monaco) {
 				[/[()[\]]/, "@brackets"],
 				[/[;,.]/, "delimiter"],
 				[/[=+\-*/%<>!&|^~?:]+/, "operator"],
+			],
+
+			// Minimal CSS ruleset for `<style>` bodies — selectors, properties,
+			// values, comments and strings. Not a full grammar, but enough that
+			// styles aren't shown as untokenized plain text.
+			css: [
+				[/\/\*/, "comment", "@csscomment"],
+				[/[{}]/, "delimiter.bracket"],
+				[/[#.][\w-]+/, "tag"],
+				[/[\w-]+(?=\s*:)/, "attribute.name"],
+				[/#[0-9a-fA-F]{3,8}\b/, "number.hex"],
+				[
+					/-?\d+(\.\d+)?(px|em|rem|%|vh|vw|s|ms|fr|deg|pt|ex|ch|vmin|vmax)?/,
+					"number",
+				],
+				[/"/, "string", "@string_double"],
+				[/'/, "string", "@string_single"],
+				[/[:;,()]/, "delimiter"],
+				[/!important\b/, "keyword"],
+				[/@[\w-]+/, "keyword"],
+				[/[a-zA-Z][\w-]*/, "attribute.value"],
+				[/\s+/, ""],
+			],
+			csscomment: [
+				[/[^*/]+/, "comment"],
+				[/\*\//, "comment", "@pop"],
+				[/[*/]/, "comment"],
 			],
 
 			whitespace: [
