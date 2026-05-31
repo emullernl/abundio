@@ -355,15 +355,104 @@ pub fn rebuild_menu_for_focused_window(app: &AppHandle<Wry>) {
     }
 }
 
+/// Before the window-state plugin loads its geometry cache, make the main
+/// window adopt a surviving window's saved geometry when the user closed the
+/// main window last session. Without this, a survivor that takes over the main
+/// window (see `plan_restoration`) would appear at the *old* main window's
+/// position/size rather than its own. Best-effort: any failure leaves the main
+/// window at its own saved geometry. MUST run before the window-state plugin's
+/// setup reads `.window-state.json` into its in-memory cache.
+///
+/// Returns the computed `RestorationPlan` in the (rare) case where it opened the
+/// DB, so `setup()` can reuse the *exact same* plan instead of recomputing it —
+/// this guarantees the profile restoration matches the geometry migration just
+/// performed and avoids a second DB open. Returns `None` on the common fast
+/// path (a persisted "main" entry exists, so no adoption is possible), where
+/// `setup()` computes the plan itself.
+fn adopt_survivor_geometry_into_main() -> Option<window_persistence::RestorationPlan> {
+    let entries = window_persistence::load();
+    let main_label = window_management::MAIN_WINDOW_LABEL;
+
+    // Fast path: only the "main entry missing, another profile window survives"
+    // case can require adoption. Checking windows.json alone avoids the DB open
+    // + migration run on the common launch path, keeping it off first paint.
+    let has_main = entries.iter().any(|e| e.label == main_label);
+    let has_survivor = entries
+        .iter()
+        .any(|e| e.label != main_label && window_management::is_profile_window_label(&e.label));
+    if has_main || !has_survivor {
+        return None;
+    }
+
+    let conn = migrations::open_db().ok()?;
+    let profile_store = ProfileStore::new(conn);
+    let all_profiles = profile_store.list().ok()?;
+    let valid_ids: std::collections::HashSet<&str> =
+        all_profiles.iter().map(|p| p.id.as_str()).collect();
+    let plan = window_persistence::plan_restoration(
+        entries,
+        &valid_ids,
+        main_label,
+        all_profiles.first().map(|p| p.id.as_str()),
+    );
+    if let Some(from_label) = &plan.main_adopted_label {
+        migrate_main_geometry(from_label, main_label);
+    }
+    Some(plan)
+}
+
+/// Copies `from_label`'s geometry onto the main window's key inside the
+/// window-state plugin's `.window-state.json`, atomically (tmp + rename). A
+/// half-written file would make the plugin reset *all* window geometries on the
+/// next launch, not just the adopted one — hence the same tmp+rename pattern as
+/// `window_persistence::save()`.
+fn migrate_main_geometry(from_label: &str, main_label: &str) {
+    // The plugin stores geometry at <app_config_dir>/.window-state.json, where
+    // app_config_dir = config_dir()/<bundle identifier> (see tauri.conf.json's
+    // "identifier"). We're pre-Builder here, so resolve the path ourselves.
+    let Some(path) = dirs::config_dir().map(|d| {
+        d.join("com.abundio.desktop")
+            .join(tauri_plugin_window_state::DEFAULT_FILENAME)
+    }) else {
+        return;
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        // No file yet (first-ever launch) is expected; only surface real errors.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            eprintln!("[abundio] failed to read window-state for geometry adoption: {e}");
+            return;
+        }
+    };
+    let Some(rewritten) =
+        window_persistence::migrate_geometry_to_main(&contents, from_label, main_label)
+    else {
+        return;
+    };
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, rewritten) {
+        eprintln!("[abundio] failed to write window-state geometry adoption: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        eprintln!("[abundio] failed to commit window-state geometry adoption: {e}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Must happen before the window-state plugin is initialised below. Returns
+    // the precomputed plan (rare case) for setup() to reuse.
+    let preplan = adopt_survivor_geometry_into_main();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_os::init())
-        .setup(|app| {
+        .setup(move |app| {
             // Initialize SQLite + run migrations. Two connections so the
             // ProfileStore and WorkspaceStore can be locked independently;
             // SQLite WAL mode (set in open_db) handles concurrent access.
@@ -439,20 +528,25 @@ pub fn run() {
             let valid_ids: std::collections::HashSet<&str> =
                 all_profiles.iter().map(|p| p.id.as_str()).collect();
 
-            let persisted = window_persistence::load();
-            let mut claimed_profiles: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-
             let main_label = window_management::MAIN_WINDOW_LABEL;
-            // Find the persisted main-window entry (if any) and seed it.
-            let main_profile_id = persisted
-                .iter()
-                .find(|e| e.label == main_label && valid_ids.contains(e.profile_id.as_str()))
-                .map(|e| e.profile_id.clone())
-                .or_else(|| all_profiles.first().map(|p| p.id.clone()));
-            if let Some(pid) = main_profile_id {
+
+            // Decide which profile the always-present main window adopts and
+            // which additional windows to spawn. See plan_restoration — closing
+            // the main window while others stay open must NOT resurrect it.
+            // Reuse the plan already computed by the pre-Builder geometry step
+            // when present, so the profile restoration matches the geometry
+            // migration exactly (and we skip a redundant DB read); otherwise
+            // compute it here (the common, no-adoption launch path).
+            let plan = preplan.unwrap_or_else(|| {
+                window_persistence::plan_restoration(
+                    window_persistence::load(),
+                    &valid_ids,
+                    main_label,
+                    all_profiles.first().map(|p| p.id.as_str()),
+                )
+            });
+            if let Some(pid) = plan.main_profile_id {
                 active_state.set_for_window(main_label, &pid);
-                claimed_profiles.insert(pid.clone());
                 // Override the tauri.conf static title with the profile-aware
                 // title. The frontend will re-set it on profile change.
                 if let Some(name) = all_profiles
@@ -473,25 +567,7 @@ pub fn run() {
             // fully initialised; otherwise the second window can race and end
             // up without its assets fully wired.
             let app_handle = app.handle().clone();
-            let additional: Vec<window_persistence::WindowEntry> = persisted
-                .into_iter()
-                .filter(|e| {
-                    // Defensive: skip non-profile labels (e.g. a stale
-                    // "settings" entry written by a pre-fix build) so they
-                    // never get respawned as profile windows on launch.
-                    window_management::is_profile_window_label(&e.label)
-                        && e.label != main_label
-                        && valid_ids.contains(e.profile_id.as_str())
-                })
-                .filter(|e| {
-                    if claimed_profiles.contains(&e.profile_id) {
-                        false
-                    } else {
-                        claimed_profiles.insert(e.profile_id.clone());
-                        true
-                    }
-                })
-                .collect();
+            let additional = plan.additional;
             if !additional.is_empty() {
                 tauri::async_runtime::spawn(async move {
                     for entry in additional {

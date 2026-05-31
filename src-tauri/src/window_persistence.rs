@@ -60,6 +60,87 @@ pub fn snapshot_from_state(state: &crate::profile_store::ActiveProfileState) -> 
         .collect()
 }
 
+/// The outcome of planning window restoration from persisted entries.
+pub struct RestorationPlan {
+    /// Profile the always-present main window should adopt (`None` only when
+    /// there are no profiles at all).
+    pub main_profile_id: Option<String>,
+    /// When the main window adopts a *survivor's* entry (because no persisted
+    /// "main" entry existed), this is that survivor's label. The main window
+    /// should also adopt its saved geometry. `None` when the main window keeps
+    /// its own geometry (genuine "main" entry, or a fresh start).
+    pub main_adopted_label: Option<String>,
+    /// Additional windows to spawn, each reusing its persisted label.
+    pub additional: Vec<WindowEntry>,
+}
+
+/// Decides, purely, which Profile the main window adopts and which additional
+/// windows to spawn on launch. The main window is always physically created by
+/// `tauri.conf`, so it must show *some* profile; it adopts:
+///   1. the persisted "main" entry, if present (preserves main's geometry);
+///   2. else the first surviving entry — so closing the main window while
+///      others stay open lets a survivor take over the main window rather than
+///      the closed main window being resurrected alongside it;
+///   3. else `first_profile_id` (a fresh start).
+/// The adopted entry is removed from `additional`. Entries are first filtered
+/// to valid, profile-bound labels and deduped by profile id (keeping the first
+/// occurrence — a Profile can't be owned by two windows at once).
+pub fn plan_restoration(
+    entries: Vec<WindowEntry>,
+    valid_profile_ids: &std::collections::HashSet<&str>,
+    main_label: &str,
+    first_profile_id: Option<&str>,
+) -> RestorationPlan {
+    let mut seen_profiles: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut entries: Vec<WindowEntry> = entries
+        .into_iter()
+        .filter(|e| {
+            crate::window_management::is_profile_window_label(&e.label)
+                && valid_profile_ids.contains(e.profile_id.as_str())
+        })
+        .filter(|e| seen_profiles.insert(e.profile_id.clone()))
+        .collect();
+
+    let main_idx = entries
+        .iter()
+        .position(|e| e.label == main_label)
+        .or_else(|| if entries.is_empty() { None } else { Some(0) });
+    let (main_profile_id, main_adopted_label) = match main_idx {
+        Some(i) => {
+            let e = entries.remove(i);
+            // Only flag a geometry adoption when a *survivor* (non-main label)
+            // takes over the main window. The genuine main entry keeps its own.
+            let adopted = (e.label != main_label).then_some(e.label);
+            (Some(e.profile_id), adopted)
+        }
+        None => (first_profile_id.map(|s| s.to_string()), None),
+    };
+
+    RestorationPlan {
+        main_profile_id,
+        main_adopted_label,
+        additional: entries,
+    }
+}
+
+/// Copies one window's saved geometry onto the main window's key inside the
+/// `tauri-plugin-window-state` JSON file contents, so the main window restores
+/// at the survivor window's position/size. Operates on the raw JSON (a map of
+/// `label -> {geometry}`) to avoid coupling to the plugin's private state type.
+/// Returns the rewritten JSON, or `None` if there's nothing to do (unparseable
+/// contents, or `from_label` has no saved entry).
+pub fn migrate_geometry_to_main(
+    contents: &str,
+    from_label: &str,
+    main_label: &str,
+) -> Option<String> {
+    let mut root: serde_json::Value = serde_json::from_str(contents).ok()?;
+    let obj = root.as_object_mut()?;
+    let geometry = obj.get(from_label)?.clone();
+    obj.insert(main_label.to_string(), geometry);
+    serde_json::to_string_pretty(&root).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +181,139 @@ mod tests {
         // just exercise the parse-empty branch directly.
         let parsed: Vec<WindowEntry> = serde_json::from_str("[]").unwrap();
         assert_eq!(parsed.len(), 0);
+    }
+
+    fn entry(label: &str, profile: &str) -> WindowEntry {
+        WindowEntry {
+            label: label.into(),
+            profile_id: profile.into(),
+        }
+    }
+
+    fn ids<'a>(list: &[&'a str]) -> std::collections::HashSet<&'a str> {
+        list.iter().copied().collect()
+    }
+
+    #[test]
+    fn restore_no_entries_seeds_first_profile() {
+        let plan = plan_restoration(vec![], &ids(&["p1", "p2"]), "main", Some("p1"));
+        assert_eq!(plan.main_profile_id.as_deref(), Some("p1"));
+        assert!(plan.additional.is_empty());
+    }
+
+    #[test]
+    fn restore_main_entry_kept_as_main() {
+        // Closing the non-main window leaves only the main entry → only the
+        // main window restores, with its own profile.
+        let plan = plan_restoration(
+            vec![entry("main", "p1")],
+            &ids(&["p1", "p2"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(plan.main_profile_id.as_deref(), Some("p1"));
+        assert!(plan.additional.is_empty());
+    }
+
+    #[test]
+    fn restore_closed_main_does_not_resurrect() {
+        // The bug: closing the main window (profile 1) while a spawned window
+        // (profile 2) stays open must NOT bring the main window back. The
+        // survivor takes over the main window; no extra window spawns.
+        let plan = plan_restoration(
+            vec![entry("window-abc", "p2")],
+            &ids(&["p1", "p2"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(plan.main_profile_id.as_deref(), Some("p2"));
+        // The survivor's label is flagged so the main window can also adopt its
+        // saved geometry.
+        assert_eq!(plan.main_adopted_label.as_deref(), Some("window-abc"));
+        assert!(
+            plan.additional.is_empty(),
+            "closed main window must not be resurrected as a second window"
+        );
+    }
+
+    #[test]
+    fn restore_main_entry_does_not_flag_geometry_adoption() {
+        let plan = plan_restoration(
+            vec![entry("main", "p1")],
+            &ids(&["p1"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(plan.main_adopted_label, None);
+    }
+
+    #[test]
+    fn restore_both_windows() {
+        let plan = plan_restoration(
+            vec![entry("main", "p1"), entry("window-abc", "p2")],
+            &ids(&["p1", "p2"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(plan.main_profile_id.as_deref(), Some("p1"));
+        assert_eq!(plan.additional.len(), 1);
+        assert_eq!(plan.additional[0].label, "window-abc");
+        assert_eq!(plan.additional[0].profile_id, "p2");
+    }
+
+    #[test]
+    fn restore_dedupes_by_profile() {
+        let plan = plan_restoration(
+            vec![entry("main", "p1"), entry("window-abc", "p1")],
+            &ids(&["p1"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(plan.main_profile_id.as_deref(), Some("p1"));
+        assert!(plan.additional.is_empty());
+    }
+
+    #[test]
+    fn restore_filters_invalid_profiles_and_aux_labels() {
+        let plan = plan_restoration(
+            vec![
+                entry("settings", "p1"),  // auxiliary label — dropped
+                entry("window-abc", "gone"), // profile no longer exists — dropped
+                entry("window-def", "p2"),
+            ],
+            &ids(&["p1", "p2"]),
+            "main",
+            Some("p1"),
+        );
+        // No main entry survived, so the first valid survivor takes the main
+        // window; nothing else remains.
+        assert_eq!(plan.main_profile_id.as_deref(), Some("p2"));
+        assert!(plan.additional.is_empty());
+    }
+
+    #[test]
+    fn migrate_geometry_copies_survivor_onto_main() {
+        let contents = r#"{
+            "main": {"width": 800, "height": 600, "x": 0, "y": 0},
+            "window-abc": {"width": 1400, "height": 900, "x": 120, "y": 80}
+        }"#;
+        let out = migrate_geometry_to_main(contents, "window-abc", "main").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        // main now holds the survivor's geometry...
+        assert_eq!(parsed["main"]["width"], 1400);
+        assert_eq!(parsed["main"]["x"], 120);
+        // ...and the survivor entry is left untouched.
+        assert_eq!(parsed["window-abc"]["width"], 1400);
+    }
+
+    #[test]
+    fn migrate_geometry_absent_survivor_is_noop() {
+        let contents = r#"{"main": {"width": 800, "height": 600, "x": 0, "y": 0}}"#;
+        assert!(migrate_geometry_to_main(contents, "window-gone", "main").is_none());
+    }
+
+    #[test]
+    fn migrate_geometry_unparseable_is_noop() {
+        assert!(migrate_geometry_to_main("not json", "window-abc", "main").is_none());
     }
 }
