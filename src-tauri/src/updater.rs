@@ -54,6 +54,12 @@ pub struct UpdaterState {
     /// Whether the background loop should hit the network. Mirrors the frontend
     /// "Automatically check for updates" setting. The manual "Check now" button
     /// bypasses this entirely.
+    ///
+    /// Defaults to `false`: Rust never auto-checks until the frontend explicitly
+    /// pushes the persisted setting via `updater_set_auto_check` on rehydrate.
+    /// This avoids a startup TOCTOU where an opted-out user's first auto-check
+    /// could fire before the disabled flag arrived. Do not flip this to `true`
+    /// without also dropping the frontend's explicit push.
     auto_check: AtomicBool,
 }
 
@@ -69,7 +75,8 @@ impl UpdaterState {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(UpdaterInner::default()),
-            auto_check: AtomicBool::new(true),
+            // Off until the frontend pushes the persisted setting — see field doc.
+            auto_check: AtomicBool::new(false),
         }
     }
 }
@@ -84,7 +91,7 @@ fn to_info(update: &Update) -> UpdateInfo {
 }
 
 /// Runs a check and, if an update is available, stashes it as `pending` and
-/// emits `update-available` to the focused Window. Shared by the background
+/// emits `update-available` to a Profile-bound Window. Shared by the background
 /// loop; the manual command path uses `updater_check` directly.
 async fn check_and_emit(app: &AppHandle) -> Result<(), String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
@@ -93,10 +100,32 @@ async fn check_and_emit(app: &AppHandle) -> Result<(), String> {
         if let Some(state) = app.try_state::<UpdaterState>() {
             state.inner.lock().unwrap().pending = Some(update);
         }
-        // Focused-Window-only so multiple Windows don't each prompt. See ADR-0014.
-        let _ = crate::emit_to_focused(app, "update-available", &info);
+        emit_update_available(app, &info);
     }
     Ok(())
+}
+
+/// Emits `update-available` to the focused Window, but only when it is a
+/// Profile-bound Window — the Settings auxiliary window has no listener, so
+/// targeting it would silently drop the prompt. Falls back to any Profile-bound
+/// Window otherwise. Preserves ADR-0014's "focused Window only" intent for the
+/// multi-Profile-window case while never stranding the event on Settings.
+fn emit_update_available(app: &AppHandle, info: &UpdateInfo) {
+    let windows = app.webview_windows();
+    let focused_profile = windows.iter().find_map(|(label, w)| {
+        (w.is_focused().unwrap_or(false)
+            && crate::window_management::is_profile_window_label(label))
+        .then(|| label.clone())
+    });
+    let target = focused_profile.or_else(|| {
+        windows
+            .keys()
+            .find(|label| crate::window_management::is_profile_window_label(label))
+            .cloned()
+    });
+    if let Some(label) = target {
+        let _ = app.emit_to(label.as_str(), "update-available", info);
+    }
 }
 
 /// Spawns the background auto-check loop: one check shortly after launch, then
@@ -125,12 +154,21 @@ pub fn start_auto_check(app: AppHandle) {
 /// blocking the quit. On macOS/Linux this swaps the bundle in place; on Windows
 /// it launches the (passive) installer as the app exits.
 pub fn apply_staged_update_on_quit(app: &AppHandle) {
-    let staged = app
-        .try_state::<UpdaterState>()
-        .and_then(|s| s.inner.lock().unwrap().staged.take());
+    let Some(state) = app.try_state::<UpdaterState>() else {
+        return;
+    };
+    let staged = state.inner.lock().unwrap().staged.take();
     if let Some((update, bytes)) = staged {
-        if let Err(e) = update.install(bytes) {
-            eprintln!("[abundio] staged update install on quit failed: {e}");
+        let version = update.version.clone();
+        // Borrow the bytes so we can re-stage them if the install fails.
+        match update.install(&bytes) {
+            Ok(()) => eprintln!("[abundio] staged update {version} installed on quit"),
+            Err(e) => {
+                eprintln!("[abundio] staged update {version} install on quit failed: {e}");
+                // Re-stage so a subsequent quit retries rather than permanently
+                // losing the downloaded bundle to a transient failure.
+                state.inner.lock().unwrap().staged = Some((update, bytes));
+            }
         }
     }
 }
@@ -237,11 +275,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_check_defaults_on() {
+    fn auto_check_defaults_off() {
+        // Off until the frontend explicitly enables it on rehydrate, so an
+        // opted-out user never races a check before their setting arrives.
         let state = UpdaterState::new();
-        assert!(state.auto_check.load(Ordering::Relaxed));
-        state.auto_check.store(false, Ordering::Relaxed);
         assert!(!state.auto_check.load(Ordering::Relaxed));
+        state.auto_check.store(true, Ordering::Relaxed);
+        assert!(state.auto_check.load(Ordering::Relaxed));
     }
 
     #[test]

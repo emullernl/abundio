@@ -399,9 +399,12 @@ export const useSettingsStore = create<SettingsState>()(
 							typeof gitPanelSplitRatio === "number" ? gitPanelSplitRatio : 0.5,
 					};
 				}
-				// v5: in-app updater (ADR-0014). New keys default via the store's
-				// initial state on merge; seed them here so the persisted shape is
-				// explicit for users upgrading from v4.
+				// v5: in-app updater (ADR-0014). Belt-and-suspenders only — the
+				// synchronous PERSISTED_DEFAULTS read and `merge` already supply
+				// these keys when a v4 snapshot lacks them. The spread keeps any
+				// persisted value (spread last) and just guarantees the keys exist
+				// during the rehydrate microtask window. Safe to drop if the
+				// PERSISTED_DEFAULTS path is ever proven sufficient on its own.
 				if (version < 5) {
 					state = {
 						autoCheckUpdatesEnabled: true,
@@ -498,11 +501,12 @@ export const useSettingsStore = create<SettingsState>()(
 					setWebglEnabled(false);
 				}
 				// Sync the Rust-side auto-check flag with the persisted setting on
-				// startup (the Rust background loop's source of truth). Defaults
-				// to enabled, so only push when explicitly disabled.
-				if (state?.autoCheckUpdatesEnabled === false) {
-					updates.setAutoCheck(false).catch(() => {});
-				}
+				// startup. Rust defaults this OFF and waits for this explicit push
+				// (see updater.rs), so always send the value — not only when
+				// disabled — otherwise auto-check would never turn on.
+				updates
+					.setAutoCheck(state?.autoCheckUpdatesEnabled ?? true)
+					.catch(() => {});
 			},
 		},
 	),

@@ -851,10 +851,6 @@ pub fn run() {
             // window Destroyed events see the QuittingFlag and skip their
             // per-window save logic, preserving the full pre-quit set.
             if let tauri::RunEvent::ExitRequested { .. } = event {
-                // Apply a staged update (if any) before the process exits — the
-                // default "install on quit" contract. Idempotent with the
-                // menu-driven quit path above. See ADR-0014.
-                updater::apply_staged_update_on_quit(app_handle);
                 let already_handled = app_handle
                     .try_state::<profile_store::QuittingFlag>()
                     .map(|f| {
@@ -877,6 +873,12 @@ pub fn run() {
                         );
                     }
                 }
+                // Apply a staged update (if any) AFTER persisting windows.json,
+                // so the restoration snapshot is never lost to a stalled or
+                // failed install. The quit-app menu path already applied it (and
+                // also saved first), so this covers the direct ExitRequested
+                // paths (dock quit, OS shutdown). See ADR-0014.
+                updater::apply_staged_update_on_quit(app_handle);
             }
         });
 }

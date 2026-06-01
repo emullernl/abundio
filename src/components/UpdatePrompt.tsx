@@ -1,7 +1,8 @@
+import { open } from "@tauri-apps/plugin-shell";
 import { AnimatePresence, motion } from "framer-motion";
 import { Download, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
-import { useUpdateStore } from "../stores/updateStore";
+import { releaseNotesUrl, useUpdateStore } from "../stores/updateStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 /**
@@ -96,6 +97,24 @@ export function UpdatePrompt() {
 												? `Downloading…${pct != null ? ` ${pct}%` : ""}`
 												: `You're on ${info.currentVersion}.`}
 									</div>
+									<button
+										type="button"
+										onClick={() =>
+											open(releaseNotesUrl(info.version)).catch(() => {})
+										}
+										className="text-left transition-colors"
+										style={{
+											fontSize: 11,
+											color: "var(--accent)",
+											marginTop: 4,
+											background: "transparent",
+											border: "none",
+											padding: 0,
+											cursor: "pointer",
+										}}
+									>
+										View release notes ↗
+									</button>
 								</div>
 								{status !== "downloading" && (
 									<button

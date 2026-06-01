@@ -51,6 +51,12 @@ function isSkipped(version: string): boolean {
 	return useSettingsStore.getState().skippedUpdateVersion === version;
 }
 
+/** Canonical GitHub release page for a version — the source of truth for "what
+ *  changed" (we link out rather than render the raw Markdown release notes). */
+export function releaseNotesUrl(version: string): string {
+	return `https://github.com/emullernl/abundio/releases/tag/v${version}`;
+}
+
 export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	status: "idle",
 	info: null,
@@ -65,6 +71,10 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	},
 
 	check: async ({ manual = false } = {}) => {
+		// Guard against concurrent invokes (rapid clicks, a re-emit, a second
+		// caller) racing on the Rust-side `pending` slot.
+		const current = get().status;
+		if (current === "checking" || current === "downloading") return;
 		set({ status: "checking", error: null });
 		try {
 			const info = await updates.check();
@@ -84,6 +94,10 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 
 	download: async () => {
 		if (!get().info) return;
+		// Don't re-stage an in-flight or already-downloaded update (would discard
+		// the first downloaded bundle).
+		const current = get().status;
+		if (current === "downloading" || current === "ready") return;
 		set({ status: "downloading", downloaded: 0, total: null, error: null });
 		try {
 			await updates.download();

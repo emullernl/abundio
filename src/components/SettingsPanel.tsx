@@ -1,4 +1,5 @@
 import { getVersion } from "@tauri-apps/api/app";
+import { open } from "@tauri-apps/plugin-shell";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	fonts as fontsIpc,
@@ -17,7 +18,7 @@ import { useAgentRegistryStore } from "../stores/agentRegistryStore";
 import { useProfileStore } from "../stores/profileStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { consumeRequestedSection } from "../stores/settingsUiStore";
-import { useUpdateStore } from "../stores/updateStore";
+import { releaseNotesUrl, useUpdateStore } from "../stores/updateStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Check, Plus, X } from "./Icons";
 
@@ -1029,6 +1030,29 @@ function UpdatesSection() {
 						{statusText}
 					</div>
 				)}
+				{(status === "available" ||
+					status === "downloading" ||
+					status === "ready") &&
+					info && (
+						<button
+							type="button"
+							onClick={() =>
+								open(releaseNotesUrl(info.version)).catch(() => {})
+							}
+							className="text-left transition-colors"
+							style={{
+								fontSize: 12,
+								color: "var(--accent)",
+								marginTop: 6,
+								background: "transparent",
+								border: "none",
+								padding: 0,
+								cursor: "pointer",
+							}}
+						>
+							View release notes ↗
+						</button>
+					)}
 				{status === "downloading" && (
 					<div
 						className="rounded-full overflow-hidden"
