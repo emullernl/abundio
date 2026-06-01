@@ -209,8 +209,10 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Action | macOS | Windows/Linux |
 |--------|-------|---------------|
 | Split horizontal | `Cmd+Shift+H` | `Ctrl+Shift+H` |
-| Split vertical | `Cmd+Shift+V` | `Ctrl+Shift+V` |
+| Split vertical | `Cmd+Shift+V` | `Ctrl+Alt+V` |
 | Close pane | `Cmd+Shift+W` | `Ctrl+Shift+W` |
+| Copy (terminal) | `Cmd+C` (native) | `Ctrl+Shift+C` |
+| Paste (terminal) | `Cmd+V` (native) | `Ctrl+Shift+V` |
 | Navigate panes | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
 | Command palette | `Cmd+K` | `Ctrl+K` |
 | File quickopen | `Cmd+P` | `Ctrl+P` |

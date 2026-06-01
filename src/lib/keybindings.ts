@@ -22,13 +22,18 @@ type KeyAction =
 	| "toggle-right-sidebar-explorer"
 	| "toggle-right-sidebar-notes"
 	| "toggle-markdown-preview"
-	| "open-settings";
+	| "open-settings"
+	| "copy"
+	| "paste";
 
 interface KeyBinding {
 	key: string;
 	meta: boolean;
 	shift: boolean;
 	ctrl: boolean;
+	// Defaults to false when omitted. Only the Linux/Windows split-vertical
+	// binding sets this (Ctrl+Alt+V), freeing Ctrl+Shift+V for terminal paste.
+	alt?: boolean;
 	action: KeyAction;
 }
 
@@ -76,10 +81,13 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		action: "split-horizontal",
 	},
 	{
+		// macOS: Cmd+Shift+V. Linux/Windows: Ctrl+Alt+V — Ctrl+Shift+V is reserved
+		// for terminal paste (the universal Linux convention), see below.
 		key: "v",
 		meta: isMac,
-		shift: true,
+		shift: isMac,
 		ctrl: !isMac,
+		alt: !isMac,
 		action: "split-vertical",
 	},
 	{ key: "w", meta: isMac, shift: true, ctrl: !isMac, action: "close-pane" },
@@ -196,6 +204,19 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	},
 ];
 
+// Terminal copy/paste keyboard shortcuts. macOS already copies/pastes via the
+// native Cmd+C / Cmd+V (and globally grabbing those would break copy/paste in
+// other panels), so these are Linux/Windows-only: Ctrl+Shift+C / Ctrl+Shift+V,
+// the standard terminal-emulator bindings (plain Ctrl+C/Ctrl+V stay reserved
+// for SIGINT / the shell). They are intentionally NOT workspace-global, so when
+// Monaco has focus they fall through to the editor's own copy/paste.
+if (!isMac) {
+	DEFAULT_BINDINGS.push(
+		{ key: "c", meta: false, shift: true, ctrl: true, action: "copy" },
+		{ key: "v", meta: false, shift: true, ctrl: true, action: "paste" },
+	);
+}
+
 type ActionHandler = () => void;
 
 const handlers = new Map<KeyAction, ActionHandler>();
@@ -217,7 +238,8 @@ function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
 		e.key.toLowerCase() === binding.key.toLowerCase() &&
 		e.metaKey === binding.meta &&
 		e.shiftKey === binding.shift &&
-		e.ctrlKey === binding.ctrl
+		e.ctrlKey === binding.ctrl &&
+		e.altKey === (binding.alt ?? false)
 	);
 }
 

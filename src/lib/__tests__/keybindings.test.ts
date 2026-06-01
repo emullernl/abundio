@@ -14,6 +14,7 @@ function makeKeyEvent(
 		metaKey: opts.metaKey ?? false,
 		shiftKey: opts.shiftKey ?? false,
 		ctrlKey: opts.ctrlKey ?? false,
+		altKey: opts.altKey ?? false,
 		bubbles: true,
 	});
 }
@@ -110,6 +111,44 @@ describe("Monaco focus delegation", () => {
 		handleKeyDown(e);
 
 		expect(handler).toHaveBeenCalledOnce();
+	});
+});
+
+// Terminal copy/paste are Linux/Windows-only bindings; the test env is non-mac
+// (jsdom navigator.platform is ""), so they're active here. On a macOS runner
+// these are intentionally absent, so skip rather than assert.
+describe("terminal copy/paste (Linux/Windows)", () => {
+	afterEach(() => {
+		unregisterAction("copy");
+		unregisterAction("paste");
+		unregisterAction("split-vertical");
+	});
+
+	it.skipIf(isMac)("Ctrl+Shift+C triggers copy", () => {
+		const handler = vi.fn();
+		registerAction("copy", handler);
+		handleKeyDown(makeKeyEvent({ key: "c", ctrlKey: true, shiftKey: true }));
+		expect(handler).toHaveBeenCalledOnce();
+	});
+
+	it.skipIf(isMac)("Ctrl+Shift+V triggers paste, not split-vertical", () => {
+		const paste = vi.fn();
+		const split = vi.fn();
+		registerAction("paste", paste);
+		registerAction("split-vertical", split);
+		handleKeyDown(makeKeyEvent({ key: "v", ctrlKey: true, shiftKey: true }));
+		expect(paste).toHaveBeenCalledOnce();
+		expect(split).not.toHaveBeenCalled();
+	});
+
+	it.skipIf(isMac)("Ctrl+Alt+V triggers split-vertical, not paste", () => {
+		const paste = vi.fn();
+		const split = vi.fn();
+		registerAction("paste", paste);
+		registerAction("split-vertical", split);
+		handleKeyDown(makeKeyEvent({ key: "v", ctrlKey: true, altKey: true }));
+		expect(split).toHaveBeenCalledOnce();
+		expect(paste).not.toHaveBeenCalled();
 	});
 });
 
