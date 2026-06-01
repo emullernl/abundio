@@ -7,6 +7,7 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
+import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { pty } from "../../lib/ipc";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
@@ -184,13 +185,13 @@ export function TerminalSlot({
 		if (!managed) return;
 		const selection = managed.term.getSelection();
 		if (selection) {
-			navigator.clipboard.writeText(selection);
+			void writeClipboardText(selection);
 		}
 	}, [paneId]);
 
 	const handlePaste = useCallback(async () => {
 		const managed = getTerminal(paneId);
-		const text = await navigator.clipboard.readText();
+		const text = await readClipboardText();
 		if (text && managed?.ptyId) {
 			pty.write(managed.ptyId, text);
 		}
