@@ -677,10 +677,10 @@ export function App() {
 					</div>
 					{!activeWorkspaceId && (
 						<div
-							className="flex items-center justify-center flex-1"
+							className="flex items-center justify-center flex-1 min-w-0 overflow-hidden px-4"
 							style={{ color: "var(--fg-secondary)" }}
 						>
-							<div className="text-center">
+							<div className="text-center max-w-full break-words">
 								<div
 									className="text-2xl mb-3 font-medium"
 									style={{ color: "var(--accent)" }}
