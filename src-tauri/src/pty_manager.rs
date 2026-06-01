@@ -432,7 +432,17 @@ __abundio_preexec() {
 }
 __abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD"; __abundio_at_prompt=1; }
 trap '__abundio_preexec' DEBUG
-PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND;}__abundio_precmd"
+# Append precmd LAST so it runs after every other PROMPT_COMMAND command (re-arming
+# the prompt flag only once they've all run). bash 5.1+ allows PROMPT_COMMAND to be
+# an array — set by GNOME/VTE's /etc/profile.d integration and some prompt tools — and
+# a scalar assignment would only replace element [0], leaving later array entries to
+# run after command_end and re-trigger a spurious command_start (pane stuck "busy").
+# Detect the array form and push onto it instead.
+if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+  PROMPT_COMMAND+=(__abundio_precmd)
+else
+  PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}__abundio_precmd"
+fi
 "#;
 
     let _ = fs::write(&bashrc, bashrc_content);
