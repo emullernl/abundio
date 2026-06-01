@@ -443,6 +443,52 @@ export const metrics = {
 		listen<AppMetrics>("app-metrics", (event) => callback(event.payload)),
 };
 
+/** Metadata for an available app update. Mirrors the Rust `UpdateInfo`. */
+export interface UpdateInfo {
+	version: string;
+	currentVersion: string;
+	body: string | null;
+	date: string | null;
+}
+
+/** Download progress for a staging update. `total` is null until known. */
+export interface UpdateDownloadProgress {
+	downloaded: number;
+	total: number | null;
+}
+
+export const updates = {
+	/** Manually check for an update. Resolves to null when up to date.
+	 *  Stashes any found update Rust-side for a subsequent `download()`. */
+	check: () => invoke<UpdateInfo | null>("updater_check"),
+
+	/** Download the pending update and stage it for install (on quit, or via
+	 *  `installNow`). Emits progress via `onDownloadProgress`. */
+	download: () => invoke<void>("updater_download"),
+
+	/** Install the staged update immediately and restart the app. The caller
+	 *  must confirm first — this terminates all Windows, PTYs and Agents. */
+	installNow: () => invoke<void>("updater_install_now"),
+
+	/** Enable/disable background auto-checks (the app-wide Rust flag). */
+	setAutoCheck: (enabled: boolean) =>
+		invoke<void>("updater_set_auto_check", { enabled }),
+
+	/** Fires (focused Window only) when the Rust background loop finds an update. */
+	onUpdateAvailable: (
+		callback: (info: UpdateInfo) => void,
+	): Promise<UnlistenFn> =>
+		listen<UpdateInfo>("update-available", (event) => callback(event.payload)),
+
+	/** Streams download progress while `download()` runs. */
+	onDownloadProgress: (
+		callback: (progress: UpdateDownloadProgress) => void,
+	): Promise<UnlistenFn> =>
+		listen<UpdateDownloadProgress>("update-download-progress", (event) =>
+			callback(event.payload),
+		),
+};
+
 export const devEnvironments = {
 	list: () => invoke<DetectedDevEnvironment[]>("list_dev_environments"),
 

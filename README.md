@@ -300,6 +300,44 @@ git push --follow-tags         # triggers CI build for all platforms
 
 This creates a draft [GitHub Release](../../releases) with macOS, Linux, and Windows artifacts. Review the draft on GitHub and publish when ready.
 
+### Auto-updates
+
+Abundio has a built-in updater (see [`docs/adr/0014-in-app-updater.md`](docs/adr/0014-in-app-updater.md)). Installed copies check `releases/latest/download/latest.json`, download in the background, and **install the update the next time the app quits** — so running terminals and agents are never interrupted (an opt-in "Restart now" is offered too). Because the updater only sees **published, non-prerelease** releases, **clicking _Publish_ on the GitHub draft is the act that ships the update to all users.** Updates can be turned off per-install under **Settings → Updates**.
+
+The build signs each artifact with a dedicated Tauri updater key. This is separate from OS code-signing and is required for the updater to work — without it, signed-artifact verification fails.
+
+#### One-time signing-key setup
+
+1. **Generate the key pair** (do this once, locally):
+
+   ```bash
+   pnpm tauri signer generate -w ~/.tauri/abundio_updater.key
+   ```
+
+   Choose a password when prompted. This writes the private key to `~/.tauri/abundio_updater.key` and the public key to `~/.tauri/abundio_updater.key.pub`.
+
+   > ⚠️ **Back up the private key somewhere safe (e.g. a password manager).** If it is lost, existing installs will reject every future update — there is no recovery short of shipping a manual reinstall.
+
+2. **Add the public key to config.** Copy the contents of `~/.tauri/abundio_updater.key.pub` into `src-tauri/tauri.conf.json` → `plugins.updater.pubkey` (replacing the `REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY` placeholder). This is public — it's committed to the repo.
+
+3. **Add the private key + password as GitHub Actions secrets.** The release workflow (`.github/workflows/build.yml`) reads these to sign artifacts. In the repo: **Settings → Secrets and variables → Actions → New repository secret** (direct link: `https://github.com/emullernl/abundio/settings/secrets/actions`), or via the `gh` CLI:
+
+   ```bash
+   gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/abundio_updater.key
+   gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD   # prompts for the password (set empty if you chose no password)
+   ```
+
+   | Secret | Value |
+   | --- | --- |
+   | `TAURI_SIGNING_PRIVATE_KEY` | full contents of `~/.tauri/abundio_updater.key` |
+   | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the password chosen in step 1 |
+
+After this, every tagged release is signed automatically, and publishing the draft delivers it to users.
+
+> **`TAURI_SIGNING_PRIVATE_KEY` vs `TAURI_SIGNING_PRIVATE_KEY_PATH`:** `signer generate` mentions both — they are two ways to point Tauri at the *same* private key, so set only one. `TAURI_SIGNING_PRIVATE_KEY` takes either the key's **contents** or a file path; `TAURI_SIGNING_PRIVATE_KEY_PATH` takes a file path. **In CI use `TAURI_SIGNING_PRIVATE_KEY` with the contents** (the file doesn't exist on the runner — that's why the `gh secret set … < …key` command pipes the contents in). The `_PATH` form is only convenient for signing a local build.
+
+> **Note:** `bundle.createUpdaterArtifacts` is enabled, so a local `pnpm tauri build` will fail to sign unless the signing variables are set in your environment — for local builds, `export TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/abundio_updater.key` (plus `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) is the easiest. Bundle signing is normally a CI-only concern.
+
 ## License
 
 Abundio is dual-licensed under either of:
