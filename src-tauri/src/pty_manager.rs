@@ -438,11 +438,18 @@ trap '__abundio_preexec' DEBUG
 # a scalar assignment would only replace element [0], leaving later array entries to
 # run after command_end and re-trigger a spurious command_start (pane stuck "busy").
 # Detect the array form and push onto it instead.
-if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
-  PROMPT_COMMAND+=(__abundio_precmd)
+__abundio_pc="$(declare -p PROMPT_COMMAND 2>/dev/null)"
+__abundio_pc_flags="${__abundio_pc#declare }"; __abundio_pc_flags="${__abundio_pc_flags%% *}"
+if [[ "$__abundio_pc" == *__abundio_precmd* ]]; then
+  :  # already installed (e.g. .bashrc sourced twice) — don't double command_end
+elif [[ "$__abundio_pc_flags" == *r* ]]; then
+  :  # PROMPT_COMMAND is readonly — can't hook it without an error on first prompt
+elif [[ "$__abundio_pc_flags" == *[aA]* ]]; then
+  PROMPT_COMMAND+=(__abundio_precmd)  # array form (bash 5.1+); -A treated like -a
 else
   PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}__abundio_precmd"
 fi
+unset __abundio_pc __abundio_pc_flags
 "#;
 
     let _ = fs::write(&bashrc, bashrc_content);

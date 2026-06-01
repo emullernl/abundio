@@ -72,6 +72,21 @@ function isMonacoFocused(): boolean {
 	return !!el && (el as Element).closest?.(".monaco-editor") !== null;
 }
 
+// True when focus is in an editable element that is NOT a terminal. xterm.js
+// receives input through a hidden <textarea> inside `.xterm`, which IS the
+// paste target — so it must not count as "editable" here. Everything else
+// (the workspace rename input, branch-selector search, the TipTap Notes editor,
+// etc.) must NOT have terminal copy/paste hijack its keystrokes, or clipboard
+// text would be written to a background terminal's PTY instead of the input.
+function isEditableFocused(): boolean {
+	const el = document.activeElement as HTMLElement | null;
+	if (!el) return false;
+	if (el.closest?.(".xterm")) return false;
+	return (
+		el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable
+	);
+}
+
 const DEFAULT_BINDINGS: KeyBinding[] = [
 	{
 		// macOS: Cmd+Shift+H. Linux/Windows: Ctrl+Alt+H — kept symmetric with
@@ -253,6 +268,15 @@ export function handleKeyDown(e: KeyboardEvent) {
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.
 			if (isMonacoFocused() && !WORKSPACE_GLOBAL_ACTIONS.has(binding.action)) {
+				return;
+			}
+			// Terminal copy/paste must defer to a focused non-terminal text input
+			// (rename field, branch search, Notes editor) — otherwise the
+			// clipboard would be written to a background terminal's PTY.
+			if (
+				(binding.action === "copy" || binding.action === "paste") &&
+				isEditableFocused()
+			) {
 				return;
 			}
 			// Always prevent default for registered bindings, even if no handler yet

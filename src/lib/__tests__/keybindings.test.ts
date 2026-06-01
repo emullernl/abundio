@@ -124,14 +124,50 @@ describe("Monaco focus delegation", () => {
 	});
 });
 
-// Terminal copy/paste are Linux/Windows-only bindings; the test env is non-mac
-// (jsdom navigator.platform is ""), so they're active here. On a macOS runner
-// these are intentionally absent, so skip rather than assert.
+// Terminal copy/paste are Linux/Windows-only bindings; the test env is non-mac,
+// so they're active here. (The keybindings module's `isMac` comes from
+// platform.ts, which falls back to `navigator.userAgent` — jsdom's UA starts
+// with "Mozilla/5.0 (linux) …", so /Mac/i doesn't match.) On a real macOS
+// runner these bindings are absent, so skip rather than assert.
 describe("terminal copy/paste (Linux/Windows)", () => {
 	afterEach(() => {
 		unregisterAction("copy");
 		unregisterAction("paste");
 		unregisterAction("split-vertical");
+		document.body.innerHTML = "";
+	});
+
+	function focus(tag: string, className?: string): void {
+		const el = document.createElement(tag);
+		if (className) el.className = className;
+		document.body.appendChild(el);
+		(el as HTMLElement).focus();
+	}
+
+	it.skipIf(isMac)("paste defers to a focused text input", () => {
+		const paste = vi.fn();
+		registerAction("paste", paste);
+		focus("input");
+		const e = makeKeyEvent({ key: "v", ctrlKey: true, shiftKey: true });
+		const preventSpy = vi.spyOn(e, "preventDefault");
+		handleKeyDown(e);
+		expect(paste).not.toHaveBeenCalled();
+		expect(preventSpy).not.toHaveBeenCalled(); // input keeps native handling
+	});
+
+	it.skipIf(isMac)("paste fires when xterm's own textarea is focused", () => {
+		const paste = vi.fn();
+		registerAction("paste", paste);
+		// xterm's hidden input is a <textarea> inside `.xterm` — it IS the
+		// paste target, so it must not be treated as an editable to defer to.
+		const term = document.createElement("div");
+		term.className = "xterm";
+		const ta = document.createElement("textarea");
+		term.appendChild(ta);
+		document.body.appendChild(term);
+		ta.focus();
+		handleKeyDown(makeKeyEvent({ key: "v", ctrlKey: true, shiftKey: true }));
+		expect(paste).toHaveBeenCalledOnce();
 	});
 
 	it.skipIf(isMac)("Ctrl+Shift+C triggers copy", () => {

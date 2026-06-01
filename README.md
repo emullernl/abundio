@@ -79,6 +79,11 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Save file               | `Cmd+S`           | `Ctrl+S`           |
 | Open settings           | `Cmd+,`           | `Ctrl+,`           |
 
+> **Note:** The `Ctrl+Alt` split shortcuts can clash on some setups — a few
+> Linux window managers reserve `Ctrl+Alt`+key, and on international keyboard
+> layouts (e.g. Brazilian, Czech) `Ctrl+Alt` acts as `AltGr` and may type a
+> character instead. If a split shortcut doesn't fire, that's usually why.
+
 ## Runtime requirements
 
 Abundio shells out to a few external command-line tools at runtime. Only a shell is strictly required — the rest light up individual features and the app runs fine without them (those panels simply stay empty).
