@@ -74,10 +74,13 @@ function isMonacoFocused(): boolean {
 
 const DEFAULT_BINDINGS: KeyBinding[] = [
 	{
+		// macOS: Cmd+Shift+H. Linux/Windows: Ctrl+Alt+H — kept symmetric with
+		// split-vertical (Ctrl+Alt+V), which freed Ctrl+Shift+V for paste.
 		key: "h",
 		meta: isMac,
-		shift: true,
+		shift: isMac,
 		ctrl: !isMac,
+		alt: !isMac,
 		action: "split-horizontal",
 	},
 	{

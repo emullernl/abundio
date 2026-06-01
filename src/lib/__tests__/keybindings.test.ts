@@ -35,7 +35,12 @@ describe("registerAction / unregisterAction", () => {
 		const handler = vi.fn();
 		registerAction("split-horizontal", handler);
 
-		const e = makeKeyEvent({ key: "h", [modKey]: true, shiftKey: true });
+		const e = makeKeyEvent({
+			key: "h",
+			[modKey]: true,
+			shiftKey: isMac,
+			altKey: !isMac,
+		});
 		handleKeyDown(e);
 		expect(handler).toHaveBeenCalledOnce();
 	});
@@ -45,7 +50,12 @@ describe("registerAction / unregisterAction", () => {
 		registerAction("split-horizontal", handler);
 		unregisterAction("split-horizontal");
 
-		const e = makeKeyEvent({ key: "h", [modKey]: true, shiftKey: true });
+		const e = makeKeyEvent({
+			key: "h",
+			[modKey]: true,
+			shiftKey: isMac,
+			altKey: !isMac,
+		});
 		handleKeyDown(e);
 		expect(handler).not.toHaveBeenCalled();
 	});
