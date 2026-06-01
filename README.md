@@ -55,9 +55,11 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 
 | Action                  | macOS             | Windows/Linux      |
 | ----------------------- | ----------------- | :----------------- |
-| Split horizontal        | `Cmd+Shift+H`     | `Ctrl+Shift+H`     |
-| Split vertical          | `Cmd+Shift+V`     | `Ctrl+Shift+V`     |
+| Split horizontal        | `Cmd+Shift+H`     | `Ctrl+Alt+H`       |
+| Split vertical          | `Cmd+Shift+V`     | `Ctrl+Alt+V`       |
 | Close pane              | `Cmd+Shift+W`     | `Ctrl+Shift+W`     |
+| Copy (terminal)         | `Cmd+C` (native)  | `Ctrl+Shift+C`     |
+| Paste (terminal)        | `Cmd+V` (native)  | `Ctrl+Shift+V`     |
 | Navigate panes          | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
 | Command palette         | `Cmd+K`           | `Ctrl+K`           |
 | File quickopen          | `Cmd+P`           | `Ctrl+P`           |
@@ -76,6 +78,11 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Decrease font size      | `Cmd+-`           | `Ctrl+-`           |
 | Save file               | `Cmd+S`           | `Ctrl+S`           |
 | Open settings           | `Cmd+,`           | `Ctrl+,`           |
+
+> **Note:** The `Ctrl+Alt` split shortcuts can clash on some setups — a few
+> Linux window managers reserve `Ctrl+Alt`+key, and on international keyboard
+> layouts (e.g. Brazilian, Czech) `Ctrl+Alt` acts as `AltGr` and may type a
+> character instead. If a split shortcut doesn't fire, that's usually why.
 
 ## Runtime requirements
 

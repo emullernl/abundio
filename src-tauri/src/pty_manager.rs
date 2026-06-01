@@ -417,13 +417,39 @@ fi
 [ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
 [ -f ~/.bashrc ] && source ~/.bashrc
 # Hooks
+# Track whether the DEBUG trap is firing for a genuine interactive command
+# vs. a command run from PROMPT_COMMAND (e.g. a distro's `history -a`) or tab
+# completion. Without this, any pre-existing PROMPT_COMMAND command runs after
+# our command_end and the DEBUG trap emits a spurious command_start, leaving
+# the pane stuck "busy" at an idle prompt. precmd is appended LAST so all
+# other PROMPT_COMMAND commands run before we re-arm the prompt flag.
+__abundio_at_prompt=0
 __abundio_preexec() {
-  [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
+  [ -n "$COMP_LINE" ] && return
+  [ "$__abundio_at_prompt" = 1 ] || return
+  __abundio_at_prompt=0
   printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
 }
-__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD"; }
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD"; __abundio_at_prompt=1; }
 trap '__abundio_preexec' DEBUG
-PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+# Append precmd LAST so it runs after every other PROMPT_COMMAND command (re-arming
+# the prompt flag only once they've all run). bash 5.1+ allows PROMPT_COMMAND to be
+# an array — set by GNOME/VTE's /etc/profile.d integration and some prompt tools — and
+# a scalar assignment would only replace element [0], leaving later array entries to
+# run after command_end and re-trigger a spurious command_start (pane stuck "busy").
+# Detect the array form and push onto it instead.
+__abundio_pc="$(declare -p PROMPT_COMMAND 2>/dev/null)"
+__abundio_pc_flags="${__abundio_pc#declare }"; __abundio_pc_flags="${__abundio_pc_flags%% *}"
+if [[ "$__abundio_pc" == *__abundio_precmd* ]]; then
+  :  # already installed (e.g. .bashrc sourced twice) — don't double command_end
+elif [[ "$__abundio_pc_flags" == *r* ]]; then
+  :  # PROMPT_COMMAND is readonly — can't hook it without an error on first prompt
+elif [[ "$__abundio_pc_flags" == *[aA]* ]]; then
+  PROMPT_COMMAND+=(__abundio_precmd)  # array form (bash 5.1+); -A treated like -a
+else
+  PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}__abundio_precmd"
+fi
+unset __abundio_pc __abundio_pc_flags
 "#;
 
     let _ = fs::write(&bashrc, bashrc_content);

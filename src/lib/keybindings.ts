@@ -22,13 +22,18 @@ type KeyAction =
 	| "toggle-right-sidebar-explorer"
 	| "toggle-right-sidebar-notes"
 	| "toggle-markdown-preview"
-	| "open-settings";
+	| "open-settings"
+	| "copy"
+	| "paste";
 
 interface KeyBinding {
 	key: string;
 	meta: boolean;
 	shift: boolean;
 	ctrl: boolean;
+	// Defaults to false when omitted. Only the Linux/Windows split-vertical
+	// binding sets this (Ctrl+Alt+V), freeing Ctrl+Shift+V for terminal paste.
+	alt?: boolean;
 	action: KeyAction;
 }
 
@@ -67,19 +72,40 @@ function isMonacoFocused(): boolean {
 	return !!el && (el as Element).closest?.(".monaco-editor") !== null;
 }
 
+// True when focus is in an editable element that is NOT a terminal. xterm.js
+// receives input through a hidden <textarea> inside `.xterm`, which IS the
+// paste target — so it must not count as "editable" here. Everything else
+// (the workspace rename input, branch-selector search, the TipTap Notes editor,
+// etc.) must NOT have terminal copy/paste hijack its keystrokes, or clipboard
+// text would be written to a background terminal's PTY instead of the input.
+function isEditableFocused(): boolean {
+	const el = document.activeElement as HTMLElement | null;
+	if (!el) return false;
+	if (el.closest?.(".xterm")) return false;
+	return (
+		el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable
+	);
+}
+
 const DEFAULT_BINDINGS: KeyBinding[] = [
 	{
+		// macOS: Cmd+Shift+H. Linux/Windows: Ctrl+Alt+H — kept symmetric with
+		// split-vertical (Ctrl+Alt+V), which freed Ctrl+Shift+V for paste.
 		key: "h",
 		meta: isMac,
-		shift: true,
+		shift: isMac,
 		ctrl: !isMac,
+		alt: !isMac,
 		action: "split-horizontal",
 	},
 	{
+		// macOS: Cmd+Shift+V. Linux/Windows: Ctrl+Alt+V — Ctrl+Shift+V is reserved
+		// for terminal paste (the universal Linux convention), see below.
 		key: "v",
 		meta: isMac,
-		shift: true,
+		shift: isMac,
 		ctrl: !isMac,
+		alt: !isMac,
 		action: "split-vertical",
 	},
 	{ key: "w", meta: isMac, shift: true, ctrl: !isMac, action: "close-pane" },
@@ -196,6 +222,19 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	},
 ];
 
+// Terminal copy/paste keyboard shortcuts. macOS already copies/pastes via the
+// native Cmd+C / Cmd+V (and globally grabbing those would break copy/paste in
+// other panels), so these are Linux/Windows-only: Ctrl+Shift+C / Ctrl+Shift+V,
+// the standard terminal-emulator bindings (plain Ctrl+C/Ctrl+V stay reserved
+// for SIGINT / the shell). They are intentionally NOT workspace-global, so when
+// Monaco has focus they fall through to the editor's own copy/paste.
+if (!isMac) {
+	DEFAULT_BINDINGS.push(
+		{ key: "c", meta: false, shift: true, ctrl: true, action: "copy" },
+		{ key: "v", meta: false, shift: true, ctrl: true, action: "paste" },
+	);
+}
+
 type ActionHandler = () => void;
 
 const handlers = new Map<KeyAction, ActionHandler>();
@@ -217,7 +256,8 @@ function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
 		e.key.toLowerCase() === binding.key.toLowerCase() &&
 		e.metaKey === binding.meta &&
 		e.shiftKey === binding.shift &&
-		e.ctrlKey === binding.ctrl
+		e.ctrlKey === binding.ctrl &&
+		e.altKey === (binding.alt ?? false)
 	);
 }
 
@@ -228,6 +268,15 @@ export function handleKeyDown(e: KeyboardEvent) {
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.
 			if (isMonacoFocused() && !WORKSPACE_GLOBAL_ACTIONS.has(binding.action)) {
+				return;
+			}
+			// Terminal copy/paste must defer to a focused non-terminal text input
+			// (rename field, branch search, Notes editor) — otherwise the
+			// clipboard would be written to a background terminal's PTY.
+			if (
+				(binding.action === "copy" || binding.action === "paste") &&
+				isEditableFocused()
+			) {
 				return;
 			}
 			// Always prevent default for registered bindings, even if no handler yet

@@ -33,6 +33,10 @@ import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
+import {
+	copyTerminalSelection,
+	pasteIntoTerminal,
+} from "./lib/terminalClipboard";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import type { PaneNode } from "./lib/types";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
@@ -527,6 +531,14 @@ export function App() {
 		registerAction("close-pane", () => {
 			const paneId = useWorkspaceStore.getState().focusedPaneId;
 			if (paneId) closePane(paneId);
+		});
+		registerAction("copy", () => {
+			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			if (paneId) copyTerminalSelection(paneId);
+		});
+		registerAction("paste", () => {
+			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			if (paneId) void pasteIntoTerminal(paneId);
 		});
 		registerAction("navigate-up", () => navigatePane("up"));
 		registerAction("navigate-down", () => navigatePane("down"));
