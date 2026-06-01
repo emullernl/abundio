@@ -417,13 +417,22 @@ fi
 [ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
 [ -f ~/.bashrc ] && source ~/.bashrc
 # Hooks
+# Track whether the DEBUG trap is firing for a genuine interactive command
+# vs. a command run from PROMPT_COMMAND (e.g. a distro's `history -a`) or tab
+# completion. Without this, any pre-existing PROMPT_COMMAND command runs after
+# our command_end and the DEBUG trap emits a spurious command_start, leaving
+# the pane stuck "busy" at an idle prompt. precmd is appended LAST so all
+# other PROMPT_COMMAND commands run before we re-arm the prompt flag.
+__abundio_at_prompt=0
 __abundio_preexec() {
-  [ "$BASH_COMMAND" = "__abundio_precmd" ] && return
+  [ -n "$COMP_LINE" ] && return
+  [ "$__abundio_at_prompt" = 1 ] || return
+  __abundio_at_prompt=0
   printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
 }
-__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD"; }
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD"; __abundio_at_prompt=1; }
 trap '__abundio_preexec' DEBUG
-PROMPT_COMMAND="__abundio_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND;}__abundio_precmd"
 "#;
 
     let _ = fs::write(&bashrc, bashrc_content);
