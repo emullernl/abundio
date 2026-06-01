@@ -92,6 +92,9 @@ _Avoid_: footer, info bar; do not call the **Overview bar** a "status bar".
 Both sidebars collapse to a 44px icon strip. Open/closed state and (for the right sidebar) the active tab + PR-collapsed state are per-Window. Width is global.
 _Avoid_: panel (collides with **Pane** colloquially), drawer, rail.
 
+**Update**: A newer published Abundio release the running app can fetch and apply via the Tauri updater. App-global, not per-Profile. Lifecycle: *available* → *downloading* → *staged* → *installed on quit*. By default applied only on the next natural quit so live **PTY**s and **Agent** turns survive; an explicit, confirmed "restart now" is the exception. The version check runs in Rust and surfaces in the focused **Window** only. See ADR-0014.
+_Avoid_: upgrade, patch, version bump.
+
 **Shell-mode PTY**: A PTY that Abundio has not currently detected as running an Agent — a plain shell. Its counterpart, an **agent-mode PTY**, has its status indicator driven by Agent hooks. A single PTY flips between the two as Agents are launched in it and exit.
 _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 
@@ -111,6 +114,7 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 - Each **Pane** belongs to exactly one **Tab**. A terminal pane holds at most one **PTY**; a file pane holds at most one open file; a preview pane holds neither — it references a **source pane**.
 - A **preview pane** and its **source pane** always live in the same **Tab**.
 - Abundio derives an **Agent**'s status by observing its **Agent hooks**; a permission-request hook puts the Agent into the **Waiting** state, which clears when the user types into that **Pane**'s terminal.
+- Installing an **Update** is deferred to app quit by default: the staged install runs in the quit path (the `quit-app` menu item / `ExitRequested`) before Windows tear down, so it composes with the "last-window-closing quits the app" rule rather than interrupting a running session.
 - Abundio derives a **shell-mode PTY**'s status from shell-integration OSC markers (`command_start` / `command_end`) emitted by Abundio's startup hooks; **Working** and **Error** for shells are detected this way (a clean exit returns to **Idle**, with no Ready hop). Without working shell integration the PTY degrades silently to permanent **Idle** (no false signal).
 
 ## Flagged ambiguities

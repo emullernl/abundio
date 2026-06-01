@@ -185,6 +185,14 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		}
 		case "agent_hooks_provision":
 			return undefined;
+
+		// ── Updater — inert in demo (never touches the network) ──
+		case "updater_check":
+			return null;
+		case "updater_download":
+		case "updater_install_now":
+		case "updater_set_auto_check":
+			return undefined;
 		case "list_system_fonts":
 			return fixtures.systemFonts;
 		case "list_available_shells":

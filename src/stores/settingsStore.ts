@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
-import { agentHooks } from "../lib/ipc";
+import { agentHooks, updates } from "../lib/ipc";
 import type { PreviewColorMode } from "../lib/previewColorMode";
 import { nextPreviewColorMode } from "../lib/previewColorMode";
 import {
@@ -35,6 +35,11 @@ interface SettingsState {
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
+	/** Whether the app checks for updates on launch + periodically. */
+	autoCheckUpdatesEnabled: boolean;
+	/** Update version the user chose to skip; suppresses its prompt until a
+	 *  newer release ships. Null when nothing is skipped. */
+	skippedUpdateVersion: string | null;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -61,6 +66,8 @@ interface SettingsState {
 	toggleMarkdownPreviewColorMode: () => void;
 	setAgentHooksEnabled: (enabled: boolean) => void;
 	setGpuAcceleration: (enabled: boolean) => void;
+	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
+	setSkippedUpdateVersion: (version: string | null) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -89,6 +96,8 @@ const PERSISTED_DEFAULTS: {
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
+	autoCheckUpdatesEnabled: boolean;
+	skippedUpdateVersion: string | null;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -110,6 +119,8 @@ const PERSISTED_DEFAULTS: {
 		markdownPreviewColorMode: "auto" as PreviewColorMode,
 		agentHooksEnabled: true,
 		gpuAccelerationEnabled: true,
+		autoCheckUpdatesEnabled: true,
+		skippedUpdateVersion: null as string | null,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -200,6 +211,14 @@ const PERSISTED_DEFAULTS: {
 				typeof s.gpuAccelerationEnabled === "boolean"
 					? s.gpuAccelerationEnabled
 					: defaults.gpuAccelerationEnabled,
+			autoCheckUpdatesEnabled:
+				typeof s.autoCheckUpdatesEnabled === "boolean"
+					? s.autoCheckUpdatesEnabled
+					: defaults.autoCheckUpdatesEnabled,
+			skippedUpdateVersion:
+				typeof s.skippedUpdateVersion === "string"
+					? s.skippedUpdateVersion
+					: defaults.skippedUpdateVersion,
 		};
 	} catch {
 		return defaults;
@@ -228,6 +247,8 @@ export const useSettingsStore = create<SettingsState>()(
 			markdownPreviewColorMode: PERSISTED_DEFAULTS.markdownPreviewColorMode,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
+			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
+			skippedUpdateVersion: PERSISTED_DEFAULTS.skippedUpdateVersion,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -324,10 +345,21 @@ export const useSettingsStore = create<SettingsState>()(
 				setWebglEnabled(gpuAccelerationEnabled);
 				set({ gpuAccelerationEnabled });
 			},
+			setAutoCheckUpdatesEnabled: (autoCheckUpdatesEnabled) => {
+				// Rust holds the app-wide auto-check flag (the background loop
+				// reads it). Push the change immediately so any Window's toggle
+				// takes effect without a restart. See ADR-0014.
+				updates.setAutoCheck(autoCheckUpdatesEnabled).catch((err) => {
+					console.error("[updates] setAutoCheck failed:", err);
+				});
+				set({ autoCheckUpdatesEnabled });
+			},
+			setSkippedUpdateVersion: (skippedUpdateVersion) =>
+				set({ skippedUpdateVersion }),
 		}),
 		{
 			name: "abundio-settings",
-			version: 4,
+			version: 5,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -367,6 +399,19 @@ export const useSettingsStore = create<SettingsState>()(
 							typeof gitPanelSplitRatio === "number" ? gitPanelSplitRatio : 0.5,
 					};
 				}
+				// v5: in-app updater (ADR-0014). Belt-and-suspenders only — the
+				// synchronous PERSISTED_DEFAULTS read and `merge` already supply
+				// these keys when a v4 snapshot lacks them. The spread keeps any
+				// persisted value (spread last) and just guarantees the keys exist
+				// during the rehydrate microtask window. Safe to drop if the
+				// PERSISTED_DEFAULTS path is ever proven sufficient on its own.
+				if (version < 5) {
+					state = {
+						autoCheckUpdatesEnabled: true,
+						skippedUpdateVersion: null,
+						...state,
+					};
+				}
 				return state;
 			},
 			partialize: (state) => ({
@@ -389,6 +434,8 @@ export const useSettingsStore = create<SettingsState>()(
 				markdownPreviewColorMode: state.markdownPreviewColorMode,
 				agentHooksEnabled: state.agentHooksEnabled,
 				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
+				autoCheckUpdatesEnabled: state.autoCheckUpdatesEnabled,
+				skippedUpdateVersion: state.skippedUpdateVersion,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
@@ -453,6 +500,13 @@ export const useSettingsStore = create<SettingsState>()(
 				if (state?.gpuAccelerationEnabled === false) {
 					setWebglEnabled(false);
 				}
+				// Sync the Rust-side auto-check flag with the persisted setting on
+				// startup. Rust defaults this OFF and waits for this explicit push
+				// (see updater.rs), so always send the value — not only when
+				// disabled — otherwise auto-check would never turn on.
+				updates
+					.setAutoCheck(state?.autoCheckUpdatesEnabled ?? true)
+					.catch(() => {});
 			},
 		},
 	),

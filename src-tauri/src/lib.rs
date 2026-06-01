@@ -18,6 +18,7 @@ pub mod process_monitor;
 pub mod profile_store;
 pub mod pty_manager;
 pub mod search;
+pub mod updater;
 pub mod window_management;
 pub mod window_persistence;
 pub mod workspace_store;
@@ -452,6 +453,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             // Initialize SQLite + run migrations. Two connections so the
             // ProfileStore and WorkspaceStore can be locked independently;
@@ -489,6 +491,12 @@ pub fn run() {
 
             // Initialize search manager
             app.manage(search::SearchManager::new());
+
+            // In-app updater state + background auto-check loop. The check runs
+            // in Rust and emits `update-available` to the focused Window; the
+            // loop honours the frontend's auto-check setting. See ADR-0014.
+            app.manage(updater::UpdaterState::new());
+            updater::start_auto_check(app.handle().clone());
 
             // Start the resource-usage sampler. Pushes `app-metrics` events
             // (whole-tree CPU + memory) to the status bar on a background
@@ -684,6 +692,9 @@ pub fn run() {
                         eprintln!("[abundio] failed to persist windows.json at quit: {e}");
                     }
                 }
+                // Apply a staged update (if any) on this quit — the default
+                // "install on quit" contract. See ADR-0014.
+                updater::apply_staged_update_on_quit(app);
                 app.exit(0);
                 return;
             }
@@ -826,6 +837,10 @@ pub fn run() {
             dev_environments::launch_dev_environment,
             agent_registry::list_installed_agent_commands,
             commands::agent_hooks_provision,
+            updater::updater_check,
+            updater::updater_download,
+            updater::updater_install_now,
+            updater::updater_set_auto_check,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -858,6 +873,12 @@ pub fn run() {
                         );
                     }
                 }
+                // Apply a staged update (if any) AFTER persisting windows.json,
+                // so the restoration snapshot is never lost to a stalled or
+                // failed install. The quit-app menu path already applied it (and
+                // also saved first), so this covers the direct ExitRequested
+                // paths (dock quit, OS shutdown). See ADR-0014.
+                updater::apply_staged_update_on_quit(app_handle);
             }
         });
 }

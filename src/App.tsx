@@ -20,12 +20,14 @@ import { TabBar } from "./components/TabBar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
+import { UpdatePrompt } from "./components/UpdatePrompt";
 import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
+import { updates } from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds } from "./lib/paneTree";
@@ -66,6 +68,7 @@ import {
 	requestTabCloseWithDirtyCheck,
 	useTabCloseConfirmStore,
 } from "./stores/tabCloseConfirmStore";
+import { useUpdateStore } from "./stores/updateStore";
 import { useWindowUiStore } from "./stores/windowUiStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 
@@ -397,6 +400,24 @@ export function App() {
 	// Detect installed dev environments once at startup.
 	useEffect(() => {
 		useDevEnvironmentsStore.getState().load();
+	}, []);
+
+	// In-app updater: the Rust background loop checks and emits `update-available`
+	// to the focused Window; download progress streams in while staging. The
+	// UpdatePrompt renders from useUpdateStore. See ADR-0014.
+	useEffect(() => {
+		const unlistenAvailable = updates.onUpdateAvailable((info) => {
+			useUpdateStore.getState().setAvailable(info);
+		});
+		const unlistenProgress = updates.onDownloadProgress(
+			({ downloaded, total }) => {
+				useUpdateStore.getState().setProgress(downloaded, total);
+			},
+		);
+		return () => {
+			unlistenAvailable.then((fn) => fn()).catch(() => {});
+			unlistenProgress.then((fn) => fn()).catch(() => {});
+		};
 	}, []);
 
 	// Detect installed agent CLIs once at startup.
@@ -873,6 +894,7 @@ export function App() {
 					);
 				})()}
 			<DragPanePreview />
+			<UpdatePrompt />
 		</div>
 	);
 }
