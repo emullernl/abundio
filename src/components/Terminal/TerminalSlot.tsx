@@ -174,14 +174,29 @@ export function TerminalSlot({
 		}
 	}, [onFocus, paneId]);
 
-	const handleContextMenu = useCallback(
-		(e: React.MouseEvent) => {
+	// Open our own context menu on right-click, and crucially stop the event
+	// before xterm.js sees it. xterm registers a `contextmenu` listener on its
+	// inner `.xterm` element whose handler moves the hidden input textarea under
+	// the cursor and dumps the current selection into it (its support for the
+	// browser-native copy/paste menu). On Windows WebView2 that makes a plain
+	// right-click paste the clipboard straight into the PTY. We use PaneContextMenu
+	// and route clipboard through Tauri, so xterm's handler is pure liability.
+	// React's onContextMenu is bubble-phase on the outer container and would run
+	// *after* xterm's listener on the descendant element — too late. Register in
+	// the capture phase on the container so we run first and stopPropagation()
+	// keeps the event from ever reaching xterm.
+	useEffect(() => {
+		const el = containerRef.current;
+		if (!el) return;
+		const handler = (e: MouseEvent) => {
 			e.preventDefault();
+			e.stopPropagation();
 			handleFocus();
 			setContextMenu({ x: e.clientX, y: e.clientY });
-		},
-		[handleFocus],
-	);
+		};
+		el.addEventListener("contextmenu", handler, true);
+		return () => el.removeEventListener("contextmenu", handler, true);
+	}, [handleFocus]);
 
 	const handleCopy = useCallback(() => {
 		copyTerminalSelection(paneId);
@@ -287,7 +302,6 @@ export function TerminalSlot({
 			}}
 			onFocus={handleFocus}
 			onMouseDown={handleFocus}
-			onContextMenu={handleContextMenu}
 		>
 			<TerminalTitleBar
 				paneId={paneId}
