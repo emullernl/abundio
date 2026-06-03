@@ -1,3 +1,4 @@
+import { sc } from "../../lib/platform";
 import {
 	type RightSidebarTab,
 	useWindowUiStore,
@@ -12,10 +13,30 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-	{ id: "git", label: "Git changes", icon: GitCompare, shortcut: "⇧⌘G" },
-	{ id: "explorer", label: "Explorer", icon: Folder, shortcut: "⇧⌘E" },
-	{ id: "search", label: "Search", icon: Search, shortcut: "⇧⌘F" },
-	{ id: "notes", label: "Notes", icon: StickyNote, shortcut: "⇧⌘K" },
+	{
+		id: "git",
+		label: "Git changes",
+		icon: GitCompare,
+		shortcut: sc("⇧⌘G", "Ctrl+Shift+G"),
+	},
+	{
+		id: "explorer",
+		label: "Explorer",
+		icon: Folder,
+		shortcut: sc("⇧⌘E", "Ctrl+Shift+E"),
+	},
+	{
+		id: "search",
+		label: "Search",
+		icon: Search,
+		shortcut: sc("⇧⌘F", "Ctrl+Shift+F"),
+	},
+	{
+		id: "notes",
+		label: "Notes",
+		icon: StickyNote,
+		shortcut: sc("⇧⌘K", "Ctrl+Shift+K"),
+	},
 ];
 
 /** Horizontal tab strip at the top of the expanded right sidebar.

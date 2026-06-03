@@ -6,3 +6,7 @@ try {
 	_isMac = /Mac/i.test(navigator.userAgent);
 }
 export const isMac = _isMac;
+
+export function sc(mac: string, other: string) {
+	return isMac ? mac : other;
+}

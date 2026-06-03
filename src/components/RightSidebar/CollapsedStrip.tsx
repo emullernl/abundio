@@ -1,3 +1,4 @@
+import { sc } from "../../lib/platform";
 import {
 	type RightSidebarTab,
 	useWindowUiStore,
@@ -12,10 +13,30 @@ interface IconButtonProps {
 }
 
 const ICONS: IconButtonProps[] = [
-	{ tab: "git", label: "Git changes", shortcut: "⇧⌘G", icon: GitCompare },
-	{ tab: "explorer", label: "Explorer", shortcut: "⇧⌘E", icon: Folder },
-	{ tab: "search", label: "Search", shortcut: "⇧⌘F", icon: Search },
-	{ tab: "notes", label: "Notes", shortcut: "⇧⌘K", icon: StickyNote },
+	{
+		tab: "git",
+		label: "Git changes",
+		shortcut: sc("⇧⌘G", "Ctrl+Shift+G"),
+		icon: GitCompare,
+	},
+	{
+		tab: "explorer",
+		label: "Explorer",
+		shortcut: sc("⇧⌘E", "Ctrl+Shift+E"),
+		icon: Folder,
+	},
+	{
+		tab: "search",
+		label: "Search",
+		shortcut: sc("⇧⌘F", "Ctrl+Shift+F"),
+		icon: Search,
+	},
+	{
+		tab: "notes",
+		label: "Notes",
+		shortcut: sc("⇧⌘K", "Ctrl+Shift+K"),
+		icon: StickyNote,
+	},
 ];
 
 interface Props {

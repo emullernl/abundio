@@ -5,6 +5,7 @@ import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
 import { findPreviewForSource } from "../../lib/paneTree";
+import { sc } from "../../lib/platform";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -140,7 +141,7 @@ export function FilePane({
 		? [
 				{
 					label: "Toggle Preview",
-					shortcut: "⇧⌘M",
+					shortcut: sc("⇧⌘M", "Ctrl+Shift+M"),
 					onClick: () => {
 						toggleMarkdownPreviewForPane(paneId);
 					},
@@ -160,22 +161,22 @@ export function FilePane({
 			? [
 					{
 						label: "Copy",
-						shortcut: "⌘C",
+						shortcut: sc("⌘C", "Ctrl+C"),
 						onClick: action("editor.action.clipboardCopyAction"),
 					},
 					{
 						label: "Cut",
-						shortcut: "⌘X",
+						shortcut: sc("⌘X", "Ctrl+X"),
 						onClick: action("editor.action.clipboardCutAction"),
 					},
 					{
 						label: "Paste",
-						shortcut: "⌘V",
+						shortcut: sc("⌘V", "Ctrl+V"),
 						onClick: action("editor.action.clipboardPasteAction"),
 					},
 					{
 						label: "Select All",
-						shortcut: "⌘A",
+						shortcut: sc("⌘A", "Ctrl+A"),
 						onClick: action("editor.action.selectAll"),
 					},
 					{ separator: true },
@@ -187,7 +188,11 @@ export function FilePane({
 						label: "Toggle Word Wrap",
 						onClick: action("abundio.toggleWordWrap"),
 					},
-					{ label: "Find", shortcut: "⌘F", onClick: action("actions.find") },
+					{
+						label: "Find",
+						shortcut: sc("⌘F", "Ctrl+F"),
+						onClick: action("actions.find"),
+					},
 					{
 						label: "Command Palette",
 						shortcut: "F1",
@@ -200,16 +205,20 @@ export function FilePane({
 	const paneItems: ContextMenuItem[] = [
 		{
 			label: "Split Right",
-			shortcut: "⇧⌘V",
+			shortcut: sc("⇧⌘V", "Ctrl+Alt+V"),
 			onClick: () => splitPaneWithPicker(paneId, "vertical"),
 		},
 		{
 			label: "Split Down",
-			shortcut: "⇧⌘H",
+			shortcut: sc("⇧⌘H", "Ctrl+Alt+H"),
 			onClick: () => splitPaneWithPicker(paneId, "horizontal"),
 		},
 		{ separator: true },
-		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: () => closePane(paneId) },
+		{
+			label: "Close Pane",
+			shortcut: sc("⇧⌘W", "Ctrl+Shift+W"),
+			onClick: () => closePane(paneId),
+		},
 	];
 
 	const contextMenuItems: ContextMenuItem[] = [

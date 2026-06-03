@@ -9,6 +9,7 @@ import {
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { pty } from "../../lib/ipc";
+import { sc } from "../../lib/platform";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import {
 	copyTerminalSelection,
@@ -267,10 +268,14 @@ export function TerminalSlot({
 	);
 
 	const contextMenuItems: ContextMenuItem[] = [
-		{ label: "Copy", shortcut: "⌘C", onClick: handleCopy },
-		{ label: "Paste", shortcut: "⌘V", onClick: handlePaste },
+		{ label: "Copy", shortcut: sc("⌘C", "Ctrl+Shift+C"), onClick: handleCopy },
+		{
+			label: "Paste",
+			shortcut: sc("⌘V", "Ctrl+Shift+V"),
+			onClick: handlePaste,
+		},
 		{ separator: true },
-		{ label: "Find", shortcut: "⇧⌘F", onClick: toggleSearch },
+		{ label: "Find", shortcut: sc("⌘F", "Ctrl+F"), onClick: toggleSearch },
 		{ label: "Clear Terminal", onClick: handleClear },
 		{ label: "Reset Terminal", onClick: handleReset },
 		{ separator: true },
@@ -280,10 +285,22 @@ export function TerminalSlot({
 			submenu: agentSubmenu,
 		},
 		{ separator: true },
-		{ label: "Split Right", shortcut: "⇧⌘V", onClick: onSplitVertical },
-		{ label: "Split Down", shortcut: "⇧⌘H", onClick: onSplitHorizontal },
+		{
+			label: "Split Right",
+			shortcut: sc("⇧⌘V", "Ctrl+Alt+V"),
+			onClick: onSplitVertical,
+		},
+		{
+			label: "Split Down",
+			shortcut: sc("⇧⌘H", "Ctrl+Alt+H"),
+			onClick: onSplitHorizontal,
+		},
 		{ separator: true },
-		{ label: "Close Pane", shortcut: "⇧⌘W", onClick: onClose },
+		{
+			label: "Close Pane",
+			shortcut: sc("⇧⌘W", "Ctrl+Shift+W"),
+			onClick: onClose,
+		},
 	];
 
 	return (
