@@ -19,15 +19,19 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 	},
 	copilot: {
 		userPromptSubmitted: "active",
-		// Copilot fires permissionRequest for EVERY tool with no approval/mode
-		// field, so an auto-approved tool can't be told from a genuine prompt
-		// at request time. postToolUse / postToolUseFailure (the tool actually
-		// ran → permission was granted) pull the dot back to active; a
-		// genuinely blocked tool never fires them and stays "waiting". The dot
-		// shows "waiting" for the duration of an auto-approved tool's own
-		// execution — accepted (Decision 12, agent-hooks-status-integration).
-		// postToolUseFailure (non-zero exit, e.g. grep no-match) is "active",
-		// not "error": a failed tool is normal agent flow.
+		// Copilot fires permissionRequest for permission-gated tools (edits/
+		// writes; read-kind tools like glob/view short-circuit it), even when
+		// auto-approved, in the order preToolUse → permissionRequest →
+		// postToolUse. So permissionRequest alone can't tell an auto-approved
+		// tool from a genuine prompt at request time. This map resolves it to
+		// "waiting", but terminalManager routes Copilot's tool-lifecycle events
+		// through copilotWaitingDebounce, which only commits "waiting" once a
+		// permissionRequest has gone 1500ms with no postToolUse AND the pane is
+		// quiet — a genuine block. postToolUse / postToolUseFailure (the tool
+		// ran → permission was granted) cancel the pending wait; a blocked tool
+		// never fires them. postToolUseFailure (non-zero exit, e.g. grep
+		// no-match) is "active", not "error": a failed tool is normal agent
+		// flow. See ADR-0015.
 		//
 		// Other agents deliberately OMIT this: Claude/Codex PermissionRequest
 		// and Gemini Notification fire only on a genuine prompt, cleared by the

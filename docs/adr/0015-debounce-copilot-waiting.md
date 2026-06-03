@@ -1,0 +1,17 @@
+# Debounce Copilot's per-tool "waiting" — only a quiet, unfinished permission gate is a real block
+
+Copilot fires hooks per tool in the order `preToolUse → permissionRequest → postToolUse` — confirmed by captured `[abundio:hook]` event logs, which contradict GitHub's published docs (those put `permissionRequest` first). `permissionRequest` fires only for permission-gated tools (edits/writes; read-kind tools like `glob`/`view` short-circuit it) and fires **even on autopilot** — an auto-approved edit's `postToolUse` follows its `permissionRequest` by ~100ms. The only "this tool is done / unblocked" signal is `postToolUse`, which arrives *after the tool runs*. Mapping `permissionRequest → waiting` directly (Decisions 6 and 12 of `docs/plans/agent-hooks-status-integration.md`) therefore flickered the sky-blue **Waiting** dot and fired a "needs your input" notification for every permission-gated tool — constant spam during edit-heavy autopilot work in a background pane.
+
+We reverse that **for Copilot only**: a tool's `permissionRequest` starts a 1500ms timer (FIFO per `toolName`, since the hook payload carries no tool-call id); a matching `postToolUse`/`postToolUseFailure` cancels it. If the timer elapses with no `postToolUse` **and** the pane's output has been quiet for that window, the tool is treated as genuinely blocked → the pane enters **Waiting** (sky-blue dot) and the existing away-gated notification fires. A still-running tool keeps producing output, which re-arms the timer, so a slow build/test/grep stays **Working**. Other Agents are unchanged (their `permissionRequest`/`Notification` fires only on a real prompt → immediate Waiting); `exit_plan_mode`/`ask_user` keep their immediate-Waiting special case (Copilot fires only `preToolUse` for them, with no `postToolUse` until answered). The debounce lives at the hook-reception layer (`terminalManager` → a new `copilotWaitingDebounce` module) so the demo — which seeds `"waiting"` via `applyHookEvent` directly — is unaffected; the store state machine and the notification subscriber (with its blur/visibility gate) are reused untouched.
+
+## Considered alternatives
+
+- **Clear on `preToolUse` (a sub-second window).** Based on GitHub's *documented* order (`permissionRequest → preToolUse → postToolUse`), which would make the transient gate a fast permission check. Rejected: the *observed* order is `preToolUse → permissionRequest → postToolUse`, so `preToolUse` precedes the gate and can't clear it — `postToolUse` is the real signal and it follows execution.
+- **Notification-only debounce, or agent-agnostic debounce.** Rejected: the sky-blue flicker is itself noise, so the dot must debounce too; and only Copilot has the per-tool `permissionRequest` pattern, so other agents shouldn't pay a notification delay.
+- **Key timers by `toolName + toolArgs`, or by a tool-call id.** No tool-call id exists in the payload; `toolName`-only FIFO is simpler and good enough — parallel same-name calls are matched oldest-first, a rare and tolerable imprecision.
+- **No output-quiet check (notify on the bare 1500ms timeout).** Rejected: a legitimately slow auto-approved tool would false-notify. Gating on pane-output-quiet keeps verbose builds/tests as Working.
+
+## Known residuals
+
+- A *silent* long-running auto-approved tool (no output — e.g. a network call or `sleep`) still false-confirms as Waiting after 1500ms of quiet.
+- The output-quiet check is per-pane, so a noisy tool can keep a genuinely-blocked sibling's timer re-arming until the pane goes quiet.
