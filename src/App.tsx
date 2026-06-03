@@ -487,9 +487,11 @@ export function App() {
 	}, [proceedWithClose]);
 
 	// Mirror this Window's Opened-workspace count into Rust so the quit
-	// confirmation can sum across all Windows. The store subscriber fires on
-	// every PTY activity change, but we only invoke IPC when the count actually
-	// changes. See ADR-0016.
+	// confirmation can sum across all Windows. usePtyActivityStore is a vanilla
+	// store (no subscribeWithSelector), so this listener intentionally runs on
+	// every PTY tick — that's fine: the body is just a Set.size read + integer
+	// compare, and the `last` guard means we only issue the IPC when the count
+	// actually changes. See ADR-0016.
 	useEffect(() => {
 		let last = -1;
 		const report = (size: number) => {
@@ -939,11 +941,9 @@ export function App() {
 					return (
 						<ConfirmDialog
 							title="Close window?"
-							message={`${n} opened workspace${n === 1 ? "" : "s"} ${
-								n === 1 ? "is" : "are"
-							} open in this window. Closing it will terminate ${
-								n === 1 ? "its" : "their"
-							} agents and terminal processes.`}
+							message={`You have ${n} opened workspace${
+								n === 1 ? "" : "s"
+							} in this window with running agents and terminal processes. Closing the window will terminate them.`}
 							confirmLabel="Close window"
 							confirmVariant="danger"
 							onConfirm={() => {

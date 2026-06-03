@@ -61,6 +61,15 @@ pub struct QuittingFlag(pub Mutex<bool>);
 #[derive(Default)]
 pub struct OpenedCountState(pub Mutex<HashMap<String, usize>>);
 
+/// Guards against stacking multiple quit-confirmation dialogs. The native quit
+/// dialog is non-blocking (`show` returns immediately and the menu handler
+/// returns), so a second Cmd+Q while the first dialog is still open would
+/// otherwise re-enter the quit-app branch and open a second dialog on top. Set
+/// before showing the dialog, cleared in its callback on both the confirm and
+/// cancel paths. See ADR-0016.
+#[derive(Default)]
+pub struct QuitConfirmInFlight(pub Mutex<bool>);
+
 impl OpenedCountState {
     /// Records the Opened-workspace count for the given Window.
     pub fn set_for_window(&self, window_label: &str, count: usize) {

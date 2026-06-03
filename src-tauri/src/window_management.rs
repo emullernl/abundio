@@ -297,4 +297,18 @@ mod tests {
         assert!(msg.contains("5 opened workspaces"), "got: {msg}");
         assert!(msg.contains("across 3 windows"), "got: {msg}");
     }
+
+    #[test]
+    fn quit_message_plural_single_window() {
+        let msg = quit_confirm_message(3, 1);
+        assert!(msg.contains("3 opened workspaces "), "got: {msg}");
+        assert!(!msg.contains("across"), "single window omits 'across': {msg}");
+    }
+
+    #[test]
+    fn quit_message_singular_multi_window() {
+        let msg = quit_confirm_message(1, 2);
+        assert!(msg.contains("1 opened workspace "), "got: {msg}");
+        assert!(msg.contains("across 2 windows"), "got: {msg}");
+    }
 }

@@ -498,6 +498,9 @@ pub fn run() {
             // Per-window Opened-workspace counts (pushed by the frontend),
             // summed at quit time to drive the quit confirmation. See ADR-0016.
             app.manage(profile_store::OpenedCountState::default());
+            // Guards against stacking quit-confirmation dialogs on a repeated
+            // Cmd+Q (the native dialog is non-blocking). See ADR-0016.
+            app.manage(profile_store::QuitConfirmInFlight::default());
 
             // Build and set the application menu. At this point no window is
             // focused yet (we're still in setup), so the menu falls back to
@@ -729,6 +732,18 @@ pub fn run() {
                     .map(|s| s.total())
                     .unwrap_or(0);
                 if total_opened > 0 {
+                    // The native dialog is non-blocking, so a second Cmd+Q while
+                    // it's open would re-enter here and stack another dialog.
+                    // Skip if one is already in flight. See ADR-0016.
+                    if let Some(flag) =
+                        app.try_state::<profile_store::QuitConfirmInFlight>()
+                    {
+                        let mut in_flight = flag.0.lock().unwrap();
+                        if *in_flight {
+                            return;
+                        }
+                        *in_flight = true;
+                    }
                     let window_count = app
                         .webview_windows()
                         .keys()
@@ -750,6 +765,13 @@ pub fn run() {
                             "Cancel".to_string(),
                         ))
                         .show(move |confirmed| {
+                            // Clear the in-flight guard on both paths so a later
+                            // cancelled quit can re-prompt.
+                            if let Some(flag) =
+                                app_handle.try_state::<profile_store::QuitConfirmInFlight>()
+                            {
+                                *flag.0.lock().unwrap() = false;
+                            }
                             if confirmed {
                                 perform_quit(&app_handle);
                             }
