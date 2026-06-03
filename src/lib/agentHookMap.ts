@@ -27,7 +27,7 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		// permission-gated tool even on autopilot. The Waiting dot is held
 		// against the prompt's own render output by a recordOutput guard in
 		// ptyActivityStore, and cleared by the user's keystroke (ESC → idle,
-		// Enter/0-9 → active) or agentStop. See ADR-0016 (supersedes ADR-0015).
+		// Enter/0-9 → active) or agentStop. See ADR-0015.
 		notification: "waiting",
 		// No default `preToolUse` mapping: it's provisioned ONLY for
 		// exit_plan_mode/ask_user (matcher-scoped), and the COPILOT_WAITING_TOOLS

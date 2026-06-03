@@ -146,7 +146,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			// would set "active" and stomp the sky-blue Waiting dot the instant it
 			// lights, since Copilot's notification → waiting fires right around the
 			// prompt render. Agent mode only — a stale "waiting" on a terminal-mode
-			// pane falls through to be cleared normally. See ADR-0016.
+			// pane falls through to be cleared normally. See ADR-0015.
 			if (entry?.state === "waiting" && entry.detectionMode === "agent") {
 				lastOutputTimestamps.set(ptyId, Date.now());
 				return;

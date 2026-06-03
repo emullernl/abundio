@@ -13,7 +13,7 @@ describe("mapHookEvent", () => {
 	it("drives Copilot Waiting from the notification hook, not permissionRequest", () => {
 		expect(mapHookEvent("copilot", "userPromptSubmitted")).toBe("active");
 		// notification reaches us only as permission_prompt (matcher-scoped at
-		// provisioning), so it maps straight to waiting. See ADR-0016.
+		// provisioning), so it maps straight to waiting. See ADR-0015.
 		expect(mapHookEvent("copilot", "notification")).toBe("waiting");
 		expect(mapHookEvent("copilot", "agentStop")).toBe("ready");
 		expect(mapHookEvent("copilot", "errorOccurred")).toBe("error");
@@ -22,7 +22,7 @@ describe("mapHookEvent", () => {
 
 	it("no longer maps Copilot's retired per-tool hooks", () => {
 		// permissionRequest + the postToolUse/preToolUse-default dance (and the
-		// copilotWaitingDebounce module) were removed with ADR-0016.
+		// copilotWaitingDebounce module) were removed with ADR-0015.
 		expect(mapHookEvent("copilot", "permissionRequest")).toBeNull();
 		expect(mapHookEvent("copilot", "postToolUse")).toBeNull();
 		expect(mapHookEvent("copilot", "postToolUseFailure")).toBeNull();

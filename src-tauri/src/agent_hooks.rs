@@ -309,7 +309,7 @@ fn codex_config(relay: &Path) -> Result<String, AbundioError> {
 /// and needed a 1500ms debounce). `preToolUse` is kept *only* for the two tools
 /// whose execution IS a prompt blocking on the user — `exit_plan_mode` and
 /// `ask_user`, which emit no `notification` — matcher-scoped so it no longer
-/// fires per tool. See ADR-0016 (supersedes ADR-0015).
+/// fires per tool. See ADR-0015.
 fn copilot_config(relay: &RelayPaths) -> Result<String, AbundioError> {
     let bash = |event: &str| format!("sh \"{}\" {} copilot", relay.sh.to_string_lossy(), event);
     let powershell = |event: &str| {
@@ -563,7 +563,7 @@ mod tests {
         assert_eq!(pre[0]["matcher"], "exit_plan_mode|ask_user");
 
         // The noisy per-tool hooks are gone — Waiting no longer comes from them
-        // (ADR-0016 supersedes the ADR-0015 debounce).
+        // (see ADR-0015).
         assert!(!hooks.contains_key("permissionRequest"));
         assert!(!hooks.contains_key("postToolUse"));
         assert!(!hooks.contains_key("postToolUseFailure"));

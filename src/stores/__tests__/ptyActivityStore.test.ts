@@ -648,7 +648,7 @@ describe("detection mode", () => {
 	it("recordOutput does not stomp an agent-mode waiting dot", () => {
 		// A permission prompt's own render output flows through recordOutput; it
 		// must NOT pull the sky-blue Waiting dot back to active. Cleared only by
-		// a keystroke or the next hook. See ADR-0016.
+		// a keystroke or the next hook. See ADR-0015.
 		usePtyActivityStore.getState().initPty("pty-1", "agent");
 		usePtyActivityStore.getState().applyHookEvent("pty-1", "waiting");
 		usePtyActivityStore.getState().recordOutput("pty-1");
