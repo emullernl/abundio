@@ -574,6 +574,42 @@ mod tests {
     }
 
     #[test]
+    fn copilot_matchers_anchor_to_exactly_the_intended_values() {
+        // Copilot wraps a hook's `matcher` as `^(?:pattern)$`. Mirror that here so
+        // a future typo in a matcher string (or a pattern that doesn't anchor
+        // cleanly) fails at test time rather than silently matching nothing — the
+        // "fire-never" risk called out in ADR-0015's alternatives.
+        let dir = tempfile::tempdir().unwrap();
+        let relay = RelayPaths {
+            sh: dir.path().join("abundio-hook.sh"),
+            ps1: dir.path().join("abundio-hook.ps1"),
+        };
+        let v: Value = serde_json::from_str(&copilot_config(&relay).unwrap()).unwrap();
+
+        let anchored = |event: &str| -> regex::Regex {
+            let m = v["hooks"][event][0]["matcher"].as_str().unwrap();
+            regex::Regex::new(&format!("^(?:{m})$")).expect("matcher must compile")
+        };
+
+        // notification fires only for the genuine permission prompt — not a
+        // renamed/suffixed look-alike.
+        let notif = anchored("notification");
+        assert!(notif.is_match("permission_prompt"));
+        assert!(!notif.is_match("permission_prompt_legacy"));
+        assert!(!notif.is_match("xpermission_prompt"));
+        assert!(!notif.is_match("permission"));
+
+        // preToolUse fires only for the two prompt-tools, not their look-alikes —
+        // proves the unanchored alternation still binds to whole tool names.
+        let pre = anchored("preToolUse");
+        assert!(pre.is_match("exit_plan_mode"));
+        assert!(pre.is_match("ask_user"));
+        assert!(!pre.is_match("ask_user_confirm"));
+        assert!(!pre.is_match("exit_plan_mode_v2"));
+        assert!(!pre.is_match("bash"));
+    }
+
+    #[test]
     fn own_file_written_then_deleted() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("hooks.json");

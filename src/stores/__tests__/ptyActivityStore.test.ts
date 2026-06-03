@@ -651,10 +651,15 @@ describe("detection mode", () => {
 		// a keystroke or the next hook. See ADR-0015.
 		usePtyActivityStore.getState().initPty("pty-1", "agent");
 		usePtyActivityStore.getState().applyHookEvent("pty-1", "waiting");
+		vi.setSystemTime(5000);
 		usePtyActivityStore.getState().recordOutput("pty-1");
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
 			"waiting",
 		);
+		// The guard must still bump the out-of-band timestamp so the idle-scanner
+		// backstop won't eventually time the Waiting dot out — guards against a
+		// regression that drops the lastOutputTimestamps.set(...) line.
+		expect(getLastOutputAt("pty-1")).toBe(5000);
 	});
 
 	it("recordOutput still clears a waiting dot in shell mode (guard is agent-only)", () => {

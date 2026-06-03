@@ -26,8 +26,10 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		// `permissionRequest` + 1500ms debounce, which fired for every
 		// permission-gated tool even on autopilot. The Waiting dot is held
 		// against the prompt's own render output by a recordOutput guard in
-		// ptyActivityStore, and cleared by the user's keystroke (ESC → idle,
-		// Enter/0-9 → active) or agentStop. See ADR-0015.
+		// ptyActivityStore, and cleared by the user's keystroke in
+		// terminalManager — ESC dismisses to idle (clearWaiting); Enter/0-9
+		// answers and goes straight to active (applyHookEvent), not via idle —
+		// or by agentStop. See ADR-0015.
 		notification: "waiting",
 		// No default `preToolUse` mapping: it's provisioned ONLY for
 		// exit_plan_mode/ask_user (matcher-scoped), and the COPILOT_WAITING_TOOLS
