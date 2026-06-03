@@ -92,7 +92,7 @@ export function UpdatePrompt() {
 										}}
 									>
 										{status === "ready"
-											? "It will install automatically the next time you quit Abundio."
+											? "Restart Abundio to get the new version."
 											: status === "downloading"
 												? `Downloading…${pct != null ? ` ${pct}%` : ""}`
 												: `You're on ${info.currentVersion}.`}
