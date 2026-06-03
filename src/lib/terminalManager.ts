@@ -17,10 +17,6 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
 import { mapHookEvent } from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
-import {
-	cancelPendingForPty,
-	handleCopilotToolEvent,
-} from "./copilotWaitingDebounce";
 import { pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
 import { takePendingAgent } from "./pendingAgentRegistry";
@@ -783,14 +779,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				if (data === "\x1b") {
 					// Bare ESC dismisses the prompt without a choice — the
 					// agent goes back to idle, not busy.
-					cancelPendingForPty(currentPtyId);
 					actStore.clearWaiting(currentPtyId);
 				} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
 					// Enter or a 0-9 choice answers the prompt — the agent
 					// resumes working, so show it as busy right away. Any
 					// other key (typing a rejection reason, navigation, etc.)
 					// leaves the dot waiting.
-					cancelPendingForPty(currentPtyId);
 					actStore.applyHookEvent(currentPtyId, "active");
 				}
 			}
@@ -1024,26 +1018,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				// even if title-based detection missed it.
 				actStore.setAgentPty(currentPtyId, hookEvent.agent);
 				if (transition === "clear") {
-					cancelPendingForPty(currentPtyId);
 					actStore.clearAgentPty(currentPtyId);
-					return;
-				}
-				// Copilot's per-tool waiting is debounced: permissionRequest fires
-				// for every permission-gated tool (even auto-approved ones), in the
-				// order preToolUse → permissionRequest → postToolUse, so a direct
-				// → "waiting" flickered the dot + notification per tool. Route its
-				// tool-lifecycle events through the debounce instead. The
-				// exit_plan_mode/ask_user case (preToolUse → "waiting") is a genuine
-				// block from the outset and stays immediate. See ADR-0015.
-				if (
-					hookEvent.agent === "copilot" &&
-					(hookEvent.event === "preToolUse" ||
-						hookEvent.event === "permissionRequest" ||
-						hookEvent.event === "postToolUse" ||
-						hookEvent.event === "postToolUseFailure") &&
-					!(hookEvent.event === "preToolUse" && transition === "waiting")
-				) {
-					handleCopilotToolEvent(currentPtyId, hookEvent.event, toolName ?? "");
 					return;
 				}
 				actStore.applyHookEvent(currentPtyId, transition);
@@ -1136,7 +1111,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenActivity();
 		unlistenStatus();
 		unlistenHook();
-		cancelPendingForPty(currentPtyId);
 		term.element?.removeEventListener("mousedown", onTermClick);
 		escPressTimestamps.delete(currentPtyId);
 		if (managed.writeRafId !== null) {

@@ -140,6 +140,17 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 
 		recordOutput: (ptyId) => {
 			const entry = get().activities[ptyId];
+			// A waiting Agent is cleared only by a keystroke or the next hook —
+			// never by its own output (the invariant markIdle documents). The
+			// permission prompt's render flows through here; without this guard it
+			// would set "active" and stomp the sky-blue Waiting dot the instant it
+			// lights, since Copilot's notification → waiting fires right around the
+			// prompt render. Agent mode only — a stale "waiting" on a terminal-mode
+			// pane falls through to be cleared normally. See ADR-0016.
+			if (entry?.state === "waiting" && entry.detectionMode === "agent") {
+				lastOutputTimestamps.set(ptyId, Date.now());
+				return;
+			}
 			// Skip set() if already active — this fires on every output chunk
 			if (entry?.state === "active") {
 				lastOutputTimestamps.set(ptyId, Date.now());

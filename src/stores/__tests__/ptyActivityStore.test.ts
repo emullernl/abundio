@@ -645,6 +645,29 @@ describe("detection mode", () => {
 		).toBe("agent");
 	});
 
+	it("recordOutput does not stomp an agent-mode waiting dot", () => {
+		// A permission prompt's own render output flows through recordOutput; it
+		// must NOT pull the sky-blue Waiting dot back to active. Cleared only by
+		// a keystroke or the next hook. See ADR-0016.
+		usePtyActivityStore.getState().initPty("pty-1", "agent");
+		usePtyActivityStore.getState().applyHookEvent("pty-1", "waiting");
+		usePtyActivityStore.getState().recordOutput("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"waiting",
+		);
+	});
+
+	it("recordOutput still clears a waiting dot in shell mode (guard is agent-only)", () => {
+		// A stale "waiting" on a terminal-mode pane falls through to normal
+		// output handling — the guard only protects agent-mode panes.
+		usePtyActivityStore.getState().initPty("pty-1", "shell");
+		usePtyActivityStore.getState().applyHookEvent("pty-1", "waiting");
+		usePtyActivityStore.getState().recordOutput("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+	});
+
 	it("recordError preserves detectionMode", () => {
 		usePtyActivityStore.getState().initPty("pty-1", "agent");
 		usePtyActivityStore.getState().recordError("pty-1");
