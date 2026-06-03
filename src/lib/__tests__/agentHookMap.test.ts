@@ -10,43 +10,34 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("claude", "SessionEnd")).toBe("clear");
 	});
 
-	it("maps Copilot CLI events incl. permissionRequest/preToolUse", () => {
+	it("drives Copilot Waiting from the notification hook, not permissionRequest", () => {
 		expect(mapHookEvent("copilot", "userPromptSubmitted")).toBe("active");
-		expect(mapHookEvent("copilot", "permissionRequest")).toBe("waiting");
-		expect(mapHookEvent("copilot", "preToolUse")).toBe("active");
+		// notification reaches us only as permission_prompt (matcher-scoped at
+		// provisioning), so it maps straight to waiting. See ADR-0015.
+		expect(mapHookEvent("copilot", "notification")).toBe("waiting");
 		expect(mapHookEvent("copilot", "agentStop")).toBe("ready");
 		expect(mapHookEvent("copilot", "errorOccurred")).toBe("error");
+		expect(mapHookEvent("copilot", "sessionEnd")).toBe("clear");
 	});
 
-	it("maps Copilot postToolUse/postToolUseFailure back to active", () => {
-		// A tool that has run proves its permissionRequest was granted, so the
-		// dot must leave "waiting". A non-zero exit (postToolUseFailure) is
-		// normal agent flow — active, not error.
-		expect(mapHookEvent("copilot", "postToolUse")).toBe("active");
-		expect(mapHookEvent("copilot", "postToolUseFailure")).toBe("active");
-		// Tool-scoped: a blocking tool's postToolUse still resumes work — the
-		// user has answered the plan review / question by the time it fires.
-		expect(mapHookEvent("copilot", "postToolUse", "bash")).toBe("active");
-		expect(mapHookEvent("copilot", "postToolUse", "exit_plan_mode")).toBe(
-			"active",
-		);
-		// Copilot-specific — not leaked to other agents.
-		expect(mapHookEvent("claude", "postToolUse")).toBeNull();
+	it("no longer maps Copilot's retired per-tool hooks", () => {
+		// permissionRequest + the postToolUse/preToolUse-default dance (and the
+		// copilotWaitingDebounce module) were removed with ADR-0015.
+		expect(mapHookEvent("copilot", "permissionRequest")).toBeNull();
+		expect(mapHookEvent("copilot", "postToolUse")).toBeNull();
+		expect(mapHookEvent("copilot", "postToolUseFailure")).toBeNull();
+		// preToolUse has no default mapping — only the two prompt-tools below.
+		expect(mapHookEvent("copilot", "preToolUse")).toBeNull();
+		expect(mapHookEvent("copilot", "preToolUse", "bash")).toBeNull();
 	});
 
-	it("keeps Copilot blocking tools in waiting despite preToolUse", () => {
-		// exit_plan_mode blocks on the user's plan-review decision and ask_user
-		// blocks on a multiple-choice answer — preToolUse must NOT flip the dot
-		// back to active for these tools.
+	it("keeps Copilot blocking tools (exit_plan_mode/ask_user) in waiting via preToolUse", () => {
+		// These emit no notification; their preToolUse is provisioned
+		// matcher-scoped and is the only signal, so it maps to waiting.
 		expect(mapHookEvent("copilot", "preToolUse", "exit_plan_mode")).toBe(
 			"waiting",
 		);
 		expect(mapHookEvent("copilot", "preToolUse", "ask_user")).toBe("waiting");
-		// Any other tool keeps the default preToolUse → active.
-		expect(mapHookEvent("copilot", "preToolUse", "bash")).toBe("active");
-		expect(mapHookEvent("copilot", "preToolUse", "report_intent")).toBe(
-			"active",
-		);
 		// The override is Copilot-specific and event-specific.
 		expect(mapHookEvent("claude", "preToolUse", "ask_user")).toBeNull();
 	});

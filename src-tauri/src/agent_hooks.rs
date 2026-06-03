@@ -298,7 +298,18 @@ fn codex_config(relay: &Path) -> Result<String, AbundioError> {
 }
 
 /// Copilot CLI hook file (Abundio-owned). Copilot wants `bash` + `powershell`
-/// keys on the command rather than a single `command`.
+/// keys on the command rather than a single `command`, and supports an optional
+/// `matcher` regex on a hook entry — tested against `notification_type` for
+/// `notification`, against `toolName` for tool hooks, and anchored as
+/// `^(?:pattern)$` by Copilot.
+///
+/// Waiting is driven by `notification` scoped to `permission_prompt` (the only
+/// notification that means a genuine permission block), not the noisy
+/// `permissionRequest` (which fired per permission-gated tool even on autopilot
+/// and needed a 1500ms debounce). `preToolUse` is kept *only* for the two tools
+/// whose execution IS a prompt blocking on the user — `exit_plan_mode` and
+/// `ask_user`, which emit no `notification` — matcher-scoped so it no longer
+/// fires per tool. See ADR-0015.
 fn copilot_config(relay: &RelayPaths) -> Result<String, AbundioError> {
     let bash = |event: &str| format!("sh \"{}\" {} copilot", relay.sh.to_string_lossy(), event);
     let powershell = |event: &str| {
@@ -309,29 +320,26 @@ fn copilot_config(relay: &RelayPaths) -> Result<String, AbundioError> {
         )
     };
     let mut hooks = serde_json::Map::new();
-    for event in [
-        "userPromptSubmitted",
-        "permissionRequest",
-        "preToolUse",
-        // postToolUse / postToolUseFailure fire once a tool has actually run —
-        // proof the permission was granted (auto or by the user). They pull
-        // the dot back from "waiting" to "active"; a genuinely blocked tool
-        // never reaches them. See Decision 12 in the plan doc.
-        "postToolUse",
-        "postToolUseFailure",
-        "agentStop",
-        "errorOccurred",
-        "sessionEnd",
+    // (event, optional matcher). The matcher is the raw pattern; Copilot anchors
+    // it `^(?:pattern)$`.
+    for (event, matcher) in [
+        ("userPromptSubmitted", None),
+        ("preToolUse", Some("exit_plan_mode|ask_user")),
+        ("notification", Some("permission_prompt")),
+        ("agentStop", None),
+        ("errorOccurred", None),
+        ("sessionEnd", None),
     ] {
-        hooks.insert(
-            event.to_string(),
-            json!([{
-                "type": "command",
-                "bash": bash(event),
-                "powershell": powershell(event),
-                "timeoutSec": 5,
-            }]),
-        );
+        let mut entry = json!({
+            "type": "command",
+            "bash": bash(event),
+            "powershell": powershell(event),
+            "timeoutSec": 5,
+        });
+        if let Some(m) = matcher {
+            entry["matcher"] = json!(m);
+        }
+        hooks.insert(event.to_string(), json!([entry]));
     }
     serde_json::to_string_pretty(&json!({ "version": 1, "hooks": hooks }))
         .map_err(|e| io_err(e.to_string()))
@@ -529,6 +537,76 @@ mod tests {
         assert!(result.is_err());
         // The corrupt file must be left untouched.
         assert_eq!(fs::read_to_string(&path).unwrap(), "{ this is not json");
+    }
+
+    #[test]
+    fn copilot_config_drives_waiting_from_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        let relay = RelayPaths {
+            sh: dir.path().join("abundio-hook.sh"),
+            ps1: dir.path().join("abundio-hook.ps1"),
+        };
+        let v: Value = serde_json::from_str(&copilot_config(&relay).unwrap()).unwrap();
+        let hooks = v["hooks"].as_object().unwrap();
+
+        // notification is the permission-block signal, scoped to permission_prompt.
+        let notif = hooks["notification"].as_array().unwrap();
+        assert_eq!(notif[0]["matcher"], "permission_prompt");
+        assert!(notif[0]["bash"]
+            .as_str()
+            .unwrap()
+            .contains("notification copilot"));
+
+        // preToolUse survives only for the two prompt-tools, matcher-scoped so it
+        // no longer fires per tool.
+        let pre = hooks["preToolUse"].as_array().unwrap();
+        assert_eq!(pre[0]["matcher"], "exit_plan_mode|ask_user");
+
+        // The noisy per-tool hooks are gone — Waiting no longer comes from them
+        // (see ADR-0015).
+        assert!(!hooks.contains_key("permissionRequest"));
+        assert!(!hooks.contains_key("postToolUse"));
+        assert!(!hooks.contains_key("postToolUseFailure"));
+
+        // Unscoped lifecycle hooks carry no matcher.
+        assert!(hooks["userPromptSubmitted"][0].get("matcher").is_none());
+        assert!(hooks["agentStop"][0].get("matcher").is_none());
+    }
+
+    #[test]
+    fn copilot_matchers_anchor_to_exactly_the_intended_values() {
+        // Copilot wraps a hook's `matcher` as `^(?:pattern)$`. Mirror that here so
+        // a future typo in a matcher string (or a pattern that doesn't anchor
+        // cleanly) fails at test time rather than silently matching nothing — the
+        // "fire-never" risk called out in ADR-0015's alternatives.
+        let dir = tempfile::tempdir().unwrap();
+        let relay = RelayPaths {
+            sh: dir.path().join("abundio-hook.sh"),
+            ps1: dir.path().join("abundio-hook.ps1"),
+        };
+        let v: Value = serde_json::from_str(&copilot_config(&relay).unwrap()).unwrap();
+
+        let anchored = |event: &str| -> regex::Regex {
+            let m = v["hooks"][event][0]["matcher"].as_str().unwrap();
+            regex::Regex::new(&format!("^(?:{m})$")).expect("matcher must compile")
+        };
+
+        // notification fires only for the genuine permission prompt — not a
+        // renamed/suffixed look-alike.
+        let notif = anchored("notification");
+        assert!(notif.is_match("permission_prompt"));
+        assert!(!notif.is_match("permission_prompt_legacy"));
+        assert!(!notif.is_match("xpermission_prompt"));
+        assert!(!notif.is_match("permission"));
+
+        // preToolUse fires only for the two prompt-tools, not their look-alikes —
+        // proves the unanchored alternation still binds to whole tool names.
+        let pre = anchored("preToolUse");
+        assert!(pre.is_match("exit_plan_mode"));
+        assert!(pre.is_match("ask_user"));
+        assert!(!pre.is_match("ask_user_confirm"));
+        assert!(!pre.is_match("exit_plan_mode_v2"));
+        assert!(!pre.is_match("bash"));
     }
 
     #[test]

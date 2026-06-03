@@ -19,24 +19,22 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 	},
 	copilot: {
 		userPromptSubmitted: "active",
-		// Copilot fires permissionRequest for EVERY tool with no approval/mode
-		// field, so an auto-approved tool can't be told from a genuine prompt
-		// at request time. postToolUse / postToolUseFailure (the tool actually
-		// ran → permission was granted) pull the dot back to active; a
-		// genuinely blocked tool never fires them and stays "waiting". The dot
-		// shows "waiting" for the duration of an auto-approved tool's own
-		// execution — accepted (Decision 12, agent-hooks-status-integration).
-		// postToolUseFailure (non-zero exit, e.g. grep no-match) is "active",
-		// not "error": a failed tool is normal agent flow.
-		//
-		// Other agents deliberately OMIT this: Claude/Codex PermissionRequest
-		// and Gemini Notification fire only on a genuine prompt, cleared by the
-		// user's keystroke (ESC → idle, Enter/0-9 → active). Don't add a
-		// preToolUse/postToolUse mapping to them.
-		permissionRequest: "waiting",
-		preToolUse: "active",
-		postToolUse: "active",
-		postToolUseFailure: "active",
+		// Copilot's genuine permission-block signal. Its `notification` hook is
+		// provisioned with `matcher: "permission_prompt"` (see agent_hooks.rs),
+		// so the only `notification` events that reach us are real prompts —
+		// map them straight to "waiting". This replaces the old
+		// `permissionRequest` + 1500ms debounce, which fired for every
+		// permission-gated tool even on autopilot. The Waiting dot is held
+		// against the prompt's own render output by a recordOutput guard in
+		// ptyActivityStore, and cleared by the user's keystroke in
+		// terminalManager — ESC dismisses to idle (clearWaiting); Enter/0-9
+		// answers and goes straight to active (applyHookEvent), not via idle —
+		// or by agentStop. See ADR-0015.
+		notification: "waiting",
+		// No default `preToolUse` mapping: it's provisioned ONLY for
+		// exit_plan_mode/ask_user (matcher-scoped), and the COPILOT_WAITING_TOOLS
+		// branch in mapHookEvent turns those into "waiting". preToolUse never
+		// fires for other tools, and would map to null here if it did.
 		agentStop: "ready",
 		errorOccurred: "error",
 		sessionEnd: "clear",
@@ -75,10 +73,11 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 HOOK_EVENT_MAP.qwen = HOOK_EVENT_MAP.gemini;
 
 // Copilot tools whose preToolUse IS the act of blocking on the user: running
-// the tool presents a plan / question and waits for an answer. They must stay
-// "waiting" rather than letting the default preToolUse → active pull the dot
-// back. Copilot emits no permissionRequest for these — preToolUse is the only
-// signal — so the tool name is the discriminator.
+// the tool presents a plan / question and waits for an answer. Copilot emits no
+// `notification` for these (and no permissionRequest) — preToolUse is the only
+// signal — so the tool name is the discriminator. preToolUse is provisioned
+// matcher-scoped to exactly these tools (see agent_hooks.rs), so it doesn't
+// fire for any other tool.
 const COPILOT_WAITING_TOOLS = new Set(["exit_plan_mode", "ask_user"]);
 
 /**
@@ -93,11 +92,10 @@ export function mapHookEvent(
 	eventName: string,
 	toolName?: string,
 ): HookTransition | null {
-	// Copilot's preToolUse normally pulls the dot back to "active" once a tool
-	// clears the permission gate. The exceptions are tools whose execution IS a
-	// prompt blocking on the user (exit_plan_mode's plan review, ask_user's
-	// multiple-choice question) — those stay "waiting" until the user answers
-	// (a keystroke then clears it).
+	// Copilot's preToolUse is provisioned only for the two tools whose execution
+	// IS a prompt blocking on the user (exit_plan_mode's plan review, ask_user's
+	// multiple-choice question) — those go to "waiting" until the user answers
+	// (a keystroke then clears it). There is no default preToolUse mapping.
 	if (
 		agentId === "copilot" &&
 		eventName === "preToolUse" &&
