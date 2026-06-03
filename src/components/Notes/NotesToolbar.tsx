@@ -1,4 +1,5 @@
 import { type Editor, useEditorState } from "@tiptap/react";
+import { sc } from "../../lib/platform";
 import { Bold, Italic, ListBullet, ListChecks, Strikethrough } from "../Icons";
 
 interface Props {
@@ -77,14 +78,14 @@ export function NotesToolbar({ editor }: Props) {
 		>
 			<ToolbarButton
 				active={state.bold}
-				title="Bold (⌘B)"
+				title={`Bold (${sc("⌘B", "Ctrl+B")})`}
 				onClick={() => editor.chain().focus().toggleBold().run()}
 			>
 				<Bold size={15} />
 			</ToolbarButton>
 			<ToolbarButton
 				active={state.italic}
-				title="Italic (⌘I)"
+				title={`Italic (${sc("⌘I", "Ctrl+I")})`}
 				onClick={() => editor.chain().focus().toggleItalic().run()}
 			>
 				<Italic size={15} />

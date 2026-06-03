@@ -1,8 +1,8 @@
+import { sc } from "../../lib/platform";
 import {
 	type RightSidebarTab,
 	useWindowUiStore,
 } from "../../stores/windowUiStore";
-import { isMac } from "../../lib/platform";
 import { Folder, GitCompare, Search, StickyNote } from "../Icons";
 
 interface IconButtonProps {
@@ -16,25 +16,25 @@ const ICONS: IconButtonProps[] = [
 	{
 		tab: "git",
 		label: "Git changes",
-		shortcut: isMac ? "⇧⌘G" : "Ctrl+Shift+G",
+		shortcut: sc("⇧⌘G", "Ctrl+Shift+G"),
 		icon: GitCompare,
 	},
 	{
 		tab: "explorer",
 		label: "Explorer",
-		shortcut: isMac ? "⇧⌘E" : "Ctrl+Shift+E",
+		shortcut: sc("⇧⌘E", "Ctrl+Shift+E"),
 		icon: Folder,
 	},
 	{
 		tab: "search",
 		label: "Search",
-		shortcut: isMac ? "⇧⌘F" : "Ctrl+Shift+F",
+		shortcut: sc("⇧⌘F", "Ctrl+Shift+F"),
 		icon: Search,
 	},
 	{
 		tab: "notes",
 		label: "Notes",
-		shortcut: isMac ? "⇧⌘K" : "Ctrl+Shift+K",
+		shortcut: sc("⇧⌘K", "Ctrl+Shift+K"),
 		icon: StickyNote,
 	},
 ];
