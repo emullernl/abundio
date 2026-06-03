@@ -26,6 +26,7 @@ pub mod shell_env;
 
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use profile_store::ProfileStore;
 use pty_manager::PtyManager;
@@ -315,6 +316,26 @@ fn no_profile_windows_open(app: &AppHandle<Wry>) -> bool {
         .all(|label| !window_management::is_profile_window_label(label))
 }
 
+/// Runs the actual app quit: marks the `QuittingFlag` so per-window `Destroyed`
+/// events skip their incremental `windows.json` saves, snapshots the full
+/// pre-quit window set, applies any staged update, then exits. Shared by the
+/// confirmed and no-confirmation-needed quit-app paths. See ADR-0016 / ADR-0007.
+fn perform_quit(app: &AppHandle<Wry>) {
+    if let Some(flag) = app.try_state::<profile_store::QuittingFlag>() {
+        *flag.0.lock().unwrap() = true;
+    }
+    if let Some(state) = app.try_state::<profile_store::ActiveProfileState>() {
+        let snapshot = window_persistence::snapshot_from_state(&state);
+        if let Err(e) = window_persistence::save(&snapshot) {
+            eprintln!("[abundio] failed to persist windows.json at quit: {e}");
+        }
+    }
+    // Apply a staged update (if any) on this quit — the default "install on
+    // quit" contract. See ADR-0014.
+    updater::apply_staged_update_on_quit(app);
+    app.exit(0);
+}
+
 /// Emits an event to the currently-focused webview only. Used for "open
 /// settings" / "switch profile" intents from the native menu — those are
 /// always per-window and shouldn't fan out to other Windows.
@@ -474,6 +495,9 @@ pub fn run() {
             // Destroyed events know to skip their save-to-windows.json logic
             // — the quit handler captured the full pre-quit state once.
             app.manage(profile_store::QuittingFlag::default());
+            // Per-window Opened-workspace counts (pushed by the frontend),
+            // summed at quit time to drive the quit confirmation. See ADR-0016.
+            app.manage(profile_store::OpenedCountState::default());
 
             // Build and set the application menu. At this point no window is
             // focused yet (we're still in setup), so the menu falls back to
@@ -633,6 +657,13 @@ pub fn run() {
                 {
                     state.remove_for_window(&label);
                 }
+                // Drop this window's Opened-workspace count so it can't inflate
+                // the quit-time total. See ADR-0016.
+                if let Some(counts) =
+                    app_handle.try_state::<profile_store::OpenedCountState>()
+                {
+                    counts.remove_for_window(&label);
+                }
                 let _ = app_handle.emit("profile-ownership-changed", ());
                 rebuild_menu_for_focused_window(&app_handle);
 
@@ -682,21 +713,50 @@ pub fn run() {
                 // only after the LAST window destroys (see ADR-0007 / source
                 // of tauri-runtime-wry::lib.rs), so we can't rely on it for
                 // the menu-driven quit path.
-                if let Some(flag) = app.try_state::<profile_store::QuittingFlag>() {
-                    *flag.0.lock().unwrap() = true;
+                //
+                // Confirm first if any Opened workspaces (live agents / PTYs)
+                // would be lost. The per-window counts live in each window's
+                // frontend and are mirrored into OpenedCountState, so this is
+                // the only place a cross-window total exists. Shown as a NATIVE
+                // dialog because the quit decision runs here in Rust (the
+                // frontend never sees the quit-app path) and it must work even
+                // if a webview is hung. This gates ONLY the custom quit-app menu
+                // item (Cmd+Q / "Quit Abundio"); dock-icon Quit and OS shutdown
+                // go through ExitRequested AFTER windows tear down — too late to
+                // gate gracefully. See ADR-0016.
+                let total_opened = app
+                    .try_state::<profile_store::OpenedCountState>()
+                    .map(|s| s.total())
+                    .unwrap_or(0);
+                if total_opened > 0 {
+                    let window_count = app
+                        .webview_windows()
+                        .keys()
+                        .filter(|l| window_management::is_profile_window_label(l))
+                        .count();
+                    let message =
+                        window_management::quit_confirm_message(total_opened, window_count);
+                    let app_handle = app.clone();
+                    // Non-blocking: the callback fires when the dialog is
+                    // dismissed. Returning from the menu handler without exiting
+                    // is safe — quit-app is a custom MenuItem with no default
+                    // behaviour, so nothing quits unless we say so.
+                    app.dialog()
+                        .message(message)
+                        .title("Quit Abundio?")
+                        .kind(MessageDialogKind::Warning)
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Quit Abundio".to_string(),
+                            "Cancel".to_string(),
+                        ))
+                        .show(move |confirmed| {
+                            if confirmed {
+                                perform_quit(&app_handle);
+                            }
+                        });
+                    return;
                 }
-                if let Some(state) =
-                    app.try_state::<profile_store::ActiveProfileState>()
-                {
-                    let snapshot = window_persistence::snapshot_from_state(&state);
-                    if let Err(e) = window_persistence::save(&snapshot) {
-                        eprintln!("[abundio] failed to persist windows.json at quit: {e}");
-                    }
-                }
-                // Apply a staged update (if any) on this quit — the default
-                // "install on quit" contract. See ADR-0014.
-                updater::apply_staged_update_on_quit(app);
-                app.exit(0);
+                perform_quit(app);
                 return;
             }
             if id == "settings" {
@@ -781,6 +841,7 @@ pub fn run() {
             commands::profile_delete,
             commands::profile_reorder,
             commands::set_active_profile_id,
+            commands::report_opened_workspace_count,
             commands::get_active_profile_for_window,
             commands::get_profile_ownership_map,
             commands::open_window_with_profile,

@@ -206,6 +206,16 @@ export const profiles = {
 		invoke<string>("create_untitled_profile_in_new_window"),
 };
 
+/** Per-Window session reporting — pushes state the Rust side needs to aggregate
+ *  across Windows. See ADR-0016. */
+export const windowSession = {
+	/** Report this Window's current count of Opened workspaces. The Rust side
+	 *  mirrors it into a per-window map and sums across all Windows at quit time
+	 *  to decide whether to show the quit confirmation. */
+	reportOpenedWorkspaceCount: (count: number) =>
+		invoke<void>("report_opened_workspace_count", { count }),
+};
+
 export const tabs = {
 	create: (workspaceId: string, name: string) =>
 		invoke<Tab>("tab_create", { workspaceId, name }),

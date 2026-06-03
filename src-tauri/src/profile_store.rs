@@ -49,6 +49,39 @@ pub struct ActiveProfileState(pub Mutex<HashMap<String, String>>);
 #[derive(Default)]
 pub struct QuittingFlag(pub Mutex<bool>);
 
+/// Tracks how many **Opened workspaces** each Window currently has live, keyed
+/// by the Tauri window label. The frontend pushes its window's count via
+/// `report_opened_workspace_count` whenever its `openedWorkspaceIds` set
+/// changes, and the `Destroyed` handler drops the entry when a window closes.
+///
+/// Rust reads the sum at quit time to decide whether to show the
+/// "you have N opened workspaces" confirmation — the count lives in each
+/// window's frontend, so this map is the only place a cross-window total can be
+/// computed. See ADR-0016.
+#[derive(Default)]
+pub struct OpenedCountState(pub Mutex<HashMap<String, usize>>);
+
+impl OpenedCountState {
+    /// Records the Opened-workspace count for the given Window.
+    pub fn set_for_window(&self, window_label: &str, count: usize) {
+        self.0
+            .lock()
+            .unwrap()
+            .insert(window_label.to_string(), count);
+    }
+
+    /// Drops the entry for a Window (called when it's destroyed) so its stale
+    /// count can't inflate the quit-time total.
+    pub fn remove_for_window(&self, window_label: &str) {
+        self.0.lock().unwrap().remove(window_label);
+    }
+
+    /// Total Opened workspaces across all Windows.
+    pub fn total(&self) -> usize {
+        self.0.lock().unwrap().values().sum()
+    }
+}
+
 impl ActiveProfileState {
     /// The Profile id currently shown in the given Window, if any.
     pub fn get_for_window(&self, window_label: &str) -> Option<String> {
@@ -340,6 +373,24 @@ mod tests {
         assert!(!*flag.0.lock().unwrap());
         *flag.0.lock().unwrap() = true;
         assert!(*flag.0.lock().unwrap());
+    }
+
+    #[test]
+    fn opened_count_state_sums_across_windows() {
+        let state = OpenedCountState::default();
+        assert_eq!(state.total(), 0);
+        state.set_for_window("main", 1);
+        state.set_for_window("window-2", 3);
+        assert_eq!(state.total(), 4);
+        // A re-report replaces (not accumulates) the window's count.
+        state.set_for_window("main", 2);
+        assert_eq!(state.total(), 5);
+        // Removing a window drops its contribution so a stale count can't
+        // inflate the quit-time total.
+        state.remove_for_window("window-2");
+        assert_eq!(state.total(), 2);
+        state.remove_for_window("main");
+        assert_eq!(state.total(), 0);
     }
 
     #[test]

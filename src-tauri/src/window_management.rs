@@ -32,6 +32,27 @@ pub fn generate_window_label() -> String {
     format!("window-{}", uuid::Uuid::new_v4())
 }
 
+/// Body text for the quit confirmation shown when **Opened workspaces** would be
+/// lost on quit. `window_count` lets us drop the awkward "across 1 window"
+/// clause when everything is in a single Window. See ADR-0016. Pure so it can
+/// be unit-tested without a dialog.
+pub fn quit_confirm_message(total_opened: usize, window_count: usize) -> String {
+    let ws = if total_opened == 1 {
+        "workspace"
+    } else {
+        "workspaces"
+    };
+    if window_count <= 1 {
+        format!(
+            "You have {total_opened} opened {ws} with running agents and terminal processes. Quit Abundio?"
+        )
+    } else {
+        format!(
+            "You have {total_opened} opened {ws} across {window_count} windows with running agents and terminal processes. Quit Abundio?"
+        )
+    }
+}
+
 /// Opens the singleton settings window, or focuses it if already open. Pass
 /// `initial_section` to deep-link to a specific settings section (e.g.
 /// "profiles" for the "Manage Profiles…" menu item). When the window already
@@ -261,5 +282,19 @@ mod tests {
     fn untitled_ignores_unrelated_names() {
         let list = vec![p("Work"), p("Untitled"), p("Personal")];
         assert_eq!(next_untitled_name(&list), "Untitled 2");
+    }
+
+    #[test]
+    fn quit_message_singular_single_window() {
+        let msg = quit_confirm_message(1, 1);
+        assert!(msg.contains("1 opened workspace "), "got: {msg}");
+        assert!(!msg.contains("across"), "single window omits 'across': {msg}");
+    }
+
+    #[test]
+    fn quit_message_plural_multi_window() {
+        let msg = quit_confirm_message(5, 3);
+        assert!(msg.contains("5 opened workspaces"), "got: {msg}");
+        assert!(msg.contains("across 3 windows"), "got: {msg}");
     }
 }
