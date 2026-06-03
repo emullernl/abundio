@@ -2,6 +2,7 @@ import {
 	type RightSidebarTab,
 	useWindowUiStore,
 } from "../../stores/windowUiStore";
+import { isMac } from "../../lib/platform";
 import { Folder, GitCompare, PanelRight, Search, StickyNote } from "../Icons";
 
 interface TabDef {
@@ -12,10 +13,30 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-	{ id: "git", label: "Git changes", icon: GitCompare, shortcut: "⇧⌘G" },
-	{ id: "explorer", label: "Explorer", icon: Folder, shortcut: "⇧⌘E" },
-	{ id: "search", label: "Search", icon: Search, shortcut: "⇧⌘F" },
-	{ id: "notes", label: "Notes", icon: StickyNote, shortcut: "⇧⌘K" },
+	{
+		id: "git",
+		label: "Git changes",
+		icon: GitCompare,
+		shortcut: isMac ? "⇧⌘G" : "Ctrl+Shift+G",
+	},
+	{
+		id: "explorer",
+		label: "Explorer",
+		icon: Folder,
+		shortcut: isMac ? "⇧⌘E" : "Ctrl+Shift+E",
+	},
+	{
+		id: "search",
+		label: "Search",
+		icon: Search,
+		shortcut: isMac ? "⇧⌘F" : "Ctrl+Shift+F",
+	},
+	{
+		id: "notes",
+		label: "Notes",
+		icon: StickyNote,
+		shortcut: isMac ? "⇧⌘K" : "Ctrl+Shift+K",
+	},
 ];
 
 /** Horizontal tab strip at the top of the expanded right sidebar.
