@@ -333,6 +333,22 @@ body,
 	scrollbar-width: none;
 }
 
+/* Same WKWebView compositing trap as the xterm scrollbar above: Monaco promotes
+   its editor (the scrolling `.view-lines` use `transform`, and its scrollbar
+   sliders use layer hinting) to its own compositor layer, which macOS WKWebView
+   does NOT hide via an ancestor's `visibility: hidden`. Terminals dodge this
+   because their DOM is physically re-parented into the active workspace's slot,
+   but a file/diff pane is rendered in place inside its own workspace subtree —
+   so a Monaco editor open in a background workspace paints straight through the
+   active one (header updates, diff body bleeds through). Drop the whole editor
+   out of the layout tree in background workspaces; the compositor can't bypass
+   `display: none`. The active workspace and inactive *tabs* (already
+   `display: none` at the tab wrapper) are unaffected. */
+[data-workspace-active="false"] .monaco-editor,
+[data-workspace-active="false"] .monaco-diff-editor {
+	display: none !important;
+}
+
 /* Shimmer text animation — silver-white gradient sweep */
 @keyframes shimmer {
 	0% {
