@@ -946,7 +946,7 @@ function UpdatesSection() {
 			case "downloading":
 				return `Downloading…${pct != null ? ` ${pct}%` : ""}`;
 			case "ready":
-				return "Update downloaded — it will install when you quit Abundio.";
+				return "Update downloaded — restart Abundio to get the new version.";
 			case "error":
 				return error ? `Update check failed: ${error}` : "Update check failed.";
 			default:

@@ -26,8 +26,9 @@ import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
+import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
-import { updates } from "./lib/ipc";
+import { updates, windowSession } from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds } from "./lib/paneTree";
@@ -317,6 +318,9 @@ export function App() {
 	const pendingProfileSwitch = useProfileSwitchConfirmStore((s) => s.pending);
 
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
+	// Confirm before closing a Window that has ≥1 Opened workspace (when no
+	// unsaved files take precedence). See ADR-0016.
+	const [workspaceCloseRequested, setWorkspaceCloseRequested] = useState(false);
 	const appWindowRef = useRef<Awaited<
 		ReturnType<typeof getCurrentWindow>
 	> | null>(null);
@@ -461,19 +465,45 @@ export function App() {
 		appWindowRef.current = appWindow;
 		const unlisten = appWindow.onCloseRequested(async (event) => {
 			event.preventDefault();
-			const dirtyPanes = Object.values(
+			const dirtyPaneCount = Object.values(
 				useExplorerStore.getState().filePanes,
-			).filter((p) => p.isDirty);
-			if (dirtyPanes.length > 0) {
-				setAppCloseRequested(true);
-				return;
+			).filter((p) => p.isDirty).length;
+			const openedCount =
+				usePtyActivityStore.getState().openedWorkspaceIds.size;
+			switch (decideWindowClose(dirtyPaneCount, openedCount)) {
+				case "save-confirm":
+					setAppCloseRequested(true);
+					return;
+				case "workspace-confirm":
+					setWorkspaceCloseRequested(true);
+					return;
+				default:
+					await proceedWithClose();
 			}
-			await proceedWithClose();
 		});
 		return () => {
 			unlisten.then((fn) => fn());
 		};
 	}, [proceedWithClose]);
+
+	// Mirror this Window's Opened-workspace count into Rust so the quit
+	// confirmation can sum across all Windows. usePtyActivityStore is a vanilla
+	// store (no subscribeWithSelector), so this listener intentionally runs on
+	// every PTY tick — that's fine: the body is just a Set.size read + integer
+	// compare, and the `last` guard means we only issue the IPC when the count
+	// actually changes. See ADR-0016.
+	useEffect(() => {
+		let last = -1;
+		const report = (size: number) => {
+			if (size === last) return;
+			last = size;
+			windowSession.reportOpenedWorkspaceCount(size).catch(() => {});
+		};
+		report(usePtyActivityStore.getState().openedWorkspaceIds.size);
+		return usePtyActivityStore.subscribe((state) => {
+			report(state.openedWorkspaceIds.size);
+		});
+	}, []);
 
 	// Settings menu is now handled entirely in Rust — it opens the singleton
 	// `settings` window via window_management::open_or_focus_settings_window.
@@ -902,6 +932,25 @@ export function App() {
 								await proceedWithClose();
 							}}
 							onCancel={() => setAppCloseRequested(false)}
+						/>
+					);
+				})()}
+			{workspaceCloseRequested &&
+				(() => {
+					const n = openedWorkspaceIds.size;
+					return (
+						<ConfirmDialog
+							title="Close window?"
+							message={`You have ${n} opened workspace${
+								n === 1 ? "" : "s"
+							} in this window with running agents and terminal processes. Closing the window will terminate them.`}
+							confirmLabel="Close window"
+							confirmVariant="danger"
+							onConfirm={() => {
+								setWorkspaceCloseRequested(false);
+								proceedWithClose().catch(() => {});
+							}}
+							onCancel={() => setWorkspaceCloseRequested(false)}
 						/>
 					);
 				})()}

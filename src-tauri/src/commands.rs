@@ -3,7 +3,9 @@ use tauri::{AppHandle, Emitter, Manager, State, Window};
 use crate::error::AbundioError;
 use crate::file_watcher::FileWatcher;
 use crate::git_scheduler::GitScheduler;
-use crate::profile_store::{ActiveProfileState, Profile, ProfileStore, ProfileUpdate};
+use crate::profile_store::{
+    ActiveProfileState, OpenedCountState, Profile, ProfileStore, ProfileUpdate,
+};
 use crate::pty_manager::PtyManager;
 use crate::workspace_store::{WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs, Tab, TabUpdate};
 use crate::shell_env;
@@ -190,6 +192,24 @@ pub async fn get_active_profile_for_window(
     state: State<'_, ActiveProfileState>,
 ) -> Result<Option<String>, AbundioError> {
     Ok(state.get_for_window(window.label()))
+}
+
+/// The frontend pushes its Window's current count of **Opened workspaces**
+/// whenever the set changes, so Rust can sum across all Windows at quit time and
+/// decide whether to confirm (see ADR-0016). Auxiliary windows (settings) never
+/// own workspaces and are ignored defensively, mirroring `set_active_profile_id`.
+#[tauri::command]
+pub async fn report_opened_workspace_count(
+    window: Window,
+    state: State<'_, OpenedCountState>,
+    count: usize,
+) -> Result<(), AbundioError> {
+    let label = window.label().to_string();
+    if !crate::window_management::is_profile_window_label(&label) {
+        return Ok(());
+    }
+    state.set_for_window(&label, count);
+    Ok(())
 }
 
 /// Returns the full profileId → windowLabel ownership map. The frontend uses
