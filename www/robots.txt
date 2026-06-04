@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://emullernl.github.io/abundio/sitemap-index.xml
