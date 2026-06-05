@@ -72,6 +72,11 @@ function isMonacoFocused(): boolean {
 	return !!el && (el as Element).closest?.(".monaco-editor") !== null;
 }
 
+function isTerminalFocused(): boolean {
+	const el = document.activeElement;
+	return !!el && (el as Element).closest?.(".xterm") !== null;
+}
+
 // True when focus is in an editable element that is NOT a terminal. xterm.js
 // receives input through a hidden <textarea> inside `.xterm`, which IS the
 // paste target — so it must not count as "editable" here. Everything else
@@ -268,6 +273,12 @@ export function handleKeyDown(e: KeyboardEvent) {
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.
 			if (isMonacoFocused() && !WORKSPACE_GLOBAL_ACTIONS.has(binding.action)) {
+				return;
+			}
+			// Let terminals receive Ctrl/Cmd+S directly. Agent CLIs use it for
+			// inline editors and prompts (for example when adding MCP servers), and
+			// intercepting it here prevents the PTY from ever seeing the keystroke.
+			if (binding.action === "save-file" && isTerminalFocused()) {
 				return;
 			}
 			// Terminal copy/paste must defer to a focused non-terminal text input

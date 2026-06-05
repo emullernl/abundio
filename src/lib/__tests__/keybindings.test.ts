@@ -122,6 +122,25 @@ describe("Monaco focus delegation", () => {
 
 		expect(handler).toHaveBeenCalledOnce();
 	});
+
+	it("does not intercept save-file when xterm's textarea is focused", () => {
+		const handler = vi.fn();
+		registerAction("save-file", handler);
+		const term = document.createElement("div");
+		term.className = "xterm";
+		const ta = document.createElement("textarea");
+		term.appendChild(ta);
+		document.body.appendChild(term);
+		ta.focus();
+
+		const e = makeKeyEvent({ key: "s", [modKey]: true });
+		const preventSpy = vi.spyOn(e, "preventDefault");
+
+		handleKeyDown(e);
+
+		expect(handler).not.toHaveBeenCalled();
+		expect(preventSpy).not.toHaveBeenCalled();
+	});
 });
 
 // Terminal copy/paste are Linux/Windows-only bindings; the test env is non-mac,
