@@ -328,6 +328,49 @@ const WS_DEFS: WsDef[] = [
 			["src/oauth/index.ts", "M", 5, 1, "staged"],
 		],
 	},
+	// orbit-dashboard: a Worktree set (primary + two linked worktrees), showing
+	// parallel work across worktrees of one repo. Grouping is driven by the
+	// shared worktreeGroupKey returned from `workspaceSummary` (WORKTREE_SETS).
+	{
+		id: "ws-orbit",
+		name: "orbit-dashboard",
+		root: `${CODE}/orbit-dashboard`,
+		base: "main",
+		branch: "main",
+		tabs: one(
+			"Dev",
+			h(0.55, sh("active", "devServer"), sh("idle", "idleShell")),
+		),
+		branches: ["feature/charts-revamp", "chore/a11y-audit"],
+	},
+	{
+		id: "ws-orbit-charts",
+		name: "charts-revamp",
+		root: `${CODE}/orbit-dashboard.worktrees/charts-revamp`,
+		base: "main",
+		branch: "feature/charts-revamp",
+		tabs: [
+			{ name: "Agent", pane: a("claude", "active", "claudeSession") },
+			{
+				name: "Dev",
+				pane: h(0.5, sh("active", "devServer"), sh("idle", "scratchShell")),
+			},
+		],
+		git: [
+			["src/charts/Donut.tsx", "M", 44, 12, "against_base"],
+			["src/charts/index.ts", "M", 6, 1, "against_base"],
+			["src/charts/__tests__/donut.test.ts", "A", 38, 0, "staged"],
+		],
+	},
+	{
+		id: "ws-orbit-a11y",
+		name: "a11y-audit",
+		root: `${CODE}/orbit-dashboard.worktrees/a11y-audit`,
+		base: "main",
+		branch: "chore/a11y-audit",
+		tabs: one("Audit", a("copilot", "waiting", "copilotSession")),
+		git: [["src/components/Modal.tsx", "M", 15, 3, "unstaged"]],
+	},
 	// 14 — notification-svc
 	{
 		id: "ws-notify",
@@ -531,49 +574,6 @@ const WS_DEFS: WsDef[] = [
 		branch: "feature/mqtt-tls",
 		tabs: one("Bridge", sh("active", "devServer")),
 		git: [["src/mqtt/tls.ts", "M", 24, 7, "against_base"]],
-	},
-	// 31–33 — orbit-dashboard: a Worktree set (primary + two linked worktrees),
-	// showing parallel work across worktrees of one repo. Grouping is driven by
-	// the shared worktreeGroupKey returned from `workspaceSummary` (WORKTREE_SETS).
-	{
-		id: "ws-orbit",
-		name: "orbit-dashboard",
-		root: `${CODE}/orbit-dashboard`,
-		base: "main",
-		branch: "main",
-		tabs: one(
-			"Dev",
-			h(0.55, sh("active", "devServer"), sh("idle", "idleShell")),
-		),
-		branches: ["feature/charts-revamp", "chore/a11y-audit"],
-	},
-	{
-		id: "ws-orbit-charts",
-		name: "charts-revamp",
-		root: `${CODE}/orbit-dashboard.worktrees/charts-revamp`,
-		base: "main",
-		branch: "feature/charts-revamp",
-		tabs: [
-			{ name: "Agent", pane: a("claude", "active", "claudeSession") },
-			{
-				name: "Dev",
-				pane: h(0.5, sh("active", "devServer"), sh("idle", "scratchShell")),
-			},
-		],
-		git: [
-			["src/charts/Donut.tsx", "M", 44, 12, "against_base"],
-			["src/charts/index.ts", "M", 6, 1, "against_base"],
-			["src/charts/__tests__/donut.test.ts", "A", 38, 0, "staged"],
-		],
-	},
-	{
-		id: "ws-orbit-a11y",
-		name: "a11y-audit",
-		root: `${CODE}/orbit-dashboard.worktrees/a11y-audit`,
-		base: "main",
-		branch: "chore/a11y-audit",
-		tabs: one("Audit", a("copilot", "waiting", "copilotSession")),
-		git: [["src/components/Modal.tsx", "M", 15, 3, "unstaged"]],
 	},
 ];
 
