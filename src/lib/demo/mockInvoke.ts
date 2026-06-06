@@ -184,7 +184,13 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return requested.filter((c) => fixtures.installedAgentCommands.has(c));
 		}
 		case "agent_hooks_provision":
+		case "agent_hooks_provision_startup":
 			return undefined;
+		case "ensure_agent_hooks":
+			// Demo never touches the filesystem; pretend nothing needed provisioning.
+			return false;
+		case "agent_hook_status":
+			return fixtures.agentHookStatuses ?? [];
 
 		// ── Updater — inert in demo (never touches the network) ──
 		case "updater_check":

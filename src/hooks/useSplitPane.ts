@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { pty } from "../lib/ipc";
+import { agentHooks, pty } from "../lib/ipc";
 import { suppressMarkdownPreview } from "../lib/markdownPreview";
 import {
 	collectTerminals,
@@ -14,6 +14,7 @@ import { destroyTerminal } from "../lib/terminalManager";
 import type { CodingAgent, PaneNode } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
 import { requestPaneClose } from "../stores/paneCloseConfirmStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 function generateId(): string {
@@ -49,6 +50,20 @@ export function useSplitPane() {
 			};
 
 			if (!findNode(layout, paneId)) return;
+
+			// When launching an agent with hooks enabled, register its hooks
+			// BEFORE the PTY spawns, so the config is in place by the time the
+			// agent process reads it (covers a mid-session install). Awaited here
+			// rather than alongside setPendingAgent so it can't race the pending-
+			// command drain. Best-effort: a provisioning failure must not block
+			// the launch. See ADR-0003 (Revisited).
+			if (agent && useSettingsStore.getState().agentHooksEnabled) {
+				try {
+					await agentHooks.ensure(agent.id, true);
+				} catch (err) {
+					console.error("[agentHooks] ensure failed:", err);
+				}
+			}
 
 			const newLayout = wrapInSplit(layout, paneId, newTerminal, direction);
 			await updateLayout(tab.id, newLayout);

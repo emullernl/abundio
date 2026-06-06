@@ -12,7 +12,11 @@
  * on load, so transcripts and agent dots are keyed by the stable **paneId**
  * (delivered as `pty_spawn`'s `logId` arg), not by ptyId.
  */
-import type { GitFetchBundle, WorkspaceGitSummary } from "../ipc";
+import type {
+	AgentHookStatus,
+	GitFetchBundle,
+	WorkspaceGitSummary,
+} from "../ipc";
 import type {
 	AvailableShell,
 	BranchInfo,
@@ -1197,3 +1201,62 @@ export const installedAgentCommands = new Set([
 	"opencode",
 	"qwen",
 ]);
+
+/** Per-agent hook footprint shown in Settings → Agents (demo, no real files). */
+export const agentHookStatuses: AgentHookStatus[] = [
+	{
+		agentId: "claude",
+		configPath: "~/.claude/settings.json",
+		ownership: "merged",
+		events: [
+			"UserPromptSubmit",
+			"PermissionRequest",
+			"Stop",
+			"StopFailure",
+			"SessionEnd",
+		],
+		state: "registered",
+	},
+	{
+		agentId: "gemini",
+		configPath: "~/.gemini/settings.json",
+		ownership: "merged",
+		events: ["BeforeAgent", "AfterAgent", "Notification", "SessionEnd"],
+		state: "registered",
+	},
+	{
+		agentId: "qwen",
+		configPath: "~/.qwen/settings.json",
+		ownership: "merged",
+		events: ["BeforeAgent", "AfterAgent", "Notification", "SessionEnd"],
+		state: "notRegistered",
+	},
+	{
+		agentId: "codex",
+		configPath: "~/.codex/hooks.json",
+		ownership: "owned",
+		events: ["UserPromptSubmit", "PermissionRequest", "Stop"],
+		state: "registered",
+	},
+	{
+		agentId: "copilot",
+		configPath: "~/.copilot/hooks/abundio.json",
+		ownership: "owned",
+		events: [
+			"userPromptSubmitted",
+			"preToolUse",
+			"notification",
+			"agentStop",
+			"errorOccurred",
+			"sessionEnd",
+		],
+		state: "registered",
+	},
+	{
+		agentId: "opencode",
+		configPath: "~/.config/opencode/plugin/abundio.ts",
+		ownership: "owned",
+		events: ["all lifecycle events"],
+		state: "registered",
+	},
+];

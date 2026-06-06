@@ -16,9 +16,26 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::error::AbundioError;
+
+/// One-shot guard so startup provisioning runs a single time per process,
+/// however many Windows call into it. Managed in `lib.rs` and read by the
+/// `agent_hooks_provision_startup` command. See ADR-0003 (Revisited).
+#[derive(Default)]
+pub struct StartupProvisionGuard(AtomicBool);
+
+impl StartupProvisionGuard {
+    /// Returns true exactly once — on the first call this process. Subsequent
+    /// calls (e.g. from other Windows' rehydrate) return false.
+    pub fn claim(&self) -> bool {
+        !self.0.swap(true, Ordering::SeqCst)
+    }
+}
 
 const RELAY_SH: &str = r#"#!/bin/sh
 # Abundio agent status hook relay — auto-generated, do not edit.
@@ -91,6 +108,17 @@ fn relay_dir() -> PathBuf {
         .join("hooks")
 }
 
+/// Compute the relay script paths without writing them. Used by the read-only
+/// inspection paths (`config_state`, `agent_hook_status`) which must not have
+/// the side effect of (re)writing the scripts.
+fn relay_paths() -> RelayPaths {
+    let dir = relay_dir();
+    RelayPaths {
+        sh: dir.join("abundio-hook.sh"),
+        ps1: dir.join("abundio-hook.ps1"),
+    }
+}
+
 /// Refresh the relay scripts on disk to match this binary's `RELAY_SH` /
 /// `RELAY_PS1`. Safe to call unconditionally on startup — the scripts are
 /// pure functions of the binary, contain no user data, and overwriting them
@@ -103,18 +131,16 @@ pub fn refresh_relay_scripts() -> Result<(), AbundioError> {
 
 /// Write both relay scripts; make the shell script executable on Unix.
 fn write_relay_scripts() -> Result<RelayPaths, AbundioError> {
-    let dir = relay_dir();
-    fs::create_dir_all(&dir)?;
-    let sh = dir.join("abundio-hook.sh");
-    let ps1 = dir.join("abundio-hook.ps1");
-    fs::write(&sh, RELAY_SH)?;
-    fs::write(&ps1, RELAY_PS1)?;
+    let paths = relay_paths();
+    fs::create_dir_all(relay_dir())?;
+    fs::write(&paths.sh, RELAY_SH)?;
+    fs::write(&paths.ps1, RELAY_PS1)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&sh, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(&paths.sh, fs::Permissions::from_mode(0o755))?;
     }
-    Ok(RelayPaths { sh, ps1 })
+    Ok(paths)
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<(), AbundioError> {
@@ -385,10 +411,268 @@ fn curl_available() -> bool {
         .unwrap_or(false)
 }
 
+/// The agents Abundio can provision hooks for, in display order. Aider and
+/// custom user agents are intentionally absent — Abundio has no hook
+/// integration for them.
+const SUPPORTED_AGENTS: &[&str] = &["claude", "gemini", "qwen", "codex", "copilot", "opencode"];
+
+/// Whether Abundio merges entries into a config the agent also owns, or owns
+/// the whole file itself.
+#[derive(Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum Ownership {
+    /// Entries merged into a file the agent also writes (e.g. `settings.json`).
+    Merged,
+    /// A file Abundio writes wholesale and deletes on disable.
+    Owned,
+}
+
+/// Static provisioning facts for one supported agent.
+struct AgentDescriptor {
+    /// Config dir, relative to `$HOME`, whose existence gates startup provisioning.
+    dir_rel: PathBuf,
+    /// Config file Abundio touches, relative to `$HOME`.
+    config_rel: PathBuf,
+    ownership: Ownership,
+    /// Lifecycle events Abundio hooks (for the Settings footprint display).
+    events: Vec<String>,
+}
+
+/// Resolve an agent id to its provisioning descriptor, or `None` when Abundio
+/// has no hook integration for it (Aider, custom user agents).
+fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
+    let merge_events = |a: &str| {
+        merge_agent_events(a)
+            .into_iter()
+            .map(|(e, _, _)| e.to_string())
+            .collect::<Vec<_>>()
+    };
+    let owned_events = |events: &[&str]| events.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    match agent_id {
+        "claude" => Some(AgentDescriptor {
+            dir_rel: PathBuf::from(".claude"),
+            config_rel: [".claude", "settings.json"].iter().collect(),
+            ownership: Ownership::Merged,
+            events: merge_events("claude"),
+        }),
+        "gemini" => Some(AgentDescriptor {
+            dir_rel: PathBuf::from(".gemini"),
+            config_rel: [".gemini", "settings.json"].iter().collect(),
+            ownership: Ownership::Merged,
+            events: merge_events("gemini"),
+        }),
+        "qwen" => Some(AgentDescriptor {
+            dir_rel: PathBuf::from(".qwen"),
+            config_rel: [".qwen", "settings.json"].iter().collect(),
+            ownership: Ownership::Merged,
+            events: merge_events("qwen"),
+        }),
+        "codex" => Some(AgentDescriptor {
+            dir_rel: PathBuf::from(".codex"),
+            config_rel: [".codex", "hooks.json"].iter().collect(),
+            ownership: Ownership::Owned,
+            events: owned_events(&["UserPromptSubmit", "PermissionRequest", "Stop"]),
+        }),
+        "copilot" => Some(AgentDescriptor {
+            dir_rel: PathBuf::from(".copilot"),
+            config_rel: [".copilot", "hooks", "abundio.json"].iter().collect(),
+            ownership: Ownership::Owned,
+            events: owned_events(&[
+                "userPromptSubmitted",
+                "preToolUse",
+                "notification",
+                "agentStop",
+                "errorOccurred",
+                "sessionEnd",
+            ]),
+        }),
+        "opencode" => Some(AgentDescriptor {
+            dir_rel: [".config", "opencode"].iter().collect(),
+            config_rel: [".config", "opencode", "plugin", "abundio.ts"]
+                .iter()
+                .collect(),
+            ownership: Ownership::Owned,
+            events: vec!["all lifecycle events".to_string()],
+        }),
+        _ => None,
+    }
+}
+
+/// Content for an Abundio-owned config file. Errors only on serialization
+/// failure (effectively never).
+fn owned_content(agent_id: &str, relay: &RelayPaths) -> Result<String, AbundioError> {
+    match agent_id {
+        "codex" => codex_config(relay.primary()),
+        "copilot" => copilot_config(relay),
+        "opencode" => Ok(opencode_plugin()),
+        _ => Ok(String::new()),
+    }
+}
+
+/// Provision (or strip) hooks for a single agent.
+///
+/// `create_dir` lets the launch path scaffold a missing config dir so a
+/// freshly-installed agent gets hooks on its very first run; startup/toggle
+/// pass `false` to honor ADR-0003's no-litter rule (skip agents that have no
+/// config dir yet). Unsupported agents are a no-op.
+fn provision_agent(
+    home: &Path,
+    relay: &RelayPaths,
+    agent_id: &str,
+    enabled: bool,
+    create_dir: bool,
+) -> Result<(), AbundioError> {
+    let Some(desc) = agent_descriptor(agent_id) else {
+        return Ok(());
+    };
+    let dir = home.join(&desc.dir_rel);
+    if !dir.is_dir() {
+        if enabled && create_dir {
+            fs::create_dir_all(&dir)?;
+        } else {
+            // No dir: nothing to strip on disable, and don't litter on enable.
+            return Ok(());
+        }
+    }
+    let path = home.join(&desc.config_rel);
+    match desc.ownership {
+        Ownership::Merged => provision_merge_settings(&path, enabled, agent_id, relay.primary()),
+        Ownership::Owned => {
+            if enabled {
+                let content = owned_content(agent_id, relay)?;
+                provision_own_file(&path, true, &content)
+            } else {
+                provision_own_file(&path, false, "")
+            }
+        }
+    }
+}
+
+/// True when Abundio's relay marker is present anywhere in a parsed merge config.
+fn merge_has_marker(root: &Value, marker: &str) -> bool {
+    root.get("hooks")
+        .and_then(|h| h.as_object())
+        .map(|hooks| {
+            hooks.values().any(|v| {
+                v.as_array()
+                    .map(|arr| arr.iter().any(|g| group_is_abundio(g, marker)))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Per-agent registration state derived purely from on-disk config.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum HookConfigState {
+    /// Abundio's entries are present.
+    Registered,
+    /// Supported, but Abundio's entries are absent (incl. no config dir/file).
+    NotRegistered,
+    /// A merge config exists but is unparseable — Abundio won't touch it.
+    ConfigError,
+}
+
+/// Inspect one agent's config (no writes) and classify it.
+fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigState {
+    let Some(desc) = agent_descriptor(agent_id) else {
+        return HookConfigState::NotRegistered;
+    };
+    let path = home.join(&desc.config_rel);
+    match desc.ownership {
+        Ownership::Merged => {
+            let text = match fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(_) => return HookConfigState::NotRegistered, // file absent
+            };
+            if text.trim().is_empty() {
+                return HookConfigState::NotRegistered;
+            }
+            match serde_json::from_str::<Value>(&text) {
+                Err(_) => HookConfigState::ConfigError,
+                Ok(root) => {
+                    let marker = relay.primary().to_string_lossy();
+                    if merge_has_marker(&root, &marker) {
+                        HookConfigState::Registered
+                    } else {
+                        HookConfigState::NotRegistered
+                    }
+                }
+            }
+        }
+        // Abundio owns the whole file — its presence means registered.
+        Ownership::Owned => {
+            if path.exists() {
+                HookConfigState::Registered
+            } else {
+                HookConfigState::NotRegistered
+            }
+        }
+    }
+}
+
+/// True when this agent's hooks are currently provisioned on disk.
+fn is_provisioned(home: &Path, relay: &RelayPaths, agent_id: &str) -> bool {
+    config_state(home, relay, agent_id) == HookConfigState::Registered
+}
+
+/// Read-only provisioning footprint for one supported agent, for Settings.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentHookStatus {
+    agent_id: String,
+    config_path: String,
+    ownership: Ownership,
+    events: Vec<String>,
+    state: HookConfigState,
+}
+
+/// Inspect every supported agent's config and report its footprint. Pure read —
+/// never writes relay scripts or config files. Aider / custom agents are absent
+/// from the result; the frontend renders those as "not supported".
+pub fn agent_hook_status() -> Result<Vec<AgentHookStatus>, AbundioError> {
+    let home = dirs::home_dir().ok_or_else(|| io_err("no home directory".into()))?;
+    let relay = relay_paths();
+    Ok(SUPPORTED_AGENTS
+        .iter()
+        .filter_map(|&agent_id| {
+            let desc = agent_descriptor(agent_id)?;
+            Some(AgentHookStatus {
+                agent_id: agent_id.to_string(),
+                config_path: home.join(&desc.config_rel).to_string_lossy().into_owned(),
+                ownership: desc.ownership,
+                events: desc.events,
+                state: config_state(&home, &relay, agent_id),
+            })
+        })
+        .collect())
+}
+
+/// Register hooks for a single agent on demand if they aren't already, creating
+/// the agent's config dir if absent. Called when an agent is launched so a
+/// mid-session install gets hooks without restarting Abundio. No-op when hooks
+/// are disabled, the agent is unsupported, or it's already provisioned. Returns
+/// whether it actually provisioned.
+pub fn ensure_agent_hooks(agent_id: &str, enabled: bool) -> Result<bool, AbundioError> {
+    if !enabled || agent_descriptor(agent_id).is_none() {
+        return Ok(false);
+    }
+    let home = dirs::home_dir().ok_or_else(|| io_err("no home directory".into()))?;
+    // Ensure the relay scripts exist before any config references them.
+    let relay = write_relay_scripts()?;
+    if is_provisioned(&home, &relay, agent_id) {
+        return Ok(false);
+    }
+    provision_agent(&home, &relay, agent_id, true, true)?;
+    Ok(true)
+}
+
 /// Enable or disable Agent status hooks across every installed Agent.
 ///
 /// Per-agent failures are collected and reported but do not abort the rest —
 /// a corrupt `~/.claude/settings.json` must not prevent provisioning Codex.
+/// Startup and toggle both route here; neither scaffolds a missing config dir.
 pub fn provision(enabled: bool) -> Result<(), AbundioError> {
     let home = dirs::home_dir().ok_or_else(|| io_err("no home directory".into()))?;
     let relay = write_relay_scripts()?;
@@ -407,76 +691,8 @@ pub fn provision(enabled: bool) -> Result<(), AbundioError> {
         );
     }
 
-    // Only touch an Agent's config when it already has a config directory —
-    // avoids littering the home dir for Agents the user hasn't installed.
-    let claude_dir = home.join(".claude");
-    if claude_dir.is_dir() {
-        if let Err(e) =
-            provision_merge_settings(&claude_dir.join("settings.json"), enabled, "claude", relay.primary())
-        {
-            errors.push(e.to_string());
-        }
-    }
-
-    let gemini_dir = home.join(".gemini");
-    if gemini_dir.is_dir() {
-        if let Err(e) =
-            provision_merge_settings(&gemini_dir.join("settings.json"), enabled, "gemini", relay.primary())
-        {
-            errors.push(e.to_string());
-        }
-    }
-
-    let qwen_dir = home.join(".qwen");
-    if qwen_dir.is_dir() {
-        if let Err(e) =
-            provision_merge_settings(&qwen_dir.join("settings.json"), enabled, "qwen", relay.primary())
-        {
-            errors.push(e.to_string());
-        }
-    }
-
-    let codex_dir = home.join(".codex");
-    if codex_dir.is_dir() {
-        let content = match codex_config(relay.primary()) {
-            Ok(c) => c,
-            Err(e) => {
-                errors.push(e.to_string());
-                String::new()
-            }
-        };
-        if !content.is_empty() || !enabled {
-            if let Err(e) = provision_own_file(&codex_dir.join("hooks.json"), enabled, &content) {
-                errors.push(e.to_string());
-            }
-        }
-    }
-
-    let copilot_dir = home.join(".copilot");
-    if copilot_dir.is_dir() {
-        let content = match copilot_config(&relay) {
-            Ok(c) => c,
-            Err(e) => {
-                errors.push(e.to_string());
-                String::new()
-            }
-        };
-        if !content.is_empty() || !enabled {
-            if let Err(e) =
-                provision_own_file(&copilot_dir.join("hooks").join("abundio.json"), enabled, &content)
-            {
-                errors.push(e.to_string());
-            }
-        }
-    }
-
-    let opencode_dir = home.join(".config").join("opencode");
-    if opencode_dir.is_dir() {
-        if let Err(e) = provision_own_file(
-            &opencode_dir.join("plugin").join("abundio.ts"),
-            enabled,
-            &opencode_plugin(),
-        ) {
+    for &agent_id in SUPPORTED_AGENTS {
+        if let Err(e) = provision_agent(&home, &relay, agent_id, enabled, false) {
             errors.push(e.to_string());
         }
     }
@@ -617,5 +833,88 @@ mod tests {
         assert!(path.exists());
         provision_own_file(&path, false, "").unwrap();
         assert!(!path.exists());
+    }
+
+    /// RelayPaths pointing inside a fake home; not written to disk.
+    fn test_relay(home: &tempfile::TempDir) -> RelayPaths {
+        RelayPaths {
+            sh: home.path().join("hooks").join("abundio-hook.sh"),
+            ps1: home.path().join("hooks").join("abundio-hook.ps1"),
+        }
+    }
+
+    #[test]
+    fn provision_agent_merge_creates_dir_then_strips() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+
+        // create_dir scaffolds ~/.claude and writes settings.json with the marker.
+        provision_agent(home.path(), &relay, "claude", true, true).unwrap();
+        assert!(home.path().join(".claude").join("settings.json").exists());
+        assert!(is_provisioned(home.path(), &relay, "claude"));
+
+        // Disable strips Abundio's entries → no longer registered.
+        provision_agent(home.path(), &relay, "claude", false, false).unwrap();
+        assert!(!is_provisioned(home.path(), &relay, "claude"));
+    }
+
+    #[test]
+    fn provision_agent_no_litter_when_dir_absent() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        // create_dir=false (startup/toggle): an absent config dir is left alone.
+        provision_agent(home.path(), &relay, "gemini", true, false).unwrap();
+        assert!(!home.path().join(".gemini").exists());
+        assert!(!is_provisioned(home.path(), &relay, "gemini"));
+    }
+
+    #[test]
+    fn provision_agent_owned_codex_presence_is_registered() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        provision_agent(home.path(), &relay, "codex", true, true).unwrap();
+        assert!(home.path().join(".codex").join("hooks.json").exists());
+        assert!(is_provisioned(home.path(), &relay, "codex"));
+        provision_agent(home.path(), &relay, "codex", false, false).unwrap();
+        assert!(!home.path().join(".codex").join("hooks.json").exists());
+        assert!(!is_provisioned(home.path(), &relay, "codex"));
+    }
+
+    #[test]
+    fn provision_agent_unsupported_is_noop() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        provision_agent(home.path(), &relay, "aider", true, true).unwrap();
+        // No descriptor → nothing scaffolded in the fake home.
+        assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
+        assert!(!is_provisioned(home.path(), &relay, "aider"));
+    }
+
+    #[test]
+    fn config_state_classifies_absent_broken_and_registered() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+
+        // Absent file → NotRegistered.
+        assert_eq!(
+            config_state(home.path(), &relay, "claude"),
+            HookConfigState::NotRegistered
+        );
+
+        // Unparseable merge config → ConfigError (Abundio won't touch it).
+        fs::create_dir_all(home.path().join(".claude")).unwrap();
+        fs::write(home.path().join(".claude").join("settings.json"), "{ not json").unwrap();
+        assert_eq!(
+            config_state(home.path(), &relay, "claude"),
+            HookConfigState::ConfigError
+        );
+
+        // Valid config + provisioned → Registered.
+        fs::write(home.path().join(".claude").join("settings.json"), "{}").unwrap();
+        provision_agent(home.path(), &relay, "claude", true, false).unwrap();
+        assert_eq!(
+            config_state(home.path(), &relay, "claude"),
+            HookConfigState::Registered
+        );
     }
 }

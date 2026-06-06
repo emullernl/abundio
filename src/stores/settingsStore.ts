@@ -488,11 +488,13 @@ export const useSettingsStore = create<SettingsState>()(
 						`${state.uiFontSize}px`,
 					);
 				}
-				// Re-sync agent hook provisioning with the persisted setting
-				// (also refreshes the relay scripts after an app update).
+				// Re-sync agent hook provisioning with the persisted setting on
+				// startup. Uses the once-per-process startup command so that, with
+				// multiple Windows open, only the first rehydrate actually rewrites
+				// the global agent configs. See ADR-0003 (Revisited).
 				if (state?.agentHooksEnabled) {
-					agentHooks.provision(true).catch((err) => {
-						console.error("[agentHooks] provision failed:", err);
+					agentHooks.provisionStartup(true).catch((err) => {
+						console.error("[agentHooks] startup provision failed:", err);
 					});
 				}
 				// The module flag in terminalManager defaults to true — only

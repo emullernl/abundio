@@ -59,8 +59,17 @@ _Avoid_: terminal process, shell
 
 **Agent**: A detected AI coding CLI tool (Claude Code, Copilot, Gemini CLI, Aider, Codex, OpenCode) that can be launched inside a Pane. Detected by scanning `$PATH`; not spawned until the user requests one.
 
-**Agent hook**: A lifecycle event an Agent emits — prompt submitted, permission requested, turn finished, turn failed — that Abundio observes (via the Agent's own hook system) to drive the status indicator. Abundio only observes; it never alters the Agent's behaviour.
+**Agent hook**: A lifecycle event an Agent emits — prompt submitted, permission requested, turn finished, turn failed — that Abundio observes (via the Agent's own hook system) to drive the status indicator. Abundio only observes; it never alters the Agent's behaviour. Distinct from **Hook provisioning** (the edits Abundio writes so these events reach it).
 _Avoid_: callback, event listener
+
+**Hook provisioning**: The set of edits Abundio writes into an Agent's *own* configuration so that Agent emits its **Agent hooks** to Abundio — distinct from the hooks themselves, which Abundio only observes. Comprises the relay scripts in Abundio's data dir plus, per Agent, either entries merged into a co-owned config (e.g. `~/.claude/settings.json`, `~/.gemini/settings.json`, `~/.qwen/settings.json`) or an Abundio-owned file (e.g. `~/.codex/hooks.json`, `~/.copilot/hooks/abundio.json`, `~/.config/opencode/plugin/abundio.ts`). Gated by the global **Status Hooks** setting; idempotent; removes only Abundio's own entries on disable. See ADR-0003.
+_Avoid_: hook injection, hook registration (ok colloquially)
+
+**Status Hooks setting**: The single global, opt-out toggle (`agentHooksEnabled`) that turns **Hook provisioning** on or off for every supported Agent at once. On by default. There is no per-Agent enable/disable for provisioning — the toggle is all-or-nothing; the per-Agent surface in Settings is read-only.
+_Avoid_: hooks preference, per-agent hook toggle (does not exist)
+
+**Provisioning footprint**: The concrete, per-Agent record of what **Hook provisioning** has done — which config file is touched, whether Abundio owns that file or merged into a shared one, and which lifecycle events are hooked — surfaced read-only per Agent in Settings. Each Agent reads as one of: *Registered*, *Not registered*, *Not installed*, *Not supported* (Aider and custom Agents have no hook integration), or *Config error* (the Agent's config is unparseable).
+_Avoid_: hook status (ambiguous with the **Status indicator**)
 
 **Waiting**: An Agent state in which the Agent has emitted a permission- or input-request hook and the user has not yet responded in its terminal. Distinct from a finished turn ("ready") — the Agent is stalled mid-turn, not done.
 _Avoid_: blocked, idle, stuck
@@ -114,6 +123,7 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 - Each **Pane** belongs to exactly one **Tab**. A terminal pane holds at most one **PTY**; a file pane holds at most one open file; a preview pane holds neither — it references a **source pane**.
 - A **preview pane** and its **source pane** always live in the same **Tab**.
 - Abundio derives an **Agent**'s status by observing its **Agent hooks**; a permission-request hook puts the Agent into the **Waiting** state, which clears when the user types into that **Pane**'s terminal.
+- **Hook provisioning** runs at three moments, all gated by the **Status Hooks setting**: at app startup (once per process, however many **Windows** open), on toggling the setting, and the first time an Agent is launched in a **Pane** if that Agent is not yet provisioned. The launch-time path may create the Agent's config dir if absent — a launch is explicit intent — whereas startup never scaffolds dirs for Agents the user hasn't run. A newly-installed Agent therefore gains hooks without an app restart. See ADR-0003.
 - Installing an **Update** is deferred to app quit by default: the staged install runs in the quit path (the `quit-app` menu item / `ExitRequested`) before Windows tear down, so it composes with the "last-window-closing quits the app" rule rather than interrupting a running session.
 - Abundio derives a **shell-mode PTY**'s status from shell-integration OSC markers (`command_start` / `command_end`) emitted by Abundio's startup hooks; **Working** and **Error** for shells are detected this way (a clean exit returns to **Idle**, with no Ready hop). Without working shell integration the PTY degrades silently to permanent **Idle** (no false signal).
 
