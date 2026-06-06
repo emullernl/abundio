@@ -666,16 +666,16 @@ function hookBadge(
 	installed: boolean,
 	state: AgentHookStatus["state"] | undefined,
 ): { label: string; tone: HookTone } {
-	if (!supported) return { label: "No hooks", tone: "muted" };
+	if (!supported) return { label: "Hooks not supported", tone: "muted" };
 	if (!hooksEnabled) return { label: "Hooks off", tone: "muted" };
 	if (!installed) return { label: "Not installed", tone: "muted" };
 	switch (state) {
 		case "registered":
-			return { label: "Registered", tone: "success" };
+			return { label: "Hooks registered", tone: "success" };
 		case "configError":
 			return { label: "Config error", tone: "error" };
 		default:
-			return { label: "Not registered", tone: "warning" };
+			return { label: "Hooks not registered", tone: "warning" };
 	}
 }
 
@@ -897,25 +897,7 @@ function AgentRow({
 						{agent.args?.length ? ` ${agent.args.join(" ")}` : ""}
 					</div>
 				</div>
-				<HookBadge label={badge.label} tone={badge.tone} />
-				{installed && (
-					<span
-						className="flex-shrink-0 rounded"
-						style={{
-							fontSize: 9,
-							fontWeight: 600,
-							color: "var(--success, #4ade80)",
-							letterSpacing: "0.05em",
-							textTransform: "uppercase",
-							padding: "2px 5px",
-							border:
-								"1px solid color-mix(in srgb, var(--success, #4ade80) 40%, transparent)",
-						}}
-					>
-						Installed
-					</span>
-				)}
-				{agent.builtin ? (
+				{agent.builtin && (
 					<span
 						className="flex-shrink-0 rounded"
 						style={{
@@ -931,16 +913,45 @@ function AgentRow({
 					>
 						Built-in
 					</span>
+				)}
+				{installed && (
+					<span
+						className="flex-shrink-0 rounded"
+						style={{
+							fontSize: 9,
+							fontWeight: 600,
+							color: "var(--success, #4ade80)",
+							letterSpacing: "0.05em",
+							textTransform: "uppercase",
+							padding: "2px 5px",
+							border:
+								"1px solid color-mix(in srgb, var(--success, #4ade80) 40%, transparent)",
+						}}
+					>
+						Detected
+					</span>
+				)}
+				<HookBadge label={badge.label} tone={badge.tone} />
+				{/* Single trailing slot so the badge columns and this control line
+				    up across every row: chevron for supported agents, the remove
+				    button for custom ones, an empty spacer otherwise. */}
+				{supported ? (
+					<button
+						type="button"
+						onClick={() => setExpanded((v) => !v)}
+						aria-label={expanded ? "Hide hook details" : "Show hook details"}
+						className="flex-shrink-0 flex items-center justify-center rounded-md"
+						style={{ width: 22, height: 22, color: "var(--fg-secondary)" }}
+					>
+						{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+					</button>
 				) : onRemove ? (
 					<button
 						type="button"
 						onClick={onRemove}
+						aria-label="Remove agent"
 						className="flex-shrink-0 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-						style={{
-							width: 24,
-							height: 24,
-							color: "var(--fg-secondary)",
-						}}
+						style={{ width: 22, height: 22, color: "var(--fg-secondary)" }}
 						onMouseEnter={(e) => {
 							(e.currentTarget as HTMLElement).style.color = "var(--error)";
 							(e.currentTarget as HTMLElement).style.backgroundColor =
@@ -954,17 +965,6 @@ function AgentRow({
 						}}
 					>
 						<X size={13} />
-					</button>
-				) : null}
-				{supported ? (
-					<button
-						type="button"
-						onClick={() => setExpanded((v) => !v)}
-						aria-label={expanded ? "Hide hook details" : "Show hook details"}
-						className="flex-shrink-0 flex items-center justify-center rounded-md"
-						style={{ width: 22, height: 22, color: "var(--fg-secondary)" }}
-					>
-						{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 					</button>
 				) : (
 					<span style={{ width: 22, flexShrink: 0 }} aria-hidden />
@@ -1730,18 +1730,22 @@ export function SettingsPanel({ onClose }: Props) {
 	const agentHooksEnabled = useSettingsStore((s) => s.agentHooksEnabled);
 	const setAgentHooksEnabled = useSettingsStore((s) => s.setAgentHooksEnabled);
 	// Live per-agent hook footprint, keyed by agentId. Re-fetched whenever the
-	// Agents section is shown so a mid-session install/registration shows up.
+	// Agents section is shown, and again after a toggle re-provisions, so the
+	// Hooks registered / not registered badge reflects the new on-disk state.
 	const [hookStatuses, setHookStatuses] = useState<
 		Map<string, AgentHookStatus>
 	>(() => new Map());
-	useEffect(() => {
-		if (section !== "agents") return;
-		reloadRegistry(agents.map((a) => a.command));
+	const refreshHookStatuses = useCallback(() => {
 		agentHooks
 			.status()
 			.then((list) => setHookStatuses(new Map(list.map((s) => [s.agentId, s]))))
 			.catch(() => setHookStatuses(new Map()));
-	}, [section, agents, reloadRegistry]);
+	}, []);
+	useEffect(() => {
+		if (section !== "agents") return;
+		reloadRegistry(agents.map((a) => a.command));
+		refreshHookStatuses();
+	}, [section, agents, reloadRegistry, refreshHookStatuses]);
 	const gpuAccelerationEnabled = useSettingsStore(
 		(s) => s.gpuAccelerationEnabled,
 	);
@@ -2096,7 +2100,9 @@ export function SettingsPanel({ onClose }: Props) {
 									>
 										<Toggle
 											checked={agentHooksEnabled}
-											onChange={setAgentHooksEnabled}
+											onChange={(v) => {
+												setAgentHooksEnabled(v).then(refreshHookStatuses);
+											}}
 										/>
 										<div className="flex-1 min-w-0">
 											<div
@@ -2147,7 +2153,9 @@ export function SettingsPanel({ onClose }: Props) {
 												installed={installedCommands.has(agent.command)}
 												hooksEnabled={agentHooksEnabled}
 												hookStatus={hookStatuses.get(agent.id)}
-												onToggle={() => toggleAgent(agent.id)}
+												onToggle={() => {
+													toggleAgent(agent.id).then(refreshHookStatuses);
+												}}
 												onRemove={
 													agent.builtin
 														? undefined

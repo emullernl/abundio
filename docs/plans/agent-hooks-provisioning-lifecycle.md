@@ -176,8 +176,11 @@ Canonical terms added to `CONTEXT.md`: **Hook provisioning**, **Status Hooks set
 - **Multi-window startup** — the once-guard means exactly one provisioning pass per process
   regardless of Window count; `localStorage` isolation per webview is fine since the first window's
   enabled value is authoritative for the startup pass.
-- **No per-agent enable/disable** — provisioning stays all-or-nothing under the global toggle; the
-  per-agent surface is read-only.
+- **Per-agent gating** — an Agent's own enable toggle (which already gates detection) also gates its
+  hooks: `provision(enabled, enabledAgents)` installs only enabled agents and strips the rest, so
+  toggling an Agent off removes just its hooks. The footprint *display* stays read-only. Disabled
+  agents can't reach the launch-time `ensure` path (picker lists only enabled; detection skips
+  disabled), so it never contradicts the gate.
 
 ## Test checklist
 

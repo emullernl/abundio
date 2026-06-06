@@ -449,16 +449,20 @@ export interface AgentHookStatus {
 }
 
 export const agentHooks = {
-	/** Enable/disable Agent status hooks by (un)provisioning agent configs. */
-	provision: (enabled: boolean) =>
-		invoke<void>("agent_hooks_provision", { enabled }),
+	/**
+	 * Enable/disable Agent status hooks by (un)provisioning agent configs.
+	 * `enabledAgents` are the agent ids whose per-agent toggle is on — only those
+	 * get hooks; the rest are stripped. When `enabled` is false, all are stripped.
+	 */
+	provision: (enabled: boolean, enabledAgents: string[]) =>
+		invoke<void>("agent_hooks_provision", { enabled, enabledAgents }),
 	/**
 	 * Provision hooks at startup. Every Window's settings rehydrate calls this;
 	 * Rust runs it once per process (guard), so N Windows don't each rewrite the
 	 * same global configs. See ADR-0003 (Revisited).
 	 */
-	provisionStartup: (enabled: boolean) =>
-		invoke<void>("agent_hooks_provision_startup", { enabled }),
+	provisionStartup: (enabled: boolean, enabledAgents: string[]) =>
+		invoke<void>("agent_hooks_provision_startup", { enabled, enabledAgents }),
 	/**
 	 * Register hooks for one Agent on demand if missing (creating its config dir
 	 * if needed). Called when an Agent is launched. Returns whether it

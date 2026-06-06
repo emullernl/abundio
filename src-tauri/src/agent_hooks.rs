@@ -668,12 +668,18 @@ pub fn ensure_agent_hooks(agent_id: &str, enabled: bool) -> Result<bool, Abundio
     Ok(true)
 }
 
-/// Enable or disable Agent status hooks across every installed Agent.
+/// Enable or disable Agent status hooks across every supported Agent.
+///
+/// Provisioning is gated per-agent: an Agent gets hooks only when `enabled` (the
+/// global Status Hooks setting) is true AND its id is in `enabled_agents` (its
+/// own detection toggle). Every supported Agent not meeting both is stripped, so
+/// this also serves as the "an agent was toggled off" path. When `enabled` is
+/// false, all are stripped regardless of `enabled_agents`.
 ///
 /// Per-agent failures are collected and reported but do not abort the rest —
 /// a corrupt `~/.claude/settings.json` must not prevent provisioning Codex.
 /// Startup and toggle both route here; neither scaffolds a missing config dir.
-pub fn provision(enabled: bool) -> Result<(), AbundioError> {
+pub fn provision(enabled: bool, enabled_agents: &[String]) -> Result<(), AbundioError> {
     let home = dirs::home_dir().ok_or_else(|| io_err("no home directory".into()))?;
     let relay = write_relay_scripts()?;
     let mut errors: Vec<String> = Vec::new();
@@ -692,7 +698,8 @@ pub fn provision(enabled: bool) -> Result<(), AbundioError> {
     }
 
     for &agent_id in SUPPORTED_AGENTS {
-        if let Err(e) = provision_agent(&home, &relay, agent_id, enabled, false) {
+        let agent_on = enabled && enabled_agents.iter().any(|a| a == agent_id);
+        if let Err(e) = provision_agent(&home, &relay, agent_id, agent_on, false) {
             errors.push(e.to_string());
         }
     }

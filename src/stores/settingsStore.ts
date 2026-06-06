@@ -15,6 +15,16 @@ import {
 import { applyTheme, getTheme } from "../lib/themes";
 import type { CodingAgent } from "../lib/types";
 
+/**
+ * IDs of agents whose hooks should be provisioned — those with their per-agent
+ * detection toggle on. Hook provisioning is gated by BOTH the global Status
+ * Hooks setting and the agent's own toggle. Rust filters this to the agents it
+ * actually supports, so custom/unsupported agents here are harmless.
+ */
+function provisionableAgentIds(agents: CodingAgent[]): string[] {
+	return agents.filter((a) => a.enabled).map((a) => a.id);
+}
+
 interface SettingsState {
 	terminalFontFamily: string;
 	uiFontFamily: string;
@@ -55,7 +65,9 @@ interface SettingsState {
 	setTerminalScrollback: (n: number) => void;
 	addAgent: (name: string, command: string, args?: string[]) => void;
 	removeAgent: (id: string) => void;
-	toggleAgent: (id: string) => void;
+	/** Resolves once hook provisioning for the new state has settled, so callers
+	 *  (e.g. Settings) can refresh the per-agent footprint afterwards. */
+	toggleAgent: (id: string) => Promise<void>;
 	updateAgent: (
 		id: string,
 		updates: Partial<Pick<CodingAgent, "name" | "command" | "args">>,
@@ -64,7 +76,8 @@ interface SettingsState {
 	toggleEditorWordWrap: () => void;
 	toggleMarkdownPreviewAutoOpen: () => void;
 	toggleMarkdownPreviewColorMode: () => void;
-	setAgentHooksEnabled: (enabled: boolean) => void;
+	/** Resolves once (un)provisioning has settled — see `toggleAgent`. */
+	setAgentHooksEnabled: (enabled: boolean) => Promise<void>;
 	setGpuAcceleration: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
@@ -227,7 +240,7 @@ const PERSISTED_DEFAULTS: {
 
 export const useSettingsStore = create<SettingsState>()(
 	persist(
-		(set) => ({
+		(set, get) => ({
 			terminalFontFamily: PERSISTED_DEFAULTS.terminalFontFamily,
 			uiFontFamily: PERSISTED_DEFAULTS.uiFontFamily,
 			fontSize: PERSISTED_DEFAULTS.fontSize,
@@ -311,6 +324,19 @@ export const useSettingsStore = create<SettingsState>()(
 						a.id === id ? { ...a, enabled: !a.enabled } : a,
 					),
 				}));
+				// Sync hook provisioning to the new per-agent state — install the
+				// toggled agent's hooks when turning it on, remove them when turning
+				// it off. Only when the global Status Hooks setting is on; when it's
+				// off there are no hooks to add or remove. provision() re-syncs every
+				// supported agent to match its toggle, so the disabled one is stripped.
+				// Returns the provision promise so callers can refresh the footprint.
+				const state = get();
+				if (!state.agentHooksEnabled) return Promise.resolve();
+				return agentHooks
+					.provision(true, provisionableAgentIds(state.agents))
+					.catch((err) => {
+						console.error("[agentHooks] provision failed:", err);
+					});
 			},
 			updateAgent: (id, updates) => {
 				set((s) => ({
@@ -336,10 +362,13 @@ export const useSettingsStore = create<SettingsState>()(
 				// (e.g. unparseable ~/.claude/settings.json, missing curl, read-only
 				// hook file). Surface them to the devtools so a user reporting "the
 				// status dot doesn't work for Claude" has a breadcrumb to follow.
-				agentHooks.provision(agentHooksEnabled).catch((err) => {
-					console.error("[agentHooks] provision failed:", err);
-				});
+				// Returns the provision promise so callers can refresh the footprint.
 				set({ agentHooksEnabled });
+				return agentHooks
+					.provision(agentHooksEnabled, provisionableAgentIds(get().agents))
+					.catch((err) => {
+						console.error("[agentHooks] provision failed:", err);
+					});
 			},
 			setGpuAcceleration: (gpuAccelerationEnabled) => {
 				setWebglEnabled(gpuAccelerationEnabled);
@@ -493,9 +522,11 @@ export const useSettingsStore = create<SettingsState>()(
 				// multiple Windows open, only the first rehydrate actually rewrites
 				// the global agent configs. See ADR-0003 (Revisited).
 				if (state?.agentHooksEnabled) {
-					agentHooks.provisionStartup(true).catch((err) => {
-						console.error("[agentHooks] startup provision failed:", err);
-					});
+					agentHooks
+						.provisionStartup(true, provisionableAgentIds(state.agents))
+						.catch((err) => {
+							console.error("[agentHooks] startup provision failed:", err);
+						});
 				}
 				// The module flag in terminalManager defaults to true — only
 				// push a change when the user has disabled GPU acceleration.
