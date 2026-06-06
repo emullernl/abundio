@@ -551,6 +551,11 @@ pub fn run() {
                 eprintln!("[abundio] relay script refresh failed: {e}");
             }
 
+            // One-shot guard so startup hook provisioning runs a single time
+            // per process even though every Window's settings rehydrate calls
+            // `agent_hooks_provision_startup`. See ADR-0003 (Revisited).
+            app.manage(agent_hooks::StartupProvisionGuard::default());
+
             // Restore windows from windows.json. The tauri.conf-spawned main
             // window is already mounting; we seed its profile from the
             // persisted entry if present (else first profile in position
@@ -921,6 +926,9 @@ pub fn run() {
             dev_environments::launch_dev_environment,
             agent_registry::list_installed_agent_commands,
             commands::agent_hooks_provision,
+            commands::agent_hooks_provision_startup,
+            commands::ensure_agent_hooks,
+            commands::agent_hook_status,
             updater::updater_check,
             updater::updater_download,
             updater::updater_install_now,

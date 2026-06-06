@@ -17,7 +17,7 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
 import { mapHookEvent } from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
-import { pty } from "./ipc";
+import { agentHooks, pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
 import { takePendingAgent } from "./pendingAgentRegistry";
 import { ShellIntegrationParser } from "./shellIntegration";
@@ -26,6 +26,14 @@ import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
 import type { PaneNode } from "./types";
 import { addWindowFocusListener } from "./windowFocus";
+
+/**
+ * Agent ids we've already asked Rust to ensure-provision this session. The
+ * manual-typing detection path (`command_start`) fires on every agent command,
+ * so this avoids a redundant IPC + config read on every launch. Cleared only by
+ * a process restart, which is fine — startup provisioning re-covers everything.
+ */
+const ensuredAgentsThisSession = new Set<string>();
 
 /**
  * True when xterm `onData` carries a terminal-reported focus or mouse event
@@ -863,6 +871,26 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							if (matched) {
 								actState.setAgentPty(currentPtyId, matched.id);
 								nowIsAgent = true;
+								// Manually-typed launch (not via the picker): register
+								// this agent's hooks if missing. Best-effort and once
+								// per session — the agent already read its config, so
+								// this only takes effect on its NEXT run. See ADR-0003.
+								if (
+									useSettingsStore.getState().agentHooksEnabled &&
+									!ensuredAgentsThisSession.has(matched.id)
+								) {
+									// Only cache on success — a transient failure here must
+									// not permanently suppress retries for the session, since
+									// a re-typed command is the user's only recourse.
+									agentHooks
+										.ensure(matched.id, true)
+										.then(() => {
+											ensuredAgentsThisSession.add(matched.id);
+										})
+										.catch((err) => {
+											console.error("[agentHooks] ensure failed:", err);
+										});
+								}
 							}
 						}
 						if (!nowIsAgent) {

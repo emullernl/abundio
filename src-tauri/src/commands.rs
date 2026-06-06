@@ -459,10 +459,61 @@ pub async fn list_system_fonts() -> Result<Vec<String>, AbundioError> {
 // ── Agent hooks ──
 
 /// Enable or disable Agent status hooks by (un)provisioning hook configs in
-/// each installed Agent's global config directory.
+/// each installed Agent's global config directory. `enabled_agents` are the
+/// agent ids whose per-agent toggle is on — only those are provisioned; the
+/// rest are stripped (so toggling one agent off removes just its hooks).
 #[tauri::command]
-pub async fn agent_hooks_provision(enabled: bool) -> Result<(), AbundioError> {
-    tauri::async_runtime::spawn_blocking(move || crate::agent_hooks::provision(enabled))
+pub async fn agent_hooks_provision(
+    enabled: bool,
+    enabled_agents: Vec<String>,
+) -> Result<(), AbundioError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::agent_hooks::provision(enabled, &enabled_agents)
+    })
+    .await
+    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
+}
+
+/// Provision hooks at app startup, exactly once per process. Every Window's
+/// settings rehydrate calls this with the persisted enabled flag and the set of
+/// per-agent-enabled ids; the guard makes only the first call do the work, so N
+/// Windows don't each rewrite the same global config files. See ADR-0003
+/// (Revisited).
+#[tauri::command]
+pub async fn agent_hooks_provision_startup(
+    enabled: bool,
+    enabled_agents: Vec<String>,
+    guard: State<'_, crate::agent_hooks::StartupProvisionGuard>,
+) -> Result<(), AbundioError> {
+    if !guard.claim() {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::agent_hooks::provision(enabled, &enabled_agents)
+    })
+    .await
+    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
+}
+
+/// Register hooks for a single Agent on demand if they aren't already, creating
+/// the Agent's config dir if needed. Called when an Agent is launched so a
+/// mid-session install gets hooks without restarting. Returns whether it
+/// provisioned. No-op when hooks are disabled or the Agent is unsupported.
+#[tauri::command]
+pub async fn ensure_agent_hooks(agent_id: String, enabled: bool) -> Result<bool, AbundioError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::agent_hooks::ensure_agent_hooks(&agent_id, enabled)
+    })
+    .await
+    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
+}
+
+/// Read-only per-Agent provisioning footprint (config path, ownership, hooked
+/// events, registration state) for the Settings UI.
+#[tauri::command]
+pub async fn agent_hook_status(
+) -> Result<Vec<crate::agent_hooks::AgentHookStatus>, AbundioError> {
+    tauri::async_runtime::spawn_blocking(crate::agent_hooks::agent_hook_status)
         .await
         .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
 }

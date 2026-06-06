@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { pty } from "../lib/ipc";
+import { agentHooks, pty } from "../lib/ipc";
 import { suppressMarkdownPreview } from "../lib/markdownPreview";
 import {
 	collectTerminals,
@@ -14,11 +14,18 @@ import { destroyTerminal } from "../lib/terminalManager";
 import type { CodingAgent, PaneNode } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
 import { requestPaneClose } from "../stores/paneCloseConfirmStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 function generateId(): string {
 	return crypto.randomUUID();
 }
+
+/** Max time to wait for on-launch hook provisioning before letting the pane
+ *  appear anyway. Hooks are picked up on the agent's next run if it times out,
+ *  so a pathological slow disk / provision-mutex contention can't freeze the
+ *  launch path. */
+const ENSURE_HOOKS_TIMEOUT_MS = 2000;
 
 export function useSplitPane() {
 	const getActiveTab = useWorkspaceStore((s) => s.getActiveTab);
@@ -49,6 +56,27 @@ export function useSplitPane() {
 			};
 
 			if (!findNode(layout, paneId)) return;
+
+			// When launching an agent with hooks enabled, register its hooks
+			// BEFORE the PTY spawns, so the config is in place by the time the
+			// agent process reads it (covers a mid-session install). Awaited here
+			// rather than alongside setPendingAgent so it can't race the pending-
+			// command drain. Best-effort: a provisioning failure must not block
+			// the launch. See ADR-0003 (Revisited).
+			if (agent && useSettingsStore.getState().agentHooksEnabled) {
+				try {
+					// Cap the wait so slow disk I/O or provision-mutex contention
+					// can't freeze the launch; the agent picks up hooks next run.
+					await Promise.race([
+						agentHooks.ensure(agent.id, true),
+						new Promise<void>((resolve) => {
+							setTimeout(resolve, ENSURE_HOOKS_TIMEOUT_MS);
+						}),
+					]);
+				} catch (err) {
+					console.error("[agentHooks] ensure failed:", err);
+				}
+			}
 
 			const newLayout = wrapInSplit(layout, paneId, newTerminal, direction);
 			await updateLayout(tab.id, newLayout);

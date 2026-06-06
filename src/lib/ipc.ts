@@ -436,10 +436,42 @@ export const agentRegistry = {
 		invoke<string[]>("list_installed_agent_commands", { commands }),
 };
 
+/** On-disk registration state of one Agent's hooks (mirrors Rust `HookConfigState`). */
+export type HookConfigState = "registered" | "notRegistered" | "configError";
+
+/** Read-only per-Agent provisioning footprint (mirrors Rust `AgentHookStatus`). */
+export interface AgentHookStatus {
+	agentId: string;
+	configPath: string;
+	ownership: "merged" | "owned";
+	events: string[];
+	state: HookConfigState;
+}
+
 export const agentHooks = {
-	/** Enable/disable Agent status hooks by (un)provisioning agent configs. */
-	provision: (enabled: boolean) =>
-		invoke<void>("agent_hooks_provision", { enabled }),
+	/**
+	 * Enable/disable Agent status hooks by (un)provisioning agent configs.
+	 * `enabledAgents` are the agent ids whose per-agent toggle is on — only those
+	 * get hooks; the rest are stripped. When `enabled` is false, all are stripped.
+	 */
+	provision: (enabled: boolean, enabledAgents: string[]) =>
+		invoke<void>("agent_hooks_provision", { enabled, enabledAgents }),
+	/**
+	 * Provision hooks at startup. Every Window's settings rehydrate calls this;
+	 * Rust runs it once per process (guard), so N Windows don't each rewrite the
+	 * same global configs. See ADR-0003 (Revisited).
+	 */
+	provisionStartup: (enabled: boolean, enabledAgents: string[]) =>
+		invoke<void>("agent_hooks_provision_startup", { enabled, enabledAgents }),
+	/**
+	 * Register hooks for one Agent on demand if missing (creating its config dir
+	 * if needed). Called when an Agent is launched. Returns whether it
+	 * provisioned. No-op when `enabled` is false or the Agent is unsupported.
+	 */
+	ensure: (agentId: string, enabled: boolean) =>
+		invoke<boolean>("ensure_agent_hooks", { agentId, enabled }),
+	/** Per-Agent provisioning footprint for the Settings UI. */
+	status: () => invoke<AgentHookStatus[]>("agent_hook_status"),
 };
 
 export const metrics = {
