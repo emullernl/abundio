@@ -6,9 +6,10 @@
 
 - **GPU-accelerated terminals**: WebGL-powered rendering via xterm.js keeps the terminal smooth even under heavy output, with a canvas fallback when needed.
 - **Flexible pane management**: Split horizontally and vertically with unlimited recursive nesting, organize across tabs, and switch layouts without losing your place.
-- **First-class AI agents**: Auto-detects installed coding agents — Claude Code, Copilot CLI, Gemini, Aider, Codex, OpenCode — with live activity status, launched right beside your shell.
+- **First-class AI agents**: Auto-detects installed coding agents — Claude Code, Copilot CLI, Gemini, Aider, Codex, OpenCode — or define your own custom agents, all with live activity status beside your shell.
 - **Editor & file explorer**: A Monaco-powered editor, a tree-view explorer with Nerd Font icons, image preview, and clickable file links straight from terminal output.
 - **Git & GitHub PRs**: A changed-files panel, branch selector, inline diff viewer, and a GitHub PR panel for reviewing and tracking open pull requests.
+- **First-class git worktrees**: Worktrees of a repo are grouped together in the sidebar. Create or remove them in-app on a new or existing branch, with optional per-repo setup commands run automatically in each one.
 - **Workspaces & profiles**: Bind workspaces to project folders, persist pane layouts and scrollback across sessions, and group projects into named profiles.
 - **Markdown & notes**: Live side-by-side markdown preview with Mermaid diagrams, plus a per-workspace notes editor for capturing ideas and context.
 - **Full-text search**: Search across every file in the project with cancellation support, then jump straight to files and definitions from the results.
