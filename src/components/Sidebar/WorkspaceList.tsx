@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { worktrees } from "../../lib/ipc";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
 	buildWorkspaceRows,
@@ -276,22 +277,16 @@ export function WorkspaceList({
 				items.push({ separator: true });
 				items.push({
 					label: "Remove worktree…",
-					onClick: () => {
+					onClick: async () => {
 						// Probe dirtiness before showing the (escalated) confirm.
-						import("../../lib/ipc").then(({ worktrees }) =>
-							worktrees
-								.dirty(ws.rootFolder)
-								.catch(() => false)
-								.then((dirty) =>
-									setRemoveWorktreeTarget({
-										workspaceId,
-										name: ws.name,
-										primaryCwd,
-										worktreePath: ws.rootFolder,
-										dirty,
-									}),
-								),
-						);
+						const dirty = await worktrees.dirty(ws.rootFolder).catch(() => false);
+						setRemoveWorktreeTarget({
+							workspaceId,
+							name: ws.name,
+							primaryCwd,
+							worktreePath: ws.rootFolder,
+							dirty,
+						});
 					},
 				});
 			}

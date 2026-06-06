@@ -9,6 +9,8 @@ import type { WorkspaceWithTabs } from "./types";
 export interface WorktreeGroupFacts {
 	worktreeGroupKey: string | null;
 	isMainWorktree: boolean;
+	/** Canonicalized worktree root, for symlink-safe reconcile comparisons. */
+	worktreeRoot?: string | null;
 }
 
 export interface StandaloneRow {

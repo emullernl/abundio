@@ -24,13 +24,24 @@ async function reconcileRepo(commonDir: string): Promise<void> {
 	// Empty here means this repo belongs to another Window's Profile — ignore.
 	if (members.length === 0) return;
 
-	let onDisk: Awaited<ReturnType<typeof worktrees.list>>;
-	try {
-		onDisk = await worktrees.list(members[0].rootFolder);
-	} catch {
-		// Can't enumerate (e.g. the whole repo vanished) — leave entries stale.
-		return;
+	// Probe the main worktree first, then linked ones, until one resolves — the
+	// member we happen to list first could itself be the one whose folder just
+	// vanished, which would make `list` throw and silently stall the sync.
+	const probeOrder = [
+		...members.filter((m) => facts[m.id]?.isMainWorktree),
+		...members.filter((m) => !facts[m.id]?.isMainWorktree),
+	];
+	let onDisk: Awaited<ReturnType<typeof worktrees.list>> | null = null;
+	for (const m of probeOrder) {
+		try {
+			onDisk = await worktrees.list(m.rootFolder);
+			break;
+		} catch {
+			// Try the next member.
+		}
 	}
+	// Can't enumerate from any member (whole repo vanished) — leave stale.
+	if (!onDisk) return;
 
 	// Eager add: every real worktree becomes a Workspace (addDiscoveredWorktree
 	// dedups by folder, so existing ones and our own in-app adds are no-ops).
@@ -41,9 +52,13 @@ async function reconcileRepo(commonDir: string): Promise<void> {
 	}
 
 	// Git-confirmed remove: a member whose folder git no longer tracks at all.
+	// Compare against the member's *canonical* root (from the summary) so a
+	// symlinked path — e.g. /tmp vs /private/tmp — never mismatches and deletes
+	// a live workspace (the data-loss footgun ADR-0017 guards against).
 	const trackedPaths = new Set(onDisk.map((e) => e.path));
 	for (const m of members) {
-		if (!trackedPaths.has(m.rootFolder)) {
+		const canonical = facts[m.id]?.worktreeRoot ?? m.rootFolder;
+		if (!trackedPaths.has(canonical) && !trackedPaths.has(m.rootFolder)) {
 			await store.deleteWorkspace(m.id);
 		}
 	}

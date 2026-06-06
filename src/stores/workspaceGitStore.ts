@@ -202,6 +202,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 			facts[s.workspaceId] = {
 				worktreeGroupKey: s.worktreeGroupKey,
 				isMainWorktree: s.isMainWorktree,
+				worktreeRoot: s.worktreeRoot,
 			};
 		}
 		set((state) => ({

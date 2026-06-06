@@ -428,18 +428,37 @@ fn canonicalize_lossy(p: &Path) -> String {
 fn common_git_dir(repo: &Repository) -> Option<PathBuf> {
     let gitdir = repo.path();
     if repo.is_worktree() {
-        // Strip the trailing `worktrees/<name>` to reach the common `.git`.
+        // Prefer git's authoritative `commondir` pointer file — it handles
+        // `--separate-git-dir`, submodules, and other non-standard layouts that
+        // the `worktrees/<name>` strip below would group wrong. The file holds a
+        // path (usually relative to the gitdir) to the common dir.
+        if let Ok(contents) = std::fs::read_to_string(gitdir.join("commondir")) {
+            let trimmed = contents.trim();
+            if !trimmed.is_empty() {
+                let p = Path::new(trimmed);
+                return Some(if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    gitdir.join(p)
+                });
+            }
+        }
+        // Fallback for the standard layout: strip the trailing `worktrees/<name>`.
         gitdir.parent()?.parent().map(|p| p.to_path_buf())
     } else {
         Some(gitdir.to_path_buf())
     }
 }
 
-/// The two facts the sidebar needs to group worktrees: a stable per-repository
-/// key and whether this folder is the repository's main (primary) worktree.
+/// The facts the sidebar needs to group worktrees: a stable per-repository key,
+/// whether this folder is the repository's main (primary) worktree, and the
+/// worktree's *canonical* root. The canonical root lets the live-sync reconciler
+/// compare a workspace against `list_repo_worktrees` output (also canonical)
+/// without a symlink mismatch silently deleting it. See ADR-0017.
 pub struct WorktreeSummaryBits {
     pub group_key: Option<String>,
     pub is_main_worktree: bool,
+    pub canonical_root: Option<String>,
 }
 
 pub fn worktree_summary_bits(cwd: &str) -> WorktreeSummaryBits {
@@ -449,10 +468,12 @@ pub fn worktree_summary_bits(cwd: &str) -> WorktreeSummaryBits {
             is_main_worktree: !repo.is_worktree()
                 && !repo.is_bare()
                 && repo.workdir().is_some(),
+            canonical_root: repo.workdir().map(canonicalize_lossy),
         },
         Err(_) => WorktreeSummaryBits {
             group_key: None,
             is_main_worktree: false,
+            canonical_root: None,
         },
     }
 }
@@ -591,6 +612,12 @@ pub fn add_worktree(
             if let Ok(mut b) = main_repo.find_branch(branch, BranchType::Local) {
                 let _ = b.delete();
             }
+        }
+        // Best-effort: remove the parent dir we may have created above.
+        // `remove_dir` only succeeds when empty, so a pre-existing populated
+        // `<repo>.worktrees/` (other worktrees) is left untouched.
+        if let Some(parent) = target.parent() {
+            let _ = std::fs::remove_dir(parent);
         }
         return Err(AbundioError::Git(format!("worktree add: {e}")));
     }

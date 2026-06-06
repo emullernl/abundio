@@ -106,12 +106,20 @@ impl WorktreeWatcher {
             })
             .map_err(|e| AbundioError::Watcher(e.to_string()))?;
 
-        // Recursive watch on the common git dir. `.git` churns on every git
-        // op, but the debounce loop only emits when an event touches a
-        // `worktrees` path, so add/remove are the only triggers in practice.
+        // Watch the common git dir NON-recursively (catches the `worktrees/`
+        // dir being created on a standalone bootstrap, or removed), plus the
+        // `worktrees/` dir itself when it exists (per-worktree add/remove are
+        // its direct children). Avoids a recursive watch over all of `.git`,
+        // which on Linux inotify would consume a watch slot per object/ref/log
+        // subdir. When `worktrees/` is first created, the next reconcile-driven
+        // `watchSet` re-registers and picks it up. See ADR-0017.
         watcher
-            .watch(path, RecursiveMode::Recursive)
+            .watch(path, RecursiveMode::NonRecursive)
             .map_err(|e| AbundioError::Watcher(e.to_string()))?;
+        let worktrees_dir = path.join("worktrees");
+        if worktrees_dir.is_dir() {
+            let _ = watcher.watch(&worktrees_dir, RecursiveMode::NonRecursive);
+        }
 
         let common = common_dir.to_string();
         std::thread::spawn(move || {
@@ -157,7 +165,10 @@ fn debounce_loop(
         crossbeam_channel::select! {
             recv(stop_rx) -> _ => break,
             recv(event_rx) -> msg => {
-                relevant = matches!(msg, Ok(ref ev) if is_worktree_admin_event(ev));
+                // Sender gone (watcher dropped) → exit instead of busy-looping
+                // on the disconnected channel.
+                let Ok(ev) = msg else { return };
+                relevant = is_worktree_admin_event(&ev);
             }
         }
 
@@ -166,9 +177,8 @@ fn debounce_loop(
             crossbeam_channel::select! {
                 recv(stop_rx) -> _ => return,
                 recv(event_rx) -> msg => {
-                    if let Ok(ev) = msg {
-                        relevant |= is_worktree_admin_event(&ev);
-                    }
+                    let Ok(ev) = msg else { return };
+                    relevant |= is_worktree_admin_event(&ev);
                 }
                 default(timeout) => break,
             }

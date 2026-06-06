@@ -161,8 +161,10 @@ export function WorkspaceSettingsDialog({
 									}}
 								/>
 								<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>
-									Run one command per line in a newly created worktree after Add
-									worktree, before any chosen agent.
+									Run in a newly created worktree after Add worktree, before any
+									chosen agent. One command per line, each run independently — a
+									failing line doesn't stop the rest, so chain with{" "}
+									<code>&&</code> if you need fail-fast.
 								</span>
 							</div>
 						)}

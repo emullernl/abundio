@@ -248,6 +248,10 @@ pub struct WorkspaceGitSummary {
     /// True when this workspace's folder is the repository's main worktree
     /// (the Primary worktree).
     pub is_main_worktree: bool,
+    /// Canonicalized worktree root. Lets the live-sync reconciler compare a
+    /// workspace against canonical `list_repo_worktrees` paths without a symlink
+    /// mismatch (e.g. `/tmp` vs `/private/tmp`) deleting it. See ADR-0017.
+    pub worktree_root: Option<String>,
 }
 
 /// Resolves just the current branch name for a workspace via libgit2.
@@ -269,6 +273,7 @@ fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummar
         deletions: 0,
         worktree_group_key: bits.group_key,
         is_main_worktree: bits.is_main_worktree,
+        worktree_root: bits.canonical_root,
     }
 }
 

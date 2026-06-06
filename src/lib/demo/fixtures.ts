@@ -701,6 +701,7 @@ export function workspaceSummary(
 			deletions: 0,
 			worktreeGroupKey: null,
 			isMainWorktree: false,
+			worktreeRoot: null,
 		};
 	}
 	const bundle = gitBundleForCwd(cwd);
@@ -716,6 +717,7 @@ export function workspaceSummary(
 		// Demo mode treats each repo as a standalone main worktree (no sets).
 		worktreeGroupKey: `${cwd}/.git`,
 		isMainWorktree: true,
+		worktreeRoot: cwd,
 	};
 }
 

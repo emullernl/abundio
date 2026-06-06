@@ -160,6 +160,41 @@ mod tests {
     }
 
     #[test]
+    fn group_key_matches_for_separate_gitdir_worktree() {
+        // A repo created with --separate-git-dir has `<work>/.git` as a *file*
+        // pointing at the real gitdir. Exercises the `commondir`-file path in
+        // common_git_dir (is_worktree branch) for the linked worktree.
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        let gitdir = dir.path().join("gd");
+        std::fs::create_dir_all(&work).unwrap();
+        run_git(
+            &work,
+            &["init", "--separate-git-dir", gitdir.to_str().unwrap(), "-b", "main"],
+        );
+        run_git(&work, &["config", "user.email", "t@t.com"]);
+        run_git(&work, &["config", "user.name", "T"]);
+        std::fs::write(work.join("a.txt"), "x\n").unwrap();
+        run_git(&work, &["add", "."]);
+        run_git(&work, &["commit", "-m", "init"]);
+        let wt = dir.path().join("wt");
+        run_git(
+            &work,
+            &["worktree", "add", "-b", "feature", wt.to_str().unwrap()],
+        );
+
+        let main_key =
+            git_libgit2::worktree_summary_bits(work.to_str().unwrap()).group_key;
+        let linked_key =
+            git_libgit2::worktree_summary_bits(wt.to_str().unwrap()).group_key;
+        assert!(main_key.is_some());
+        assert_eq!(
+            main_key, linked_key,
+            "separate-git-dir worktrees must share a group key"
+        );
+    }
+
+    #[test]
     fn worktree_dirty_detects_untracked() {
         let dir = setup_repo();
         let cwd = dir.path().to_str().unwrap();

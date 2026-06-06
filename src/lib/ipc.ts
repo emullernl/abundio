@@ -326,6 +326,9 @@ export type WorkspaceGitSummary = {
 	worktreeGroupKey: string | null;
 	/** True when this workspace's folder is the repository's main worktree. */
 	isMainWorktree: boolean;
+	/** Canonicalized worktree root — compared against canonical
+	 *  `list_repo_worktrees` paths so symlinked folders don't mis-reconcile. */
+	worktreeRoot: string | null;
 };
 
 export const worktrees = {

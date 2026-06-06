@@ -472,13 +472,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	removeWorktreeWorkspace: async (workspaceId, primaryCwd, worktreePath) => {
 		const wasActive = get().activeWorkspaceId === workspaceId;
-		// Kill PTYs / file watchers first so nothing is left holding the folder
-		// we're about to delete.
-		await get().closeWorkspace(workspaceId);
-		// Prune the worktree on disk (deletes the folder, keeps the branch). If
-		// this fails (e.g. locked), leave the entry in place and surface the error
-		// rather than orphaning the sidebar row.
+		// Prune the worktree on disk FIRST, while the workspace is still intact
+		// (PTYs alive, layout untouched). If this throws — locked worktree, EBUSY,
+		// permission denied — the workspace keeps its live session instead of being
+		// left half-torn-down. Only on success do we kill PTYs and remove the entry.
+		// The brief window where a shell's cwd is unlinked before we kill it is
+		// harmless on the platforms we target. See ADR-0017.
 		await worktreesApi.remove(primaryCwd, worktreePath);
+		await get().closeWorkspace(workspaceId);
 		await get().deleteWorkspace(workspaceId);
 		if (wasActive) {
 			const primary = get().workspaces.find((w) => w.rootFolder === primaryCwd);

@@ -95,6 +95,30 @@ describe("buildWorkspaceRows", () => {
 		expect(rows.map(rowId)).toEqual(["ws:alpha", `set:${KEY}`, "ws:zeta"]);
 	});
 
+	it("preserves input order for rows sharing an identical position", () => {
+		// Two standalone workspaces both at position 0 (DB race / glitch) must
+		// keep their input order — relies on a stable sort.
+		const list = [ws("first", 0), ws("second", 0)];
+		const facts: Record<string, WorktreeGroupFacts> = {
+			first: { worktreeGroupKey: null, isMainWorktree: false },
+			second: { worktreeGroupKey: null, isMainWorktree: false },
+		};
+		const rows = buildWorkspaceRows(list, facts);
+		expect(rows.map(rowId)).toEqual(["ws:first", "ws:second"]);
+	});
+
+	it("treats a workspace missing from facts as standalone (mid-sync race)", () => {
+		// `syncWorktreeFacts` hasn't returned yet for a just-added workspace.
+		const list = [ws("known", 0), ws("pending", 1)];
+		const facts: Record<string, WorktreeGroupFacts> = {
+			known: { worktreeGroupKey: KEY, isMainWorktree: true },
+			// `pending` intentionally absent from facts.
+		};
+		const rows = buildWorkspaceRows(list, facts);
+		expect(rows).toHaveLength(2);
+		expect(rows.every((r) => r.kind === "standalone")).toBe(true);
+	});
+
 	it("keeps two distinct repos as separate sets", () => {
 		const k1 = "/repos/one/.git";
 		const k2 = "/repos/two/.git";
