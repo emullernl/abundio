@@ -22,6 +22,8 @@ pub mod updater;
 pub mod window_management;
 pub mod window_persistence;
 pub mod workspace_store;
+pub mod worktree_commands;
+pub mod worktree_watcher;
 pub mod shell_env;
 
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -516,6 +518,8 @@ pub fn run() {
             // Initialize file watcher
             app.manage(file_watcher::FileWatcher::new());
             app.manage(git_scheduler::GitScheduler::new());
+            // Per-repo live-sync watcher for git worktree add/remove. See ADR-0017.
+            app.manage(worktree_watcher::WorktreeWatcher::new());
 
             // Initialize search manager
             app.manage(search::SearchManager::new());
@@ -664,6 +668,13 @@ pub fn run() {
                     app_handle.try_state::<profile_store::ActiveProfileState>()
                 {
                     state.remove_for_window(&label);
+                }
+                // Drop this window's worktree watch contribution so closed
+                // Windows don't keep repos watched forever. See ADR-0017.
+                if let Some(ww) =
+                    app_handle.try_state::<worktree_watcher::WorktreeWatcher>()
+                {
+                    ww.forget_window(&app_handle, &label);
                 }
                 // Drop this window's Opened-workspace count so it can't inflate
                 // the quit-time total. See ADR-0016.
@@ -913,6 +924,11 @@ pub fn run() {
             git_commands::git_list_branches,
             git_commands::git_status_fingerprint,
             git_commands::git_workspaces_summary,
+            worktree_commands::list_repo_worktrees,
+            worktree_commands::worktree_add,
+            worktree_commands::worktree_remove,
+            worktree_commands::worktree_dirty,
+            commands::worktree_watch_set,
             gh_commands::gh_status,
             gh_commands::gh_review_requests,
             gh_commands::gh_review_requests_all,

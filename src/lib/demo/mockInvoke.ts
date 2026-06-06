@@ -121,6 +121,16 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "git_scheduler_stop":
 			return undefined;
 
+		// ── Worktrees (demo treats every repo as a lone main worktree) ──
+		case "list_repo_worktrees":
+			return [];
+		case "worktree_dirty":
+			return false;
+		case "worktree_add":
+		case "worktree_remove":
+		case "worktree_watch_set":
+			return undefined;
+
 		// ── GitHub ──
 		case "gh_status":
 			return fixtures.ghStatus;

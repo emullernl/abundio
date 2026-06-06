@@ -33,6 +33,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/009_recover_lost_tabs.sql"),
     ),
     ("010_add_notes", include_str!("../migrations/010_add_notes.sql")),
+    (
+        "011_add_worktree_setup_commands",
+        include_str!("../migrations/011_add_worktree_setup_commands.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -215,7 +219,7 @@ mod tests {
         let count: i32 = conn
             .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 10);
+        assert_eq!(count, 11);
     }
 
     /// Simulates the wedged state of users who ran the original buggy 008:

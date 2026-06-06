@@ -19,6 +19,10 @@ pub struct Workspace {
     pub profile_id: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Worktree setup commands run in a newly created worktree's terminal
+    /// after an in-app Add worktree. Only meaningful on a main-worktree
+    /// Workspace. Empty string = none. See ADR-0017.
+    pub worktree_setup_commands: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +35,7 @@ pub struct WorkspaceUpdate {
     pub file_tabs_json: Option<String>,
     pub base_branch: Option<Option<String>>,
     pub last_branch: Option<String>,
+    pub worktree_setup_commands: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,7 +120,7 @@ impl WorkspaceStore {
     pub fn list(&self, profile_id: &str) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.name, s.root_folder, s.env_json, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.profile_id, s.created_at, s.updated_at,
+            "SELECT s.id, s.name, s.root_folder, s.env_json, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.profile_id, s.created_at, s.updated_at, s.worktree_setup_commands,
                     t.id, t.workspace_id, t.name, t.layout_json, t.position, t.created_at, t.updated_at
              FROM workspaces s
              LEFT JOIN tabs t ON t.workspace_id = s.id
@@ -146,6 +151,7 @@ impl WorkspaceStore {
                         profile_id: row.get(9)?,
                         created_at: row.get(10)?,
                         updated_at: row.get(11)?,
+                        worktree_setup_commands: row.get(12)?,
                     },
                     tabs: Vec::new(),
                 });
@@ -153,17 +159,17 @@ impl WorkspaceStore {
             }
 
             // Append tab if present (LEFT JOIN may produce NULL tab columns)
-            let tab_id: Option<String> = row.get(12)?;
+            let tab_id: Option<String> = row.get(13)?;
             if let Some(tid) = tab_id {
                 if let Some(entry) = result.last_mut() {
                     entry.tabs.push(Tab {
                         id: tid,
-                        workspace_id: row.get(13)?,
-                        name: row.get(14)?,
-                        layout_json: row.get(15)?,
-                        position: row.get(16)?,
-                        created_at: row.get(17)?,
-                        updated_at: row.get(18)?,
+                        workspace_id: row.get(14)?,
+                        name: row.get(15)?,
+                        layout_json: row.get(16)?,
+                        position: row.get(17)?,
+                        created_at: row.get(18)?,
+                        updated_at: row.get(19)?,
                     });
                 }
             }
@@ -205,6 +211,10 @@ impl WorkspaceStore {
         if let Some(ref last_branch) = updates.last_branch {
             sets.push(format!("last_branch = ?{}", params.len() + 1));
             params.push(Box::new(last_branch.clone()));
+        }
+        if let Some(ref cmds) = updates.worktree_setup_commands {
+            sets.push(format!("worktree_setup_commands = ?{}", params.len() + 1));
+            params.push(Box::new(cmds.clone()));
         }
 
         let idx = params.len() + 1;
@@ -340,7 +350,7 @@ impl WorkspaceStore {
 
     fn get_workspace_with_conn(conn: &Connection, id: &str) -> Result<Workspace, AbundioError> {
         conn.query_row(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, base_branch, last_branch, position, profile_id, created_at, updated_at
+            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, base_branch, last_branch, position, profile_id, created_at, updated_at, worktree_setup_commands
              FROM workspaces WHERE id = ?1",
             [id],
             |row| {
@@ -357,6 +367,7 @@ impl WorkspaceStore {
                     profile_id: row.get(9)?,
                     created_at: row.get(10)?,
                     updated_at: row.get(11)?,
+                    worktree_setup_commands: row.get(12)?,
                 })
             },
         )
@@ -500,6 +511,7 @@ mod tests {
                     file_tabs_json: None,
                     base_branch: None,
                     last_branch: None,
+                    worktree_setup_commands: None,
                 },
             )
             .unwrap();

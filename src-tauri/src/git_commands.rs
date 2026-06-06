@@ -241,6 +241,17 @@ pub struct WorkspaceGitSummary {
     pub changed_file_count: i32,
     pub additions: i32,
     pub deletions: i32,
+    /// Stable per-repository key shared by all worktrees of one repo (the
+    /// canonical common git dir). `None` when not a git repo. Drives the
+    /// sidebar's Worktree set grouping. See ADR-0017.
+    pub worktree_group_key: Option<String>,
+    /// True when this workspace's folder is the repository's main worktree
+    /// (the Primary worktree).
+    pub is_main_worktree: bool,
+    /// Canonicalized worktree root. Lets the live-sync reconciler compare a
+    /// workspace against canonical `list_repo_worktrees` paths without a symlink
+    /// mismatch (e.g. `/tmp` vs `/private/tmp`) deleting it. See ADR-0017.
+    pub worktree_root: Option<String>,
 }
 
 /// Resolves just the current branch name for a workspace via libgit2.
@@ -249,13 +260,20 @@ pub struct WorkspaceGitSummary {
 /// which syncs back to the workspace chip store via the frontend.
 fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummary {
     let current_branch = git_libgit2::current_branch_only(&req.cwd);
+    let bits = git_libgit2::worktree_summary_bits(&req.cwd);
+    // A repo can be a git repo even with a detached/unborn HEAD (no branch),
+    // so anchor is_git_repo on the worktree group key, not the branch name.
+    let is_git_repo = bits.group_key.is_some();
     WorkspaceGitSummary {
         workspace_id: req.workspace_id,
-        is_git_repo: current_branch.is_some(),
+        is_git_repo,
         current_branch,
         changed_file_count: 0,
         additions: 0,
         deletions: 0,
+        worktree_group_key: bits.group_key,
+        is_main_worktree: bits.is_main_worktree,
+        worktree_root: bits.canonical_root,
     }
 }
 

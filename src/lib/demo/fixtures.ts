@@ -85,6 +85,9 @@ interface WsDef {
 	/** Extra branches to offer in the branch selector. */
 	branches?: string[];
 	nonGit?: boolean;
+	/** Override the derived `${CODE}/${name}` root — used for worktree folders
+	 *  that live under `<repo>.worktrees/<branch>`. */
+	root?: string;
 }
 
 const a = (agent: string, st: AgentState, tx: string): PaneDef => ({
@@ -325,6 +328,49 @@ const WS_DEFS: WsDef[] = [
 			["src/oauth/index.ts", "M", 5, 1, "staged"],
 		],
 	},
+	// orbit-dashboard: a Worktree set (primary + two linked worktrees), showing
+	// parallel work across worktrees of one repo. Grouping is driven by the
+	// shared worktreeGroupKey returned from `workspaceSummary` (WORKTREE_SETS).
+	{
+		id: "ws-orbit",
+		name: "orbit-dashboard",
+		root: `${CODE}/orbit-dashboard`,
+		base: "main",
+		branch: "main",
+		tabs: one(
+			"Dev",
+			h(0.55, sh("active", "devServer"), sh("idle", "idleShell")),
+		),
+		branches: ["feature/charts-revamp", "chore/a11y-audit"],
+	},
+	{
+		id: "ws-orbit-charts",
+		name: "charts-revamp",
+		root: `${CODE}/orbit-dashboard.worktrees/charts-revamp`,
+		base: "main",
+		branch: "feature/charts-revamp",
+		tabs: [
+			{ name: "Agent", pane: a("claude", "active", "claudeSession") },
+			{
+				name: "Dev",
+				pane: h(0.5, sh("active", "devServer"), sh("idle", "scratchShell")),
+			},
+		],
+		git: [
+			["src/charts/Donut.tsx", "M", 44, 12, "against_base"],
+			["src/charts/index.ts", "M", 6, 1, "against_base"],
+			["src/charts/__tests__/donut.test.ts", "A", 38, 0, "staged"],
+		],
+	},
+	{
+		id: "ws-orbit-a11y",
+		name: "a11y-audit",
+		root: `${CODE}/orbit-dashboard.worktrees/a11y-audit`,
+		base: "main",
+		branch: "chore/a11y-audit",
+		tabs: one("Audit", a("copilot", "waiting", "copilotSession")),
+		git: [["src/components/Modal.tsx", "M", 15, 3, "unstaged"]],
+	},
 	// 14 — notification-svc
 	{
 		id: "ws-notify",
@@ -545,6 +591,9 @@ export const OPEN_ON_LAUNCH = [
 	"ws-portfolio",
 	"ws-docs",
 	"ws-scratch",
+	// orbit-dashboard Worktree set — primary + the agent-running linked worktree.
+	"ws-orbit",
+	"ws-orbit-charts",
 ];
 
 // ── Derive everything from WS_DEFS ──
@@ -605,6 +654,32 @@ function rootOf(name: string): string {
 	return `${CODE}/${name}`;
 }
 
+// Worktree sets surfaced in the demo sidebar. Each linked root shares its
+// primary's `groupKey`, which is what makes them render as one Worktree set.
+const WORKTREE_SETS: { groupKey: string; primary: string; linked: string[] }[] =
+	[
+		{
+			groupKey: `${CODE}/orbit-dashboard/.git`,
+			primary: `${CODE}/orbit-dashboard`,
+			linked: [
+				`${CODE}/orbit-dashboard.worktrees/charts-revamp`,
+				`${CODE}/orbit-dashboard.worktrees/a11y-audit`,
+			],
+		},
+	];
+
+/** root → worktree grouping facts, for `workspaceSummary` to look up. */
+const worktreeFactByRoot = new Map<
+	string,
+	{ groupKey: string; isMain: boolean }
+>();
+for (const set of WORKTREE_SETS) {
+	worktreeFactByRoot.set(set.primary, { groupKey: set.groupKey, isMain: true });
+	for (const linked of set.linked) {
+		worktreeFactByRoot.set(linked, { groupKey: set.groupKey, isMain: false });
+	}
+}
+
 const gitByRoot: Record<
 	string,
 	{ files: GitChangedFile[]; branch: BranchInfo }
@@ -613,7 +688,7 @@ export const branchesForCwd: Record<string, string[]> = {};
 export const nonGitRoots = new Set<string>();
 
 export const workspaces: WorkspaceWithTabs[] = WS_DEFS.map((def, i) => {
-	const root = rootOf(def.name);
+	const root = def.root ?? rootOf(def.name);
 	const ctr = { n: 0 };
 	const tabs: Tab[] = def.tabs.map((t, ti) => ({
 		id: `${def.id}-tab-${ti}`,
@@ -658,6 +733,7 @@ export const workspaces: WorkspaceWithTabs[] = WS_DEFS.map((def, i) => {
 		profileId: ACTIVE_PROFILE_ID,
 		createdAt: T0,
 		updatedAt: T0,
+		worktreeSetupCommands: "",
 		tabs,
 	};
 });
@@ -698,6 +774,9 @@ export function workspaceSummary(
 			changedFileCount: 0,
 			additions: 0,
 			deletions: 0,
+			worktreeGroupKey: null,
+			isMainWorktree: false,
+			worktreeRoot: null,
 		};
 	}
 	const bundle = gitBundleForCwd(cwd);
@@ -710,6 +789,11 @@ export function workspaceSummary(
 		changedFileCount: bundle.changedFiles.length,
 		additions,
 		deletions,
+		// Roots listed in WORKTREE_SETS group into a Worktree set; every other
+		// repo is its own standalone main worktree.
+		worktreeGroupKey: worktreeFactByRoot.get(cwd)?.groupKey ?? `${cwd}/.git`,
+		isMainWorktree: worktreeFactByRoot.get(cwd)?.isMain ?? true,
+		worktreeRoot: cwd,
 	};
 }
 

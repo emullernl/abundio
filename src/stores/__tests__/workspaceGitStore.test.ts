@@ -150,6 +150,9 @@ describe("workspaceGitStore", () => {
 				changedFileCount: 0,
 				additions: 0,
 				deletions: 0,
+				worktreeGroupKey: "/a/.git",
+				isMainWorktree: true,
+				worktreeRoot: "/a",
 			},
 			{
 				workspaceId: "ws-b",
@@ -158,6 +161,9 @@ describe("workspaceGitStore", () => {
 				changedFileCount: 2,
 				additions: 10,
 				deletions: 3,
+				worktreeGroupKey: "/b/.git",
+				isMainWorktree: true,
+				worktreeRoot: "/b",
 			},
 		]);
 		await useWorkspaceGitStore.getState().fetchAll([

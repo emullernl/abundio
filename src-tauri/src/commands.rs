@@ -8,6 +8,7 @@ use crate::profile_store::{
 };
 use crate::pty_manager::PtyManager;
 use crate::workspace_store::{WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs, Tab, TabUpdate};
+use crate::worktree_watcher::WorktreeWatcher;
 use crate::shell_env;
 
 // ── PTY commands ──
@@ -410,6 +411,24 @@ pub async fn fs_watch_stop(
     root_path: String,
 ) -> Result<(), AbundioError> {
     watcher.stop_watching(&root_path);
+    Ok(())
+}
+
+// ── Worktree live-sync watcher ──
+
+/// Set the calling Window's desired set of watched repository common dirs.
+/// The Rust watcher reconciles the union across Windows and emits
+/// `worktrees-changed` when a `git worktree add/remove` touches one. The
+/// frontend recomputes `common_dirs` from its workspace git summaries whenever
+/// the workspace list or grouping changes. See ADR-0017.
+#[tauri::command]
+pub async fn worktree_watch_set(
+    app: AppHandle,
+    window: Window,
+    watcher: State<'_, WorktreeWatcher>,
+    common_dirs: Vec<String>,
+) -> Result<(), AbundioError> {
+    watcher.set_watched(&app, window.label(), common_dirs);
     Ok(())
 }
 

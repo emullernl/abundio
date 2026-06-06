@@ -36,6 +36,7 @@ beforeEach(() => {
 				profileId: "p-default",
 				createdAt: 0,
 				updatedAt: 0,
+				worktreeSetupCommands: "",
 				tabs: [
 					{
 						id: "tab-1",
@@ -178,6 +179,7 @@ describe("findPaneLocation", () => {
 					profileId: "p-default",
 					createdAt: 0,
 					updatedAt: 0,
+					worktreeSetupCommands: "",
 					tabs: [
 						{
 							id: "tab-2",

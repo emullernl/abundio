@@ -4,6 +4,7 @@ import {
 	type WorkspaceGitSummary,
 	workspaces as workspacesApi,
 } from "../lib/ipc";
+import type { WorktreeGroupFacts } from "../lib/worktreeGrouping";
 
 export type WorkspaceGitInfo = {
 	isGitRepo: boolean;
@@ -15,6 +16,10 @@ export type WorkspaceGitInfo = {
 
 interface WorkspaceGitState {
 	byWorkspaceId: Record<string, WorkspaceGitInfo>;
+	/** Worktree grouping facts per workspace, kept separate from the branch-chip
+	 *  info above so its many writers (fetch / setInfo / scheduler) can't clobber
+	 *  it. Populated only from the batch `git_workspaces_summary`. See ADR-0017. */
+	worktreeFacts: Record<string, WorktreeGroupFacts>;
 	inFlight: Set<string>;
 	fetch: (
 		workspaceId: string,
@@ -35,10 +40,21 @@ interface WorkspaceGitState {
 	) => Promise<void>;
 	setInfo: (workspaceId: string, info: WorkspaceGitInfo) => void;
 	remove: (workspaceId: string) => void;
+	/** Refresh worktree grouping facts for the given workspaces via one batched
+	 *  summary IPC. Called whenever the workspace list changes. */
+	syncWorktreeFacts: (
+		workspaces: {
+			id: string;
+			rootFolder: string;
+			baseBranch?: string | null;
+		}[],
+	) => Promise<void>;
+	setWorktreeFacts: (workspaceId: string, facts: WorktreeGroupFacts) => void;
 }
 
 export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 	byWorkspaceId: {},
+	worktreeFacts: {},
 	inFlight: new Set(),
 
 	fetch: async (workspaceId, cwd, baseBranch) => {
@@ -163,7 +179,39 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 	remove: (workspaceId) => {
 		set((s) => {
 			const { [workspaceId]: _removed, ...rest } = s.byWorkspaceId;
-			return { byWorkspaceId: rest };
+			const { [workspaceId]: _f, ...restFacts } = s.worktreeFacts;
+			return { byWorkspaceId: rest, worktreeFacts: restFacts };
 		});
 	},
+
+	syncWorktreeFacts: async (workspaces) => {
+		if (workspaces.length === 0) return;
+		const requests = workspaces.map((ws) => ({
+			workspaceId: ws.id,
+			cwd: ws.rootFolder,
+			baseBranch: ws.baseBranch ?? null,
+		}));
+		let summaries: WorkspaceGitSummary[];
+		try {
+			summaries = await git.workspacesSummary(requests);
+		} catch {
+			return;
+		}
+		const facts: Record<string, WorktreeGroupFacts> = {};
+		for (const s of summaries) {
+			facts[s.workspaceId] = {
+				worktreeGroupKey: s.worktreeGroupKey,
+				isMainWorktree: s.isMainWorktree,
+				worktreeRoot: s.worktreeRoot,
+			};
+		}
+		set((state) => ({
+			worktreeFacts: { ...state.worktreeFacts, ...facts },
+		}));
+	},
+
+	setWorktreeFacts: (workspaceId, facts) =>
+		set((s) => ({
+			worktreeFacts: { ...s.worktreeFacts, [workspaceId]: facts },
+		})),
 }));

@@ -1,18 +1,40 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { worktrees } from "../../lib/ipc";
 import type { WorkspaceWithTabs } from "../../lib/types";
+import {
+	buildWorkspaceRows,
+	flattenRowsToIds,
+	rowId,
+	rowWorkspaces,
+	type WorkspaceRow,
+} from "../../lib/worktreeGrouping";
+import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { AddWorktreeDialog } from "../AddWorktreeDialog";
 import { ConfirmDialog } from "../ConfirmDialog";
 import {
 	type ContextMenuItem,
 	PaneContextMenu,
 } from "../Terminal/PaneContextMenu";
+import { WorkspaceSettingsDialog } from "../WorkspaceSettingsDialog";
 import { CollapsedStrip } from "./CollapsedStrip";
 import { WorkspaceItem } from "./WorkspaceItem";
 
 const DRAG_THRESHOLD = 5;
+/** Left indent (px) of a Linked worktree under its Primary — shared by the
+ *  expanded rail and the collapsed strip so both read identically. */
+const LINKED_INDENT = 14;
 
 interface WorkspaceListProps {
 	variant?: "expanded" | "collapsed";
+}
+
+/** Per-workspace worktree role, derived from the grouped render rows. */
+interface WorkspaceRole {
+	/** Main worktree (Primary, or a standalone that can bootstrap a set). */
+	isMainWorktree: boolean;
+	/** When this workspace is a Linked worktree, the cwd of its set's primary. */
+	linkedPrimaryCwd: string | null;
 }
 
 export function WorkspaceList({
@@ -27,8 +49,44 @@ export function WorkspaceList({
 	const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
 	const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
 	const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
+	const removeWorktreeWorkspace = useWorkspaceStore(
+		(s) => s.removeWorktreeWorkspace,
+	);
+	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
 
-	const [draggedId, setDraggedId] = useState<string | null>(null);
+	// Derived grouping into render blocks (sets + standalones).
+	const rows = useMemo(
+		() => buildWorkspaceRows(workspaces, worktreeFacts),
+		[workspaces, worktreeFacts],
+	);
+
+	// workspaceId → worktree role, for the context menu.
+	const roleById = useMemo(() => {
+		const map = new Map<string, WorkspaceRole>();
+		for (const row of rows) {
+			if (row.kind === "set") {
+				map.set(row.primary.id, {
+					isMainWorktree: true,
+					linkedPrimaryCwd: null,
+				});
+				for (const linked of row.linked) {
+					map.set(linked.id, {
+						isMainWorktree: false,
+						linkedPrimaryCwd: row.primary.rootFolder,
+					});
+				}
+			} else {
+				map.set(row.workspace.id, {
+					isMainWorktree:
+						worktreeFacts[row.workspace.id]?.isMainWorktree ?? false,
+					linkedPrimaryCwd: null,
+				});
+			}
+		}
+		return map;
+	}, [rows, worktreeFacts]);
+
+	const [draggedRowId, setDraggedRowId] = useState<string | null>(null);
 	const [mousePos, setMousePos] = useState<{ x: number; y: number }>({
 		x: 0,
 		y: 0,
@@ -36,35 +94,54 @@ export function WorkspaceList({
 	const [ghostWidth, setGhostWidth] = useState(0);
 	const [nearestSlot, setNearestSlot] = useState<number | null>(null);
 
-	// Context menu state
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
 		y: number;
 		workspaceId: string;
 	} | null>(null);
 
-	// Inline rename state
 	const [renamingId, setRenamingId] = useState<string | null>(null);
-
-	// Confirmation dialog state for permanent workspace removal
 	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 	const pendingWorkspace = pendingDeleteId
 		? workspaces.find((w) => w.id === pendingDeleteId)
 		: null;
 
-	const startPos = useRef<{ x: number; y: number } | null>(null);
-	const pendingId = useRef<string | null>(null);
-	const containerRef = useRef<HTMLDivElement>(null);
-	// Store refs to each item's DOM element to compute slot positions
-	const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+	// Add worktree dialog target (the primary the worktree is added to).
+	const [addWorktreeTarget, setAddWorktreeTarget] = useState<{
+		primaryCwd: string;
+		primaryName: string;
+	} | null>(null);
 
-	const handleMouseDown = useCallback((e: React.MouseEvent, id: string) => {
-		if (e.button !== 0) return;
-		if ((e.target as HTMLElement).closest("button")) return;
-		e.preventDefault();
-		pendingId.current = id;
-		startPos.current = { x: e.clientX, y: e.clientY };
-	}, []);
+	// Remove worktree confirmation target.
+	const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<{
+		workspaceId: string;
+		name: string;
+		primaryCwd: string;
+		worktreePath: string;
+		dirty: boolean;
+	} | null>(null);
+
+	// Workspace settings dialog target.
+	const [settingsWorkspaceId, setSettingsWorkspaceId] = useState<string | null>(
+		null,
+	);
+
+	const startPos = useRef<{ x: number; y: number } | null>(null);
+	const pendingRowId = useRef<string | null>(null);
+	const containerRef = useRef<HTMLDivElement>(null);
+	// Block (row) DOM elements, keyed by row index, for slot computation.
+	const blockRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+	const handleMouseDown = useCallback(
+		(e: React.MouseEvent, blockRowId: string) => {
+			if (e.button !== 0) return;
+			if ((e.target as HTMLElement).closest("button")) return;
+			e.preventDefault();
+			pendingRowId.current = blockRowId;
+			startPos.current = { x: e.clientX, y: e.clientY };
+		},
+		[],
+	);
 
 	useEffect(() => {
 		if (collapsed) return;
@@ -72,20 +149,21 @@ export function WorkspaceList({
 			if (!startPos.current) return;
 			const dx = e.clientX - startPos.current.x;
 			const dy = e.clientY - startPos.current.y;
-			if (Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD && pendingId.current) {
-				setDraggedId(pendingId.current);
+			if (
+				Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD &&
+				pendingRowId.current
+			) {
+				setDraggedRowId(pendingRowId.current);
 				setGhostWidth(
 					containerRef.current?.getBoundingClientRect().width ?? 200,
 				);
-				pendingId.current = null;
+				pendingRowId.current = null;
 			}
 		};
-
 		const onMouseUp = () => {
 			startPos.current = null;
-			pendingId.current = null;
+			pendingRowId.current = null;
 		};
-
 		document.addEventListener("mousemove", onMouseMove);
 		document.addEventListener("mouseup", onMouseUp);
 		return () => {
@@ -94,65 +172,58 @@ export function WorkspaceList({
 		};
 	}, [collapsed]);
 
-	// While dragging, track mouse position and compute nearest drop slot
+	// While dragging a block, track the cursor and compute the nearest drop slot
+	// (between blocks). Slots are block boundaries, so a whole set moves as one.
 	useEffect(() => {
 		if (collapsed) return;
-		if (draggedId === null) return;
-		const draggedIndex = workspaces.findIndex((s) => s.id === draggedId);
+		if (draggedRowId === null) return;
+		const draggedIndex = rows.findIndex((r) => rowId(r) === draggedRowId);
 
 		const onMouseMove = (e: MouseEvent) => {
 			setMousePos({ x: e.clientX, y: e.clientY });
-
-			// Compute which slot the cursor is nearest to
 			let bestSlot: number | null = null;
 			let bestDist = Number.POSITIVE_INFINITY;
-
-			for (let i = 0; i <= workspaces.length; i++) {
-				// Skip adjacent slots (no-op positions)
+			for (let i = 0; i <= rows.length; i++) {
 				if (i === draggedIndex || i === draggedIndex + 1) continue;
-
-				// Slot i is the gap before item i (or after last item)
 				let slotY: number;
-				if (i < workspaces.length) {
-					const el = itemRefs.current.get(i);
+				if (i < rows.length) {
+					const el = blockRefs.current.get(i);
 					if (!el) continue;
 					slotY = el.getBoundingClientRect().top;
 				} else {
-					const el = itemRefs.current.get(workspaces.length - 1);
+					const el = blockRefs.current.get(rows.length - 1);
 					if (!el) continue;
 					slotY = el.getBoundingClientRect().bottom;
 				}
-
 				const dist = Math.abs(e.clientY - slotY);
 				if (dist < bestDist && dist < 40) {
 					bestDist = dist;
 					bestSlot = i;
 				}
 			}
-
 			setNearestSlot(bestSlot);
 		};
 
 		const onMouseUp = () => {
-			// Perform drop if we have a valid slot
 			setNearestSlot((slot) => {
 				if (slot !== null) {
-					const currentIdx = workspaces.findIndex((s) => s.id === draggedId);
+					const currentIdx = rows.findIndex((r) => rowId(r) === draggedRowId);
 					if (
 						currentIdx !== -1 &&
 						slot !== currentIdx &&
 						slot !== currentIdx + 1
 					) {
-						const ids = workspaces.map((s) => s.id);
-						ids.splice(currentIdx, 1);
+						const reordered = [...rows];
+						const [moved] = reordered.splice(currentIdx, 1);
 						const insertAt = slot > currentIdx ? slot - 1 : slot;
-						ids.splice(insertAt, 0, draggedId);
-						reorderWorkspaces(ids);
+						reordered.splice(insertAt, 0, moved);
+						// Flatten blocks → workspace ids; each set stays contiguous.
+						reorderWorkspaces(flattenRowsToIds(reordered));
 					}
 				}
 				return null;
 			});
-			setDraggedId(null);
+			setDraggedRowId(null);
 		};
 
 		document.addEventListener("mousemove", onMouseMove);
@@ -161,29 +232,114 @@ export function WorkspaceList({
 			document.removeEventListener("mousemove", onMouseMove);
 			document.removeEventListener("mouseup", onMouseUp);
 		};
-	}, [collapsed, draggedId, workspaces, reorderWorkspaces]);
+	}, [collapsed, draggedRowId, rows, reorderWorkspaces]);
 
-	const draggedWorkspace = draggedId
-		? workspaces.find((s) => s.id === draggedId)
+	const draggedRow = draggedRowId
+		? rows.find((r) => rowId(r) === draggedRowId)
 		: null;
 
-	const contextMenuItems: ContextMenuItem[] = contextMenu
-		? [
+	const buildContextMenuItems = useCallback(
+		(workspaceId: string): ContextMenuItem[] => {
+			const role = roleById.get(workspaceId);
+			const ws = workspaces.find((w) => w.id === workspaceId);
+			const items: ContextMenuItem[] = [
 				{
 					label: "Unload Workspace",
-					onClick: () => closeWorkspace(contextMenu.workspaceId),
+					onClick: () => closeWorkspace(workspaceId),
 				},
-				{ separator: true as const },
-				{
-					label: "Rename Workspace",
-					onClick: () => setRenamingId(contextMenu.workspaceId),
-				},
-				{
-					label: "Close Workspace",
-					onClick: () => setPendingDeleteId(contextMenu.workspaceId),
-				},
-			]
+			];
+			if (role?.isMainWorktree && ws) {
+				items.push({ separator: true });
+				items.push({
+					label: "Add worktree…",
+					onClick: () =>
+						setAddWorktreeTarget({
+							primaryCwd: ws.rootFolder,
+							primaryName: ws.name,
+						}),
+				});
+			}
+			items.push({ separator: true });
+			items.push({
+				label: "Workspace settings…",
+				onClick: () => setSettingsWorkspaceId(workspaceId),
+			});
+			items.push({
+				label: "Rename Workspace",
+				onClick: () => setRenamingId(workspaceId),
+			});
+			items.push({
+				label: "Close Workspace",
+				onClick: () => setPendingDeleteId(workspaceId),
+			});
+			if (role?.linkedPrimaryCwd && ws) {
+				const primaryCwd = role.linkedPrimaryCwd;
+				items.push({ separator: true });
+				items.push({
+					label: "Remove worktree…",
+					onClick: async () => {
+						// Probe dirtiness before showing the (escalated) confirm.
+						const dirty = await worktrees.dirty(ws.rootFolder).catch(() => false);
+						setRemoveWorktreeTarget({
+							workspaceId,
+							name: ws.name,
+							primaryCwd,
+							worktreePath: ws.rootFolder,
+							dirty,
+						});
+					},
+				});
+			}
+			return items;
+		},
+		[roleById, workspaces, closeWorkspace],
+	);
+
+	const contextMenuItems = contextMenu
+		? buildContextMenuItems(contextMenu.workspaceId)
 		: [];
+
+	// Per-item callbacks shared by standalone + set rendering.
+	const itemHandlers = (workspace: WorkspaceWithTabs, blockRowId: string) => ({
+		isActive: workspace.id === (switchingWorkspaceId ?? activeWorkspaceId),
+		isRenaming: workspace.id === renamingId,
+		onClick: () => {
+			if (draggedRowId) return;
+			beginWorkspaceSwitch(workspace.id);
+		},
+		onDelete: () => setPendingDeleteId(workspace.id),
+		onContextMenu: (e: React.MouseEvent) => {
+			e.preventDefault();
+			setContextMenu({ x: e.clientX, y: e.clientY, workspaceId: workspace.id });
+		},
+		onRename: (name: string) => {
+			renameWorkspace(workspace.id, name);
+			setRenamingId(null);
+		},
+		onRenameCancel: () => setRenamingId(null),
+		onMouseDown: (e: React.MouseEvent) => handleMouseDown(e, blockRowId),
+	});
+
+	const renderCollapsedStrip = (
+		workspace: WorkspaceWithTabs,
+		indent: number,
+	) => {
+		const h = itemHandlers(workspace, `ws:${workspace.id}`);
+		return (
+			<CollapsedStrip
+				key={workspace.id}
+				workspace={workspace}
+				indent={indent}
+				isActive={h.isActive}
+				isRenaming={h.isRenaming}
+				onClick={h.onClick}
+				onDelete={h.onDelete}
+				onContextMenu={h.onContextMenu}
+				onRename={h.onRename}
+				onRenameCancel={h.onRenameCancel}
+			/>
+		);
+	};
 
 	return (
 		<div className="flex flex-col" ref={containerRef}>
@@ -195,78 +351,46 @@ export function WorkspaceList({
 					No workspaces yet
 				</div>
 			)}
-			{workspaces.map((workspace, i) => {
-				const isActive =
-					workspace.id === (switchingWorkspaceId ?? activeWorkspaceId);
-				const isRenaming = workspace.id === renamingId;
-				const onClick = () => {
-					if (draggedId) return;
-					beginWorkspaceSwitch(workspace.id);
-				};
-				const onDelete = () => setPendingDeleteId(workspace.id);
-				const onContextMenu = (e: React.MouseEvent) => {
-					e.preventDefault();
-					setContextMenu({
-						x: e.clientX,
-						y: e.clientY,
-						workspaceId: workspace.id,
-					});
-				};
-				const onRename = (name: string) => {
-					renameWorkspace(workspace.id, name);
-					setRenamingId(null);
-				};
-				const onRenameCancel = () => setRenamingId(null);
 
-				return (
-					<div
-						key={workspace.id}
-						ref={(el) => {
-							if (el) itemRefs.current.set(i, el);
-							else itemRefs.current.delete(i);
-						}}
-					>
-						{!collapsed && nearestSlot === i && <DropIndicator />}
-						{collapsed ? (
-							<CollapsedStrip
-								workspace={workspace}
-								isActive={isActive}
-								isRenaming={isRenaming}
-								onClick={onClick}
-								onDelete={onDelete}
-								onContextMenu={onContextMenu}
-								onRename={onRename}
-								onRenameCancel={onRenameCancel}
-							/>
-						) : (
-							<WorkspaceItem
-								workspace={workspace}
-								isActive={isActive}
-								isDragging={workspace.id === draggedId}
-								isRenaming={isRenaming}
-								onClick={onClick}
-								onDelete={onDelete}
-								onContextMenu={onContextMenu}
-								onRename={onRename}
-								onRenameCancel={onRenameCancel}
-								onMouseDown={(e) => handleMouseDown(e, workspace.id)}
-							/>
-						)}
-					</div>
-				);
-			})}
-			{!collapsed && nearestSlot === workspaces.length && <DropIndicator />}
+			{collapsed
+				? // Collapsed strips in grouped display order; Linked worktrees keep
+					// the same indentation + rail as the expanded sidebar.
+					rows.flatMap((row) =>
+						row.kind === "set"
+							? [
+									renderCollapsedStrip(row.primary, 0),
+									...row.linked.map((linked) =>
+										renderCollapsedStrip(linked, LINKED_INDENT),
+									),
+								]
+							: [renderCollapsedStrip(row.workspace, 0)],
+					)
+				: rows.map((row, i) => {
+						const id = rowId(row);
+						return (
+							<div
+								key={id}
+								ref={(el) => {
+									if (el) blockRefs.current.set(i, el);
+									else blockRefs.current.delete(i);
+								}}
+							>
+								{nearestSlot === i && <DropIndicator />}
+								<WorkspaceRowView
+									row={row}
+									isDragging={id === draggedRowId}
+									itemHandlers={itemHandlers}
+								/>
+							</div>
+						);
+					})}
 
-			{/* Floating ghost following the cursor (expanded only) */}
-			{!collapsed && draggedWorkspace && (
-				<DragGhost
-					workspace={draggedWorkspace}
-					mousePos={mousePos}
-					width={ghostWidth}
-				/>
+			{!collapsed && nearestSlot === rows.length && <DropIndicator />}
+
+			{!collapsed && draggedRow && (
+				<DragGhost row={draggedRow} mousePos={mousePos} width={ghostWidth} />
 			)}
 
-			{/* Workspace context menu */}
 			{contextMenu && (
 				<PaneContextMenu
 					x={contextMenu.x}
@@ -276,7 +400,6 @@ export function WorkspaceList({
 				/>
 			)}
 
-			{/* Confirmation dialog for permanent workspace removal */}
 			{pendingWorkspace && (
 				<ConfirmDialog
 					title="Close Workspace"
@@ -290,6 +413,105 @@ export function WorkspaceList({
 					onCancel={() => setPendingDeleteId(null)}
 				/>
 			)}
+
+			{addWorktreeTarget && (
+				<AddWorktreeDialog
+					primaryCwd={addWorktreeTarget.primaryCwd}
+					primaryName={addWorktreeTarget.primaryName}
+					onClose={() => setAddWorktreeTarget(null)}
+				/>
+			)}
+
+			{removeWorktreeTarget && (
+				<ConfirmDialog
+					title="Remove worktree"
+					message={
+						removeWorktreeTarget.dirty
+							? `"${removeWorktreeTarget.name}" has uncommitted changes that will be permanently lost. This deletes the worktree's folder from disk. The branch is kept.`
+							: `This permanently deletes the worktree folder for "${removeWorktreeTarget.name}" from disk. The branch is kept. This cannot be undone.`
+					}
+					confirmLabel="Remove worktree"
+					confirmVariant="danger"
+					onConfirm={() => {
+						const t = removeWorktreeTarget;
+						setRemoveWorktreeTarget(null);
+						removeWorktreeWorkspace(
+							t.workspaceId,
+							t.primaryCwd,
+							t.worktreePath,
+						).catch((err) => console.error("Failed to remove worktree:", err));
+					}}
+					onCancel={() => setRemoveWorktreeTarget(null)}
+				/>
+			)}
+
+			{settingsWorkspaceId && (
+				<WorkspaceSettingsDialog
+					workspaceId={settingsWorkspaceId}
+					isMainWorktree={
+						roleById.get(settingsWorkspaceId)?.isMainWorktree ?? false
+					}
+					onClose={() => setSettingsWorkspaceId(null)}
+				/>
+			)}
+		</div>
+	);
+}
+
+/** Renders one block: a standalone workspace, or a Worktree set (primary +
+ *  indented linked worktrees on a shared rail). The whole block is one drag
+ *  unit — grabbing any member drags the set. */
+function WorkspaceRowView({
+	row,
+	isDragging,
+	itemHandlers,
+}: {
+	row: WorkspaceRow;
+	isDragging: boolean;
+	itemHandlers: (
+		workspace: WorkspaceWithTabs,
+		blockRowId: string,
+	) => Omit<
+		React.ComponentProps<typeof WorkspaceItem>,
+		"workspace" | "isDragging"
+	>;
+}) {
+	const id = rowId(row);
+	if (row.kind === "standalone") {
+		return (
+			<WorkspaceItem
+				workspace={row.workspace}
+				isDragging={isDragging}
+				{...itemHandlers(row.workspace, id)}
+			/>
+		);
+	}
+	return (
+		<div style={{ opacity: isDragging ? 0.4 : 1 }}>
+			<WorkspaceItem
+				workspace={row.primary}
+				isDragging={false}
+				{...itemHandlers(row.primary, id)}
+			/>
+			{/* Linked worktrees: indented on a vertical rail tying them to the
+			    repo above. Pixel polish via /frontend-design. */}
+			<div
+				style={{
+					position: "relative",
+					marginLeft: LINKED_INDENT,
+					paddingLeft: 10,
+					borderLeft: "2px solid var(--border)",
+				}}
+			>
+				{row.linked.map((linked) => (
+					<WorkspaceItem
+						key={linked.id}
+						workspace={linked}
+						isDragging={false}
+						{...itemHandlers(linked, id)}
+					/>
+				))}
+			</div>
 		</div>
 	);
 }
@@ -308,14 +530,16 @@ function DropIndicator() {
 }
 
 function DragGhost({
-	workspace,
+	row,
 	mousePos,
 	width,
 }: {
-	workspace: WorkspaceWithTabs;
+	row: WorkspaceRow;
 	mousePos: { x: number; y: number };
 	width: number;
 }) {
+	const head = rowWorkspaces(row)[0];
+	const count = rowWorkspaces(row).length;
 	return (
 		<div
 			className="pointer-events-none"
@@ -330,7 +554,7 @@ function DragGhost({
 			}}
 		>
 			<WorkspaceItem
-				workspace={workspace}
+				workspace={head}
 				isActive={false}
 				isDragging={false}
 				isRenaming={false}
@@ -341,6 +565,14 @@ function DragGhost({
 				onRenameCancel={() => {}}
 				onMouseDown={() => {}}
 			/>
+			{count > 1 && (
+				<div
+					className="text-center"
+					style={{ fontSize: 10, color: "var(--fg-secondary)", marginTop: 2 }}
+				>
+					+{count - 1} more worktree{count - 1 > 1 ? "s" : ""}
+				</div>
+			)}
 		</div>
 	);
 }

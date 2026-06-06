@@ -28,6 +28,7 @@ import type {
 	TabUpdate,
 	WorkspaceUpdate,
 	WorkspaceWithTabs,
+	WorktreeEntry,
 } from "./types";
 
 // Demo-mode chokepoint. In normal builds these are zero-overhead pass-throughs
@@ -320,6 +321,44 @@ export type WorkspaceGitSummary = {
 	changedFileCount: number;
 	additions: number;
 	deletions: number;
+	/** Stable per-repository key shared by all worktrees of one repo. Null when
+	 *  not a git repo. Drives the sidebar Worktree set grouping. */
+	worktreeGroupKey: string | null;
+	/** True when this workspace's folder is the repository's main worktree. */
+	isMainWorktree: boolean;
+	/** Canonicalized worktree root — compared against canonical
+	 *  `list_repo_worktrees` paths so symlinked folders don't mis-reconcile. */
+	worktreeRoot: string | null;
+};
+
+export const worktrees = {
+	/** Every worktree of the repository `cwd` belongs to (primary first). */
+	list: (cwd: string) =>
+		invoke<WorktreeEntry[]>("list_repo_worktrees", { cwd }),
+
+	/** Create a worktree of the primary's repo, checking out `branch` (created
+	 *  from the primary's HEAD if it doesn't exist) at absolute `path`. */
+	add: (primaryCwd: string, branch: string, path: string) =>
+		invoke<WorktreeEntry>("worktree_add", { primaryCwd, branch, path }),
+
+	/** Remove the worktree whose folder is `worktreePath` (deletes the folder,
+	 *  prunes git's admin link, keeps the branch). */
+	remove: (primaryCwd: string, worktreePath: string) =>
+		invoke<void>("worktree_remove", { primaryCwd, worktreePath }),
+
+	/** True if the worktree at `cwd` has uncommitted/untracked changes. */
+	dirty: (cwd: string) => invoke<boolean>("worktree_dirty", { cwd }),
+
+	/** Set this Window's desired set of watched repository common dirs. The
+	 *  Rust watcher emits `worktrees-changed` when a CLI add/remove touches one. */
+	watchSet: (commonDirs: string[]) =>
+		invoke<void>("worktree_watch_set", { commonDirs }),
+
+	/** Fires when a watched repo's worktree set changes on disk. */
+	onChanged: (callback: (commonDir: string) => void): Promise<UnlistenFn> =>
+		listen<{ commonDir: string }>("worktrees-changed", (event) =>
+			callback(event.payload.commonDir),
+		),
 };
 
 export const gh = {

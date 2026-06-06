@@ -8,7 +8,7 @@ A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https:/
 
 Each **workspace** is bound to a project folder. Inside it you get a fast WebGL-rendered terminal that you can split into as many horizontal and vertical panes as you like and organize across multiple tabs — run a dev server in one pane, tail logs in another, and drive an AI agent in a third. Abundio has **first-class support for AI coding CLI agents** (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode): it auto-detects the ones installed on your `$PATH`, lets you define your own, and surfaces live activity status so you can see at a glance which agents are working.
 
-Around the terminal sits a full development surface: a **file explorer** and Monaco-powered **code editor** for viewing and editing files, **git integration** with a changed-files panel and inline diffs, a **GitHub PR panel**, **full-text workspace search**, live **Markdown preview**, and a **notes** panel — plus the ability to hand the current workspace off to VS Code, Cursor, or a JetBrains IDE when you want a heavier editor. Terminal output is clickable (file paths printed by compilers, test runners, and agents open straight in the editor), scrollback is persisted across sessions, and an overview bar keeps a running count of your workspaces, agents, terminals, and open PRs. Abundio runs natively on macOS, Windows, and Linux.
+Around the terminal sits a full development surface: a **file explorer** and Monaco-powered **code editor** for viewing and editing files, **git integration** with a changed-files panel and inline diffs, first-class **git worktree support** (worktrees of a repo are grouped together in the sidebar and you can create or remove them in-app), a **GitHub PR panel**, **full-text workspace search**, live **Markdown preview**, and a **notes** panel — plus the ability to hand the current workspace off to VS Code, Cursor, or a JetBrains IDE when you want a heavier editor. Terminal output is clickable (file paths printed by compilers, test runners, and agents open straight in the editor), scrollback is persisted across sessions, and an overview bar keeps a running count of your workspaces, agents, terminals, and open PRs. Abundio runs natively on macOS, Windows, and Linux.
 
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple\&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows\&logoColor=white)
@@ -40,6 +40,7 @@ See [all releases](https://github.com/emullernl/abundio/releases) for previous v
 * **Notes** — Per-workspace notes editor in the side panel
 * **Clickable file links in terminal** — Open file paths printed by tools (compilers, test runners, agents) directly in the editor
 * **Git integration** — Changed files panel, branch selector, inline diff viewer
+* **Git worktree support** — Worktrees of a repo appear as a grouped, primary-first set in the sidebar; create a new worktree (new or existing branch) or remove one without leaving the app, with optional per-repo setup commands run automatically in each new worktree
 * **GitHub PR panel** — Review requests and your PRs via GitHub CLI
 * **Workspace search** — Full-text search across project files with cancellation
 * **External editor integration** — Detects and launches VS Code, Cursor, JetBrains IDEs, and others for the current workspace
@@ -91,7 +92,7 @@ Abundio shells out to a few external command-line tools at runtime. Only a shell
 * **A login shell** (required) — the terminal spawns your `$SHELL` (defaults to `/bin/zsh`). This is the only hard requirement.
 * **[`gh`](https://cli.github.com/) (GitHub CLI)** (optional) — powers the GitHub PR panel (review requests and your open PRs). Must be authenticated (`gh auth login`).
 
-> **Note:** Abundio does **not** require the `git` CLI. All git functionality — the changes panel, branch selector, inline diffs, sidebar git chips, and GitHub-remote detection — runs in-process via a bundled libgit2.
+> **Note:** Abundio does **not** require the `git` CLI. All git functionality — the changes panel, branch selector, inline diffs, sidebar git chips, GitHub-remote detection, and worktree create/remove — runs in-process via a bundled libgit2.
 * **AI coding agent CLIs** (optional) — any of [Claude Code](https://docs.claude.com/en/docs/claude-code), [GitHub Copilot CLI](https://github.com/github/gh-copilot), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat/), [Codex](https://github.com/openai/codex), or [OpenCode](https://opencode.ai/). Abundio auto-detects whichever are on your `$PATH`; you can also define custom agents in Settings.
 
 ## Prerequisites

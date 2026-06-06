@@ -15,6 +15,10 @@ interface Props {
 	onContextMenu: (e: React.MouseEvent) => void;
 	onRename: (name: string) => void;
 	onRenameCancel: () => void;
+	/** Left indent (px) for a Linked worktree in a Worktree set; draws a rail.
+	 *  Applied as internal padding so the strip's edge — and thus the hover
+	 *  popover — stays flush with the sidebar. See ADR-0017. */
+	indent?: number;
 }
 
 const STRIP_WIDTH = 56;
@@ -29,6 +33,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	onContextMenu,
 	onRename,
 	onRenameCancel,
+	indent = 0,
 }: Props) {
 	const dotStatus = useWorkspaceDotStatus(workspace);
 	const sidebarWidth = useSettingsStore((s) => s.sidebarWidth);
@@ -103,9 +108,10 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 				onBlur={scheduleClose}
 				className="flex items-center cursor-pointer select-none"
 				style={{
+					position: "relative",
 					width: STRIP_WIDTH,
 					height: `var(--workspace-item-height, ${WORKSPACE_ITEM_HEIGHT_FALLBACK}px)`,
-					paddingLeft: 8,
+					paddingLeft: 8 + indent,
 					paddingRight: 4,
 					gap: 6,
 					backgroundColor: tinted ? "var(--bg-tertiary)" : "transparent",
@@ -115,6 +121,22 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 					transition: "background-color var(--transition-fast)",
 				}}
 			>
+				{indent > 0 && (
+					// Vertical rail tying Linked worktrees to the Primary above. Each
+					// strip draws its own full-height segment, so stacked strips form
+					// one continuous line.
+					<div
+						aria-hidden
+						style={{
+							position: "absolute",
+							left: indent - 2,
+							top: 0,
+							bottom: 0,
+							width: 2,
+							backgroundColor: "var(--border)",
+						}}
+					/>
+				)}
 				<div style={{ flexShrink: 0, display: "flex" }}>
 					<AgentStatusIcon status={dotStatus} />
 				</div>
@@ -153,18 +175,50 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 							zIndex: 1000,
 						}}
 					>
-						<WorkspaceItem
-							workspace={workspace}
-							isActive={isActive}
-							isDragging={false}
-							isRenaming={isRenaming}
-							onClick={onClick}
-							onDelete={onDelete}
-							onContextMenu={onContextMenu}
-							onRename={onRename}
-							onRenameCancel={onRenameCancel}
-							onMouseDown={() => {}}
-						/>
+						{indent > 0 ? (
+							// Indent the popover's contents by the same amount as the
+							// collapsed strip (not the deeper expanded-row indent), so the
+							// item doesn't jump sideways when the popover opens. The rail
+							// matches the strip's rail position.
+							<div style={{ position: "relative", paddingLeft: indent }}>
+								<div
+									aria-hidden
+									style={{
+										position: "absolute",
+										left: indent - 2,
+										top: 0,
+										bottom: 0,
+										width: 2,
+										backgroundColor: "var(--border)",
+									}}
+								/>
+								<WorkspaceItem
+									workspace={workspace}
+									isActive={isActive}
+									isDragging={false}
+									isRenaming={isRenaming}
+									onClick={onClick}
+									onDelete={onDelete}
+									onContextMenu={onContextMenu}
+									onRename={onRename}
+									onRenameCancel={onRenameCancel}
+									onMouseDown={() => {}}
+								/>
+							</div>
+						) : (
+							<WorkspaceItem
+								workspace={workspace}
+								isActive={isActive}
+								isDragging={false}
+								isRenaming={isRenaming}
+								onClick={onClick}
+								onDelete={onDelete}
+								onContextMenu={onContextMenu}
+								onRename={onRename}
+								onRenameCancel={onRenameCancel}
+								onMouseDown={() => {}}
+							/>
+						)}
 					</div>,
 					document.body,
 				)}

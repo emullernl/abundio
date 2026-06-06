@@ -26,6 +26,7 @@ import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useWorkspace } from "./hooks/useWorkspace";
+import { useWorktreeSync } from "./hooks/useWorktreeSync";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
 import { updates, windowSession } from "./lib/ipc";
@@ -233,6 +234,7 @@ export function App() {
 	useDemoBootstrap();
 	useFileReloadWatcher();
 	useGitDataSync();
+	useWorktreeSync();
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const activeTabByWorkspace = useWorkspaceStore((s) => s.activeTabByWorkspace);

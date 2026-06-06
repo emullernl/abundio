@@ -80,6 +80,7 @@ function makeWorkspace(
 		profileId: "p-default",
 		createdAt: 0,
 		updatedAt: 0,
+		worktreeSetupCommands: "",
 		tabs: [makeTab()],
 		...overrides,
 	};

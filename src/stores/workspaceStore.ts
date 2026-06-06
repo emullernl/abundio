@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import { pty, tabs as tabsApi, workspaces as workspacesApi } from "../lib/ipc";
+import {
+	pty,
+	tabs as tabsApi,
+	workspaces as workspacesApi,
+	worktrees as worktreesApi,
+} from "../lib/ipc";
 import {
 	collectAgentPanes,
 	collectPaneIds,
@@ -19,6 +24,7 @@ import type {
 	PtyStatusType,
 	Tab,
 	WorkspaceWithTabs,
+	WorktreeEntry,
 } from "../lib/types";
 import { useExplorerStore } from "./explorerStore";
 import { useNotesStore } from "./notesStore";
@@ -45,9 +51,30 @@ interface WorkspaceState {
 		rootFolder: string,
 		agent?: CodingAgent,
 	) => Promise<WorkspaceWithTabs>;
+	/** Create + activate a Workspace for a freshly created worktree, seeding its
+	 *  focal terminal with the primary's setup commands then the chosen agent. */
+	addWorktreeWorkspace: (
+		entry: WorktreeEntry,
+		setupCommands: string,
+		agent?: CodingAgent,
+	) => Promise<WorkspaceWithTabs>;
+	/** Add a discovered worktree as an unopened Workspace (no PTY, no agent),
+	 *  deduped by folder. Used by sibling expansion and live reconcile. */
+	addDiscoveredWorktree: (
+		name: string,
+		rootFolder: string,
+	) => Promise<WorkspaceWithTabs | null>;
+	/** Kill the worktree Workspace's PTYs, prune the worktree on disk (keeping
+	 *  the branch), then remove the entry; focus falls back to the primary. */
+	removeWorktreeWorkspace: (
+		workspaceId: string,
+		primaryCwd: string,
+		worktreePath: string,
+	) => Promise<void>;
 	deleteWorkspace: (id: string) => Promise<void>;
 	closeWorkspace: (id: string) => Promise<void>;
 	renameWorkspace: (id: string, name: string) => Promise<void>;
+	setWorktreeSetupCommands: (id: string, commands: string) => Promise<void>;
 	setActiveWorkspace: (id: string | null) => void;
 	beginWorkspaceSwitch: (id: string | null) => void;
 
@@ -99,6 +126,69 @@ interface WorkspaceState {
 
 function defaultLayout(): PaneNode {
 	return { type: "terminal", id: crypto.randomUUID(), ptyId: "" };
+}
+
+function basename(path: string): string {
+	return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
+/** Find the worktree whose root contains the picked folder (longest prefix). */
+function findFocalWorktree(
+	entries: WorktreeEntry[],
+	picked: string,
+): WorktreeEntry | null {
+	let best: WorktreeEntry | null = null;
+	for (const e of entries) {
+		const root = e.path;
+		const prefix = root.endsWith("/") ? root : `${root}/`;
+		if (picked === root || picked.startsWith(prefix)) {
+			if (!best || e.path.length > best.path.length) best = e;
+		}
+	}
+	return best;
+}
+
+/**
+ * Seed the focal terminal pane's pending command: the primary's setup commands
+ * (one per line) followed by the chosen agent's launch command. The shell
+ * serializes them, so setup runs first and the agent starts after. Also stamps
+ * the agent id into the layout so it survives restarts. Returns the focal tab
+ * and pane ids. See ADR-0017.
+ */
+function seedFocalPane(
+	ws: WorkspaceWithTabs,
+	opts: { setupCommands?: string; agent?: CodingAgent },
+): { firstTabId: string | undefined; firstPaneId: string | null } {
+	const firstTab = ws.tabs[0];
+	const firstTabId = firstTab?.id;
+	let firstPaneId: string | null = null;
+	if (!firstTab) return { firstTabId, firstPaneId };
+	try {
+		const layout = JSON.parse(firstTab.layoutJson) as PaneNode;
+		firstPaneId = firstTerminalId(layout);
+		const setupLines = (opts.setupCommands ?? "")
+			.split("\n")
+			.map((l) => l.trim())
+			.filter(Boolean);
+		const agentCmd = opts.agent
+			? [opts.agent.command, ...(opts.agent.args ?? [])].join(" ")
+			: null;
+		const combined = [...setupLines, ...(agentCmd ? [agentCmd] : [])].join(
+			"\n",
+		);
+		if (firstPaneId && combined) {
+			setPendingAgent(firstPaneId, { command: combined });
+		}
+		if (opts.agent && firstPaneId) {
+			const stamped = setAgentId(layout, firstPaneId, opts.agent.id);
+			const stampedJson = JSON.stringify(stamped);
+			firstTab.layoutJson = stampedJson;
+			tabsApi.update(firstTab.id, { layoutJson: stampedJson }).catch(() => {});
+		}
+	} catch {
+		/* malformed layout — skip seeding */
+	}
+	return { firstTabId, firstPaneId };
 }
 
 function firstLeafId(node: PaneNode): string | null {
@@ -276,49 +366,125 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	createWorkspace: async (name, rootFolder, agent) => {
 		const profileId = fallbackProfileId();
+
+		// Worktree expansion: if the picked folder is part of a repo with ≥2
+		// worktrees, snap the focal Workspace to its worktree root and add every
+		// other worktree as an unopened sibling. See ADR-0017.
+		let focalFolder = rootFolder;
+		let siblings: WorktreeEntry[] = [];
+		try {
+			// Only real (existing) worktrees participate in expansion.
+			const list = (await worktreesApi.list(rootFolder)).filter(
+				(e) => e.exists,
+			);
+			if (list.length >= 2) {
+				const focal = findFocalWorktree(list, rootFolder);
+				if (focal) {
+					focalFolder = focal.path;
+					siblings = list.filter((e) => e.path !== focal.path);
+				}
+			}
+		} catch {
+			// Not a git repo / discovery failed — plain single create.
+		}
+
 		const workspaceWithTabs = await workspacesApi.create(
 			name,
-			rootFolder,
+			focalFolder,
 			profileId,
 		);
 		usePtyActivityStore.getState().markWorkspaceOpened(workspaceWithTabs.id);
-		const firstTab = workspaceWithTabs.tabs[0];
-		const firstTabId = firstTab?.id;
-		let firstPaneId: string | null = null;
-		if (firstTab) {
-			try {
-				const layout = JSON.parse(firstTab.layoutJson) as PaneNode;
-				firstPaneId = firstTerminalId(layout);
-				if (agent && firstPaneId) {
-					setPendingAgent(firstPaneId, {
-						command: [agent.command, ...(agent.args ?? [])].join(" "),
-					});
-					// Persist the agent identity into the layout so it survives restarts.
-					const stamped = setAgentId(layout, firstPaneId, agent.id);
-					const stampedJson = JSON.stringify(stamped);
-					firstTab.layoutJson = stampedJson;
-					tabsApi
-						.update(firstTab.id, { layoutJson: stampedJson })
-						.catch(() => {});
-				}
-			} catch {
-				/* ignore */
-			}
-		}
+		const { firstTabId, firstPaneId } = seedFocalPane(workspaceWithTabs, {
+			agent,
+		});
 		set((state) => ({
 			workspaces: [...state.workspaces, workspaceWithTabs],
 			activeWorkspaceId: workspaceWithTabs.id,
-			activeTabByWorkspace: {
-				...state.activeTabByWorkspace,
-				[workspaceWithTabs.id]: firstTabId,
-			},
+			activeTabByWorkspace: firstTabId
+				? {
+						...state.activeTabByWorkspace,
+						[workspaceWithTabs.id]: firstTabId,
+					}
+				: state.activeTabByWorkspace,
 			focusedPaneId: firstPaneId ?? state.focusedPaneId,
 		}));
 		useWorkspaceGitStore
 			.getState()
-			.fetch(workspaceWithTabs.id, rootFolder, null)
+			.fetch(workspaceWithTabs.id, focalFolder, null)
 			.catch(() => {});
+
+		// Add sibling worktrees as unopened Workspaces (deduped against existing).
+		for (const e of siblings) {
+			await get().addDiscoveredWorktree(basename(e.path), e.path);
+		}
+
 		return workspaceWithTabs;
+	},
+
+	addWorktreeWorkspace: async (entry, setupCommands, agent) => {
+		// If the watcher already raced this in, just activate the existing entry.
+		const existing = get().workspaces.find((w) => w.rootFolder === entry.path);
+		if (existing) {
+			get().beginWorkspaceSwitch(existing.id);
+			return existing;
+		}
+		const profileId = fallbackProfileId();
+		const ws = await workspacesApi.create(
+			basename(entry.path),
+			entry.path,
+			profileId,
+		);
+		usePtyActivityStore.getState().markWorkspaceOpened(ws.id);
+		const { firstTabId, firstPaneId } = seedFocalPane(ws, {
+			setupCommands,
+			agent,
+		});
+		set((state) => ({
+			workspaces: [...state.workspaces, ws],
+			activeWorkspaceId: ws.id,
+			activeTabByWorkspace: firstTabId
+				? { ...state.activeTabByWorkspace, [ws.id]: firstTabId }
+				: state.activeTabByWorkspace,
+			focusedPaneId: firstPaneId ?? state.focusedPaneId,
+		}));
+		useWorkspaceGitStore
+			.getState()
+			.fetch(ws.id, entry.path, null)
+			.catch(() => {});
+		return ws;
+	},
+
+	addDiscoveredWorktree: async (name, rootFolder) => {
+		// Dedup by folder — never create a second entry for the same worktree.
+		if (get().workspaces.some((w) => w.rootFolder === rootFolder)) {
+			return null;
+		}
+		const profileId = fallbackProfileId();
+		const ws = await workspacesApi.create(name, rootFolder, profileId);
+		// Unopened: not marked opened, not activated, no PTY, no agent.
+		set((state) => ({ workspaces: [...state.workspaces, ws] }));
+		useWorkspaceGitStore
+			.getState()
+			.fetch(ws.id, rootFolder, null)
+			.catch(() => {});
+		return ws;
+	},
+
+	removeWorktreeWorkspace: async (workspaceId, primaryCwd, worktreePath) => {
+		const wasActive = get().activeWorkspaceId === workspaceId;
+		// Prune the worktree on disk FIRST, while the workspace is still intact
+		// (PTYs alive, layout untouched). If this throws — locked worktree, EBUSY,
+		// permission denied — the workspace keeps its live session instead of being
+		// left half-torn-down. Only on success do we kill PTYs and remove the entry.
+		// The brief window where a shell's cwd is unlinked before we kill it is
+		// harmless on the platforms we target. See ADR-0017.
+		await worktreesApi.remove(primaryCwd, worktreePath);
+		await get().closeWorkspace(workspaceId);
+		await get().deleteWorkspace(workspaceId);
+		if (wasActive) {
+			const primary = get().workspaces.find((w) => w.rootFolder === primaryCwd);
+			if (primary) get().beginWorkspaceSwitch(primary.id);
+		}
 	},
 
 	deleteWorkspace: async (id) => {
@@ -415,6 +581,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		set((state) => ({
 			workspaces: state.workspaces.map((s) =>
 				s.id === id ? { ...s, name } : s,
+			),
+		}));
+	},
+
+	setWorktreeSetupCommands: async (id, commands) => {
+		await workspacesApi.update(id, { worktreeSetupCommands: commands });
+		set((state) => ({
+			workspaces: state.workspaces.map((s) =>
+				s.id === id ? { ...s, worktreeSetupCommands: commands } : s,
 			),
 		}));
 	},
