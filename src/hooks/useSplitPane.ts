@@ -21,6 +21,12 @@ function generateId(): string {
 	return crypto.randomUUID();
 }
 
+/** Max time to wait for on-launch hook provisioning before letting the pane
+ *  appear anyway. Hooks are picked up on the agent's next run if it times out,
+ *  so a pathological slow disk / provision-mutex contention can't freeze the
+ *  launch path. */
+const ENSURE_HOOKS_TIMEOUT_MS = 2000;
+
 export function useSplitPane() {
 	const getActiveTab = useWorkspaceStore((s) => s.getActiveTab);
 	const getActiveLayout = useWorkspaceStore((s) => s.getActiveLayout);
@@ -59,7 +65,14 @@ export function useSplitPane() {
 			// the launch. See ADR-0003 (Revisited).
 			if (agent && useSettingsStore.getState().agentHooksEnabled) {
 				try {
-					await agentHooks.ensure(agent.id, true);
+					// Cap the wait so slow disk I/O or provision-mutex contention
+					// can't freeze the launch; the agent picks up hooks next run.
+					await Promise.race([
+						agentHooks.ensure(agent.id, true),
+						new Promise<void>((resolve) => {
+							setTimeout(resolve, ENSURE_HOOKS_TIMEOUT_MS);
+						}),
+					]);
 				} catch (err) {
 					console.error("[agentHooks] ensure failed:", err);
 				}

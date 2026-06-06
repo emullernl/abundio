@@ -1743,9 +1743,14 @@ export function SettingsPanel({ onClose }: Props) {
 	}, []);
 	useEffect(() => {
 		if (section !== "agents") return;
-		reloadRegistry(agents.map((a) => a.command));
+		// Read agents non-reactively: a detection toggle mutates the agents array,
+		// but the toggle callbacks already refresh after provisioning, so we don't
+		// want this effect re-firing on every toggle (a redundant IPC that reads
+		// pre-provision state and flickers the badge). Runs on section-open;
+		// add/remove refresh via their own handlers.
+		reloadRegistry(useSettingsStore.getState().agents.map((a) => a.command));
 		refreshHookStatuses();
-	}, [section, agents, reloadRegistry, refreshHookStatuses]);
+	}, [section, reloadRegistry, refreshHookStatuses]);
 	const gpuAccelerationEnabled = useSettingsStore(
 		(s) => s.gpuAccelerationEnabled,
 	);
@@ -2166,7 +2171,18 @@ export function SettingsPanel({ onClose }: Props) {
 									</div>
 								</div>
 								<div className="flex-shrink-0">
-									<AddAgentForm onAdd={addAgent} />
+									<AddAgentForm
+										onAdd={(name, command) => {
+											addAgent(name, command);
+											// A newly added agent isn't in the last $PATH scan yet —
+											// rescan so its Detected badge reflects reality.
+											reloadRegistry(
+												useSettingsStore
+													.getState()
+													.agents.map((a) => a.command),
+											);
+										}}
+									/>
 								</div>
 							</div>
 						)}

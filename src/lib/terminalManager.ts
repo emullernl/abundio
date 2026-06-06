@@ -879,10 +879,17 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 									useSettingsStore.getState().agentHooksEnabled &&
 									!ensuredAgentsThisSession.has(matched.id)
 								) {
-									ensuredAgentsThisSession.add(matched.id);
-									agentHooks.ensure(matched.id, true).catch((err) => {
-										console.error("[agentHooks] ensure failed:", err);
-									});
+									// Only cache on success — a transient failure here must
+									// not permanently suppress retries for the session, since
+									// a re-typed command is the user's only recourse.
+									agentHooks
+										.ensure(matched.id, true)
+										.then(() => {
+											ensuredAgentsThisSession.add(matched.id);
+										})
+										.catch((err) => {
+											console.error("[agentHooks] ensure failed:", err);
+										});
 								}
 							}
 						}

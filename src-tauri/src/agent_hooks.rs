@@ -398,6 +398,14 @@ export const AbundioStatus = async () => {
     .to_string()
 }
 
+/// Warning surfaced when `curl` is missing on Unix. Shared by `provision` and
+/// `ensure_agent_hooks` so both paths give the same diagnostic instead of
+/// scaffolding hooks that can never fire.
+#[cfg(not(windows))]
+const CURL_MISSING_WARNING: &str = "`curl` was not found on PATH — Agent status \
+     hooks were registered but won't fire. Install curl (e.g. `apt install curl`) \
+     and toggle the setting off and on again.";
+
 /// True when a callable `curl` is on PATH. The Unix relay script POSTs via
 /// curl; without it the script silently no-ops (`|| true`), so the user gets
 /// "hooks installed but never fire" with no diagnostic. Several minimal Linux
@@ -601,14 +609,23 @@ fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigSt
                 }
             }
         }
-        // Abundio owns the whole file — its presence means registered.
-        Ownership::Owned => {
-            if path.exists() {
-                HookConfigState::Registered
-            } else {
-                HookConfigState::NotRegistered
+        // Abundio owns the whole file. codex/copilot embed the relay-script
+        // path in their hook commands, so a stale path (e.g. data-dir change)
+        // must read as not-registered and get refreshed. opencode's plugin
+        // talks to the loopback server via env vars and embeds no relay path,
+        // so for it presence alone means registered.
+        Ownership::Owned => match fs::read_to_string(&path) {
+            Err(_) => HookConfigState::NotRegistered, // file absent
+            Ok(text) => {
+                let current = agent_id == "opencode"
+                    || text.contains(&*relay.primary().to_string_lossy());
+                if current {
+                    HookConfigState::Registered
+                } else {
+                    HookConfigState::NotRegistered
+                }
             }
-        }
+        },
     }
 }
 
@@ -665,6 +682,14 @@ pub fn ensure_agent_hooks(agent_id: &str, enabled: bool) -> Result<bool, Abundio
         return Ok(false);
     }
     provision_agent(&home, &relay, agent_id, true, true)?;
+    // We just wrote hook configs. On Unix the relay POSTs via curl; warn (as
+    // provision() does) so a curl-less box gets a diagnostic via the caller's
+    // .catch instead of silently-installed-but-never-firing hooks. Fires at
+    // most once per agent — subsequent launches short-circuit on is_provisioned.
+    #[cfg(not(windows))]
+    if !curl_available() {
+        return Err(io_err(CURL_MISSING_WARNING.to_string()));
+    }
     Ok(true)
 }
 
@@ -689,12 +714,7 @@ pub fn provision(enabled: bool, enabled_agents: &[String]) -> Result<(), Abundio
     // curl was uninstalled after provisioning.
     #[cfg(not(windows))]
     if enabled && !curl_available() {
-        errors.push(
-            "`curl` was not found on PATH — Agent status hooks were registered \
-             but won't fire. Install curl (e.g. `apt install curl`) and toggle \
-             the setting off and on again."
-                .to_string(),
-        );
+        errors.push(CURL_MISSING_WARNING.to_string());
     }
 
     for &agent_id in SUPPORTED_AGENTS {
@@ -885,6 +905,42 @@ mod tests {
         provision_agent(home.path(), &relay, "codex", false, false).unwrap();
         assert!(!home.path().join(".codex").join("hooks.json").exists());
         assert!(!is_provisioned(home.path(), &relay, "codex"));
+    }
+
+    #[test]
+    fn owned_codex_with_stale_relay_path_is_not_registered() {
+        let home = tempfile::tempdir().unwrap();
+        // Provision against one relay dir, then inspect against a different one
+        // (simulating a data-dir change): the embedded path is now stale.
+        let old_relay = RelayPaths {
+            sh: home.path().join("old").join("abundio-hook.sh"),
+            ps1: home.path().join("old").join("abundio-hook.ps1"),
+        };
+        provision_agent(home.path(), &old_relay, "codex", true, true).unwrap();
+        assert!(is_provisioned(home.path(), &old_relay, "codex"));
+
+        let new_relay = RelayPaths {
+            sh: home.path().join("new").join("abundio-hook.sh"),
+            ps1: home.path().join("new").join("abundio-hook.ps1"),
+        };
+        assert!(
+            !is_provisioned(home.path(), &new_relay, "codex"),
+            "a stale embedded relay path must read as not-registered"
+        );
+    }
+
+    #[test]
+    fn owned_opencode_presence_is_registered_regardless_of_relay() {
+        let home = tempfile::tempdir().unwrap();
+        // OpenCode's plugin embeds no relay path (it uses env vars), so its mere
+        // presence means registered even when inspected against another relay.
+        let relay_a = test_relay(&home);
+        provision_agent(home.path(), &relay_a, "opencode", true, true).unwrap();
+        let relay_b = RelayPaths {
+            sh: home.path().join("elsewhere").join("abundio-hook.sh"),
+            ps1: home.path().join("elsewhere").join("abundio-hook.ps1"),
+        };
+        assert!(is_provisioned(home.path(), &relay_b, "opencode"));
     }
 
     #[test]
