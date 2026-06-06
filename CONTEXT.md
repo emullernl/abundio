@@ -34,6 +34,21 @@ _Avoid_: loaded workspace, mounted workspace
 
 **Background workspace**: An Opened workspace that is not currently the Active workspace. Not a separate state — derived as `openedWorkspaceIds \ {activeWorkspaceId}`.
 
+**Worktree set**: A group of Workspaces that are git worktrees of the same repository — one underlying repository, different branches checked out into different folders, each folder its own Workspace. Rendered as a single visually-distinct cluster in the **Left sidebar**; never a separate stored entity and never a **Profile**. Derived live from git, not persisted: two Workspaces belong to the same set iff their folders are worktrees of the same repository. A repository present only through its main worktree forms no set — the cluster chrome appears only once two or more worktrees of one repository exist as Workspaces. Within a set the **Primary worktree** is always rendered first, followed by the **Linked worktrees**.
+_Avoid_: worktree group, repo group (collides with **Profile**'s sense of "group"), worktree cluster.
+
+**Primary worktree**: The Workspace bound to a repository's *main* working tree (git's "main worktree"). Exactly one per **Worktree set**, always rendered first within it. **Add worktree** is offered here — and equally on a standalone git Workspace whose folder is a main worktree but has no set yet; that Workspace simply isn't *called* a Primary worktree until its first linked worktree exists.
+_Avoid_: main worktree (git-side synonym, ok colloquially), root worktree.
+
+**Linked worktree**: A non-primary Workspace in a **Worktree set** — a working tree git links to the repository's main one (git's own term for the non-main worktrees). The only Workspace on which **Remove worktree** is offered; removing it deletes that worktree's folder from disk.
+_Avoid_: secondary worktree, child worktree.
+
+**Workspace settings**: A per-Workspace dialog opened from the **Left sidebar** context menu (`Workspace settings…`). Hosts the Workspace rename and — only for **main-worktree** Workspaces (a **Primary worktree**, or a standalone main worktree) — the **Worktree setup commands** box; Linked worktrees and non-git Workspaces see the rename field alone. A plain in-window dialog, *not* the **Settings window** (which is a global, OS-level auxiliary Window editing the profile registry); Workspace settings edits one Workspace's own row.
+_Avoid_: preferences, workspace config, settings panel (collides with **Settings window**).
+
+**Worktree setup commands**: An ordered list of shell commands stored on a **main-worktree** Workspace's row and run in a newly created worktree's focal terminal immediately after an in-app **Add worktree** — and only then. A worktree created via the CLI and surfaced by live-sync is added unopened and runs nothing. The commands are sent as literal shell input (one line per command, the shell serializing them), ahead of any Agent chosen in the Add worktree dialog. Not a git "hook" and unrelated to **Agent hooks** or **Hook provisioning**.
+_Avoid_: worktree hook, setup hook, post-create hook, init script.
+
 **Pane**: A leaf slot within a Workspace tab. Panes form a recursive binary split tree (`PaneNode`). A Pane is one of: a **terminal pane** (holds a PTY), a **file pane** (holds an open file), or a **preview pane** (renders another pane's content).
 _Avoid_: panel, window, split
 
@@ -118,6 +133,8 @@ _Avoid_: shell pane, terminal mode (a Pane has no mode — its PTY does)
 - The **Active workspace** is always also an **Opened workspace**.
 - A Workspace shown in the sidebar may be neither Active nor Opened — it has not been activated this session.
 - **Closing** a Workspace removes it from Opened; deleting also removes it from the sidebar.
+- A **Worktree set** is derived, not stored: two Workspaces belong to the same set iff their folders are worktrees of the same git repository. Membership and primary-vs-linked status are recomputed from git, never authored by the user. **Add worktree** is offered on any Workspace bound to a repository's *main* worktree — a **Primary worktree** when a set already exists, or a standalone git Workspace not yet in a set (its first add bootstraps the set). **Remove worktree** is a **Linked worktree**-only action that physically deletes that worktree's folder.
+- **Worktree setup commands** are configured per main-worktree Workspace (stored on its row, so a repo present in two Profiles keeps an independent copy) and execute only on an in-app **Add worktree**, in the new worktree's focal terminal, before any chosen Agent. They are edited in the **Workspace settings** dialog.
 - Each **Tab** belongs to exactly one **Workspace**.
 - Each **Workspace** has at most one **Note** (one-to-zero-or-one); the Note is deleted with its Workspace.
 - Each **Pane** belongs to exactly one **Tab**. A terminal pane holds at most one **PTY**; a file pane holds at most one open file; a preview pane holds neither — it references a **source pane**.

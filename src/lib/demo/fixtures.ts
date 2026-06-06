@@ -658,6 +658,7 @@ export const workspaces: WorkspaceWithTabs[] = WS_DEFS.map((def, i) => {
 		profileId: ACTIVE_PROFILE_ID,
 		createdAt: T0,
 		updatedAt: T0,
+		worktreeSetupCommands: "",
 		tabs,
 	};
 });
@@ -698,6 +699,8 @@ export function workspaceSummary(
 			changedFileCount: 0,
 			additions: 0,
 			deletions: 0,
+			worktreeGroupKey: null,
+			isMainWorktree: false,
 		};
 	}
 	const bundle = gitBundleForCwd(cwd);
@@ -710,6 +713,9 @@ export function workspaceSummary(
 		changedFileCount: bundle.changedFiles.length,
 		additions,
 		deletions,
+		// Demo mode treats each repo as a standalone main worktree (no sets).
+		worktreeGroupKey: `${cwd}/.git`,
+		isMainWorktree: true,
 	};
 }
 

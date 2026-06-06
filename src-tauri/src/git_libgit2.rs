@@ -17,12 +17,17 @@
 /// in without touching its callers (the `#[tauri::command]` wrappers,
 /// `git_scheduler.rs`, etc.).
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use dashmap::DashMap;
-use git2::{Delta, Diff, DiffOptions, ErrorCode, Repository, Status, StatusOptions};
+use git2::{
+    BranchType, Delta, Diff, DiffOptions, ErrorCode, Reference, Repository, Status, StatusOptions,
+    WorktreeAddOptions, WorktreePruneOptions,
+};
 
 use crate::error::AbundioError;
 use crate::git_commands::{BranchInfo, GitChangedFile};
+use crate::worktree_commands::WorktreeEntry;
 
 const MAX_UNTRACKED: usize = 500;
 
@@ -402,6 +407,261 @@ pub fn detect_default_branch_uncached(cwd: &str) -> Result<String, AbundioError>
         return Ok("master".to_string());
     }
     Err(AbundioError::Git("No default branch found".to_string()))
+}
+
+// ── Worktrees ──
+//
+// git2 0.19 does NOT bind `git_repository_commondir`, so the key shared by
+// all worktrees of one repository is derived from `repo.path()`:
+//   - main worktree:   path() = <main>/.git                    → key = <main>/.git
+//   - linked worktree: path() = <main>/.git/worktrees/<name>   → strip 2 = <main>/.git
+// This relies on git's standard on-disk worktree layout. See ADR-0017.
+
+fn canonicalize_lossy(p: &Path) -> String {
+    std::fs::canonicalize(p)
+        .map(|c| c.to_string_lossy().to_string())
+        .unwrap_or_else(|_| p.to_string_lossy().to_string())
+}
+
+/// The common git dir shared by every worktree of a repository, derived from
+/// the opened repo's gitdir. `None` only if the path has no parents.
+fn common_git_dir(repo: &Repository) -> Option<PathBuf> {
+    let gitdir = repo.path();
+    if repo.is_worktree() {
+        // Strip the trailing `worktrees/<name>` to reach the common `.git`.
+        gitdir.parent()?.parent().map(|p| p.to_path_buf())
+    } else {
+        Some(gitdir.to_path_buf())
+    }
+}
+
+/// The two facts the sidebar needs to group worktrees: a stable per-repository
+/// key and whether this folder is the repository's main (primary) worktree.
+pub struct WorktreeSummaryBits {
+    pub group_key: Option<String>,
+    pub is_main_worktree: bool,
+}
+
+pub fn worktree_summary_bits(cwd: &str) -> WorktreeSummaryBits {
+    match Repository::discover(cwd) {
+        Ok(repo) => WorktreeSummaryBits {
+            group_key: common_git_dir(&repo).map(|p| canonicalize_lossy(&p)),
+            is_main_worktree: !repo.is_worktree()
+                && !repo.is_bare()
+                && repo.workdir().is_some(),
+        },
+        Err(_) => WorktreeSummaryBits {
+            group_key: None,
+            is_main_worktree: false,
+        },
+    }
+}
+
+fn head_shorthand(cwd: &Path) -> Option<String> {
+    Repository::discover(cwd)
+        .ok()?
+        .head()
+        .ok()?
+        .shorthand()
+        .map(String::from)
+}
+
+/// Open the MAIN repository from any worktree's cwd (so `worktrees()` and
+/// `workdir()` reflect the whole repo, not just the linked tree we're in).
+fn open_main_repo(cwd: &str) -> Result<Repository, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let common = common_git_dir(&repo)
+        .ok_or_else(|| AbundioError::Git("cannot resolve common git dir".into()))?;
+    Repository::open(&common).map_err(|e| AbundioError::Git(format!("open main repo: {e}")))
+}
+
+/// Enumerate all worktrees of the repository `cwd` belongs to: the main
+/// worktree (unless bare) first as primary, then every linked worktree whose
+/// folder still exists on disk. Each entry carries its checked-out branch.
+pub fn list_repo_worktrees(cwd: &str) -> Result<Vec<WorktreeEntry>, AbundioError> {
+    let main_repo = open_main_repo(cwd)?;
+    let mut entries = Vec::new();
+
+    if let Some(workdir) = main_repo.workdir() {
+        entries.push(WorktreeEntry {
+            path: canonicalize_lossy(workdir),
+            branch: head_shorthand(workdir),
+            is_primary: true,
+            exists: workdir.exists(),
+        });
+    }
+
+    if let Ok(names) = main_repo.worktrees() {
+        for name in names.iter().flatten() {
+            let Ok(wt) = main_repo.find_worktree(name) else {
+                continue;
+            };
+            let wt_path = wt.path();
+            // Include git-tracked worktrees even when their folder is gone (the
+            // frontend uses `exists` to tell stale-folder from real removal).
+            let exists = wt_path.exists();
+            entries.push(WorktreeEntry {
+                path: canonicalize_lossy(wt_path),
+                branch: if exists { head_shorthand(wt_path) } else { None },
+                is_primary: false,
+                exists,
+            });
+        }
+    }
+
+    Ok(entries)
+}
+
+/// Sanitize a folder path into a git worktree admin name (basename, unique key
+/// in `.git/worktrees/`). Falls back to "worktree" if no basename.
+fn worktree_name_for(path: &Path) -> String {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "worktree".to_string())
+}
+
+/// Resolve the branch the new worktree should check out, creating it when
+/// needed. Returns the reference plus whether we created a branch (so the
+/// caller can roll it back if the worktree add then fails).
+fn resolve_worktree_branch<'r>(
+    main_repo: &'r Repository,
+    branch: &str,
+) -> Result<(Reference<'r>, bool), AbundioError> {
+    if let Ok(b) = main_repo.find_branch(branch, BranchType::Local) {
+        // Existing local branch — git refuses to check it out if it's already
+        // checked out in another worktree, surfaced as the add error.
+        return Ok((
+            b.into_reference(),
+            false,
+        ));
+    }
+    if let Ok(remote_b) = main_repo.find_branch(&format!("origin/{branch}"), BranchType::Remote) {
+        // Exists only on the remote — create a local tracking branch.
+        let commit = remote_b
+            .get()
+            .peel_to_commit()
+            .map_err(|e| AbundioError::Git(format!("peel origin/{branch}: {e}")))?;
+        let mut local = main_repo
+            .branch(branch, &commit, false)
+            .map_err(|e| AbundioError::Git(format!("create tracking branch: {e}")))?;
+        let _ = local.set_upstream(Some(&format!("origin/{branch}")));
+        return Ok((local.into_reference(), true));
+    }
+    // New branch forked from the primary worktree's current HEAD.
+    let head_commit = main_repo
+        .head()
+        .and_then(|h| h.peel_to_commit())
+        .map_err(|e| AbundioError::Git(format!("primary HEAD: {e}")))?;
+    let b = main_repo
+        .branch(branch, &head_commit, false)
+        .map_err(|e| AbundioError::Git(format!("create branch '{branch}': {e}")))?;
+    Ok((b.into_reference(), true))
+}
+
+/// Create a new worktree of the repository at `path`, checking out `branch`
+/// (created from the primary's HEAD when it doesn't exist). `path` must be an
+/// absolute, non-existent folder; its parent is created if missing.
+pub fn add_worktree(
+    primary_cwd: &str,
+    branch: &str,
+    path: &str,
+) -> Result<WorktreeEntry, AbundioError> {
+    let main_repo = open_main_repo(primary_cwd)?;
+
+    let target = Path::new(path);
+    if target.exists() {
+        return Err(AbundioError::Git(format!(
+            "target folder already exists: {path}"
+        )));
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(AbundioError::Io)?;
+    }
+
+    let (branch_ref, created_branch) = resolve_worktree_branch(&main_repo, branch)?;
+
+    let name = worktree_name_for(target);
+    let mut opts = WorktreeAddOptions::new();
+    opts.reference(Some(&branch_ref));
+
+    if let Err(e) = main_repo.worktree(&name, target, Some(&opts)) {
+        // Roll back a branch we created so a retry isn't blocked by it.
+        if created_branch {
+            if let Ok(mut b) = main_repo.find_branch(branch, BranchType::Local) {
+                let _ = b.delete();
+            }
+        }
+        return Err(AbundioError::Git(format!("worktree add: {e}")));
+    }
+
+    Ok(WorktreeEntry {
+        path: canonicalize_lossy(target),
+        branch: Some(branch.to_string()),
+        is_primary: false,
+        exists: true,
+    })
+}
+
+/// Remove the worktree whose folder is `worktree_path`: deletes the folder and
+/// prunes git's admin link. The branch is left intact. Errors (without forcing)
+/// if the worktree is locked.
+pub fn remove_worktree(primary_cwd: &str, worktree_path: &str) -> Result<(), AbundioError> {
+    let main_repo = open_main_repo(primary_cwd)?;
+    let target = canonicalize_lossy(Path::new(worktree_path));
+
+    let names = main_repo
+        .worktrees()
+        .map_err(|e| AbundioError::Git(format!("worktrees: {e}")))?;
+    for name in names.iter().flatten() {
+        let Ok(wt) = main_repo.find_worktree(name) else {
+            continue;
+        };
+        if canonicalize_lossy(wt.path()) == target {
+            let mut opts = WorktreePruneOptions::new();
+            // valid: prune even though the worktree still exists.
+            // working_tree: actually delete the folder on disk.
+            // locked stays false → a locked worktree errors instead of force-prune.
+            opts.valid(true).working_tree(true);
+            wt.prune(Some(&mut opts))
+                .map_err(|e| AbundioError::Git(format!("prune worktree: {e}")))?;
+            return Ok(());
+        }
+    }
+    Err(AbundioError::NotFound(format!(
+        "worktree not found: {worktree_path}"
+    )))
+}
+
+/// True if the worktree at `cwd` has any staged or unstaged change, or an
+/// untracked file — used to escalate the Remove-worktree confirmation.
+pub fn worktree_is_dirty(cwd: &str) -> bool {
+    let Ok(repo) = open_repo(cwd) else {
+        return false;
+    };
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(false)
+        .include_ignored(false);
+    let dirty = match repo.statuses(Some(&mut opts)) {
+        Ok(statuses) => statuses.iter().any(|s| {
+            s.status().intersects(
+                Status::WT_NEW
+                    | Status::WT_MODIFIED
+                    | Status::WT_DELETED
+                    | Status::WT_RENAMED
+                    | Status::WT_TYPECHANGE
+                    | Status::INDEX_NEW
+                    | Status::INDEX_MODIFIED
+                    | Status::INDEX_DELETED
+                    | Status::INDEX_RENAMED
+                    | Status::INDEX_TYPECHANGE
+                    | Status::CONFLICTED,
+            )
+        }),
+        Err(_) => false,
+    };
+    dirty
 }
 
 fn untracked_files(repo: &Repository) -> Vec<GitChangedFile> {

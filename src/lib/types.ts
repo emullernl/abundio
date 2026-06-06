@@ -63,6 +63,9 @@ export interface Workspace {
 	profileId: string;
 	createdAt: number;
 	updatedAt: number;
+	/** Worktree setup commands run in a newly created worktree's terminal after
+	 *  an in-app Add worktree. Only meaningful on a main-worktree Workspace. */
+	worktreeSetupCommands: string;
 }
 
 export interface WorkspaceUpdate {
@@ -73,6 +76,7 @@ export interface WorkspaceUpdate {
 	fileTabsJson?: string;
 	baseBranch?: string | null;
 	lastBranch?: string;
+	worktreeSetupCommands?: string;
 }
 
 export interface WorkspaceWithTabs {
@@ -88,7 +92,23 @@ export interface WorkspaceWithTabs {
 	profileId: string;
 	createdAt: number;
 	updatedAt: number;
+	worktreeSetupCommands: string;
 	tabs: Tab[];
+}
+
+// ── Worktrees ──
+
+/** One worktree of a repository (mirrors the Rust `WorktreeEntry`). */
+export interface WorktreeEntry {
+	/** Canonicalized worktree root folder. */
+	path: string;
+	/** Checked-out branch shorthand, or null if detached/unborn/missing. */
+	branch: string | null;
+	/** True for the repository's main worktree (the Primary worktree). */
+	isPrimary: boolean;
+	/** Whether the folder still exists on disk. A git-tracked worktree with
+	 *  `exists: false` is stale (keep + render stale), not a confirmed removal. */
+	exists: boolean;
 }
 
 // ── Tab ──

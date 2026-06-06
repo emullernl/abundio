@@ -66,6 +66,7 @@ function seedWorkspace(id: string, name: string) {
 		profileId: "p-default",
 		createdAt: 0,
 		updatedAt: 0,
+		worktreeSetupCommands: "",
 		tabs: [],
 	};
 	useWorkspaceStore.setState({ workspaces: [ws] });
