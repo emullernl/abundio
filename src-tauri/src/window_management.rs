@@ -82,6 +82,7 @@ pub fn open_or_focus_settings_window(
         None => "index.html?settings".to_string(),
     };
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = WebviewWindowBuilder::new(
         app,
         SETTINGS_WINDOW_LABEL,
@@ -176,6 +177,7 @@ pub fn open_window_with_profile_and_label(
     // OS-drawn title (the React Titlebar component renders it itself). The
     // tauri.macos.conf.json applies these settings to the conf-spawned main
     // window — we replicate them here for every additional window.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder =
         WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
             .title(&window_title_for(&profile_name))

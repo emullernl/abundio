@@ -196,6 +196,7 @@ pub struct LaunchFile {
 /// always include those as extras. On Windows, probes common binary extensions.
 pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH").unwrap_or_default();
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
     #[cfg(target_os = "macos")]
     {
