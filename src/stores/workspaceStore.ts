@@ -461,8 +461,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 		const profileId = fallbackProfileId();
 		const ws = await workspacesApi.create(name, rootFolder, profileId);
-		// Unopened: not marked opened, not activated, no PTY, no agent.
-		set((state) => ({ workspaces: [...state.workspaces, ws] }));
+		// Unopened: not marked opened, not activated, no PTY, no agent. We still
+		// record the active tab so switching to it later renders the first tab —
+		// mirrors loadWorkspaces' default. Without this, activeTabByWorkspace[id]
+		// is undefined and no tab content shows until an app restart.
+		const firstTabId = ws.tabs[0]?.id;
+		set((state) => ({
+			workspaces: [...state.workspaces, ws],
+			activeTabByWorkspace: firstTabId
+				? { ...state.activeTabByWorkspace, [ws.id]: firstTabId }
+				: state.activeTabByWorkspace,
+		}));
 		useWorkspaceGitStore
 			.getState()
 			.fetch(ws.id, rootFolder, null)

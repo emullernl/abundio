@@ -420,4 +420,59 @@ describe("workspaceStore", () => {
 			expect(useWorkspaceStore.getState().workspaces).toHaveLength(0);
 		});
 	});
+
+	describe("addDiscoveredWorktree", () => {
+		it("records the active tab so switching later renders the first tab", async () => {
+			const { workspaces } = await import("../../lib/ipc");
+			const discovered = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [makeTab({ id: "wt-tab-1", workspaceId: "wt-1" })],
+			});
+			vi.mocked(workspaces.create).mockResolvedValueOnce(discovered);
+
+			await useWorkspaceStore
+				.getState()
+				.addDiscoveredWorktree("feature", "/repo/feature");
+
+			// The invariant that loadWorkspaces establishes for every workspace:
+			// activeTabByWorkspace[id] points at the first tab. Without it,
+			// setActiveWorkspace can't resolve a tab and no content renders.
+			expect(
+				useWorkspaceStore.getState().activeTabByWorkspace["wt-1"],
+			).toBe("wt-tab-1");
+			// Still unopened: not activated, not marked opened.
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
+			expect(markWorkspaceOpened).not.toHaveBeenCalled();
+		});
+
+		it("activates the first tab when the discovered worktree is switched to", async () => {
+			const { workspaces } = await import("../../lib/ipc");
+			const discovered = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [makeTab({ id: "wt-tab-1", workspaceId: "wt-1" })],
+			});
+			vi.mocked(workspaces.create).mockResolvedValueOnce(discovered);
+
+			await useWorkspaceStore
+				.getState()
+				.addDiscoveredWorktree("feature", "/repo/feature");
+			useWorkspaceStore.getState().setActiveWorkspace("wt-1");
+
+			expect(useWorkspaceStore.getState().focusedPaneId).toBe("pane-1");
+		});
+
+		it("dedups against an existing workspace for the same folder", async () => {
+			const existing = makeWorkspace({ rootFolder: "/repo/feature" });
+			useWorkspaceStore.setState({ workspaces: [existing] });
+
+			const result = await useWorkspaceStore
+				.getState()
+				.addDiscoveredWorktree("feature", "/repo/feature");
+
+			expect(result).toBeNull();
+			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
+		});
+	});
 });
