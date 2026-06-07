@@ -1346,6 +1346,18 @@ function UpdatesSection() {
 					</div>
 				</div>
 			</div>
+
+			<div
+				style={{
+					fontSize: 11,
+					color: "var(--fg-secondary)",
+					lineHeight: 1.5,
+					marginTop: "auto",
+					paddingTop: 4,
+				}}
+			>
+				© 2026 Emil Müller and contributors · MIT OR Apache-2.0
+			</div>
 		</div>
 	);
 }

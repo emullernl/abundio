@@ -63,6 +63,8 @@ pub fn build_menu(
     let about_metadata = AboutMetadata {
         name: Some(pkg.name.clone()),
         version: Some(pkg.version.to_string()),
+        copyright: Some("Copyright © 2026 Emil Müller and contributors".to_string()),
+        license: Some("MIT OR Apache-2.0".to_string()),
         ..Default::default()
     };
 
