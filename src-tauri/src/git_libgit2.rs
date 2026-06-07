@@ -433,8 +433,24 @@ pub fn detect_default_branch_uncached(cwd: &str) -> Result<String, AbundioError>
 
 fn canonicalize_lossy(p: &Path) -> String {
     std::fs::canonicalize(p)
-        .map(|c| c.to_string_lossy().to_string())
+        .map(|c| strip_verbatim_prefix(&c.to_string_lossy()))
         .unwrap_or_else(|_| p.to_string_lossy().to_string())
+}
+
+/// Strip Windows' `\\?\` verbatim (extended-length) prefix that
+/// `std::fs::canonicalize` adds on Windows. The rest of the app stores
+/// unprefixed roots (from the folder picker), so without this the same folder
+/// compares unequal — e.g. the main worktree shows up twice in the sidebar.
+/// `\\?\UNC\server\share` → `\\server\share`; `\\?\C:\x` → `C:\x`. No-op on
+/// POSIX, where paths never carry the prefix.
+fn strip_verbatim_prefix(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 /// The common git dir shared by every worktree of a repository, derived from
@@ -793,5 +809,23 @@ mod tests {
         let bits = worktree_summary_bits(path);
         assert!(bits.group_key.is_none());
         assert!(!bits.is_main_worktree);
+    }
+
+    #[test]
+    fn strip_verbatim_prefix_normalizes_windows_paths() {
+        // Plain disk paths shed the `\\?\` prefix so they match the unprefixed
+        // roots the folder picker stores (the sidebar dedup/grouping key).
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\C:\Users\me\dev\project"),
+            r"C:\Users\me\dev\project"
+        );
+        // Verbatim UNC paths collapse back to the familiar `\\server\share` form.
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\UNC\server\share\repo"),
+            r"\\server\share\repo"
+        );
+        // Already-unprefixed and POSIX paths pass through untouched.
+        assert_eq!(strip_verbatim_prefix(r"C:\Users\me"), r"C:\Users\me");
+        assert_eq!(strip_verbatim_prefix("/home/me/dev/project"), "/home/me/dev/project");
     }
 }
