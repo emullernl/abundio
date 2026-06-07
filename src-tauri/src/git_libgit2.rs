@@ -110,6 +110,20 @@ fn detect_default_branch(repo: &Repository, cwd: &str) -> Result<String, Abundio
         default_branch_cache().insert(cache_key, "master".to_string());
         return Ok("master".to_string());
     }
+    // A freshly `git init`'d repo has an unborn HEAD: no commits, so no branch
+    // refs exist yet. Read HEAD's symbolic target to recover the intended
+    // default branch name (e.g. `refs/heads/main` → `main`) so the bundle still
+    // resolves and the repo is recognized the moment it's initialized. Not
+    // cached — the eventual default may differ once commits/remotes appear.
+    if let Ok(head_ref) = repo.find_reference("HEAD") {
+        if let Some(target) = head_ref.symbolic_target() {
+            if let Some(name) = target.strip_prefix("refs/heads/") {
+                if !name.is_empty() {
+                    return Ok(name.to_string());
+                }
+            }
+        }
+    }
     Err(AbundioError::Git("No default branch found".to_string()))
 }
 
@@ -569,11 +583,23 @@ fn resolve_worktree_branch<'r>(
         let _ = local.set_upstream(Some(&format!("origin/{branch}")));
         return Ok((local.into_reference(), true));
     }
-    // New branch forked from the primary worktree's current HEAD.
-    let head_commit = main_repo
-        .head()
-        .and_then(|h| h.peel_to_commit())
-        .map_err(|e| AbundioError::Git(format!("primary HEAD: {e}")))?;
+    // New branch forked from the primary worktree's current HEAD. A repo with
+    // no commits (unborn HEAD, e.g. right after `git init`) has no commit to
+    // base a worktree on — git itself can't do this — so surface a clear,
+    // actionable message instead of the raw libgit2 "reference not found".
+    let head = main_repo.head().map_err(|e| {
+        if e.code() == ErrorCode::UnbornBranch {
+            AbundioError::Git(
+                "this repository has no commits yet — make an initial commit before adding a worktree"
+                    .to_string(),
+            )
+        } else {
+            AbundioError::Git(format!("primary HEAD: {e}"))
+        }
+    })?;
+    let head_commit = head
+        .peel_to_commit()
+        .map_err(|e| AbundioError::Git(format!("primary HEAD commit: {e}")))?;
     let b = main_repo
         .branch(branch, &head_commit, false)
         .map_err(|e| AbundioError::Git(format!("create branch '{branch}': {e}")))?;
@@ -596,11 +622,15 @@ pub fn add_worktree(
             "target folder already exists: {path}"
         )));
     }
+
+    // Resolve the branch before touching the filesystem so a failure here (e.g.
+    // a commitless repo's unborn HEAD) doesn't leave an empty `.worktrees` dir
+    // behind.
+    let (branch_ref, created_branch) = resolve_worktree_branch(&main_repo, branch)?;
+
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(AbundioError::Io)?;
     }
-
-    let (branch_ref, created_branch) = resolve_worktree_branch(&main_repo, branch)?;
 
     let name = worktree_name_for(target);
     let mut opts = WorktreeAddOptions::new();
@@ -726,4 +756,42 @@ fn untracked_files(repo: &Repository) -> Vec<GitChangedFile> {
         }
     }
     files
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_repo_resolves_default_branch_from_unborn_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        // A bare `init` leaves an unborn HEAD: no commits, no branch refs yet.
+        git2::Repository::init(dir.path()).unwrap();
+
+        // Branch info must still resolve (no "No default branch found"), so the
+        // GitScheduler can emit a success bundle the moment `git init` runs and
+        // the repo gets recognized instead of staying "Not a git repository".
+        let info = compute_branch_info_sync(path).expect("branch info for fresh repo");
+        assert!(!info.default_branch.is_empty());
+        // Changed-files must not error on the unborn repo either.
+        let files =
+            compute_changed_files_sync(path, None).expect("changed files for fresh repo");
+        assert!(files.is_empty());
+        // And it must register as a (main) git worktree for sidebar grouping.
+        let bits = worktree_summary_bits(path);
+        assert!(bits.group_key.is_some());
+        assert!(bits.is_main_worktree);
+    }
+
+    #[test]
+    fn non_repo_dir_is_not_a_git_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        assert!(!is_git_repo(path));
+        assert!(compute_branch_info_sync(path).is_err());
+        let bits = worktree_summary_bits(path);
+        assert!(bits.group_key.is_none());
+        assert!(!bits.is_main_worktree);
+    }
 }

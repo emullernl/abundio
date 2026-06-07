@@ -160,6 +160,26 @@ mod tests {
     }
 
     #[test]
+    fn add_worktree_on_commitless_repo_gives_actionable_error() {
+        // A freshly `git init`'d repo has an unborn HEAD — git can't base a
+        // worktree on a non-existent commit. The error must explain that
+        // (mention commits) rather than leak the raw libgit2 reference error.
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-b", "main"]);
+        let primary = dir.path().to_str().unwrap().to_string();
+        let wt_path = dir.path().parent().unwrap().join("wt-empty");
+        let res = git_libgit2::add_worktree(&primary, "feature", wt_path.to_str().unwrap());
+        let err = res.expect_err("worktree add on a commitless repo must fail");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("commit"),
+            "error should mention commits, got: {msg}"
+        );
+        // The half-created target folder must not be left behind.
+        assert!(!wt_path.exists());
+    }
+
+    #[test]
     fn group_key_matches_for_separate_gitdir_worktree() {
         // A repo created with --separate-git-dir has `<work>/.git` as a *file*
         // pointing at the real gitdir. Exercises the `commondir`-file path in

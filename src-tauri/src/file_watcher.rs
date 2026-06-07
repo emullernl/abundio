@@ -31,6 +31,13 @@ fn is_git_internal(path: &Path) -> bool {
     })
 }
 
+/// Whether the path is the `.git` directory itself (its final component is
+/// `.git`), as opposed to something nested inside it. The creation of this
+/// directory is the non-git → git transition (`git init` / a fresh clone).
+fn is_dot_git_dir(path: &Path) -> bool {
+    matches!(path.file_name().and_then(|s| s.to_str()), Some(".git"))
+}
+
 /// Whether a `.git` path represents a meaningful ref change (branch switch,
 /// commit, merge, rebase) rather than an index/lock refresh. Read-only git
 /// commands with `--no-optional-locks` still touch the index occasionally;
@@ -235,12 +242,20 @@ fn collect_parents(
     git_changed: &mut bool,
 ) {
     let class = classify_kind(&event.kind);
+    let is_create = matches!(event.kind, EventKind::Create(_));
     for path in &event.paths {
         if is_ignored(path) {
             continue;
         }
         if is_git_internal(path) {
             if is_meaningful_git_change(path) {
+                *git_changed = true;
+            } else if is_create && is_dot_git_dir(path) {
+                // `git init` (or a fresh clone) just created the repo's `.git`
+                // dir — the non-git → git transition. FSEvents may coalesce the
+                // burst of inner-file creates into a single event on the dir
+                // itself, which wouldn't match `is_meaningful_git_change`, so
+                // recognize it here to trigger a git refresh.
                 *git_changed = true;
             }
             continue;
@@ -275,6 +290,46 @@ mod tests {
         assert!(is_git_internal(Path::new("/projects/myapp/.git/HEAD")));
         assert!(is_git_internal(Path::new("/projects/myapp/.git/refs/heads/main")));
         assert!(!is_git_internal(Path::new("/projects/myapp/src/main.rs")));
+    }
+
+    #[test]
+    fn dot_git_dir_detected() {
+        assert!(is_dot_git_dir(Path::new("/projects/myapp/.git")));
+        // Children of `.git` are not the dir itself.
+        assert!(!is_dot_git_dir(Path::new("/projects/myapp/.git/HEAD")));
+        assert!(!is_dot_git_dir(Path::new("/projects/myapp/src/main.rs")));
+    }
+
+    #[test]
+    fn collect_parents_git_init_triggers_git_change() {
+        // `git init` surfaced as the creation of the `.git` directory itself
+        // (FSEvents coalescing the inner-file burst). This is the non-git → git
+        // transition and must trigger a git refresh.
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::Folder),
+            paths: vec![PathBuf::from("/projects/myapp/.git")],
+            attrs: Default::default(),
+        };
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
+        assert!(git_changed);
+        // The `.git` dir itself is not surfaced as a normal file/dir change.
+        assert!(pending.is_empty());
+        assert!(changed.is_empty());
+    }
+
+    #[test]
+    fn collect_parents_git_dir_removal_does_not_trigger_git_change() {
+        // Only *creation* of `.git` is the init signal; a removal (or any other
+        // event) on the dir must not be mistaken for it here.
+        let (mut pending, mut changed, mut removed, mut git_changed) = empty_sets();
+        let event = Event {
+            kind: EventKind::Remove(notify::event::RemoveKind::Folder),
+            paths: vec![PathBuf::from("/projects/myapp/.git")],
+            attrs: Default::default(),
+        };
+        collect_parents(&event, &mut pending, &mut changed, &mut removed, &mut git_changed);
+        assert!(!git_changed);
     }
 
     #[test]

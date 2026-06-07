@@ -253,6 +253,24 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 				.catch(() => {});
 		}
 
+		// Refresh worktree grouping facts when this folder wasn't recognized as
+		// a git worktree yet — e.g. the user ran `git init` in a folder that
+		// wasn't a repo when the Workspace opened. The scheduler now reports a
+		// successful bundle, so re-run the batched summary to populate
+		// `isMainWorktree`/`worktreeGroupKey` and surface the "Add worktree"
+		// affordance without reopening the Workspace. Gated on the missing group
+		// key so it fires once per non-git→git transition, not on every push.
+		const wtStore = useWorkspaceGitStore.getState();
+		if (workspace && !wtStore.worktreeFacts[workspaceId]?.worktreeGroupKey) {
+			wtStore.syncWorktreeFacts([
+				{
+					id: workspaceId,
+					rootFolder: workspace.rootFolder,
+					baseBranch: workspaceBaseBranch,
+				},
+			]);
+		}
+
 		// Singleton: only when this bundle is for the active workspace.
 		// Background-workspace pushes update the per-workspace caches above
 		// without disturbing what's currently visible in the Git changes tab.
@@ -275,13 +293,32 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 
 	applyError: (workspaceId, message, notGitRepo) => {
 		if (notGitRepo) {
-			useWorkspaceGitStore.getState().setInfo(workspaceId, {
+			const wtStore = useWorkspaceGitStore.getState();
+			wtStore.setInfo(workspaceId, {
 				isGitRepo: false,
 				currentBranch: null,
 				changedFileCount: 0,
 				additions: 0,
 				deletions: 0,
 			});
+			// Symmetric to applyBundle: a folder that's no longer a repo (e.g.
+			// `.git` was removed mid-session) must drop its stale worktree facts
+			// so the "Add worktree" affordance disappears. Gated on a still-held
+			// group key so it fires once per git→non-git transition.
+			if (wtStore.worktreeFacts[workspaceId]?.worktreeGroupKey) {
+				const ws = useWorkspaceStore
+					.getState()
+					.workspaces.find((w) => w.id === workspaceId);
+				if (ws) {
+					wtStore.syncWorktreeFacts([
+						{
+							id: workspaceId,
+							rootFolder: ws.rootFolder,
+							baseBranch: ws.baseBranch ?? null,
+						},
+					]);
+				}
+			}
 		}
 		const activeId = useWorkspaceStore.getState().activeWorkspaceId;
 		if (workspaceId !== activeId) return;
