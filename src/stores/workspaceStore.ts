@@ -58,6 +58,16 @@ interface WorkspaceState {
 		setupCommands: string,
 		agent?: CodingAgent,
 	) => Promise<WorkspaceWithTabs>;
+	/** Create the worktree on disk (worktrees.add) then create + activate its
+	 *  Workspace — one awaitable op so the sidebar can show a single waiting
+	 *  indicator over the whole (potentially slow) operation. */
+	createWorktreeWorkspace: (
+		primaryCwd: string,
+		branch: string,
+		absolutePath: string,
+		setupCommands: string,
+		agent?: CodingAgent,
+	) => Promise<WorkspaceWithTabs>;
 	/** Add a discovered worktree as an unopened Workspace (no PTY, no agent),
 	 *  deduped by folder. Used by sibling expansion and live reconcile. */
 	addDiscoveredWorktree: (
@@ -419,6 +429,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 
 		return workspaceWithTabs;
+	},
+
+	createWorktreeWorkspace: async (
+		primaryCwd,
+		branch,
+		absolutePath,
+		setupCommands,
+		agent,
+	) => {
+		// Disk-level git worktree add (slow on large repos), then the in-app
+		// Workspace.
+		const entry = await worktreesApi.add(primaryCwd, branch, absolutePath);
+		try {
+			return await get().addWorktreeWorkspace(entry, setupCommands, agent);
+		} catch (e) {
+			// The worktree exists on disk but registering its Workspace failed
+			// (rare — local DB insert). Best-effort rollback so the user isn't left
+			// with an orphan folder + stale `.git/worktrees` entry that would also
+			// make a same-path "Edit & retry" fail with "target folder already
+			// exists". If the rollback itself fails, they're no worse off than
+			// before it; surface the original error either way.
+			await worktreesApi.remove(primaryCwd, entry.path).catch(() => {});
+			throw e;
+		}
 	},
 
 	addWorktreeWorkspace: async (entry, setupCommands, agent) => {
