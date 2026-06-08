@@ -197,6 +197,13 @@ pub struct LaunchFile {
 /// rather than the inherited process env. `/usr/local/bin` and
 /// `/opt/homebrew/bin` are still appended as extras. On Windows, probes common
 /// binary extensions.
+///
+/// Cost note: the first call process-wide (shared with `gh_commands`) blocks on
+/// a login-shell subprocess to resolve the PATH (~50–300ms on macOS); the
+/// result is cached for the process lifetime, so subsequent calls are cheap.
+/// Today's callers (`lib.rs` setup, `list_installed_agent_commands`,
+/// `detect_all`) are off the UI hot path — keep them there, or warm
+/// `shell_path()` ahead of time if this ever moves onto a UI-blocking path.
 pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
     let path_var = crate::shell_env::shell_path();
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
