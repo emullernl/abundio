@@ -75,6 +75,9 @@ export function useWorktreeSync(): void {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const signature = workspaces.map((w) => `${w.id}:${w.rootFolder}`).join("|");
 
+	// `signature` is the intended trigger; the body reads fresh state via
+	// getState() rather than the reactive value, so it's the only dep.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: signature is the re-run key
 	useEffect(() => {
 		let cancelled = false;
 		const list = useWorkspaceStore.getState().workspaces.map((w) => ({
@@ -102,9 +105,6 @@ export function useWorktreeSync(): void {
 		return () => {
 			cancelled = true;
 		};
-		// `signature` is the intended trigger; the body reads fresh state via
-		// getState() rather than the reactive value, so it's the only dep.
-		// biome-ignore lint/correctness/useExhaustiveDependencies: signature is the re-run key
 	}, [signature]);
 
 	// Live reconcile on CLI worktree add/remove. Registered once.

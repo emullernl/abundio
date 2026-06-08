@@ -438,9 +438,9 @@ describe("workspaceStore", () => {
 			// The invariant that loadWorkspaces establishes for every workspace:
 			// activeTabByWorkspace[id] points at the first tab. Without it,
 			// setActiveWorkspace can't resolve a tab and no content renders.
-			expect(
-				useWorkspaceStore.getState().activeTabByWorkspace["wt-1"],
-			).toBe("wt-tab-1");
+			expect(useWorkspaceStore.getState().activeTabByWorkspace["wt-1"]).toBe(
+				"wt-tab-1",
+			);
 			// Still unopened: not activated, not marked opened.
 			expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
 			expect(markWorkspaceOpened).not.toHaveBeenCalled();
