@@ -192,12 +192,15 @@ pub struct LaunchFile {
 
 /// Probe `$PATH` + a few well-known dirs for an executable. On macOS,
 /// launching via the Tauri app bundle yields a minimal `$PATH` that excludes
-/// `/usr/local/bin` and `/opt/homebrew/bin` (where editor CLIs live), so we
-/// always include those as extras. On Windows, probes common binary extensions.
+/// the user's shell PATH (e.g. `~/.local/bin`, where Claude Code's installer
+/// puts `claude`), so we resolve the full login-shell PATH via `shell_path()`
+/// rather than the inherited process env. `/usr/local/bin` and
+/// `/opt/homebrew/bin` are still appended as extras. On Windows, probes common
+/// binary extensions.
 pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    let path_var = crate::shell_env::shell_path();
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(path_var).collect();
     #[cfg(target_os = "macos")]
     {
         for extra in ["/usr/local/bin", "/opt/homebrew/bin"] {
