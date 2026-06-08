@@ -45,6 +45,19 @@ export function WorktreeProgressDialog({
 		if (isError) primaryRef.current?.focus();
 	}, [isError]);
 
+	// Escape closes the error dialog regardless of where focus is (the inline
+	// handler below only fires while focus is inside the dialog; there's no focus
+	// trap, so a Tab-out would otherwise leave Escape dead). Progress is not
+	// dismissable, so this only binds in the error state.
+	useEffect(() => {
+		if (!isError) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onClose?.();
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [isError, onClose]);
+
 	return (
 		<AnimatePresence>
 			<motion.div
@@ -63,6 +76,7 @@ export function WorktreeProgressDialog({
 				<motion.div
 					role="dialog"
 					aria-label={`${verb} worktree`}
+					aria-busy={!isError}
 					className="rounded-2xl overflow-hidden flex flex-col"
 					initial={{ opacity: 0, scale: 0.95, y: 10 }}
 					animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -98,6 +112,7 @@ export function WorktreeProgressDialog({
 									Couldn't {VERB_ACTION[verb]} worktree
 								</h2>
 								<p
+									role="alert"
 									className="leading-relaxed"
 									style={{
 										color: "var(--fg-secondary)",
@@ -165,6 +180,7 @@ export function WorktreeProgressDialog({
 							style={{ padding: "36px 32px 34px" }}
 						>
 							<div
+								aria-hidden="true"
 								className="flex gap-[3px] mb-5"
 								style={{ width: 27, height: 14 }}
 							>
@@ -183,6 +199,8 @@ export function WorktreeProgressDialog({
 								))}
 							</div>
 							<p
+								role="status"
+								aria-live="polite"
 								style={{
 									color: "var(--fg-primary)",
 									fontSize: 14,

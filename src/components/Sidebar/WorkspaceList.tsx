@@ -127,6 +127,10 @@ export function WorkspaceList({
 		: null;
 	// If the pending-close workspace is a primary with a set, closing it cascades
 	// to its linked worktree workspaces (closed too — folders on disk are kept).
+	// Scope is taken from `rows` (the rendered grouping), so it always matches
+	// what the user sees: if git facts haven't loaded yet the set isn't rendered
+	// as a set either, so there's no cascade *and* the dialog shows the plain
+	// single-workspace message — no false "will also close N" promise.
 	const pendingLinked: WorkspaceWithTabs[] = pendingDeleteId
 		? (rows.find(
 				(r): r is SetRow =>
@@ -502,8 +506,20 @@ export function WorkspaceList({
 					confirmVariant="danger"
 					onConfirm={() => {
 						if (pendingDeleteId) {
-							deleteWorkspace(pendingDeleteId);
-							for (const linked of pendingLinked) deleteWorkspace(linked.id);
+							// Close the primary and any linked worktrees together. Run
+							// them through allSettled so one failed delete doesn't abort
+							// the rest and, crucially, isn't swallowed as an unhandled
+							// rejection — surface it instead.
+							const ids = [pendingDeleteId, ...pendingLinked.map((w) => w.id)];
+							Promise.allSettled(ids.map((id) => deleteWorkspace(id))).then(
+								(results) => {
+									for (const r of results) {
+										if (r.status === "rejected") {
+											console.error("Failed to close workspace:", r.reason);
+										}
+									}
+								},
+							);
 						}
 						setPendingDeleteId(null);
 					}}

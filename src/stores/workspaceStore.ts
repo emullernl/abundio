@@ -439,11 +439,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		agent,
 	) => {
 		// Disk-level git worktree add (slow on large repos), then the in-app
-		// Workspace. If addWorktreeWorkspace throws after the worktree exists on
-		// disk, a straight retry would hit "target folder already exists" — rare
-		// (local DB insert) and surfaced to the user via the error message.
+		// Workspace.
 		const entry = await worktreesApi.add(primaryCwd, branch, absolutePath);
-		return get().addWorktreeWorkspace(entry, setupCommands, agent);
+		try {
+			return await get().addWorktreeWorkspace(entry, setupCommands, agent);
+		} catch (e) {
+			// The worktree exists on disk but registering its Workspace failed
+			// (rare — local DB insert). Best-effort rollback so the user isn't left
+			// with an orphan folder + stale `.git/worktrees` entry that would also
+			// make a same-path "Edit & retry" fail with "target folder already
+			// exists". If the rollback itself fails, they're no worse off than
+			// before it; surface the original error either way.
+			await worktreesApi.remove(primaryCwd, entry.path).catch(() => {});
+			throw e;
+		}
 	},
 
 	addWorktreeWorkspace: async (entry, setupCommands, agent) => {
