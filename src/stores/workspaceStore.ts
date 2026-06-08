@@ -58,6 +58,16 @@ interface WorkspaceState {
 		setupCommands: string,
 		agent?: CodingAgent,
 	) => Promise<WorkspaceWithTabs>;
+	/** Create the worktree on disk (worktrees.add) then create + activate its
+	 *  Workspace — one awaitable op so the sidebar can show a single waiting
+	 *  indicator over the whole (potentially slow) operation. */
+	createWorktreeWorkspace: (
+		primaryCwd: string,
+		branch: string,
+		absolutePath: string,
+		setupCommands: string,
+		agent?: CodingAgent,
+	) => Promise<WorkspaceWithTabs>;
 	/** Add a discovered worktree as an unopened Workspace (no PTY, no agent),
 	 *  deduped by folder. Used by sibling expansion and live reconcile. */
 	addDiscoveredWorktree: (
@@ -419,6 +429,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 
 		return workspaceWithTabs;
+	},
+
+	createWorktreeWorkspace: async (
+		primaryCwd,
+		branch,
+		absolutePath,
+		setupCommands,
+		agent,
+	) => {
+		// Disk-level git worktree add (slow on large repos), then the in-app
+		// Workspace. If addWorktreeWorkspace throws after the worktree exists on
+		// disk, a straight retry would hit "target folder already exists" — rare
+		// (local DB insert) and surfaced to the user via the error message.
+		const entry = await worktreesApi.add(primaryCwd, branch, absolutePath);
+		return get().addWorktreeWorkspace(entry, setupCommands, agent);
 	},
 
 	addWorktreeWorkspace: async (entry, setupCommands, agent) => {

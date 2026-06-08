@@ -6,15 +6,34 @@ import {
 	getAgentIconComponent,
 	TerminalBrandIcon,
 } from "../lib/agentIcons";
-import { worktrees } from "../lib/ipc";
 import type { CodingAgent } from "../lib/types";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+
+/** Everything the caller needs to create the worktree and (on error) reopen
+ *  this form pre-filled with the same values. */
+export interface AddWorktreePayload {
+	primaryCwd: string;
+	primaryName: string;
+	branch: string;
+	folder: string;
+	absolutePath: string;
+	agent?: CodingAgent;
+	setupCommands: string;
+	selectedIndex: number;
+}
 
 interface Props {
 	/** The primary worktree's folder — worktrees are added relative to it. */
 	primaryCwd: string;
 	primaryName: string;
+	/** Pre-fill values, used when reopening after a failed create. */
+	initialBranch?: string;
+	initialFolder?: string;
+	initialSelectedIndex?: number;
+	/** Hand the validated form values to the caller, which runs the (slow)
+	 *  creation behind the waiting modal. This form does no async work itself. */
+	onSubmit: (payload: AddWorktreePayload) => void;
 	onClose: () => void;
 }
 
@@ -84,9 +103,16 @@ function isValidBranch(branch: string): boolean {
 	return true;
 }
 
-export function AddWorktreeDialog({ primaryCwd, primaryName, onClose }: Props) {
+export function AddWorktreeDialog({
+	primaryCwd,
+	primaryName,
+	initialBranch,
+	initialFolder,
+	initialSelectedIndex,
+	onSubmit,
+	onClose,
+}: Props) {
 	const agents = useSettingsStore((s) => s.agents);
-	const addWorktreeWorkspace = useWorkspaceStore((s) => s.addWorktreeWorkspace);
 	const setupCommands = useWorkspaceStore(
 		(s) =>
 			s.workspaces.find((w) => w.rootFolder === primaryCwd)
@@ -94,12 +120,12 @@ export function AddWorktreeDialog({ primaryCwd, primaryName, onClose }: Props) {
 	);
 
 	const branchInputRef = useRef<HTMLInputElement>(null);
-	const [branch, setBranch] = useState("");
-	const [folder, setFolder] = useState("");
-	const folderDirty = useRef(false);
-	const [selectedIndex, setSelectedIndex] = useState(0);
-	const [submitting, setSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const [branch, setBranch] = useState(initialBranch ?? "");
+	const [folder, setFolder] = useState(initialFolder ?? "");
+	// Pre-filled folder counts as user-edited so the branch→folder auto-derive
+	// below doesn't clobber it on reopen.
+	const folderDirty = useRef(Boolean(initialFolder));
+	const [selectedIndex, setSelectedIndex] = useState(initialSelectedIndex ?? 0);
 
 	const repo = basename(primaryCwd);
 
@@ -134,22 +160,24 @@ export function AddWorktreeDialog({ primaryCwd, primaryName, onClose }: Props) {
 
 	const absolutePath = folder ? resolvePath(primaryCwd, folder) : "";
 	const branchValid = isValidBranch(branch);
-	const isValid = branchValid && folder.length > 0 && !submitting;
+	const isValid = branchValid && folder.length > 0;
 
-	const submit = async () => {
+	// Hand validated values to the caller; it closes this form and runs the
+	// (slow) creation behind the waiting modal. Backend errors surface there.
+	const submit = () => {
 		if (!isValid) return;
-		setSubmitting(true);
-		setError(null);
-		try {
-			const entry = await worktrees.add(primaryCwd, branch, absolutePath);
-			const opt = options[selectedIndex];
-			const agent = opt?.choice.kind === "agent" ? opt.choice.agent : undefined;
-			await addWorktreeWorkspace(entry, setupCommands, agent);
-			onClose();
-		} catch (e) {
-			setError(e instanceof Error ? e.message : String(e));
-			setSubmitting(false);
-		}
+		const opt = options[selectedIndex];
+		const agent = opt?.choice.kind === "agent" ? opt.choice.agent : undefined;
+		onSubmit({
+			primaryCwd,
+			primaryName,
+			branch,
+			folder,
+			absolutePath,
+			agent,
+			setupCommands,
+			selectedIndex,
+		});
 	};
 
 	const onKeyDown = (e: React.KeyboardEvent) => {
@@ -361,23 +389,6 @@ export function AddWorktreeDialog({ primaryCwd, primaryName, onClose }: Props) {
 								})}
 							</div>
 						</div>
-
-						{error && (
-							<div
-								style={{
-									fontSize: 12,
-									color: "var(--error)",
-									backgroundColor:
-										"color-mix(in srgb, var(--error) 12%, transparent)",
-									border:
-										"1px solid color-mix(in srgb, var(--error) 30%, transparent)",
-									borderRadius: 8,
-									padding: "8px 12px",
-								}}
-							>
-								{error}
-							</div>
-						)}
 					</div>
 
 					<div
@@ -414,7 +425,7 @@ export function AddWorktreeDialog({ primaryCwd, primaryName, onClose }: Props) {
 								border: "none",
 							}}
 						>
-							<span>{submitting ? "Creating…" : "Create worktree"}</span>
+							<span>Create worktree</span>
 							<CornerDownLeft size={13} />
 						</button>
 					</div>

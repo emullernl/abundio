@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useWorktreeProgress } from "../../hooks/useWorktreeProgress";
 import { worktrees } from "../../lib/ipc";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
@@ -6,17 +7,22 @@ import {
 	flattenRowsToIds,
 	rowId,
 	rowWorkspaces,
+	type SetRow,
 	type WorkspaceRow,
 } from "../../lib/worktreeGrouping";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { AddWorktreeDialog } from "../AddWorktreeDialog";
+import {
+	AddWorktreeDialog,
+	type AddWorktreePayload,
+} from "../AddWorktreeDialog";
 import { ConfirmDialog } from "../ConfirmDialog";
 import {
 	type ContextMenuItem,
 	PaneContextMenu,
 } from "../Terminal/PaneContextMenu";
 import { WorkspaceSettingsDialog } from "../WorkspaceSettingsDialog";
+import { WorktreeProgressDialog } from "../WorktreeProgressDialog";
 import { CollapsedStrip } from "./CollapsedStrip";
 import { WorkspaceItem } from "./WorkspaceItem";
 
@@ -52,7 +58,21 @@ export function WorkspaceList({
 	const removeWorktreeWorkspace = useWorkspaceStore(
 		(s) => s.removeWorktreeWorkspace,
 	);
+	const createWorktreeWorkspace = useWorkspaceStore(
+		(s) => s.createWorktreeWorkspace,
+	);
 	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
+
+	// Waiting modal for the (potentially slow) create/remove worktree ops.
+	const {
+		display: worktreeProgress,
+		run: runWorktreeProgress,
+		dismiss: dismissWorktreeProgress,
+	} = useWorktreeProgress();
+	// The values from the last create submit, kept so an error's "Edit & retry"
+	// can reopen the form pre-filled.
+	const [lastCreatePayload, setLastCreatePayload] =
+		useState<AddWorktreePayload | null>(null);
 
 	// Derived grouping into render blocks (sets + standalones).
 	const rows = useMemo(
@@ -105,11 +125,21 @@ export function WorkspaceList({
 	const pendingWorkspace = pendingDeleteId
 		? workspaces.find((w) => w.id === pendingDeleteId)
 		: null;
+	// If the pending-close workspace is a primary with a set, closing it cascades
+	// to its linked worktree workspaces (closed too — folders on disk are kept).
+	const pendingLinked: WorkspaceWithTabs[] = pendingDeleteId
+		? (rows.find(
+				(r): r is SetRow =>
+					r.kind === "set" && r.primary.id === pendingDeleteId,
+			)?.linked ?? [])
+		: [];
 
-	// Add worktree dialog target (the primary the worktree is added to).
+	// Add worktree dialog target (the primary the worktree is added to). `initial`
+	// pre-fills the form when reopening after a failed create.
 	const [addWorktreeTarget, setAddWorktreeTarget] = useState<{
 		primaryCwd: string;
 		primaryName: string;
+		initial?: { branch: string; folder: string; selectedIndex: number };
 	} | null>(null);
 
 	// Remove worktree confirmation target.
@@ -238,6 +268,23 @@ export function WorkspaceList({
 		? rows.find((r) => rowId(r) === draggedRowId)
 		: null;
 
+	// Open the dirty-aware Remove-worktree confirm for a linked worktree. Shared
+	// by the context-menu item and the row's X button.
+	const requestRemoveWorktree = useCallback(
+		async (ws: WorkspaceWithTabs, primaryCwd: string) => {
+			// Probe dirtiness before showing the (escalated) confirm.
+			const dirty = await worktrees.dirty(ws.rootFolder).catch(() => false);
+			setRemoveWorktreeTarget({
+				workspaceId: ws.id,
+				name: ws.name,
+				primaryCwd,
+				worktreePath: ws.rootFolder,
+				dirty,
+			});
+		},
+		[],
+	);
+
 	const buildContextMenuItems = useCallback(
 		(workspaceId: string): ContextMenuItem[] => {
 			const role = roleById.get(workspaceId);
@@ -268,36 +315,66 @@ export function WorkspaceList({
 				label: "Rename Workspace",
 				onClick: () => setRenamingId(workspaceId),
 			});
-			items.push({
-				label: "Close Workspace",
-				onClick: () => setPendingDeleteId(workspaceId),
-			});
+			// A linked worktree is removed via "Remove worktree…" (deletes the
+			// folder), not "Close Workspace" (which would just drop the list entry
+			// and leave the worktree on disk to be re-discovered) — so hide it here.
+			if (!role?.linkedPrimaryCwd) {
+				items.push({
+					label: "Close Workspace",
+					onClick: () => setPendingDeleteId(workspaceId),
+				});
+			}
 			if (role?.linkedPrimaryCwd && ws) {
 				const primaryCwd = role.linkedPrimaryCwd;
 				items.push({ separator: true });
 				items.push({
 					label: "Remove worktree…",
-					onClick: async () => {
-						// Probe dirtiness before showing the (escalated) confirm.
-						const dirty = await worktrees.dirty(ws.rootFolder).catch(() => false);
-						setRemoveWorktreeTarget({
-							workspaceId,
-							name: ws.name,
-							primaryCwd,
-							worktreePath: ws.rootFolder,
-							dirty,
-						});
-					},
+					onClick: () => requestRemoveWorktree(ws, primaryCwd),
 				});
 			}
 			return items;
 		},
-		[roleById, workspaces, closeWorkspace],
+		[roleById, workspaces, closeWorkspace, requestRemoveWorktree],
 	);
 
 	const contextMenuItems = contextMenu
 		? buildContextMenuItems(contextMenu.workspaceId)
 		: [];
+
+	// Close the form and run the create behind the waiting modal.
+	const handleAddWorktreeSubmit = useCallback(
+		(payload: AddWorktreePayload) => {
+			setAddWorktreeTarget(null);
+			setLastCreatePayload(payload);
+			runWorktreeProgress({ verb: "Creating", target: payload.branch }, () =>
+				createWorktreeWorkspace(
+					payload.primaryCwd,
+					payload.branch,
+					payload.absolutePath,
+					payload.setupCommands,
+					payload.agent,
+				),
+			);
+		},
+		[runWorktreeProgress, createWorktreeWorkspace],
+	);
+
+	// From a create error: dismiss the modal and reopen the form pre-filled.
+	const handleEditCreate = useCallback(() => {
+		const p = lastCreatePayload;
+		dismissWorktreeProgress();
+		if (p) {
+			setAddWorktreeTarget({
+				primaryCwd: p.primaryCwd,
+				primaryName: p.primaryName,
+				initial: {
+					branch: p.branch,
+					folder: p.folder,
+					selectedIndex: p.selectedIndex,
+				},
+			});
+		}
+	}, [lastCreatePayload, dismissWorktreeProgress]);
 
 	// Per-item callbacks shared by standalone + set rendering.
 	const itemHandlers = (workspace: WorkspaceWithTabs, blockRowId: string) => ({
@@ -307,7 +384,16 @@ export function WorkspaceList({
 			if (draggedRowId) return;
 			beginWorkspaceSwitch(workspace.id);
 		},
-		onDelete: () => setPendingDeleteId(workspace.id),
+		onDelete: () => {
+			// On a linked worktree the X removes the worktree (deletes the folder),
+			// matching the context menu; everywhere else it closes the workspace.
+			const role = roleById.get(workspace.id);
+			if (role?.linkedPrimaryCwd) {
+				requestRemoveWorktree(workspace, role.linkedPrimaryCwd);
+			} else {
+				setPendingDeleteId(workspace.id);
+			}
+		},
 		onContextMenu: (e: React.MouseEvent) => {
 			e.preventDefault();
 			setContextMenu({ x: e.clientX, y: e.clientY, workspaceId: workspace.id });
@@ -403,11 +489,22 @@ export function WorkspaceList({
 			{pendingWorkspace && (
 				<ConfirmDialog
 					title="Close Workspace"
-					message={`"${pendingWorkspace.name}" will be permanently removed from your workspace list. This cannot be undone.`}
-					confirmLabel="Close Workspace"
+					message={
+						pendingLinked.length > 0
+							? `Closing "${pendingWorkspace.name}" will also close its ${pendingLinked.length} linked worktree workspace${
+									pendingLinked.length === 1 ? "" : "s"
+								}. They're removed from your workspace list; the worktree folders on disk are kept. This cannot be undone.`
+							: `"${pendingWorkspace.name}" will be permanently removed from your workspace list. This cannot be undone.`
+					}
+					confirmLabel={
+						pendingLinked.length > 0 ? "Close workspaces" : "Close Workspace"
+					}
 					confirmVariant="danger"
 					onConfirm={() => {
-						if (pendingDeleteId) deleteWorkspace(pendingDeleteId);
+						if (pendingDeleteId) {
+							deleteWorkspace(pendingDeleteId);
+							for (const linked of pendingLinked) deleteWorkspace(linked.id);
+						}
 						setPendingDeleteId(null);
 					}}
 					onCancel={() => setPendingDeleteId(null)}
@@ -418,7 +515,26 @@ export function WorkspaceList({
 				<AddWorktreeDialog
 					primaryCwd={addWorktreeTarget.primaryCwd}
 					primaryName={addWorktreeTarget.primaryName}
+					initialBranch={addWorktreeTarget.initial?.branch}
+					initialFolder={addWorktreeTarget.initial?.folder}
+					initialSelectedIndex={addWorktreeTarget.initial?.selectedIndex}
+					onSubmit={handleAddWorktreeSubmit}
 					onClose={() => setAddWorktreeTarget(null)}
+				/>
+			)}
+
+			{worktreeProgress && (
+				<WorktreeProgressDialog
+					verb={worktreeProgress.verb}
+					target={worktreeProgress.target}
+					status={worktreeProgress.status}
+					error={worktreeProgress.error}
+					onClose={dismissWorktreeProgress}
+					onEdit={
+						worktreeProgress.verb === "Creating" && lastCreatePayload
+							? handleEditCreate
+							: undefined
+					}
 				/>
 			)}
 
@@ -435,11 +551,15 @@ export function WorkspaceList({
 					onConfirm={() => {
 						const t = removeWorktreeTarget;
 						setRemoveWorktreeTarget(null);
-						removeWorktreeWorkspace(
-							t.workspaceId,
-							t.primaryCwd,
-							t.worktreePath,
-						).catch((err) => console.error("Failed to remove worktree:", err));
+						runWorktreeProgress(
+							{ verb: "Removing", target: `'${t.name}'` },
+							() =>
+								removeWorktreeWorkspace(
+									t.workspaceId,
+									t.primaryCwd,
+									t.worktreePath,
+								),
+						);
 					}}
 					onCancel={() => setRemoveWorktreeTarget(null)}
 				/>
