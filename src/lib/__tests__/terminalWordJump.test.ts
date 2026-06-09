@@ -49,13 +49,16 @@ describe("altArrowWordJumpSequence", () => {
 		).toBeNull();
 	});
 
-	it("ignores non-horizontal arrows and other keys", () => {
-		expect(
-			altArrowWordJumpSequence(ev({ key: "ArrowUp", altKey: true })),
-		).toBeNull();
+	it("swallows Alt+Up / Alt+Down silently (handled, sends nothing)", () => {
+		expect(altArrowWordJumpSequence(ev({ key: "ArrowUp", altKey: true }))).toBe(
+			"",
+		);
 		expect(
 			altArrowWordJumpSequence(ev({ key: "ArrowDown", altKey: true })),
-		).toBeNull();
+		).toBe("");
+	});
+
+	it("ignores other keys", () => {
 		expect(altArrowWordJumpSequence(ev({ key: "b", altKey: true }))).toBeNull();
 	});
 });

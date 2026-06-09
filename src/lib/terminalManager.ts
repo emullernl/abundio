@@ -633,19 +633,20 @@ export async function createTerminal(
 		deferredInit: null,
 	};
 
-	// Alt+Left / Alt+Right jump word-by-word in the line editor. We intercept
-	// before xterm turns them into its default `\e[1;3D` / `\e[1;3C` sequence
-	// (unbound in the default bash/zsh keymaps, so it leaked into the line as
-	// visible "codes") and instead send ESC-b / ESC-f, which both shells bind to
-	// backward-word / forward-word out of the box. See terminalWordJump.ts.
-	// Runs for keydown/keyup/keypress — act on keydown only so we don't write
-	// the sequence twice. Returning false suppresses xterm's own handling.
+	// Alt+Arrow handling for the line editor. We intercept before xterm turns
+	// these into its default `\e[1;3x` sequences (unbound in the default
+	// bash/zsh keymaps, so they leaked into the line as visible "codes").
+	// Left/Right send ESC-b / ESC-f, which both shells bind to backward-word /
+	// forward-word out of the box; Up/Down have no word equivalent so they're
+	// swallowed (empty sequence). See terminalWordJump.ts. Runs for
+	// keydown/keyup/keypress — act on keydown only so we don't write the
+	// sequence twice. Returning false suppresses xterm's own handling.
 	term.attachCustomKeyEventHandler((event) => {
 		if (event.type !== "keydown") return true;
 		const seq = altArrowWordJumpSequence(event);
 		if (seq === null) return true;
 		event.preventDefault();
-		if (!managed.restoring && managed.ptyId) {
+		if (seq && !managed.restoring && managed.ptyId) {
 			pty.write(managed.ptyId, seq);
 		}
 		return false;
