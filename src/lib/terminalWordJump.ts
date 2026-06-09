@@ -45,12 +45,13 @@ export function modifiedNavKeySequence(event: NavKeyEvent): string | null {
 			return "";
 		case "Home":
 		case "End":
+		case "Insert":
 		case "Delete":
 		case "PageUp":
 		case "PageDown":
-			// Modified Home/End/Delete/PageUp/PageDown (`\e[1;N{H,F}`, `\e[3;N~`,
-			// `\e[5;N~`, `\e[6;N~`) are unbound by default — swallow so they don't
-			// leak as codes.
+			// Modified Home/End/Insert/Delete/PageUp/PageDown (`\e[1;N{H,F}`,
+			// `\e[2;N~`, `\e[3;N~`, `\e[5;N~`, `\e[6;N~`) are unbound by default —
+			// swallow so they don't leak as codes.
 			return "";
 		default:
 			return null;

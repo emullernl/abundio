@@ -650,7 +650,14 @@ export async function createTerminal(
 		if (seq === null) return true;
 		event.preventDefault();
 		if (seq && !managed.restoring && managed.ptyId) {
-			pty.write(managed.ptyId, seq);
+			// This write bypasses term.onData, so mirror the input-gate
+			// bookkeeping onData does for normal keystrokes — otherwise a
+			// word-jump at the prompt wouldn't reset the agent-mode input gate and
+			// an output burst arriving right after could briefly mis-classify as
+			// activity instead of user-echo.
+			managed.lastInputAt = Date.now();
+			managed.bytesSinceIdle = 0;
+			pty.write(managed.ptyId, seq).catch(() => {});
 		}
 		return false;
 	});

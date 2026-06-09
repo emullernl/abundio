@@ -80,8 +80,15 @@ describe("modifiedNavKeySequence", () => {
 		).toBe("");
 	});
 
-	it("swallows modified Home/End/Delete/PageUp/PageDown silently", () => {
-		for (const key of ["Home", "End", "Delete", "PageUp", "PageDown"]) {
+	it("swallows modified Home/End/Insert/Delete/PageUp/PageDown silently", () => {
+		for (const key of [
+			"Home",
+			"End",
+			"Insert",
+			"Delete",
+			"PageUp",
+			"PageDown",
+		]) {
 			expect(modifiedNavKeySequence(ev({ key, altKey: true }))).toBe("");
 			expect(modifiedNavKeySequence(ev({ key, ctrlKey: true }))).toBe("");
 			expect(modifiedNavKeySequence(ev({ key, shiftKey: true }))).toBe("");
