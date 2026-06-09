@@ -24,6 +24,7 @@ import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
+import { modifiedNavKeySequence } from "./terminalWordJump";
 import type { PaneNode } from "./types";
 import { addWindowFocusListener } from "./windowFocus";
 
@@ -631,6 +632,35 @@ export async function createTerminal(
 		writeRafId: null,
 		deferredInit: null,
 	};
+
+	// Modified-nav-key handling for the shell line editor. xterm turns these into
+	// CSI sequences (`\e[1;Nx`, `\e[3;N~`, …) that the default bash/zsh keymaps
+	// don't bind, so they leaked into the line as visible "codes". Alt/Ctrl +
+	// Left/Right become ESC-b / ESC-f (word movement, bound out of the box); the
+	// rest (vertical arrows, Shift+Arrow, modified Home/End/Delete/Page) are
+	// swallowed. See terminalWordJump.ts. Gated to the normal buffer so
+	// full-screen TUIs (vim, lazygit, …) on the alternate screen still receive
+	// the raw sequences and handle them themselves. Runs for
+	// keydown/keyup/keypress — act on keydown only so we don't send twice;
+	// returning false suppresses xterm's own handling.
+	term.attachCustomKeyEventHandler((event) => {
+		if (event.type !== "keydown") return true;
+		if (term.buffer.active.type === "alternate") return true;
+		const seq = modifiedNavKeySequence(event);
+		if (seq === null) return true;
+		event.preventDefault();
+		if (seq && !managed.restoring && managed.ptyId) {
+			// This write bypasses term.onData, so mirror the input-gate
+			// bookkeeping onData does for normal keystrokes — otherwise a
+			// word-jump at the prompt wouldn't reset the agent-mode input gate and
+			// an output burst arriving right after could briefly mis-classify as
+			// activity instead of user-echo.
+			managed.lastInputAt = Date.now();
+			managed.bytesSinceIdle = 0;
+			pty.write(managed.ptyId, seq).catch(() => {});
+		}
+		return false;
+	});
 
 	// Populate deferredInit BEFORE publishing `managed` via instances.set so
 	// any caller that looks it up (projectInto via onTargetChange, a racing
