@@ -1,7 +1,7 @@
 /** Minimal shape of the fields we read off a KeyboardEvent — kept as a plain
  *  interface so the logic is unit-testable without constructing a real DOM
  *  KeyboardEvent. */
-export interface WordJumpKeyEvent {
+export interface NavKeyEvent {
 	key: string;
 	altKey: boolean;
 	ctrlKey: boolean;
@@ -10,29 +10,49 @@ export interface WordJumpKeyEvent {
 }
 
 /**
- * Decide how to handle a plain Alt+Arrow keypress for the shell line editor.
- * Returns:
- *  - the byte sequence to send for Alt+Left / Alt+Right (one-word movement),
- *  - "" for Alt+Up / Alt+Down — handled but silent (send nothing),
- *  - null for anything else — caller should let xterm handle it.
+ * Decide what the shell line editor should receive for a modified navigation
+ * keypress, defusing the modified-arrow / nav-key CSI sequences that xterm
+ * emits but the default bash/zsh keymaps leave unbound (which otherwise leak
+ * into the line as visible "codes"). Returns:
+ *   - a byte sequence to send — Alt or Ctrl + Left/Right jump one word,
+ *   - "" — handled but silent: combos with no useful shell action,
+ *   - null — not ours; let xterm send its normal sequence.
  *
- * Left/Right emit ESC-b / ESC-f (backward-word / forward-word) rather than
- * xterm's default modified-arrow sequence (`\e[1;3D` / `\e[1;3C`): ESC-b /
- * ESC-f are bound to word movement out of the box in both bash's readline and
- * zsh's emacs keymap, whereas `\e[1;3x` is unbound by default and leaked into
- * the line as visible "codes". Up/Down have no word equivalent, so we swallow
- * them too — same "codes" leak, nothing useful to send. Plain Alt only — Alt
- * with Shift/Ctrl/Cmd is left to xterm so selection and other modified-arrow
- * behaviours are unaffected.
+ * Word movement emits ESC-b / ESC-f (backward-word / forward-word), bound out
+ * of the box in both bash's readline and zsh's emacs keymap. Cmd combos are
+ * always left to the app, and unmodified nav keys are left to the shell (those
+ * are already bound) — only modified combos are claimed.
  */
-export function altArrowWordJumpSequence(
-	event: WordJumpKeyEvent,
-): string | null {
-	if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
-		return null;
+export function modifiedNavKeySequence(event: NavKeyEvent): string | null {
+	// Cmd combos are app/OS shortcuts — never ours.
+	if (event.metaKey) return null;
+	// Unmodified nav keys (plain ←, Home, Delete, …) are already bound by the
+	// shell; only the modified variants leak as codes.
+	if (!event.altKey && !event.ctrlKey && !event.shiftKey) return null;
+
+	switch (event.key) {
+		case "ArrowLeft":
+		case "ArrowRight":
+			// Alt or Ctrl (without Shift) → one-word movement.
+			if ((event.altKey || event.ctrlKey) && !event.shiftKey) {
+				return event.key === "ArrowLeft" ? "\x1bb" : "\x1bf";
+			}
+			// Shift+Arrow (e.g. an attempted text selection) has no shell action.
+			return "";
+		case "ArrowUp":
+		case "ArrowDown":
+			// No word/line equivalent for vertical movement.
+			return "";
+		case "Home":
+		case "End":
+		case "Delete":
+		case "PageUp":
+		case "PageDown":
+			// Modified Home/End/Delete/PageUp/PageDown (`\e[1;N{H,F}`, `\e[3;N~`,
+			// `\e[5;N~`, `\e[6;N~`) are unbound by default — swallow so they don't
+			// leak as codes.
+			return "";
+		default:
+			return null;
 	}
-	if (event.key === "ArrowLeft") return "\x1bb";
-	if (event.key === "ArrowRight") return "\x1bf";
-	if (event.key === "ArrowUp" || event.key === "ArrowDown") return "";
-	return null;
 }

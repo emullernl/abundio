@@ -24,7 +24,7 @@ import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
-import { altArrowWordJumpSequence } from "./terminalWordJump";
+import { modifiedNavKeySequence } from "./terminalWordJump";
 import type { PaneNode } from "./types";
 import { addWindowFocusListener } from "./windowFocus";
 
@@ -633,17 +633,20 @@ export async function createTerminal(
 		deferredInit: null,
 	};
 
-	// Alt+Arrow handling for the line editor. We intercept before xterm turns
-	// these into its default `\e[1;3x` sequences (unbound in the default
-	// bash/zsh keymaps, so they leaked into the line as visible "codes").
-	// Left/Right send ESC-b / ESC-f, which both shells bind to backward-word /
-	// forward-word out of the box; Up/Down have no word equivalent so they're
-	// swallowed (empty sequence). See terminalWordJump.ts. Runs for
-	// keydown/keyup/keypress — act on keydown only so we don't write the
-	// sequence twice. Returning false suppresses xterm's own handling.
+	// Modified-nav-key handling for the shell line editor. xterm turns these into
+	// CSI sequences (`\e[1;Nx`, `\e[3;N~`, …) that the default bash/zsh keymaps
+	// don't bind, so they leaked into the line as visible "codes". Alt/Ctrl +
+	// Left/Right become ESC-b / ESC-f (word movement, bound out of the box); the
+	// rest (vertical arrows, Shift+Arrow, modified Home/End/Delete/Page) are
+	// swallowed. See terminalWordJump.ts. Gated to the normal buffer so
+	// full-screen TUIs (vim, lazygit, …) on the alternate screen still receive
+	// the raw sequences and handle them themselves. Runs for
+	// keydown/keyup/keypress — act on keydown only so we don't send twice;
+	// returning false suppresses xterm's own handling.
 	term.attachCustomKeyEventHandler((event) => {
 		if (event.type !== "keydown") return true;
-		const seq = altArrowWordJumpSequence(event);
+		if (term.buffer.active.type === "alternate") return true;
+		const seq = modifiedNavKeySequence(event);
 		if (seq === null) return true;
 		event.preventDefault();
 		if (seq && !managed.restoring && managed.ptyId) {
