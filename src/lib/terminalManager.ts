@@ -24,6 +24,7 @@ import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
+import { altArrowWordJumpSequence } from "./terminalWordJump";
 import type { PaneNode } from "./types";
 import { addWindowFocusListener } from "./windowFocus";
 
@@ -631,6 +632,24 @@ export async function createTerminal(
 		writeRafId: null,
 		deferredInit: null,
 	};
+
+	// Alt+Left / Alt+Right jump word-by-word in the line editor. We intercept
+	// before xterm turns them into its default `\e[1;3D` / `\e[1;3C` sequence
+	// (unbound in the default bash/zsh keymaps, so it leaked into the line as
+	// visible "codes") and instead send ESC-b / ESC-f, which both shells bind to
+	// backward-word / forward-word out of the box. See terminalWordJump.ts.
+	// Runs for keydown/keyup/keypress — act on keydown only so we don't write
+	// the sequence twice. Returning false suppresses xterm's own handling.
+	term.attachCustomKeyEventHandler((event) => {
+		if (event.type !== "keydown") return true;
+		const seq = altArrowWordJumpSequence(event);
+		if (seq === null) return true;
+		event.preventDefault();
+		if (!managed.restoring && managed.ptyId) {
+			pty.write(managed.ptyId, seq);
+		}
+		return false;
+	});
 
 	// Populate deferredInit BEFORE publishing `managed` via instances.set so
 	// any caller that looks it up (projectInto via onTargetChange, a racing
