@@ -120,13 +120,12 @@ fn run_gh(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 	cmd.args(args)
 		.env("PATH", crate::shell_env::shell_path());
 	// Account-wide searches (`gh search prs`) are repo-independent and may run
-	// with no workspace open — an empty cwd. Fall back to the home directory so
-	// `gh` always has a valid working directory. Repo-scoped commands are never
-	// invoked with an empty cwd.
+	// with no workspace open — an empty cwd. Fall back to the home directory
+	// (and to "/" if the platform home lookup fails) so `gh` always has an
+	// explicit working directory rather than silently inheriting Abundio's own
+	// process cwd. Repo-scoped commands are never invoked with an empty cwd.
 	if cwd.is_empty() {
-		if let Some(home) = dirs::home_dir() {
-			cmd.current_dir(home);
-		}
+		cmd.current_dir(dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")));
 	} else {
 		cmd.current_dir(cwd);
 	}

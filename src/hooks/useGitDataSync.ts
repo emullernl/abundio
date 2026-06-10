@@ -170,11 +170,13 @@ export function useGitDataSync() {
 
 	// No-workspace fallback. When zero workspaces are Opened, the per-workspace
 	// gh lifecycle above never runs (it has no cwd). Fetch account-wide PRs with
-	// an empty cwd — `run_gh` falls back to the home dir, and the store forces
-	// the `-all` view on an empty cwd — so the PR section and the Overview bar
-	// chips populate on the empty screen. Reuses the same `usePrStore` fetch
-	// path; this is the empty-state behaviour ADR-0005 originally conceded and
-	// later reversed (see its 2026-06-10 update).
+	// a `null` cwd — the store treats `null` as the no-workspace sentinel and
+	// forces the `-all` view (and `run_gh` falls back to the home dir) — so the
+	// PR section and the Overview bar chips populate on the empty screen. Reuses
+	// the same `usePrStore` fetch path; this is the empty-state behaviour
+	// ADR-0005 originally conceded and later reversed (see its 2026-06-10 update).
+	// `checkGhStatus`'s own generation guard prevents a late `null` status check
+	// from clobbering a workspace's status if one opens mid-flight.
 	const noOpenedWorkspaces = openedWorkspaceIds.size === 0;
 	useEffect(() => {
 		if (!noOpenedWorkspaces) return;
@@ -182,13 +184,13 @@ export function useGitDataSync() {
 		const run = () => {
 			usePrStore
 				.getState()
-				.checkGhStatus("")
+				.checkGhStatus(null)
 				.then(() => {
 					if (cancelled) return;
 					const { ghStatus: status } = usePrStore.getState();
 					if (status?.available && status?.authenticated) {
-						usePrStore.getState().fetchReviewPrs("");
-						usePrStore.getState().fetchMyPrs("");
+						usePrStore.getState().fetchReviewPrs(null);
+						usePrStore.getState().fetchMyPrs(null);
 					}
 				});
 		};

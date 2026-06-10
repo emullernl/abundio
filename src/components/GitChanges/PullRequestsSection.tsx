@@ -41,12 +41,13 @@ export function PullRequestsSection() {
 	const effMyPrsView: MyPrsView = noWorkspace ? "mine-all" : myPrsView;
 
 	const handleRefresh = useCallback(async () => {
-		const target = cwd ?? (noWorkspace ? "" : null);
-		if (target === null) return;
-		await checkGhStatus(target);
-		fetchReviewPrs(target);
-		fetchMyPrs(target);
-	}, [cwd, noWorkspace, checkGhStatus, fetchReviewPrs, fetchMyPrs]);
+		// `cwd` is null when no workspace folder is active → account-wide refresh
+		// (the store treats null as the no-workspace sentinel). This also covers
+		// the Opened≥1-but-none-Active edge: the user still gets the -all refresh.
+		await checkGhStatus(cwd);
+		fetchReviewPrs(cwd);
+		fetchMyPrs(cwd);
+	}, [cwd, checkGhStatus, fetchReviewPrs, fetchMyPrs]);
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
@@ -146,9 +147,7 @@ function PrSubPanel<V extends PrView>({
 				<div className="relative" ref={dropdownRef}>
 					<button
 						type="button"
-						onClick={() => {
-							if (!locked) setDropdownOpen((o) => !o);
-						}}
+						onClick={() => setDropdownOpen((o) => !o)}
 						disabled={locked}
 						className="flex items-center gap-1 rounded px-2 py-0.5 transition-colors"
 						style={{
