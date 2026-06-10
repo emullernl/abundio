@@ -24,6 +24,7 @@ import {
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { FileDropHighlight } from "../FileDropHighlight";
 import { PaneDropIndicator } from "../PaneDropIndicator";
 import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
@@ -346,6 +347,7 @@ export function TerminalSlot({
 				/>
 			)}
 			<PaneDropIndicator paneId={paneId} />
+			<FileDropHighlight paneId={paneId} />
 		</div>
 	);
 }

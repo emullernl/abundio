@@ -1767,6 +1767,8 @@ export function SettingsPanel({ onClose }: Props) {
 		(s) => s.gpuAccelerationEnabled,
 	);
 	const setGpuAcceleration = useSettingsStore((s) => s.setGpuAcceleration);
+	const smartImageDrop = useSettingsStore((s) => s.smartImageDrop);
+	const setSmartImageDrop = useSettingsStore((s) => s.setSmartImageDrop);
 	const darkThemes = useMemo(
 		() => themeList().filter((t) => t.variant === "dark"),
 		[],
@@ -2012,6 +2014,46 @@ export function SettingsPanel({ onClose }: Props) {
 												Smoother scrolling and faster paint on heavy output.
 												When many panes are open at once, some fall back to CPU
 												rendering automatically.
+											</div>
+										</div>
+									</div>
+								</div>
+								<div className="flex-shrink-0">
+									<SectionLabel>Drag &amp; Drop</SectionLabel>
+									<div
+										className="flex items-center gap-3 rounded-lg"
+										style={{
+											padding: "10px 12px",
+											backgroundColor: "var(--bg-primary)",
+											border: "1px solid var(--border)",
+										}}
+									>
+										<Toggle
+											checked={smartImageDrop}
+											onChange={setSmartImageDrop}
+										/>
+										<div className="flex-1 min-w-0">
+											<div
+												style={{
+													fontSize: 13,
+													color: "var(--fg-primary)",
+													lineHeight: 1.3,
+												}}
+											>
+												Drop images to agents as images
+											</div>
+											<div
+												style={{
+													fontSize: 11,
+													color: "var(--fg-secondary)",
+													marginTop: 2,
+													lineHeight: 1.4,
+												}}
+											>
+												When you drop an image onto a running agent, paste it
+												via the clipboard so the agent recognises it — instead
+												of inserting the file path. Other dropped files always
+												insert their path.
 											</div>
 										</div>
 									</div>

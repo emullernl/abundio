@@ -468,6 +468,11 @@ export const fonts = {
 
 export const shells = {
 	listAvailable: () => invoke<AvailableShell[]>("list_available_shells"),
+
+	/** The shell a new PTY spawns with when no `shellPath` is set. Resolved in
+	 *  Rust (Git Bash preferred on Windows). Used by file-drop to choose the
+	 *  right path style for the "System Default" shell. */
+	default: () => invoke<string>("default_shell"),
 };
 
 export const agentRegistry = {
@@ -568,6 +573,15 @@ export const updates = {
 		listen<UpdateDownloadProgress>("update-download-progress", (event) =>
 			callback(event.payload),
 		),
+};
+
+export const clipboardImage = {
+	/** Decode an image file and place it on the OS clipboard as PNG, so a running
+	 *  agent ingests it via its Ctrl+V clipboard-image path. Backs the "Smart
+	 *  image drop" behaviour — see useTerminalFileDrop. Rejects on an unreadable
+	 *  or unsupported image (caller falls back to inserting the path). */
+	setFromPath: (path: string) =>
+		invoke<void>("set_clipboard_image_from_path", { path }),
 };
 
 export const devEnvironments = {

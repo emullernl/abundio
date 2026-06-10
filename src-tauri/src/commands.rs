@@ -46,6 +46,15 @@ pub async fn list_available_shells() -> Result<Vec<shell_env::AvailableShell>, A
     Ok(shell_env::list_available_shells())
 }
 
+/// The shell a PTY spawns with when the user hasn't picked one (`shellPath`
+/// null). The resolution lives in Rust (on Windows it prefers Git Bash, else
+/// cmd.exe), so the frontend can't derive it — it calls this to learn what the
+/// "System Default" resolves to (used by file-drop to pick the right path style).
+#[tauri::command]
+pub async fn default_shell() -> Result<String, AbundioError> {
+    Ok(shell_env::default_shell())
+}
+
 #[tauri::command]
 pub async fn pty_write(
     pty_mgr: State<'_, PtyManager>,

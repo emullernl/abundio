@@ -24,6 +24,8 @@ pub enum AbundioError {
     Search(String),
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+    #[error("Clipboard error: {0}")]
+    Clipboard(String),
 }
 
 impl Serialize for AbundioError {

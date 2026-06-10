@@ -45,6 +45,10 @@ interface SettingsState {
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
+	/** When an image is dropped onto a running agent, paste it via the clipboard
+	 *  (so the agent recognises it) instead of inserting its file path. See the
+	 *  "Smart image drop" term in CONTEXT.md. */
+	smartImageDrop: boolean;
 	/** Whether the app checks for updates on launch + periodically. */
 	autoCheckUpdatesEnabled: boolean;
 	/** Update version the user chose to skip; suppresses its prompt until a
@@ -79,6 +83,7 @@ interface SettingsState {
 	/** Resolves once (un)provisioning has settled — see `toggleAgent`. */
 	setAgentHooksEnabled: (enabled: boolean) => Promise<void>;
 	setGpuAcceleration: (enabled: boolean) => void;
+	setSmartImageDrop: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
 }
@@ -109,6 +114,7 @@ const PERSISTED_DEFAULTS: {
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
+	smartImageDrop: boolean;
 	autoCheckUpdatesEnabled: boolean;
 	skippedUpdateVersion: string | null;
 } = (() => {
@@ -132,6 +138,7 @@ const PERSISTED_DEFAULTS: {
 		markdownPreviewColorMode: "auto" as PreviewColorMode,
 		agentHooksEnabled: true,
 		gpuAccelerationEnabled: true,
+		smartImageDrop: true,
 		autoCheckUpdatesEnabled: true,
 		skippedUpdateVersion: null as string | null,
 	};
@@ -224,6 +231,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.gpuAccelerationEnabled === "boolean"
 					? s.gpuAccelerationEnabled
 					: defaults.gpuAccelerationEnabled,
+			smartImageDrop:
+				typeof s.smartImageDrop === "boolean"
+					? s.smartImageDrop
+					: defaults.smartImageDrop,
 			autoCheckUpdatesEnabled:
 				typeof s.autoCheckUpdatesEnabled === "boolean"
 					? s.autoCheckUpdatesEnabled
@@ -260,6 +271,7 @@ export const useSettingsStore = create<SettingsState>()(
 			markdownPreviewColorMode: PERSISTED_DEFAULTS.markdownPreviewColorMode,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
+			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
 			skippedUpdateVersion: PERSISTED_DEFAULTS.skippedUpdateVersion,
 
@@ -374,6 +386,7 @@ export const useSettingsStore = create<SettingsState>()(
 				setWebglEnabled(gpuAccelerationEnabled);
 				set({ gpuAccelerationEnabled });
 			},
+			setSmartImageDrop: (smartImageDrop) => set({ smartImageDrop }),
 			setAutoCheckUpdatesEnabled: (autoCheckUpdatesEnabled) => {
 				// Rust holds the app-wide auto-check flag (the background loop
 				// reads it). Push the change immediately so any Window's toggle
@@ -388,7 +401,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 5,
+			version: 6,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -441,6 +454,12 @@ export const useSettingsStore = create<SettingsState>()(
 						...state,
 					};
 				}
+				// v6: Smart image drop (default on). Additive default-true key;
+				// PERSISTED_DEFAULTS + merge already supply it, so this only
+				// guarantees the key exists during the rehydrate window.
+				if (version < 6) {
+					state = { smartImageDrop: true, ...state };
+				}
 				return state;
 			},
 			partialize: (state) => ({
@@ -463,6 +482,7 @@ export const useSettingsStore = create<SettingsState>()(
 				markdownPreviewColorMode: state.markdownPreviewColorMode,
 				agentHooksEnabled: state.agentHooksEnabled,
 				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
+				smartImageDrop: state.smartImageDrop,
 				autoCheckUpdatesEnabled: state.autoCheckUpdatesEnabled,
 				skippedUpdateVersion: state.skippedUpdateVersion,
 			}),
