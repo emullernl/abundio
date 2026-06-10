@@ -72,6 +72,7 @@ pub fn build_menu(
     // our Rust handlers can snapshot windows.json. Our custom item routes
     // through on_menu_event, where we save the snapshot, set QuittingFlag,
     // and only then call app.exit(0). See ADR-0007.
+    #[cfg(target_os = "macos")]
     let quit_item =
         MenuItem::with_id(handle, "quit-app", "Quit Abundio", true, Some("CmdOrCtrl+Q"))?;
 
@@ -134,7 +135,6 @@ pub fn build_menu(
             &switch_profile_submenu,
             &PredefinedMenuItem::separator(handle)?,
             &PredefinedMenuItem::close_window(handle, None)?,
-            &quit_item,
         ],
     )?;
 
