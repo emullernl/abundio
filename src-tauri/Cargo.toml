@@ -52,6 +52,21 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # feature is needed (processes + CPU); disk/network/component are excluded.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 tauri-plugin-clipboard-manager = "2"
+# Image decode + PNG re-encode for "Smart image drop" (see clipboard_image.rs).
+# A dropped image of any supported raster format is decoded and placed on the OS
+# clipboard as PNG so an agent ingests it via its Ctrl+V clipboard path.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+    "tiff",
+] }
+# Cross-platform image-to-clipboard on Windows/Linux (macOS uses a native PNG
+# path — see clipboard_image.rs). Already pulled in transitively by
+# tauri-plugin-clipboard-manager; pinned here so the direct dependency is explicit.
+arboard = "3"
 
 [dev-dependencies]
 tempfile = "3"

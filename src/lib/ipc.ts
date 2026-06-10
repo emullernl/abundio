@@ -570,6 +570,15 @@ export const updates = {
 		),
 };
 
+export const clipboardImage = {
+	/** Decode an image file and place it on the OS clipboard as PNG, so a running
+	 *  agent ingests it via its Ctrl+V clipboard-image path. Backs the "Smart
+	 *  image drop" behaviour — see useTerminalFileDrop. Rejects on an unreadable
+	 *  or unsupported image (caller falls back to inserting the path). */
+	setFromPath: (path: string) =>
+		invoke<void>("set_clipboard_image_from_path", { path }),
+};
+
 export const devEnvironments = {
 	list: () => invoke<DetectedDevEnvironment[]>("list_dev_environments"),
 

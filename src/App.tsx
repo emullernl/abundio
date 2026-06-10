@@ -25,6 +25,7 @@ import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
 import { useSplitPane } from "./hooks/useSplitPane";
+import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
 import { decideWindowClose } from "./lib/closeDecision";
@@ -235,6 +236,7 @@ export function App() {
 	useFileReloadWatcher();
 	useGitDataSync();
 	useWorktreeSync();
+	useTerminalFileDrop();
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const activeTabByWorkspace = useWorkspaceStore((s) => s.activeTabByWorkspace);

@@ -145,6 +145,7 @@ export function setupCrossWindowSync(): void {
 		agents: unknown;
 		agentHooksEnabled: unknown;
 		gpuAccelerationEnabled: unknown;
+		smartImageDrop: unknown;
 		terminalScrollback: unknown;
 		markdownPreviewColorMode: unknown;
 	};
@@ -157,6 +158,7 @@ export function setupCrossWindowSync(): void {
 		agents: s.agents,
 		agentHooksEnabled: s.agentHooksEnabled,
 		gpuAccelerationEnabled: s.gpuAccelerationEnabled,
+		smartImageDrop: s.smartImageDrop,
 		terminalScrollback: s.terminalScrollback,
 		markdownPreviewColorMode: s.markdownPreviewColorMode,
 	});

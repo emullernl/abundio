@@ -1,6 +1,7 @@
 pub mod agent_hooks;
 pub mod agent_registry;
 pub mod app_metrics;
+pub mod clipboard_image;
 pub mod commands;
 pub mod config;
 pub mod dev_environments;
@@ -951,6 +952,7 @@ pub fn run() {
             updater::updater_download,
             updater::updater_install_now,
             updater::updater_set_auto_check,
+            clipboard_image::set_clipboard_image_from_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

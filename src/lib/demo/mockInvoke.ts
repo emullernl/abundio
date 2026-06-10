@@ -209,6 +209,10 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "updater_install_now":
 		case "updater_set_auto_check":
 			return undefined;
+		// ── Clipboard image (Smart image drop) — inert in demo ──
+		case "set_clipboard_image_from_path":
+			return undefined;
+
 		case "list_system_fonts":
 			return fixtures.systemFonts;
 		case "list_available_shells":
