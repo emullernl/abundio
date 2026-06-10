@@ -115,7 +115,11 @@ export const usePrStore = create<PrState>()(
 					const gen = ++reviewGeneration;
 					set({ review: { ...get().review, loading: true, error: null } });
 
-					const view = get().reviewView;
+					// An empty cwd is the no-workspace sentinel (zero Opened
+					// workspaces): there is no repo to scope to, so force the
+					// account-wide view regardless of the stored per-section
+					// preference (which is preserved for when a workspace reopens).
+					const view: ReviewView = cwd === "" ? "review-all" : get().reviewView;
 					// The Overview bar chip always shows the -all count regardless of
 					// the panel view (see ADR 0005). When the panel is in -all mode
 					// the panel fetch IS the -all fetch — both names reference the
@@ -191,7 +195,9 @@ export const usePrStore = create<PrState>()(
 					const gen = ++myPrsGeneration;
 					set({ myPrs: { ...get().myPrs, loading: true, error: null } });
 
-					const view = get().myPrsView;
+					// Empty cwd = no-workspace sentinel — force the account-wide
+					// view (see fetchReviewPrs).
+					const view: MyPrsView = cwd === "" ? "mine-all" : get().myPrsView;
 					// Mirror fetchReviewPrs: piggyback the -all variant for the
 					// Overview bar chip when the panel is in -repo mode. Commits
 					// are decoupled so a piggyback failure can't poison the panel.

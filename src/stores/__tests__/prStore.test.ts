@@ -365,6 +365,44 @@ describe("prStore", () => {
 		});
 	});
 
+	describe("no-workspace fallback (empty cwd)", () => {
+		// An empty cwd is the sentinel for "zero Opened workspaces": there is no
+		// repo to scope to, so the account-wide (-all) view is forced regardless
+		// of the stored per-section preference, which must remain untouched.
+		it("forces review-all on empty cwd even when stored view is review-repo", async () => {
+			mockGh.reviewRequestsAll.mockResolvedValue([
+				makePr({ number: 7, repository: "org/x" }),
+			]);
+			useWorkspaceStore.setState({ activeWorkspaceId: null });
+			usePrStore.setState({ reviewView: "review-repo" });
+
+			await usePrStore.getState().fetchReviewPrs("");
+
+			expect(mockGh.reviewRequestsAll).toHaveBeenCalledWith("");
+			expect(mockGh.reviewRequests).not.toHaveBeenCalled();
+			expect(usePrStore.getState().review.prs).toHaveLength(1);
+			// Stored preference is preserved for when a workspace reopens.
+			expect(usePrStore.getState().reviewView).toBe("review-repo");
+		});
+
+		it("forces mine-all on empty cwd even when stored view is mine-repo", async () => {
+			mockGh.myPrsAll.mockResolvedValue([
+				makePr({ number: 8 }),
+				makePr({ number: 9 }),
+			]);
+			useWorkspaceStore.setState({ activeWorkspaceId: null });
+			usePrStore.setState({ myPrsView: "mine-repo" });
+
+			await usePrStore.getState().fetchMyPrs("");
+
+			expect(mockGh.myPrsAll).toHaveBeenCalledWith("");
+			expect(mockGh.myPrs).not.toHaveBeenCalled();
+			expect(usePrStore.getState().myPrs.prs).toHaveLength(2);
+			expect(usePrStore.getState().globalMyPrsCount).toBe(2);
+			expect(usePrStore.getState().myPrsView).toBe("mine-repo");
+		});
+	});
+
 	describe("clear", () => {
 		it("resets both sections", () => {
 			usePrStore.setState({

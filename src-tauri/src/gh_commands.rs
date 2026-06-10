@@ -118,8 +118,18 @@ struct GhRepository {
 fn run_gh(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 	let mut cmd = Command::new("gh");
 	cmd.args(args)
-		.current_dir(cwd)
 		.env("PATH", crate::shell_env::shell_path());
+	// Account-wide searches (`gh search prs`) are repo-independent and may run
+	// with no workspace open — an empty cwd. Fall back to the home directory so
+	// `gh` always has a valid working directory. Repo-scoped commands are never
+	// invoked with an empty cwd.
+	if cwd.is_empty() {
+		if let Some(home) = dirs::home_dir() {
+			cmd.current_dir(home);
+		}
+	} else {
+		cmd.current_dir(cwd);
+	}
 	#[cfg(target_os = "windows")]
 	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
 	let output = cmd
@@ -458,7 +468,9 @@ fn gh_status_sync(cwd: &str) -> Result<GhStatus, AbundioError> {
 	}
 
 	// Local check: just scan git remotes for github.com (no network call).
-	let has_remote = crate::git_libgit2::has_github_remote(cwd);
+	// With no workspace open (empty cwd) there is no repo to probe — has_remote
+	// is irrelevant for the account-wide views shown in that state.
+	let has_remote = !cwd.is_empty() && crate::git_libgit2::has_github_remote(cwd);
 
 	Ok(GhStatus {
 		available: true,

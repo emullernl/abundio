@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GhStatus } from "../../lib/types";
 import {
+	type MyPrsView,
 	PR_VIEW_LABELS,
 	type PrSectionState,
 	type PrView,
+	type ReviewView,
 	usePrStore,
 } from "../../stores/prStore";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
@@ -27,20 +30,31 @@ export function PullRequestsSection() {
 	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
 	const cwd = activeWorkspace?.rootFolder ?? null;
 
+	// No Opened workspaces: there is no repo context, so both sections show
+	// their account-wide (-all) view and the repo/all selector is locked. The
+	// stored per-section preference is left untouched and restored when a
+	// workspace reopens. Data is fetched with an empty cwd (see useGitDataSync).
+	const noWorkspace = usePtyActivityStore(
+		(s) => s.openedWorkspaceIds.size === 0,
+	);
+	const effReviewView: ReviewView = noWorkspace ? "review-all" : reviewView;
+	const effMyPrsView: MyPrsView = noWorkspace ? "mine-all" : myPrsView;
+
 	const handleRefresh = useCallback(async () => {
-		if (cwd) {
-			await checkGhStatus(cwd);
-			fetchReviewPrs(cwd);
-			fetchMyPrs(cwd);
-		}
-	}, [cwd, checkGhStatus, fetchReviewPrs, fetchMyPrs]);
+		const target = cwd ?? (noWorkspace ? "" : null);
+		if (target === null) return;
+		await checkGhStatus(target);
+		fetchReviewPrs(target);
+		fetchMyPrs(target);
+	}, [cwd, noWorkspace, checkGhStatus, fetchReviewPrs, fetchMyPrs]);
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<PrSubPanel
 				views={["review-all", "review-repo"]}
-				activeView={reviewView}
+				activeView={effReviewView}
 				setActiveView={setReviewView}
+				locked={noWorkspace}
 				section={review}
 				ghStatus={ghStatus}
 				onRefresh={handleRefresh}
@@ -53,8 +67,9 @@ export function PullRequestsSection() {
 			/>
 			<PrSubPanel
 				views={["mine-all", "mine-repo"]}
-				activeView={myPrsView}
+				activeView={effMyPrsView}
 				setActiveView={setMyPrsView}
+				locked={noWorkspace}
 				section={myPrs}
 				ghStatus={ghStatus}
 				onRefresh={handleRefresh}
@@ -69,6 +84,9 @@ interface PrSubPanelProps<V extends PrView> {
 	views: V[];
 	activeView: V;
 	setActiveView: (view: V) => void;
+	/** No Opened workspace: render the view as a static `(All)` label instead of
+	 *  a dropdown, since the repo/all choice is meaningless with no repo. */
+	locked?: boolean;
 	section: PrSectionState;
 	ghStatus: GhStatus | null;
 	onRefresh: () => void;
@@ -80,6 +98,7 @@ function PrSubPanel<V extends PrView>({
 	views,
 	activeView,
 	setActiveView,
+	locked,
 	section,
 	ghStatus,
 	onRefresh,
@@ -122,11 +141,15 @@ function PrSubPanel<V extends PrView>({
 					style={{ color: "var(--accent)", flexShrink: 0 }}
 				/>
 
-				{/* View selector dropdown */}
+				{/* View selector dropdown. Locked (no Opened workspace) → a
+				    non-interactive static label, since repo/all is meaningless. */}
 				<div className="relative" ref={dropdownRef}>
 					<button
 						type="button"
-						onClick={() => setDropdownOpen((o) => !o)}
+						onClick={() => {
+							if (!locked) setDropdownOpen((o) => !o);
+						}}
+						disabled={locked}
 						className="flex items-center gap-1 rounded px-2 py-0.5 transition-colors"
 						style={{
 							backgroundColor: "var(--bg-tertiary)",
@@ -135,9 +158,10 @@ function PrSubPanel<V extends PrView>({
 							height: 24,
 							fontFamily: "var(--font-mono)",
 							border: "1px solid transparent",
+							cursor: locked ? "default" : "pointer",
 						}}
 						onMouseEnter={(e) => {
-							e.currentTarget.style.borderColor = "var(--border)";
+							if (!locked) e.currentTarget.style.borderColor = "var(--border)";
 						}}
 						onMouseLeave={(e) => {
 							e.currentTarget.style.borderColor = "transparent";
@@ -146,10 +170,10 @@ function PrSubPanel<V extends PrView>({
 						<span className="truncate" style={{ maxWidth: 160 }}>
 							{PR_VIEW_LABELS[activeView]}
 						</span>
-						<ChevronDown size={10} />
+						{!locked && <ChevronDown size={10} />}
 					</button>
 
-					{dropdownOpen && (
+					{!locked && dropdownOpen && (
 						<div
 							className="absolute top-full left-0 mt-1 rounded-lg overflow-hidden shadow-lg"
 							style={{
