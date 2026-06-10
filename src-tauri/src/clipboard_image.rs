@@ -27,8 +27,14 @@ pub async fn set_clipboard_image_from_path(path: String) -> Result<(), AbundioEr
 }
 
 fn set_clipboard_image_blocking(path: &str) -> Result<(), AbundioError> {
-    let img = image::ImageReader::open(path)?
-        .with_guessed_format()?
+    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    // Bound decode allocation so a multi-GB image or a "decompression bomb"
+    // (tiny on disk, huge declared dimensions) can't OOM the app. ~256 MB pixel
+    // budget — e.g. an 8000×8000 RGBA image is ~256 MB.
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    reader.limits(limits);
+    let img = reader
         .decode()
         .map_err(|e| AbundioError::Clipboard(format!("decode failed: {e}")))?;
 
@@ -42,6 +48,19 @@ fn set_clipboard_image_blocking(path: &str) -> Result<(), AbundioError> {
     }
 }
 
+/// Removes its path on drop, so the temp PNG is never orphaned regardless of
+/// which return path `set_clipboard_png_macos` takes (or if a later edit adds an
+/// early return between the write and the end of the function).
+#[cfg(target_os = "macos")]
+struct TempFileGuard(std::path::PathBuf);
+
+#[cfg(target_os = "macos")]
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// macOS: re-encode to a temp PNG and set the clipboard via AppleScript so the
 /// pasteboard carries `public.png` (the format Claude Code's reader expects).
 #[cfg(target_os = "macos")]
@@ -52,22 +71,26 @@ fn set_clipboard_png_macos(img: &image::DynamicImage) -> Result<(), AbundioError
     img.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
         .map_err(|e| AbundioError::Clipboard(format!("png encode failed: {e}")))?;
 
-    // A UUID filename keeps the path free of quotes/spaces, so embedding it in
-    // the AppleScript string literal below is safe without escaping.
     let tmp = std::env::temp_dir().join(format!("abundio-drop-{}.png", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, &png)?;
+    // RAII cleanup — removes the file on every exit path, including early returns.
+    let _guard = TempFileGuard(tmp.clone());
 
-    let script = format!(
-        "set the clipboard to (read (POSIX file \"{}\") as «class PNGf»)",
-        tmp.display()
-    );
+    // The UUID filename can't contain quotes, but the temp-dir prefix derives
+    // from $TMPDIR (attacker-influenceable in principle), so escape the full
+    // path for the AppleScript double-quoted string literal — `\` then `"` — to
+    // close any injection vector.
+    let escaped = tmp
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let script =
+        format!("set the clipboard to (read (POSIX file \"{escaped}\") as «class PNGf»)");
     let status = std::process::Command::new("osascript")
         .arg("-e")
         .arg(&script)
         .status();
-
-    // Best-effort cleanup on every path — osascript reads the file synchronously.
-    let _ = std::fs::remove_file(&tmp);
 
     match status {
         Ok(s) if s.success() => Ok(()),

@@ -84,7 +84,12 @@ async function handleDrop(
 	// Focus the target pane so subsequent typing lands where the file did.
 	useWorkspaceStore.getState().setFocusedPane(paneId);
 
-	const isAgent = usePtyActivityStore.getState().agentPtyIds.has(ptyId);
+	// Gate on `detectionMode` — the same canonical agent/shell signal TerminalSlot
+	// and the status indicators read — so this never diverges from the rest of
+	// the UI. (agentPtyIds is kept in lockstep with it by setAgentPty/clearAgentPty,
+	// but detectionMode is the one source of truth.)
+	const isAgent =
+		usePtyActivityStore.getState().activities[ptyId]?.detectionMode === "agent";
 	const mode: DropMode = isAgent ? "agent" : "shell";
 
 	// Smart image drop: single image onto an agent, setting on → clipboard + Ctrl+V.
@@ -98,9 +103,14 @@ async function handleDrop(
 			await clipboardImage.setFromPath(paths[0]);
 			pty.write(ptyId, CTRL_V);
 			return;
-		} catch {
+		} catch (err) {
 			// Decode/clipboard failure → fall through to a path insert so the drop
-			// still does something useful.
+			// still does something useful. Leave a breadcrumb: a silent fallback is
+			// indistinguishable from "the setting is off" for a bug reporter.
+			console.warn(
+				"[fileDrop] clipboard image trick failed, inserting path instead:",
+				err,
+			);
 		}
 	}
 

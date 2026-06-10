@@ -33,6 +33,15 @@ export type DropMode = "shell" | "agent";
 // A path is left bare when it contains only characters a POSIX shell treats
 // literally; anything else gets single-quoted. Conservative on purpose — when
 // in doubt, quote.
+//
+// TODO(windows): this quoting is POSIX-only. On cmd.exe single quotes aren't
+// metacharacters (they'd become part of the argument); PowerShell single-quoted
+// strings don't accept the '\'' escape this emits; and a Windows path with
+// backslashes always falls into the quoting branch (backslash isn't in
+// SHELL_SAFE). Before the Windows ship, plumb the spawned shell kind through
+// (shell_env.rs knows it) and branch the quoting per shell. The agent-mode raw
+// path may also need per-agent escaping for `\`. See CONTEXT.md (Flagged
+// ambiguities → file-drop path quoting).
 const SHELL_SAFE = /^[A-Za-z0-9_./@%+:,=-]+$/;
 
 /**
