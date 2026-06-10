@@ -365,6 +365,47 @@ describe("prStore", () => {
 		});
 	});
 
+	describe("no-workspace fallback (null cwd)", () => {
+		// `null` is the sentinel for "zero Opened workspaces": there is no repo to
+		// scope to, so the account-wide (-all) view is forced regardless of the
+		// stored per-section preference, which must remain untouched. The cwd is
+		// coalesced to "" at the IPC boundary (Rust runs gh from the home dir).
+		it("forces review-all on null cwd even when stored view is review-repo", async () => {
+			mockGh.reviewRequestsAll.mockResolvedValue([
+				makePr({ number: 7, repository: "org/x" }),
+			]);
+			useWorkspaceStore.setState({ activeWorkspaceId: null });
+			usePrStore.setState({ reviewView: "review-repo", globalReviewCount: 0 });
+
+			await usePrStore.getState().fetchReviewPrs(null);
+
+			expect(mockGh.reviewRequestsAll).toHaveBeenCalledWith("");
+			expect(mockGh.reviewRequests).not.toHaveBeenCalled();
+			expect(usePrStore.getState().review.prs).toHaveLength(1);
+			// The Overview bar chip must also reflect the account-wide count.
+			expect(usePrStore.getState().globalReviewCount).toBe(1);
+			// Stored preference is preserved for when a workspace reopens.
+			expect(usePrStore.getState().reviewView).toBe("review-repo");
+		});
+
+		it("forces mine-all on null cwd even when stored view is mine-repo", async () => {
+			mockGh.myPrsAll.mockResolvedValue([
+				makePr({ number: 8 }),
+				makePr({ number: 9 }),
+			]);
+			useWorkspaceStore.setState({ activeWorkspaceId: null });
+			usePrStore.setState({ myPrsView: "mine-repo", globalMyPrsCount: 0 });
+
+			await usePrStore.getState().fetchMyPrs(null);
+
+			expect(mockGh.myPrsAll).toHaveBeenCalledWith("");
+			expect(mockGh.myPrs).not.toHaveBeenCalled();
+			expect(usePrStore.getState().myPrs.prs).toHaveLength(2);
+			expect(usePrStore.getState().globalMyPrsCount).toBe(2);
+			expect(usePrStore.getState().myPrsView).toBe("mine-repo");
+		});
+	});
+
 	describe("clear", () => {
 		it("resets both sections", () => {
 			usePrStore.setState({

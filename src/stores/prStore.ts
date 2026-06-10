@@ -42,9 +42,11 @@ interface PrState {
 	 */
 	globalMyPrsCount: number;
 
-	checkGhStatus: (cwd: string) => Promise<void>;
-	fetchReviewPrs: (cwd: string) => Promise<void>;
-	fetchMyPrs: (cwd: string) => Promise<void>;
+	/** `cwd` is the active workspace's folder, or `null` when no workspace is
+	 *  open — `null` forces the account-wide (`-all`) data. */
+	checkGhStatus: (cwd: string | null) => Promise<void>;
+	fetchReviewPrs: (cwd: string | null) => Promise<void>;
+	fetchMyPrs: (cwd: string | null) => Promise<void>;
 	setReviewView: (view: ReviewView) => void;
 	setMyPrsView: (view: MyPrsView) => void;
 	clear: () => void;
@@ -85,6 +87,7 @@ export const usePrStore = create<PrState>()(
 		(set, get) => {
 			let reviewGeneration = 0;
 			let myPrsGeneration = 0;
+			let ghStatusGeneration = 0;
 			return {
 				ghStatus: null,
 				reviewView: "review-all",
@@ -95,10 +98,19 @@ export const usePrStore = create<PrState>()(
 				globalMyPrsCount: 0,
 
 				checkGhStatus: async (cwd) => {
+					// Latest call wins. A stale no-workspace status check (cwd null,
+					// hasRemote false) must not clobber a fresher workspace one that
+					// started later (or vice versa), regardless of which network call
+					// resolves first — otherwise hasRemote can briefly flip back and
+					// the panel flickers "No GitHub remote found". Mirrors the
+					// generation guards in fetchReviewPrs / fetchMyPrs.
+					const gen = ++ghStatusGeneration;
 					try {
-						const status = await gh.status(cwd);
+						const status = await gh.status(cwd ?? "");
+						if (gen !== ghStatusGeneration) return;
 						set({ ghStatus: status });
 					} catch {
+						if (gen !== ghStatusGeneration) return;
 						set({
 							ghStatus: {
 								available: false,
@@ -115,7 +127,15 @@ export const usePrStore = create<PrState>()(
 					const gen = ++reviewGeneration;
 					set({ review: { ...get().review, loading: true, error: null } });
 
-					const view = get().reviewView;
+					// `null` is the no-workspace sentinel (zero Opened workspaces):
+					// there is no repo to scope to, so force the account-wide view
+					// regardless of the stored per-section preference (which is
+					// preserved for when a workspace reopens). The gh commands take a
+					// string cwd; coalescing null → "" tells the Rust side to run from
+					// the home dir (see run_gh in gh_commands.rs).
+					const ghCwd = cwd ?? "";
+					const view: ReviewView =
+						cwd === null ? "review-all" : get().reviewView;
 					// The Overview bar chip always shows the -all count regardless of
 					// the panel view (see ADR 0005). When the panel is in -all mode
 					// the panel fetch IS the -all fetch — both names reference the
@@ -125,11 +145,11 @@ export const usePrStore = create<PrState>()(
 					// (and vice versa).
 					const panelPrsPromise =
 						view === "review-repo"
-							? gh.reviewRequests(cwd)
-							: gh.reviewRequestsAll(cwd);
+							? gh.reviewRequests(ghCwd)
+							: gh.reviewRequestsAll(ghCwd);
 					const allPrsPromise =
 						view === "review-repo"
-							? gh.reviewRequestsAll(cwd)
+							? gh.reviewRequestsAll(ghCwd)
 							: panelPrsPromise;
 
 					// ── Panel section commit ──
@@ -191,14 +211,17 @@ export const usePrStore = create<PrState>()(
 					const gen = ++myPrsGeneration;
 					set({ myPrs: { ...get().myPrs, loading: true, error: null } });
 
-					const view = get().myPrsView;
+					// `null` = no-workspace sentinel — force the account-wide view
+					// (see fetchReviewPrs).
+					const ghCwd = cwd ?? "";
+					const view: MyPrsView = cwd === null ? "mine-all" : get().myPrsView;
 					// Mirror fetchReviewPrs: piggyback the -all variant for the
 					// Overview bar chip when the panel is in -repo mode. Commits
 					// are decoupled so a piggyback failure can't poison the panel.
 					const panelPrsPromise =
-						view === "mine-repo" ? gh.myPrs(cwd) : gh.myPrsAll(cwd);
+						view === "mine-repo" ? gh.myPrs(ghCwd) : gh.myPrsAll(ghCwd);
 					const allPrsPromise =
-						view === "mine-repo" ? gh.myPrsAll(cwd) : panelPrsPromise;
+						view === "mine-repo" ? gh.myPrsAll(ghCwd) : panelPrsPromise;
 
 					// ── Panel section commit ──
 					try {
