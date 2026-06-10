@@ -48,39 +48,32 @@ fn set_clipboard_image_blocking(path: &str) -> Result<(), AbundioError> {
     }
 }
 
-/// Removes its path on drop, so the temp PNG is never orphaned regardless of
-/// which return path `set_clipboard_png_macos` takes (or if a later edit adds an
-/// early return between the write and the end of the function).
-#[cfg(target_os = "macos")]
-struct TempFileGuard(std::path::PathBuf);
-
-#[cfg(target_os = "macos")]
-impl Drop for TempFileGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
 /// macOS: re-encode to a temp PNG and set the clipboard via AppleScript so the
 /// pasteboard carries `public.png` (the format Claude Code's reader expects).
 #[cfg(target_os = "macos")]
 fn set_clipboard_png_macos(img: &image::DynamicImage) -> Result<(), AbundioError> {
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
 
     let mut png: Vec<u8> = Vec::new();
     img.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
         .map_err(|e| AbundioError::Clipboard(format!("png encode failed: {e}")))?;
 
-    let tmp = std::env::temp_dir().join(format!("abundio-drop-{}.png", uuid::Uuid::new_v4()));
-    std::fs::write(&tmp, &png)?;
-    // RAII cleanup — removes the file on every exit path, including early returns.
-    let _guard = TempFileGuard(tmp.clone());
+    // NamedTempFile creates the file atomically (O_EXCL) with 0600 perms and an
+    // unpredictable name, and removes it on drop — closing the "insecure temp
+    // file" class (predictable name, symlink-follow, world-readable, leak) that
+    // a hand-rolled temp_dir().join(...) + fs::write would invite.
+    let mut tmp = tempfile::Builder::new()
+        .prefix("abundio-drop-")
+        .suffix(".png")
+        .tempfile()?;
+    tmp.write_all(&png)?;
+    tmp.flush()?;
 
-    // The UUID filename can't contain quotes, but the temp-dir prefix derives
-    // from $TMPDIR (attacker-influenceable in principle), so escape the full
-    // path for the AppleScript double-quoted string literal — `\` then `"` — to
-    // close any injection vector.
+    // Escape the path for the AppleScript double-quoted string literal — `\` then
+    // `"`. The temp-dir prefix derives from $TMPDIR (attacker-influenceable in
+    // principle), so this closes any AppleScript-injection vector.
     let escaped = tmp
+        .path()
         .display()
         .to_string()
         .replace('\\', "\\\\")
@@ -99,6 +92,7 @@ fn set_clipboard_png_macos(img: &image::DynamicImage) -> Result<(), AbundioError
             "osascript spawn failed: {e}"
         ))),
     }
+    // `tmp` drops here, removing the temp file on every exit path.
 }
 
 /// Windows/Linux: write raw RGBA via `arboard` (CF_DIB on Windows, the

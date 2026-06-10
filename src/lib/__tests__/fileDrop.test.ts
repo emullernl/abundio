@@ -85,3 +85,40 @@ describe("buildDropText", () => {
 		expect(buildDropText(["/a/b.png"], "agent")).toBe("/a/b.png ");
 	});
 });
+
+describe("control-char sanitization (security: filename → PTY injection)", () => {
+	it("agent mode strips ESC, newline, and CR from the raw path", () => {
+		const out = formatDroppedPath("/a/evil\x1b[201~\rrm -rf ~\n.png", "agent");
+		expect(out).not.toContain("\x1b");
+		expect(out).not.toContain("\n");
+		expect(out).not.toContain("\r");
+		// The ESC is gone, so the bracketed-paste terminator can no longer form.
+		expect(out).toBe("/a/evil[201~rm -rf ~.png");
+	});
+
+	it("agent mode strips DEL and C1 control bytes", () => {
+		expect(formatDroppedPath("/a/x\x7f\x9b.png", "agent")).toBe("/a/x.png");
+	});
+
+	it("shell mode strips control chars before quoting (no breakout survives)", () => {
+		const out = formatDroppedPath("/a/x\x1b[201~ y\n.png", "shell");
+		expect(out).not.toContain("\x1b");
+		expect(out).not.toContain("\n");
+		// Has a space after stripping → single-quoted as one token.
+		expect(out).toBe("'/a/x[201~ y.png'");
+	});
+
+	it("buildDropText output never carries ESC/newline from a hostile filename", () => {
+		const text = buildDropText(
+			["/a/p\x1b[201~\rbad\n.png", "/b/q.png"],
+			"agent",
+		);
+		expect(text).not.toContain("\x1b");
+		expect(text).not.toContain("\n");
+		expect(text).not.toContain("\r");
+	});
+
+	it("leaves clean paths untouched", () => {
+		expect(formatDroppedPath("/a/normal.png", "agent")).toBe("/a/normal.png");
+	});
+});

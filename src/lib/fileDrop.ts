@@ -30,6 +30,23 @@ export function isImagePath(path: string): boolean {
 
 export type DropMode = "shell" | "agent";
 
+// Strip control characters from a dropped path before it ever reaches the PTY.
+// A filename can legally contain any byte but `/` and NUL (POSIX) — including
+// ESC, newline and CR. Inserted via xterm's `term.paste()`, an embedded
+// `ESC[201~` would close bracketed paste early and a newline (converted to CR)
+// would submit whatever follows — turning a hostile *filename* into command
+// injection in the shell/agent. Removing C0 (incl. ESC/LF/CR/TAB), DEL and C1
+// defuses both the bracketed-paste breakout and the bare-newline submit; real
+// paths never contain these bytes, so stripping is non-destructive in practice.
+// Applied to BOTH modes (agent mode is otherwise raw). See the security note in
+// docs/plans/terminal-file-drop.md.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — we strip control characters
+const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
+
+function stripControlChars(path: string): string {
+	return path.replace(CONTROL_CHARS, "");
+}
+
 // A path is left bare when it contains only characters a POSIX shell treats
 // literally; anything else gets single-quoted. Conservative on purpose — when
 // in doubt, quote.
@@ -53,9 +70,12 @@ const SHELL_SAFE = /^[A-Za-z0-9_./@%+:,=-]+$/;
  *   POSIX way ('\'').
  */
 export function formatDroppedPath(path: string, mode: DropMode): string {
-	if (mode === "agent") return path;
-	if (SHELL_SAFE.test(path)) return path;
-	return `'${path.replace(/'/g, "'\\''")}'`;
+	// Strip control chars first — applies to both modes (agent mode is otherwise
+	// raw), closing the bracketed-paste / newline injection from hostile filenames.
+	const safe = stripControlChars(path);
+	if (mode === "agent") return safe;
+	if (SHELL_SAFE.test(safe)) return safe;
+	return `'${safe.replace(/'/g, "'\\''")}'`;
 }
 
 /** Build the text inserted for a drop: each path formatted for the mode, joined

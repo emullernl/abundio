@@ -67,6 +67,6 @@ image = { version = "0.25", default-features = false, features = [
 # path — see clipboard_image.rs). Already pulled in transitively by
 # tauri-plugin-clipboard-manager; pinned here so the direct dependency is explicit.
 arboard = "3"
-
-[dev-dependencies]
+# Secure temp-file creation (O_EXCL, 0600, RAII cleanup) for the macOS PNG
+# clipboard path in clipboard_image.rs. Also used by tests.
 tempfile = "3"
