@@ -49,12 +49,34 @@ export function PullRequestsSection() {
 		fetchMyPrs(cwd);
 	}, [cwd, checkGhStatus, fetchReviewPrs, fetchMyPrs]);
 
+	// Switching the view (repo ↔ all) refetches immediately so the panel reflects
+	// the new scope right away instead of showing stale data until the next poll.
+	// `fetchReviewPrs`/`fetchMyPrs` read the freshly-set view synchronously from
+	// the store, so the setter must run first. The store's view-change subscription
+	// sets `skipNextLoad`, which suppresses spurious "review requested" / status
+	// notifications for PRs that merely appear because the scope widened.
+	const handleReviewViewChange = useCallback(
+		(view: ReviewView) => {
+			setReviewView(view);
+			fetchReviewPrs(cwd);
+		},
+		[cwd, setReviewView, fetchReviewPrs],
+	);
+
+	const handleMyPrsViewChange = useCallback(
+		(view: MyPrsView) => {
+			setMyPrsView(view);
+			fetchMyPrs(cwd);
+		},
+		[cwd, setMyPrsView, fetchMyPrs],
+	);
+
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<PrSubPanel
 				views={["review-all", "review-repo"]}
 				activeView={effReviewView}
-				setActiveView={setReviewView}
+				setActiveView={handleReviewViewChange}
 				locked={noWorkspace}
 				section={review}
 				ghStatus={ghStatus}
@@ -69,7 +91,7 @@ export function PullRequestsSection() {
 			<PrSubPanel
 				views={["mine-all", "mine-repo"]}
 				activeView={effMyPrsView}
-				setActiveView={setMyPrsView}
+				setActiveView={handleMyPrsViewChange}
 				locked={noWorkspace}
 				section={myPrs}
 				ghStatus={ghStatus}
