@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildDropText, formatDroppedPath, isImagePath } from "../fileDrop";
+import {
+	buildDropText,
+	formatDroppedPath,
+	isImagePath,
+	isMsysBashShell,
+	toMsysPath,
+} from "../fileDrop";
 
 describe("isImagePath", () => {
 	it("detects common raster image extensions, case-insensitively", () => {
@@ -120,5 +126,74 @@ describe("control-char sanitization (security: filename → PTY injection)", () 
 
 	it("leaves clean paths untouched", () => {
 		expect(formatDroppedPath("/a/normal.png", "agent")).toBe("/a/normal.png");
+	});
+});
+
+describe("toMsysPath (Windows → Git Bash path style)", () => {
+	it("converts a backslash drive path to /c/… (drive lowercased)", () => {
+		expect(toMsysPath("C:\\Users\\Me\\file.png")).toBe("/c/Users/Me/file.png");
+		expect(toMsysPath("D:\\a\\b")).toBe("/d/a/b");
+	});
+
+	it("converts a forward-slash drive path too", () => {
+		expect(toMsysPath("C:/Users/Me/file.png")).toBe("/c/Users/Me/file.png");
+	});
+
+	it("converts UNC paths", () => {
+		expect(toMsysPath("\\\\server\\share\\x")).toBe("//server/share/x");
+	});
+
+	it("handles a bare drive", () => {
+		expect(toMsysPath("C:")).toBe("/c");
+	});
+
+	it("leaves already-unix paths unchanged", () => {
+		expect(toMsysPath("/c/Users/Me/file.png")).toBe("/c/Users/Me/file.png");
+		expect(toMsysPath("/home/me/f.png")).toBe("/home/me/f.png");
+	});
+});
+
+describe("isMsysBashShell", () => {
+	it("is true for bash on Windows", () => {
+		expect(isMsysBashShell("C:\\Program Files\\Git\\bin\\bash.exe", true)).toBe(
+			true,
+		);
+		expect(isMsysBashShell("bash.exe", true)).toBe(true);
+	});
+
+	it("is false for cmd.exe / PowerShell on Windows", () => {
+		expect(isMsysBashShell("C:\\Windows\\System32\\cmd.exe", true)).toBe(false);
+		expect(isMsysBashShell("powershell.exe", true)).toBe(false);
+		expect(isMsysBashShell("pwsh.exe", true)).toBe(false);
+	});
+
+	it("is false on non-Windows regardless of shell", () => {
+		expect(isMsysBashShell("/bin/bash", false)).toBe(false);
+	});
+});
+
+describe("formatDroppedPath / buildDropText with msys=true (Git Bash)", () => {
+	it("agent mode emits the raw unix path", () => {
+		expect(formatDroppedPath("C:\\Users\\Me\\f.png", "agent", true)).toBe(
+			"/c/Users/Me/f.png",
+		);
+	});
+
+	it("shell mode converts then single-quotes when there are spaces", () => {
+		expect(formatDroppedPath("C:\\Users\\My Docs\\f.png", "shell", true)).toBe(
+			"'/c/Users/My Docs/f.png'",
+		);
+	});
+
+	it("shell mode leaves a clean converted path bare", () => {
+		expect(formatDroppedPath("C:\\Users\\Me\\f.png", "shell", true)).toBe(
+			"/c/Users/Me/f.png",
+		);
+	});
+
+	it("buildDropText converts every path", () => {
+		expect(buildDropText(["C:\\a\\b.png", "D:\\c\\d.png"], "agent", true)).toBe(
+			"/c/a/b.png /d/c/d.png ",
+		);
 	});
 });

@@ -468,6 +468,11 @@ export const fonts = {
 
 export const shells = {
 	listAvailable: () => invoke<AvailableShell[]>("list_available_shells"),
+
+	/** The shell a new PTY spawns with when no `shellPath` is set. Resolved in
+	 *  Rust (Git Bash preferred on Windows). Used by file-drop to choose the
+	 *  right path style for the "System Default" shell. */
+	default: () => invoke<string>("default_shell"),
 };
 
 export const agentRegistry = {

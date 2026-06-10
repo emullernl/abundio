@@ -1,9 +1,15 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect } from "react";
 import { isDemoMode } from "../lib/demo";
-import { buildDropText, type DropMode, isImagePath } from "../lib/fileDrop";
+import {
+	buildDropText,
+	type DropMode,
+	isImagePath,
+	isMsysBashShell,
+} from "../lib/fileDrop";
 import { useFileDropStore } from "../lib/fileDropStore";
-import { clipboardImage, pty } from "../lib/ipc";
+import { clipboardImage, pty, shells } from "../lib/ipc";
+import { isWindows } from "../lib/platform";
 import { getTerminal } from "../lib/terminalManager";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -12,6 +18,27 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 // Ctrl+V control byte. Agents that support clipboard-image paste (Claude Code,
 // Gemini CLI) read the OS clipboard when they receive this on stdin.
 const CTRL_V = "\x16";
+
+// The PTY's "System Default" shell, resolved once in Rust and memoized. Only
+// needed on Windows to tell whether the default is Git Bash (→ unix paths).
+let _defaultShell: string | null = null;
+let _defaultShellInflight: Promise<string> | null = null;
+function getDefaultShell(): Promise<string> {
+	if (_defaultShell !== null) return Promise.resolve(_defaultShell);
+	if (!_defaultShellInflight) {
+		_defaultShellInflight = shells
+			.default()
+			.then((s) => {
+				_defaultShell = s;
+				return s;
+			})
+			.catch(() => {
+				_defaultShell = "";
+				return "";
+			});
+	}
+	return _defaultShellInflight;
+}
 
 /** Map a webview drop position (physical px) to the terminal pane under it.
  *  `document.elementFromPoint` wants CSS px, so divide out the device ratio. */
@@ -114,6 +141,17 @@ async function handleDrop(
 		}
 	}
 
+	// On Windows, a Git-Bash pane needs Unix-style paths (/c/Users/…); cmd.exe
+	// and PowerShell want native C:\… paths. Resolve the pane's shell (the user's
+	// setting, or the System Default from Rust) to decide. Non-Windows skips this
+	// entirely — no IPC, no behaviour change.
+	let msys = false;
+	if (isWindows) {
+		const shellPath =
+			useSettingsStore.getState().shellPath ?? (await getDefaultShell());
+		msys = isMsysBashShell(shellPath, isWindows);
+	}
+
 	// Base behaviour: bracketed-paste the path(s) — never executed.
-	managed.term.paste(buildDropText(paths, mode));
+	managed.term.paste(buildDropText(paths, mode, msys));
 }

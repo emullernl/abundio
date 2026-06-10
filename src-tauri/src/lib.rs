@@ -939,6 +939,7 @@ pub fn run() {
             gh_commands::gh_my_prs_all,
             commands::list_system_fonts,
             commands::list_available_shells,
+            commands::default_shell,
             search::fs_search,
             search::fs_search_cancel,
             dev_environments::list_dev_environments,

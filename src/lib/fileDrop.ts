@@ -47,32 +47,68 @@ function stripControlChars(path: string): string {
 	return path.replace(CONTROL_CHARS, "");
 }
 
+/**
+ * Convert a Windows path to the MSYS / Git-Bash unix form, which is what a
+ * git-bash pane actually understands (backslashes are escape chars in bash, so a
+ * `C:\…` path would break):
+ *   `C:\Users\Me\f.png` → `/c/Users/Me/f.png`   (drive lowercased, `:` dropped)
+ *   `C:/Users/Me/f.png` → `/c/Users/Me/f.png`
+ *   `\\srv\share\x`      → `//srv/share/x`        (UNC)
+ * Only the path *shape* is converted; quoting happens afterwards. Paths already
+ * in unix form pass through unchanged.
+ */
+export function toMsysPath(path: string): string {
+	if (path.startsWith("\\\\")) {
+		return `//${path.slice(2).replace(/\\/g, "/")}`;
+	}
+	const drive = /^([A-Za-z]):[\\/](.*)$/.exec(path);
+	if (drive) {
+		return `/${drive[1].toLowerCase()}/${drive[2].replace(/\\/g, "/")}`;
+	}
+	const bareDrive = /^([A-Za-z]):$/.exec(path);
+	if (bareDrive) return `/${bareDrive[1].toLowerCase()}`;
+	return path.replace(/\\/g, "/");
+}
+
+/** True when the pane's shell is an MSYS / Git-Bash shell on Windows — the case
+ *  that needs Unix-style paths. cmd.exe and PowerShell want native `C:\…` paths,
+ *  so they return false. */
+export function isMsysBashShell(shellPath: string, windows: boolean): boolean {
+	if (!windows) return false;
+	const base = (shellPath.split(/[\\/]/).pop() ?? "").toLowerCase();
+	return base.includes("bash");
+}
+
 // A path is left bare when it contains only characters a POSIX shell treats
-// literally; anything else gets single-quoted. Conservative on purpose — when
-// in doubt, quote.
+// literally; anything else gets single-quoted. POSIX single-quoting is correct
+// for bash/zsh/fish — including Git Bash on Windows, whose paths are first
+// converted to `/c/…` unix form (see toMsysPath + the `msys` flag).
 //
-// TODO(windows): this quoting is POSIX-only. On cmd.exe single quotes aren't
-// metacharacters (they'd become part of the argument); PowerShell single-quoted
-// strings don't accept the '\'' escape this emits; and a Windows path with
-// backslashes always falls into the quoting branch (backslash isn't in
-// SHELL_SAFE). Before the Windows ship, plumb the spawned shell kind through
-// (shell_env.rs knows it) and branch the quoting per shell. The agent-mode raw
-// path may also need per-agent escaping for `\`. See CONTEXT.md (Flagged
-// ambiguities → file-drop path quoting).
+// TODO(windows): cmd.exe and PowerShell still receive POSIX quoting, which is
+// wrong (cmd single quotes aren't metacharacters; PowerShell rejects the '\''
+// escape). Their *path style* is already correct (native C:\…) — only the
+// quoting is off. The fix is per-shell quoting branched on the resolved shell
+// kind. See CONTEXT.md (Flagged ambiguities → file-drop path quoting).
 const SHELL_SAFE = /^[A-Za-z0-9_./@%+:,=-]+$/;
 
 /**
  * Format one dropped path for insertion.
+ * - `msys`: first rewrite a Windows path to its Git-Bash `/c/…` form.
  * - agent mode: raw literal path (the agent resolves it; quotes/backslashes
  *   would only get in the way).
  * - shell mode: POSIX single-quote when the path has spaces/special chars, so
  *   it survives as a single shell token. Embedded single quotes are escaped the
  *   POSIX way ('\'').
  */
-export function formatDroppedPath(path: string, mode: DropMode): string {
+export function formatDroppedPath(
+	path: string,
+	mode: DropMode,
+	msys = false,
+): string {
 	// Strip control chars first — applies to both modes (agent mode is otherwise
 	// raw), closing the bracketed-paste / newline injection from hostile filenames.
-	const safe = stripControlChars(path);
+	let safe = stripControlChars(path);
+	if (msys) safe = toMsysPath(safe);
 	if (mode === "agent") return safe;
 	if (SHELL_SAFE.test(safe)) return safe;
 	return `'${safe.replace(/'/g, "'\\''")}'`;
@@ -80,6 +116,10 @@ export function formatDroppedPath(path: string, mode: DropMode): string {
 
 /** Build the text inserted for a drop: each path formatted for the mode, joined
  *  by spaces, with a trailing space so the user can keep typing. */
-export function buildDropText(paths: string[], mode: DropMode): string {
-	return `${paths.map((p) => formatDroppedPath(p, mode)).join(" ")} `;
+export function buildDropText(
+	paths: string[],
+	mode: DropMode,
+	msys = false,
+): string {
+	return `${paths.map((p) => formatDroppedPath(p, mode, msys)).join(" ")} `;
 }

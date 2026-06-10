@@ -217,6 +217,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return fixtures.systemFonts;
 		case "list_available_shells":
 			return fixtures.availableShells;
+		case "default_shell":
+			return "/bin/zsh";
 		case "list_dev_environments":
 			return fixtures.devEnvironments;
 		case "launch_dev_environment":
