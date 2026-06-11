@@ -56,10 +56,14 @@ export function SearchBar({ searchAddon, onClose }: Props) {
 		return () => clearTimeout(timer);
 	}, [query]);
 
+	// Skip the first run: on mount `debouncedQuery` is "", and there are no
+	// decorations to clear yet, so there's no need to poke the addon.
+	const hasSearchedRef = useRef(false);
 	useEffect(() => {
 		if (debouncedQuery) {
+			hasSearchedRef.current = true;
 			searchAddon.findNext(debouncedQuery, searchOptions);
-		} else {
+		} else if (hasSearchedRef.current) {
 			searchAddon.clearDecorations();
 		}
 	}, [debouncedQuery, searchAddon, searchOptions]);
@@ -71,6 +75,10 @@ export function SearchBar({ searchAddon, onClose }: Props) {
 				onClose();
 			} else if (e.key === "Enter") {
 				e.preventDefault();
+				if (!query) {
+					// Nothing to search for; avoid findNext("") scanning the buffer.
+					return;
+				}
 				if (query !== debouncedQuery) {
 					// Flush the pending debounce; the search effect performs the find.
 					setDebouncedQuery(query);

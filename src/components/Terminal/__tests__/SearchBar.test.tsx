@@ -84,11 +84,14 @@ describe("SearchBar", () => {
 		});
 		expect(addon.findNext).toHaveBeenCalledTimes(1);
 
+		// Snapshot the count so the assertion proves the empty-input transition
+		// triggered a clear, not an incidental mount-time call.
+		const clearsBefore = addon.clearDecorations.mock.calls.length;
 		type(input, "");
 		act(() => {
 			vi.advanceTimersByTime(150);
 		});
-		expect(addon.clearDecorations).toHaveBeenCalled();
+		expect(addon.clearDecorations.mock.calls.length).toBe(clearsBefore + 1);
 	});
 
 	it("flushes a pending debounce on Enter without double-searching", () => {
