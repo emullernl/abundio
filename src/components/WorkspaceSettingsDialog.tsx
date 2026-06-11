@@ -146,7 +146,6 @@ export function WorkspaceSettingsDialog({
 									value={commands}
 									onChange={(e) => setCommands(e.target.value)}
 									placeholder={"pnpm install\ncp ../$(basename $PWD)/.env .env"}
-									spellCheck={false}
 									rows={6}
 									style={{
 										...inputStyle,

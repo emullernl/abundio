@@ -26,15 +26,23 @@ export function applyTextAssistOptOuts(element: Element): void {
 	}
 }
 
-export function disableNativeTextAssist(target: Document = document): void {
-	target.addEventListener(
-		"focusin",
-		(event) => {
-			const el = event.target;
-			if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-				applyTextAssistOptOuts(el);
-			}
-		},
-		true,
-	);
+/**
+ * Installs the focus guard on `target`. Returns a teardown function that
+ * removes the listener — call it when the host is torn down (and in tests,
+ * so capture-phase handlers don't accumulate across cases).
+ */
+export function disableNativeTextAssist(
+	target: Document = document,
+): () => void {
+	const onFocusIn = (event: Event): void => {
+		const el = event.target;
+		// Intentionally narrow: contenteditable hosts (e.g. the Notes editor's
+		// ProseMirror surface, src/components/Notes/NotesEditor.tsx) are prose
+		// and *want* spellcheck/autocorrect, so they're deliberately excluded.
+		if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+			applyTextAssistOptOuts(el);
+		}
+	};
+	target.addEventListener("focusin", onFocusIn, true);
+	return () => target.removeEventListener("focusin", onFocusIn, true);
 }

@@ -93,7 +93,6 @@ export function EditingRow({
 					color: "var(--fg-primary)",
 					padding: "0 4px",
 				}}
-				spellCheck={false}
 			/>
 		</div>
 	);
