@@ -13,8 +13,13 @@ function readCssVar(name: string, fallback: string): string {
 	return value || fallback;
 }
 
+// Re-highlighting every match across the scrollback on each keystroke is
+// expensive, so live search waits for a brief pause in typing.
+const SEARCH_DEBOUNCE_MS = 150;
+
 export function SearchBar({ searchAddon, onClose }: Props) {
 	const [query, setQuery] = useState("");
+	const [debouncedQuery, setDebouncedQuery] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	// Without `decorations`, xterm's SearchAddon only paints the active match
@@ -44,10 +49,20 @@ export function SearchBar({ searchAddon, onClose }: Props) {
 	}, []);
 
 	useEffect(() => {
-		if (query) {
-			searchAddon.findNext(query, searchOptions);
+		const timer = setTimeout(
+			() => setDebouncedQuery(query),
+			SEARCH_DEBOUNCE_MS,
+		);
+		return () => clearTimeout(timer);
+	}, [query]);
+
+	useEffect(() => {
+		if (debouncedQuery) {
+			searchAddon.findNext(debouncedQuery, searchOptions);
+		} else {
+			searchAddon.clearDecorations();
 		}
-	}, [query, searchAddon, searchOptions]);
+	}, [debouncedQuery, searchAddon, searchOptions]);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -56,14 +71,17 @@ export function SearchBar({ searchAddon, onClose }: Props) {
 				onClose();
 			} else if (e.key === "Enter") {
 				e.preventDefault();
-				if (e.shiftKey) {
+				if (query !== debouncedQuery) {
+					// Flush the pending debounce; the search effect performs the find.
+					setDebouncedQuery(query);
+				} else if (e.shiftKey) {
 					searchAddon.findPrevious(query, searchOptions);
 				} else {
 					searchAddon.findNext(query, searchOptions);
 				}
 			}
 		},
-		[query, searchAddon, searchOptions, onClose],
+		[query, debouncedQuery, searchAddon, searchOptions, onClose],
 	);
 
 	return (
