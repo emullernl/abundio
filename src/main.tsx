@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
+import { disableNativeTextAssist } from "./lib/disableNativeTextAssist";
 import { initNotificationListener } from "./lib/notificationRouter";
 import { primaryFontFamily } from "./lib/terminalManager";
 import { SettingsApp, setupCrossWindowSync } from "./SettingsApp";
@@ -12,6 +13,10 @@ import "./styles/globals.css";
 // theme/font changes propagate live. Registered explicitly here — once per
 // window — rather than as a module-eval side effect. (See SettingsApp.tsx.)
 setupCrossWindowSync();
+
+// macOS auto-capitalizes / autocorrects text fields unless each one opts out.
+// Stamp the opt-out attributes globally on focus instead of per component.
+disableNativeTextAssist();
 
 /** Which OS-level Abundio window is hosting this React app. The string is
  *  evaluated synchronously at module load; safe to compare against literals. */
