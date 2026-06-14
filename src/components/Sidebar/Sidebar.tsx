@@ -111,7 +111,7 @@ export function Sidebar({
 				style={{
 					width: 56,
 					paddingTop: titlebarHeight + 8,
-					backgroundColor: "var(--bg-secondary)",
+					background: "var(--ambient-glow), var(--bg-secondary)",
 					borderRight: "1px solid var(--border)",
 				}}
 			>
@@ -147,7 +147,7 @@ export function Sidebar({
 			className="flex flex-col h-full relative"
 			style={{
 				width: currentWidth,
-				backgroundColor: "var(--bg-secondary)",
+				background: "var(--ambient-glow), var(--bg-secondary)",
 				borderRight: "1px solid var(--border)",
 			}}
 		>

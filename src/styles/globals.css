@@ -241,6 +241,17 @@
 	--font-ui: system-ui, -apple-system, sans-serif;
 	--pane-border: 1px solid var(--border);
 	--pane-focus-glow: 0 0 0 1px var(--accent);
+	/* Ambient radial glow rising from the bottom of a surface. Built from the
+	   active theme's --accent over transparent, so it re-resolves for every
+	   theme automatically when applyTheme() swaps --accent (dark themes get a
+	   luminous lift; light themes a soft colored wash). Layer it ABOVE a base
+	   colour: `background: var(--ambient-glow), var(--bg-secondary)`. */
+	--ambient-glow: radial-gradient(
+		125% 95% at 50% 100%,
+		color-mix(in oklab, var(--accent) 14%, transparent) 0%,
+		color-mix(in oklab, var(--accent) 5%, transparent) 35%,
+		transparent 65%
+	);
 	--sidebar-width: 280px;
 	--statusbar-height: 34px;
 	--transition-fast: 120ms ease-out;
