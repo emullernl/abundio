@@ -1,0 +1,1597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>abundio — product tour</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+/* ── Fonts ─────────────────────────────────────────────────────────── */
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: normal; font-display: block; src: url("assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 500; font-style: normal; font-display: block; src: url("assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 700; font-style: normal; font-display: block; src: url("assets/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 800; font-style: normal; font-display: block; src: url("assets/fonts/jetbrains-mono-latin-800-normal.woff2") format("woff2"); }
+
+/* ── Design tokens (mirrors abundio-website + app default theme) ───── */
+:root {
+	--bg-primary: #0d1117;
+	--bg-secondary: #161b22;
+	--bg-tertiary: #21262d;
+	--fg-primary: #e6edf3;
+	--fg-secondary: #8b949e;
+	--accent: #58d5ba;
+	--accent-soft: #7ee2cc;
+	--blue: #58a6ff;
+	--magenta: #bc8cff;
+	--green: #3fb950;
+	--yellow: #d29922;
+	--red: #ff7b72;
+	--error: #f85149;
+	--border: #30363d;
+	--glass-bg: rgba(22, 27, 34, 0.6);
+	--ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+	--mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	/* status-dot states (lifted from the app's AgentStatusIcon) */
+	--st-idle: rgb(52 211 153);     --st-idle-glow: rgba(16,185,129,0.5);
+	--st-working: rgb(251 191 36);  --st-working-glow: rgba(251,191,36,0.5);
+	--st-waiting: rgb(56 189 248);  --st-waiting-glow: rgba(56,189,248,0.6);
+	--st-ready: rgb(192 132 252);   --st-ready-glow: rgba(168,85,247,0.4);
+	--st-error: rgb(244 63 94);     --st-error-glow: rgba(244,63,94,0.6);
+	--st-shell: rgb(34 211 238);    --st-shell-glow: rgba(34,211,238,0.5);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+	height: 100%;
+	background: #000;
+	overflow: hidden;
+	font-family: var(--mono);
+	color: var(--fg-primary);
+	cursor: none;
+}
+body.show-cursor { cursor: default; }
+
+/* ── 16:9 stage, letterboxed ───────────────────────────────────────── */
+#viewport { position: fixed; inset: 0; display: grid; place-items: center; }
+#stage {
+	position: relative;
+	width: 1920px;
+	height: 1080px;
+	background: var(--bg-primary);
+	overflow: hidden;
+	transform-origin: center center;
+}
+
+/* ── Ambient background: mesh drift + grid + vignette ──────────────── */
+.bg-mesh {
+	position: absolute; inset: -10%;
+	background:
+		radial-gradient(60% 50% at 15% 0%, rgba(88, 213, 186, 0.16), transparent 70%),
+		radial-gradient(55% 50% at 85% 8%, rgba(88, 166, 255, 0.14), transparent 70%),
+		radial-gradient(50% 45% at 50% 100%, rgba(188, 140, 255, 0.12), transparent 70%);
+	animation: meshDrift 24s linear infinite alternate;
+	pointer-events: none;
+}
+@keyframes meshDrift {
+	from { transform: translate3d(-1.5%, -1%, 0) scale(1.05); }
+	to   { transform: translate3d(2%, 2%, 0) scale(1.12); }
+}
+.bg-grid {
+	position: absolute; inset: 0;
+	background-image:
+		linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+	background-size: 56px 56px;
+	-webkit-mask-image: radial-gradient(75% 75% at 50% 40%, #000 30%, transparent 100%);
+	mask-image: radial-gradient(75% 75% at 50% 40%, #000 30%, transparent 100%);
+	pointer-events: none;
+}
+.bg-vignette {
+	position: absolute; inset: 0;
+	background: radial-gradient(120% 120% at 50% 30%, transparent 55%, rgba(0,0,0,0.55) 100%);
+	pointer-events: none;
+}
+
+/* ── Scenes ────────────────────────────────────────────────────────── */
+.scene {
+	position: absolute; inset: 0;
+	display: flex; flex-direction: column;
+	align-items: center; justify-content: center;
+	opacity: 0; visibility: hidden;
+	transition: opacity 0.85s ease, visibility 0s linear 0.85s;
+	padding: 0 120px;
+}
+.scene.on {
+	opacity: 1; visibility: visible;
+	transition: opacity 0.85s ease;
+	z-index: 2;
+}
+
+.rv {
+	opacity: 0;
+	transform: translateY(26px);
+	transition: opacity 0.8s ease, transform 0.8s var(--ease-out);
+	transition-delay: var(--d, 0ms);
+}
+.scene.on .rv { opacity: 1; transform: translateY(0); }
+
+.step { opacity: 0; transition: opacity 0.7s ease; pointer-events: none; }
+.step.on { opacity: 1; }
+
+/* ── Type ──────────────────────────────────────────────────────────── */
+.eyebrow {
+	font-size: 20px;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	color: var(--accent);
+	font-weight: 500;
+	min-height: 30px;
+	white-space: pre;
+}
+.eyebrow::before { content: "$ "; color: var(--fg-secondary); }
+.eyebrow .caret {
+	display: inline-block; width: 12px; height: 24px;
+	background: var(--accent);
+	vertical-align: -3px; margin-left: 4px;
+	animation: blink 1.1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+h1 {
+	font-weight: 800;
+	letter-spacing: -0.03em;
+	line-height: 1.06;
+	font-size: 76px;
+	text-align: center;
+	margin: 26px 0 18px;
+}
+.grad {
+	background: linear-gradient(120deg, #fff 0%, #7ee2cc 45%, #58a6ff 100%);
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+}
+.sub {
+	color: var(--fg-secondary);
+	font-size: 23px;
+	font-weight: 400;
+	letter-spacing: -0.01em;
+	text-align: center;
+	max-width: 1280px;
+	line-height: 1.5;
+}
+.sub b { color: var(--fg-primary); font-weight: 500; }
+.sub .k {
+	display: inline-block;
+	padding: 1px 10px 3px;
+	border: 1px solid var(--border);
+	border-bottom-width: 2px;
+	border-radius: 7px;
+	background: var(--bg-tertiary);
+	color: var(--accent-soft);
+	font-size: 22px;
+}
+.scene .head { display: flex; flex-direction: column; align-items: center; }
+.scene h1 { font-size: 56px; margin: 16px 0 8px; }
+
+/* ── Mock app window chrome ────────────────────────────────────────── */
+.win {
+	position: relative;
+	border-radius: 14px;
+	border: 1px solid var(--border);
+	background: var(--bg-primary);
+	box-shadow:
+		inset 0 0 0 1px rgba(255,255,255,0.04),
+		0 30px 80px rgba(0,0,0,0.55);
+	overflow: hidden;
+	text-align: left;
+}
+.glow {
+	position: absolute;
+	inset: -60px -120px;
+	background: radial-gradient(55% 55% at 50% 45%, rgba(88, 213, 186, 0.22), transparent 72%);
+	filter: blur(50px);
+	z-index: -1;
+	pointer-events: none;
+}
+.win-tb {
+	display: flex; align-items: center; gap: 14px;
+	height: 44px; padding: 0 16px;
+	background: rgba(255,255,255,0.02);
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+}
+.lights { display: flex; gap: 8px; }
+.lights span { width: 13px; height: 13px; border-radius: 50%; }
+.lights span:nth-child(1) { background: #ff5f57; }
+.lights span:nth-child(2) { background: #febc2e; }
+.lights span:nth-child(3) { background: #28c840; }
+.win-title { font-size: 15px; color: var(--fg-secondary); white-space: nowrap; }
+.win-title .path { opacity: 0.6; margin-left: 0.5em; }
+.win-grow { flex: 1; }
+.win-chip {
+	font-size: 13px; color: var(--fg-secondary);
+	padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px;
+}
+
+/* ── Status dots (exact app states) ────────────────────────────────── */
+.adot { display: inline-flex; flex-shrink: 0; color: var(--c); filter: drop-shadow(0 0 5px var(--g)); }
+.adot svg { width: var(--sz, 16px); height: var(--sz, 16px); }
+.adot[data-anim="spin"]    { animation: st-spin 1.5s linear infinite; transform-origin: center; }
+.adot[data-anim="pulse"]   { animation: st-pulse 1.6s ease-in-out infinite; }
+.adot[data-anim="bounce"]  { animation: st-bounce 1s ease-in-out infinite; }
+.adot[data-anim="shake"]   { animation: st-shake 2.4s ease-in-out infinite; }
+.adot[data-anim="breathe"] { animation: st-breathe 1.6s ease-in-out infinite; }
+@keyframes st-spin { to { transform: rotate(360deg); } }
+@keyframes st-pulse { 0%, 100% { opacity: 0.55; transform: scale(0.92); } 50% { opacity: 1; transform: scale(1.08); } }
+@keyframes st-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+@keyframes st-shake {
+	0% { transform: translateX(-1.5px); } 4.2% { transform: translateX(1.5px); }
+	8.3% { transform: translateX(-1.5px); } 12.5% { transform: translateX(1.5px); }
+	16.7%, 100% { transform: translateX(0); }
+}
+@keyframes st-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ── Terminal ──────────────────────────────────────────────────────── */
+.term { background: var(--bg-primary); overflow: hidden; }
+.term pre {
+	margin: 0; padding: 18px 22px;
+	font-family: var(--mono);
+	font-size: 17px; line-height: 1.72;
+	white-space: pre-wrap; word-break: break-word;
+	color: var(--fg-primary);
+}
+.ln { min-height: 1.72em; opacity: 0; }
+.scene.on .anim-lines .ln, .pane.show .ln {
+	animation: lnIn 0.34s ease-out both;
+	animation-delay: calc(var(--i) * var(--lng, 120ms) + var(--t0, 400ms));
+}
+@keyframes lnIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.t-dim { color: var(--fg-secondary); }
+.t-grn { color: #3fb950; }
+.t-org { color: #ff8700; }
+.t-cyn { color: #58d5ba; }
+.t-red { color: #ff7b72; }
+.t-mag { color: #bc8cff; }
+.t-blu { color: #58a6ff; }
+.t-yel { color: #e3b341; }
+.t-b   { font-weight: 700; }
+.t-spin { display: inline-block; animation: glyphPulse 1.2s ease-in-out infinite; }
+@keyframes glyphPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.t-cursor {
+	display: inline-block; width: 9px; height: 19px;
+	background: var(--accent); vertical-align: -3px;
+	animation: blink 1.1s steps(1) infinite;
+}
+
+/* ── Terminal pane title bar ───────────────────────────────────────── */
+.ttb {
+	display: flex; align-items: center; gap: 8px;
+	height: 30px; padding: 0 10px;
+	background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+	border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+	font-size: 13px; color: var(--fg-secondary);
+	flex-shrink: 0;
+}
+.ttb img, .ttb svg.tico { width: 15px; height: 15px; opacity: 0.85; }
+.ttb .ttb-grow { flex: 1; }
+
+/* ── App tab bar ───────────────────────────────────────────────────── */
+.tabs2 {
+	display: flex; align-items: flex-end; gap: 2px;
+	height: 44px; padding: 0 10px;
+	background: var(--bg-secondary);
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+}
+.tab2 {
+	display: inline-flex; align-items: center; gap: 9px;
+	height: 34px; padding: 0 16px;
+	font-size: 15px; color: var(--fg-secondary);
+	border-radius: 8px 8px 0 0;
+	border: 1px solid transparent; border-bottom: none;
+}
+.tab2 img { width: 16px; height: 16px; }
+.tab2.is-on {
+	height: 38px;
+	color: var(--fg-primary);
+	background: var(--bg-primary);
+	border-color: var(--border);
+	border-top: 2px solid var(--accent);
+}
+.tab2 .adot { --sz: 13px; }
+
+/* ── Status bar ────────────────────────────────────────────────────── */
+.statusbar {
+	display: flex; align-items: center; justify-content: space-between;
+	height: 38px; padding: 0 22px;
+	background: var(--bg-secondary);
+	border-top: 1px solid var(--border);
+	font-size: 14px; color: var(--fg-secondary);
+	flex-shrink: 0;
+}
+.statusbar .cluster { display: flex; align-items: center; gap: 14px; }
+.statusbar .wsname { color: var(--accent); font-weight: 500; }
+.statusbar .sep { color: var(--border); }
+
+/* ── Sidebar workspace items ───────────────────────────────────────── */
+.wsl { display: flex; flex-direction: column; gap: 4px; }
+.wsi {
+	display: flex; align-items: flex-start; gap: 11px;
+	padding: 11px 12px 11px 10px;
+	border-radius: 10px;
+	border-left: 2.5px solid transparent;
+}
+.wsi.is-active { background: var(--bg-tertiary); border-left-color: var(--accent); }
+.wsi .adot { margin-top: 3px; --sz: 16px; }
+.wsi .body { flex: 1; min-width: 0; }
+.wsi .row1 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.wsi .name { font-size: 16px; font-weight: 500; color: var(--fg-primary); white-space: nowrap; }
+.wsi .branch {
+	display: inline-flex; align-items: center; gap: 4px;
+	padding: 3px 7px; border-radius: 6px;
+	font-size: 12px; line-height: 1;
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+	border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+	color: var(--accent);
+	max-width: 190px;
+}
+.wsi .branch svg { width: 11px; height: 11px; flex-shrink: 0; }
+.wsi .branch .bn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wsi .row2 { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 3px; }
+.wsi .path { font-size: 13px; color: var(--fg-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wsi .stats { display: inline-flex; gap: 7px; font-size: 13px; flex-shrink: 0; }
+.wsi .sf { color: var(--fg-secondary); }
+.wsi .sa { color: var(--green); }
+.wsi .sd { color: var(--error); }
+/* staggered entrance, scoped per scene activation */
+.scene.on .wsl .wsi {
+	animation: wsIn 0.5s var(--ease-out) both;
+	animation-delay: calc(var(--i) * 90ms + var(--t0, 500ms));
+}
+@keyframes wsIn { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+/* ── Overview bar ──────────────────────────────────────────────────── */
+.obar {
+	display: flex; align-items: center; gap: 30px;
+	padding: 10px 22px 12px;
+	background: var(--bg-secondary);
+	border-bottom: 1px solid var(--border);
+}
+.obar .sec { display: flex; flex-direction: column; gap: 7px; flex-shrink: 0; }
+.obar .sec-title {
+	font-size: 11px; text-transform: uppercase; letter-spacing: 0.14em;
+	color: var(--fg-secondary); line-height: 1; padding-left: 2px; white-space: nowrap;
+}
+.obar .sec-row { display: flex; align-items: center; gap: 7px; }
+.obar .tile {
+	display: flex; align-items: center; justify-content: center; gap: 7px;
+	min-width: 66px; height: 38px; padding-inline: 9px;
+	background: var(--bg-tertiary);
+	border-radius: 8px;
+	opacity: 0.4;
+}
+.obar .tile.is-active { opacity: 1; }
+.obar .num {
+	font-size: 18px; font-variant-numeric: tabular-nums;
+	font-weight: 600; letter-spacing: -0.03em; line-height: 1;
+	color: var(--fg-secondary);
+}
+.obar .tile.is-active .num { color: var(--fg-primary); }
+.obar .tile .adot { --sz: 19px; }
+.obar .tile:not(.is-active) .adot { color: var(--fg-secondary); filter: none; animation: none; }
+.scene.on .obar .tile {
+	animation: tileIn 0.5s var(--ease-out) both;
+	animation-delay: calc(var(--i) * 70ms + var(--t0, 400ms));
+}
+@keyframes tileIn { from { opacity: 0; transform: translateY(8px) scale(0.94); } to { opacity: var(--o, 1); transform: none; } }
+.obar .tile:not(.is-active) { --o: 0.4; }
+
+/* ── S1 · full app window ──────────────────────────────────────────── */
+#s1 .app { width: 1530px; height: 740px; margin-top: 32px; display: flex; flex-direction: column; }
+#s1 .app-body { display: flex; flex: 1; min-height: 0; }
+#s1 .side {
+	width: 330px; flex-shrink: 0;
+	border-right: 1px solid var(--border);
+	background: var(--bg-secondary);
+	padding: 12px 9px;
+}
+#s1 .side-h {
+	font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+	color: var(--fg-secondary); padding: 4px 10px 10px;
+}
+#s1 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#s1 .panes { flex: 1; display: flex; min-height: 0; }
+#s1 .pcol { display: flex; flex-direction: column; min-width: 0; }
+#s1 .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+#s1 .pane .term { flex: 1; }
+#s1 .pane .term pre { font-size: 14.5px; line-height: 1.62; padding: 12px 16px; }
+#s1 .pv { border-right: 1px solid var(--border); }
+#s1 .ph { border-bottom: 1px solid var(--border); }
+#s1 .obar { padding: 7px 16px 9px; gap: 22px; }
+#s1 .obar .tile { min-width: 52px; height: 30px; gap: 5px; border-radius: 6px; }
+#s1 .obar .num { font-size: 14px; }
+#s1 .obar .tile .adot { --sz: 15px; }
+#s1 .obar .sec-title { font-size: 9px; }
+#s1 .wsi { padding: 8px 9px 8px 8px; }
+#s1 .wsi .name { font-size: 14px; }
+#s1 .wsi .path { font-size: 11.5px; }
+#s1 .wsi .branch { font-size: 10.5px; padding: 2px 6px; }
+#s1 .wsi .stats { font-size: 11.5px; }
+#s1 .wsi .adot { --sz: 14px; }
+/* editor mini-pane inside the app */
+.code { background: var(--bg-primary); }
+.code pre { margin: 0; padding: 12px 16px; font-size: 14.5px; line-height: 1.62; }
+.cl { display: flex; gap: 16px; min-height: 1.62em; opacity: 0; }
+.scene.on .anim-lines .cl {
+	animation: lnIn 0.3s ease-out both;
+	animation-delay: calc(var(--i) * 70ms + var(--t0, 600ms));
+}
+.cl .gut { width: 26px; text-align: right; color: var(--fg-secondary); opacity: 0.55; flex-shrink: 0; user-select: none; }
+.cl.hl { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.tk-kw { color: #ff7b72; }
+.tk-fn { color: #d2a8ff; }
+.tk-str { color: #a5d6ff; }
+.tk-num { color: #79c0ff; }
+.tk-cm { color: var(--fg-secondary); }
+.tk-ty { color: #ffa657; }
+
+/* ── S2 · agent tabs ───────────────────────────────────────────────── */
+#s2 .agt { width: 1280px; margin-top: 30px; display: flex; flex-direction: column; }
+#s2 .agt-screen { position: relative; height: 540px; }
+#s2 .agt-term { position: absolute; inset: 0; opacity: 0; transition: opacity 0.35s ease; }
+#s2 .agt-term.active { opacity: 1; }
+/* line stagger for the active agent terminal */
+#s2 .agt-term.active .ln {
+	animation: lnIn 0.3s ease-out both;
+	animation-delay: calc(var(--i) * 75ms);
+}
+#s2 .tab2 { font-size: 16px; height: 38px; }
+#s2 .tab2.is-on { height: 43px; }
+#s2 .tabs2 { height: 50px; }
+
+/* ── S3 · fleet ────────────────────────────────────────────────────── */
+#s3 .fleet { width: 1340px; margin-top: 30px; display: flex; flex-direction: column; }
+#s3 .fleet-body { display: flex; }
+#s3 .wsl { flex: 1; padding: 14px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+
+/* ── S4 · splits ───────────────────────────────────────────────────── */
+#s4 .splitwin { width: 1380px; height: 640px; margin-top: 32px; display: flex; flex-direction: column; }
+#s4 .splitstage { flex: 1; display: flex; min-height: 0; }
+#s4 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+#s4 .pane .term { flex: 1; }
+#s4 .pane .term pre { font-size: 15px; line-height: 1.66; }
+#s4 .pcolA { flex: 1.15; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 0; }
+#s4 .pcolB { flex: 0; display: flex; flex-direction: column; min-width: 0; transition: flex-grow 0.9s var(--ease-out); }
+#s4.split-1 .pcolB { flex-grow: 1; }
+#s4 .paneB { flex: 1; }
+#s4 .paneC { flex: 0; border-top: 1px solid transparent; transition: flex-grow 0.9s var(--ease-out), border-color 0.9s ease; min-height: 0; }
+#s4.split-2 .paneC { flex-grow: 0.85; border-top-color: var(--border); }
+#s4 .kbd-callout {
+	position: absolute; z-index: 5;
+	display: flex; align-items: center; gap: 10px;
+	padding: 10px 18px;
+	background: var(--glass-bg);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	backdrop-filter: blur(12px);
+	font-size: 17px; color: var(--fg-primary);
+	box-shadow: 0 14px 40px rgba(0,0,0,0.5);
+	opacity: 0; transform: translateY(8px) scale(0.96);
+	transition: opacity 0.4s ease, transform 0.4s var(--ease-out);
+}
+#s4 .kbd-callout.on { opacity: 1; transform: none; }
+#s4 .kbd-callout .k { font-size: 16px; }
+
+/* ── S6 · git ──────────────────────────────────────────────────────── */
+#s6 .gitwin { width: 1480px; height: 640px; margin-top: 30px; display: flex; flex-direction: column; }
+#s6 .git-body { flex: 1; display: flex; min-height: 0; }
+.gpanel {
+	width: 420px; flex-shrink: 0;
+	border-right: 1px solid var(--border);
+	background: var(--bg-secondary);
+	padding: 14px;
+	overflow: hidden;
+}
+.gp-h {
+	font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase;
+	color: var(--fg-secondary); padding: 8px 6px 8px;
+}
+.gfile {
+	display: flex; align-items: center; gap: 10px;
+	padding: 8px 9px; border-radius: 8px;
+	font-size: 14.5px; color: var(--fg-primary);
+	opacity: 0;
+}
+.scene.on .gfile {
+	animation: wsIn 0.45s var(--ease-out) both;
+	animation-delay: calc(var(--i) * 80ms + 500ms);
+}
+.gfile.is-sel { background: var(--bg-tertiary); }
+.gfile .badge {
+	width: 21px; height: 21px; border-radius: 5px;
+	display: grid; place-items: center;
+	font-size: 12px; font-weight: 700; flex-shrink: 0;
+}
+.badge.M { color: var(--yellow); background: color-mix(in srgb, var(--yellow) 14%, transparent); }
+.badge.A { color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent); }
+.gfile .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gfile .gstats { display: flex; gap: 6px; font-size: 13px; flex-shrink: 0; }
+.gfile .ga { color: var(--green); } .gfile .gd { color: var(--error); }
+/* branch row */
+.gbranch {
+	display: flex; align-items: center; gap: 9px;
+	padding: 9px 10px; margin-bottom: 8px;
+	border: 1px solid var(--border); border-radius: 9px;
+	font-size: 14px; color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.gbranch svg { width: 14px; height: 14px; }
+.gbranch .base { color: var(--fg-secondary); font-size: 13px; }
+/* diff */
+.diff { flex: 1; min-width: 0; background: var(--bg-primary); padding: 16px 0; overflow: hidden; }
+.diff-h {
+	font-size: 14px; color: var(--fg-secondary);
+	padding: 0 20px 12px; border-bottom: 1px solid var(--border); margin-bottom: 10px;
+	display: flex; gap: 12px; align-items: center;
+}
+.diff-h .fchip { color: var(--fg-primary); }
+.dl {
+	display: flex; gap: 14px; padding: 1.5px 20px;
+	font-size: 15px; line-height: 1.6;
+	opacity: 0;
+}
+.scene.on .diff .dl {
+	animation: dlIn 0.4s var(--ease-out) both;
+	animation-delay: calc(var(--i) * 60ms + 900ms);
+}
+@keyframes dlIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+.dl .sg { width: 16px; flex-shrink: 0; color: var(--fg-secondary); opacity: 0.6; }
+.dl.add { background: color-mix(in srgb, var(--green) 13%, transparent); }
+.dl.add .sg { color: var(--green); opacity: 1; }
+.dl.del { background: color-mix(in srgb, var(--error) 13%, transparent); }
+.dl.del .sg { color: var(--error); opacity: 1; }
+.dl code { color: var(--fg-primary); font-family: var(--mono); }
+.dl.ctx code { color: var(--fg-secondary); }
+/* PR cards */
+.prs { width: 340px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--bg-secondary); padding: 14px; }
+.prcard {
+	padding: 11px 12px; margin-bottom: 8px;
+	border: 1px solid var(--border); border-radius: 10px;
+	background: var(--bg-primary);
+	opacity: 0;
+}
+.scene.on .prcard {
+	animation: wsIn 0.45s var(--ease-out) both;
+	animation-delay: calc(var(--i) * 110ms + 800ms);
+}
+.prcard .prt { font-size: 14px; color: var(--fg-primary); line-height: 1.35; display: flex; gap: 8px; align-items: flex-start; }
+.prcard .prn { color: var(--fg-secondary); }
+.prcard .prmeta { display: flex; align-items: center; gap: 9px; margin-top: 7px; font-size: 12.5px; color: var(--fg-secondary); }
+.ci { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ci.success { background: var(--green); }
+.ci.failure { background: var(--error); }
+.ci.pending { background: var(--yellow); animation: ciPulse 1.3s ease-in-out infinite; }
+@keyframes ciPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+.prcard .dec { font-size: 11.5px; padding: 2px 7px; border-radius: 5px; }
+.dec.appr { color: var(--green); background: color-mix(in srgb, var(--green) 13%, transparent); }
+.dec.chg { color: var(--yellow); background: color-mix(in srgb, var(--yellow) 13%, transparent); }
+
+/* ── S5 · editor & explorer ────────────────────────────────────────── */
+#s5 .edwin { width: 1440px; height: 650px; margin-top: 30px; display: flex; flex-direction: column; }
+#s5 .ed-body { flex: 1; display: flex; min-height: 0; }
+.tree { width: 330px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--bg-secondary); padding: 12px 10px; }
+.trow {
+	display: flex; align-items: center; gap: 9px;
+	padding: 6px 10px; border-radius: 7px;
+	font-size: 15px; color: var(--fg-primary);
+	opacity: 0;
+}
+.scene.on .trow {
+	animation: wsIn 0.4s var(--ease-out) both;
+	animation-delay: calc(var(--i) * 60ms + 500ms);
+}
+.trow.dim { color: var(--fg-secondary); }
+.trow.is-sel { background: var(--bg-tertiary); color: var(--accent-soft); }
+.trow svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.8; }
+.trow .ind { width: 20px; flex-shrink: 0; }
+.trow .fold { color: var(--blue); }
+.trow .fts { color: var(--accent); }
+.trow .fpy { color: var(--yellow); }
+.trow .fmd { color: var(--magenta); }
+#s5 .ed-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#s5 .ed-tabs {
+	display: flex; align-items: center; height: 42px;
+	background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+	padding: 0 10px; gap: 2px;
+}
+#s5 .ftab {
+	display: inline-flex; align-items: center; gap: 9px;
+	height: 34px; padding: 0 16px; font-size: 14.5px;
+	color: var(--fg-secondary); border-radius: 8px 8px 0 0;
+}
+#s5 .ftab.is-on { color: var(--fg-primary); background: var(--bg-primary); border: 1px solid var(--border); border-bottom: none; border-top: 2px solid var(--accent); }
+#s5 .code { flex: 1; }
+#s5 .code pre { font-size: 16px; line-height: 1.7; padding: 16px 20px; }
+#s5 .cl .gut { width: 32px; }
+
+/* ── S7 · palettes ─────────────────────────────────────────────────── */
+#s7 .duo { position: relative; width: 1460px; height: 600px; margin-top: 34px; }
+.pal {
+	position: absolute;
+	width: 715px;
+	border-radius: 16px;
+	border: 1px solid var(--border);
+	background: rgba(22, 27, 34, 0.92);
+	backdrop-filter: blur(14px);
+	box-shadow: inset 0 0 0 1px rgba(255,255,255,0.045), 0 40px 100px rgba(0,0,0,0.65), 0 0 70px rgba(88,213,186,0.08);
+	overflow: hidden;
+	text-align: left;
+}
+.pal-input {
+	display: flex; align-items: center; gap: 13px;
+	padding: 18px 22px;
+	border-bottom: 1px solid var(--border);
+	font-size: 19px;
+}
+.pal-input svg { width: 19px; height: 19px; color: var(--fg-secondary); flex-shrink: 0; }
+.pal-input .ph { color: var(--fg-secondary); }
+.pal-input .q { color: var(--fg-primary); white-space: pre; }
+.pal-input .t-cursor { height: 22px; }
+.pal-sect { font-size: 11.5px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--fg-secondary); padding: 12px 22px 6px; }
+.pal-row {
+	display: flex; align-items: center; gap: 13px;
+	padding: 11px 22px; font-size: 16.5px; color: var(--fg-primary);
+	opacity: 0;
+}
+.pal-row svg, .pal-row img { width: 17px; height: 17px; flex-shrink: 0; color: var(--fg-secondary); }
+.pal-row .grow { flex: 1; }
+.pal-row .hintk { font-size: 13px; color: var(--fg-secondary); }
+.pal-row .dim2 { color: var(--fg-secondary); }
+.pal-row.is-sel { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.pal-row.is-sel .selbar { position: absolute; left: 0; width: 3px; }
+.pal-row b { color: var(--accent-soft); font-weight: 600; }
+.pal-foot {
+	display: flex; gap: 18px; padding: 12px 22px;
+	border-top: 1px solid var(--border);
+	font-size: 13px; color: var(--fg-secondary);
+}
+#s7 .palA { left: 0; top: 20px; transform: rotate(-1.2deg); z-index: 2; }
+#s7 .palB { right: 0; top: 110px; transform: rotate(1.1deg); z-index: 1; }
+/* palette rows stream in (driven by JS hook re-trigger) */
+.pal.live .pal-row { animation: wsIn 0.35s var(--ease-out) both; animation-delay: calc(var(--i) * 60ms); }
+
+/* ── S8 · markdown & notes ─────────────────────────────────────────── */
+#s8 .mdwin { width: 1300px; height: 600px; margin-top: 30px; display: flex; flex-direction: column; }
+#s8 .md-body { flex: 1; display: flex; min-height: 0; }
+.md-src { flex: 1; border-right: 1px solid var(--border); }
+.md-src pre { margin: 0; padding: 18px 22px; font-size: 15.5px; line-height: 1.8; }
+.md-prev { flex: 1.1; padding: 26px 34px; font-family: var(--mono); overflow: hidden; }
+.md-prev > * { opacity: 0; }
+.scene.on .md-prev > * {
+	animation: wsIn 0.5s var(--ease-out) both;
+	animation-delay: calc(var(--i) * 140ms + 900ms);
+}
+.md-prev h2 { font-size: 30px; letter-spacing: -0.02em; margin-bottom: 14px; }
+.md-prev h3 { font-size: 21px; margin: 18px 0 10px; color: var(--fg-primary); }
+.md-prev p { font-size: 16px; color: var(--fg-secondary); line-height: 1.65; margin-bottom: 8px; }
+.md-prev ul { margin: 6px 0 0 22px; }
+.md-prev li { font-size: 16px; color: var(--fg-primary); line-height: 1.9; }
+.md-prev li::marker { color: var(--accent); }
+/* floating notes card */
+#s8 .notecard {
+	position: absolute; right: 150px; bottom: 96px; width: 480px;
+	border-radius: 14px; border: 1px solid var(--border);
+	background: rgba(22, 27, 34, 0.95);
+	box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04), 0 30px 80px rgba(0,0,0,0.7), 0 0 50px rgba(88,213,186,0.10);
+	padding: 18px 22px;
+	z-index: 4;
+	text-align: left;
+}
+#s8 .note-h { display: flex; align-items: center; gap: 10px; font-size: 13px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--fg-secondary); margin-bottom: 13px; }
+#s8 .note-h svg { width: 15px; height: 15px; color: var(--accent); }
+#s8 .ntitle { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
+.note {
+	display: flex; align-items: center; gap: 12px;
+	padding: 7px 0; font-size: 15.5px; color: var(--fg-primary);
+}
+.note .box {
+	width: 19px; height: 19px; border-radius: 5px;
+	border: 1.5px solid var(--fg-secondary);
+	display: grid; place-items: center;
+	flex-shrink: 0;
+	transition: background 0.3s ease, border-color 0.3s ease;
+}
+.note .box svg { width: 13px; height: 13px; color: #04211b; opacity: 0; transform: scale(0.4); transition: opacity 0.25s ease, transform 0.3s var(--ease-out); }
+.note .ntext { transition: color 0.3s ease; position: relative; }
+.note .ntext::after {
+	content: ""; position: absolute; left: 0; right: 100%; top: 53%;
+	height: 1.5px; background: var(--fg-secondary);
+	transition: right 0.4s var(--ease-out);
+}
+.note.done .box { background: var(--accent); border-color: var(--accent); }
+.note.done .box svg { opacity: 1; transform: scale(1); }
+.note.done .ntext { color: var(--fg-secondary); }
+.note.done .ntext::after { right: 0; }
+
+/* ── S0 / S9 ───────────────────────────────────────────────────────── */
+#s0 .mark { width: 168px; filter: drop-shadow(0 6px 30px rgba(88,213,186,0.5)); }
+#s0 .brand { font-size: 44px; font-weight: 700; letter-spacing: -0.01em; margin-top: 22px; }
+#s0 h1 { font-size: 104px; margin-top: 30px; }
+#s0 .sub { margin-top: 6px; }
+#s0 .tourtag {
+	margin-top: 54px; font-size: 20px; letter-spacing: 0.22em;
+	text-transform: uppercase; color: var(--fg-secondary);
+	display: flex; align-items: center; gap: 16px;
+}
+#s0 .tourtag::before, #s0 .tourtag::after {
+	content: ""; width: 70px; height: 1px;
+	background: linear-gradient(90deg, transparent, var(--border));
+}
+#s0 .tourtag::after { background: linear-gradient(90deg, var(--border), transparent); }
+
+#s9 .mark { width: 132px; filter: drop-shadow(0 6px 30px rgba(88,213,186,0.5)); animation: markPulse 3s ease-in-out infinite; }
+@keyframes markPulse {
+	0%, 100% { filter: drop-shadow(0 6px 26px rgba(88,213,186,0.4)); }
+	50% { filter: drop-shadow(0 6px 44px rgba(88,213,186,0.75)); }
+}
+#s9 h1 { font-size: 96px; margin-top: 34px; }
+#s9 .oss {
+	margin-top: 40px; display: flex; gap: 30px; align-items: center;
+	color: var(--fg-secondary); font-size: 23px;
+}
+#s9 .oss .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--border); }
+#s9 .oss .free { color: var(--accent-soft); }
+
+/* ── Progress + hint ───────────────────────────────────────────────── */
+#progress {
+	position: absolute; left: 0; bottom: 0; height: 3px; width: 0%;
+	background: linear-gradient(90deg, var(--accent), var(--blue));
+	z-index: 50; opacity: 0.55;
+	transition: opacity 0.4s ease;
+}
+#progress.hidden { opacity: 0; }
+#hint {
+	position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+	font-size: 17px; color: var(--fg-secondary); letter-spacing: 0.08em;
+	background: var(--glass-bg); border: 1px solid var(--border);
+	padding: 10px 22px; border-radius: 999px;
+	backdrop-filter: blur(12px);
+	z-index: 60;
+	transition: opacity 0.5s ease;
+}
+#hint.hidden { opacity: 0; }
+#hint .k { color: var(--accent-soft); }
+</style>
+</head>
+<body>
+<div id="viewport">
+	<div id="stage">
+		<div class="bg-mesh"></div>
+		<div class="bg-grid"></div>
+		<div class="bg-vignette"></div>
+
+		<!-- 0 · TITLE -->
+		<section class="scene" id="s0" data-dur="7500">
+			<img class="mark rv" src="assets/abundio-mark.png" alt="" style="--d:100ms" />
+			<div class="brand rv" style="--d:280ms">abundio</div>
+			<h1 class="rv" style="--d:500ms">An <span class="grad">abundance</span> of productivity.</h1>
+			<p class="sub rv" style="--d:760ms">A home base for project-centric, AI-assisted development.</p>
+			<div class="tourtag rv" style="--d:1100ms">product tour</div>
+		</section>
+
+		<!-- 1 · ONE WINDOW -->
+		<section class="scene" id="s1" data-dur="12000">
+			<div class="head">
+				<div class="eyebrow" data-type="abundio open acme-web"></div>
+				<h1 class="rv" style="--d:200ms">Your whole workflow, <span class="grad">in one window.</span></h1>
+				<p class="sub rv" style="--d:380ms">Shells, coding agents, editor and git — side by side, scoped to the project.</p>
+			</div>
+			<div class="win app rv" style="--d:560ms" id="mock-app"><div class="glow"></div></div>
+		</section>
+
+		<!-- 2 · AI AGENTS -->
+		<section class="scene" id="s2" data-dur="13000">
+			<div class="head">
+				<div class="eyebrow" data-type="abundio launch --agent"></div>
+				<h1 class="rv" style="--d:200ms"><span class="grad">First-class</span> AI agents.</h1>
+				<p class="sub rv" style="--d:380ms">Claude Code, Copilot, Gemini, Aider, Codex, OpenCode — auto-detected, with <b>live status</b> beside your shell.</p>
+			</div>
+			<div class="win agt rv" style="--d:560ms" id="mock-agents"><div class="glow"></div></div>
+		</section>
+
+		<!-- 3 · FLEET -->
+		<section class="scene" id="s3" data-dur="11000">
+			<div class="head">
+				<div class="eyebrow" data-type="abundio status --all"></div>
+				<h1 class="rv" style="--d:200ms">Your entire fleet, <span class="grad">one glance away.</span></h1>
+				<p class="sub rv" style="--d:380ms">Live counts for every workspace, agent, terminal and pull request — each state with its own pulse.</p>
+			</div>
+			<div class="win fleet rv" style="--d:560ms" id="mock-fleet"><div class="glow"></div></div>
+		</section>
+
+		<!-- 4 · SPLITS -->
+		<section class="scene" id="s4" data-dur="11000">
+			<div class="head">
+				<div class="eyebrow" data-type="abundio split --vertical"></div>
+				<h1 class="rv" style="--d:200ms">Split, stack, nest. <span class="grad">Never lose your place.</span></h1>
+				<p class="sub rv" style="--d:380ms">Unlimited recursive splits across tabs — every layout persists between sessions.</p>
+			</div>
+			<div class="win splitwin rv" style="--d:560ms" id="mock-split"><div class="glow"></div></div>
+		</section>
+
+		<!-- 5 · EDITOR -->
+		<section class="scene" id="s5" data-dur="10000">
+			<div class="head">
+				<div class="eyebrow" data-type="abundio edit src/api/checkout.ts"></div>
+				<h1 class="rv" style="--d:200ms">An editor where <span class="grad">your terminal lives.</span></h1>
+				<p class="sub rv" style="--d:380ms">Monaco-powered editing, a tree explorer, image preview — files open straight from terminal output.</p>
+			</div>
+			<div class="win edwin rv" style="--d:560ms" id="mock-editor"><div class="glow"></div></div>
+		</section>
+
+		<!-- 6 · GIT -->
+		<section class="scene" id="s6" data-dur="11500">
+			<div class="head">
+				<div class="eyebrow" data-type="git diff src/api/checkout.ts"></div>
+				<h1 class="rv" style="--d:200ms">Git, GitHub &amp; worktrees, <span class="grad">built in.</span></h1>
+				<p class="sub rv" style="--d:380ms">Changed files, branches, inline diffs — plus a PR panel for everything awaiting your review.</p>
+			</div>
+			<div class="win gitwin rv" style="--d:560ms" id="mock-git"><div class="glow"></div></div>
+		</section>
+
+		<!-- 7 · SPEED -->
+		<section class="scene" id="s7" data-dur="10500">
+			<div class="head">
+				<div class="eyebrow" data-type="abundio jump --anywhere"></div>
+				<h1 class="rv" style="--d:200ms">Navigate at the <span class="grad">speed of thought.</span></h1>
+				<p class="sub rv" style="--d:380ms"><span class="k">⌘K</span> commands, workspaces &amp; agents&nbsp;&nbsp;·&nbsp;&nbsp;<span class="k">⌘P</span> any file&nbsp;&nbsp;·&nbsp;&nbsp;<span class="k">⌘⇧F</span> full-text search</p>
+			</div>
+			<div class="duo">
+				<div class="pal palA rv" style="--d:560ms" id="mock-palette"></div>
+				<div class="pal palB rv" style="--d:820ms" id="mock-quickopen"></div>
+			</div>
+		</section>
+
+		<!-- 8 · MARKDOWN & NOTES -->
+		<section class="scene" id="s8" data-dur="11000">
+			<div class="head">
+				<div class="eyebrow" data-type="abundio note --workspace acme-web"></div>
+				<h1 class="rv" style="--d:200ms">Docs render live. <span class="grad">Ideas stay scoped.</span></h1>
+				<p class="sub rv" style="--d:380ms">Side-by-side markdown preview with Mermaid — and per-workspace notes for context that sticks.</p>
+			</div>
+			<div class="win mdwin rv" style="--d:560ms" id="mock-md"><div class="glow"></div></div>
+			<div class="notecard rv" style="--d:900ms" id="mock-notes"></div>
+		</section>
+
+		<!-- 9 · CLOSE -->
+		<section class="scene" id="s9" data-dur="9000">
+			<img class="mark rv" src="assets/abundio-mark.png" alt="" style="--d:120ms" />
+			<h1 class="rv" style="--d:340ms">Run an <span class="grad">abundance</span> of work.</h1>
+			<div class="oss rv" style="--d:640ms">
+				<span class="free">Free &amp; open source</span><span class="dot"></span>
+				<span>macOS</span><span class="dot"></span>
+				<span>Windows</span><span class="dot"></span>
+				<span>Linux</span>
+			</div>
+		</section>
+
+		<div id="progress"></div>
+	</div>
+</div>
+<div id="hint"><span class="k">space</span> play / pause &nbsp;·&nbsp; <span class="k">←→</span> scenes &nbsp;·&nbsp; <span class="k">r</span> restart &nbsp;·&nbsp; <span class="k">p</span> progress bar &nbsp;·&nbsp; <span class="k">f</span> fullscreen</div>
+
+<script>
+(() => {
+	/* ════════════════════════════════════════════════════════════════
+	   Icon + status-dot system (states/animations lifted from the app)
+	   ════════════════════════════════════════════════════════════════ */
+	const G = {
+		circle: `<circle cx="12" cy="12" r="10"/>`,
+		ring: `<circle cx="12" cy="12" r="10" stroke-dasharray="15.71 47.12"/><circle cx="12" cy="12" r="10" stroke-dasharray="15.71 47.12" transform="rotate(180 12 12)"/>`,
+		help: `<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>`,
+		check: `<path d="M20 6 9 17l-5-5"/>`,
+		alert: `<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>`,
+		chevrons: `<path d="M5 7l4 5-4 5"/><path d="M11 7l4 5-4 5"/><path d="M17 7l4 5-4 5"/>`,
+		eye: `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>`,
+		pr: `<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/>`,
+		branch: `<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>`,
+		grid: `<rect width="7" height="7" x="3" y="3" rx="1.5"/><rect width="7" height="7" x="14" y="3" rx="1.5"/><rect width="7" height="7" x="14" y="14" rx="1.5"/><rect width="7" height="7" x="3" y="14" rx="1.5"/>`,
+		term: `<rect x="2.5" y="3.5" width="19" height="17" rx="3"/><path d="M5 7l4 4-4 4"/><path d="M12 16h7"/>`,
+		folder: `<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>`,
+		file: `<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>`,
+		chevd: `<path d="m6 9 6 6 6-6"/>`,
+		chevr: `<path d="m9 18 6-6-6-6"/>`,
+		search: `<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>`,
+		note: `<path d="M13 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.17 2.17 0 0 1 3 3L16 11l-4 1 1-4Z"/>`,
+		moon: `<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>`,
+	};
+	const svg = (k, sw = 2.5) =>
+		`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${G[k]}</svg>`;
+
+	const STATES = {
+		idle:    { g: "circle",   c: "var(--st-idle)",    gl: "var(--st-idle-glow)" },
+		working: { g: "ring",     c: "var(--st-working)", gl: "var(--st-working-glow)", anim: "spin" },
+		waiting: { g: "help",     c: "var(--st-waiting)", gl: "var(--st-waiting-glow)", anim: "pulse" },
+		ready:   { g: "check",    c: "var(--st-ready)",   gl: "var(--st-ready-glow)",   anim: "bounce" },
+		error:   { g: "alert",    c: "var(--st-error)",   gl: "var(--st-error-glow)",   anim: "shake" },
+		shell:   { g: "chevrons", c: "var(--st-shell)",   gl: "var(--st-shell-glow)",   anim: "breathe" },
+		off:     { g: "moon",     c: "var(--fg-secondary)", gl: "transparent" },
+	};
+	const dot = (state, size = 16) => {
+		const s = STATES[state];
+		return `<span class="adot" data-anim="${s.anim ?? ""}" style="--c:${s.c}; --g:${s.gl}; --sz:${size}px">${svg(s.g)}</span>`;
+	};
+
+	/* terminal renderer: lines = arrays of [text, cls] segments; [] = blank */
+	const term = (lines, extra = "") =>
+		`<div class="term ${extra}"><pre><code>${lines
+			.map((ln, i) =>
+				`<div class="ln" style="--i:${i}">${
+					ln.length === 0 ? "&nbsp;" : ln.map(([t, c]) =>
+						c === "cursor" ? `<span class="t-cursor"></span>` :
+						`<span class="${(c ?? "").split(" ").filter(Boolean).map((x) => `t-${x}`).join(" ")}">${t}</span>`
+					).join("")
+				}</div>`
+			).join("")}</code></pre></div>`;
+
+	const ttb = (icon, label, state) =>
+		`<div class="ttb">${icon}<span>${label}</span><span class="ttb-grow"></span>${state ? dot(state, 14) : ""}</div>`;
+	const aicon = (id, sz = 15) => `<img src="assets/agent-icons/${id}.svg" alt="" style="width:${sz}px;height:${sz}px" />`;
+	const ticon = `<svg class="tico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${G.term}</svg>`;
+
+	const winTb = (path, chip) =>
+		`<div class="win-tb"><div class="lights"><span></span><span></span><span></span></div>
+		 <div class="win-title">Abundio <span class="path">${path}</span></div>
+		 <div class="win-grow"></div>${chip ? `<span class="win-chip">${chip}</span>` : ""}</div>`;
+
+	/* ════════════════════════════════════════════════════════════════
+	   Transcripts (from the app's demo fixtures)
+	   ════════════════════════════════════════════════════════════════ */
+	const CLAUDE = [
+		[["~/code/acme-web", "dim"], [" ❯ ", "grn"], ["claude"]],
+		[],
+		[["✻ ", "org"], ["Claude Code", "b"], [" v2.0.14", "dim"]],
+		[["  /Users/demo/code/acme-web · feature/checkout-redesign", "dim"]],
+		[],
+		[["> Refactor the checkout flow to validate the cart total", "dim"]],
+		[["  before submitting the payment intent.", "dim"]],
+		[],
+		[["✻ ", "org"], ["Reading the current checkout implementation…"]],
+		[["  ⎿  Read src/api/checkout.ts (148 lines)", "dim"]],
+		[["  ⎿  Read src/components/Cart.tsx (96 lines)", "dim"]],
+		[],
+		[["● ", "org"], ["I'll add a guard that re-derives the total from the"]],
+		[["  line items and rejects mismatched totals."]],
+		[],
+		[["  Edit src/api/checkout.ts", "dim"]],
+		[["    + if (computedTotal !== payload.total) {", "grn"]],
+		[["    +   throw new CheckoutError(\"cart_total_mismatch\");", "grn"]],
+		[["    + }", "grn"]],
+		[],
+		[["✻ ", "org spin"], ["Validating the change…  "], ["(esc to interrupt)", "dim"]],
+	];
+	const COPILOT = [
+		[["~/code/payments-api", "dim"], [" ❯ ", "grn"], ["copilot"]],
+		[],
+		[["● ", "cyn"], ["GitHub Copilot CLI", "b"]],
+		[["  /Users/demo/code/payments-api · main", "dim"]],
+		[],
+		[["> Add retry-with-backoff to the Stripe webhook handler.", "dim"]],
+		[],
+		[["● ", "cyn"], ["Wrapped the handler in an exponential-backoff retry"]],
+		[["  (5 attempts, 200ms base) and added a dead-letter log."]],
+		[],
+		[["  Edited src/webhooks/stripe.ts  (+34 −6)", "dim"]],
+		[["  Ran tests: ", "dim"], ["24 passed", "grn"]],
+		[],
+		[["✓ Done.", "grn"], ["  Anything else?", "dim"]],
+	];
+	const GEMINI = [
+		[["~/code/ml-pipeline", "dim"], [" ❯ ", "grn"], ["gemini"]],
+		[],
+		[["◆ ", "blu"], ["Gemini CLI", "b"], [" v0.5.2", "dim"]],
+		[["  /Users/demo/code/ml-pipeline · feature/training-loop", "dim"]],
+		[],
+		[["> Optimize the data loader to prefetch batches on the GPU.", "dim"]],
+		[],
+		[["◆ ", "blu"], ["Profiling the current input pipeline…"]],
+		[["  ⎿  Read src/data/loader.py (211 lines)", "dim"]],
+		[],
+		[["◆ ", "blu"], ["Added a prefetch buffer (depth 4) with pinned memory."]],
+		[["    + loader = DataLoader(ds, num_workers=8, pin_memory=True)", "grn"]],
+		[["    + loader = PrefetchWrapper(loader, depth=4)", "grn"]],
+		[],
+		[["◆ ", "blu spin"], ["Running the throughput benchmark…  "], ["(esc to cancel)", "dim"]],
+	];
+	const CODEX = [
+		[["~/code/infra-terraform", "dim"], [" ❯ ", "grn"], ["codex"]],
+		[],
+		[["● ", "mag"], ["Codex", "b"], [" · o4-mini", "dim"]],
+		[],
+		[["> Migrate the VPC module to the new AWS provider.", "dim"]],
+		[],
+		[["✻ ", "mag"], ["Rewriting modules/vpc/main.tf …"]],
+		[["  Running terraform init", "dim"]],
+		[],
+		[["✖ Error: ", "red b"], ["provider aws requires version >= 5.0,", "red"]],
+		[["  found 4.67.0 — terraform init failed (exit 1)", "red"]],
+		[],
+		[["The migration needs the provider pinned to ^5.0 first.", "dim"]],
+	];
+	const DEVSERVER = [
+		[["~/code/acme-web", "dim"], [" ❯ ", "grn"], ["pnpm dev"]],
+		[],
+		[["  VITE", "mag b"], [" v8.0.3", "grn"], ["  ready in ", "dim"], ["312", "b"], [" ms", "dim"]],
+		[],
+		[["  ➜ ", "grn"], ["Local", "b"], [":   ", "dim"], ["http://localhost:5173/", "cyn"]],
+		[["  ➜ ", "grn"], ["Network", "b"], [": ", "dim"], ["use --host to expose", "dim"]],
+		[],
+		[["9:41:02 AM ", "dim"], ["[vite]", "cyn"], [" hmr update ", ""], ["/src/components/Cart.tsx", "dim"]],
+		[["9:41:07 AM ", "dim"], ["[vite]", "cyn"], [" hmr update ", ""], ["/src/api/checkout.ts", "dim"]],
+	];
+	const GITSTATUS = [
+		[["~/code/acme-web", "dim"], [" ❯ ", "grn"], ["git status -sb"]],
+		[["## feature/checkout-redesign...origin/feature/checkout-redesign", "grn"]],
+		[[" M", "grn"], [" src/api/checkout.ts"]],
+		[[" M", "red"], [" src/components/Cart.tsx"]],
+		[],
+		[["~/code/acme-web", "dim"], [" ❯ ", "grn"], ["", "cursor"]],
+	];
+	const TESTS = [
+		[["~/code/acme-web", "dim"], [" ❯ ", "grn"], ["npx vitest --run checkout"]],
+		[],
+		[["✓", "grn"], [" src/api/__tests__/checkout.test.ts ", ""], ["(3 tests)", "dim"]],
+		[["  ✓ rejects a mismatched cart total", "dim"]],
+		[["  ✓ creates a payment intent for a valid cart", "dim"]],
+		[],
+		[["Tests  ", "dim"], ["3 passed", "grn b"], [" (3)", "dim"]],
+		[["~/code/acme-web", "dim"], [" ❯ ", "grn"], ["", "cursor"]],
+	];
+
+	/* workspace item renderer */
+	const wsi = (i, state, name, branch, path, stats, active) =>
+		`<div class="wsi ${active ? "is-active" : ""}" style="--i:${i}">
+			${dot(state)}
+			<div class="body">
+				<div class="row1"><span class="name">${name}</span>
+					${branch ? `<span class="branch">${svg("branch")}<span class="bn">${branch}</span></span>` : ""}</div>
+				<div class="row2"><span class="path">${path}</span>
+					${stats ? `<span class="stats"><span class="sf">${stats[0]}F</span>${stats[1] ? `<span class="sa">+${stats[1]}</span>` : ""}${stats[2] ? `<span class="sd">-${stats[2]}</span>` : ""}</span>` : ""}</div>
+			</div>
+		</div>`;
+
+	/* overview bar renderer */
+	const obar = (compact) => {
+		const tile = (i, n, glyph, state) => {
+			const active = n > 0;
+			const s = STATES[state] ?? null;
+			return `<div class="tile ${active ? "is-active" : ""}" style="--i:${i}">
+				<span class="num">${n}</span>
+				${s ? dot(state, compact ? 15 : 19)
+					 : `<span class="adot" style="--c:${glyph === "grid" ? "rgb(176 188 204)" : "var(--accent)"};--g:transparent;--sz:${compact ? 15 : 19}px">${svg(glyph)}</span>`}
+			</div>`;
+		};
+		let i = 0;
+		return `<div class="obar">
+			<div class="sec"><div class="sec-title">Workspaces</div><div class="sec-row">${tile(i++, 13, "grid")}</div></div>
+			<div class="sec"><div class="sec-title">Agents</div><div class="sec-row">
+				${tile(i++, 1, null, "idle")}${tile(i++, 6, null, "working")}${tile(i++, 4, null, "waiting")}${tile(i++, 0, null, "ready")}${tile(i++, 1, null, "error")}
+			</div></div>
+			<div class="sec"><div class="sec-title">Terminals</div><div class="sec-row">
+				${tile(i++, 10, null, "idle")}${tile(i++, 3, null, "shell")}${tile(i++, 0, null, "error")}
+			</div></div>
+			<div class="sec"><div class="sec-title">Pull requests</div><div class="sec-row">
+				${tile(i++, 7, "eye")}${tile(i++, 7, "pr")}
+			</div></div>
+		</div>`;
+	};
+
+	/* ════════════════════════════════════════════════════════════════
+	   S1 — full app window
+	   ════════════════════════════════════════════════════════════════ */
+	document.getElementById("mock-app").insertAdjacentHTML("beforeend",
+		winTb("~/code/acme-web", "Personal") +
+		obar(true) +
+		`<div class="app-body">
+			<div class="side">
+				<div class="side-h">Workspaces</div>
+				<div class="wsl">
+					${wsi(0, "working", "acme-web", "feature/check…", "~/code/acme-web", [5, 102, 13], true)}
+					${wsi(1, "waiting", "payments-api", "main", "~/code/payments-api", [1, 34, 6])}
+					${wsi(2, "working", "ml-pipeline", "feature/train…", "~/code/ml-pipeline", [3, 40, 9])}
+					${wsi(3, "error", "infra-terraform", "fix/state-drift", "~/code/infra-terraform", [4, 64, 17])}
+					${wsi(4, "idle", "docs-site", "docs/api-ref…", "~/code/docs-site", [2, 108, 4])}
+					${wsi(5, "ready", "game-server", "feature/match…", "~/code/game-server", [6, 198, 12])}
+				</div>
+			</div>
+			<div class="main">
+				<div class="tabs2">
+					<span class="tab2 is-on">${aicon("claude", 16)} Agent ${dot("working", 13)}</span>
+					<span class="tab2">${ticon} Dev ${dot("shell", 13)}</span>
+					<span class="tab2">${ticon} Code ${dot("idle", 13)}</span>
+				</div>
+				<div class="panes">
+					<div class="pane pv" style="flex: 1.12">
+						${ttb(aicon("claude"), "Claude Code", "working")}
+						${term(CLAUDE.slice(0, 19), "anim-lines")}
+					</div>
+					<div class="pcol" style="flex: 1">
+						<div class="pane ph" style="flex: 1.05">
+							${ttb(ticon, "zsh : pnpm dev", "shell")}
+							${term(DEVSERVER, "anim-lines")}
+						</div>
+						<div class="pane" style="flex: 1">
+							${ttb(ticon, "zsh", "idle")}
+							${term(GITSTATUS, "anim-lines")}
+						</div>
+					</div>
+				</div>
+				<div class="statusbar">
+					<div class="cluster">
+						<span class="wsname">⊞ acme-web</span><span class="sep">|</span>
+						<span>~/code/acme-web</span><span class="sep">|</span><span>Agent</span>
+					</div>
+					<div class="cluster"><span>cpu 18%</span><span>mem 33%</span><span class="sep">|</span><span>Personal</span></div>
+				</div>
+			</div>
+		</div>`);
+	/* terminal line timing inside the big app: slower groups */
+	document.querySelectorAll("#mock-app .anim-lines").forEach((t, n) => {
+		t.style.setProperty("--t0", `${700 + n * 250}ms`);
+		t.style.setProperty("--lng", "150ms");
+	});
+
+	/* ════════════════════════════════════════════════════════════════
+	   S2 — agent tabs (auto-cycling)
+	   ════════════════════════════════════════════════════════════════ */
+	const AGENTS = [
+		{ id: "claude", name: "Claude Code", state: "working", lines: CLAUDE },
+		{ id: "github", name: "Copilot CLI", state: "ready", lines: COPILOT },
+		{ id: "gemini", name: "Gemini CLI", state: "working", lines: GEMINI },
+		{ id: "codex", name: "Codex", state: "error", lines: CODEX },
+	];
+	document.getElementById("mock-agents").insertAdjacentHTML("beforeend",
+		winTb("~/code — Abundio", "4 agents") +
+		`<div class="tabs2">${AGENTS.map((a, i) =>
+			`<span class="tab2 ${i === 0 ? "is-on" : ""}" data-atab="${i}">${aicon(a.id, 16)} ${a.name} ${dot(a.state, 13)}</span>`
+		).join("")}<span class="tab2" style="opacity:.6">+</span></div>
+		<div class="agt-screen">${AGENTS.map((a, i) =>
+			`<div class="agt-term ${i === 0 ? "active" : ""}" data-aterm="${i}">${term(a.lines)}</div>`
+		).join("")}</div>`);
+
+	/* ════════════════════════════════════════════════════════════════
+	   S3 — fleet (overview bar + workspace grid)
+	   ════════════════════════════════════════════════════════════════ */
+	document.getElementById("mock-fleet").insertAdjacentHTML("beforeend",
+		winTb("all profiles", "13 workspaces") +
+		obar(false) +
+		`<div class="fleet-body"><div class="wsl">
+			${wsi(0, "working", "acme-web", "feature/checkout-redesign", "~/code/acme-web", [5, 102, 13], true)}
+			${wsi(1, "waiting", "payments-api", "main", "~/code/payments-api", [1, 34, 6])}
+			${wsi(2, "working", "ml-pipeline", "feature/training-loop", "~/code/ml-pipeline", [3, 40, 9])}
+			${wsi(3, "error", "infra-terraform", "fix/state-drift", "~/code/infra-terraform", [4, 64, 17])}
+			${wsi(4, "ready", "game-server", "feature/matchmaking", "~/code/game-server", [6, 198, 12])}
+			${wsi(5, "shell", "data-warehouse", "feature/incremental", "~/code/data-warehouse", [2, 50, 7])}
+			${wsi(6, "idle", "docs-site", "docs/api-reference", "~/code/docs-site", [2, 108, 4])}
+			${wsi(7, "off", "design-system", "main", "~/code/design-system", null)}
+		</div></div>`);
+
+	/* ════════════════════════════════════════════════════════════════
+	   S4 — split choreography
+	   ════════════════════════════════════════════════════════════════ */
+	document.getElementById("mock-split").insertAdjacentHTML("beforeend",
+		winTb("~/code/acme-web", "Dev tab") +
+		`<div class="splitstage">
+			<div class="pcolA">
+				<div class="pane show" style="flex:1" data-pane="a">
+					${ttb(aicon("claude"), "Claude Code", "working")}
+					${term(CLAUDE.slice(0, 14))}
+				</div>
+			</div>
+			<div class="pcolB">
+				<div class="pane paneB" data-pane="b">
+					${ttb(ticon, "zsh : pnpm dev", "shell")}
+					${term(DEVSERVER)}
+				</div>
+				<div class="pane paneC" data-pane="c">
+					${ttb(ticon, "zsh : vitest", "idle")}
+					${term(TESTS)}
+				</div>
+			</div>
+		</div>
+		<div class="kbd-callout" data-callout="v" style="right: 40px; top: 60px;"><span class="k">⌘⇧V</span> split vertical</div>
+		<div class="kbd-callout" data-callout="h" style="right: 40px; bottom: 50px;"><span class="k">⌘⇧H</span> split horizontal</div>`);
+	document.querySelector('#mock-split [data-pane="a"] .term').style.setProperty("--t0", "300ms");
+
+	/* ════════════════════════════════════════════════════════════════
+	   S5 — editor & explorer
+	   ════════════════════════════════════════════════════════════════ */
+	const TREE = [
+		[0, "folder fold", "src", "open"],
+		[1, "folder fold", "api", "open"],
+		[2, "file fts", "checkout.ts", "sel"],
+		[2, "file fts", "payments.ts", "dim"],
+		[1, "folder fold", "components", "open"],
+		[2, "file fts", "Cart.tsx", "dim"],
+		[2, "file fts", "CartSummary.tsx", "dim"],
+		[1, "folder fold", "lib", ""],
+		[0, "folder fold", "public", ""],
+		[0, "file fmd", "README.md", "dim"],
+		[0, "file fpy", "vite.config.ts", "dim"],
+	];
+	const CODE_LINES = [
+		[1, `<span class="tk-kw">export async function</span> <span class="tk-fn">createCheckout</span>(payload: <span class="tk-ty">CheckoutPayload</span>) {`],
+		[2, `  <span class="tk-kw">const</span> computedTotal = payload.lineItems.<span class="tk-fn">reduce</span>(`],
+		[3, `    (sum, item) => sum + item.unitPrice * item.quantity,`],
+		[4, `    <span class="tk-num">0</span>,`],
+		[5, `  );`],
+		[6, `  <span class="tk-kw">if</span> (computedTotal !== payload.total) {`, "hl"],
+		[7, `    <span class="tk-kw">throw new</span> <span class="tk-fn">CheckoutError</span>(<span class="tk-str">"cart_total_mismatch"</span>);`, "hl"],
+		[8, `  }`, "hl"],
+		[9, `  <span class="tk-kw">const</span> intent = <span class="tk-kw">await</span> stripe.paymentIntents.<span class="tk-fn">create</span>({`],
+		[10, `    amount: computedTotal,`],
+		[11, `    currency: payload.currency,`],
+		[12, `  });`],
+		[13, `  <span class="tk-kw">return</span> intent;`],
+		[14, `}`],
+	];
+	document.getElementById("mock-editor").insertAdjacentHTML("beforeend",
+		winTb("~/code/acme-web", "Code tab") +
+		`<div class="ed-body">
+			<div class="tree">
+				${TREE.map(([ind, ic, name, st], i) => {
+					const [kind, color] = ic.split(" ");
+					return `<div class="trow ${st === "sel" ? "is-sel" : ""} ${st === "dim" ? "dim" : ""}" style="--i:${i}">
+						${"<span class=\"ind\"></span>".repeat(ind)}
+						${kind === "folder" ? `<span style="display:inline-flex;width:15px;color:var(--fg-secondary)">${svg(st === "open" ? "chevd" : "chevr", 2)}</span>` : `<span class="ind" style="width:15px"></span>`}
+						<span class="${color}" style="display:inline-flex">${svg(kind, 2)}</span>
+						<span>${name}</span>
+					</div>`;
+				}).join("")}
+			</div>
+			<div class="ed-main">
+				<div class="ed-tabs">
+					<span class="ftab is-on"><span class="fts" style="display:inline-flex">${svg("file", 2)}</span> checkout.ts</span>
+					<span class="ftab"><span class="fts" style="display:inline-flex">${svg("file", 2)}</span> Cart.tsx</span>
+				</div>
+				<div class="code anim-lines"><pre>${CODE_LINES.map(([n, html, hl], i) =>
+					`<div class="cl ${hl ?? ""}" style="--i:${i}"><span class="gut">${n}</span><span>${html}</span></div>`
+				).join("")}</pre></div>
+			</div>
+		</div>`);
+
+	/* ════════════════════════════════════════════════════════════════
+	   S6 — git & github
+	   ════════════════════════════════════════════════════════════════ */
+	const GFILES = [
+		["M", "src/api/checkout.ts", 32, 6, true],
+		["M", "src/components/Cart.tsx", 18, 4],
+		["A", "src/api/__tests__/checkout.test.ts", 41, 0],
+		["M", "src/lib/money.ts", 9, 2],
+		["M", "README.md", 2, 1],
+	];
+	const DIFF = [
+		["ctx", "export async function createCheckout(payload) {"],
+		["add", "  const computedTotal = payload.lineItems.reduce("],
+		["add", "    (sum, item) => sum + item.unitPrice * item.quantity,"],
+		["add", "    0,"],
+		["add", "  );"],
+		["add", "  if (computedTotal !== payload.total) {"],
+		["add", "    throw new CheckoutError(\"cart_total_mismatch\");"],
+		["add", "  }"],
+		["ctx", "  const intent = await stripe.paymentIntents.create({"],
+		["del", "    amount: payload.total,"],
+		["add", "    amount: computedTotal,"],
+		["ctx", "    currency: payload.currency,"],
+		["ctx", "  });"],
+		["ctx", "  return intent;"],
+		["ctx", "}"],
+	];
+	const PRS = [
+		["#481", "Add idempotency keys to payment webhooks", "pending", null],
+		["#477", "Fix rounding error in multi-currency carts", "success", "appr"],
+		["#473", "Refresh worktree summary after rebase", "success", null],
+		["#469", "Migrate VPC module to provider v5", "failure", "chg"],
+	];
+	document.getElementById("mock-git").insertAdjacentHTML("beforeend",
+		winTb("~/code/acme-web", "Git changes") +
+		`<div class="git-body">
+			<div class="gpanel">
+				<div class="gbranch">${svg("branch", 2)} feature/checkout-redesign <span class="base">→ main</span></div>
+				<div class="gp-h">Changes against base · 5 files</div>
+				${GFILES.map(([b, f, a, d, sel], i) =>
+					`<div class="gfile ${sel ? "is-sel" : ""}" style="--i:${i}">
+						<span class="badge ${b}">${b}</span><span class="fname">${f}</span>
+						<span class="gstats">${a ? `<span class="ga">+${a}</span>` : ""}${d ? `<span class="gd">−${d}</span>` : ""}</span>
+					</div>`).join("")}
+			</div>
+			<div class="diff">
+				<div class="diff-h"><span class="fchip">src/api/checkout.ts</span><span class="ga" style="color:var(--green)">+32</span><span style="color:var(--error)">−6</span></div>
+				${DIFF.map(([t, code], i) =>
+					`<div class="dl ${t}" style="--i:${i}"><span class="sg">${t === "add" ? "+" : t === "del" ? "−" : " "}</span><code>${code}</code></div>`).join("")}
+			</div>
+			<div class="prs">
+				<div class="gp-h" style="display:flex;align-items:center;gap:8px"><span style="display:inline-flex;width:14px;color:var(--accent)">${svg("eye", 2)}</span> Review requested · 4</div>
+				${PRS.map(([n, t, ci, dec], i) =>
+					`<div class="prcard" style="--i:${i}">
+						<div class="prt"><span class="prn">${n}</span><span>${t}</span></div>
+						<div class="prmeta"><span class="ci ${ci}"></span><span>${ci === "pending" ? "checks running" : ci === "success" ? "checks passed" : "checks failed"}</span>
+						${dec ? `<span class="dec ${dec}">${dec === "appr" ? "Approved" : "Changes"}</span>` : ""}</div>
+					</div>`).join("")}
+			</div>
+		</div>`);
+
+	/* ════════════════════════════════════════════════════════════════
+	   S7 — palettes
+	   ════════════════════════════════════════════════════════════════ */
+	const palRows = (rows) => rows.map((r, i) =>
+		`<div class="pal-row ${r.sel ? "is-sel" : ""}" style="--i:${i}">${r.icon}<span>${r.html}</span><span class="grow"></span>${r.k ? `<span class="hintk">${r.k}</span>` : ""}</div>`
+	).join("");
+	document.getElementById("mock-palette").insertAdjacentHTML("beforeend",
+		`<div class="pal-input">${svg("search", 2)}<span class="q" data-paltype="agent"></span><span class="t-cursor"></span></div>
+		<div class="pal-list">
+			<div class="pal-sect">Agents</div>
+			${palRows([
+				{ icon: aicon("claude", 17), html: `Launch <b>Agent</b> — Claude Code`, sel: true, k: "↵" },
+				{ icon: aicon("gemini", 17), html: `Launch <b>Agent</b> — Gemini CLI` },
+				{ icon: aicon("github", 17), html: `Launch <b>Agent</b> — Copilot CLI` },
+			])}
+			<div class="pal-sect">Commands</div>
+			${palRows([
+				{ icon: svg("term", 2), html: `<b>Agent</b>s: restart in current pane` },
+				{ icon: svg("grid", 2), html: `Show <b>agent</b> activity overview`, k: "⌘⇧O" },
+			])}
+		</div>
+		<div class="pal-foot"><span>↑↓ navigate</span><span>↵ run</span><span>esc close</span></div>`);
+	document.getElementById("mock-quickopen").insertAdjacentHTML("beforeend",
+		`<div class="pal-input">${svg("file", 2)}<span class="q" data-paltype="checkout"></span><span class="t-cursor"></span></div>
+		<div class="pal-list">
+			<div class="pal-sect">Files · acme-web</div>
+			${palRows([
+				{ icon: svg("file", 2), html: `<b>checkout</b>.ts <span class="dim2">— src/api</span>`, sel: true, k: "↵" },
+				{ icon: svg("file", 2), html: `<b>Checkout</b>.tsx <span class="dim2">— src/components</span>` },
+				{ icon: svg("file", 2), html: `<b>checkout</b>.test.ts <span class="dim2">— src/api/__tests__</span>` },
+				{ icon: svg("file", 2), html: `<b>checkout</b>.md <span class="dim2">— docs/api</span>` },
+			])}
+		</div>
+		<div class="pal-foot"><span>↑↓ navigate</span><span>↵ open</span><span>⌘↵ open to the side</span></div>`);
+
+	/* ════════════════════════════════════════════════════════════════
+	   S8 — markdown + notes
+	   ════════════════════════════════════════════════════════════════ */
+	const MD_SRC = [
+		[["# docs-site", "cyn b"]],
+		[],
+		[["Public documentation for the Acme platform.", ""]],
+		[],
+		[["## Sections", "cyn b"]],
+		[],
+		[["- ", "dim"], ["Getting started"]],
+		[["- ", "dim"], ["API reference"]],
+		[["- ", "dim"], ["Webhooks"]],
+		[],
+		[["```mermaid", "dim"]],
+		[["graph LR; Cart --> Checkout --> Intent", "mag"]],
+		[["```", "dim"]],
+	];
+	document.getElementById("mock-md").insertAdjacentHTML("beforeend",
+		winTb("~/code/docs-site", "README.md · preview") +
+		`<div class="md-body">
+			<div class="md-src anim-lines">${term(MD_SRC).replace('class="term ', 'class="term md-srct ')}</div>
+			<div class="md-prev">
+				<h2 style="--i:0">docs-site</h2>
+				<p style="--i:1">Public documentation for the Acme platform.</p>
+				<h3 style="--i:2">Sections</h3>
+				<ul style="--i:3"><li>Getting started</li><li>API reference</li><li>Webhooks</li></ul>
+				<p style="--i:4; margin-top:16px; color:var(--accent-soft)">⬡ Cart → Checkout → Intent</p>
+			</div>
+		</div>`);
+	document.getElementById("mock-notes").insertAdjacentHTML("beforeend",
+		`<div class="note-h">${svg("note", 2)} Notes · acme-web</div>
+		<div class="ntitle">Checkout redesign</div>
+		<div class="note" data-note="0"><span class="box">${svg("check", 3.5)}</span><span class="ntext">Validate cart totals server-side</span></div>
+		<div class="note" data-note="1"><span class="box">${svg("check", 3.5)}</span><span class="ntext">Add regression test for rounding</span></div>
+		<div class="note" data-note="2"><span class="box">${svg("check", 3.5)}</span><span class="ntext">Ship behind feature flag</span></div>`);
+
+	/* ════════════════════════════════════════════════════════════════
+	   Scene engine
+	   ════════════════════════════════════════════════════════════════ */
+	const stage = document.getElementById("stage");
+	const scenes = Array.from(document.querySelectorAll(".scene"));
+	const progress = document.getElementById("progress");
+	const hint = document.getElementById("hint");
+
+	const fit = () => {
+		const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+		stage.style.transform = `scale(${s})`;
+	};
+	addEventListener("resize", fit);
+	fit();
+
+	let idx = -1;
+	let playing = false;
+	let sceneStart = 0;
+	let sceneElapsed = 0;
+	let raf = 0;
+	let timers = [];
+	let intervals = [];
+	let typeTimer = 0;
+
+	const dur = (s) => Number(s.dataset.dur || 9000);
+	const addTimer = (fn, ms) => timers.push(setTimeout(fn, ms));
+	const addInterval = (fn, ms) => intervals.push(setInterval(fn, ms));
+
+	function clearTimers() {
+		timers.forEach(clearTimeout); timers = [];
+		intervals.forEach(clearInterval); intervals = [];
+		clearInterval(typeTimer);
+	}
+
+	function typeInto(el, text, speed = 34) {
+		el.textContent = "";
+		let i = 0;
+		const t = setInterval(() => {
+			if (i < text.length) el.textContent += text[i++];
+			else clearInterval(t);
+		}, speed);
+		intervals.push(t);
+	}
+
+	function typeEyebrow(scene) {
+		const el = scene.querySelector("[data-type]");
+		if (!el) return;
+		const text = el.dataset.type;
+		el.innerHTML = '<span class="caret"></span>';
+		const caret = el.querySelector(".caret");
+		let i = 0;
+		clearInterval(typeTimer);
+		typeTimer = setInterval(() => {
+			if (i < text.length) caret.insertAdjacentText("beforebegin", text[i++]);
+			else clearInterval(typeTimer);
+		}, 34);
+	}
+
+	/* per-scene live behaviours */
+	const HOOKS = {
+		/* S2: cycle through the agent tabs */
+		s2(scene) {
+			const tabs = scene.querySelectorAll("[data-atab]");
+			const terms = scene.querySelectorAll("[data-aterm]");
+			let cur = 0;
+			const show = (n) => {
+				tabs.forEach((t, k) => t.classList.toggle("is-on", k === n));
+				terms.forEach((t, k) => {
+					t.classList.toggle("active", k === n);
+					if (k === n) { // restart line stagger
+						t.querySelectorAll(".ln").forEach((l) => { l.style.animation = "none"; void l.offsetWidth; l.style.animation = ""; });
+					}
+				});
+				cur = n;
+			};
+			show(0);
+			addInterval(() => show((cur + 1) % tabs.length), 3100);
+		},
+		/* S4: choreograph the splits */
+		s4(scene) {
+			scene.classList.remove("split-1", "split-2");
+			scene.querySelectorAll(".kbd-callout").forEach((c) => c.classList.remove("on"));
+			scene.querySelectorAll('[data-pane="b"], [data-pane="c"]').forEach((p) => p.classList.remove("show"));
+			addTimer(() => scene.querySelector('[data-callout="v"]').classList.add("on"), 2200);
+			addTimer(() => {
+				scene.classList.add("split-1");
+				scene.querySelector('[data-pane="b"]').classList.add("show");
+			}, 3000);
+			addTimer(() => scene.querySelector('[data-callout="v"]').classList.remove("on"), 5200);
+			addTimer(() => scene.querySelector('[data-callout="h"]').classList.add("on"), 5600);
+			addTimer(() => {
+				scene.classList.add("split-2");
+				scene.querySelector('[data-pane="c"]').classList.add("show");
+			}, 6400);
+			addTimer(() => scene.querySelector('[data-callout="h"]').classList.remove("on"), 9200);
+		},
+		/* S7: type the palette queries, then stream rows */
+		s7(scene) {
+			scene.querySelectorAll(".pal").forEach((p) => p.classList.remove("live"));
+			const a = scene.querySelector('[data-paltype="agent"]');
+			const b = scene.querySelector('[data-paltype="checkout"]');
+			a.textContent = ""; b.textContent = "";
+			addTimer(() => {
+				typeInto(a, "agent", 70);
+				addTimer(() => scene.querySelector(".palA").classList.add("live"), 420);
+			}, 1300);
+			addTimer(() => {
+				typeInto(b, "checkout", 60);
+				addTimer(() => scene.querySelector(".palB").classList.add("live"), 540);
+			}, 3600);
+		},
+		/* S8: tick the notes */
+		s8(scene) {
+			scene.querySelectorAll(".note").forEach((n) => n.classList.remove("done"));
+			[4200, 5800, 7400].forEach((t, i) =>
+				addTimer(() => scene.querySelector(`[data-note="${i}"]`).classList.add("done"), t));
+		},
+	};
+
+	function enter(i, { autoplay = playing } = {}) {
+		clearTimers();
+		idx = (i + scenes.length) % scenes.length;
+		scenes.forEach((s, n) => {
+			if (n !== idx) {
+				s.classList.remove("on");
+				s.querySelectorAll(".step.on").forEach((e) => e.classList.remove("on"));
+				const t = s.querySelector("[data-type]");
+				if (t) t.innerHTML = "";
+			}
+		});
+		const scene = scenes[idx];
+		void scene.offsetWidth; // reflow so re-entering replays reveals
+		scene.classList.add("on");
+		typeEyebrow(scene);
+		scene.querySelectorAll(".step").forEach((el) => {
+			addTimer(() => el.classList.add("on"), Number(el.dataset.step || 0));
+		});
+		HOOKS[scene.id]?.(scene);
+		sceneStart = performance.now();
+		sceneElapsed = 0;
+		playing = autoplay;
+		tick();
+	}
+
+	function tick() {
+		cancelAnimationFrame(raf);
+		const loop = () => {
+			const total = dur(scenes[idx]);
+			const t = playing ? sceneElapsed + (performance.now() - sceneStart) : sceneElapsed;
+			const overall = (scenes.slice(0, idx).reduce((a, s) => a + dur(s), 0) + Math.min(t, total)) /
+				scenes.reduce((a, s) => a + dur(s), 0);
+			progress.style.width = `${overall * 100}%`;
+			if (playing && t >= total) {
+				if (idx < scenes.length - 1) { enter(idx + 1); return; }
+				playing = false; // hold on the closing scene
+			}
+			raf = requestAnimationFrame(loop);
+		};
+		raf = requestAnimationFrame(loop);
+	}
+
+	function pauseResume() {
+		if (playing) {
+			sceneElapsed += performance.now() - sceneStart;
+			playing = false;
+		} else {
+			sceneStart = performance.now();
+			playing = true;
+		}
+	}
+
+	addEventListener("keydown", (e) => {
+		hideHint();
+		if (e.key === " ") { e.preventDefault(); pauseResume(); }
+		else if (e.key === "ArrowRight") enter(idx + 1);
+		else if (e.key === "ArrowLeft") enter(idx - 1);
+		else if (e.key.toLowerCase() === "r") enter(0, { autoplay: true });
+		else if (e.key.toLowerCase() === "p") progress.classList.toggle("hidden");
+		else if (e.key.toLowerCase() === "f") {
+			document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+		}
+	});
+
+	let hintHidden = false;
+	function hideHint() {
+		if (hintHidden) return;
+		hintHidden = true;
+		hint.classList.add("hidden");
+	}
+	let cursorTimer = 0;
+	addEventListener("mousemove", () => {
+		document.body.classList.add("show-cursor");
+		clearTimeout(cursorTimer);
+		cursorTimer = setTimeout(() => document.body.classList.remove("show-cursor"), 1600);
+	});
+
+	enter(0, { autoplay: false });
+})();
+</script>
+</body>
+</html>
