@@ -151,11 +151,16 @@ function TabItem({
 					: hovered
 						? "var(--fg-primary)"
 						: "var(--fg-secondary)",
+				// Active tab is transparent so the ambient gradient shows through and
+				// it merges with the content area below (its accent top border +
+				// side borders mark it active). Inactive tabs get a solid bg-tertiary
+				// fill so they clearly read as recessed/unselected chips against the
+				// transparent active tab, lifting slightly toward fg on hover.
 				backgroundColor: isActive
-					? "var(--bg-primary)"
+					? "transparent"
 					: hovered
-						? "color-mix(in srgb, var(--bg-tertiary) 50%, transparent)"
-						: "transparent",
+						? "color-mix(in srgb, var(--bg-tertiary) 88%, var(--fg-primary))"
+						: "var(--bg-tertiary)",
 				borderRadius: "6px 6px 0 0",
 				borderTop: isActive
 					? "1px solid var(--accent)"
@@ -399,7 +404,9 @@ export function TabBar({
 			data-tab-strip
 			style={{
 				height: 38,
-				backgroundColor: "var(--bg-secondary)",
+				// Transparent so the workspace ambient gradient shows through the tab
+				// strip (the strip's parent paints the gradient — see App.tsx).
+				backgroundColor: "transparent",
 				paddingLeft: 8,
 				paddingRight: 4,
 				gap: 1,

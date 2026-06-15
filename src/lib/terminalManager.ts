@@ -6,7 +6,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { type ITheme, Terminal } from "@xterm/xterm";
+import { type FontWeight, type ITheme, Terminal } from "@xterm/xterm";
 import {
 	setShellCommandRunning,
 	touchLastOutput,
@@ -528,6 +528,27 @@ function transparentBg(theme: ITheme): ITheme {
 	return { ...theme, background: `rgba(${r}, ${g}, ${b}, 0)` };
 }
 
+/**
+ * Normal-text font weight for a theme. Light text on a dark background reads
+ * heavier than dark text on a light background at the same weight (irradiation),
+ * so dark themes already *look* bold at xterm's default weight while light themes
+ * look thin. We lift the normal weight on light themes so they match that bolder
+ * dark-theme appearance. Bold ANSI text keeps the default bold weight (700), so
+ * the normal/bold distinction is preserved (500 vs 700). Light vs dark is derived
+ * from the theme's background luminance so callers don't need to thread variant.
+ */
+function normalFontWeightFor(theme: ITheme): FontWeight {
+	const hex = /^#([0-9a-f]{6})$/i.exec(theme.background ?? "");
+	if (!hex) return "normal";
+	const n = Number.parseInt(hex[1], 16);
+	const r = (n >> 16) & 255;
+	const g = (n >> 8) & 255;
+	const b = n & 255;
+	// Perceived luminance (Rec. 601); > 140/255 → a light background.
+	const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+	return luma > 140 ? 500 : "normal";
+}
+
 export async function createTerminal(
 	paneId: string,
 	initialPtyId: string,
@@ -571,6 +592,9 @@ export async function createTerminal(
 		// workspace ambient gradient shows behind the terminal (see transparentBg).
 		allowTransparency: true,
 		theme: transparentBg(options.theme),
+		// Lift normal-text weight on light themes so they read as bold as the dark
+		// themes do (see normalFontWeightFor).
+		fontWeight: normalFontWeightFor(options.theme),
 		// Auto-adjust foreground when a cell's fg/bg contrast is too low, so
 		// prompt segments that paint light text on a light ANSI colour (common
 		// in powerline themes) stay readable. 4.5 = WCAG AA for normal text.
@@ -1304,6 +1328,9 @@ export function setAllTerminalsScrollback(scrollback: number): void {
 export function setAllTerminalsTheme(theme: ITheme): void {
 	for (const managed of instances.values()) {
 		managed.term.options.theme = transparentBg(theme);
+		// Switch the normal-text weight too (light themes render heavier — see
+		// normalFontWeightFor) so a dark↔light switch updates boldness in place.
+		managed.term.options.fontWeight = normalFontWeightFor(theme);
 		// WebGL caches rasterized glyphs in a texture atlas with the old fg/bg
 		// colors baked in — clear it so refresh() rebuilds against the new theme.
 		managed.webglAddon?.clearTextureAtlas();

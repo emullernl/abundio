@@ -18,7 +18,8 @@ export function PrSection() {
 			className="flex flex-col min-h-0"
 			style={{
 				borderTop: collapsed ? "1px solid var(--border)" : "none",
-				backgroundColor: "var(--bg-secondary)",
+				// Transparent so the sidebar's ambient glow shows through.
+				backgroundColor: "transparent",
 				flex: "1 1 0%",
 			}}
 		>

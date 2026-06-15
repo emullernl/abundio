@@ -58,7 +58,9 @@ export function RightSidebarCollapsedStrip({ titlebarHeight }: Props) {
 				width: 44,
 				paddingTop: titlebarHeight + 8,
 				gap: 4,
-				backgroundColor: "var(--bg-secondary)",
+				// Linear ambient glow rising from the bottom, matching the expanded
+				// right sidebar and the left sidebar (--ambient-glow over bg-secondary).
+				background: "var(--ambient-glow), var(--bg-secondary)",
 				borderLeft: "1px solid var(--border)",
 			}}
 		>

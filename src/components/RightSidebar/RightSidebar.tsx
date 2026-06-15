@@ -46,51 +46,55 @@ export function RightSidebar({ titlebarHeight }: Props) {
 	}
 
 	return (
-		<>
+		<div
+			className="flex flex-col flex-shrink-0 h-full relative"
+			style={{
+				width,
+				// Linear ambient glow rising from the bottom, mirroring the left
+				// sidebar (--ambient-glow over bg-secondary). The panels inside
+				// (tab strip, tab content, PR section) are transparent so the glow
+				// shows through.
+				background: "var(--ambient-glow), var(--bg-secondary)",
+				borderLeft: "1px solid var(--border)",
+				paddingTop: titlebarHeight,
+			}}
+		>
+			{/* Resize handle pinned to the sidebar's left edge (absolute), so it
+			    lives inside the sidebar rather than the content row. */}
 			<RightSidebarResizer />
+			<RightSidebarTabStrip />
+
+			{/* Top half: active tab content. When the PR section is collapsed,
+			 *  the tab content stretches to fill all available height; when the
+			 *  PR section is expanded, the two share the height via prRatio. */}
 			<div
-				className="flex flex-col flex-shrink-0 h-full"
+				className="flex flex-col min-h-0"
+				style={{ flex: prCollapsed ? "1 1 0%" : `${ratio} 1 0%` }}
+			>
+				{activeTab === "git" && <GitChangesTab />}
+				{activeTab === "explorer" && <Explorer />}
+				{activeTab === "search" && <SearchPanel />}
+				{activeTab === "notes" && <NotesPanel />}
+			</div>
+
+			{!prCollapsed && (
+				<SectionDivider
+					onResize={handleDividerResize}
+					onResizeEnd={handleDividerResizeEnd}
+				/>
+			)}
+
+			{/* PR section. When collapsed, only its 30px header pins at the
+			 *  bottom (flex: 0 0 auto). When expanded, it takes the remaining
+			 *  ratio share of the panel height. */}
+			<div
+				className="flex flex-col flex-shrink-0 min-h-0"
 				style={{
-					width,
-					backgroundColor: "var(--bg-secondary)",
-					borderLeft: "1px solid var(--border)",
-					paddingTop: titlebarHeight,
+					flex: prCollapsed ? "0 0 auto" : `${1 - ratio} 1 0%`,
 				}}
 			>
-				<RightSidebarTabStrip />
-
-				{/* Top half: active tab content. When the PR section is collapsed,
-				 *  the tab content stretches to fill all available height; when the
-				 *  PR section is expanded, the two share the height via prRatio. */}
-				<div
-					className="flex flex-col min-h-0"
-					style={{ flex: prCollapsed ? "1 1 0%" : `${ratio} 1 0%` }}
-				>
-					{activeTab === "git" && <GitChangesTab />}
-					{activeTab === "explorer" && <Explorer />}
-					{activeTab === "search" && <SearchPanel />}
-					{activeTab === "notes" && <NotesPanel />}
-				</div>
-
-				{!prCollapsed && (
-					<SectionDivider
-						onResize={handleDividerResize}
-						onResizeEnd={handleDividerResizeEnd}
-					/>
-				)}
-
-				{/* PR section. When collapsed, only its 30px header pins at the
-				 *  bottom (flex: 0 0 auto). When expanded, it takes the remaining
-				 *  ratio share of the panel height. */}
-				<div
-					className="flex flex-col flex-shrink-0 min-h-0"
-					style={{
-						flex: prCollapsed ? "0 0 auto" : `${1 - ratio} 1 0%`,
-					}}
-				>
-					<PrSection />
-				</div>
+				<PrSection />
 			</div>
-		</>
+		</div>
 	);
 }

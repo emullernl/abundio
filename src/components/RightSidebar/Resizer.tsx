@@ -40,9 +40,18 @@ export function RightSidebarResizer() {
 		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for sidebar resize
 		<div
 			onMouseDown={onMouseDown}
-			className="flex-shrink-0 transition-colors"
+			className="transition-colors"
+			// Absolutely pinned to the left edge of the right sidebar (its parent is
+			// position:relative), mirroring the left sidebar's right-edge handle. By
+			// living inside the sidebar it overlays the sidebar's own glow rather
+			// than sitting in the content row over the flat-dark root background.
 			style={{
+				position: "absolute",
+				top: 0,
+				left: 0,
 				width: 4,
+				height: "100%",
+				zIndex: 10,
 				cursor: "col-resize",
 				backgroundColor: "transparent",
 			}}

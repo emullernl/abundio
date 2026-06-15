@@ -56,7 +56,8 @@ export function RightSidebarTabStrip() {
 				paddingLeft: 6,
 				paddingRight: 6,
 				borderBottom: "1px solid var(--border)",
-				backgroundColor: "var(--bg-secondary)",
+				// Transparent so the sidebar's ambient glow shows through.
+				backgroundColor: "transparent",
 			}}
 		>
 			<div className="flex items-center gap-0.5">
