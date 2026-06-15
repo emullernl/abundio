@@ -6,7 +6,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { type FontWeight, type ITheme, Terminal } from "@xterm/xterm";
+import { type ITheme, Terminal } from "@xterm/xterm";
 import {
 	setShellCommandRunning,
 	touchLastOutput,
@@ -25,6 +25,7 @@ import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
 import { modifiedNavKeySequence } from "./terminalWordJump";
+import { normalFontWeightFor, transparentBg } from "./themeUtils";
 import type { PaneNode } from "./types";
 import { addWindowFocusListener } from "./windowFocus";
 
@@ -508,45 +509,6 @@ setTimeout(() => {
 
 export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
-}
-
-/**
- * Return a copy of the theme with its background made fully transparent, so the
- * workspace's ambient gradient shows through the pane. Cells painted with the
- * default background become see-through; cells with explicit ANSI bg colors stay
- * opaque. The original RGB is preserved (alpha → 0) so xterm's
- * minimumContrastRatio still computes against the theme's intended base colour.
- * Requires the Terminal to be created with `allowTransparency: true`.
- */
-function transparentBg(theme: ITheme): ITheme {
-	const hex = /^#([0-9a-f]{6})$/i.exec(theme.background ?? "");
-	if (!hex) return { ...theme, background: "rgba(0, 0, 0, 0)" };
-	const n = Number.parseInt(hex[1], 16);
-	const r = (n >> 16) & 255;
-	const g = (n >> 8) & 255;
-	const b = n & 255;
-	return { ...theme, background: `rgba(${r}, ${g}, ${b}, 0)` };
-}
-
-/**
- * Normal-text font weight for a theme. Light text on a dark background reads
- * heavier than dark text on a light background at the same weight (irradiation),
- * so dark themes already *look* bold at xterm's default weight while light themes
- * look thin. We lift the normal weight on light themes so they match that bolder
- * dark-theme appearance. Bold ANSI text keeps the default bold weight (700), so
- * the normal/bold distinction is preserved (500 vs 700). Light vs dark is derived
- * from the theme's background luminance so callers don't need to thread variant.
- */
-function normalFontWeightFor(theme: ITheme): FontWeight {
-	const hex = /^#([0-9a-f]{6})$/i.exec(theme.background ?? "");
-	if (!hex) return "normal";
-	const n = Number.parseInt(hex[1], 16);
-	const r = (n >> 16) & 255;
-	const g = (n >> 8) & 255;
-	const b = n & 255;
-	// Perceived luminance (Rec. 601); > 140/255 → a light background.
-	const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-	return luma > 140 ? 500 : "normal";
 }
 
 export async function createTerminal(

@@ -61,7 +61,7 @@ export function RightSidebar({ titlebarHeight }: Props) {
 		>
 			{/* Resize handle pinned to the sidebar's left edge (absolute), so it
 			    lives inside the sidebar rather than the content row. */}
-			<RightSidebarResizer />
+			<RightSidebarResizer titlebarHeight={titlebarHeight} />
 			<RightSidebarTabStrip />
 
 			{/* Top half: active tab content. When the PR section is collapsed,

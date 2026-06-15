@@ -4,7 +4,11 @@ import { useSettingsStore } from "../../stores/settingsStore";
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 800;
 
-export function RightSidebarResizer() {
+export function RightSidebarResizer({
+	titlebarHeight,
+}: {
+	titlebarHeight: number;
+}) {
 	const setRightSidebarWidth = useSettingsStore((s) => s.setRightSidebarWidth);
 	const isDragging = useRef(false);
 
@@ -45,12 +49,14 @@ export function RightSidebarResizer() {
 			// position:relative), mirroring the left sidebar's right-edge handle. By
 			// living inside the sidebar it overlays the sidebar's own glow rather
 			// than sitting in the content row over the flat-dark root background.
+			// Starts below the titlebar strip so the handle doesn't put a col-resize
+			// drag column inside the (macOS overlay) titlebar region.
 			style={{
 				position: "absolute",
-				top: 0,
+				top: titlebarHeight,
+				bottom: 0,
 				left: 0,
 				width: 4,
-				height: "100%",
 				zIndex: 10,
 				cursor: "col-resize",
 				backgroundColor: "transparent",
