@@ -773,7 +773,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 	reloadPaneFromDisk: async (paneId) => {
 		const pane = get().filePanes[paneId];
-		if (!pane || pane.fileType !== "text") return;
+		if (pane?.fileType !== "text") return;
 		try {
 			const result = await fsApi.readFile(pane.filePath);
 			set((s) => ({

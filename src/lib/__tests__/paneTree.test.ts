@@ -240,9 +240,10 @@ describe("extractNode", () => {
 
 	it("remaining tree still contains untouched nodes", () => {
 		const { remaining } = extractNode(nestedSplit, "a");
-		expect(findNode(remaining!, "b")).toEqual(leafB);
-		expect(findNode(remaining!, "c")).toEqual(leafC);
-		expect(findNode(remaining!, "a")).toBeNull();
+		if (!remaining) throw new Error("expected a remaining tree");
+		expect(findNode(remaining, "b")).toEqual(leafB);
+		expect(findNode(remaining, "c")).toEqual(leafC);
+		expect(findNode(remaining, "a")).toBeNull();
 	});
 });
 

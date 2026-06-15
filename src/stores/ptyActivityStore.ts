@@ -210,7 +210,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 
 		clearError: (ptyId) => {
 			const entry = get().activities[ptyId];
-			if (!entry || entry.state !== "error") return;
+			if (entry?.state !== "error") return;
 			set((s) => ({
 				activities: {
 					...s.activities,
@@ -265,7 +265,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			// drives the dot from here; agent output flips it back via the
 			// idle scanner / recordOutput if work resumes before then.
 			const entry = get().activities[ptyId];
-			if (!entry || entry.state !== "waiting") return;
+			if (entry?.state !== "waiting") return;
 			set((s) => ({
 				activities: {
 					...s.activities,
@@ -280,8 +280,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			// move an agent's "active" → "idle" (focus/clicks must not lie
 			// about agent progress); this is the explicit cancel path.
 			const entry = get().activities[ptyId];
-			if (!entry || entry.state !== "active" || entry.detectionMode !== "agent")
-				return;
+			if (entry?.state !== "active" || entry.detectionMode !== "agent") return;
 			set((s) => ({
 				activities: {
 					...s.activities,

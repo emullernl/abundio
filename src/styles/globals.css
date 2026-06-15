@@ -294,8 +294,8 @@ body,
 }
 
 /* Pane drag-and-drop: global cursor + kill pointer events on non-drag surfaces */
-/* biome-ignore lint/complexity/noImportantStyles: must override inline cursor:grab on title bars */
 .dragging-pane {
+	/* biome-ignore lint/complexity/noImportantStyles: must override inline cursor:grab on title bars */
 	cursor: grabbing !important;
 	user-select: none;
 }
@@ -346,6 +346,7 @@ body,
    entirely, which the compositor cannot bypass. The native viewport scrollbar
    is hidden in parallel — it's redundant since xterm draws its own. */
 [data-workspace-active="false"] .xterm-scrollable-element > .scrollbar {
+	/* biome-ignore lint/complexity/noImportantStyles: must beat xterm.js's composite-promoted scrollbar layer, which an ancestor's visibility:hidden can't hide on macOS WKWebView — see the comment above. */
 	display: none !important;
 }
 .xterm-viewport::-webkit-scrollbar {
@@ -370,6 +371,7 @@ body,
    `display: none` at the tab wrapper) are unaffected. */
 [data-workspace-active="false"] .monaco-editor,
 [data-workspace-active="false"] .monaco-diff-editor {
+	/* biome-ignore lint/complexity/noImportantStyles: same WKWebView compositor trap as the xterm scrollbar above — display:none is the only thing the compositor can't bypass. */
 	display: none !important;
 }
 
@@ -403,6 +405,7 @@ body,
 .app-hidden *,
 .app-hidden *::before,
 .app-hidden *::after {
+	/* biome-ignore lint/complexity/noImportantStyles: must win over per-element animation shorthands to pause every animation when the app is hidden. */
 	animation-play-state: paused !important;
 }
 
