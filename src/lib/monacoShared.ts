@@ -656,14 +656,18 @@ export function defineAbundioTheme(monaco: Monaco) {
 		inherit: true,
 		rules: [],
 		colors: {
-			"editor.background": resolve("--bg-primary"),
+			// Transparent (8-digit hex, alpha 00) so the workspace's ambient
+			// gradient shows through the editor — matches the transparent terminal
+			// panes. The pane/container backgrounds are transparent too (CodeEditor
+			// / FilePane). Overlay widgets keep `editorWidget.background` for legibility.
+			"editor.background": "#00000000",
 			"editor.foreground": resolve("--fg-primary"),
 			"editorLineNumber.foreground": resolve("--fg-secondary"),
 			"editorLineNumber.activeForeground": resolve("--fg-primary"),
 			"editorCursor.foreground": resolve("--accent"),
 			"editor.selectionBackground": `${resolve("--accent")}40`,
 			"editor.lineHighlightBackground": `${resolve("--fg-primary")}0D`,
-			"editorGutter.background": resolve("--bg-secondary"),
+			"editorGutter.background": "#00000000",
 			"editorWidget.background": resolve("--bg-secondary"),
 			"editorWidget.border": resolve("--border"),
 			"editor.findMatchBackground": `${resolve("--accent")}40`,

@@ -510,6 +510,24 @@ export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
 }
 
+/**
+ * Return a copy of the theme with its background made fully transparent, so the
+ * workspace's ambient gradient shows through the pane. Cells painted with the
+ * default background become see-through; cells with explicit ANSI bg colors stay
+ * opaque. The original RGB is preserved (alpha → 0) so xterm's
+ * minimumContrastRatio still computes against the theme's intended base colour.
+ * Requires the Terminal to be created with `allowTransparency: true`.
+ */
+function transparentBg(theme: ITheme): ITheme {
+	const hex = /^#([0-9a-f]{6})$/i.exec(theme.background ?? "");
+	if (!hex) return { ...theme, background: "rgba(0, 0, 0, 0)" };
+	const n = Number.parseInt(hex[1], 16);
+	const r = (n >> 16) & 255;
+	const g = (n >> 8) & 255;
+	const b = n & 255;
+	return { ...theme, background: `rgba(${r}, ${g}, ${b}, 0)` };
+}
+
 export async function createTerminal(
 	paneId: string,
 	initialPtyId: string,
@@ -549,7 +567,10 @@ export async function createTerminal(
 		scrollback: options.scrollback,
 		cursorBlink: false,
 		allowProposedApi: true,
-		theme: options.theme,
+		// Let the pane's default-background cells render see-through so the
+		// workspace ambient gradient shows behind the terminal (see transparentBg).
+		allowTransparency: true,
+		theme: transparentBg(options.theme),
 		// Auto-adjust foreground when a cell's fg/bg contrast is too low, so
 		// prompt segments that paint light text on a light ANSI colour (common
 		// in powerline themes) stay readable. 4.5 = WCAG AA for normal text.
@@ -1282,7 +1303,7 @@ export function setAllTerminalsScrollback(scrollback: number): void {
 /** Update theme on all terminal instances */
 export function setAllTerminalsTheme(theme: ITheme): void {
 	for (const managed of instances.values()) {
-		managed.term.options.theme = theme;
+		managed.term.options.theme = transparentBg(theme);
 		// WebGL caches rasterized glyphs in a texture atlas with the old fg/bg
 		// colors baked in — clear it so refresh() rebuilds against the new theme.
 		managed.webglAddon?.clearTextureAtlas();

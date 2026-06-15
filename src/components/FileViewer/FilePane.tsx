@@ -234,7 +234,9 @@ export function FilePane({
 			className="relative w-full h-full flex flex-col"
 			data-pane-id={paneId}
 			style={{
-				backgroundColor: "var(--bg-primary)",
+				// Transparent so the workspace ambient gradient shows through the
+				// editor/diff/image pane (matches transparent terminal panes).
+				backgroundColor: "transparent",
 				opacity: isDragSource ? 0.35 : 1,
 				transition: "opacity 150ms ease",
 			}}

@@ -90,7 +90,10 @@ const SwitchingOverlay = memo(function SwitchingOverlay() {
 		<div
 			className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"
 			style={{
-				backgroundColor: "var(--bg-primary)",
+				// Show the ambient gradient (matching the panes/splash) instead of a
+				// flat fill, so the workspace-switch loading screen blends in. Still
+				// opaque, so it masks the layout swap underneath during the switch.
+				background: "var(--ambient-glow), var(--bg-primary)",
 				paddingTop: TITLEBAR_HEIGHT,
 				isolation: "isolate",
 				contain: "layout paint",
@@ -777,7 +780,12 @@ export function App() {
 											activeFilePath={isActive ? activeFocusedFilePath : null}
 										/>
 									</div>
-									<div className="flex-1 min-h-0 relative">
+									<div
+										className="flex-1 min-h-0 relative"
+										style={{
+											background: "var(--ambient-glow), var(--bg-primary)",
+										}}
+									>
 										{workspace.tabs.map((tab) => {
 											if (!mountedTabIds.has(tab.id)) return null;
 											const isTabActive = tab.id === activeTabId;

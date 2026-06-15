@@ -342,6 +342,8 @@ body,
 }
 .xterm-viewport {
 	scrollbar-width: none;
+	/* biome-ignore lint/complexity/noImportantStyles: xterm.css hardcodes `background-color: #000` on the viewport (an opaque layer behind the transparent terminal canvas) and loads after globals.css, so this must win to let the workspace's ambient gradient show through the pane — see allowTransparency in terminalManager. */
+	background-color: transparent !important;
 }
 
 /* Same WKWebView compositing trap as the xterm scrollbar above: Monaco promotes

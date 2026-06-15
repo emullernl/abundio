@@ -160,7 +160,10 @@ export function PreviewPane({
 			className="relative w-full h-full flex flex-col"
 			data-pane-id={paneId}
 			style={{
-				backgroundColor: "var(--bg-primary)",
+				// In "follow theme" mode the preview is transparent so the workspace
+				// ambient gradient shows through; the forced-white "printed paper"
+				// mode stays opaque (paper shouldn't be see-through).
+				backgroundColor: followTheme ? "transparent" : "var(--bg-primary)",
 			}}
 			onClick={onFocus}
 		>
@@ -186,7 +189,7 @@ export function PreviewPane({
 				data-themed={followTheme ? "true" : undefined}
 				style={{
 					padding: "28px 36px",
-					background: followTheme ? "var(--bg-primary)" : "#ffffff",
+					background: followTheme ? "transparent" : "#ffffff",
 				}}
 			>
 				{preview}
