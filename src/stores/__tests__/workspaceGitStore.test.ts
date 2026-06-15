@@ -16,7 +16,6 @@ import { git } from "../../lib/ipc";
 
 // biome-ignore lint/suspicious/noExplicitAny: mock data
 const noFiles = () => Promise.resolve([] as any[]);
-// biome-ignore lint/suspicious/noExplicitAny: mock data
 const twoFiles = () =>
 	Promise.resolve([
 		{
@@ -33,6 +32,7 @@ const twoFiles = () =>
 			deletions: 1,
 			section: "unstaged",
 		},
+		// biome-ignore lint/suspicious/noExplicitAny: mock data
 	] as any[]);
 
 function resetStore() {

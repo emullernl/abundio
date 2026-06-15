@@ -25,6 +25,7 @@ import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
 import { modifiedNavKeySequence } from "./terminalWordJump";
+import { normalFontWeightFor, transparentBg } from "./themeUtils";
 import type { PaneNode } from "./types";
 import { addWindowFocusListener } from "./windowFocus";
 
@@ -549,7 +550,13 @@ export async function createTerminal(
 		scrollback: options.scrollback,
 		cursorBlink: false,
 		allowProposedApi: true,
-		theme: options.theme,
+		// Let the pane's default-background cells render see-through so the
+		// workspace ambient gradient shows behind the terminal (see transparentBg).
+		allowTransparency: true,
+		theme: transparentBg(options.theme),
+		// Lift normal-text weight on light themes so they read as bold as the dark
+		// themes do (see normalFontWeightFor).
+		fontWeight: normalFontWeightFor(options.theme),
 		// Auto-adjust foreground when a cell's fg/bg contrast is too low, so
 		// prompt segments that paint light text on a light ANSI colour (common
 		// in powerline themes) stay readable. 4.5 = WCAG AA for normal text.
@@ -1282,7 +1289,10 @@ export function setAllTerminalsScrollback(scrollback: number): void {
 /** Update theme on all terminal instances */
 export function setAllTerminalsTheme(theme: ITheme): void {
 	for (const managed of instances.values()) {
-		managed.term.options.theme = theme;
+		managed.term.options.theme = transparentBg(theme);
+		// Switch the normal-text weight too (light themes render heavier — see
+		// normalFontWeightFor) so a dark↔light switch updates boldness in place.
+		managed.term.options.fontWeight = normalFontWeightFor(theme);
 		// WebGL caches rasterized glyphs in a texture atlas with the old fg/bg
 		// colors baked in — clear it so refresh() rebuilds against the new theme.
 		managed.webglAddon?.clearTextureAtlas();

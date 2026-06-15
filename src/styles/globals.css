@@ -241,16 +241,27 @@
 	--font-ui: system-ui, -apple-system, sans-serif;
 	--pane-border: 1px solid var(--border);
 	--pane-focus-glow: 0 0 0 1px var(--accent);
-	/* Ambient radial glow rising from the bottom of a surface. Built from the
-	   active theme's --accent over transparent, so it re-resolves for every
-	   theme automatically when applyTheme() swaps --accent (dark themes get a
-	   luminous lift; light themes a soft colored wash). Layer it ABOVE a base
-	   colour: `background: var(--ambient-glow), var(--bg-secondary)`. */
-	--ambient-glow: radial-gradient(
-		125% 95% at 50% 100%,
+	/* Ambient glow rising from the bottom of a surface — a vertical LINEAR
+	   gradient (used by the narrow left sidebar, where a linear wash reads
+	   cleaner than a radial hotspot). Built from the active theme's --accent
+	   over transparent, so it re-resolves for every theme automatically when
+	   applyTheme() swaps --accent (dark themes get a luminous lift; light themes
+	   a soft colored wash). Layer it ABOVE a base colour:
+	   `background: var(--ambient-glow), var(--bg-secondary)`. */
+	--ambient-glow: linear-gradient(
+		to top,
 		color-mix(in oklab, var(--accent) 14%, transparent) 0%,
 		color-mix(in oklab, var(--accent) 5%, transparent) 35%,
 		transparent 65%
+	);
+	/* The wide middle content area's glow instead descends from the TOP as a
+	   radial hotspot, so its gradient runs top→bottom. Reaches further down
+	   (taller ellipse, later fade) so the wide area doesn't fade out too early. */
+	--ambient-glow-top: radial-gradient(
+		135% 130% at 50% 0%,
+		color-mix(in oklab, var(--accent) 14%, transparent) 0%,
+		color-mix(in oklab, var(--accent) 5%, transparent) 42%,
+		transparent 80%
 	);
 	--sidebar-width: 280px;
 	--statusbar-height: 34px;
@@ -283,8 +294,8 @@ body,
 }
 
 /* Pane drag-and-drop: global cursor + kill pointer events on non-drag surfaces */
-/* biome-ignore lint/complexity/noImportantStyles: must override inline cursor:grab on title bars */
 .dragging-pane {
+	/* biome-ignore lint/complexity/noImportantStyles: must override inline cursor:grab on title bars */
 	cursor: grabbing !important;
 	user-select: none;
 }
@@ -335,6 +346,7 @@ body,
    entirely, which the compositor cannot bypass. The native viewport scrollbar
    is hidden in parallel — it's redundant since xterm draws its own. */
 [data-workspace-active="false"] .xterm-scrollable-element > .scrollbar {
+	/* biome-ignore lint/complexity/noImportantStyles: must beat xterm.js's composite-promoted scrollbar layer, which an ancestor's visibility:hidden can't hide on macOS WKWebView — see the comment above. */
 	display: none !important;
 }
 .xterm-viewport::-webkit-scrollbar {
@@ -342,6 +354,8 @@ body,
 }
 .xterm-viewport {
 	scrollbar-width: none;
+	/* biome-ignore lint/complexity/noImportantStyles: xterm.css hardcodes `background-color: #000` on the viewport (an opaque layer behind the transparent terminal canvas) and loads after globals.css, so this must win to let the workspace's ambient gradient show through the pane — see allowTransparency in terminalManager. */
+	background-color: transparent !important;
 }
 
 /* Same WKWebView compositing trap as the xterm scrollbar above: Monaco promotes
@@ -357,6 +371,7 @@ body,
    `display: none` at the tab wrapper) are unaffected. */
 [data-workspace-active="false"] .monaco-editor,
 [data-workspace-active="false"] .monaco-diff-editor {
+	/* biome-ignore lint/complexity/noImportantStyles: same WKWebView compositor trap as the xterm scrollbar above — display:none is the only thing the compositor can't bypass. */
 	display: none !important;
 }
 
@@ -390,6 +405,7 @@ body,
 .app-hidden *,
 .app-hidden *::before,
 .app-hidden *::after {
+	/* biome-ignore lint/complexity/noImportantStyles: must win over per-element animation shorthands to pause every animation when the app is hidden. */
 	animation-play-state: paused !important;
 }
 

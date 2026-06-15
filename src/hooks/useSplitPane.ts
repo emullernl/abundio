@@ -164,7 +164,7 @@ export function useSplitPane() {
 			if (!tab || !layout) return;
 
 			const node = findNode(layout, splitNodeId);
-			if (!node || node.type !== "split") return;
+			if (node?.type !== "split") return;
 
 			const updated = replaceNode(layout, splitNodeId, { ...node, ratio });
 			updateLayoutLocal(tab.id, updated);

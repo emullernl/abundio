@@ -259,7 +259,9 @@ export const CodeEditor = memo(function CodeEditor({
 	return (
 		<div
 			className="h-full w-full"
-			style={{ backgroundColor: "var(--bg-primary)" }}
+			// Transparent so the workspace ambient gradient shows through the editor
+			// (Monaco's own background is transparent — see defineAbundioTheme).
+			style={{ backgroundColor: "transparent" }}
 		>
 			<Editor
 				height="100%"

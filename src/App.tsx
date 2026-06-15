@@ -90,7 +90,10 @@ const SwitchingOverlay = memo(function SwitchingOverlay() {
 		<div
 			className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"
 			style={{
-				backgroundColor: "var(--bg-primary)",
+				// Show the ambient gradient (matching the panes) instead of a flat
+				// fill, so the workspace-switch loading screen blends in. Still
+				// opaque, so it masks the layout swap underneath during the switch.
+				background: "var(--ambient-glow-top), var(--bg-primary)",
 				paddingTop: TITLEBAR_HEIGHT,
 				isolation: "isolate",
 				contain: "layout paint",
@@ -714,7 +717,7 @@ export function App() {
 							className="flex items-center justify-center flex-1 min-w-0 overflow-hidden px-4"
 							style={{
 								color: "var(--fg-secondary)",
-								background: "var(--ambient-glow), var(--bg-primary)",
+								background: "var(--ambient-glow-top), var(--bg-primary)",
 							}}
 						>
 							<div className="text-center max-w-full break-words">
@@ -747,6 +750,11 @@ export function App() {
 										left: 0,
 										right: 0,
 										bottom: 0,
+										// Paint the ambient gradient on the whole region (tab bar +
+										// content) so a single top-anchored glow runs through both;
+										// the tab bar, tabs, and content area below are transparent
+										// and reveal it.
+										background: "var(--ambient-glow-top), var(--bg-primary)",
 										visibility: isActive ? "visible" : "hidden",
 										pointerEvents: isActive ? "auto" : "none",
 									}}
@@ -755,7 +763,9 @@ export function App() {
 										className="flex items-end shrink-0"
 										style={{
 											height: 38,
-											backgroundColor: "var(--bg-primary)",
+											// Transparent so the gradient (painted on the parent) shows
+											// through the tab bar; the TabBar strip is transparent too.
+											backgroundColor: "transparent",
 											gap: 8,
 											paddingRight: 8,
 										}}
@@ -777,7 +787,14 @@ export function App() {
 											activeFilePath={isActive ? activeFocusedFilePath : null}
 										/>
 									</div>
-									<div className="flex-1 min-h-0 relative">
+									<div
+										className="flex-1 min-h-0 relative"
+										style={{
+											// Transparent — the gradient is painted on the parent
+											// workspace container so it spans the tab bar too.
+											background: "transparent",
+										}}
+									>
 										{workspace.tabs.map((tab) => {
 											if (!mountedTabIds.has(tab.id)) return null;
 											const isTabActive = tab.id === activeTabId;

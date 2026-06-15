@@ -90,7 +90,9 @@ export function PreviewPaneTitleBar({
 			style={{
 				height: 22,
 				padding: "0 4px 0 6px",
-				background: "color-mix(in srgb, var(--bg-primary) 85%, transparent)",
+				// Transparent so the workspace ambient gradient shows through the
+				// pane's title bar too (matches the transparent preview body).
+				background: "transparent",
 				borderBottom:
 					"1px solid color-mix(in srgb, var(--border) 40%, transparent)",
 				cursor: "grab",

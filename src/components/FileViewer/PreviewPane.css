@@ -16,7 +16,11 @@
    `data-themed` on the container so the forced-white "printed paper" mode keeps
    @uiw's untouched light palette. */
 .abundio-md-preview[data-themed="true"] .wmde-markdown {
-	--color-canvas-default: var(--bg-primary);
+	/* Transparent in "follow theme" mode so the workspace ambient gradient shows
+	   through the rendered document. `--color-canvas-subtle` stays opaque so code
+	   blocks / table headers keep a legible surface. The forced-white "printed
+	   paper" mode (no [data-themed]) is untouched and stays opaque. */
+	--color-canvas-default: transparent;
 	--color-canvas-subtle: var(--bg-secondary);
 	--color-fg-default: var(--fg-primary);
 	--color-fg-muted: var(--fg-secondary);
@@ -32,7 +36,7 @@
 		var(--fg-secondary) 22%,
 		transparent
 	);
-	background-color: var(--bg-primary);
+	background-color: transparent;
 	color: var(--fg-primary);
 }
 

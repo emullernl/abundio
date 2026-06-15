@@ -76,12 +76,7 @@ export async function toggleMarkdownPreviewForPane(
 	// Allow invoking from the preview pane itself — resolve to its source.
 	const filePaneId = node?.type === "preview" ? node.sourcePaneId : paneId;
 	const fileNode = findNode(layout, filePaneId);
-	if (
-		!fileNode ||
-		fileNode.type !== "file" ||
-		!isMarkdownFile(fileNode.filePath)
-	)
-		return;
+	if (fileNode?.type !== "file" || !isMarkdownFile(fileNode.filePath)) return;
 
 	const existing = findPreviewForSource(layout, filePaneId);
 	if (existing) {

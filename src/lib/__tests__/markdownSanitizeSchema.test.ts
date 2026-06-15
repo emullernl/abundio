@@ -7,6 +7,7 @@ import { markdownSanitizeSchema } from "../markdownSanitizeSchema";
 // preview pane uses — without pulling in the whole remark/rehype pipeline.
 // biome-ignore lint/suspicious/noExplicitAny: hand-built hast nodes
 const sanitize = (tree: any) =>
+	// biome-ignore lint/suspicious/noExplicitAny: rehypeSanitize's returned transform isn't typed for direct invocation
 	(rehypeSanitize(markdownSanitizeSchema) as any)(tree);
 
 // biome-ignore lint/suspicious/noExplicitAny: hast element helper

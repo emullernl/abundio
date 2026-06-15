@@ -60,7 +60,14 @@ function TerminalLoader({ paneId }: { paneId: string }) {
 	return (
 		<div
 			className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
-			style={{ backgroundColor: "var(--bg-primary)" }}
+			// Transparent — the pane (slot + xterm canvas) is already transparent, so
+			// this reveals the SINGLE continuous workspace gradient behind all panes.
+			// Painting the gradient on the loader itself re-centers it per-pane
+			// (`at 50% 100%` is relative to each box), so it wouldn't line up across
+			// splits; staying transparent keeps the illusion seamless. The dots float
+			// on top; the un-painted terminal beneath is transparent too, so there's
+			// nothing opaque left to mask.
+			style={{ background: "transparent" }}
 		>
 			<div className="flex flex-col items-center gap-3">
 				<div className="flex gap-[3px]">
@@ -314,7 +321,10 @@ export function TerminalSlot({
 				padding: "0 0 0 8px",
 				overflow: "hidden",
 				boxShadow: "none",
-				background: "var(--bg-primary)",
+				// Transparent so the workspace's ambient gradient (painted behind
+				// the pane tree) shows through the terminal — the xterm canvas is
+				// transparent too (see allowTransparency in terminalManager).
+				background: "transparent",
 				opacity: isDragSource ? 0.35 : isFocused ? 1 : 0.75,
 				transition: "opacity 150ms ease",
 			}}
