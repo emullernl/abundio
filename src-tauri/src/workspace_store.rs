@@ -66,6 +66,148 @@ pub struct WorkspaceWithTabs {
     pub tabs: Vec<Tab>,
 }
 
+// ── Agent telemetry ──
+//
+// One AgentTurnRecord per Turn (a single prompt -> turn-finished cycle). See
+// docs/plans/agent-turn-telemetry-and-statistics-overlay.md and ADR-0018.
+// All measured timestamps are Unix milliseconds; `created_at` is Unix seconds
+// (DB default, set on insert). Line counts are `Option` — `None` means
+// "unattributed" (e.g. two Turns overlapped in one Workspace).
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTurnRecord {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub profile_id: String,
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub workspace_path: String,
+    #[serde(default)]
+    pub workspace_name: String,
+    pub agent_id: String,
+    #[serde(default)]
+    pub pty_id: String,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub working_ms: Option<i64>,
+    pub waiting_ms: Option<i64>,
+    pub end_reason: Option<String>,
+    #[serde(default)]
+    pub permission_requests_count: i64,
+    #[serde(default)]
+    pub tool_calls_count: i64,
+    #[serde(default)]
+    pub error_count: i64,
+    pub lines_added: Option<i64>,
+    pub lines_deleted: Option<i64>,
+    pub files_changed: Option<i64>,
+    pub git_added_start: Option<i64>,
+    pub git_deleted_start: Option<i64>,
+    pub git_added_end: Option<i64>,
+    pub git_deleted_end: Option<i64>,
+    /// Row provenance (Unix seconds). Set by the DB default on insert; ignored
+    /// on the way in (frontend omits it).
+    #[serde(default)]
+    pub created_at: i64,
+}
+
+/// A bucketed aggregate row (one per date bucket, optionally per agent or
+/// per workspace). All sums are NULL-safe (overlap Turns with NULL line counts
+/// contribute 0 to line totals but still count toward `turn_count`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTurnBucket {
+    pub bucket: String,
+    pub agent_id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub workspace_name: Option<String>,
+    pub turn_count: i64,
+    /// Turns whose line counts are attributed (non-NULL) — lets the UI show
+    /// "N of M Turns measured".
+    pub attributed_turn_count: i64,
+    pub total_duration_ms: i64,
+    pub total_working_ms: i64,
+    pub total_waiting_ms: i64,
+    pub total_lines_added: i64,
+    pub total_lines_deleted: i64,
+    pub total_files_changed: i64,
+    pub total_permission_requests: i64,
+    pub total_tool_calls: i64,
+    pub total_errors: i64,
+}
+
+/// Overall totals across the whole range (no bucketing).
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTurnTotals {
+    pub turn_count: i64,
+    pub attributed_turn_count: i64,
+    pub session_count: i64,
+    pub total_duration_ms: i64,
+    pub total_working_ms: i64,
+    pub total_waiting_ms: i64,
+    pub total_lines_added: i64,
+    pub total_lines_deleted: i64,
+    pub total_files_changed: i64,
+    pub total_permission_requests: i64,
+    pub total_tool_calls: i64,
+    pub total_errors: i64,
+    pub longest_turn_ms: i64,
+}
+
+/// Calendar bucket granularity for telemetry rollups.
+#[derive(Debug, Clone, Copy)]
+pub enum Bucket {
+    Day,
+    Month,
+    Year,
+}
+
+impl Bucket {
+    pub fn parse(s: &str) -> Result<Bucket, AbundioError> {
+        match s {
+            "day" => Ok(Bucket::Day),
+            "month" => Ok(Bucket::Month),
+            "year" => Ok(Bucket::Year),
+            other => Err(AbundioError::InvalidOperation(format!(
+                "invalid telemetry bucket: {other}"
+            ))),
+        }
+    }
+
+    /// SQLite strftime format. Hardcoded per variant — never user input.
+    fn strftime(self) -> &'static str {
+        match self {
+            Bucket::Day => "%Y-%m-%d",
+            Bucket::Month => "%Y-%m",
+            Bucket::Year => "%Y",
+        }
+    }
+}
+
+/// Optional secondary grouping dimension for telemetry rollups.
+#[derive(Debug, Clone, Copy)]
+pub enum GroupBy {
+    None,
+    Agent,
+    Workspace,
+}
+
+impl GroupBy {
+    pub fn parse(s: &str) -> Result<GroupBy, AbundioError> {
+        match s {
+            "none" => Ok(GroupBy::None),
+            "agent" => Ok(GroupBy::Agent),
+            "workspace" => Ok(GroupBy::Workspace),
+            other => Err(AbundioError::InvalidOperation(format!(
+                "invalid telemetry groupBy: {other}"
+            ))),
+        }
+    }
+}
+
 pub struct WorkspaceStore {
     pub conn: Mutex<Connection>,
 }
@@ -344,6 +486,234 @@ impl WorkspaceStore {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    // ── Agent telemetry ──
+
+    /// Persists a Turn (insert, or replace by id — finalize is idempotent).
+    /// `created_at` is omitted so the DB default (Unix seconds) fires.
+    pub fn record_agent_turn(&self, t: &AgentTurnRecord) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO agent_turn
+               (id, session_id, profile_id, workspace_id, workspace_path, workspace_name,
+                agent_id, pty_id, started_at, ended_at, duration_ms, working_ms, waiting_ms,
+                end_reason, permission_requests_count, tool_calls_count, error_count,
+                lines_added, lines_deleted, files_changed,
+                git_added_start, git_deleted_start, git_added_end, git_deleted_end)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            rusqlite::params![
+                t.id,
+                t.session_id,
+                t.profile_id,
+                t.workspace_id,
+                t.workspace_path,
+                t.workspace_name,
+                t.agent_id,
+                t.pty_id,
+                t.started_at,
+                t.ended_at,
+                t.duration_ms,
+                t.working_ms,
+                t.waiting_ms,
+                t.end_reason,
+                t.permission_requests_count,
+                t.tool_calls_count,
+                t.error_count,
+                t.lines_added,
+                t.lines_deleted,
+                t.files_changed,
+                t.git_added_start,
+                t.git_deleted_start,
+                t.git_added_end,
+                t.git_deleted_end,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Bucketed rollups for the Statistics overlay, scoped to one Profile and a
+    /// `[from_ms, to_ms)` window. Open Turns (`ended_at IS NULL`) are excluded.
+    /// The `strftime` format and the optional grouping column come from the
+    /// `Bucket`/`GroupBy` enums (hardcoded), not from user strings — `profile_id`
+    /// and the bounds are bound parameters.
+    pub fn agent_turn_buckets(
+        &self,
+        profile_id: &str,
+        from_ms: i64,
+        to_ms: i64,
+        bucket: Bucket,
+        group_by: GroupBy,
+    ) -> Result<Vec<AgentTurnBucket>, AbundioError> {
+        let fmt = bucket.strftime();
+        let (dim_select, dim_group) = match group_by {
+            GroupBy::None => ("NULL AS agent_id, NULL AS workspace_id, NULL AS workspace_name", ""),
+            GroupBy::Agent => (
+                "agent_id, NULL AS workspace_id, NULL AS workspace_name",
+                ", agent_id",
+            ),
+            GroupBy::Workspace => (
+                "NULL AS agent_id, workspace_id, MAX(workspace_name) AS workspace_name",
+                ", workspace_id",
+            ),
+        };
+        let sql = format!(
+            "SELECT strftime('{fmt}', started_at/1000, 'unixepoch', 'localtime') AS bucket,
+                    {dim_select},
+                    COUNT(*) AS turn_count,
+                    COALESCE(SUM(CASE WHEN lines_added IS NOT NULL THEN 1 ELSE 0 END), 0) AS attributed_turn_count,
+                    COALESCE(SUM(duration_ms), 0) AS total_duration_ms,
+                    COALESCE(SUM(working_ms), 0) AS total_working_ms,
+                    COALESCE(SUM(waiting_ms), 0) AS total_waiting_ms,
+                    COALESCE(SUM(lines_added), 0) AS total_lines_added,
+                    COALESCE(SUM(lines_deleted), 0) AS total_lines_deleted,
+                    COALESCE(SUM(files_changed), 0) AS total_files_changed,
+                    COALESCE(SUM(permission_requests_count), 0) AS total_permission_requests,
+                    COALESCE(SUM(tool_calls_count), 0) AS total_tool_calls,
+                    COALESCE(SUM(error_count), 0) AS total_errors
+             FROM agent_turn
+             WHERE profile_id = ?1 AND started_at >= ?2 AND started_at < ?3 AND ended_at IS NOT NULL
+             GROUP BY bucket{dim_group}
+             ORDER BY bucket ASC"
+        );
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params![profile_id, from_ms, to_ms], |row| {
+                Ok(AgentTurnBucket {
+                    bucket: row.get(0)?,
+                    agent_id: row.get(1)?,
+                    workspace_id: row.get(2)?,
+                    workspace_name: row.get(3)?,
+                    turn_count: row.get(4)?,
+                    attributed_turn_count: row.get(5)?,
+                    total_duration_ms: row.get(6)?,
+                    total_working_ms: row.get(7)?,
+                    total_waiting_ms: row.get(8)?,
+                    total_lines_added: row.get(9)?,
+                    total_lines_deleted: row.get(10)?,
+                    total_files_changed: row.get(11)?,
+                    total_permission_requests: row.get(12)?,
+                    total_tool_calls: row.get(13)?,
+                    total_errors: row.get(14)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Overall totals over the whole `[from_ms, to_ms)` window for one Profile.
+    pub fn agent_turn_totals(
+        &self,
+        profile_id: &str,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<AgentTurnTotals, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let totals = conn.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN lines_added IS NOT NULL THEN 1 ELSE 0 END), 0),
+                    COUNT(DISTINCT session_id),
+                    COALESCE(SUM(duration_ms), 0), COALESCE(SUM(working_ms), 0), COALESCE(SUM(waiting_ms), 0),
+                    COALESCE(SUM(lines_added), 0), COALESCE(SUM(lines_deleted), 0), COALESCE(SUM(files_changed), 0),
+                    COALESCE(SUM(permission_requests_count), 0), COALESCE(SUM(tool_calls_count), 0),
+                    COALESCE(SUM(error_count), 0), COALESCE(MAX(duration_ms), 0)
+             FROM agent_turn
+             WHERE profile_id = ?1 AND started_at >= ?2 AND started_at < ?3 AND ended_at IS NOT NULL",
+            rusqlite::params![profile_id, from_ms, to_ms],
+            |row| {
+                Ok(AgentTurnTotals {
+                    turn_count: row.get(0)?,
+                    attributed_turn_count: row.get(1)?,
+                    session_count: row.get(2)?,
+                    total_duration_ms: row.get(3)?,
+                    total_working_ms: row.get(4)?,
+                    total_waiting_ms: row.get(5)?,
+                    total_lines_added: row.get(6)?,
+                    total_lines_deleted: row.get(7)?,
+                    total_files_changed: row.get(8)?,
+                    total_permission_requests: row.get(9)?,
+                    total_tool_calls: row.get(10)?,
+                    total_errors: row.get(11)?,
+                    longest_turn_ms: row.get(12)?,
+                })
+            },
+        )?;
+        Ok(totals)
+    }
+
+    /// Raw Turn rows for a Profile in a window (drill-down table), newest first.
+    pub fn list_agent_turns(
+        &self,
+        profile_id: &str,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<AgentTurnRecord>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, profile_id, workspace_id, workspace_path, workspace_name,
+                    agent_id, pty_id, started_at, ended_at, duration_ms, working_ms, waiting_ms,
+                    end_reason, permission_requests_count, tool_calls_count, error_count,
+                    lines_added, lines_deleted, files_changed,
+                    git_added_start, git_deleted_start, git_added_end, git_deleted_end, created_at
+             FROM agent_turn
+             WHERE profile_id = ?1 AND started_at >= ?2 AND started_at < ?3 AND ended_at IS NOT NULL
+             ORDER BY started_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![profile_id, from_ms, to_ms], Self::row_to_agent_turn)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Closes any Turns left open by a crash / hard quit so aggregation
+    /// (which filters `ended_at IS NOT NULL`) stays clean. We have no reliable
+    /// last-activity timestamp for a crashed Turn, so it's closed at its start
+    /// (near-zero duration) rather than left open forever. Idempotent.
+    pub fn recover_orphan_turns(&self) -> Result<u32, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "UPDATE agent_turn
+             SET ended_at = started_at,
+                 duration_ms = 0,
+                 working_ms = COALESCE(working_ms, 0),
+                 waiting_ms = COALESCE(waiting_ms, 0),
+                 end_reason = 'orphan_recovered'
+             WHERE ended_at IS NULL",
+            [],
+        )?;
+        Ok(affected as u32)
+    }
+
+    fn row_to_agent_turn(row: &rusqlite::Row) -> rusqlite::Result<AgentTurnRecord> {
+        Ok(AgentTurnRecord {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            profile_id: row.get(2)?,
+            workspace_id: row.get(3)?,
+            workspace_path: row.get(4)?,
+            workspace_name: row.get(5)?,
+            agent_id: row.get(6)?,
+            pty_id: row.get(7)?,
+            started_at: row.get(8)?,
+            ended_at: row.get(9)?,
+            duration_ms: row.get(10)?,
+            working_ms: row.get(11)?,
+            waiting_ms: row.get(12)?,
+            end_reason: row.get(13)?,
+            permission_requests_count: row.get(14)?,
+            tool_calls_count: row.get(15)?,
+            error_count: row.get(16)?,
+            lines_added: row.get(17)?,
+            lines_deleted: row.get(18)?,
+            files_changed: row.get(19)?,
+            git_added_start: row.get(20)?,
+            git_deleted_start: row.get(21)?,
+            git_added_end: row.get(22)?,
+            git_deleted_end: row.get(23)?,
+            created_at: row.get(24)?,
+        })
     }
 
     // ── Internal helpers ──
@@ -685,5 +1055,242 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    // ── Agent telemetry ──
+
+    /// Builds a finalized Turn. `day_ms` is the start time in Unix ms; helpers
+    /// below pass specific local-day timestamps to lock bucketing.
+    fn turn(id: &str, profile_id: &str, agent: &str, start_ms: i64, dur_ms: i64) -> AgentTurnRecord {
+        AgentTurnRecord {
+            id: id.into(),
+            session_id: Some(format!("sess-{id}")),
+            profile_id: profile_id.into(),
+            workspace_id: Some("w1".into()),
+            workspace_path: "/tmp/w1".into(),
+            workspace_name: "W1".into(),
+            agent_id: agent.into(),
+            pty_id: "pty1".into(),
+            started_at: start_ms,
+            ended_at: Some(start_ms + dur_ms),
+            duration_ms: Some(dur_ms),
+            working_ms: Some(dur_ms),
+            waiting_ms: Some(0),
+            end_reason: Some("stop".into()),
+            permission_requests_count: 1,
+            tool_calls_count: 3,
+            error_count: 0,
+            lines_added: Some(10),
+            lines_deleted: Some(2),
+            files_changed: Some(1),
+            git_added_start: Some(0),
+            git_deleted_start: Some(0),
+            git_added_end: Some(10),
+            git_deleted_end: Some(2),
+            created_at: 0,
+        }
+    }
+
+    // 2026-03-10 12:00 and 2026-04-10 12:00 UTC — far from any midnight so the
+    // local-day bucket is unambiguous regardless of the test machine's tz.
+    const MAR_10_MS: i64 = 1_741_608_000_000;
+    const APR_10_MS: i64 = 1_744_286_400_000;
+
+    #[test]
+    fn record_agent_turn_inserts_and_replace_is_idempotent() {
+        let store = test_store();
+        let mut t = turn("t1", DEFAULT_PID, "claude", MAR_10_MS, 5000);
+        store.record_agent_turn(&t).unwrap();
+        // Re-finalize same id (e.g. quit flush racing): replaces, no dup.
+        t.duration_ms = Some(6000);
+        store.record_agent_turn(&t).unwrap();
+        let count: i64 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM agent_turn", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+        let dur: i64 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT duration_ms FROM agent_turn WHERE id='t1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(dur, 6000);
+    }
+
+    #[test]
+    fn record_agent_turn_with_unknown_workspace_id_succeeds() {
+        // workspace_id is NOT a FK — a Turn can reference a deleted workspace.
+        let store = test_store();
+        let mut t = turn("t1", DEFAULT_PID, "claude", MAR_10_MS, 1000);
+        t.workspace_id = Some("does-not-exist".into());
+        store.record_agent_turn(&t).unwrap();
+    }
+
+    #[test]
+    fn deleting_workspace_keeps_its_turns() {
+        // #4 split lifetime: Workspace delete must NOT remove historical Turns.
+        let store = test_store();
+        let ws = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        let mut t = turn("t1", DEFAULT_PID, "claude", MAR_10_MS, 1000);
+        t.workspace_id = Some(ws.workspace.id.clone());
+        store.record_agent_turn(&t).unwrap();
+        store.delete(&ws.workspace.id).unwrap();
+        let count: i64 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM agent_turn", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "Turn must survive its Workspace deletion");
+    }
+
+    #[test]
+    fn deleting_profile_cascades_to_turns() {
+        // #4 split lifetime: Profile delete DOES remove its Turns (FK cascade).
+        let store = test_store();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO profiles (id, name, position) VALUES ('p2','Other',1)", [])
+            .unwrap();
+        store
+            .record_agent_turn(&turn("t1", "p2", "claude", MAR_10_MS, 1000))
+            .unwrap();
+        // Delete profile p2 directly (cascade fires because foreign_keys=ON).
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM profiles WHERE id='p2'", [])
+            .unwrap();
+        let count: i64 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM agent_turn", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "Turns must cascade-delete with their Profile");
+    }
+
+    #[test]
+    fn buckets_group_by_day_and_filter_by_profile() {
+        let store = test_store();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO profiles (id, name, position) VALUES ('p2','Other',1)", [])
+            .unwrap();
+        store.record_agent_turn(&turn("a", DEFAULT_PID, "claude", MAR_10_MS, 1000)).unwrap();
+        store.record_agent_turn(&turn("b", DEFAULT_PID, "claude", MAR_10_MS + 3_600_000, 2000)).unwrap();
+        store.record_agent_turn(&turn("c", DEFAULT_PID, "gemini", APR_10_MS, 4000)).unwrap();
+        // A different profile's Turn must not leak into DEFAULT_PID's buckets.
+        store.record_agent_turn(&turn("x", "p2", "claude", MAR_10_MS, 9999)).unwrap();
+
+        let buckets = store
+            .agent_turn_buckets(DEFAULT_PID, 0, i64::MAX, Bucket::Day, GroupBy::None)
+            .unwrap();
+        assert_eq!(buckets.len(), 2, "two distinct local days");
+        // March bucket: two turns, durations 1000+2000.
+        let mar = &buckets[0];
+        assert_eq!(mar.turn_count, 2);
+        assert_eq!(mar.total_duration_ms, 3000);
+        assert_eq!(mar.total_lines_added, 20);
+    }
+
+    #[test]
+    fn buckets_group_by_agent_and_month() {
+        let store = test_store();
+        store.record_agent_turn(&turn("a", DEFAULT_PID, "claude", MAR_10_MS, 1000)).unwrap();
+        store.record_agent_turn(&turn("b", DEFAULT_PID, "gemini", MAR_10_MS, 2000)).unwrap();
+        let buckets = store
+            .agent_turn_buckets(DEFAULT_PID, 0, i64::MAX, Bucket::Month, GroupBy::Agent)
+            .unwrap();
+        assert_eq!(buckets.len(), 2, "one row per agent in the month");
+        assert!(buckets.iter().all(|b| b.bucket.len() == 7)); // YYYY-MM
+        assert!(buckets.iter().any(|b| b.agent_id.as_deref() == Some("claude")));
+        assert!(buckets.iter().any(|b| b.agent_id.as_deref() == Some("gemini")));
+    }
+
+    #[test]
+    fn buckets_exclude_open_turns_and_null_lines() {
+        let store = test_store();
+        // Finalized, attributed.
+        store.record_agent_turn(&turn("a", DEFAULT_PID, "claude", MAR_10_MS, 1000)).unwrap();
+        // Finalized but unattributed (overlap null-out): lines NULL.
+        let mut nulled = turn("b", DEFAULT_PID, "claude", MAR_10_MS + 1000, 1000);
+        nulled.lines_added = None;
+        nulled.lines_deleted = None;
+        nulled.files_changed = None;
+        store.record_agent_turn(&nulled).unwrap();
+        // Open turn — must be excluded.
+        let mut open = turn("c", DEFAULT_PID, "claude", MAR_10_MS + 2000, 0);
+        open.ended_at = None;
+        open.duration_ms = None;
+        store.record_agent_turn(&open).unwrap();
+
+        let buckets = store
+            .agent_turn_buckets(DEFAULT_PID, 0, i64::MAX, Bucket::Day, GroupBy::None)
+            .unwrap();
+        assert_eq!(buckets.len(), 1);
+        let b = &buckets[0];
+        assert_eq!(b.turn_count, 2, "two finalized turns; open one excluded");
+        assert_eq!(b.attributed_turn_count, 1, "only one turn has line counts");
+        assert_eq!(b.total_lines_added, 10, "NULL lines contribute 0");
+    }
+
+    #[test]
+    fn totals_match() {
+        let store = test_store();
+        store.record_agent_turn(&turn("a", DEFAULT_PID, "claude", MAR_10_MS, 1000)).unwrap();
+        store.record_agent_turn(&turn("b", DEFAULT_PID, "gemini", APR_10_MS, 5000)).unwrap();
+        let totals = store.agent_turn_totals(DEFAULT_PID, 0, i64::MAX).unwrap();
+        assert_eq!(totals.turn_count, 2);
+        assert_eq!(totals.session_count, 2);
+        assert_eq!(totals.total_duration_ms, 6000);
+        assert_eq!(totals.longest_turn_ms, 5000);
+        assert_eq!(totals.total_lines_added, 20);
+    }
+
+    #[test]
+    fn recover_orphan_turns_closes_open_rows_idempotently() {
+        let store = test_store();
+        let mut open = turn("a", DEFAULT_PID, "claude", MAR_10_MS, 0);
+        open.ended_at = None;
+        open.duration_ms = None;
+        open.working_ms = None;
+        store.record_agent_turn(&open).unwrap();
+
+        let recovered = store.recover_orphan_turns().unwrap();
+        assert_eq!(recovered, 1);
+        let (ended, reason): (Option<i64>, Option<String>) = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT ended_at, end_reason FROM agent_turn WHERE id='a'", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(ended, Some(MAR_10_MS));
+        assert_eq!(reason.as_deref(), Some("orphan_recovered"));
+
+        // Second call is a no-op.
+        assert_eq!(store.recover_orphan_turns().unwrap(), 0);
+    }
+
+    #[test]
+    fn list_agent_turns_returns_rows_newest_first() {
+        let store = test_store();
+        store.record_agent_turn(&turn("old", DEFAULT_PID, "claude", MAR_10_MS, 1000)).unwrap();
+        store.record_agent_turn(&turn("new", DEFAULT_PID, "claude", APR_10_MS, 1000)).unwrap();
+        let rows = store.list_agent_turns(DEFAULT_PID, 0, i64::MAX).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "new");
+        assert_eq!(rows[1].id, "old");
+        assert!(rows[0].created_at > 0, "created_at populated by DB default");
     }
 }

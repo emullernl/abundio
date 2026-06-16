@@ -15,6 +15,7 @@ import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
 import { RightSidebar } from "./components/RightSidebar/RightSidebar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { Sidebar } from "./components/Sidebar/Sidebar";
+import { StatisticsOverlay } from "./components/Statistics/StatisticsOverlay";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
 import { SplitContainer } from "./components/Terminal/SplitContainer";
@@ -28,9 +29,13 @@ import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
+import {
+	finalizeAllOpenTurns,
+	initAgentTurnTracker,
+} from "./lib/agentTurnTracker";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
-import { updates, windowSession } from "./lib/ipc";
+import { telemetry, updates, windowSession } from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds } from "./lib/paneTree";
@@ -141,6 +146,8 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 	const reviewRequestedPrs = usePrStore((s) => s.globalReviewCount);
 	const myOpenPrs = usePrStore((s) => s.globalMyPrsCount);
 	const showAgentWaiting = useSettingsStore((s) => s.agentHooksEnabled);
+	const statisticsOpen = useWindowUiStore((s) => s.statisticsOverlayOpen);
+	const toggleStatistics = useWindowUiStore((s) => s.toggleStatisticsOverlay);
 	return (
 		<OverviewBar
 			openedWorkspaces={openedWorkspaces}
@@ -156,6 +163,8 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 			reviewRequestedPrs={reviewRequestedPrs}
 			myOpenPrs={myOpenPrs}
 			showAgentWaiting={showAgentWaiting}
+			statisticsOpen={statisticsOpen}
+			onToggleStatistics={toggleStatistics}
 		/>
 	);
 });
@@ -441,6 +450,14 @@ export function App() {
 		useAgentRegistryStore.getState().load(commands);
 	}, []);
 
+	// Agent Turn telemetry: wire the tracker to the activity store, and close any
+	// Turns left open by a previous crash/hard-quit so aggregation stays clean.
+	// See ADR-0018.
+	useEffect(() => {
+		initAgentTurnTracker();
+		telemetry.recoverOrphans().catch(() => {});
+	}, []);
+
 	// Listen for split-with-picker events dispatched by useSplitPane
 	useEffect(() => {
 		const handler = (e: Event) => {
@@ -460,7 +477,9 @@ export function App() {
 	const proceedWithClose = useCallback(async () => {
 		const appWindow = appWindowRef.current ?? getCurrentWindow();
 		await Promise.race([
-			saveAllSnapshots(),
+			// Best-effort: persist scrollback and flush any open agent Turns
+			// (orphan recovery on next launch is the backstop if this races).
+			Promise.all([saveAllSnapshots(), finalizeAllOpenTurns("app_quit")]),
 			new Promise((r) => setTimeout(r, 2000)),
 		]);
 		appWindow.destroy();
@@ -671,6 +690,9 @@ export function App() {
 		registerAction("search-in-workspace", () => {
 			useWindowUiStore.getState().toggleRightSidebarTab("search");
 		});
+		registerAction("toggle-statistics-overlay", () => {
+			useWindowUiStore.getState().toggleStatisticsOverlay();
+		});
 	}, [
 		splitPaneWithPicker,
 		closePane,
@@ -816,6 +838,13 @@ export function App() {
 							);
 						})}
 					{switchingWorkspaceId !== null && <SwitchingOverlay />}
+					{/* Statistics overlay — covers the workspace stack (terminals stay
+					    alive behind it via the portal registry) when open; renders null
+					    otherwise. Sits below the Overview bar's z-40 so its toggle stays
+					    clickable, above the workspace stack. See ADR-0018. */}
+					<StatisticsOverlay
+						topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT}
+					/>
 				</div>
 				<RightSidebar titlebarHeight={TITLEBAR_HEIGHT} />
 			</div>

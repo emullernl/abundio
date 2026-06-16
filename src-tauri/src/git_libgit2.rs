@@ -737,6 +737,50 @@ pub fn worktree_is_dirty(cwd: &str) -> bool {
     dirty
 }
 
+/// Cap on bytes read per untracked file when counting lines. Bounds the I/O on
+/// a refresh and avoids slurping a huge text blob; larger files under-count
+/// (acceptable — they're rare and usually binary anyway).
+const MAX_UNTRACKED_LINE_COUNT_BYTES: u64 = 1024 * 1024;
+
+/// Count the lines in a brand-new (untracked, not-yet-`git add`ed) file so it
+/// contributes its line count as additions — matching `git diff --numstat`'s
+/// treatment of a new file (the whole file is "+"). Returns 0 for directory
+/// entries, binary files, empty/unreadable files, or anything over the cap.
+fn count_untracked_additions(workdir: &std::path::Path, rel_path: &str) -> i32 {
+    use std::io::Read;
+    // With recurse_untracked_dirs(false), a new directory surfaces as a single
+    // entry ending in '/'. Counting its "lines" is meaningless (and would mean
+    // walking it), so skip — matches git's own per-file numstat.
+    if rel_path.ends_with('/') {
+        return 0;
+    }
+    let full = workdir.join(rel_path);
+    match std::fs::metadata(&full) {
+        Ok(m) if m.is_file() => {}
+        _ => return 0,
+    }
+    let Ok(file) = std::fs::File::open(&full) else {
+        return 0;
+    };
+    let mut buf = Vec::new();
+    if file
+        .take(MAX_UNTRACKED_LINE_COUNT_BYTES)
+        .read_to_end(&mut buf)
+        .is_err()
+        || buf.is_empty()
+    {
+        return 0;
+    }
+    // NUL byte ⇒ treat as binary (git reports no line stats for binaries).
+    if buf.contains(&0) {
+        return 0;
+    }
+    let newlines = buf.iter().filter(|&&b| b == b'\n').count();
+    // A non-empty final line with no trailing newline still counts as one line.
+    let trailing = i32::from(buf.last() != Some(&b'\n'));
+    newlines as i32 + trailing
+}
+
 fn untracked_files(repo: &Repository) -> Vec<GitChangedFile> {
     let mut opts = StatusOptions::new();
     // Don't recurse into untracked directories: a single un-gitignored tree
@@ -753,6 +797,7 @@ fn untracked_files(repo: &Repository) -> Vec<GitChangedFile> {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
+    let workdir = repo.workdir();
     let mut files = Vec::new();
     for status in statuses.iter() {
         if !status.status().contains(Status::WT_NEW) {
@@ -762,10 +807,17 @@ fn untracked_files(repo: &Repository) -> Vec<GitChangedFile> {
             break;
         }
         if let Some(path) = status.path() {
+            // A new file isn't in any tree/index yet, so the tree/index diffs
+            // above report nothing for it. Count its lines here so a freshly
+            // created file's code shows up in the change stats (and in agent
+            // Turn telemetry) instead of reading as 0 additions.
+            let additions = workdir
+                .map(|w| count_untracked_additions(w, path))
+                .unwrap_or(0);
             files.push(GitChangedFile {
                 path: path.to_string(),
                 status: "?".to_string(),
-                additions: 0,
+                additions,
                 deletions: 0,
                 section: "untracked".to_string(),
             });
@@ -777,6 +829,30 @@ fn untracked_files(repo: &Repository) -> Vec<GitChangedFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn count_untracked_additions_handles_edge_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = dir.path();
+        std::fs::write(w.join("trailing.txt"), "a\nb\nc\n").unwrap();
+        std::fs::write(w.join("no_trailing.txt"), "x\ny").unwrap();
+        std::fs::write(w.join("empty.txt"), "").unwrap();
+        std::fs::write(w.join("binary.dat"), [0u8, 1, 2, b'\n', 3]).unwrap();
+        std::fs::create_dir(w.join("subdir")).unwrap();
+
+        // Trailing newline: 3 lines → 3 additions (git numstat semantics).
+        assert_eq!(count_untracked_additions(w, "trailing.txt"), 3);
+        // No trailing newline: the final non-empty line still counts.
+        assert_eq!(count_untracked_additions(w, "no_trailing.txt"), 2);
+        // Empty file: 0.
+        assert_eq!(count_untracked_additions(w, "empty.txt"), 0);
+        // Binary (NUL byte): no line stats, like git.
+        assert_eq!(count_untracked_additions(w, "binary.dat"), 0);
+        // Directory entry (untracked dir, recursion off → trailing slash): 0.
+        assert_eq!(count_untracked_additions(w, "subdir/"), 0);
+        // Missing path: 0.
+        assert_eq!(count_untracked_additions(w, "nope.txt"), 0);
+    }
 
     #[test]
     fn fresh_repo_resolves_default_branch_from_unborn_head() {

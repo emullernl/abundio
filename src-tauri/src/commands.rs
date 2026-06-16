@@ -7,7 +7,10 @@ use crate::profile_store::{
     ActiveProfileState, OpenedCountState, Profile, ProfileStore, ProfileUpdate,
 };
 use crate::pty_manager::PtyManager;
-use crate::workspace_store::{WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs, Tab, TabUpdate};
+use crate::workspace_store::{
+    AgentTurnBucket, AgentTurnRecord, AgentTurnTotals, Bucket, GroupBy, Tab, TabUpdate,
+    WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs,
+};
 use crate::worktree_watcher::WorktreeWatcher;
 use crate::shell_env;
 
@@ -374,6 +377,65 @@ pub async fn note_set(
     content: String,
 ) -> Result<(), AbundioError> {
     store.set_note(&workspace_id, &content)
+}
+
+// ── Agent telemetry commands ──
+//
+// The frontend Turn tracker records one row per Turn at finalize; the
+// Statistics overlay queries Profile-scoped rollups. See
+// docs/plans/agent-turn-telemetry-and-statistics-overlay.md and ADR-0018.
+
+#[tauri::command]
+pub async fn telemetry_record_turn(
+    store: State<'_, WorkspaceStore>,
+    turn: AgentTurnRecord,
+) -> Result<(), AbundioError> {
+    store.record_agent_turn(&turn)
+}
+
+#[tauri::command]
+pub async fn telemetry_buckets(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    from_ms: i64,
+    to_ms: i64,
+    bucket: String,
+    group_by: String,
+) -> Result<Vec<AgentTurnBucket>, AbundioError> {
+    store.agent_turn_buckets(
+        &profile_id,
+        from_ms,
+        to_ms,
+        Bucket::parse(&bucket)?,
+        GroupBy::parse(&group_by)?,
+    )
+}
+
+#[tauri::command]
+pub async fn telemetry_totals(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    from_ms: i64,
+    to_ms: i64,
+) -> Result<AgentTurnTotals, AbundioError> {
+    store.agent_turn_totals(&profile_id, from_ms, to_ms)
+}
+
+#[tauri::command]
+pub async fn telemetry_list_turns(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    from_ms: i64,
+    to_ms: i64,
+) -> Result<Vec<AgentTurnRecord>, AbundioError> {
+    store.list_agent_turns(&profile_id, from_ms, to_ms)
+}
+
+#[tauri::command]
+pub async fn telemetry_recover_orphans(
+    store: State<'_, WorkspaceStore>,
+) -> Result<u32, AbundioError> {
+    store.recover_orphan_turns()
 }
 
 // ── PTY log commands ──

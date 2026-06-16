@@ -1,5 +1,6 @@
 import {
 	AlertTriangle,
+	BarChart3,
 	Check,
 	Circle,
 	Eye,
@@ -52,6 +53,12 @@ export interface OverviewBarProps {
 	 * can't be detected, so showing the tile would be misleading.
 	 */
 	showAgentWaiting: boolean;
+	/** Whether the Statistics overlay is currently open (drives the toggle's
+	 *  active styling). */
+	statisticsOpen: boolean;
+	/** Open/close the Statistics overlay. The bar's one navigation affordance —
+	 *  it reveals a view, it does not mutate workspace state. See ADR-0018. */
+	onToggleStatistics: () => void;
 }
 
 const TILE_WIDTH = 44;
@@ -143,6 +150,8 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 		reviewRequestedPrs,
 		myOpenPrs,
 		showAgentWaiting,
+		statisticsOpen,
+		onToggleStatistics,
 	} = props;
 
 	return (
@@ -183,9 +192,45 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 				<PrTile kind="review" count={reviewRequestedPrs} />
 				<PrTile kind="mine" count={myOpenPrs} />
 			</Section>
+
+			{/* Right-aligned: the bar's one interactive affordance — opens the
+			    Statistics overlay. Pushed to the far edge with margin-left:auto. */}
+			<div style={{ marginLeft: "auto", paddingLeft: SECTION_GAP }}>
+				<StatisticsToggle open={statisticsOpen} onClick={onToggleStatistics} />
+			</div>
 		</div>
 	);
 });
+
+function StatisticsToggle({
+	open,
+	onClick,
+}: {
+	open: boolean;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			title="Statistics — agent activity for this profile (Cmd/Ctrl+Shift+S)"
+			aria-pressed={open}
+			className="flex items-center justify-center flex-shrink-0"
+			style={{
+				width: 34,
+				height: TILE_HEIGHT,
+				borderRadius: 5,
+				border: `1px solid ${open ? "var(--accent)" : "var(--border)"}`,
+				backgroundColor: open ? "var(--bg-tertiary)" : "transparent",
+				color: open ? "var(--accent)" : "var(--fg-secondary)",
+				cursor: "pointer",
+				transition: "color 160ms ease-out, border-color 160ms ease-out",
+			}}
+		>
+			<BarChart3 size={14} strokeWidth={2.25} style={{ flexShrink: 0 }} />
+		</button>
+	);
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
 	return (

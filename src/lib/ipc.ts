@@ -331,6 +331,119 @@ export type WorkspaceGitSummary = {
 	worktreeRoot: string | null;
 };
 
+// ── Agent telemetry ──
+//
+// One AgentTurnRecord per Turn (a single prompt → turn-finished cycle). The
+// frontend Turn tracker (agentTurnTracker.ts) records rows; the Statistics
+// overlay queries Profile-scoped rollups. See ADR-0018 and
+// docs/plans/agent-turn-telemetry-and-statistics-overlay.md.
+//
+// Timestamps are Unix ms (except `createdAt`, Unix seconds). Line counts are
+// `null` when unattributed (e.g. two Turns overlapped in one Workspace).
+
+export interface AgentTurnRecord {
+	id: string;
+	sessionId: string | null;
+	profileId: string;
+	workspaceId: string | null;
+	workspacePath: string;
+	workspaceName: string;
+	agentId: string;
+	ptyId: string;
+	startedAt: number;
+	endedAt: number | null;
+	durationMs: number | null;
+	workingMs: number | null;
+	waitingMs: number | null;
+	endReason: string | null;
+	permissionRequestsCount: number;
+	toolCallsCount: number;
+	errorCount: number;
+	linesAdded: number | null;
+	linesDeleted: number | null;
+	filesChanged: number | null;
+	gitAddedStart: number | null;
+	gitDeletedStart: number | null;
+	gitAddedEnd: number | null;
+	gitDeletedEnd: number | null;
+	createdAt: number;
+}
+
+export interface AgentTurnBucket {
+	bucket: string;
+	agentId: string | null;
+	workspaceId: string | null;
+	workspaceName: string | null;
+	turnCount: number;
+	/** Turns whose line counts are attributed (non-null). */
+	attributedTurnCount: number;
+	totalDurationMs: number;
+	totalWorkingMs: number;
+	totalWaitingMs: number;
+	totalLinesAdded: number;
+	totalLinesDeleted: number;
+	totalFilesChanged: number;
+	totalPermissionRequests: number;
+	totalToolCalls: number;
+	totalErrors: number;
+}
+
+export interface AgentTurnTotals {
+	turnCount: number;
+	attributedTurnCount: number;
+	sessionCount: number;
+	totalDurationMs: number;
+	totalWorkingMs: number;
+	totalWaitingMs: number;
+	totalLinesAdded: number;
+	totalLinesDeleted: number;
+	totalFilesChanged: number;
+	totalPermissionRequests: number;
+	totalToolCalls: number;
+	totalErrors: number;
+	longestTurnMs: number;
+}
+
+export type TelemetryBucket = "day" | "month" | "year";
+export type TelemetryGroupBy = "none" | "agent" | "workspace";
+
+export const telemetry = {
+	/** Persist a finalized Turn (idempotent by id). */
+	recordTurn: (turn: AgentTurnRecord) =>
+		invoke<void>("telemetry_record_turn", { turn }),
+
+	/** Bucketed rollups for one Profile in the `[fromMs, toMs)` window. */
+	buckets: (
+		profileId: string,
+		fromMs: number,
+		toMs: number,
+		bucket: TelemetryBucket,
+		groupBy: TelemetryGroupBy,
+	) =>
+		invoke<AgentTurnBucket[]>("telemetry_buckets", {
+			profileId,
+			fromMs,
+			toMs,
+			bucket,
+			groupBy,
+		}),
+
+	/** Overall totals for one Profile in the window. */
+	totals: (profileId: string, fromMs: number, toMs: number) =>
+		invoke<AgentTurnTotals>("telemetry_totals", { profileId, fromMs, toMs }),
+
+	/** Raw Turn rows (drill-down table), newest first. */
+	listTurns: (profileId: string, fromMs: number, toMs: number) =>
+		invoke<AgentTurnRecord[]>("telemetry_list_turns", {
+			profileId,
+			fromMs,
+			toMs,
+		}),
+
+	/** Close any Turns left open by a crash / hard quit. Returns the count. */
+	recoverOrphans: () => invoke<number>("telemetry_recover_orphans"),
+};
+
 export const worktrees = {
 	/** Every worktree of the repository `cwd` belongs to (primary first). */
 	list: (cwd: string) =>

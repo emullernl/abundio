@@ -31,6 +31,13 @@ interface WindowUiState {
 	toggleRightSidebarTab: (tab: RightSidebarTab) => void;
 	togglePrSectionCollapsed: () => void;
 	setPrSectionCollapsed: (collapsed: boolean) => void;
+
+	/** The Statistics overlay covers the workspace stack (terminals stay alive
+	 *  behind it via the portal registry) and shows agent Turn stats for this
+	 *  Window's Active profile. Per-Window, like the sidebars. See ADR-0018. */
+	statisticsOverlayOpen: boolean;
+	toggleStatisticsOverlay: () => void;
+	setStatisticsOverlayOpen: (open: boolean) => void;
 }
 
 /** Synchronously resolved window label. Falls back to "main" when running
@@ -72,6 +79,10 @@ export const useWindowUiStore = create<WindowUiState>()(
 				set((s) => ({ prSectionCollapsed: !s.prSectionCollapsed })),
 			setPrSectionCollapsed: (collapsed) =>
 				set({ prSectionCollapsed: collapsed }),
+			statisticsOverlayOpen: false,
+			toggleStatisticsOverlay: () =>
+				set((s) => ({ statisticsOverlayOpen: !s.statisticsOverlayOpen })),
+			setStatisticsOverlayOpen: (open) => set({ statisticsOverlayOpen: open }),
 		}),
 		{
 			name: persistKey,
@@ -95,6 +106,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				rightSidebarOpen: s.rightSidebarOpen,
 				rightSidebarActiveTab: s.rightSidebarActiveTab,
 				prSectionCollapsed: s.prSectionCollapsed,
+				statisticsOverlayOpen: s.statisticsOverlayOpen,
 			}),
 		},
 	),

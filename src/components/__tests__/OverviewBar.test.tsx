@@ -18,6 +18,8 @@ function baseProps(): OverviewBarProps {
 		reviewRequestedPrs: 0,
 		myOpenPrs: 0,
 		showAgentWaiting: true,
+		statisticsOpen: false,
+		onToggleStatistics: () => {},
 	};
 }
 
