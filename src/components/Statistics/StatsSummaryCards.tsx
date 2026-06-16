@@ -24,9 +24,10 @@ function StatCard({
 			style={{
 				display: "flex",
 				flexDirection: "column",
-				gap: 6,
-				padding: "13px 15px",
-				borderRadius: 8,
+				gap: 8,
+				padding: "18px 20px",
+				minHeight: 104,
+				borderRadius: 10,
 				border: "1px solid var(--border)",
 				backgroundColor: "var(--bg-secondary)",
 				animationDelay: `${delay}ms`,
@@ -46,7 +47,7 @@ function StatCard({
 			<span
 				style={{
 					fontFamily: "var(--font-mono)",
-					fontSize: 22,
+					fontSize: 26,
 					fontWeight: 600,
 					lineHeight: 1.05,
 					letterSpacing: "-0.02em",
@@ -85,15 +86,16 @@ export function StatsSummaryCards({
 	const avgMs = turns ? totals.totalDurationMs / turns : 0;
 	const permPerTurn = turns ? totals.totalPermissionRequests / turns : 0;
 	const errorPct = turns ? (totals.totalErrors / turns) * 100 : 0;
-	const toolsPerTurn = turns ? totals.totalToolCalls / turns : 0;
 	const unmeasured = turns - totals.attributedTurnCount;
 
 	return (
 		<div
 			style={{
 				display: "grid",
-				gridTemplateColumns: "repeat(auto-fill, minmax(168px, 1fr))",
-				gap: 10,
+				// Wide tracks so the eight cards land on a 4×2 grid at the overlay's
+				// content width, reflowing to fewer columns on a narrow window.
+				gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+				gap: 12,
 			}}
 		>
 			<StatCard
@@ -156,12 +158,6 @@ export function StatsSummaryCards({
 				value={formatCount(totals.totalErrors)}
 				sub={`${errorPct.toFixed(0)}% of turns`}
 				delay={240}
-			/>
-			<StatCard
-				label="Tool calls"
-				value={formatCount(totals.totalToolCalls)}
-				sub={`${toolsPerTurn.toFixed(1)} per turn`}
-				delay={280}
 			/>
 			<StatCard
 				label="Top agent"
