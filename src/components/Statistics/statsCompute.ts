@@ -114,10 +114,15 @@ export function formatSignedLines(n: number, sign: "+" | "-"): string {
 // ── CSV export ──
 
 /** RFC-4180 field escaping: wrap in quotes when the value contains a comma,
- *  quote, or newline, and double any embedded quotes. */
+ *  quote, or newline, and double any embedded quotes. Also neutralizes
+ *  spreadsheet formula injection — a field starting with `=`, `+`, `-`, `@` (or
+ *  a control char) is evaluated as a formula by Excel/Sheets, and workspace
+ *  names/paths are user-controlled (a folder can be named e.g. `=cmd`). Such a
+ *  field is prefixed with a `'` inside quotes so it renders as literal text. */
 function csvField(value: string | number | null | undefined): string {
 	if (value === null || value === undefined) return "";
 	const s = String(value);
+	if (/^[=+\-@\t\r]/.test(s)) return `"'${s.replace(/"/g, '""')}"`;
 	return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -140,7 +145,9 @@ const CSV_COLUMNS: {
 	{ header: "working_ms", value: (t) => t.workingMs },
 	{ header: "waiting_ms", value: (t) => t.waitingMs },
 	{ header: "end_reason", value: (t) => t.endReason },
-	{ header: "permission_requests", value: (t) => t.permissionRequestsCount },
+	// Counts each time a Turn entered a waiting/blocked state, not strictly
+	// permission prompts (the activity-store signal can't distinguish them).
+	{ header: "times_blocked", value: (t) => t.permissionRequestsCount },
 	{ header: "errors", value: (t) => t.errorCount },
 	{ header: "lines_added", value: (t) => t.linesAdded },
 	{ header: "lines_deleted", value: (t) => t.linesDeleted },

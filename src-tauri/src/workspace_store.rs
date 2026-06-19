@@ -659,25 +659,6 @@ impl WorkspaceStore {
         Ok(rows)
     }
 
-    /// Closes any Turns left open by a crash / hard quit so aggregation
-    /// (which filters `ended_at IS NOT NULL`) stays clean. We have no reliable
-    /// last-activity timestamp for a crashed Turn, so it's closed at its start
-    /// (near-zero duration) rather than left open forever. Idempotent.
-    pub fn recover_orphan_turns(&self) -> Result<u32, AbundioError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn.execute(
-            "UPDATE agent_turn
-             SET ended_at = started_at,
-                 duration_ms = 0,
-                 working_ms = COALESCE(working_ms, 0),
-                 waiting_ms = COALESCE(waiting_ms, 0),
-                 end_reason = 'orphan_recovered'
-             WHERE ended_at IS NULL",
-            [],
-        )?;
-        Ok(affected as u32)
-    }
-
     fn row_to_agent_turn(row: &rusqlite::Row) -> rusqlite::Result<AgentTurnRecord> {
         Ok(AgentTurnRecord {
             id: row.get(0)?,
@@ -1244,32 +1225,6 @@ mod tests {
         assert_eq!(totals.total_duration_ms, 6000);
         assert_eq!(totals.longest_turn_ms, 5000);
         assert_eq!(totals.total_lines_added, 20);
-    }
-
-    #[test]
-    fn recover_orphan_turns_closes_open_rows_idempotently() {
-        let store = test_store();
-        let mut open = turn("a", DEFAULT_PID, "claude", MAR_10_MS, 0);
-        open.ended_at = None;
-        open.duration_ms = None;
-        open.working_ms = None;
-        store.record_agent_turn(&open).unwrap();
-
-        let recovered = store.recover_orphan_turns().unwrap();
-        assert_eq!(recovered, 1);
-        let (ended, reason): (Option<i64>, Option<String>) = store
-            .conn
-            .lock()
-            .unwrap()
-            .query_row("SELECT ended_at, end_reason FROM agent_turn WHERE id='a'", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
-            .unwrap();
-        assert_eq!(ended, Some(MAR_10_MS));
-        assert_eq!(reason.as_deref(), Some("orphan_recovered"));
-
-        // Second call is a no-op.
-        assert_eq!(store.recover_orphan_turns().unwrap(), 0);
     }
 
     #[test]

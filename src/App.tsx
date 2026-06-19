@@ -35,7 +35,7 @@ import {
 } from "./lib/agentTurnTracker";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
-import { telemetry, updates, windowSession } from "./lib/ipc";
+import { updates, windowSession } from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds } from "./lib/paneTree";
@@ -450,12 +450,12 @@ export function App() {
 		useAgentRegistryStore.getState().load(commands);
 	}, []);
 
-	// Agent Turn telemetry: wire the tracker to the activity store, and close any
-	// Turns left open by a previous crash/hard-quit so aggregation stays clean.
+	// Agent Turn telemetry: wire the tracker to the activity store. Turns are
+	// persisted only at finalize (always with an end time), so a crash/hard-quit
+	// just drops the in-flight Turn — there are no half-written rows to recover.
 	// See ADR-0018.
 	useEffect(() => {
 		initAgentTurnTracker();
-		telemetry.recoverOrphans().catch(() => {});
 	}, []);
 
 	// Listen for split-with-picker events dispatched by useSplitPane

@@ -250,6 +250,7 @@ export function StatisticsOverlay({ topOffset }: { topOffset: number }) {
 								turns={data.turns}
 								now={now}
 								longestTurnMs={data.totals.longestTurnMs}
+								rangeLabel={range.label}
 							/>
 							<StatsTurnsTable
 								turns={data.turns}

@@ -909,7 +909,6 @@ pub fn run() {
             commands::telemetry_buckets,
             commands::telemetry_totals,
             commands::telemetry_list_turns,
-            commands::telemetry_recover_orphans,
             file_explorer::fs_list_dir,
             file_explorer::fs_list_files,
             file_explorer::fs_index_workspace_files,

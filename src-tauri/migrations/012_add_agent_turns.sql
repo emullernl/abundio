@@ -34,9 +34,8 @@ CREATE TABLE agent_turn (
     duration_ms               INTEGER,                  -- wall clock = ended_at - started_at
     working_ms                INTEGER,                  -- time in Working state
     waiting_ms                INTEGER,                  -- time in Waiting state (blocked on user)
-    end_reason                TEXT,                     -- stop|error|session_end|pty_exit|app_quit|orphan_recovered
+    end_reason                TEXT,                     -- stop|error|session_end|pty_exit|app_quit
     permission_requests_count INTEGER NOT NULL DEFAULT 0,
-    tool_calls_count          INTEGER NOT NULL DEFAULT 0,
     error_count               INTEGER NOT NULL DEFAULT 0,
     lines_added               INTEGER,                  -- NULL = unattributed (overlap / unknown)
     lines_deleted             INTEGER,
@@ -53,4 +52,3 @@ CREATE INDEX idx_agent_turn_profile_started   ON agent_turn (profile_id, started
 CREATE INDEX idx_agent_turn_agent_started     ON agent_turn (agent_id, started_at);
 CREATE INDEX idx_agent_turn_workspace_started ON agent_turn (workspace_id, started_at);
 CREATE INDEX idx_agent_turn_session           ON agent_turn (session_id);
-CREATE INDEX idx_agent_turn_open              ON agent_turn (ended_at) WHERE ended_at IS NULL;

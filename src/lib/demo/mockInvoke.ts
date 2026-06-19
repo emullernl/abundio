@@ -226,8 +226,6 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			);
 		case "telemetry_record_turn":
 			return undefined; // inert — demo never persists
-		case "telemetry_recover_orphans":
-			return 0;
 
 		// ── Updater — inert in demo (never touches the network) ──
 		case "updater_check":

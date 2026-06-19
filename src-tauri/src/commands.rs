@@ -431,13 +431,6 @@ pub async fn telemetry_list_turns(
     store.list_agent_turns(&profile_id, from_ms, to_ms)
 }
 
-#[tauri::command]
-pub async fn telemetry_recover_orphans(
-    store: State<'_, WorkspaceStore>,
-) -> Result<u32, AbundioError> {
-    store.recover_orphan_turns()
-}
-
 // ── PTY log commands ──
 
 #[tauri::command]

@@ -436,9 +436,6 @@ export const telemetry = {
 			fromMs,
 			toMs,
 		}),
-
-	/** Close any Turns left open by a crash / hard quit. Returns the count. */
-	recoverOrphans: () => invoke<number>("telemetry_recover_orphans"),
 };
 
 export const worktrees = {

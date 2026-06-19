@@ -41,10 +41,6 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "012_add_agent_turns",
         include_str!("../migrations/012_add_agent_turns.sql"),
     ),
-    (
-        "013_drop_tool_calls",
-        include_str!("../migrations/013_drop_tool_calls.sql"),
-    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -227,7 +223,7 @@ mod tests {
         let count: i32 = conn
             .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 13);
+        assert_eq!(count, 12);
     }
 
     /// Simulates the wedged state of users who ran the original buggy 008:

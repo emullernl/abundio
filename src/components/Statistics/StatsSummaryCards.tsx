@@ -147,10 +147,10 @@ export function StatsSummaryCards({
 				delay={160}
 			/>
 			<StatCard
-				label="Permission prompts"
+				label="Blocked on you"
 				value={formatCount(totals.totalPermissionRequests)}
 				sub={`${permPerTurn.toFixed(1)} per turn`}
-				title="How often agents blocked on you for permission. Lower per-turn means more autonomy."
+				title="How often a turn paused, blocked waiting on you — usually a permission prompt, though any wait counts. Lower per-turn means more autonomy. Approximate."
 				delay={200}
 			/>
 			<StatCard

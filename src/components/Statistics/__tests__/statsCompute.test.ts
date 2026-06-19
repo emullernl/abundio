@@ -130,6 +130,20 @@ describe("turnsToCsv", () => {
 		expect(row).toContain('"my, ""weird"" proj"');
 	});
 
+	it("neutralizes spreadsheet formula injection in user-controlled fields", () => {
+		// A folder literally named like a formula must not be emitted as one.
+		for (const name of ["=cmd", "+1", "-rf", "@SUM(A1)"]) {
+			const csv = turnsToCsv([turn({ workspaceName: name })]);
+			const row = csv.split("\r\n")[1];
+			// Prefixed with a leading ' inside quotes so spreadsheets treat it as text.
+			expect(row).toContain(`"'${name}"`);
+		}
+		// A benign name is left unquoted.
+		expect(
+			turnsToCsv([turn({ workspaceName: "proj" })]).split("\r\n")[1],
+		).toContain(",proj,");
+	});
+
 	it("returns just the header for an empty list", () => {
 		const csv = turnsToCsv([]);
 		expect(csv.split("\r\n")).toHaveLength(1);

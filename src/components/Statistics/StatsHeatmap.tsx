@@ -13,10 +13,12 @@ export function StatsHeatmap({
 	turns,
 	now,
 	longestTurnMs,
+	rangeLabel,
 }: {
 	turns: AgentTurnRecord[];
 	now: number;
 	longestTurnMs: number;
+	rangeLabel: string;
 }) {
 	const heat = computeHeatmap(turns);
 	const streaks = computeStreaks(turns, now);
@@ -53,6 +55,12 @@ export function StatsHeatmap({
 					/>
 					<Record label="Longest turn" value={formatDuration(longestTurnMs)} />
 				</div>
+
+				{/* These are computed over the windowed Turn list, so they reset as the
+				    range changes — say so rather than letting them read as all-time. */}
+				<span style={{ fontSize: 10, color: "var(--fg-secondary)" }}>
+					Measured over the selected range — {rangeLabel}.
+				</span>
 
 				{/* Heatmap grid */}
 				<div style={{ display: "flex", flexDirection: "column", gap: 3 }}>

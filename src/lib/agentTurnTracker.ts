@@ -170,7 +170,11 @@ function transitionTimers(
 		t.workingSince = now;
 	} else if (newState === "waiting") {
 		t.waitingSince = now;
-		t.permissionRequests += 1; // counts entries into Waiting
+		// Counts entries into Waiting (surfaced as "Blocked on you"). Usually a
+		// permission prompt, but the activity-store signal can't prove that, so
+		// this is an approximate "times the turn paused on you", not a strict
+		// permission-request count.
+		t.permissionRequests += 1;
 	}
 	t.lastState = newState;
 }
