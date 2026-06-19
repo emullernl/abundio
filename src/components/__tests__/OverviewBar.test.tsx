@@ -17,6 +17,7 @@ function baseProps(): OverviewBarProps {
 		errorShells: 0,
 		reviewRequestedPrs: 0,
 		myOpenPrs: 0,
+		prPollingEnabled: true,
 		showAgentWaiting: true,
 		statisticsOpen: false,
 		onToggleStatistics: () => {},

@@ -13,35 +13,17 @@ vi.mock("../../lib/windowFocus", () => ({
 	NOTIFICATION_BLUR_THRESHOLD_MS: 3000,
 }));
 
-vi.mock("../../lib/ipc", () => ({
-	gh: {
-		status: vi.fn(),
-		reviewRequests: vi.fn(),
-		reviewRequestsAll: vi.fn(),
-		myPrs: vi.fn(),
-		myPrsAll: vi.fn(),
-	},
-}));
-
-import { gh } from "../../lib/ipc";
-import type { GhStatus, PullRequest } from "../../lib/types";
+import type { PrChange, PrStatePayload, PullRequest } from "../../lib/types";
 import {
+	handlePrChanges,
 	PR_VIEW_LABELS,
-	resetPrNotificationState,
+	selectVisibleMyPrs,
+	selectVisibleReviewPrs,
 	usePrStore,
 } from "../prStore";
 import { useWorkspaceStore } from "../workspaceStore";
 
 const mockSendNotification = vi.mocked(sendNotification);
-
-const mockGh = vi.mocked(gh);
-
-const makeGhStatus = (overrides: Partial<GhStatus> = {}): GhStatus => ({
-	available: true,
-	authenticated: true,
-	hasRemote: true,
-	...overrides,
-});
 
 const makePr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
 	number: 1,
@@ -58,19 +40,32 @@ const makePr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
 	statusCheckRollup: "SUCCESS",
 	isDraft: false,
 	labels: [],
-	repository: "",
+	repository: "org/repo",
+	...overrides,
+});
+
+const makePayload = (
+	overrides: Partial<PrStatePayload> = {},
+): PrStatePayload => ({
+	available: true,
+	authenticated: true,
+	reviewRequested: [],
+	mine: [],
+	error: null,
 	...overrides,
 });
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	resetPrNotificationState();
 	usePrStore.setState({
 		ghStatus: null,
+		reviewRequested: [],
+		mine: [],
+		error: null,
+		loading: true,
+		activeRepoSlug: null,
 		reviewView: "review-all",
-		review: { prs: [], loading: false, error: null },
 		myPrsView: "mine-all",
-		myPrs: { prs: [], loading: false, error: null },
 		globalReviewCount: 0,
 		globalMyPrsCount: 0,
 	});
@@ -87,462 +82,118 @@ describe("prStore", () => {
 		});
 	});
 
-	describe("setReviewView", () => {
-		it("updates the review view", () => {
+	describe("view + slug setters", () => {
+		it("setReviewView updates the review view", () => {
 			usePrStore.getState().setReviewView("review-repo");
 			expect(usePrStore.getState().reviewView).toBe("review-repo");
 		});
-	});
 
-	describe("setMyPrsView", () => {
-		it("updates the my PRs view", () => {
+		it("setMyPrsView updates the my PRs view", () => {
 			usePrStore.getState().setMyPrsView("mine-repo");
 			expect(usePrStore.getState().myPrsView).toBe("mine-repo");
 		});
-	});
 
-	describe("checkGhStatus", () => {
-		it("sets ghStatus on success", async () => {
-			const status = makeGhStatus();
-			mockGh.status.mockResolvedValue(status);
-
-			await usePrStore.getState().checkGhStatus("/test");
-
-			expect(usePrStore.getState().ghStatus).toEqual(status);
-			expect(mockGh.status).toHaveBeenCalledWith("/test");
-		});
-
-		it("sets unavailable on error", async () => {
-			mockGh.status.mockRejectedValue(new Error("failed"));
-
-			await usePrStore.getState().checkGhStatus("/test");
-
-			expect(usePrStore.getState().ghStatus).toEqual({
-				available: false,
-				authenticated: false,
-				hasRemote: false,
-			});
+		it("setActiveRepoSlug updates the slug", () => {
+			usePrStore.getState().setActiveRepoSlug("org/x");
+			expect(usePrStore.getState().activeRepoSlug).toBe("org/x");
 		});
 	});
 
-	describe("fetchReviewPrs", () => {
-		it("fetches review requests for review-repo view", async () => {
-			const prs = [makePr({ number: 42 })];
-			mockGh.reviewRequests.mockResolvedValue(prs);
-			// Piggyback -all fetch for the Overview bar count (see ADR 0005)
-			mockGh.reviewRequestsAll.mockResolvedValue([]);
-
-			usePrStore.setState({ reviewView: "review-repo" });
-			await usePrStore.getState().fetchReviewPrs("/test");
-
-			expect(mockGh.reviewRequests).toHaveBeenCalledWith("/test");
-			expect(usePrStore.getState().review.prs).toEqual(prs);
-			expect(usePrStore.getState().review.loading).toBe(false);
-		});
-
-		it("fetches all review requests for review-all view", async () => {
-			const prs = [makePr({ number: 87, repository: "org/lib" })];
-			mockGh.reviewRequestsAll.mockResolvedValue(prs);
-
-			usePrStore.setState({ reviewView: "review-all" });
-			await usePrStore.getState().fetchReviewPrs("/test");
-
-			expect(mockGh.reviewRequestsAll).toHaveBeenCalledWith("/test");
-			expect(usePrStore.getState().review.prs).toEqual(prs);
-		});
-
-		it("updates globalReviewCount from the -all variant in review-all view", async () => {
-			const prs = [
-				makePr({ number: 1, repository: "org/a" }),
-				makePr({ number: 2, repository: "org/b" }),
-				makePr({ number: 3, repository: "org/c" }),
-			];
-			mockGh.reviewRequestsAll.mockResolvedValue(prs);
-
-			usePrStore.setState({ reviewView: "review-all", globalReviewCount: 0 });
-			await usePrStore.getState().fetchReviewPrs("/test");
-
-			expect(usePrStore.getState().globalReviewCount).toBe(3);
-		});
-
-		it("updates globalReviewCount via piggyback fetch when view is review-repo", async () => {
-			// Panel shows only this repo, but the Overview bar must reflect all repos.
-			const repoPrs = [makePr({ number: 42 })];
-			const allPrs = [
-				makePr({ number: 42 }),
-				makePr({ number: 88, repository: "org/other" }),
-				makePr({ number: 99, repository: "org/third" }),
-			];
-			mockGh.reviewRequests.mockResolvedValue(repoPrs);
-			mockGh.reviewRequestsAll.mockResolvedValue(allPrs);
-
-			usePrStore.setState({ reviewView: "review-repo", globalReviewCount: 0 });
-			await usePrStore.getState().fetchReviewPrs("/test");
-
-			// Panel section reflects repo-scoped fetch
-			expect(usePrStore.getState().review.prs).toEqual(repoPrs);
-			// Overview bar count reflects the piggyback -all fetch
-			expect(usePrStore.getState().globalReviewCount).toBe(3);
-			expect(mockGh.reviewRequests).toHaveBeenCalledWith("/test");
-			expect(mockGh.reviewRequestsAll).toHaveBeenCalledWith("/test");
-		});
-
-		it("does not double-fetch -all when view is review-all", async () => {
-			mockGh.reviewRequestsAll.mockResolvedValue([makePr()]);
-
-			usePrStore.setState({ reviewView: "review-all" });
-			await usePrStore.getState().fetchReviewPrs("/test");
-
-			// Single gh call: the panel fetch IS the -all fetch; both consumers
-			// await the same promise.
-			expect(mockGh.reviewRequestsAll).toHaveBeenCalledTimes(1);
-			expect(mockGh.reviewRequests).not.toHaveBeenCalled();
-		});
-
-		it("does not poison the panel when the piggyback -all fetch fails (review-repo view)", async () => {
-			// Panel fetch succeeds, piggyback fails — the panel must commit
-			// cleanly and the global count must stay at its last-known value.
-			const repoPrs = [makePr({ number: 42 })];
-			mockGh.reviewRequests.mockResolvedValue(repoPrs);
-			mockGh.reviewRequestsAll.mockRejectedValue(new Error("rate limited"));
-
-			usePrStore.setState({
-				reviewView: "review-repo",
-				globalReviewCount: 7, // last-known value
-			});
-			await usePrStore.getState().fetchReviewPrs("/test");
-
-			expect(usePrStore.getState().review.prs).toEqual(repoPrs);
-			expect(usePrStore.getState().review.error).toBe(null);
-			expect(usePrStore.getState().review.loading).toBe(false);
-			// globalReviewCount stays at the prior value — a transient gh failure
-			// shouldn't zero the chip.
-			expect(usePrStore.getState().globalReviewCount).toBe(7);
-		});
-
-		it("commits the panel error independently when the panel fetch fails (review-repo view)", async () => {
-			// Inverse of the above: panel fails, piggyback succeeds.
-			mockGh.reviewRequests.mockRejectedValue(new Error("panel boom"));
-			mockGh.reviewRequestsAll.mockResolvedValue([makePr(), makePr()]);
-
-			usePrStore.setState({
-				reviewView: "review-repo",
-				globalReviewCount: 0,
-			});
-			await usePrStore.getState().fetchReviewPrs("/test");
-
-			expect(usePrStore.getState().review.error).toBe("panel boom");
-			expect(usePrStore.getState().review.prs).toEqual([]);
-			// Piggyback succeeded — chip still updates.
-			expect(usePrStore.getState().globalReviewCount).toBe(2);
-		});
-
-		it("sets error on failure", async () => {
-			mockGh.reviewRequestsAll.mockRejectedValue(new Error("rate limited"));
-
-			await usePrStore.getState().fetchReviewPrs("/test");
-
-			expect(usePrStore.getState().review.error).toBe("rate limited");
-			expect(usePrStore.getState().review.prs).toEqual([]);
-			expect(usePrStore.getState().review.loading).toBe(false);
-		});
-
-		it("sets loading while fetching", async () => {
-			let resolvePromise: (value: PullRequest[]) => void;
-			const pending = new Promise<PullRequest[]>((resolve) => {
-				resolvePromise = resolve;
-			});
-			mockGh.reviewRequestsAll.mockReturnValue(pending);
-
-			const fetchPromise = usePrStore.getState().fetchReviewPrs("/test");
-			expect(usePrStore.getState().review.loading).toBe(true);
-
-			// biome-ignore lint/style/noNonNullAssertion: assigned in Promise callback above
-			resolvePromise!([]);
-			await fetchPromise;
-			expect(usePrStore.getState().review.loading).toBe(false);
-		});
-	});
-
-	describe("fetchMyPrs", () => {
-		it("fetches my PRs for mine-repo view", async () => {
-			const prs = [makePr({ number: 10 })];
-			mockGh.myPrs.mockResolvedValue(prs);
-			// Piggyback -all fetch for the Overview bar count (see ADR 0005)
-			mockGh.myPrsAll.mockResolvedValue([]);
-
-			usePrStore.setState({ myPrsView: "mine-repo" });
-			await usePrStore.getState().fetchMyPrs("/test");
-
-			expect(mockGh.myPrs).toHaveBeenCalledWith("/test");
-			expect(usePrStore.getState().myPrs.prs).toEqual(prs);
-			expect(usePrStore.getState().myPrs.loading).toBe(false);
-		});
-
-		it("updates globalMyPrsCount via piggyback fetch when view is mine-repo", async () => {
-			const repoPrs = [makePr({ number: 10 })];
-			const allPrs = [
-				makePr({ number: 10 }),
-				makePr({ number: 20, repository: "org/other" }),
-			];
-			mockGh.myPrs.mockResolvedValue(repoPrs);
-			mockGh.myPrsAll.mockResolvedValue(allPrs);
-
-			usePrStore.setState({ myPrsView: "mine-repo", globalMyPrsCount: 0 });
-			await usePrStore.getState().fetchMyPrs("/test");
-
-			expect(usePrStore.getState().myPrs.prs).toEqual(repoPrs);
-			expect(usePrStore.getState().globalMyPrsCount).toBe(2);
-		});
-
-		it("does not poison the panel when the piggyback -all fetch fails (mine-repo view)", async () => {
-			const repoPrs = [makePr({ number: 10 })];
-			mockGh.myPrs.mockResolvedValue(repoPrs);
-			mockGh.myPrsAll.mockRejectedValue(new Error("rate limited"));
-
-			usePrStore.setState({
-				myPrsView: "mine-repo",
-				globalMyPrsCount: 5, // last-known value
-			});
-			await usePrStore.getState().fetchMyPrs("/test");
-
-			expect(usePrStore.getState().myPrs.prs).toEqual(repoPrs);
-			expect(usePrStore.getState().myPrs.error).toBe(null);
-			expect(usePrStore.getState().globalMyPrsCount).toBe(5);
-		});
-
-		it("updates globalMyPrsCount from the -all fetch in mine-all view", async () => {
-			mockGh.myPrsAll.mockResolvedValue([
-				makePr({ number: 1 }),
-				makePr({ number: 2 }),
-				makePr({ number: 3 }),
-				makePr({ number: 4 }),
-			]);
-
-			usePrStore.setState({ myPrsView: "mine-all", globalMyPrsCount: 0 });
-			await usePrStore.getState().fetchMyPrs("/test");
-
-			expect(usePrStore.getState().globalMyPrsCount).toBe(4);
-			expect(mockGh.myPrsAll).toHaveBeenCalledTimes(1);
-			expect(mockGh.myPrs).not.toHaveBeenCalled();
-		});
-
-		it("fetches all my PRs for mine-all view", async () => {
-			const prs = [makePr({ number: 20, repository: "org/other" })];
-			mockGh.myPrsAll.mockResolvedValue(prs);
-
-			usePrStore.setState({ myPrsView: "mine-all" });
-			await usePrStore.getState().fetchMyPrs("/test");
-
-			expect(mockGh.myPrsAll).toHaveBeenCalledWith("/test");
-			expect(usePrStore.getState().myPrs.prs).toEqual(prs);
-		});
-
-		it("sets error on failure", async () => {
-			mockGh.myPrsAll.mockRejectedValue(new Error("network error"));
-
-			await usePrStore.getState().fetchMyPrs("/test");
-
-			expect(usePrStore.getState().myPrs.error).toBe("network error");
-			expect(usePrStore.getState().myPrs.prs).toEqual([]);
-			expect(usePrStore.getState().myPrs.loading).toBe(false);
-		});
-
-		it("sets loading while fetching", async () => {
-			let resolvePromise: (value: PullRequest[]) => void;
-			const pending = new Promise<PullRequest[]>((resolve) => {
-				resolvePromise = resolve;
-			});
-			mockGh.myPrsAll.mockReturnValue(pending);
-
-			const fetchPromise = usePrStore.getState().fetchMyPrs("/test");
-			expect(usePrStore.getState().myPrs.loading).toBe(true);
-
-			// biome-ignore lint/style/noNonNullAssertion: assigned in Promise callback above
-			resolvePromise!([]);
-			await fetchPromise;
-			expect(usePrStore.getState().myPrs.loading).toBe(false);
-		});
-	});
-
-	describe("no-workspace fallback (null cwd)", () => {
-		// `null` is the sentinel for "zero Opened workspaces": there is no repo to
-		// scope to, so the account-wide (-all) view is forced regardless of the
-		// stored per-section preference, which must remain untouched. The cwd is
-		// coalesced to "" at the IPC boundary (Rust runs gh from the home dir).
-		it("forces review-all on null cwd even when stored view is review-repo", async () => {
-			mockGh.reviewRequestsAll.mockResolvedValue([
-				makePr({ number: 7, repository: "org/x" }),
-			]);
-			useWorkspaceStore.setState({ activeWorkspaceId: null });
-			usePrStore.setState({ reviewView: "review-repo", globalReviewCount: 0 });
-
-			await usePrStore.getState().fetchReviewPrs(null);
-
-			expect(mockGh.reviewRequestsAll).toHaveBeenCalledWith("");
-			expect(mockGh.reviewRequests).not.toHaveBeenCalled();
-			expect(usePrStore.getState().review.prs).toHaveLength(1);
-			// The Overview bar chip must also reflect the account-wide count.
-			expect(usePrStore.getState().globalReviewCount).toBe(1);
-			// Stored preference is preserved for when a workspace reopens.
-			expect(usePrStore.getState().reviewView).toBe("review-repo");
-		});
-
-		it("forces mine-all on null cwd even when stored view is mine-repo", async () => {
-			mockGh.myPrsAll.mockResolvedValue([
-				makePr({ number: 8 }),
-				makePr({ number: 9 }),
-			]);
-			useWorkspaceStore.setState({ activeWorkspaceId: null });
-			usePrStore.setState({ myPrsView: "mine-repo", globalMyPrsCount: 0 });
-
-			await usePrStore.getState().fetchMyPrs(null);
-
-			expect(mockGh.myPrsAll).toHaveBeenCalledWith("");
-			expect(mockGh.myPrs).not.toHaveBeenCalled();
-			expect(usePrStore.getState().myPrs.prs).toHaveLength(2);
-			expect(usePrStore.getState().globalMyPrsCount).toBe(2);
-			expect(usePrStore.getState().myPrsView).toBe("mine-repo");
-		});
-	});
-
-	describe("clear", () => {
-		it("resets both sections", () => {
-			usePrStore.setState({
-				review: { prs: [makePr()], loading: true, error: "oops" },
-				myPrs: { prs: [makePr({ number: 2 })], loading: true, error: "fail" },
-			});
-			usePrStore.getState().clear();
-
-			expect(usePrStore.getState().review).toEqual({
-				prs: [],
-				loading: false,
-				error: null,
-			});
-			expect(usePrStore.getState().myPrs).toEqual({
-				prs: [],
-				loading: false,
-				error: null,
-			});
-		});
-	});
-
-	describe("hydrateFromWorkspace", () => {
-		it("restores cached PRs after a prior fetch for that workspace", async () => {
-			const aPrs = [makePr({ number: 11 })];
-			mockGh.reviewRequestsAll.mockResolvedValue(aPrs);
-
-			useWorkspaceStore.setState({ activeWorkspaceId: "ws-A" });
-			await usePrStore.getState().fetchReviewPrs("/repo-a");
-
-			// Simulate switching to another workspace and that workspace fetching
-			useWorkspaceStore.setState({ activeWorkspaceId: "ws-B" });
-			const bPrs = [makePr({ number: 22 })];
-			mockGh.reviewRequestsAll.mockResolvedValue(bPrs);
-			await usePrStore.getState().fetchReviewPrs("/repo-b");
-			expect(usePrStore.getState().review.prs).toEqual(bPrs);
-
-			// Switch back: hydrate from ws-A's cache should restore aPrs
-			useWorkspaceStore.setState({ activeWorkspaceId: "ws-A" });
-			usePrStore.getState().hydrateFromWorkspace("ws-A");
-			expect(usePrStore.getState().review.prs).toEqual(aPrs);
-		});
-
-		it("shows empty sections for a workspace with no cached data", () => {
-			usePrStore.setState({
-				review: { prs: [makePr()], loading: false, error: null },
-				myPrs: { prs: [makePr({ number: 9 })], loading: false, error: null },
-			});
-
-			usePrStore.getState().hydrateFromWorkspace("never-fetched");
-			expect(usePrStore.getState().review).toEqual({
-				prs: [],
-				loading: false,
-				error: null,
-			});
-			expect(usePrStore.getState().myPrs).toEqual({
-				prs: [],
-				loading: false,
-				error: null,
-			});
-		});
-
-		it("clears the singleton when called with null", () => {
-			usePrStore.setState({
-				review: { prs: [makePr()], loading: false, error: null },
-			});
-			usePrStore.getState().hydrateFromWorkspace(null);
-			expect(usePrStore.getState().review.prs).toEqual([]);
-		});
-
-		it("writes cache against the workspaceId captured at fetch start, not the current one", async () => {
-			let resolveA: (prs: PullRequest[]) => void = () => {};
-			mockGh.reviewRequestsAll.mockReturnValueOnce(
-				new Promise<PullRequest[]>((res) => {
-					resolveA = res;
+	describe("applyPrState", () => {
+		it("sets status, raw lists, account-wide counts and clears loading", () => {
+			usePrStore.getState().applyPrState(
+				makePayload({
+					reviewRequested: [makePr({ number: 1 }), makePr({ number: 2 })],
+					mine: [makePr({ number: 3 })],
 				}),
 			);
+			const s = usePrStore.getState();
+			expect(s.ghStatus).toEqual({ available: true, authenticated: true });
+			expect(s.reviewRequested).toHaveLength(2);
+			expect(s.mine).toHaveLength(1);
+			// Overview-bar counts are always the full account-wide lengths.
+			expect(s.globalReviewCount).toBe(2);
+			expect(s.globalMyPrsCount).toBe(1);
+			expect(s.loading).toBe(false);
+			expect(s.error).toBe(null);
+		});
 
-			useWorkspaceStore.setState({ activeWorkspaceId: "ws-A" });
-			const aFetch = usePrStore.getState().fetchReviewPrs("/repo-a");
-
-			// User switches before the in-flight fetch completes
-			useWorkspaceStore.setState({ activeWorkspaceId: "ws-B" });
-
-			const aPrs = [makePr({ number: 99 })];
-			resolveA(aPrs);
-			await aFetch;
-
-			// A's late response must NOT be written into the singleton while B is
-			// the active workspace — that would contaminate B's panel.
-			expect(usePrStore.getState().review.prs).not.toEqual(aPrs);
-
-			// Hydrating ws-A should still recover aPrs even though it was no longer
-			// active when the response arrived.
-			usePrStore.getState().hydrateFromWorkspace("ws-A");
-			expect(usePrStore.getState().review.prs).toEqual(aPrs);
+		it("carries an error and the unauthenticated status", () => {
+			usePrStore
+				.getState()
+				.applyPrState(
+					makePayload({ available: true, authenticated: false, error: "boom" }),
+				);
+			const s = usePrStore.getState();
+			expect(s.ghStatus).toEqual({ available: true, authenticated: false });
+			expect(s.error).toBe("boom");
+			expect(s.loading).toBe(false);
 		});
 	});
 
-	describe("PR notifications", () => {
-		// Helper to simulate a loading -> loaded transition
-		function simulateReviewLoad(prs: PullRequest[]) {
-			usePrStore.setState((s) => ({
-				review: { ...s.review, loading: true },
-			}));
-			usePrStore.setState({
-				review: { prs, loading: false, error: null },
-			});
-		}
+	describe("client-side All-vs-Repo filtering", () => {
+		const prA = makePr({ number: 1, repository: "org/a" });
+		const prB = makePr({ number: 2, repository: "org/b" });
 
-		function simulateMyPrsLoad(prs: PullRequest[]) {
-			usePrStore.setState((s) => ({
-				myPrs: { ...s.myPrs, loading: true },
-			}));
+		it("review-all returns the full account-wide list", () => {
 			usePrStore.setState({
-				myPrs: { prs, loading: false, error: null },
+				reviewRequested: [prA, prB],
+				reviewView: "review-all",
+				activeRepoSlug: "org/a",
 			});
-		}
+			expect(selectVisibleReviewPrs(usePrStore.getState())).toEqual([prA, prB]);
+		});
+
+		it("review-repo filters to the active repo slug", () => {
+			usePrStore.setState({
+				reviewRequested: [prA, prB],
+				reviewView: "review-repo",
+				activeRepoSlug: "org/a",
+			});
+			expect(selectVisibleReviewPrs(usePrStore.getState())).toEqual([prA]);
+		});
+
+		it("review-repo with no active slug falls back to the full list", () => {
+			usePrStore.setState({
+				reviewRequested: [prA, prB],
+				reviewView: "review-repo",
+				activeRepoSlug: null,
+			});
+			expect(selectVisibleReviewPrs(usePrStore.getState())).toEqual([prA, prB]);
+		});
+
+		it("mine-repo filters to the active repo slug", () => {
+			usePrStore.setState({
+				mine: [prA, prB],
+				myPrsView: "mine-repo",
+				activeRepoSlug: "org/b",
+			});
+			expect(selectVisibleMyPrs(usePrStore.getState())).toEqual([prB]);
+		});
+
+		it("mine-all returns the full list regardless of slug", () => {
+			usePrStore.setState({
+				mine: [prA, prB],
+				myPrsView: "mine-all",
+				activeRepoSlug: "org/b",
+			});
+			expect(selectVisibleMyPrs(usePrStore.getState())).toEqual([prA, prB]);
+		});
+	});
+
+	// The diff that produces these descriptors now lives in Rust (pr_poller).
+	// The frontend's job is only to render them as OS notifications, gated on
+	// the window-blur threshold.
+	describe("handlePrChanges", () => {
+		const change = (body: string): PrChange => ({ kind: "review", body });
 
 		beforeEach(() => {
 			vi.spyOn(document, "hasFocus").mockReturnValue(false);
+			focusMock.blurredMs = 10_000;
 		});
 
-		it("does not notify on first load", () => {
-			simulateReviewLoad([makePr({ number: 1 })]);
-			simulateMyPrsLoad([makePr({ number: 2 })]);
-
-			expect(mockSendNotification).not.toHaveBeenCalled();
-		});
-
-		it("notifies on new review-requested PR", () => {
-			simulateReviewLoad([makePr({ number: 1, title: "First PR" })]);
-
-			simulateReviewLoad([
-				makePr({ number: 1, title: "First PR" }),
-				makePr({ number: 2, title: "New PR" }),
-			]);
-
+		it("notifies with the preformatted body, title and routing payload", () => {
+			handlePrChanges([change("Review requested: New PR (#2)")]);
 			expect(mockSendNotification).toHaveBeenCalledWith({
 				title: "Abundio",
 				body: "Review requested: New PR (#2)",
@@ -550,170 +201,25 @@ describe("prStore", () => {
 			});
 		});
 
-		it("notifies when reviewDecision changes on my PR", () => {
-			simulateMyPrsLoad([
-				makePr({ number: 10, title: "My PR", reviewDecision: "" }),
-			]);
-
-			simulateMyPrsLoad([
-				makePr({ number: 10, title: "My PR", reviewDecision: "APPROVED" }),
-			]);
-
-			expect(mockSendNotification).toHaveBeenCalledWith({
-				title: "Abundio",
-				body: "#10 My PR — approved",
-				extra: { type: "pr", workspaceId: "ws-1" },
-			});
+		it("fires one notification per change", () => {
+			handlePrChanges([change("a"), change("b"), change("c")]);
+			expect(mockSendNotification).toHaveBeenCalledTimes(3);
 		});
 
-		it("notifies when reviewDecision changes to CHANGES_REQUESTED", () => {
-			simulateMyPrsLoad([
-				makePr({ number: 10, title: "My PR", reviewDecision: "" }),
-			]);
-
-			simulateMyPrsLoad([
-				makePr({
-					number: 10,
-					title: "My PR",
-					reviewDecision: "CHANGES_REQUESTED",
-				}),
-			]);
-
-			expect(mockSendNotification).toHaveBeenCalledWith({
-				title: "Abundio",
-				body: "#10 My PR — has changes requested",
-				extra: { type: "pr", workspaceId: "ws-1" },
-			});
-		});
-
-		it("notifies when CI status changes on my PR", () => {
-			simulateMyPrsLoad([
-				makePr({
-					number: 5,
-					title: "CI PR",
-					statusCheckRollup: "PENDING",
-				}),
-			]);
-
-			simulateMyPrsLoad([
-				makePr({
-					number: 5,
-					title: "CI PR",
-					statusCheckRollup: "SUCCESS",
-				}),
-			]);
-
-			expect(mockSendNotification).toHaveBeenCalledWith({
-				title: "Abundio",
-				body: "#5 CI PR — CI passed",
-				extra: { type: "pr", workspaceId: "ws-1" },
-			});
-		});
-
-		it("notifies CI failed", () => {
-			simulateMyPrsLoad([
-				makePr({
-					number: 5,
-					title: "CI PR",
-					statusCheckRollup: "PENDING",
-				}),
-			]);
-
-			simulateMyPrsLoad([
-				makePr({
-					number: 5,
-					title: "CI PR",
-					statusCheckRollup: "FAILURE",
-				}),
-			]);
-
-			expect(mockSendNotification).toHaveBeenCalledWith({
-				title: "Abundio",
-				body: "#5 CI PR — CI failed",
-				extra: { type: "pr", workspaceId: "ws-1" },
-			});
-		});
-
-		it("does not notify for new PRs appearing in my PRs list", () => {
-			simulateMyPrsLoad([makePr({ number: 10, title: "Existing" })]);
-
-			simulateMyPrsLoad([
-				makePr({ number: 10, title: "Existing" }),
-				makePr({ number: 11, title: "Brand New" }),
-			]);
-
-			expect(mockSendNotification).not.toHaveBeenCalled();
-		});
-
-		it("does not notify when app is focused", () => {
+		it("does not notify when the app is focused", () => {
 			vi.spyOn(document, "hasFocus").mockReturnValue(true);
-
-			simulateReviewLoad([makePr({ number: 1 })]);
-			simulateReviewLoad([
-				makePr({ number: 1 }),
-				makePr({ number: 2, title: "New" }),
-			]);
-
+			handlePrChanges([change("x")]);
 			expect(mockSendNotification).not.toHaveBeenCalled();
 		});
 
 		it("does not notify when blurred for less than the threshold", () => {
 			focusMock.blurredMs = 1500;
-
-			simulateReviewLoad([makePr({ number: 1 })]);
-			simulateReviewLoad([
-				makePr({ number: 1 }),
-				makePr({ number: 2, title: "New" }),
-			]);
-
-			expect(mockSendNotification).not.toHaveBeenCalled();
-			focusMock.blurredMs = 10_000;
-		});
-
-		it("notifies when blurred for more than the threshold", () => {
-			focusMock.blurredMs = 4000;
-
-			simulateReviewLoad([makePr({ number: 1 })]);
-			simulateReviewLoad([
-				makePr({ number: 1 }),
-				makePr({ number: 2, title: "New" }),
-			]);
-
-			expect(mockSendNotification).toHaveBeenCalledWith(
-				expect.objectContaining({ body: "Review requested: New (#2)" }),
-			);
-			focusMock.blurredMs = 10_000;
-		});
-
-		it("does not notify when review view changes", () => {
-			simulateReviewLoad([makePr({ number: 1 })]);
-
-			// Change view, then fetch (separate setState calls, like the real code)
-			usePrStore.setState({ reviewView: "review-repo" as const });
-			usePrStore.setState((s) => ({
-				review: { ...s.review, loading: true },
-			}));
-			usePrStore.setState({
-				review: {
-					prs: [makePr({ number: 99, title: "Repo Only" })],
-					loading: false,
-					error: null,
-				},
-			});
-
+			handlePrChanges([change("x")]);
 			expect(mockSendNotification).not.toHaveBeenCalled();
 		});
 
-		it("resets notification state on clear so next load does not notify", () => {
-			simulateReviewLoad([makePr({ number: 1 })]);
-			simulateMyPrsLoad([makePr({ number: 2 })]);
-
-			// Clear (workspace switch)
-			usePrStore.getState().clear();
-
-			// Next load should be treated as first load — no notification
-			simulateReviewLoad([makePr({ number: 99, title: "After Clear" })]);
-
+		it("does nothing for an empty change list", () => {
+			handlePrChanges([]);
 			expect(mockSendNotification).not.toHaveBeenCalled();
 		});
 	});

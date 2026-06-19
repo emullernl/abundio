@@ -22,8 +22,9 @@ describe("ipc chokepoint in demo mode", () => {
 		expect(ws.length).toBeGreaterThan(0);
 		expect(ws[0].tabs.length).toBeGreaterThan(0);
 
-		const status = await ipc.gh.status("/x");
-		expect(status.available).toBe(true);
+		const snapshot = await ipc.pr.snapshot();
+		expect(snapshot?.available).toBe(true);
+		expect(Array.isArray(snapshot?.reviewRequested)).toBe(true);
 	});
 
 	it("delivers a git-state bundle through listen()", async () => {

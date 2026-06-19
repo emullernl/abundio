@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { pr } from "../../lib/ipc";
 import type { GhStatus } from "../../lib/types";
 import {
 	type MyPrsView,
@@ -9,66 +11,67 @@ import {
 	usePrStore,
 } from "../../stores/prStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
 
 export function PullRequestsSection() {
 	const ghStatus = usePrStore((s) => s.ghStatus);
+	const reviewRequested = usePrStore((s) => s.reviewRequested);
+	const mine = usePrStore((s) => s.mine);
+	const loading = usePrStore((s) => s.loading);
+	const error = usePrStore((s) => s.error);
+	const activeRepoSlug = usePrStore((s) => s.activeRepoSlug);
 	const reviewView = usePrStore((s) => s.reviewView);
-	const review = usePrStore((s) => s.review);
 	const myPrsView = usePrStore((s) => s.myPrsView);
-	const myPrs = usePrStore((s) => s.myPrs);
-	const checkGhStatus = usePrStore((s) => s.checkGhStatus);
-	const fetchReviewPrs = usePrStore((s) => s.fetchReviewPrs);
-	const fetchMyPrs = usePrStore((s) => s.fetchMyPrs);
 	const setReviewView = usePrStore((s) => s.setReviewView);
 	const setMyPrsView = usePrStore((s) => s.setMyPrsView);
-
-	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
-	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
-	const cwd = activeWorkspace?.rootFolder ?? null;
+	const prPollEnabled = useSettingsStore((s) => s.prPollEnabled);
 
 	// No Opened workspaces: there is no repo context, so both sections show
 	// their account-wide (-all) view and the repo/all selector is locked. The
 	// stored per-section preference is left untouched and restored when a
-	// workspace reopens. Data is fetched with an empty cwd (see useGitDataSync).
+	// workspace reopens. See CONTEXT.md / ADR-0019.
 	const noWorkspace = usePtyActivityStore(
 		(s) => s.openedWorkspaceIds.size === 0,
 	);
+	const hasRepo = !!activeRepoSlug;
 	const effReviewView: ReviewView = noWorkspace ? "review-all" : reviewView;
 	const effMyPrsView: MyPrsView = noWorkspace ? "mine-all" : myPrsView;
 
-	const handleRefresh = useCallback(async () => {
-		// `cwd` is null when no workspace folder is active → account-wide refresh
-		// (the store treats null as the no-workspace sentinel). This also covers
-		// the Opened≥1-but-none-Active edge: the user still gets the -all refresh.
-		await checkGhStatus(cwd);
-		fetchReviewPrs(cwd);
-		fetchMyPrs(cwd);
-	}, [cwd, checkGhStatus, fetchReviewPrs, fetchMyPrs]);
-
-	// Switching the view (repo ↔ all) refetches immediately so the panel reflects
-	// the new scope right away instead of showing stale data until the next poll.
-	// `fetchReviewPrs`/`fetchMyPrs` read the freshly-set view synchronously from
-	// the store, so the setter must run first. The store's view-change subscription
-	// sets `skipNextLoad`, which suppresses spurious "review requested" / status
-	// notifications for PRs that merely appear because the scope widened.
-	const handleReviewViewChange = useCallback(
-		(view: ReviewView) => {
-			setReviewView(view);
-			fetchReviewPrs(cwd);
-		},
-		[cwd, setReviewView, fetchReviewPrs],
+	// Client-side All-vs-Repo filtering over the one account-wide dataset.
+	const reviewPrs = useMemo(
+		() =>
+			effReviewView === "review-repo" && activeRepoSlug
+				? reviewRequested.filter((p) => p.repository === activeRepoSlug)
+				: reviewRequested,
+		[effReviewView, activeRepoSlug, reviewRequested],
+	);
+	const myPrsList = useMemo(
+		() =>
+			effMyPrsView === "mine-repo" && activeRepoSlug
+				? mine.filter((p) => p.repository === activeRepoSlug)
+				: mine,
+		[effMyPrsView, activeRepoSlug, mine],
 	);
 
+	const reviewSection: PrSectionState = { prs: reviewPrs, loading, error };
+	const myPrsSection: PrSectionState = { prs: myPrsList, loading, error };
+
+	// Manual Refresh triggers an immediate app-global poll (works even when
+	// automatic polling is off). The result is broadcast to every Window.
+	const handleRefresh = useCallback(() => {
+		pr.refresh().catch(() => {});
+	}, []);
+
+	// Switching repo↔all is purely client-side now — no refetch.
+	const handleReviewViewChange = useCallback(
+		(view: ReviewView) => setReviewView(view),
+		[setReviewView],
+	);
 	const handleMyPrsViewChange = useCallback(
-		(view: MyPrsView) => {
-			setMyPrsView(view);
-			fetchMyPrs(cwd);
-		},
-		[cwd, setMyPrsView, fetchMyPrs],
+		(view: MyPrsView) => setMyPrsView(view),
+		[setMyPrsView],
 	);
 
 	return (
@@ -78,8 +81,10 @@ export function PullRequestsSection() {
 				activeView={effReviewView}
 				setActiveView={handleReviewViewChange}
 				locked={noWorkspace}
-				section={review}
+				section={reviewSection}
 				ghStatus={ghStatus}
+				hasRepo={hasRepo}
+				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
 				showRefresh
 				showPrStatus
@@ -93,14 +98,20 @@ export function PullRequestsSection() {
 				activeView={effMyPrsView}
 				setActiveView={handleMyPrsViewChange}
 				locked={noWorkspace}
-				section={myPrs}
+				section={myPrsSection}
 				ghStatus={ghStatus}
+				hasRepo={hasRepo}
+				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
 				showRefresh={false}
 				showPrStatus
 			/>
 		</div>
 	);
+}
+
+function openGithubSettings() {
+	invoke("open_settings_window", { section: "github" }).catch(() => {});
 }
 
 interface PrSubPanelProps<V extends PrView> {
@@ -112,6 +123,10 @@ interface PrSubPanelProps<V extends PrView> {
 	locked?: boolean;
 	section: PrSectionState;
 	ghStatus: GhStatus | null;
+	/** Whether the active workspace resolved to a GitHub repo (owner/repo). */
+	hasRepo: boolean;
+	/** Whether automatic PR polling is enabled (Settings → GitHub). */
+	pollEnabled: boolean;
 	onRefresh: () => void;
 	showRefresh: boolean;
 	showPrStatus?: boolean;
@@ -124,6 +139,8 @@ function PrSubPanel<V extends PrView>({
 	locked,
 	section,
 	ghStatus,
+	hasRepo,
+	pollEnabled,
 	onRefresh,
 	showRefresh,
 	showPrStatus,
@@ -324,7 +341,7 @@ function PrSubPanel<V extends PrView>({
 							gh auth login
 						</span>
 					</StatusMessage>
-				) : !ghStatus.hasRemote && isRepoView ? (
+				) : isRepoView && !hasRepo ? (
 					<StatusMessage>No GitHub remote found</StatusMessage>
 				) : section.loading && section.prs.length === 0 ? (
 					<StatusMessage>
@@ -333,7 +350,36 @@ function PrSubPanel<V extends PrView>({
 				) : section.error && section.prs.length === 0 ? (
 					<StatusMessage>{section.error}</StatusMessage>
 				) : section.prs.length === 0 ? (
-					<StatusMessage>No pull requests</StatusMessage>
+					!pollEnabled ? (
+						<StatusMessage>
+							<span
+								style={{
+									fontWeight: 500,
+									color: "var(--fg-primary)",
+									marginBottom: 4,
+									display: "block",
+								}}
+							>
+								Pull request polling is off
+							</span>
+							<button
+								type="button"
+								onClick={openGithubSettings}
+								style={{
+									color: "var(--accent)",
+									background: "none",
+									border: "none",
+									padding: 0,
+									cursor: "pointer",
+									font: "inherit",
+								}}
+							>
+								Enable in Settings
+							</button>
+						</StatusMessage>
+					) : (
+						<StatusMessage>No pull requests</StatusMessage>
+					)
 				) : (
 					<div className="flex flex-col">
 						{section.prs.map((pr) => (

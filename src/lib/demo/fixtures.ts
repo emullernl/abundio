@@ -857,7 +857,6 @@ export const fileDiffs: Record<string, GitFileDiff> = {
 export const ghStatus: GhStatus = {
 	available: true,
 	authenticated: true,
-	hasRemote: true,
 };
 
 /** acme/<basename>, matching each workspace's repository. */

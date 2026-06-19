@@ -15,6 +15,7 @@ pub mod git_libgit2;
 pub mod git_scheduler;
 pub mod hook_server;
 pub mod migrations;
+pub mod pr_poller;
 pub mod process_monitor;
 pub mod profile_store;
 pub mod pty_manager;
@@ -533,6 +534,14 @@ pub fn run() {
             app.manage(updater::UpdaterState::new());
             updater::start_auto_check(app.handle().clone());
 
+            // App-global GitHub PR poller. One `gh api graphql` call (both PR
+            // lists, with CI + approval status) on a focus-adaptive cadence,
+            // broadcast to all Windows; client-side All-vs-Repo filter. The
+            // poller must be managed before `start` (it reads its own state).
+            // See ADR-0019.
+            app.manage(pr_poller::PrPoller::new());
+            pr_poller::start(app.handle().clone());
+
             // Start the resource-usage sampler. Pushes `app-metrics` events
             // (whole-tree CPU + memory) to the status bar on a background
             // thread; see app_metrics.rs for why this is a push, not an invoke.
@@ -643,7 +652,13 @@ pub fn run() {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::Focused(true) => {
-                rebuild_menu_for_focused_window(&window.app_handle().clone());
+                let app_handle = window.app_handle().clone();
+                rebuild_menu_for_focused_window(&app_handle);
+                // Wake the PR poller for a focus-gain refresh (gated by its
+                // own min-gap). See ADR-0019.
+                if let Some(poller) = app_handle.try_state::<pr_poller::PrPoller>() {
+                    poller.on_focus();
+                }
             }
             tauri::WindowEvent::Destroyed => {
                 let app_handle = window.app_handle().clone();
@@ -936,11 +951,10 @@ pub fn run() {
             worktree_commands::worktree_remove,
             worktree_commands::worktree_dirty,
             commands::worktree_watch_set,
-            gh_commands::gh_status,
-            gh_commands::gh_review_requests,
-            gh_commands::gh_review_requests_all,
-            gh_commands::gh_my_prs,
-            gh_commands::gh_my_prs_all,
+            pr_poller::pr_poller_set_config,
+            pr_poller::pr_poller_refresh,
+            pr_poller::pr_poller_snapshot,
+            git_commands::git_repo_slug,
             commands::list_system_fonts,
             commands::list_available_shells,
             commands::default_shell,

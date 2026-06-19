@@ -47,6 +47,9 @@ export interface OverviewBarProps {
 	reviewRequestedPrs: number;
 	/** User's own open PRs across all repos. */
 	myOpenPrs: number;
+	/** Whether automatic PR polling is enabled. When false the PR tiles render
+	 *  dimmed with an explanatory tooltip rather than a misleading live count. */
+	prPollingEnabled: boolean;
 	/**
 	 * When false, the Waiting agent tile is hidden. Driven by
 	 * `settingsStore.agentHooksEnabled` — without hooks, the Waiting state
@@ -149,6 +152,7 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 		errorShells,
 		reviewRequestedPrs,
 		myOpenPrs,
+		prPollingEnabled,
 		showAgentWaiting,
 		statisticsOpen,
 		onToggleStatistics,
@@ -189,8 +193,12 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 			</Section>
 
 			<Section title="Pull requests">
-				<PrTile kind="review" count={reviewRequestedPrs} />
-				<PrTile kind="mine" count={myOpenPrs} />
+				<PrTile
+					kind="review"
+					count={reviewRequestedPrs}
+					enabled={prPollingEnabled}
+				/>
+				<PrTile kind="mine" count={myOpenPrs} enabled={prPollingEnabled} />
 			</Section>
 
 			{/* Right-aligned: the bar's one interactive affordance — opens the
@@ -502,9 +510,19 @@ const PR_DEFINITIONS: Record<
 	},
 };
 
-function PrTile({ kind, count }: { kind: PrKind; count: number }) {
+function PrTile({
+	kind,
+	count,
+	enabled,
+}: {
+	kind: PrKind;
+	count: number;
+	enabled: boolean;
+}) {
 	const def = PR_DEFINITIONS[kind];
-	const active = count > 0;
+	// When polling is off, never read as a live count: render dimmed with an
+	// explanatory tooltip (ADR-0019).
+	const active = enabled && count > 0;
 	return (
 		<TileShell
 			glyph={staticGlyph(
@@ -513,7 +531,11 @@ function PrTile({ kind, count }: { kind: PrKind; count: number }) {
 			)}
 			active={active}
 			primary={count}
-			title={`${def.label} — ${def.description} (${count})`}
+			title={
+				enabled
+					? `${def.label} — ${def.description} (${count})`
+					: `${def.label} — PR polling is off (enable in Settings)`
+			}
 		/>
 	);
 }

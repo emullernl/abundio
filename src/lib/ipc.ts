@@ -13,15 +13,15 @@ import type {
 	DirEntry,
 	FileContent,
 	FileEntry,
-	GhStatus,
 	GitChangedFile,
 	GitFileDiff,
 	LaunchFile,
+	PrChange,
 	Profile,
 	ProfileUpdate,
+	PrStatePayload,
 	PtyActivityType,
 	PtyStatusType,
-	PullRequest,
 	SearchFileResult,
 	SearchResult,
 	Tab,
@@ -312,6 +312,10 @@ export const git = {
 		listen<GitStateEvent>(`git-state-${workspaceId}`, (event) => {
 			callback(event.payload);
 		}),
+
+	/** GitHub `owner/repo` for a workspace folder, or null. Drives the
+	 *  client-side All-vs-Repo PR filter (ADR-0019). */
+	repoSlug: (cwd: string) => invoke<string | null>("git_repo_slug", { cwd }),
 };
 
 export type WorkspaceGitSummary = {
@@ -468,18 +472,32 @@ export const worktrees = {
 		),
 };
 
-export const gh = {
-	status: (cwd: string) => invoke<GhStatus>("gh_status", { cwd }),
+// GitHub PR data is fetched by the app-global Rust poller (ADR-0019). The
+// frontend only hydrates from the cached snapshot, listens for pushes, and
+// forwards the user's manual Refresh / settings changes.
+export const pr = {
+	/** Last poll result cached in Rust, for new Windows to paint instantly
+	 *  without triggering a gh call. Null until the first poll completes. */
+	snapshot: () => invoke<PrStatePayload | null>("pr_poller_snapshot"),
 
-	reviewRequests: (cwd: string) =>
-		invoke<PullRequest[]>("gh_review_requests", { cwd }),
+	/** Force an immediate one-shot poll (manual Refresh). Bypasses the enabled
+	 *  flag and the min-gap, and re-checks gh auth. */
+	refresh: () => invoke<void>("pr_poller_refresh"),
 
-	reviewRequestsAll: (cwd: string) =>
-		invoke<PullRequest[]>("gh_review_requests_all", { cwd }),
+	/** Push the persisted polling config: enabled + focused interval (minutes). */
+	setConfig: (enabled: boolean, minutes: number) =>
+		invoke<void>("pr_poller_set_config", { enabled, minutes }),
 
-	myPrs: (cwd: string) => invoke<PullRequest[]>("gh_my_prs", { cwd }),
+	/** Broadcast PR lists pushed by the poller — every Window receives these. */
+	onPrState: (
+		callback: (payload: PrStatePayload) => void,
+	): Promise<UnlistenFn> =>
+		listen<PrStatePayload>("pr-state", (event) => callback(event.payload)),
 
-	myPrsAll: (cwd: string) => invoke<PullRequest[]>("gh_my_prs_all", { cwd }),
+	/** Notification descriptors — emitted to ONE Window so N Windows don't
+	 *  each fire duplicate OS notifications. */
+	onPrChanges: (callback: (changes: PrChange[]) => void): Promise<UnlistenFn> =>
+		listen<PrChange[]>("pr-changes", (event) => callback(event.payload)),
 };
 
 export const fs = {

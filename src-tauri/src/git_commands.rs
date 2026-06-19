@@ -97,6 +97,15 @@ pub async fn git_changed_files(
         .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
 }
 
+/// The GitHub `owner/repo` for a workspace folder, or None if it has no github
+/// remote. Drives the client-side All-vs-Repo PR filter (see ADR-0019).
+#[tauri::command]
+pub async fn git_repo_slug(cwd: String) -> Result<Option<String>, AbundioError> {
+    tokio::task::spawn_blocking(move || crate::git_libgit2::github_repo_slug(&cwd))
+        .await
+        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitFetchBundle {

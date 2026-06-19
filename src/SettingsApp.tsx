@@ -148,6 +148,8 @@ export function setupCrossWindowSync(): void {
 		smartImageDrop: unknown;
 		terminalScrollback: unknown;
 		markdownPreviewColorMode: unknown;
+		prPollEnabled: unknown;
+		prPollIntervalMinutes: unknown;
 	};
 	const sliceOf = (s: Record<string, unknown>): SettingsSlice => ({
 		terminalFontFamily: s.terminalFontFamily,
@@ -161,6 +163,8 @@ export function setupCrossWindowSync(): void {
 		smartImageDrop: s.smartImageDrop,
 		terminalScrollback: s.terminalScrollback,
 		markdownPreviewColorMode: s.markdownPreviewColorMode,
+		prPollEnabled: s.prPollEnabled,
+		prPollIntervalMinutes: s.prPollIntervalMinutes,
 	});
 	// Fully order-independent serialization: sorts object keys recursively so a
 	// payload that round-tripped through serde_json (alphabetized keys, incl.

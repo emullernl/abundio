@@ -132,17 +132,21 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "worktree_watch_set":
 			return undefined;
 
-		// ── GitHub ──
-		case "gh_status":
-			return fixtures.ghStatus;
-		case "gh_review_requests":
-			return fixtures.reviewPrsForCwd(String(args.cwd ?? ""));
-		case "gh_review_requests_all":
-			return fixtures.allReviewPrs;
-		case "gh_my_prs":
-			return fixtures.myPrsForCwd(String(args.cwd ?? ""));
-		case "gh_my_prs_all":
-			return fixtures.allMyPrs;
+		// ── GitHub (app-global PR poller, ADR-0019) ──
+		case "pr_poller_snapshot":
+			// One account-wide payload; the panel filters All-vs-Repo client-side
+			// using the repo slug below.
+			return {
+				...fixtures.ghStatus,
+				reviewRequested: fixtures.allReviewPrs,
+				mine: fixtures.allMyPrs,
+				error: null,
+			};
+		case "pr_poller_refresh":
+		case "pr_poller_set_config":
+			return undefined;
+		case "git_repo_slug":
+			return fixtures.repoForCwd(String(args.cwd ?? ""));
 
 		// ── Filesystem (reads) ──
 		case "fs_list_dir":
