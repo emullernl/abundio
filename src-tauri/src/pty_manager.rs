@@ -129,6 +129,13 @@ impl PtyManager {
                     #[cfg(target_os = "windows")]
                     let rcfile_str = rcfile_str.replace('\\', "/");
                     cmd.args(["--rcfile", &rcfile_str, "-i"]);
+                    // Our wrapper rcfile sources /etc/profile for login-shell
+                    // parity. On Git Bash (MSYS2), /etc/profile does `cd "$HOME"`
+                    // unless CHERE_INVOKING is set — which would clobber the spawn
+                    // cwd and land every new terminal in the user's home folder
+                    // instead of the workspace folder.
+                    #[cfg(target_os = "windows")]
+                    cmd.env("CHERE_INVOKING", "1");
                 }
                 ShellType::PowerShell => {
                     let init_script = integration_dir.join("abundio_init.ps1");
@@ -166,6 +173,10 @@ impl PtyManager {
             cmd.env("ABUNDIO_WINDOW_LABEL", window_label.unwrap_or(""));
         }
 
+        // A stamped cwd may arrive in Git Bash's MSYS form (`/c/Users/…`), which
+        // Path can't validate on Windows; convert it to native form first.
+        #[cfg(target_os = "windows")]
+        let cwd = &msys_to_windows_path(cwd);
         if Path::new(cwd).is_dir() {
             cmd.cwd(cwd);
         }
@@ -342,6 +353,31 @@ fn detect_shell_type(shell: &str) -> ShellType {
     } else {
         ShellType::Other
     }
+}
+
+/// Convert a Git Bash / MSYS path to its native Windows form. Pure string
+/// transform; non-MSYS shapes pass through unchanged. Applied only on Windows,
+/// where a leading `/c/` is unambiguously an MSYS drive path (a native path is
+/// `C:\…` / `C:/…`); on Unix `/c/…` is a real path and must not be rewritten.
+///   `/c/Users/x`     -> `c:/Users/x`
+///   `/c`             -> `c:`
+///   `//server/share` -> `\\server\share`   (UNC)
+///   `/usr/bin`       -> `/usr/bin`          (not a single-letter drive segment)
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn msys_to_windows_path(cwd: &str) -> String {
+    if let Some(rest) = cwd.strip_prefix("//") {
+        return format!("\\\\{}", rest.replace('/', "\\"));
+    }
+    let b = cwd.as_bytes();
+    if b.len() >= 2
+        && b[0] == b'/'
+        && b[1].is_ascii_alphabetic()
+        && (cwd.len() == 2 || b[2] == b'/')
+    {
+        // "/c" -> "c:", "/c/x" -> "c:/x"
+        return format!("{}:{}", &cwd[1..2], &cwd[2..]);
+    }
+    cwd.to_string()
 }
 
 /// Returns the directory containing shell integration startup files.
@@ -724,5 +760,42 @@ fn truncate_log_file(path: &Path, keep_bytes: u64) {
     let start = (len - keep_bytes) as usize;
     if let Ok(mut file) = File::create(path) {
         let _ = file.write_all(&data[start..]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn msys_drive_paths_become_native() {
+        assert_eq!(msys_to_windows_path("/c/Users/x"), "c:/Users/x");
+        assert_eq!(msys_to_windows_path("/d/repos/abundio"), "d:/repos/abundio");
+        assert_eq!(msys_to_windows_path("/c"), "c:");
+        assert_eq!(msys_to_windows_path("/c/"), "c:/");
+    }
+
+    #[test]
+    fn msys_unc_paths_become_native() {
+        assert_eq!(
+            msys_to_windows_path("//server/share/x"),
+            "\\\\server\\share\\x"
+        );
+    }
+
+    #[test]
+    fn non_msys_paths_pass_through() {
+        // Already-native Windows paths.
+        assert_eq!(msys_to_windows_path("C:/already/native"), "C:/already/native");
+        assert_eq!(
+            msys_to_windows_path("C:\\already\\native"),
+            "C:\\already\\native"
+        );
+        // MSYS root paths that aren't a single-letter drive segment.
+        assert_eq!(msys_to_windows_path("/usr/bin"), "/usr/bin");
+        // POSIX absolute (multi-char first segment) and relative paths.
+        assert_eq!(msys_to_windows_path("/Users/emil/dev"), "/Users/emil/dev");
+        assert_eq!(msys_to_windows_path("relative/path"), "relative/path");
+        assert_eq!(msys_to_windows_path(""), "");
     }
 }
