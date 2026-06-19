@@ -11,6 +11,7 @@
 import * as fixtures from "./fixtures";
 import { publish } from "./mockBus";
 import { seedPaneActivity } from "./seed";
+import * as telemetry from "./telemetry";
 import { DEMO_FALLBACK, encodeBase64, TRANSCRIPTS } from "./transcripts";
 
 type Args = Record<string, unknown> | undefined;
@@ -201,6 +202,30 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return false;
 		case "agent_hook_status":
 			return fixtures.agentHookStatuses ?? [];
+
+		// ── Agent Turn telemetry — synthesised demo dataset ──
+		case "telemetry_buckets":
+			return telemetry.telemetryBuckets(
+				String(args.profileId ?? ""),
+				Number(args.fromMs ?? 0),
+				Number(args.toMs ?? 0),
+				String(args.bucket ?? "day"),
+				String(args.groupBy ?? "none"),
+			);
+		case "telemetry_totals":
+			return telemetry.telemetryTotals(
+				String(args.profileId ?? ""),
+				Number(args.fromMs ?? 0),
+				Number(args.toMs ?? 0),
+			);
+		case "telemetry_list_turns":
+			return telemetry.telemetryListTurns(
+				String(args.profileId ?? ""),
+				Number(args.fromMs ?? 0),
+				Number(args.toMs ?? 0),
+			);
+		case "telemetry_record_turn":
+			return undefined; // inert — demo never persists
 
 		// ── Updater — inert in demo (never touches the network) ──
 		case "updater_check":

@@ -22,6 +22,7 @@ type KeyAction =
 	| "toggle-right-sidebar-explorer"
 	| "toggle-right-sidebar-notes"
 	| "toggle-markdown-preview"
+	| "toggle-statistics-overlay"
 	| "open-settings"
 	| "copy"
 	| "paste";
@@ -63,6 +64,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"toggle-right-sidebar-explorer",
 	"toggle-right-sidebar-notes",
 	"toggle-markdown-preview",
+	"toggle-statistics-overlay",
 	"open-settings",
 	"save-file",
 ]);
@@ -217,6 +219,13 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		shift: true,
 		ctrl: !isMac,
 		action: "toggle-markdown-preview",
+	},
+	{
+		key: "s",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "toggle-statistics-overlay",
 	},
 	{
 		key: ",",

@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(untracked.len(), 1);
         assert_eq!(untracked[0].path, "new_file.txt");
         assert_eq!(untracked[0].status, "?");
-        assert_eq!(untracked[0].additions, 0);
+        assert_eq!(untracked[0].additions, 3); // new file: whole content counts as additions (git numstat semantics)
         assert_eq!(untracked[0].deletions, 0);
     }
 
