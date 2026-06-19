@@ -56,7 +56,6 @@ interface OpenTurn {
 	waitingSince: number | null;
 	lastState: PtyActivityState;
 	permissionRequests: number;
-	toolCalls: number;
 	errors: number;
 	gitStart: GitSnapshot | null;
 	/** Set when another Turn was open in the same Workspace at any point during
@@ -218,7 +217,6 @@ export function noteState(
 			waitingSince: null,
 			lastState: "active",
 			permissionRequests: 0,
-			toolCalls: 0,
 			errors: 0,
 			gitStart: cachedGitSnapshot(ctx.workspaceId),
 			contaminated: false,
@@ -246,13 +244,6 @@ export function noteState(
 	}
 	// "waiting" or "idle": pause/resume timers, keep the Turn open.
 	transitionTimers(open, state, now);
-}
-
-/** Increment the open Turn's tool-call count (called from the hook listener
- *  when a hook payload carries a toolName). No-op if no Turn is open. */
-export function recordToolCall(ptyId: string): void {
-	const t = openTurns.get(ptyId);
-	if (t) t.toolCalls += 1;
 }
 
 /** SessionEnd ("clear") — finalize an open Turn and end the session so the next
@@ -356,7 +347,6 @@ async function writeRecord(
 		waitingMs: t.waitingMs,
 		endReason: reason,
 		permissionRequestsCount: t.permissionRequests,
-		toolCallsCount: t.toolCalls,
 		errorCount: t.errors,
 		linesAdded,
 		linesDeleted,

@@ -13,6 +13,7 @@
     "shell:allow-stdin-write",
     "shell:allow-open",
     "dialog:allow-open",
+    "dialog:allow-save",
     "notification:default",
     "core:webview:allow-print",
     "clipboard-manager:allow-read-text",

@@ -357,7 +357,6 @@ export interface AgentTurnRecord {
 	waitingMs: number | null;
 	endReason: string | null;
 	permissionRequestsCount: number;
-	toolCallsCount: number;
 	errorCount: number;
 	linesAdded: number | null;
 	linesDeleted: number | null;
@@ -384,7 +383,6 @@ export interface AgentTurnBucket {
 	totalLinesDeleted: number;
 	totalFilesChanged: number;
 	totalPermissionRequests: number;
-	totalToolCalls: number;
 	totalErrors: number;
 }
 
@@ -399,7 +397,6 @@ export interface AgentTurnTotals {
 	totalLinesDeleted: number;
 	totalFilesChanged: number;
 	totalPermissionRequests: number;
-	totalToolCalls: number;
 	totalErrors: number;
 	longestTurnMs: number;
 }

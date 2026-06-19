@@ -10,7 +10,6 @@ import {
 	noteState,
 	onPtyExit,
 	onSessionEnd,
-	recordToolCall,
 } from "../agentTurnTracker";
 import { type AgentTurnRecord, git, telemetry } from "../ipc";
 import type { WorkspaceWithTabs } from "../types";
@@ -152,18 +151,14 @@ describe("agentTurnTracker state machine", () => {
 		);
 	});
 
-	it("counts permission requests, tool calls and errors", async () => {
+	it("counts permission requests and errors", async () => {
 		registerAgentPty("pty1", "pane1");
 		noteState("pty1", "active");
 		noteState("pty1", "waiting"); // permission +1
 		noteState("pty1", "active");
-		recordToolCall("pty1");
-		recordToolCall("pty1");
-		recordToolCall("pty1");
 		await noteState("pty1", "error"); // error +1, finalize
 		const rec = lastRecord();
 		expect(rec.permissionRequestsCount).toBe(1);
-		expect(rec.toolCallsCount).toBe(3);
 		expect(rec.errorCount).toBe(1);
 		expect(rec.endReason).toBe("error");
 	});

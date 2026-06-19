@@ -20,7 +20,6 @@ import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import {
 	onPtyExit as trackPtyExit,
 	onSessionEnd as trackSessionEnd,
-	recordToolCall as trackToolCall,
 } from "./agentTurnTracker";
 import { agentHooks, pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
@@ -1074,11 +1073,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					}
 				} catch {
 					// payload is not JSON — leave toolName undefined
-				}
-				// Count every tool-scoped hook toward the open Turn, even when the
-				// event itself maps to no status transition (e.g. PostToolUse).
-				if (toolName) {
-					trackToolCall(currentPtyId);
 				}
 				const transition = mapHookEvent(
 					hookEvent.agent,

@@ -97,8 +97,6 @@ pub struct AgentTurnRecord {
     #[serde(default)]
     pub permission_requests_count: i64,
     #[serde(default)]
-    pub tool_calls_count: i64,
-    #[serde(default)]
     pub error_count: i64,
     pub lines_added: Option<i64>,
     pub lines_deleted: Option<i64>,
@@ -134,7 +132,6 @@ pub struct AgentTurnBucket {
     pub total_lines_deleted: i64,
     pub total_files_changed: i64,
     pub total_permission_requests: i64,
-    pub total_tool_calls: i64,
     pub total_errors: i64,
 }
 
@@ -152,7 +149,6 @@ pub struct AgentTurnTotals {
     pub total_lines_deleted: i64,
     pub total_files_changed: i64,
     pub total_permission_requests: i64,
-    pub total_tool_calls: i64,
     pub total_errors: i64,
     pub longest_turn_ms: i64,
 }
@@ -498,11 +494,11 @@ impl WorkspaceStore {
             "INSERT OR REPLACE INTO agent_turn
                (id, session_id, profile_id, workspace_id, workspace_path, workspace_name,
                 agent_id, pty_id, started_at, ended_at, duration_ms, working_ms, waiting_ms,
-                end_reason, permission_requests_count, tool_calls_count, error_count,
+                end_reason, permission_requests_count, error_count,
                 lines_added, lines_deleted, files_changed,
                 git_added_start, git_deleted_start, git_added_end, git_deleted_end)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             rusqlite::params![
                 t.id,
                 t.session_id,
@@ -519,7 +515,6 @@ impl WorkspaceStore {
                 t.waiting_ms,
                 t.end_reason,
                 t.permission_requests_count,
-                t.tool_calls_count,
                 t.error_count,
                 t.lines_added,
                 t.lines_deleted,
@@ -570,7 +565,6 @@ impl WorkspaceStore {
                     COALESCE(SUM(lines_deleted), 0) AS total_lines_deleted,
                     COALESCE(SUM(files_changed), 0) AS total_files_changed,
                     COALESCE(SUM(permission_requests_count), 0) AS total_permission_requests,
-                    COALESCE(SUM(tool_calls_count), 0) AS total_tool_calls,
                     COALESCE(SUM(error_count), 0) AS total_errors
              FROM agent_turn
              WHERE profile_id = ?1 AND started_at >= ?2 AND started_at < ?3 AND ended_at IS NOT NULL
@@ -595,8 +589,7 @@ impl WorkspaceStore {
                     total_lines_deleted: row.get(10)?,
                     total_files_changed: row.get(11)?,
                     total_permission_requests: row.get(12)?,
-                    total_tool_calls: row.get(13)?,
-                    total_errors: row.get(14)?,
+                    total_errors: row.get(13)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -617,7 +610,7 @@ impl WorkspaceStore {
                     COUNT(DISTINCT session_id),
                     COALESCE(SUM(duration_ms), 0), COALESCE(SUM(working_ms), 0), COALESCE(SUM(waiting_ms), 0),
                     COALESCE(SUM(lines_added), 0), COALESCE(SUM(lines_deleted), 0), COALESCE(SUM(files_changed), 0),
-                    COALESCE(SUM(permission_requests_count), 0), COALESCE(SUM(tool_calls_count), 0),
+                    COALESCE(SUM(permission_requests_count), 0),
                     COALESCE(SUM(error_count), 0), COALESCE(MAX(duration_ms), 0)
              FROM agent_turn
              WHERE profile_id = ?1 AND started_at >= ?2 AND started_at < ?3 AND ended_at IS NOT NULL",
@@ -634,9 +627,8 @@ impl WorkspaceStore {
                     total_lines_deleted: row.get(7)?,
                     total_files_changed: row.get(8)?,
                     total_permission_requests: row.get(9)?,
-                    total_tool_calls: row.get(10)?,
-                    total_errors: row.get(11)?,
-                    longest_turn_ms: row.get(12)?,
+                    total_errors: row.get(10)?,
+                    longest_turn_ms: row.get(11)?,
                 })
             },
         )?;
@@ -654,7 +646,7 @@ impl WorkspaceStore {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, profile_id, workspace_id, workspace_path, workspace_name,
                     agent_id, pty_id, started_at, ended_at, duration_ms, working_ms, waiting_ms,
-                    end_reason, permission_requests_count, tool_calls_count, error_count,
+                    end_reason, permission_requests_count, error_count,
                     lines_added, lines_deleted, files_changed,
                     git_added_start, git_deleted_start, git_added_end, git_deleted_end, created_at
              FROM agent_turn
@@ -703,16 +695,15 @@ impl WorkspaceStore {
             waiting_ms: row.get(12)?,
             end_reason: row.get(13)?,
             permission_requests_count: row.get(14)?,
-            tool_calls_count: row.get(15)?,
-            error_count: row.get(16)?,
-            lines_added: row.get(17)?,
-            lines_deleted: row.get(18)?,
-            files_changed: row.get(19)?,
-            git_added_start: row.get(20)?,
-            git_deleted_start: row.get(21)?,
-            git_added_end: row.get(22)?,
-            git_deleted_end: row.get(23)?,
-            created_at: row.get(24)?,
+            error_count: row.get(15)?,
+            lines_added: row.get(16)?,
+            lines_deleted: row.get(17)?,
+            files_changed: row.get(18)?,
+            git_added_start: row.get(19)?,
+            git_deleted_start: row.get(20)?,
+            git_added_end: row.get(21)?,
+            git_deleted_end: row.get(22)?,
+            created_at: row.get(23)?,
         })
     }
 
@@ -1078,7 +1069,6 @@ mod tests {
             waiting_ms: Some(0),
             end_reason: Some("stop".into()),
             permission_requests_count: 1,
-            tool_calls_count: 3,
             error_count: 0,
             lines_added: Some(10),
             lines_deleted: Some(2),

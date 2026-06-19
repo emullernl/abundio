@@ -1,4 +1,4 @@
-import { BarChart3, X } from "lucide-react";
+import { BarChart3, Info, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useProfileStore } from "../../stores/profileStore";
 import { useTelemetryStore } from "../../stores/telemetryStore";
@@ -251,11 +251,44 @@ export function StatisticsOverlay({ topOffset }: { topOffset: number }) {
 								now={now}
 								longestTurnMs={data.totals.longestTurnMs}
 							/>
-							<StatsTurnsTable turns={data.turns} />
+							<StatsTurnsTable
+								turns={data.turns}
+								profileName={profileName}
+								rangeLabel={range.label}
+							/>
+							<Disclaimer />
 						</>
 					) : null}
 				</div>
 			</div>
+		</div>
+	);
+}
+
+function Disclaimer() {
+	return (
+		<div
+			style={{
+				display: "flex",
+				alignItems: "flex-start",
+				gap: 8,
+				padding: "11px 13px",
+				borderRadius: 8,
+				border: "1px solid var(--border)",
+				backgroundColor: "var(--bg-secondary)",
+				color: "var(--fg-secondary)",
+				fontSize: 11.5,
+				lineHeight: 1.5,
+			}}
+		>
+			<Info size={14} style={{ flexShrink: 0, marginTop: 1, opacity: 0.7 }} />
+			<span>
+				These figures are estimates, not exact measurements. Abundio observes
+				agents from the outside, so timings are approximate and some activity —
+				like lines changed in folders that aren’t git repositories — can’t be
+				counted. Treat the numbers as a rough guide to trends, not precise
+				totals.
+			</span>
 		</div>
 	);
 }

@@ -61,7 +61,7 @@ CREATE TABLE agent_turn (
     waiting_ms                INTEGER,                  -- time in Waiting state (blocked on user)
     end_reason                TEXT,                     -- stop|error|session_end|pty_exit|app_quit|orphan_recovered
     permission_requests_count INTEGER NOT NULL DEFAULT 0,
-    tool_calls_count          INTEGER NOT NULL DEFAULT 0,
+    tool_calls_count          INTEGER NOT NULL DEFAULT 0, -- DROPPED in migration 013 (unmeasurable; removed from UI + CSV)
     error_count               INTEGER NOT NULL DEFAULT 0,
     lines_added               INTEGER,                  -- NULL = unattributed (overlap / unknown)
     lines_deleted             INTEGER,

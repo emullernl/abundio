@@ -41,7 +41,6 @@ function emptyBucket(key: string): AgentTurnBucket {
 		totalLinesDeleted: 0,
 		totalFilesChanged: 0,
 		totalPermissionRequests: 0,
-		totalToolCalls: 0,
 		totalErrors: 0,
 	};
 }
@@ -110,6 +109,54 @@ export function formatCount(n: number): string {
 /** Signed line count, e.g. "+1,204" / "−318". */
 export function formatSignedLines(n: number, sign: "+" | "-"): string {
 	return `${sign}${n.toLocaleString()}`;
+}
+
+// ── CSV export ──
+
+/** RFC-4180 field escaping: wrap in quotes when the value contains a comma,
+ *  quote, or newline, and double any embedded quotes. */
+function csvField(value: string | number | null | undefined): string {
+	if (value === null || value === undefined) return "";
+	const s = String(value);
+	return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function isoOrBlank(ms: number | null): string {
+	return ms === null ? "" : new Date(ms).toISOString();
+}
+
+const CSV_COLUMNS: {
+	header: string;
+	value: (t: AgentTurnRecord) => string | number | null;
+}[] = [
+	{ header: "id", value: (t) => t.id },
+	{ header: "agent", value: (t) => agentLabel(t.agentId) },
+	{ header: "agent_id", value: (t) => t.agentId },
+	{ header: "workspace", value: (t) => t.workspaceName },
+	{ header: "workspace_path", value: (t) => t.workspacePath },
+	{ header: "started_at", value: (t) => new Date(t.startedAt).toISOString() },
+	{ header: "ended_at", value: (t) => isoOrBlank(t.endedAt) },
+	{ header: "duration_ms", value: (t) => t.durationMs },
+	{ header: "working_ms", value: (t) => t.workingMs },
+	{ header: "waiting_ms", value: (t) => t.waitingMs },
+	{ header: "end_reason", value: (t) => t.endReason },
+	{ header: "permission_requests", value: (t) => t.permissionRequestsCount },
+	{ header: "errors", value: (t) => t.errorCount },
+	{ header: "lines_added", value: (t) => t.linesAdded },
+	{ header: "lines_deleted", value: (t) => t.linesDeleted },
+	{ header: "files_changed", value: (t) => t.filesChanged },
+];
+
+/** Serialize raw Turn rows to RFC-4180 CSV (header + one row per Turn).
+ *  Timestamps become ISO-8601; durations/counts stay raw (ms, integers) for
+ *  analysis; the "unmeasured" case (null line/file counts) becomes empty
+ *  cells rather than a placeholder string. */
+export function turnsToCsv(turns: AgentTurnRecord[]): string {
+	const lines = [CSV_COLUMNS.map((c) => c.header).join(",")];
+	for (const t of turns) {
+		lines.push(CSV_COLUMNS.map((c) => csvField(c.value(t))).join(","));
+	}
+	return lines.join("\r\n");
 }
 
 // ── Agent colours ──
