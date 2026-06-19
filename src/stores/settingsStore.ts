@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
-import { agentHooks, updates } from "../lib/ipc";
+import { agentHooks, pr, updates } from "../lib/ipc";
 import type { PreviewColorMode } from "../lib/previewColorMode";
 import { nextPreviewColorMode } from "../lib/previewColorMode";
 import {
@@ -54,6 +54,10 @@ interface SettingsState {
 	/** Update version the user chose to skip; suppresses its prompt until a
 	 *  newer release ships. Null when nothing is skipped. */
 	skippedUpdateVersion: string | null;
+	/** Whether the app-global GitHub PR poller runs automatically. See ADR-0019. */
+	prPollEnabled: boolean;
+	/** Focused-cadence PR poll interval in minutes (1–30). */
+	prPollIntervalMinutes: number;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -86,6 +90,8 @@ interface SettingsState {
 	setSmartImageDrop: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
+	setPrPollEnabled: (enabled: boolean) => void;
+	setPrPollIntervalMinutes: (minutes: number) => void;
 }
 
 // Read persisted settings from localStorage synchronously so the store's
@@ -117,6 +123,8 @@ const PERSISTED_DEFAULTS: {
 	smartImageDrop: boolean;
 	autoCheckUpdatesEnabled: boolean;
 	skippedUpdateVersion: string | null;
+	prPollEnabled: boolean;
+	prPollIntervalMinutes: number;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -141,6 +149,8 @@ const PERSISTED_DEFAULTS: {
 		smartImageDrop: true,
 		autoCheckUpdatesEnabled: true,
 		skippedUpdateVersion: null as string | null,
+		prPollEnabled: true,
+		prPollIntervalMinutes: 5,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -243,6 +253,14 @@ const PERSISTED_DEFAULTS: {
 				typeof s.skippedUpdateVersion === "string"
 					? s.skippedUpdateVersion
 					: defaults.skippedUpdateVersion,
+			prPollEnabled:
+				typeof s.prPollEnabled === "boolean"
+					? s.prPollEnabled
+					: defaults.prPollEnabled,
+			prPollIntervalMinutes:
+				typeof s.prPollIntervalMinutes === "number"
+					? s.prPollIntervalMinutes
+					: defaults.prPollIntervalMinutes,
 		};
 	} catch {
 		return defaults;
@@ -274,6 +292,8 @@ export const useSettingsStore = create<SettingsState>()(
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
 			skippedUpdateVersion: PERSISTED_DEFAULTS.skippedUpdateVersion,
+			prPollEnabled: PERSISTED_DEFAULTS.prPollEnabled,
+			prPollIntervalMinutes: PERSISTED_DEFAULTS.prPollIntervalMinutes,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -398,10 +418,28 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			setSkippedUpdateVersion: (skippedUpdateVersion) =>
 				set({ skippedUpdateVersion }),
+			setPrPollEnabled: (prPollEnabled) => {
+				// Rust owns the running poller; push so the change (incl. "Off")
+				// takes effect immediately in every Window. See ADR-0019.
+				pr.setConfig(prPollEnabled, get().prPollIntervalMinutes).catch(
+					() => {},
+				);
+				set({ prPollEnabled });
+			},
+			setPrPollIntervalMinutes: (minutes) => {
+				const prPollIntervalMinutes = Math.min(
+					30,
+					Math.max(1, Math.round(minutes)),
+				);
+				pr.setConfig(get().prPollEnabled, prPollIntervalMinutes).catch(
+					() => {},
+				);
+				set({ prPollIntervalMinutes });
+			},
 		}),
 		{
 			name: "abundio-settings",
-			version: 6,
+			version: 7,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -460,6 +498,16 @@ export const useSettingsStore = create<SettingsState>()(
 				if (version < 6) {
 					state = { smartImageDrop: true, ...state };
 				}
+				// v7: app-global PR poller (ADR-0019). Additive default keys;
+				// PERSISTED_DEFAULTS + merge already supply them — this only
+				// guarantees they exist during the rehydrate window.
+				if (version < 7) {
+					state = {
+						prPollEnabled: true,
+						prPollIntervalMinutes: 5,
+						...state,
+					};
+				}
 				return state;
 			},
 			partialize: (state) => ({
@@ -485,6 +533,8 @@ export const useSettingsStore = create<SettingsState>()(
 				smartImageDrop: state.smartImageDrop,
 				autoCheckUpdatesEnabled: state.autoCheckUpdatesEnabled,
 				skippedUpdateVersion: state.skippedUpdateVersion,
+				prPollEnabled: state.prPollEnabled,
+				prPollIntervalMinutes: state.prPollIntervalMinutes,
 			}),
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
@@ -560,6 +610,13 @@ export const useSettingsStore = create<SettingsState>()(
 				updates
 					.setAutoCheck(state?.autoCheckUpdatesEnabled ?? true)
 					.catch(() => {});
+				// Push the persisted PR-poller config to Rust on startup +
+				// cross-window sync. The poller defaults to enabled/5min, but a
+				// custom interval or "Off" must be applied. See ADR-0019.
+				pr.setConfig(
+					state?.prPollEnabled ?? true,
+					state?.prPollIntervalMinutes ?? 5,
+				).catch(() => {});
 			},
 		},
 	),

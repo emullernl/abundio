@@ -387,6 +387,90 @@ fn url_is_github(url: &str) -> bool {
     url.contains("github.com/") || url.contains("github.com:")
 }
 
+/// The GitHub `owner/repo` ("nameWithOwner") for this workspace, or None if it
+/// has no github remote. Prefers `origin`, falling back to any github remote.
+/// Purely local — reads the configured remotes, no network. Used for the
+/// client-side All-vs-Repo PR filter (see ADR-0019); replaces the prior
+/// `has_github_remote` signal with the actual repo identity the filter needs.
+pub fn github_repo_slug(cwd: &str) -> Option<String> {
+    let repo = open_repo(cwd).ok()?;
+
+    // `origin` first.
+    if let Ok(remote) = repo.find_remote("origin") {
+        if let Some(slug) = [remote.url(), remote.pushurl()]
+            .into_iter()
+            .flatten()
+            .find_map(parse_github_slug)
+        {
+            return Some(slug);
+        }
+    }
+
+    // Any other github remote.
+    let remotes = repo.remotes().ok()?;
+    remotes.iter().flatten().find_map(|name| {
+        repo.find_remote(name).ok().and_then(|remote| {
+            [remote.url(), remote.pushurl()]
+                .into_iter()
+                .flatten()
+                .find_map(parse_github_slug)
+        })
+    })
+}
+
+/// Parse `owner/repo` from a github.com remote URL (HTTPS or SSH forms),
+/// stripping a trailing `.git`. Returns None for non-github URLs or anything
+/// that isn't exactly `owner/repo`.
+fn parse_github_slug(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| url.strip_prefix("git@github.com:"))?;
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let rest = rest.trim_end_matches('/');
+    let mut parts = rest.splitn(3, '/');
+    let owner = parts.next().filter(|s| !s.is_empty())?;
+    let name = parts.next().filter(|s| !s.is_empty())?;
+    Some(format!("{}/{}", owner, name))
+}
+
+#[cfg(test)]
+mod slug_tests {
+    use super::parse_github_slug;
+
+    #[test]
+    fn parses_https_with_and_without_git_suffix() {
+        assert_eq!(
+            parse_github_slug("https://github.com/org/repo.git").as_deref(),
+            Some("org/repo")
+        );
+        assert_eq!(
+            parse_github_slug("https://github.com/org/repo").as_deref(),
+            Some("org/repo")
+        );
+    }
+
+    #[test]
+    fn parses_ssh_forms() {
+        assert_eq!(
+            parse_github_slug("git@github.com:org/repo.git").as_deref(),
+            Some("org/repo")
+        );
+        assert_eq!(
+            parse_github_slug("ssh://git@github.com/org/repo").as_deref(),
+            Some("org/repo")
+        );
+    }
+
+    #[test]
+    fn rejects_non_github_and_malformed() {
+        assert_eq!(parse_github_slug("https://gitlab.com/org/repo.git"), None);
+        assert_eq!(parse_github_slug("https://github.com/org"), None);
+        assert_eq!(parse_github_slug("git@github.com:"), None);
+    }
+}
+
 /// Current branch shortname, or None if HEAD can't be resolved (detached,
 /// unborn, or not a repo). Used by `compute_workspace_git_summary` to drive
 /// the sidebar branch chip.

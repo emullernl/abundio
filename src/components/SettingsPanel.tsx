@@ -46,7 +46,8 @@ type Section =
 	| "shell"
 	| "agents"
 	| "profiles"
-	| "updates";
+	| "updates"
+	| "github";
 
 interface Props {
 	/** Called when the user clicks the panel's X button. The settings window
@@ -1669,6 +1670,143 @@ function AddProfileForm({ onAdd }: { onAdd: (name: string) => void }) {
 	);
 }
 
+function PrIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<circle cx="6" cy="6" r="3" />
+			<circle cx="6" cy="18" r="3" />
+			<path d="M6 9v6" />
+			<circle cx="18" cy="18" r="3" />
+			<path d="M13 6h3a2 2 0 0 1 2 2v7" />
+		</svg>
+	);
+}
+
+/* ─── GitHub section ─── */
+function GithubSection() {
+	const enabled = useSettingsStore((s) => s.prPollEnabled);
+	const setEnabled = useSettingsStore((s) => s.setPrPollEnabled);
+	const interval = useSettingsStore((s) => s.prPollIntervalMinutes);
+	const setPrInterval = useSettingsStore((s) => s.setPrPollIntervalMinutes);
+
+	const stepBtnStyle = {
+		width: 22,
+		height: 22,
+		color: "var(--fg-secondary)",
+		backgroundColor: "var(--bg-tertiary)",
+		fontSize: 14,
+		lineHeight: 1,
+	} as const;
+
+	return (
+		<div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+			<div>
+				<SectionLabel>Pull Requests</SectionLabel>
+				<div
+					className="flex items-center gap-3 rounded-lg"
+					style={{
+						padding: "10px 12px",
+						backgroundColor: "var(--bg-primary)",
+						border: "1px solid var(--border)",
+					}}
+				>
+					<Toggle checked={enabled} onChange={setEnabled} />
+					<div className="flex-1 min-w-0">
+						<div
+							style={{
+								fontSize: 13,
+								color: "var(--fg-primary)",
+								lineHeight: 1.3,
+							}}
+						>
+							Automatically check for pull requests
+						</div>
+						<div
+							style={{
+								fontSize: 11,
+								color: "var(--fg-secondary)",
+								marginTop: 2,
+								lineHeight: 1.4,
+							}}
+						>
+							Polls GitHub for your review requests and open PRs — one request
+							per cycle, shared across all windows. Checks at the interval below
+							while Abundio is focused, and hourly in the background. When off,
+							use the Refresh button in the Pull Requests panel to check
+							manually.
+						</div>
+					</div>
+				</div>
+			</div>
+			<div style={{ opacity: enabled ? 1 : 0.5 }}>
+				<SectionLabel>Check Interval</SectionLabel>
+				<div
+					className="flex items-center gap-4 rounded-lg"
+					style={{
+						padding: "10px 14px",
+						backgroundColor: "var(--bg-primary)",
+						border: "1px solid var(--border)",
+					}}
+				>
+					<span
+						className="flex-shrink-0"
+						style={{ fontSize: 11, color: "var(--fg-secondary)" }}
+					>
+						While focused
+					</span>
+					<input
+						type="range"
+						min={1}
+						max={30}
+						step={1}
+						value={interval}
+						disabled={!enabled}
+						onChange={(e) => setPrInterval(Number(e.target.value))}
+						className="flex-1 accent-[var(--accent)]"
+						style={{ height: 3 }}
+					/>
+					<div className="flex items-center gap-1 flex-shrink-0">
+						<button
+							type="button"
+							disabled={!enabled}
+							onClick={() => setPrInterval(interval - 1)}
+							className="rounded flex items-center justify-center transition-colors"
+							style={stepBtnStyle}
+						>
+							-
+						</button>
+						<span
+							className="font-mono text-center"
+							style={{ fontSize: 12, color: "var(--fg-primary)", width: 48 }}
+						>
+							{interval} min
+						</span>
+						<button
+							type="button"
+							disabled={!enabled}
+							onClick={() => setPrInterval(interval + 1)}
+							className="rounded flex items-center justify-center transition-colors"
+							style={stepBtnStyle}
+						>
+							+
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 export function SettingsPanel({ onClose }: Props) {
 	const [section, setSection] = useState<Section>("theme");
 
@@ -1704,7 +1842,8 @@ export function SettingsPanel({ onClose }: Props) {
 					s === "shell" ||
 					s === "agents" ||
 					s === "profiles" ||
-					s === "updates"
+					s === "updates" ||
+					s === "github"
 				) {
 					setSection(s);
 				}
@@ -1935,6 +2074,12 @@ export function SettingsPanel({ onClose }: Props) {
 							icon={<UpdateIcon />}
 							isActive={section === "updates"}
 							onClick={() => setSection("updates")}
+						/>
+						<NavItem
+							label="GitHub"
+							icon={<PrIcon />}
+							isActive={section === "github"}
+							onClick={() => setSection("github")}
 						/>
 					</div>
 
@@ -2290,6 +2435,8 @@ export function SettingsPanel({ onClose }: Props) {
 						)}
 
 						{section === "updates" && <UpdatesSection />}
+
+						{section === "github" && <GithubSection />}
 					</div>
 				</div>
 			</div>

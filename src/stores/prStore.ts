@@ -1,8 +1,12 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { gh } from "../lib/ipc";
-import type { GhStatus, PullRequest } from "../lib/types";
+import type {
+	GhStatus,
+	PrChange,
+	PrStatePayload,
+	PullRequest,
+} from "../lib/types";
 import {
 	getWindowBlurredMs,
 	NOTIFICATION_BLUR_THRESHOLD_MS,
@@ -14,6 +18,9 @@ export type ReviewView = "review-all" | "review-repo";
 export type MyPrsView = "mine-all" | "mine-repo";
 export type PrView = ReviewView | MyPrsView;
 
+/** Shape the PR sub-panel renders. Built from the raw store lists by the
+ *  client-side All-vs-Repo selectors below — no longer a stored per-section
+ *  slice (the app-global poller pushes one account-wide dataset). */
 export interface PrSectionState {
 	prs: PullRequest[];
 	loading: boolean;
@@ -21,52 +28,32 @@ export interface PrSectionState {
 }
 
 interface PrState {
+	/** gh availability/auth, from the poller's pushed payload. Null until the
+	 *  first `pr-state` / snapshot arrives. */
 	ghStatus: GhStatus | null;
+	/** Raw account-wide lists (every repo). The panel filters these client-side. */
+	reviewRequested: PullRequest[];
+	mine: PullRequest[];
+	error: string | null;
+	/** True until the first payload (snapshot or pushed event) lands. */
+	loading: boolean;
+	/** The active workspace's GitHub `owner/repo`, or null (no github remote /
+	 *  no active workspace). Drives the repo-scoped filter and the repo-view
+	 *  "No GitHub remote found" empty state. */
+	activeRepoSlug: string | null;
 
 	reviewView: ReviewView;
-	review: PrSectionState;
-
 	myPrsView: MyPrsView;
-	myPrs: PrSectionState;
 
-	/**
-	 * Count of PRs awaiting the user's review across ALL repos — the
-	 * `gh search prs --review-requested=@me` total. Independent of
-	 * `reviewView`; the Overview bar surfaces this count regardless of
-	 * which view the side panel is in. Piggybacks on `fetchReviewPrs`.
-	 */
+	/** Account-wide counts for the Overview bar — always the full list lengths,
+	 *  independent of the panel's repo/all view (per ADR-0005). */
 	globalReviewCount: number;
-	/**
-	 * Count of the user's own open PRs across ALL repos. Same
-	 * piggyback pattern as `globalReviewCount`; independent of `myPrsView`.
-	 */
 	globalMyPrsCount: number;
 
-	/** `cwd` is the active workspace's folder, or `null` when no workspace is
-	 *  open — `null` forces the account-wide (`-all`) data. */
-	checkGhStatus: (cwd: string | null) => Promise<void>;
-	fetchReviewPrs: (cwd: string | null) => Promise<void>;
-	fetchMyPrs: (cwd: string | null) => Promise<void>;
+	applyPrState: (payload: PrStatePayload) => void;
+	setActiveRepoSlug: (slug: string | null) => void;
 	setReviewView: (view: ReviewView) => void;
 	setMyPrsView: (view: MyPrsView) => void;
-	clear: () => void;
-	hydrateFromWorkspace: (workspaceId: string | null) => void;
-}
-
-// Per-workspace PR cache so workspace switches can hydrate the singleton from
-// prior data instead of clearing the panel back to empty.
-interface PrCacheEntry {
-	review: PrSectionState;
-	myPrs: PrSectionState;
-}
-
-const prCacheByWorkspaceId = new Map<string, PrCacheEntry>();
-
-function emptyPrCacheEntry(): PrCacheEntry {
-	return {
-		review: { prs: [], loading: false, error: null },
-		myPrs: { prs: [], loading: false, error: null },
-	};
 }
 
 export const PR_VIEW_LABELS: Record<PrView, string> = {
@@ -76,230 +63,46 @@ export const PR_VIEW_LABELS: Record<PrView, string> = {
 	"mine-all": "My Open PRs (All)",
 };
 
-const EMPTY_SECTION: PrSectionState = {
-	prs: [],
-	loading: false,
-	error: null,
-};
-
 export const usePrStore = create<PrState>()(
 	persist(
-		(set, get) => {
-			let reviewGeneration = 0;
-			let myPrsGeneration = 0;
-			let ghStatusGeneration = 0;
-			return {
-				ghStatus: null,
-				reviewView: "review-all",
-				review: { ...EMPTY_SECTION },
-				myPrsView: "mine-all",
-				myPrs: { ...EMPTY_SECTION },
-				globalReviewCount: 0,
-				globalMyPrsCount: 0,
+		(set) => ({
+			ghStatus: null,
+			reviewRequested: [],
+			mine: [],
+			error: null,
+			loading: true,
+			activeRepoSlug: null,
+			reviewView: "review-all",
+			myPrsView: "mine-all",
+			globalReviewCount: 0,
+			globalMyPrsCount: 0,
 
-				checkGhStatus: async (cwd) => {
-					// Latest call wins. A stale no-workspace status check (cwd null,
-					// hasRemote false) must not clobber a fresher workspace one that
-					// started later (or vice versa), regardless of which network call
-					// resolves first — otherwise hasRemote can briefly flip back and
-					// the panel flickers "No GitHub remote found". Mirrors the
-					// generation guards in fetchReviewPrs / fetchMyPrs.
-					const gen = ++ghStatusGeneration;
-					try {
-						const status = await gh.status(cwd ?? "");
-						if (gen !== ghStatusGeneration) return;
-						set({ ghStatus: status });
-					} catch {
-						if (gen !== ghStatusGeneration) return;
-						set({
-							ghStatus: {
-								available: false,
-								authenticated: false,
-								hasRemote: false,
-							},
-						});
-					}
-				},
+			applyPrState: (payload) => {
+				const reviewRequested = payload.reviewRequested ?? [];
+				const mine = payload.mine ?? [];
+				set({
+					ghStatus: {
+						available: payload.available,
+						authenticated: payload.authenticated,
+					},
+					reviewRequested,
+					mine,
+					error: payload.error ?? null,
+					loading: false,
+					// Account-wide counts for the Overview bar chips.
+					globalReviewCount: reviewRequested.length,
+					globalMyPrsCount: mine.length,
+				});
+			},
 
-				fetchReviewPrs: async (cwd) => {
-					const startedForWorkspaceId =
-						useWorkspaceStore.getState().activeWorkspaceId;
-					const gen = ++reviewGeneration;
-					set({ review: { ...get().review, loading: true, error: null } });
-
-					// `null` is the no-workspace sentinel (zero Opened workspaces):
-					// there is no repo to scope to, so force the account-wide view
-					// regardless of the stored per-section preference (which is
-					// preserved for when a workspace reopens). The gh commands take a
-					// string cwd; coalescing null → "" tells the Rust side to run from
-					// the home dir (see run_gh in gh_commands.rs).
-					const ghCwd = cwd ?? "";
-					const view: ReviewView =
-						cwd === null ? "review-all" : get().reviewView;
-					// The Overview bar chip always shows the -all count regardless of
-					// the panel view (see ADR 0005). When the panel is in -all mode
-					// the panel fetch IS the -all fetch — both names reference the
-					// same promise, so awaiting twice is free. When the panel is in
-					// -repo mode, the two fetches run in parallel. We commit them
-					// INDEPENDENTLY: a piggyback failure must not poison the panel
-					// (and vice versa).
-					const panelPrsPromise =
-						view === "review-repo"
-							? gh.reviewRequests(ghCwd)
-							: gh.reviewRequestsAll(ghCwd);
-					const allPrsPromise =
-						view === "review-repo"
-							? gh.reviewRequestsAll(ghCwd)
-							: panelPrsPromise;
-
-					// ── Panel section commit ──
-					try {
-						const prs = await panelPrsPromise;
-						const section: PrSectionState = {
-							prs,
-							loading: false,
-							error: null,
-						};
-						if (startedForWorkspaceId) {
-							const existing =
-								prCacheByWorkspaceId.get(startedForWorkspaceId) ??
-								emptyPrCacheEntry();
-							prCacheByWorkspaceId.set(startedForWorkspaceId, {
-								...existing,
-								review: section,
-							});
-						}
-						if (gen !== reviewGeneration) return;
-						// Don't write A's PRs into the singleton if the user has since
-						// switched to B and B's own fetch was skipped by the freshness
-						// gate (so reviewGeneration was never bumped past A's gen).
-						if (
-							startedForWorkspaceId ===
-							useWorkspaceStore.getState().activeWorkspaceId
-						) {
-							set({ review: section });
-						}
-					} catch (e) {
-						if (gen === reviewGeneration) {
-							set({
-								review: {
-									prs: [],
-									loading: false,
-									error: e instanceof Error ? e.message : String(e),
-								},
-							});
-						}
-					}
-
-					// ── Overview bar count commit (piggyback) ──
-					// Failure leaves the last-known count alone — a transient gh hiccup
-					// shouldn't zero out the chip and keep it stuck at 0 until the
-					// next poll.
-					try {
-						const allPrs = await allPrsPromise;
-						if (gen === reviewGeneration) {
-							set({ globalReviewCount: allPrs.length });
-						}
-					} catch {
-						// keep last-known globalReviewCount
-					}
-				},
-
-				fetchMyPrs: async (cwd) => {
-					const startedForWorkspaceId =
-						useWorkspaceStore.getState().activeWorkspaceId;
-					const gen = ++myPrsGeneration;
-					set({ myPrs: { ...get().myPrs, loading: true, error: null } });
-
-					// `null` = no-workspace sentinel — force the account-wide view
-					// (see fetchReviewPrs).
-					const ghCwd = cwd ?? "";
-					const view: MyPrsView = cwd === null ? "mine-all" : get().myPrsView;
-					// Mirror fetchReviewPrs: piggyback the -all variant for the
-					// Overview bar chip when the panel is in -repo mode. Commits
-					// are decoupled so a piggyback failure can't poison the panel.
-					const panelPrsPromise =
-						view === "mine-repo" ? gh.myPrs(ghCwd) : gh.myPrsAll(ghCwd);
-					const allPrsPromise =
-						view === "mine-repo" ? gh.myPrsAll(ghCwd) : panelPrsPromise;
-
-					// ── Panel section commit ──
-					try {
-						const prs = await panelPrsPromise;
-						const section: PrSectionState = {
-							prs,
-							loading: false,
-							error: null,
-						};
-						if (startedForWorkspaceId) {
-							const existing =
-								prCacheByWorkspaceId.get(startedForWorkspaceId) ??
-								emptyPrCacheEntry();
-							prCacheByWorkspaceId.set(startedForWorkspaceId, {
-								...existing,
-								myPrs: section,
-							});
-						}
-						if (gen !== myPrsGeneration) return;
-						// See fetchReviewPrs: guard against contaminating another
-						// workspace's panel when its fetch was skipped as fresh.
-						if (
-							startedForWorkspaceId ===
-							useWorkspaceStore.getState().activeWorkspaceId
-						) {
-							set({ myPrs: section });
-						}
-					} catch (e) {
-						if (gen === myPrsGeneration) {
-							set({
-								myPrs: {
-									prs: [],
-									loading: false,
-									error: e instanceof Error ? e.message : String(e),
-								},
-							});
-						}
-					}
-
-					// ── Overview bar count commit (piggyback) ──
-					try {
-						const allPrs = await allPrsPromise;
-						if (gen === myPrsGeneration) {
-							set({ globalMyPrsCount: allPrs.length });
-						}
-					} catch {
-						// keep last-known globalMyPrsCount
-					}
-				},
-
-				setReviewView: (view) => set({ reviewView: view }),
-				setMyPrsView: (view) => set({ myPrsView: view }),
-
-				clear: () =>
-					// Don't reset globalReviewCount / globalMyPrsCount — they're
-					// account-wide (not workspace-scoped), same as
-					// hydrateFromWorkspace deliberately leaves them alone. A future
-					// caller wiring this into a logout / "no workspace" flow
-					// shouldn't have the Overview bar's PR chips zero out and
-					// stay zero until the next 60s poll.
-					set({
-						review: { ...EMPTY_SECTION },
-						myPrs: { ...EMPTY_SECTION },
-					}),
-
-				hydrateFromWorkspace: (workspaceId) => {
-					const entry = workspaceId
-						? prCacheByWorkspaceId.get(workspaceId)
-						: undefined;
-					set({
-						review: entry?.review ?? { ...EMPTY_SECTION },
-						myPrs: entry?.myPrs ?? { ...EMPTY_SECTION },
-					});
-				},
-			};
-		},
+			setActiveRepoSlug: (activeRepoSlug) => set({ activeRepoSlug }),
+			setReviewView: (reviewView) => set({ reviewView }),
+			setMyPrsView: (myPrsView) => set({ myPrsView }),
+		}),
 		{
 			name: "abundio-pr-panel",
+			// Only the per-section view preference persists; data is always
+			// re-fetched by the poller on launch.
 			partialize: (state) => ({
 				reviewView: state.reviewView,
 				myPrsView: state.myPrsView,
@@ -308,121 +111,41 @@ export const usePrStore = create<PrState>()(
 	),
 );
 
-// ── PR state change notifications ──
+// ── Client-side All-vs-Repo filter (single source of truth) ──
+// Repo-scoped view AND a known active repo → filter to it; otherwise (all view,
+// or no active repo) the full account-wide list. The PR panel passes its
+// *effective* view (which forces `-all` when no workspace is open), so the rule
+// lives here once rather than being duplicated in the component. A repo view
+// with a null slug naturally shows the `-all` data, which is why the
+// empty-Opened-set state can simply force the `-all` label.
 
-function prKey(pr: PullRequest): string {
-	return `${pr.repository}#${pr.number}`;
+export function visiblePrs(
+	prs: PullRequest[],
+	isRepoView: boolean,
+	activeRepoSlug: string | null,
+): PullRequest[] {
+	if (isRepoView && activeRepoSlug) {
+		return prs.filter((pr) => pr.repository === activeRepoSlug);
+	}
+	return prs;
 }
 
-function buildPrMap(prs: PullRequest[]): Map<string, PullRequest> {
-	const map = new Map<string, PullRequest>();
-	for (const pr of prs) {
-		map.set(prKey(pr), pr);
-	}
-	return map;
-}
+// ── PR change notifications ──
+// The diff now runs in Rust (the poller), which emits `pr-changes` to a single
+// Window. This handler renders those descriptors as OS notifications, gated on
+// the same window-blur threshold as before — so notifications only fire while
+// the app is backgrounded, and exactly once across all Windows.
 
-let reviewHasLoaded = false;
-let myPrsHasLoaded = false;
-let skipNextReviewLoad = false;
-let skipNextMyPrsLoad = false;
-
-export function resetPrNotificationState() {
-	reviewHasLoaded = false;
-	myPrsHasLoaded = false;
-	skipNextReviewLoad = false;
-	skipNextMyPrsLoad = false;
-}
-
-usePrStore.subscribe((state, prevState) => {
-	// Reset loaded flags when store is cleared
-	if (
-		state.review.prs.length === 0 &&
-		!state.review.loading &&
-		state.myPrs.prs.length === 0 &&
-		!state.myPrs.loading &&
-		(prevState.review.prs.length > 0 || prevState.myPrs.prs.length > 0)
-	) {
-		reviewHasLoaded = false;
-		myPrsHasLoaded = false;
-		return;
-	}
-
-	// Track view changes — skip the next load after a view switch
-	if (prevState.reviewView !== state.reviewView) {
-		skipNextReviewLoad = true;
-	}
-	if (prevState.myPrsView !== state.myPrsView) {
-		skipNextMyPrsLoad = true;
-	}
-
+export function handlePrChanges(changes: PrChange[]) {
 	const blurredMs = getWindowBlurredMs();
 	if (blurredMs === null || blurredMs < NOTIFICATION_BLUR_THRESHOLD_MS) return;
 
-	const notifications: string[] = [];
-
-	// ── Review PRs: detect new review requests ──
-	const reviewJustLoaded = prevState.review.loading && !state.review.loading;
-	if (reviewJustLoaded) {
-		if (!reviewHasLoaded) {
-			reviewHasLoaded = true;
-		} else if (skipNextReviewLoad) {
-			skipNextReviewLoad = false;
-		} else {
-			const prevKeys = new Set(prevState.review.prs.map(prKey));
-			for (const pr of state.review.prs) {
-				if (!prevKeys.has(prKey(pr))) {
-					notifications.push(`Review requested: ${pr.title} (#${pr.number})`);
-				}
-			}
-		}
-	}
-
-	// ── My PRs: detect state transitions on existing PRs ──
-	const myPrsJustLoaded = prevState.myPrs.loading && !state.myPrs.loading;
-	if (myPrsJustLoaded) {
-		if (!myPrsHasLoaded) {
-			myPrsHasLoaded = true;
-		} else if (skipNextMyPrsLoad) {
-			skipNextMyPrsLoad = false;
-		} else {
-			const prevMap = buildPrMap(prevState.myPrs.prs);
-			for (const pr of state.myPrs.prs) {
-				const prev = prevMap.get(prKey(pr));
-				if (!prev) continue; // New PR in my list — skip per requirements
-
-				if (prev.reviewDecision !== pr.reviewDecision && pr.reviewDecision) {
-					const label =
-						pr.reviewDecision === "APPROVED"
-							? "approved"
-							: pr.reviewDecision === "CHANGES_REQUESTED"
-								? "has changes requested"
-								: `review: ${pr.reviewDecision.toLowerCase()}`;
-					notifications.push(`#${pr.number} ${pr.title} — ${label}`);
-				}
-
-				if (
-					prev.statusCheckRollup !== pr.statusCheckRollup &&
-					pr.statusCheckRollup
-				) {
-					const label =
-						pr.statusCheckRollup === "SUCCESS"
-							? "CI passed"
-							: pr.statusCheckRollup === "FAILURE"
-								? "CI failed"
-								: `CI: ${pr.statusCheckRollup.toLowerCase()}`;
-					notifications.push(`#${pr.number} ${pr.title} — ${label}`);
-				}
-			}
-		}
-	}
-
 	const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-	for (const body of notifications) {
+	for (const change of changes) {
 		try {
 			sendNotification({
 				title: currentNotificationTitle(),
-				body,
+				body: change.body,
 				extra: {
 					type: "pr",
 					...(activeWorkspaceId && { workspaceId: activeWorkspaceId }),
@@ -432,4 +155,4 @@ usePrStore.subscribe((state, prevState) => {
 			// Notifications may not be permitted
 		}
 	}
-});
+}

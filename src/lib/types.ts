@@ -226,7 +226,22 @@ export interface BranchInfo {
 export interface GhStatus {
 	available: boolean;
 	authenticated: boolean;
-	hasRemote: boolean;
+}
+
+/** Payload of the broadcast `pr-state` event from the app-global PR poller.
+ *  Carries both account-wide lists; All-vs-Repo filtering is client-side. */
+export interface PrStatePayload {
+	available: boolean;
+	authenticated: boolean;
+	reviewRequested: PullRequest[];
+	mine: PullRequest[];
+	error: string | null;
+}
+
+/** One notification descriptor from the single-target `pr-changes` event. */
+export interface PrChange {
+	kind: string;
+	body: string;
 }
 
 export interface PullRequest {

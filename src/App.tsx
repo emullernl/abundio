@@ -146,6 +146,7 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 	const reviewRequestedPrs = usePrStore((s) => s.globalReviewCount);
 	const myOpenPrs = usePrStore((s) => s.globalMyPrsCount);
 	const showAgentWaiting = useSettingsStore((s) => s.agentHooksEnabled);
+	const prPollingEnabled = useSettingsStore((s) => s.prPollEnabled);
 	const statisticsOpen = useWindowUiStore((s) => s.statisticsOverlayOpen);
 	const toggleStatistics = useWindowUiStore((s) => s.toggleStatisticsOverlay);
 	return (
@@ -162,6 +163,7 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 			errorShells={errorShells}
 			reviewRequestedPrs={reviewRequestedPrs}
 			myOpenPrs={myOpenPrs}
+			prPollingEnabled={prPollingEnabled}
 			showAgentWaiting={showAgentWaiting}
 			statisticsOpen={statisticsOpen}
 			onToggleStatistics={toggleStatistics}

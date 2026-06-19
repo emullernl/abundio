@@ -1,16 +1,12 @@
 import { useEffect, useRef } from "react";
-import { git } from "../lib/ipc";
+import { git, pr } from "../lib/ipc";
 import {
 	hasGitDataCachedFor,
 	useGitChangesStore,
 } from "../stores/gitChangesStore";
-import { usePrStore } from "../stores/prStore";
+import { handlePrChanges, usePrStore } from "../stores/prStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
-import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-
-const GH_OPEN_MS = 60_000;
-const GH_COLLAPSED_MS = 60_000;
 
 interface SchedulerEntry {
 	workspaceId: string;
@@ -24,18 +20,14 @@ interface SchedulerEntry {
  *  pattern that froze the JS main thread on `git stash` (because every
  *  `invoke` carries ~100-600ms of WKWebView main-thread overhead).
  *
- *  The lifecycle tracks `openedWorkspaceIds` — schedulers are started for
- *  every Opened workspace (per the CONTEXT.md definition: a Workspace that
- *  has been activated at least once this session) and stopped when the
- *  workspace closes. */
+ *  PR data is NOT fetched here anymore. The app-global Rust PR poller (ADR-0019)
+ *  pushes `pr-state` to every Window; this hook just subscribes, hydrates from
+ *  the cached snapshot on mount, and resolves the active workspace's repo slug
+ *  for the client-side All-vs-Repo filter. */
 export function useGitDataSync() {
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-	const rightSidebarOpen = useWindowUiStore((s) => s.rightSidebarOpen);
-	const activeTab = useWindowUiStore((s) => s.rightSidebarActiveTab);
-	const panelOpen = rightSidebarOpen && activeTab === "git";
-	const ghStatus = usePrStore((s) => s.ghStatus);
 
 	const activeRef = useRef<Map<string, SchedulerEntry>>(new Map());
 
@@ -109,96 +101,87 @@ export function useGitDataSync() {
 		};
 	}, []);
 
+	// ── App-global PR poller subscription (once per Window) ──
+	// Hydrate immediately from the Rust-cached snapshot (no gh call), then
+	// listen for pushed updates. `pr-changes` (notifications) is emitted to a
+	// single Window by Rust, so registering the listener in every Window is safe.
+	useEffect(() => {
+		let cancelled = false;
+		const unlisteners: Array<() => void> = [];
+
+		pr.snapshot()
+			.then((payload) => {
+				if (cancelled || !payload) return;
+				usePrStore.getState().applyPrState(payload);
+			})
+			.catch(() => {});
+
+		pr.onPrState((payload) => usePrStore.getState().applyPrState(payload))
+			.then((un) => {
+				if (cancelled) un();
+				else unlisteners.push(un);
+			})
+			.catch(() => {});
+
+		pr.onPrChanges((changes) => handlePrChanges(changes))
+			.then((un) => {
+				if (cancelled) un();
+				else unlisteners.push(un);
+			})
+			.catch(() => {});
+
+		return () => {
+			cancelled = true;
+			for (const un of unlisteners) un();
+		};
+	}, []);
+
 	const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
 	const activeCwd = activeWorkspace?.rootFolder ?? null;
 	const activeBaseBranch = activeWorkspace?.baseBranch ?? null;
 
-	// Workspace-switch effect — hydrate the singleton from cache.
-	// Falls back to a one-shot `fetchChanges` only when no cache exists yet
-	// (truly cold start: scheduler was just started and hasn't pushed yet, or
-	// the scheduler crashed and never pushed). Per-Q4 of the plan: this is
-	// the cache-presence gate that replaces the prior 30 s freshness window.
+	// Workspace-switch effect — hydrate git changes from cache, resolve the
+	// active repo slug for the client-side PR filter, and cold-start a git
+	// fetch only when no cache exists yet.
 	useEffect(() => {
 		useGitChangesStore.getState().hydrateFromWorkspace(activeWorkspaceId);
-		usePrStore.getState().hydrateFromWorkspace(activeWorkspaceId);
-		if (!activeCwd) return;
+
+		if (!activeCwd) {
+			// No active workspace folder → no repo to scope to. The PR panel
+			// falls back to the account-wide (-all) view.
+			usePrStore.getState().setActiveRepoSlug(null);
+			return;
+		}
 		const cwd = activeCwd;
 		const baseBranch = activeBaseBranch;
 		const wsId = activeWorkspaceId;
 		const cached = wsId ? hasGitDataCachedFor(wsId) : false;
 
 		let cancelled = false;
+
+		// Resolve the workspace's GitHub repo (owner/repo) for the repo-scoped
+		// PR filter. Null when the workspace has no github remote.
+		git
+			.repoSlug(cwd)
+			.then((slug) => {
+				if (!cancelled) usePrStore.getState().setActiveRepoSlug(slug);
+			})
+			.catch(() => {
+				if (!cancelled) usePrStore.getState().setActiveRepoSlug(null);
+			});
+
 		const rafId = requestAnimationFrame(() => {
 			if (cancelled) return;
 			if (!cached) {
-				// Cold-start fallback. Rare in practice — the scheduler will be
-				// running (or about to be) for this workspace, and its initial
-				// trigger covers the same data within ~500ms. This `fetchChanges`
-				// only matters when the scheduler hasn't pushed even once.
+				// Cold-start fallback — the scheduler's initial trigger covers
+				// the same data within ~500ms; this only matters when it hasn't
+				// pushed even once.
 				useGitChangesStore.getState().fetchChanges(cwd, baseBranch);
 			}
-			// PR data is orthogonal to the git scheduler — keep the invoke path.
-			usePrStore
-				.getState()
-				.checkGhStatus(cwd)
-				.then(() => {
-					if (cancelled) return;
-					const { ghStatus: status } = usePrStore.getState();
-					if (status?.available && status?.authenticated) {
-						usePrStore.getState().fetchReviewPrs(cwd);
-						usePrStore.getState().fetchMyPrs(cwd);
-					}
-				});
 		});
 		return () => {
 			cancelled = true;
 			cancelAnimationFrame(rafId);
 		};
 	}, [activeWorkspaceId, activeCwd, activeBaseBranch]);
-
-	// Adaptive gh polling: 60s when panel open, 300s when collapsed.
-	useEffect(() => {
-		if (!activeCwd || !ghStatus?.available || !ghStatus?.authenticated) return;
-		const cwd = activeCwd;
-		const ms = panelOpen ? GH_OPEN_MS : GH_COLLAPSED_MS;
-		const interval = setInterval(() => {
-			usePrStore.getState().fetchReviewPrs(cwd);
-			usePrStore.getState().fetchMyPrs(cwd);
-		}, ms);
-		return () => clearInterval(interval);
-	}, [activeCwd, panelOpen, ghStatus?.available, ghStatus?.authenticated]);
-
-	// No-workspace fallback. When zero workspaces are Opened, the per-workspace
-	// gh lifecycle above never runs (it has no cwd). Fetch account-wide PRs with
-	// a `null` cwd — the store treats `null` as the no-workspace sentinel and
-	// forces the `-all` view (and `run_gh` falls back to the home dir) — so the
-	// PR section and the Overview bar chips populate on the empty screen. Reuses
-	// the same `usePrStore` fetch path; this is the empty-state behaviour
-	// ADR-0005 originally conceded and later reversed (see its 2026-06-10 update).
-	// `checkGhStatus`'s own generation guard prevents a late `null` status check
-	// from clobbering a workspace's status if one opens mid-flight.
-	const noOpenedWorkspaces = openedWorkspaceIds.size === 0;
-	useEffect(() => {
-		if (!noOpenedWorkspaces) return;
-		let cancelled = false;
-		const run = () => {
-			usePrStore
-				.getState()
-				.checkGhStatus(null)
-				.then(() => {
-					if (cancelled) return;
-					const { ghStatus: status } = usePrStore.getState();
-					if (status?.available && status?.authenticated) {
-						usePrStore.getState().fetchReviewPrs(null);
-						usePrStore.getState().fetchMyPrs(null);
-					}
-				});
-		};
-		run();
-		const interval = setInterval(run, GH_OPEN_MS);
-		return () => {
-			cancelled = true;
-			clearInterval(interval);
-		};
-	}, [noOpenedWorkspaces]);
 }

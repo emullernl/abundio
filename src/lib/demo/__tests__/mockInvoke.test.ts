@@ -58,12 +58,13 @@ describe("mockInvoke", () => {
 		);
 	});
 
-	it("reports gh as available and authenticated", async () => {
-		expect(await mockInvoke("gh_status", { cwd: "/x" })).toEqual(
+	it("serves a PR poller snapshot with both lists", async () => {
+		expect(await mockInvoke("pr_poller_snapshot")).toEqual(
 			expect.objectContaining({
 				available: true,
 				authenticated: true,
-				hasRemote: true,
+				reviewRequested: expect.any(Array),
+				mine: expect.any(Array),
 			}),
 		);
 	});
