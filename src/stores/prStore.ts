@@ -111,26 +111,23 @@ export const usePrStore = create<PrState>()(
 	),
 );
 
-// ── Client-side All-vs-Repo selectors ──
-// When the view is repo-scoped AND we know the active repo, filter to it;
-// otherwise (all view, or no active repo) return the full account-wide list.
-// This means a repo-view with a null slug naturally shows the -all data, which
-// is why the empty-Opened-set state can simply force the -all label.
+// ── Client-side All-vs-Repo filter (single source of truth) ──
+// Repo-scoped view AND a known active repo → filter to it; otherwise (all view,
+// or no active repo) the full account-wide list. The PR panel passes its
+// *effective* view (which forces `-all` when no workspace is open), so the rule
+// lives here once rather than being duplicated in the component. A repo view
+// with a null slug naturally shows the `-all` data, which is why the
+// empty-Opened-set state can simply force the `-all` label.
 
-export function selectVisibleReviewPrs(state: PrState): PullRequest[] {
-	if (state.reviewView === "review-repo" && state.activeRepoSlug) {
-		return state.reviewRequested.filter(
-			(pr) => pr.repository === state.activeRepoSlug,
-		);
+export function visiblePrs(
+	prs: PullRequest[],
+	isRepoView: boolean,
+	activeRepoSlug: string | null,
+): PullRequest[] {
+	if (isRepoView && activeRepoSlug) {
+		return prs.filter((pr) => pr.repository === activeRepoSlug);
 	}
-	return state.reviewRequested;
-}
-
-export function selectVisibleMyPrs(state: PrState): PullRequest[] {
-	if (state.myPrsView === "mine-repo" && state.activeRepoSlug) {
-		return state.mine.filter((pr) => pr.repository === state.activeRepoSlug);
-	}
-	return state.mine;
+	return prs;
 }
 
 // ── PR change notifications ──

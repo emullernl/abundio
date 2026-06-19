@@ -67,6 +67,11 @@ struct PollerShared {
 	/// (= the focused interval) has elapsed.
 	focus_pending: Arc<AtomicBool>,
 	last: Arc<Mutex<Option<PrStatePayload>>>,
+	/// Last *successful* (authenticated, error-free) payload — the notification
+	/// diff baseline, kept separate from `last` so a transient gh error (whose
+	/// lists are empty) doesn't reset the baseline and swallow the next success's
+	/// notifications.
+	last_success: Arc<Mutex<Option<PrStatePayload>>>,
 	last_fetch: Arc<Mutex<Option<Instant>>>,
 }
 
@@ -85,11 +90,16 @@ impl PrPoller {
 		Self {
 			shared: PollerShared {
 				interval_minutes: Arc::new(AtomicU32::new(DEFAULT_INTERVAL_MINS)),
-				enabled: Arc::new(AtomicBool::new(true)),
+				// Off until the frontend pushes the persisted setting (mirrors
+				// UpdaterState::auto_check, updater.rs). This guarantees the
+				// PR's "zero when Off" promise with no startup race — the poller
+				// never fetches before it knows the user's real config.
+				enabled: Arc::new(AtomicBool::new(false)),
 				notify: Arc::new(Notify::new()),
 				force_fetch: Arc::new(AtomicBool::new(false)),
 				focus_pending: Arc::new(AtomicBool::new(false)),
 				last: Arc::new(Mutex::new(None)),
+				last_success: Arc::new(Mutex::new(None)),
 				last_fetch: Arc::new(Mutex::new(None)),
 			},
 		}
@@ -98,10 +108,16 @@ impl PrPoller {
 	/// Push the persisted frontend setting. Clamps the interval to 1–30 and
 	/// wakes the loop so the new cadence / enabled-state takes effect now.
 	pub fn set_config(&self, enabled: bool, minutes: u32) {
-		self.shared.enabled.store(enabled, Ordering::Relaxed);
+		let was_enabled = self.shared.enabled.swap(enabled, Ordering::Relaxed);
 		self.shared
 			.interval_minutes
 			.store(minutes.clamp(1, 30), Ordering::Relaxed);
+		// Just turned on (including the frontend's first push at startup) →
+		// populate immediately instead of waiting for the first timer tick. A
+		// redundant push from another Window (already on) does not refetch.
+		if enabled && !was_enabled {
+			self.shared.force_fetch.store(true, Ordering::Relaxed);
+		}
 		self.shared.notify.notify_one();
 	}
 
@@ -231,19 +247,18 @@ fn diff_changes(prev: &PrStatePayload, next: &PrStatePayload) -> Vec<PrChange> {
 /// Broadcast `pr-state` to all Windows; diff and send `pr-changes` to one
 /// profile Window; then cache the payload.
 fn emit_payload(app: &AppHandle, shared: &PollerShared, payload: PrStatePayload) {
-	let prev = shared.last.lock().unwrap().clone();
-
+	// Broadcast the display data to every Window.
 	let _ = app.emit("pr-state", &payload);
 
-	// Only diff between two successful, authenticated fetches — this skips the
-	// unauth→auth transition (e.g. after `gh auth login`), which would
-	// otherwise flag every PR as "new" and spam notifications on first load.
-	if let Some(prev) = prev {
-		if prev.authenticated
-			&& prev.error.is_none()
-			&& payload.authenticated
-			&& payload.error.is_none()
-		{
+	let is_success = payload.authenticated && payload.error.is_none();
+
+	// Diff against the last *successful* payload — not merely the last emitted
+	// one. This both skips the unauth→auth transition (which would flag every PR
+	// as "new" and spam on first login) and survives a transient error round:
+	// the error payload never becomes the baseline, so the next success still
+	// diffs against real prior data instead of an empty error payload.
+	if is_success {
+		if let Some(prev) = shared.last_success.lock().unwrap().clone() {
 			let changes = diff_changes(&prev, &payload);
 			if !changes.is_empty() {
 				emit_changes_to_one_window(app, &changes);
@@ -251,7 +266,12 @@ fn emit_payload(app: &AppHandle, shared: &PollerShared, payload: PrStatePayload)
 		}
 	}
 
-	*shared.last.lock().unwrap() = Some(payload);
+	// `last` is the snapshot served to new Windows (reflects the latest
+	// broadcast, error or not); `last_success` is the notification baseline.
+	*shared.last.lock().unwrap() = Some(payload.clone());
+	if is_success {
+		*shared.last_success.lock().unwrap() = Some(payload);
+	}
 }
 
 /// Send `pr-changes` to the focused profile Window, else any profile Window.
@@ -282,23 +302,26 @@ pub fn start(app: AppHandle) {
 	};
 	tauri::async_runtime::spawn(async move {
 		tokio::time::sleep(INITIAL_DELAY).await;
+		// Whether the previous wait ended because the cadence timer elapsed (vs a
+		// notify for refresh / focus / config change). Starts false so the first
+		// iteration never fetches on its own — the frontend's config push (or a
+		// manual refresh) drives the initial fetch via `force_fetch`.
+		let mut timer_elapsed = false;
 		loop {
 			let force = shared.force_fetch.swap(false, Ordering::Relaxed);
 			let focus = shared.focus_pending.swap(false, Ordering::Relaxed);
 			let enabled = shared.enabled.load(Ordering::Relaxed);
 			let interval = shared.interval_minutes.load(Ordering::Relaxed);
 
-			let should_fetch = if force {
-				true
-			} else if focus {
-				enabled && gap_elapsed(&shared, interval)
-			} else {
-				// timer-elapsed (or the first iteration)
-				enabled
-			};
+			// Fetch only for explicit reasons: a manual refresh, the cadence timer
+			// firing, or a focus-gain past the min-gap. A bare notify (interval
+			// change, or a redundant config push from another Window) just
+			// recomputes the wait — it never fetches.
+			let should_fetch = force
+				|| (timer_elapsed && enabled)
+				|| (focus && enabled && gap_elapsed(&shared, interval));
 
 			if should_fetch {
-				*shared.last_fetch.lock().unwrap() = Some(Instant::now());
 				let payload = tokio::task::spawn_blocking(build_payload_blocking)
 					.await
 					.unwrap_or_else(|_| PrStatePayload {
@@ -306,6 +329,9 @@ pub fn start(app: AppHandle) {
 						..Default::default()
 					});
 				emit_payload(&app, &shared, payload);
+				// Stamp AFTER completion so the min-gap measures spacing between
+				// finished fetches, not from fetch start.
+				*shared.last_fetch.lock().unwrap() = Some(Instant::now());
 			}
 
 			let mins = if app_focused(&app) {
@@ -314,10 +340,10 @@ pub fn start(app: AppHandle) {
 				BACKGROUND_INTERVAL_MINS
 			};
 			let dur = Duration::from_secs(mins as u64 * 60);
-			tokio::select! {
-				_ = tokio::time::sleep(dur) => {}
-				_ = shared.notify.notified() => {}
-			}
+			timer_elapsed = tokio::select! {
+				_ = tokio::time::sleep(dur) => true,
+				_ = shared.notify.notified() => false,
+			};
 		}
 	});
 }

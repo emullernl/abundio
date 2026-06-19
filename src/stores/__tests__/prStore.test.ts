@@ -17,9 +17,8 @@ import type { PrChange, PrStatePayload, PullRequest } from "../../lib/types";
 import {
 	handlePrChanges,
 	PR_VIEW_LABELS,
-	selectVisibleMyPrs,
-	selectVisibleReviewPrs,
 	usePrStore,
+	visiblePrs,
 } from "../prStore";
 import { useWorkspaceStore } from "../workspaceStore";
 
@@ -131,53 +130,20 @@ describe("prStore", () => {
 		});
 	});
 
-	describe("client-side All-vs-Repo filtering", () => {
+	describe("visiblePrs (All-vs-Repo filter)", () => {
 		const prA = makePr({ number: 1, repository: "org/a" });
 		const prB = makePr({ number: 2, repository: "org/b" });
 
-		it("review-all returns the full account-wide list", () => {
-			usePrStore.setState({
-				reviewRequested: [prA, prB],
-				reviewView: "review-all",
-				activeRepoSlug: "org/a",
-			});
-			expect(selectVisibleReviewPrs(usePrStore.getState())).toEqual([prA, prB]);
+		it("returns the full account-wide list in all view", () => {
+			expect(visiblePrs([prA, prB], false, "org/a")).toEqual([prA, prB]);
 		});
 
-		it("review-repo filters to the active repo slug", () => {
-			usePrStore.setState({
-				reviewRequested: [prA, prB],
-				reviewView: "review-repo",
-				activeRepoSlug: "org/a",
-			});
-			expect(selectVisibleReviewPrs(usePrStore.getState())).toEqual([prA]);
+		it("filters to the active repo slug in repo view", () => {
+			expect(visiblePrs([prA, prB], true, "org/a")).toEqual([prA]);
 		});
 
-		it("review-repo with no active slug falls back to the full list", () => {
-			usePrStore.setState({
-				reviewRequested: [prA, prB],
-				reviewView: "review-repo",
-				activeRepoSlug: null,
-			});
-			expect(selectVisibleReviewPrs(usePrStore.getState())).toEqual([prA, prB]);
-		});
-
-		it("mine-repo filters to the active repo slug", () => {
-			usePrStore.setState({
-				mine: [prA, prB],
-				myPrsView: "mine-repo",
-				activeRepoSlug: "org/b",
-			});
-			expect(selectVisibleMyPrs(usePrStore.getState())).toEqual([prB]);
-		});
-
-		it("mine-all returns the full list regardless of slug", () => {
-			usePrStore.setState({
-				mine: [prA, prB],
-				myPrsView: "mine-all",
-				activeRepoSlug: "org/b",
-			});
-			expect(selectVisibleMyPrs(usePrStore.getState())).toEqual([prA, prB]);
+		it("falls back to the full list in repo view with no slug", () => {
+			expect(visiblePrs([prA, prB], true, null)).toEqual([prA, prB]);
 		});
 	});
 

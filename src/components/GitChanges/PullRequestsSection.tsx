@@ -9,6 +9,7 @@ import {
 	type PrView,
 	type ReviewView,
 	usePrStore,
+	visiblePrs,
 } from "../../stores/prStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -39,19 +40,19 @@ export function PullRequestsSection() {
 	const effReviewView: ReviewView = noWorkspace ? "review-all" : reviewView;
 	const effMyPrsView: MyPrsView = noWorkspace ? "mine-all" : myPrsView;
 
-	// Client-side All-vs-Repo filtering over the one account-wide dataset.
+	// Client-side All-vs-Repo filtering over the one account-wide dataset, using
+	// the shared `visiblePrs` rule with this panel's effective view.
 	const reviewPrs = useMemo(
 		() =>
-			effReviewView === "review-repo" && activeRepoSlug
-				? reviewRequested.filter((p) => p.repository === activeRepoSlug)
-				: reviewRequested,
+			visiblePrs(
+				reviewRequested,
+				effReviewView === "review-repo",
+				activeRepoSlug,
+			),
 		[effReviewView, activeRepoSlug, reviewRequested],
 	);
 	const myPrsList = useMemo(
-		() =>
-			effMyPrsView === "mine-repo" && activeRepoSlug
-				? mine.filter((p) => p.repository === activeRepoSlug)
-				: mine,
+		() => visiblePrs(mine, effMyPrsView === "mine-repo", activeRepoSlug),
 		[effMyPrsView, activeRepoSlug, mine],
 	);
 
@@ -301,7 +302,38 @@ function PrSubPanel<V extends PrView>({
 
 			{/* Content */}
 			<div className="flex-1 min-h-0 overflow-y-auto">
-				{!ghStatus ? (
+				{!pollEnabled && section.prs.length === 0 ? (
+					// Checked ahead of the status/loading gates: with polling Off and
+					// no data, the poller never broadcasts, so `ghStatus`/`loading`
+					// would otherwise show "Checking GitHub CLI…" forever on a cold
+					// start. Manual Refresh still populates it.
+					<StatusMessage>
+						<span
+							style={{
+								fontWeight: 500,
+								color: "var(--fg-primary)",
+								marginBottom: 4,
+								display: "block",
+							}}
+						>
+							Pull request polling is off
+						</span>
+						<button
+							type="button"
+							onClick={openGithubSettings}
+							style={{
+								color: "var(--accent)",
+								background: "none",
+								border: "none",
+								padding: 0,
+								cursor: "pointer",
+								font: "inherit",
+							}}
+						>
+							Enable in Settings
+						</button>
+					</StatusMessage>
+				) : !ghStatus ? (
 					<StatusMessage>Checking GitHub CLI...</StatusMessage>
 				) : !ghStatus.available ? (
 					<StatusMessage>
@@ -350,36 +382,7 @@ function PrSubPanel<V extends PrView>({
 				) : section.error && section.prs.length === 0 ? (
 					<StatusMessage>{section.error}</StatusMessage>
 				) : section.prs.length === 0 ? (
-					!pollEnabled ? (
-						<StatusMessage>
-							<span
-								style={{
-									fontWeight: 500,
-									color: "var(--fg-primary)",
-									marginBottom: 4,
-									display: "block",
-								}}
-							>
-								Pull request polling is off
-							</span>
-							<button
-								type="button"
-								onClick={openGithubSettings}
-								style={{
-									color: "var(--accent)",
-									background: "none",
-									border: "none",
-									padding: 0,
-									cursor: "pointer",
-									font: "inherit",
-								}}
-							>
-								Enable in Settings
-							</button>
-						</StatusMessage>
-					) : (
-						<StatusMessage>No pull requests</StatusMessage>
-					)
+					<StatusMessage>No pull requests</StatusMessage>
 				) : (
 					<div className="flex flex-col">
 						{section.prs.map((pr) => (
