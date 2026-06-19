@@ -32,7 +32,9 @@ export function GitChangesFileList({
 	const grouped = SECTION_ORDER.map(({ key, label }) => ({
 		key,
 		label: label(baseBranch),
-		files: files.filter((f) => f.section === key),
+		files: files
+			.filter((f) => f.section === key)
+			.sort((a, b) => a.path.localeCompare(b.path)),
 	})).filter((g) => g.files.length > 0);
 
 	if (grouped.length === 0) {
