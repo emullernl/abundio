@@ -717,6 +717,71 @@ describe("detection mode", () => {
 	});
 });
 
+// The Overview bar counts are derived live by iterating activities/agentPtyIds.
+// teardownTerminal's store effect is removePty(ptyId) + removePane(paneId); these
+// tests lock that closing a pane drops its count and never underflows. See ADR-0020.
+describe("Overview bar counts drop when a pane is torn down", () => {
+	function seedFourPanes() {
+		const s = usePtyActivityStore.getState();
+		// agent working
+		s.initPty("a1", "agent");
+		s.setAgentPty("a1");
+		s.recordOutput("a1");
+		s.registerPane("pane-a1", "a1");
+		// agent idle
+		s.initPty("a2", "agent");
+		s.setAgentPty("a2");
+		s.registerPane("pane-a2", "a2");
+		// shell working
+		s.initPty("s1");
+		s.recordOutput("s1");
+		s.registerPane("pane-s1", "s1");
+		// shell error
+		s.initPty("s2");
+		s.recordError("s2");
+		s.registerPane("pane-s2", "s2");
+	}
+
+	it("dropping an agent and a shell pane decrements only their tiles", () => {
+		seedFourPanes();
+		expect(selectWorkingAgentCount(usePtyActivityStore.getState())).toBe(1);
+		expect(selectIdleAgentCount(usePtyActivityStore.getState())).toBe(1);
+		expect(selectWorkingShellCount(usePtyActivityStore.getState())).toBe(1);
+		expect(selectErrorShellCount(usePtyActivityStore.getState())).toBe(1);
+
+		// Simulate teardownTerminal's store effect for the working agent + shell.
+		const s = usePtyActivityStore.getState();
+		s.removePty("a1");
+		s.removePane("pane-a1");
+		s.removePty("s1");
+		s.removePane("pane-s1");
+
+		const after = usePtyActivityStore.getState();
+		expect(selectWorkingAgentCount(after)).toBe(0);
+		expect(selectIdleAgentCount(after)).toBe(1); // a2 survives
+		expect(selectWorkingShellCount(after)).toBe(0);
+		expect(selectErrorShellCount(after)).toBe(1); // s2 survives
+		expect(after.panePtyMap["pane-a1"]).toBeUndefined();
+		expect(after.panePtyMap["pane-s1"]).toBeUndefined();
+		expect(after.agentPtyIds.has("a1")).toBe(false);
+	});
+
+	it("is idempotent — a redundant teardown pass can't underflow the counts", () => {
+		seedFourPanes();
+		const s = usePtyActivityStore.getState();
+		s.removePty("a1");
+		s.removePane("pane-a1");
+		// Second pass (the closePaneNow→closeTab cascade) is a no-op.
+		s.removePty("a1");
+		s.removePane("pane-a1");
+
+		const after = usePtyActivityStore.getState();
+		expect(selectWorkingAgentCount(after)).toBe(0);
+		expect(selectIdleAgentCount(after)).toBe(1);
+		expect(selectWorkingShellCount(after)).toBe(1);
+	});
+});
+
 describe("notifications on state transitions", () => {
 	const mockSendNotification = vi.mocked(sendNotification);
 

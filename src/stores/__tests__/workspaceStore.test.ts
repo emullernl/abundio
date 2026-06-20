@@ -25,6 +25,8 @@ vi.mock("../explorerStore", () => ({
 			activeFileTabId: null,
 			activeFileTabByWorkspace: {},
 			fileTabs: [],
+			unregisterFilePane: vi.fn(),
+			clearWorkspaceFilePanes: vi.fn(),
 		})),
 		setState: vi.fn(),
 	},
@@ -32,6 +34,9 @@ vi.mock("../explorerStore", () => ({
 
 const markWorkspaceOpened = vi.fn();
 const unmarkWorkspaceOpened = vi.fn();
+// Referenced eagerly in the terminalManager mock factory (not deferred inside a
+// closure like the others), so it must be hoisted alongside the vi.mock call.
+const { teardownTerminal } = vi.hoisted(() => ({ teardownTerminal: vi.fn() }));
 let mockOpenedWorkspaceIds = new Set<string>();
 vi.mock("../ptyActivityStore", () => ({
 	usePtyActivityStore: {
@@ -45,6 +50,7 @@ vi.mock("../ptyActivityStore", () => ({
 
 vi.mock("../../lib/terminalManager", () => ({
 	destroyTerminal: vi.fn(),
+	teardownTerminal,
 }));
 
 import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
@@ -89,6 +95,7 @@ function makeWorkspace(
 beforeEach(() => {
 	markWorkspaceOpened.mockClear();
 	unmarkWorkspaceOpened.mockClear();
+	teardownTerminal.mockClear();
 	mockOpenedWorkspaceIds = new Set();
 	useWorkspaceStore.setState({
 		workspaces: [],
@@ -418,6 +425,80 @@ describe("workspaceStore", () => {
 
 			expect(unmarkWorkspaceOpened).toHaveBeenCalledWith("workspace-1");
 			expect(useWorkspaceStore.getState().workspaces).toHaveLength(0);
+		});
+
+		it("tears down every pane so Overview counts drop on a direct delete", async () => {
+			// Direct delete (sidebar bulk-delete) skips closeWorkspace, so
+			// deleteWorkspace must tear down its own panes. See ADR-0020.
+			const workspace = makeWorkspace();
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+
+			await useWorkspaceStore.getState().deleteWorkspace("workspace-1");
+
+			expect(teardownTerminal).toHaveBeenCalledWith("pane-1");
+		});
+	});
+
+	describe("closeTab", () => {
+		it("tears down the closed tab's panes but not other tabs'", async () => {
+			const tabA = makeTab({
+				id: "tab-1",
+				layoutJson: JSON.stringify({
+					type: "terminal",
+					id: "pane-a",
+					ptyId: "",
+				}),
+			});
+			const tabB = makeTab({
+				id: "tab-2",
+				layoutJson: JSON.stringify({
+					type: "terminal",
+					id: "pane-b",
+					ptyId: "",
+				}),
+			});
+			const workspace = makeWorkspace({ tabs: [tabA, tabB] });
+			useWorkspaceStore.setState({
+				workspaces: [workspace],
+				activeTabByWorkspace: { "workspace-1": "tab-2" },
+			});
+
+			await useWorkspaceStore.getState().closeTab("tab-2");
+
+			expect(teardownTerminal).toHaveBeenCalledWith("pane-b");
+			expect(teardownTerminal).not.toHaveBeenCalledWith("pane-a");
+			expect(
+				useWorkspaceStore.getState().workspaces[0].tabs.map((t) => t.id),
+			).toEqual(["tab-1"]);
+		});
+	});
+
+	describe("closeWorkspace", () => {
+		it("tears down every pane and unmarks the workspace as opened", async () => {
+			const splitTab = makeTab({
+				id: "tab-1",
+				layoutJson: JSON.stringify({
+					type: "split",
+					id: "split-1",
+					direction: "horizontal",
+					ratio: 0.5,
+					first: { type: "terminal", id: "pane-a", ptyId: "" },
+					second: { type: "terminal", id: "pane-b", ptyId: "" },
+				}),
+			});
+			const workspace = makeWorkspace({ tabs: [splitTab] });
+			useWorkspaceStore.setState({
+				workspaces: [workspace],
+				activeWorkspaceId: "workspace-1",
+			});
+
+			await useWorkspaceStore.getState().closeWorkspace("workspace-1");
+
+			expect(teardownTerminal).toHaveBeenCalledWith("pane-a");
+			expect(teardownTerminal).toHaveBeenCalledWith("pane-b");
+			expect(unmarkWorkspaceOpened).toHaveBeenCalledWith("workspace-1");
+			// Closed, not deleted — the workspace stays in the list.
+			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
 		});
 	});
 

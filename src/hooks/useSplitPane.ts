@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { agentHooks, pty } from "../lib/ipc";
+import { agentHooks } from "../lib/ipc";
 import { suppressMarkdownPreview } from "../lib/markdownPreview";
 import {
 	collectTerminals,
@@ -10,7 +10,7 @@ import {
 	wrapInSplit,
 } from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
-import { destroyTerminal } from "../lib/terminalManager";
+import { teardownTerminal } from "../lib/terminalManager";
 import type { CodingAgent, PaneNode } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
 import { requestPaneClose } from "../stores/paneCloseConfirmStore";
@@ -117,11 +117,12 @@ export function useSplitPane() {
 			// A file pane's bound preview pane is closed alongside it.
 			let cascadePreviewId: string | null = null;
 			if (node?.type === "terminal") {
-				destroyTerminal(paneId);
-				if (node.ptyId) {
-					pty.kill(node.ptyId).catch(() => {});
-				}
-				pty.deleteLog(paneId).catch(() => {});
+				// Permanently tear down: stops the background tracker, kills the
+				// PTY, and purges activity entries so the Overview bar counts drop
+				// (ADR-0020). If this is the last pane, the closeTab cascade below
+				// re-runs teardownTerminal over the still-stale stored layout — an
+				// intentional, idempotent no-op.
+				teardownTerminal(paneId);
 			} else if (node?.type === "file") {
 				useExplorerStore.getState().unregisterFilePane(paneId);
 				cascadePreviewId = findPreviewForSource(layout, paneId)?.id ?? null;

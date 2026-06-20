@@ -325,6 +325,17 @@ export const INACTIVITY_RESET_MS = 3000;
 
 async function startBackgroundTracking(ptyId: string) {
 	if (backgroundTrackers.has(ptyId)) return;
+	// Invariant (ADR-0020): a live tracker must have a matching panePtyMap entry,
+	// or teardownTerminal can't reach it to stop it. Guard in dev only.
+	if (import.meta.env.DEV) {
+		const { panePtyMap } = usePtyActivityStore.getState();
+		if (!Object.values(panePtyMap).includes(ptyId)) {
+			console.warn(
+				`[terminalManager] background tracker for ptyId ${ptyId} has no ` +
+					`panePtyMap entry — teardownTerminal cannot reach it (ADR-0020).`,
+			);
+		}
+	}
 	let bgBytesSinceIdle = 0;
 	let bgThresholdHitTimes: number[] = [];
 	let bgLastOutputChunkAt = 0;
@@ -1394,25 +1405,77 @@ export async function resetTerminal(paneId: string): Promise<void> {
 	await initPty(paneId, managed, cwd);
 }
 
-/** Fully destroy a terminal (used when closing a pane) */
-export function destroyTerminal(paneId: string): void {
+/**
+ * Dispose a pane's xterm instance (optionally snapshotting scrollback first).
+ * Does NOT touch the PTY process or background tracking — callers decide that.
+ * Returns the disposed instance's ptyId, or null if there was no instance.
+ */
+function disposeInstance(paneId: string, snapshot: boolean): string | null {
 	const managed = instances.get(paneId);
-	if (!managed) return;
-	// Serialize scrollback before cleanup/dispose destroys the terminal
-	try {
-		const data = managed.serializeAddon.serialize();
-		if (data) {
-			pty.writeSnapshot(paneId, data);
+	if (!managed) return null;
+	if (snapshot) {
+		// Serialize scrollback before cleanup/dispose destroys the terminal
+		try {
+			const data = managed.serializeAddon.serialize();
+			if (data) {
+				pty.writeSnapshot(paneId, data);
+			}
+		} catch {
+			// Terminal may be in intermediate state
 		}
-	} catch {
-		// Terminal may be in intermediate state
 	}
+	const ptyId = managed.ptyId;
 	managed.cleanup?.();
 	managed.term.dispose();
 	instances.delete(paneId);
 	bumpPaneRevision(paneId);
+	return ptyId || null;
+}
+
+/**
+ * Destroy a terminal on workspace *switch-away*: dispose the UI but keep the PTY
+ * alive, handing activity tracking to a background listener so the status dot
+ * keeps updating for the now-inactive workspace. NOT for permanent close — that
+ * is `teardownTerminal`. See ADR-0020.
+ */
+export function destroyTerminal(paneId: string): void {
+	const ptyId = disposeInstance(paneId, true);
 	// Start background tracking so activity dots update for inactive workspaces
-	if (managed.ptyId) {
-		startBackgroundTracking(managed.ptyId);
+	if (ptyId) {
+		startBackgroundTracking(ptyId);
 	}
+}
+
+/**
+ * Permanently tear down a pane's terminal — used when closing a Pane, Tab, or
+ * Workspace (never on switch-away). Stops any background tracker, disposes the UI
+ * WITHOUT re-tracking, kills the PTY, deletes its log, and purges its activity
+ * entries so the Overview bar counts drop. Idempotent (a second call resolves an
+ * empty ptyId and only runs the no-op `removePane`) and safe for non-terminal
+ * panes. Must run synchronously from the close handler so it pre-empts the
+ * deferred `destroyTerminal` the unmounting component schedules — which then
+ * finds no instance and no-ops instead of re-starting a tracker on a dead PTY.
+ * See ADR-0020.
+ */
+export function teardownTerminal(paneId: string): void {
+	const actStore = usePtyActivityStore.getState();
+	// Authoritative live ptyId: the mounted instance, else panePtyMap (written at
+	// spawn, ahead of the layout write-back, and surviving instance disposal).
+	// Never the layout's node.ptyId. See ADR-0020.
+	const ptyId =
+		instances.get(paneId)?.ptyId || actStore.panePtyMap[paneId] || "";
+	if (ptyId) {
+		// Stop any tracker started by a prior switch-away first, so the kill's
+		// exit event reaches no listener and can't re-create the entry via the
+		// unguarded recordError. See ADR-0020.
+		stopBackgroundTracking(ptyId);
+	}
+	// Dispose without snapshotting (we're deleting the log) and without re-tracking.
+	disposeInstance(paneId, false);
+	if (ptyId) {
+		pty.kill(ptyId).catch(() => {});
+		pty.deleteLog(paneId).catch(() => {});
+		actStore.removePty(ptyId);
+	}
+	actStore.removePane(paneId);
 }
