@@ -1,9 +1,11 @@
 use std::env;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::sync::mpsc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -60,6 +62,15 @@ pub fn default_shell() -> String {
 /// On macOS, apps launched from Finder inherit a minimal PATH that doesn't
 /// include Homebrew directories. This resolves the real PATH by invoking the
 /// user's login shell once, then caches the result for the process lifetime.
+///
+/// The shell is invoked with `-l -i` (login + interactive) to match the flags
+/// used when spawning terminal PTYs. Many tools (Claude Code's installer, etc.)
+/// add themselves to PATH only from interactive-shell config (`.zshrc`), which
+/// a login-but-not-interactive shell never sources — so without `-i` those
+/// binaries resolve as "not installed" here even though they run fine inside a
+/// pane. Interactive config may print to stdout (prompts, plugins), so the
+/// PATH is wrapped in sentinels and extracted rather than parsing the whole
+/// stream.
 pub fn shell_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
@@ -68,14 +79,12 @@ pub fn shell_path() -> &'static str {
         }
 
         let shell = default_shell();
-        if let Ok(output) = Command::new(&shell)
-            .args(["-l", "-c", "printenv PATH 2>/dev/null"])
-            .output()
-        {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if let Some(stdout) = capture_login_shell_path(&shell) {
+            if let Some(path) =
+                extract_between(&stdout, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__")
+            {
                 if !path.is_empty() {
-                    return path;
+                    return path.to_string();
                 }
             }
         }
@@ -84,6 +93,70 @@ pub fn shell_path() -> &'static str {
         let current = env::var("PATH").unwrap_or_default();
         format!("{current}:/opt/homebrew/bin:/usr/local/bin")
     })
+}
+
+/// Upper bound on how long we wait for the login+interactive shell to print its
+/// PATH. Interactive rc files can do slow or even blocking work (`compinit`,
+/// `nvm`, network-touching plugins); if one wedges, we give up and let the
+/// caller fall through to the Homebrew fallback rather than hanging forever.
+const SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Runs the user's login + interactive shell to capture its sentinel-wrapped
+/// `PATH`, bounded by [`SHELL_PATH_TIMEOUT`]. Returns the raw stdout on success,
+/// or `None` if the shell failed to spawn or timed out.
+///
+/// Two guards make this safe now that we source interactive config:
+/// - **stdin is nulled** so a sourced rc snippet that issues a `read` gets EOF
+///   immediately instead of blocking on the parent's inherited stdin.
+/// - **stdout is drained on a worker thread** so a hung shell can be killed on
+///   timeout without leaking the reader (the read returns once the killed
+///   child's stdout closes).
+fn capture_login_shell_path(shell: &str) -> Option<String> {
+    use std::io::Read;
+
+    let mut child = Command::new(shell)
+        .args([
+            "-l",
+            "-i",
+            "-c",
+            "printf '__ABUNDIO_PATH_START__%s__ABUNDIO_PATH_END__' \"$PATH\"",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        let _ = tx.send(buf);
+    });
+
+    match rx.recv_timeout(SHELL_PATH_TIMEOUT) {
+        // Exit status is intentionally ignored: an interactive shell with no
+        // tty often exits non-zero (job-control warnings) even when `printf`
+        // succeeded. The sentinel extraction is the real success check.
+        Ok(buf) => {
+            let _ = child.wait();
+            Some(buf)
+        }
+        Err(_) => {
+            // Timed out (or the reader vanished) — kill the shell and bail.
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+    }
+}
+
+/// Returns the substring strictly between the first `start` marker and the
+/// first following `end` marker, or `None` if either marker is absent.
+fn extract_between<'a>(haystack: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let after_start = haystack.split_once(start)?.1;
+    Some(after_start.split_once(end)?.0)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -255,5 +328,25 @@ mod tests {
         if !cfg!(target_os = "windows") {
             assert!(shell.starts_with('/') || shell == "cmd.exe");
         }
+    }
+
+    #[test]
+    fn extract_between_pulls_path_out_of_noisy_stream() {
+        // Interactive shell config can print to stdout before the PATH value;
+        // the sentinels must isolate just the PATH regardless of that noise.
+        let stream = "welcome banner\nplugin loaded\n__ABUNDIO_PATH_START__/usr/local/bin:/usr/bin__ABUNDIO_PATH_END__";
+        assert_eq!(
+            extract_between(stream, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__"),
+            Some("/usr/local/bin:/usr/bin")
+        );
+    }
+
+    #[test]
+    fn extract_between_returns_none_without_markers() {
+        assert_eq!(extract_between("no markers here", "__START__", "__END__"), None);
+        assert_eq!(
+            extract_between("__START__only start", "__START__", "__END__"),
+            None
+        );
     }
 }
