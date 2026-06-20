@@ -8,7 +8,6 @@ import {
 import {
 	collectAgentPanes,
 	collectPaneIds,
-	collectTerminalIds,
 	extractNode,
 	findFilePaneInTree,
 	insertBesideNode,
@@ -17,7 +16,7 @@ import {
 	setCwd,
 } from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
-import { destroyTerminal } from "../lib/terminalManager";
+import { teardownTerminal } from "../lib/terminalManager";
 import type {
 	CodingAgent,
 	PaneNode,
@@ -533,13 +532,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	deleteWorkspace: async (id) => {
 		const workspace = get().workspaces.find((s) => s.id === id);
 		if (workspace) {
-			// Clean up log files for all panes across all tabs
+			// Permanently tear down every pane across all tabs — kills PTYs, stops
+			// background trackers, and purges activity entries so the Overview bar
+			// counts drop even for a direct delete that skipped closeWorkspace
+			// (e.g. sidebar bulk-delete, worktree sync). Idempotent if
+			// closeWorkspace already ran. See ADR-0020.
 			for (const tab of workspace.tabs) {
 				try {
 					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					const paneIds = collectTerminalIds(layout);
-					for (const paneId of paneIds) {
-						pty.deleteLog(paneId).catch(() => {});
+					for (const paneId of collectPaneIds(layout)) {
+						teardownTerminal(paneId);
 					}
 				} catch {
 					// Layout parse failure — skip cleanup
@@ -566,19 +568,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 		const activityStore = usePtyActivityStore.getState();
 
-		// Destroy terminal instances, kill PTYs, and clean up activity state.
+		// Permanently tear down every pane: kill PTYs, stop background trackers,
+		// and purge activity entries so the Overview bar counts drop (ADR-0020).
 		for (const tab of workspace.tabs) {
 			try {
 				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				const paneIds = collectPaneIds(layout);
-				for (const paneId of paneIds) {
-					destroyTerminal(paneId);
-					const ptyId = activityStore.panePtyMap[paneId];
-					if (ptyId) {
-						pty.kill(ptyId).catch(() => {});
-						activityStore.removePty(ptyId);
-					}
-					activityStore.removePane(paneId);
+				for (const paneId of collectPaneIds(layout)) {
+					teardownTerminal(paneId);
 				}
 				// Clean up file pane state
 				useExplorerStore.getState().clearWorkspaceFilePanes(id);
@@ -791,20 +787,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		const tabIndex = workspace.tabs.findIndex((t) => t.id === tabId);
 		const tab = workspace.tabs[tabIndex];
 
-		// Clean up panes in this tab
+		// Permanently tear down every pane in this tab — kills PTYs, stops
+		// background trackers, and purges activity entries so the Overview bar
+		// counts drop (ADR-0020). File-pane explorer state is cleared alongside.
 		if (tab) {
 			try {
 				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				const termIds = collectTerminalIds(layout);
-				for (const paneId of termIds) {
-					pty.deleteLog(paneId).catch(() => {});
-				}
-				// Clean up file pane states for file leaves
 				for (const paneId of collectPaneIds(layout)) {
+					teardownTerminal(paneId);
 					useExplorerStore.getState().unregisterFilePane(paneId);
 				}
 			} catch {
-				// ignore
+				// Layout parse failure — skip cleanup
 			}
 		}
 
