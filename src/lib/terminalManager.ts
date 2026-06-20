@@ -1474,8 +1474,12 @@ export function teardownTerminal(paneId: string): void {
 	disposeInstance(paneId, false);
 	if (ptyId) {
 		pty.kill(ptyId).catch(() => {});
-		pty.deleteLog(paneId).catch(() => {});
 		actStore.removePty(ptyId);
 	}
+	// deleteLog is keyed by paneId, not the live PTY, so run it even for a cold
+	// pane (ptyId resolves to "") — a directly-deleted workspace whose tabs were
+	// never opened this session still has persisted scrollback logs on disk; purge
+	// them now instead of leaving them for the next-launch cleanupStaleLogs sweep.
+	pty.deleteLog(paneId).catch(() => {});
 	actStore.removePane(paneId);
 }
