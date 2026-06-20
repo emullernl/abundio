@@ -1,9 +1,11 @@
 use std::env;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::sync::mpsc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -77,23 +79,12 @@ pub fn shell_path() -> &'static str {
         }
 
         let shell = default_shell();
-        if let Ok(output) = Command::new(&shell)
-            .args([
-                "-l",
-                "-i",
-                "-c",
-                "printf '__ABUNDIO_PATH_START__%s__ABUNDIO_PATH_END__' \"$PATH\"",
-            ])
-            .output()
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(path) =
-                    extract_between(&stdout, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__")
-                {
-                    if !path.is_empty() {
-                        return path.to_string();
-                    }
+        if let Some(stdout) = capture_login_shell_path(&shell) {
+            if let Some(path) =
+                extract_between(&stdout, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__")
+            {
+                if !path.is_empty() {
+                    return path.to_string();
                 }
             }
         }
@@ -102,6 +93,63 @@ pub fn shell_path() -> &'static str {
         let current = env::var("PATH").unwrap_or_default();
         format!("{current}:/opt/homebrew/bin:/usr/local/bin")
     })
+}
+
+/// Upper bound on how long we wait for the login+interactive shell to print its
+/// PATH. Interactive rc files can do slow or even blocking work (`compinit`,
+/// `nvm`, network-touching plugins); if one wedges, we give up and let the
+/// caller fall through to the Homebrew fallback rather than hanging forever.
+const SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Runs the user's login + interactive shell to capture its sentinel-wrapped
+/// `PATH`, bounded by [`SHELL_PATH_TIMEOUT`]. Returns the raw stdout on success,
+/// or `None` if the shell failed to spawn or timed out.
+///
+/// Two guards make this safe now that we source interactive config:
+/// - **stdin is nulled** so a sourced rc snippet that issues a `read` gets EOF
+///   immediately instead of blocking on the parent's inherited stdin.
+/// - **stdout is drained on a worker thread** so a hung shell can be killed on
+///   timeout without leaking the reader (the read returns once the killed
+///   child's stdout closes).
+fn capture_login_shell_path(shell: &str) -> Option<String> {
+    use std::io::Read;
+
+    let mut child = Command::new(shell)
+        .args([
+            "-l",
+            "-i",
+            "-c",
+            "printf '__ABUNDIO_PATH_START__%s__ABUNDIO_PATH_END__' \"$PATH\"",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        let _ = tx.send(buf);
+    });
+
+    match rx.recv_timeout(SHELL_PATH_TIMEOUT) {
+        // Exit status is intentionally ignored: an interactive shell with no
+        // tty often exits non-zero (job-control warnings) even when `printf`
+        // succeeded. The sentinel extraction is the real success check.
+        Ok(buf) => {
+            let _ = child.wait();
+            Some(buf)
+        }
+        Err(_) => {
+            // Timed out (or the reader vanished) — kill the shell and bail.
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+    }
 }
 
 /// Returns the substring strictly between the first `start` marker and the
