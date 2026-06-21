@@ -36,6 +36,41 @@ if (!IS_SETTINGS_WINDOW) {
 	initNotificationListener();
 }
 
+// Probe only the main window. `!IS_SETTINGS_WINDOW` is also true for every
+// `window-*` profile window, so gating on it would fan out a capture request
+// per restored window on a multi-window launch (windows.json restoration).
+if (currentWindowLabel() === "main") {
+	probeMicrophoneAccess();
+}
+
+// Diagnostic probe: on app start, ask for microphone access so macOS shows its
+// one-time TCC permission prompt (and so we can see, in the console, exactly
+// where the chain breaks). `navigator.mediaDevices` is `undefined` in a
+// WKWebView that isn't a secure context — surfaced separately from a denial so
+// the two failure modes don't get confused. Stops the track immediately; we
+// only want to trigger the prompt, not keep the mic open.
+function probeMicrophoneAccess(): void {
+	if (!navigator.mediaDevices?.getUserMedia) {
+		console.error(
+			"[mic-probe] navigator.mediaDevices.getUserMedia is unavailable — " +
+				"webview is not a secure context (no NSMicrophoneUsageDescription " +
+				"reached, or custom protocol not treated as secure).",
+		);
+		return;
+	}
+	navigator.mediaDevices
+		.getUserMedia({ audio: true })
+		.then((stream) => {
+			console.log("[mic-probe] microphone access granted");
+			for (const track of stream.getTracks()) track.stop();
+		})
+		.catch((err) => {
+			console.error(
+				`[mic-probe] microphone access denied or error: ${err?.name ?? "Error"}: ${err?.message ?? err}`,
+			);
+		});
+}
+
 // Pause all CSS animations when the app is hidden to reduce GPU usage.
 document.addEventListener("visibilitychange", () => {
 	document.documentElement.classList.toggle("app-hidden", document.hidden);
