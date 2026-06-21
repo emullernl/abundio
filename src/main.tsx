@@ -34,6 +34,12 @@ const IS_SETTINGS_WINDOW = currentWindowLabel() === "settings";
 // has no workspaces / PTYs / notification routing of its own.
 if (!IS_SETTINGS_WINDOW) {
 	initNotificationListener();
+}
+
+// Probe only the main window. `!IS_SETTINGS_WINDOW` is also true for every
+// `window-*` profile window, so gating on it would fan out a capture request
+// per restored window on a multi-window launch (windows.json restoration).
+if (currentWindowLabel() === "main") {
 	probeMicrophoneAccess();
 }
 
