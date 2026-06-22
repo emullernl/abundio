@@ -440,8 +440,28 @@ fi
     // MSYS2 /etc/profile / /etc/bash.bashrc can no longer clobber restored
     // scrollback. Use a single unified bashrc across all platforms.
     let bashrc_content = r#"# Abundio shell integration — loaded via --rcfile
-# Source login shell config files for parity (--rcfile replaces -l)
+# Reproduce a login + interactive bash startup so panes get both login env
+# (PATH etc.) AND interactive config (PS1, aliases) — but source ~/.bashrc
+# EXACTLY ONCE. A real `bash -l -i` reads /etc/profile then the first of
+# ~/.bash_profile|~/.bash_login|~/.profile; on Debian/Ubuntu those source
+# ~/.bashrc themselves. We also want ~/.bashrc for users whose profile does
+# not. Sourcing it twice breaks re-source-guarded prompt tools: the second
+# pass re-runs ~/.bashrc's own default PS1 line while a guarded tool it loads
+# (e.g. nerdps1's `ps1_loaded`) early-returns, leaving the system default
+# prompt. So we intercept the profile's ~/.bashrc source and dedupe it.
 [ -f /etc/profile ] && source /etc/profile
+[ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
+# Wrap source/. only while sourcing the login profile files: this records
+# whether they already loaded ~/.bashrc and forwards every other source
+# untouched (so e.g. .bashrc -> nerdps1 still loads normally).
+__abundio_bashrc_loaded=
+source() {
+  case "$1" in
+    "$HOME/.bashrc"|~/.bashrc|.bashrc|./.bashrc) __abundio_bashrc_loaded=1 ;;
+  esac
+  builtin source "$@"
+}
+.() { source "$@"; }
 if [ -f ~/.bash_profile ]; then
   source ~/.bash_profile
 elif [ -f ~/.bash_login ]; then
@@ -449,9 +469,10 @@ elif [ -f ~/.bash_login ]; then
 elif [ -f ~/.profile ]; then
   source ~/.profile
 fi
-# Source the user's real bash config
-[ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
-[ -f ~/.bashrc ] && source ~/.bashrc
+unset -f source .
+# Only source ~/.bashrc ourselves if the profile files did not already do it.
+[ -z "$__abundio_bashrc_loaded" ] && [ -f ~/.bashrc ] && builtin source ~/.bashrc
+unset __abundio_bashrc_loaded
 # Hooks
 # Track whether the DEBUG trap is firing for a genuine interactive command
 # vs. a command run from PROMPT_COMMAND (e.g. a distro's `history -a`) or tab
