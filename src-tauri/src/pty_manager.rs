@@ -450,6 +450,11 @@ fi
 # (e.g. nerdps1's `ps1_loaded`) early-returns, leaving the system default
 # prompt. So we intercept the profile's ~/.bashrc source and dedupe it.
 [ -f /etc/profile ] && source /etc/profile
+# Dedup below is intentionally ~/.bashrc-only. On Debian/Ubuntu /etc/profile
+# itself sources /etc/bash.bashrc (when PS1 is set), so the next line may run
+# it twice — harmless, since ~/.bashrc is sourced last and wins the prompt, and
+# no guarded tool ships in /etc/bash.bashrc. (--rcfile suppresses bash's own
+# automatic /etc/bash.bashrc + ~/.bashrc loading, hence sourcing it here.)
 [ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
 # Wrap source/. only while sourcing the login profile files: this records
 # whether they already loaded ~/.bashrc and forwards every other source
