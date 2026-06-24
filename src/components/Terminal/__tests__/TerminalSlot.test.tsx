@@ -19,8 +19,20 @@ vi.mock("../../../lib/terminalManager", () => ({
 	getPaneRevision: () => 0,
 	subscribePaneRevision: () => () => {},
 }));
+// Capture the element TerminalSlot registers as the xterm screen target
+// (innerRef) so tests can dispatch clicks that land "inside the terminal" vs.
+// on surrounding chrome.
+const { registerTarget, xtermTargets } = vi.hoisted(() => {
+	const xtermTargets: Record<string, HTMLElement> = {};
+	return {
+		xtermTargets,
+		registerTarget: (paneId: string, el: HTMLElement) => {
+			xtermTargets[paneId] = el;
+		},
+	};
+});
 vi.mock("../../../lib/portalRegistry", () => ({
-	registerTarget: vi.fn(),
+	registerTarget,
 	unregisterTarget: vi.fn(),
 }));
 vi.mock("../../../lib/ipc", () => ({ pty: { write: vi.fn() } }));
@@ -89,24 +101,36 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 		return container.querySelector<HTMLElement>('[data-pane-id="pane-1"]');
 	}
 
-	function mouseDown(button: number) {
+	// The registered xterm screen element — clicks here count as "inside the
+	// terminal". Falls back to the pane container if registration didn't happen.
+	function screenEl() {
+		return xtermTargets["pane-1"] ?? paneEl();
+	}
+
+	function mouseDownOn(el: Element | null | undefined, button: number) {
 		act(() => {
-			paneEl()?.dispatchEvent(
-				new MouseEvent("mousedown", { bubbles: true, button }),
-			);
+			el?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button }));
 		});
 	}
 
-	it("left-click drops a waiting agent to idle", () => {
+	it("left-click inside the terminal screen drops a waiting agent to idle", () => {
 		makeWaiting("pty-1");
 		expect(stateOf("pty-1")).toBe("waiting");
-		mouseDown(0);
+		mouseDownOn(screenEl(), 0);
 		expect(stateOf("pty-1")).toBe("idle");
 	});
 
-	it("right-click leaves the waiting dot untouched", () => {
+	it("left-click on pane chrome (outside the screen) leaves the dot lit", () => {
 		makeWaiting("pty-1");
-		mouseDown(2);
+		// Click the outer container directly — stands in for the title bar / a
+		// pane drag-reorder that starts outside the xterm screen.
+		mouseDownOn(paneEl(), 0);
+		expect(stateOf("pty-1")).toBe("waiting");
+	});
+
+	it("right-click inside the screen leaves the waiting dot untouched", () => {
+		makeWaiting("pty-1");
+		mouseDownOn(screenEl(), 2);
 		expect(stateOf("pty-1")).toBe("waiting");
 	});
 
@@ -121,7 +145,7 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 	it("is a no-op when the pane has no managed PTY yet", () => {
 		makeWaiting("pty-1");
 		currentManagedPtyId = null;
-		mouseDown(0);
+		mouseDownOn(screenEl(), 0);
 		expect(stateOf("pty-1")).toBe("waiting");
 	});
 });

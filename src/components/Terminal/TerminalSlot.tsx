@@ -183,18 +183,24 @@ export function TerminalSlot({
 		}
 	}, [onFocus, paneId]);
 
-	// A deliberate left-click into the pane counts as the user engaging with a
-	// waiting agent, so clear its sky-blue "waiting" dot to idle — the same
-	// effect ESC has in terminalManager's onData keystroke path. clearWaiting is
-	// a no-op unless the pane is actually waiting, so this is safe to call
-	// unconditionally. We do NOT fold this into handleFocus: that also fires on
-	// programmatic focus (tab switch via the isFocused effect), and switching to
-	// a tab should keep showing its waiting dot, not silently clear it. Right-
-	// and middle-clicks (context menu, paste) are excluded too.
+	// A deliberate left-click into the terminal screen counts as the user
+	// engaging with a waiting agent, so clear its sky-blue "waiting" dot to idle
+	// — the same effect ESC has in terminalManager's onData keystroke path.
+	// clearWaiting is a no-op unless the pane is actually waiting, so this is
+	// safe to call. Two deliberate restrictions:
+	//   • We do NOT fold this into handleFocus: that also fires on programmatic
+	//     focus (tab switch via the isFocused effect), and switching to a tab
+	//     should keep showing its waiting dot, not silently clear it.
+	//   • We gate on the click landing inside innerRef (the xterm screen). The
+	//     mousedown is bound to the whole pane container so a click anywhere
+	//     focuses the pane, but clicks on the title bar — including the start of
+	//     a pane drag-reorder — must NOT clear the dot. Right/middle clicks
+	//     (context menu, paste) are excluded via the button guard.
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
 			handleFocus();
 			if (e.button !== 0) return;
+			if (!innerRef.current?.contains(e.target as Node)) return;
 			const ptyId = getTerminal(paneId)?.ptyId;
 			if (ptyId) usePtyActivityStore.getState().clearWaiting(ptyId);
 		},
