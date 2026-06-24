@@ -62,6 +62,7 @@ beforeEach(() => {
 		mine: [],
 		error: null,
 		loading: true,
+		refreshing: false,
 		activeRepoSlug: null,
 		reviewView: "review-all",
 		myPrsView: "mine-all",
@@ -115,6 +116,13 @@ describe("prStore", () => {
 			expect(s.globalMyPrsCount).toBe(1);
 			expect(s.loading).toBe(false);
 			expect(s.error).toBe(null);
+		});
+
+		it("clears an in-flight manual refresh when a payload lands", () => {
+			usePrStore.getState().beginRefresh();
+			expect(usePrStore.getState().refreshing).toBe(true);
+			usePrStore.getState().applyPrState(makePayload());
+			expect(usePrStore.getState().refreshing).toBe(false);
 		});
 
 		it("carries an error and the unauthenticated status", () => {
