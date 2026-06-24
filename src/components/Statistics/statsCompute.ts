@@ -106,6 +106,19 @@ export function formatCount(n: number): string {
 	return n.toLocaleString();
 }
 
+const compactCountFmt = new Intl.NumberFormat("en-US", {
+	notation: "compact",
+	maximumFractionDigits: 1,
+});
+
+/** Count kept short for the space-constrained stats cards/legends: exact below
+ *  10,000 (so everyday counts read precisely, e.g. "9,999"), then a K/M suffix
+ *  above (e.g. "12.3K", "1.2M"). The en-US locale pins the "K"/"M" units and
+ *  gives Intl's correct rounding and rollover (999,999 → "1M"). */
+export function formatCompactCount(n: number): string {
+	return Math.abs(n) < 10_000 ? n.toLocaleString() : compactCountFmt.format(n);
+}
+
 /** Signed line count, e.g. "+1,204" / "−318". */
 export function formatSignedLines(n: number, sign: "+" | "-"): string {
 	return `${sign}${n.toLocaleString()}`;

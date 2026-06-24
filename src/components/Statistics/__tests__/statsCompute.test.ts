@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTurnBucket, AgentTurnRecord } from "../../../lib/ipc";
-import { densifyBuckets, turnsToCsv } from "../statsCompute";
+import {
+	densifyBuckets,
+	formatCompactCount,
+	turnsToCsv,
+} from "../statsCompute";
 
 function bucket(key: string, turnCount: number): AgentTurnBucket {
 	return {
@@ -63,6 +67,27 @@ describe("densifyBuckets", () => {
 	it("returns nothing for an empty window with no data", () => {
 		const from = new Date(2026, 2, 10).getTime();
 		expect(densifyBuckets([], from, from, "day")).toHaveLength(0);
+	});
+});
+
+describe("formatCompactCount", () => {
+	it("keeps counts below 10,000 exact with thousands separators", () => {
+		expect(formatCompactCount(0)).toBe("0");
+		expect(formatCompactCount(847)).toBe("847");
+		expect(formatCompactCount(1234)).toBe("1,234");
+		expect(formatCompactCount(9999)).toBe("9,999");
+	});
+
+	it("abbreviates thousands with a K suffix at/above 10,000", () => {
+		expect(formatCompactCount(10_000)).toBe("10K");
+		expect(formatCompactCount(12_345)).toBe("12.3K");
+		expect(formatCompactCount(123_456)).toBe("123.5K");
+	});
+
+	it("abbreviates millions with an M suffix and rolls over correctly", () => {
+		expect(formatCompactCount(999_999)).toBe("1M");
+		expect(formatCompactCount(1_234_567)).toBe("1.2M");
+		expect(formatCompactCount(12_345_678)).toBe("12.3M");
 	});
 });
 
