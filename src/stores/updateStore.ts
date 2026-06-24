@@ -40,7 +40,7 @@ interface UpdateStoreState {
 	download: () => Promise<void>;
 	/** Install the staged update now and restart (caller must confirm first). */
 	installNow: () => Promise<void>;
-	/** "Later" — hide the prompt this session; re-offered on the next check. */
+	/** "Later" — snooze every update prompt for 24h (persisted + cross-Window). */
 	dismissLater: () => void;
 	/** "Skip this version" — persist it so it never re-prompts (until newer). */
 	skipVersion: () => void;
@@ -50,6 +50,16 @@ interface UpdateStoreState {
 function isSkipped(version: string): boolean {
 	return useSettingsStore.getState().skippedUpdateVersion === version;
 }
+
+/** Whether "Later" is still suppressing the prompt. Version-independent: while
+ *  snoozed, even a newer release stays hidden until the window expires. */
+function isSnoozed(): boolean {
+	const until = useSettingsStore.getState().updateSnoozedUntil;
+	return until != null && until > Date.now();
+}
+
+/** How long "Later" keeps the prompt hidden — a rolling 24h. */
+const SNOOZE_MS = 24 * 60 * 60 * 1000;
 
 /** Canonical GitHub release page for a version — the source of truth for "what
  *  changed" (we link out rather than render the raw Markdown release notes). */
@@ -66,7 +76,7 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	dismissed: false,
 
 	setAvailable: (info) => {
-		if (isSkipped(info.version)) return;
+		if (isSkipped(info.version) || isSnoozed()) return;
 		set({ status: "available", info, dismissed: false, error: null });
 	},
 
@@ -82,7 +92,7 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 				set({ status: manual ? "uptodate" : "idle" });
 				return;
 			}
-			if (!manual && isSkipped(info.version)) {
+			if (!manual && (isSkipped(info.version) || isSnoozed())) {
 				set({ status: "idle" });
 				return;
 			}
@@ -116,7 +126,12 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		}
 	},
 
-	dismissLater: () => set({ dismissed: true }),
+	dismissLater: () => {
+		// Snooze every update prompt for 24h (persisted + synced across Windows),
+		// not just this session — "don't bother me for the rest of the day".
+		useSettingsStore.getState().setUpdateSnoozedUntil(Date.now() + SNOOZE_MS);
+		set({ dismissed: true });
+	},
 
 	skipVersion: () => {
 		const { info } = get();

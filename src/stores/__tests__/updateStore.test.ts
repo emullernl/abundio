@@ -42,9 +42,14 @@ function reset() {
 		error: null,
 		dismissed: false,
 	});
-	useSettingsStore.setState({ skippedUpdateVersion: null });
+	useSettingsStore.setState({
+		skippedUpdateVersion: null,
+		updateSnoozedUntil: null,
+	});
 	vi.clearAllMocks();
 }
+
+const HOUR_MS = 60 * 60 * 1000;
 
 describe("updateStore", () => {
 	beforeEach(reset);
@@ -88,6 +93,44 @@ describe("updateStore", () => {
 		useUpdateStore.getState().skipVersion();
 		expect(useSettingsStore.getState().skippedUpdateVersion).toBe("1.4.0");
 		expect(useUpdateStore.getState().dismissed).toBe(true);
+	});
+
+	it("dismissLater snoozes ~24h and dismisses the prompt", () => {
+		useUpdateStore.getState().setAvailable(info("1.4.0"));
+		const before = Date.now();
+		useUpdateStore.getState().dismissLater();
+		const until = useSettingsStore.getState().updateSnoozedUntil;
+		expect(until).not.toBeNull();
+		// ~24h out, allowing a little slack for clock movement during the test.
+		expect(until).toBeGreaterThanOrEqual(before + 24 * HOUR_MS - 1000);
+		expect(until).toBeLessThanOrEqual(Date.now() + 24 * HOUR_MS + 1000);
+		expect(useUpdateStore.getState().dismissed).toBe(true);
+	});
+
+	it("setAvailable ignores updates while snoozed", () => {
+		useSettingsStore.setState({ updateSnoozedUntil: Date.now() + HOUR_MS });
+		useUpdateStore.getState().setAvailable(info("1.4.0"));
+		expect(useUpdateStore.getState().status).toBe("idle");
+	});
+
+	it("setAvailable surfaces updates once the snooze has expired", () => {
+		useSettingsStore.setState({ updateSnoozedUntil: Date.now() - HOUR_MS });
+		useUpdateStore.getState().setAvailable(info("1.4.0"));
+		expect(useUpdateStore.getState().status).toBe("available");
+	});
+
+	it("auto check suppresses while snoozed", async () => {
+		useSettingsStore.setState({ updateSnoozedUntil: Date.now() + HOUR_MS });
+		check.mockResolvedValueOnce(info("1.4.0"));
+		await useUpdateStore.getState().check();
+		expect(useUpdateStore.getState().status).toBe("idle");
+	});
+
+	it("manual check surfaces even while snoozed", async () => {
+		useSettingsStore.setState({ updateSnoozedUntil: Date.now() + HOUR_MS });
+		check.mockResolvedValueOnce(info("1.4.0"));
+		await useUpdateStore.getState().check({ manual: true });
+		expect(useUpdateStore.getState().status).toBe("available");
 	});
 
 	it("download transitions available → downloading → ready", async () => {
