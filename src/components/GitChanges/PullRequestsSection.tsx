@@ -16,6 +16,12 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
 
+/** Minimum time the refresh icon stays spinning after a click, so a fast
+ *  background poll can't reduce it to a twitch. Matches the Git panel's floor. */
+const REFRESH_SPIN_FLOOR_MS = 600;
+/** Hard cap on the spin if the poller never pushes a payload (e.g. dead thread). */
+const REFRESH_SPIN_TIMEOUT_MS = 15000;
+
 export function PullRequestsSection() {
 	const ghStatus = usePrStore((s) => s.ghStatus);
 	const reviewRequested = usePrStore((s) => s.reviewRequested);
@@ -23,7 +29,7 @@ export function PullRequestsSection() {
 	const loading = usePrStore((s) => s.loading);
 	const error = usePrStore((s) => s.error);
 	const activeRepoSlug = usePrStore((s) => s.activeRepoSlug);
-	const refreshing = usePrStore((s) => s.refreshing);
+	const storeRefreshing = usePrStore((s) => s.refreshing);
 	const reviewView = usePrStore((s) => s.reviewView);
 	const myPrsView = usePrStore((s) => s.myPrsView);
 	const setReviewView = usePrStore((s) => s.setReviewView);
@@ -60,6 +66,17 @@ export function PullRequestsSection() {
 	const reviewSection: PrSectionState = { prs: reviewPrs, loading, error };
 	const myPrsSection: PrSectionState = { prs: myPrsList, loading, error };
 
+	// Minimum-visible-spin floor + a per-click nonce that re-arms the timers.
+	// `floorActive` keeps the icon spinning for at least REFRESH_SPIN_FLOOR_MS
+	// after a click, so a passive background `pr-state` poll that clears the
+	// store flag early can't reduce the icon to a sub-second twitch (mirrors
+	// the Git panel's floor). The nonce changes on every click, so a second
+	// click mid-spin still re-runs the effects below — `refreshing` toggling
+	// true→true would otherwise be a no-op and leave the timers on the first
+	// click's deadline.
+	const [floorActive, setFloorActive] = useState(false);
+	const [refreshNonce, setRefreshNonce] = useState(0);
+
 	// Manual Refresh triggers an immediate app-global poll (works even when
 	// automatic polling is off). The result is broadcast to every Window.
 	// `beginRefresh` spins the icon until the poller pushes the next payload
@@ -67,19 +84,34 @@ export function PullRequestsSection() {
 	// poll finishes, so it can't gate the spinner.
 	const handleRefresh = useCallback(() => {
 		usePrStore.getState().beginRefresh();
+		setFloorActive(true);
+		setRefreshNonce((n) => n + 1);
 		pr.refresh().catch(() => {});
 	}, []);
 
-	// Safety net: if the poller never pushes a payload (e.g. dead thread), stop
-	// spinning after a generous timeout so the icon doesn't hang forever.
+	// Floor timer — drop `floorActive` once the minimum spin time has elapsed.
+	// Keyed on the nonce so each click resets the floor to the latest click.
 	useEffect(() => {
-		if (!refreshing) return;
+		if (refreshNonce === 0) return;
+		const t = setTimeout(() => setFloorActive(false), REFRESH_SPIN_FLOOR_MS);
+		return () => clearTimeout(t);
+	}, [refreshNonce]);
+
+	// Safety net: if the poller never pushes a payload (e.g. dead thread), stop
+	// spinning after a generous timeout so the icon doesn't hang forever. Keyed
+	// on the nonce so a repeated click resets the deadline to the latest click.
+	useEffect(() => {
+		if (refreshNonce === 0) return;
 		const t = setTimeout(
 			() => usePrStore.setState({ refreshing: false }),
-			15000,
+			REFRESH_SPIN_TIMEOUT_MS,
 		);
 		return () => clearTimeout(t);
-	}, [refreshing]);
+	}, [refreshNonce]);
+
+	// Spin while the store flag is set (poll in flight) or the floor is still
+	// active (anti-twitch minimum).
+	const refreshing = storeRefreshing || floorActive;
 
 	// Switching repo↔all is purely client-side now — no refetch.
 	const handleReviewViewChange = useCallback(
