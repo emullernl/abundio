@@ -181,9 +181,20 @@ fn build_payload_blocking() -> PrStatePayload {
 		Err(e) => PrStatePayload {
 			available: true,
 			authenticated: true,
-			error: Some(format!("{}", e)),
+			error: Some(pr_error_message(e)),
 			..Default::default()
 		},
+	}
+}
+
+/// User-facing text for a PR-fetch failure. `fetch_prs` only ever yields
+/// `AbundioError::Git`, whose `Display` prepends a technical "Git error: " —
+/// strip it so the friendly messages built in `gh_commands` (offline /
+/// unparseable response) read cleanly in the panel.
+fn pr_error_message(e: AbundioError) -> String {
+	match e {
+		AbundioError::Git(msg) => msg,
+		other => other.to_string(),
 	}
 }
 
@@ -432,6 +443,17 @@ mod tests {
 		let next = payload(vec![], vec![pr("org/repo", 9, "APPROVED", "SUCCESS")]);
 		// A brand-new own PR is not notified (no prior state to transition from).
 		assert!(diff_changes(&prev, &next).is_empty());
+	}
+
+	#[test]
+	fn pr_error_message_strips_git_prefix() {
+		// The friendly gh messages must reach the panel without the technical
+		// "Git error: " prefix that AbundioError::Git's Display adds.
+		let e = AbundioError::Git("Can't reach GitHub — check your internet connection.".into());
+		assert_eq!(
+			pr_error_message(e),
+			"Can't reach GitHub — check your internet connection."
+		);
 	}
 
 	#[test]
