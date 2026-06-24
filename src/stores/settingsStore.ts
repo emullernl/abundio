@@ -54,6 +54,9 @@ interface SettingsState {
 	/** Update version the user chose to skip; suppresses its prompt until a
 	 *  newer release ships. Null when nothing is skipped. */
 	skippedUpdateVersion: string | null;
+	/** Epoch ms until which "Later" suppresses the update prompt (all versions).
+	 *  Null when not snoozed; a past value is treated as expired. See ADR-0014. */
+	updateSnoozedUntil: number | null;
 	/** Whether the app-global GitHub PR poller runs automatically. See ADR-0019. */
 	prPollEnabled: boolean;
 	/** Focused-cadence PR poll interval in minutes (1–30). */
@@ -90,6 +93,7 @@ interface SettingsState {
 	setSmartImageDrop: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
+	setUpdateSnoozedUntil: (until: number | null) => void;
 	setPrPollEnabled: (enabled: boolean) => void;
 	setPrPollIntervalMinutes: (minutes: number) => void;
 }
@@ -123,6 +127,7 @@ const PERSISTED_DEFAULTS: {
 	smartImageDrop: boolean;
 	autoCheckUpdatesEnabled: boolean;
 	skippedUpdateVersion: string | null;
+	updateSnoozedUntil: number | null;
 	prPollEnabled: boolean;
 	prPollIntervalMinutes: number;
 } = (() => {
@@ -149,6 +154,7 @@ const PERSISTED_DEFAULTS: {
 		smartImageDrop: true,
 		autoCheckUpdatesEnabled: true,
 		skippedUpdateVersion: null as string | null,
+		updateSnoozedUntil: null as number | null,
 		prPollEnabled: true,
 		prPollIntervalMinutes: 5,
 	};
@@ -253,6 +259,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.skippedUpdateVersion === "string"
 					? s.skippedUpdateVersion
 					: defaults.skippedUpdateVersion,
+			updateSnoozedUntil:
+				typeof s.updateSnoozedUntil === "number"
+					? s.updateSnoozedUntil
+					: defaults.updateSnoozedUntil,
 			prPollEnabled:
 				typeof s.prPollEnabled === "boolean"
 					? s.prPollEnabled
@@ -292,6 +302,7 @@ export const useSettingsStore = create<SettingsState>()(
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
 			skippedUpdateVersion: PERSISTED_DEFAULTS.skippedUpdateVersion,
+			updateSnoozedUntil: PERSISTED_DEFAULTS.updateSnoozedUntil,
 			prPollEnabled: PERSISTED_DEFAULTS.prPollEnabled,
 			prPollIntervalMinutes: PERSISTED_DEFAULTS.prPollIntervalMinutes,
 
@@ -418,6 +429,8 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			setSkippedUpdateVersion: (skippedUpdateVersion) =>
 				set({ skippedUpdateVersion }),
+			setUpdateSnoozedUntil: (updateSnoozedUntil) =>
+				set({ updateSnoozedUntil }),
 			setPrPollEnabled: (prPollEnabled) => {
 				// Rust owns the running poller; push so the change (incl. "Off")
 				// takes effect immediately in every Window. See ADR-0019.
@@ -439,7 +452,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 7,
+			version: 8,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -508,6 +521,12 @@ export const useSettingsStore = create<SettingsState>()(
 						...state,
 					};
 				}
+				// v8: "Later" snooze for the update prompt (ADR-0014). Additive
+				// default-null key; PERSISTED_DEFAULTS + merge already supply it —
+				// this only guarantees it exists during the rehydrate window.
+				if (version < 8) {
+					state = { updateSnoozedUntil: null, ...state };
+				}
 				return state;
 			},
 			partialize: (state) => ({
@@ -533,6 +552,7 @@ export const useSettingsStore = create<SettingsState>()(
 				smartImageDrop: state.smartImageDrop,
 				autoCheckUpdatesEnabled: state.autoCheckUpdatesEnabled,
 				skippedUpdateVersion: state.skippedUpdateVersion,
+				updateSnoozedUntil: state.updateSnoozedUntil,
 				prPollEnabled: state.prPollEnabled,
 				prPollIntervalMinutes: state.prPollIntervalMinutes,
 			}),
