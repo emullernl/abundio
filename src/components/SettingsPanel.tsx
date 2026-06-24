@@ -23,9 +23,10 @@ import {
 } from "../lib/nerdFonts";
 import { setAllTerminalsFontSize } from "../lib/terminalManager";
 import { type AppTheme, themeList } from "../lib/themes";
-import type { AvailableShell, CodingAgent } from "../lib/types";
+import type { AvailableShell, CodingAgent, SecretMeta } from "../lib/types";
 import { useAgentRegistryStore } from "../stores/agentRegistryStore";
 import { useProfileStore } from "../stores/profileStore";
+import { useSecretsStore } from "../stores/secretsStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { consumeRequestedSection } from "../stores/settingsUiStore";
 import { releaseNotesUrl, useUpdateStore } from "../stores/updateStore";
@@ -45,6 +46,7 @@ type Section =
 	| "ui-font"
 	| "shell"
 	| "agents"
+	| "secrets"
 	| "profiles"
 	| "updates"
 	| "github";
@@ -1073,6 +1075,370 @@ function AddAgentForm({
 	);
 }
 
+/* ─── Lock icon for nav ─── */
+function LockIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<rect x="3" y="11" width="18" height="11" rx="2" />
+			<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+		</svg>
+	);
+}
+
+const secretInputStyle: React.CSSProperties = {
+	color: "var(--fg-primary)",
+	fontSize: 12,
+	padding: "6px 8px",
+	border: "1px solid var(--border)",
+	backgroundColor: "var(--bg-secondary)",
+	borderRadius: 6,
+	outline: "none",
+	minWidth: 0,
+};
+
+/* ─── Add-secret form ─── */
+function AddSecretForm({
+	onAdd,
+}: {
+	onAdd: (name: string, value: string, description: string) => void;
+}) {
+	const [name, setName] = useState("");
+	const [value, setValue] = useState("");
+	const [description, setDescription] = useState("");
+
+	const canSubmit = name.trim().length > 0 && value.length > 0;
+
+	const handleSubmit = () => {
+		if (!canSubmit) return;
+		onAdd(name.trim(), value, description.trim());
+		setName("");
+		setValue("");
+		setDescription("");
+	};
+
+	return (
+		<div
+			className="rounded-lg"
+			style={{
+				padding: "12px",
+				backgroundColor: "var(--bg-primary)",
+				border: "1px solid var(--border)",
+			}}
+		>
+			<div
+				className="font-medium"
+				style={{
+					fontSize: 11,
+					color: "var(--fg-secondary)",
+					letterSpacing: "0.04em",
+					marginBottom: 8,
+				}}
+			>
+				Add Secret
+			</div>
+			<div className="flex flex-col gap-2">
+				<input
+					type="text"
+					placeholder="Name (env var, e.g. OPENAI_API_KEY)"
+					value={name}
+					onChange={(e) => setName(e.target.value)}
+					onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+					className="bg-transparent"
+					style={{ ...secretInputStyle, fontFamily: "var(--font-mono)" }}
+				/>
+				<div className="flex gap-2">
+					<input
+						type="password"
+						placeholder="Value (stored in your OS keychain)"
+						value={value}
+						onChange={(e) => setValue(e.target.value)}
+						onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+						className="flex-1 bg-transparent"
+						style={secretInputStyle}
+						autoComplete="off"
+					/>
+					<button
+						type="button"
+						onClick={handleSubmit}
+						disabled={!canSubmit}
+						className="flex items-center gap-1.5 rounded-md transition-colors flex-shrink-0"
+						style={{
+							padding: "6px 10px",
+							fontSize: 12,
+							fontWeight: 500,
+							color: canSubmit ? "var(--bg-primary)" : "var(--fg-secondary)",
+							backgroundColor: canSubmit
+								? "var(--accent)"
+								: "var(--bg-tertiary)",
+							opacity: canSubmit ? 1 : 0.5,
+							cursor: canSubmit ? "pointer" : "default",
+						}}
+					>
+						<Plus size={12} />
+						Add
+					</button>
+				</div>
+				<input
+					type="text"
+					placeholder="Description (optional)"
+					value={description}
+					onChange={(e) => setDescription(e.target.value)}
+					onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+					className="bg-transparent"
+					style={secretInputStyle}
+				/>
+			</div>
+		</div>
+	);
+}
+
+/* ─── Secret row (collapsed view + inline edit) ─── */
+function SecretRow({
+	secret,
+	onUpdate,
+	onDelete,
+}: {
+	secret: SecretMeta;
+	onUpdate: (updates: {
+		name?: string;
+		description?: string;
+		value?: string;
+	}) => void;
+	onDelete: () => void;
+}) {
+	const [editing, setEditing] = useState(false);
+	const [name, setName] = useState(secret.name);
+	const [description, setDescription] = useState(secret.description);
+	const [value, setValue] = useState("");
+
+	const beginEdit = () => {
+		setName(secret.name);
+		setDescription(secret.description);
+		setValue("");
+		setEditing(true);
+	};
+
+	const save = () => {
+		const updates: { name?: string; description?: string; value?: string } = {};
+		const trimmedName = name.trim();
+		if (trimmedName && trimmedName !== secret.name) updates.name = trimmedName;
+		if (description !== secret.description) updates.description = description;
+		// Only send a value when the user actually typed one — blank means
+		// "keep the existing keychain value".
+		if (value.length > 0) updates.value = value;
+		if (Object.keys(updates).length > 0) onUpdate(updates);
+		setEditing(false);
+	};
+
+	if (editing) {
+		return (
+			<div
+				className="flex flex-col gap-2 rounded-lg"
+				style={{
+					padding: "10px",
+					backgroundColor: "var(--bg-primary)",
+					border: "1px solid var(--border)",
+				}}
+			>
+				<input
+					type="text"
+					value={name}
+					onChange={(e) => setName(e.target.value)}
+					className="bg-transparent"
+					style={{ ...secretInputStyle, fontFamily: "var(--font-mono)" }}
+				/>
+				<input
+					type="password"
+					placeholder="Leave blank to keep current value"
+					value={value}
+					onChange={(e) => setValue(e.target.value)}
+					className="bg-transparent"
+					style={secretInputStyle}
+					autoComplete="off"
+				/>
+				<input
+					type="text"
+					placeholder="Description (optional)"
+					value={description}
+					onChange={(e) => setDescription(e.target.value)}
+					className="bg-transparent"
+					style={secretInputStyle}
+				/>
+				<div className="flex gap-2 justify-end">
+					<button
+						type="button"
+						onClick={() => setEditing(false)}
+						className="rounded-md"
+						style={{
+							padding: "5px 10px",
+							fontSize: 12,
+							color: "var(--fg-secondary)",
+							backgroundColor: "var(--bg-tertiary)",
+						}}
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						onClick={save}
+						className="rounded-md"
+						style={{
+							padding: "5px 10px",
+							fontSize: 12,
+							fontWeight: 500,
+							color: "var(--bg-primary)",
+							backgroundColor: "var(--accent)",
+						}}
+					>
+						Save
+					</button>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div
+			className="flex items-center gap-3 rounded-lg group"
+			style={{ padding: "9px 10px" }}
+		>
+			<div className="flex-1 min-w-0">
+				<div
+					className="truncate"
+					style={{
+						fontSize: 13,
+						color: "var(--fg-primary)",
+						fontFamily: "var(--font-mono)",
+						lineHeight: 1.3,
+					}}
+				>
+					{secret.name}
+				</div>
+				{secret.description && (
+					<div
+						className="truncate"
+						style={{
+							fontSize: 11,
+							color: "var(--fg-secondary)",
+							marginTop: 1,
+						}}
+					>
+						{secret.description}
+					</div>
+				)}
+			</div>
+			<button
+				type="button"
+				onClick={beginEdit}
+				className="flex-shrink-0 rounded-md"
+				style={{
+					padding: "4px 8px",
+					fontSize: 12,
+					color: "var(--fg-secondary)",
+					backgroundColor: "var(--bg-tertiary)",
+				}}
+			>
+				Edit
+			</button>
+			<button
+				type="button"
+				onClick={onDelete}
+				aria-label="Delete secret"
+				className="flex-shrink-0 flex items-center justify-center rounded-md"
+				style={{ width: 22, height: 22, color: "var(--fg-secondary)" }}
+			>
+				<X size={14} />
+			</button>
+		</div>
+	);
+}
+
+/* ─── Secrets section ─── */
+function SecretsSection() {
+	const secrets = useSecretsStore((s) => s.secrets);
+	const reload = useSecretsStore((s) => s.reload);
+	const create = useSecretsStore((s) => s.create);
+	const update = useSecretsStore((s) => s.update);
+	const remove = useSecretsStore((s) => s.remove);
+
+	// Re-fetch each time the section opens so a secret added in another window
+	// (or stale metadata) is reflected.
+	useEffect(() => {
+		reload();
+	}, [reload]);
+
+	return (
+		<div className="flex flex-col gap-4 flex-1 min-h-0">
+			<div className="flex-1 min-h-0 overflow-y-auto">
+				<SectionLabel>Secrets</SectionLabel>
+				<p
+					style={{
+						fontSize: 12,
+						color: "var(--fg-secondary)",
+						marginBottom: 12,
+						lineHeight: 1.5,
+					}}
+				>
+					Secrets are stored in your operating system's keychain, never on disk
+					in plaintext. Assign them to a workspace from its settings to have
+					them injected as environment variables into that workspace's
+					terminals.
+				</p>
+				<div className="flex flex-col gap-0.5">
+					{secrets.length === 0 ? (
+						<div
+							style={{
+								fontSize: 12,
+								color: "var(--fg-secondary)",
+								opacity: 0.7,
+								padding: "8px 2px",
+							}}
+						>
+							No secrets yet.
+						</div>
+					) : (
+						secrets.map((secret) => (
+							<SecretRow
+								key={secret.id}
+								secret={secret}
+								onUpdate={(updates) =>
+									update(secret.id, updates).catch((err) =>
+										console.error("[secrets] update failed:", err),
+									)
+								}
+								onDelete={() =>
+									remove(secret.id).catch((err) =>
+										console.error("[secrets] delete failed:", err),
+									)
+								}
+							/>
+						))
+					)}
+				</div>
+			</div>
+			<div className="flex-shrink-0">
+				<AddSecretForm
+					onAdd={(name, value, description) =>
+						create(name, value, description).catch((err) =>
+							console.error("[secrets] create failed:", err),
+						)
+					}
+				/>
+			</div>
+		</div>
+	);
+}
+
 /* ─── Bot icon for nav ─── */
 function AgentIcon() {
 	return (
@@ -2064,6 +2430,12 @@ export function SettingsPanel({ onClose }: Props) {
 							onClick={() => setSection("agents")}
 						/>
 						<NavItem
+							label="Secrets"
+							icon={<LockIcon />}
+							isActive={section === "secrets"}
+							onClick={() => setSection("secrets")}
+						/>
+						<NavItem
 							label="Profiles"
 							icon={<ProfileIcon />}
 							isActive={section === "profiles"}
@@ -2385,6 +2757,8 @@ export function SettingsPanel({ onClose }: Props) {
 								</div>
 							</div>
 						)}
+
+						{section === "secrets" && <SecretsSection />}
 
 						{section === "profiles" && (
 							<div className="flex flex-col gap-4 flex-1 min-h-0">

@@ -7,6 +7,7 @@ use crate::profile_store::{
     ActiveProfileState, OpenedCountState, Profile, ProfileStore, ProfileUpdate,
 };
 use crate::pty_manager::PtyManager;
+use crate::secrets_store::{SecretMeta, SecretsStore};
 use crate::workspace_store::{
     AgentTurnBucket, AgentTurnRecord, AgentTurnTotals, Bucket, GroupBy, Tab, TabUpdate,
     WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs,
@@ -20,6 +21,7 @@ use crate::shell_env;
 pub async fn pty_spawn(
     app: AppHandle,
     pty_mgr: State<'_, PtyManager>,
+    secrets_store: State<'_, SecretsStore>,
     cwd: String,
     cols: u16,
     rows: u16,
@@ -28,8 +30,16 @@ pub async fn pty_spawn(
     log_id: Option<String>,
     pty_id: Option<String>,
     workspace_name: Option<String>,
+    workspace_id: Option<String>,
     window_label: Option<String>,
 ) -> Result<String, AbundioError> {
+    // Resolve the workspace's assigned secrets into env vars. Values are read
+    // from the OS keychain here, in the backend, and never travel to the
+    // frontend. A missing/unreadable secret is skipped (logged), not fatal.
+    let secret_env = match workspace_id.as_deref() {
+        Some(id) => secrets_store.resolve_env_for_workspace(id)?,
+        None => Vec::new(),
+    };
     pty_mgr.spawn(
         app,
         &cwd,
@@ -41,7 +51,61 @@ pub async fn pty_spawn(
         pty_id.as_deref(),
         workspace_name.as_deref(),
         window_label.as_deref(),
+        &secret_env,
     )
+}
+
+// ── Secrets commands ──
+
+#[tauri::command]
+pub async fn secret_list(store: State<'_, SecretsStore>) -> Result<Vec<SecretMeta>, AbundioError> {
+    store.list()
+}
+
+#[tauri::command]
+pub async fn secret_create(
+    store: State<'_, SecretsStore>,
+    name: String,
+    value: String,
+    description: Option<String>,
+) -> Result<SecretMeta, AbundioError> {
+    store.create(&name, &value, description.as_deref().unwrap_or(""))
+}
+
+#[tauri::command]
+pub async fn secret_update(
+    store: State<'_, SecretsStore>,
+    id: String,
+    name: Option<String>,
+    description: Option<String>,
+    value: Option<String>,
+) -> Result<SecretMeta, AbundioError> {
+    store.update(&id, name.as_deref(), description.as_deref(), value.as_deref())
+}
+
+#[tauri::command]
+pub async fn secret_delete(
+    store: State<'_, SecretsStore>,
+    id: String,
+) -> Result<(), AbundioError> {
+    store.delete(&id)
+}
+
+#[tauri::command]
+pub async fn workspace_secret_list(
+    store: State<'_, SecretsStore>,
+    workspace_id: String,
+) -> Result<Vec<SecretMeta>, AbundioError> {
+    store.list_for_workspace(&workspace_id)
+}
+
+#[tauri::command]
+pub async fn workspace_secret_set(
+    store: State<'_, SecretsStore>,
+    workspace_id: String,
+    secret_ids: Vec<String>,
+) -> Result<(), AbundioError> {
+    store.set_for_workspace(&workspace_id, &secret_ids)
 }
 
 #[tauri::command]

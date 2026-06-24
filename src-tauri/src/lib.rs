@@ -20,6 +20,7 @@ pub mod process_monitor;
 pub mod profile_store;
 pub mod pty_manager;
 pub mod search;
+pub mod secrets_store;
 pub mod updater;
 pub mod window_management;
 pub mod window_persistence;
@@ -34,6 +35,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use profile_store::ProfileStore;
 use pty_manager::PtyManager;
+use secrets_store::SecretsStore;
 use workspace_store::WorkspaceStore;
 
 /// Builds the application menu for the currently focused Window. Reads the
@@ -494,6 +496,11 @@ pub fn run() {
             let profile_store = ProfileStore::new(profile_conn);
             app.manage(profile_store);
 
+            // Secrets vault: its own connection (locked independently of the
+            // other stores). Values live in the OS keychain, not this DB.
+            let secrets_conn = migrations::open_db().expect("Failed to open database");
+            app.manage(SecretsStore::new(secrets_conn));
+
             // Active profile cache (set by the frontend after rehydrating its
             // settings store). Used by the menu rebuild.
             app.manage(profile_store::ActiveProfileState::default());
@@ -920,6 +927,12 @@ pub fn run() {
             commands::tab_delete,
             commands::note_get,
             commands::note_set,
+            commands::secret_list,
+            commands::secret_create,
+            commands::secret_update,
+            commands::secret_delete,
+            commands::workspace_secret_list,
+            commands::workspace_secret_set,
             commands::telemetry_record_turn,
             commands::telemetry_buckets,
             commands::telemetry_totals,

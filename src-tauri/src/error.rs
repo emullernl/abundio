@@ -26,6 +26,17 @@ pub enum AbundioError {
     InvalidOperation(String),
     #[error("Clipboard error: {0}")]
     Clipboard(String),
+    #[error("Keychain error: {0}")]
+    Keyring(String),
+}
+
+impl From<keyring::Error> for AbundioError {
+    fn from(e: keyring::Error) -> Self {
+        // Stringify the keyring error rather than embedding the source — a
+        // keyring error never contains the secret value, but we keep the
+        // surface minimal and uniform with the other String-backed variants.
+        AbundioError::Keyring(e.to_string())
+    }
 }
 
 impl Serialize for AbundioError {

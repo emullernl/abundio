@@ -96,6 +96,21 @@ export interface WorkspaceWithTabs {
 	tabs: Tab[];
 }
 
+// ── Secrets ──
+
+/**
+ * A secrets-vault entry's metadata (mirrors the Rust `SecretMeta`). The value
+ * itself lives in the OS keychain and is never sent to the frontend.
+ */
+export interface SecretMeta {
+	id: string;
+	/** The env-var name injected into terminals, e.g. `OPENAI_API_KEY`. */
+	name: string;
+	description: string;
+	createdAt: number;
+	updatedAt: number;
+}
+
 // ── Worktrees ──
 
 /** One worktree of a repository (mirrors the Rust `WorktreeEntry`). */

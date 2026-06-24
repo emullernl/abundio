@@ -1,5 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
+import { secrets as secretsApi } from "../lib/ipc";
+import { useSecretsStore } from "../stores/secretsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 interface Props {
@@ -22,17 +24,54 @@ export function WorkspaceSettingsDialog({
 		(s) => s.setWorktreeSetupCommands,
 	);
 
+	const allSecrets = useSecretsStore((s) => s.secrets);
+	const reloadSecrets = useSecretsStore((s) => s.reload);
+
 	const nameRef = useRef<HTMLInputElement>(null);
 	const [name, setName] = useState(workspace?.name ?? "");
 	const [commands, setCommands] = useState(
 		workspace?.worktreeSetupCommands ?? "",
 	);
+	// Secret ids assigned to this workspace. Loaded from the backend on mount;
+	// `initialAssigned` is the baseline used to detect changes on save.
+	const [assignedIds, setAssignedIds] = useState<Set<string>>(new Set());
+	const [assignedLoaded, setAssignedLoaded] = useState(false);
+	const initialAssignedRef = useRef<Set<string>>(new Set());
 
 	useEffect(() => {
 		requestAnimationFrame(() => nameRef.current?.select());
 	}, []);
 
+	useEffect(() => {
+		reloadSecrets();
+		let active = true;
+		secretsApi
+			.listForWorkspace(workspaceId)
+			.then((list) => {
+				if (!active) return;
+				const ids = new Set(list.map((s) => s.id));
+				setAssignedIds(ids);
+				initialAssignedRef.current = ids;
+				setAssignedLoaded(true);
+			})
+			.catch(() => {
+				if (active) setAssignedLoaded(true);
+			});
+		return () => {
+			active = false;
+		};
+	}, [workspaceId, reloadSecrets]);
+
 	if (!workspace) return null;
+
+	const toggleSecret = (id: string) => {
+		setAssignedIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			return next;
+		});
+	};
 
 	const save = () => {
 		const trimmed = name.trim();
@@ -41,6 +80,16 @@ export function WorkspaceSettingsDialog({
 		}
 		if (isMainWorktree && commands !== workspace.worktreeSetupCommands) {
 			setWorktreeSetupCommands(workspace.id, commands);
+		}
+		// Persist secret assignment only if it changed.
+		const initial = initialAssignedRef.current;
+		const unchanged =
+			assignedIds.size === initial.size &&
+			[...assignedIds].every((id) => initial.has(id));
+		if (assignedLoaded && !unchanged) {
+			secretsApi
+				.setForWorkspace(workspace.id, [...assignedIds])
+				.catch((err) => console.error("[secrets] assign failed:", err));
 		}
 		onClose();
 	};
@@ -167,6 +216,77 @@ export function WorkspaceSettingsDialog({
 								</span>
 							</div>
 						)}
+
+						<div className="flex flex-col" style={{ gap: 6 }}>
+							<span style={fieldLabelStyle}>Secrets</span>
+							{allSecrets.length === 0 ? (
+								<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>
+									No secrets yet. Add them in Settings ▸ Secrets, then assign
+									them here to inject them as environment variables into this
+									workspace's terminals.
+								</span>
+							) : (
+								<>
+									<div
+										className="flex flex-col"
+										style={{
+											border: "1px solid var(--border)",
+											borderRadius: 8,
+											backgroundColor: "var(--bg-primary)",
+											maxHeight: 168,
+											overflowY: "auto",
+										}}
+									>
+										{allSecrets.map((secret) => (
+											<label
+												key={secret.id}
+												className="flex items-center"
+												style={{
+													gap: 10,
+													padding: "8px 12px",
+													cursor: "pointer",
+												}}
+											>
+												<input
+													type="checkbox"
+													checked={assignedIds.has(secret.id)}
+													onChange={() => toggleSecret(secret.id)}
+												/>
+												<span className="flex flex-col" style={{ minWidth: 0 }}>
+													<span
+														className="truncate"
+														style={{
+															fontSize: 13,
+															color: "var(--fg-primary)",
+															fontFamily:
+																"var(--font-mono, ui-monospace, SFMono-Regular, monospace)",
+														}}
+													>
+														{secret.name}
+													</span>
+													{secret.description && (
+														<span
+															className="truncate"
+															style={{
+																fontSize: 11,
+																color: "var(--fg-secondary)",
+															}}
+														>
+															{secret.description}
+														</span>
+													)}
+												</span>
+											</label>
+										))}
+									</div>
+									<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>
+										Checked secrets are injected as environment variables into
+										new terminals in this workspace. Already-open terminals pick
+										them up after a restart.
+									</span>
+								</>
+							)}
+						</div>
 					</div>
 
 					<div

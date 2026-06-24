@@ -70,3 +70,14 @@ arboard = "3"
 # Secure temp-file creation (O_EXCL, 0600, RAII cleanup) for the macOS PNG
 # clipboard path in clipboard_image.rs. Also used by tests.
 tempfile = "3"
+# OS keychain access for the secrets vault (see secrets_store.rs). Secret
+# values live in the platform secure store — macOS Keychain, Windows Credential
+# Manager, Linux secret-service — never in Abundio's SQLite/disk in plaintext.
+# Only metadata (name/description) is kept in the DB. Native backends avoid the
+# extra C deps the generic backends pull in.
+keyring = { version = "3", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+    "crypto-rust",
+] }

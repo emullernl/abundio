@@ -65,6 +65,7 @@ impl PtyManager {
         pty_id: Option<&str>,
         workspace_name: Option<&str>,
         window_label: Option<&str>,
+        secret_env: &[(String, String)],
     ) -> Result<String, AbundioError> {
         let pty_id = pty_id
             .map(|s| s.to_string())
@@ -171,6 +172,14 @@ impl PtyManager {
             // workspace rename after launch will not update them.
             cmd.env("ABUNDIO_WORKSPACE_NAME", workspace_name.unwrap_or(""));
             cmd.env("ABUNDIO_WINDOW_LABEL", window_label.unwrap_or(""));
+        }
+
+        // Inject the workspace's assigned secrets (resolved from the OS
+        // keychain by the caller) as env vars. Set last so a user secret wins,
+        // though reserved names (TERM, ABUNDIO_*) should not be used as secret
+        // names. Values are never logged.
+        for (name, value) in secret_env {
+            cmd.env(name, value);
         }
 
         // A stamped cwd may arrive in Git Bash's MSYS form (`/c/Users/…`), which

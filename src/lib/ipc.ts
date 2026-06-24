@@ -24,6 +24,7 @@ import type {
 	PtyStatusType,
 	SearchFileResult,
 	SearchResult,
+	SecretMeta,
 	Tab,
 	TabUpdate,
 	WorkspaceUpdate,
@@ -58,6 +59,7 @@ export const pty = {
 		ptyId?: string,
 		workspaceName?: string,
 		windowLabel?: string,
+		workspaceId?: string,
 	) =>
 		invoke<string>("pty_spawn", {
 			cwd,
@@ -69,6 +71,7 @@ export const pty = {
 			ptyId,
 			workspaceName,
 			windowLabel,
+			workspaceId,
 		}),
 
 	write: (ptyId: string, data: string) =>
@@ -156,6 +159,33 @@ export const workspaces = {
 	delete: (id: string) => invoke<void>("workspace_delete", { id }),
 
 	reorder: (ids: string[]) => invoke<void>("workspace_reorder", { ids }),
+};
+
+export const secrets = {
+	/** Lists vault secrets (metadata only — values never leave the keychain). */
+	list: () => invoke<SecretMeta[]>("secret_list"),
+
+	create: (name: string, value: string, description?: string) =>
+		invoke<SecretMeta>("secret_create", { name, value, description }),
+
+	/**
+	 * Updates a secret. Omit `value` to keep the existing keychain value; pass
+	 * a new string to overwrite it.
+	 */
+	update: (
+		id: string,
+		updates: { name?: string; description?: string; value?: string },
+	) => invoke<SecretMeta>("secret_update", { id, ...updates }),
+
+	delete: (id: string) => invoke<void>("secret_delete", { id }),
+
+	/** Secrets assigned to a workspace. */
+	listForWorkspace: (workspaceId: string) =>
+		invoke<SecretMeta[]>("workspace_secret_list", { workspaceId }),
+
+	/** Replaces a workspace's full set of assigned secret ids. */
+	setForWorkspace: (workspaceId: string, secretIds: string[]) =>
+		invoke<void>("workspace_secret_set", { workspaceId, secretIds }),
 };
 
 export const notes = {

@@ -1126,6 +1126,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							currentPtyId,
 							useWorkspaceStore.getState().getActiveWorkspace()?.name,
 							getCurrentWindow().label,
+							// Workspace id drives backend secret injection at spawn.
+							useWorkspaceStore.getState().getActiveWorkspace()?.id,
 						),
 					]
 				: []),
