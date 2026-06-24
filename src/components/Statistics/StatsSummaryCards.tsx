@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { AgentTurnTotals } from "../../lib/ipc";
-import { agentLabel, formatCount, formatDuration } from "./statsCompute";
+import { agentLabel, formatCompactCount, formatDuration } from "./statsCompute";
 
 function StatCard({
 	label,
@@ -111,10 +111,10 @@ export function StatsSummaryCards({
 				value={
 					<span>
 						<span style={{ color: "rgb(124 196 144)" }}>
-							+{formatCount(totals.totalLinesAdded)}
+							+{formatCompactCount(totals.totalLinesAdded)}
 						</span>{" "}
 						<span style={{ color: "rgb(244 113 116)" }}>
-							−{formatCount(totals.totalLinesDeleted)}
+							−{formatCompactCount(totals.totalLinesDeleted)}
 						</span>
 					</span>
 				}
@@ -128,14 +128,14 @@ export function StatsSummaryCards({
 			/>
 			<StatCard
 				label="Files touched"
-				value={formatCount(totals.totalFilesChanged)}
+				value={formatCompactCount(totals.totalFilesChanged)}
 				sub="across measured turns"
 				delay={80}
 			/>
 			<StatCard
 				label="Turns"
-				value={formatCount(turns)}
-				sub={`${formatCount(totals.sessionCount)} session${
+				value={formatCompactCount(turns)}
+				sub={`${formatCompactCount(totals.sessionCount)} session${
 					totals.sessionCount === 1 ? "" : "s"
 				}`}
 				delay={120}
@@ -148,14 +148,14 @@ export function StatsSummaryCards({
 			/>
 			<StatCard
 				label="Blocked on you"
-				value={formatCount(totals.totalPermissionRequests)}
+				value={formatCompactCount(totals.totalPermissionRequests)}
 				sub={`${permPerTurn.toFixed(1)} per turn`}
 				title="How often a turn paused, blocked waiting on you — usually a permission prompt, though any wait counts. Lower per-turn means more autonomy. Approximate."
 				delay={200}
 			/>
 			<StatCard
 				label="Errors"
-				value={formatCount(totals.totalErrors)}
+				value={formatCompactCount(totals.totalErrors)}
 				sub={`${errorPct.toFixed(0)}% of turns`}
 				delay={240}
 			/>
