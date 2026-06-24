@@ -37,6 +37,11 @@ interface PrState {
 	error: string | null;
 	/** True until the first payload (snapshot or pushed event) lands. */
 	loading: boolean;
+	/** True from a manual Refresh request until the next poller payload lands.
+	 *  Drives the spinning refresh icon. Distinct from `loading` (first-load
+	 *  only) because `pr_poller_refresh` returns before the poll completes —
+	 *  the spin must persist until the pushed `pr-state` clears it. */
+	refreshing: boolean;
 	/** The active workspace's GitHub `owner/repo`, or null (no github remote /
 	 *  no active workspace). Drives the repo-scoped filter and the repo-view
 	 *  "No GitHub remote found" empty state. */
@@ -51,6 +56,9 @@ interface PrState {
 	globalMyPrsCount: number;
 
 	applyPrState: (payload: PrStatePayload) => void;
+	/** Mark a manual Refresh as in-flight (spins the refresh icon). Cleared by
+	 *  the next `applyPrState`. */
+	beginRefresh: () => void;
 	setActiveRepoSlug: (slug: string | null) => void;
 	setReviewView: (view: ReviewView) => void;
 	setMyPrsView: (view: MyPrsView) => void;
@@ -71,6 +79,7 @@ export const usePrStore = create<PrState>()(
 			mine: [],
 			error: null,
 			loading: true,
+			refreshing: false,
 			activeRepoSlug: null,
 			reviewView: "review-all",
 			myPrsView: "mine-all",
@@ -89,11 +98,14 @@ export const usePrStore = create<PrState>()(
 					mine,
 					error: payload.error ?? null,
 					loading: false,
+					refreshing: false,
 					// Account-wide counts for the Overview bar chips.
 					globalReviewCount: reviewRequested.length,
 					globalMyPrsCount: mine.length,
 				});
 			},
+
+			beginRefresh: () => set({ refreshing: true }),
 
 			setActiveRepoSlug: (activeRepoSlug) => set({ activeRepoSlug }),
 			setReviewView: (reviewView) => set({ reviewView }),

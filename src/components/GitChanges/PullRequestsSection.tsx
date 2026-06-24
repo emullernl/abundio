@@ -23,6 +23,7 @@ export function PullRequestsSection() {
 	const loading = usePrStore((s) => s.loading);
 	const error = usePrStore((s) => s.error);
 	const activeRepoSlug = usePrStore((s) => s.activeRepoSlug);
+	const refreshing = usePrStore((s) => s.refreshing);
 	const reviewView = usePrStore((s) => s.reviewView);
 	const myPrsView = usePrStore((s) => s.myPrsView);
 	const setReviewView = usePrStore((s) => s.setReviewView);
@@ -61,9 +62,24 @@ export function PullRequestsSection() {
 
 	// Manual Refresh triggers an immediate app-global poll (works even when
 	// automatic polling is off). The result is broadcast to every Window.
+	// `beginRefresh` spins the icon until the poller pushes the next payload
+	// (`applyPrState` clears it) — `pr.refresh()` itself resolves before the
+	// poll finishes, so it can't gate the spinner.
 	const handleRefresh = useCallback(() => {
+		usePrStore.getState().beginRefresh();
 		pr.refresh().catch(() => {});
 	}, []);
+
+	// Safety net: if the poller never pushes a payload (e.g. dead thread), stop
+	// spinning after a generous timeout so the icon doesn't hang forever.
+	useEffect(() => {
+		if (!refreshing) return;
+		const t = setTimeout(
+			() => usePrStore.setState({ refreshing: false }),
+			15000,
+		);
+		return () => clearTimeout(t);
+	}, [refreshing]);
 
 	// Switching repo↔all is purely client-side now — no refetch.
 	const handleReviewViewChange = useCallback(
@@ -87,6 +103,7 @@ export function PullRequestsSection() {
 				hasRepo={hasRepo}
 				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
+				refreshing={refreshing}
 				showRefresh
 				showPrStatus
 			/>
@@ -129,6 +146,8 @@ interface PrSubPanelProps<V extends PrView> {
 	/** Whether automatic PR polling is enabled (Settings → GitHub). */
 	pollEnabled: boolean;
 	onRefresh: () => void;
+	/** Manual refresh in flight — spins the refresh icon. */
+	refreshing?: boolean;
 	showRefresh: boolean;
 	showPrStatus?: boolean;
 }
@@ -143,6 +162,7 @@ function PrSubPanel<V extends PrView>({
 	hasRepo,
 	pollEnabled,
 	onRefresh,
+	refreshing,
 	showRefresh,
 	showPrStatus,
 }: PrSubPanelProps<V>) {
@@ -295,7 +315,10 @@ function PrSubPanel<V extends PrView>({
 						}}
 						title="Refresh"
 					>
-						<RefreshCw size={12} />
+						<RefreshCw
+							size={12}
+							className={refreshing ? "animate-spin" : undefined}
+						/>
 					</button>
 				)}
 			</div>

@@ -19,6 +19,7 @@ export function GitChangesTab() {
 	const fetchChanges = useGitChangesStore((s) => s.fetchChanges);
 
 	const [selectedFile, setSelectedFile] = useState<GitChangedFile | null>(null);
+	const [refreshing, setRefreshing] = useState(false);
 
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -55,8 +56,19 @@ export function GitChangesTab() {
 		}
 	}
 
-	function handleRefresh() {
-		if (cwd) fetchChanges(cwd, workspaceBaseBranch);
+	async function handleRefresh() {
+		if (!cwd || refreshing) return;
+		setRefreshing(true);
+		try {
+			// Floor the spin at a single rotation so a sub-second fetch reads as a
+			// deliberate refresh rather than an icon twitch.
+			await Promise.all([
+				fetchChanges(cwd, workspaceBaseBranch),
+				new Promise((resolve) => setTimeout(resolve, 600)),
+			]);
+		} finally {
+			setRefreshing(false);
+		}
 	}
 
 	if (isGitRepo === false) {
@@ -125,7 +137,10 @@ export function GitChangesTab() {
 					}}
 					title="Refresh"
 				>
-					<RefreshCw size={12} />
+					<RefreshCw
+						size={12}
+						className={refreshing ? "animate-spin" : undefined}
+					/>
 				</button>
 			</div>
 
