@@ -53,6 +53,8 @@ vi.mock("../../lib/terminalManager", () => ({
 	teardownTerminal,
 }));
 
+import { tabs } from "../../lib/ipc";
+import { collectAgentPanes } from "../../lib/paneTree";
 import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
 import { useWorkspaceStore } from "../workspaceStore";
 
@@ -288,6 +290,52 @@ describe("workspaceStore", () => {
 			useWorkspaceStore.getState().setFocusedPane("pane-1");
 			// Zustand `set` creates a new object, so referential equality verifies no update was made
 			expect(useWorkspaceStore.getState()).toBe(before);
+		});
+	});
+
+	describe("stampAgentOnPane", () => {
+		it("persists an agentId onto the matching terminal pane", () => {
+			const workspace = makeWorkspace();
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+
+			useWorkspaceStore.getState().stampAgentOnPane("pane-1", "claude");
+
+			const tab = useWorkspaceStore.getState().workspaces[0].tabs[0];
+			expect(collectAgentPanes(JSON.parse(tab.layoutJson))).toEqual([
+				{ paneId: "pane-1", agentId: "claude" },
+			]);
+			expect(tabs.update).toHaveBeenCalledWith("tab-1", {
+				layoutJson: tab.layoutJson,
+			});
+		});
+
+		it("clears a persisted agentId when undefined is passed (manual exit)", () => {
+			const layout: PaneNode = {
+				type: "terminal",
+				id: "pane-1",
+				ptyId: "",
+				agentId: "claude",
+			};
+			const workspace = makeWorkspace({
+				tabs: [makeTab({ layoutJson: JSON.stringify(layout) })],
+			});
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+
+			useWorkspaceStore.getState().stampAgentOnPane("pane-1", undefined);
+
+			const tab = useWorkspaceStore.getState().workspaces[0].tabs[0];
+			// No agent remains, so a restart's seedPendingAgentsForLayout is a no-op.
+			expect(collectAgentPanes(JSON.parse(tab.layoutJson))).toEqual([]);
+		});
+
+		it("does nothing when no layout contains the pane", () => {
+			const workspace = makeWorkspace();
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+			vi.mocked(tabs.update).mockClear();
+
+			useWorkspaceStore.getState().stampAgentOnPane("missing-pane", "claude");
+
+			expect(tabs.update).not.toHaveBeenCalled();
 		});
 	});
 

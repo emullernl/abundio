@@ -924,6 +924,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							const matched = matchTitleToAgent(cmd.commandText, agents);
 							if (matched) {
 								actState.setAgentPty(currentPtyId, matched.id);
+								// Persist the agent identity onto the layout so a
+								// manually-typed agent re-runs after a restart, mirroring
+								// the cwd stamp above.
+								useWorkspaceStore
+									.getState()
+									.stampAgentOnPane(paneId, matched.id);
 								nowIsAgent = true;
 								// Manually-typed launch (not via the picker): register
 								// this agent's hooks if missing. Best-effort and once
@@ -968,6 +974,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						const currentEntry = freshState.activities[currentPtyId];
 						if (currentEntry?.detectionMode === "agent") {
 							freshState.clearAgentPty(currentPtyId);
+							// Agent exited while the shell survives (manual /exit, Ctrl+C,
+							// or a crash): forget it so it does NOT auto-relaunch next time.
+							useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
 						}
 						const wasAgentMode = currentEntry?.detectionMode === "agent";
 						if (!managed.suppressActivity && !wasAgentMode) {
@@ -1106,8 +1115,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					// SessionEnd: finalize any open Turn before agent mode is dropped.
 					void trackSessionEnd(currentPtyId);
 					actStore.clearAgentPty(currentPtyId);
+					// Agent ended while the shell survives: forget it so it does NOT
+					// auto-relaunch next time.
+					useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
 					return;
 				}
+				// Persist the agent identity so a hook-detected agent re-runs after a
+				// restart. Idempotent: stampAgentOnPane no-ops when already stamped.
+				useWorkspaceStore.getState().stampAgentOnPane(paneId, hookEvent.agent);
 				actStore.applyHookEvent(currentPtyId, transition);
 			}),
 

@@ -65,9 +65,11 @@ export function setAgentId(
 	if (tree.type === "terminal") {
 		if (tree.id !== paneId) return tree;
 		if (agentId === undefined) {
+			if (tree.agentId === undefined) return tree;
 			const { agentId: _drop, ...rest } = tree;
 			return rest;
 		}
+		if (tree.agentId === agentId) return tree;
 		return { ...tree, agentId };
 	}
 	if (tree.type !== "split") return tree;
