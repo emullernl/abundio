@@ -322,7 +322,10 @@ pub fn parse_combined_prs(json: &str) -> Result<(Vec<PullRequest>, Vec<PullReque
 		// JSON, a captive-portal HTML page, an unexpected schema, etc. The serde
 		// detail is useless to the user, so show a friendly line and keep the raw
 		// reason in the log for debugging.
-		eprintln!("gh graphql parse error: {} — body: {}", e, json);
+		// Cap the logged body to 500 chars: a captive-portal page or misbehaving
+		// proxy could otherwise dump hundreds of KB every poll cycle. The serde
+		// reason `e` is the high-signal part anyway.
+		eprintln!("gh graphql parse error: {} — body: {:.500}", e, json);
 		AbundioError::Git("Couldn't read GitHub's response — try refreshing.".to_string())
 	})?;
 	let to_prs = |conn: GqlConnection| -> Vec<PullRequest> {
