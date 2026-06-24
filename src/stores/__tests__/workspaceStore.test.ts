@@ -55,7 +55,14 @@ vi.mock("../../lib/terminalManager", () => ({
 
 import { tabs } from "../../lib/ipc";
 import { collectAgentPanes } from "../../lib/paneTree";
-import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
+import { takePendingAgent } from "../../lib/pendingAgentRegistry";
+import type {
+	CodingAgent,
+	PaneNode,
+	Tab,
+	WorkspaceWithTabs,
+	WorktreeEntry,
+} from "../../lib/types";
 import { useWorkspaceStore } from "../workspaceStore";
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
@@ -602,6 +609,105 @@ describe("workspaceStore", () => {
 
 			expect(result).toBeNull();
 			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
+		});
+	});
+
+	describe("addWorktreeWorkspace", () => {
+		const agent: CodingAgent = {
+			id: "claude",
+			name: "Claude Code",
+			command: "claude",
+			args: [],
+			builtin: true,
+			enabled: true,
+		};
+		const entry: WorktreeEntry = {
+			path: "/repo/feature",
+			branch: "feature",
+			isPrimary: false,
+			exists: true,
+		};
+
+		it("seeds the chosen agent when the watcher already raced the entry in", async () => {
+			// addDiscoveredWorktree created a bare unopened entry during the slow
+			// `git worktree add` — the regression: the agent must not be dropped.
+			const discovered = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [
+					makeTab({
+						id: "wt-tab-1",
+						workspaceId: "wt-1",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "wt-pane-1",
+							ptyId: "",
+						}),
+					}),
+				],
+			});
+			useWorkspaceStore.setState({ workspaces: [discovered] });
+
+			const result = await useWorkspaceStore
+				.getState()
+				.addWorktreeWorkspace(entry, "", agent);
+
+			expect(result).toBe(discovered);
+			// No duplicate workspace created for the same folder.
+			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
+			expect(takePendingAgent("wt-pane-1")).toEqual({ command: "claude" });
+		});
+
+		it("does not re-seed an entry that is already open", async () => {
+			mockOpenedWorkspaceIds = new Set(["wt-1"]);
+			const discovered = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [
+					makeTab({
+						id: "wt-tab-1",
+						workspaceId: "wt-1",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "open-pane-1",
+							ptyId: "pty-live",
+						}),
+					}),
+				],
+			});
+			useWorkspaceStore.setState({ workspaces: [discovered] });
+
+			await useWorkspaceStore.getState().addWorktreeWorkspace(entry, "", agent);
+
+			expect(takePendingAgent("open-pane-1")).toBeUndefined();
+		});
+
+		it("seeds the agent when it creates the entry itself (no race)", async () => {
+			const { workspaces } = await import("../../lib/ipc");
+			const created = makeWorkspace({
+				id: "wt-2",
+				rootFolder: "/repo/feature",
+				tabs: [
+					makeTab({
+						id: "wt-tab-2",
+						workspaceId: "wt-2",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "new-pane-1",
+							ptyId: "",
+						}),
+					}),
+				],
+			});
+			vi.mocked(workspaces.create).mockResolvedValueOnce(created);
+
+			const result = await useWorkspaceStore
+				.getState()
+				.addWorktreeWorkspace(entry, "", agent);
+
+			expect(result).toBe(created);
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("wt-2");
+			expect(takePendingAgent("new-pane-1")).toEqual({ command: "claude" });
 		});
 	});
 });
