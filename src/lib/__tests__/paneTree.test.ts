@@ -194,6 +194,26 @@ describe("setAgentId", () => {
 			expect(result.first).toBe(nestedSplit.first);
 		}
 	});
+
+	it("returns the same leaf when the agentId is unchanged", () => {
+		const stamped: PaneNode = {
+			type: "terminal",
+			id: "a",
+			ptyId: "pty-a",
+			agentId: "claude",
+		};
+		expect(setAgentId(stamped, "a", "claude")).toBe(stamped);
+	});
+
+	it("returns the same leaf when clearing an already-unstamped leaf", () => {
+		expect(setAgentId(leafA, "a", undefined)).toBe(leafA);
+	});
+
+	it("returns the same tree when a nested stamp is a no-op", () => {
+		const stamped = setAgentId(nestedSplit, "c", "copilot");
+		// Re-stamping the same agentId must not allocate a new tree.
+		expect(setAgentId(stamped, "c", "copilot")).toBe(stamped);
+	});
 });
 
 describe("collectAgentPanes", () => {

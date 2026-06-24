@@ -53,7 +53,16 @@ vi.mock("../../lib/terminalManager", () => ({
 	teardownTerminal,
 }));
 
-import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
+import { tabs } from "../../lib/ipc";
+import { collectAgentPanes } from "../../lib/paneTree";
+import { takePendingAgent } from "../../lib/pendingAgentRegistry";
+import type {
+	CodingAgent,
+	PaneNode,
+	Tab,
+	WorkspaceWithTabs,
+	WorktreeEntry,
+} from "../../lib/types";
 import { useWorkspaceStore } from "../workspaceStore";
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
@@ -288,6 +297,52 @@ describe("workspaceStore", () => {
 			useWorkspaceStore.getState().setFocusedPane("pane-1");
 			// Zustand `set` creates a new object, so referential equality verifies no update was made
 			expect(useWorkspaceStore.getState()).toBe(before);
+		});
+	});
+
+	describe("stampAgentOnPane", () => {
+		it("persists an agentId onto the matching terminal pane", () => {
+			const workspace = makeWorkspace();
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+
+			useWorkspaceStore.getState().stampAgentOnPane("pane-1", "claude");
+
+			const tab = useWorkspaceStore.getState().workspaces[0].tabs[0];
+			expect(collectAgentPanes(JSON.parse(tab.layoutJson))).toEqual([
+				{ paneId: "pane-1", agentId: "claude" },
+			]);
+			expect(tabs.update).toHaveBeenCalledWith("tab-1", {
+				layoutJson: tab.layoutJson,
+			});
+		});
+
+		it("clears a persisted agentId when undefined is passed (manual exit)", () => {
+			const layout: PaneNode = {
+				type: "terminal",
+				id: "pane-1",
+				ptyId: "",
+				agentId: "claude",
+			};
+			const workspace = makeWorkspace({
+				tabs: [makeTab({ layoutJson: JSON.stringify(layout) })],
+			});
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+
+			useWorkspaceStore.getState().stampAgentOnPane("pane-1", undefined);
+
+			const tab = useWorkspaceStore.getState().workspaces[0].tabs[0];
+			// No agent remains, so a restart's seedPendingAgentsForLayout is a no-op.
+			expect(collectAgentPanes(JSON.parse(tab.layoutJson))).toEqual([]);
+		});
+
+		it("does nothing when no layout contains the pane", () => {
+			const workspace = makeWorkspace();
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+			vi.mocked(tabs.update).mockClear();
+
+			useWorkspaceStore.getState().stampAgentOnPane("missing-pane", "claude");
+
+			expect(tabs.update).not.toHaveBeenCalled();
 		});
 	});
 
@@ -558,7 +613,15 @@ describe("workspaceStore", () => {
 	});
 
 	describe("addWorktreeWorkspace", () => {
-		const entry = {
+		const agent: CodingAgent = {
+			id: "claude",
+			name: "Claude Code",
+			command: "claude",
+			args: [],
+			builtin: true,
+			enabled: true,
+		};
+		const entry: WorktreeEntry = {
 			path: "/repo/feature",
 			branch: "feature",
 			isPrimary: false,
@@ -566,9 +629,6 @@ describe("workspaceStore", () => {
 		};
 
 		it("seeds setup commands onto a worktree the watcher raced in first", async () => {
-			const { takePendingAgent } = await import(
-				"../../lib/pendingAgentRegistry"
-			);
 			// Watcher won the race and registered the worktree as an unopened
 			// Workspace (no setup commands seeded). Its focal pane has no PTY yet.
 			const raced = makeWorkspace({
@@ -583,14 +643,95 @@ describe("workspaceStore", () => {
 				.addWorktreeWorkspace(entry, "npm install\nnpm run dev", undefined);
 
 			// Reuses the raced-in entry — no duplicate workspace.
-			expect(result.id).toBe("wt-1");
+			expect(result).toBe(raced);
 			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
-			// Now opened, and its focal pane carries the configured setup commands
-			// so they run once its PTY spawns — the bug was this being skipped.
-			expect(markWorkspaceOpened).toHaveBeenCalledWith("wt-1");
+			// Its focal pane carries the configured setup commands so they run once
+			// its PTY spawns — the bug was this being silently skipped.
 			expect(takePendingAgent("pane-1")).toEqual({
 				command: "npm install\nnpm run dev",
 			});
+		});
+
+		it("seeds the chosen agent when the watcher already raced the entry in", async () => {
+			// addDiscoveredWorktree created a bare unopened entry during the slow
+			// `git worktree add` — the regression: the agent must not be dropped.
+			const discovered = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [
+					makeTab({
+						id: "wt-tab-1",
+						workspaceId: "wt-1",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "wt-pane-1",
+							ptyId: "",
+						}),
+					}),
+				],
+			});
+			useWorkspaceStore.setState({ workspaces: [discovered] });
+
+			const result = await useWorkspaceStore
+				.getState()
+				.addWorktreeWorkspace(entry, "", agent);
+
+			expect(result).toBe(discovered);
+			// No duplicate workspace created for the same folder.
+			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
+			expect(takePendingAgent("wt-pane-1")).toEqual({ command: "claude" });
+		});
+
+		it("does not re-seed an entry that is already open", async () => {
+			mockOpenedWorkspaceIds = new Set(["wt-1"]);
+			const discovered = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [
+					makeTab({
+						id: "wt-tab-1",
+						workspaceId: "wt-1",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "open-pane-1",
+							ptyId: "pty-live",
+						}),
+					}),
+				],
+			});
+			useWorkspaceStore.setState({ workspaces: [discovered] });
+
+			await useWorkspaceStore.getState().addWorktreeWorkspace(entry, "", agent);
+
+			expect(takePendingAgent("open-pane-1")).toBeUndefined();
+		});
+
+		it("seeds the agent when it creates the entry itself (no race)", async () => {
+			const { workspaces } = await import("../../lib/ipc");
+			const created = makeWorkspace({
+				id: "wt-2",
+				rootFolder: "/repo/feature",
+				tabs: [
+					makeTab({
+						id: "wt-tab-2",
+						workspaceId: "wt-2",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "new-pane-1",
+							ptyId: "",
+						}),
+					}),
+				],
+			});
+			vi.mocked(workspaces.create).mockResolvedValueOnce(created);
+
+			const result = await useWorkspaceStore
+				.getState()
+				.addWorktreeWorkspace(entry, "", agent);
+
+			expect(result).toBe(created);
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("wt-2");
+			expect(takePendingAgent("new-pane-1")).toEqual({ command: "claude" });
 		});
 	});
 });

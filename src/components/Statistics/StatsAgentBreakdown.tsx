@@ -2,7 +2,7 @@ import { SectionTitle } from "./StatsActivityChart";
 import {
 	agentColor,
 	agentLabel,
-	formatCount,
+	formatCompactCount,
 	formatDuration,
 	type KeyAggregate,
 } from "./statsCompute";
@@ -87,7 +87,8 @@ export function StatsAgentBreakdown({ agents }: { agents: KeyAggregate[] }) {
 											fontSize: 11,
 										}}
 									>
-										{formatDuration(a.workingMs)} · {formatCount(a.turnCount)}t
+										{formatDuration(a.workingMs)} ·{" "}
+										{formatCompactCount(a.turnCount)}t
 									</span>
 								</div>
 							))}

@@ -1,5 +1,9 @@
 import { SectionTitle } from "./StatsActivityChart";
-import { formatCount, formatDuration, type KeyAggregate } from "./statsCompute";
+import {
+	formatCompactCount,
+	formatDuration,
+	type KeyAggregate,
+} from "./statsCompute";
 
 const MAX_ROWS = 8;
 
@@ -69,7 +73,8 @@ export function StatsWorkspaceBreakdown({
 										fontVariantNumeric: "tabular-nums",
 									}}
 								>
-									{formatDuration(w.workingMs)} · {formatCount(w.turnCount)}t
+									{formatDuration(w.workingMs)} ·{" "}
+									{formatCompactCount(w.turnCount)}t
 								</span>
 							</div>
 							<div
