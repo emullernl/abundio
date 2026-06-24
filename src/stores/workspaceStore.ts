@@ -455,9 +455,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	addWorktreeWorkspace: async (entry, setupCommands, agent) => {
-		// If the watcher already raced this in, just activate the existing entry.
+		// The watcher commonly races this in during the slow `git worktree add`:
+		// it fires `worktrees-changed`, and addDiscoveredWorktree creates a bare,
+		// unopened Workspace for the new folder before we get here. That entry has
+		// no agent seeded, so just switching to it would silently drop the user's
+		// "Launch with" choice. Seed the focal pane first (unless it's somehow
+		// already open, where a pending command would never be consumed), then
+		// activate.
 		const existing = get().workspaces.find((w) => w.rootFolder === entry.path);
 		if (existing) {
+			const alreadyOpen = usePtyActivityStore
+				.getState()
+				.openedWorkspaceIds.has(existing.id);
+			if (!alreadyOpen && (agent || setupCommands)) {
+				seedFocalPane(existing, { setupCommands, agent });
+			}
 			get().beginWorkspaceSwitch(existing.id);
 			return existing;
 		}
