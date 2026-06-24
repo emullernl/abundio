@@ -216,7 +216,9 @@ export function setupCrossWindowSync(): void {
 			// rather than replacing it — otherwise every non-synced key (skipped
 			// update version, sidebar widths, shell path, …) is dropped from
 			// localStorage and reset to defaults on the next launch. Preserve the
-			// stored persist version so rehydrate doesn't re-run migrations.
+			// stored persist version so rehydrate doesn't re-run migrations; fall
+			// back to the store's current version (never a literal that could
+			// drift from the persist config) when nothing is stored yet.
 			const raw = localStorage.getItem("abundio-settings");
 			const existing = raw ? JSON.parse(raw) : {};
 			const prevState =
@@ -224,7 +226,9 @@ export function setupCrossWindowSync(): void {
 					? existing.state
 					: {};
 			const version =
-				typeof existing?.version === "number" ? existing.version : 8;
+				typeof existing?.version === "number"
+					? existing.version
+					: (useSettingsStore.persist.getOptions().version ?? 0);
 			localStorage.setItem(
 				"abundio-settings",
 				JSON.stringify({ state: { ...prevState, ...partial }, version }),
