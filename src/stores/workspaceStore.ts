@@ -458,10 +458,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// The watcher commonly races this in during the slow `git worktree add`:
 		// it fires `worktrees-changed`, and addDiscoveredWorktree creates a bare,
 		// unopened Workspace for the new folder before we get here. That entry has
-		// no agent seeded, so just switching to it would silently drop the user's
-		// "Launch with" choice. Seed the focal pane first (unless it's somehow
-		// already open, where a pending command would never be consumed), then
-		// activate.
+		// no agent or setup commands seeded, so just switching to it would silently
+		// drop the user's "Launch with" choice and their configured setup commands.
+		// This bites macOS hardest: many-small-file checkouts are slower on APFS,
+		// so the checkout outruns the worktrees-changed debounce far more often.
+		// Seed the focal pane first (unless it's somehow already open, where a
+		// pending command would never be consumed), then activate.
 		const existing = get().workspaces.find((w) => w.rootFolder === entry.path);
 		if (existing) {
 			const alreadyOpen = usePtyActivityStore
