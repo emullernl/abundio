@@ -556,4 +556,41 @@ describe("workspaceStore", () => {
 			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
 		});
 	});
+
+	describe("addWorktreeWorkspace", () => {
+		const entry = {
+			path: "/repo/feature",
+			branch: "feature",
+			isPrimary: false,
+			exists: true,
+		};
+
+		it("seeds setup commands onto a worktree the watcher raced in first", async () => {
+			const { takePendingAgent } = await import(
+				"../../lib/pendingAgentRegistry"
+			);
+			// Watcher won the race and registered the worktree as an unopened
+			// Workspace (no setup commands seeded). Its focal pane has no PTY yet.
+			const raced = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [makeTab({ id: "wt-tab-1", workspaceId: "wt-1" })],
+			});
+			useWorkspaceStore.setState({ workspaces: [raced] });
+
+			const result = await useWorkspaceStore
+				.getState()
+				.addWorktreeWorkspace(entry, "npm install\nnpm run dev", undefined);
+
+			// Reuses the raced-in entry — no duplicate workspace.
+			expect(result.id).toBe("wt-1");
+			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
+			// Now opened, and its focal pane carries the configured setup commands
+			// so they run once its PTY spawns — the bug was this being skipped.
+			expect(markWorkspaceOpened).toHaveBeenCalledWith("wt-1");
+			expect(takePendingAgent("pane-1")).toEqual({
+				command: "npm install\nnpm run dev",
+			});
+		});
+	});
 });

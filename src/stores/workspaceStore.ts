@@ -455,9 +455,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	addWorktreeWorkspace: async (entry, setupCommands, agent) => {
-		// If the watcher already raced this in, just activate the existing entry.
+		// The disk watcher can win a race against our own create: on a repo whose
+		// checkout outruns the worktrees-changed debounce (common on macOS, whose
+		// many-small-file checkouts are slower), reconcileRepo registers this
+		// worktree as an *unopened* Workspace before we get here. It has no PTY
+		// yet (unopened panes never spawn), so seed its focal pane with the setup
+		// commands + agent and open it — otherwise adding a worktree silently
+		// skips the configured setup. See ADR-0017.
 		const existing = get().workspaces.find((w) => w.rootFolder === entry.path);
 		if (existing) {
+			usePtyActivityStore.getState().markWorkspaceOpened(existing.id);
+			seedFocalPane(existing, { setupCommands, agent });
 			get().beginWorkspaceSwitch(existing.id);
 			return existing;
 		}
