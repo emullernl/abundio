@@ -58,14 +58,48 @@ pub fn run_gh(cwd: &str, args: &[&str]) -> Result<String, AbundioError> {
 
 	if !output.status.success() {
 		let stderr = String::from_utf8_lossy(&output.stderr);
+		let stderr = stderr.trim();
+		// Offline / can't-reach-GitHub failures carry a raw transport error (and,
+		// for `gh api graphql`, the entire echoed query) that is useless to the
+		// user. Collapse those to one human-readable line. See ADR-0019.
+		if let Some(friendly) = offline_message(stderr) {
+			return Err(AbundioError::Git(friendly.to_string()));
+		}
 		return Err(AbundioError::Git(format!(
 			"gh {} failed: {}",
 			args.join(" "),
-			stderr.trim()
+			stderr
 		)));
 	}
 
 	Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Detect the family of `gh` failures caused by the machine being offline or
+/// otherwise unable to reach GitHub, and map them to a short, friendly message.
+/// Returns `None` for everything else (auth errors, rate limits, bad queries…)
+/// so those still surface their original detail.
+fn offline_message(stderr: &str) -> Option<&'static str> {
+	// Lower-cased substring match across the transport-layer errors Go's net
+	// stack emits on each platform when a request can't reach the host.
+	const NETWORK_MARKERS: &[&str] = &[
+		"dial tcp",                            // generic Go dial failure
+		"no such host",                        // DNS lookup failed (offline)
+		"could not resolve host",              // curl/libc DNS failure
+		"temporary failure in name resolution", // glibc DNS failure (Linux)
+		"network is unreachable",              // no route (Unix)
+		"network is down",                     // interface down (Unix)
+		"connection refused",
+		"connection attempt failed",           // Windows WSAETIMEDOUT (connectex)
+		"i/o timeout",
+		"tls handshake timeout",
+		"server misbehaving",                  // Go resolver, no DNS reachable
+	];
+	let lower = stderr.to_lowercase();
+	NETWORK_MARKERS
+		.iter()
+		.any(|m| lower.contains(m))
+		.then_some("Can't reach GitHub — check your internet connection.")
 }
 
 // ── availability / auth cache ──
@@ -413,5 +447,36 @@ mod tests {
 		assert!(q.contains("author:@me"));
 		assert!(q.contains("reviewDecision"));
 		assert!(q.contains("statusCheckRollup"));
+	}
+
+	#[test]
+	fn offline_message_detects_windows_connectex() {
+		// The exact shape from the user's offline report (Windows).
+		let stderr = "gh: Post \"https://api.github.com/graphql\": dial tcp 140.82.121.5:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.";
+		assert_eq!(
+			offline_message(stderr),
+			Some("Can't reach GitHub — check your internet connection.")
+		);
+	}
+
+	#[test]
+	fn offline_message_detects_dns_and_unreachable() {
+		assert!(offline_message("dial tcp: lookup api.github.com: no such host").is_some());
+		assert!(
+			offline_message("dial tcp 140.82.121.6:443: connect: network is unreachable").is_some()
+		);
+		assert!(offline_message("Could not resolve host: github.com").is_some());
+		assert!(
+			offline_message("dial tcp: lookup api.github.com: Temporary failure in name resolution")
+				.is_some()
+		);
+	}
+
+	#[test]
+	fn offline_message_ignores_non_network_errors() {
+		// Auth / API errors must keep their original detail.
+		assert!(offline_message("gh: Bad credentials (HTTP 401)").is_none());
+		assert!(offline_message("GraphQL: Field 'foo' doesn't exist on type 'PullRequest'").is_none());
+		assert!(offline_message("API rate limit exceeded").is_none());
 	}
 }
