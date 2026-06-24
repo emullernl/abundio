@@ -183,6 +183,30 @@ export function TerminalSlot({
 		}
 	}, [onFocus, paneId]);
 
+	// A deliberate left-click into the terminal screen counts as the user
+	// engaging with a waiting agent, so clear its sky-blue "waiting" dot to idle
+	// — the same effect ESC has in terminalManager's onData keystroke path.
+	// clearWaiting is a no-op unless the pane is actually waiting, so this is
+	// safe to call. Two deliberate restrictions:
+	//   • We do NOT fold this into handleFocus: that also fires on programmatic
+	//     focus (tab switch via the isFocused effect), and switching to a tab
+	//     should keep showing its waiting dot, not silently clear it.
+	//   • We gate on the click landing inside innerRef (the xterm screen). The
+	//     mousedown is bound to the whole pane container so a click anywhere
+	//     focuses the pane, but clicks on the title bar — including the start of
+	//     a pane drag-reorder — must NOT clear the dot. Right/middle clicks
+	//     (context menu, paste) are excluded via the button guard.
+	const handleMouseDown = useCallback(
+		(e: React.MouseEvent) => {
+			handleFocus();
+			if (e.button !== 0) return;
+			if (!innerRef.current?.contains(e.target as Node)) return;
+			const ptyId = getTerminal(paneId)?.ptyId;
+			if (ptyId) usePtyActivityStore.getState().clearWaiting(ptyId);
+		},
+		[handleFocus, paneId],
+	);
+
 	// Open our own context menu on right-click, and crucially stop the event
 	// before xterm.js sees it. xterm registers a `contextmenu` listener on its
 	// inner `.xterm` element whose handler moves the hidden input textarea under
@@ -329,7 +353,7 @@ export function TerminalSlot({
 				transition: "opacity 150ms ease",
 			}}
 			onFocus={handleFocus}
-			onMouseDown={handleFocus}
+			onMouseDown={handleMouseDown}
 		>
 			<TerminalTitleBar
 				paneId={paneId}
