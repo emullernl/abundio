@@ -150,6 +150,8 @@ export function setupCrossWindowSync(): void {
 		markdownPreviewColorMode: unknown;
 		prPollEnabled: unknown;
 		prPollIntervalMinutes: unknown;
+		skippedUpdateVersion: unknown;
+		updateSnoozedUntil: unknown;
 	};
 	const sliceOf = (s: Record<string, unknown>): SettingsSlice => ({
 		terminalFontFamily: s.terminalFontFamily,
@@ -165,6 +167,11 @@ export function setupCrossWindowSync(): void {
 		markdownPreviewColorMode: s.markdownPreviewColorMode,
 		prPollEnabled: s.prPollEnabled,
 		prPollIntervalMinutes: s.prPollIntervalMinutes,
+		// Update suppression: skipping/snoozing in one Window must reach the
+		// others (the Rust check emits the prompt to the focused Window only),
+		// and must survive the localStorage write below. See ADR-0014.
+		skippedUpdateVersion: s.skippedUpdateVersion,
+		updateSnoozedUntil: s.updateSnoozedUntil,
 	});
 	// Fully order-independent serialization: sorts object keys recursively so a
 	// payload that round-tripped through serde_json (alphabetized keys, incl.
@@ -205,12 +212,29 @@ export function setupCrossWindowSync(): void {
 		// Record BEFORE rehydrate so the resulting store update doesn't echo.
 		lastSerialized = json;
 		try {
+			// MERGE the incoming slice into this Window's existing persisted state
+			// rather than replacing it — otherwise every non-synced key (skipped
+			// update version, sidebar widths, shell path, …) is dropped from
+			// localStorage and reset to defaults on the next launch. Preserve the
+			// stored persist version so rehydrate doesn't re-run migrations; fall
+			// back to the store's current version (never a literal that could
+			// drift from the persist config) when nothing is stored yet.
+			const raw = localStorage.getItem("abundio-settings");
+			const existing = raw ? JSON.parse(raw) : {};
+			const prevState =
+				existing?.state && typeof existing.state === "object"
+					? existing.state
+					: {};
+			const version =
+				typeof existing?.version === "number"
+					? existing.version
+					: (useSettingsStore.persist.getOptions().version ?? 0);
 			localStorage.setItem(
 				"abundio-settings",
-				JSON.stringify({ state: partial, version: 2 }),
+				JSON.stringify({ state: { ...prevState, ...partial }, version }),
 			);
 		} catch {
-			// localStorage write failure — best effort, rehydrate may
+			// localStorage read/write failure — best effort, rehydrate may
 			// pick up stale data but at least won't crash.
 		}
 		useSettingsStore.persist.rehydrate();
