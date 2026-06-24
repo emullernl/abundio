@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
 import { useWorktreeProgress } from "../../hooks/useWorktreeProgress";
 import { worktrees } from "../../lib/ipc";
 import type { WorkspaceWithTabs } from "../../lib/types";
@@ -52,7 +53,6 @@ export function WorkspaceList({
 	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
 	const beginWorkspaceSwitch = useWorkspaceStore((s) => s.beginWorkspaceSwitch);
 	const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
-	const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
 	const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
 	const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
 	const removeWorktreeWorkspace = useWorkspaceStore(
@@ -62,6 +62,11 @@ export function WorkspaceList({
 		(s) => s.createWorktreeWorkspace,
 	);
 	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
+
+	// "Unload Workspace" tears down the workspace's PTYs; confirm first when an
+	// agent is Working or a command is in progress.
+	const { requestUnload, dialogProps: unloadDialogProps } =
+		useConfirmUnloadWorkspace();
 
 	// Waiting modal for the (potentially slow) create/remove worktree ops.
 	const {
@@ -296,7 +301,7 @@ export function WorkspaceList({
 			const items: ContextMenuItem[] = [
 				{
 					label: "Unload Workspace",
-					onClick: () => closeWorkspace(workspaceId),
+					onClick: () => requestUnload(workspaceId),
 				},
 			];
 			if (role?.isMainWorktree && ws) {
@@ -338,7 +343,7 @@ export function WorkspaceList({
 			}
 			return items;
 		},
-		[roleById, workspaces, closeWorkspace, requestRemoveWorktree],
+		[roleById, workspaces, requestUnload, requestRemoveWorktree],
 	);
 
 	const contextMenuItems = contextMenu
@@ -526,6 +531,8 @@ export function WorkspaceList({
 					onCancel={() => setPendingDeleteId(null)}
 				/>
 			)}
+
+			{unloadDialogProps && <ConfirmDialog {...unloadDialogProps} />}
 
 			{addWorktreeTarget && (
 				<AddWorktreeDialog
