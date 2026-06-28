@@ -17,10 +17,7 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
 import { mapHookEvent } from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
-import {
-	onPtyExit as trackPtyExit,
-	onSessionEnd as trackSessionEnd,
-} from "./agentTurnTracker";
+import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { agentHooks, pty } from "./ipc";
 import { collectPaneIds } from "./paneTree";
 import { takePendingAgent } from "./pendingAgentRegistry";
@@ -371,8 +368,8 @@ async function startBackgroundTracking(ptyId: string) {
 	});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
 		if (status.type === "exited") {
-			// Finalize any open Turn as a pty exit before the state flips.
-			void trackPtyExit(ptyId);
+			// Telemetry finalizes this Turn as a pty_exit off the StatusChange cause
+			// (recordExitSuccess/recordError below) — no inline call needed.
 			const actStore = usePtyActivityStore.getState();
 			if (status.code !== 0 && status.code !== null) {
 				actStore.recordError(ptyId);
@@ -1057,9 +1054,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 			pty.onStatus(currentPtyId, (status) => {
 				if (status.type === "exited") {
-					// Finalize any open Turn as a pty exit BEFORE the state flips to
-					// ready/error (whose subscription would otherwise close it as "stop").
-					void trackPtyExit(currentPtyId);
+					// Telemetry finalizes this Turn as a pty_exit off the StatusChange
+					// cause (recordExitSuccess/recordError below) — no inline call.
 					// Set activity state BEFORE setPtyStatus to avoid subscriber race
 					const actStore = usePtyActivityStore.getState();
 					const outcome = classifyShellExit(status.code);
