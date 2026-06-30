@@ -86,6 +86,7 @@ beforeEach(() => {
 		detectedAgentIds: {},
 		activities: {},
 		cwds: {},
+		agentPtyIds: new Set(),
 	});
 	vi.spyOn(telemetry, "recordTurn").mockResolvedValue(undefined);
 	vi.spyOn(git, "snapshotWorktree").mockResolvedValue("oid");
@@ -134,6 +135,48 @@ describe("turn tracker via the StatusChange seam", () => {
 			.calls[0][0] as AgentTurnRecord;
 		expect(rec.agentId).toBe("copilot");
 		expect(rec.endReason).toBe("stop");
+	});
+
+	it("records an auto-launched Agent: setAgentPty(no id) → command/hook backfills the id → Turn records", async () => {
+		// Reproduces the workspace-load auto-launch path. The pane is marked an
+		// agent WITHOUT an id first (terminalManager `takePendingAgent`); the id
+		// only arrives later from a `command_start` title match or the first hook,
+		// which used to early-return and drop it — leaving detectedAgentIds empty
+		// (terminal icon, no Turns).
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsA", "paneA", "ptyA")],
+		});
+		usePtyActivityStore.setState((s) => ({
+			panePtyMap: { ...s.panePtyMap, paneA: "ptyA" },
+			activities: {
+				...s.activities,
+				ptyA: {
+					state: "idle",
+					lastOutputAt: null,
+					hasEverReceivedOutput: true,
+					detectionMode: "shell",
+					hookDriven: false,
+				},
+			},
+		}));
+		const a = usePtyActivityStore.getState();
+		a.setAgentPty("ptyA"); // (1) auto-launch: agent mode, no id
+		a.recordOutput("ptyA"); // (2) TUI flood → Working
+		a.setAgentPty("ptyA", "copilot"); // (3) command_start match → backfills id
+		// The id must now be recorded (drives both the titlebar icon and the tracker).
+		expect(usePtyActivityStore.getState().detectedAgentIds.ptyA).toBe(
+			"copilot",
+		);
+		a.applyHookEvent("ptyA", "active"); // (4) userPromptSubmitted (Working→Working)
+		a.applyHookEvent("ptyA", "ready"); // (5) agentStop
+		await vi.waitFor(() =>
+			expect(
+				(telemetry.recordTurn as ReturnType<typeof vi.fn>).mock.calls.length,
+			).toBe(1),
+		);
+		const rec = (telemetry.recordTurn as ReturnType<typeof vi.fn>).mock
+			.calls[0][0] as AgentTurnRecord;
+		expect(rec.agentId).toBe("copilot");
 	});
 
 	it("does NOT open a Turn on a mode-only change (agentDetected, state unchanged)", () => {

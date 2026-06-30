@@ -349,7 +349,23 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 
 		setAgentPty: (ptyId, agentId) => {
 			const s = get();
-			if (s.agentPtyIds.has(ptyId)) return;
+			if (s.agentPtyIds.has(ptyId)) {
+				// Already in agent mode — but the auto-launch path marks the PTY as
+				// an agent WITHOUT an id (it only knows the command string, not which
+				// Agent — see terminalManager `takePendingAgent`). The id-bearing
+				// detection that follows (a `command_start` title match or the first
+				// Agent hook) must still be able to record it; otherwise
+				// `detectedAgentIds` stays empty, the titlebar keeps the terminal icon
+				// instead of the Agent's, and the Turn tracker can't resolve the Agent
+				// so no Turns are recorded. Backfill the id without re-running the
+				// agentDetected transition (mode is already agent).
+				if (agentId && s.detectedAgentIds[ptyId] !== agentId) {
+					set({
+						detectedAgentIds: { ...s.detectedAgentIds, [ptyId]: agentId },
+					});
+				}
+				return;
+			}
 			const newSet = new Set(s.agentPtyIds);
 			newSet.add(ptyId);
 			// Clear shell command tracking — agent mode doesn't use shell integration
