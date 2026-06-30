@@ -14,27 +14,23 @@
 // mode without changing the dot state). The PTY exit handlers add pty-exit
 // fidelity. All of those funnel into the same idempotent engine here.
 //
-// Attribution is git-diff delta: snapshot the workspace's cached additions/
-// deletions at Turn start, fetch fresh totals at finalize, store the
-// difference. Line counts are NULL ("unattributed") when two Turns overlap in
-// one Workspace — the per-Workspace git delta can't be split between them.
+// Attribution is a per-Turn working-tree diff (ADR-0021): snapshot the
+// workspace's working tree to a git tree at Turn start and finalize, then diff
+// the two — the additions/deletions between them are the lines the Turn
+// changed. (This replaced a net-vs-base-branch delta that recorded +0 −0 for
+// most edit Turns.) Line counts are NULL ("unmeasured") when two Turns overlap
+// in one Workspace (the shared working tree can't be split between them), when
+// the Workspace isn't a git repo, or when a snapshot is unavailable.
 
 import { useProfileStore } from "../stores/profileStore";
 import {
 	subscribeStatusChange,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
-import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { type AgentTurnRecord, git, telemetry } from "./ipc";
 import { findPaneLocation } from "./notificationRouter";
 import type { PtyActivityState } from "./types";
-
-interface GitSnapshot {
-	added: number;
-	deleted: number;
-	files: number;
-}
 
 interface OpenTurn {
 	id: string;
@@ -45,8 +41,9 @@ interface OpenTurn {
 	workspaceId: string | null;
 	workspacePath: string;
 	workspaceName: string;
-	/** Repo root + base branch for the finalize-time fetchBundle. */
+	/** Repo root for the start/finalize worktree snapshots (ADR-0021). */
 	cwd: string | null;
+	/** Base branch — retained context (no longer used for line counts). */
 	baseBranch: string | null;
 	startedAt: number;
 	workingMs: number;
@@ -57,7 +54,13 @@ interface OpenTurn {
 	lastState: PtyActivityState;
 	permissionRequests: number;
 	errors: number;
-	gitStart: GitSnapshot | null;
+	/** Worktree tree OID captured at Turn begin (resolves async via
+	 *  startTreePromise). Null until it resolves, or permanently null if the
+	 *  begin snapshot failed / the Workspace isn't a git repo. */
+	startTreeOid: string | null;
+	/** In-flight begin snapshot, awaited at finalize so a fast Turn that ends
+	 *  before it resolves still gets attribution. Never rejects (catches to null). */
+	startTreePromise: Promise<string | null> | null;
 	/** Set when another Turn was open in the same Workspace at any point during
 	 *  this Turn's life — line counts become NULL (unattributed). */
 	contaminated: boolean;
@@ -132,17 +135,6 @@ function resolveContext(ptyId: string): {
 		workspaceName: ws?.name ?? "",
 		cwd: ws?.rootFolder ?? act.cwds[ptyId] ?? null,
 		baseBranch: ws?.baseBranch ?? null,
-	};
-}
-
-function cachedGitSnapshot(workspaceId: string | null): GitSnapshot | null {
-	if (!workspaceId) return null;
-	const info = useWorkspaceGitStore.getState().byWorkspaceId[workspaceId];
-	if (!info) return null;
-	return {
-		added: info.additions,
-		deleted: info.deletions,
-		files: info.changedFileCount,
 	};
 }
 
@@ -222,9 +214,21 @@ export function noteState(
 			lastState: "active",
 			permissionRequests: 0,
 			errors: 0,
-			gitStart: cachedGitSnapshot(ctx.workspaceId),
+			startTreeOid: null,
+			startTreePromise: null,
 			contaminated: false,
 		};
+		// Capture the start-of-Turn worktree snapshot, fire-and-forget so the
+		// begin path stays non-blocking. There's a small documented race: edits
+		// landing before this resolves leak into the baseline (ADR-0021). The
+		// turn-start hook fires before the agent edits, and the scan is fast, so
+		// it's rare and fails safe (under-counts, never crashes).
+		if (turn.cwd) {
+			turn.startTreePromise = git
+				.snapshotWorktree(turn.cwd)
+				.then((oid) => (turn.startTreeOid = oid))
+				.catch(() => null);
+		}
 		// Overlap: mark this Turn and every other open Turn in the same Workspace
 		// as contaminated, so all of them null-out their line attribution.
 		if (turn.workspaceId !== null) {
@@ -295,44 +299,37 @@ function finalize(
 	return writeRecord(t, reason, now);
 }
 
-function sumBundleFiles(
-	changedFiles: { additions: number; deletions: number }[],
-): GitSnapshot {
-	let added = 0;
-	let deleted = 0;
-	for (const f of changedFiles) {
-		added += f.additions;
-		deleted += f.deletions;
-	}
-	return { added, deleted, files: changedFiles.length };
-}
-
 async function writeRecord(
 	t: OpenTurn,
 	reason: NonNullable<AgentTurnRecord["endReason"]>,
 	endedAt: number,
 ): Promise<void> {
-	// Prefer a fresh git read at finalize (the scheduler push may be coalesced
-	// and stale); fall back to the cached snapshot if the fetch fails.
-	let gitEnd: GitSnapshot | null = null;
-	if (t.cwd) {
-		try {
-			const bundle = await git.fetchBundle(t.cwd, t.baseBranch);
-			gitEnd = sumBundleFiles(bundle.changedFiles);
-		} catch {
-			gitEnd = cachedGitSnapshot(t.workspaceId);
-		}
-	} else {
-		gitEnd = cachedGitSnapshot(t.workspaceId);
-	}
-
+	// Per-Turn working-tree diff (ADR-0021): snapshot the worktree now and diff
+	// against the start snapshot — the result is the lines this Turn changed.
+	// Stays NULL ("unmeasured") when the Turn overlapped another in the same
+	// Workspace, the Workspace isn't a git repo, or a snapshot was unavailable.
 	let linesAdded: number | null = null;
 	let linesDeleted: number | null = null;
 	let filesChanged: number | null = null;
-	if (!t.contaminated && t.gitStart && gitEnd) {
-		linesAdded = Math.max(0, gitEnd.added - t.gitStart.added);
-		linesDeleted = Math.max(0, gitEnd.deleted - t.gitStart.deleted);
-		filesChanged = Math.max(0, gitEnd.files - t.gitStart.files);
+	if (!t.contaminated && t.cwd) {
+		// Await the fire-and-forget begin snapshot so a fast Turn that finalizes
+		// before it resolves still gets attribution.
+		const startOid = await (t.startTreePromise ??
+			Promise.resolve(t.startTreeOid));
+		if (startOid) {
+			try {
+				const endOid = await git.snapshotWorktree(t.cwd);
+				if (endOid) {
+					const s = await git.diffTrees(t.cwd, startOid, endOid);
+					// Tree-diff sides are independently non-negative — no flooring.
+					linesAdded = s.additions;
+					linesDeleted = s.deletions;
+					filesChanged = s.files;
+				}
+			} catch {
+				// Leave NULL ("unmeasured") on any snapshot/diff failure.
+			}
+		}
 	}
 
 	const record: AgentTurnRecord = {
@@ -355,10 +352,12 @@ async function writeRecord(
 		linesAdded,
 		linesDeleted,
 		filesChanged,
-		gitAddedStart: t.gitStart?.added ?? null,
-		gitDeletedStart: t.gitStart?.deleted ?? null,
-		gitAddedEnd: gitEnd?.added ?? null,
-		gitDeletedEnd: gitEnd?.deleted ?? null,
+		// The vs-base provenance columns were retired with the net-vs-base
+		// metric (ADR-0021); kept in the schema, written NULL.
+		gitAddedStart: null,
+		gitDeletedStart: null,
+		gitAddedEnd: null,
+		gitDeletedEnd: null,
 		createdAt: 0, // set by the DB default
 	};
 
@@ -370,6 +369,7 @@ async function writeRecord(
 }
 
 let subscribed = false;
+const unsubscribers: Array<() => void> = [];
 
 /** Wire the tracker to the Status transition stream. Call once at the App root. */
 export function initAgentTurnTracker(): void {
@@ -380,56 +380,69 @@ export function initAgentTurnTracker(): void {
 	// the one PTY that moved and carries its `cause`, so end-reason fidelity
 	// arrives in-band — no inline trackPtyExit, and no ordering race against the
 	// activity-state flip. See docs/plans/status-machine.md.
-	subscribeStatusChange(({ ptyId, prev, next, cause }) => {
-		const isAgent =
-			next.detectionMode === "agent" ||
-			prev.detectionMode === "agent" ||
-			openTurns.has(ptyId);
-		if (!isAgent) return;
+	unsubscribers.push(
+		subscribeStatusChange(({ ptyId, prev, next, cause }) => {
+			const isAgent =
+				next.detectionMode === "agent" ||
+				prev.detectionMode === "agent" ||
+				openTurns.has(ptyId);
+			if (!isAgent) return;
 
-		// `recordExitSuccess` / `recordError` on an **agent-mode** PTY is a real pty
-		// exit — the onStatus "exited" path leaves the PTY in agent mode — so the
-		// cause IS the pty-exit signal: finalize as pty_exit, ahead of (and instead
-		// of) the ready/error state's would-be stop/error finalize. The same causes
-		// also fire on a shell `command_end`/`commandFinished`; there the PTY is in
-		// shell mode, so the detectionMode gate routes it to noteState below —
-		// keeping a lingering Turn open (as on `main`) rather than finalizing it as a
-		// pty_exit. Session-end stays an explicit trackSessionEnd in terminalManager's
-		// hook-clear path (the same clearAgentPty also fires on a shell command_end
-		// that merely drops agent mode, which must NOT finalize a Turn).
-		if (
-			next.detectionMode === "agent" &&
-			(cause.kind === "recordExitSuccess" || cause.kind === "recordError")
-		) {
-			void onPtyExit(ptyId);
-			return;
-		}
-		// Mode-only changes (agentDetected / sessionEnded flip detectionMode while
-		// leaving `state` untouched) emit a StatusChange but are NOT state
-		// transitions; the old store.subscribe driver skipped unchanged-state
-		// entries, so we do too — otherwise detecting an agent mid-activity would
-		// start a Turn at detection time, and a session-end mid-turn could resume or
-		// finalize one.
-		if (prev.state === next.state) return;
-		void noteState(ptyId, next.state);
-	});
+			// `recordExitSuccess` / `recordError` on an **agent-mode** PTY is a real pty
+			// exit — the onStatus "exited" path leaves the PTY in agent mode — so the
+			// cause IS the pty-exit signal: finalize as pty_exit, ahead of (and instead
+			// of) the ready/error state's would-be stop/error finalize. The same causes
+			// also fire on a shell `command_end`/`commandFinished`; there the PTY is in
+			// shell mode, so the detectionMode gate routes it to noteState below —
+			// keeping a lingering Turn open (as on `main`) rather than finalizing it as a
+			// pty_exit. Session-end stays an explicit trackSessionEnd in terminalManager's
+			// hook-clear path (the same clearAgentPty also fires on a shell command_end
+			// that merely drops agent mode, which must NOT finalize a Turn).
+			if (
+				next.detectionMode === "agent" &&
+				(cause.kind === "recordExitSuccess" || cause.kind === "recordError")
+			) {
+				void onPtyExit(ptyId);
+				return;
+			}
+			// Mode-only changes (agentDetected / sessionEnded flip detectionMode while
+			// leaving `state` untouched) emit a StatusChange but are NOT state
+			// transitions; skip unchanged-state entries — otherwise detecting an agent
+			// mid-activity would start a Turn at detection time, and a session-end
+			// mid-turn could resume or finalize one.
+			//
+			// Exception: a turn-start hook (`userPromptSubmitted`/`UserPromptSubmit`/…
+			// → "working") IS a turn boundary even when the dot is already Working. A
+			// command-detected Agent whose TUI floods output (e.g. Copilot) trips the
+			// activity byte-heuristic into Working *before* its first hook; that first
+			// hook then only flips `hookDriven` (Working→Working), and dropping it here
+			// would never open the Turn. So always let a hook "working" cause through.
+			const startsWork =
+				cause.kind === "hook" && cause.transition === "working";
+			if (prev.state === next.state && !startsWork) return;
+			void noteState(ptyId, next.state);
+		}),
+	);
 
 	// Backstop: a PTY removed from the store (teardown without a pty-exit event)
 	// with a Turn still open → finalize as a pty exit. A removal isn't a status
 	// transition, so it can't ride the StatusChange seam.
-	usePtyActivityStore.subscribe((state, prev) => {
-		for (const ptyId of [...openTurns.keys()]) {
-			if (!state.activities[ptyId] && prev.activities[ptyId]) {
-				void onPtyExit(ptyId);
+	unsubscribers.push(
+		usePtyActivityStore.subscribe((state, prev) => {
+			for (const ptyId of [...openTurns.keys()]) {
+				if (!state.activities[ptyId] && prev.activities[ptyId]) {
+					void onPtyExit(ptyId);
+				}
 			}
-		}
-	});
+		}),
+	);
 }
 
 /** Test-only: clear all in-memory state between cases. */
 export function __resetAgentTurnTrackerForTests(): void {
 	openTurns.clear();
 	sessionByPty.clear();
+	for (const unsub of unsubscribers.splice(0)) unsub();
 	subscribed = false;
 }
 

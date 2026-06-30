@@ -107,7 +107,7 @@ export function StatsSummaryCards({
 				delay={0}
 			/>
 			<StatCard
-				label="Net lines"
+				label="Lines changed"
 				value={
 					<span>
 						<span style={{ color: "rgb(124 196 144)" }}>
@@ -121,9 +121,9 @@ export function StatsSummaryCards({
 				sub={
 					unmeasured > 0
 						? `${unmeasured} of ${turns} turns unmeasured`
-						: "net vs base branch"
+						: "changed during turns"
 				}
-				title="Net lines changed vs the base branch during agent turns. Approximate; turns where two agents ran in one workspace at once are unmeasured."
+				title="Lines added/removed during agent turns, measured per turn as a working-tree diff (snapshot at turn start vs end). Turns where two agents ran in one workspace at once are unmeasured."
 				delay={40}
 			/>
 			<StatCard

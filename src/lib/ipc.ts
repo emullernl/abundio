@@ -235,6 +235,14 @@ export interface GitFetchBundle {
 	statusFingerprint: string;
 }
 
+/** Line/file churn between two worktree tree snapshots — a per-Turn working-tree
+ *  diff (see ADR-0021). Each field is independently non-negative. */
+export interface TreeDiffStats {
+	additions: number;
+	deletions: number;
+	files: number;
+}
+
 /** Discriminated union pushed by the Rust `GitScheduler` on every refresh.
  *  Single channel for success and failure — keeps state-update ordering
  *  trivial on the frontend (one listener, one switch). */
@@ -316,6 +324,15 @@ export const git = {
 	/** GitHub `owner/repo` for a workspace folder, or null. Drives the
 	 *  client-side All-vs-Repo PR filter (ADR-0019). */
 	repoSlug: (cwd: string) => invoke<string | null>("git_repo_slug", { cwd }),
+
+	/** Snapshot the worktree to a git tree OID for per-Turn churn measurement
+	 *  (ADR-0021). Null for a non-git workspace. Never touches the staging area. */
+	snapshotWorktree: (cwd: string) =>
+		invoke<string | null>("git_snapshot_worktree", { cwd }),
+
+	/** Line/file churn between two worktree tree snapshots (per-Turn diff). */
+	diffTrees: (cwd: string, startOid: string, endOid: string) =>
+		invoke<TreeDiffStats>("git_diff_trees", { cwd, startOid, endOid }),
 };
 
 export type WorkspaceGitSummary = {

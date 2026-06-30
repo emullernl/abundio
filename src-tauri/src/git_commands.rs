@@ -39,6 +39,16 @@ pub struct BranchInfo {
     pub current_branch: String,
 }
 
+/// Line/file churn between two worktree snapshots — a per-Turn working-tree
+/// diff (see ADR-0021). Each field is independently non-negative.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeDiffStats {
+    pub additions: i64,
+    pub deletions: i64,
+    pub files: i64,
+}
+
 fn cache_key_for(cwd: &str) -> String {
     std::fs::canonicalize(cwd)
         .map(|p| p.to_string_lossy().to_string())
@@ -104,6 +114,29 @@ pub async fn git_repo_slug(cwd: String) -> Result<Option<String>, AbundioError> 
     tokio::task::spawn_blocking(move || crate::git_libgit2::github_repo_slug(&cwd))
         .await
         .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))
+}
+
+/// Snapshot the worktree to a tree OID for per-Turn churn measurement (ADR-0021).
+/// Best-effort: returns null for a non-git workspace. Never touches the on-disk
+/// staging area (see `git_libgit2::snapshot_worktree_tree`).
+#[tauri::command]
+pub async fn git_snapshot_worktree(cwd: String) -> Result<Option<String>, AbundioError> {
+    tokio::task::spawn_blocking(move || git_libgit2::snapshot_worktree_tree(&cwd))
+        .await
+        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+}
+
+/// Line/file churn between two worktree tree snapshots (per-Turn working-tree
+/// diff). See ADR-0021.
+#[tauri::command]
+pub async fn git_diff_trees(
+    cwd: String,
+    start_oid: String,
+    end_oid: String,
+) -> Result<TreeDiffStats, AbundioError> {
+    tokio::task::spawn_blocking(move || git_libgit2::diff_tree_stats(&cwd, &start_oid, &end_oid))
+        .await
+        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
 }
 
 #[derive(Debug, Clone, Serialize)]
