@@ -243,6 +243,67 @@ describe("agentTurnTracker git attribution", () => {
 			expect(r.gitAddedEnd).toBeNull();
 		}
 	});
+
+	it("awaits a begin snapshot that resolves after the turn finalizes (fast-turn race)", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("ws1", [{ paneId: "pane1", ptyId: "pty1" }])],
+		});
+		registerAgentPty("pty1", "pane1");
+		// The begin snapshot stays pending past noteState("ready") — the exact
+		// race the `await t.startTreePromise` in writeRecord exists to handle.
+		let resolveStart!: (oid: string) => void;
+		const pendingStart = new Promise<string>((r) => {
+			resolveStart = r;
+		});
+		(git.snapshotWorktree as ReturnType<typeof vi.fn>)
+			.mockReturnValueOnce(pendingStart) // begin — pending
+			.mockResolvedValueOnce("end"); // finalize
+		(git.diffTrees as ReturnType<typeof vi.fn>).mockResolvedValue({
+			additions: 3,
+			deletions: 0,
+			files: 1,
+		});
+		noteState("pty1", "active");
+		const finalizing = noteState("pty1", "ready"); // now blocked on pendingStart
+		resolveStart("start"); // begin snapshot resolves only after finalize began
+		await finalizing;
+		const rec = lastRecord();
+		expect(rec.linesAdded).toBe(3);
+		expect(git.diffTrees).toHaveBeenCalledWith("/tmp/ws1", "start", "end");
+	});
+
+	it("leaves line counts NULL when the start snapshot is unavailable (non-git)", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("ws1", [{ paneId: "pane1", ptyId: "pty1" }])],
+		});
+		registerAgentPty("pty1", "pane1");
+		(git.snapshotWorktree as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		noteState("pty1", "active");
+		await noteState("pty1", "ready");
+		const rec = lastRecord();
+		expect(rec.linesAdded).toBeNull();
+		expect(rec.linesDeleted).toBeNull();
+		expect(rec.filesChanged).toBeNull();
+		// No start OID → the diff is never attempted.
+		expect(git.diffTrees).not.toHaveBeenCalled();
+	});
+
+	it("leaves line counts NULL when the snapshot/diff throws", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("ws1", [{ paneId: "pane1", ptyId: "pty1" }])],
+		});
+		registerAgentPty("pty1", "pane1");
+		// Begin/finalize snapshots succeed (default "oid" stub); the diff fails.
+		(git.diffTrees as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error("diff failed"),
+		);
+		noteState("pty1", "active");
+		await noteState("pty1", "ready");
+		const rec = lastRecord();
+		expect(rec.linesAdded).toBeNull();
+		expect(rec.linesDeleted).toBeNull();
+		expect(rec.filesChanged).toBeNull();
+	});
 });
 
 describe("agentTurnTracker sessions & bulk finalize", () => {

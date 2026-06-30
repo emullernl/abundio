@@ -22,7 +22,7 @@ Net-vs-base reads 0/0 whenever a turn reverts/cleans up (floored), re-edits line
 5. **Overlap untouched** — `contaminated → NULL`, keyed on `workspaceId`.
 6. **Whole-repo snapshot** (no pathspec scoping; future refinement). **Renames** = delete+add (parity). **New files = `git add -A` semantics**: untracked non-ignored files counted as additions (true line counts, no size cap, binaries 0 lines/1 file); ignored files excluded.
 
-**Validated:** `git2 = 0.19` (libgit2 1.8.1). `add_all(["."], DEFAULT, None)` = `git add -A`. **Never calling `index.write()` leaves `.git/index` untouched** — only loose tree/blob objects (dedup'd, GC'd). Cost ≈ a `git status` walk + hashing only changed files (proportional to uncommitted changes, not repo size). Works for linked worktrees, unborn branches, non-git dirs (`Ok(None)`). Concurrent snapshots safe.
+**Validated:** `git2 = 0.19` (libgit2 1.8.1). `add_all(["."], DEFAULT, None)` = `git add -A`. **Never calling `index.write()` leaves `.git/index` untouched** — only loose tree/blob objects (dedup'd, GC'd). Cost ≈ a `git status`-class working-tree stat-walk (proportional to non-ignored file count) plus hashing of only the changed/new files — run twice per Turn on a blocking thread, comparable to `compute_status_fingerprint_sync`. Works for linked worktrees, unborn branches, non-git dirs (`Ok(None)`). Concurrent snapshots safe.
 
 ## Implementation
 

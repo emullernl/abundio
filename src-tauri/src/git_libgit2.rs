@@ -177,8 +177,10 @@ pub fn compute_changed_files_sync(
 /// so the user's on-disk `.git/index` (staging area) is untouched. Only loose
 /// tree/blob objects are written to the ODB (content-addressed, deduplicated,
 /// reaped by `git gc`), exactly as `git add -A` + `git write-tree` do. The cost
-/// is an index-to-workdir walk plus hashing only the changed/new files —
-/// proportional to uncommitted changes, not repo size.
+/// is a working-tree stat-walk (a `git status`-class scan, proportional to the
+/// number of non-ignored files in the worktree) plus hashing of only the
+/// changed/new files (libgit2's stat cache skips unchanged tracked files). Runs
+/// on a blocking thread, comparable to `compute_status_fingerprint_sync`.
 pub fn snapshot_worktree_tree(cwd: &str) -> Result<Option<String>, AbundioError> {
     let repo = match open_repo(cwd) {
         Ok(r) => r,
