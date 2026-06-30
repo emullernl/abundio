@@ -21,7 +21,7 @@
 
 import { useProfileStore } from "../stores/profileStore";
 import {
-	type PtyActivityEntry,
+	subscribeStatusChange,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
@@ -371,22 +371,53 @@ async function writeRecord(
 
 let subscribed = false;
 
-/** Wire the tracker to the activity store. Call once at the App root. */
+/** Wire the tracker to the Status transition stream. Call once at the App root. */
 export function initAgentTurnTracker(): void {
 	if (subscribed) return;
 	subscribed = true;
-	usePtyActivityStore.subscribe((state, prev) => {
-		// State transitions for agent-mode PTYs (and any PTY with an open Turn).
-		for (const [ptyId, entry] of Object.entries(state.activities)) {
-			const prevEntry = prev.activities[ptyId] as PtyActivityEntry | undefined;
-			if (!prevEntry || prevEntry.state === entry.state) continue;
-			const isAgent =
-				entry.detectionMode === "agent" || state.agentPtyIds.has(ptyId);
-			if (!isAgent && !openTurns.has(ptyId)) continue;
-			void noteState(ptyId, entry.state);
+
+	// Primary driver: the Status transition output seam. Each StatusChange names
+	// the one PTY that moved and carries its `cause`, so end-reason fidelity
+	// arrives in-band — no inline trackPtyExit, and no ordering race against the
+	// activity-state flip. See docs/plans/status-machine.md.
+	subscribeStatusChange(({ ptyId, prev, next, cause }) => {
+		const isAgent =
+			next.detectionMode === "agent" ||
+			prev.detectionMode === "agent" ||
+			openTurns.has(ptyId);
+		if (!isAgent) return;
+
+		// `recordExitSuccess` / `recordError` on an **agent-mode** PTY is a real pty
+		// exit — the onStatus "exited" path leaves the PTY in agent mode — so the
+		// cause IS the pty-exit signal: finalize as pty_exit, ahead of (and instead
+		// of) the ready/error state's would-be stop/error finalize. The same causes
+		// also fire on a shell `command_end`/`commandFinished`; there the PTY is in
+		// shell mode, so the detectionMode gate routes it to noteState below —
+		// keeping a lingering Turn open (as on `main`) rather than finalizing it as a
+		// pty_exit. Session-end stays an explicit trackSessionEnd in terminalManager's
+		// hook-clear path (the same clearAgentPty also fires on a shell command_end
+		// that merely drops agent mode, which must NOT finalize a Turn).
+		if (
+			next.detectionMode === "agent" &&
+			(cause.kind === "recordExitSuccess" || cause.kind === "recordError")
+		) {
+			void onPtyExit(ptyId);
+			return;
 		}
-		// A PTY removed from the store (removePty) with a Turn still open →
-		// finalize as a pty exit (the explicit onPtyExit usually beats this).
+		// Mode-only changes (agentDetected / sessionEnded flip detectionMode while
+		// leaving `state` untouched) emit a StatusChange but are NOT state
+		// transitions; the old store.subscribe driver skipped unchanged-state
+		// entries, so we do too — otherwise detecting an agent mid-activity would
+		// start a Turn at detection time, and a session-end mid-turn could resume or
+		// finalize one.
+		if (prev.state === next.state) return;
+		void noteState(ptyId, next.state);
+	});
+
+	// Backstop: a PTY removed from the store (teardown without a pty-exit event)
+	// with a Turn still open → finalize as a pty exit. A removal isn't a status
+	// transition, so it can't ride the StatusChange seam.
+	usePtyActivityStore.subscribe((state, prev) => {
 		for (const ptyId of [...openTurns.keys()]) {
 			if (!state.activities[ptyId] && prev.activities[ptyId]) {
 				void onPtyExit(ptyId);

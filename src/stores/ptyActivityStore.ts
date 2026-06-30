@@ -1,6 +1,12 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
+import {
+	type StatusEvent,
+	type StatusState,
+	type StatusTransition,
+	statusReducer,
+} from "../lib/statusReducer";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -16,12 +22,10 @@ import { useWorkspaceStore } from "./workspaceStore";
 
 // ── Constants ──
 
+// Used by DebugActivityMeter for its progress ring; the idle-scan threshold
+// itself now lives in statusReducer (IDLE_THRESHOLD_MS / HOOK_IDLE_BACKSTOP_MS).
 export const IDLE_THRESHOLD_MS = 2000;
 const SCAN_INTERVAL_MS = 2000;
-// Hook-driven PTYs trust hook events for transitions; the idle scanner is
-// only a backstop for a genuinely stuck "active" dot (a dropped Stop event),
-// so it uses a far longer threshold than the heuristic's 2s.
-const HOOK_IDLE_BACKSTOP_MS = 30000;
 
 // Hot-path optimization: track last output timestamps outside Zustand state
 // to avoid triggering re-renders on every output chunk.
@@ -97,6 +101,162 @@ interface PtyActivityState_Store {
 	removePane: (paneId: string) => void;
 }
 
+// ── Status machine bridge ──
+//
+// The discrete transition logic lives in the pure `statusReducer`; the store is
+// its dispatcher. Each status action method hydrates a reducer StatusState from
+// the stored entry + the out-of-band hot maps, reduces, syncs the maps, projects
+// back into the legacy `PtyActivityEntry` shape (so every consumer + the pure
+// aggregation functions are untouched), and emits a Status transition. See
+// docs/plans/status-machine.md.
+
+const LEGACY_STATE: Record<StatusState["state"], PtyActivityState> = {
+	idle: "idle",
+	working: "active", // canonical → legacy string (rename deferred, CONTEXT.md)
+	waiting: "waiting",
+	ready: "ready",
+	error: "error",
+};
+const CANONICAL_STATE: Record<PtyActivityState, StatusState["state"]> = {
+	idle: "idle",
+	active: "working",
+	waiting: "waiting",
+	ready: "ready",
+	error: "error",
+};
+
+/** Hydrate a reducer StatusState from the stored entry + the hot maps. The
+ *  heuristic / ESC fields are unused by store-level events (terminalManager
+ *  still owns the byte heuristic and ESC classification), so they default. */
+function hydrate(
+	entry: PtyActivityEntry | undefined,
+	ptyId: string,
+): StatusState {
+	return {
+		state: entry ? CANONICAL_STATE[entry.state] : "idle",
+		mode: entry?.detectionMode ?? "shell",
+		hookDriven: entry?.hookDriven ?? false,
+		workingSince: entry?.lastOutputAt ?? null,
+		lastActivityAt:
+			lastOutputTimestamps.get(ptyId) ?? entry?.lastOutputAt ?? null,
+		shellCommandRunning: shellCommandRunning.get(ptyId) ?? false,
+		bytesSinceIdle: 0,
+		thresholdHitTimes: [],
+		lastInputAt: 0,
+		lastOutputChunkAt: null,
+		lastEscAt: null,
+	};
+}
+
+function project(
+	st: StatusState,
+	prev: PtyActivityEntry | undefined,
+): PtyActivityEntry {
+	return {
+		state: LEGACY_STATE[st.state],
+		lastOutputAt: st.workingSince,
+		hasEverReceivedOutput: prev?.hasEverReceivedOutput ?? true,
+		detectionMode: st.mode,
+		hookDriven: st.hookDriven,
+	};
+}
+
+function entriesEqual(a: PtyActivityEntry, b: PtyActivityEntry): boolean {
+	return (
+		a.state === b.state &&
+		a.lastOutputAt === b.lastOutputAt &&
+		a.hasEverReceivedOutput === b.hasEverReceivedOutput &&
+		a.detectionMode === b.detectionMode &&
+		a.hookDriven === b.hookDriven
+	);
+}
+
+// ── Status transition output seam ──
+// Emitted whenever a PTY's status tuple changes, carrying the cause in-band.
+// Consumed by notifications and Turn telemetry (see docs/plans/status-machine.md).
+
+export interface StatusSnapshot {
+	state: PtyActivityState;
+	detectionMode: PtyDetectionMode;
+	hookDriven: boolean;
+}
+export interface StatusChange {
+	ptyId: string;
+	prev: StatusSnapshot;
+	next: StatusSnapshot;
+	cause: StatusEvent;
+}
+
+const statusChangeListeners = new Set<(c: StatusChange) => void>();
+
+/** Subscribe to Status transitions. Returns an unsubscribe fn. */
+export function subscribeStatusChange(
+	fn: (c: StatusChange) => void,
+): () => void {
+	statusChangeListeners.add(fn);
+	return () => statusChangeListeners.delete(fn);
+}
+
+function emitStatusChange(c: StatusChange): void {
+	for (const fn of statusChangeListeners) {
+		try {
+			fn(c);
+		} catch (err) {
+			console.error("[statusChange] listener failed:", err);
+		}
+	}
+}
+
+function snap(e: PtyActivityEntry): StatusSnapshot {
+	return {
+		state: e.state,
+		detectionMode: e.detectionMode,
+		hookDriven: e.hookDriven,
+	};
+}
+
+/** Apply one reducer event to a PTY: reduce, sync the hot maps, project back
+ *  into `activities` (skipping the write when the projected entry is unchanged —
+ *  preserving the hot-path no-re-render), and emit a StatusChange on a real tuple
+ *  change. `extra` folds identity-set mutations into the same set(). */
+function applyStatusEvent(
+	ptyId: string,
+	event: StatusEvent,
+	extra?: Partial<PtyActivityState_Store>,
+): void {
+	const prevEntry = usePtyActivityStore.getState().activities[ptyId];
+	const before = hydrate(prevEntry, ptyId);
+	const after = statusReducer(before, event);
+
+	// Sync the out-of-band hot maps from the reducer result.
+	if (after.lastActivityAt !== null) {
+		lastOutputTimestamps.set(ptyId, after.lastActivityAt);
+	}
+	if (after.shellCommandRunning) shellCommandRunning.set(ptyId, true);
+	else shellCommandRunning.delete(ptyId);
+
+	const nextEntry = project(after, prevEntry);
+	const changed = !prevEntry || !entriesEqual(prevEntry, nextEntry);
+
+	if (extra || changed) {
+		usePtyActivityStore.setState((s) => ({
+			...(extra ?? {}),
+			...(changed
+				? { activities: { ...s.activities, [ptyId]: nextEntry } }
+				: {}),
+		}));
+	}
+	if (changed) {
+		const prevSnap = snap(prevEntry ?? project(before, undefined));
+		emitStatusChange({
+			ptyId,
+			prev: prevSnap,
+			next: snap(nextEntry),
+			cause: event,
+		});
+	}
+}
+
 // ── Store ──
 
 export const usePtyActivityStore = create<PtyActivityState_Store>(
@@ -139,170 +299,52 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		},
 
 		recordOutput: (ptyId) => {
-			const entry = get().activities[ptyId];
-			// A waiting Agent is cleared only by a keystroke or the next hook —
-			// never by its own output (the invariant markIdle documents). The
-			// permission prompt's render flows through here; without this guard it
-			// would set "active" and stomp the sky-blue Waiting dot the instant it
-			// lights, since Copilot's notification → waiting fires right around the
-			// prompt render. Agent mode only — a stale "waiting" on a terminal-mode
-			// pane falls through to be cleared normally. We still bump the
-			// out-of-band lastOutputTimestamps map so the idle-scanner backstop
-			// (HOOK_IDLE_BACKSTOP_MS) sees fresh output and won't time the Waiting
-			// dot out; the entry's lastOutputAt is deliberately NOT touched — it
-			// marks the "active" window's start, not last-output. See ADR-0015.
-			if (entry?.state === "waiting" && entry.detectionMode === "agent") {
-				lastOutputTimestamps.set(ptyId, Date.now());
-				return;
-			}
-			// Skip set() if already active — this fires on every output chunk
-			if (entry?.state === "active") {
-				lastOutputTimestamps.set(ptyId, Date.now());
-				return;
-			}
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: {
-						state: "active",
-						lastOutputAt: Date.now(),
-						hasEverReceivedOutput: true,
-						detectionMode: s.activities[ptyId]?.detectionMode ?? "shell",
-						hookDriven: s.activities[ptyId]?.hookDriven ?? false,
-					},
-				},
-			}));
+			// The reducer holds the ADR-0015 Waiting guard and the already-Working
+			// short-circuit; applyStatusEvent skips the set() (and the re-render)
+			// when the projected entry is unchanged, only bumping the hot map.
+			applyStatusEvent(ptyId, { kind: "recordOutput", now: Date.now() });
 		},
 
 		markIdle: (ptyId) => {
-			const entry = get().activities[ptyId];
-			if (
-				!entry ||
-				entry.state === "idle" ||
-				entry.state === "error" ||
-				// An agent waiting on the user is cleared only by a keystroke or
-				// the next hook event — never by focus/click. Agent mode only;
-				// a stale "waiting" on a terminal-mode pane falls through to be
-				// cleared normally.
-				(entry.state === "waiting" && entry.detectionMode === "agent")
-			)
-				return;
-			// Agent mode: never cancel an in-progress "active" state. markIdle
-			// is meant to dismiss "ready"/"error" alerts the user has
-			// acknowledged (focus, click, etc.); for an agent that's still
-			// streaming output, the work hasn't finished yet, so flipping the
-			// dot from amber to green would lie about what's happening.
-			if (entry.state === "active" && entry.detectionMode === "agent") return;
-			// Shell mode: same principle — don't drop "active" while a shell
-			// command is still in flight (between command_start and command_end).
-			// Focus reassertion on workspace switch, mousedown, and keystrokes
-			// all funnel through here; without this guard a long-running command
-			// gets a misleading idle dot whenever the user clicks back into the
-			// pane. Mirrors the idle scanner's shellCommandRunning check.
-			if (entry.state === "active" && shellCommandRunning.get(ptyId)) return;
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: { ...s.activities[ptyId], state: "idle" },
-				},
-			}));
+			// markIdle == the reducer's `focus` event: dismiss an acknowledged
+			// Ready/Error-shell alert, but never cancel a Working agent, a Waiting
+			// agent, or a running shell command. All those guards live in the reducer.
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, { kind: "focus" });
 		},
 
 		clearError: (ptyId) => {
-			const entry = get().activities[ptyId];
-			if (entry?.state !== "error") return;
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: { ...s.activities[ptyId], state: "idle" },
-				},
-			}));
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, { kind: "clearError" });
 		},
 
 		recordError: (ptyId) => {
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: {
-						state: "error",
-						lastOutputAt: s.activities[ptyId]?.lastOutputAt ?? null,
-						hasEverReceivedOutput:
-							s.activities[ptyId]?.hasEverReceivedOutput ?? false,
-						detectionMode: s.activities[ptyId]?.detectionMode ?? "shell",
-						hookDriven: s.activities[ptyId]?.hookDriven ?? false,
-					},
-				},
-			}));
+			// No guard: a recordError on an absent PTY creates the Error entry
+			// (mirrors the old unconditional set()).
+			applyStatusEvent(ptyId, { kind: "recordError" });
 		},
 
 		applyHookEvent: (ptyId, transition) => {
-			const entry = get().activities[ptyId];
-			if (!entry) return;
-			if (transition === "active") {
-				lastOutputTimestamps.set(ptyId, Date.now());
-			}
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: {
-						...s.activities[ptyId],
-						state: transition,
-						hookDriven: true,
-						lastOutputAt:
-							transition === "active"
-								? Date.now()
-								: s.activities[ptyId].lastOutputAt,
-					},
-				},
-			}));
+			if (!get().activities[ptyId]) return;
+			// The store's legacy "active" maps to the reducer's canonical "working".
+			const t: StatusTransition =
+				transition === "active" ? "working" : transition;
+			applyStatusEvent(ptyId, { kind: "hook", transition: t, now: Date.now() });
 		},
 
 		clearWaiting: (ptyId) => {
-			// A keystroke answering an agent's permission prompt clears the
-			// "waiting" dot. It goes to "idle", not "active": at this moment
-			// the user is typing, not the agent working — showing amber would
-			// lie. The next hook (Stop → ready, or another PermissionRequest)
-			// drives the dot from here; agent output flips it back via the
-			// idle scanner / recordOutput if work resumes before then.
-			const entry = get().activities[ptyId];
-			if (entry?.state !== "waiting") return;
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: { ...s.activities[ptyId], state: "idle" },
-				},
-			}));
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, { kind: "clearWaiting" });
 		},
 
 		clearActive: (ptyId) => {
-			// Counterpart to clearWaiting for the "user pressed ESC to cancel
-			// an in-flight agent task" case. markIdle deliberately refuses to
-			// move an agent's "active" → "idle" (focus/clicks must not lie
-			// about agent progress); this is the explicit cancel path.
-			const entry = get().activities[ptyId];
-			if (entry?.state !== "active" || entry.detectionMode !== "agent") return;
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: { ...s.activities[ptyId], state: "idle" },
-				},
-			}));
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, { kind: "clearActive" });
 		},
 
 		recordExitSuccess: (ptyId) => {
-			const entry = get().activities[ptyId];
-			if (!entry) return;
-			// Shells skip Ready entirely — a clean command exit is silent. Agents
-			// keep the Ready hop so the user gets a notification + purple dot
-			// they must acknowledge. See ADR-0009.
-			const nextState: PtyActivityState =
-				entry.detectionMode === "agent" ? "ready" : "idle";
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: { ...s.activities[ptyId], state: nextState },
-				},
-			}));
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, { kind: "recordExitSuccess" });
 		},
 
 		setAgentPty: (ptyId, agentId) => {
@@ -313,19 +355,15 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			// Clear shell command tracking — agent mode doesn't use shell integration
 			// sequences, so command_end will never fire to clear this flag.
 			shellCommandRunning.delete(ptyId);
-			const entry = s.activities[ptyId];
 			const detectedUpdate = agentId
 				? { detectedAgentIds: { ...s.detectedAgentIds, [ptyId]: agentId } }
 				: {};
-			if (entry) {
-				set({
-					agentPtyIds: newSet,
-					activities: {
-						...s.activities,
-						[ptyId]: { ...entry, detectionMode: "agent" },
-					},
-					...detectedUpdate,
-				});
+			if (s.activities[ptyId]) {
+				applyStatusEvent(
+					ptyId,
+					{ kind: "agentDetected" },
+					{ agentPtyIds: newSet, ...detectedUpdate },
+				);
 			} else {
 				set({ agentPtyIds: newSet, ...detectedUpdate });
 			}
@@ -337,16 +375,12 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			const newSet = new Set(s.agentPtyIds);
 			newSet.delete(ptyId);
 			const { [ptyId]: _, ...restDetected } = s.detectedAgentIds;
-			const entry = s.activities[ptyId];
-			if (entry) {
-				set({
-					agentPtyIds: newSet,
-					detectedAgentIds: restDetected,
-					activities: {
-						...s.activities,
-						[ptyId]: { ...entry, detectionMode: "shell", hookDriven: false },
-					},
-				});
+			if (s.activities[ptyId]) {
+				applyStatusEvent(
+					ptyId,
+					{ kind: "sessionEnded" },
+					{ agentPtyIds: newSet, detectedAgentIds: restDetected },
+				);
 			} else {
 				set({ agentPtyIds: newSet, detectedAgentIds: restDetected });
 			}
@@ -449,112 +483,100 @@ setInterval(() => {
 	const { activities } = usePtyActivityStore.getState();
 	const now = Date.now();
 	const updates: Record<string, PtyActivityEntry> = {};
-	let hasChanges = false;
+	const changes: StatusChange[] = [];
 
 	for (const [ptyId, entry] of Object.entries(activities)) {
-		const lastOutput = lastOutputTimestamps.get(ptyId) ?? entry.lastOutputAt;
-		if (lastOutput === null) continue;
-		const elapsed = now - lastOutput;
-
-		const threshold = entry.hookDriven
-			? HOOK_IDLE_BACKSTOP_MS
-			: IDLE_THRESHOLD_MS;
-		if (entry.state === "active" && elapsed > threshold) {
-			// Don't transition to idle if a shell command is still running
-			if (shellCommandRunning.get(ptyId)) continue;
-			// Agent mode: blurred-or-focused, go to "ready" — the agent finished
-			// work and is ready for user input, even when the terminal has focus.
-			// Shell mode: go straight to "idle" regardless of focus — shells skip
-			// the Ready hop entirely (ADR-0009).
-			let nextState: PtyActivityState;
-			if (entry.detectionMode === "agent") {
-				nextState = "ready";
-			} else {
-				nextState = "idle";
-			}
-			updates[ptyId] = {
-				...entry,
-				state: nextState,
-			};
-			hasChanges = true;
-		}
+		// The reducer's Tick holds the whole idle-scan rule: only a stuck Working
+		// PTY transitions, with the hook-driven backstop vs heuristic threshold,
+		// the shell-command guard, and agent→Ready / shell→Idle (ADR-0009).
+		const before = hydrate(entry, ptyId);
+		const after = statusReducer(before, { kind: "tick", now });
+		if (after.state === before.state) continue;
+		const nextEntry = project(after, entry);
+		updates[ptyId] = nextEntry;
+		changes.push({
+			ptyId,
+			prev: snap(entry),
+			next: snap(nextEntry),
+			cause: { kind: "tick", now },
+		});
 	}
 
-	if (hasChanges) {
+	if (changes.length > 0) {
 		usePtyActivityStore.setState((s) => ({
 			activities: { ...s.activities, ...updates },
 		}));
+		for (const c of changes) emitStatusChange(c);
 	}
 }, SCAN_INTERVAL_MS);
 
 // ── Notifications for state transitions ──
+//
+// Consumes the Status transition output seam: each StatusChange names the one
+// PTY that moved and carries its prev/next, so the per-pty diff the old
+// store.subscribe did by scanning all activities is now implicit. See
+// docs/plans/status-machine.md.
 
-usePtyActivityStore.subscribe((state, prevState) => {
-	const { activities, titles, panePtyMap } = state;
-	const prevActivities = prevState.activities;
+subscribeStatusChange(({ ptyId, prev, next }) => {
+	if (prev.state === next.state) return; // a mode-only change (e.g. sessionEnded)
+	if (
+		next.state !== "ready" &&
+		next.state !== "error" &&
+		next.state !== "waiting"
+	)
+		return;
+
+	const { titles, panePtyMap } = usePtyActivityStore.getState();
 	const blurredMs = getWindowBlurredMs();
 	const windowAwayLongEnough =
 		blurredMs !== null && blurredMs >= NOTIFICATION_BLUR_THRESHOLD_MS;
-	const ptyToPane = getPtyToPaneMap(panePtyMap);
+	const paneId = getPtyToPaneMap(panePtyMap)[ptyId];
 
-	for (const [ptyId, entry] of Object.entries(activities)) {
-		const prevEntry = prevActivities[ptyId];
-		if (!prevEntry || prevEntry.state === entry.state) continue;
-		if (
-			entry.state !== "ready" &&
-			entry.state !== "error" &&
-			entry.state !== "waiting"
-		)
-			continue;
+	// "waiting" (agent blocked on the user) notifies whenever the pane is not on
+	// screen — window blurred OR the pane is in a background tab/workspace.
+	// "ready"/"error" keep the blurred-only gate.
+	const shouldNotify =
+		next.state === "waiting"
+			? windowAwayLongEnough || !paneId || !isPaneVisible(paneId)
+			: windowAwayLongEnough;
+	if (!shouldNotify) return;
 
-		const paneId = ptyToPane[ptyId];
+	const title = paneId ? titles[paneId] : undefined;
+	const label =
+		title || (next.detectionMode === "agent" ? "Agent" : "Terminal");
+	const baseBody =
+		next.state === "error"
+			? `${label} encountered an error`
+			: next.state === "waiting"
+				? `${label} needs your input`
+				: `${label} is ready`;
 
-		// "waiting" (agent blocked on the user) notifies whenever the pane is
-		// not on screen — window blurred OR the pane is in a background
-		// tab/workspace. "ready"/"error" keep the blurred-only gate.
-		const shouldNotify =
-			entry.state === "waiting"
-				? windowAwayLongEnough || !paneId || !isPaneVisible(paneId)
-				: windowAwayLongEnough;
-		if (!shouldNotify) continue;
-
-		const title = paneId ? titles[paneId] : undefined;
-		const label =
-			title || (entry.detectionMode === "agent" ? "Agent" : "Terminal");
-		const baseBody =
-			entry.state === "error"
-				? `${label} encountered an error`
-				: entry.state === "waiting"
-					? `${label} needs your input`
-					: `${label} is ready`;
-
-		const location = paneId ? findPaneLocation(paneId) : null;
-		const workspaceName = location
-			? useWorkspaceStore
-					.getState()
-					.workspaces.find((w) => w.id === location.workspaceId)?.name
-			: undefined;
-		// Title uses the profile-qualified format (matches the window title);
-		// workspace context that previously lived in the title is folded into
-		// the body so it isn't lost.
-		const body = workspaceName ? `${workspaceName}: ${baseBody}` : baseBody;
-		try {
-			sendNotification({
-				title: currentNotificationTitle(),
-				body,
-				extra:
-					location && paneId
-						? {
-								type: "pty",
-								paneId,
-								workspaceId: location.workspaceId,
-								tabId: location.tabId,
-							}
-						: { type: "pty" },
-			});
-		} catch {
-			// Notifications may not be permitted
-		}
+	const location = paneId ? findPaneLocation(paneId) : null;
+	const workspaceName = location
+		? useWorkspaceStore
+				.getState()
+				.workspaces.find((w) => w.id === location.workspaceId)?.name
+		: undefined;
+	// Title uses the profile-qualified format (matches the window title);
+	// workspace context that previously lived in the title is folded into the
+	// body so it isn't lost.
+	const body = workspaceName ? `${workspaceName}: ${baseBody}` : baseBody;
+	try {
+		sendNotification({
+			title: currentNotificationTitle(),
+			body,
+			extra:
+				location && paneId
+					? {
+							type: "pty",
+							paneId,
+							workspaceId: location.workspaceId,
+							tabId: location.tabId,
+						}
+					: { type: "pty" },
+		});
+	} catch {
+		// Notifications may not be permitted
 	}
 });
 
