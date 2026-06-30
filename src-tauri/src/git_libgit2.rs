@@ -21,12 +21,12 @@ use std::path::{Path, PathBuf};
 
 use dashmap::DashMap;
 use git2::{
-    BranchType, Delta, Diff, DiffOptions, ErrorCode, Reference, Repository, Status, StatusOptions,
-    WorktreeAddOptions, WorktreePruneOptions,
+    BranchType, Delta, Diff, DiffOptions, ErrorCode, IndexAddOption, Oid, Reference, Repository,
+    Status, StatusOptions, WorktreeAddOptions, WorktreePruneOptions,
 };
 
 use crate::error::AbundioError;
-use crate::git_commands::{BranchInfo, GitChangedFile};
+use crate::git_commands::{BranchInfo, GitChangedFile, TreeDiffStats};
 use crate::worktree_commands::WorktreeEntry;
 
 const MAX_UNTRACKED: usize = 500;
@@ -166,6 +166,80 @@ pub fn compute_changed_files_sync(
     all_files.extend(untracked_files(&repo));
 
     Ok(all_files)
+}
+
+/// Snapshot the entire working tree to a git tree OID, for per-Turn churn
+/// diffing (see ADR-0021). Captures `git add -A` semantics: tracked
+/// modifications + non-ignored untracked files (recursively) + deletions,
+/// respecting `.gitignore`. Best-effort: `Ok(None)` when `cwd` isn't a git repo.
+///
+/// Safety: all index mutations are in-memory — we **never** call `index.write()`,
+/// so the user's on-disk `.git/index` (staging area) is untouched. Only loose
+/// tree/blob objects are written to the ODB (content-addressed, deduplicated,
+/// reaped by `git gc`), exactly as `git add -A` + `git write-tree` do. The cost
+/// is an index-to-workdir walk plus hashing only the changed/new files —
+/// proportional to uncommitted changes, not repo size.
+pub fn snapshot_worktree_tree(cwd: &str) -> Result<Option<String>, AbundioError> {
+    let repo = match open_repo(cwd) {
+        Ok(r) => r,
+        Err(AbundioError::NotGitRepo(_)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut index = repo
+        .index()
+        .map_err(|e| AbundioError::Git(format!("open index: {e}")))?;
+    // Seed the in-memory index from HEAD so tracked content is the baseline;
+    // an unborn branch (no commits) starts from an empty index.
+    match repo.head().and_then(|h| h.peel_to_tree()) {
+        Ok(tree) => index
+            .read_tree(&tree)
+            .map_err(|e| AbundioError::Git(format!("read_tree: {e}")))?,
+        Err(_) => index
+            .clear()
+            .map_err(|e| AbundioError::Git(format!("clear index: {e}")))?,
+    }
+    // `git add -A`: stage modified files, add non-ignored untracked files, and
+    // remove deleted files. DEFAULT (no FORCE) respects `.gitignore`.
+    index
+        .add_all(["."], IndexAddOption::DEFAULT, None)
+        .map_err(|e| AbundioError::Git(format!("add_all: {e}")))?;
+    // Writes tree (and any new blob) objects to the ODB. Crucially NOT
+    // `index.write()` — the on-disk index file is never serialized.
+    let oid = index
+        .write_tree_to(&repo)
+        .map_err(|e| AbundioError::Git(format!("write_tree: {e}")))?;
+    Ok(Some(oid.to_string()))
+}
+
+/// Line/file churn between two worktree tree snapshots (per-Turn working-tree
+/// diff). Each of additions/deletions/files is independently non-negative — no
+/// flooring needed. Binary files contribute 0 lines but count as a file.
+/// Renames are counted as delete+add (no rename detection), matching the diff
+/// behaviour elsewhere in this module.
+pub fn diff_tree_stats(
+    cwd: &str,
+    start_oid: &str,
+    end_oid: &str,
+) -> Result<TreeDiffStats, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let start = Oid::from_str(start_oid)
+        .and_then(|o| repo.find_tree(o))
+        .map_err(|e| AbundioError::Git(format!("find start tree: {e}")))?;
+    let end = Oid::from_str(end_oid)
+        .and_then(|o| repo.find_tree(o))
+        .map_err(|e| AbundioError::Git(format!("find end tree: {e}")))?;
+    let mut opts = DiffOptions::new();
+    let diff = repo
+        .diff_tree_to_tree(Some(&start), Some(&end), Some(&mut opts))
+        .map_err(|e| AbundioError::Git(format!("diff trees: {e}")))?;
+    let stats = diff
+        .stats()
+        .map_err(|e| AbundioError::Git(format!("diff stats: {e}")))?;
+    Ok(TreeDiffStats {
+        additions: stats.insertions() as i64,
+        deletions: stats.deletions() as i64,
+        files: stats.files_changed() as i64,
+    })
 }
 
 fn resolve_base_oid(
@@ -987,5 +1061,183 @@ mod tests {
         // Already-unprefixed and POSIX paths pass through untouched.
         assert_eq!(strip_verbatim_prefix(r"C:\Users\me"), r"C:\Users\me");
         assert_eq!(strip_verbatim_prefix("/home/me/dev/project"), "/home/me/dev/project");
+    }
+
+    // ---- Per-Turn worktree snapshot / diff (ADR-0021) ----
+
+    /// Minimal subprocess git for test setup only (production is pure libgit2).
+    fn run_git(cwd: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("git failed to spawn");
+        assert!(
+            out.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    /// Temp repo with `initial.txt` committed.
+    fn repo_with_commit() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        run_git(p, &["init"]);
+        run_git(p, &["config", "user.email", "t@t.com"]);
+        run_git(p, &["config", "user.name", "T"]);
+        std::fs::write(p.join("initial.txt"), "hello\n").unwrap();
+        run_git(p, &["add", "."]);
+        run_git(p, &["commit", "-m", "init"]);
+        dir
+    }
+
+    fn snap(cwd: &std::path::Path) -> String {
+        snapshot_worktree_tree(cwd.to_str().unwrap())
+            .unwrap()
+            .expect("snapshot Some")
+    }
+
+    fn stats(cwd: &std::path::Path, a: &str, b: &str) -> TreeDiffStats {
+        diff_tree_stats(cwd.to_str().unwrap(), a, b).unwrap()
+    }
+
+    #[test]
+    fn snapshot_counts_tracked_edit_as_additions() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        std::fs::write(p.join("a.txt"), "1\n2\n3\n").unwrap();
+        run_git(p, &["add", "a.txt"]);
+        run_git(p, &["commit", "-m", "add a"]);
+        let s = snap(p);
+        std::fs::write(p.join("a.txt"), "1\n2\n3\n4\n5\n").unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (2, 0, 1));
+    }
+
+    #[test]
+    fn snapshot_counts_deletion_as_net_negative_not_floored() {
+        // The headline fix: a Turn that removes lines records deletions > 0
+        // (the old net-vs-base metric floored such Turns to +0 −0).
+        let dir = repo_with_commit();
+        let p = dir.path();
+        std::fs::write(p.join("b.txt"), "1\n2\n3\n4\n5\n").unwrap();
+        run_git(p, &["add", "b.txt"]);
+        run_git(p, &["commit", "-m", "add b"]);
+        let s = snap(p);
+        std::fs::write(p.join("b.txt"), "1\n2\n3\n").unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (0, 2, 1));
+    }
+
+    #[test]
+    fn snapshot_counts_new_untracked_and_excludes_gitignored() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        std::fs::write(p.join(".gitignore"), "*.log\n").unwrap();
+        run_git(p, &["add", ".gitignore"]);
+        run_git(p, &["commit", "-m", "ignore logs"]);
+        let s = snap(p);
+        // New untracked file (no `git add`) is counted; an ignored file is not.
+        std::fs::write(p.join("keep.txt"), "a\nb\n").unwrap();
+        std::fs::write(p.join("skip.log"), "x\ny\nz\n").unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (2, 0, 1));
+    }
+
+    #[test]
+    fn snapshot_counts_whole_file_deletion() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        std::fs::write(p.join("gone.txt"), "1\n2\n").unwrap();
+        run_git(p, &["add", "gone.txt"]);
+        run_git(p, &["commit", "-m", "add gone"]);
+        let s = snap(p);
+        std::fs::remove_file(p.join("gone.txt")).unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (0, 2, 1));
+    }
+
+    #[test]
+    fn snapshot_never_touches_on_disk_index() {
+        // The invariant that makes this safe: we never call `index.write()`, so
+        // the user's staging area is untouched.
+        let dir = repo_with_commit();
+        let p = dir.path();
+        // Make the on-disk index non-trivial (a staged add).
+        std::fs::write(p.join("staged.txt"), "s\n").unwrap();
+        run_git(p, &["add", "staged.txt"]);
+        // An unstaged change too, so add_all has real work to do.
+        std::fs::write(p.join("initial.txt"), "hello\nworld\n").unwrap();
+
+        let index_path = p.join(".git").join("index");
+        let before = std::fs::read(&index_path).unwrap();
+        let status_before = run_git(p, &["status", "--porcelain"]);
+
+        let _ = snap(p);
+
+        let after = std::fs::read(&index_path).unwrap();
+        assert_eq!(before, after, ".git/index must be byte-identical");
+        assert_eq!(status_before, run_git(p, &["status", "--porcelain"]));
+    }
+
+    #[test]
+    fn snapshot_works_on_unborn_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git2::Repository::init(p).unwrap();
+        std::fs::write(p.join("a.txt"), "x\n").unwrap();
+        let s = snap(p); // no commits → Some via the clear() arm
+        std::fs::write(p.join("b.txt"), "1\n2\n").unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (2, 0, 1));
+    }
+
+    #[test]
+    fn snapshot_returns_none_for_non_git_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(snapshot_worktree_tree(dir.path().to_str().unwrap())
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn snapshot_counts_binary_file_as_file_not_lines() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        let s = snap(p);
+        std::fs::write(p.join("data.bin"), [0u8, 1, 2, b'\n', 3, 0, 9]).unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!(st.additions, 0);
+        assert_eq!(st.files, 1);
+    }
+
+    #[test]
+    fn snapshot_diff_works_in_linked_worktree() {
+        let dir = repo_with_commit();
+        let main = dir.path();
+        let wt_root = tempfile::tempdir().unwrap();
+        let wt_path = wt_root.path().join("linked");
+        add_worktree(
+            main.to_str().unwrap(),
+            "feature",
+            wt_path.to_str().unwrap(),
+        )
+        .expect("add worktree");
+
+        let s = snap(&wt_path);
+        // Edit the committed file inside the linked worktree.
+        std::fs::write(wt_path.join("initial.txt"), "hello\nmore\n").unwrap();
+        let e = snap(&wt_path);
+        let st = stats(&wt_path, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (1, 0, 1));
     }
 }

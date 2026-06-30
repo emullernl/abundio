@@ -147,6 +147,10 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return undefined;
 		case "git_repo_slug":
 			return fixtures.repoForCwd(String(args.cwd ?? ""));
+		case "git_snapshot_worktree":
+			return null;
+		case "git_diff_trees":
+			return { additions: 0, deletions: 0, files: 0 };
 
 		// ── Filesystem (reads) ──
 		case "fs_list_dir":

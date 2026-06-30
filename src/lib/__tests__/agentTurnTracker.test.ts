@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useProfileStore } from "../../stores/profileStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	__openTurnCountForTests,
@@ -104,13 +103,14 @@ beforeEach(() => {
 		activities: {},
 		cwds: {},
 	});
-	useWorkspaceGitStore.setState({ byWorkspaceId: {} });
 	vi.spyOn(telemetry, "recordTurn").mockResolvedValue(undefined);
-	vi.spyOn(git, "fetchBundle").mockResolvedValue({
-		changedFiles: [],
-		// biome-ignore lint/suspicious/noExplicitAny: minimal stub for the bundle
-		branchInfo: {} as any,
-		statusFingerprint: "",
+	// Per-Turn worktree snapshot/diff (ADR-0021): default to a no-op diff so
+	// timing/session tests resolve cleanly; attribution tests override these.
+	vi.spyOn(git, "snapshotWorktree").mockResolvedValue("oid");
+	vi.spyOn(git, "diffTrees").mockResolvedValue({
+		additions: 0,
+		deletions: 0,
+		files: 0,
 	});
 });
 
@@ -184,42 +184,32 @@ describe("agentTurnTracker state machine", () => {
 });
 
 describe("agentTurnTracker git attribution", () => {
-	it("floors net-negative deltas at 0 but keeps the raw end snapshot", async () => {
+	it("records per-turn working-tree churn — deletions count, no flooring", async () => {
 		useWorkspaceStore.setState({
 			workspaces: [makeWorkspace("ws1", [{ paneId: "pane1", ptyId: "pty1" }])],
 		});
-		useWorkspaceGitStore.setState({
-			byWorkspaceId: {
-				ws1: {
-					isGitRepo: true,
-					currentBranch: "main",
-					changedFileCount: 1,
-					additions: 10,
-					deletions: 5,
-				},
-			},
-		});
 		registerAgentPty("pty1", "pane1");
-		// End snapshot smaller than start (a revert): net would be negative.
-		(git.fetchBundle as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-			changedFiles: [
-				{
-					path: "a",
-					status: "M",
-					additions: 5,
-					deletions: 1,
-					section: "unstaged",
-				},
-			],
-			branchInfo: {},
-			statusFingerprint: "",
+		// Begin snapshot → "start", finalize snapshot → "end".
+		(git.snapshotWorktree as ReturnType<typeof vi.fn>)
+			.mockResolvedValueOnce("start")
+			.mockResolvedValueOnce("end");
+		// A revert: 0 added, 5 removed. The old net-vs-base metric floored this
+		// to +0 −0; the working-tree diff records the real deletions.
+		(git.diffTrees as ReturnType<typeof vi.fn>).mockResolvedValue({
+			additions: 0,
+			deletions: 5,
+			files: 1,
 		});
 		noteState("pty1", "active");
 		await noteState("pty1", "ready");
 		const rec = lastRecord();
-		expect(rec.linesAdded).toBe(0); // max(0, 5 - 10)
-		expect(rec.gitAddedStart).toBe(10);
-		expect(rec.gitAddedEnd).toBe(5);
+		expect(rec.linesAdded).toBe(0);
+		expect(rec.linesDeleted).toBe(5);
+		expect(rec.filesChanged).toBe(1);
+		expect(git.diffTrees).toHaveBeenCalledWith("/tmp/ws1", "start", "end");
+		// vs-base provenance columns are retired with the net-vs-base metric.
+		expect(rec.gitAddedStart).toBeNull();
+		expect(rec.gitAddedEnd).toBeNull();
 	});
 
 	it("nulls out line attribution when two turns overlap in one workspace", async () => {
@@ -231,31 +221,12 @@ describe("agentTurnTracker git attribution", () => {
 				]),
 			],
 		});
-		useWorkspaceGitStore.setState({
-			byWorkspaceId: {
-				ws1: {
-					isGitRepo: true,
-					currentBranch: "main",
-					changedFileCount: 0,
-					additions: 0,
-					deletions: 0,
-				},
-			},
-		});
 		registerAgentPty("pty1", "pane1");
 		registerAgentPty("pty2", "pane2");
-		(git.fetchBundle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			changedFiles: [
-				{
-					path: "a",
-					status: "M",
-					additions: 8,
-					deletions: 0,
-					section: "unstaged",
-				},
-			],
-			branchInfo: {},
-			statusFingerprint: "",
+		(git.diffTrees as ReturnType<typeof vi.fn>).mockResolvedValue({
+			additions: 8,
+			deletions: 0,
+			files: 1,
 		});
 		noteState("pty1", "active");
 		noteState("pty2", "active"); // overlap → both contaminated
@@ -264,11 +235,12 @@ describe("agentTurnTracker git attribution", () => {
 		const calls = (telemetry.recordTurn as ReturnType<typeof vi.fn>).mock.calls;
 		const recs = calls.map((c) => c[0] as AgentTurnRecord);
 		expect(recs).toHaveLength(2);
+		// Contaminated turns skip the diff entirely — line counts stay NULL.
+		expect(git.diffTrees).not.toHaveBeenCalled();
 		for (const r of recs) {
 			expect(r.linesAdded).toBeNull();
 			expect(r.linesDeleted).toBeNull();
-			// Raw end snapshot still recorded for later re-derivation.
-			expect(r.gitAddedEnd).toBe(8);
+			expect(r.gitAddedEnd).toBeNull();
 		}
 	});
 });
