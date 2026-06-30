@@ -178,6 +178,7 @@ git push --follow-tags         # triggers CI build for all platforms
 - Shell is spawned with `-l -i` flags (login + interactive) to source `.zshrc`. `TERM_PROGRAM=Abundio` is set.
 - Keybindings use capture phase (`addEventListener(..., true)`) to intercept before xterm.js.
 - Themes apply to both CSS variables (UI) and xterm.js terminal options.
+- The per-Pane state indicator is the **status icon** (component `AgentStatusIcon`) — call it a "status icon", never a "status dot". It renders as a spinner, chevron `>>>`, check, or coloured glyph depending on state/mode. See the `Status indicator` entry in `CONTEXT.md`.
 - macOS uses native titlebar with `titleBarStyle: "Overlay"` — content extends behind traffic lights. The React `Titlebar` component renders a 28px strip (`bg-secondary`) with the title text aligned to the traffic-light row.
 - Cross-platform keybindings: `Cmd` on macOS, `Ctrl` on Windows/Linux.
 
