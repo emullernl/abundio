@@ -387,16 +387,30 @@ export function initAgentTurnTracker(): void {
 			openTurns.has(ptyId);
 		if (!isAgent) return;
 
-		// `recordExitSuccess` / `recordError` fire only on a PTY exit for an agent,
-		// so the cause IS the pty-exit signal: finalize as pty_exit, ahead of (and
-		// instead of) the ready/error state's would-be stop/error finalize.
-		// Session-end stays an explicit trackSessionEnd in terminalManager's
-		// hook-clear path — the same clearAgentPty also fires on a shell
-		// command_end that merely drops agent mode, which must NOT finalize a Turn.
-		if (cause.kind === "recordExitSuccess" || cause.kind === "recordError") {
+		// `recordExitSuccess` / `recordError` on an **agent-mode** PTY is a real pty
+		// exit — the onStatus "exited" path leaves the PTY in agent mode — so the
+		// cause IS the pty-exit signal: finalize as pty_exit, ahead of (and instead
+		// of) the ready/error state's would-be stop/error finalize. The same causes
+		// also fire on a shell `command_end`/`commandFinished`; there the PTY is in
+		// shell mode, so the detectionMode gate routes it to noteState below —
+		// keeping a lingering Turn open (as on `main`) rather than finalizing it as a
+		// pty_exit. Session-end stays an explicit trackSessionEnd in terminalManager's
+		// hook-clear path (the same clearAgentPty also fires on a shell command_end
+		// that merely drops agent mode, which must NOT finalize a Turn).
+		if (
+			next.detectionMode === "agent" &&
+			(cause.kind === "recordExitSuccess" || cause.kind === "recordError")
+		) {
 			void onPtyExit(ptyId);
 			return;
 		}
+		// Mode-only changes (agentDetected / sessionEnded flip detectionMode while
+		// leaving `state` untouched) emit a StatusChange but are NOT state
+		// transitions; the old store.subscribe driver skipped unchanged-state
+		// entries, so we do too — otherwise detecting an agent mid-activity would
+		// start a Turn at detection time, and a session-end mid-turn could resume or
+		// finalize one.
+		if (prev.state === next.state) return;
 		void noteState(ptyId, next.state);
 	});
 
