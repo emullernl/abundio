@@ -7,6 +7,7 @@ interface Props {
 	files: GitChangedFile[];
 	baseBranch: string | null;
 	onSelectFile: (file: GitChangedFile) => void;
+	onOpenFile: (file: GitChangedFile) => void;
 	selectedFile: GitChangedFile | null;
 }
 
@@ -24,6 +25,7 @@ export function GitChangesFileList({
 	files,
 	baseBranch,
 	onSelectFile,
+	onOpenFile,
 	selectedFile,
 }: Props) {
 	const collapsedSections = useGitChangesStore((s) => s.collapsedSections);
@@ -141,6 +143,7 @@ export function GitChangesFileList({
 											selectedFile?.section === file.section
 										}
 										onClick={() => onSelectFile(file)}
+										onOpenFile={() => onOpenFile(file)}
 									/>
 								))}
 							</div>

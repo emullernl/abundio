@@ -70,6 +70,7 @@ function makeTextPane(overrides: Partial<FilePaneState> = {}): FilePaneState {
 		diffOriginal: null,
 		diffModified: null,
 		diffSection: null,
+		isDeleted: false,
 		...overrides,
 	};
 }
@@ -89,6 +90,7 @@ function makeDiffPane(overrides: Partial<FilePaneState> = {}): FilePaneState {
 		diffOriginal: "old",
 		diffModified: "new",
 		diffSection: "unstaged",
+		isDeleted: false,
 		...overrides,
 	};
 }

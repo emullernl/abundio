@@ -6,6 +6,7 @@ import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
 import { findPreviewForSource } from "../../lib/paneTree";
 import { sc } from "../../lib/platform";
+import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -26,6 +27,7 @@ interface FilePaneProps {
 	filePath: string;
 	isDiff?: boolean;
 	diffSection?: GitChangedFile["section"];
+	isDeleted?: boolean;
 	isFocused: boolean;
 	onFocus: () => void;
 }
@@ -35,6 +37,7 @@ export function FilePane({
 	filePath,
 	isDiff,
 	diffSection,
+	isDeleted,
 	isFocused,
 	onFocus,
 }: FilePaneProps) {
@@ -66,7 +69,15 @@ export function FilePane({
 
 	// Register/unregister with the store when filePath changes
 	useEffect(() => {
-		registerFilePane(paneId, filePath, isDiff, diffSection, null, null);
+		registerFilePane(
+			paneId,
+			filePath,
+			isDiff,
+			diffSection,
+			isDeleted,
+			null,
+			null,
+		);
 		return () => {
 			unregisterFilePane(paneId);
 		};
@@ -77,6 +88,7 @@ export function FilePane({
 		filePath,
 		isDiff,
 		diffSection,
+		isDeleted,
 		registerFilePane,
 		unregisterFilePane,
 	]);
@@ -126,6 +138,36 @@ export function FilePane({
 
 	const isMarkdown =
 		paneState.fileType === "text" && isMarkdownFile(paneState.fileName);
+
+	// For a diff pane, the underlying real (repo-relative) path, sans "diff:" prefix.
+	const diffRealPath =
+		paneState.fileType === "diff"
+			? paneState.filePath.replace(/^diff:/, "")
+			: null;
+
+	// Open the plain (non-diff) file backing this diff pane in the editor.
+	// Undefined for deleted files (nothing on disk to open). Resolves via the
+	// active workspace — safe because a focused diff pane is always in the active
+	// workspace — and against its root folder, since the diff pane stores a
+	// repo-relative path that fs.readFile can't consume directly.
+	const openPlainFileFromDiff =
+		diffRealPath && !paneState.isDeleted
+			? () => {
+					const wsState = useWorkspaceStore.getState();
+					const workspaceId = wsState.activeWorkspaceId;
+					const workspace = wsState.workspaces.find(
+						(w) => w.id === workspaceId,
+					);
+					if (!workspaceId || !workspace) return;
+					useExplorerStore
+						.getState()
+						.openFile(
+							workspaceId,
+							resolveWorkspacePath(workspace.rootFolder, diffRealPath),
+						)
+						.catch(() => {});
+				}
+			: undefined;
 
 	const handlePrintMarkdown = async () => {
 		const ws = useWorkspaceStore.getState();
@@ -280,18 +322,20 @@ export function FilePane({
 				)}
 				{paneState.fileType === "diff" &&
 					paneState.diffOriginal != null &&
-					paneState.diffModified != null && (
+					paneState.diffModified != null &&
+					diffRealPath != null && (
 						<div className="absolute inset-0">
 							<DiffViewer
 								diff={{
 									original: paneState.diffOriginal,
 									modified: paneState.diffModified,
-									filePath: paneState.filePath.replace(/^diff:/, ""),
+									filePath: diffRealPath,
 								}}
 								isActive={isFocused}
 								onBack={() => {
 									unregisterFilePane(paneId);
 								}}
+								onOpenFile={openPlainFileFromDiff}
 							/>
 						</div>
 					)}

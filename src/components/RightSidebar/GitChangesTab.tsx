@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { git } from "../../lib/ipc";
+import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
@@ -50,10 +51,22 @@ export function GitChangesTab() {
 					diff.original,
 					diff.modified,
 					file.section,
+					file.status === "D",
 				);
 		} catch {
 			// Failed to load diff
 		}
+	}
+
+	function handleOpenFile(file: GitChangedFile) {
+		if (!cwd || !activeWorkspaceId) return;
+		const absolutePath = resolveWorkspacePath(cwd, file.path);
+		useExplorerStore
+			.getState()
+			.openFile(activeWorkspaceId, absolutePath)
+			.catch(() => {
+				// Failed to open file (e.g. createTab rejected) — nothing to recover
+			});
 	}
 
 	async function handleRefresh() {
@@ -197,6 +210,7 @@ export function GitChangesTab() {
 							files={changedFiles}
 							baseBranch={baseBranch}
 							onSelectFile={handleSelectFile}
+							onOpenFile={handleOpenFile}
 							selectedFile={selectedFile}
 						/>
 					</div>

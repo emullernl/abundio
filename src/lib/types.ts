@@ -14,6 +14,7 @@ export type PaneNode =
 			filePath: string;
 			isDiff?: boolean;
 			diffSection?: GitChangedFile["section"];
+			isDeleted?: boolean;
 	  }
 	| {
 			// A live markdown preview bound to a file pane (its "source pane").

@@ -1,9 +1,11 @@
 import type { GitChangedFile } from "../../lib/types";
+import { File } from "../Icons";
 
 interface Props {
 	file: GitChangedFile;
 	isSelected: boolean;
 	onClick: () => void;
+	onOpenFile: () => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -32,16 +34,37 @@ function dirPath(path: string): string {
 	return parts.slice(0, -1).join("/");
 }
 
-export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
+export function GitChangesFileItem({
+	file,
+	isSelected,
+	onClick,
+	onOpenFile,
+}: Props) {
 	const color = STATUS_COLORS[file.status] ?? "var(--fg-secondary)";
 	const label = STATUS_LABELS[file.status] ?? file.status;
 	const dir = dirPath(file.path);
+	const isDeleted = file.status === "D";
 
 	return (
-		<button
-			type="button"
+		// biome-ignore lint/a11y/useSemanticElements: div used intentionally for styling — hosts a nested "Open File" button
+		<div
+			role="button"
+			tabIndex={0}
 			onClick={onClick}
-			className="w-full flex items-center gap-2 py-1 text-left transition-colors group"
+			onKeyDown={(e) => {
+				// Only respond to keys targeted at the row itself — otherwise a
+				// keypress on the nested "Open File" button bubbles up here and
+				// opens the diff too (its keydown isn't stopped by the click-time
+				// stopPropagation). Space is handled to match native button behavior.
+				if (e.target !== e.currentTarget) return;
+				if (e.key === "Enter") {
+					onClick();
+				} else if (e.key === " ") {
+					e.preventDefault();
+					onClick();
+				}
+			}}
+			className="w-full flex items-center gap-2 py-1 text-left transition-colors group cursor-pointer"
 			style={{
 				height: 28,
 				// Inline padding instead of Tailwind px-3 to avoid specificity issues with the borderLeft style
@@ -89,6 +112,30 @@ export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
 					</span>
 				)}
 			</span>
+			{isDeleted ? (
+				<span className="flex-shrink-0" style={{ width: 18, height: 18 }} />
+			) : (
+				<button
+					type="button"
+					title="Open File"
+					onClick={(e) => {
+						e.stopPropagation();
+						onOpenFile();
+					}}
+					className="flex items-center justify-center rounded transition-opacity opacity-0 group-hover:opacity-70 hover:!opacity-100 flex-shrink-0"
+					style={{
+						width: 18,
+						height: 18,
+						color: "var(--fg-secondary)",
+						background: "none",
+						border: "none",
+						cursor: "pointer",
+						padding: 0,
+					}}
+				>
+					<File size={12} />
+				</button>
+			)}
 			<span
 				className="flex-shrink-0 flex items-center gap-1"
 				style={{ fontSize: 11, fontFamily: "var(--font-ui)" }}
@@ -100,6 +147,6 @@ export function GitChangesFileItem({ file, isSelected, onClick }: Props) {
 					<span style={{ color: "var(--error)" }}>-{file.deletions}</span>
 				)}
 			</span>
-		</button>
+		</div>
 	);
 }

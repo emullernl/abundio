@@ -5,15 +5,21 @@ import { defineAbundioTheme, detectLanguage } from "../../lib/monacoShared";
 import { setMonacoInstance } from "../../lib/themes";
 import type { GitFileDiff } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { ArrowLeft } from "../Icons";
+import { ArrowLeft, File } from "../Icons";
 
 interface Props {
 	diff: GitFileDiff;
 	onBack: () => void;
+	onOpenFile?: () => void;
 	isActive?: boolean;
 }
 
-export function DiffViewer({ diff, onBack, isActive = false }: Props) {
+export function DiffViewer({
+	diff,
+	onBack,
+	onOpenFile,
+	isActive = false,
+}: Props) {
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const monacoFontSize = fontSize - 1;
@@ -110,6 +116,16 @@ export function DiffViewer({ diff, onBack, isActive = false }: Props) {
 				>
 					{fileName}
 				</span>
+				{onOpenFile && (
+					<button
+						type="button"
+						onClick={onOpenFile}
+						title="Open File"
+						className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0 text-[var(--fg-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--fg-primary)]"
+					>
+						<File size={14} />
+					</button>
+				)}
 				<div
 					className="flex items-center rounded overflow-hidden"
 					style={{ border: "1px solid var(--border)" }}

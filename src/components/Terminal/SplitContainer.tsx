@@ -55,6 +55,7 @@ const FileLeaf = memo(function FileLeaf({
 			filePath={node.filePath}
 			isDiff={node.isDiff}
 			diffSection={node.diffSection}
+			isDeleted={node.isDeleted}
 			isFocused={isFocused}
 			onFocus={() => setFocusedPane(node.id)}
 		/>
