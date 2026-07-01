@@ -6,6 +6,7 @@ import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
 import { findPreviewForSource } from "../../lib/paneTree";
 import { sc } from "../../lib/platform";
+import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -137,6 +138,36 @@ export function FilePane({
 
 	const isMarkdown =
 		paneState.fileType === "text" && isMarkdownFile(paneState.fileName);
+
+	// For a diff pane, the underlying real (repo-relative) path, sans "diff:" prefix.
+	const diffRealPath =
+		paneState.fileType === "diff"
+			? paneState.filePath.replace(/^diff:/, "")
+			: null;
+
+	// Open the plain (non-diff) file backing this diff pane in the editor.
+	// Undefined for deleted files (nothing on disk to open). Resolves via the
+	// active workspace — safe because a focused diff pane is always in the active
+	// workspace — and against its root folder, since the diff pane stores a
+	// repo-relative path that fs.readFile can't consume directly.
+	const openPlainFileFromDiff =
+		diffRealPath && !paneState.isDeleted
+			? () => {
+					const wsState = useWorkspaceStore.getState();
+					const workspaceId = wsState.activeWorkspaceId;
+					const workspace = wsState.workspaces.find(
+						(w) => w.id === workspaceId,
+					);
+					if (!workspaceId || !workspace) return;
+					useExplorerStore
+						.getState()
+						.openFile(
+							workspaceId,
+							resolveWorkspacePath(workspace.rootFolder, diffRealPath),
+						)
+						.catch(() => {});
+				}
+			: undefined;
 
 	const handlePrintMarkdown = async () => {
 		const ws = useWorkspaceStore.getState();
@@ -292,41 +323,22 @@ export function FilePane({
 				{paneState.fileType === "diff" &&
 					paneState.diffOriginal != null &&
 					paneState.diffModified != null &&
-					(() => {
-						const realFilePath = paneState.filePath.replace(/^diff:/, "");
-						return (
-							<div className="absolute inset-0">
-								<DiffViewer
-									diff={{
-										original: paneState.diffOriginal,
-										modified: paneState.diffModified,
-										filePath: realFilePath,
-									}}
-									isActive={isFocused}
-									onBack={() => {
-										unregisterFilePane(paneId);
-									}}
-									onOpenFile={
-										paneState.isDeleted
-											? undefined
-											: () => {
-													const wsState = useWorkspaceStore.getState();
-													const workspaceId = wsState.activeWorkspaceId;
-													const workspace = wsState.workspaces.find(
-														(w) => w.id === workspaceId,
-													);
-													if (workspaceId && workspace) {
-														const absolutePath = `${workspace.rootFolder.replace(/\/$/, "")}/${realFilePath}`;
-														useExplorerStore
-															.getState()
-															.openFile(workspaceId, absolutePath);
-													}
-												}
-									}
-								/>
-							</div>
-						);
-					})()}
+					diffRealPath != null && (
+						<div className="absolute inset-0">
+							<DiffViewer
+								diff={{
+									original: paneState.diffOriginal,
+									modified: paneState.diffModified,
+									filePath: diffRealPath,
+								}}
+								isActive={isFocused}
+								onBack={() => {
+									unregisterFilePane(paneId);
+								}}
+								onOpenFile={openPlainFileFromDiff}
+							/>
+						</div>
+					)}
 				{paneState.fileType === "image" && (
 					<ImageViewer
 						content={paneState.content ?? ""}

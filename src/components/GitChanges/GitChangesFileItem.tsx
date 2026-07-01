@@ -51,7 +51,19 @@ export function GitChangesFileItem({
 			role="button"
 			tabIndex={0}
 			onClick={onClick}
-			onKeyDown={(e) => e.key === "Enter" && onClick()}
+			onKeyDown={(e) => {
+				// Only respond to keys targeted at the row itself — otherwise a
+				// keypress on the nested "Open File" button bubbles up here and
+				// opens the diff too (its keydown isn't stopped by the click-time
+				// stopPropagation). Space is handled to match native button behavior.
+				if (e.target !== e.currentTarget) return;
+				if (e.key === "Enter") {
+					onClick();
+				} else if (e.key === " ") {
+					e.preventDefault();
+					onClick();
+				}
+			}}
 			className="w-full flex items-center gap-2 py-1 text-left transition-colors group cursor-pointer"
 			style={{
 				height: 28,

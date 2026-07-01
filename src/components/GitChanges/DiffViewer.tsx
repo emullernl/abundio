@@ -121,16 +121,7 @@ export function DiffViewer({
 						type="button"
 						onClick={onOpenFile}
 						title="Open File"
-						className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
-						style={{ color: "var(--fg-secondary)" }}
-						onMouseEnter={(e) => {
-							e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
-							e.currentTarget.style.color = "var(--fg-primary)";
-						}}
-						onMouseLeave={(e) => {
-							e.currentTarget.style.backgroundColor = "transparent";
-							e.currentTarget.style.color = "var(--fg-secondary)";
-						}}
+						className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0 text-[var(--fg-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--fg-primary)]"
 					>
 						<File size={14} />
 					</button>
