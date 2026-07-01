@@ -38,7 +38,7 @@ import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
 import { updates, windowSession } from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
-import { collectFilePaneIds } from "./lib/paneTree";
+import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import {
@@ -46,7 +46,6 @@ import {
 	pasteIntoTerminal,
 } from "./lib/terminalClipboard";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
-import type { PaneNode } from "./lib/types";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
@@ -77,7 +76,6 @@ import {
 import { useSettingsStore } from "./stores/settingsStore";
 import {
 	clearTabClose,
-	requestTabCloseWithDirtyCheck,
 	useTabCloseConfirmStore,
 } from "./stores/tabCloseConfirmStore";
 import { useUpdateStore } from "./stores/updateStore";
@@ -179,13 +177,7 @@ const TabContent = memo(function TabContent({
 	layoutJson: string;
 	cwd: string;
 }) {
-	const layout = useMemo(() => {
-		try {
-			return JSON.parse(layoutJson) as PaneNode;
-		} catch {
-			return null;
-		}
-	}, [layoutJson]);
+	const layout = useMemo(() => parseTabLayout(layoutJson), [layoutJson]);
 
 	if (!layout) return null;
 	return (
@@ -256,7 +248,6 @@ export function App() {
 	const activeTabByWorkspace = useWorkspaceStore((s) => s.activeTabByWorkspace);
 	const setActiveTab = useWorkspaceStore((s) => s.setActiveTab);
 	const createTab = useWorkspaceStore((s) => s.createTab);
-	const closeTab = useWorkspaceStore((s) => s.closeTab);
 	const renameTab = useWorkspaceStore((s) => s.renameTab);
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
 	const {
@@ -798,11 +789,7 @@ export function App() {
 											tabs={workspace.tabs}
 											activeTabId={activeTabId}
 											onActivate={(tabId) => setActiveTab(workspace.id, tabId)}
-											onClose={(tabId) =>
-												requestTabCloseWithDirtyCheck(tabId, () =>
-													closeTab(tabId),
-												)
-											}
+											onClose={(tabId) => requestCloseTerminalTab(tabId)}
 											onNew={() => requestNewTab(workspace.id)}
 											onRename={(tabId, name) => renameTab(tabId, name)}
 										/>
@@ -936,8 +923,8 @@ export function App() {
 							.workspaces.flatMap((w) => w.tabs)
 							.find((t) => t.id === id);
 						if (tab) {
-							try {
-								const layout = JSON.parse(tab.layoutJson);
+							const layout = parseTabLayout(tab.layoutJson);
+							if (layout) {
 								const filePanes = useExplorerStore.getState().filePanes;
 								const dirtyIds = collectFilePaneIds(layout).filter(
 									(pid) => filePanes[pid]?.isDirty,
@@ -947,8 +934,6 @@ export function App() {
 										useExplorerStore.getState().saveFile(pid),
 									),
 								);
-							} catch {
-								// ignore parse errors
 							}
 						}
 						onClean?.();
