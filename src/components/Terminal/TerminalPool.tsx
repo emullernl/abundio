@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { parseTabLayout } from "../../lib/paneTree";
-import type { PaneNode } from "../../lib/types";
+import { collectTerminals, parseTabLayout } from "../../lib/paneTree";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { TerminalInstance } from "./TerminalInstance";
@@ -9,13 +8,6 @@ interface TerminalInfo {
 	paneId: string;
 	ptyId: string;
 	cwd?: string;
-}
-
-function collectTerminals(node: PaneNode): TerminalInfo[] {
-	if (node.type === "terminal")
-		return [{ paneId: node.id, ptyId: node.ptyId, cwd: node.cwd }];
-	if (node.type !== "split") return [];
-	return [...collectTerminals(node.first), ...collectTerminals(node.second)];
 }
 
 export function TerminalPool() {
@@ -42,7 +34,11 @@ export function TerminalPool() {
 				const layout = parseTabLayout(tab.layoutJson);
 				if (!layout) continue;
 				for (const t of collectTerminals(layout)) {
-					result.push({ ...t, cwd: t.cwd ?? workspace.rootFolder });
+					result.push({
+						paneId: t.id,
+						ptyId: t.ptyId,
+						cwd: t.cwd ?? workspace.rootFolder,
+					});
 				}
 			}
 		}

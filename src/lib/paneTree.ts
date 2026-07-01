@@ -17,6 +17,10 @@ export function findNode(tree: PaneNode, id: string): PaneNode | null {
 	return null;
 }
 
+export function containsPane(tree: PaneNode, id: string): boolean {
+	return findNode(tree, id) !== null;
+}
+
 export function replaceNode(
 	tree: PaneNode,
 	id: string,
@@ -56,8 +60,9 @@ export function removeNode(tree: PaneNode, id: string): PaneNode | null {
 /** Collect all terminal node IDs in tree order (depth-first). */
 export function collectTerminals(
 	tree: PaneNode,
-): { id: string; ptyId: string }[] {
-	if (tree.type === "terminal") return [{ id: tree.id, ptyId: tree.ptyId }];
+): { id: string; ptyId: string; cwd?: string }[] {
+	if (tree.type === "terminal")
+		return [{ id: tree.id, ptyId: tree.ptyId, cwd: tree.cwd }];
 	if (tree.type !== "split") return [];
 	return [...collectTerminals(tree.first), ...collectTerminals(tree.second)];
 }

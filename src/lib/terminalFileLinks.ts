@@ -3,8 +3,7 @@ import type { IDisposable, ILink, Terminal } from "@xterm/xterm";
 import { useExplorerStore } from "../stores/explorerStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { parseTabLayout } from "./paneTree";
-import type { PaneNode } from "./types";
+import { containsPane, parseTabLayout } from "./paneTree";
 import { isWorkspaceFile } from "./workspaceFileIndex";
 
 // Resolved once at module load. `~/` expansion is best-effort; if this rejects
@@ -134,16 +133,6 @@ function findWorkspaceIdForPane(paneId: string): string | null {
 		}
 	}
 	return null;
-}
-
-function containsPane(node: PaneNode, targetPaneId: string): boolean {
-	if (node.type === "split") {
-		return (
-			containsPane(node.first, targetPaneId) ||
-			containsPane(node.second, targetPaneId)
-		);
-	}
-	return node.id === targetPaneId;
 }
 
 /**
