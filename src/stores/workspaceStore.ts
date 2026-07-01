@@ -11,6 +11,7 @@ import {
 	extractNode,
 	findFilePaneInTree,
 	insertBesideNode,
+	parseTabLayout,
 	pruneOrphanPreviews,
 	setAgentId,
 	setCwd,
@@ -173,7 +174,8 @@ function seedFocalPane(
 	let firstPaneId: string | null = null;
 	if (!firstTab) return { firstTabId, firstPaneId };
 	try {
-		const layout = JSON.parse(firstTab.layoutJson) as PaneNode;
+		const layout = parseTabLayout(firstTab.layoutJson);
+		if (!layout) return { firstTabId, firstPaneId };
 		firstPaneId = firstTerminalId(layout);
 		const setupLines = (opts.setupCommands ?? "")
 			.split("\n")
@@ -255,6 +257,29 @@ function updateTabInWorkspaces(
 	}));
 }
 
+/**
+ * Walk every tab across every workspace, applying `mutate` to its parsed layout.
+ * Returns the first tab whose layout actually changed (reference inequality —
+ * relies on paneTree mutators returning the same node when nothing changed),
+ * with its new layoutJson ready to persist. Returns null if none changed.
+ */
+export function findMutatedTabLayout(
+	workspaces: WorkspaceWithTabs[],
+	mutate: (layout: PaneNode) => PaneNode,
+): { tabId: string; layoutJson: string } | null {
+	for (const ws of workspaces) {
+		for (const tab of ws.tabs) {
+			const layout = parseTabLayout(tab.layoutJson);
+			if (!layout) continue;
+			const stamped = mutate(layout);
+			if (stamped !== layout) {
+				return { tabId: tab.id, layoutJson: JSON.stringify(stamped) };
+			}
+		}
+	}
+	return null;
+}
+
 interface PersistedFileTab {
 	id: string;
 	filePath: string;
@@ -285,18 +310,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		const cleaned = workspacesWithTabs.map((s) => ({
 			...s,
 			tabs: s.tabs.map((t) => {
-				try {
-					const layout = JSON.parse(t.layoutJson) as PaneNode;
-					// Prune preview panes orphaned across sessions (their source pane
-					// no longer exists) before clearing stale ptyIds.
-					const pruned = pruneOrphanPreviews(layout) ?? layout;
-					allPaneIds.push(...collectPaneIds(pruned));
-					const cleared = clearPtyIds(pruned);
-					seedPendingAgentsForLayout(cleared);
-					return { ...t, layoutJson: JSON.stringify(cleared) };
-				} catch {
-					return t;
-				}
+				const layout = parseTabLayout(t.layoutJson);
+				if (!layout) return t;
+				// Prune preview panes orphaned across sessions (their source pane
+				// no longer exists) before clearing stale ptyIds.
+				const pruned = pruneOrphanPreviews(layout) ?? layout;
+				allPaneIds.push(...collectPaneIds(pruned));
+				const cleared = clearPtyIds(pruned);
+				seedPendingAgentsForLayout(cleared);
+				return { ...t, layoutJson: JSON.stringify(cleared) };
 			}),
 		}));
 
@@ -552,13 +574,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			// (e.g. sidebar bulk-delete, worktree sync). Idempotent if
 			// closeWorkspace already ran. See ADR-0020.
 			for (const tab of workspace.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					for (const paneId of collectPaneIds(layout)) {
-						teardownTerminal(paneId);
-					}
-				} catch {
-					// Layout parse failure — skip cleanup
+				const layout = parseTabLayout(tab.layoutJson);
+				if (!layout) continue;
+				for (const paneId of collectPaneIds(layout)) {
+					teardownTerminal(paneId);
 				}
 			}
 		}
@@ -585,16 +604,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Permanently tear down every pane: kill PTYs, stop background trackers,
 		// and purge activity entries so the Overview bar counts drop (ADR-0020).
 		for (const tab of workspace.tabs) {
-			try {
-				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				for (const paneId of collectPaneIds(layout)) {
-					teardownTerminal(paneId);
-				}
-				// Clean up file pane state
-				useExplorerStore.getState().clearWorkspaceFilePanes(id);
-			} catch {
-				// Layout parse failure — skip
+			const layout = parseTabLayout(tab.layoutJson);
+			if (!layout) continue;
+			for (const paneId of collectPaneIds(layout)) {
+				teardownTerminal(paneId);
 			}
+			// Clean up file pane state
+			useExplorerStore.getState().clearWorkspaceFilePanes(id);
 		}
 
 		// Reset dot to grey
@@ -609,17 +625,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					? {
 							...s,
 							tabs: s.tabs.map((t) => {
-								try {
-									const layout = JSON.parse(t.layoutJson) as PaneNode;
-									const cleared = clearPtyIds(layout);
-									seedPendingAgentsForLayout(cleared);
-									return {
-										...t,
-										layoutJson: JSON.stringify(cleared),
-									};
-								} catch {
-									return t;
-								}
+								const layout = parseTabLayout(t.layoutJson);
+								if (!layout) return t;
+								const cleared = clearPtyIds(layout);
+								seedPendingAgentsForLayout(cleared);
+								return {
+									...t,
+									layoutJson: JSON.stringify(cleared),
+								};
 							}),
 						}
 					: s,
@@ -668,12 +681,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				const workspace = state.workspaces.find((s) => s.id === id);
 				const tab = workspace?.tabs.find((t) => t.id === newTabId);
 				if (tab) {
-					try {
-						const layout = JSON.parse(tab.layoutJson) as PaneNode;
-						restoredFocus = firstLeafId(layout);
-					} catch {
-						/* ignore */
-					}
+					const layout = parseTabLayout(tab.layoutJson);
+					if (layout) restoredFocus = firstLeafId(layout);
 				}
 			}
 			return {
@@ -753,11 +762,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			tab.layoutJson = layoutJson;
 			tabsApi.update(tab.id, { layoutJson }).catch(() => {});
 		} else {
-			try {
-				finalLayout = JSON.parse(tab.layoutJson) as PaneNode;
-			} catch {
-				finalLayout = defaultLayout();
-			}
+			finalLayout = parseTabLayout(tab.layoutJson) ?? defaultLayout();
 		}
 
 		let initialFocus: string | null = firstLeafId(finalLayout);
@@ -805,14 +810,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// background trackers, and purges activity entries so the Overview bar
 		// counts drop (ADR-0020). File-pane explorer state is cleared alongside.
 		if (tab) {
-			try {
-				const layout = JSON.parse(tab.layoutJson) as PaneNode;
+			const layout = parseTabLayout(tab.layoutJson);
+			if (layout) {
 				for (const paneId of collectPaneIds(layout)) {
 					teardownTerminal(paneId);
 					useExplorerStore.getState().unregisterFilePane(paneId);
 				}
-			} catch {
-				// Layout parse failure — skip cleanup
 			}
 		}
 
@@ -872,12 +875,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				const workspace = state.workspaces.find((s) => s.id === workspaceId);
 				const tab = workspace?.tabs.find((t) => t.id === tabId);
 				if (tab) {
-					try {
-						const layout = JSON.parse(tab.layoutJson) as PaneNode;
-						restoredFocus = firstLeafId(layout);
-					} catch {
-						/* ignore */
-					}
+					const layout = parseTabLayout(tab.layoutJson);
+					if (layout) restoredFocus = firstLeafId(layout);
 				}
 			}
 			return {
@@ -909,61 +908,37 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	// Persist an agent identity onto a terminal pane in its tab's layout.
 	stampAgentOnPane: (paneId, agentId) => {
-		const state = get();
-		let targetTabId: string | null = null;
-		let nextLayoutJson: string | null = null;
-		for (const ws of state.workspaces) {
-			for (const tab of ws.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					const stamped = setAgentId(layout, paneId, agentId);
-					if (stamped !== layout) {
-						targetTabId = tab.id;
-						nextLayoutJson = JSON.stringify(stamped);
-						break;
-					}
-				} catch {
-					/* ignore */
-				}
-			}
-			if (targetTabId) break;
-		}
-		if (!targetTabId || nextLayoutJson === null) return;
-		const layoutJson = nextLayoutJson;
-		const tabId = targetTabId;
+		const result = findMutatedTabLayout(get().workspaces, (layout) =>
+			setAgentId(layout, paneId, agentId),
+		);
+		if (!result) return;
 		set((s) => ({
-			workspaces: updateTabInWorkspaces(s.workspaces, tabId, layoutJson),
+			workspaces: updateTabInWorkspaces(
+				s.workspaces,
+				result.tabId,
+				result.layoutJson,
+			),
 		}));
-		tabsApi.update(tabId, { layoutJson }).catch(() => {});
+		tabsApi
+			.update(result.tabId, { layoutJson: result.layoutJson })
+			.catch(() => {});
 	},
 
 	stampCwdOnPane: (paneId, cwd) => {
-		const state = get();
-		let targetTabId: string | null = null;
-		let nextLayoutJson: string | null = null;
-		for (const ws of state.workspaces) {
-			for (const tab of ws.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					const stamped = setCwd(layout, paneId, cwd);
-					if (stamped !== layout) {
-						targetTabId = tab.id;
-						nextLayoutJson = JSON.stringify(stamped);
-						break;
-					}
-				} catch {
-					/* ignore */
-				}
-			}
-			if (targetTabId) break;
-		}
-		if (!targetTabId || nextLayoutJson === null) return;
-		const layoutJson = nextLayoutJson;
-		const tabId = targetTabId;
+		const result = findMutatedTabLayout(get().workspaces, (layout) =>
+			setCwd(layout, paneId, cwd),
+		);
+		if (!result) return;
 		set((s) => ({
-			workspaces: updateTabInWorkspaces(s.workspaces, tabId, layoutJson),
+			workspaces: updateTabInWorkspaces(
+				s.workspaces,
+				result.tabId,
+				result.layoutJson,
+			),
 		}));
-		tabsApi.update(tabId, { layoutJson }).catch(() => {});
+		tabsApi
+			.update(result.tabId, { layoutJson: result.layoutJson })
+			.catch(() => {});
 	},
 
 	// Full update: local state + persist to SQLite
@@ -1023,12 +998,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		const sourceTab = workspace.tabs.find((t) => t.id === sourceTabId);
 		if (!sourceTab) return;
 
-		let sourceLayout: PaneNode;
-		try {
-			sourceLayout = JSON.parse(sourceTab.layoutJson) as PaneNode;
-		} catch {
-			return;
-		}
+		const sourceLayout = parseTabLayout(sourceTab.layoutJson);
+		if (!sourceLayout) return;
 
 		const { remaining: sourceRemaining, removed: movedNode } = extractNode(
 			sourceLayout,
@@ -1054,12 +1025,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				// Cross-tab move
 				const destTab = workspace.tabs.find((t) => t.id === destTabId);
 				if (!destTab) return;
-				let destLayout: PaneNode;
-				try {
-					destLayout = JSON.parse(destTab.layoutJson) as PaneNode;
-				} catch {
-					return;
-				}
+				const destLayout = parseTabLayout(destTab.layoutJson);
+				if (!destLayout) return;
 				const newDestLayout = insertBesideNode(
 					destLayout,
 					targetPaneId,
@@ -1208,11 +1175,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	getActiveLayout: () => {
 		const tab = get().getActiveTab();
 		if (!tab) return null;
-		try {
-			return JSON.parse(tab.layoutJson) as PaneNode;
-		} catch {
-			return defaultLayout();
-		}
+		return parseTabLayout(tab.layoutJson) ?? defaultLayout();
 	},
 
 	getTabsForWorkspace: (workspaceId) => {

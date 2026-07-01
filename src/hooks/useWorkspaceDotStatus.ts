@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { parseTabLayout } from "../lib/paneTree";
 import type { PaneNode, WorkspaceWithTabs } from "../lib/types";
 import {
 	computeWorkspaceDotStatus,
@@ -10,11 +11,8 @@ export function useWorkspaceDotStatus(workspace: WorkspaceWithTabs): DotStatus {
 	const tabLayouts = useMemo(() => {
 		const layouts: PaneNode[] = [];
 		for (const tab of workspace.tabs) {
-			try {
-				layouts.push(JSON.parse(tab.layoutJson) as PaneNode);
-			} catch {
-				// ignore
-			}
+			const layout = parseTabLayout(tab.layoutJson);
+			if (layout) layouts.push(layout);
 		}
 		return layouts;
 	}, [workspace.tabs]);

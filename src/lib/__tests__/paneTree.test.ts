@@ -10,6 +10,7 @@ import {
 	findOrphanPreviews,
 	findPreviewForSource,
 	insertBesideNode,
+	parseTabLayout,
 	pruneOrphanPreviews,
 	removeNode,
 	replaceNode,
@@ -154,6 +155,20 @@ describe("collectPaneIds", () => {
 
 	it("returns all ids depth-first from a nested tree", () => {
 		expect(collectPaneIds(nestedSplit)).toEqual(["a", "b", "c"]);
+	});
+});
+
+describe("parseTabLayout", () => {
+	it("round-trips valid JSON into a PaneNode", () => {
+		expect(parseTabLayout(JSON.stringify(nestedSplit))).toEqual(nestedSplit);
+	});
+
+	it("returns null for malformed JSON instead of throwing", () => {
+		expect(parseTabLayout("{not json")).toBeNull();
+	});
+
+	it("returns null for an empty string", () => {
+		expect(parseTabLayout("")).toBeNull();
 	});
 });
 

@@ -19,8 +19,9 @@ import { mapHookEvent } from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { agentHooks, pty } from "./ipc";
-import { collectPaneIds } from "./paneTree";
+import { collectPaneIds, parseTabLayout } from "./paneTree";
 import { takePendingAgent } from "./pendingAgentRegistry";
+import { isMac } from "./platform";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
@@ -482,14 +483,10 @@ setTimeout(() => {
 		for (const workspace of state.workspaces) {
 			if (!openedIds.has(workspace.id)) continue;
 			for (const tab of workspace.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					for (const id of collectPaneIds(layout)) {
-						liveWebglPaneIds.add(id);
-					}
-				} catch {
-					// Skip unparseable layouts — terminals there won't be reconciled
-					// this tick, which is the same behavior as before this change.
+				const layout = parseTabLayout(tab.layoutJson);
+				if (!layout) continue;
+				for (const id of collectPaneIds(layout)) {
+					liveWebglPaneIds.add(id);
 				}
 			}
 		}
@@ -585,8 +582,13 @@ export async function createTerminal(
 	// layer would each open the URL — two browser tabs. When the app is tracking
 	// the mouse we stand down and let it own the click; in the normal shell
 	// buffer (no mouse tracking) our detection is the only thing that opens it.
-	const openExternalUrl = (url: string) => {
-		if (term.modes.mouseTrackingMode !== "none") return;
+	// Mouse tracking doesn't reliably imply the app handles hyperlinks itself
+	// though (e.g. Claude Code enables it for its own scroll/selection UI but
+	// doesn't open links), which would otherwise swallow the click with nothing
+	// opening it — Cmd/Ctrl+click always force-opens as an escape hatch.
+	const openExternalUrl = (event: MouseEvent, url: string) => {
+		const forceOpen = isMac ? event.metaKey : event.ctrlKey;
+		if (term.modes.mouseTrackingMode !== "none" && !forceOpen) return;
 		open(url);
 	};
 
@@ -595,7 +597,7 @@ export async function createTerminal(
 	// OSC link provider falls back to its default (a confirm() + bare
 	// window.open()), which in WKWebView leaks the URL to the system browser.
 	term.options.linkHandler = {
-		activate: (_event, uri) => openExternalUrl(uri),
+		activate: (event, uri) => openExternalUrl(event, uri),
 	};
 
 	const fitAddon = new FitAddon();
@@ -611,8 +613,8 @@ export async function createTerminal(
 	// double-opening. The cost of plain-click activation is that text selections
 	// starting inside a linked path must begin outside the link's hot zone.
 	term.loadAddon(
-		new WebLinksAddon((_event, url) => {
-			openExternalUrl(url);
+		new WebLinksAddon((event, url) => {
+			openExternalUrl(event, url);
 		}),
 	);
 	installFileLinkProvider(term, paneId);
@@ -1163,15 +1165,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		const workspace = store.getActiveWorkspace();
 		if (workspace) {
 			for (const tab of workspace.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					if (containsPaneId(layout, paneId)) {
-						const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
-						store.updateLayoutLocal(tab.id, updated);
-						break;
-					}
-				} catch {
-					// skip
+				const layout = parseTabLayout(tab.layoutJson);
+				if (!layout) continue;
+				if (containsPaneId(layout, paneId)) {
+					const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
+					store.updateLayoutLocal(tab.id, updated);
+					break;
 				}
 			}
 		}

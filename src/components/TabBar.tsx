@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDragPaneStore } from "../lib/dragPaneStore";
-import { collectFilePaneIds } from "../lib/paneTree";
-import type { PaneNode, Tab } from "../lib/types";
+import { collectFilePaneIds, parseTabLayout } from "../lib/paneTree";
+import type { Tab } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
 import {
 	computeTabDotStatus,
@@ -54,12 +54,8 @@ function DirtyDot() {
 
 function useTabIsDirty(tab: Tab): boolean {
 	const fileIds = useMemo(() => {
-		try {
-			const layout = JSON.parse(tab.layoutJson) as PaneNode;
-			return collectFilePaneIds(layout);
-		} catch {
-			return [];
-		}
+		const layout = parseTabLayout(tab.layoutJson);
+		return layout ? collectFilePaneIds(layout) : [];
 	}, [tab.layoutJson]);
 
 	return useExplorerStore((s) =>

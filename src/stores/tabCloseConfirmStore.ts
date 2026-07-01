@@ -1,6 +1,5 @@
 import { create } from "zustand";
-import { collectFilePaneIds } from "../lib/paneTree";
-import type { PaneNode } from "../lib/types";
+import { collectFilePaneIds, parseTabLayout } from "../lib/paneTree";
 import { useExplorerStore } from "./explorerStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
@@ -30,10 +29,8 @@ export function requestTabCloseWithDirtyCheck(
 		return;
 	}
 
-	let layout: PaneNode;
-	try {
-		layout = JSON.parse(tab.layoutJson) as PaneNode;
-	} catch {
+	const layout = parseTabLayout(tab.layoutJson);
+	if (!layout) {
 		onClean();
 		return;
 	}

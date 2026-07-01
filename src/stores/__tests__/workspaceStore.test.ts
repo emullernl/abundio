@@ -63,7 +63,7 @@ import type {
 	WorkspaceWithTabs,
 	WorktreeEntry,
 } from "../../lib/types";
-import { useWorkspaceStore } from "../workspaceStore";
+import { findMutatedTabLayout, useWorkspaceStore } from "../workspaceStore";
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
 	const layout: PaneNode = { type: "terminal", id: "pane-1", ptyId: "" };
@@ -343,6 +343,116 @@ describe("workspaceStore", () => {
 			useWorkspaceStore.getState().stampAgentOnPane("missing-pane", "claude");
 
 			expect(tabs.update).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("stampCwdOnPane", () => {
+		it("persists a cwd onto the matching terminal pane", () => {
+			const workspace = makeWorkspace();
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+
+			useWorkspaceStore.getState().stampCwdOnPane("pane-1", "/tmp/project");
+
+			const tab = useWorkspaceStore.getState().workspaces[0].tabs[0];
+			expect(JSON.parse(tab.layoutJson)).toMatchObject({
+				id: "pane-1",
+				cwd: "/tmp/project",
+			});
+			expect(tabs.update).toHaveBeenCalledWith("tab-1", {
+				layoutJson: tab.layoutJson,
+			});
+		});
+
+		it("clears a persisted cwd when an empty string is passed", () => {
+			const layout: PaneNode = {
+				type: "terminal",
+				id: "pane-1",
+				ptyId: "",
+				cwd: "/tmp/project",
+			};
+			const workspace = makeWorkspace({
+				tabs: [makeTab({ layoutJson: JSON.stringify(layout) })],
+			});
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+
+			useWorkspaceStore.getState().stampCwdOnPane("pane-1", "");
+
+			const tab = useWorkspaceStore.getState().workspaces[0].tabs[0];
+			expect(JSON.parse(tab.layoutJson)).not.toHaveProperty("cwd");
+		});
+
+		it("does nothing when no layout contains the pane", () => {
+			const workspace = makeWorkspace();
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+			vi.mocked(tabs.update).mockClear();
+
+			useWorkspaceStore.getState().stampCwdOnPane("missing-pane", "/tmp");
+
+			expect(tabs.update).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("findMutatedTabLayout", () => {
+		it("returns the tab whose layout the mutator actually changes", () => {
+			const workspaceA = makeWorkspace({
+				id: "workspace-a",
+				tabs: [
+					makeTab({
+						id: "tab-a",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "pane-a",
+							ptyId: "",
+						} satisfies PaneNode),
+					}),
+				],
+			});
+			const workspaceB = makeWorkspace({
+				id: "workspace-b",
+				tabs: [
+					makeTab({
+						id: "tab-b",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "pane-b",
+							ptyId: "",
+						} satisfies PaneNode),
+					}),
+				],
+			});
+
+			const result = findMutatedTabLayout([workspaceA, workspaceB], (layout) =>
+				layout.type === "terminal" && layout.id === "pane-b"
+					? { ...layout, agentId: "claude" }
+					: layout,
+			);
+
+			expect(result).not.toBeNull();
+			expect(result?.tabId).toBe("tab-b");
+			expect(JSON.parse(result?.layoutJson ?? "")).toMatchObject({
+				id: "pane-b",
+				agentId: "claude",
+			});
+		});
+
+		it("returns null when the mutator never returns a changed reference", () => {
+			const workspace = makeWorkspace();
+
+			const result = findMutatedTabLayout([workspace], (layout) => layout);
+
+			expect(result).toBeNull();
+		});
+
+		it("skips tabs with malformed layoutJson", () => {
+			const workspace = makeWorkspace({
+				tabs: [makeTab({ layoutJson: "{not json" })],
+			});
+
+			const result = findMutatedTabLayout([workspace], (layout) => ({
+				...layout,
+			}));
+
+			expect(result).toBeNull();
 		});
 	});
 
