@@ -10,15 +10,18 @@ import { ArrowLeft } from "../Icons";
 interface Props {
 	diff: GitFileDiff;
 	onBack: () => void;
+	isActive?: boolean;
 }
 
-export function DiffViewer({ diff, onBack }: Props) {
+export function DiffViewer({ diff, onBack, isActive = false }: Props) {
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const monacoFontSize = fontSize - 1;
 	const editorWordWrap = useSettingsStore((s) => s.editorWordWrap);
 	const [hideUnchanged, setHideUnchanged] = useState(true);
 	const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
+	const isActiveRef = useRef(isActive);
+	isActiveRef.current = isActive;
 
 	const language = detectLanguage(diff.filePath);
 
@@ -37,9 +40,28 @@ export function DiffViewer({ diff, onBack }: Props) {
 			};
 			ed.getOriginalEditor().addAction(action);
 			ed.getModifiedEditor().addAction(action);
+
+			// A brand-new tab renders with isActive already true, before Monaco
+			// has asynchronously loaded — the isActive-change effect below never
+			// fires again for it, so focus explicitly here on first mount.
+			if (isActiveRef.current) {
+				requestAnimationFrame(() => {
+					requestAnimationFrame(() => ed.focus());
+				});
+			}
 		},
 		[],
 	);
+
+	// Focus editor when this pane becomes active
+	useEffect(() => {
+		const de = diffEditorRef.current;
+		if (isActive && de) {
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => de.focus());
+			});
+		}
+	}, [isActive]);
 
 	useEffect(() => {
 		const de = diffEditorRef.current;
@@ -110,7 +132,9 @@ export function DiffViewer({ diff, onBack }: Props) {
 			</div>
 			<div
 				className="flex-1 min-h-0"
-				style={{ backgroundColor: "var(--bg-primary)" }}
+				// Transparent so the workspace ambient gradient shows through, matching
+				// CodeEditor (Monaco's own background is transparent too — see defineAbundioTheme).
+				style={{ backgroundColor: "transparent" }}
 			>
 				<DiffEditor
 					height="100%"
