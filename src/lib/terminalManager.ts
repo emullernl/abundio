@@ -19,7 +19,7 @@ import { mapHookEvent } from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { agentHooks, pty } from "./ipc";
-import { collectPaneIds, parseTabLayout } from "./paneTree";
+import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
 import { ShellIntegrationParser } from "./shellIntegration";
@@ -156,14 +156,6 @@ export function primaryFontFamily(fontFamily: string): string | null {
 	if (!first) return null;
 	if (CSS_GENERIC_FAMILIES.test(first)) return null;
 	return first;
-}
-
-function containsPaneId(node: PaneNode, targetPaneId: string): boolean {
-	if (node.type !== "split") return node.id === targetPaneId;
-	return (
-		containsPaneId(node.first, targetPaneId) ||
-		containsPaneId(node.second, targetPaneId)
-	);
 }
 
 function setPtyIdInLayout(
@@ -1167,7 +1159,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			for (const tab of workspace.tabs) {
 				const layout = parseTabLayout(tab.layoutJson);
 				if (!layout) continue;
-				if (containsPaneId(layout, paneId)) {
+				if (containsPane(layout, paneId)) {
 					const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
 					store.updateLayoutLocal(tab.id, updated);
 					break;

@@ -8,6 +8,7 @@ import {
 import {
 	collectAgentPanes,
 	collectPaneIds,
+	collectTerminalIds,
 	extractNode,
 	findFilePaneInTree,
 	insertBesideNode,
@@ -176,7 +177,7 @@ function seedFocalPane(
 	try {
 		const layout = parseTabLayout(firstTab.layoutJson);
 		if (!layout) return { firstTabId, firstPaneId };
-		firstPaneId = firstTerminalId(layout);
+		firstPaneId = collectTerminalIds(layout)[0] ?? null;
 		const setupLines = (opts.setupCommands ?? "")
 			.split("\n")
 			.map((l) => l.trim())
@@ -200,17 +201,6 @@ function seedFocalPane(
 		/* malformed layout — skip seeding */
 	}
 	return { firstTabId, firstPaneId };
-}
-
-function firstLeafId(node: PaneNode): string | null {
-	if (node.type !== "split") return node.id;
-	return firstLeafId(node.first) ?? firstLeafId(node.second);
-}
-
-function firstTerminalId(node: PaneNode): string | null {
-	if (node.type === "terminal") return node.id;
-	if (node.type !== "split") return null;
-	return firstTerminalId(node.first) ?? firstTerminalId(node.second);
 }
 
 /** Clear all ptyIds in a layout tree so fresh PTYs get spawned on render. */
@@ -682,7 +672,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				const tab = workspace?.tabs.find((t) => t.id === newTabId);
 				if (tab) {
 					const layout = parseTabLayout(tab.layoutJson);
-					if (layout) restoredFocus = firstLeafId(layout);
+					if (layout) restoredFocus = collectPaneIds(layout)[0] ?? null;
 				}
 			}
 			return {
@@ -765,10 +755,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			finalLayout = parseTabLayout(tab.layoutJson) ?? defaultLayout();
 		}
 
-		let initialFocus: string | null = firstLeafId(finalLayout);
+		let initialFocus: string | null = collectPaneIds(finalLayout)[0] ?? null;
 
 		if (agent && !seedLayout) {
-			const terminalFocus = firstTerminalId(finalLayout);
+			const terminalFocus = collectTerminalIds(finalLayout)[0] ?? null;
 			if (terminalFocus) {
 				setPendingAgent(terminalFocus, {
 					command: [agent.command, ...(agent.args ?? [])].join(" "),
@@ -876,7 +866,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				const tab = workspace?.tabs.find((t) => t.id === tabId);
 				if (tab) {
 					const layout = parseTabLayout(tab.layoutJson);
-					if (layout) restoredFocus = firstLeafId(layout);
+					if (layout) restoredFocus = collectPaneIds(layout)[0] ?? null;
 				}
 			}
 			return {

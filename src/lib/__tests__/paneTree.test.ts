@@ -5,6 +5,7 @@ import {
 	collectPaneIds,
 	collectTerminalIds,
 	collectTerminals,
+	containsPane,
 	extractNode,
 	findNode,
 	findOrphanPreviews,
@@ -63,6 +64,31 @@ describe("findNode", () => {
 	it("finds a single leaf", () => {
 		expect(findNode(leafA, "a")).toBe(leafA);
 		expect(findNode(leafA, "b")).toBeNull();
+	});
+});
+
+describe("containsPane", () => {
+	it("returns true for a leaf present in the tree", () => {
+		expect(containsPane(simpleSplit, "a")).toBe(true);
+		expect(containsPane(simpleSplit, "b")).toBe(true);
+	});
+
+	it("returns true for a split node's own id", () => {
+		expect(containsPane(simpleSplit, "s1")).toBe(true);
+	});
+
+	it("returns false for a non-existent id", () => {
+		expect(containsPane(simpleSplit, "nonexistent")).toBe(false);
+	});
+
+	it("works in deeply nested trees", () => {
+		expect(containsPane(nestedSplit, "c")).toBe(true);
+		expect(containsPane(nestedSplit, "nonexistent")).toBe(false);
+	});
+
+	it("works on a single leaf", () => {
+		expect(containsPane(leafA, "a")).toBe(true);
+		expect(containsPane(leafA, "b")).toBe(false);
 	});
 });
 
@@ -140,6 +166,18 @@ describe("collectTerminals", () => {
 			{ id: "a", ptyId: "pty-a" },
 			{ id: "b", ptyId: "pty-b" },
 			{ id: "c", ptyId: "pty-c" },
+		]);
+	});
+
+	it("includes cwd when present on the terminal node", () => {
+		const leafWithCwd: PaneNode = {
+			type: "terminal",
+			id: "a",
+			ptyId: "pty-a",
+			cwd: "/Users/dev/project",
+		};
+		expect(collectTerminals(leafWithCwd)).toEqual([
+			{ id: "a", ptyId: "pty-a", cwd: "/Users/dev/project" },
 		]);
 	});
 });

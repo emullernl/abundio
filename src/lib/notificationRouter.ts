@@ -2,8 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { onAction } from "@tauri-apps/plugin-notification";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { parseTabLayout } from "./paneTree";
-import type { PaneNode } from "./types";
+import { containsPane, parseTabLayout } from "./paneTree";
 
 interface PtyExtra {
 	type: "pty";
@@ -36,11 +35,6 @@ export function findPaneLocation(
 		}
 	}
 	return null;
-}
-
-function containsPane(node: PaneNode, paneId: string): boolean {
-	if (node.type !== "split") return node.id === paneId;
-	return containsPane(node.first, paneId) || containsPane(node.second, paneId);
 }
 
 /**
