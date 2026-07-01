@@ -288,6 +288,7 @@ export function FilePane({
 									modified: paneState.diffModified,
 									filePath: paneState.filePath.replace(/^diff:/, ""),
 								}}
+								isActive={isFocused}
 								onBack={() => {
 									unregisterFilePane(paneId);
 								}}

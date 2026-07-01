@@ -92,6 +92,8 @@ export const CodeEditor = memo(function CodeEditor({
 	onChangeRef.current = onChange;
 	const tabIdRef = useRef(tabId);
 	tabIdRef.current = tabId;
+	const isActiveRef = useRef(isActive);
+	isActiveRef.current = isActive;
 
 	const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
@@ -205,6 +207,15 @@ export const CodeEditor = memo(function CodeEditor({
 				contextMenuOrder: 1.5,
 				run: () => useSettingsStore.getState().toggleEditorWordWrap(),
 			});
+
+			// A brand-new tab renders with isActive already true, before Monaco
+			// has asynchronously loaded — the isActive-change effect below never
+			// fires again for it, so focus explicitly here on first mount.
+			if (isActiveRef.current) {
+				requestAnimationFrame(() => {
+					requestAnimationFrame(() => ed.focus());
+				});
+			}
 		},
 		[initialEditorState],
 	);
