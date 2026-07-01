@@ -26,6 +26,7 @@ interface FilePaneProps {
 	filePath: string;
 	isDiff?: boolean;
 	diffSection?: GitChangedFile["section"];
+	isDeleted?: boolean;
 	isFocused: boolean;
 	onFocus: () => void;
 }
@@ -35,6 +36,7 @@ export function FilePane({
 	filePath,
 	isDiff,
 	diffSection,
+	isDeleted,
 	isFocused,
 	onFocus,
 }: FilePaneProps) {
@@ -66,7 +68,15 @@ export function FilePane({
 
 	// Register/unregister with the store when filePath changes
 	useEffect(() => {
-		registerFilePane(paneId, filePath, isDiff, diffSection, null, null);
+		registerFilePane(
+			paneId,
+			filePath,
+			isDiff,
+			diffSection,
+			isDeleted,
+			null,
+			null,
+		);
 		return () => {
 			unregisterFilePane(paneId);
 		};
@@ -77,6 +87,7 @@ export function FilePane({
 		filePath,
 		isDiff,
 		diffSection,
+		isDeleted,
 		registerFilePane,
 		unregisterFilePane,
 	]);
@@ -280,21 +291,42 @@ export function FilePane({
 				)}
 				{paneState.fileType === "diff" &&
 					paneState.diffOriginal != null &&
-					paneState.diffModified != null && (
-						<div className="absolute inset-0">
-							<DiffViewer
-								diff={{
-									original: paneState.diffOriginal,
-									modified: paneState.diffModified,
-									filePath: paneState.filePath.replace(/^diff:/, ""),
-								}}
-								isActive={isFocused}
-								onBack={() => {
-									unregisterFilePane(paneId);
-								}}
-							/>
-						</div>
-					)}
+					paneState.diffModified != null &&
+					(() => {
+						const realFilePath = paneState.filePath.replace(/^diff:/, "");
+						return (
+							<div className="absolute inset-0">
+								<DiffViewer
+									diff={{
+										original: paneState.diffOriginal,
+										modified: paneState.diffModified,
+										filePath: realFilePath,
+									}}
+									isActive={isFocused}
+									onBack={() => {
+										unregisterFilePane(paneId);
+									}}
+									onOpenFile={
+										paneState.isDeleted
+											? undefined
+											: () => {
+													const wsState = useWorkspaceStore.getState();
+													const workspaceId = wsState.activeWorkspaceId;
+													const workspace = wsState.workspaces.find(
+														(w) => w.id === workspaceId,
+													);
+													if (workspaceId && workspace) {
+														const absolutePath = `${workspace.rootFolder.replace(/\/$/, "")}/${realFilePath}`;
+														useExplorerStore
+															.getState()
+															.openFile(workspaceId, absolutePath);
+													}
+												}
+									}
+								/>
+							</div>
+						);
+					})()}
 				{paneState.fileType === "image" && (
 					<ImageViewer
 						content={paneState.content ?? ""}

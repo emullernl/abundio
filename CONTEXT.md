@@ -52,7 +52,7 @@ _Avoid_: worktree hook, setup hook, post-create hook, init script.
 **Pane**: A leaf slot within a Workspace tab. Panes form a recursive binary split tree (`PaneNode`). A Pane is one of: a **terminal pane** (holds a PTY), a **file pane** (holds an open file), or a **preview pane** (renders another pane's content).
 _Avoid_: panel, window, split
 
-**File pane**: A Pane that holds one open file — rendered as a Monaco editor (text), diff view, or image viewer depending on file type. Identified by its `filePath`.
+**File pane**: A Pane that holds one open file — rendered as a Monaco editor (text), diff view, or image viewer depending on file type. Identified by its `filePath`. A diff-mode File pane and a text-mode File pane for the same underlying path are tracked independently (keyed `path` vs `diff:path`) and can be open simultaneously — e.g. the **Git changes tab**'s "Open File" action opens the latter without closing the former, and each stays in sync with on-disk changes via the file watcher independently of the other.
 _Avoid_: editor, viewer
 
 **Preview pane**: A Pane that renders a live, read-only rendering of its **source pane**'s markdown buffer — including Mermaid diagrams. Owns no file of its own; it mirrors. Created beside a file pane when a markdown file is opened. Its appearance is governed by the **Preview color mode**.

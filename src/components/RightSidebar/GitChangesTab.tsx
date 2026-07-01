@@ -50,10 +50,17 @@ export function GitChangesTab() {
 					diff.original,
 					diff.modified,
 					file.section,
+					file.status === "D",
 				);
 		} catch {
 			// Failed to load diff
 		}
+	}
+
+	function handleOpenFile(file: GitChangedFile) {
+		if (!cwd || !activeWorkspaceId) return;
+		const absolutePath = `${cwd.replace(/\/$/, "")}/${file.path}`;
+		useExplorerStore.getState().openFile(activeWorkspaceId, absolutePath);
 	}
 
 	async function handleRefresh() {
@@ -197,6 +204,7 @@ export function GitChangesTab() {
 							files={changedFiles}
 							baseBranch={baseBranch}
 							onSelectFile={handleSelectFile}
+							onOpenFile={handleOpenFile}
 							selectedFile={selectedFile}
 						/>
 					</div>

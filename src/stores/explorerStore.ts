@@ -43,6 +43,7 @@ export interface FilePaneState {
 	diffOriginal: string | null;
 	diffModified: string | null;
 	diffSection: GitChangedFile["section"] | null;
+	isDeleted: boolean;
 }
 
 function makeEmptyPaneState(filePath: string): FilePaneState {
@@ -62,6 +63,7 @@ function makeEmptyPaneState(filePath: string): FilePaneState {
 		diffOriginal: null,
 		diffModified: null,
 		diffSection: null,
+		isDeleted: false,
 	};
 }
 
@@ -78,6 +80,7 @@ interface ExplorerState {
 		filePath: string,
 		isDiff?: boolean,
 		diffSection?: GitChangedFile["section"] | null,
+		isDeleted?: boolean,
 		diffOriginal?: string | null,
 		diffModified?: string | null,
 	) => void;
@@ -94,6 +97,7 @@ interface ExplorerState {
 		original: string,
 		modified: string,
 		section?: GitChangedFile["section"] | null,
+		isDeleted?: boolean,
 	) => void;
 
 	// Inline create / rename in the file tree
@@ -229,6 +233,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		filePath,
 		isDiff,
 		diffSection,
+		isDeleted,
 		diffOriginal,
 		diffModified,
 	) => {
@@ -271,6 +276,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 						diffOriginal: resolvedOriginal,
 						diffModified: resolvedModified,
 						diffSection: diffSection ?? null,
+						isDeleted: isDeleted ?? false,
 					},
 				},
 			}));
@@ -348,7 +354,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		await wsStore.createTab(workspaceId, undefined, seedLayout);
 	},
 
-	openDiff: (workspaceId, filePath, original, modified, section) => {
+	openDiff: (workspaceId, filePath, original, modified, section, isDeleted) => {
 		const diffKey = `diff:${filePath}`;
 
 		const wsStore = useWorkspaceStore.getState();
@@ -370,6 +376,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 								diffOriginal: original,
 								diffModified: modified,
 								diffSection: section ?? null,
+								isDeleted: isDeleted ?? false,
 							},
 						},
 					}));
@@ -403,6 +410,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 					diffOriginal: original,
 					diffModified: modified,
 					diffSection: section ?? null,
+					isDeleted: isDeleted ?? false,
 				},
 			},
 		}));
@@ -413,6 +421,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			filePath: diffKey,
 			isDiff: true,
 			diffSection: section || undefined,
+			isDeleted: isDeleted || undefined,
 		};
 
 		// Always open diff in a new tab
