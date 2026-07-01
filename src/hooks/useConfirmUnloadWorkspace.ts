@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { PaneNode } from "../lib/types";
+import { parseTabLayout } from "../lib/paneTree";
 import {
 	collectPtyIds,
 	isShellCommandRunning,
@@ -21,12 +21,8 @@ export function detectWorkInLayout(
 	isCommandRunning: (ptyId: string) => boolean,
 	panePtyMap: Record<string, string>,
 ): WorkSignals {
-	let layout: PaneNode;
-	try {
-		layout = JSON.parse(layoutJson) as PaneNode;
-	} catch {
-		return { hasWorkingAgent: false, hasRunningCommand: false };
-	}
+	const layout = parseTabLayout(layoutJson);
+	if (!layout) return { hasWorkingAgent: false, hasRunningCommand: false };
 	let hasWorkingAgent = false;
 	let hasRunningCommand = false;
 	for (const ptyId of collectPtyIds(layout, panePtyMap)) {

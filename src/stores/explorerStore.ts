@@ -13,6 +13,7 @@ import {
 	collectPaneIds,
 	findFilePaneByPath,
 	findNode,
+	parseTabLayout,
 	wrapInSplit,
 } from "../lib/paneTree";
 import type { DirEntry, GitChangedFile, PaneNode } from "../lib/types";
@@ -156,11 +157,9 @@ function getActiveTabLayout(workspaceId: string): {
 	const tabId = wsStore.activeTabByWorkspace[workspaceId];
 	const tab = workspace?.tabs.find((t) => t.id === tabId);
 	if (!tab) return null;
-	try {
-		return { tabId, layout: JSON.parse(tab.layoutJson) as PaneNode };
-	} catch {
-		return null;
-	}
+	const layout = parseTabLayout(tab.layoutJson);
+	if (!layout) return null;
+	return { tabId, layout };
 }
 
 function renameFileInLayout(
@@ -313,13 +312,10 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		if (!workspace) return;
 		const paneIdsToRemove = new Set<string>();
 		for (const tab of workspace.tabs) {
-			try {
-				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				for (const id of collectPaneIds(layout)) {
-					paneIdsToRemove.add(id);
-				}
-			} catch {
-				// ignore
+			const layout = parseTabLayout(tab.layoutJson);
+			if (!layout) continue;
+			for (const id of collectPaneIds(layout)) {
+				paneIdsToRemove.add(id);
 			}
 		}
 		set((s) => {
@@ -337,16 +333,13 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		const workspace = wsStore.workspaces.find((w) => w.id === workspaceId);
 		if (workspace) {
 			for (const tab of workspace.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					const existing = findFilePaneByPath(layout, filePath);
-					if (existing) {
-						wsStore.setActiveTab(workspaceId, tab.id);
-						wsStore.setFocusedPane(existing.id);
-						return;
-					}
-				} catch {
-					/* ignore malformed layout */
+				const layout = parseTabLayout(tab.layoutJson);
+				if (!layout) continue;
+				const existing = findFilePaneByPath(layout, filePath);
+				if (existing) {
+					wsStore.setActiveTab(workspaceId, tab.id);
+					wsStore.setFocusedPane(existing.id);
+					return;
 				}
 			}
 		}
@@ -364,28 +357,25 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		// Check if diff pane already exists in any tab
 		if (workspace) {
 			for (const tab of workspace.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					const existing = findFilePaneByPath(layout, diffKey);
-					if (existing) {
-						// Update diff content, activate the tab, and focus
-						set((s) => ({
-							filePanes: {
-								...s.filePanes,
-								[existing.id]: {
-									...s.filePanes[existing.id],
-									diffOriginal: original,
-									diffModified: modified,
-									diffSection: section ?? null,
-								},
+				const layout = parseTabLayout(tab.layoutJson);
+				if (!layout) continue;
+				const existing = findFilePaneByPath(layout, diffKey);
+				if (existing) {
+					// Update diff content, activate the tab, and focus
+					set((s) => ({
+						filePanes: {
+							...s.filePanes,
+							[existing.id]: {
+								...s.filePanes[existing.id],
+								diffOriginal: original,
+								diffModified: modified,
+								diffSection: section ?? null,
 							},
-						}));
-						wsStore.setActiveTab(workspaceId, tab.id);
-						wsStore.setFocusedPane(existing.id);
-						return;
-					}
-				} catch {
-					/* ignore malformed layout */
+						},
+					}));
+					wsStore.setActiveTab(workspaceId, tab.id);
+					wsStore.setFocusedPane(existing.id);
+					return;
 				}
 			}
 		}
@@ -515,17 +505,14 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				const wsStore = useWorkspaceStore.getState();
 				for (const workspace of wsStore.workspaces) {
 					for (const tab of workspace.tabs) {
-						try {
-							const layout = JSON.parse(tab.layoutJson) as PaneNode;
-							const renamed = renameFileInLayout(layout, targetPath, newPath);
-							// A markdown file renamed to a non-markdown extension drops
-							// its preview pane.
-							const updated = pruneNonMarkdownPreviews(renamed);
-							if (updated !== layout) {
-								wsStore.updateLayout(tab.id, updated).catch(() => {});
-							}
-						} catch {
-							// ignore malformed layout
+						const layout = parseTabLayout(tab.layoutJson);
+						if (!layout) continue;
+						const renamed = renameFileInLayout(layout, targetPath, newPath);
+						// A markdown file renamed to a non-markdown extension drops
+						// its preview pane.
+						const updated = pruneNonMarkdownPreviews(renamed);
+						if (updated !== layout) {
+							wsStore.updateLayout(tab.id, updated).catch(() => {});
 						}
 					}
 				}
@@ -650,12 +637,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		const workspace = wsStore.workspaces.find((w) => w.id === workspaceId);
 		const workspacePaneIds = new Set<string>();
 		for (const tab of workspace?.tabs ?? []) {
-			try {
-				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				for (const id of collectPaneIds(layout)) workspacePaneIds.add(id);
-			} catch {
-				// ignore
-			}
+			const layout = parseTabLayout(tab.layoutJson);
+			if (!layout) continue;
+			for (const id of collectPaneIds(layout)) workspacePaneIds.add(id);
 		}
 
 		for (const [paneId, pane] of Object.entries(filePanes)) {
@@ -824,34 +808,31 @@ export async function persistAllFilePanes() {
 	const wsStore = useWorkspaceStore.getState();
 	for (const workspace of wsStore.workspaces) {
 		for (const tab of workspace.tabs) {
-			try {
-				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				// Persist editor state into each file leaf's layout node
-				let mutated = false;
-				const persist = (node: PaneNode): PaneNode => {
-					if (node.type === "file") {
-						const state = getSerializableEditorState(node.id);
-						if (state) {
-							mutated = true;
-							return { ...node, _editorState: state } as PaneNode;
-						}
-						return node;
+			const layout = parseTabLayout(tab.layoutJson);
+			if (!layout) continue;
+			// Persist editor state into each file leaf's layout node
+			let mutated = false;
+			const persist = (node: PaneNode): PaneNode => {
+				if (node.type === "file") {
+					const state = getSerializableEditorState(node.id);
+					if (state) {
+						mutated = true;
+						return { ...node, _editorState: state } as PaneNode;
 					}
-					if (node.type !== "split") return node;
-					return {
-						...node,
-						first: persist(node.first),
-						second: persist(node.second),
-					};
-				};
-				const updated = persist(layout);
-				if (mutated) {
-					tabsApi
-						.update(tab.id, { layoutJson: JSON.stringify(updated) })
-						.catch(() => {});
+					return node;
 				}
-			} catch {
-				// ignore
+				if (node.type !== "split") return node;
+				return {
+					...node,
+					first: persist(node.first),
+					second: persist(node.second),
+				};
+			};
+			const updated = persist(layout);
+			if (mutated) {
+				tabsApi
+					.update(tab.id, { layoutJson: JSON.stringify(updated) })
+					.catch(() => {});
 			}
 		}
 	}

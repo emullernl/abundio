@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { onAction } from "@tauri-apps/plugin-notification";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { parseTabLayout } from "./paneTree";
 import type { PaneNode } from "./types";
 
 interface PtyExtra {
@@ -28,13 +29,9 @@ export function findPaneLocation(
 
 	for (const workspace of workspaces) {
 		for (const tab of workspace.tabs) {
-			try {
-				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				if (containsPane(layout, paneId)) {
-					return { workspaceId: workspace.id, tabId: tab.id };
-				}
-			} catch {
-				/* skip malformed layout */
+			const layout = parseTabLayout(tab.layoutJson);
+			if (layout && containsPane(layout, paneId)) {
+				return { workspaceId: workspace.id, tabId: tab.id };
 			}
 		}
 	}

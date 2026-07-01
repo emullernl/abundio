@@ -1,6 +1,7 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
+import { parseTabLayout } from "../lib/paneTree";
 import {
 	type StatusEvent,
 	type StatusState,
@@ -669,12 +670,8 @@ export function computeTabDotStatus(
 	activities: Record<string, PtyActivityEntry>,
 	panePtyMap?: Record<string, string>,
 ): DotStatus {
-	let layout: PaneNode;
-	try {
-		layout = JSON.parse(tab.layoutJson) as PaneNode;
-	} catch {
-		return "green";
-	}
+	const layout = parseTabLayout(tab.layoutJson);
+	if (!layout) return "green";
 
 	const ptyIds = collectPtyIds(layout, panePtyMap);
 	if (ptyIds.length === 0) return "grey";

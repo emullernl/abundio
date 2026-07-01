@@ -1,8 +1,7 @@
 import { useCallback, useRef } from "react";
 import { hitTest } from "../lib/dragPaneHitTest";
 import { useDragPaneStore } from "../lib/dragPaneStore";
-import { collectPaneIds } from "../lib/paneTree";
-import type { PaneNode } from "../lib/types";
+import { collectPaneIds, parseTabLayout } from "../lib/paneTree";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 function buildPaneTabMap(): Record<string, string> {
@@ -13,12 +12,10 @@ function buildPaneTabMap(): Record<string, string> {
 	if (!workspace) return {};
 	const map: Record<string, string> = {};
 	for (const tab of workspace.tabs) {
-		try {
-			for (const id of collectPaneIds(JSON.parse(tab.layoutJson) as PaneNode)) {
-				map[id] = tab.id;
-			}
-		} catch {
-			// ignore malformed layout
+		const layout = parseTabLayout(tab.layoutJson);
+		if (!layout) continue;
+		for (const id of collectPaneIds(layout)) {
+			map[id] = tab.id;
 		}
 	}
 	return map;
@@ -73,13 +70,8 @@ export function usePaneDrag(paneId: string) {
 						(w) => w.id === state.activeWorkspaceId,
 					);
 					const sourceTabId = workspace?.tabs.find((t) => {
-						try {
-							return collectPaneIds(
-								JSON.parse(t.layoutJson) as PaneNode,
-							).includes(paneId);
-						} catch {
-							return false;
-						}
+						const layout = parseTabLayout(t.layoutJson);
+						return layout ? collectPaneIds(layout).includes(paneId) : false;
 					})?.id;
 
 					if (!sourceTabId) {

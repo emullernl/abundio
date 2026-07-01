@@ -3,6 +3,7 @@ import type { IDisposable, ILink, Terminal } from "@xterm/xterm";
 import { useExplorerStore } from "../stores/explorerStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { parseTabLayout } from "./paneTree";
 import type { PaneNode } from "./types";
 import { isWorkspaceFile } from "./workspaceFileIndex";
 
@@ -128,12 +129,8 @@ function findWorkspaceIdForPane(paneId: string): string | null {
 	const { workspaces } = useWorkspaceStore.getState();
 	for (const w of workspaces) {
 		for (const tab of w.tabs) {
-			try {
-				const layout = JSON.parse(tab.layoutJson) as PaneNode;
-				if (containsPane(layout, paneId)) return w.id;
-			} catch {
-				/* skip malformed layout */
-			}
+			const layout = parseTabLayout(tab.layoutJson);
+			if (layout && containsPane(layout, paneId)) return w.id;
 		}
 	}
 	return null;

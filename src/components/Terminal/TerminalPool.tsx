@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { parseTabLayout } from "../../lib/paneTree";
 import type { PaneNode } from "../../lib/types";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -38,13 +39,10 @@ export function TerminalPool() {
 			if (!openedWorkspaceIds.has(workspace.id)) continue;
 			if (!loadAll && workspace.id !== activeWorkspaceId) continue;
 			for (const tab of workspace.tabs) {
-				try {
-					const layout = JSON.parse(tab.layoutJson) as PaneNode;
-					for (const t of collectTerminals(layout)) {
-						result.push({ ...t, cwd: t.cwd ?? workspace.rootFolder });
-					}
-				} catch {
-					// Skip unparseable layouts
+				const layout = parseTabLayout(tab.layoutJson);
+				if (!layout) continue;
+				for (const t of collectTerminals(layout)) {
+					result.push({ ...t, cwd: t.cwd ?? workspace.rootFolder });
 				}
 			}
 		}

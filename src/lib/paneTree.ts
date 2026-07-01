@@ -1,5 +1,14 @@
 import type { PaneNode } from "./types";
 
+/** Parse a Tab's stored layoutJson. Returns null on malformed JSON rather than throwing. */
+export function parseTabLayout(layoutJson: string): PaneNode | null {
+	try {
+		return JSON.parse(layoutJson) as PaneNode;
+	} catch {
+		return null;
+	}
+}
+
 export function findNode(tree: PaneNode, id: string): PaneNode | null {
 	if (tree.id === id) return tree;
 	if (tree.type === "split") {
