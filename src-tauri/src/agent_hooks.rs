@@ -592,18 +592,27 @@ fn provision_agent(
     }
 }
 
-/// True when Abundio's relay marker is present anywhere in a parsed merge config.
-fn merge_has_marker(root: &Value, marker: &str) -> bool {
-    root.get("hooks")
-        .and_then(|h| h.as_object())
-        .map(|hooks| {
-            hooks.values().any(|v| {
-                v.as_array()
-                    .map(|arr| arr.iter().any(|g| group_is_abundio(g, marker)))
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false)
+/// True when a parsed merge config carries an Abundio group for EVERY event the
+/// current binary registers — not merely "some marker present". Presence-only
+/// classification left a config written by an older Abundio (fewer/renamed
+/// events) reading as Registered, so `ensure_agent_hooks` never upgraded it at
+/// agent launch (the subagent-events rollout tripped exactly this — see
+/// docs/plans/subagent-aware-status.md).
+fn merge_is_current(root: &Value, marker: &str, agent_id: &str) -> bool {
+    let events = merge_agent_events(agent_id);
+    if events.is_empty() {
+        return false;
+    }
+    let Some(hooks) = root.get("hooks").and_then(|h| h.as_object()) else {
+        return false;
+    };
+    events.iter().all(|(event, _, _)| {
+        hooks
+            .get(*event)
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().any(|g| group_is_abundio(g, marker)))
+            .unwrap_or(false)
+    })
 }
 
 /// Per-agent registration state derived purely from on-disk config.
@@ -637,7 +646,7 @@ fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigSt
                 Err(_) => HookConfigState::ConfigError,
                 Ok(root) => {
                     let marker = relay.primary().to_string_lossy();
-                    if merge_has_marker(&root, &marker) {
+                    if merge_is_current(&root, &marker, agent_id) {
                         HookConfigState::Registered
                     } else {
                         HookConfigState::NotRegistered
@@ -645,22 +654,17 @@ fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigSt
                 }
             }
         }
-        // Abundio owns the whole file. codex/copilot embed the relay-script
-        // path in their hook commands, so a stale path (e.g. data-dir change)
-        // must read as not-registered and get refreshed. opencode's plugin
-        // talks to the loopback server via env vars and embeds no relay path,
-        // so for it presence alone means registered.
+        // Abundio owns the whole file: Registered means the on-disk content
+        // equals what this binary would write. Anything else — a stale relay
+        // path after a data-dir change, an older event set, an outdated
+        // opencode plugin body — reads as not-registered and gets refreshed by
+        // the next ensure/provision pass.
         Ownership::Owned => match fs::read_to_string(&path) {
             Err(_) => HookConfigState::NotRegistered, // file absent
-            Ok(text) => {
-                let current = agent_id == "opencode"
-                    || text.contains(&*relay.primary().to_string_lossy());
-                if current {
-                    HookConfigState::Registered
-                } else {
-                    HookConfigState::NotRegistered
-                }
-            }
+            Ok(text) => match owned_content(agent_id, relay) {
+                Ok(expected) if text == expected => HookConfigState::Registered,
+                _ => HookConfigState::NotRegistered,
+            },
         },
     }
 }
@@ -875,6 +879,83 @@ mod tests {
                 .count();
             assert_eq!(count, 1, "{event} must appear exactly once");
         }
+    }
+
+    #[test]
+    fn stale_event_set_reads_not_registered_so_ensure_upgrades_it() {
+        // The self-heal path: is_provisioned must be event-set-aware, so an
+        // agent launch (ensure_agent_hooks) upgrades a config written by an
+        // older Abundio instead of short-circuiting on marker presence.
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        fs::create_dir_all(home.path().join(".claude")).unwrap();
+        let path = home.path().join(".claude").join("settings.json");
+
+        // Simulate the pre-subagent-events footprint: provision, then strip
+        // the two new event groups the way an old binary's write would lack them.
+        provision_agent(home.path(), &relay, "claude", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "claude"));
+        let mut v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let hooks = v["hooks"].as_object_mut().unwrap();
+        hooks.remove("SubagentStart");
+        hooks.remove("SubagentStop");
+        fs::write(&path, serde_json::to_string(&v).unwrap()).unwrap();
+
+        // Presence-only classification would say Registered here; the
+        // event-set-aware check must not.
+        assert!(
+            !is_provisioned(home.path(), &relay, "claude"),
+            "a stale event set must read as not-registered"
+        );
+
+        // Re-provisioning (what ensure_agent_hooks now does at agent launch)
+        // restores the full set without duplicates.
+        provision_agent(home.path(), &relay, "claude", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "claude"));
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        for event in ["SubagentStart", "SubagentStop", "Stop"] {
+            let count = v["hooks"][event]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|g| group_is_abundio(g, "abundio-hook.sh"))
+                .count();
+            assert_eq!(count, 1, "{event} must appear exactly once");
+        }
+    }
+
+    #[test]
+    fn stale_owned_content_reads_not_registered() {
+        // Owned files (codex/copilot/opencode) are Registered only when their
+        // content matches what this binary writes — an old event set or an
+        // outdated opencode plugin body must trigger a refresh.
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        fs::create_dir_all(home.path().join(".codex")).unwrap();
+        provision_agent(home.path(), &relay, "codex", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "codex"));
+
+        // An older binary's file: same relay path, fewer events.
+        let path = home.path().join(".codex").join("hooks.json");
+        let mut v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        v["hooks"].as_object_mut().unwrap().remove("SubagentStart");
+        fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        assert!(
+            !is_provisioned(home.path(), &relay, "codex"),
+            "stale owned content must read as not-registered"
+        );
+
+        // Same for the opencode plugin body (it embeds no relay path).
+        let oc_dir = home.path().join(".config").join("opencode");
+        fs::create_dir_all(&oc_dir).unwrap();
+        provision_agent(home.path(), &relay, "opencode", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "opencode"));
+        let oc_path = oc_dir.join("plugin").join("abundio.ts");
+        fs::write(&oc_path, "// old plugin body\n").unwrap();
+        assert!(
+            !is_provisioned(home.path(), &relay, "opencode"),
+            "an outdated opencode plugin must read as not-registered"
+        );
     }
 
     #[test]

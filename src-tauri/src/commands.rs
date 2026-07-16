@@ -571,8 +571,18 @@ pub async fn agent_hooks_provision_startup(
     if !guard.claim() {
         return Ok(());
     }
+    // Startup provisioning is the invisible path — when it silently doesn't
+    // run, hooks quietly stay stale (frontend console errors live in the
+    // webview, not the terminal). Leave a breadcrumb where a dev can see it.
+    eprintln!(
+        "[abundio] startup hook provisioning: enabled={enabled}, agents={enabled_agents:?}"
+    );
     tauri::async_runtime::spawn_blocking(move || {
-        crate::agent_hooks::provision(enabled, &enabled_agents)
+        let result = crate::agent_hooks::provision(enabled, &enabled_agents);
+        if let Err(e) = &result {
+            eprintln!("[abundio] startup hook provisioning failed: {e}");
+        }
+        result
     })
     .await
     .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?

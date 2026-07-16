@@ -43,6 +43,14 @@ subagent tail — no telemetry plumbing changes.
 - Provisioning **self-upgrades**: `provision_merge_settings` strips all Abundio groups
   (relay-path marker) and re-adds the current set; `agent_hooks_provision_startup` runs
   on every launch. New/changed events reach existing installs on next start.
+- **Rollout correction:** the startup path alone proved fragile in the field (an install
+  where startup provisioning didn't take left the old 5-event set until the user toggled
+  the agent manually). The fix: `config_state`/`is_provisioned` are **event-set-aware**
+  — a Merged config is Registered only when every current event carries an Abundio
+  group, and an Owned file only when its content equals what this binary writes. That
+  makes `ensure_agent_hooks` (which runs on every Agent launch) a self-healing upgrade
+  point instead of a marker-presence short-circuit, and the Settings footprint reads
+  "Not registered" for stale sets. Startup provisioning also logs a terminal breadcrumb.
 - The status-machine refactor (docs/plans/status-machine.md) is staged: the pure reducer
   exists, the Stage-2 dispatcher (single home for hot state) does not. The new
   `subagentState` hot map follows the *current* pattern — **Stage 2 must absorb it**
