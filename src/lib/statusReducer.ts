@@ -54,6 +54,14 @@ export interface StatusState {
 	/** Timestamp of the last bare ESC while Working — drives the double-press
 	 *  cancel for agents that need two presses. Mirrors `escPressTimestamps`. */
 	lastEscAt: number | null;
+	// ── Subagent tracking (ADR-0022, docs/plans/subagent-aware-status.md) ──
+	/** Live Subagents of this pane's Agent. `startedAt` drives the stale prune
+	 *  (a lost stop event must not wedge the pane). Mirrored in the store's
+	 *  out-of-band `subagentState` map. */
+	activeSubagents: ReadonlyArray<{ id: string; startedAt: number }>;
+	/** The main agent's turn-finished hook arrived while Subagents were alive —
+	 *  the pane "owes a Ready" once the set drains (ADR-0022). */
+	stopHeldForSubagents: boolean;
 }
 
 export interface StatusConfig {
@@ -74,6 +82,10 @@ export const HOOK_IDLE_BACKSTOP_MS = 30000; // hook-driven backstop (dropped Sto
 export const INPUT_GATE_MS = 2000; // ignore output right after a keystroke
 export const INACTIVITY_RESET_MS = 3000; // reset byte counter after an output gap
 export const ESC_DOUBLE_PRESS_WINDOW_MS = 750; // double-ESC cancel window
+// Wedge-breaker for a lost SubagentStop (the relay is fire-and-forget): prune
+// on Tick, generous because Subagents legitimately run many minutes. Session
+// end / PTY exit / ESC / the next prompt clear the set instantly (ADR-0022).
+export const SUBAGENT_STALE_MS = 30 * 60_000;
 
 export type StatusEvent =
 	// Hook-driven transition (the translator resolved it via `mapHookEvent`).
@@ -93,6 +105,10 @@ export type StatusEvent =
 	// A pre-classified keystroke. `escRequired` = presses to cancel for the
 	// detected agent (1 for claude/gemini/qwen, else 2).
 	| { kind: "keystroke"; key: KeystrokeKey; escRequired: number; now: number }
+	// A Subagent started / stopped (subagent lifecycle hooks — these bypass
+	// `mapHookEvent` because they carry an id, not a transition). ADR-0022.
+	| { kind: "subagentStarted"; agentId: string; now: number }
+	| { kind: "subagentStopped"; agentId: string; now: number }
 	// The PTY process exited.
 	| { kind: "ptyExited"; code: number | null }
 	// The global idle scanner ticked.
@@ -124,8 +140,15 @@ export function initialStatusState(mode: StatusMode): StatusState {
 		lastInputAt: 0,
 		lastOutputChunkAt: null,
 		lastEscAt: null,
+		activeSubagents: NO_SUBAGENTS,
+		stopHeldForSubagents: false,
 	};
 }
+
+/** Shared empty set — keeps referential equality so `hydrate`/sync can use
+ *  cheap identity checks on the common no-subagents path. */
+export const NO_SUBAGENTS: ReadonlyArray<{ id: string; startedAt: number }> =
+	[];
 
 // ── Atomic transitions (mirror the old ptyActivityStore action methods) ──
 
@@ -173,15 +196,28 @@ function clearWaiting(s: StatusState): StatusState {
 }
 
 /** `clearActive`: the explicit ESC-cancel of an in-flight agent task. Only a
- *  Working agent is cancellable here — focus/click must not lie about progress. */
+ *  Working agent is cancellable here — focus/click must not lie about progress.
+ *  The user aborted, so the Subagent set is dropped too: a stale set must not
+ *  hold the next turn's Stop or resurrect state on a late SubagentStop. */
 function clearActive(s: StatusState): StatusState {
 	return s.state === "working" && s.mode === "agent"
-		? { ...s, state: "idle" }
+		? {
+				...s,
+				state: "idle",
+				activeSubagents: NO_SUBAGENTS,
+				stopHeldForSubagents: false,
+			}
 		: s;
 }
 
 /** `applyHookEvent`: hooks are authoritative, so `hookDriven` becomes true. Only
- *  the Working transition resets the activity-window markers. */
+ *  the Working transition resets the activity-window markers.
+ *
+ *  Subagent interplay (ADR-0022): a "ready" (turn-finished) with live Subagents
+ *  is HELD — the pane stays Working and owes a Ready once the set drains. A
+ *  "working" (prompt submit) clears the hold but keeps the set (survivors must
+ *  hold the next Stop too). An "error" clears the hold — an errored turn must
+ *  not flip to Ready later when the set drains. */
 function applyHook(
 	s: StatusState,
 	transition: StatusTransition,
@@ -194,9 +230,72 @@ function applyHook(
 			hookDriven: true,
 			workingSince: now,
 			lastActivityAt: now,
+			stopHeldForSubagents: false,
+		};
+	}
+	if (transition === "ready" && s.activeSubagents.length > 0) {
+		return {
+			...s,
+			state: "working",
+			hookDriven: true,
+			stopHeldForSubagents: true,
+		};
+	}
+	if (transition === "error") {
+		return {
+			...s,
+			state: "error",
+			hookDriven: true,
+			stopHeldForSubagents: false,
 		};
 	}
 	return { ...s, state: transition, hookDriven: true };
+}
+
+// ── Subagent lifecycle (ADR-0022, docs/plans/subagent-aware-status.md) ──
+
+/** A Subagent started: add (or refresh — a duplicate id restarts its staleness
+ *  clock) and make sure the pane reads busy. A Waiting or Error pane keeps its
+ *  state — blocked-on-you / failed outrank "delegated work in progress". */
+function subagentStarted(s: StatusState, id: string, now: number): StatusState {
+	const others = s.activeSubagents.filter((a) => a.id !== id);
+	const activeSubagents = [...others, { id, startedAt: now }];
+	if (s.state === "working") {
+		return { ...s, activeSubagents, hookDriven: true, lastActivityAt: now };
+	}
+	if (s.state === "waiting" || s.state === "error") {
+		return { ...s, activeSubagents, hookDriven: true };
+	}
+	return {
+		...s,
+		activeSubagents,
+		state: "working",
+		hookDriven: true,
+		workingSince: now,
+		lastActivityAt: now,
+	};
+}
+
+/** A Subagent stopped: drain it from the set (unknown id → no-op, covering
+ *  mid-session provisioning and post-clear stragglers). The last stop releases
+ *  a held turn-finished → Ready; it never mutates Waiting or Error. */
+function subagentStopped(s: StatusState, id: string): StatusState {
+	const kept = s.activeSubagents.filter((a) => a.id !== id);
+	if (kept.length === s.activeSubagents.length) return s;
+	const activeSubagents = kept.length === 0 ? NO_SUBAGENTS : kept;
+	if (
+		activeSubagents.length === 0 &&
+		s.stopHeldForSubagents &&
+		s.state === "working"
+	) {
+		return {
+			...s,
+			activeSubagents,
+			stopHeldForSubagents: false,
+			state: "ready",
+		};
+	}
+	return { ...s, activeSubagents };
 }
 
 // ── Compound event handlers ──
@@ -278,7 +377,14 @@ function reduceKeystroke(
 				base.lastEscAt !== null &&
 				now - base.lastEscAt <= ESC_DOUBLE_PRESS_WINDOW_MS;
 			if (escRequired === 1 || isFollowUp) {
-				return { ...base, state: "idle", lastEscAt: null }; // clearActive
+				// clearActive — the abort also drops the Subagent set (ADR-0022).
+				return {
+					...base,
+					state: "idle",
+					lastEscAt: null,
+					activeSubagents: NO_SUBAGENTS,
+					stopHeldForSubagents: false,
+				};
 			}
 			return { ...base, lastEscAt: now }; // arm the double-press
 		}
@@ -292,6 +398,27 @@ function reduceKeystroke(
 function reduceTick(s: StatusState, now: number): StatusState {
 	if (s.state !== "working") return s;
 	if (s.shellCommandRunning) return s;
+	// Live Subagents hold Working and SUPPRESS the idle backstop — background
+	// Subagents produce no pane output, so quietness proves nothing (ADR-0022).
+	// Only the stale prune (a lost SubagentStop) can shrink the set here.
+	if (s.activeSubagents.length > 0) {
+		const kept = s.activeSubagents.filter(
+			(a) => now - a.startedAt <= SUBAGENT_STALE_MS,
+		);
+		if (kept.length === s.activeSubagents.length) return s;
+		if (kept.length === 0 && s.stopHeldForSubagents) {
+			return {
+				...s,
+				activeSubagents: NO_SUBAGENTS,
+				stopHeldForSubagents: false,
+				state: s.mode === "agent" ? "ready" : "idle",
+			};
+		}
+		return {
+			...s,
+			activeSubagents: kept.length === 0 ? NO_SUBAGENTS : kept,
+		};
+	}
 	const last = s.lastActivityAt ?? s.workingSince;
 	if (last === null) return s;
 	const threshold = s.hookDriven ? HOOK_IDLE_BACKSTOP_MS : IDLE_THRESHOLD_MS;
@@ -319,7 +446,13 @@ export function statusReducer(
 		case "sessionEnded":
 			return s.mode === "shell"
 				? s
-				: { ...s, mode: "shell", hookDriven: false };
+				: {
+						...s,
+						mode: "shell",
+						hookDriven: false,
+						activeSubagents: NO_SUBAGENTS,
+						stopHeldForSubagents: false,
+					};
 		case "shellCommandStarted":
 			if (s.mode === "agent") return s;
 			return recordActivity({ ...s, shellCommandRunning: true }, e.now);
@@ -334,10 +467,21 @@ export function statusReducer(
 			return reduceOutput(s, e.bytes, e.now, config);
 		case "keystroke":
 			return reduceKeystroke(s, e.key, e.escRequired, e.now);
-		case "ptyExited":
+		case "subagentStarted":
+			return subagentStarted(s, e.agentId, e.now);
+		case "subagentStopped":
+			return subagentStopped(s, e.agentId);
+		case "ptyExited": {
+			// The process died — any Subagent bookkeeping died with it (ADR-0022).
+			const cleared: StatusState = {
+				...s,
+				activeSubagents: NO_SUBAGENTS,
+				stopHeldForSubagents: false,
+			};
 			return classifyShellExit(e.code) === "error"
-				? recordError(s)
-				: recordExitSuccess(s);
+				? recordError(cleared)
+				: recordExitSuccess(cleared);
+		}
 		case "tick":
 			return reduceTick(s, e.now);
 		case "focus":

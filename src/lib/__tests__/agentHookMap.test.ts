@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapHookEvent } from "../agentHookMap";
+import { mapHookEvent, mapSubagentHookEvent } from "../agentHookMap";
 
 describe("mapHookEvent", () => {
 	it("maps Claude Code lifecycle events", () => {
@@ -42,12 +42,19 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("claude", "preToolUse", "ask_user")).toBeNull();
 	});
 
-	it("maps Gemini events and shares the map with Qwen", () => {
+	it("maps Gemini events", () => {
 		expect(mapHookEvent("gemini", "BeforeAgent")).toBe("active");
 		expect(mapHookEvent("gemini", "AfterAgent")).toBe("ready");
 		expect(mapHookEvent("gemini", "Notification")).toBe("waiting");
-		expect(mapHookEvent("qwen", "BeforeAgent")).toBe("active");
-		expect(mapHookEvent("qwen", "AfterAgent")).toBe("ready");
+	});
+
+	it("Qwen shares Claude's map, not Gemini's (qwen ≥0.15 speaks Claude-style hooks)", () => {
+		expect(mapHookEvent("qwen", "UserPromptSubmit")).toBe("active");
+		expect(mapHookEvent("qwen", "Stop")).toBe("ready");
+		expect(mapHookEvent("qwen", "StopFailure")).toBe("error");
+		expect(mapHookEvent("qwen", "SessionEnd")).toBe("clear");
+		expect(mapHookEvent("qwen", "BeforeAgent")).toBeNull();
+		expect(mapHookEvent("qwen", "AfterAgent")).toBeNull();
 	});
 
 	it("maps Codex events", () => {
@@ -74,5 +81,127 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("aider", "Stop")).toBeNull();
 		expect(mapHookEvent("claude", "PreToolUse")).toBeNull();
 		expect(mapHookEvent("totally-unknown", "whatever")).toBeNull();
+	});
+
+	it("has no transition mapping for subagent lifecycle events (they bypass it)", () => {
+		// SubagentStart/SubagentStop carry an id, not a transition — the
+		// translator dispatches them as reducer events (ADR-0022).
+		expect(mapHookEvent("claude", "SubagentStart")).toBeNull();
+		expect(mapHookEvent("claude", "SubagentStop")).toBeNull();
+		expect(mapHookEvent("qwen", "SubagentStart")).toBeNull();
+		expect(mapHookEvent("copilot", "subagentStart")).toBeNull();
+	});
+});
+
+describe("mapSubagentHookEvent (ADR-0022)", () => {
+	const never = () => false;
+	const always = () => true;
+
+	it("classifies Claude/Qwen/Codex SubagentStart/Stop by agent_id", () => {
+		for (const agent of ["claude", "qwen", "codex"]) {
+			expect(
+				mapSubagentHookEvent(agent, "SubagentStart", { agent_id: "a1" }, never),
+			).toEqual({ action: "started", id: "a1" });
+			expect(
+				mapSubagentHookEvent(agent, "SubagentStop", { agent_id: "a1" }, never),
+			).toEqual({ action: "stopped", id: "a1" });
+		}
+		// camelCase payload tolerated.
+		expect(
+			mapSubagentHookEvent("claude", "SubagentStart", { agentId: "a2" }, never),
+		).toEqual({ action: "started", id: "a2" });
+	});
+
+	it("classifies Copilot subagentStart/Stop by agentName", () => {
+		expect(
+			mapSubagentHookEvent(
+				"copilot",
+				"subagentStart",
+				{ agentName: "explore" },
+				never,
+			),
+		).toEqual({ action: "started", id: "explore" });
+		expect(
+			mapSubagentHookEvent(
+				"copilot",
+				"subagentStop",
+				{ agentName: "explore" },
+				never,
+			),
+		).toEqual({ action: "stopped", id: "explore" });
+	});
+
+	it("returns null on a missing/malformed id (never wedge on a bad payload)", () => {
+		expect(
+			mapSubagentHookEvent("claude", "SubagentStart", {}, never),
+		).toBeNull();
+		expect(
+			mapSubagentHookEvent("claude", "SubagentStop", undefined, never),
+		).toBeNull();
+		expect(
+			mapSubagentHookEvent(
+				"copilot",
+				"subagentStart",
+				{ agentName: "" },
+				never,
+			),
+		).toBeNull();
+	});
+
+	it("returns null for non-subagent events (falls through to mapHookEvent)", () => {
+		expect(
+			mapSubagentHookEvent("claude", "Stop", { agent_id: "a1" }, never),
+		).toBeNull();
+		expect(
+			mapSubagentHookEvent(
+				"gemini",
+				"SubagentStart",
+				{ agent_id: "a1" },
+				never,
+			),
+		).toBeNull();
+	});
+
+	it("OpenCode: a child session's created/updated (parentID) is a start", () => {
+		const child = { info: { id: "ses_child", parentID: "ses_main" } };
+		expect(
+			mapSubagentHookEvent("opencode", "session.created", child, never),
+		).toEqual({ action: "started", id: "ses_child" });
+		expect(
+			mapSubagentHookEvent("opencode", "session.updated", child, never),
+		).toEqual({ action: "started", id: "ses_child" });
+		// The pane's own session (no parentID) is not a subagent.
+		expect(
+			mapSubagentHookEvent(
+				"opencode",
+				"session.created",
+				{ info: { id: "ses_main" } },
+				never,
+			),
+		).toBeNull();
+	});
+
+	it("OpenCode: idle/error/deleted of a session in the live set is a stop", () => {
+		for (const event of ["session.idle", "session.error", "session.deleted"]) {
+			expect(
+				mapSubagentHookEvent(
+					"opencode",
+					event,
+					{ sessionID: "ses_child" },
+					always,
+				),
+			).toEqual({ action: "stopped", id: "ses_child" });
+			// Unknown session → the pane's own lifecycle; falls through to
+			// mapHookEvent (this was the pre-existing mid-turn ready flash fix:
+			// a tracked child's idle no longer reaches the ready mapping).
+			expect(
+				mapSubagentHookEvent(
+					"opencode",
+					event,
+					{ sessionID: "ses_main" },
+					never,
+				),
+			).toBeNull();
+		}
 	});
 });

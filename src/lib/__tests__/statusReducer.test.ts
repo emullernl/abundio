@@ -8,6 +8,7 @@ import {
 	type StatusEvent,
 	type StatusMode,
 	type StatusState,
+	SUBAGENT_STALE_MS,
 	statusReducer,
 } from "../statusReducer";
 
@@ -507,5 +508,180 @@ describe("statusReducer — purity", () => {
 		statusReducer(before, { kind: "tick", now: 999999 }, DEFAULT_STATUS_CONFIG);
 		statusReducer(before, { kind: "hook", transition: "ready", now: 1 });
 		expect(JSON.stringify(before)).toBe(snapshot);
+	});
+});
+
+describe("statusReducer — Subagent hold (ADR-0022)", () => {
+	const start = (id: string, now: number): StatusEvent => ({
+		kind: "subagentStarted",
+		agentId: id,
+		now,
+	});
+	const stop = (id: string, now = 0): StatusEvent => ({
+		kind: "subagentStopped",
+		agentId: id,
+		now,
+	});
+	const mainStop = (now: number): StatusEvent => ({
+		kind: "hook",
+		transition: "ready",
+		now,
+	});
+
+	it("Stop with an empty set still goes Ready (regression guard)", () => {
+		const s = run(mk({ state: "working" }, "agent"), mainStop(100));
+		expect(s.state).toBe("ready");
+		expect(s.stopHeldForSubagents).toBe(false);
+	});
+
+	it("Stop with live Subagents holds Working; stops drain; last stop releases Ready", () => {
+		let s = run(
+			mk({ state: "working" }, "agent"),
+			start("a", 10),
+			start("b", 20),
+			mainStop(100),
+		);
+		expect(s.state).toBe("working");
+		expect(s.stopHeldForSubagents).toBe(true);
+
+		s = statusReducer(s, stop("a"));
+		expect(s.state).toBe("working");
+		expect(s.activeSubagents).toHaveLength(1);
+
+		s = statusReducer(s, stop("b"));
+		expect(s.state).toBe("ready");
+		expect(s.stopHeldForSubagents).toBe(false);
+		expect(s.activeSubagents).toHaveLength(0);
+	});
+
+	it("a stop with an unknown id is a no-op (mid-session provisioning)", () => {
+		const before = mk({ state: "ready" }, "agent");
+		expect(statusReducer(before, stop("ghost"))).toBe(before);
+	});
+
+	it("a duplicate start refreshes startedAt without growing the set", () => {
+		const s = run(
+			mk({ state: "working" }, "agent"),
+			start("a", 10),
+			start("a", 500),
+		);
+		expect(s.activeSubagents).toHaveLength(1);
+		expect(s.activeSubagents[0].startedAt).toBe(500);
+	});
+
+	it("a start from idle/ready forces Working + hookDriven", () => {
+		for (const state of ["idle", "ready"] as const) {
+			const s = statusReducer(mk({ state }, "agent"), start("a", 10));
+			expect(s.state).toBe("working");
+			expect(s.hookDriven).toBe(true);
+		}
+	});
+
+	it("a start never overrides Waiting or Error (blocked/failed outrank delegation)", () => {
+		for (const state of ["waiting", "error"] as const) {
+			const s = statusReducer(mk({ state }, "agent"), start("a", 10));
+			expect(s.state).toBe(state);
+			expect(s.activeSubagents).toHaveLength(1);
+		}
+	});
+
+	it("the tick backstop is suppressed while Subagents are alive", () => {
+		const held = run(
+			mk({ state: "working", hookDriven: true, lastActivityAt: 0 }, "agent"),
+			start("a", 0),
+			mainStop(1),
+		);
+		// Way past HOOK_IDLE_BACKSTOP_MS but before SUBAGENT_STALE_MS: still held.
+		const s = statusReducer(held, {
+			kind: "tick",
+			now: HOOK_IDLE_BACKSTOP_MS * 10,
+		});
+		expect(s.state).toBe("working");
+	});
+
+	it("the tick prunes stale Subagents and releases a held Stop", () => {
+		const held = run(
+			mk({ state: "working", hookDriven: true, lastActivityAt: 0 }, "agent"),
+			start("a", 0),
+			mainStop(1),
+		);
+		const s = statusReducer(held, { kind: "tick", now: SUBAGENT_STALE_MS + 1 });
+		expect(s.state).toBe("ready");
+		expect(s.activeSubagents).toHaveLength(0);
+		expect(s.stopHeldForSubagents).toBe(false);
+	});
+
+	it("pruning without a held Stop keeps Working (main still mid-turn)", () => {
+		const s = statusReducer(
+			run(
+				mk({ state: "working", hookDriven: true, lastActivityAt: 0 }, "agent"),
+				start("a", 0),
+			),
+			{ kind: "tick", now: SUBAGENT_STALE_MS + 1 },
+		);
+		expect(s.state).toBe("working");
+		expect(s.activeSubagents).toHaveLength(0);
+	});
+
+	it("StopFailure while Subagents run goes Error and stays Error when drained", () => {
+		let s = run(mk({ state: "working" }, "agent"), start("a", 0), {
+			kind: "hook",
+			transition: "error",
+			now: 1,
+		});
+		expect(s.state).toBe("error");
+		expect(s.stopHeldForSubagents).toBe(false);
+		s = statusReducer(s, stop("a"));
+		expect(s.state).toBe("error");
+		expect(s.activeSubagents).toHaveLength(0);
+	});
+
+	it("a new prompt clears the hold but keeps the set; the next Stop re-holds", () => {
+		let s = run(mk({ state: "working" }, "agent"), start("a", 0), mainStop(1), {
+			kind: "hook",
+			transition: "working",
+			now: 2,
+		});
+		expect(s.state).toBe("working");
+		expect(s.stopHeldForSubagents).toBe(false);
+		expect(s.activeSubagents).toHaveLength(1);
+		s = statusReducer(s, mainStop(3));
+		expect(s.state).toBe("working");
+		expect(s.stopHeldForSubagents).toBe(true);
+	});
+
+	it("sessionEnded / ptyExited / ESC-cancel clear set and hold", () => {
+		const held = () =>
+			run(mk({ state: "working" }, "agent"), start("a", 0), mainStop(1));
+
+		const ended = statusReducer(held(), { kind: "sessionEnded" });
+		expect(ended.activeSubagents).toHaveLength(0);
+		expect(ended.stopHeldForSubagents).toBe(false);
+
+		const exited = statusReducer(held(), { kind: "ptyExited", code: 0 });
+		expect(exited.activeSubagents).toHaveLength(0);
+		expect(exited.stopHeldForSubagents).toBe(false);
+
+		const escaped = statusReducer(held(), {
+			kind: "keystroke",
+			key: "esc",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(escaped.state).toBe("idle");
+		expect(escaped.activeSubagents).toHaveLength(0);
+		expect(escaped.stopHeldForSubagents).toBe(false);
+	});
+
+	it("a late stop after the release never resurrects state", () => {
+		const s = run(
+			mk({ state: "working" }, "agent"),
+			start("a", 0),
+			mainStop(1),
+			stop("a"),
+			{ kind: "focus" }, // user acknowledges → idle
+			stop("a"), // straggler duplicate
+		);
+		expect(s.state).toBe("idle");
 	});
 });

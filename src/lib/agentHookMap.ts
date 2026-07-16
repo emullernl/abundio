@@ -69,8 +69,11 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 	},
 };
 
-// Qwen Code is a Gemini CLI fork — identical hook events.
-HOOK_EVENT_MAP.qwen = HOOK_EVENT_MAP.gemini;
+// Qwen Code forked from Gemini CLI but has since adopted Claude-style hooks
+// (verified against qwen 0.15.6: PascalCase UserPromptSubmit/Stop/StopFailure/
+// SessionEnd etc., zero BeforeAgent/AfterAgent) — see
+// docs/plans/subagent-aware-status.md.
+HOOK_EVENT_MAP.qwen = HOOK_EVENT_MAP.claude;
 
 // Copilot tools whose preToolUse IS the act of blocking on the user: running
 // the tool presents a plan / question and waits for an answer. Copilot emits no
@@ -105,4 +108,84 @@ export function mapHookEvent(
 		return "waiting";
 	}
 	return HOOK_EVENT_MAP[agentId]?.[eventName] ?? null;
+}
+
+// ── Subagent lifecycle events (ADR-0022, docs/plans/subagent-aware-status.md) ──
+//
+// These deliberately have NO entry in HOOK_EVENT_MAP: they carry a Subagent id,
+// not a status transition, and are dispatched as subagentStarted/subagentStopped
+// reducer events by the translator (terminalManager) before mapHookEvent runs.
+
+export interface SubagentSignal {
+	action: "started" | "stopped";
+	id: string;
+}
+
+function str(v: unknown): string | undefined {
+	return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+/**
+ * Classify a hook event as a Subagent start/stop signal, or `null` when it is
+ * not one (fall through to `mapHookEvent`). `payload` is the parsed hook JSON
+ * (undefined when unparseable); `hasSubagent` checks live-set membership — the
+ * discriminator for OpenCode events whose payload lacks a `parentID`.
+ *
+ * Per agent:
+ * - claude / qwen / codex: `SubagentStart` / `SubagentStop`, id = `agent_id`.
+ * - copilot: `subagentStart` / `subagentStop`, id = `agentName` (no instance id
+ *   exists; concurrent same-named subagents may release the hold early, and the
+ *   built-in `general-purpose` agent emits neither event — accepted gaps).
+ * - opencode: child sessions. `session.created`/`session.updated` with a truthy
+ *   `parentID` → started; `session.idle`/`session.error`/`session.deleted` of a
+ *   session in the live set → stopped (a child's idle/error must NOT drive the
+ *   pane's own ready/error — that was the pre-existing mid-turn ready flash).
+ */
+export function mapSubagentHookEvent(
+	agentId: string,
+	eventName: string,
+	payload: unknown,
+	hasSubagent: (id: string) => boolean,
+): SubagentSignal | null {
+	const p = payload as Record<string, unknown> | undefined;
+	if (agentId === "claude" || agentId === "qwen" || agentId === "codex") {
+		if (eventName !== "SubagentStart" && eventName !== "SubagentStop") {
+			return null;
+		}
+		const id = str(p?.agent_id) ?? str(p?.agentId);
+		if (!id) return null;
+		return {
+			action: eventName === "SubagentStart" ? "started" : "stopped",
+			id,
+		};
+	}
+	if (agentId === "copilot") {
+		if (eventName !== "subagentStart" && eventName !== "subagentStop") {
+			return null;
+		}
+		const id = str(p?.agentName);
+		if (!id) return null;
+		return {
+			action: eventName === "subagentStart" ? "started" : "stopped",
+			id,
+		};
+	}
+	if (agentId === "opencode") {
+		const info = p?.info as Record<string, unknown> | undefined;
+		if (eventName === "session.created" || eventName === "session.updated") {
+			const id = str(info?.id);
+			if (id && str(info?.parentID)) return { action: "started", id };
+			return null;
+		}
+		if (
+			eventName === "session.idle" ||
+			eventName === "session.error" ||
+			eventName === "session.deleted"
+		) {
+			const id = str(p?.sessionID) ?? str(info?.id);
+			if (id && hasSubagent(id)) return { action: "stopped", id };
+			return null;
+		}
+	}
+	return null;
 }

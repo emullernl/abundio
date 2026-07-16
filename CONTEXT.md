@@ -74,8 +74,11 @@ _Avoid_: terminal process, shell
 
 **Agent**: A detected AI coding CLI tool (Claude Code, Copilot, Gemini CLI, Aider, Codex, OpenCode) that can be launched inside a Pane. Detected by scanning `$PATH`; not spawned until the user requests one.
 
-**Turn**: One unit of Agent work — from a prompt submitted (turn-start hook) to the turn finishing or failing (turn-finished / turn-failed hook). The atomic record for agent telemetry: one row per Turn in the `agent_turn` table, carrying its duration, **Working**/**Waiting** time, permission/tool/error counts, and the lines it changed. See ADR-0018.
+**Turn**: One unit of Agent work — from a prompt submitted (turn-start hook) to the turn finishing or failing (turn-finished / turn-failed hook). If the Agent spawned background **Subagents** that outlive the turn-finished hook, the Turn extends until the last of them stops — delegated work is the Turn's work, so its duration and **Working** time include the subagent tail. A new prompt always cuts the extension short: turns never overlap, so a Subagent surviving into the next Turn accrues its remaining time there (accepted imprecision). The atomic record for agent telemetry: one row per Turn in the `agent_turn` table, carrying its duration, **Working**/**Waiting** time, permission/tool/error counts, and the lines it changed. See ADR-0018.
 _Avoid_: run, request, interaction (and never "running" — collides with **Working**).
+
+**Subagent**: A worker an **Agent** spawns to delegate part of a **Turn** (Claude/Codex/Qwen subagent hooks, Copilot `subagentStart`/`subagentStop`, OpenCode child sessions with a `parentID`). Abundio observes only its start/stop lifecycle, and only to hold the parent PTY in **Working** until all Subagents finish — a Subagent has no Pane, no status icon, and no telemetry row of its own.
+_Avoid_: background agent (not all are background), task (collides with OpenCode's task tool), child session (OpenCode-specific).
 
 **Session**: The span of one Agent process in a Pane — from launch to `SessionEnd`/exit — comprising one or more **Turns**. Not a stored entity: it's a `session_id` stamped on each Turn so the **Statistics overlay** can group a session's Turns and answer "how long was the agent running". See ADR-0018.
 _Avoid_: conversation, run.
