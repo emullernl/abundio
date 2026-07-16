@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
 import { parseTabLayout } from "../lib/paneTree";
 import {
+	NO_SUBAGENTS,
 	type StatusEvent,
 	type StatusState,
 	type StatusTransition,
@@ -35,6 +36,25 @@ const lastOutputTimestamps = new Map<string, number>();
 // Track whether a shell command is currently running (between command_start and command_end).
 // Stored outside Zustand like lastOutputTimestamps to avoid re-renders.
 const shellCommandRunning = new Map<string, boolean>();
+
+// Live Subagents + the "Stop held" flag per PTY (ADR-0022,
+// docs/plans/subagent-aware-status.md). Stored outside Zustand like the maps
+// above: per-Start/Stop churn must not re-render — only the resulting state
+// flips do. The Stage-2 dispatcher absorbs this map with the others.
+const subagentState = new Map<
+	string,
+	{
+		subagents: ReadonlyArray<{ id: string; startedAt: number }>;
+		stopHeld: boolean;
+	}
+>();
+
+/** Whether `id` is a live Subagent of this PTY — used by the translator to
+ *  route OpenCode child-session events (their `session.idle` payload carries
+ *  no `parentID`, so set membership is the discriminator). */
+export function hasActiveSubagent(ptyId: string, id: string): boolean {
+	return subagentState.get(ptyId)?.subagents.some((s) => s.id === id) ?? false;
+}
 
 /** Get the last output timestamp for a PTY (for use outside the store, e.g. DebugActivityMeter). */
 export function getLastOutputAt(ptyId: string): number | null {
@@ -90,6 +110,8 @@ interface PtyActivityState_Store {
 	) => void;
 	clearWaiting: (ptyId: string) => void;
 	clearActive: (ptyId: string) => void;
+	subagentStarted: (ptyId: string, agentId: string) => void;
+	subagentStopped: (ptyId: string, agentId: string) => void;
 	setAgentPty: (ptyId: string, agentId?: string) => void;
 	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
@@ -146,7 +168,22 @@ function hydrate(
 		lastInputAt: 0,
 		lastOutputChunkAt: null,
 		lastEscAt: null,
+		activeSubagents: subagentState.get(ptyId)?.subagents ?? NO_SUBAGENTS,
+		stopHeldForSubagents: subagentState.get(ptyId)?.stopHeld ?? false,
 	};
+}
+
+/** Sync the out-of-band Subagent map from a reducer result (delete on the
+ *  trivial empty+unheld state — mirrors `shellCommandRunning` hygiene). */
+function syncSubagentState(ptyId: string, after: StatusState): void {
+	if (after.activeSubagents.length > 0 || after.stopHeldForSubagents) {
+		subagentState.set(ptyId, {
+			subagents: after.activeSubagents,
+			stopHeld: after.stopHeldForSubagents,
+		});
+	} else {
+		subagentState.delete(ptyId);
+	}
 }
 
 function project(
@@ -235,6 +272,7 @@ function applyStatusEvent(
 	}
 	if (after.shellCommandRunning) shellCommandRunning.set(ptyId, true);
 	else shellCommandRunning.delete(ptyId);
+	syncSubagentState(ptyId, after);
 
 	const nextEntry = project(after, prevEntry);
 	const changed = !prevEntry || !entriesEqual(prevEntry, nextEntry);
@@ -343,6 +381,24 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			applyStatusEvent(ptyId, { kind: "clearActive" });
 		},
 
+		subagentStarted: (ptyId, agentId) => {
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, {
+				kind: "subagentStarted",
+				agentId,
+				now: Date.now(),
+			});
+		},
+
+		subagentStopped: (ptyId, agentId) => {
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, {
+				kind: "subagentStopped",
+				agentId,
+				now: Date.now(),
+			});
+		},
+
 		recordExitSuccess: (ptyId) => {
 			if (!get().activities[ptyId]) return;
 			applyStatusEvent(ptyId, { kind: "recordExitSuccess" });
@@ -445,6 +501,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		removePty: (ptyId) => {
 			lastOutputTimestamps.delete(ptyId);
 			shellCommandRunning.delete(ptyId);
+			subagentState.delete(ptyId);
 			set((s) => {
 				const { [ptyId]: _, ...rest } = s.activities;
 				const { [ptyId]: _rc, ...restRunning } = s.runningCommands;
@@ -508,6 +565,11 @@ setInterval(() => {
 		// the shell-command guard, and agent→Ready / shell→Idle (ADR-0009).
 		const before = hydrate(entry, ptyId);
 		const after = statusReducer(before, { kind: "tick", now });
+		// The stale-Subagent prune can shrink the set WITHOUT a state flip — sync
+		// the out-of-band map before the equal-state early-continue (ADR-0022).
+		if (after.activeSubagents !== before.activeSubagents) {
+			syncSubagentState(ptyId, after);
+		}
 		if (after.state === before.state) continue;
 		const nextEntry = project(after, entry);
 		updates[ptyId] = nextEntry;

@@ -8,6 +8,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import {
+	hasActiveSubagent,
 	setShellCommandRunning,
 	touchLastOutput,
 	usePtyActivityStore,
@@ -15,7 +16,7 @@ import {
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
-import { mapHookEvent } from "./agentHookMap";
+import { mapHookEvent, mapSubagentHookEvent } from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { agentHooks, pty } from "./ipc";
@@ -1073,17 +1074,45 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					"pty=",
 					currentPtyId,
 				);
-				// The payload carries `toolName` on tool-scoped events; it lets
-				// mapHookEvent special-case tools like exit_plan_mode.
-				let toolName: string | undefined;
+				// The payload carries `toolName` on tool-scoped events (mapHookEvent
+				// special-cases tools like exit_plan_mode) and the Subagent identity
+				// on subagent lifecycle events.
+				let payload: unknown;
 				try {
-					const parsed = JSON.parse(hookEvent.payload);
-					if (typeof parsed?.toolName === "string") {
-						toolName = parsed.toolName;
-					}
+					payload = JSON.parse(hookEvent.payload);
 				} catch {
-					// payload is not JSON — leave toolName undefined
+					// payload is not JSON — leave undefined
 				}
+				const toolName =
+					typeof (payload as { toolName?: unknown })?.toolName === "string"
+						? ((payload as { toolName: string }).toolName as string)
+						: undefined;
+
+				// Subagent lifecycle events bypass mapHookEvent: they carry an id, not
+				// a transition, and drive the pane's Subagent set — which holds the
+				// Ready flip while delegated work still runs (ADR-0022,
+				// docs/plans/subagent-aware-status.md).
+				const subagent = mapSubagentHookEvent(
+					hookEvent.agent,
+					hookEvent.event,
+					payload,
+					(id) => hasActiveSubagent(currentPtyId, id),
+				);
+				if (subagent) {
+					const actStore = usePtyActivityStore.getState();
+					// A subagent hook proves an agent runs here as much as any hook.
+					actStore.setAgentPty(currentPtyId, hookEvent.agent);
+					useWorkspaceStore
+						.getState()
+						.stampAgentOnPane(paneId, hookEvent.agent);
+					if (subagent.action === "started") {
+						actStore.subagentStarted(currentPtyId, subagent.id);
+					} else {
+						actStore.subagentStopped(currentPtyId, subagent.id);
+					}
+					return;
+				}
+
 				const transition = mapHookEvent(
 					hookEvent.agent,
 					hookEvent.event,

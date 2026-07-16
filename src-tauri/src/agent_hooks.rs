@@ -211,19 +211,28 @@ fn group_is_abundio(group: &Value, relay_marker: &str) -> bool {
 /// Events to register for a `settings.json`-merge agent: (event, matcher, async).
 fn merge_agent_events(agent: &str) -> Vec<(&'static str, Option<&'static str>, bool)> {
     match agent {
-        "claude" => vec![
+        // SubagentStart/SubagentStop drive the ADR-0022 hold: the pane stays
+        // Working past `Stop` while background subagents still run. Qwen forked
+        // from Gemini CLI but has since adopted Claude's hook vocabulary
+        // (verified against qwen 0.15.6: PascalCase events, no BeforeAgent/
+        // AfterAgent), so it registers Claude's set — see
+        // docs/plans/subagent-aware-status.md.
+        "claude" | "qwen" => vec![
             ("UserPromptSubmit", None, true),
             ("PermissionRequest", None, true),
             ("Stop", None, true),
             ("StopFailure", None, true),
+            ("SubagentStart", None, true),
+            ("SubagentStop", None, true),
             ("SessionEnd", None, true),
         ],
-        // Gemini / Qwen: `Notification` is their only permission signal. We
-        // register it without a matcher (the exact tool-permission matcher
-        // token is undocumented; a wrong matcher would fire never). Non-
-        // permission notifications also flipping to "waiting" is an accepted
-        // limitation.
-        "gemini" | "qwen" => vec![
+        // Gemini: `Notification` is its only permission signal. We register it
+        // without a matcher (the exact tool-permission matcher token is
+        // undocumented; a wrong matcher would fire never). Non-permission
+        // notifications also flipping to "waiting" is an accepted limitation.
+        // No subagent events exist — Gemini subagents are synchronous tool
+        // calls, so AfterAgent cannot fire while one runs.
+        "gemini" => vec![
             ("BeforeAgent", None, false),
             ("AfterAgent", None, false),
             ("Notification", None, false),
@@ -316,7 +325,13 @@ fn provision_own_file(path: &Path, enabled: bool, content: &str) -> Result<(), A
 /// Codex `hooks.json` (Abundio-owned). Same matcher-group shape as Claude.
 fn codex_config(relay: &Path) -> Result<String, AbundioError> {
     let mut hooks = serde_json::Map::new();
-    for event in ["UserPromptSubmit", "PermissionRequest", "Stop"] {
+    for event in [
+        "UserPromptSubmit",
+        "PermissionRequest",
+        "Stop",
+        "SubagentStart",
+        "SubagentStop",
+    ] {
         let cmd = command_str(relay, event, "codex");
         hooks.insert(event.to_string(), json!([make_group(None, &cmd, false)]));
     }
@@ -349,10 +364,16 @@ fn copilot_config(relay: &RelayPaths) -> Result<String, AbundioError> {
     let mut hooks = serde_json::Map::new();
     // (event, optional matcher). The matcher is the raw pattern; Copilot anchors
     // it `^(?:pattern)$`.
+    // subagentStart/subagentStop drive the ADR-0022 hold. Known gaps: Copilot's
+    // built-in `general-purpose` agent emits neither event, and the payload
+    // carries only `agentName` (no instance id) — see
+    // docs/plans/subagent-aware-status.md.
     for (event, matcher) in [
         ("userPromptSubmitted", None),
         ("preToolUse", Some("exit_plan_mode|ask_user")),
         ("notification", Some("permission_prompt")),
+        ("subagentStart", None),
+        ("subagentStop", None),
         ("agentStop", None),
         ("errorOccurred", None),
         ("sessionEnd", None),
@@ -378,20 +399,26 @@ fn opencode_plugin() -> String {
     r#"// Abundio agent status hook plugin — auto-generated, do not edit.
 // Forwards OpenCode lifecycle events to Abundio's loopback status server.
 export const AbundioStatus = async () => {
-  const post = (event) => {
+  const post = (type, properties) => {
     const pty = process.env.ABUNDIO_PTY_ID;
     const port = process.env.ABUNDIO_HOOK_PORT;
     const token = process.env.ABUNDIO_HOOK_TOKEN;
-    if (!pty || !port || !event) return;
+    if (!pty || !port || !type) return;
+    // The payload lets Abundio tell child (subagent) sessions apart from the
+    // pane's own session (info.parentID / sessionID) — see ADR-0022.
+    let body = "{}";
+    try {
+      body = JSON.stringify(properties ?? {});
+    } catch {}
     fetch(
-      `http://127.0.0.1:${port}/hook?event=${encodeURIComponent(event)}` +
+      `http://127.0.0.1:${port}/hook?event=${encodeURIComponent(type)}` +
         `&agent=opencode&pty=${encodeURIComponent(pty)}`,
-      { method: "POST", headers: { "X-Abundio-Token": token ?? "" }, body: "{}" },
+      { method: "POST", headers: { "X-Abundio-Token": token ?? "" }, body },
     ).catch(() => {});
   };
   return {
     event: async ({ event }) => {
-      post(event && event.type);
+      post(event && event.type, event && event.properties);
     },
   };
 };
@@ -480,7 +507,13 @@ fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
             dir_rel: PathBuf::from(".codex"),
             config_rel: [".codex", "hooks.json"].iter().collect(),
             ownership: Ownership::Owned,
-            events: owned_events(&["UserPromptSubmit", "PermissionRequest", "Stop"]),
+            events: owned_events(&[
+                "UserPromptSubmit",
+                "PermissionRequest",
+                "Stop",
+                "SubagentStart",
+                "SubagentStop",
+            ]),
         }),
         "copilot" => Some(AgentDescriptor {
             dir_rel: PathBuf::from(".copilot"),
@@ -490,6 +523,8 @@ fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
                 "userPromptSubmitted",
                 "preToolUse",
                 "notification",
+                "subagentStart",
+                "subagentStop",
                 "agentStop",
                 "errorOccurred",
                 "sessionEnd",
@@ -557,18 +592,27 @@ fn provision_agent(
     }
 }
 
-/// True when Abundio's relay marker is present anywhere in a parsed merge config.
-fn merge_has_marker(root: &Value, marker: &str) -> bool {
-    root.get("hooks")
-        .and_then(|h| h.as_object())
-        .map(|hooks| {
-            hooks.values().any(|v| {
-                v.as_array()
-                    .map(|arr| arr.iter().any(|g| group_is_abundio(g, marker)))
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false)
+/// True when a parsed merge config carries an Abundio group for EVERY event the
+/// current binary registers — not merely "some marker present". Presence-only
+/// classification left a config written by an older Abundio (fewer/renamed
+/// events) reading as Registered, so `ensure_agent_hooks` never upgraded it at
+/// agent launch (the subagent-events rollout tripped exactly this — see
+/// docs/plans/subagent-aware-status.md).
+fn merge_is_current(root: &Value, marker: &str, agent_id: &str) -> bool {
+    let events = merge_agent_events(agent_id);
+    if events.is_empty() {
+        return false;
+    }
+    let Some(hooks) = root.get("hooks").and_then(|h| h.as_object()) else {
+        return false;
+    };
+    events.iter().all(|(event, _, _)| {
+        hooks
+            .get(*event)
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().any(|g| group_is_abundio(g, marker)))
+            .unwrap_or(false)
+    })
 }
 
 /// Per-agent registration state derived purely from on-disk config.
@@ -602,7 +646,7 @@ fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigSt
                 Err(_) => HookConfigState::ConfigError,
                 Ok(root) => {
                     let marker = relay.primary().to_string_lossy();
-                    if merge_has_marker(&root, &marker) {
+                    if merge_is_current(&root, &marker, agent_id) {
                         HookConfigState::Registered
                     } else {
                         HookConfigState::NotRegistered
@@ -610,22 +654,17 @@ fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigSt
                 }
             }
         }
-        // Abundio owns the whole file. codex/copilot embed the relay-script
-        // path in their hook commands, so a stale path (e.g. data-dir change)
-        // must read as not-registered and get refreshed. opencode's plugin
-        // talks to the loopback server via env vars and embeds no relay path,
-        // so for it presence alone means registered.
+        // Abundio owns the whole file: Registered means the on-disk content
+        // equals what this binary would write. Anything else — a stale relay
+        // path after a data-dir change, an older event set, an outdated
+        // opencode plugin body — reads as not-registered and gets refreshed by
+        // the next ensure/provision pass.
         Ownership::Owned => match fs::read_to_string(&path) {
             Err(_) => HookConfigState::NotRegistered, // file absent
-            Ok(text) => {
-                let current = agent_id == "opencode"
-                    || text.contains(&*relay.primary().to_string_lossy());
-                if current {
-                    HookConfigState::Registered
-                } else {
-                    HookConfigState::NotRegistered
-                }
-            }
+            Ok(text) => match owned_content(agent_id, relay) {
+                Ok(expected) if text == expected => HookConfigState::Registered,
+                _ => HookConfigState::NotRegistered,
+            },
         },
     }
 }
@@ -770,6 +809,180 @@ mod tests {
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.len(), 1);
         assert!(!group_is_abundio(&stop[0], "abundio-hook.sh"));
+    }
+
+    #[test]
+    fn merge_registers_subagent_events_for_claude_and_qwen() {
+        // ADR-0022: SubagentStart/SubagentStop drive the Working hold. Qwen
+        // registers Claude's vocabulary (it diverged from Gemini CLI).
+        for agent in ["claude", "qwen"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            provision_merge_settings(&path, true, agent, &relay()).unwrap();
+            let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            for event in ["SubagentStart", "SubagentStop", "Stop", "UserPromptSubmit"] {
+                let groups = v["hooks"][event]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{agent}: {event} missing"));
+                assert!(
+                    groups.iter().any(|g| group_is_abundio(g, "abundio-hook.sh")),
+                    "{agent}: {event} must carry an Abundio group"
+                );
+            }
+            // Qwen must NOT register the old Gemini-style events.
+            if agent == "qwen" {
+                assert!(v["hooks"].get("BeforeAgent").is_none());
+                assert!(v["hooks"].get("AfterAgent").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn merge_upgrades_old_event_set_without_duplicates() {
+        // A settings.json provisioned by an older Abundio (pre-subagent events,
+        // and Gemini-style names for qwen) must upgrade in place: stale Abundio
+        // groups stripped, the current set added exactly once, user keys kept.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let old_cmd = format!("sh \"{}\" BeforeAgent qwen", relay().to_string_lossy());
+        fs::write(
+            &path,
+            serde_json::to_string(&json!({
+                "theme": "dark",
+                "hooks": { "BeforeAgent": [ { "hooks": [ { "type": "command", "command": old_cmd } ] } ] }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        provision_merge_settings(&path, true, "qwen", &relay()).unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+
+        assert_eq!(v["theme"], "dark");
+        // The stale Gemini-style Abundio group is gone (empty arrays may remain).
+        let stale = v["hooks"]["BeforeAgent"]
+            .as_array()
+            .map(|groups| {
+                groups
+                    .iter()
+                    .any(|g| group_is_abundio(g, "abundio-hook.sh"))
+            })
+            .unwrap_or(false);
+        assert!(!stale, "old-style Abundio group must be stripped");
+        // The new events are present exactly once.
+        for event in ["SubagentStart", "SubagentStop", "Stop"] {
+            let count = v["hooks"][event]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|g| group_is_abundio(g, "abundio-hook.sh"))
+                .count();
+            assert_eq!(count, 1, "{event} must appear exactly once");
+        }
+    }
+
+    #[test]
+    fn stale_event_set_reads_not_registered_so_ensure_upgrades_it() {
+        // The self-heal path: is_provisioned must be event-set-aware, so an
+        // agent launch (ensure_agent_hooks) upgrades a config written by an
+        // older Abundio instead of short-circuiting on marker presence.
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        fs::create_dir_all(home.path().join(".claude")).unwrap();
+        let path = home.path().join(".claude").join("settings.json");
+
+        // Simulate the pre-subagent-events footprint: provision, then strip
+        // the two new event groups the way an old binary's write would lack them.
+        provision_agent(home.path(), &relay, "claude", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "claude"));
+        let mut v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let hooks = v["hooks"].as_object_mut().unwrap();
+        hooks.remove("SubagentStart");
+        hooks.remove("SubagentStop");
+        fs::write(&path, serde_json::to_string(&v).unwrap()).unwrap();
+
+        // Presence-only classification would say Registered here; the
+        // event-set-aware check must not.
+        assert!(
+            !is_provisioned(home.path(), &relay, "claude"),
+            "a stale event set must read as not-registered"
+        );
+
+        // Re-provisioning (what ensure_agent_hooks now does at agent launch)
+        // restores the full set without duplicates.
+        provision_agent(home.path(), &relay, "claude", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "claude"));
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        for event in ["SubagentStart", "SubagentStop", "Stop"] {
+            let count = v["hooks"][event]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|g| group_is_abundio(g, "abundio-hook.sh"))
+                .count();
+            assert_eq!(count, 1, "{event} must appear exactly once");
+        }
+    }
+
+    #[test]
+    fn stale_owned_content_reads_not_registered() {
+        // Owned files (codex/copilot/opencode) are Registered only when their
+        // content matches what this binary writes — an old event set or an
+        // outdated opencode plugin body must trigger a refresh.
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        fs::create_dir_all(home.path().join(".codex")).unwrap();
+        provision_agent(home.path(), &relay, "codex", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "codex"));
+
+        // An older binary's file: same relay path, fewer events.
+        let path = home.path().join(".codex").join("hooks.json");
+        let mut v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        v["hooks"].as_object_mut().unwrap().remove("SubagentStart");
+        fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        assert!(
+            !is_provisioned(home.path(), &relay, "codex"),
+            "stale owned content must read as not-registered"
+        );
+
+        // Same for the opencode plugin body (it embeds no relay path).
+        let oc_dir = home.path().join(".config").join("opencode");
+        fs::create_dir_all(&oc_dir).unwrap();
+        provision_agent(home.path(), &relay, "opencode", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "opencode"));
+        let oc_path = oc_dir.join("plugin").join("abundio.ts");
+        fs::write(&oc_path, "// old plugin body\n").unwrap();
+        assert!(
+            !is_provisioned(home.path(), &relay, "opencode"),
+            "an outdated opencode plugin must read as not-registered"
+        );
+    }
+
+    #[test]
+    fn codex_and_copilot_configs_register_subagent_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let relay = RelayPaths {
+            sh: dir.path().join("abundio-hook.sh"),
+            ps1: dir.path().join("abundio-hook.ps1"),
+        };
+        let codex: Value = serde_json::from_str(&codex_config(relay.primary()).unwrap()).unwrap();
+        assert!(codex["hooks"]["SubagentStart"].is_array());
+        assert!(codex["hooks"]["SubagentStop"].is_array());
+
+        let copilot: Value = serde_json::from_str(&copilot_config(&relay).unwrap()).unwrap();
+        for event in ["subagentStart", "subagentStop"] {
+            assert!(copilot["hooks"][event].is_array(), "{event} missing");
+            assert!(copilot["hooks"][event][0].get("matcher").is_none());
+        }
+    }
+
+    #[test]
+    fn opencode_plugin_forwards_event_properties() {
+        // The payload lets the frontend tell child (subagent) sessions apart
+        // from the pane's own session (ADR-0022).
+        let src = opencode_plugin();
+        assert!(src.contains("event.properties"));
+        assert!(src.contains("JSON.stringify"));
     }
 
     #[test]

@@ -19,9 +19,9 @@ See `CONTEXT.md` for the canonical terms **Agent hook** and **Waiting**, and
 
 | Agent | Prompt submitted | Permission/waiting | Finished | Error |
 |---|---|---|---|---|
-| Claude Code | `UserPromptSubmit` | `PermissionRequest` | `Stop` | `StopFailure` |
+| Claude Code / Qwen | `UserPromptSubmit` | `PermissionRequest` | `Stop` | `StopFailure` |
 | Copilot CLI | `userPromptSubmitted` | `permissionRequest` | `agentStop` | `errorOccurred` |
-| Gemini / Qwen | `BeforeAgent` | `Notification` (permission matcher) | `AfterAgent` | *(none)* |
+| Gemini | `BeforeAgent` | `Notification` (permission matcher) | `AfterAgent` | *(none)* |
 | Codex CLI | `UserPromptSubmit` | `PermissionRequest` | `Stop` | *(none)* |
 | OpenCode | `message.updated` | `permission.asked` / `question.asked` | `session.idle` | `session.error` |
 | Aider | — out of scope (no hook system) — | | | |
@@ -150,13 +150,31 @@ gated by a per-launch random token passed as the `ABUNDIO_HOOK_TOKEN` env var.
 
 ### Per-agent event mapping (`agentHookMap.ts`)
 
-| transition | Claude | Copilot | Gemini/Qwen | Codex | OpenCode |
+> Qwen no longer shares Gemini's column: it adopted Claude-style hooks (verified
+> against qwen 0.15.6), so `HOOK_EVENT_MAP.qwen = HOOK_EVENT_MAP.claude` — see
+> docs/plans/subagent-aware-status.md.
+
+| transition | Claude / Qwen | Copilot | Gemini | Codex | OpenCode |
 |---|---|---|---|---|---|
 | active | UserPromptSubmit | userPromptSubmitted, preToolUse, postToolUse, postToolUseFailure | BeforeAgent | UserPromptSubmit | message.part.delta, permission.replied, question.replied |
 | waiting | PermissionRequest | permissionRequest | Notification (perm matcher) | PermissionRequest | permission.asked, question.asked |
 | ready | Stop | agentStop | AfterAgent | Stop | session.idle |
 | error | StopFailure | errorOccurred | — | — | session.error |
 | clear | SessionEnd | sessionEnd | SessionEnd | — | session.deleted |
+
+Subagent lifecycle events (ADR-0022) deliberately have **no row** here — they
+carry a Subagent id, not a transition, and are routed by `mapSubagentHookEvent`
+(same module) into the reducer's `subagentStarted`/`subagentStopped` events,
+which hold the Ready flip while delegated work still runs:
+
+| signal | Claude / Qwen / Codex | Copilot | Gemini | OpenCode |
+|---|---|---|---|---|
+| subagent started | SubagentStart (`agent_id`) | subagentStart (`agentName`) | — (synchronous subagents) | session.created / session.updated with `info.parentID` |
+| subagent stopped | SubagentStop (`agent_id`) | subagentStop (`agentName`) | — | session.idle / session.error / session.deleted of a session in the live set |
+
+Copilot gaps (accepted): the built-in `general-purpose` agent emits neither
+event, and `agentName` is not an instance id — concurrent same-named subagents
+may release the hold early.
 
 ## Tests
 
