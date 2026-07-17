@@ -57,6 +57,13 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		builtin: true,
 		enabled: true,
 	},
+	{
+		id: "grok",
+		name: "Grok Build",
+		command: "grok",
+		builtin: true,
+		enabled: true,
+	},
 ];
 
 /**
@@ -103,6 +110,9 @@ export function matchProcessToAgent(
  * Kimi Code deliberately stays on the double-ESC default: its `Interrupt`
  * hook is the authoritative cancel signal (mapped to "idle" in
  * agentHookMap.ts), so the keystroke heuristic is only a fallback there.
+ * Grok Build also stays on the default: ESC never cancels a Grok turn
+ * (Ctrl+C does — verified against its bundled keyboard-shortcuts guide), and
+ * its `Stop` hook with `reason: "cancelled"` is the authoritative signal.
  */
 export function escPressesToCancelAgent(agentId: string | undefined): number {
 	if (agentId === "claude" || agentId === "gemini" || agentId === "qwen") {

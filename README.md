@@ -6,7 +6,7 @@ A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https:/
 
 *The name comes from the Latin _abundō_ ("to overflow, abound") — Abundio is built for an **abundance of productivity**, giving you room to run an abundance of terminals, agents, and parallel work without leaving your project.*
 
-Each **workspace** is bound to a project folder. Inside it you get a fast WebGL-rendered terminal that you can split into as many horizontal and vertical panes as you like and organize across multiple tabs — run a dev server in one pane, tail logs in another, and drive an AI agent in a third. Abundio has **first-class support for AI coding CLI agents** — Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, OpenCode, Qwen Code, and Kimi Code (see [Supported coding agents](#supported-coding-agents)): it auto-detects the ones installed on your `$PATH`, lets you define your own, and surfaces live activity status so you can see at a glance which agents are working.
+Each **workspace** is bound to a project folder. Inside it you get a fast WebGL-rendered terminal that you can split into as many horizontal and vertical panes as you like and organize across multiple tabs — run a dev server in one pane, tail logs in another, and drive an AI agent in a third. Abundio has **first-class support for AI coding CLI agents** — Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, OpenCode, Qwen Code, Kimi Code, and Grok Build (see [Supported coding agents](#supported-coding-agents)): it auto-detects the ones installed on your `$PATH`, lets you define your own, and surfaces live activity status so you can see at a glance which agents are working.
 
 Around the terminal sits a full development surface: a **file explorer** and Monaco-powered **code editor** for viewing and editing files, **git integration** with a changed-files panel and inline diffs, first-class **git worktree support** (worktrees of a repo are grouped together in the sidebar and you can create or remove them in-app), a **GitHub PR panel**, **full-text workspace search**, live **Markdown preview**, and a **notes** panel — plus the ability to hand the current workspace off to VS Code, Cursor, or a JetBrains IDE when you want a heavier editor. Terminal output is clickable (file paths printed by compilers, test runners, and agents open straight in the editor), scrollback is persisted across sessions, and an overview bar keeps a running count of your workspaces, agents, terminals, and open PRs. Abundio runs natively on macOS, Windows, and Linux.
 
@@ -66,6 +66,7 @@ For most of them Abundio also registers **status hooks** in the agent's own conf
 | [OpenCode](https://opencode.ai/) | `opencode` | ✅ |
 | [Qwen Code](https://github.com/QwenLM/qwen-code) | `qwen` | ✅ |
 | [Kimi Code](https://github.com/MoonshotAI/kimi-code) | `kimi` | ✅ |
+| [Grok Build](https://docs.x.ai/build/overview) | `grok` | ✅ |
 
 Anything not on this list can still be added as a **custom agent** in Settings (name + command); custom agents get PATH detection and heuristic activity status, just not hook-driven status.
 

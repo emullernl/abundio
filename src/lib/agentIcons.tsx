@@ -4,6 +4,7 @@ import claudeIconUrl from "../assets/agent-icons/claude.svg";
 import codexIconUrl from "../assets/agent-icons/codex.svg";
 import geminiIconUrl from "../assets/agent-icons/gemini.svg";
 import githubIconUrl from "../assets/agent-icons/github.svg";
+import grokIconUrl from "../assets/agent-icons/grok.svg";
 import kimiIconUrl from "../assets/agent-icons/kimi.svg";
 import opencodeIconUrl from "../assets/agent-icons/opencode.svg";
 import qwenIconUrl from "../assets/agent-icons/qwen.svg";
@@ -25,6 +26,10 @@ import terminalIconUrl from "../assets/agent-icons/terminal.jpg";
 //                        official for-dark-backgrounds mark — white K + #1783FF
 //                        accent; invisible-on-light is the same accepted
 //                        limitation as codex.svg)
+//   - grok.svg         → grok.com/images/favicon.svg (official product mark:
+//                        white glyph on a near-black rounded tile — the tile
+//                        is part of the asset, so it reads on light AND dark;
+//                        decorative Figma foreignObject/drop-shadow stripped)
 //   - terminal.jpg     → iterm2.com (for the "New Terminal" option)
 
 interface IconProps {
@@ -61,6 +66,7 @@ const AiderIcon = brandImg(aiderIconUrl, "Aider");
 const OpenCodeIcon = brandImg(opencodeIconUrl, "OpenCode");
 const QwenIcon = brandImg(qwenIconUrl, "Qwen");
 const KimiIcon = brandImg(kimiIconUrl, "Kimi");
+const GrokIcon = brandImg(grokIconUrl, "Grok");
 
 export const TerminalBrandIcon = brandImg(terminalIconUrl, "New Terminal");
 
@@ -87,6 +93,8 @@ export function getAgentIconComponent(
 			return QwenIcon;
 		case "kimi":
 			return KimiIcon;
+		case "grok":
+			return GrokIcon;
 		default:
 			return undefined;
 	}
