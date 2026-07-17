@@ -342,41 +342,68 @@ fn provision_merge_toml_hooks(
         return Ok(()); // nothing to strip
     };
 
-    // Always strip prior Abundio entries first — idempotent, and the disable path.
-    if let Some(hooks) = doc.get_mut("hooks").and_then(|i| i.as_array_of_tables_mut()) {
-        hooks.retain(|t| {
-            !t.get("command")
-                .and_then(|c| c.as_str())
-                .map(|c| c.contains(relay_marker.as_str()))
-                .unwrap_or(false)
-        });
+    // Always strip prior Abundio entries first — idempotent, and the disable
+    // path. `hooks` may be either the `[[hooks]]` header form (ArrayOfTables)
+    // or the equally-legal inline form `hooks = [{ ... }]` (a Value array of
+    // inline tables) — both are handled, keeping whichever form the user wrote.
+    if let Some(item) = doc.get_mut("hooks") {
+        if let Some(hooks) = item.as_array_of_tables_mut() {
+            hooks.retain(|t| {
+                !t.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.contains(relay_marker.as_str()))
+                    .unwrap_or(false)
+            });
+        } else if let Some(arr) = item.as_value_mut().and_then(|v| v.as_array_mut()) {
+            arr.retain(|v| {
+                !v.as_inline_table()
+                    .and_then(|t| t.get("command"))
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.contains(relay_marker.as_str()))
+                    .unwrap_or(false)
+            });
+        }
     }
 
     if enabled {
         let item = doc
             .entry("hooks")
             .or_insert(toml_edit::Item::ArrayOfTables(Default::default()));
-        let hooks = item.as_array_of_tables_mut().ok_or_else(|| {
-            io_err(format!(
-                "{} has a non-array-of-tables `hooks` key — skipped hook provisioning",
+        if let Some(hooks) = item.as_array_of_tables_mut() {
+            for event in KIMI_EVENTS {
+                let mut t = toml_edit::Table::new();
+                t["event"] = toml_edit::value(*event);
+                t["command"] = toml_edit::value(command_str(relay, event, agent));
+                hooks.push(t);
+            }
+        } else if let Some(arr) = item.as_value_mut().and_then(|v| v.as_array_mut()) {
+            // The user keeps their hooks in the inline form — append matching
+            // inline tables rather than forcing a format change on their file.
+            for event in KIMI_EVENTS {
+                let mut t = toml_edit::InlineTable::new();
+                t.insert("event", (*event).into());
+                t.insert("command", command_str(relay, event, agent).into());
+                arr.push(toml_edit::Value::InlineTable(t));
+            }
+        } else {
+            return Err(io_err(format!(
+                "{} has a non-array `hooks` key — skipped hook provisioning",
                 path.display()
-            ))
-        })?;
-        for event in KIMI_EVENTS {
-            let mut t = toml_edit::Table::new();
-            t["event"] = toml_edit::value(*event);
-            t["command"] = toml_edit::value(command_str(relay, event, agent));
-            hooks.push(t);
+            )));
         }
     }
 
-    // Tidy: drop an emptied hooks array so a disable leaves no trace.
-    if doc
+    // Tidy: drop an emptied hooks array (either form) so a disable leaves no trace.
+    let hooks_emptied = doc
         .get("hooks")
-        .and_then(|i| i.as_array_of_tables())
-        .map(|a| a.is_empty())
-        .unwrap_or(false)
-    {
+        .map(|item| {
+            item.as_array_of_tables()
+                .map(|a| a.is_empty())
+                .or_else(|| item.as_array().map(|a| a.is_empty()))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    if hooks_emptied {
         doc.remove("hooks");
     }
 
@@ -743,23 +770,44 @@ fn merge_is_current(root: &Value, marker: &str, agent_id: &str) -> bool {
 }
 
 /// TOML counterpart of `merge_is_current`: every event in `events` must have a
-/// `[[hooks]]` table whose `event` matches and whose `command` carries the
-/// relay marker, so an older Abundio's event set reads as not-registered and
-/// `ensure_agent_hooks` upgrades it at agent launch.
+/// hook entry whose `event` matches and whose `command` carries the relay
+/// marker, so an older Abundio's event set reads as not-registered and
+/// `ensure_agent_hooks` upgrades it at agent launch. Recognizes both the
+/// `[[hooks]]` header form and the inline `hooks = [{ ... }]` form, matching
+/// `provision_merge_toml_hooks`.
 fn toml_merge_is_current(doc: &toml_edit::DocumentMut, marker: &str, events: &[&str]) -> bool {
     if events.is_empty() {
         return false;
     }
-    let Some(hooks) = doc.get("hooks").and_then(|i| i.as_array_of_tables()) else {
+    let Some(item) = doc.get("hooks") else {
+        return false;
+    };
+    // (event, command) pairs from whichever representation the file uses.
+    let pairs: Vec<(Option<&str>, Option<&str>)> = if let Some(aot) = item.as_array_of_tables() {
+        aot.iter()
+            .map(|t| {
+                (
+                    t.get("event").and_then(|e| e.as_str()),
+                    t.get("command").and_then(|c| c.as_str()),
+                )
+            })
+            .collect()
+    } else if let Some(arr) = item.as_array() {
+        arr.iter()
+            .filter_map(|v| v.as_inline_table())
+            .map(|t| {
+                (
+                    t.get("event").and_then(|e| e.as_str()),
+                    t.get("command").and_then(|c| c.as_str()),
+                )
+            })
+            .collect()
+    } else {
         return false;
     };
     events.iter().all(|event| {
-        hooks.iter().any(|t| {
-            t.get("event").and_then(|e| e.as_str()) == Some(*event)
-                && t.get("command")
-                    .and_then(|c| c.as_str())
-                    .map(|c| c.contains(marker))
-                    .unwrap_or(false)
+        pairs.iter().any(|(e, c)| {
+            *e == Some(*event) && c.map(|c| c.contains(marker)).unwrap_or(false)
         })
     })
 }
@@ -1462,6 +1510,66 @@ timeout = 10
         let before = fs::read_to_string(&path).unwrap();
         assert!(provision_merge_toml_hooks(&path, true, "kimi", &relay()).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn kimi_toml_merge_handles_inline_array_hooks_form() {
+        // TOML allows `hooks = [{ ... }]` as well as `[[hooks]]` — a user
+        // keeping the inline form must still be able to register, self-heal,
+        // and strip, without Abundio rewriting their file into header form.
+        let user_config = "model = \"kimi-k3\"\nhooks = [{ event = \"PreToolUse\", command = \"my-own-hook\" }]\n";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, user_config).unwrap();
+
+        // Enable twice — no duplicates, user entry kept, inline form kept.
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("[[hooks]]"),
+            "the user's inline form must not be rewritten to header form"
+        );
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+        let arr = doc["hooks"].as_array().unwrap();
+        let abundio = arr
+            .iter()
+            .filter_map(|v| v.as_inline_table())
+            .filter(|t| {
+                t.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.contains("abundio-hook.sh"))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(abundio, KIMI_EVENTS.len(), "no duplicates on re-provision");
+        assert_eq!(arr.len(), KIMI_EVENTS.len() + 1, "user's own hook survives");
+        // The self-heal check must recognize the inline form as registered.
+        assert!(toml_merge_is_current(
+            &doc,
+            "abundio-hook.sh",
+            KIMI_EVENTS
+        ));
+
+        // Disable — back to exactly the user's entries.
+        provision_merge_toml_hooks(&path, false, "kimi", &relay()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("abundio-hook.sh"));
+        assert!(text.contains("my-own-hook"));
+        assert!(text.contains("kimi-k3"));
+    }
+
+    #[test]
+    fn kimi_toml_disable_removes_emptied_inline_hooks_array() {
+        // Fresh file provisioned in inline form (only possible if the user had
+        // `hooks = []`): a disable must tidy the emptied array away.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "hooks = []\n").unwrap();
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains("abundio-hook.sh"));
+        provision_merge_toml_hooks(&path, false, "kimi", &relay()).unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("hooks"));
     }
 
     #[test]

@@ -85,6 +85,10 @@ HOOK_EVENT_MAP.kimi = {
 	// and Interrupt — the user cancelled the turn, which is also why kimi keeps
 	// the double-ESC default in escPressesToCancelAgent: the hook is the
 	// authoritative cancel signal, the keystroke heuristic only a fallback.
+	// PermissionResult likely fires on deny as well as grant (its payload isn't
+	// split by outcome in the docs): on a deny the pane may read Working for a
+	// beat before the ensuing Stop/StopFailure corrects it — accepted as
+	// self-correcting. Confirm on the first live turn (hook-server log).
 	UserPromptSubmit: "active",
 	PermissionRequest: "waiting",
 	PermissionResult: "active",
