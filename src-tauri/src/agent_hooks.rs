@@ -576,19 +576,29 @@ const SUPPORTED_AGENTS: &[&str] = &[
 /// Claude-compatible reimplementation (it even loads `.claude/settings.json`),
 /// but Abundio provisions a standalone personal-scope file in `~/.grok/hooks/`
 /// instead — global hook files there are always trusted (no folder-trust gate,
-/// unlike project-scope hooks). PreToolUse/PostToolUse/PreCompact/PostCompact
-/// are deliberately absent: per-tool noise with no status value.
+/// unlike project-scope hooks). PostToolUse/PreCompact/PostCompact are
+/// deliberately absent: per-tool noise with no status value.
 /// `Notification` is matcher-scoped (the matcher regex tests Grok's
 /// `notificationType`) to the two first-party blocking types — plugins can
 /// dispatch arbitrary notification types, so an unscoped hook would flip
-/// Waiting on non-prompts. `PermissionDenied` gives the authoritative resume
-/// out of Waiting on a deny; `Stop` carries `reason: end_turn|cancelled|error`
-/// which the frontend branches on (a cancelled turn goes to Idle, not Ready).
+/// Waiting on non-prompts. Grok has NO permission-granted event (unlike
+/// Kimi's PermissionResult), and its permission pipeline runs — emitting the
+/// `permission_prompt` notification — even for prompts that resolve without
+/// a local keystroke (always-approve mode, the LLM-classifier mode,
+/// remembered grants, a mid-prompt Ctrl+O toggle, relay approvals), so
+/// Waiting would otherwise wedge until turn end. `PreToolUse` is the resume
+/// signal: a tool only runs after its permission resolves, so it maps to
+/// "active" on the frontend — and it cannot mask genuine Waiting because no
+/// tool runs while a prompt is actually pending. `PermissionDenied` gives
+/// the authoritative resume out of Waiting on a deny; `Stop` carries
+/// `reason: end_turn|cancelled|error` which the frontend branches on (a
+/// cancelled turn goes to Idle, not Ready).
 /// Verified against github.com/xai-org/grok-build (xai-grok-hooks/src/event.rs,
 /// xai-grok-shell acp_session_impl) and the bundled user guide.
 const GROK_EVENTS: &[&str] = &[
     "UserPromptSubmit",
     "Notification",
+    "PreToolUse",
     "PermissionDenied",
     "Stop",
     "StopFailure",

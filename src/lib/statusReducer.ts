@@ -25,13 +25,18 @@ export type StatusMode = "agent" | "shell";
  *  side (the "clear" transition is modelled as the `sessionEnded` event).
  *  "idle" is an authoritative user-cancel (Kimi's `Interrupt`): straight to
  *  Idle — not Ready, the user just acted so nothing is unacknowledged — and
- *  the delegated-work set is dropped, mirroring the ESC cancel path. */
+ *  the delegated-work set is dropped, mirroring the ESC cancel path.
+ *  "resume" proves the agent is not blocked (a tool is executing — Grok's
+ *  PreToolUse): it lifts Waiting → Working and is otherwise a strict no-op,
+ *  so a per-tool-call event can never reset the working window or drop a
+ *  Subagent-held Stop (ADR-0022). */
 export type StatusTransition =
 	| "working"
 	| "waiting"
 	| "ready"
 	| "idle"
-	| "error";
+	| "error"
+	| "resume";
 
 /** A keystroke pre-classified by the translator (after focus/mouse-report
  *  filtering). `answer` = Enter or a 0-9 choice; `esc` = a bare ESC. */
@@ -231,6 +236,23 @@ function applyHook(
 	transition: StatusTransition,
 	now: number,
 ): StatusState {
+	if (transition === "resume") {
+		// Only a Waiting agent has anything to resume from. A prompt that
+		// resolved without a local keystroke (auto-approve, LLM classifier,
+		// remembered grant, relay approval) still runs the tool — this is the
+		// authoritative "not blocked" signal. Everywhere else it is a strict
+		// no-op: it must not reset `workingSince` or clear a Subagent hold.
+		if (s.state === "waiting" && s.mode === "agent") {
+			return {
+				...s,
+				state: "working",
+				hookDriven: true,
+				workingSince: now,
+				lastActivityAt: now,
+			};
+		}
+		return s;
+	}
 	if (transition === "working") {
 		return {
 			...s,

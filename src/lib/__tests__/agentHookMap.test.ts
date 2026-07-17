@@ -84,10 +84,15 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("grok", "Notification")).toBe("waiting");
 		// PermissionDenied fires AFTER the deny — the turn continues.
 		expect(mapHookEvent("grok", "PermissionDenied")).toBe("active");
+		// PreToolUse is the resume-out-of-Waiting signal: Grok has no
+		// permission-granted event, and prompts frequently resolve without a
+		// local keystroke (always-approve mode, LLM classifier, remembered
+		// grants, mid-prompt Ctrl+O, relay approvals). "resume" lifts Waiting
+		// and is a no-op otherwise, so the per-tool-call frequency is safe.
+		expect(mapHookEvent("grok", "PreToolUse")).toBe("resume");
 		expect(mapHookEvent("grok", "StopFailure")).toBe("error");
 		expect(mapHookEvent("grok", "SessionEnd")).toBe("clear");
 		// Unprovisioned per-tool/compaction noise stays unmapped.
-		expect(mapHookEvent("grok", "PreToolUse")).toBeNull();
 		expect(mapHookEvent("grok", "PostToolUse")).toBeNull();
 		expect(mapHookEvent("grok", "PostToolUseFailure")).toBeNull();
 		expect(mapHookEvent("grok", "PreCompact")).toBeNull();
