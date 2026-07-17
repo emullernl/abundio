@@ -76,6 +76,44 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("kimi", "Notification")).toBeNull();
 	});
 
+	it("maps Grok Build events (Claude-compatible schema, Notification-driven waiting)", () => {
+		expect(mapHookEvent("grok", "UserPromptSubmit")).toBe("active");
+		// Notification is matcher-scoped at provisioning to
+		// permission_prompt|elicitation_dialog, so only genuine blocking
+		// prompts reach this mapping (Copilot-style, not Gemini-style).
+		expect(mapHookEvent("grok", "Notification")).toBe("waiting");
+		// PermissionDenied fires AFTER the deny — the turn continues.
+		expect(mapHookEvent("grok", "PermissionDenied")).toBe("active");
+		expect(mapHookEvent("grok", "StopFailure")).toBe("error");
+		expect(mapHookEvent("grok", "SessionEnd")).toBe("clear");
+		// Unprovisioned per-tool/compaction noise stays unmapped.
+		expect(mapHookEvent("grok", "PreToolUse")).toBeNull();
+		expect(mapHookEvent("grok", "PostToolUse")).toBeNull();
+		expect(mapHookEvent("grok", "PostToolUseFailure")).toBeNull();
+		expect(mapHookEvent("grok", "PreCompact")).toBeNull();
+		expect(mapHookEvent("grok", "PostCompact")).toBeNull();
+	});
+
+	it("branches Grok's Stop on its reason payload (end_turn/cancelled/error)", () => {
+		// Grok fires a single Stop for every turn end, discriminated by reason.
+		expect(mapHookEvent("grok", "Stop", undefined, "end_turn")).toBe("ready");
+		// A user-cancel goes straight to Idle, never Ready (CONTEXT.md: Ready =
+		// clean finish; same rationale as Kimi's Interrupt).
+		expect(mapHookEvent("grok", "Stop", undefined, "cancelled")).toBe("idle");
+		// Stop fires AFTER StopFailure on errored turns — "ready" here would
+		// overwrite the Error icon.
+		expect(mapHookEvent("grok", "Stop", undefined, "error")).toBe("error");
+		// Missing/unknown reasons fall through to the map default.
+		expect(mapHookEvent("grok", "Stop")).toBe("ready");
+		expect(mapHookEvent("grok", "Stop", undefined, "future_reason")).toBe(
+			"ready",
+		);
+		// The reason branch is Grok-specific — Claude's Stop ignores it.
+		expect(mapHookEvent("claude", "Stop", undefined, "cancelled")).toBe(
+			"ready",
+		);
+	});
+
 	it("maps Codex events", () => {
 		expect(mapHookEvent("codex", "UserPromptSubmit")).toBe("active");
 		expect(mapHookEvent("codex", "PermissionRequest")).toBe("waiting");
@@ -129,6 +167,27 @@ describe("mapSubagentHookEvent (ADR-0022)", () => {
 		expect(
 			mapSubagentHookEvent("claude", "SubagentStart", { agentId: "a2" }, never),
 		).toEqual({ action: "started", id: "a2" });
+	});
+
+	it("classifies Grok SubagentStart/Stop by subagentId", () => {
+		// Grok's payload field is `subagentId` (xai-grok-hooks/src/event.rs).
+		expect(
+			mapSubagentHookEvent(
+				"grok",
+				"SubagentStart",
+				{ subagentId: "sub-1", subagentType: "explore" },
+				never,
+			),
+		).toEqual({ action: "started", id: "sub-1" });
+		expect(
+			mapSubagentHookEvent(
+				"grok",
+				"SubagentStop",
+				{ subagentId: "sub-1" },
+				never,
+			),
+		).toEqual({ action: "stopped", id: "sub-1" });
+		expect(mapSubagentHookEvent("grok", "SubagentStart", {}, never)).toBeNull();
 	});
 
 	it("classifies Copilot subagentStart/Stop by agentName", () => {

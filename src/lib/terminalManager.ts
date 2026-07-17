@@ -1087,6 +1087,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					typeof (payload as { toolName?: unknown })?.toolName === "string"
 						? ((payload as { toolName: string }).toolName as string)
 						: undefined;
+				// Grok's Stop payload discriminates how the turn ended
+				// (end_turn / cancelled / error) — mapHookEvent branches on it.
+				const stopReason =
+					typeof (payload as { reason?: unknown })?.reason === "string"
+						? ((payload as { reason: string }).reason as string)
+						: undefined;
 
 				// Subagent lifecycle events bypass mapHookEvent: they carry an id, not
 				// a transition, and drive the pane's Subagent set — which holds the
@@ -1117,6 +1123,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					hookEvent.agent,
 					hookEvent.event,
 					toolName,
+					stopReason,
 				);
 				if (!transition) {
 					console.debug(

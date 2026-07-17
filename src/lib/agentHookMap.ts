@@ -98,6 +98,30 @@ HOOK_EVENT_MAP.kimi = {
 	SessionEnd: "clear",
 };
 
+HOOK_EVENT_MAP.grok = {
+	// Grok Build (xAI) reimplements Claude's hook schema (it can even load
+	// .claude/settings.json), but Abundio provisions a standalone file in
+	// ~/.grok/hooks/ — see GROK_EVENTS in agent_hooks.rs. Grok has no
+	// PermissionRequest event; its Notification hook is provisioned
+	// matcher-scoped to the two first-party blocking notification types
+	// (permission_prompt | elicitation_dialog), so — like Copilot — only
+	// genuine prompts reach the "waiting" mapping. PermissionDenied fires
+	// AFTER a deny: the user (or policy) just acted and the turn continues,
+	// so it resumes "active"; Stop/StopFailure corrects if the turn ends
+	// instead. Stop is reason-branched in mapHookEvent (end_turn → ready,
+	// cancelled → idle, error → error) because Grok fires a single Stop for
+	// completed, cancelled, AND errored turns — and on errors it fires AFTER
+	// StopFailure, so an unconditional "ready" would overwrite the Error
+	// icon. Verified against github.com/xai-org/grok-build
+	// (acp_session_impl/turn.rs).
+	UserPromptSubmit: "active",
+	Notification: "waiting",
+	PermissionDenied: "active",
+	Stop: "ready",
+	StopFailure: "error",
+	SessionEnd: "clear",
+};
+
 // Qwen Code forked from Gemini CLI but has since adopted Claude-style hooks
 // (verified against qwen 0.15.6: PascalCase UserPromptSubmit/Stop/StopFailure/
 // SessionEnd etc., zero BeforeAgent/AfterAgent) — see
@@ -118,12 +142,26 @@ const COPILOT_WAITING_TOOLS = new Set(["exit_plan_mode", "ask_user"]);
  *
  * `toolName` (from the hook payload, when present) lets a specific tool
  * override the event's default transition — see the exit_plan_mode case.
+ * `stopReason` (Grok's `Stop.reason` payload field) lets a turn-end event
+ * distinguish how the turn ended — see the grok case.
  */
 export function mapHookEvent(
 	agentId: string,
 	eventName: string,
 	toolName?: string,
+	stopReason?: string,
 ): HookTransition | null {
+	// Grok's single Stop event covers completed, cancelled, and errored turns,
+	// discriminated by `reason`. A user-cancel goes straight to Idle, not Ready
+	// (CONTEXT.md: Ready = clean finish; same rationale as Kimi's Interrupt).
+	// An errored turn must NOT map to "ready": Grok fires Stop AFTER
+	// StopFailure on errors, and "ready" would overwrite the Error icon.
+	// Unknown/missing reasons fall through to the map's default ("ready").
+	if (agentId === "grok" && eventName === "Stop") {
+		if (stopReason === "cancelled") return "idle";
+		if (stopReason === "error") return "error";
+		return "ready";
+	}
 	// Copilot's preToolUse is provisioned only for the two tools whose execution
 	// IS a prompt blocking on the user (exit_plan_mode's plan review, ask_user's
 	// multiple-choice question) — those go to "waiting" until the user answers
@@ -162,6 +200,8 @@ function str(v: unknown): string | undefined {
  *
  * Per agent:
  * - claude / qwen / codex / kimi: `SubagentStart` / `SubagentStop`, id = `agent_id`.
+ * - grok: same PascalCase events, id = `subagentId` (camelCase — verified
+ *   against xai-grok-hooks/src/event.rs in the open-source repo).
  * - copilot: `subagentStart` / `subagentStop`, id = `agentName` (no instance id
  *   exists; concurrent same-named subagents may release the hold early, and the
  *   built-in `general-purpose` agent emits neither event — accepted gaps).
@@ -181,12 +221,13 @@ export function mapSubagentHookEvent(
 		agentId === "claude" ||
 		agentId === "qwen" ||
 		agentId === "codex" ||
-		agentId === "kimi"
+		agentId === "kimi" ||
+		agentId === "grok"
 	) {
 		if (eventName !== "SubagentStart" && eventName !== "SubagentStop") {
 			return null;
 		}
-		const id = str(p?.agent_id) ?? str(p?.agentId);
+		const id = str(p?.agent_id) ?? str(p?.agentId) ?? str(p?.subagentId);
 		if (!id) return null;
 		return {
 			action: eventName === "SubagentStart" ? "started" : "stopped",

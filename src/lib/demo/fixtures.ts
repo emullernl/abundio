@@ -1284,6 +1284,7 @@ export const installedAgentCommands = new Set([
 	"opencode",
 	"qwen",
 	"kimi",
+	"grok",
 ]);
 
 /** Per-agent hook footprint shown in Settings → Agents (demo, no real files). */
@@ -1354,6 +1355,22 @@ export const agentHookStatuses: AgentHookStatus[] = [
 			"Stop",
 			"StopFailure",
 			"Interrupt",
+			"SubagentStart",
+			"SubagentStop",
+			"SessionEnd",
+		],
+		state: "registered",
+	},
+	{
+		agentId: "grok",
+		configPath: "~/.grok/hooks/abundio.json",
+		ownership: "owned",
+		events: [
+			"UserPromptSubmit",
+			"Notification",
+			"PermissionDenied",
+			"Stop",
+			"StopFailure",
 			"SubagentStart",
 			"SubagentStop",
 			"SessionEnd",

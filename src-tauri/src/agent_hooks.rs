@@ -492,6 +492,25 @@ fn copilot_config(relay: &RelayPaths) -> Result<String, AbundioError> {
         .map_err(|e| io_err(e.to_string()))
 }
 
+/// Grok Build hooks file (Abundio-owned, personal scope `~/.grok/hooks/`).
+/// Claude-compatible matcher-group schema, so `make_group` produces the right
+/// shape. Grok rejects a matcher on the lifecycle events (SessionStart,
+/// SessionEnd, Stop, UserPromptSubmit) — only `Notification` gets one here.
+/// `type: "http"` hooks exist but are unusable: the loopback port is
+/// per-launch, so the env-driven relay script is used like every other agent.
+/// Hook failures are fail-open on Grok's side and the relay always exits 0,
+/// so a dead relay can never block a tool call.
+fn grok_config(relay: &Path) -> Result<String, AbundioError> {
+    let mut hooks = serde_json::Map::new();
+    for event in GROK_EVENTS {
+        let cmd = command_str(relay, event, "grok");
+        let matcher = (*event == "Notification").then_some(GROK_NOTIFICATION_MATCHER);
+        hooks.insert(event.to_string(), json!([make_group(matcher, &cmd, false)]));
+    }
+    serde_json::to_string_pretty(&json!({ "hooks": hooks }))
+        .map_err(|e| io_err(e.to_string()))
+}
+
 /// OpenCode plugin source (Abundio-owned). Forwards lifecycle events directly
 /// to the loopback server — OpenCode plugins are JS, so no relay is needed.
 fn opencode_plugin() -> String {
@@ -550,8 +569,38 @@ fn curl_available() -> bool {
 /// custom user agents are intentionally absent — Abundio has no hook
 /// integration for them.
 const SUPPORTED_AGENTS: &[&str] = &[
-    "claude", "gemini", "qwen", "codex", "copilot", "opencode", "kimi",
+    "claude", "gemini", "qwen", "codex", "copilot", "opencode", "kimi", "grok",
 ];
+
+/// Grok Build (xAI) hook events Abundio registers. Grok's hook system is a
+/// Claude-compatible reimplementation (it even loads `.claude/settings.json`),
+/// but Abundio provisions a standalone personal-scope file in `~/.grok/hooks/`
+/// instead — global hook files there are always trusted (no folder-trust gate,
+/// unlike project-scope hooks). PreToolUse/PostToolUse/PreCompact/PostCompact
+/// are deliberately absent: per-tool noise with no status value.
+/// `Notification` is matcher-scoped (the matcher regex tests Grok's
+/// `notificationType`) to the two first-party blocking types — plugins can
+/// dispatch arbitrary notification types, so an unscoped hook would flip
+/// Waiting on non-prompts. `PermissionDenied` gives the authoritative resume
+/// out of Waiting on a deny; `Stop` carries `reason: end_turn|cancelled|error`
+/// which the frontend branches on (a cancelled turn goes to Idle, not Ready).
+/// Verified against github.com/xai-org/grok-build (xai-grok-hooks/src/event.rs,
+/// xai-grok-shell acp_session_impl) and the bundled user guide.
+const GROK_EVENTS: &[&str] = &[
+    "UserPromptSubmit",
+    "Notification",
+    "PermissionDenied",
+    "Stop",
+    "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
+    "SessionEnd",
+];
+
+/// Matcher for Grok's `Notification` hook: only the first-party notification
+/// types that mean "blocked on the user" (tool/plan permission prompts and
+/// free-form user questions). Grok tests this regex against `notificationType`.
+const GROK_NOTIFICATION_MATCHER: &str = "permission_prompt|elicitation_dialog";
 
 /// Kimi Code hook events Abundio registers (Claude vocabulary; hooks are Beta).
 /// Kimi's `[[hooks]]` entries allow ONLY event/matcher/command/timeout — an
@@ -685,6 +734,17 @@ fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
             format: ConfigFormat::Toml,
             events: KIMI_EVENTS.iter().map(|s| s.to_string()).collect(),
         }),
+        // Grok Build's config home is relocatable via GROK_HOME; like the other
+        // descriptors only the default location is supported. `dir_rel` is
+        // `.grok` (not `.grok/hooks`) so the no-litter gate keys off "is grok
+        // installed at all" — write_atomic creates the `hooks/` parent.
+        "grok" => Some(AgentDescriptor {
+            dir_rel: PathBuf::from(".grok"),
+            config_rel: [".grok", "hooks", "abundio.json"].iter().collect(),
+            ownership: Ownership::Owned,
+            format: ConfigFormat::Json,
+            events: GROK_EVENTS.iter().map(|s| s.to_string()).collect(),
+        }),
         _ => None,
     }
 }
@@ -696,6 +756,7 @@ fn owned_content(agent_id: &str, relay: &RelayPaths) -> Result<String, AbundioEr
         "codex" => codex_config(relay.primary()),
         "copilot" => copilot_config(relay),
         "opencode" => Ok(opencode_plugin()),
+        "grok" => grok_config(relay.primary()),
         _ => Ok(String::new()),
     }
 }
@@ -1183,6 +1244,80 @@ mod tests {
             assert!(copilot["hooks"][event].is_array(), "{event} missing");
             assert!(copilot["hooks"][event][0].get("matcher").is_none());
         }
+    }
+
+    #[test]
+    fn grok_config_registers_expected_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let relay = RelayPaths {
+            sh: dir.path().join("abundio-hook.sh"),
+            ps1: dir.path().join("abundio-hook.ps1"),
+        };
+        let v: Value = serde_json::from_str(&grok_config(relay.primary()).unwrap()).unwrap();
+        let hooks = v["hooks"].as_object().unwrap();
+        assert_eq!(hooks.len(), GROK_EVENTS.len());
+        for event in GROK_EVENTS {
+            let groups = hooks[*event].as_array().unwrap();
+            assert_eq!(groups.len(), 1, "{event} must have exactly one group");
+            let cmd = groups[0]["hooks"][0]["command"].as_str().unwrap();
+            assert!(
+                cmd.contains(&format!("{event} grok")),
+                "{event} command must pass the event name and agent id"
+            );
+            assert!(cmd.contains("abundio-hook"), "{event} must use the relay");
+        }
+
+        // Notification is matcher-scoped to the two first-party blocking
+        // notification types (permission prompts / user questions) — plugins
+        // can dispatch arbitrary types, which must not flip Waiting.
+        let notif = hooks["Notification"].as_array().unwrap();
+        let matcher = notif[0]["matcher"].as_str().unwrap();
+        assert_eq!(matcher, GROK_NOTIFICATION_MATCHER);
+        let re = regex::Regex::new(&format!("^(?:{matcher})$")).expect("matcher must compile");
+        assert!(re.is_match("permission_prompt"));
+        assert!(re.is_match("elicitation_dialog"));
+        assert!(!re.is_match("task_update"));
+
+        // Grok REJECTS a matcher on lifecycle events (SessionStart/SessionEnd/
+        // Stop/UserPromptSubmit) — one there would kill the hook at load time.
+        for event in ["UserPromptSubmit", "Stop", "SessionEnd", "StopFailure"] {
+            assert!(
+                hooks[event][0].get("matcher").is_none(),
+                "{event} must carry no matcher"
+            );
+        }
+    }
+
+    #[test]
+    fn grok_provisioning_owned_lifecycle_and_self_heal() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+
+        // No ~/.grok dir → no-litter: nothing written.
+        provision_agent(home.path(), &relay, "grok", true, false).unwrap();
+        assert!(!home.path().join(".grok").exists());
+
+        // With the dir present, provisioning creates hooks/abundio.json
+        // (write_atomic scaffolds the hooks/ parent).
+        fs::create_dir_all(home.path().join(".grok")).unwrap();
+        provision_agent(home.path(), &relay, "grok", true, false).unwrap();
+        let path = home.path().join(".grok").join("hooks").join("abundio.json");
+        assert!(path.exists());
+        assert!(is_provisioned(home.path(), &relay, "grok"));
+
+        // An older binary's file (fewer events) reads as not-registered and
+        // re-provisioning heals it.
+        let mut v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        v["hooks"].as_object_mut().unwrap().remove("SubagentStart");
+        fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        assert!(!is_provisioned(home.path(), &relay, "grok"));
+        provision_agent(home.path(), &relay, "grok", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "grok"));
+
+        // Disable deletes only Abundio's own file.
+        provision_agent(home.path(), &relay, "grok", false, false).unwrap();
+        assert!(!path.exists());
+        assert!(home.path().join(".grok").exists());
     }
 
     #[test]
