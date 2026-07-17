@@ -588,7 +588,9 @@ const SUPPORTED_AGENTS: &[&str] = &[
 /// remembered grants, a mid-prompt Ctrl+O toggle, relay approvals), so
 /// Waiting would otherwise wedge until turn end. `PreToolUse` is the resume
 /// signal: a tool only runs after its permission resolves, so it maps to
-/// "active" on the frontend — and it cannot mask genuine Waiting because no
+/// "resume" on the frontend (lift Waiting → Working, else a strict no-op —
+/// deliberately NOT "active", which would reset the working window on every
+/// tool call) — and it cannot mask genuine Waiting because no
 /// tool runs while a prompt is actually pending. `PermissionDenied` gives
 /// the authoritative resume out of Waiting on a deny; `Stop` carries
 /// `reason: end_turn|cancelled|error` which the frontend branches on (a
