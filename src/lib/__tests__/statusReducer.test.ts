@@ -63,6 +63,30 @@ describe("statusReducer — hook transitions (applyHookEvent parity)", () => {
 			expect(s.lastActivityAt).toBe(5);
 		}
 	});
+
+	it("Idle (Kimi's Interrupt) cancels a Working agent and drops its Subagents", () => {
+		// The authoritative user-cancel: straight to Idle — never a Ready flash
+		// (the user just acted, nothing is unacknowledged) — and delegated work
+		// is dropped exactly like the ESC cancel path (ADR-0022).
+		const s = statusReducer(
+			mk(
+				{
+					state: "working",
+					hookDriven: true,
+					activeSubagents: [{ id: "sub-1", startedAt: 50 }],
+					stopHeldForSubagents: true,
+					lastEscAt: 90,
+				},
+				"agent",
+			),
+			{ kind: "hook", transition: "idle", now: 100 },
+		);
+		expect(s.state).toBe("idle");
+		expect(s.hookDriven).toBe(true);
+		expect(s.activeSubagents).toEqual([]);
+		expect(s.stopHeldForSubagents).toBe(false);
+		expect(s.lastEscAt).toBeNull();
+	});
 });
 
 describe("statusReducer — agent/session mode flips", () => {

@@ -50,6 +50,13 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		builtin: true,
 		enabled: true,
 	},
+	{
+		id: "kimi",
+		name: "Kimi Code",
+		command: "kimi",
+		builtin: true,
+		enabled: true,
+	},
 ];
 
 /**
@@ -93,6 +100,9 @@ export function matchProcessToAgent(
  * Claude, Gemini, and Qwen treat a single ESC as the cancellation key;
  * the others require a deliberate double-ESC. Unknown agents default to
  * double-ESC — the safer choice when we can't identify the CLI.
+ * Kimi Code deliberately stays on the double-ESC default: its `Interrupt`
+ * hook is the authoritative cancel signal (mapped to "idle" in
+ * agentHookMap.ts), so the keystroke heuristic is only a fallback there.
  */
 export function escPressesToCancelAgent(agentId: string | undefined): number {
 	if (agentId === "claude" || agentId === "gemini" || agentId === "qwen") {

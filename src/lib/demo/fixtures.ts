@@ -1283,6 +1283,7 @@ export const installedAgentCommands = new Set([
 	"codex",
 	"opencode",
 	"qwen",
+	"kimi",
 ]);
 
 /** Per-agent hook footprint shown in Settings → Agents (demo, no real files). */
@@ -1340,6 +1341,23 @@ export const agentHookStatuses: AgentHookStatus[] = [
 		configPath: "~/.config/opencode/plugin/abundio.ts",
 		ownership: "owned",
 		events: ["all lifecycle events"],
+		state: "registered",
+	},
+	{
+		agentId: "kimi",
+		configPath: "~/.kimi-code/config.toml",
+		ownership: "merged",
+		events: [
+			"UserPromptSubmit",
+			"PermissionRequest",
+			"PermissionResult",
+			"Stop",
+			"StopFailure",
+			"Interrupt",
+			"SubagentStart",
+			"SubagentStop",
+			"SessionEnd",
+		],
 		state: "registered",
 	},
 ];

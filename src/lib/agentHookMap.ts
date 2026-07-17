@@ -2,10 +2,19 @@
 //
 // Hooks are authoritative ground truth for Agent status — see
 // docs/plans/agent-hooks-status-integration.md. "clear" means the Agent
-// session ended (drop agent mode); the other values are PtyActivityState
-// transitions.
+// session ended (drop agent mode); "idle" means the user cancelled the turn
+// (Kimi's Interrupt) — the pane goes straight to Idle, NOT Ready: the user
+// just acted in the pane, so there is nothing unacknowledged, and an
+// interrupt is not a clean finish (see CONTEXT.md's Ready definition). The
+// other values are PtyActivityState transitions.
 
-export type HookTransition = "active" | "waiting" | "ready" | "error" | "clear";
+export type HookTransition =
+	| "active"
+	| "waiting"
+	| "ready"
+	| "idle"
+	| "error"
+	| "clear";
 
 // Per-agent (event name → transition). Event names match each Agent's own
 // hook system; see the per-agent mapping table in the plan.
@@ -67,6 +76,22 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		"session.error": "error",
 		"session.deleted": "clear",
 	},
+};
+
+HOOK_EVENT_MAP.kimi = {
+	// Kimi Code uses Claude's hook vocabulary (Moonshot docs, hooks Beta) plus
+	// two events Claude lacks, both provisioned (see agent_hooks.rs):
+	// PermissionResult — the permission prompt was answered, the turn resumes —
+	// and Interrupt — the user cancelled the turn, which is also why kimi keeps
+	// the double-ESC default in escPressesToCancelAgent: the hook is the
+	// authoritative cancel signal, the keystroke heuristic only a fallback.
+	UserPromptSubmit: "active",
+	PermissionRequest: "waiting",
+	PermissionResult: "active",
+	Stop: "ready",
+	StopFailure: "error",
+	Interrupt: "idle",
+	SessionEnd: "clear",
 };
 
 // Qwen Code forked from Gemini CLI but has since adopted Claude-style hooks
@@ -132,7 +157,7 @@ function str(v: unknown): string | undefined {
  * discriminator for OpenCode events whose payload lacks a `parentID`.
  *
  * Per agent:
- * - claude / qwen / codex: `SubagentStart` / `SubagentStop`, id = `agent_id`.
+ * - claude / qwen / codex / kimi: `SubagentStart` / `SubagentStop`, id = `agent_id`.
  * - copilot: `subagentStart` / `subagentStop`, id = `agentName` (no instance id
  *   exists; concurrent same-named subagents may release the hold early, and the
  *   built-in `general-purpose` agent emits neither event — accepted gaps).
@@ -148,7 +173,12 @@ export function mapSubagentHookEvent(
 	hasSubagent: (id: string) => boolean,
 ): SubagentSignal | null {
 	const p = payload as Record<string, unknown> | undefined;
-	if (agentId === "claude" || agentId === "qwen" || agentId === "codex") {
+	if (
+		agentId === "claude" ||
+		agentId === "qwen" ||
+		agentId === "codex" ||
+		agentId === "kimi"
+	) {
 		if (eventName !== "SubagentStart" && eventName !== "SubagentStop") {
 			return null;
 		}

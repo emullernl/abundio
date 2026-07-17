@@ -22,8 +22,16 @@ export type StatusDotState = "idle" | "working" | "waiting" | "ready" | "error";
 export type StatusMode = "agent" | "shell";
 
 /** A hook-driven transition, as resolved by `mapHookEvent` on the translator
- *  side (the "clear" transition is modelled as the `sessionEnded` event). */
-export type StatusTransition = "working" | "waiting" | "ready" | "error";
+ *  side (the "clear" transition is modelled as the `sessionEnded` event).
+ *  "idle" is an authoritative user-cancel (Kimi's `Interrupt`): straight to
+ *  Idle — not Ready, the user just acted so nothing is unacknowledged — and
+ *  the delegated-work set is dropped, mirroring the ESC cancel path. */
+export type StatusTransition =
+	| "working"
+	| "waiting"
+	| "ready"
+	| "idle"
+	| "error";
 
 /** A keystroke pre-classified by the translator (after focus/mouse-report
  *  filtering). `answer` = Enter or a 0-9 choice; `esc` = a bare ESC. */
@@ -246,6 +254,18 @@ function applyHook(
 			...s,
 			state: "error",
 			hookDriven: true,
+			stopHeldForSubagents: false,
+		};
+	}
+	if (transition === "idle") {
+		// Authoritative user-cancel (Kimi's Interrupt): the abort also drops the
+		// Subagent set, exactly like the ESC clearActive path (ADR-0022).
+		return {
+			...s,
+			state: "idle",
+			hookDriven: true,
+			lastEscAt: null,
+			activeSubagents: NO_SUBAGENTS,
 			stopHeldForSubagents: false,
 		};
 	}

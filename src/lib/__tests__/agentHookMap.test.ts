@@ -57,6 +57,25 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("qwen", "AfterAgent")).toBeNull();
 	});
 
+	it("maps Kimi Code events (Claude vocabulary plus PermissionResult/Interrupt)", () => {
+		expect(mapHookEvent("kimi", "UserPromptSubmit")).toBe("active");
+		expect(mapHookEvent("kimi", "PermissionRequest")).toBe("waiting");
+		// Kimi (unlike Claude) emits an explicit "prompt answered" resume.
+		expect(mapHookEvent("kimi", "PermissionResult")).toBe("active");
+		expect(mapHookEvent("kimi", "Stop")).toBe("ready");
+		expect(mapHookEvent("kimi", "StopFailure")).toBe("error");
+		expect(mapHookEvent("kimi", "SessionEnd")).toBe("clear");
+	});
+
+	it("maps Kimi's Interrupt to idle, never ready (user-cancel is acknowledged)", () => {
+		// An interrupt is not a clean finish and the user just acted in the
+		// pane — a Ready flash here would lie (see CONTEXT.md's Ready).
+		expect(mapHookEvent("kimi", "Interrupt")).toBe("idle");
+		// Unprovisioned noise stays unmapped.
+		expect(mapHookEvent("kimi", "PreToolUse")).toBeNull();
+		expect(mapHookEvent("kimi", "Notification")).toBeNull();
+	});
+
 	it("maps Codex events", () => {
 		expect(mapHookEvent("codex", "UserPromptSubmit")).toBe("active");
 		expect(mapHookEvent("codex", "PermissionRequest")).toBe("waiting");
@@ -97,8 +116,8 @@ describe("mapSubagentHookEvent (ADR-0022)", () => {
 	const never = () => false;
 	const always = () => true;
 
-	it("classifies Claude/Qwen/Codex SubagentStart/Stop by agent_id", () => {
-		for (const agent of ["claude", "qwen", "codex"]) {
+	it("classifies Claude/Qwen/Codex/Kimi SubagentStart/Stop by agent_id", () => {
+		for (const agent of ["claude", "qwen", "codex", "kimi"]) {
 			expect(
 				mapSubagentHookEvent(agent, "SubagentStart", { agent_id: "a1" }, never),
 			).toEqual({ action: "started", id: "a1" });

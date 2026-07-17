@@ -19,6 +19,7 @@ describe("BUILTIN_AGENTS", () => {
 		expect(commands).toContain("codex");
 		expect(commands).toContain("opencode");
 		expect(commands).toContain("qwen");
+		expect(commands).toContain("kimi");
 	});
 
 	it("all builtins are enabled by default", () => {
@@ -41,6 +42,9 @@ describe("escPressesToCancelAgent", () => {
 		expect(escPressesToCancelAgent("aider")).toBe(2);
 		expect(escPressesToCancelAgent("codex")).toBe(2);
 		expect(escPressesToCancelAgent("opencode")).toBe(2);
+		// Kimi deliberately keeps the double-ESC default: its Interrupt hook is
+		// the authoritative cancel signal (mapped to "idle" in agentHookMap).
+		expect(escPressesToCancelAgent("kimi")).toBe(2);
 	});
 
 	it("defaults to 2 for unknown or undefined agents", () => {
