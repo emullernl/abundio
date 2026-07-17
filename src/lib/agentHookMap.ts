@@ -5,8 +5,12 @@
 // session ended (drop agent mode); "idle" means the user cancelled the turn
 // (Kimi's Interrupt) — the pane goes straight to Idle, NOT Ready: the user
 // just acted in the pane, so there is nothing unacknowledged, and an
-// interrupt is not a clean finish (see CONTEXT.md's Ready definition). The
-// other values are PtyActivityState transitions.
+// interrupt is not a clean finish (see CONTEXT.md's Ready definition).
+// "resume" means "the agent is provably not blocked" (a tool is executing):
+// it lifts Waiting → Working and is otherwise a strict no-op — unlike
+// "active" it never resets the working window or drops a Subagent-held Stop,
+// so it is safe for per-tool-call events. The other values are
+// PtyActivityState transitions.
 
 export type HookTransition =
 	| "active"
@@ -14,6 +18,7 @@ export type HookTransition =
 	| "ready"
 	| "idle"
 	| "error"
+	| "resume"
 	| "clear";
 
 // Per-agent (event name → transition). Event names match each Agent's own
@@ -105,7 +110,16 @@ HOOK_EVENT_MAP.grok = {
 	// PermissionRequest event; its Notification hook is provisioned
 	// matcher-scoped to the two first-party blocking notification types
 	// (permission_prompt | elicitation_dialog), so — like Copilot — only
-	// genuine prompts reach the "waiting" mapping. PermissionDenied fires
+	// genuine prompts reach the "waiting" mapping. Grok has NO
+	// permission-granted event (unlike Kimi's PermissionResult), and its
+	// permission pipeline emits the permission_prompt notification even for
+	// prompts that resolve without a local keystroke (always-approve mode,
+	// the LLM-classifier mode, remembered grants, a mid-prompt Ctrl+O
+	// toggle, relay approvals) — so PreToolUse is the resume signal out of
+	// Waiting: a tool only runs after its permission resolves, and no tool
+	// runs while a prompt is genuinely pending, so "resume" cannot mask real
+	// Waiting (and, being a no-op outside Waiting, the per-tool-call
+	// frequency is harmless). PermissionDenied fires
 	// AFTER a deny: the user (or policy) just acted and the turn continues,
 	// so it resumes "active"; Stop/StopFailure corrects if the turn ends
 	// instead. Stop is reason-branched in mapHookEvent (end_turn → ready,
@@ -116,6 +130,7 @@ HOOK_EVENT_MAP.grok = {
 	// (acp_session_impl/turn.rs).
 	UserPromptSubmit: "active",
 	Notification: "waiting",
+	PreToolUse: "resume",
 	PermissionDenied: "active",
 	Stop: "ready",
 	StopFailure: "error",

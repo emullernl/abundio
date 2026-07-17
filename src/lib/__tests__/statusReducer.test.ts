@@ -87,6 +87,59 @@ describe("statusReducer — hook transitions (applyHookEvent parity)", () => {
 		expect(s.stopHeldForSubagents).toBe(false);
 		expect(s.lastEscAt).toBeNull();
 	});
+
+	it("Resume lifts a Waiting agent to Working (Grok's PreToolUse)", () => {
+		// A tool only runs after its permission resolves — the prompt is gone
+		// even though no local keystroke answered it (always-approve mode, LLM
+		// classifier, remembered grant, relay approval).
+		const s = statusReducer(
+			mk({ state: "waiting", hookDriven: true }, "agent"),
+			{
+				kind: "hook",
+				transition: "resume",
+				now: 100,
+			},
+		);
+		expect(s.state).toBe("working");
+		expect(s.hookDriven).toBe(true);
+		expect(s.workingSince).toBe(100);
+		expect(s.lastActivityAt).toBe(100);
+	});
+
+	it("Resume is a strict no-op outside Waiting (per-tool-call frequency)", () => {
+		// PreToolUse fires on EVERY tool call. Outside Waiting it must not
+		// reset the working window, drop a Subagent-held Stop, or resurrect a
+		// finished/errored pane back to Working.
+		const working = mk(
+			{
+				state: "working",
+				hookDriven: true,
+				workingSince: 5,
+				lastActivityAt: 5,
+				activeSubagents: [{ id: "sub-1", startedAt: 3 }],
+				stopHeldForSubagents: true,
+			},
+			"agent",
+		);
+		expect(
+			statusReducer(working, { kind: "hook", transition: "resume", now: 100 }),
+		).toBe(working);
+		for (const state of ["idle", "ready", "error"] as const) {
+			const before = mk({ state }, "agent");
+			expect(
+				statusReducer(before, { kind: "hook", transition: "resume", now: 100 }),
+			).toBe(before);
+		}
+		// Waiting in shell mode (not a real agent pane) is left alone too.
+		const shellWaiting = mk({ state: "waiting" }, "shell");
+		expect(
+			statusReducer(shellWaiting, {
+				kind: "hook",
+				transition: "resume",
+				now: 100,
+			}),
+		).toBe(shellWaiting);
+	});
 });
 
 describe("statusReducer — agent/session mode flips", () => {
