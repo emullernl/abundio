@@ -312,6 +312,105 @@ fn provision_merge_settings(
     Ok(())
 }
 
+/// Merge (or strip) Abundio's `[[hooks]]` entries in a co-owned TOML config
+/// (Kimi Code's `config.toml`). Counterpart of `provision_merge_settings` for
+/// `ConfigFormat::Toml`; `toml_edit` preserves the user's comments and layout,
+/// where a serde rewrite would destroy them. Abundio's entries are recognized
+/// by the relay path inside `command` — Kimi's strict loader forbids any
+/// marker key (only event/matcher/command/timeout are legal; an unknown key
+/// makes kimi reject its whole hooks section, silencing the user's own hooks).
+fn provision_merge_toml_hooks(
+    path: &Path,
+    enabled: bool,
+    agent: &str,
+    relay: &Path,
+) -> Result<(), AbundioError> {
+    let relay_marker = relay.to_string_lossy().into_owned();
+
+    let mut doc: toml_edit::DocumentMut = if path.exists() {
+        let text = fs::read_to_string(path)?;
+        text.parse().map_err(|e| {
+            io_err(format!(
+                "{} is not valid TOML ({}) — skipped hook provisioning",
+                path.display(),
+                e
+            ))
+        })?
+    } else if enabled {
+        toml_edit::DocumentMut::new()
+    } else {
+        return Ok(()); // nothing to strip
+    };
+
+    // Always strip prior Abundio entries first — idempotent, and the disable
+    // path. `hooks` may be either the `[[hooks]]` header form (ArrayOfTables)
+    // or the equally-legal inline form `hooks = [{ ... }]` (a Value array of
+    // inline tables) — both are handled, keeping whichever form the user wrote.
+    if let Some(item) = doc.get_mut("hooks") {
+        if let Some(hooks) = item.as_array_of_tables_mut() {
+            hooks.retain(|t| {
+                !t.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.contains(relay_marker.as_str()))
+                    .unwrap_or(false)
+            });
+        } else if let Some(arr) = item.as_value_mut().and_then(|v| v.as_array_mut()) {
+            arr.retain(|v| {
+                !v.as_inline_table()
+                    .and_then(|t| t.get("command"))
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.contains(relay_marker.as_str()))
+                    .unwrap_or(false)
+            });
+        }
+    }
+
+    if enabled {
+        let item = doc
+            .entry("hooks")
+            .or_insert(toml_edit::Item::ArrayOfTables(Default::default()));
+        if let Some(hooks) = item.as_array_of_tables_mut() {
+            for event in KIMI_EVENTS {
+                let mut t = toml_edit::Table::new();
+                t["event"] = toml_edit::value(*event);
+                t["command"] = toml_edit::value(command_str(relay, event, agent));
+                hooks.push(t);
+            }
+        } else if let Some(arr) = item.as_value_mut().and_then(|v| v.as_array_mut()) {
+            // The user keeps their hooks in the inline form — append matching
+            // inline tables rather than forcing a format change on their file.
+            for event in KIMI_EVENTS {
+                let mut t = toml_edit::InlineTable::new();
+                t.insert("event", (*event).into());
+                t.insert("command", command_str(relay, event, agent).into());
+                arr.push(toml_edit::Value::InlineTable(t));
+            }
+        } else {
+            return Err(io_err(format!(
+                "{} has a non-array `hooks` key — skipped hook provisioning",
+                path.display()
+            )));
+        }
+    }
+
+    // Tidy: drop an emptied hooks array (either form) so a disable leaves no trace.
+    let hooks_emptied = doc
+        .get("hooks")
+        .map(|item| {
+            item.as_array_of_tables()
+                .map(|a| a.is_empty())
+                .or_else(|| item.as_array().map(|a| a.is_empty()))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    if hooks_emptied {
+        doc.remove("hooks");
+    }
+
+    write_atomic(path, &doc.to_string())?;
+    Ok(())
+}
+
 /// Write or delete an Abundio-owned config file.
 fn provision_own_file(path: &Path, enabled: bool, content: &str) -> Result<(), AbundioError> {
     if enabled {
@@ -450,7 +549,30 @@ fn curl_available() -> bool {
 /// The agents Abundio can provision hooks for, in display order. Aider and
 /// custom user agents are intentionally absent — Abundio has no hook
 /// integration for them.
-const SUPPORTED_AGENTS: &[&str] = &["claude", "gemini", "qwen", "codex", "copilot", "opencode"];
+const SUPPORTED_AGENTS: &[&str] = &[
+    "claude", "gemini", "qwen", "codex", "copilot", "opencode", "kimi",
+];
+
+/// Kimi Code hook events Abundio registers (Claude vocabulary; hooks are Beta).
+/// Kimi's `[[hooks]]` entries allow ONLY event/matcher/command/timeout — an
+/// extra key makes kimi reject and ignore its ENTIRE hooks section (verified
+/// against kimi 0.27.0: "Warning: Ignored invalid config … : hooks"), killing
+/// the user's own hooks too — so Abundio's entries are identified by the relay
+/// path in `command`, never by a marker field. `PermissionResult`
+/// and `Interrupt` have no Claude equivalent: they give an authoritative
+/// "prompt answered" resume and a user-cancel that would otherwise strand the
+/// pane on Working.
+const KIMI_EVENTS: &[&str] = &[
+    "UserPromptSubmit",
+    "PermissionRequest",
+    "PermissionResult",
+    "Stop",
+    "StopFailure",
+    "Interrupt",
+    "SubagentStart",
+    "SubagentStop",
+    "SessionEnd",
+];
 
 /// Whether Abundio merges entries into a config the agent also owns, or owns
 /// the whole file itself.
@@ -463,6 +585,14 @@ enum Ownership {
     Owned,
 }
 
+/// On-disk format of a `Merged` config file. Internal routing only — the
+/// frontend-facing `Ownership` is unaffected. (`Owned` files ignore this.)
+#[derive(Clone, Copy, PartialEq)]
+enum ConfigFormat {
+    Json,
+    Toml,
+}
+
 /// Static provisioning facts for one supported agent.
 struct AgentDescriptor {
     /// Config dir, relative to `$HOME`, whose existence gates startup provisioning.
@@ -470,6 +600,7 @@ struct AgentDescriptor {
     /// Config file Abundio touches, relative to `$HOME`.
     config_rel: PathBuf,
     ownership: Ownership,
+    format: ConfigFormat,
     /// Lifecycle events Abundio hooks (for the Settings footprint display).
     events: Vec<String>,
 }
@@ -489,24 +620,28 @@ fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
             dir_rel: PathBuf::from(".claude"),
             config_rel: [".claude", "settings.json"].iter().collect(),
             ownership: Ownership::Merged,
+            format: ConfigFormat::Json,
             events: merge_events("claude"),
         }),
         "gemini" => Some(AgentDescriptor {
             dir_rel: PathBuf::from(".gemini"),
             config_rel: [".gemini", "settings.json"].iter().collect(),
             ownership: Ownership::Merged,
+            format: ConfigFormat::Json,
             events: merge_events("gemini"),
         }),
         "qwen" => Some(AgentDescriptor {
             dir_rel: PathBuf::from(".qwen"),
             config_rel: [".qwen", "settings.json"].iter().collect(),
             ownership: Ownership::Merged,
+            format: ConfigFormat::Json,
             events: merge_events("qwen"),
         }),
         "codex" => Some(AgentDescriptor {
             dir_rel: PathBuf::from(".codex"),
             config_rel: [".codex", "hooks.json"].iter().collect(),
             ownership: Ownership::Owned,
+            format: ConfigFormat::Json,
             events: owned_events(&[
                 "UserPromptSubmit",
                 "PermissionRequest",
@@ -519,6 +654,7 @@ fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
             dir_rel: PathBuf::from(".copilot"),
             config_rel: [".copilot", "hooks", "abundio.json"].iter().collect(),
             ownership: Ownership::Owned,
+            format: ConfigFormat::Json,
             events: owned_events(&[
                 "userPromptSubmitted",
                 "preToolUse",
@@ -536,7 +672,18 @@ fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
                 .iter()
                 .collect(),
             ownership: Ownership::Owned,
+            format: ConfigFormat::Json,
             events: vec!["all lifecycle events".to_string()],
+        }),
+        // Kimi Code's config home is relocatable via KIMI_CODE_HOME; like the
+        // other descriptors (CLAUDE_CONFIG_DIR is equally unhonored) only the
+        // default location is supported.
+        "kimi" => Some(AgentDescriptor {
+            dir_rel: PathBuf::from(".kimi-code"),
+            config_rel: [".kimi-code", "config.toml"].iter().collect(),
+            ownership: Ownership::Merged,
+            format: ConfigFormat::Toml,
+            events: KIMI_EVENTS.iter().map(|s| s.to_string()).collect(),
         }),
         _ => None,
     }
@@ -580,7 +727,14 @@ fn provision_agent(
     }
     let path = home.join(&desc.config_rel);
     match desc.ownership {
-        Ownership::Merged => provision_merge_settings(&path, enabled, agent_id, relay.primary()),
+        Ownership::Merged => match desc.format {
+            ConfigFormat::Json => {
+                provision_merge_settings(&path, enabled, agent_id, relay.primary())
+            }
+            ConfigFormat::Toml => {
+                provision_merge_toml_hooks(&path, enabled, agent_id, relay.primary())
+            }
+        },
         Ownership::Owned => {
             if enabled {
                 let content = owned_content(agent_id, relay)?;
@@ -615,6 +769,49 @@ fn merge_is_current(root: &Value, marker: &str, agent_id: &str) -> bool {
     })
 }
 
+/// TOML counterpart of `merge_is_current`: every event in `events` must have a
+/// hook entry whose `event` matches and whose `command` carries the relay
+/// marker, so an older Abundio's event set reads as not-registered and
+/// `ensure_agent_hooks` upgrades it at agent launch. Recognizes both the
+/// `[[hooks]]` header form and the inline `hooks = [{ ... }]` form, matching
+/// `provision_merge_toml_hooks`.
+fn toml_merge_is_current(doc: &toml_edit::DocumentMut, marker: &str, events: &[&str]) -> bool {
+    if events.is_empty() {
+        return false;
+    }
+    let Some(item) = doc.get("hooks") else {
+        return false;
+    };
+    // (event, command) pairs from whichever representation the file uses.
+    let pairs: Vec<(Option<&str>, Option<&str>)> = if let Some(aot) = item.as_array_of_tables() {
+        aot.iter()
+            .map(|t| {
+                (
+                    t.get("event").and_then(|e| e.as_str()),
+                    t.get("command").and_then(|c| c.as_str()),
+                )
+            })
+            .collect()
+    } else if let Some(arr) = item.as_array() {
+        arr.iter()
+            .filter_map(|v| v.as_inline_table())
+            .map(|t| {
+                (
+                    t.get("event").and_then(|e| e.as_str()),
+                    t.get("command").and_then(|c| c.as_str()),
+                )
+            })
+            .collect()
+    } else {
+        return false;
+    };
+    events.iter().all(|event| {
+        pairs.iter().any(|(e, c)| {
+            *e == Some(*event) && c.map(|c| c.contains(marker)).unwrap_or(false)
+        })
+    })
+}
+
 /// Per-agent registration state derived purely from on-disk config.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -642,16 +839,28 @@ fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigSt
             if text.trim().is_empty() {
                 return HookConfigState::NotRegistered;
             }
-            match serde_json::from_str::<Value>(&text) {
-                Err(_) => HookConfigState::ConfigError,
-                Ok(root) => {
-                    let marker = relay.primary().to_string_lossy();
-                    if merge_is_current(&root, &marker, agent_id) {
-                        HookConfigState::Registered
-                    } else {
-                        HookConfigState::NotRegistered
+            let marker = relay.primary().to_string_lossy();
+            match desc.format {
+                ConfigFormat::Json => match serde_json::from_str::<Value>(&text) {
+                    Err(_) => HookConfigState::ConfigError,
+                    Ok(root) => {
+                        if merge_is_current(&root, &marker, agent_id) {
+                            HookConfigState::Registered
+                        } else {
+                            HookConfigState::NotRegistered
+                        }
                     }
-                }
+                },
+                ConfigFormat::Toml => match text.parse::<toml_edit::DocumentMut>() {
+                    Err(_) => HookConfigState::ConfigError,
+                    Ok(doc) => {
+                        if toml_merge_is_current(&doc, &marker, KIMI_EVENTS) {
+                            HookConfigState::Registered
+                        } else {
+                            HookConfigState::NotRegistered
+                        }
+                    }
+                },
             }
         }
         // Abundio owns the whole file: Registered means the on-disk content
@@ -1193,5 +1402,245 @@ mod tests {
             config_state(home.path(), &relay, "claude"),
             HookConfigState::Registered
         );
+    }
+
+    // ── Kimi Code: TOML merge into a user-owned config.toml ──
+
+    /// A config.toml the way a real Kimi user might keep it: comments, own
+    /// keys, and an own [[hooks]] entry that must all survive Abundio's merge.
+    const KIMI_USER_CONFIG: &str = r#"# my kimi setup — do not lose this comment
+model = "kimi-k3"
+
+[[hooks]]
+# my own safety gate
+event = "PreToolUse"
+matcher = "Shell"
+command = "~/.kimi/hooks/safety-check.sh"
+timeout = 10
+"#;
+
+    #[test]
+    fn kimi_toml_merge_adds_then_strips_preserving_user_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, KIMI_USER_CONFIG).unwrap();
+
+        // Enable twice — must not duplicate Abundio entries.
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+
+        // User comment and own keys survive.
+        assert!(text.contains("do not lose this comment"));
+        assert!(text.contains("# my own safety gate"));
+        assert_eq!(doc["model"].as_str(), Some("kimi-k3"));
+        let hooks = doc["hooks"].as_array_of_tables().unwrap();
+        let abundio_count = |hooks: &toml_edit::ArrayOfTables| {
+            hooks
+                .iter()
+                .filter(|t| {
+                    t.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c.contains("abundio-hook.sh"))
+                        .unwrap_or(false)
+                })
+                .count()
+        };
+        assert_eq!(
+            abundio_count(hooks),
+            KIMI_EVENTS.len(),
+            "re-provisioning must not duplicate"
+        );
+        assert_eq!(hooks.len(), KIMI_EVENTS.len() + 1, "user's own hook must survive");
+
+        // Disable — byte-identical to the original user file.
+        provision_merge_toml_hooks(&path, false, "kimi", &relay()).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            KIMI_USER_CONFIG,
+            "disable must restore the user's file byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn kimi_toml_entries_carry_only_allowed_keys() {
+        // Kimi rejects its ENTIRE hooks section on any unknown key in a
+        // [[hooks]] entry (verified against kimi 0.27.0) — a future "helpful"
+        // extra field would silently kill the user's own hooks along with
+        // Abundio's. Exactly `event` + `command`, nothing else.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        let doc: toml_edit::DocumentMut =
+            fs::read_to_string(&path).unwrap().parse().unwrap();
+        let hooks = doc["hooks"].as_array_of_tables().unwrap();
+        assert_eq!(hooks.len(), KIMI_EVENTS.len());
+        for t in hooks.iter() {
+            let keys: Vec<&str> = t.iter().map(|(k, _)| k).collect();
+            assert_eq!(keys, ["event", "command"], "only Kimi-legal keys allowed");
+            let event = t["event"].as_str().unwrap();
+            assert!(KIMI_EVENTS.contains(&event));
+            let cmd = t["command"].as_str().unwrap();
+            assert!(cmd.contains("abundio-hook.sh"));
+            assert!(cmd.contains(event), "command must carry its event name");
+            assert!(cmd.contains("kimi"), "command must carry the agent id");
+        }
+    }
+
+    #[test]
+    fn kimi_toml_merge_aborts_on_unparseable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "this = is not [ valid toml").unwrap();
+        let result = provision_merge_toml_hooks(&path, true, "kimi", &relay());
+        assert!(result.is_err());
+        // The corrupt file must be left untouched.
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "this = is not [ valid toml"
+        );
+    }
+
+    #[test]
+    fn kimi_toml_merge_aborts_on_non_array_hooks_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[hooks]\nfoo = 1\n").unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        assert!(provision_merge_toml_hooks(&path, true, "kimi", &relay()).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn kimi_toml_merge_handles_inline_array_hooks_form() {
+        // TOML allows `hooks = [{ ... }]` as well as `[[hooks]]` — a user
+        // keeping the inline form must still be able to register, self-heal,
+        // and strip, without Abundio rewriting their file into header form.
+        let user_config = "model = \"kimi-k3\"\nhooks = [{ event = \"PreToolUse\", command = \"my-own-hook\" }]\n";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, user_config).unwrap();
+
+        // Enable twice — no duplicates, user entry kept, inline form kept.
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("[[hooks]]"),
+            "the user's inline form must not be rewritten to header form"
+        );
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+        let arr = doc["hooks"].as_array().unwrap();
+        let abundio = arr
+            .iter()
+            .filter_map(|v| v.as_inline_table())
+            .filter(|t| {
+                t.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.contains("abundio-hook.sh"))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(abundio, KIMI_EVENTS.len(), "no duplicates on re-provision");
+        assert_eq!(arr.len(), KIMI_EVENTS.len() + 1, "user's own hook survives");
+        // The self-heal check must recognize the inline form as registered.
+        assert!(toml_merge_is_current(
+            &doc,
+            "abundio-hook.sh",
+            KIMI_EVENTS
+        ));
+
+        // Disable — back to exactly the user's entries.
+        provision_merge_toml_hooks(&path, false, "kimi", &relay()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("abundio-hook.sh"));
+        assert!(text.contains("my-own-hook"));
+        assert!(text.contains("kimi-k3"));
+    }
+
+    #[test]
+    fn kimi_toml_disable_removes_emptied_inline_hooks_array() {
+        // Fresh file provisioned in inline form (only possible if the user had
+        // `hooks = []`): a disable must tidy the emptied array away.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "hooks = []\n").unwrap();
+        provision_merge_toml_hooks(&path, true, "kimi", &relay()).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains("abundio-hook.sh"));
+        provision_merge_toml_hooks(&path, false, "kimi", &relay()).unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("hooks"));
+    }
+
+    #[test]
+    fn kimi_stale_event_set_reads_not_registered_so_ensure_upgrades_it() {
+        // Same self-heal contract as the JSON agents: a config.toml written by
+        // an older Abundio (fewer events) must not read as Registered, and a
+        // re-provision restores the full set exactly once per event.
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        fs::create_dir_all(home.path().join(".kimi-code")).unwrap();
+        let path = home.path().join(".kimi-code").join("config.toml");
+
+        provision_agent(home.path(), &relay, "kimi", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "kimi"));
+
+        // Simulate an older binary's footprint: drop one event's table.
+        let mut doc: toml_edit::DocumentMut =
+            fs::read_to_string(&path).unwrap().parse().unwrap();
+        doc["hooks"]
+            .as_array_of_tables_mut()
+            .unwrap()
+            .retain(|t| t["event"].as_str() != Some("Interrupt"));
+        fs::write(&path, doc.to_string()).unwrap();
+        assert!(
+            !is_provisioned(home.path(), &relay, "kimi"),
+            "a stale event set must read as not-registered"
+        );
+
+        provision_agent(home.path(), &relay, "kimi", true, false).unwrap();
+        assert!(is_provisioned(home.path(), &relay, "kimi"));
+        let doc: toml_edit::DocumentMut =
+            fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(
+            doc["hooks"].as_array_of_tables().unwrap().len(),
+            KIMI_EVENTS.len(),
+            "exactly one entry per event after the upgrade"
+        );
+    }
+
+    #[test]
+    fn kimi_dir_gating_and_config_state() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+
+        // No-litter: absent ~/.kimi-code with create_dir=false is left alone.
+        provision_agent(home.path(), &relay, "kimi", true, false).unwrap();
+        assert!(!home.path().join(".kimi-code").exists());
+        assert_eq!(
+            config_state(home.path(), &relay, "kimi"),
+            HookConfigState::NotRegistered
+        );
+
+        // Unparseable config.toml → ConfigError (Abundio won't touch it).
+        fs::create_dir_all(home.path().join(".kimi-code")).unwrap();
+        let path = home.path().join(".kimi-code").join("config.toml");
+        fs::write(&path, "not [ toml").unwrap();
+        assert_eq!(
+            config_state(home.path(), &relay, "kimi"),
+            HookConfigState::ConfigError
+        );
+
+        // Launch path (create_dir=true) provisions a fresh file → Registered;
+        // disable strips it back to no hooks at all.
+        fs::write(&path, "").unwrap();
+        provision_agent(home.path(), &relay, "kimi", true, true).unwrap();
+        assert_eq!(
+            config_state(home.path(), &relay, "kimi"),
+            HookConfigState::Registered
+        );
+        provision_agent(home.path(), &relay, "kimi", false, false).unwrap();
+        assert!(!is_provisioned(home.path(), &relay, "kimi"));
+        assert!(!fs::read_to_string(&path).unwrap().contains("abundio-hook"));
     }
 }

@@ -6,7 +6,7 @@ A GPU-accelerated terminal multiplexer desktop app built with [Tauri v2](https:/
 
 *The name comes from the Latin _abundō_ ("to overflow, abound") — Abundio is built for an **abundance of productivity**, giving you room to run an abundance of terminals, agents, and parallel work without leaving your project.*
 
-Each **workspace** is bound to a project folder. Inside it you get a fast WebGL-rendered terminal that you can split into as many horizontal and vertical panes as you like and organize across multiple tabs — run a dev server in one pane, tail logs in another, and drive an AI agent in a third. Abundio has **first-class support for AI coding CLI agents** (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, and OpenCode): it auto-detects the ones installed on your `$PATH`, lets you define your own, and surfaces live activity status so you can see at a glance which agents are working.
+Each **workspace** is bound to a project folder. Inside it you get a fast WebGL-rendered terminal that you can split into as many horizontal and vertical panes as you like and organize across multiple tabs — run a dev server in one pane, tail logs in another, and drive an AI agent in a third. Abundio has **first-class support for AI coding CLI agents** — Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, OpenCode, Qwen Code, and Kimi Code (see [Supported coding agents](#supported-coding-agents)): it auto-detects the ones installed on your `$PATH`, lets you define your own, and surfaces live activity status so you can see at a glance which agents are working.
 
 Around the terminal sits a full development surface: a **file explorer** and Monaco-powered **code editor** for viewing and editing files, **git integration** with a changed-files panel and inline diffs, first-class **git worktree support** (worktrees of a repo are grouped together in the sidebar and you can create or remove them in-app), a **GitHub PR panel**, **full-text workspace search**, live **Markdown preview**, and a **notes** panel — plus the ability to hand the current workspace off to VS Code, Cursor, or a JetBrains IDE when you want a heavier editor. Terminal output is clickable (file paths printed by compilers, test runners, and agents open straight in the editor), scrollback is persisted across sessions, and an overview bar keeps a running count of your workspaces, agents, terminals, and open PRs. Abundio runs natively on macOS, Windows, and Linux.
 
@@ -32,7 +32,7 @@ See [all releases](https://github.com/emullernl/abundio/releases) for previous v
 * **Split panes** — Horizontal and vertical splits with recursive nesting
 * **Tabs** — Multiple tabs per workspace, each with its own pane layout
 * **Workspace management** — Persistent workspaces tied to project directories, stored in SQLite
-* **AI agent support** — Auto-detects installed agents (Claude Code, Copilot, Gemini, Aider, Codex, OpenCode) on your `$PATH`, supports user-defined custom agents, and shows live activity status as agents work
+* **AI agent support** — Auto-detects installed agents on your `$PATH` (see [Supported coding agents](#supported-coding-agents)), supports user-defined custom agents, and shows live activity status as agents work
 * **Overview bar** — At-a-glance counts of workspaces, agents, terminals, and open PRs
 * **Built-in code editor** — Monaco-powered editor for viewing and editing files
 * **Live Markdown preview** — Side-by-side preview pane with Mermaid diagram rendering
@@ -49,6 +49,25 @@ See [all releases](https://github.com/emullernl/abundio/releases) for previous v
 * **Native macOS integration** — Overlay titlebar with traffic light controls
 * **Cross-platform** — macOS, Windows, and Linux support
 * **Command palette** — Quick access to actions via `Cmd+K` / `Ctrl+K`
+
+## Supported coding agents
+
+Abundio ships built-in support for these AI coding CLI agents. Any that are installed on your `$PATH` are auto-detected — no configuration needed — and can be launched straight into a pane.
+
+For most of them Abundio also registers **status hooks** in the agent's own configuration (opt-out via **Settings → Agent status hooks**), so the pane's status icon is driven by the agent's real lifecycle: working, waiting for your permission/input, finished, or failed — including holding "working" while background subagents are still running.
+
+| Agent | CLI command | Live status via hooks |
+| ----- | ----------- | :-------------------: |
+| [Claude Code](https://docs.claude.com/en/docs/claude-code) | `claude` | ✅ |
+| [GitHub Copilot CLI](https://github.com/github/gh-copilot) | `copilot` | ✅ |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini` | ✅ |
+| [Aider](https://aider.chat/) | `aider` | — (activity heuristics) |
+| [Codex](https://github.com/openai/codex) | `codex` | ✅ |
+| [OpenCode](https://opencode.ai/) | `opencode` | ✅ |
+| [Qwen Code](https://github.com/QwenLM/qwen-code) | `qwen` | ✅ |
+| [Kimi Code](https://github.com/MoonshotAI/kimi-code) | `kimi` | ✅ |
+
+Anything not on this list can still be added as a **custom agent** in Settings (name + command); custom agents get PATH detection and heuristic activity status, just not hook-driven status.
 
 ## Keyboard Shortcuts
 
@@ -93,7 +112,7 @@ Abundio shells out to a few external command-line tools at runtime. Only a shell
 * **[`gh`](https://cli.github.com/) (GitHub CLI)** (optional) — powers the GitHub PR panel (review requests and your open PRs). Must be authenticated (`gh auth login`).
 
 > **Note:** Abundio does **not** require the `git` CLI. All git functionality — the changes panel, branch selector, inline diffs, sidebar git chips, GitHub-remote detection, and worktree create/remove — runs in-process via a bundled libgit2.
-* **AI coding agent CLIs** (optional) — any of [Claude Code](https://docs.claude.com/en/docs/claude-code), [GitHub Copilot CLI](https://github.com/github/gh-copilot), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat/), [Codex](https://github.com/openai/codex), or [OpenCode](https://opencode.ai/). Abundio auto-detects whichever are on your `$PATH`; you can also define custom agents in Settings.
+* **AI coding agent CLIs** (optional) — any of the [supported coding agents](#supported-coding-agents). Abundio auto-detects whichever are on your `$PATH`; you can also define custom agents in Settings.
 
 ## Prerequisites
 

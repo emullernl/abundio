@@ -70,3 +70,8 @@ arboard = "3"
 # Secure temp-file creation (O_EXCL, 0600, RAII cleanup) for the macOS PNG
 # clipboard path in clipboard_image.rs. Also used by tests.
 tempfile = "3"
+# Format-preserving edits to Kimi Code's user-owned ~/.kimi-code/config.toml —
+# comments and layout must survive Abundio's [[hooks]] merge (agent_hooks.rs),
+# and Kimi's strict loader rejects unknown keys so a serde rewrite is too risky.
+# Already in the dependency tree transitively via the tauri toolchain.
+toml_edit = "0.25"

@@ -4,6 +4,7 @@ import claudeIconUrl from "../assets/agent-icons/claude.svg";
 import codexIconUrl from "../assets/agent-icons/codex.svg";
 import geminiIconUrl from "../assets/agent-icons/gemini.svg";
 import githubIconUrl from "../assets/agent-icons/github.svg";
+import kimiIconUrl from "../assets/agent-icons/kimi.svg";
 import opencodeIconUrl from "../assets/agent-icons/opencode.svg";
 import qwenIconUrl from "../assets/agent-icons/qwen.svg";
 import terminalIconUrl from "../assets/agent-icons/terminal.jpg";
@@ -20,6 +21,10 @@ import terminalIconUrl from "../assets/agent-icons/terminal.jpg";
 //   - aider.ico        → aider.chat
 //   - opencode.svg     → opencode.ai
 //   - qwen.svg         → upload.wikimedia.org/wikipedia/commons/6/69/Qwen_logo.svg (CC0)
+//   - kimi.svg         → moonshotai.github.io/Branding-Guide (k-only-dark: the
+//                        official for-dark-backgrounds mark — white K + #1783FF
+//                        accent; invisible-on-light is the same accepted
+//                        limitation as codex.svg)
 //   - terminal.jpg     → iterm2.com (for the "New Terminal" option)
 
 interface IconProps {
@@ -55,6 +60,7 @@ const CodexIcon = brandImg(codexIconUrl, "Codex");
 const AiderIcon = brandImg(aiderIconUrl, "Aider");
 const OpenCodeIcon = brandImg(opencodeIconUrl, "OpenCode");
 const QwenIcon = brandImg(qwenIconUrl, "Qwen");
+const KimiIcon = brandImg(kimiIconUrl, "Kimi");
 
 export const TerminalBrandIcon = brandImg(terminalIconUrl, "New Terminal");
 
@@ -79,6 +85,8 @@ export function getAgentIconComponent(
 			return OpenCodeIcon;
 		case "qwen":
 			return QwenIcon;
+		case "kimi":
+			return KimiIcon;
 		default:
 			return undefined;
 	}
