@@ -98,7 +98,7 @@ export const ESC_DOUBLE_PRESS_WINDOW_MS = 750; // double-ESC cancel window
 // Wedge-breaker for a lost SubagentStop (the relay is fire-and-forget): prune
 // on Tick, generous because Subagents legitimately run many minutes. Session
 // end / PTY exit / ESC / the next prompt clear the set instantly (ADR-0022).
-export const SUBAGENT_STALE_MS = 30 * 60_000;
+export const SUBAGENT_STALE_MS = 2 * 60 * 60_000;
 
 export type StatusEvent =
 	// Hook-driven transition (the translator resolved it via `mapHookEvent`).
