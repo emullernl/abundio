@@ -129,7 +129,7 @@ describe("mapHookEvent", () => {
 				"permission_prompt",
 			),
 		).toBe("resume");
-		// default and plan modes genuinely block on the user.
+		// default mode genuinely blocks on the user.
 		expect(
 			mapHookEvent(
 				"grok",
@@ -140,6 +140,9 @@ describe("mapHookEvent", () => {
 				"permission_prompt",
 			),
 		).toBe("waiting");
+		// Plan mode without a message (older Grok) keeps the conservative
+		// "waiting" — suppression there requires the message to confirm a
+		// gate-entry prompt (see the plan-mode test below).
 		expect(
 			mapHookEvent(
 				"grok",
@@ -174,6 +177,103 @@ describe("mapHookEvent", () => {
 				undefined,
 				"auto",
 				"permission_prompt",
+			),
+		).toBe("waiting");
+	});
+
+	it("resumes on plan-mode gate-entry prompts, holds waiting for on-screen dialogs", () => {
+		// Planning turns are dominated by Read/Grep/WebSearch, which the
+		// permission actor auto-allows unconditionally (SAFE_COMMAND,
+		// grok-build permission/manager.rs) — but the gate-entry
+		// permission_prompt ("Tool permission requested") fires BEFORE that
+		// resolution, so panes read a false Waiting for most of the turn.
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"plan",
+				"permission_prompt",
+				"Tool permission requested",
+			),
+		).toBe("resume");
+		// The exit_plan_mode approval and diff-review dialogs fire their
+		// permission_prompt at the moment the dialog is shown — they always
+		// block, in every mode. Plan approval is itself an AccessKind::Read
+		// (tool_calls.rs), so without the message discriminator plan-mode
+		// suppression would hide plan mode's one guaranteed genuine block.
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"plan",
+				"permission_prompt",
+				"Plan approval requested",
+			),
+		).toBe("waiting");
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"plan",
+				"permission_prompt",
+				"Diff review requested",
+			),
+		).toBe("waiting");
+		// The dialog-on-screen messages outrank the auto/bypass suppression
+		// too — a diff review escalated in auto mode must show Waiting
+		// (narrows the trade-off documented on the auto-mode mapping).
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"auto",
+				"permission_prompt",
+				"Diff review requested",
+			),
+		).toBe("waiting");
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"bypassPermissions",
+				"permission_prompt",
+				"Plan approval requested",
+			),
+		).toBe("waiting");
+		// Auto/bypass keep suppressing gate-entry prompts, with or without
+		// the message field (older Grok binaries omit it).
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"auto",
+				"permission_prompt",
+				"Tool permission requested",
+			),
+		).toBe("resume");
+		// Default mode stays untouched even with a gate-entry message —
+		// bash/MCP prompts genuinely block there and are common.
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"default",
+				"permission_prompt",
+				"Tool permission requested",
 			),
 		).toBe("waiting");
 	});

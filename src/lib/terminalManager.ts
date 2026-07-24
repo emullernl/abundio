@@ -1107,6 +1107,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						?.notificationType === "string"
 						? (payload as { notificationType: string }).notificationType
 						: undefined;
+				// Grok's Notification message text is the only field separating a
+				// dialog actually shown on screen (plan approval, diff review —
+				// always blocks) from the gate-entry prompt that fires before the
+				// permission resolves (mapHookEvent branches).
+				const message =
+					typeof (payload as { message?: unknown })?.message === "string"
+						? (payload as { message: string }).message
+						: undefined;
 
 				// Subagent lifecycle events bypass mapHookEvent: they carry an id, not
 				// a transition, and drive the pane's Subagent set — which holds the
@@ -1140,6 +1148,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					stopReason,
 					permissionMode,
 					notificationType,
+					message,
 				);
 				if (!transition) {
 					console.debug(
