@@ -53,7 +53,7 @@ vi.mock("../../lib/terminalManager", () => ({
 	teardownTerminal,
 }));
 
-import { tabs } from "../../lib/ipc";
+import { tabs, workspaces } from "../../lib/ipc";
 import { collectAgentPanes } from "../../lib/paneTree";
 import { takePendingAgent } from "../../lib/pendingAgentRegistry";
 import type {
@@ -63,6 +63,10 @@ import type {
 	WorkspaceWithTabs,
 	WorktreeEntry,
 } from "../../lib/types";
+import {
+	buildWorkspaceRows,
+	flattenRowsToIds,
+} from "../../lib/worktreeGrouping";
 import { findMutatedTabLayout, useWorkspaceStore } from "../workspaceStore";
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
@@ -276,6 +280,87 @@ describe("workspaceStore", () => {
 				["s1", 1],
 				["s2", 2],
 			]);
+		});
+
+		// Asserts the symptom, not the mechanism: whatever the sidebar derives its
+		// row order from, it has to follow the drop.
+		it("produces sidebar rows in the dropped order", () => {
+			const s1 = makeWorkspace({ id: "s1", name: "First", position: 0 });
+			const s2 = makeWorkspace({ id: "s2", name: "Second", position: 1 });
+			const s3 = makeWorkspace({ id: "s3", name: "Third", position: 2 });
+			useWorkspaceStore.setState({ workspaces: [s1, s2, s3] });
+
+			useWorkspaceStore.getState().reorderWorkspaces(["s3", "s1", "s2"]);
+
+			const rows = buildWorkspaceRows(
+				useWorkspaceStore.getState().workspaces,
+				{},
+			);
+			expect(flattenRowsToIds(rows)).toEqual(["s3", "s1", "s2"]);
+		});
+
+		// Deletes leave gaps and (historically) duplicate positions behind; the
+		// restamp has to normalise them rather than preserve the collision.
+		it("normalises sparse and duplicated starting positions", () => {
+			const s1 = makeWorkspace({ id: "s1", name: "First", position: 0 });
+			const s2 = makeWorkspace({ id: "s2", name: "Second", position: 5 });
+			const s3 = makeWorkspace({ id: "s3", name: "Third", position: 5 });
+			useWorkspaceStore.setState({ workspaces: [s1, s2, s3] });
+
+			useWorkspaceStore.getState().reorderWorkspaces(["s2", "s3", "s1"]);
+
+			expect(
+				useWorkspaceStore
+					.getState()
+					.workspaces.map((s) => [s.id, s.position] as const),
+			).toEqual([
+				["s2", 0],
+				["s3", 1],
+				["s1", 2],
+			]);
+			const rows = buildWorkspaceRows(
+				useWorkspaceStore.getState().workspaces,
+				{},
+			);
+			expect(flattenRowsToIds(rows)).toEqual(["s2", "s3", "s1"]);
+		});
+
+		it("keeps workspaces missing from ids instead of dropping them", () => {
+			const s1 = makeWorkspace({ id: "s1", name: "First", position: 0 });
+			const s2 = makeWorkspace({ id: "s2", name: "Second", position: 1 });
+			const s3 = makeWorkspace({ id: "s3", name: "Third", position: 2 });
+			useWorkspaceStore.setState({ workspaces: [s1, s2, s3] });
+
+			useWorkspaceStore.getState().reorderWorkspaces(["s3", "s1"]);
+
+			expect(
+				useWorkspaceStore
+					.getState()
+					.workspaces.map((s) => [s.id, s.position] as const),
+			).toEqual([
+				["s3", 0],
+				["s1", 1],
+				["s2", 2],
+			]);
+			// The leftover is persisted too, so the DB can't keep a stale position.
+			expect(workspaces.reorder).toHaveBeenCalledWith(["s3", "s1", "s2"]);
+		});
+
+		it("rolls back the local order when the persist fails", async () => {
+			const s1 = makeWorkspace({ id: "s1", name: "First", position: 0 });
+			const s2 = makeWorkspace({ id: "s2", name: "Second", position: 1 });
+			useWorkspaceStore.setState({ workspaces: [s1, s2] });
+			vi.mocked(workspaces.reorder).mockRejectedValueOnce(new Error("db"));
+
+			useWorkspaceStore.getState().reorderWorkspaces(["s2", "s1"]);
+			await vi.waitFor(() =>
+				expect(
+					useWorkspaceStore.getState().workspaces.map((s) => s.id),
+				).toEqual(["s1", "s2"]),
+			);
+			expect(
+				useWorkspaceStore.getState().workspaces.map((s) => s.position),
+			).toEqual([0, 1]);
 		});
 	});
 

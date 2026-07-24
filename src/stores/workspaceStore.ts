@@ -717,16 +717,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	reorderWorkspaces: (ids) => {
-		const { workspaces } = get();
-		const byId = new Map(workspaces.map((s) => [s.id, s]));
+		const previous = get().workspaces;
+		const byId = new Map(previous.map((s) => [s.id, s]));
+		// `ids` need not be the complete set: anything omitted keeps its relative
+		// order after the listed ids, so no workspace is dropped from state and no
+		// two end up sharing a `position`.
+		const listed = new Set(ids);
+		const ordered = [
+			...ids
+				.map((id) => byId.get(id))
+				.filter((w): w is WorkspaceWithTabs => w !== undefined),
+			...previous.filter((w) => !listed.has(w.id)),
+		];
 		// `position` — not array order — is what the sidebar sorts rows by
 		// (`buildWorkspaceRows`), so it must be restamped here to match what the
 		// backend writes (position = index), otherwise the drop snaps back.
-		const reordered = (
-			ids.map((id) => byId.get(id)).filter(Boolean) as WorkspaceWithTabs[]
-		).map((w, i) => (w.position === i ? w : { ...w, position: i }));
+		// Unmoved workspaces keep their identity so their rows don't re-render.
+		const reordered = ordered.map((w, i) =>
+			w.position === i ? w : { ...w, position: i },
+		);
 		set({ workspaces: reordered });
-		workspacesApi.reorder(ids).catch(() => {});
+		// Persist the full order, not just `ids` — the backend stamps only the ids
+		// it receives, so a partial list would leave stale positions in the DB.
+		workspacesApi.reorder(reordered.map((w) => w.id)).catch(() => {
+			// The write failed, so the DB still holds the old order. Roll the UI
+			// back rather than showing an order that would vanish on restart.
+			if (get().workspaces === reordered) set({ workspaces: previous });
+		});
 	},
 
 	// ── Tab actions ──
