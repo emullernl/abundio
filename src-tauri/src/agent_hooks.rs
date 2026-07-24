@@ -586,12 +586,16 @@ const SUPPORTED_AGENTS: &[&str] = &[
 /// `permission_prompt` notification — even for prompts that resolve without
 /// a local keystroke (always-approve mode, the LLM-classifier mode,
 /// remembered grants, a mid-prompt Ctrl+O toggle, relay approvals), so
-/// Waiting would otherwise wedge until turn end. `PreToolUse` is the resume
-/// signal: a tool only runs after its permission resolves, so it maps to
-/// "resume" on the frontend (lift Waiting → Working, else a strict no-op —
+/// Waiting would otherwise wedge until turn end. NOTE the in-tool-call
+/// ordering: `PreToolUse` fires BEFORE the permission gate (grok-build
+/// tool_calls.rs dispatches it ahead of `permissions.request_*`), so its
+/// frontend "resume" mapping (lift Waiting → Working, else a strict no-op —
 /// deliberately NOT "active", which would reset the working window on every
-/// tool call) — and it cannot mask genuine Waiting because no
-/// tool runs while a prompt is actually pending. `PermissionDenied` gives
+/// tool call) can only heal the PREVIOUS tool's stale Waiting. The
+/// self-resolving modes are instead discriminated on the frontend via the
+/// envelope's `permissionMode` field (auto/bypassPermissions
+/// permission_prompts map to "resume", see agentHookMap.ts).
+/// `PermissionDenied` gives
 /// the authoritative resume out of Waiting on a deny; `Stop` carries
 /// `reason: end_turn|cancelled|error` which the frontend branches on (a
 /// cancelled turn goes to Idle, not Ready).

@@ -111,15 +111,17 @@ HOOK_EVENT_MAP.grok = {
 	// matcher-scoped to the two first-party blocking notification types
 	// (permission_prompt | elicitation_dialog), so — like Copilot — only
 	// genuine prompts reach the "waiting" mapping. Grok has NO
-	// permission-granted event (unlike Kimi's PermissionResult), and its
-	// permission pipeline emits the permission_prompt notification even for
-	// prompts that resolve without a local keystroke (always-approve mode,
-	// the LLM-classifier mode, remembered grants, a mid-prompt Ctrl+O
-	// toggle, relay approvals) — so PreToolUse is the resume signal out of
-	// Waiting: a tool only runs after its permission resolves, and no tool
-	// runs while a prompt is genuinely pending, so "resume" cannot mask real
-	// Waiting (and, being a no-op outside Waiting, the per-tool-call
-	// frequency is harmless). PermissionDenied fires
+	// permission-granted event (unlike Kimi's PermissionResult). Crucially,
+	// PreToolUse fires BEFORE the permission gate, not after it (verified
+	// against grok-build tool_calls.rs: the PreToolUse dispatch precedes
+	// `permissions.request_with_edit_path_context`), so within one tool call
+	// the order is always PreToolUse → permission_prompt Notification —
+	// PreToolUse can only heal the PREVIOUS tool's stale Waiting, never its
+	// own. In `auto` (LLM classifier) mode the prompt usually self-resolves
+	// with no keystroke and nothing fires after approval, which left the pane
+	// stuck Waiting for the rest of the tool run; the envelope's
+	// `permissionMode` field discriminates this — see the grok Notification
+	// branch in mapHookEvent. PermissionDenied fires
 	// AFTER a deny: the user (or policy) just acted and the turn continues,
 	// so it resumes "active"; Stop/StopFailure corrects if the turn ends
 	// instead. Stop is reason-branched in mapHookEvent (end_turn → ready,
@@ -159,12 +161,18 @@ const COPILOT_WAITING_TOOLS = new Set(["exit_plan_mode", "ask_user"]);
  * override the event's default transition — see the exit_plan_mode case.
  * `stopReason` (Grok's `Stop.reason` payload field) lets a turn-end event
  * distinguish how the turn ended — see the grok case.
+ * `permissionMode` (Grok's envelope field: `default` | `auto` | `plan` |
+ * `bypassPermissions`) and `notificationType` (Grok's Notification payload
+ * field) let a permission_prompt that will self-resolve map to "resume"
+ * instead of "waiting" — see the grok Notification case.
  */
 export function mapHookEvent(
 	agentId: string,
 	eventName: string,
 	toolName?: string,
 	stopReason?: string,
+	permissionMode?: string,
+	notificationType?: string,
 ): HookTransition | null {
 	// Grok's single Stop event covers completed, cancelled, and errored turns,
 	// discriminated by `reason`. A user-cancel goes straight to Idle, not Ready
@@ -172,6 +180,27 @@ export function mapHookEvent(
 	// An errored turn must NOT map to "ready": Grok fires Stop AFTER
 	// StopFailure on errors, and "ready" would overwrite the Error icon.
 	// Unknown/missing reasons fall through to the map's default ("ready").
+	// Grok fires the permission_prompt notification BEFORE the permission
+	// gate resolves, and nothing fires after an approval. In `auto` (LLM
+	// classifier) and `bypassPermissions` modes the prompt (almost) always
+	// self-resolves without a keystroke, so "waiting" would stick for the
+	// whole tool run (the next PreToolUse fires before the NEXT prompt's
+	// notification, so the pane read Waiting for essentially the entire
+	// turn). Map those to "resume" — a strict no-op unless Waiting, which
+	// also heals a stale Waiting left by a mid-prompt Ctrl+O mode toggle.
+	// Known trade-off: a classifier escalation to a real user prompt in
+	// auto mode shows Working, not Waiting; the 30s hook-idle backstop
+	// flips it to Ready as the attention signal. elicitation_dialog and
+	// plan-approval prompts genuinely block regardless of mode, so only
+	// permission_prompt is suppressed.
+	if (
+		agentId === "grok" &&
+		eventName === "Notification" &&
+		notificationType === "permission_prompt" &&
+		(permissionMode === "auto" || permissionMode === "bypassPermissions")
+	) {
+		return "resume";
+	}
 	if (agentId === "grok" && eventName === "Stop") {
 		if (stopReason === "cancelled") return "idle";
 		if (stopReason === "error") return "error";

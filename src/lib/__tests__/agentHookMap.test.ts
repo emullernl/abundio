@@ -99,6 +99,80 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("grok", "PostCompact")).toBeNull();
 	});
 
+	it("resumes instead of waiting on Grok permission_prompts that self-resolve (auto/bypass modes)", () => {
+		// Grok fires the permission_prompt notification BEFORE the permission
+		// gate, and nothing fires after an approval (grok-build tool_calls.rs).
+		// In auto (LLM classifier) mode the prompt self-resolves with no
+		// keystroke, so "waiting" would stick for the whole tool run.
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"auto",
+				"permission_prompt",
+			),
+		).toBe("resume");
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"bypassPermissions",
+				"permission_prompt",
+			),
+		).toBe("resume");
+		// default and plan modes genuinely block on the user.
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"default",
+				"permission_prompt",
+			),
+		).toBe("waiting");
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"plan",
+				"permission_prompt",
+			),
+		).toBe("waiting");
+		// An elicitation dialog blocks the user regardless of permission mode.
+		expect(
+			mapHookEvent(
+				"grok",
+				"Notification",
+				undefined,
+				undefined,
+				"auto",
+				"elicitation_dialog",
+			),
+		).toBe("waiting");
+		// Missing payload fields (older Grok, unparseable payload) keep the
+		// conservative "waiting" mapping.
+		expect(mapHookEvent("grok", "Notification")).toBe("waiting");
+		// The suppression is Grok-specific — Copilot's notification is already
+		// only emitted for genuine prompts.
+		expect(
+			mapHookEvent(
+				"copilot",
+				"notification",
+				undefined,
+				undefined,
+				"auto",
+				"permission_prompt",
+			),
+		).toBe("waiting");
+	});
+
 	it("branches Grok's Stop on its reason payload (end_turn/cancelled/error)", () => {
 		// Grok fires a single Stop for every turn end, discriminated by reason.
 		expect(mapHookEvent("grok", "Stop", undefined, "end_turn")).toBe("ready");
