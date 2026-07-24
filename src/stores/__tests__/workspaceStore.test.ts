@@ -257,6 +257,26 @@ describe("workspaceStore", () => {
 			const ids = useWorkspaceStore.getState().workspaces.map((s) => s.id);
 			expect(ids).toEqual(["s2", "s1"]);
 		});
+
+		it("restamps position to the new index", () => {
+			const s1 = makeWorkspace({ id: "s1", name: "First", position: 0 });
+			const s2 = makeWorkspace({ id: "s2", name: "Second", position: 1 });
+			const s3 = makeWorkspace({ id: "s3", name: "Third", position: 2 });
+			useWorkspaceStore.setState({ workspaces: [s1, s2, s3] });
+
+			useWorkspaceStore.getState().reorderWorkspaces(["s3", "s1", "s2"]);
+
+			// The sidebar sorts rows by `position`, so it must follow the new order.
+			expect(
+				useWorkspaceStore
+					.getState()
+					.workspaces.map((s) => [s.id, s.position] as const),
+			).toEqual([
+				["s3", 0],
+				["s1", 1],
+				["s2", 2],
+			]);
+		});
 	});
 
 	describe("createTab", () => {

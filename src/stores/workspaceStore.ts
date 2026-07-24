@@ -719,9 +719,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	reorderWorkspaces: (ids) => {
 		const { workspaces } = get();
 		const byId = new Map(workspaces.map((s) => [s.id, s]));
-		const reordered = ids
-			.map((id) => byId.get(id))
-			.filter(Boolean) as WorkspaceWithTabs[];
+		// `position` — not array order — is what the sidebar sorts rows by
+		// (`buildWorkspaceRows`), so it must be restamped here to match what the
+		// backend writes (position = index), otherwise the drop snaps back.
+		const reordered = (
+			ids.map((id) => byId.get(id)).filter(Boolean) as WorkspaceWithTabs[]
+		).map((w, i) => (w.position === i ? w : { ...w, position: i }));
 		set({ workspaces: reordered });
 		workspacesApi.reorder(ids).catch(() => {});
 	},
