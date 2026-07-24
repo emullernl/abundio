@@ -140,6 +140,44 @@ describe("statusReducer — hook transitions (applyHookEvent parity)", () => {
 			}),
 		).toBe(shellWaiting);
 	});
+
+	it("Attach marks the PTY hook-driven without any state change (Grok's SessionStart)", () => {
+		const s = statusReducer(mk({}, "agent"), {
+			kind: "hook",
+			transition: "attach",
+			now: 100,
+		});
+		expect(s.state).toBe("idle");
+		expect(s.hookDriven).toBe(true);
+		// No activity markers — the session just started, nothing is running.
+		expect(s.workingSince).toBeNull();
+		expect(s.lastActivityAt).toBeNull();
+		// Already hook-driven → referential no-op.
+		expect(
+			statusReducer(s, { kind: "hook", transition: "attach", now: 200 }),
+		).toBe(s);
+	});
+
+	it("Attach silences the byte heuristic on Grok's welcome screen", () => {
+		// The welcome screen plays an animated logo emitting 8-10KB bursts every
+		// few seconds; before SessionStart the heuristic would read that as
+		// Working. After attach, bursts only refresh activity — the pane stays
+		// Idle until a real hook drives it.
+		let s = statusReducer(mk({}, "agent"), {
+			kind: "hook",
+			transition: "attach",
+			now: 100,
+		});
+		for (let i = 0; i < 10; i++) {
+			s = statusReducer(s, {
+				kind: "output",
+				bytes: 9000,
+				now: 4000 * (i + 1),
+			});
+			expect(s.state).toBe("idle");
+		}
+		expect(s.lastActivityAt).toBe(40000);
+	});
 });
 
 describe("statusReducer — agent/session mode flips", () => {

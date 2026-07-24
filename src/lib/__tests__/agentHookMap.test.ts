@@ -77,6 +77,11 @@ describe("mapHookEvent", () => {
 	});
 
 	it("maps Grok Build events (Claude-compatible schema, Notification-driven waiting)", () => {
+		// SessionStart fires ~100ms after launch, while the welcome screen is
+		// up. "attach" flips the PTY to hook-driven with no state change, so
+		// the welcome-screen logo animation (8-10KB redraw bursts) can no
+		// longer trip the byte heuristic into Working.
+		expect(mapHookEvent("grok", "SessionStart")).toBe("attach");
 		expect(mapHookEvent("grok", "UserPromptSubmit")).toBe("active");
 		// Notification is matcher-scoped at provisioning to
 		// permission_prompt|elicitation_dialog, so only genuine blocking

@@ -602,6 +602,7 @@ const SUPPORTED_AGENTS: &[&str] = &[
 /// Verified against github.com/xai-org/grok-build (xai-grok-hooks/src/event.rs,
 /// xai-grok-shell acp_session_impl) and the bundled user guide.
 const GROK_EVENTS: &[&str] = &[
+    "SessionStart",
     "UserPromptSubmit",
     "Notification",
     "PreToolUse",
@@ -1296,7 +1297,13 @@ mod tests {
 
         // Grok REJECTS a matcher on lifecycle events (SessionStart/SessionEnd/
         // Stop/UserPromptSubmit) — one there would kill the hook at load time.
-        for event in ["UserPromptSubmit", "Stop", "SessionEnd", "StopFailure"] {
+        for event in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "Stop",
+            "SessionEnd",
+            "StopFailure",
+        ] {
             assert!(
                 hooks[event][0].get("matcher").is_none(),
                 "{event} must carry no matcher"

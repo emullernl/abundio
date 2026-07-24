@@ -9,7 +9,10 @@
 // "resume" means "the agent is provably not blocked" (a tool is executing):
 // it lifts Waiting → Working and is otherwise a strict no-op — unlike
 // "active" it never resets the working window or drops a Subagent-held Stop,
-// so it is safe for per-tool-call events. The other values are
+// so it is safe for per-tool-call events. "attach" means "hooks are live in
+// this PTY": it marks the PTY hook-driven (silencing the byte heuristic)
+// without driving any state transition — for events that fire before any
+// work starts, like Grok's SessionStart. The other values are
 // PtyActivityState transitions.
 
 export type HookTransition =
@@ -19,6 +22,7 @@ export type HookTransition =
 	| "idle"
 	| "error"
 	| "resume"
+	| "attach"
 	| "clear";
 
 // Per-agent (event name → transition). Event names match each Agent's own
@@ -130,6 +134,14 @@ HOOK_EVENT_MAP.grok = {
 	// StopFailure, so an unconditional "ready" would overwrite the Error
 	// icon. Verified against github.com/xai-org/grok-build
 	// (acp_session_impl/turn.rs).
+	// SessionStart maps to "attach" (mark hook-driven, no state change):
+	// Grok's welcome screen plays an animated logo that emits 8-10KB redraw
+	// bursts every few seconds, which the byte heuristic reads as Working —
+	// but no hook fires before the first prompt, so the heuristic stays live
+	// exactly there. SessionStart lands ~100ms after launch (verified against
+	// the 0.2.111 binary with a logging hook probe), flipping the PTY to
+	// hook-driven before the first burst (~2s in).
+	SessionStart: "attach",
 	UserPromptSubmit: "active",
 	Notification: "waiting",
 	PreToolUse: "resume",
