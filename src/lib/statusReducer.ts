@@ -29,14 +29,18 @@ export type StatusMode = "agent" | "shell";
  *  "resume" proves the agent is not blocked (a tool is executing — Grok's
  *  PreToolUse): it lifts Waiting → Working and is otherwise a strict no-op,
  *  so a per-tool-call event can never reset the working window or drop a
- *  Subagent-held Stop (ADR-0022). */
+ *  Subagent-held Stop (ADR-0022).
+ *  "attach" proves hooks are live in this PTY (Grok's SessionStart): it sets
+ *  `hookDriven` — silencing the byte heuristic, which Grok's welcome-screen
+ *  animation would otherwise trip — and changes nothing else. */
 export type StatusTransition =
 	| "working"
 	| "waiting"
 	| "ready"
 	| "idle"
 	| "error"
-	| "resume";
+	| "resume"
+	| "attach";
 
 /** A keystroke pre-classified by the translator (after focus/mouse-report
  *  filtering). `answer` = Enter or a 0-9 choice; `esc` = a bare ESC. */
@@ -236,6 +240,12 @@ function applyHook(
 	transition: StatusTransition,
 	now: number,
 ): StatusState {
+	if (transition === "attach") {
+		// Session-start marker: the hooks pipeline is provably wired, so the
+		// byte heuristic backs off from here on. No state transition — the
+		// session just started, nothing is running yet.
+		return s.hookDriven ? s : { ...s, hookDriven: true };
+	}
 	if (transition === "resume") {
 		// Only a Waiting agent has anything to resume from. A prompt that
 		// resolved without a local keystroke (auto-approve, LLM classifier,

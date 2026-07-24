@@ -1093,6 +1093,28 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					typeof (payload as { reason?: unknown })?.reason === "string"
 						? ((payload as { reason: string }).reason as string)
 						: undefined;
+				// Grok's envelope stamps the session permission mode and its
+				// Notification payload carries the notification type — together they
+				// tell a self-resolving auto-mode permission_prompt apart from a
+				// prompt that genuinely blocks on the user (mapHookEvent branches).
+				const permissionMode =
+					typeof (payload as { permissionMode?: unknown })?.permissionMode ===
+					"string"
+						? (payload as { permissionMode: string }).permissionMode
+						: undefined;
+				const notificationType =
+					typeof (payload as { notificationType?: unknown })
+						?.notificationType === "string"
+						? (payload as { notificationType: string }).notificationType
+						: undefined;
+				// Grok's Notification message text is the only field separating a
+				// dialog actually shown on screen (plan approval, diff review —
+				// always blocks) from the gate-entry prompt that fires before the
+				// permission resolves (mapHookEvent branches).
+				const message =
+					typeof (payload as { message?: unknown })?.message === "string"
+						? (payload as { message: string }).message
+						: undefined;
 
 				// Subagent lifecycle events bypass mapHookEvent: they carry an id, not
 				// a transition, and drive the pane's Subagent set — which holds the
@@ -1124,6 +1146,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					hookEvent.event,
 					toolName,
 					stopReason,
+					permissionMode,
+					notificationType,
+					message,
 				);
 				if (!transition) {
 					console.debug(

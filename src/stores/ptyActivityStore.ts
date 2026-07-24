@@ -106,7 +106,14 @@ interface PtyActivityState_Store {
 	clearError: (ptyId: string) => void;
 	applyHookEvent: (
 		ptyId: string,
-		transition: "active" | "waiting" | "ready" | "idle" | "error" | "resume",
+		transition:
+			| "active"
+			| "waiting"
+			| "ready"
+			| "idle"
+			| "error"
+			| "resume"
+			| "attach",
 	) => void;
 	clearWaiting: (ptyId: string) => void;
 	clearActive: (ptyId: string) => void;

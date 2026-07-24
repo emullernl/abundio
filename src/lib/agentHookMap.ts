@@ -9,7 +9,10 @@
 // "resume" means "the agent is provably not blocked" (a tool is executing):
 // it lifts Waiting → Working and is otherwise a strict no-op — unlike
 // "active" it never resets the working window or drops a Subagent-held Stop,
-// so it is safe for per-tool-call events. The other values are
+// so it is safe for per-tool-call events. "attach" means "hooks are live in
+// this PTY": it marks the PTY hook-driven (silencing the byte heuristic)
+// without driving any state transition — for events that fire before any
+// work starts, like Grok's SessionStart. The other values are
 // PtyActivityState transitions.
 
 export type HookTransition =
@@ -19,6 +22,7 @@ export type HookTransition =
 	| "idle"
 	| "error"
 	| "resume"
+	| "attach"
 	| "clear";
 
 // Per-agent (event name → transition). Event names match each Agent's own
@@ -111,15 +115,17 @@ HOOK_EVENT_MAP.grok = {
 	// matcher-scoped to the two first-party blocking notification types
 	// (permission_prompt | elicitation_dialog), so — like Copilot — only
 	// genuine prompts reach the "waiting" mapping. Grok has NO
-	// permission-granted event (unlike Kimi's PermissionResult), and its
-	// permission pipeline emits the permission_prompt notification even for
-	// prompts that resolve without a local keystroke (always-approve mode,
-	// the LLM-classifier mode, remembered grants, a mid-prompt Ctrl+O
-	// toggle, relay approvals) — so PreToolUse is the resume signal out of
-	// Waiting: a tool only runs after its permission resolves, and no tool
-	// runs while a prompt is genuinely pending, so "resume" cannot mask real
-	// Waiting (and, being a no-op outside Waiting, the per-tool-call
-	// frequency is harmless). PermissionDenied fires
+	// permission-granted event (unlike Kimi's PermissionResult). Crucially,
+	// PreToolUse fires BEFORE the permission gate, not after it (verified
+	// against grok-build tool_calls.rs: the PreToolUse dispatch precedes
+	// `permissions.request_with_edit_path_context`), so within one tool call
+	// the order is always PreToolUse → permission_prompt Notification —
+	// PreToolUse can only heal the PREVIOUS tool's stale Waiting, never its
+	// own. In `auto` (LLM classifier) mode the prompt usually self-resolves
+	// with no keystroke and nothing fires after approval, which left the pane
+	// stuck Waiting for the rest of the tool run; the envelope's
+	// `permissionMode` field discriminates this — see the grok Notification
+	// branch in mapHookEvent. PermissionDenied fires
 	// AFTER a deny: the user (or policy) just acted and the turn continues,
 	// so it resumes "active"; Stop/StopFailure corrects if the turn ends
 	// instead. Stop is reason-branched in mapHookEvent (end_turn → ready,
@@ -128,6 +134,14 @@ HOOK_EVENT_MAP.grok = {
 	// StopFailure, so an unconditional "ready" would overwrite the Error
 	// icon. Verified against github.com/xai-org/grok-build
 	// (acp_session_impl/turn.rs).
+	// SessionStart maps to "attach" (mark hook-driven, no state change):
+	// Grok's welcome screen plays an animated logo that emits 8-10KB redraw
+	// bursts every few seconds, which the byte heuristic reads as Working —
+	// but no hook fires before the first prompt, so the heuristic stays live
+	// exactly there. SessionStart lands ~100ms after launch (verified against
+	// the 0.2.111 binary with a logging hook probe), flipping the PTY to
+	// hook-driven before the first burst (~2s in).
+	SessionStart: "attach",
 	UserPromptSubmit: "active",
 	Notification: "waiting",
 	PreToolUse: "resume",
@@ -151,6 +165,20 @@ HOOK_EVENT_MAP.qwen = HOOK_EVENT_MAP.claude;
 // fire for any other tool.
 const COPILOT_WAITING_TOOLS = new Set(["exit_plan_mode", "ask_user"]);
 
+// Grok permission_prompt messages that fire at the moment a modal dialog is
+// actually shown — the exit_plan_mode approval ("Plan approval requested",
+// tool_calls.rs request_plan_approval) and the diff-review UI ("Diff review
+// requested", hook_dispatch.rs notification_hook_for_update). These always
+// block on the user, in every permission mode — unlike the gate-entry
+// "Tool permission requested", which fires BEFORE the permission resolves
+// and frequently self-resolves (Read/Grep/WebSearch are unconditionally
+// auto-allowed as SAFE_COMMAND in permission/manager.rs). The strings are
+// stable literals in grok-build source.
+const GROK_BLOCKING_PROMPT_MESSAGES = new Set([
+	"Plan approval requested",
+	"Diff review requested",
+]);
+
 /**
  * Resolve an Agent hook event to a status transition, or `null` when the
  * event is not one we drive status from.
@@ -159,12 +187,21 @@ const COPILOT_WAITING_TOOLS = new Set(["exit_plan_mode", "ask_user"]);
  * override the event's default transition — see the exit_plan_mode case.
  * `stopReason` (Grok's `Stop.reason` payload field) lets a turn-end event
  * distinguish how the turn ended — see the grok case.
+ * `permissionMode` (Grok's envelope field: `default` | `auto` | `plan` |
+ * `bypassPermissions`), `notificationType` (Grok's Notification payload
+ * field), and `message` (the Notification's human-readable text — the only
+ * field that separates Grok's dialog-on-screen prompts from its gate-entry
+ * prompts) let a permission_prompt that will self-resolve map to "resume"
+ * instead of "waiting" — see the grok Notification case.
  */
 export function mapHookEvent(
 	agentId: string,
 	eventName: string,
 	toolName?: string,
 	stopReason?: string,
+	permissionMode?: string,
+	notificationType?: string,
+	message?: string,
 ): HookTransition | null {
 	// Grok's single Stop event covers completed, cancelled, and errored turns,
 	// discriminated by `reason`. A user-cancel goes straight to Idle, not Ready
@@ -172,6 +209,44 @@ export function mapHookEvent(
 	// An errored turn must NOT map to "ready": Grok fires Stop AFTER
 	// StopFailure on errors, and "ready" would overwrite the Error icon.
 	// Unknown/missing reasons fall through to the map's default ("ready").
+	// Grok fires the gate-entry permission_prompt notification BEFORE the
+	// permission resolves, and nothing fires after an approval. Which of
+	// them self-resolve depends on the mode and the tool:
+	// - `auto` (LLM classifier) / `bypassPermissions`: (almost) all prompts
+	//   self-resolve without a keystroke, so "waiting" would stick for the
+	//   whole tool run (the next PreToolUse fires before the NEXT prompt's
+	//   notification, so the pane read Waiting for essentially the entire
+	//   turn). Suppress every gate-entry prompt.
+	// - `plan`: Read/Grep/WebSearch are unconditionally auto-allowed
+	//   (SAFE_COMMAND, permission/manager.rs) and dominate planning turns,
+	//   which left panes falsely Waiting for most of a planning turn.
+	//   Suppress gate-entry prompts here too — but only when `message`
+	//   confirms gate entry, so older Grok binaries without the field keep
+	//   the conservative "waiting".
+	// - dialog-on-screen prompts (plan approval, diff review — see
+	//   GROK_BLOCKING_PROMPT_MESSAGES) always block: "waiting" in EVERY
+	//   mode, including auto/bypass where they were previously suppressed.
+	// "resume" is a strict no-op unless Waiting, which also heals a stale
+	// Waiting left by a mid-prompt Ctrl+O mode toggle.
+	// Known trade-off: a genuine tool prompt in auto or plan mode (a
+	// classifier escalation, an ungrated bash/MCP call) shares the
+	// "Tool permission requested" message with the self-resolving case, so
+	// it shows Working, not Waiting; the 30s hook-idle backstop flips it to
+	// Ready as the attention signal. elicitation_dialog genuinely blocks
+	// regardless of mode and keeps the "waiting" mapping.
+	if (
+		agentId === "grok" &&
+		eventName === "Notification" &&
+		notificationType === "permission_prompt" &&
+		!(message !== undefined && GROK_BLOCKING_PROMPT_MESSAGES.has(message))
+	) {
+		if (permissionMode === "auto" || permissionMode === "bypassPermissions") {
+			return "resume";
+		}
+		if (permissionMode === "plan" && message === "Tool permission requested") {
+			return "resume";
+		}
+	}
 	if (agentId === "grok" && eventName === "Stop") {
 		if (stopReason === "cancelled") return "idle";
 		if (stopReason === "error") return "error";
