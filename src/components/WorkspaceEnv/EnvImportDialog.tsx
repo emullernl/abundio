@@ -254,6 +254,15 @@ export function EnvImportDialog({
 								</span>
 							)}
 
+							{parsed.unterminated.length > 0 && (
+								<span style={{ fontSize: 11, color: "var(--error)" }}>
+									{parsed.unterminated.join(", ")}{" "}
+									{parsed.unterminated.length === 1 ? "opens" : "open"} a quote
+									that is never closed — skipped rather than imported
+									half-finished. Check the file is complete.
+								</span>
+							)}
+
 							{parsed.invalidNames.length > 0 && (
 								<span style={{ fontSize: 11, color: "var(--error)" }}>
 									Skipped {parsed.invalidNames.length} invalid or reserved{" "}

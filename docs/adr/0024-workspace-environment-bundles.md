@@ -30,6 +30,14 @@ environment — but code running *inside* a pane can read `ABUNDIO_HOOK_TOKEN` a
 ask the helper for it. This is a defence against disk scraping, not against a
 targeted attacker who already runs as you.
 
+**Not a boundary between panes, either.** Resolving the Workspace from
+`ABUNDIO_PTY_ID` server-side stops a typo or a naive caller reaching another
+Workspace, but it is not isolation: the hook token is process-wide and identical
+in every pane, and every pane's `ABUNDIO_PTY_ID` is readable by any same-user
+process (`/proc/<pid>/environ`, `ps eww`). The honest statement is "a process
+running as you can read any Workspace's on-demand Bundles" — the token buys that
+a process *outside* an Abundio terminal can read none of them.
+
 **`zeroize` is best-effort.** Serde's IPC deserialization has already copied the
 plaintext somewhere we cannot reach, and JS strings are immutable and
 GC-managed. The frontend store holds at most **one** decrypted value at a time

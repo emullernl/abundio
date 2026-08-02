@@ -158,20 +158,32 @@ static KEY_CACHE: Mutex<Option<MasterKey>> = Mutex::new(None);
 /// Cached process-wide after the first success — which means it is shared by
 /// every window, since a Tauri app is a single process.
 pub fn master_key() -> Result<MasterKey, CryptoError> {
-    if let Some(key) = KEY_CACHE.lock().unwrap().as_ref() {
+    // The guard is held across the ENTIRE init, not just the cache read.
+    //
+    // Releasing it between the check and `load_or_create_keyring_key` lets two
+    // first-use callers — say a PTY spawn and an `env_list` from a second
+    // window — both observe `NoEntry`, both generate a key and both store it.
+    // One key wins the credential store, the other wins this process's cache,
+    // and everything sealed for the rest of the session then decrypts to
+    // nothing after a restart. Silent, unrecoverable data loss.
+    //
+    // The cost is that a second caller blocks behind an open Keychain prompt
+    // rather than raising a second one, which is the better behaviour anyway.
+    let mut cache = KEY_CACHE.lock().unwrap();
+    if let Some(key) = cache.as_ref() {
         return Ok(key.clone());
     }
 
     #[cfg(debug_assertions)]
     if let Ok(hex) = std::env::var(DEV_KEY_ENV) {
         let key = parse_hex_key(&hex)?;
-        *KEY_CACHE.lock().unwrap() = Some(key.clone());
+        *cache = Some(key.clone());
         log::warn!("[env] using {DEV_KEY_ENV} instead of the OS credential store (debug build)");
         return Ok(key);
     }
 
     let key = load_or_create_keyring_key()?;
-    *KEY_CACHE.lock().unwrap() = Some(key.clone());
+    *cache = Some(key.clone());
     Ok(key)
 }
 

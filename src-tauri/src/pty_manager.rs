@@ -245,8 +245,17 @@ impl PtyManager {
             _ => Vec::new(),
         };
 
-        let (pairs, keys_manifest, skipped) =
-            build_env_injection(&injected, crate::env_crypto::MAX_INJECTED_BYTES);
+        // Only the three wrapper scripts consume (and unset) the shadow copies.
+        let has_wrapper = command.is_none()
+            && matches!(
+                shell_type,
+                ShellType::Zsh | ShellType::Bash | ShellType::PowerShell
+            );
+        let (pairs, keys_manifest, skipped) = build_env_injection(
+            &injected,
+            crate::env_crypto::MAX_INJECTED_BYTES,
+            has_wrapper,
+        );
         for (name, value) in &pairs {
             cmd.env(name, value);
         }
@@ -472,9 +481,16 @@ fn detect_shell_type(shell: &str) -> ShellType {
 /// Truncates at `budget_bytes` and reports what was dropped. This is not
 /// cosmetic: on Windows the whole environment block is capped at 32,767
 /// characters and `CreateProcess` FAILS on overflow, which would kill the pane.
+/// `emit_shadow` is false for shells Abundio writes no wrapper rc for
+/// (`ShellType::Other`, and `command`-mode spawns). The shadow exists only so
+/// the wrapper can re-export after the user's rc; with no wrapper it would
+/// never be consumed, and `ABUNDIO_ENV__*` plus `ABUNDIO_ENV_KEYS` would linger
+/// in the environment of that shell and every child — doubling the footprint in
+/// `env` output and crash dumps, and handing a reader the list of managed names.
 pub(crate) fn build_env_injection(
     vars: &[(String, String)],
     budget_bytes: usize,
+    emit_shadow: bool,
 ) -> (Vec<(String, String)>, String, Vec<String>) {
     let shadow_prefix = crate::env_crypto::SHADOW_PREFIX;
 
@@ -484,15 +500,21 @@ pub(crate) fn build_env_injection(
     let mut used = 0usize;
 
     for (name, value) in vars {
-        let cost = crate::env_crypto::injection_cost(name.len(), value.len());
+        let cost = if emit_shadow {
+            crate::env_crypto::injection_cost(name.len(), value.len())
+        } else {
+            name.len() + value.len() + 2
+        };
         if used + cost > budget_bytes {
             skipped.push(name.clone());
             continue;
         }
         used += cost;
         pairs.push((name.clone(), value.clone()));
-        pairs.push((format!("{shadow_prefix}{name}"), value.clone()));
-        names.push(name.clone());
+        if emit_shadow {
+            pairs.push((format!("{shadow_prefix}{name}"), value.clone()));
+            names.push(name.clone());
+        }
     }
 
     (pairs, names.join(" "), skipped)
@@ -888,9 +910,22 @@ case "${1:-}" in
 
     # NUL-delimited KEY=VALUE records: no escaping rules, no eval, and values
     # containing newlines (certificates) survive intact.
+    #
+    # A process substitution's exit status is invisible to `set -e`, so the
+    # fetch status is smuggled out through a file. Without this, a locked
+    # keychain or a typo'd bundle name reads zero records and execs the command
+    # with NOTHING applied — the same silent-blank-values failure this helper
+    # exists to avoid.
+    __abundio_status=$(mktemp)
     while IFS= read -r -d '' __abundio_pair; do
       export "${__abundio_pair%%=*}=${__abundio_pair#*=}"
-    done < <(__abundio_fetch /env/raw "$bundle")
+    done < <(__abundio_fetch /env/raw "$bundle"; echo $? >"$__abundio_status")
+    __abundio_rc=$(cat "$__abundio_status")
+    rm -f "$__abundio_status"
+    if [ "$__abundio_rc" != 0 ]; then
+      echo "abundio-env: could not read bundle '$bundle' — refusing to run without it" >&2
+      exit 1
+    fi
 
     exec "$@"
     ;;
@@ -945,14 +980,26 @@ switch ($Command) {
         # value, so nothing is ever evaluated as code and a value containing
         # quotes or newlines cannot execute.
         $body = @{ ptyId = $env:ABUNDIO_PTY_ID; bundle = $Bundle } | ConvertTo-Json -Compress
-        $raw = Invoke-RestMethod -Uri "$base/env/raw" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        # Invoke-RestMethod's HTTP failure is statement-terminating, not
+        # script-terminating, so without this catch execution falls through and
+        # runs the command with no variables set.
+        try {
+            $raw = Invoke-RestMethod -Uri "$base/env/raw" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        } catch {
+            Write-Error "abundio-env: could not read bundle '$Bundle' - refusing to run without it"
+            exit 1
+        }
         foreach ($record in ($raw -split "`0")) {
             if (-not $record) { continue }
             $i = $record.IndexOf('=')
             if ($i -lt 1) { continue }
             [Environment]::SetEnvironmentVariable($record.Substring(0, $i), $record.Substring($i + 1), 'Process')
         }
-        & $args2[0] @($args2[1..($args2.Count - 1)])
+        # Skip-based, not range-based: an index range from 1 to the last element
+        # descends when the command has a single token, which would pass the
+        # command name to itself as an argument.
+        $rest = @($args2 | Select-Object -Skip 1)
+        & $args2[0] @rest
         exit $LASTEXITCODE
     }
     "print" {
@@ -1249,7 +1296,7 @@ mod env_injection_tests {
 
     #[test]
     fn emits_both_the_plain_and_shadow_forms() {
-        let (pairs, keys, skipped) = build_env_injection(&vars(&[("TOKEN", "abc")]), 64 * 1024);
+        let (pairs, keys, skipped) = build_env_injection(&vars(&[("TOKEN", "abc")]), 64 * 1024, true);
         assert!(pairs.contains(&("TOKEN".into(), "abc".into())));
         assert!(pairs.contains(&("ABUNDIO_ENV__TOKEN".into(), "abc".into())));
         assert_eq!(keys, "TOKEN");
@@ -1261,8 +1308,24 @@ mod env_injection_tests {
         let (_, keys, _) = build_env_injection(
             &vars(&[("A", "1"), ("B", "2"), ("C", "3")]),
             64 * 1024,
+            true,
         );
         assert_eq!(keys, "A B C");
+    }
+
+    /// Shells with no wrapper rc never consume the shadow copies, so emitting
+    /// them would leave `ABUNDIO_ENV__*` and the manifest lingering in the
+    /// environment of that shell and every child.
+    #[test]
+    fn no_shadow_copies_for_shells_without_a_wrapper() {
+        let (pairs, keys, _) =
+            build_env_injection(&vars(&[("TOKEN", "abc")]), 64 * 1024, false);
+        assert_eq!(pairs, vec![("TOKEN".to_string(), "abc".to_string())]);
+        assert!(
+            keys.is_empty(),
+            "no manifest without a wrapper to act on it"
+        );
+        assert!(!pairs.iter().any(|(k, _)| k.starts_with("ABUNDIO_ENV__")));
     }
 
     /// The wrapper scripts guard on `[ -n "$ABUNDIO_ENV_KEYS" ]`, so with no
@@ -1270,7 +1333,7 @@ mod env_injection_tests {
     /// at all rather than exporting an empty string.
     #[test]
     fn empty_input_produces_no_manifest() {
-        let (pairs, keys, skipped) = build_env_injection(&[], 64 * 1024);
+        let (pairs, keys, skipped) = build_env_injection(&[], 64 * 1024, true);
         assert!(pairs.is_empty());
         assert!(keys.is_empty());
         assert!(skipped.is_empty());
@@ -1279,7 +1342,7 @@ mod env_injection_tests {
     #[test]
     fn values_with_newlines_survive_unchanged() {
         let pem = "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n";
-        let (pairs, _, _) = build_env_injection(&vars(&[("CERT", pem)]), 64 * 1024);
+        let (pairs, _, _) = build_env_injection(&vars(&[("CERT", pem)]), 64 * 1024, true);
         assert_eq!(pairs[0].1, pem);
         assert_eq!(pairs[1].1, pem);
     }
@@ -1291,7 +1354,7 @@ mod env_injection_tests {
     fn truncates_at_the_budget_and_reports_what_was_dropped() {
         let big = "x".repeat(500);
         let (pairs, keys, skipped) =
-            build_env_injection(&vars(&[("SMALL", "1"), ("BIG", &big)]), 200);
+            build_env_injection(&vars(&[("SMALL", "1"), ("BIG", &big)]), 200, true);
         assert!(pairs.iter().any(|(k, _)| k == "SMALL"));
         assert!(!pairs.iter().any(|(k, _)| k == "BIG"));
         assert_eq!(keys, "SMALL");
@@ -1404,6 +1467,31 @@ mod wrapper_script_tests {
             "compose cannot read a process substitution"
         );
         assert!(ABUNDIO_ENV_SH.contains("abundio-env run production -- docker compose up"));
+    }
+
+    /// A process substitution's exit status is invisible to `set -e`, so
+    /// without an explicit check a failed fetch execs the command with NO
+    /// variables — the exact silent-blank-values failure this helper replaced
+    /// `--env-file` to avoid.
+    #[test]
+    fn helper_run_aborts_when_the_fetch_fails() {
+        assert!(ABUNDIO_ENV_SH.contains("__abundio_rc"));
+        assert!(ABUNDIO_ENV_SH.contains("refusing to run without it"));
+        // The abort must come BEFORE the exec.
+        let check = ABUNDIO_ENV_SH.find("refusing to run without it").unwrap();
+        let exec = ABUNDIO_ENV_SH.find("exec \"$@\"").unwrap();
+        assert!(check < exec, "the status check must precede exec");
+
+        assert!(ABUNDIO_ENV_PS1.contains("refusing to run without it"));
+        assert!(ABUNDIO_ENV_PS1.contains("} catch {"));
+    }
+
+    /// `$args2[1..($args2.Count - 1)]` is a DESCENDING range for a single-token
+    /// command, which passes the command name to itself.
+    #[test]
+    fn powershell_run_handles_a_command_with_no_arguments() {
+        assert!(ABUNDIO_ENV_PS1.contains("Select-Object -Skip 1"));
+        assert!(!ABUNDIO_ENV_PS1.contains("$args2.Count - 1"));
     }
 
     #[test]

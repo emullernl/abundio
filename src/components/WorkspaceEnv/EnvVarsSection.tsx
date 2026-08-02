@@ -1,6 +1,6 @@
 import { AlertTriangle, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
-import { isValidEnvName } from "../../lib/dotenvParse";
+import { injectionCost, isValidEnvName } from "../../lib/dotenvParse";
 import { useWorkspaceEnvStore } from "../../stores/workspaceEnvStore";
 import { BundleTabs } from "./BundleTabs";
 import { EnvImportDialog } from "./EnvImportDialog";
@@ -48,11 +48,18 @@ export function EnvVarsSection({
 	const duplicate = store.vars.some(
 		(v) => v.name === newName.trim() && !v.inherited,
 	);
+	// The SAME cost the spawn path will spend — `name.length + value.length`
+	// under-counts by more than half, so the form stayed enabled well past the
+	// point where variables start being dropped.
 	const wouldExceedBudget =
 		isInjected &&
 		store.bytesBudget > 0 &&
-		store.bytesUsed + newName.trim().length + newValue.length >
+		store.bytesUsed + injectionCost(newName.trim().length, newValue.length) >
 			store.bytesBudget;
+	// Import and value-edit have no pre-flight check of their own, so a
+	// post-write banner is what covers those paths.
+	const overBudget =
+		isInjected && store.bytesBudget > 0 && store.bytesUsed > store.bytesBudget;
 	const canAdd =
 		isValidEnvName(newName.trim()) &&
 		newValue.length > 0 &&
@@ -155,6 +162,31 @@ export function EnvVarsSection({
 					>
 						Retry
 					</button>
+				</div>
+			)}
+
+			{overBudget && (
+				<div
+					className="flex items-center"
+					style={{
+						gap: 8,
+						padding: "8px 10px",
+						borderRadius: 8,
+						fontSize: 11,
+						lineHeight: 1.45,
+						color: "var(--fg-primary)",
+						backgroundColor:
+							"color-mix(in srgb, var(--error) 12%, var(--bg-primary))",
+						border:
+							"1px solid color-mix(in srgb, var(--error) 35%, transparent)",
+					}}
+				>
+					<AlertTriangle size={13} style={{ color: "var(--error)" }} />
+					<span>
+						This bundle is over the {formatValueSize(store.bytesBudget)}{" "}
+						environment budget. Variables past the limit are dropped when a
+						terminal starts — move some to an on-demand bundle.
+					</span>
 				</div>
 			)}
 

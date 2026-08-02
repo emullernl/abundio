@@ -8,6 +8,7 @@
 //! Bound to `127.0.0.1` only. The relay correlates events to a PTY via the
 //! `ABUNDIO_PTY_ID` env var injected at PTY spawn.
 
+use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::thread;
 use std::time::Duration;
@@ -249,13 +250,33 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
 /// Serve `abundio-env list` / `abundio-env print <bundle>` for one pane.
 ///
 /// The Workspace is resolved from `ptyId` through the PtyManager's spawn-context
-/// map — NEVER taken from the request. That is what stops a pane asking for
-/// another Workspace's Bundles: the caller can only name a bundle, not a
-/// workspace. Combined with the token check above, a process outside an Abundio
-/// terminal cannot read anything at all.
+/// map rather than taken from the request body, so a caller can name a bundle
+/// but not a workspace. That stops a typo or a naive caller reaching another
+/// Workspace.
+///
+/// It is NOT a security boundary between panes, and should not be described as
+/// one. The `X-Abundio-Token` header is the process-wide hook token — identical
+/// in every pane — and `ABUNDIO_PTY_ID` sits in every pane's environment, which
+/// any same-user process can read (`/proc/<pid>/environ`, `ps eww`). The real
+/// property is "a process running as you can read any Workspace's on-demand
+/// bundles", which is inside the threat model in ADR-0024. What the token does
+/// buy is that a process *outside* an Abundio terminal cannot read anything.
 fn handle_env_request(app: &AppHandle, path: &str, mut request: tiny_http::Request) {
+    // Bounded: an authenticated caller should not be able to make the server
+    // buffer an arbitrary amount. These bodies are two short JSON fields.
+    const MAX_ENV_REQUEST_BODY: u64 = 64 * 1024;
     let mut body = String::new();
-    let _ = request.as_reader().read_to_string(&mut body);
+    // `as_reader()` hands back a trait object, so `Read::take` needs an
+    // explicit `by_ref` to have a sized receiver.
+    let reader = request.as_reader();
+    if (&mut *reader)
+        .take(MAX_ENV_REQUEST_BODY)
+        .read_to_string(&mut body)
+        .is_err()
+    {
+        let _ = request.respond(tiny_http::Response::empty(400));
+        return;
+    }
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
     let pty_id = parsed.get("ptyId").and_then(|v| v.as_str()).unwrap_or("");
     let bundle = parsed.get("bundle").and_then(|v| v.as_str()).unwrap_or("");

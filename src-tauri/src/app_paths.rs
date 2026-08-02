@@ -114,8 +114,11 @@ pub fn import_legacy_state_if_needed() {
             Err(e) => {
                 log::error!("[paths] could not import the previous database: {e}");
                 // Leave no half-written file behind — a fresh, empty database is
-                // recoverable, a truncated one is not.
-                let _ = std::fs::remove_file(&target);
+                // recoverable, a truncated one is not. The sidecars matter too:
+                // `Connection::open` may have created them before the copy
+                // failed, and orphaned WAL/SHM alongside a fresh target on the
+                // next attempt is an avoidable state.
+                remove_database_files(&target);
                 return;
             }
         }
@@ -126,6 +129,16 @@ pub fn import_legacy_state_if_needed() {
             log::warn!("[paths] could not copy PTY scrollback logs: {e}");
         }
     });
+}
+
+/// Remove a database and its WAL/SHM sidecars.
+fn remove_database_files(db: &Path) {
+    let _ = std::fs::remove_file(db);
+    for suffix in ["-wal", "-shm"] {
+        let mut sidecar = db.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        let _ = std::fs::remove_file(PathBuf::from(sidecar));
+    }
 }
 
 /// Copy a SQLite database using the backup API.

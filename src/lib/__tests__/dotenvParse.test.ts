@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidEnvName, parseDotenv } from "../dotenvParse";
+import { injectionCost, isValidEnvName, parseDotenv } from "../dotenvParse";
 
 describe("parseDotenv", () => {
 	it("parses plain KEY=value lines", () => {
@@ -10,6 +10,7 @@ describe("parseDotenv", () => {
 		]);
 		expect(r.invalidNames).toEqual([]);
 		expect(r.skippedLines).toBe(0);
+		expect(r.unterminated).toEqual([]);
 	});
 
 	it("strips a leading `export `", () => {
@@ -154,6 +155,53 @@ FEATURE_FLAGS='a,b,c'
 		}
 	});
 
+	// The flagship case: a PEM in a .env is written as a multi-line quoted value.
+	// Line-at-a-time parsing silently imported a truncated certificate.
+	describe("multi-line quoted values", () => {
+		const PEM =
+			"-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+g\nabc\n-----END CERTIFICATE-----";
+
+		it("keeps a double-quoted certificate intact", () => {
+			const r = parseDotenv(`TLS_CERT="${PEM}"\nAPI_PORT=8080`);
+			expect(r.entries).toEqual([
+				{ name: "TLS_CERT", value: PEM },
+				{ name: "API_PORT", value: "8080" },
+			]);
+			expect(r.skippedLines).toBe(0);
+			expect(r.unterminated).toEqual([]);
+		});
+
+		it("keeps a single-quoted multi-line value intact", () => {
+			const r = parseDotenv(`KEY='line1\nline2'`);
+			expect(r.entries).toEqual([{ name: "KEY", value: "line1\nline2" }]);
+		});
+
+		it("does not treat a value that closes on its own line as multi-line", () => {
+			const r = parseDotenv('A="one"\nB="two"');
+			expect(r.entries).toEqual([
+				{ name: "A", value: "one" },
+				{ name: "B", value: "two" },
+			]);
+		});
+
+		// Refusing beats importing a secret cut off at end-of-file.
+		it("reports an unterminated quote instead of truncating", () => {
+			const r = parseDotenv('TLS_CERT="-----BEGIN CERTIFICATE-----\nMIIDdz');
+			expect(r.entries).toEqual([]);
+			expect(r.unterminated).toEqual(["TLS_CERT"]);
+		});
+
+		it("still parses entries that follow a completed multi-line value", () => {
+			const r = parseDotenv(`A="x\ny"\n# comment\nB=2`);
+			expect(r.entries.map((e) => e.name)).toEqual(["A", "B"]);
+		});
+
+		it("an escaped quote does not close the value", () => {
+			const r = parseDotenv('A="say \\"hi\\"\nsecond"');
+			expect(r.entries[0].value).toBe('say "hi"\nsecond');
+		});
+	});
+
 	it("returns nothing for empty input", () => {
 		const r = parseDotenv("");
 		expect(r.entries).toEqual([]);
@@ -184,5 +232,22 @@ describe("isValidEnvName", () => {
 		]) {
 			expect(isValidEnvName(n)).toBe(false);
 		}
+	});
+});
+
+describe("injectionCost", () => {
+	// Mirrors env_crypto::injection_cost. If this drifts, the Add form starts
+	// accepting variables that build_env_injection silently drops at spawn.
+	it("matches the Rust formula", () => {
+		// (name + value + 2) * 2 + "ABUNDIO_ENV__".length + name + 1
+		expect(injectionCost(5, 3)).toBe((5 + 3 + 2) * 2 + 13 + 5 + 1);
+		expect(injectionCost(0, 0)).toBe(2 * 2 + 13 + 0 + 1);
+		expect(injectionCost(1, 5)).toBe((1 + 5 + 2) * 2 + 13 + 1 + 1);
+	});
+
+	it("is materially larger than a naive name+value estimate", () => {
+		// The bug this replaced: TOKEN=abc predicted 8 bytes, really costs 39.
+		expect(injectionCost(5, 3)).toBe(39);
+		expect(injectionCost(5, 3)).toBeGreaterThan(5 + 3);
 	});
 });

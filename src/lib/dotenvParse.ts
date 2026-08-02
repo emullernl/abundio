@@ -36,6 +36,27 @@ export interface DotenvParseResult {
 	invalidNames: string[];
 	/** Non-empty, non-comment lines that had no `=` at all. */
 	skippedLines: number;
+	/** Names whose quoted value ran to the end of the file with no closing
+	 *  quote. Reported rather than imported: a truncated certificate is far
+	 *  worse than a refused import. */
+	unterminated: string[];
+}
+
+/** Mirrors `env_crypto::SHADOW_PREFIX`. */
+const SHADOW_PREFIX = "ABUNDIO_ENV__";
+
+/**
+ * Bytes one variable adds to a spawned shell's environment block.
+ *
+ * Mirrors `env_crypto::injection_cost` in Rust, which is the enforcement point;
+ * this copy exists so the Add form can predict a rejection instead of letting
+ * `build_env_injection` drop the variable later with only a log line. Kept next
+ * to `isValidEnvName`, which mirrors `validate_name` for the same reason.
+ */
+export function injectionCost(nameLength: number, valueLength: number): number {
+	return (
+		(nameLength + valueLength + 2) * 2 + SHADOW_PREFIX.length + nameLength + 1
+	);
 }
 
 export function isValidEnvName(name: string): boolean {
@@ -56,16 +77,22 @@ export function isValidEnvName(name: string): boolean {
  *  - Whole-line `#` comments and blank lines are ignored. A `#` inside a value
  *    is NOT a comment: too many real tokens and URLs contain one, and guessing
  *    wrong would silently truncate a secret.
+ *  - A value that opens with `"` or `'` and does not close on the same line
+ *    continues across lines until the matching quote. This is the flagship
+ *    case — a PEM certificate in a `.env` is written exactly that way, and
+ *    treating it line-at-a-time silently imported a truncated secret.
  *  - CRLF is tolerated.
  *  - Duplicate names: last wins, matching how a shell would evaluate the file.
  */
 export function parseDotenv(text: string): DotenvParseResult {
 	const byName = new Map<string, string>();
 	const invalidNames: string[] = [];
+	const unterminated: string[] = [];
 	let skippedLines = 0;
 
-	for (const rawLine of text.split(/\r?\n/)) {
-		const line = rawLine.trim();
+	const lines = text.split(/\r?\n/);
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i].trim();
 		if (!line || line.startsWith("#")) continue;
 
 		const withoutExport = line.startsWith("export ")
@@ -79,7 +106,37 @@ export function parseDotenv(text: string): DotenvParseResult {
 		}
 
 		const name = withoutExport.slice(0, eq).trim();
-		const value = unquote(withoutExport.slice(eq + 1).trim());
+		let rawValue = withoutExport.slice(eq + 1).trim();
+
+		// A quoted value that does not close on this line continues until the
+		// matching quote. Newlines inside it are part of the value — this is how
+		// certificates and private keys appear in a real `.env`.
+		const quote = rawValue[0];
+		if (
+			(quote === '"' || quote === "'") &&
+			!closesOnSameLine(rawValue, quote)
+		) {
+			const collected = [rawValue];
+			let closed = false;
+			while (++i < lines.length) {
+				const next = lines[i];
+				collected.push(next);
+				if (next.includes(quote)) {
+					closed = true;
+					break;
+				}
+			}
+			if (!closed) {
+				// Refuse rather than import a value cut off at end-of-file.
+				if (isValidEnvName(name) && !unterminated.includes(name)) {
+					unterminated.push(name);
+				}
+				continue;
+			}
+			rawValue = collected.join("\n").trimEnd();
+		}
+
+		const value = unquote(rawValue);
 
 		if (!isValidEnvName(name)) {
 			if (!invalidNames.includes(name)) invalidNames.push(name);
@@ -92,7 +149,21 @@ export function parseDotenv(text: string): DotenvParseResult {
 		entries: [...byName].map(([name, value]) => ({ name, value })),
 		invalidNames,
 		skippedLines,
+		unterminated,
 	};
+}
+
+/** Whether a value opening with `quote` also closes on the same line. The
+ *  opening character is skipped, and an escaped quote does not count. */
+function closesOnSameLine(rawValue: string, quote: string): boolean {
+	for (let i = 1; i < rawValue.length; i++) {
+		if (rawValue[i] === "\\") {
+			i++;
+			continue;
+		}
+		if (rawValue[i] === quote) return true;
+	}
+	return false;
 }
 
 function unquote(raw: string): string {
