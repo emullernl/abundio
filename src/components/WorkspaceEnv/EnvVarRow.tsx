@@ -157,27 +157,33 @@ export function EnvVarRow({
 					</span>
 				</button>
 
-				<button
-					type="button"
-					onClick={onDelete}
-					// Deletion stays available on an unreadable row — it is the only
-					// way out of a database restored without its key.
-					title={`Delete ${variable.name}`}
-					aria-label={`Delete ${variable.name}`}
-					className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity"
-					onMouseEnter={() => setHoverDelete(true)}
-					onMouseLeave={() => setHoverDelete(false)}
-					style={{
-						background: "none",
-						border: "none",
-						padding: 2,
-						cursor: "pointer",
-						flexShrink: 0,
-						color: hoverDelete ? "var(--error)" : "var(--fg-secondary)",
-					}}
-				>
-					<X size={13} />
-				</button>
+				{/* No delete for an inherited row: the value lives on the main
+				    worktree, so there is nothing here to remove — the DELETE would
+				    silently match zero rows. Remove it where it is defined, or
+				    override it. */}
+				{!variable.inherited && (
+					<button
+						type="button"
+						onClick={onDelete}
+						// Deletion stays available on an unreadable OWN row — it is the
+						// only way out of a database restored without its key.
+						title={`Delete ${variable.name}`}
+						aria-label={`Delete ${variable.name}`}
+						className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity"
+						onMouseEnter={() => setHoverDelete(true)}
+						onMouseLeave={() => setHoverDelete(false)}
+						style={{
+							background: "none",
+							border: "none",
+							padding: 2,
+							cursor: "pointer",
+							flexShrink: 0,
+							color: hoverDelete ? "var(--error)" : "var(--fg-secondary)",
+						}}
+					>
+						<X size={13} />
+					</button>
+				)}
 			</div>
 
 			<AnimatePresence initial={false}>

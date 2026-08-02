@@ -173,7 +173,7 @@ describe("workspaceEnvStore", () => {
 				.getState()
 				.upsert(WS, null, "default", "A", "1");
 			expect(ok).toBe(true);
-			expect(env.upsert).toHaveBeenCalledWith(WS, "default", "A", "1");
+			expect(env.upsert).toHaveBeenCalledWith(WS, null, "default", "A", "1");
 			expect(env.list).toHaveBeenCalled();
 		});
 
@@ -194,7 +194,7 @@ describe("workspaceEnvStore", () => {
 			await useWorkspaceEnvStore
 				.getState()
 				.importMany(WS, null, "default", entries);
-			expect(env.upsertMany).toHaveBeenCalledWith(WS, "default", entries);
+			expect(env.upsertMany).toHaveBeenCalledWith(WS, null, "default", entries);
 		});
 
 		it("remove drops the revealed value", async () => {

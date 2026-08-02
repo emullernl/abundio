@@ -36,6 +36,17 @@ describe("parseDotenv", () => {
 		);
 	});
 
+	// Regression: chained replaces decoded a LITERAL backslash-n into a newline,
+	// so `abundio-env print` output did not round-trip back through import.
+	it("keeps a literal backslash-n as two characters", () => {
+		expect(parseDotenv('P="C:\\\\newdir"').entries[0].value).toBe("C:\\newdir");
+		expect(parseDotenv('A="a\\\\nb"').entries[0].value).toBe("a\\nb");
+	});
+
+	it("leaves an unknown escape untouched rather than eating the backslash", () => {
+		expect(parseDotenv('A="a\\qb"').entries[0].value).toBe("a\\qb");
+	});
+
 	it("unwraps single quotes literally", () => {
 		expect(parseDotenv("A='no\\nescape'").entries[0].value).toBe("no\\nescape");
 	});
@@ -113,6 +124,34 @@ FEATURE_FLAGS='a,b,c'
 		]);
 		expect(r.invalidNames).toEqual([]);
 		expect(r.skippedLines).toBe(0);
+	});
+
+	// The contract with `quote_dotenv_value` in hook_server.rs: whatever
+	// `abundio-env print` emits must parse back to the original value. Mirrors
+	// the Rust escaper exactly — backslash FIRST, then the control characters.
+	it("round-trips values escaped the way abundio-env print escapes them", () => {
+		const rustQuote = (v: string) =>
+			`"${v
+				.replace(/\\/g, "\\\\")
+				.replace(/"/g, '\\"')
+				.replace(/\n/g, "\\n")
+				.replace(/\r/g, "\\r")
+				.replace(/\t/g, "\\t")}"`;
+
+		for (const original of [
+			"plain",
+			"",
+			"has space",
+			'quotes " inside',
+			"C:\\Users\\dev",
+			"literal\\nbackslash-n",
+			"-----BEGIN CERTIFICATE-----\nMIIDdz\n-----END CERTIFICATE-----\n",
+			"tab\there",
+			'mixed \\ " \n end',
+		]) {
+			const line = `K=${rustQuote(original)}`;
+			expect(parseDotenv(line).entries[0]?.value).toBe(original);
+		}
 	});
 
 	it("returns nothing for empty input", () => {

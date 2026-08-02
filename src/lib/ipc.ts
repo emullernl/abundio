@@ -795,8 +795,16 @@ export const env = {
 			bundle,
 		}),
 
-	createBundle: (workspaceId: string, name: string) =>
-		invoke<EnvBundleMeta>("env_bundle_create", { workspaceId, name }),
+	createBundle: (
+		workspaceId: string,
+		inheritFromWorkspaceId: string | null,
+		name: string,
+	) =>
+		invoke<EnvBundleMeta>("env_bundle_create", {
+			workspaceId,
+			inheritFromWorkspaceId,
+			name,
+		}),
 
 	renameBundle: (workspaceId: string, from: string, to: string) =>
 		invoke<void>("env_bundle_rename", { workspaceId, from, to }),
@@ -807,9 +815,16 @@ export const env = {
 	deleteBundle: (workspaceId: string, name: string) =>
 		invoke<void>("env_bundle_delete", { workspaceId, name }),
 
-	upsert: (workspaceId: string, bundle: string, name: string, value: string) =>
+	upsert: (
+		workspaceId: string,
+		inheritFromWorkspaceId: string | null,
+		bundle: string,
+		name: string,
+		value: string,
+	) =>
 		invoke<EnvVarMeta>("env_vars_upsert", {
 			workspaceId,
+			inheritFromWorkspaceId,
 			bundle,
 			name,
 			value,
@@ -817,11 +832,13 @@ export const env = {
 
 	upsertMany: (
 		workspaceId: string,
+		inheritFromWorkspaceId: string | null,
 		bundle: string,
 		entries: { name: string; value: string }[],
 	) =>
 		invoke<EnvVarMeta[]>("env_vars_upsert_many", {
 			workspaceId,
+			inheritFromWorkspaceId,
 			bundle,
 			entries,
 		}),

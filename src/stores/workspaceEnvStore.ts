@@ -161,7 +161,7 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 
 	upsert: async (workspaceId, inheritFrom, bundle, name, value) => {
 		try {
-			await env.upsert(workspaceId, bundle, name, value);
+			await env.upsert(workspaceId, inheritFrom, bundle, name, value);
 			set({ error: null });
 			get().markDirtyIfInjected(workspaceId, bundle);
 			await get().load(workspaceId, inheritFrom, bundle);
@@ -174,7 +174,7 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 
 	importMany: async (workspaceId, inheritFrom, bundle, entries) => {
 		try {
-			await env.upsertMany(workspaceId, bundle, entries);
+			await env.upsertMany(workspaceId, inheritFrom, bundle, entries);
 			set({ error: null });
 			get().markDirtyIfInjected(workspaceId, bundle);
 			await get().load(workspaceId, inheritFrom, bundle);
@@ -198,7 +198,7 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 
 	createBundle: async (workspaceId, inheritFrom, name) => {
 		try {
-			await env.createBundle(workspaceId, name);
+			await env.createBundle(workspaceId, inheritFrom, name);
 			set({ error: null });
 			await get().load(workspaceId, inheritFrom, name);
 			return true;

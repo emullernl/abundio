@@ -217,27 +217,36 @@ impl PtyManager {
             workspace_id,
             app.try_state::<crate::env_vars::EnvVarStore>(),
         ) {
-            (Some(ws), Some(store)) => match crate::env_crypto::master_key() {
-                Ok(key) => store
-                    .resolve_for_spawn(&key, ws, inherit_from_workspace_id)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(name, value)| (name, value.to_string()))
-                    .collect(),
-                Err(e) => {
-                    log::warn!("[pty] workspace environment unavailable for {ws}: {e}");
-                    let _ = app.emit(
-                        "env-vars-unavailable",
-                        serde_json::json!({ "workspaceId": ws, "reason": e.to_string() }),
-                    );
-                    Vec::new()
+            // Probe for rows BEFORE asking for the key. Touching the credential
+            // store here would pop a Keychain prompt on the very first terminal
+            // for users who never use this feature — and mint a key for them.
+            (Some(ws), Some(store))
+                if store
+                    .has_injected_vars(ws, inherit_from_workspace_id)
+                    .unwrap_or(false) =>
+            {
+                match crate::env_crypto::master_key() {
+                    Ok(key) => store
+                        .resolve_for_spawn(&key, ws, inherit_from_workspace_id)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(name, value)| (name, value.to_string()))
+                        .collect(),
+                    Err(e) => {
+                        log::warn!("[pty] workspace environment unavailable for {ws}: {e}");
+                        let _ = app.emit(
+                            "env-vars-unavailable",
+                            serde_json::json!({ "workspaceId": ws, "reason": e.to_string() }),
+                        );
+                        Vec::new()
+                    }
                 }
-            },
+            }
             _ => Vec::new(),
         };
 
         let (pairs, keys_manifest, skipped) =
-            build_env_injection(&injected, crate::env_crypto::MAX_INJECTED_BYTES * 2);
+            build_env_injection(&injected, crate::env_crypto::MAX_INJECTED_BYTES);
         for (name, value) in &pairs {
             cmd.env(name, value);
         }
@@ -467,7 +476,7 @@ pub(crate) fn build_env_injection(
     vars: &[(String, String)],
     budget_bytes: usize,
 ) -> (Vec<(String, String)>, String, Vec<String>) {
-    const SHADOW_PREFIX: &str = "ABUNDIO_ENV__";
+    let shadow_prefix = crate::env_crypto::SHADOW_PREFIX;
 
     let mut pairs: Vec<(String, String)> = Vec::with_capacity(vars.len() * 2);
     let mut names: Vec<String> = Vec::with_capacity(vars.len());
@@ -475,15 +484,14 @@ pub(crate) fn build_env_injection(
     let mut used = 0usize;
 
     for (name, value) in vars {
-        // Both copies, plus the name's slot in the manifest.
-        let cost = (name.len() + value.len() + 2) * 2 + SHADOW_PREFIX.len() + name.len() + 1;
+        let cost = crate::env_crypto::injection_cost(name.len(), value.len());
         if used + cost > budget_bytes {
             skipped.push(name.clone());
             continue;
         }
         used += cost;
         pairs.push((name.clone(), value.clone()));
-        pairs.push((format!("{SHADOW_PREFIX}{name}"), value.clone()));
+        pairs.push((format!("{shadow_prefix}{name}"), value.clone()));
         names.push(name.clone());
     }
 

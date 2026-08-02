@@ -61,6 +61,19 @@ pub const MAX_INJECTED_BYTES: usize = 8 * 1024;
 #[cfg(not(windows))]
 pub const MAX_INJECTED_BYTES: usize = 64 * 1024;
 
+/// Prefix for the shadow copy the wrapper rc re-exports after the user's rc.
+pub const SHADOW_PREFIX: &str = "ABUNDIO_ENV__";
+
+/// Bytes one variable adds to the child's environment block.
+///
+/// Every variable is emitted TWICE (its own name plus the `ABUNDIO_ENV__`
+/// shadow) and once more in the space-separated manifest. The settings UI and
+/// the spawn path MUST agree on this, or the "Add" form would accept a variable
+/// the spawn path then silently drops.
+pub fn injection_cost(name_len: usize, value_len: usize) -> usize {
+    (name_len + value_len + 2) * 2 + SHADOW_PREFIX.len() + name_len + 1
+}
+
 /// Environment variables Abundio owns. A user variable may not shadow these:
 /// `ABUNDIO_HOOK_TOKEN` / `ABUNDIO_PTY_ID` drive agent-status correlation
 /// (`hook_server.rs`), and `ZDOTDIR` / `TERM*` drive shell integration.

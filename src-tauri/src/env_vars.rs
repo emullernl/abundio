@@ -159,9 +159,13 @@ impl EnvVarStore {
         } else {
             merged_vars(&conn, workspace_id, inherit_from, &injected_name, key)?
         };
+        // Must match what `build_env_injection` will actually consume, or the
+        // add form would accept a variable the spawn path then drops.
         let bytes_used: i64 = injected_vars
             .iter()
-            .map(|v| v.name.len() as i64 + v.byte_len)
+            .map(|v| {
+                env_crypto::injection_cost(v.name.len(), v.byte_len.max(0) as usize) as i64
+            })
             .sum();
 
         Ok(EnvListResult {
@@ -201,6 +205,36 @@ impl EnvVarStore {
         Err(AbundioError::NotFound(format!(
             "environment variable {name}"
         )))
+    }
+
+    /// Whether this Workspace's injected Bundle holds anything at all.
+    ///
+    /// Deliberately requires no master key: it runs on every PTY spawn, and
+    /// asking the OS credential store there would pop a Keychain prompt at the
+    /// first terminal for users who never touch this feature — and would create
+    /// a key they never asked for.
+    pub fn has_injected_vars(
+        &self,
+        workspace_id: &str,
+        inherit_from: Option<&str>,
+    ) -> Result<bool, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let bundles = merged_bundles(&conn, workspace_id, inherit_from)?;
+        let Some(injected) = bundles.iter().find(|b| b.injected) else {
+            return Ok(false);
+        };
+        let mut sources = vec![workspace_id];
+        if let Some(parent) = inherit_from {
+            sources.push(parent);
+        }
+        for source in sources {
+            if let Some(row) = find_bundle(&conn, source, &injected.name)? {
+                if var_count(&conn, &row.id)? > 0 {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// The injected Bundle, fully resolved, for PTY spawn.
@@ -252,18 +286,22 @@ impl EnvVarStore {
 
     // ── Bundle mutations ──
 
-    pub fn create_bundle(&self, workspace_id: &str, name: &str) -> Result<BundleMeta, AbundioError> {
+    pub fn create_bundle(
+        &self,
+        workspace_id: &str,
+        inherit_from: Option<&str>,
+        name: &str,
+    ) -> Result<BundleMeta, AbundioError> {
         env_crypto::validate_bundle_name(name)?;
         let name = name.trim();
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        ensure_default_bundle(&tx, workspace_id)?;
         if find_bundle(&tx, workspace_id, name)?.is_some() {
             return Err(AbundioError::InvalidOperation(format!(
                 "A bundle named '{name}' already exists"
             )));
         }
-        let row = insert_bundle(&tx, workspace_id, name, false)?;
+        let row = create_own_bundle(&tx, workspace_id, inherit_from, name)?;
         tx.commit()?;
         Ok(to_meta(row, 0, false))
     }
@@ -367,13 +405,14 @@ impl EnvVarStore {
         &self,
         key: &MasterKey,
         workspace_id: &str,
+        inherit_from: Option<&str>,
         bundle: &str,
         name: &str,
         value: &str,
     ) -> Result<EnvVarMeta, AbundioError> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        let meta = upsert_one(&tx, key, workspace_id, bundle, name, value)?;
+        let meta = upsert_one(&tx, key, workspace_id, inherit_from, bundle, name, value)?;
         tx.commit()?;
         Ok(meta)
     }
@@ -384,6 +423,7 @@ impl EnvVarStore {
         &self,
         key: &MasterKey,
         workspace_id: &str,
+        inherit_from: Option<&str>,
         bundle: &str,
         entries: &[EnvVarInput],
     ) -> Result<Vec<EnvVarMeta>, AbundioError> {
@@ -395,6 +435,7 @@ impl EnvVarStore {
                 &tx,
                 key,
                 workspace_id,
+                inherit_from,
                 bundle,
                 &entry.name,
                 &entry.value,
@@ -440,16 +481,52 @@ impl EnvVarStore {
 
 // ── Free helpers (take a &Connection so they work inside a transaction too) ──
 
-fn ensure_default_bundle(conn: &Connection, workspace_id: &str) -> Result<(), AbundioError> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM workspace_env_bundles WHERE workspace_id = ?1",
-        params![workspace_id],
-        |r| r.get(0),
-    )?;
-    if count == 0 {
-        insert_bundle(conn, workspace_id, DEFAULT_BUNDLE, true)?;
+/// Create the Workspace's own copy of `bundle`, deciding the injected flag from
+/// context.
+///
+/// This is subtle and was previously wrong. A Workspace's first bundle should
+/// normally become the injected one — but a linked worktree that *inherits* an
+/// injected bundle already has an environment, and marking a freshly-created
+/// local bundle injected would shadow it and leave the worktree with nothing.
+/// So: when overriding an inherited bundle, mirror the parent's flag; otherwise
+/// only claim injected if nothing else already provides one.
+fn create_own_bundle(
+    conn: &Connection,
+    workspace_id: &str,
+    inherit_from: Option<&str>,
+    bundle: &str,
+) -> Result<BundleRow, AbundioError> {
+    env_crypto::validate_bundle_name(bundle)?;
+
+    let inherited_same_name =
+        inherit_from.and_then(|parent| find_bundle(conn, parent, bundle).ok().flatten());
+
+    let injected = match inherited_same_name {
+        // Overriding an inherited bundle: keep whatever role it already had.
+        Some(parent_row) => parent_row.injected,
+        None => {
+            let own: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM workspace_env_bundles WHERE workspace_id = ?1",
+                params![workspace_id],
+                |r| r.get(0),
+            )?;
+            let inherits_injected = match inherit_from {
+                Some(parent) => bundles_of(conn, parent)?.iter().any(|b| b.injected),
+                None => false,
+            };
+            own == 0 && !inherits_injected
+        }
+    };
+
+    // At most one injected bundle per Workspace — the partial unique index
+    // would otherwise reject this insert.
+    if injected {
+        conn.execute(
+            "UPDATE workspace_env_bundles SET injected = 0 WHERE workspace_id = ?1",
+            params![workspace_id],
+        )?;
     }
-    Ok(())
+    insert_bundle(conn, workspace_id, bundle, injected)
 }
 
 fn insert_bundle(
@@ -583,12 +660,17 @@ fn merged_bundles(
         });
     }
 
-    // Exactly one Bundle must read as injected. If only an inherited Bundle
-    // carries the flag, keep it; if none does, mark the first.
-    if !out.iter().any(|b| b.injected) {
-        if let Some(first) = out.first_mut() {
-            first.injected = true;
-        }
+    // Exactly one Bundle may read as injected. An own bundle wins over an
+    // inherited one carrying the same flag — otherwise a Workspace that has
+    // overridden its parent's injected bundle would show two bolts, and callers
+    // picking "the injected one" by `find` would depend on ordering.
+    let chosen = out
+        .iter()
+        .position(|b| b.injected && !b.inherited)
+        .or_else(|| out.iter().position(|b| b.injected))
+        .or(if out.is_empty() { None } else { Some(0) });
+    for (i, b) in out.iter_mut().enumerate() {
+        b.injected = Some(i) == chosen;
     }
     Ok(out)
 }
@@ -741,6 +823,7 @@ fn upsert_one(
     conn: &Connection,
     key: &MasterKey,
     workspace_id: &str,
+    inherit_from: Option<&str>,
     bundle: &str,
     name: &str,
     value: &str,
@@ -748,15 +831,11 @@ fn upsert_one(
     env_crypto::validate_name(name)?;
     env_crypto::validate_value(value)?;
 
-    ensure_default_bundle(conn, workspace_id)?;
     // The Bundle may exist only on the main worktree; materialise an own copy
     // so this write becomes an override rather than failing.
     let row = match find_bundle(conn, workspace_id, bundle)? {
         Some(row) => row,
-        None => {
-            env_crypto::validate_bundle_name(bundle)?;
-            insert_bundle(conn, workspace_id, bundle, false)?
-        }
+        None => create_own_bundle(conn, workspace_id, inherit_from, bundle)?,
     };
 
     let (nonce, ciphertext) = env_crypto::seal(key, name, value.as_bytes())?;
@@ -833,9 +912,14 @@ pub fn env_list(
 pub fn env_bundle_create(
     store: State<EnvVarStore>,
     workspace_id: String,
+    inherit_from_workspace_id: Option<String>,
     name: String,
 ) -> Result<BundleMeta, AbundioError> {
-    store.create_bundle(&workspace_id, &name)
+    store.create_bundle(
+        &workspace_id,
+        inherit_from_workspace_id.as_deref(),
+        &name,
+    )
 }
 
 #[tauri::command]
@@ -870,23 +954,38 @@ pub fn env_bundle_delete(
 pub fn env_vars_upsert(
     store: State<EnvVarStore>,
     workspace_id: String,
+    inherit_from_workspace_id: Option<String>,
     bundle: String,
     name: String,
     value: String,
 ) -> Result<EnvVarMeta, AbundioError> {
     let key = env_crypto::master_key()?;
-    store.upsert(&key, &workspace_id, &bundle, &name, &value)
+    store.upsert(
+        &key,
+        &workspace_id,
+        inherit_from_workspace_id.as_deref(),
+        &bundle,
+        &name,
+        &value,
+    )
 }
 
 #[tauri::command]
 pub fn env_vars_upsert_many(
     store: State<EnvVarStore>,
     workspace_id: String,
+    inherit_from_workspace_id: Option<String>,
     bundle: String,
     entries: Vec<EnvVarInput>,
 ) -> Result<Vec<EnvVarMeta>, AbundioError> {
     let key = env_crypto::master_key()?;
-    store.upsert_many(&key, &workspace_id, &bundle, &entries)
+    store.upsert_many(
+        &key,
+        &workspace_id,
+        inherit_from_workspace_id.as_deref(),
+        &bundle,
+        &entries,
+    )
 }
 
 #[tauri::command]
@@ -964,7 +1063,7 @@ mod tests {
     #[test]
     fn first_upsert_creates_an_injected_default_bundle() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "TOKEN", "abc").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "TOKEN", "abc").unwrap();
 
         let result = store.list(WS, None, None, Some(&key)).unwrap();
         assert_eq!(result.bundles.len(), 1);
@@ -977,7 +1076,7 @@ mod tests {
     fn list_returns_names_and_sizes_but_never_values() {
         let (store, key) = test_store();
         store
-            .upsert(&key, WS, DEFAULT_BUNDLE, "TOKEN", "supersecret")
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "TOKEN", "supersecret")
             .unwrap();
 
         let result = store.list(WS, None, None, Some(&key)).unwrap();
@@ -993,12 +1092,12 @@ mod tests {
     #[test]
     fn upsert_replaces_value_and_preserves_position() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "A", "1").unwrap();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "B", "2").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "B", "2").unwrap();
         let before = store.list(WS, None, None, Some(&key)).unwrap();
         let b_pos = before.vars.iter().find(|v| v.name == "B").unwrap().position;
 
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "B", "22").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "B", "22").unwrap();
         let after = store.list(WS, None, None, Some(&key)).unwrap();
         assert_eq!(after.vars.len(), 2);
         let b = after.vars.iter().find(|v| v.name == "B").unwrap();
@@ -1013,7 +1112,7 @@ mod tests {
     fn reveal_round_trips_a_multiline_certificate() {
         let (store, key) = test_store();
         let pem = "-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+g\n-----END CERTIFICATE-----\n";
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "CERT", pem).unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "CERT", pem).unwrap();
         assert_eq!(
             store.reveal(&key, WS, None, DEFAULT_BUNDLE, "CERT").unwrap(),
             pem
@@ -1023,7 +1122,7 @@ mod tests {
     #[test]
     fn reveal_unknown_name_is_not_found() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
         assert!(matches!(
             store.reveal(&key, WS, None, DEFAULT_BUNDLE, "NOPE"),
             Err(AbundioError::NotFound(_))
@@ -1033,9 +1132,9 @@ mod tests {
     #[test]
     fn bundles_are_independent() {
         let (store, key) = test_store();
-        store.create_bundle(WS, "production").unwrap();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "URL", "dev").unwrap();
-        store.upsert(&key, WS, "production", "URL", "prod").unwrap();
+        store.create_bundle(WS, None, "production").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "URL", "dev").unwrap();
+        store.upsert(&key, WS, None, "production", "URL", "prod").unwrap();
 
         assert_eq!(
             store.reveal(&key, WS, None, DEFAULT_BUNDLE, "URL").unwrap(),
@@ -1050,8 +1149,8 @@ mod tests {
     #[test]
     fn only_the_injected_bundle_is_resolved_for_spawn() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "DEV", "1").unwrap();
-        store.upsert(&key, WS, "production", "PROD", "2").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
+        store.upsert(&key, WS, None, "production", "PROD", "2").unwrap();
 
         let pairs = store.resolve_for_spawn(&key, WS, None).unwrap();
         let names: Vec<_> = pairs.iter().map(|(n, _)| n.as_str()).collect();
@@ -1061,8 +1160,8 @@ mod tests {
     #[test]
     fn set_injected_moves_the_flag() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "DEV", "1").unwrap();
-        store.upsert(&key, WS, "production", "PROD", "2").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
+        store.upsert(&key, WS, None, "production", "PROD", "2").unwrap();
 
         store.set_injected(WS, "production").unwrap();
         let pairs = store.resolve_for_spawn(&key, WS, None).unwrap();
@@ -1076,7 +1175,7 @@ mod tests {
     #[test]
     fn resolve_bundle_reads_on_demand_bundles() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, "production", "PROD", "2").unwrap();
+        store.upsert(&key, WS, None, "production", "PROD", "2").unwrap();
         let pairs = store.resolve_bundle(&key, WS, None, "production").unwrap();
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].0, "PROD");
@@ -1086,7 +1185,7 @@ mod tests {
     #[test]
     fn resolve_unknown_bundle_is_not_found() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
         assert!(matches!(
             store.resolve_bundle(&key, WS, None, "nope"),
             Err(AbundioError::NotFound(_))
@@ -1099,9 +1198,9 @@ mod tests {
     fn linked_worktree_inherits_parent_bundles_and_vars() {
         let (store, key) = test_store();
         store
-            .upsert(&key, PARENT, DEFAULT_BUNDLE, "SHARED", "from-parent")
+            .upsert(&key, PARENT, None, DEFAULT_BUNDLE, "SHARED", "from-parent")
             .unwrap();
-        store.upsert(&key, PARENT, "production", "PROD", "p").unwrap();
+        store.upsert(&key, PARENT, None, "production", "PROD", "p").unwrap();
 
         let result = store.list(WS, Some(PARENT), None, Some(&key)).unwrap();
         let names: Vec<_> = result.bundles.iter().map(|b| b.name.as_str()).collect();
@@ -1118,9 +1217,9 @@ mod tests {
     fn own_variable_overrides_inherited_one() {
         let (store, key) = test_store();
         store
-            .upsert(&key, PARENT, DEFAULT_BUNDLE, "URL", "parent")
+            .upsert(&key, PARENT, None, DEFAULT_BUNDLE, "URL", "parent")
             .unwrap();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "URL", "child").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "URL", "child").unwrap();
 
         let result = store.list(WS, Some(PARENT), None, Some(&key)).unwrap();
         assert_eq!(result.vars.len(), 1, "override must not duplicate the row");
@@ -1131,11 +1230,45 @@ mod tests {
         assert_eq!(pairs[0].1.as_str(), "child");
     }
 
+    /// Regression: overriding a variable from a linked worktree used to
+    /// materialise a local `default` bundle marked injected, which then shadowed
+    /// the inherited injected bundle and left the worktree with NO variables.
+    #[test]
+    fn overriding_from_a_worktree_keeps_the_inherited_bundle_injected() {
+        let (store, key) = test_store();
+        // The parent's injected bundle is deliberately NOT called "default".
+        store.upsert(&key, PARENT, None, "production", "A", "parent").unwrap();
+        store.set_injected(PARENT, "production").unwrap();
+
+        // Before the override the worktree sees the parent's variables.
+        let before = store.resolve_for_spawn(&key, WS, Some(PARENT)).unwrap();
+        assert_eq!(before.len(), 1);
+
+        // Overriding one variable must not silently empty the environment.
+        store.upsert(&key, WS, None, "production", "A", "child").unwrap();
+
+        let after = store.resolve_for_spawn(&key, WS, Some(PARENT)).unwrap();
+        let names: Vec<_> = after.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["A"], "worktree lost its environment");
+        assert_eq!(after[0].1.as_str(), "child");
+
+        let listed = store.list(WS, Some(PARENT), None, Some(&key)).unwrap();
+        assert_eq!(
+            listed.bundles.iter().filter(|b| b.injected).count(),
+            1,
+            "exactly one bundle may read as injected"
+        );
+        assert_eq!(
+            listed.bundles.iter().find(|b| b.injected).unwrap().name,
+            "production"
+        );
+    }
+
     #[test]
     fn resolve_orders_inherited_before_own() {
         let (store, key) = test_store();
-        store.upsert(&key, PARENT, DEFAULT_BUNDLE, "P", "1").unwrap();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "C", "2").unwrap();
+        store.upsert(&key, PARENT, None, DEFAULT_BUNDLE, "P", "1").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "C", "2").unwrap();
 
         let pairs = store.resolve_for_spawn(&key, WS, Some(PARENT)).unwrap();
         let names: Vec<_> = pairs.iter().map(|(n, _)| n.as_str()).collect();
@@ -1146,7 +1279,7 @@ mod tests {
     fn reveal_falls_back_to_the_inherited_value() {
         let (store, key) = test_store();
         store
-            .upsert(&key, PARENT, DEFAULT_BUNDLE, "ONLY_PARENT", "p")
+            .upsert(&key, PARENT, None, DEFAULT_BUNDLE, "ONLY_PARENT", "p")
             .unwrap();
         assert_eq!(
             store
@@ -1162,9 +1295,9 @@ mod tests {
     fn overriding_an_inherited_bundle_creates_an_own_copy() {
         let (store, key) = test_store();
         store
-            .upsert(&key, PARENT, "production", "URL", "parent")
+            .upsert(&key, PARENT, None, "production", "URL", "parent")
             .unwrap();
-        store.upsert(&key, WS, "production", "URL", "child").unwrap();
+        store.upsert(&key, WS, None, "production", "URL", "child").unwrap();
 
         assert_eq!(
             store.reveal(&key, PARENT, None, "production", "URL").unwrap(),
@@ -1182,7 +1315,7 @@ mod tests {
     #[test]
     fn undecryptable_rows_are_flagged_and_skipped_not_fatal() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "GOOD", "ok").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "GOOD", "ok").unwrap();
         // Simulate a database restored onto a machine without the key.
         {
             let conn = store.conn.lock().unwrap();
@@ -1219,7 +1352,7 @@ mod tests {
         let (store, key) = test_store();
         for bad in ["1FOO", "FOO-BAR", "ABUNDIO_PTY_ID", "ZDOTDIR", ""] {
             assert!(
-                store.upsert(&key, WS, DEFAULT_BUNDLE, bad, "x").is_err(),
+                store.upsert(&key, WS, None, DEFAULT_BUNDLE, bad, "x").is_err(),
                 "{bad:?} should be rejected"
             );
         }
@@ -1229,7 +1362,7 @@ mod tests {
     fn upsert_rejects_oversize_value() {
         let (store, key) = test_store();
         let huge = "x".repeat(env_crypto::MAX_VALUE_BYTES + 1);
-        assert!(store.upsert(&key, WS, DEFAULT_BUNDLE, "BIG", &huge).is_err());
+        assert!(store.upsert(&key, WS, None, DEFAULT_BUNDLE, "BIG", &huge).is_err());
     }
 
     #[test]
@@ -1249,7 +1382,7 @@ mod tests {
                 value: "3".into(),
             },
         ];
-        assert!(store.upsert_many(&key, WS, DEFAULT_BUNDLE, &entries).is_err());
+        assert!(store.upsert_many(&key, WS, None, DEFAULT_BUNDLE, &entries).is_err());
 
         let result = store.list(WS, None, None, Some(&key)).unwrap();
         assert_eq!(result.vars.len(), 0, "a failed import must write nothing");
@@ -1268,7 +1401,7 @@ mod tests {
                 value: "2".into(),
             },
         ];
-        store.upsert_many(&key, WS, DEFAULT_BUNDLE, &entries).unwrap();
+        store.upsert_many(&key, WS, None, DEFAULT_BUNDLE, &entries).unwrap();
         assert_eq!(store.list(WS, None, None, Some(&key)).unwrap().vars.len(), 2);
     }
 
@@ -1277,7 +1410,7 @@ mod tests {
     #[test]
     fn cannot_delete_the_last_bundle() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
         assert!(matches!(
             store.delete_bundle(WS, DEFAULT_BUNDLE),
             Err(AbundioError::InvalidOperation(_))
@@ -1287,8 +1420,8 @@ mod tests {
     #[test]
     fn deleting_the_injected_bundle_promotes_another() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "A", "1").unwrap();
-        store.upsert(&key, WS, "production", "B", "2").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, "production", "B", "2").unwrap();
 
         store.delete_bundle(WS, DEFAULT_BUNDLE).unwrap();
         let result = store.list(WS, None, None, Some(&key)).unwrap();
@@ -1303,8 +1436,8 @@ mod tests {
     #[test]
     fn deleting_a_bundle_removes_its_variables() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "A", "1").unwrap();
-        store.upsert(&key, WS, "production", "B", "2").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, "production", "B", "2").unwrap();
         store.delete_bundle(WS, "production").unwrap();
 
         let conn = store.conn.lock().unwrap();
@@ -1317,16 +1450,16 @@ mod tests {
     #[test]
     fn create_bundle_rejects_duplicates_and_bad_names() {
         let (store, _key) = test_store();
-        store.create_bundle(WS, "production").unwrap();
-        assert!(store.create_bundle(WS, "production").is_err());
-        assert!(store.create_bundle(WS, "has space").is_err());
-        assert!(store.create_bundle(WS, "").is_err());
+        store.create_bundle(WS, None, "production").unwrap();
+        assert!(store.create_bundle(WS, None, "production").is_err());
+        assert!(store.create_bundle(WS, None, "has space").is_err());
+        assert!(store.create_bundle(WS, None, "").is_err());
     }
 
     #[test]
     fn rename_bundle_moves_variables_with_it() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, "staging", "A", "1").unwrap();
+        store.upsert(&key, WS, None, "staging", "A", "1").unwrap();
         store.rename_bundle(WS, "staging", "preprod").unwrap();
 
         assert_eq!(store.reveal(&key, WS, None, "preprod", "A").unwrap(), "1");
@@ -1336,16 +1469,16 @@ mod tests {
     #[test]
     fn rename_bundle_rejects_a_name_already_in_use() {
         let (store, _key) = test_store();
-        store.create_bundle(WS, "a").unwrap();
-        store.create_bundle(WS, "b").unwrap();
+        store.create_bundle(WS, None, "a").unwrap();
+        store.create_bundle(WS, None, "b").unwrap();
         assert!(store.rename_bundle(WS, "a", "b").is_err());
     }
 
     #[test]
     fn delete_removes_only_the_named_variable() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "A", "1").unwrap();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "B", "2").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "B", "2").unwrap();
         store.delete(WS, DEFAULT_BUNDLE, "A").unwrap();
 
         let result = store.list(WS, None, None, Some(&key)).unwrap();
@@ -1357,7 +1490,7 @@ mod tests {
     fn reorder_sets_positions_in_the_given_order() {
         let (store, key) = test_store();
         for name in ["A", "B", "C"] {
-            store.upsert(&key, WS, DEFAULT_BUNDLE, name, "x").unwrap();
+            store.upsert(&key, WS, None, DEFAULT_BUNDLE, name, "x").unwrap();
         }
         store
             .reorder(
@@ -1375,14 +1508,15 @@ mod tests {
     #[test]
     fn bytes_used_reflects_the_injected_bundle_only() {
         let (store, key) = test_store();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "A", "12345").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "12345").unwrap();
         store
-            .upsert(&key, WS, "production", "B", &"x".repeat(1000))
+            .upsert(&key, WS, None, "production", "B", &"x".repeat(1000))
             .unwrap();
 
         let result = store.list(WS, None, None, Some(&key)).unwrap();
-        // "A" (1 byte name) + 5 byte value.
-        assert_eq!(result.bytes_used, 6);
+        // Reported in the SAME units the spawn path spends, so the add form
+        // cannot accept a variable that `build_env_injection` would then drop.
+        assert_eq!(result.bytes_used, env_crypto::injection_cost(1, 5) as i64);
         assert_eq!(result.bytes_budget, env_crypto::MAX_INJECTED_BYTES as i64);
     }
 
@@ -1400,12 +1534,49 @@ mod tests {
     #[test]
     fn bundle_names_include_inherited_ones() {
         let (store, key) = test_store();
-        store.upsert(&key, PARENT, "production", "A", "1").unwrap();
-        store.upsert(&key, WS, DEFAULT_BUNDLE, "B", "2").unwrap();
+        store.upsert(&key, PARENT, None, "production", "A", "1").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "B", "2").unwrap();
 
         let mut names = store.bundle_names(WS, Some(PARENT)).unwrap();
         names.sort();
         assert_eq!(names, vec!["default", "production"]);
+    }
+
+    /// Guards the credential-store short circuit: a Workspace with nothing to
+    /// inject must be answerable WITHOUT a key, or opening the very first
+    /// terminal would prompt for Keychain access and mint a key the user never
+    /// asked for.
+    #[test]
+    fn has_injected_vars_answers_without_a_key() {
+        let (store, key) = test_store();
+        assert!(!store.has_injected_vars(WS, None).unwrap());
+        assert!(!store.has_injected_vars(WS, Some(PARENT)).unwrap());
+
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+        assert!(store.has_injected_vars(WS, None).unwrap());
+    }
+
+    /// An on-demand bundle is not injected, so it must not drag the credential
+    /// store into the spawn path either.
+    #[test]
+    fn has_injected_vars_ignores_on_demand_bundles() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, "production", "A", "1").unwrap();
+        store.create_bundle(WS, None, "other").unwrap();
+        store.set_injected(WS, "other").unwrap();
+        assert!(
+            !store.has_injected_vars(WS, None).unwrap(),
+            "only the injected bundle's contents count"
+        );
+    }
+
+    #[test]
+    fn has_injected_vars_sees_inherited_rows() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, PARENT, None, DEFAULT_BUNDLE, "A", "1")
+            .unwrap();
+        assert!(store.has_injected_vars(WS, Some(PARENT)).unwrap());
     }
 
     #[test]

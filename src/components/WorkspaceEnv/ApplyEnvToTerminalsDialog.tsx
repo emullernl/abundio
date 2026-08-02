@@ -24,15 +24,30 @@ export function ApplyEnvToTerminalsDialog({
 	onClose,
 }: Props) {
 	const [busy, setBusy] = useState(false);
+	const [failure, setFailure] = useState<string | null>(null);
 	const clearDirty = useWorkspaceEnvStore((s) => s.clearInjectedDirty);
 
 	const agentCount = panes.filter((p) => p.agentId).length;
 
 	const run = async () => {
 		setBusy(true);
-		await restartWorkspacePtys(workspaceId);
-		clearDirty(workspaceId);
+		setFailure(null);
+		const { restarted, failed } = await restartWorkspacePtys(workspaceId);
 		setBusy(false);
+
+		if (failed > 0) {
+			// Report it and stay open. Clearing the dirty flag here would remove
+			// the only affordance for trying again, while telling the user
+			// nothing went wrong.
+			setFailure(
+				restarted > 0
+					? `Restarted ${restarted}, but ${failed} could not be restarted.`
+					: `Could not restart ${failed === 1 ? "the terminal" : "any of the terminals"}.`,
+			);
+			return;
+		}
+
+		clearDirty(workspaceId);
 		onClose();
 	};
 
@@ -177,6 +192,19 @@ export function ApplyEnvToTerminalsDialog({
 						)}
 					</p>
 
+					{failure && (
+						<p
+							style={{
+								padding: "0 28px",
+								fontSize: 11.5,
+								lineHeight: 1.5,
+								color: "var(--error)",
+							}}
+						>
+							{failure}
+						</p>
+					)}
+
 					<div
 						className="flex items-center"
 						style={{ padding: "14px 28px 18px", gap: 10 }}
@@ -218,7 +246,9 @@ export function ApplyEnvToTerminalsDialog({
 						>
 							{busy
 								? "Restarting…"
-								: `Restart ${panes.length === 1 ? "terminal" : "all"}`}
+								: failure
+									? "Try again"
+									: `Restart ${panes.length === 1 ? "terminal" : "all"}`}
 						</button>
 					</div>
 				</motion.div>

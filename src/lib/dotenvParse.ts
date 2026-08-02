@@ -100,13 +100,29 @@ function unquote(raw: string): string {
 		const first = raw[0];
 		const last = raw[raw.length - 1];
 		if (first === '"' && last === '"') {
-			return raw
-				.slice(1, -1)
-				.replace(/\\n/g, "\n")
-				.replace(/\\r/g, "\r")
-				.replace(/\\t/g, "\t")
-				.replace(/\\\\/g, "\\")
-				.replace(/\\"/g, '"');
+			// Single pass, not a chain of replaces. Replacing `\n` before `\\`
+			// decodes a LITERAL backslash-n (as in a Windows path, or anything
+			// `abundio-env print` emitted) into a real newline — the Rust side
+			// escapes the backslash first, so a chained decode does not
+			// round-trip.
+			return raw.slice(1, -1).replace(/\\(.)/g, (_match, ch: string) => {
+				switch (ch) {
+					case "n":
+						return "\n";
+					case "r":
+						return "\r";
+					case "t":
+						return "\t";
+					case "\\":
+						return "\\";
+					case '"':
+						return '"';
+					default:
+						// Unknown escape: keep it verbatim rather than eating the
+						// backslash.
+						return `\\${ch}`;
+				}
+			});
 		}
 		if (first === "'" && last === "'") {
 			// Single quotes are literal — no escape processing.

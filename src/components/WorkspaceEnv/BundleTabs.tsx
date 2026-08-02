@@ -213,10 +213,13 @@ function BundleActions({
 	// local row to delete.
 	const ownCount = bundles.filter((b) => !b.inherited).length;
 	const canDelete = !current.inherited && ownCount > 1;
+	// `set_injected` looks the bundle up on THIS workspace, so offering it for a
+	// bundle that exists only on the main worktree would just raise NotFound.
+	const canInject = !current.injected && !current.inherited;
 
 	return (
 		<div className="flex items-center" style={{ gap: 4, marginLeft: "auto" }}>
-			{!current.injected && (
+			{canInject && (
 				<button
 					type="button"
 					onClick={() => onSetInjected(selected)}

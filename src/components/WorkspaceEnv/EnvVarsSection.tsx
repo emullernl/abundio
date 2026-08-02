@@ -388,13 +388,15 @@ export function EnvVarsSection({
 					workspaceFolder={workspaceFolder}
 					onClose={() => setImporting(false)}
 					onImport={async (entries) => {
-						await store.importMany(
+						const ok = await store.importMany(
 							workspaceId,
 							inheritFromWorkspaceId,
 							selected,
 							entries,
 						);
-						setImporting(false);
+						// Import is all-or-nothing; closing on failure would throw
+						// away the pasted text with nothing written.
+						if (ok) setImporting(false);
 					}}
 				/>
 			)}
