@@ -107,6 +107,37 @@ export function flattenRowsToIds(rows: WorkspaceRow[]): string[] {
 	return rows.flatMap((row) => rowWorkspaces(row).map((w) => w.id));
 }
 
+/**
+ * The Workspace a linked worktree inherits Environment Bundles from — its set's
+ * main worktree.
+ *
+ * Returns `null` for a standalone Workspace, for a main worktree itself, and for
+ * a primary-less group (which renders as standalone rows anyway). Uses the same
+ * grouping rules as `buildWorkspaceRows` so the settings dialog and the PTY
+ * spawn path can never disagree about where a variable came from.
+ *
+ * Deliberately pure and frontend-side: Rust takes the resolved id as a spawn
+ * parameter rather than recomputing git grouping on the spawn hot path.
+ */
+export function inheritSourceWorkspaceId(
+	workspaces: WorkspaceWithTabs[],
+	facts: Record<string, WorktreeGroupFacts | undefined>,
+	workspaceId: string,
+): string | null {
+	const self = facts[workspaceId];
+	if (!self?.worktreeGroupKey) return null;
+	// A main worktree is the inheritance source, never a consumer.
+	if (self.isMainWorktree) return null;
+
+	const primary = workspaces.find(
+		(w) =>
+			w.id !== workspaceId &&
+			facts[w.id]?.worktreeGroupKey === self.worktreeGroupKey &&
+			facts[w.id]?.isMainWorktree,
+	);
+	return primary?.id ?? null;
+}
+
 /** Distinct non-null group keys among the given workspaces (for watch registration). */
 export function distinctGroupKeys(
 	workspaces: WorkspaceWithTabs[],

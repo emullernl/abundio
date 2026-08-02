@@ -23,7 +23,6 @@ function mkWorkspace(id: string, rootFolder: string): WorkspaceWithTabs {
 		id,
 		name: id,
 		rootFolder,
-		envJson: "{}",
 		agentPresetsJson: "[]",
 		fileTabsJson: "[]",
 		baseBranch: null,

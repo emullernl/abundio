@@ -14,6 +14,7 @@ import {
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
 import { mapHookEvent, mapSubagentHookEvent } from "./agentHookMap";
@@ -21,7 +22,7 @@ import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { agentHooks, pty } from "./ipc";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
-import { takePendingAgent } from "./pendingAgentRegistry";
+import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
@@ -31,6 +32,7 @@ import { modifiedNavKeySequence } from "./terminalWordJump";
 import { normalFontWeightFor, transparentBg } from "./themeUtils";
 import type { PaneNode } from "./types";
 import { addWindowFocusListener } from "./windowFocus";
+import { inheritSourceWorkspaceId } from "./worktreeGrouping";
 
 /**
  * Agent ids we've already asked Rust to ensure-provision this session. The
@@ -776,6 +778,34 @@ function writeRestoreData(managed: ManagedTerminal): void {
 	});
 }
 
+/** Spawn parameters that identify which Workspace a pane belongs to: its name
+ *  (for hook-event debugging) and the ids Rust needs to resolve the injected
+ *  Environment Bundle, including the main worktree to inherit from.
+ *
+ *  Returns empty fields when the pane has no workspace yet — the pane still
+ *  spawns, just without workspace variables. Never throws: a spawn must not be
+ *  blocked by an environment lookup. */
+function ownerSpawnContext(paneId: string): {
+	workspaceName?: string;
+	workspaceId?: string;
+	inheritFromWorkspaceId?: string;
+} {
+	const store = useWorkspaceStore.getState();
+	const owner = store.findWorkspaceForPane(paneId);
+	if (!owner) return {};
+	const facts = useWorkspaceGitStore.getState().worktreeFacts;
+	const inheritFrom = inheritSourceWorkspaceId(
+		store.workspaces,
+		facts,
+		owner.id,
+	);
+	return {
+		workspaceName: owner.name,
+		workspaceId: owner.id,
+		inheritFromWorkspaceId: inheritFrom ?? undefined,
+	};
+}
+
 async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	const { term, serializeAddon } = managed;
 	let currentPtyId = managed.ptyId;
@@ -1182,17 +1212,21 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			// if spawn completes first (Tauri buffers events until listen resolves).
 			...(isNewPty
 				? [
-						pty.spawn(
+						pty.spawn({
 							cwd,
-							term.cols,
-							term.rows,
-							undefined,
-							useSettingsStore.getState().shellPath ?? undefined,
-							paneId,
-							currentPtyId,
-							useWorkspaceStore.getState().getActiveWorkspace()?.name,
-							getCurrentWindow().label,
-						),
+							cols: term.cols,
+							rows: term.rows,
+							shell: useSettingsStore.getState().shellPath ?? undefined,
+							logId: paneId,
+							ptyId: currentPtyId,
+							// Resolved from the pane's OWN workspace, not the active
+							// one: TerminalPool mounts panes for every opened
+							// workspace, so a background pane would otherwise be
+							// labelled — and given the environment of — whichever
+							// workspace happens to be in front.
+							...ownerSpawnContext(paneId),
+							windowLabel: getCurrentWindow().label,
+						}),
 					]
 				: []),
 		]);
@@ -1213,9 +1247,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	}
 
 	if (isNewPty) {
-		// Write ptyId to the correct tab's layout (not just the active tab)
+		// Write ptyId to the correct tab's layout. Scoped to the pane's OWN
+		// workspace: a background pane spawning (or restarting) while another
+		// workspace is active would otherwise write its ptyId into the active
+		// workspace's layout.
 		const store = useWorkspaceStore.getState();
-		const workspace = store.getActiveWorkspace();
+		const workspace = store.findWorkspaceForPane(paneId);
 		if (workspace) {
 			for (const tab of workspace.tabs) {
 				const layout = parseTabLayout(tab.layoutJson);
@@ -1430,25 +1467,58 @@ export async function setAllTerminalsFontFamily(
 	}
 }
 
-/** Reset a terminal: kill the current PTY and spawn a fresh one */
-export async function resetTerminal(paneId: string): Promise<void> {
+/**
+ * Restart a MOUNTED pane's PTY in place: kill the old shell and spawn a fresh
+ * one that picks up the current workspace environment. The pane, its portal
+ * target and its xterm instance all survive.
+ *
+ * This is a THIRD terminal lifecycle path, distinct from switch-away
+ * (`destroyTerminal`, which keeps the PTY alive and starts a background
+ * tracker) and permanent close (`teardownTerminal`, which kills everything).
+ * See ADR-0020 and ADR-0023.
+ *
+ * @param opts.preserveScrollback  Restart (true) parks the serialized scrollback
+ *   and re-emits it above the new prompt. Reset (false) deliberately clears it.
+ * @param opts.agentCommand  Relaunched after the new shell settles, via the same
+ *   pendingAgentRegistry path a cold start uses.
+ */
+export async function restartPanePty(
+	paneId: string,
+	opts: {
+		cwd: string;
+		agentCommand?: string;
+		preserveScrollback: boolean;
+	},
+): Promise<void> {
 	const managed = instances.get(paneId);
 	if (!managed) return;
 
+	// Snapshot BEFORE anything tears down the terminal.
+	const snapshot = opts.preserveScrollback
+		? managed.serializeAddon.serialize()
+		: null;
+
 	const oldPtyId = managed.ptyId;
 
-	// Clean up old PTY listeners
 	managed.cleanup?.();
 	managed.cleanup = null;
 
-	// Kill the old PTY
 	if (oldPtyId) {
+		// Defensive: a switch-away race can leave a background tracker whose exit
+		// handler would re-create the activity entry we are about to remove.
+		stopBackgroundTracking(oldPtyId);
 		pty.kill(oldPtyId).catch(() => {});
+		// Must precede initPty. ADR-0020's invariant is "a live tracker has a
+		// matching panePtyMap entry"; initPty re-registers with the new ptyId.
 		usePtyActivityStore.getState().removePty(oldPtyId);
 		usePtyActivityStore.getState().removePane(paneId);
 	}
 
-	// Reset xterm content
+	// Seed before initPty — flushStartupBuffer drains the pending agent.
+	if (opts.agentCommand) {
+		setPendingAgent(paneId, { command: opts.agentCommand });
+	}
+
 	managed.term.reset();
 	managed.ptyId = "";
 	bumpPaneRevision(paneId);
@@ -1457,15 +1527,33 @@ export async function resetTerminal(paneId: string): Promise<void> {
 	managed.lastInputAt = 0;
 	managed.bytesSinceIdle = 0;
 	managed.lastOutputChunkAt = 0;
-	managed.restoreData = null;
+	managed.restoreData = snapshot;
 	managed.restoring = false;
+	// These three are what the previous implementation missed. After the first
+	// spawn `flushStartupBuffer` sets startupBuffer to null and leaves
+	// startupFlushScheduled true, so without resetting them the output handler
+	// stops buffering and the flush early-returns — meaning neither the parked
+	// scrollback nor a pending agent command would ever be delivered.
+	managed.startupBuffer = [];
+	managed.startupFlushScheduled = false;
+	managed.startupShellReady = false;
+	// `settled` deliberately stays true: the pane is already projected and
+	// painted, and clearing it would make the flush wait for the safety timeout.
 
-	// Get cwd from the active workspace
-	const workspace = useWorkspaceStore.getState().getActiveWorkspace();
+	await initPty(paneId, managed, opts.cwd);
+}
+
+/** Reset a terminal: kill the current PTY and spawn a fresh one, clearing the
+ *  screen. Delegates to `restartPanePty` so the two paths cannot drift. */
+export async function resetTerminal(paneId: string): Promise<void> {
+	if (!instances.has(paneId)) return;
+
+	// The pane's OWN workspace, not the active one — a reset triggered on a
+	// background pane would otherwise respawn it in the wrong folder.
+	const workspace = useWorkspaceStore.getState().findWorkspaceForPane(paneId);
 	const cwd = workspace?.rootFolder ?? ".";
 
-	// Re-initialize PTY (spawns a new shell)
-	await initPty(paneId, managed, cwd);
+	await restartPanePty(paneId, { cwd, preserveScrollback: false });
 }
 
 /**
@@ -1507,6 +1595,33 @@ export function destroyTerminal(paneId: string): void {
 	if (ptyId) {
 		startBackgroundTracking(ptyId);
 	}
+}
+
+/** Live ptyId of every mounted pane. Exposed instead of the `instances` map
+ *  itself so callers cannot mutate terminal state from outside this module. */
+export function livePtyIdByPane(): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [paneId, managed] of instances) {
+		if (managed.ptyId) out[paneId] = managed.ptyId;
+	}
+	return out;
+}
+
+/**
+ * Kill the PTY of a pane that has NO mounted xterm instance (a background tab
+ * whose workspace was switched away from). Stops background tracking first so
+ * the exit handler cannot resurrect the activity entry.
+ *
+ * The caller is responsible for blanking the pane's layout ptyId — that is what
+ * makes the next mount take the ordinary cold-start path.
+ */
+export function killUnmountedPanePty(paneId: string, ptyId: string): void {
+	stopBackgroundTracking(ptyId);
+	pty.kill(ptyId).catch(() => {});
+	const act = usePtyActivityStore.getState();
+	act.removePty(ptyId);
+	act.removePane(paneId);
+	bumpPaneRevision(paneId);
 }
 
 /**

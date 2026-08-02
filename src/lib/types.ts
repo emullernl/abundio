@@ -55,7 +55,6 @@ export interface Workspace {
 	id: string;
 	name: string;
 	rootFolder: string;
-	envJson: string;
 	agentPresetsJson: string;
 	fileTabsJson: string;
 	baseBranch: string | null;
@@ -72,7 +71,6 @@ export interface Workspace {
 export interface WorkspaceUpdate {
 	name?: string;
 	rootFolder?: string;
-	envJson?: string;
 	agentPresetsJson?: string;
 	fileTabsJson?: string;
 	baseBranch?: string | null;
@@ -84,7 +82,6 @@ export interface WorkspaceWithTabs {
 	id: string;
 	name: string;
 	rootFolder: string;
-	envJson: string;
 	agentPresetsJson: string;
 	fileTabsJson: string;
 	baseBranch: string | null;

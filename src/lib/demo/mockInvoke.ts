@@ -257,6 +257,43 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "launch_dev_environment":
 			return undefined;
 
+		// ── Environment variables — inert in demo ──
+		// Demo mode never touches the OS credential store, so every Workspace
+		// reports one empty injected Bundle and no key error. Enough for the
+		// settings dialog to render without throwing.
+		case "env_list":
+			return {
+				bundles: [
+					{
+						id: "demo-bundle",
+						workspaceId: String(args.workspaceId ?? ""),
+						name: "default",
+						injected: true,
+						position: 0,
+						varCount: 0,
+						inherited: false,
+					},
+				],
+				selectedBundle: "default",
+				vars: [],
+				keyError: null,
+				bytesUsed: 0,
+				bytesBudget: 65536,
+			};
+		case "env_retry_key":
+			return true;
+		case "env_vars_reveal":
+			return "";
+		case "env_bundle_create":
+		case "env_bundle_rename":
+		case "env_bundle_set_injected":
+		case "env_bundle_delete":
+		case "env_vars_upsert":
+		case "env_vars_upsert_many":
+		case "env_vars_delete":
+		case "env_vars_reorder":
+			return undefined;
+
 		default:
 			console.warn(`[demo] unmocked command: ${cmd}`);
 			return undefined;

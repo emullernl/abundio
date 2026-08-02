@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { agentCommandFor } from "../lib/agents";
 import {
 	pty,
 	tabs as tabsApi,
@@ -9,6 +10,7 @@ import {
 	collectAgentPanes,
 	collectPaneIds,
 	collectTerminalIds,
+	containsPane,
 	extractNode,
 	findFilePaneInTree,
 	insertBesideNode,
@@ -130,6 +132,9 @@ interface WorkspaceState {
 
 	// Derived
 	getActiveWorkspace: () => WorkspaceWithTabs | undefined;
+	/** The Workspace owning `paneId`, searched across every opened workspace —
+	 *  not just the active one. */
+	findWorkspaceForPane: (paneId: string) => WorkspaceWithTabs | null;
 	getActiveTab: () => Tab | undefined;
 	getActiveLayout: () => PaneNode | null;
 	getTabsForWorkspace: (workspaceId: string) => Tab[];
@@ -227,11 +232,9 @@ function seedPendingAgentsForLayout(layout: PaneNode): void {
 	if (entries.length === 0) return;
 	const agents: CodingAgent[] = useSettingsStore.getState().agents;
 	for (const { paneId, agentId } of entries) {
-		const agent = agents.find((a) => a.id === agentId);
-		if (!agent) continue;
-		setPendingAgent(paneId, {
-			command: [agent.command, ...(agent.args ?? [])].join(" "),
-		});
+		const command = agentCommandFor(agents, agentId);
+		if (!command) continue;
+		setPendingAgent(paneId, { command });
 	}
 }
 
@@ -1170,6 +1173,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	getActiveWorkspace: () => {
 		const { workspaces, activeWorkspaceId } = get();
 		return workspaces.find((s) => s.id === activeWorkspaceId);
+	},
+
+	findWorkspaceForPane: (paneId: string) => {
+		// Searched across ALL workspaces' tabs, not just the active one:
+		// TerminalPool mounts panes for every *opened* workspace, so a pane can
+		// spawn, restart or write back its ptyId while its workspace is in the
+		// background. `getActiveWorkspace()` is the wrong lens for anything
+		// pane-scoped.
+		for (const workspace of get().workspaces) {
+			for (const tab of workspace.tabs) {
+				const layout = parseTabLayout(tab.layoutJson);
+				if (layout && containsPane(layout, paneId)) return workspace;
+			}
+		}
+		return null;
 	},
 
 	getActiveTab: () => {

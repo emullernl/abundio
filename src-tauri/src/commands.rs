@@ -29,6 +29,12 @@ pub async fn pty_spawn(
     pty_id: Option<String>,
     workspace_name: Option<String>,
     window_label: Option<String>,
+    // `workspace_id` selects whose injected Environment Bundle lands in the
+    // child's environment. `inherit_from_workspace_id` is the main-worktree
+    // Workspace, resolved by the frontend (`inheritSourceWorkspaceId`) —
+    // worktree grouping is not recomputed in Rust.
+    workspace_id: Option<String>,
+    inherit_from_workspace_id: Option<String>,
 ) -> Result<String, AbundioError> {
     pty_mgr.spawn(
         app,
@@ -41,6 +47,8 @@ pub async fn pty_spawn(
         pty_id.as_deref(),
         workspace_name.as_deref(),
         window_label.as_deref(),
+        workspace_id.as_deref(),
+        inherit_from_workspace_id.as_deref(),
     )
 }
 

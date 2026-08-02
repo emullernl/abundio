@@ -157,6 +157,24 @@ export function mergeAgentsWithBuiltins(
 	return result;
 }
 
+/**
+ * The shell command that launches an agent, or undefined when the agent no
+ * longer exists (a deleted custom agent leaves its id stamped on the layout).
+ *
+ * Single source of truth for the launch string: `seedPendingAgentsForLayout`,
+ * the LaunchPicker, the command palette and pane restart all go through here,
+ * so a change to how args are joined cannot apply to some paths but not others.
+ */
+export function agentCommandFor(
+	agents: CodingAgent[],
+	agentId: string | undefined,
+): string | undefined {
+	if (!agentId) return undefined;
+	const agent = agents.find((a) => a.id === agentId);
+	if (!agent) return undefined;
+	return [agent.command, ...(agent.args ?? [])].join(" ");
+}
+
 function escapeRegExp(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

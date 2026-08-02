@@ -57,7 +57,6 @@ function seedWorkspace(id: string, name: string) {
 		id,
 		name,
 		rootFolder: `/tmp/${id}`,
-		envJson: "{}",
 		agentPresetsJson: "{}",
 		fileTabsJson: "[]",
 		baseBranch: null,

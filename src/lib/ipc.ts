@@ -47,29 +47,29 @@ function listen<T>(
 		: (realListen<T>(event, cb) as Promise<UnlistenFn>);
 }
 
+export interface PtySpawnOptions {
+	cwd: string;
+	cols: number;
+	rows: number;
+	/** Run this instead of the login shell. Unused in production — an agent is
+	 *  typed into a normal shell rather than spawned as the PTY process. */
+	command?: string;
+	shell?: string;
+	logId?: string;
+	ptyId?: string;
+	workspaceName?: string;
+	windowLabel?: string;
+	/** Whose injected Environment Bundle to place in the child's environment. */
+	workspaceId?: string;
+	/** Main worktree to inherit Bundles from, from `inheritSourceWorkspaceId`. */
+	inheritFromWorkspaceId?: string;
+}
+
 export const pty = {
-	spawn: (
-		cwd: string,
-		cols: number,
-		rows: number,
-		command?: string,
-		shell?: string,
-		logId?: string,
-		ptyId?: string,
-		workspaceName?: string,
-		windowLabel?: string,
-	) =>
-		invoke<string>("pty_spawn", {
-			cwd,
-			cols,
-			rows,
-			command,
-			shell,
-			logId,
-			ptyId,
-			workspaceName,
-			windowLabel,
-		}),
+	/** Spawn a PTY. Takes an options object rather than positional arguments —
+	 *  there are eleven of them and almost all are optional. */
+	spawn: (options: PtySpawnOptions) =>
+		invoke<string>("pty_spawn", { ...options }),
 
 	write: (ptyId: string, data: string) =>
 		invoke<void>("pty_write", { ptyId, data }),
@@ -735,4 +735,120 @@ export const devEnvironments = {
 			workspaceFolder,
 			file,
 		}),
+};
+
+// ── Per-Workspace environment variables ──
+
+/** A named set of environment variables owned by a Workspace. Exactly one
+ *  Bundle per Workspace is injected into every PTY; the rest are on-demand and
+ *  read only through the `abundio-env` helper. */
+export interface EnvBundleMeta {
+	id: string;
+	/** The owning Workspace. For an inherited Bundle this is the main worktree. */
+	workspaceId: string;
+	name: string;
+	injected: boolean;
+	position: number;
+	varCount: number;
+	/** True when this Bundle exists only on the main worktree. */
+	inherited: boolean;
+}
+
+/** Metadata for one variable. Deliberately carries NO value — plaintext reaches
+ *  the frontend only via `env.reveal`, one variable at a time. */
+export interface EnvVarMeta {
+	id: string;
+	bundleId: string;
+	name: string;
+	/** Plaintext byte length, derived from the ciphertext without decrypting. */
+	byteLen: number;
+	position: number;
+	/** True when the value comes from the main worktree. */
+	inherited: boolean;
+	/** True when the value cannot be decrypted with the current master key
+	 *  (e.g. a database restored onto a machine without it). */
+	undecryptable: boolean;
+	updatedAt: number;
+}
+
+export interface EnvListResult {
+	bundles: EnvBundleMeta[];
+	selectedBundle: string;
+	vars: EnvVarMeta[];
+	/** Non-null when the OS credential store is unavailable, locked or denied.
+	 *  The UI shows a banner with Retry and renders every row locked. */
+	keyError: string | null;
+	/** Resolved size of the injected Bundle, and the platform budget. */
+	bytesUsed: number;
+	bytesBudget: number;
+}
+
+export const env = {
+	list: (
+		workspaceId: string,
+		inheritFromWorkspaceId: string | null,
+		bundle: string | null,
+	) =>
+		invoke<EnvListResult>("env_list", {
+			workspaceId,
+			inheritFromWorkspaceId,
+			bundle,
+		}),
+
+	createBundle: (workspaceId: string, name: string) =>
+		invoke<EnvBundleMeta>("env_bundle_create", { workspaceId, name }),
+
+	renameBundle: (workspaceId: string, from: string, to: string) =>
+		invoke<void>("env_bundle_rename", { workspaceId, from, to }),
+
+	setInjected: (workspaceId: string, name: string) =>
+		invoke<void>("env_bundle_set_injected", { workspaceId, name }),
+
+	deleteBundle: (workspaceId: string, name: string) =>
+		invoke<void>("env_bundle_delete", { workspaceId, name }),
+
+	upsert: (workspaceId: string, bundle: string, name: string, value: string) =>
+		invoke<EnvVarMeta>("env_vars_upsert", {
+			workspaceId,
+			bundle,
+			name,
+			value,
+		}),
+
+	upsertMany: (
+		workspaceId: string,
+		bundle: string,
+		entries: { name: string; value: string }[],
+	) =>
+		invoke<EnvVarMeta[]>("env_vars_upsert_many", {
+			workspaceId,
+			bundle,
+			entries,
+		}),
+
+	remove: (workspaceId: string, bundle: string, name: string) =>
+		invoke<void>("env_vars_delete", { workspaceId, bundle, name }),
+
+	/** The ONLY call that brings a plaintext value into the JS heap. One
+	 *  variable, on an explicit user expand. Keep it that way. */
+	reveal: (
+		workspaceId: string,
+		inheritFromWorkspaceId: string | null,
+		bundle: string,
+		name: string,
+	) =>
+		invoke<string>("env_vars_reveal", {
+			workspaceId,
+			inheritFromWorkspaceId,
+			bundle,
+			name,
+		}),
+
+	reorder: (workspaceId: string, bundle: string, names: string[]) =>
+		invoke<void>("env_vars_reorder", { workspaceId, bundle, names }),
+
+	/** Drop the cached master key and re-read the credential store. Returns
+	 *  true when the key is available again. Process-global: affects every
+	 *  window, which is the right semantics for "the keychain was unlocked". */
+	retryKey: () => invoke<boolean>("env_retry_key"),
 };

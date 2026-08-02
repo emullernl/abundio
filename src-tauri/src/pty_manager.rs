@@ -34,15 +34,36 @@ struct PtyEntry {
     alive: Arc<AtomicBool>,
 }
 
+/// Which Workspace a live PTY belongs to.
+///
+/// Recorded at spawn so the `abundio-env` helper can resolve a Bundle from
+/// nothing but `ABUNDIO_PTY_ID`. That is what stops a pane asking for another
+/// Workspace's variables: the Workspace is derived from the pty id, never taken
+/// from the request body. See `hook_server.rs`.
+#[derive(Clone, Debug)]
+pub struct SpawnContext {
+    pub workspace_id: String,
+    /// Main-worktree Workspace this pane inherits from, if any.
+    pub inherit_from: Option<String>,
+}
+
 pub struct PtyManager {
     entries: DashMap<String, PtyEntry>,
+    spawn_contexts: DashMap<String, SpawnContext>,
 }
 
 impl PtyManager {
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
+            spawn_contexts: DashMap::new(),
         }
+    }
+
+    /// The Workspace a live PTY belongs to, or `None` if the pty id is unknown
+    /// (already exited, or spawned before a workspace id was available).
+    pub fn spawn_context(&self, pty_id: &str) -> Option<SpawnContext> {
+        self.spawn_contexts.get(pty_id).map(|e| e.clone())
     }
 
     /// Spawn a new PTY in a dedicated OS thread.
@@ -51,8 +72,13 @@ impl PtyManager {
     /// - `command`: optional command to run instead of the default shell
     /// - `cols`, `rows`: initial terminal size
     /// - `log_id`: optional stable identifier for the PTY output log file
+    /// - `workspace_id` / `inherit_from_workspace_id`: which Workspace's
+    ///   injected Bundle to place in the child's environment. The second is the
+    ///   main-worktree Workspace for a linked worktree; worktree grouping is
+    ///   derived in the frontend and is not recomputed here.
     ///
     /// Returns the PTY ID.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
         app: AppHandle,
@@ -65,6 +91,8 @@ impl PtyManager {
         pty_id: Option<&str>,
         workspace_name: Option<&str>,
         window_label: Option<&str>,
+        workspace_id: Option<&str>,
+        inherit_from_workspace_id: Option<&str>,
     ) -> Result<String, AbundioError> {
         let pty_id = pty_id
             .map(|s| s.to_string())
@@ -156,6 +184,13 @@ impl PtyManager {
 
         cmd.env("TERM", "xterm-256color");
         cmd.env("TERM_PROGRAM", "Abundio");
+        // Where the wrapper rc files and the `abundio-env` helper live. The
+        // wrappers prepend this to PATH after the user's rc so `abundio-env` is
+        // callable even if the rc rebuilds PATH from scratch.
+        cmd.env(
+            "ABUNDIO_INTEGRATION_DIR",
+            integration_dir.to_string_lossy().as_ref(),
+        );
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         // Suppress zsh's partial-line EOL marker (%) so it doesn't appear in replayed scrollback logs
         cmd.env("PROMPT_EOL_MARK", "");
@@ -171,6 +206,61 @@ impl PtyManager {
             // workspace rename after launch will not update them.
             cmd.env("ABUNDIO_WORKSPACE_NAME", workspace_name.unwrap_or(""));
             cmd.env("ABUNDIO_WINDOW_LABEL", window_label.unwrap_or(""));
+        }
+
+        // ── Workspace environment variables (injected Bundle) ──
+        //
+        // This must NEVER block the spawn. A locked or denied credential store,
+        // or a row that cannot be decrypted, degrades to an empty set plus an
+        // event the UI turns into a banner — the terminal still opens.
+        let injected: Vec<(String, String)> = match (
+            workspace_id,
+            app.try_state::<crate::env_vars::EnvVarStore>(),
+        ) {
+            (Some(ws), Some(store)) => match crate::env_crypto::master_key() {
+                Ok(key) => store
+                    .resolve_for_spawn(&key, ws, inherit_from_workspace_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(name, value)| (name, value.to_string()))
+                    .collect(),
+                Err(e) => {
+                    log::warn!("[pty] workspace environment unavailable for {ws}: {e}");
+                    let _ = app.emit(
+                        "env-vars-unavailable",
+                        serde_json::json!({ "workspaceId": ws, "reason": e.to_string() }),
+                    );
+                    Vec::new()
+                }
+            },
+            _ => Vec::new(),
+        };
+
+        let (pairs, keys_manifest, skipped) =
+            build_env_injection(&injected, crate::env_crypto::MAX_INJECTED_BYTES * 2);
+        for (name, value) in &pairs {
+            cmd.env(name, value);
+        }
+        if !keys_manifest.is_empty() {
+            cmd.env("ABUNDIO_ENV_KEYS", &keys_manifest);
+        }
+        if !skipped.is_empty() {
+            log::warn!(
+                "[pty] dropped {} workspace environment variable(s) over the {} byte budget: {}",
+                skipped.len(),
+                crate::env_crypto::MAX_INJECTED_BYTES,
+                skipped.join(", ")
+            );
+        }
+
+        if let Some(ws) = workspace_id {
+            self.spawn_contexts.insert(
+                pty_id.clone(),
+                SpawnContext {
+                    workspace_id: ws.to_string(),
+                    inherit_from: inherit_from_workspace_id.map(|s| s.to_string()),
+                },
+            );
         }
 
         // A stamped cwd may arrive in Git Bash's MSYS form (`/c/Users/…`), which
@@ -250,14 +340,15 @@ impl PtyManager {
             let _ = entry.tx.send(PtyCommand::Kill);
         }
         self.entries.remove(pty_id);
+        self.spawn_contexts.remove(pty_id);
         Ok(())
     }
 
     fn log_dir() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| Path::new("~").to_path_buf())
-            .join("abundio")
-            .join("pty-logs")
+        // Epoch-scoped: pane ids are carried over when a new epoch imports the
+        // previous database, so a shared directory would have two builds
+        // interleaving writes into the same `<paneId>.log`.
+        crate::app_paths::pty_logs_dir()
     }
 
     /// Read a PTY output log file, returning its contents as base64.
@@ -355,6 +446,50 @@ fn detect_shell_type(shell: &str) -> ShellType {
     }
 }
 
+/// Build the environment pairs for a Workspace's injected Bundle, plus the
+/// `ABUNDIO_ENV_KEYS` manifest.
+///
+/// Each variable is emitted TWICE:
+///  - under its own name, so shells with no Abundio wrapper rc (`ShellType::Other`,
+///    and `command`-mode spawns) still receive it, and
+///  - as `ABUNDIO_ENV__<NAME>`, the shadow the wrapper rc re-exports AFTER
+///    sourcing the user's rc — that is what makes a workspace variable win over
+///    an `export` in `.zshrc`.
+///
+/// Variable names are validated as shell identifiers upstream, so they can never
+/// contain whitespace; that is what makes the space-separated manifest
+/// unambiguous, and `ABUNDIO_` is reserved so the shadow prefix cannot collide.
+///
+/// Truncates at `budget_bytes` and reports what was dropped. This is not
+/// cosmetic: on Windows the whole environment block is capped at 32,767
+/// characters and `CreateProcess` FAILS on overflow, which would kill the pane.
+pub(crate) fn build_env_injection(
+    vars: &[(String, String)],
+    budget_bytes: usize,
+) -> (Vec<(String, String)>, String, Vec<String>) {
+    const SHADOW_PREFIX: &str = "ABUNDIO_ENV__";
+
+    let mut pairs: Vec<(String, String)> = Vec::with_capacity(vars.len() * 2);
+    let mut names: Vec<String> = Vec::with_capacity(vars.len());
+    let mut skipped: Vec<String> = Vec::new();
+    let mut used = 0usize;
+
+    for (name, value) in vars {
+        // Both copies, plus the name's slot in the manifest.
+        let cost = (name.len() + value.len() + 2) * 2 + SHADOW_PREFIX.len() + name.len() + 1;
+        if used + cost > budget_bytes {
+            skipped.push(name.clone());
+            continue;
+        }
+        used += cost;
+        pairs.push((name.clone(), value.clone()));
+        pairs.push((format!("{SHADOW_PREFIX}{name}"), value.clone()));
+        names.push(name.clone());
+    }
+
+    (pairs, names.join(" "), skipped)
+}
+
 /// Convert a Git Bash / MSYS path to its native Windows form. Pure string
 /// transform; non-MSYS shapes pass through unchanged. Applied only on Windows,
 /// where a leading `/c/` is unambiguously an MSYS drive path (a native path is
@@ -391,18 +526,18 @@ fn shell_integration_dir() -> PathBuf {
     }).clone()
 }
 
-fn write_shell_integration_files() -> PathBuf {
-    let dir = dirs::data_dir()
-        .unwrap_or_else(|| Path::new("~").to_path_buf())
-        .join("abundio")
-        .join("shell-integration");
-    let _ = fs::create_dir_all(&dir);
-
-    // zsh: wrapper .zshrc that sources user config then adds hooks
-    let zshrc = dir.join(".zshrc");
-    let _ = fs::write(
-        &zshrc,
-        r#"# Abundio shell integration — loaded via ZDOTDIR
+/// The re-export block shared in spirit by all three wrapper scripts.
+///
+/// PRECEDENCE IS THE WHOLE POINT: this must run AFTER the user's rc has been
+/// sourced. `cmd.env` at spawn happens before the shell starts, so an `export`
+/// in `.zshrc` would otherwise silently win over a Workspace variable. Restoring
+/// from the `ABUNDIO_ENV__` shadows here makes the Workspace value final.
+///
+/// There is deliberately NO `eval` anywhere: values are arbitrary user data
+/// including newlines and quotes, and `eval` would turn a stored certificate
+/// into a code-execution vector. zsh uses `${(P)name}` indirect expansion, bash
+/// uses `${!name}` + `printf -v`, PowerShell uses the Environment API.
+const ZSHRC_BODY: &str = r#"# Abundio shell integration — loaded via ZDOTDIR
 # Source the user's real zsh config
 if [ -n "$ABUNDIO_ORIGINAL_ZDOTDIR" ] && [ -f "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshrc" ]; then
   ZDOTDIR="$ABUNDIO_ORIGINAL_ZDOTDIR"
@@ -411,13 +546,90 @@ elif [ -f "$HOME/.zshrc" ]; then
   ZDOTDIR="$HOME"
   source "$HOME/.zshrc"
 fi
+# Re-apply this Workspace's environment variables AFTER the user's rc, so a
+# workspace value deterministically beats an `export` in .zshrc. Values never
+# appear in terminal output or shell history — this file is loaded via ZDOTDIR.
+if [ -n "$ABUNDIO_ENV_KEYS" ]; then
+  for __abundio_k in ${=ABUNDIO_ENV_KEYS}; do
+    __abundio_s="ABUNDIO_ENV__${__abundio_k}"
+    export "${__abundio_k}=${(P)__abundio_s}"
+    unset "$__abundio_s"
+  done
+  unset __abundio_k __abundio_s ABUNDIO_ENV_KEYS
+fi
+# Make `abundio-env` reachable for on-demand Bundles. Appended after the user's
+# rc so a PATH rebuild in .zshrc cannot drop it.
+case ":$PATH:" in
+  *":$ABUNDIO_INTEGRATION_DIR:"*) ;;
+  *) [ -n "$ABUNDIO_INTEGRATION_DIR" ] && PATH="$ABUNDIO_INTEGRATION_DIR:$PATH" && export PATH ;;
+esac
 # Hooks
 __abundio_preexec() { printf '\e]7770;command_start;%s\a' "${1//$'\a'/ }" }
 __abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD" }
 precmd_functions+=(__abundio_precmd)
 preexec_functions+=(__abundio_preexec)
-"#,
-    );
+"#;
+
+/// Bash equivalent of the zsh re-export block. Inserted after `/etc/profile`,
+/// the login-profile chain AND the deduped `~/.bashrc` — anything earlier and a
+/// user rc could still clobber a Workspace variable.
+const BASHRC_ENV_BLOCK: &str = r#"
+# Re-apply this Workspace's environment variables AFTER the user's rc. See the
+# ZSHRC_BODY comment in pty_manager.rs for why precedence matters here.
+if [ -n "$ABUNDIO_ENV_KEYS" ]; then
+  for __abundio_k in $ABUNDIO_ENV_KEYS; do
+    __abundio_s="ABUNDIO_ENV__${__abundio_k}"
+    printf -v "$__abundio_k" '%s' "${!__abundio_s}"
+    export "$__abundio_k"
+    unset "$__abundio_s"
+  done
+  unset __abundio_k __abundio_s ABUNDIO_ENV_KEYS
+fi
+case ":$PATH:" in
+  *":$ABUNDIO_INTEGRATION_DIR:"*) ;;
+  *) [ -n "$ABUNDIO_INTEGRATION_DIR" ] && PATH="$ABUNDIO_INTEGRATION_DIR:$PATH" && export PATH ;;
+esac
+"#;
+
+/// PowerShell equivalent. `-split` + `Where-Object` rather than
+/// `String.Split(char, StringSplitOptions)` for Windows PowerShell 5.1.
+const PS1_ENV_BLOCK: &str = r#"
+# Re-apply this Workspace's environment variables after the user's profile.
+if ($env:ABUNDIO_ENV_KEYS) {
+    foreach ($k in ($env:ABUNDIO_ENV_KEYS -split '\s+' | Where-Object { $_ })) {
+        $shadow = "ABUNDIO_ENV__$k"
+        $val = [Environment]::GetEnvironmentVariable($shadow, 'Process')
+        if ($null -ne $val) {
+            [Environment]::SetEnvironmentVariable($k, $val, 'Process')
+            [Environment]::SetEnvironmentVariable($shadow, $null, 'Process')
+        }
+    }
+    [Environment]::SetEnvironmentVariable('ABUNDIO_ENV_KEYS', $null, 'Process')
+}
+if ($env:ABUNDIO_INTEGRATION_DIR -and ($env:PATH -notlike "*$env:ABUNDIO_INTEGRATION_DIR*")) {
+    $env:PATH = "$env:ABUNDIO_INTEGRATION_DIR" + [IO.Path]::PathSeparator + $env:PATH
+}
+"#;
+
+fn write_shell_integration_files() -> PathBuf {
+    // Epoch-scoped: these files are rewritten unconditionally by whichever
+    // build spawns a terminal first. An older build's wrapper scripts have no
+    // `ABUNDIO_ENV_KEYS` re-export block, so sharing this directory would let it
+    // silently disable this version's environment injection.
+    let dir = crate::app_paths::shell_integration_dir();
+    write_shell_integration_files_into(&dir);
+    dir
+}
+
+/// Split out from `write_shell_integration_files` so tests can assert on the
+/// generated scripts — in particular that the environment re-export lands after
+/// the user's rc — without writing into the real data directory.
+fn write_shell_integration_files_into(dir: &Path) {
+    let _ = fs::create_dir_all(dir);
+
+    // zsh: wrapper .zshrc that sources user config then adds hooks
+    let zshrc = dir.join(".zshrc");
+    let _ = fs::write(&zshrc, ZSHRC_BODY);
 
     // Also create .zshenv to source the user's .zshenv
     let zshenv = dir.join(".zshenv");
@@ -478,6 +690,7 @@ unset -f source .
 # Only source ~/.bashrc ourselves if the profile files did not already do it.
 [ -z "$__abundio_bashrc_loaded" ] && [ -f ~/.bashrc ] && builtin source ~/.bashrc
 unset __abundio_bashrc_loaded
+__ABUNDIO_ENV_BLOCK__
 # Hooks
 # Track whether the DEBUG trap is firing for a genuine interactive command
 # vs. a command run from PROMPT_COMMAND (e.g. a distro's `history -a`) or tab
@@ -514,17 +727,19 @@ fi
 unset __abundio_pc __abundio_pc_flags
 "#;
 
-    let _ = fs::write(&bashrc, bashrc_content);
+    let _ = fs::write(
+        &bashrc,
+        bashrc_content.replace("__ABUNDIO_ENV_BLOCK__", BASHRC_ENV_BLOCK),
+    );
 
     // PowerShell: wrapper init script that sources user profile then adds hooks
     // Uses [char]0x1b (ESC) and [char]0x07 (BEL) for PS 5.1 compatibility
     // (`e and `a require PS 6+).
     let ps1 = dir.join("abundio_init.ps1");
-    let _ = fs::write(
-        &ps1,
-        r#"# Abundio shell integration for PowerShell — loaded via -NoProfile -File
+    let ps1_content = r#"# Abundio shell integration for PowerShell — loaded via -NoProfile -File
 # Source the user's profile first
 if (Test-Path $PROFILE) { . $PROFILE }
+__ABUNDIO_ENV_BLOCK__
 
 # ESC and BEL characters for OSC sequences (compatible with PS 5.1+)
 $Global:__AbundioESC = [char]0x1b
@@ -566,10 +781,197 @@ if (Get-Module -Name PSReadLine) {
         [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
     }
 }
-"#,
+"#;
+    let _ = fs::write(
+        &ps1,
+        ps1_content.replace("__ABUNDIO_ENV_BLOCK__", PS1_ENV_BLOCK),
     );
 
-    dir
+    // The `abundio-env` helper: reads an on-demand Bundle for THIS pane. See
+    // Stage F / hook_server.rs. Written here so it lives next to the wrapper
+    // rc files that put it on PATH.
+    write_abundio_env_helper(dir);
+}
+
+/// `abundio-env` — use an on-demand Environment Bundle in the calling pane.
+///
+/// ```text
+/// abundio-env run production -- docker compose up   # recommended
+/// abundio-env list
+/// abundio-env print production > /tmp/x.env         # explicit, deliberate
+/// ```
+///
+/// `run` applies the Bundle to a child process's environment and execs it. That
+/// is the primary path because it is the only one that touches neither disk nor
+/// the process table:
+///  - No temp file, so nothing for a disk-scraping infostealer to find.
+///  - No `eval`, so a value containing quotes or newlines cannot execute. The
+///    server emits NUL-delimited records and the reader splits on NUL, which is
+///    the one byte an environment variable cannot contain.
+///  - No `env KEY=VALUE cmd`, which would expose the values in `ps` output.
+///
+/// **`--env-file <(abundio-env print …)` does NOT work with Docker Compose.**
+/// Compose requires a regular, seekable file and silently treats a process
+/// substitution as empty — verified against Compose v5.1.3, no error, just blank
+/// values. `run` sidesteps this entirely: Compose reads `${VAR}` interpolation
+/// and `environment: [VAR]` passthrough from the shell environment.
+///
+/// Authentication is the pane's `ABUNDIO_HOOK_TOKEN`, and the Workspace is
+/// resolved server-side from `ABUNDIO_PTY_ID` — a caller can name a bundle but
+/// never a workspace.
+///
+/// Bash rather than `/bin/sh`: `read -r -d ''` is needed for NUL-delimited
+/// records, and it is absent from POSIX sh. The user's interactive shell is
+/// irrelevant — the shebang picks the interpreter.
+const ABUNDIO_ENV_SH: &str = r#"#!/usr/bin/env bash
+# Abundio — use an on-demand Environment Bundle in this terminal.
+#
+#   abundio-env run production -- docker compose up
+#   abundio-env list
+#   abundio-env print production > secrets.env    # writes to DISK, be careful
+#
+# `run` never writes the values to disk and never puts them in `ps` output.
+set -euo pipefail
+
+if [ -z "${ABUNDIO_HOOK_TOKEN:-}" ] || [ -z "${ABUNDIO_PTY_ID:-}" ]; then
+  echo "abundio-env: not running inside an Abundio terminal" >&2
+  exit 1
+fi
+
+__abundio_fetch() {   # $1 = route, $2 = bundle (optional)
+  local body
+  if [ -n "${2:-}" ]; then
+    body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\",\"bundle\":\"$2\"}"
+  else
+    body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\"}"
+  fi
+  curl -fsS -X POST "http://127.0.0.1:${ABUNDIO_HOOK_PORT}$1" \
+    -H "X-Abundio-Token: ${ABUNDIO_HOOK_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "$body"
+}
+
+__abundio_usage() {
+  cat >&2 <<'USAGE'
+abundio-env — on-demand environment bundles for this workspace
+
+  abundio-env run <bundle> -- <command>   run a command with the bundle applied
+  abundio-env list                        list available bundles
+  abundio-env print <bundle>              print as KEY="value" lines
+
+Note: `docker compose --env-file` needs a real file and will NOT read a process
+substitution. Use `run` instead:
+
+  abundio-env run production -- docker compose up
+USAGE
+}
+
+case "${1:-}" in
+  list)
+    __abundio_fetch /env/list
+    ;;
+
+  run)
+    bundle="${2:-}"
+    if [ -z "$bundle" ]; then __abundio_usage; exit 2; fi
+    shift 2
+    [ "${1:-}" = "--" ] && shift
+    if [ $# -eq 0 ]; then __abundio_usage; exit 2; fi
+
+    # NUL-delimited KEY=VALUE records: no escaping rules, no eval, and values
+    # containing newlines (certificates) survive intact.
+    while IFS= read -r -d '' __abundio_pair; do
+      export "${__abundio_pair%%=*}=${__abundio_pair#*=}"
+    done < <(__abundio_fetch /env/raw "$bundle")
+
+    exec "$@"
+    ;;
+
+  print)
+    bundle="${2:-}"
+    if [ -z "$bundle" ]; then __abundio_usage; exit 2; fi
+    # Abundio persists scrollback to disk, so dumping secrets to a terminal
+    # would write them straight into a log file — the very thing this feature
+    # exists to avoid. Redirecting or piping is fine.
+    if [ -t 1 ] && [ "${3:-}" != "--force" ]; then
+      echo "abundio-env: refusing to print secrets to a terminal." >&2
+      echo "  Use:  abundio-env run $bundle -- <command>" >&2
+      echo "  Override with --force if you really want them on screen." >&2
+      exit 3
+    fi
+    __abundio_fetch /env/print "$bundle"
+    ;;
+
+  *)
+    __abundio_usage
+    exit 2
+    ;;
+esac
+"#;
+
+/// PowerShell twin. `run` works the same way (set the variables on the current
+/// process, then invoke), so the Windows story is no worse than the Unix one —
+/// which is the opposite of what the `--env-file` approach would have given us.
+const ABUNDIO_ENV_PS1: &str = r#"# Abundio — use an on-demand Environment Bundle in this terminal.
+#   abundio-env run production -- docker compose up
+param([Parameter(Position=0)][string]$Command, [Parameter(Position=1)][string]$Bundle, [switch]$Force, [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)
+
+if (-not $env:ABUNDIO_HOOK_TOKEN -or -not $env:ABUNDIO_PTY_ID) {
+    Write-Error "abundio-env: not running inside an Abundio terminal"; exit 1
+}
+
+$headers = @{ "X-Abundio-Token" = $env:ABUNDIO_HOOK_TOKEN }
+$base = "http://127.0.0.1:$env:ABUNDIO_HOOK_PORT"
+
+switch ($Command) {
+    "list" {
+        $body = @{ ptyId = $env:ABUNDIO_PTY_ID } | ConvertTo-Json -Compress
+        Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+    }
+    "run" {
+        if (-not $Bundle) { Write-Error "abundio-env: usage: abundio-env run <bundle> -- <command>"; exit 2 }
+        $args2 = @($Rest | Where-Object { $_ -ne "--" })
+        if ($args2.Count -eq 0) { Write-Error "abundio-env: usage: abundio-env run <bundle> -- <command>"; exit 2 }
+
+        # NUL-delimited KEY=VALUE records: split on a byte that cannot occur in a
+        # value, so nothing is ever evaluated as code and a value containing
+        # quotes or newlines cannot execute.
+        $body = @{ ptyId = $env:ABUNDIO_PTY_ID; bundle = $Bundle } | ConvertTo-Json -Compress
+        $raw = Invoke-RestMethod -Uri "$base/env/raw" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        foreach ($record in ($raw -split "`0")) {
+            if (-not $record) { continue }
+            $i = $record.IndexOf('=')
+            if ($i -lt 1) { continue }
+            [Environment]::SetEnvironmentVariable($record.Substring(0, $i), $record.Substring($i + 1), 'Process')
+        }
+        & $args2[0] @($args2[1..($args2.Count - 1)])
+        exit $LASTEXITCODE
+    }
+    "print" {
+        if (-not $Bundle) { Write-Error "abundio-env: usage: abundio-env print <bundle>"; exit 2 }
+        # Scrollback is persisted to disk, so refuse an interactive dump.
+        if (-not $Force -and -not [Console]::IsOutputRedirected) {
+            Write-Error "abundio-env: refusing to print secrets to a terminal. Redirect the output or pass -Force."
+            exit 3
+        }
+        $body = @{ ptyId = $env:ABUNDIO_PTY_ID; bundle = $Bundle } | ConvertTo-Json -Compress
+        Invoke-RestMethod -Uri "$base/env/print" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+    }
+    default { Write-Error "abundio-env: usage: abundio-env {run <bundle> -- <cmd>|list|print <bundle>}"; exit 2 }
+}
+"#;
+
+fn write_abundio_env_helper(dir: &Path) {
+    let sh = dir.join("abundio-env");
+    if fs::write(&sh, ABUNDIO_ENV_SH).is_ok() {
+        // Must be executable to be usable from PATH.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&sh, fs::Permissions::from_mode(0o755));
+        }
+    }
+    let _ = fs::write(dir.join("abundio-env.ps1"), ABUNDIO_ENV_PS1);
 }
 
 /// Runs on a dedicated OS thread. Owns the master PTY and child process.
@@ -823,5 +1225,201 @@ mod tests {
         assert_eq!(msys_to_windows_path("/Users/emil/dev"), "/Users/emil/dev");
         assert_eq!(msys_to_windows_path("relative/path"), "relative/path");
         assert_eq!(msys_to_windows_path(""), "");
+    }
+}
+
+#[cfg(test)]
+mod env_injection_tests {
+    use super::*;
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn emits_both_the_plain_and_shadow_forms() {
+        let (pairs, keys, skipped) = build_env_injection(&vars(&[("TOKEN", "abc")]), 64 * 1024);
+        assert!(pairs.contains(&("TOKEN".into(), "abc".into())));
+        assert!(pairs.contains(&("ABUNDIO_ENV__TOKEN".into(), "abc".into())));
+        assert_eq!(keys, "TOKEN");
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn manifest_is_space_separated_in_resolution_order() {
+        let (_, keys, _) = build_env_injection(
+            &vars(&[("A", "1"), ("B", "2"), ("C", "3")]),
+            64 * 1024,
+        );
+        assert_eq!(keys, "A B C");
+    }
+
+    /// The wrapper scripts guard on `[ -n "$ABUNDIO_ENV_KEYS" ]`, so with no
+    /// variables the manifest must be empty and the caller must skip setting it
+    /// at all rather than exporting an empty string.
+    #[test]
+    fn empty_input_produces_no_manifest() {
+        let (pairs, keys, skipped) = build_env_injection(&[], 64 * 1024);
+        assert!(pairs.is_empty());
+        assert!(keys.is_empty());
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn values_with_newlines_survive_unchanged() {
+        let pem = "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n";
+        let (pairs, _, _) = build_env_injection(&vars(&[("CERT", pem)]), 64 * 1024);
+        assert_eq!(pairs[0].1, pem);
+        assert_eq!(pairs[1].1, pem);
+    }
+
+    /// Exceeding the OS environment-block limit makes `spawn_command` FAIL on
+    /// Windows, which would kill the pane. Oversize variables must be dropped
+    /// and reported, never allowed through.
+    #[test]
+    fn truncates_at_the_budget_and_reports_what_was_dropped() {
+        let big = "x".repeat(500);
+        let (pairs, keys, skipped) =
+            build_env_injection(&vars(&[("SMALL", "1"), ("BIG", &big)]), 200);
+        assert!(pairs.iter().any(|(k, _)| k == "SMALL"));
+        assert!(!pairs.iter().any(|(k, _)| k == "BIG"));
+        assert_eq!(keys, "SMALL");
+        assert_eq!(skipped, vec!["BIG".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod wrapper_script_tests {
+    use super::*;
+
+    /// PRECEDENCE GUARD. The re-export block must come AFTER the user's rc is
+    /// sourced, or a plain `export FOO=...` in `.zshrc` silently beats the
+    /// Workspace value. This test exists so that "tidying" the scripts cannot
+    /// quietly reverse that.
+    #[test]
+    fn zsh_reexports_after_sourcing_the_user_rc() {
+        let source_at = ZSHRC_BODY
+            .find("source \"$ABUNDIO_ORIGINAL_ZDOTDIR/.zshrc\"")
+            .expect("zsh wrapper should source the user's rc");
+        let reexport_at = ZSHRC_BODY
+            .find("ABUNDIO_ENV_KEYS")
+            .expect("zsh wrapper should re-export workspace variables");
+        assert!(
+            reexport_at > source_at,
+            "the env re-export must run AFTER the user's rc"
+        );
+    }
+
+    #[test]
+    fn bash_env_block_lands_after_the_user_rc() {
+        let bashrc = written_bashrc();
+        let source_at = bashrc
+            .rfind("builtin source ~/.bashrc")
+            .expect("bash wrapper should source ~/.bashrc");
+        let reexport_at = bashrc
+            .find("ABUNDIO_ENV_KEYS")
+            .expect("bash wrapper should re-export workspace variables");
+        assert!(
+            reexport_at > source_at,
+            "the env re-export must run AFTER ~/.bashrc"
+        );
+    }
+
+    #[test]
+    fn powershell_env_block_lands_after_the_user_profile() {
+        let block_at = PS1_ENV_BLOCK
+            .find("ABUNDIO_ENV_KEYS")
+            .expect("ps1 block should re-export workspace variables");
+        assert!(block_at > 0);
+        // The placeholder sits immediately after `. $PROFILE` in the template.
+        assert!(PS1_ENV_BLOCK.contains("SetEnvironmentVariable"));
+    }
+
+    /// Values are arbitrary user data — certificates, tokens, anything with
+    /// quotes or newlines. `eval` in these scripts would turn a stored value
+    /// into a code-execution vector.
+    #[test]
+    fn wrapper_scripts_never_use_eval() {
+        for (name, body) in [
+            ("zshrc", ZSHRC_BODY),
+            ("bashrc-env", BASHRC_ENV_BLOCK),
+            ("ps1-env", PS1_ENV_BLOCK),
+            ("abundio-env.sh", ABUNDIO_ENV_SH),
+        ] {
+            assert!(!body.contains("eval "), "{name} must not use eval");
+        }
+    }
+
+    #[test]
+    fn wrappers_put_the_integration_dir_on_path() {
+        assert!(ZSHRC_BODY.contains("ABUNDIO_INTEGRATION_DIR"));
+        assert!(BASHRC_ENV_BLOCK.contains("ABUNDIO_INTEGRATION_DIR"));
+        assert!(PS1_ENV_BLOCK.contains("ABUNDIO_INTEGRATION_DIR"));
+    }
+
+    /// Scrollback is persisted to disk, so an interactive dump would write
+    /// every secret into a log file.
+    #[test]
+    fn helper_refuses_to_print_to_a_tty() {
+        assert!(ABUNDIO_ENV_SH.contains("[ -t 1 ]"));
+        assert!(ABUNDIO_ENV_SH.contains("refusing to print secrets"));
+        assert!(ABUNDIO_ENV_PS1.contains("IsOutputRedirected"));
+    }
+
+    /// `run` is the recommended path precisely because it avoids the two
+    /// exposures `print` cannot: a temp file on disk and values in `ps` output.
+    #[test]
+    fn helper_run_execs_without_a_temp_file_or_ps_exposure() {
+        assert!(ABUNDIO_ENV_SH.contains("/env/raw"));
+        assert!(ABUNDIO_ENV_SH.contains("read -r -d ''"));
+        assert!(ABUNDIO_ENV_SH.contains("exec \"$@\""));
+        // `env KEY=VALUE cmd` would put every value into the process table.
+        assert!(
+            !ABUNDIO_ENV_SH.contains("env \""),
+            "must not pass values as argv"
+        );
+        assert!(ABUNDIO_ENV_PS1.contains("/env/raw"));
+        assert!(!ABUNDIO_ENV_PS1.contains("Invoke-Expression"));
+    }
+
+    /// Docker Compose silently ignores a process-substitution `--env-file`
+    /// (verified against Compose v5.1.3: no error, blank values). The helper
+    /// must not suggest it — a silently-empty environment is far worse than a
+    /// missing feature.
+    #[test]
+    fn helper_does_not_recommend_env_file_process_substitution() {
+        assert!(
+            !ABUNDIO_ENV_SH.contains("--env-file <("),
+            "compose cannot read a process substitution"
+        );
+        assert!(ABUNDIO_ENV_SH.contains("abundio-env run production -- docker compose up"));
+    }
+
+    #[test]
+    fn helper_requires_the_pane_token() {
+        assert!(ABUNDIO_ENV_SH.contains("ABUNDIO_HOOK_TOKEN"));
+        assert!(ABUNDIO_ENV_SH.contains("not running inside an Abundio terminal"));
+        assert!(ABUNDIO_ENV_PS1.contains("ABUNDIO_HOOK_TOKEN"));
+    }
+
+    /// The placeholder must actually be substituted — a typo would ship a
+    /// wrapper containing the literal `__ABUNDIO_ENV_BLOCK__`.
+    #[test]
+    fn placeholders_are_substituted() {
+        let bashrc = written_bashrc();
+        assert!(!bashrc.contains("__ABUNDIO_ENV_BLOCK__"));
+        assert!(bashrc.contains("printf -v"));
+    }
+
+    /// Mirrors the substitution `write_shell_integration_files` performs,
+    /// without touching the filesystem.
+    fn written_bashrc() -> String {
+        let dir = std::env::temp_dir().join("abundio-wrapper-test");
+        let _ = fs::create_dir_all(&dir);
+        write_shell_integration_files_into(&dir);
+        fs::read_to_string(dir.join(".bashrc")).expect("bashrc should have been written")
     }
 }

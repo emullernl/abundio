@@ -103,10 +103,11 @@ fn io_err(msg: String) -> AbundioError {
 
 /// Directory holding the relay scripts (inside Abundio's own data dir).
 fn relay_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("abundio")
-        .join("hooks")
+    // Deliberately SHARED across versions, unlike the database and the shell
+    // integration scripts: the relay is version-independent (it reads its port
+    // and token from the pane's environment at fire time), and a second copy
+    // would mean provisioning the user's global agent config twice.
+    crate::app_paths::hooks_dir()
 }
 
 /// Compute the relay script paths without writing them. Used by the read-only

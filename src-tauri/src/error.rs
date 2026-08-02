@@ -26,6 +26,11 @@ pub enum AbundioError {
     InvalidOperation(String),
     #[error("Clipboard error: {0}")]
     Clipboard(String),
+    /// Environment-variable crypto or credential-store failure. The message is
+    /// deliberately coarse — it is serialized straight to the frontend, so it
+    /// must never carry plaintext or key material.
+    #[error("Crypto error: {0}")]
+    Crypto(String),
 }
 
 impl Serialize for AbundioError {

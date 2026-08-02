@@ -90,7 +90,6 @@ function makeWorkspace(
 		id: "workspace-1",
 		name: "Test Workspace",
 		rootFolder: "/tmp",
-		envJson: "{}",
 		agentPresetsJson: "{}",
 		fileTabsJson: "{}",
 		baseBranch: null,

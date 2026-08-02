@@ -46,7 +46,6 @@ function makeWorkspace(
 		id,
 		name: `WS ${id}`,
 		rootFolder: `/tmp/${id}`,
-		envJson: "{}",
 		agentPresetsJson: "[]",
 		fileTabsJson: "{}",
 		baseBranch: "main",
