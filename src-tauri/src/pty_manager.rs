@@ -1511,11 +1511,17 @@ mod wrapper_script_tests {
     }
 
     /// Mirrors the substitution `write_shell_integration_files` performs,
-    /// without touching the filesystem.
+    /// without touching the real data directory.
+    ///
+    /// `tempfile::tempdir` rather than a fixed name under `env::temp_dir`: that
+    /// directory is shared between users, so a predictable name is the classic
+    /// insecure-temp-file pattern (flagged by
+    /// `rust.lang.security.temp-dir.temp-dir`). Test-only, but the correct
+    /// spelling costs nothing and `tempfile` is already a dependency.
     fn written_bashrc() -> String {
-        let dir = std::env::temp_dir().join("abundio-wrapper-test");
-        let _ = fs::create_dir_all(&dir);
-        write_shell_integration_files_into(&dir);
-        fs::read_to_string(dir.join(".bashrc")).expect("bashrc should have been written")
+        let dir = tempfile::tempdir().expect("temp dir");
+        write_shell_integration_files_into(dir.path());
+        fs::read_to_string(dir.path().join(".bashrc"))
+            .expect("bashrc should have been written")
     }
 }

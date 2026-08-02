@@ -286,7 +286,7 @@ export function WorkspaceSettingsDialog({
 													Run in a newly created worktree after Add worktree,
 													before any chosen agent. One command per line, each
 													run independently — a failing line doesn't stop the
-													rest, so chain with <code>&&</code> if you need
+													rest, so chain with <code>{"&&"}</code> if you need
 													fail-fast.
 												</span>
 											</div>
