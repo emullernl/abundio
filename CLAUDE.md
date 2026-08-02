@@ -27,7 +27,10 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 ### Rust Backend (`src-tauri/src/`)
 
 - `pty_manager.rs` — Per-PTY dedicated OS threads with crossbeam channels. PTY types never cross async boundaries. Output is base64-encoded and emitted via Tauri events.
-- `workspace_store.rs` — SQLite CRUD for workspaces, layouts, tabs, env vars. DB at `~/Library/Application Support/abundio/abundio.db`.
+- `app_paths.rs` — Every on-disk path, split into **shared** (`<data>/abundio/`: hook relay scripts, shims) and **epoch-versioned** (`<data>/abundio/v2/`: database, pty-logs, shell-integration, windows.json). Also does the one-time import of the previous epoch's database. See ADR-0025.
+- `workspace_store.rs` — SQLite CRUD for workspaces, layouts, tabs. DB at `~/Library/Application Support/abundio/v2/abundio.db`.
+- `env_crypto.rs` — Master key in the OS credential store (`keyring`) + AES-256-GCM seal/open for environment variable values. No DB, no Tauri, so it tests with an injected key.
+- `env_vars.rs` — `EnvVarStore`: per-Workspace **Environment Bundles** and their variables, plus the `env_*` IPC commands. Owns its own DB connection so PTY spawn never queues behind the WorkspaceStore mutex. See ADR-0024.
 - `agent_registry.rs` — Detects installed agents by scanning `$PATH` directories (no subprocess spawning).
 - `commands.rs` — All `#[tauri::command]` handlers. All return `Result<T, AbundioError>`.
 - `error.rs` — `AbundioError` enum (variants: `Pty`, `Db`, `Io`, `NotFound`, `Channel`) using thiserror + Serialize.
@@ -79,6 +82,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `stores/agentRegistryStore.ts` — Detected agents available in `$PATH`.
 - `stores/devEnvironmentsStore.ts` — Detected desktop IDE dev environments.
 - `stores/workspaceGitStore.ts` — Per-workspace git summary (branch, change counts) for sidebar chips.
+- `stores/workspaceEnvStore.ts` — Environment Bundles, variable metadata, and the **single** revealed-plaintext slot (one decrypted value at a time, by design).
 - `stores/paneCloseConfirmStore.ts` — Confirm state for closing a pane.
 - `stores/tabCloseConfirmStore.ts` — Confirm state for closing a tab.
 
@@ -86,11 +90,13 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 
 - `lib/ipc.ts` — Typed wrappers around Tauri `invoke()` and `listen()`.
 - `lib/themes.ts` — Built-in themes. `applyTheme()` sets CSS variables on `:root`.
-- `lib/terminalManager.ts` — `ManagedTerminal` wraps xterm.js with FitAddon, SearchAddon, SerializeAddon, WebGL (canvas fallback). Handles PTY connection, scrollback restore, font updates.
+- `lib/terminalManager.ts` — `ManagedTerminal` wraps xterm.js with FitAddon, SearchAddon, SerializeAddon, WebGL (canvas fallback). Handles PTY connection, scrollback restore, font updates, and `restartPanePty` (the third lifecycle path — ADR-0023).
+- `lib/paneRestart.ts` — `pickLivePanes` (pure) + `restartWorkspacePtys`: kill and respawn a Workspace's PTYs so they pick up a changed Injected bundle.
+- `lib/dotenvParse.ts` — Tolerant `.env` parser for the Bundle import dialog.
 - `lib/snapshotRegistry.ts` — Registry of per-pane snapshot functions. `saveAllSnapshots()` persists all terminal scrollback.
 - `lib/portalRegistry.ts` — Maps pane IDs to DOM elements for terminal rendering. Pub/sub pattern for target changes.
 - `lib/keybindings.ts` — Keyboard shortcut registry with capture-phase interception.
-- `lib/agents.ts` — Built-in agent definitions (Claude Code, Copilot, Gemini, Aider, Codex, OpenCode, Qwen, Kimi, Grok).
+- `lib/agents.ts` — Built-in agent definitions (Claude Code, Copilot, Gemini, Aider, Codex, OpenCode, Qwen, Kimi, Grok). `agentCommandFor()` is the single source of truth for an agent's launch string.
 - `lib/paneTree.ts` — Pure helper functions for pane tree traversal and manipulation.
 - `lib/platform.ts` — Platform detection (`isMac`).
 - `lib/languageMap.ts` — File extension to Monaco language mapping.
@@ -182,6 +188,15 @@ git push --follow-tags         # triggers CI build for all platforms
 - macOS uses native titlebar with `titleBarStyle: "Overlay"` — content extends behind traffic lights. The React `Titlebar` component renders a 28px strip (`bg-secondary`) with the title text aligned to the traffic-light row.
 - Cross-platform keybindings: `Cmd` on macOS, `Ctrl` on Windows/Linux.
 
+## Environment variables (ADR-0024)
+
+- Per-Workspace **Environment Bundles**. Exactly one is *injected* into every PTY; the rest are on-demand via the `abundio-env` helper. Enforced by a partial unique index, not a convention.
+- **Plaintext never reaches the frontend except one variable at a time.** `env_list` returns names + byte lengths; `env_vars_reveal` is the only IPC that returns a value, and `workspaceEnvStore.revealed` is a single slot. Keep it that way.
+- **A credential-store failure must never block a PTY spawn.** Degrade to an empty set, emit `env-vars-unavailable`, let the terminal open.
+- **No `eval` in the wrapper rc scripts or `abundio-env`.** Values are arbitrary user data; the shadow-variable re-export uses `${(P)name}` (zsh) / `${!name}` + `printf -v` (bash), and the helper reads NUL-delimited records.
+- **`docker compose --env-file` cannot read a process substitution** — it needs a regular seekable file and silently yields blank values. Use `abundio-env run <bundle> -- <cmd>`, which applies the Bundle to the child's environment.
+- Variable names are validated in **Rust** (`env_crypto::validate_name`), not just the UI — the wrapper scripts are downstream of the IPC.
+
 ## Multi-window gotchas
 
 The app spawns multiple Tauri windows at runtime — see ADR-0007 and ADR-0008. Several Tauri 2 / WKWebView behaviours bit us during implementation; capture them before next time:
@@ -194,6 +209,8 @@ The app spawns multiple Tauri windows at runtime — see ADR-0007 and ADR-0008. 
 - **Settings is its own OS-level window, not a modal.** Open it via the `open_settings_window` IPC, never a per-window `setSettingsOpen(true)`. Reading settings state from the settings window must NOT use `profileStore.loadProfiles()` (it pushes an `activeProfileId` claim into the per-window ownership map and pollutes it); fetch via `profilesApi.list()` + `setState` instead.
 - **App-wide Tauri event listeners must be registered in every root.** Both `App.tsx` (Profile-bound windows) and `SettingsApp.tsx` (Settings window) need their own `listen("profile-ownership-changed", ...)` etc. — there's no implicit propagation between roots.
 - **Cross-platform window-label assumptions.** New windows go through `window_management::generate_window_label()` (returns `window-<uuid>`). If you add a different label pattern, also update `is_profile_window_label`, the capabilities allowlist, and `windows.json` restoration filtering — these all depend on the predicate.
+- **On-disk state is split by data epoch.** Anything an older build would fight over must go under `app_paths::versioned_root()`, not the shared root — the database, the shell-integration wrapper scripts, `pty-logs` and `windows.json` all do. Adding a new state file? Decide which side it belongs on. Note that `tauri-plugin-window-state` geometry and the webview's `localStorage` are keyed by *bundle identifier*, so they stay shared between co-installed builds.
+- **The environment-variable master key cache is process-global**, not per-window, because a Tauri app is one process. `env_retry_key` therefore invalidates it for every window — which is the correct semantics for "the keychain was just unlocked", but means one window's Retry affects all of them.
 
 ## Testing
 

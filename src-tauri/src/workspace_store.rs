@@ -10,7 +10,6 @@ pub struct Workspace {
     pub id: String,
     pub name: String,
     pub root_folder: String,
-    pub env_json: String,
     pub agent_presets_json: String,
     pub file_tabs_json: String,
     pub base_branch: Option<String>,
@@ -30,7 +29,6 @@ pub struct Workspace {
 pub struct WorkspaceUpdate {
     pub name: Option<String>,
     pub root_folder: Option<String>,
-    pub env_json: Option<String>,
     pub agent_presets_json: Option<String>,
     pub file_tabs_json: Option<String>,
     pub base_branch: Option<Option<String>>,
@@ -258,7 +256,7 @@ impl WorkspaceStore {
     pub fn list(&self, profile_id: &str) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.name, s.root_folder, s.env_json, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.profile_id, s.created_at, s.updated_at, s.worktree_setup_commands,
+            "SELECT s.id, s.name, s.root_folder, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.profile_id, s.created_at, s.updated_at, s.worktree_setup_commands,
                     t.id, t.workspace_id, t.name, t.layout_json, t.position, t.created_at, t.updated_at
              FROM workspaces s
              LEFT JOIN tabs t ON t.workspace_id = s.id
@@ -280,16 +278,15 @@ impl WorkspaceStore {
                         id: workspace_id.clone(),
                         name: row.get(1)?,
                         root_folder: row.get(2)?,
-                        env_json: row.get(3)?,
-                        agent_presets_json: row.get(4)?,
-                        file_tabs_json: row.get(5)?,
-                        base_branch: row.get(6)?,
-                        last_branch: row.get(7)?,
-                        position: row.get(8)?,
-                        profile_id: row.get(9)?,
-                        created_at: row.get(10)?,
-                        updated_at: row.get(11)?,
-                        worktree_setup_commands: row.get(12)?,
+                        agent_presets_json: row.get(3)?,
+                        file_tabs_json: row.get(4)?,
+                        base_branch: row.get(5)?,
+                        last_branch: row.get(6)?,
+                        position: row.get(7)?,
+                        profile_id: row.get(8)?,
+                        created_at: row.get(9)?,
+                        updated_at: row.get(10)?,
+                        worktree_setup_commands: row.get(11)?,
                     },
                     tabs: Vec::new(),
                 });
@@ -297,17 +294,17 @@ impl WorkspaceStore {
             }
 
             // Append tab if present (LEFT JOIN may produce NULL tab columns)
-            let tab_id: Option<String> = row.get(13)?;
+            let tab_id: Option<String> = row.get(12)?;
             if let Some(tid) = tab_id {
                 if let Some(entry) = result.last_mut() {
                     entry.tabs.push(Tab {
                         id: tid,
-                        workspace_id: row.get(14)?,
-                        name: row.get(15)?,
-                        layout_json: row.get(16)?,
-                        position: row.get(17)?,
-                        created_at: row.get(18)?,
-                        updated_at: row.get(19)?,
+                        workspace_id: row.get(13)?,
+                        name: row.get(14)?,
+                        layout_json: row.get(15)?,
+                        position: row.get(16)?,
+                        created_at: row.get(17)?,
+                        updated_at: row.get(18)?,
                     });
                 }
             }
@@ -329,10 +326,6 @@ impl WorkspaceStore {
         if let Some(ref root_folder) = updates.root_folder {
             sets.push(format!("root_folder = ?{}", params.len() + 1));
             params.push(Box::new(root_folder.clone()));
-        }
-        if let Some(ref env_json) = updates.env_json {
-            sets.push(format!("env_json = ?{}", params.len() + 1));
-            params.push(Box::new(env_json.clone()));
         }
         if let Some(ref agent_presets_json) = updates.agent_presets_json {
             sets.push(format!("agent_presets_json = ?{}", params.len() + 1));
@@ -692,7 +685,7 @@ impl WorkspaceStore {
 
     fn get_workspace_with_conn(conn: &Connection, id: &str) -> Result<Workspace, AbundioError> {
         conn.query_row(
-            "SELECT id, name, root_folder, env_json, agent_presets_json, file_tabs_json, base_branch, last_branch, position, profile_id, created_at, updated_at, worktree_setup_commands
+            "SELECT id, name, root_folder, agent_presets_json, file_tabs_json, base_branch, last_branch, position, profile_id, created_at, updated_at, worktree_setup_commands
              FROM workspaces WHERE id = ?1",
             [id],
             |row| {
@@ -700,16 +693,15 @@ impl WorkspaceStore {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     root_folder: row.get(2)?,
-                    env_json: row.get(3)?,
-                    agent_presets_json: row.get(4)?,
-                    file_tabs_json: row.get(5)?,
-                    base_branch: row.get(6)?,
-                    last_branch: row.get(7)?,
-                    position: row.get(8)?,
-                    profile_id: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                    worktree_setup_commands: row.get(12)?,
+                    agent_presets_json: row.get(3)?,
+                    file_tabs_json: row.get(4)?,
+                    base_branch: row.get(5)?,
+                    last_branch: row.get(6)?,
+                    position: row.get(7)?,
+                    profile_id: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    worktree_setup_commands: row.get(11)?,
                 })
             },
         )
@@ -848,17 +840,24 @@ mod tests {
                 WorkspaceUpdate {
                     name: Some("New".to_string()),
                     root_folder: None,
-                    env_json: None,
                     agent_presets_json: None,
                     file_tabs_json: None,
                     base_branch: None,
                     last_branch: None,
-                    worktree_setup_commands: None,
+                    // Also set the LAST column of the workspaces SELECT. Both
+                    // `list` and `get_workspace_with_conn` read columns
+                    // positionally, so a mis-shifted `row.get(n)` after a column
+                    // is added or removed shows up here as a wrong/missing value
+                    // rather than silently returning a neighbouring column.
+                    worktree_setup_commands: Some("pnpm install".to_string()),
                 },
             )
             .unwrap();
         let workspaces = store.list(DEFAULT_PID).unwrap();
         assert_eq!(workspaces[0].workspace.name, "New");
+        assert_eq!(workspaces[0].workspace.worktree_setup_commands, "pnpm install");
+        assert_eq!(workspaces[0].workspace.profile_id, DEFAULT_PID);
+        assert_eq!(workspaces[0].workspace.root_folder, "/tmp");
     }
 
     #[test]

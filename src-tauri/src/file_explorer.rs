@@ -737,3 +737,28 @@ mod tests {
 		assert!(target.exists());
 	}
 }
+
+#[cfg(test)]
+mod dotfile_tests {
+    use super::*;
+
+    /// `.env` has NO extension as far as Rust is concerned (a leading dot makes
+    /// it a hidden file, not an extension), so it takes the empty-extension
+    /// path. It must still classify as text or the Bundle import file picker
+    /// would silently reject the single most important filename.
+    #[test]
+    fn dotenv_style_names_are_not_treated_as_binary() {
+        assert_eq!(Path::new(".env").extension(), None);
+        assert!(!is_binary_ext(""));
+        assert!(!is_image_ext(""));
+        assert_eq!(
+            Path::new(".env.production")
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default(),
+            "production"
+        );
+        assert!(!is_binary_ext("production"));
+        assert!(!is_binary_ext("local"));
+    }
+}

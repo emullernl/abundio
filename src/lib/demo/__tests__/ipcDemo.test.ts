@@ -47,7 +47,13 @@ describe("ipc chokepoint in demo mode", () => {
 		const received = new Promise<Uint8Array>((resolve) => {
 			ipc.pty.onOutput(ptyId, (data) => resolve(data));
 		});
-		await ipc.pty.spawn("/x", 80, 24, undefined, undefined, paneId, ptyId);
+		await ipc.pty.spawn({
+			cwd: "/x",
+			cols: 80,
+			rows: 24,
+			logId: paneId,
+			ptyId,
+		});
 		const data = await received;
 		expect(data.byteLength).toBeGreaterThan(0);
 	});

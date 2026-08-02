@@ -4,6 +4,7 @@ import {
 	buildWorkspaceRows,
 	distinctGroupKeys,
 	flattenRowsToIds,
+	inheritSourceWorkspaceId,
 	rowId,
 	type WorktreeGroupFacts,
 } from "../worktreeGrouping";
@@ -13,7 +14,6 @@ function ws(id: string, position: number): WorkspaceWithTabs {
 		id,
 		name: id,
 		rootFolder: `/repos/${id}`,
-		envJson: "{}",
 		agentPresetsJson: "{}",
 		fileTabsJson: "{}",
 		baseBranch: null,
@@ -156,5 +156,66 @@ describe("distinctGroupKeys", () => {
 			c: { worktreeGroupKey: null, isMainWorktree: false },
 		};
 		expect(distinctGroupKeys(list, facts)).toEqual([KEY]);
+	});
+});
+
+describe("inheritSourceWorkspaceId", () => {
+	const facts = (
+		entries: [string, string | null, boolean][],
+	): Record<string, WorktreeGroupFacts> =>
+		Object.fromEntries(
+			entries.map(([id, key, isMain]) => [
+				id,
+				{ worktreeGroupKey: key, isMainWorktree: isMain },
+			]),
+		);
+
+	it("resolves a linked worktree to its set's main worktree", () => {
+		const list = [ws("main", 0), ws("feat", 1)];
+		const f = facts([
+			["main", KEY, true],
+			["feat", KEY, false],
+		]);
+		expect(inheritSourceWorkspaceId(list, f, "feat")).toBe("main");
+	});
+
+	it("returns null for the main worktree itself", () => {
+		const list = [ws("main", 0), ws("feat", 1)];
+		const f = facts([
+			["main", KEY, true],
+			["feat", KEY, false],
+		]);
+		expect(inheritSourceWorkspaceId(list, f, "main")).toBeNull();
+	});
+
+	it("returns null for a standalone workspace", () => {
+		const list = [ws("solo", 0)];
+		expect(
+			inheritSourceWorkspaceId(list, facts([["solo", null, false]]), "solo"),
+		).toBeNull();
+	});
+
+	// Matches buildWorkspaceRows: a group with no primary renders as standalone
+	// rows, so there is nothing to inherit from.
+	it("returns null for a primary-less group", () => {
+		const list = [ws("a", 0), ws("b", 1)];
+		const f = facts([
+			["a", KEY, false],
+			["b", KEY, false],
+		]);
+		expect(inheritSourceWorkspaceId(list, f, "a")).toBeNull();
+	});
+
+	it("does not cross group boundaries", () => {
+		const list = [ws("main-a", 0), ws("feat-b", 1)];
+		const f = facts([
+			["main-a", KEY, true],
+			["feat-b", "/repos/other/.git", false],
+		]);
+		expect(inheritSourceWorkspaceId(list, f, "feat-b")).toBeNull();
+	});
+
+	it("returns null when the workspace has no facts yet", () => {
+		expect(inheritSourceWorkspaceId([ws("x", 0)], {}, "x")).toBeNull();
 	});
 });

@@ -1,5 +1,4 @@
 use rusqlite::Connection;
-use std::path::Path;
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("001_init", include_str!("../migrations/001_init.sql")),
@@ -40,6 +39,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "012_add_agent_turns",
         include_str!("../migrations/012_add_agent_turns.sql"),
+    ),
+    (
+        "013_add_workspace_env_vars",
+        include_str!("../migrations/013_add_workspace_env_vars.sql"),
     ),
 ];
 
@@ -223,7 +226,105 @@ mod tests {
         let count: i32 = conn
             .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 12);
+        assert_eq!(count, 13);
+    }
+
+    #[test]
+    fn env_bundle_and_var_tables_exist() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+        for table in ["workspace_env_bundles", "workspace_env_vars"] {
+            let count: i32 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "{table} should exist and be empty");
+        }
+    }
+
+    #[test]
+    fn workspaces_has_no_env_json_column() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+        let mut stmt = conn.prepare("PRAGMA table_info(workspaces)").unwrap();
+        let cols: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .map(|c| c.unwrap())
+            .collect();
+        assert!(
+            !cols.iter().any(|c| c == "env_json"),
+            "013 should have dropped env_json, got {cols:?}"
+        );
+    }
+
+    /// Only one Bundle per Workspace may be injected. The partial unique index
+    /// is what enforces it — without it, two injected Bundles would silently
+    /// both land in a spawned PTY's environment.
+    #[test]
+    fn only_one_injected_bundle_per_workspace() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+        seed_workspace(&conn, "ws-1");
+
+        conn.execute(
+            "INSERT INTO workspace_env_bundles (id, workspace_id, name, injected) VALUES ('b1', 'ws-1', 'default', 1)",
+            [],
+        )
+        .unwrap();
+        let second = conn.execute(
+            "INSERT INTO workspace_env_bundles (id, workspace_id, name, injected) VALUES ('b2', 'ws-1', 'production', 1)",
+            [],
+        );
+        assert!(second.is_err(), "a second injected bundle must be rejected");
+
+        // Non-injected siblings are fine, and so is an injected bundle in a
+        // different Workspace.
+        conn.execute(
+            "INSERT INTO workspace_env_bundles (id, workspace_id, name, injected) VALUES ('b3', 'ws-1', 'production', 0)",
+            [],
+        )
+        .unwrap();
+    }
+
+    /// Deleting a Workspace must cascade two levels: bundles, then their vars.
+    #[test]
+    fn env_vars_cascade_two_levels_on_workspace_delete() {
+        let conn = test_db();
+        run_migrations(&conn).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        seed_workspace(&conn, "ws-1");
+
+        conn.execute(
+            "INSERT INTO workspace_env_bundles (id, workspace_id, name, injected) VALUES ('b1', 'ws-1', 'default', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspace_env_vars (id, bundle_id, name, nonce, ciphertext) VALUES ('v1', 'b1', 'TOKEN', X'00', X'00')",
+            [],
+        )
+        .unwrap();
+
+        conn.execute("DELETE FROM workspaces WHERE id = 'ws-1'", [])
+            .unwrap();
+
+        let bundles: i32 = conn
+            .query_row("SELECT COUNT(*) FROM workspace_env_bundles", [], |r| r.get(0))
+            .unwrap();
+        let vars: i32 = conn
+            .query_row("SELECT COUNT(*) FROM workspace_env_vars", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(bundles, 0, "bundles should cascade from workspaces");
+        assert_eq!(vars, 0, "vars should cascade from bundles");
+    }
+
+    fn seed_workspace(conn: &Connection, id: &str) {
+        conn.execute(
+            "INSERT INTO workspaces (id, name, root_folder, position, profile_id)
+             VALUES (?1, 'W', '/tmp', 0, '00000000-0000-0000-0000-000000000001')",
+            [id],
+        )
+        .unwrap();
     }
 
     /// Simulates the wedged state of users who ran the original buggy 008:
@@ -501,13 +602,16 @@ mod tests {
 }
 
 pub fn open_db() -> Result<Connection, rusqlite::Error> {
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| Path::new("~").to_path_buf())
-        .join("abundio");
+    // On first run of this data epoch, seed it from the previous version's
+    // database (a copy, so older builds keep working — see app_paths.rs).
+    // Idempotent; the second and third `open_db` at startup are no-ops.
+    crate::app_paths::import_legacy_state_if_needed();
 
-    std::fs::create_dir_all(&data_dir).ok();
+    let db_path = crate::app_paths::db_path();
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
 
-    let db_path = data_dir.join("abundio.db");
     let conn = Connection::open(db_path)?;
 
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;

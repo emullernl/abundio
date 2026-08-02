@@ -1,10 +1,13 @@
 pub mod agent_hooks;
+pub mod app_paths;
 pub mod agent_registry;
 pub mod app_metrics;
 pub mod clipboard_image;
 pub mod commands;
 pub mod config;
 pub mod dev_environments;
+pub mod env_crypto;
+pub mod env_vars;
 pub mod error;
 pub mod events;
 pub mod file_explorer;
@@ -483,9 +486,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
-            // Initialize SQLite + run migrations. Two connections so the
-            // ProfileStore and WorkspaceStore can be locked independently;
-            // SQLite WAL mode (set in open_db) handles concurrent access.
+            // Initialize SQLite + run migrations. Three connections so the
+            // ProfileStore, WorkspaceStore and EnvVarStore can be locked
+            // independently; SQLite WAL mode (set in open_db) handles
+            // concurrent access. `open_db` runs migrations on every call, but
+            // the `_migrations` guard makes the second and third no-ops. These
+            // are sequential on purpose — do not move any of them into a
+            // spawned task, or two connections could race the same migration.
             let conn = migrations::open_db().expect("Failed to open database");
             let store = WorkspaceStore::new(conn);
             app.manage(store);
@@ -493,6 +500,12 @@ pub fn run() {
             let profile_conn = migrations::open_db().expect("Failed to open database");
             let profile_store = ProfileStore::new(profile_conn);
             app.manage(profile_store);
+
+            // Own connection: resolving a Workspace's environment sits on the
+            // PTY spawn hot path and must not queue behind the WorkspaceStore
+            // mutex while a git or telemetry write holds it.
+            let env_conn = migrations::open_db().expect("Failed to open database");
+            app.manage(env_vars::EnvVarStore::new(env_conn));
 
             // Active profile cache (set by the frontend after rehydrating its
             // settings store). Used by the menu rebuild.
@@ -964,6 +977,17 @@ pub fn run() {
             search::fs_search_cancel,
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
+            env_vars::env_list,
+            env_vars::env_bundle_create,
+            env_vars::env_bundle_rename,
+            env_vars::env_bundle_set_injected,
+            env_vars::env_bundle_delete,
+            env_vars::env_vars_upsert,
+            env_vars::env_vars_upsert_many,
+            env_vars::env_vars_delete,
+            env_vars::env_vars_reveal,
+            env_vars::env_vars_reorder,
+            env_vars::env_retry_key,
             agent_registry::list_installed_agent_commands,
             commands::agent_hooks_provision,
             commands::agent_hooks_provision_startup,

@@ -22,7 +22,10 @@ tauri-plugin-window-state = "2"
 tauri-plugin-os = "2"
 tauri-plugin-updater = "2"
 portable-pty = "0.8"
-rusqlite = { version = "0.31", features = ["bundled"] }
+# `backup` powers the one-time copy of the previous version's database into
+# this data epoch (app_paths.rs) — a plain file copy would lose uncheckpointed
+# WAL frames.
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -75,3 +78,27 @@ tempfile = "3"
 # and Kimi's strict loader rejects unknown keys so a serde rewrite is too risky.
 # Already in the dependency tree transitively via the tauri toolchain.
 toml_edit = "0.25"
+# ── Per-Workspace encrypted environment variables (env_crypto.rs) ──
+# A single 32-byte master key lives in the OS credential store; every variable
+# VALUE is sealed with AES-256-GCM under it, so a copy of abundio.db alone is
+# useless.
+#
+# keyring 4's `v1` feature selects exactly the three stores we want and no
+# others (see keyring's Cargo.toml [features]):
+#   apple-native-keyring-store/keychain   — macOS Keychain Services
+#   windows-native-keyring-store          — Windows Credential Manager
+#   zbus-secret-service-keyring-store     — Linux Secret Service over pure-Rust
+#                                           zbus, so no libdbus/libsecret C
+#                                           dependency is added to the Linux CI
+#                                           image (build.yml installs only
+#                                           webkit2gtk/appindicator/rsvg/patchelf)
+# Deliberately NOT enabled:
+#   dbus-secret-service-keyring-store — would drag in libdbus-sys
+#   linux-keyutils-keyring-store      — the kernel keyring is session-scoped and
+#                                       does not survive a reboot, which would
+#                                       present to the user as silent key loss
+# Do not list `apple-native-keyring-store` on its own here: that enables the
+# crate without its `keychain` sub-feature and fails to compile on macOS.
+keyring = { version = "4", default-features = false, features = ["v1"] }
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["zeroize_derive"] }

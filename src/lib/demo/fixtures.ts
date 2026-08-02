@@ -724,7 +724,6 @@ export const workspaces: WorkspaceWithTabs[] = WS_DEFS.map((def, i) => {
 		id: def.id,
 		name: def.name,
 		rootFolder: root,
-		envJson: "{}",
 		agentPresetsJson: "[]",
 		fileTabsJson: "[]",
 		baseBranch: def.base,

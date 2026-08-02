@@ -8,11 +8,12 @@
 //! Bound to `127.0.0.1` only. The relay correlates events to a PTY via the
 //! `ABUNDIO_PTY_ID` env var injected at PTY spawn.
 
+use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::thread;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::events::AgentHookEvent;
 
@@ -180,6 +181,16 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     }
 
     let url = request.url().to_string();
+    let path = url.splitn(2, '?').next().unwrap_or("");
+
+    // The `abundio-env` helper rides the same authenticated loopback server as
+    // the agent hook relay — same token, same origin restriction. Handled before
+    // the hook parsing below because these routes have their own body shape.
+    if path == "/env/print" || path == "/env/list" || path == "/env/raw" {
+        handle_env_request(app, path, request);
+        return;
+    }
+
     let query = url.splitn(2, '?').nth(1).unwrap_or("");
     let event = query_value(query, "event").unwrap_or("").to_string();
     let agent = query_value(query, "agent").unwrap_or("").to_string();
@@ -236,9 +247,162 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     );
 }
 
+/// Serve `abundio-env list` / `abundio-env print <bundle>` for one pane.
+///
+/// The Workspace is resolved from `ptyId` through the PtyManager's spawn-context
+/// map rather than taken from the request body, so a caller can name a bundle
+/// but not a workspace. That stops a typo or a naive caller reaching another
+/// Workspace.
+///
+/// It is NOT a security boundary between panes, and should not be described as
+/// one. The `X-Abundio-Token` header is the process-wide hook token — identical
+/// in every pane — and `ABUNDIO_PTY_ID` sits in every pane's environment, which
+/// any same-user process can read (`/proc/<pid>/environ`, `ps eww`). The real
+/// property is "a process running as you can read any Workspace's on-demand
+/// bundles", which is inside the threat model in ADR-0024. What the token does
+/// buy is that a process *outside* an Abundio terminal cannot read anything.
+fn handle_env_request(app: &AppHandle, path: &str, mut request: tiny_http::Request) {
+    // Bounded: an authenticated caller should not be able to make the server
+    // buffer an arbitrary amount. These bodies are two short JSON fields.
+    const MAX_ENV_REQUEST_BODY: u64 = 64 * 1024;
+    let mut body = String::new();
+    // `as_reader()` hands back a trait object, so `Read::take` needs an
+    // explicit `by_ref` to have a sized receiver.
+    let reader = request.as_reader();
+    if (&mut *reader)
+        .take(MAX_ENV_REQUEST_BODY)
+        .read_to_string(&mut body)
+        .is_err()
+    {
+        let _ = request.respond(tiny_http::Response::empty(400));
+        return;
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+    let pty_id = parsed.get("ptyId").and_then(|v| v.as_str()).unwrap_or("");
+    let bundle = parsed.get("bundle").and_then(|v| v.as_str()).unwrap_or("");
+
+    let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
+
+    let Some(ctx) = app
+        .try_state::<crate::pty_manager::PtyManager>()
+        .and_then(|mgr: tauri::State<crate::pty_manager::PtyManager>| {
+            mgr.spawn_context(pty_id)
+        })
+    else {
+        eprintln!("[{ts}] [abundio:env] 404 — unknown pty {pty_id:?}");
+        let _ = request.respond(tiny_http::Response::empty(404));
+        return;
+    };
+
+    let Some(store) = app.try_state::<crate::env_vars::EnvVarStore>() else {
+        let _ = request.respond(tiny_http::Response::empty(503));
+        return;
+    };
+
+    if path == "/env/list" {
+        let names = store
+            .bundle_names(&ctx.workspace_id, ctx.inherit_from.as_deref())
+            .unwrap_or_default();
+        eprintln!("[{ts}] [abundio:env] list — {} bundle(s)", names.len());
+        let _ = request.respond(tiny_http::Response::from_string(names.join("\n")));
+        return;
+    }
+
+    let key = match crate::env_crypto::master_key() {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("[{ts}] [abundio:env] 503 — credential store unavailable: {e}");
+            let _ = request.respond(tiny_http::Response::empty(503));
+            return;
+        }
+    };
+
+    match store.resolve_bundle(&key, &ctx.workspace_id, ctx.inherit_from.as_deref(), bundle) {
+        Ok(pairs) => {
+            // Log the bundle name and count only. Never the values — this log
+            // goes to stderr and is exactly the sort of thing that ends up in a
+            // support paste.
+            eprintln!(
+                "[{ts}] [abundio:env] {} bundle={bundle:?} — {} variable(s)",
+                if path == "/env/raw" { "raw" } else { "print" },
+                pairs.len()
+            );
+            let body = if path == "/env/raw" {
+                // NUL-delimited `KEY=VALUE` records for `abundio-env run`. NUL is
+                // the one byte that cannot occur in an environment variable, so
+                // the reader needs no escaping rules and no `eval` — which
+                // matters because these values are arbitrary user data.
+                pairs
+                    .iter()
+                    .map(|(name, value)| format!("{name}={}\0", value.as_str()))
+                    .collect::<String>()
+            } else {
+                pairs
+                    .iter()
+                    .map(|(name, value)| format!("{name}={}", quote_dotenv_value(value)))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let _ = request.respond(tiny_http::Response::from_string(body));
+        }
+        Err(e) => {
+            eprintln!("[{ts}] [abundio:env] 404 — bundle {bundle:?}: {e}");
+            let _ = request.respond(tiny_http::Response::empty(404));
+        }
+    }
+}
+
+/// Quote a value for `.env` output.
+///
+/// The consumer is a `--env-file` parser, not a shell, so this is dotenv
+/// escaping rather than shell escaping. Must round-trip through
+/// `parseDotenv` in `src/lib/dotenvParse.ts` — a certificate's newlines have to
+/// survive both directions.
+fn quote_dotenv_value(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{escaped}\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The output of `abundio-env print` is consumed by a `--env-file` parser
+    /// and by `parseDotenv` in the import dialog. These assertions are the
+    /// contract between the two — in particular that a certificate's newlines
+    /// survive, since that is the whole point of storing one.
+    #[test]
+    fn quote_dotenv_value_escapes_for_a_dotenv_reader() {
+        assert_eq!(quote_dotenv_value("simple"), "\"simple\"");
+        assert_eq!(quote_dotenv_value(""), "\"\"");
+        assert_eq!(quote_dotenv_value("has space"), "\"has space\"");
+        assert_eq!(quote_dotenv_value("a\"b"), "\"a\\\"b\"");
+        assert_eq!(quote_dotenv_value("a\\b"), "\"a\\\\b\"");
+        assert_eq!(quote_dotenv_value("line1\nline2"), "\"line1\\nline2\"");
+        assert_eq!(quote_dotenv_value("a\tb"), "\"a\\tb\"");
+    }
+
+    /// A backslash must be escaped BEFORE the newline, or `\` + `n` in the
+    /// source would come back as a real newline.
+    #[test]
+    fn quote_dotenv_value_does_not_double_unescape() {
+        // Literal backslash-n in the value, not a newline.
+        assert_eq!(quote_dotenv_value("a\\nb"), "\"a\\\\nb\"");
+    }
+
+    #[test]
+    fn quote_dotenv_value_handles_a_certificate() {
+        let pem = "-----BEGIN CERTIFICATE-----\nMIIDdz\n-----END CERTIFICATE-----\n";
+        let quoted = quote_dotenv_value(pem);
+        assert!(quoted.starts_with('"') && quoted.ends_with('"'));
+        assert!(!quoted[1..quoted.len() - 1].contains('\n'), "raw newlines would break KEY=value lines");
+        assert!(quoted.contains("\\n"));
+    }
 
     #[test]
     fn query_value_extracts_keys() {

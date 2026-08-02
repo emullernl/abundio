@@ -14,7 +14,7 @@ _Avoid_: viewport, app instance, frame; do **not** use "window" to mean a **Pane
 **Settings window**: The singleton auxiliary **Window** labelled `settings`. Opens (or focuses if already open) via File menu, Cmd+,, or the "Manage Profiles…" deep-link. Edits the *global* profile registry — has no active Profile of its own. Theme, font, and agent changes here propagate live to all open Profile-bound windows via a Tauri event broadcast. See ADR-0008.
 _Avoid_: preferences window, options dialog.
 
-**Profile**: A top-level grouping of Workspaces — a named bundle the user uses to organize unrelated bodies of work (e.g. "Work", "Personal"). Each **Workspace** belongs to exactly one Profile and cannot be moved between Profiles after creation. The only per-Profile data today is the Workspace list; appearance, custom agents, env vars and GitHub identity remain global. Scope is intentionally narrow so the term may broaden later. A Profile is bound to at most one **Window** at any moment.
+**Profile**: A top-level grouping of Workspaces — a named bundle the user uses to organize unrelated bodies of work (e.g. "Work", "Personal"). Each **Workspace** belongs to exactly one Profile and cannot be moved between Profiles after creation. The only per-Profile data today is the Workspace list; appearance, custom agents and GitHub identity remain global, and environment variables are per-**Workspace** (see Environment Bundle). Scope is intentionally narrow so the term may broaden later. A Profile is bound to at most one **Window** at any moment.
 _Avoid_: space, group, namespace, context
 
 **Active profile**: The single Profile currently shown in a given Window. Per-Window singleton — Window A's active profile is independent of Window B's, but a Profile cannot be active in two Windows at the same time. Switching Profile closes every Opened workspace in the previous Active profile of *that Window* (with a confirm dialog when any are open). Persisted across restarts per-Window.
@@ -33,6 +33,24 @@ _Avoid_: selected workspace, current workspace, focused workspace
 _Avoid_: loaded workspace, mounted workspace
 
 **Background workspace**: An Opened workspace that is not currently the Active workspace. Not a separate state — derived as `openedWorkspaceIds \ {activeWorkspaceId}`.
+
+**Environment Bundle**: A named, ordered set of environment variables owned by a **Workspace** (e.g. `default`, `production`). Exactly one Bundle per Workspace is the **Injected bundle**; the rest are **On-demand bundles**. Values are encrypted at rest under a single **Master key**; variable *names* are stored in plaintext so the settings list renders without touching the credential store. A Workspace's first variable creates a Bundle named `default` automatically. See ADR-0024.
+_Avoid_: env group, env set, env profile (collides with **Profile**), secret store, vault
+
+**Injected bundle**: The one Bundle per Workspace whose variables are placed into the environment of every PTY the Workspace spawns. Marked with a bolt badge in the settings dialog. Changing it affects only *future* terminals — existing PTYs keep the environment they were spawned with until explicitly restarted.
+_Avoid_: active bundle, default bundle (`default` is a name, not a role — any Bundle can be the Injected bundle)
+
+**On-demand bundle**: A Bundle that never enters any process environment on its own. Read only through the `abundio-env` helper from inside a pane, typically `abundio-env run <bundle> -- <command>`. This is where credentials that should not be visible to every terminal in the Workspace live.
+_Avoid_: manual bundle, inactive bundle
+
+**Master key**: The single 32-byte AES-256-GCM key, held in the OS credential store, that seals every environment variable value. One key per user per machine, not per Workspace or per Bundle. When it cannot be read, environment variables are simply unavailable — terminals still open.
+_Avoid_: encryption key, secret key, passphrase
+
+**Shadow variable**: An `ABUNDIO_ENV__<NAME>` copy of an injected variable, set at spawn and re-exported by Abundio's wrapper rc *after* the user's own rc has been sourced, then unset. Its only purpose is precedence: without it an `export` in `.zshrc` would silently beat the Workspace's value. Never visible in a settled shell.
+_Avoid_: temp variable, mirror variable
+
+**Inherited variable**: A variable a **Linked worktree** sees because it exists in its **Primary worktree**'s Bundle of the same name. Not a copy — it is read through at spawn time, so editing it in the primary updates every linked worktree. Saving an inherited variable in a linked worktree creates an **Override**: an own row that shadows the inherited one by name, leaving the primary untouched.
+_Avoid_: shared variable, parent variable
 
 **Worktree set**: A group of Workspaces that are git worktrees of the same repository — one underlying repository, different branches checked out into different folders, each folder its own Workspace. Rendered as a single visually-distinct cluster in the **Left sidebar**; never a separate stored entity and never a **Profile**. Derived live from git, not persisted: two Workspaces belong to the same set iff their folders are worktrees of the same repository. A repository present only through its main worktree forms no set — the cluster chrome appears only once two or more worktrees of one repository exist as Workspaces. Within a set the **Primary worktree** is always rendered first, followed by the **Linked worktrees**.
 _Avoid_: worktree group, repo group (collides with **Profile**'s sense of "group"), worktree cluster.

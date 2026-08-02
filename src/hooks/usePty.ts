@@ -28,7 +28,7 @@ export function usePty({
 		let cancelled = false;
 
 		async function spawn() {
-			const id = await pty.spawn(cwd, cols, rows, command);
+			const id = await pty.spawn({ cwd, cols, rows, command });
 			if (cancelled) {
 				pty.kill(id);
 				return;

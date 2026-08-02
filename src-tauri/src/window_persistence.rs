@@ -10,7 +10,7 @@
 //! only need to persist the (label → profileId) mapping ourselves.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowEntry {
@@ -20,10 +20,9 @@ pub struct WindowEntry {
 }
 
 pub fn windows_json_path() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| Path::new("~").to_path_buf())
-        .join("abundio")
-        .join("windows.json")
+    // Epoch-scoped so two installed builds do not overwrite each other's window
+    // restore state on quit.
+    crate::app_paths::windows_json_path()
 }
 
 pub fn load() -> Vec<WindowEntry> {
@@ -144,6 +143,7 @@ pub fn migrate_geometry_to_main(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use tempfile::TempDir;
 
     fn with_tempdir<F: FnOnce(&Path)>(f: F) {
