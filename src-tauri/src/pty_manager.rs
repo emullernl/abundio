@@ -868,6 +868,12 @@ if [ -z "${ABUNDIO_HOOK_TOKEN:-}" ] || [ -z "${ABUNDIO_PTY_ID:-}" ]; then
   exit 1
 fi
 
+# The status of the LAST `__abundio_fetch`. A file rather than a variable
+# because `run` fetches inside a process substitution, whose variables die with
+# the subshell.
+__abundio_codefile=$(mktemp)
+trap 'rm -f "$__abundio_codefile"' EXIT
+
 __abundio_fetch() {   # $1 = route, $2 = bundle (optional)
   local body
   if [ -n "${2:-}" ]; then
@@ -878,37 +884,53 @@ __abundio_fetch() {   # $1 = route, $2 = bundle (optional)
   # `-f` not `-fS`: curl's own "(22) The requested URL returned error: 404" says
   # nothing about bundles. Every caller routes failure through
   # `__abundio_explain`, which turns the status into a sentence.
-  curl -fs -X POST "http://127.0.0.1:${ABUNDIO_HOOK_PORT}$1" \
-    -H "X-Abundio-Token: ${ABUNDIO_HOOK_TOKEN}" \
-    -H 'Content-Type: application/json' \
-    -d "$body"
-}
-
-# Turn a failed fetch into a sentence. Without this the user sees curl's own
-# `curl: (22) The requested URL returned error: 404`, which says nothing about
-# bundles. Re-requests with `-o /dev/null` purely to read the status line, so no
-# secret is ever fetched twice into a variable.
-__abundio_explain() {   # $1 = route, $2 = bundle (optional)
-  local body code
-  if [ -n "${2:-}" ]; then
-    body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\",\"bundle\":\"$2\"}"
-  else
-    body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\"}"
-  fi
-  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  #
+  # `%{stderr}` sends the status code to stderr so it cannot be confused with
+  # the body on stdout — the body may be NUL-delimited records or a secret, and
+  # must reach the caller byte-for-byte. Reading the status from THIS request
+  # rather than a second probe matters: /env/raw is the one route that decrypts,
+  # so probing it again would re-enter the credential store and, on a locked
+  # keychain, prompt a second time for one user command.
+  curl -fs -w '%{stderr}%{http_code}' -X POST \
     "http://127.0.0.1:${ABUNDIO_HOOK_PORT}$1" \
     -H "X-Abundio-Token: ${ABUNDIO_HOOK_TOKEN}" \
     -H 'Content-Type: application/json' \
-    -d "$body" 2>/dev/null) || code=000
+    -d "$body" 2>"$__abundio_codefile"
+}
+
+__abundio_unknown_pane() {
+  echo "abundio-env: Abundio no longer recognises this terminal." >&2
+  echo "  Open a new pane and try again." >&2
+}
+
+# Turn the last failed fetch into a sentence. Without this the user sees curl's
+# own `curl: (22) The requested URL returned error: 404`, which says nothing
+# about bundles.
+__abundio_explain() {   # $1 = bundle name, empty when the command names none
+  local code names
+  code=$(cat "$__abundio_codefile" 2>/dev/null) || code=""
+  # `%{stderr}` needs curl 7.63+. On anything older the file holds a warning
+  # rather than a number, which must degrade to the generic message instead of
+  # being printed as a status.
+  case "$code" in ''|*[!0-9]*) code="" ;; esac
 
   case "$code" in
     404)
-      echo "abundio-env: no bundle named '${2:-}' in this workspace" >&2
-      local names
-      if names=$(__abundio_fetch /env/list 2>/dev/null) && [ -n "$names" ]; then
-        echo "  Available bundles: $(echo "$names" | tr '\n' ' ')" >&2
+      # The server answers 404 for an unknown pane as well as an unknown
+      # bundle, and `list` names no bundle at all — so only a command that
+      # passed a name can blame the name. Even then, the recovery listing
+      # settles it: if the pane were still known, /env/list would answer.
+      if [ -z "${1:-}" ]; then
+        __abundio_unknown_pane
+      elif names=$(__abundio_fetch /env/list 2>/dev/null); then
+        echo "abundio-env: no bundle named '$1' in this workspace" >&2
+        if [ -n "$names" ]; then
+          echo "  Available bundles: $(echo "$names" | tr '\n' ' ')" >&2
+        else
+          echo "  This workspace has no environment bundles yet." >&2
+        fi
       else
-        echo "  This workspace has no environment bundles yet." >&2
+        __abundio_unknown_pane
       fi
       ;;
     503)
@@ -917,6 +939,14 @@ __abundio_explain() {   # $1 = route, $2 = bundle (optional)
       ;;
     401|403)
       echo "abundio-env: this terminal is not authorised to read bundles." >&2
+      ;;
+    2*)
+      # `-f` only fails on >= 400, so a 2xx here means the transfer itself
+      # broke — a truncated body, not a rejected request.
+      echo "abundio-env: the connection to Abundio dropped mid-response — please try again." >&2
+      ;;
+    ""|000)
+      echo "abundio-env: could not reach Abundio — is the app still running?" >&2
       ;;
     *)
       echo "abundio-env: could not reach Abundio (HTTP ${code})." >&2
@@ -942,12 +972,15 @@ USAGE
 case "${1:-}" in
   list)
     if ! __abundio_list_out=$(__abundio_fetch /env/list); then
-      __abundio_explain /env/list
+      __abundio_explain ""
       exit 1
     fi
+    # Zero bundles is a successful answer to "what bundles exist", not an
+    # error — `ls` on an empty directory exits 0 too, and a caller doing
+    # `bundles=$(abundio-env list)` under `set -e` must not abort.
     if [ -z "$__abundio_list_out" ]; then
       echo "abundio-env: this workspace has no environment bundles yet." >&2
-      exit 1
+      exit 0
     fi
     printf '%s\n' "$__abundio_list_out"
     ;;
@@ -974,11 +1007,13 @@ case "${1:-}" in
     __abundio_rc=$(cat "$__abundio_status")
     rm -f "$__abundio_status"
     if [ "$__abundio_rc" != 0 ]; then
-      __abundio_explain /env/raw "$bundle"
+      __abundio_explain "$bundle"
       echo "abundio-env: refusing to run '$1' without the bundle applied" >&2
       exit 1
     fi
 
+    # `exec` replaces the process, so the EXIT trap never fires.
+    rm -f "$__abundio_codefile"
     exec "$@"
     ;;
 
@@ -995,7 +1030,7 @@ case "${1:-}" in
       exit 3
     fi
     if ! __abundio_print_out=$(__abundio_fetch /env/print "$bundle"); then
-      __abundio_explain /env/print "$bundle"
+      __abundio_explain "$bundle"
       exit 1
     fi
     printf '%s\n' "$__abundio_print_out"
@@ -1023,34 +1058,65 @@ $headers = @{ "X-Abundio-Token" = $env:ABUNDIO_HOOK_TOKEN }
 $base = "http://127.0.0.1:$env:ABUNDIO_HOOK_PORT"
 
 # Turn a failed request into a sentence, so the user never sees a bare HTTP
-# error for what is almost always a mistyped bundle name.
+# error for what is almost always a mistyped bundle name. Must classify the same
+# statuses as the bash twin's `__abundio_explain`, or a user's diagnosis depends
+# on their OS.
+#
+# `[Console]::Error.WriteLine` rather than `Write-Host` for the follow-up lines:
+# Write-Host goes to the information stream, so `abundio-env print bad 2>$null`
+# would silence the headline but leave the detail on screen — the opposite of
+# the bash behaviour.
 function Write-AbundioFailure([System.Management.Automation.ErrorRecord]$Err, [string]$BundleName) {
     $code = 0
     if ($Err.Exception.Response) { $code = [int]$Err.Exception.Response.StatusCode }
     switch ($code) {
         404 {
-            Write-Error "abundio-env: no bundle named '$BundleName' in this workspace"
+            # 404 is also the answer for an unknown pane, and `list` names no
+            # bundle — so only a command that passed a name can blame the name,
+            # and the recovery listing settles which it was.
+            if (-not $BundleName) { Write-AbundioUnknownPane; break }
+            $names = $null
             try {
                 $body = @{ ptyId = $env:ABUNDIO_PTY_ID } | ConvertTo-Json -Compress
                 $names = Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
-                if ($names) { Write-Host "  Available bundles: $($names -replace "`n", ' ')" }
-                else { Write-Host "  This workspace has no environment bundles yet." }
-            } catch { Write-Host "  This workspace has no environment bundles yet." }
+            } catch { Write-AbundioUnknownPane; break }
+            Write-Error "abundio-env: no bundle named '$BundleName' in this workspace"
+            if ($names) { [Console]::Error.WriteLine("  Available bundles: $($names -replace "`n", ' ')") }
+            else { [Console]::Error.WriteLine("  This workspace has no environment bundles yet.") }
         }
-        503 { Write-Error "abundio-env: could not unlock the credential store - is it locked? Retry from Abundio's environment settings." }
-        default { Write-Error "abundio-env: could not reach Abundio (HTTP $code)." }
+        401 { Write-Error "abundio-env: this terminal is not authorised to read bundles." }
+        403 { Write-Error "abundio-env: this terminal is not authorised to read bundles." }
+        503 {
+            Write-Error "abundio-env: could not unlock the credential store - is the keychain locked?"
+            [Console]::Error.WriteLine("  Open Abundio's environment settings and retry to re-unlock it.")
+        }
+        0 { Write-Error "abundio-env: could not reach Abundio - is the app still running?" }
+        # Three digits to match curl's `000` in the bash twin.
+        default { Write-Error "abundio-env: could not reach Abundio (HTTP $('{0:000}' -f $code))." }
     }
+}
+
+function Write-AbundioUnknownPane {
+    Write-Error "abundio-env: Abundio no longer recognises this terminal."
+    [Console]::Error.WriteLine("  Open a new pane and try again.")
 }
 
 switch ($Command) {
     "list" {
         $body = @{ ptyId = $env:ABUNDIO_PTY_ID } | ConvertTo-Json -Compress
         try {
-            Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+            $names = Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
         } catch {
             Write-AbundioFailure $_ ""
             exit 1
         }
+        # Zero bundles is a successful answer, not an error — same contract as
+        # the bash twin, which exits 0 here.
+        if (-not $names) {
+            [Console]::Error.WriteLine("abundio-env: this workspace has no environment bundles yet.")
+            exit 0
+        }
+        $names
     }
     "run" {
         if (-not $Bundle) { Write-Error "abundio-env: usage: abundio-env run <bundle> -- <command>"; exit 2 }
@@ -1563,13 +1629,16 @@ mod wrapper_script_tests {
     #[test]
     fn helper_run_aborts_when_the_fetch_fails() {
         assert!(ABUNDIO_ENV_SH.contains("__abundio_rc"));
-        assert!(ABUNDIO_ENV_SH.contains("refusing to run"));
+        // The exact message, so the ordering assertion below pins a unique
+        // substring rather than the first of several near-matches.
+        const ABORT: &str = "refusing to run '$1' without the bundle applied";
+        assert!(ABUNDIO_ENV_SH.contains(ABORT));
         // The abort must come BEFORE the exec.
-        let check = ABUNDIO_ENV_SH.find("refusing to run").unwrap();
+        let check = ABUNDIO_ENV_SH.find(ABORT).unwrap();
         let exec = ABUNDIO_ENV_SH.find("exec \"$@\"").unwrap();
         assert!(check < exec, "the status check must precede exec");
 
-        assert!(ABUNDIO_ENV_PS1.contains("refusing to run"));
+        assert!(ABUNDIO_ENV_PS1.contains("without the bundle applied"));
         assert!(ABUNDIO_ENV_PS1.contains("} catch {"));
     }
 
@@ -1582,11 +1651,96 @@ mod wrapper_script_tests {
         assert!(ABUNDIO_ENV_SH.contains("no bundle named"));
         assert!(ABUNDIO_ENV_SH.contains("Available bundles:"));
         assert!(ABUNDIO_ENV_SH.contains("credential store"));
-        // list, run and print each route their failure through the explainer.
-        assert_eq!(ABUNDIO_ENV_SH.matches("__abundio_explain /env/").count(), 3);
 
-        assert!(ABUNDIO_ENV_PS1.contains("no bundle named"));
+        // Every route's failure reaches the explainer. Counting call sites
+        // instead would break the moment a fourth route is added, without
+        // saying why.
+        for route in ["/env/list", "/env/raw", "/env/print"] {
+            let at = ABUNDIO_ENV_SH
+                .find(&format!("__abundio_fetch {route}"))
+                .unwrap_or_else(|| panic!("{route} must be fetched"));
+            assert!(
+                ABUNDIO_ENV_SH[at..].contains("__abundio_explain"),
+                "{route}'s failure must reach the explainer"
+            );
+        }
         assert_eq!(ABUNDIO_ENV_PS1.matches("Write-AbundioFailure $_").count(), 3);
+    }
+
+    /// The two scripts must classify the same statuses, or a user's diagnosis
+    /// depends on their OS — which is how the PowerShell twin first shipped
+    /// without the 401/403 arm that bash had.
+    #[test]
+    fn both_helpers_classify_the_same_statuses() {
+        for code in ["404", "503", "401", "403"] {
+            assert!(
+                ABUNDIO_ENV_SH.contains(code),
+                "sh explainer is missing a {code} arm"
+            );
+            assert!(
+                ABUNDIO_ENV_PS1.contains(code),
+                "ps1 explainer is missing a {code} arm"
+            );
+        }
+        // A 404 means "unknown pane" as well as "unknown bundle"; both scripts
+        // must be able to say so rather than blaming an empty bundle name.
+        for (name, body) in [("sh", ABUNDIO_ENV_SH), ("ps1", ABUNDIO_ENV_PS1)] {
+            assert!(
+                body.contains("no longer recognises this terminal"),
+                "{name} must distinguish an unknown pane from an unknown bundle"
+            );
+            assert!(
+                body.contains("not authorised to read bundles"),
+                "{name} must name an auth failure"
+            );
+        }
+    }
+
+    /// Zero bundles is a successful answer to "what bundles exist" — a caller
+    /// doing `bundles=$(abundio-env list)` under `set -e` must not abort, and
+    /// the two scripts must agree on it.
+    #[test]
+    fn empty_bundle_list_exits_zero_on_both_platforms() {
+        let sh_at = ABUNDIO_ENV_SH
+            .find("abundio-env: this workspace has no environment bundles yet")
+            .expect("sh must report an empty list");
+        assert!(
+            ABUNDIO_ENV_SH[sh_at..].starts_with(
+                "abundio-env: this workspace has no environment bundles yet.\" >&2\n      exit 0"
+            ),
+            "an empty list must exit 0"
+        );
+        let ps_at = ABUNDIO_ENV_PS1
+            .find("abundio-env: this workspace has no environment bundles yet")
+            .expect("ps1 must report an empty list");
+        assert!(
+            ABUNDIO_ENV_PS1[ps_at..].contains("exit 0"),
+            "an empty list must exit 0 on Windows too"
+        );
+    }
+
+    /// `/env/raw` is the one route that decrypts. Probing it a second time
+    /// purely to read a status code would re-enter the credential store and,
+    /// on a locked keychain, prompt twice for a single user command.
+    #[test]
+    fn helper_reads_the_status_from_the_request_it_already_made() {
+        assert!(ABUNDIO_ENV_SH.contains("%{stderr}%{http_code}"));
+        assert!(ABUNDIO_ENV_SH.contains("__abundio_codefile"));
+        // The explainer takes a bundle name, not a route — it cannot re-request.
+        assert!(!ABUNDIO_ENV_SH.contains("__abundio_explain /env/"));
+        // `exec` skips the EXIT trap, so the temp file is removed explicitly.
+        let rm = ABUNDIO_ENV_SH.find("rm -f \"$__abundio_codefile\"\n    exec");
+        assert!(rm.is_some(), "the code file must be cleaned up before exec");
+    }
+
+    /// `Write-Host` goes to the information stream, so a diagnostic written
+    /// with it survives `2>$null` — unlike its bash counterpart on `>&2`.
+    #[test]
+    fn powershell_diagnostics_go_to_stderr() {
+        // The prose above the function may name it; no call site may use it.
+        assert!(!ABUNDIO_ENV_PS1.contains("Write-Host \""));
+        assert!(!ABUNDIO_ENV_PS1.contains("Write-Host $"));
+        assert!(ABUNDIO_ENV_PS1.contains("[Console]::Error.WriteLine"));
     }
 
     /// `$args2[1..($args2.Count - 1)]` is a DESCENDING range for a single-token
