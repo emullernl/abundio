@@ -44,6 +44,15 @@ export function EnvVarsSection({
 		() => store.vars.map((v) => v.name),
 		[store.vars],
 	);
+	// Storage order is insertion order (position ASC); the list reads as a pile
+	// once a bundle grows past a handful of rows, so sort it for display only.
+	const sortedVars = useMemo(
+		() =>
+			[...store.vars].sort((a, b) =>
+				a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+			),
+		[store.vars],
+	);
 
 	const duplicate = store.vars.some(
 		(v) => v.name === newName.trim() && !v.inherited,
@@ -233,7 +242,7 @@ export function EnvVarsSection({
 							: `No variables in ${selected} yet. Add one below, or import a .env file.`}
 					</span>
 				) : (
-					store.vars.map((variable) => (
+					sortedVars.map((variable) => (
 						<EnvVarRow
 							key={`${variable.bundleId}:${variable.name}`}
 							variable={variable}
