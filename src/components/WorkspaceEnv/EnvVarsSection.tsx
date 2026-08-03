@@ -44,6 +44,21 @@ export function EnvVarsSection({
 		() => store.vars.map((v) => v.name),
 		[store.vars],
 	);
+	// Storage order is insertion order (position ASC); the list reads as a pile
+	// once a bundle grows past a handful of rows, so sort it for display only.
+	// One flat list, inherited rows interleaved — they keep their INHERITED
+	// badge, and a name is easier to find in one alphabetical run than in two.
+	// The locale is pinned so dev machines and CI agree.
+	const sortedVars = useMemo(
+		() =>
+			[...store.vars].sort((a, b) =>
+				a.name.localeCompare(b.name, "en", {
+					sensitivity: "base",
+					numeric: true,
+				}),
+			),
+		[store.vars],
+	);
 
 	const duplicate = store.vars.some(
 		(v) => v.name === newName.trim() && !v.inherited,
@@ -197,10 +212,13 @@ export function EnvVarsSection({
 					}}
 				>
 					<AlertTriangle size={13} style={{ color: "var(--error)" }} />
+					{/* Deliberately vague about *which* variables: the spawn path drops
+					    them in storage order, and this list is sorted by name, so
+					    "past the limit" would point at a position nobody can see. */}
 					<span>
 						This bundle is over the {formatValueSize(store.bytesBudget)}{" "}
-						environment budget. Variables past the limit are dropped when a
-						terminal starts — move some to an on-demand bundle.
+						environment budget. Some variables are dropped when a terminal
+						starts — move some to an on-demand bundle.
 					</span>
 				</div>
 			)}
@@ -233,7 +251,7 @@ export function EnvVarsSection({
 							: `No variables in ${selected} yet. Add one below, or import a .env file.`}
 					</span>
 				) : (
-					store.vars.map((variable) => (
+					sortedVars.map((variable) => (
 						<EnvVarRow
 							key={`${variable.bundleId}:${variable.name}`}
 							variable={variable}
