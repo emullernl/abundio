@@ -44,6 +44,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "013_add_workspace_env_vars",
         include_str!("../migrations/013_add_workspace_env_vars.sql"),
     ),
+    (
+        "014_add_env_injection_disabled",
+        include_str!("../migrations/014_add_env_injection_disabled.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -226,7 +230,7 @@ mod tests {
         let count: i32 = conn
             .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 13);
+        assert_eq!(count, MIGRATIONS.len() as i32);
     }
 
     #[test]

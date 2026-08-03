@@ -37,11 +37,14 @@ opted out. Bundles stay saved and readable through `abundio-env`; only the
 automatic injection stops, and running terminals keep the environment they were
 spawned with until restarted.
 
-A **linked worktree** needs more than clearing its own flags — it inherits the
-main worktree's injected Bundle, and inheritance would put the environment
-straight back. Turning injection off there writes an own, non-injected row
-shadowing that Bundle: the same override mechanism used for values, applied to
-the role. The Bundle's variables still resolve through inheritance on demand.
+"Off" is a **stored flag** on the Workspace (`env_injection_disabled`,
+migration 014), not the absence of an `injected` row. It has to be, because of
+inheritance: shadowing the parent's *currently* injected Bundle with a local
+non-injected row — the first design — was undone the moment the main worktree
+injected some other Bundle, silently handing an opted-out worktree the parent's
+production secrets. The flag is checked before inheritance, cleared only by an
+explicit *Inject*, and deliberately not cleared by creating a Bundle: creating
+one is not choosing an environment.
 
 ## Threat model, stated precisely
 

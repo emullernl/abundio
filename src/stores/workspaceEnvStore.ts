@@ -155,7 +155,7 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 
 	clearInjected: async (workspaceId, inheritFrom) => {
 		try {
-			await env.clearInjected(workspaceId, inheritFrom);
+			await env.clearInjected(workspaceId);
 			// Running terminals keep the environment they were spawned with.
 			get().markInjectedDirty(workspaceId);
 			set({ error: null });

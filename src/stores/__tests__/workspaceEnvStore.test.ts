@@ -151,7 +151,7 @@ describe("workspaceEnvStore", () => {
 			vi.mocked(env.injectedSummary).mockResolvedValue(null);
 			await useWorkspaceEnvStore.getState().clearInjected(WS, "ws-main");
 
-			expect(env.clearInjected).toHaveBeenCalledWith(WS, "ws-main");
+			expect(env.clearInjected).toHaveBeenCalledWith(WS);
 			const s = useWorkspaceEnvStore.getState();
 			expect(s.injectedSummary[WS]).toBeNull();
 			// Running terminals still hold the old environment.
