@@ -875,10 +875,53 @@ __abundio_fetch() {   # $1 = route, $2 = bundle (optional)
   else
     body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\"}"
   fi
-  curl -fsS -X POST "http://127.0.0.1:${ABUNDIO_HOOK_PORT}$1" \
+  # `-f` not `-fS`: curl's own "(22) The requested URL returned error: 404" says
+  # nothing about bundles. Every caller routes failure through
+  # `__abundio_explain`, which turns the status into a sentence.
+  curl -fs -X POST "http://127.0.0.1:${ABUNDIO_HOOK_PORT}$1" \
     -H "X-Abundio-Token: ${ABUNDIO_HOOK_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "$body"
+}
+
+# Turn a failed fetch into a sentence. Without this the user sees curl's own
+# `curl: (22) The requested URL returned error: 404`, which says nothing about
+# bundles. Re-requests with `-o /dev/null` purely to read the status line, so no
+# secret is ever fetched twice into a variable.
+__abundio_explain() {   # $1 = route, $2 = bundle (optional)
+  local body code
+  if [ -n "${2:-}" ]; then
+    body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\",\"bundle\":\"$2\"}"
+  else
+    body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\"}"
+  fi
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+    "http://127.0.0.1:${ABUNDIO_HOOK_PORT}$1" \
+    -H "X-Abundio-Token: ${ABUNDIO_HOOK_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "$body" 2>/dev/null) || code=000
+
+  case "$code" in
+    404)
+      echo "abundio-env: no bundle named '${2:-}' in this workspace" >&2
+      local names
+      if names=$(__abundio_fetch /env/list 2>/dev/null) && [ -n "$names" ]; then
+        echo "  Available bundles: $(echo "$names" | tr '\n' ' ')" >&2
+      else
+        echo "  This workspace has no environment bundles yet." >&2
+      fi
+      ;;
+    503)
+      echo "abundio-env: could not unlock the credential store — is the keychain locked?" >&2
+      echo "  Open Abundio's environment settings and retry to re-unlock it." >&2
+      ;;
+    401|403)
+      echo "abundio-env: this terminal is not authorised to read bundles." >&2
+      ;;
+    *)
+      echo "abundio-env: could not reach Abundio (HTTP ${code})." >&2
+      ;;
+  esac
 }
 
 __abundio_usage() {
@@ -898,7 +941,15 @@ USAGE
 
 case "${1:-}" in
   list)
-    __abundio_fetch /env/list
+    if ! __abundio_list_out=$(__abundio_fetch /env/list); then
+      __abundio_explain /env/list
+      exit 1
+    fi
+    if [ -z "$__abundio_list_out" ]; then
+      echo "abundio-env: this workspace has no environment bundles yet." >&2
+      exit 1
+    fi
+    printf '%s\n' "$__abundio_list_out"
     ;;
 
   run)
@@ -923,7 +974,8 @@ case "${1:-}" in
     __abundio_rc=$(cat "$__abundio_status")
     rm -f "$__abundio_status"
     if [ "$__abundio_rc" != 0 ]; then
-      echo "abundio-env: could not read bundle '$bundle' — refusing to run without it" >&2
+      __abundio_explain /env/raw "$bundle"
+      echo "abundio-env: refusing to run '$1' without the bundle applied" >&2
       exit 1
     fi
 
@@ -942,7 +994,11 @@ case "${1:-}" in
       echo "  Override with --force if you really want them on screen." >&2
       exit 3
     fi
-    __abundio_fetch /env/print "$bundle"
+    if ! __abundio_print_out=$(__abundio_fetch /env/print "$bundle"); then
+      __abundio_explain /env/print "$bundle"
+      exit 1
+    fi
+    printf '%s\n' "$__abundio_print_out"
     ;;
 
   *)
@@ -966,10 +1022,35 @@ if (-not $env:ABUNDIO_HOOK_TOKEN -or -not $env:ABUNDIO_PTY_ID) {
 $headers = @{ "X-Abundio-Token" = $env:ABUNDIO_HOOK_TOKEN }
 $base = "http://127.0.0.1:$env:ABUNDIO_HOOK_PORT"
 
+# Turn a failed request into a sentence, so the user never sees a bare HTTP
+# error for what is almost always a mistyped bundle name.
+function Write-AbundioFailure([System.Management.Automation.ErrorRecord]$Err, [string]$BundleName) {
+    $code = 0
+    if ($Err.Exception.Response) { $code = [int]$Err.Exception.Response.StatusCode }
+    switch ($code) {
+        404 {
+            Write-Error "abundio-env: no bundle named '$BundleName' in this workspace"
+            try {
+                $body = @{ ptyId = $env:ABUNDIO_PTY_ID } | ConvertTo-Json -Compress
+                $names = Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+                if ($names) { Write-Host "  Available bundles: $($names -replace "`n", ' ')" }
+                else { Write-Host "  This workspace has no environment bundles yet." }
+            } catch { Write-Host "  This workspace has no environment bundles yet." }
+        }
+        503 { Write-Error "abundio-env: could not unlock the credential store - is it locked? Retry from Abundio's environment settings." }
+        default { Write-Error "abundio-env: could not reach Abundio (HTTP $code)." }
+    }
+}
+
 switch ($Command) {
     "list" {
         $body = @{ ptyId = $env:ABUNDIO_PTY_ID } | ConvertTo-Json -Compress
-        Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        try {
+            Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        } catch {
+            Write-AbundioFailure $_ ""
+            exit 1
+        }
     }
     "run" {
         if (-not $Bundle) { Write-Error "abundio-env: usage: abundio-env run <bundle> -- <command>"; exit 2 }
@@ -986,7 +1067,8 @@ switch ($Command) {
         try {
             $raw = Invoke-RestMethod -Uri "$base/env/raw" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
         } catch {
-            Write-Error "abundio-env: could not read bundle '$Bundle' - refusing to run without it"
+            Write-AbundioFailure $_ $Bundle
+            Write-Error "abundio-env: refusing to run '$($args2[0])' without the bundle applied"
             exit 1
         }
         foreach ($record in ($raw -split "`0")) {
@@ -1010,7 +1092,12 @@ switch ($Command) {
             exit 3
         }
         $body = @{ ptyId = $env:ABUNDIO_PTY_ID; bundle = $Bundle } | ConvertTo-Json -Compress
-        Invoke-RestMethod -Uri "$base/env/print" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        try {
+            Invoke-RestMethod -Uri "$base/env/print" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        } catch {
+            Write-AbundioFailure $_ $Bundle
+            exit 1
+        }
     }
     default { Write-Error "abundio-env: usage: abundio-env {run <bundle> -- <cmd>|list|print <bundle>}"; exit 2 }
 }
@@ -1476,14 +1563,30 @@ mod wrapper_script_tests {
     #[test]
     fn helper_run_aborts_when_the_fetch_fails() {
         assert!(ABUNDIO_ENV_SH.contains("__abundio_rc"));
-        assert!(ABUNDIO_ENV_SH.contains("refusing to run without it"));
+        assert!(ABUNDIO_ENV_SH.contains("refusing to run"));
         // The abort must come BEFORE the exec.
-        let check = ABUNDIO_ENV_SH.find("refusing to run without it").unwrap();
+        let check = ABUNDIO_ENV_SH.find("refusing to run").unwrap();
         let exec = ABUNDIO_ENV_SH.find("exec \"$@\"").unwrap();
         assert!(check < exec, "the status check must precede exec");
 
-        assert!(ABUNDIO_ENV_PS1.contains("refusing to run without it"));
+        assert!(ABUNDIO_ENV_PS1.contains("refusing to run"));
         assert!(ABUNDIO_ENV_PS1.contains("} catch {"));
+    }
+
+    /// A mistyped bundle name is the most likely way to hit a failed fetch, and
+    /// it used to surface as curl's own `(22) The requested URL returned error:
+    /// 404` — which says nothing about bundles. Every subcommand must go through
+    /// the explainer instead.
+    #[test]
+    fn helper_explains_an_unknown_bundle_instead_of_leaking_curl() {
+        assert!(ABUNDIO_ENV_SH.contains("no bundle named"));
+        assert!(ABUNDIO_ENV_SH.contains("Available bundles:"));
+        assert!(ABUNDIO_ENV_SH.contains("credential store"));
+        // list, run and print each route their failure through the explainer.
+        assert_eq!(ABUNDIO_ENV_SH.matches("__abundio_explain /env/").count(), 3);
+
+        assert!(ABUNDIO_ENV_PS1.contains("no bundle named"));
+        assert_eq!(ABUNDIO_ENV_PS1.matches("Write-AbundioFailure $_").count(), 3);
     }
 
     /// `$args2[1..($args2.Count - 1)]` is a DESCENDING range for a single-token
