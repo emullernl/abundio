@@ -11,6 +11,7 @@ import {
 import { useProfileStore } from "../stores/profileStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Folder, Grid, Terminal } from "./Icons";
+import { InjectedBundlePill } from "./WorkspaceEnv/InjectedBundlePill";
 
 function shortenPath(fullPath: string): string {
 	const home = "/Users/";
@@ -183,6 +184,7 @@ export function StatusBar() {
 								</span>
 							</>
 						)}
+						<InjectedBundlePill workspaceId={workspace.id} />
 					</div>
 					{rightCluster}
 				</>

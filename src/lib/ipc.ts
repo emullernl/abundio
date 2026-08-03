@@ -783,6 +783,15 @@ export interface EnvListResult {
 	bytesBudget: number;
 }
 
+/** Which Bundle new terminals in a Workspace receive. Names and counts only. */
+export interface EnvInjectedSummary {
+	bundle: string;
+	/** Variables the bundle resolves to, inherited ones included. */
+	varCount: number;
+	/** True when the bundle comes from the main worktree. */
+	inherited: boolean;
+}
+
 export const env = {
 	list: (
 		workspaceId: string,
@@ -809,8 +818,33 @@ export const env = {
 	renameBundle: (workspaceId: string, from: string, to: string) =>
 		invoke<void>("env_bundle_rename", { workspaceId, from, to }),
 
-	setInjected: (workspaceId: string, name: string) =>
-		invoke<void>("env_bundle_set_injected", { workspaceId, name }),
+	setInjected: (
+		workspaceId: string,
+		inheritFromWorkspaceId: string | null,
+		name: string,
+	) =>
+		invoke<void>("env_bundle_set_injected", {
+			workspaceId,
+			inheritFromWorkspaceId,
+			name,
+		}),
+
+	/** Turn injection off: no bundle is injected until one is chosen again.
+	 *  Stored as a flag on the workspace, so a linked worktree stays opted out
+	 *  even when its main worktree later injects a different bundle. */
+	clearInjected: (workspaceId: string) =>
+		invoke<void>("env_bundle_clear_injected", { workspaceId }),
+
+	/** What a terminal spawned right now would receive. Null when injection is
+	 *  off. Reads no values, so it never touches the OS credential store. */
+	injectedSummary: (
+		workspaceId: string,
+		inheritFromWorkspaceId: string | null,
+	) =>
+		invoke<EnvInjectedSummary | null>("env_injected_summary", {
+			workspaceId,
+			inheritFromWorkspaceId,
+		}),
 
 	deleteBundle: (workspaceId: string, name: string) =>
 		invoke<void>("env_bundle_delete", { workspaceId, name }),

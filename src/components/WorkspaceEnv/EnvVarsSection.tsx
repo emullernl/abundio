@@ -122,10 +122,25 @@ export function EnvVarsSection({
 				onSetInjected={(name) =>
 					store.setInjected(workspaceId, inheritFromWorkspaceId, name)
 				}
+				onClearInjected={() =>
+					store.clearInjected(workspaceId, inheritFromWorkspaceId)
+				}
 				onDelete={(name) =>
 					store.deleteBundle(workspaceId, inheritFromWorkspaceId, name)
 				}
 			/>
+
+			{/* Gated on a loaded list: the dialog resets the store on close, so an
+			    ungated notice would claim "plain environment" for a frame every
+			    time the tab opens, and after a failed load. */}
+			{store.bundles.length > 0 && !store.bundles.some((b) => b.injected) && (
+				// Without this the row simply loses its bolt, which reads as a
+				// rendering gap rather than a state. Say it outright.
+				<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>
+					No bundle is injected — new terminals start with a plain environment.
+					Select a bundle and choose Inject to change that.
+				</span>
+			)}
 
 			{store.keyError && (
 				<div

@@ -981,6 +981,8 @@ pub fn run() {
             env_vars::env_bundle_create,
             env_vars::env_bundle_rename,
             env_vars::env_bundle_set_injected,
+            env_vars::env_bundle_clear_injected,
+            env_vars::env_injected_summary,
             env_vars::env_bundle_delete,
             env_vars::env_vars_upsert,
             env_vars::env_vars_upsert_many,

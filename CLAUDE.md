@@ -190,7 +190,7 @@ git push --follow-tags         # triggers CI build for all platforms
 
 ## Environment variables (ADR-0024)
 
-- Per-Workspace **Environment Bundles**. Exactly one is *injected* into every PTY; the rest are on-demand via the `abundio-env` helper. Enforced by a partial unique index, not a convention.
+- Per-Workspace **Environment Bundles**. At most one is *injected* into every PTY; the rest are on-demand via the `abundio-env` helper. Enforced by a partial unique index, not a convention. **Zero injected is a valid state** — the bundle row's green injection toggle turns it off, so never invent an injected Bundle for a Workspace that carries no flag. The status-bar pill is a read-only indicator.
 - **Plaintext never reaches the frontend except one variable at a time.** `env_list` returns names + byte lengths; `env_vars_reveal` is the only IPC that returns a value, and `workspaceEnvStore.revealed` is a single slot. Keep it that way.
 - **A credential-store failure must never block a PTY spawn.** Degrade to an empty set, emit `env-vars-unavailable`, let the terminal open.
 - **No `eval` in the wrapper rc scripts or `abundio-env`.** Values are arbitrary user data; the shadow-variable re-export uses `${(P)name}` (zsh) / `${!name}` + `printf -v` (bash), and the helper reads NUL-delimited records.

@@ -1,4 +1,4 @@
-import { Check, Plus, Zap } from "lucide-react";
+import { Plus, Zap, ZapOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { EnvBundleMeta } from "../../lib/ipc";
 
@@ -9,13 +9,15 @@ interface Props {
 	onCreate: (name: string) => void;
 	onRename: (from: string, to: string) => void;
 	onSetInjected: (name: string) => void;
+	/** Stop injecting anything — every Bundle becomes on-demand. */
+	onClearInjected: () => void;
 	onDelete: (name: string) => void;
 }
 
 /**
- * Bundle switcher. The injected Bundle carries a bolt badge — it is the one
- * whose variables land in every terminal, and telling it apart from an
- * on-demand Bundle at a glance is the whole point of the row.
+ * Bundle switcher. Injection state lives on the toggle at the end of the row,
+ * not as a badge on each tab: one green control that both reports whether the
+ * selected Bundle is injected and flips it.
  *
  * Rename is click-to-edit on the active tab, matching `ProfileRow` in
  * SettingsPanel rather than introducing a second editing idiom.
@@ -27,6 +29,7 @@ export function BundleTabs({
 	onCreate,
 	onRename,
 	onSetInjected,
+	onClearInjected,
 	onDelete,
 }: Props) {
 	const [creating, setCreating] = useState(false);
@@ -122,13 +125,6 @@ export function BundleTabs({
 							color: active ? "var(--fg-primary)" : "var(--fg-secondary)",
 						}}
 					>
-						{bundle.injected && (
-							<Zap
-								size={10}
-								style={{ color: "var(--accent)", flexShrink: 0 }}
-								aria-label="injected"
-							/>
-						)}
 						<span>{bundle.name}</span>
 						{bundle.varCount > 0 && (
 							<span style={{ opacity: 0.6, fontSize: 10 }}>
@@ -187,23 +183,27 @@ export function BundleTabs({
 				bundles={bundles}
 				selected={selected}
 				onSetInjected={onSetInjected}
+				onClearInjected={onClearInjected}
 				onDelete={onDelete}
 			/>
 		</div>
 	);
 }
 
-/** Actions for the selected Bundle. Kept beside the tabs rather than in a menu
- *  so "which bundle is injected" stays a one-click change. */
+/** Actions for the selected Bundle: the injection toggle, and delete. Kept
+ *  beside the tabs rather than in a menu so "which bundle is injected" stays a
+ *  one-click change. */
 function BundleActions({
 	bundles,
 	selected,
 	onSetInjected,
+	onClearInjected,
 	onDelete,
 }: {
 	bundles: EnvBundleMeta[];
 	selected: string;
 	onSetInjected: (name: string) => void;
+	onClearInjected: () => void;
 	onDelete: (name: string) => void;
 }) {
 	const current = bundles.find((b) => b.name === selected);
@@ -213,33 +213,58 @@ function BundleActions({
 	// local row to delete.
 	const ownCount = bundles.filter((b) => !b.inherited).length;
 	const canDelete = !current.inherited && ownCount > 1;
-	// `set_injected` looks the bundle up on THIS workspace, so offering it for a
-	// bundle that exists only on the main worktree would just raise NotFound.
-	const canInject = !current.injected && !current.inherited;
+	const injected = current.injected;
+	// Naming the injected Bundle in the off-state title: with no per-tab badge,
+	// selecting an on-demand Bundle would otherwise leave nothing on screen
+	// saying what IS injected — the status pill only covers the active
+	// workspace, and this dialog opens for any workspace in the sidebar.
+	const injectedName = bundles.find((b) => b.injected)?.name;
 
 	return (
 		<div className="flex items-center" style={{ gap: 4, marginLeft: "auto" }}>
-			{canInject && (
-				<button
-					type="button"
-					onClick={() => onSetInjected(selected)}
-					title="Inject this bundle into every terminal in this workspace"
-					className="flex items-center transition-opacity"
-					style={{
-						gap: 4,
-						padding: "3px 8px",
-						borderRadius: 999,
-						border: "1px solid var(--border)",
-						backgroundColor: "transparent",
-						color: "var(--fg-secondary)",
-						fontSize: 10.5,
-						cursor: "pointer",
-					}}
-				>
-					<Check size={10} />
-					Inject
-				</button>
-			)}
+			{/* One control, two states: this is where injection is read AND
+			    changed, so it carries the green. Splitting it into separate
+			    "Inject" and "Turn off" buttons made the current state something
+			    you had to infer from which button was showing.
+
+			    Offered for an inherited Bundle too — the backend materialises a
+			    local row and the parent's values still resolve through
+			    inheritance, so a worktree can run `production` while its main
+			    worktree runs `dev`. */}
+			<button
+				type="button"
+				role="switch"
+				aria-checked={injected}
+				onClick={() => (injected ? onClearInjected() : onSetInjected(selected))}
+				title={
+					injected
+						? "Injected into every new terminal in this workspace — click to turn off"
+						: injectedName
+							? `Inject ${selected} into every new terminal in this workspace, instead of ${injectedName}`
+							: `Inject ${selected} into every new terminal in this workspace`
+				}
+				className="flex items-center transition-colors"
+				style={{
+					gap: 5,
+					padding: "3px 9px",
+					borderRadius: 999,
+					fontSize: 10.5,
+					fontWeight: 500,
+					cursor: "pointer",
+					color: injected ? "var(--success)" : "var(--fg-secondary)",
+					backgroundColor: injected
+						? "color-mix(in srgb, var(--success) 14%, transparent)"
+						: "transparent",
+					border: `1px solid ${
+						injected
+							? "color-mix(in srgb, var(--success) 40%, transparent)"
+							: "var(--border)"
+					}`,
+				}}
+			>
+				{injected ? <Zap size={10} /> : <ZapOff size={10} />}
+				{injected ? "Injected" : "Inject"}
+			</button>
 			{canDelete && (
 				<button
 					type="button"
