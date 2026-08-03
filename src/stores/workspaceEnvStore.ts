@@ -10,7 +10,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import type { ParsedEnvEntry } from "../lib/dotenvParse";
-import type { EnvBundleMeta, EnvVarMeta } from "../lib/ipc";
+import type { EnvBundleMeta, EnvInjectedSummary, EnvVarMeta } from "../lib/ipc";
 import { env } from "../lib/ipc";
 
 interface RevealedValue {
@@ -39,6 +39,24 @@ interface WorkspaceEnvState {
 	 *  "Apply to running terminals" affordance. On-demand bundles are read fresh
 	 *  on every `abundio-env` call, so they never need a restart. */
 	dirtyInjected: Set<string>;
+
+	/** Per-Workspace answer to "what does a new terminal get?", keyed by
+	 *  Workspace id. `null` means injection is off. Undefined means not asked
+	 *  yet. Kept outside `bundles` because the status pill needs it for the
+	 *  active Workspace whether or not the settings dialog was ever opened. */
+	injectedSummary: Record<string, EnvInjectedSummary | null>;
+
+	/** Refresh `injectedSummary` for one Workspace. Cheap and key-free. */
+	loadInjectedSummary: (
+		workspaceId: string,
+		inheritFrom: string | null,
+	) => Promise<void>;
+
+	/** Stop injecting anything into new terminals in this Workspace. */
+	clearInjected: (
+		workspaceId: string,
+		inheritFrom: string | null,
+	) => Promise<void>;
 
 	load: (
 		workspaceId: string,
@@ -121,6 +139,37 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 	error: null,
 	revealed: null,
 	dirtyInjected: new Set<string>(),
+	injectedSummary: {},
+
+	loadInjectedSummary: async (workspaceId, inheritFrom) => {
+		try {
+			const summary = await env.injectedSummary(workspaceId, inheritFrom);
+			set((s) => ({
+				injectedSummary: { ...s.injectedSummary, [workspaceId]: summary },
+			}));
+		} catch {
+			// A summary is decoration, not state the app depends on — a failure
+			// here must not surface as an error banner over the terminal.
+		}
+	},
+
+	clearInjected: async (workspaceId, inheritFrom) => {
+		try {
+			await env.clearInjected(workspaceId, inheritFrom);
+			// Running terminals keep the environment they were spawned with.
+			get().markInjectedDirty(workspaceId);
+			set({ error: null });
+			// Callable from the status pill with the settings dialog closed, where
+			// there is no bundle list to refresh — only the summary.
+			if (get().bundles.length > 0) {
+				await get().load(workspaceId, inheritFrom, get().selectedBundle);
+			} else {
+				await get().loadInjectedSummary(workspaceId, inheritFrom);
+			}
+		} catch (e) {
+			set({ error: message(e) });
+		}
+	},
 
 	load: async (workspaceId, inheritFrom, bundle = null) => {
 		set({ loading: true });
@@ -135,6 +184,9 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 				bytesBudget: result.bytesBudget,
 				loading: false,
 			});
+			// Every mutation funnels through `load`, so refreshing here is what
+			// keeps the status pill honest without a subscription of its own.
+			void get().loadInjectedSummary(workspaceId, inheritFrom);
 		} catch (e) {
 			set({ loading: false, error: message(e) });
 		}

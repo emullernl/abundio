@@ -10,6 +10,8 @@ vi.mock("../../lib/ipc", () => ({
 		createBundle: vi.fn(),
 		renameBundle: vi.fn(),
 		setInjected: vi.fn(),
+		clearInjected: vi.fn(),
+		injectedSummary: vi.fn(),
 		deleteBundle: vi.fn(),
 		upsert: vi.fn(),
 		upsertMany: vi.fn(),
@@ -73,6 +75,7 @@ describe("workspaceEnvStore", () => {
 			error: null,
 			revealed: null,
 			dirtyInjected: new Set<string>(),
+			injectedSummary: {},
 		});
 		// Explicit defaults, not just clearAllMocks: that clears recorded calls
 		// but NOT implementations, so a mockRejectedValue set by one test would
@@ -85,6 +88,12 @@ describe("workspaceEnvStore", () => {
 		vi.mocked(env.createBundle).mockResolvedValue(bundle("production"));
 		vi.mocked(env.renameBundle).mockResolvedValue(undefined);
 		vi.mocked(env.setInjected).mockResolvedValue(undefined);
+		vi.mocked(env.clearInjected).mockResolvedValue(undefined);
+		vi.mocked(env.injectedSummary).mockResolvedValue({
+			bundle: "default",
+			varCount: 1,
+			inherited: false,
+		});
 		vi.mocked(env.deleteBundle).mockResolvedValue(undefined);
 		vi.mocked(env.reorder).mockResolvedValue(undefined);
 		vi.mocked(env.retryKey).mockResolvedValue(true);
@@ -122,6 +131,57 @@ describe("workspaceEnvStore", () => {
 		it("passes the inherit-from workspace through", async () => {
 			await useWorkspaceEnvStore.getState().load(WS, "ws-main");
 			expect(env.list).toHaveBeenCalledWith(WS, "ws-main", null);
+		});
+
+		// The status pill reads this map, and every mutation funnels through
+		// `load` — so a stale pill after an edit would be the failure mode.
+		it("refreshes the injected summary", async () => {
+			await useWorkspaceEnvStore.getState().load(WS, null);
+			expect(env.injectedSummary).toHaveBeenCalledWith(WS, null);
+			expect(useWorkspaceEnvStore.getState().injectedSummary[WS]).toEqual({
+				bundle: "default",
+				varCount: 1,
+				inherited: false,
+			});
+		});
+	});
+
+	describe("injection", () => {
+		it("clearInjected turns injection off and refreshes the summary", async () => {
+			vi.mocked(env.injectedSummary).mockResolvedValue(null);
+			await useWorkspaceEnvStore.getState().clearInjected(WS, "ws-main");
+
+			expect(env.clearInjected).toHaveBeenCalledWith(WS, "ws-main");
+			const s = useWorkspaceEnvStore.getState();
+			expect(s.injectedSummary[WS]).toBeNull();
+			// Running terminals still hold the old environment.
+			expect(s.dirtyInjected.has(WS)).toBe(true);
+			// Nothing was loaded into the dialog, so there is no list to reload.
+			expect(env.list).not.toHaveBeenCalled();
+		});
+
+		it("clearInjected reloads the bundle list when the dialog is open", async () => {
+			await useWorkspaceEnvStore.getState().load(WS, null);
+			vi.mocked(env.list).mockClear();
+
+			await useWorkspaceEnvStore.getState().clearInjected(WS, null);
+			expect(env.list).toHaveBeenCalled();
+		});
+
+		it("clearInjected reports a failure instead of throwing", async () => {
+			vi.mocked(env.clearInjected).mockRejectedValue("boom");
+			await useWorkspaceEnvStore.getState().clearInjected(WS, null);
+			expect(useWorkspaceEnvStore.getState().error).toBe("boom");
+		});
+
+		// A summary is decoration; failing to fetch it must not raise a banner
+		// over the terminal.
+		it("a failed summary fetch is silent", async () => {
+			vi.mocked(env.injectedSummary).mockRejectedValue("nope");
+			await useWorkspaceEnvStore.getState().loadInjectedSummary(WS, null);
+			const s = useWorkspaceEnvStore.getState();
+			expect(s.error).toBeNull();
+			expect(s.injectedSummary[WS]).toBeUndefined();
 		});
 	});
 

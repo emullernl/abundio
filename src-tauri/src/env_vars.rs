@@ -84,6 +84,17 @@ pub struct EnvListResult {
     pub bytes_budget: i64,
 }
 
+/// What a terminal spawned right now would receive. Names and counts only.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InjectedSummary {
+    pub bundle: String,
+    /// Variables the Bundle resolves to, inherited ones included.
+    pub var_count: i32,
+    /// True when the Bundle comes from the main worktree.
+    pub inherited: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvVarInput {
@@ -349,6 +360,63 @@ impl EnvVarStore {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Turn injection off entirely: no Bundle is injected, so new terminals in
+    /// this Workspace start with a plain environment. Every Bundle stays put and
+    /// remains readable on demand via `abundio-env`.
+    ///
+    /// A linked worktree needs more than clearing its own flags: it *inherits*
+    /// the main worktree's injected Bundle, and inheritance would put the
+    /// environment straight back. So shadow that Bundle with an own row carrying
+    /// `injected = 0` — the same override mechanism used for values, applied to
+    /// the role. Its variables still resolve through inheritance, so nothing is
+    /// lost; only the injection stops.
+    pub fn clear_injected(
+        &self,
+        workspace_id: &str,
+        inherit_from: Option<&str>,
+    ) -> Result<(), AbundioError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE workspace_env_bundles SET injected = 0, updated_at = unixepoch()
+             WHERE workspace_id = ?1",
+            params![workspace_id],
+        )?;
+        if let Some(parent) = inherit_from {
+            for row in bundles_of(&tx, parent)? {
+                if row.injected && find_bundle(&tx, workspace_id, &row.name)?.is_none() {
+                    insert_bundle(&tx, workspace_id, &row.name, false)?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Which Bundle a terminal spawned right now would receive, and how many
+    /// variables it resolves to. `None` when injection is off.
+    ///
+    /// Needs no master key — it counts rows, never opens them — so the status
+    /// pill can ask for it on every Workspace switch without touching the OS
+    /// credential store.
+    pub fn injected_summary(
+        &self,
+        workspace_id: &str,
+        inherit_from: Option<&str>,
+    ) -> Result<Option<InjectedSummary>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let bundles = merged_bundles(&conn, workspace_id, inherit_from)?;
+        let Some(injected) = bundles.iter().find(|b| b.injected) else {
+            return Ok(None);
+        };
+        let vars = merged_vars(&conn, workspace_id, inherit_from, &injected.name, None)?;
+        Ok(Some(InjectedSummary {
+            bundle: injected.name.clone(),
+            var_count: vars.len() as i32,
+            inherited: injected.inherited,
+        }))
     }
 
     /// Delete a Bundle and its variables. The last Bundle cannot be deleted;
@@ -660,15 +728,16 @@ fn merged_bundles(
         });
     }
 
-    // Exactly one Bundle may read as injected. An own bundle wins over an
-    // inherited one carrying the same flag — otherwise a Workspace that has
-    // overridden its parent's injected bundle would show two bolts, and callers
-    // picking "the injected one" by `find` would depend on ordering.
+    // At most one Bundle may read as injected — but zero is a legitimate state:
+    // a Workspace whose injection was turned off carries no flag anywhere, and
+    // must not have one invented for it. An own bundle wins over an inherited
+    // one carrying the same flag — otherwise a Workspace that has overridden
+    // its parent's injected bundle would show two bolts, and callers picking
+    // "the injected one" by `find` would depend on ordering.
     let chosen = out
         .iter()
         .position(|b| b.injected && !b.inherited)
-        .or_else(|| out.iter().position(|b| b.injected))
-        .or(if out.is_empty() { None } else { Some(0) });
+        .or_else(|| out.iter().position(|b| b.injected));
     for (i, b) in out.iter_mut().enumerate() {
         b.injected = Some(i) == chosen;
     }
@@ -941,6 +1010,28 @@ pub fn env_bundle_set_injected(
     store.set_injected(&workspace_id, &name)
 }
 
+/// Turn injection off for this Workspace — no Bundle is injected until one is
+/// chosen again.
+#[tauri::command]
+pub fn env_bundle_clear_injected(
+    store: State<EnvVarStore>,
+    workspace_id: String,
+    inherit_from_workspace_id: Option<String>,
+) -> Result<(), AbundioError> {
+    store.clear_injected(&workspace_id, inherit_from_workspace_id.as_deref())
+}
+
+/// Which Bundle new terminals in this Workspace receive, if any. Key-free, so
+/// the status pill can poll it without a Keychain prompt.
+#[tauri::command]
+pub fn env_injected_summary(
+    store: State<EnvVarStore>,
+    workspace_id: String,
+    inherit_from_workspace_id: Option<String>,
+) -> Result<Option<InjectedSummary>, AbundioError> {
+    store.injected_summary(&workspace_id, inherit_from_workspace_id.as_deref())
+}
+
 #[tauri::command]
 pub fn env_bundle_delete(
     store: State<EnvVarStore>,
@@ -1170,6 +1261,87 @@ mod tests {
 
         let result = store.list(WS, None, None, Some(&key)).unwrap();
         assert_eq!(result.bundles.iter().filter(|b| b.injected).count(), 1);
+    }
+
+    #[test]
+    fn clear_injected_leaves_nothing_injected() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
+
+        store.clear_injected(WS, None).unwrap();
+
+        assert!(store.resolve_for_spawn(&key, WS, None).unwrap().is_empty());
+        assert!(!store.has_injected_vars(WS, None).unwrap());
+        let result = store.list(WS, None, None, Some(&key)).unwrap();
+        assert_eq!(result.bundles.iter().filter(|b| b.injected).count(), 0);
+        // The Bundle itself survives — it is still readable on demand.
+        assert_eq!(result.bundles.len(), 1);
+        assert_eq!(
+            store.resolve_bundle(&key, WS, None, DEFAULT_BUNDLE).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn clear_injected_on_a_worktree_beats_inheritance() {
+        let (store, key) = test_store();
+        store.upsert(&key, PARENT, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
+        // The worktree inherits the parent's injected Bundle to start with.
+        assert_eq!(store.resolve_for_spawn(&key, WS, Some(PARENT)).unwrap().len(), 1);
+
+        store.clear_injected(WS, Some(PARENT)).unwrap();
+
+        assert!(store
+            .resolve_for_spawn(&key, WS, Some(PARENT))
+            .unwrap()
+            .is_empty());
+        assert!(!store.has_injected_vars(WS, Some(PARENT)).unwrap());
+        // The parent is untouched.
+        assert_eq!(store.resolve_for_spawn(&key, PARENT, None).unwrap().len(), 1);
+        // Values still resolve through inheritance, on demand.
+        assert_eq!(
+            store.resolve_bundle(&key, WS, Some(PARENT), DEFAULT_BUNDLE).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn set_injected_restores_injection_after_clearing() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
+        store.clear_injected(WS, None).unwrap();
+
+        store.set_injected(WS, DEFAULT_BUNDLE).unwrap();
+
+        let pairs = store.resolve_for_spawn(&key, WS, None).unwrap();
+        assert_eq!(pairs.len(), 1);
+    }
+
+    #[test]
+    fn injected_summary_reports_the_bundle_and_count() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "B", "2").unwrap();
+
+        let summary = store.injected_summary(WS, None).unwrap().unwrap();
+        assert_eq!(summary.bundle, DEFAULT_BUNDLE);
+        assert_eq!(summary.var_count, 2);
+        assert!(!summary.inherited);
+
+        store.clear_injected(WS, None).unwrap();
+        assert!(store.injected_summary(WS, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn injected_summary_counts_inherited_variables() {
+        let (store, key) = test_store();
+        store.upsert(&key, PARENT, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, PARENT, None, DEFAULT_BUNDLE, "B", "2").unwrap();
+        // An override of one name must not double-count it.
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "B", "own").unwrap();
+
+        let summary = store.injected_summary(WS, Some(PARENT)).unwrap().unwrap();
+        assert_eq!(summary.var_count, 2);
     }
 
     #[test]

@@ -34,10 +34,10 @@ _Avoid_: loaded workspace, mounted workspace
 
 **Background workspace**: An Opened workspace that is not currently the Active workspace. Not a separate state — derived as `openedWorkspaceIds \ {activeWorkspaceId}`.
 
-**Environment Bundle**: A named, ordered set of environment variables owned by a **Workspace** (e.g. `default`, `production`). Exactly one Bundle per Workspace is the **Injected bundle**; the rest are **On-demand bundles**. Values are encrypted at rest under a single **Master key**; variable *names* are stored in plaintext so the settings list renders without touching the credential store. A Workspace's first variable creates a Bundle named `default` automatically. See ADR-0024.
+**Environment Bundle**: A named, ordered set of environment variables owned by a **Workspace** (e.g. `default`, `production`). At most one Bundle per Workspace is the **Injected bundle**; the rest are **On-demand bundles**, and a Workspace may have no Injected bundle at all. Values are encrypted at rest under a single **Master key**; variable *names* are stored in plaintext so the settings list renders without touching the credential store. A Workspace's first variable creates a Bundle named `default` automatically. See ADR-0024.
 _Avoid_: env group, env set, env profile (collides with **Profile**), secret store, vault
 
-**Injected bundle**: The one Bundle per Workspace whose variables are placed into the environment of every PTY the Workspace spawns. Marked with a bolt badge in the settings dialog. Changing it affects only *future* terminals — existing PTYs keep the environment they were spawned with until explicitly restarted.
+**Injected bundle**: The Bundle — at most one per Workspace, possibly none — whose variables are placed into the environment of every PTY the Workspace spawns. Set with the green injection toggle beside the bundle row in workspace settings — turning it off leaves every Bundle on-demand — and named by a read-only green pill in the status bar. Changing it affects only *future* terminals — existing PTYs keep the environment they were spawned with until explicitly restarted.
 _Avoid_: active bundle, default bundle (`default` is a name, not a role — any Bundle can be the Injected bundle)
 
 **On-demand bundle**: A Bundle that never enters any process environment on its own. Read only through the `abundio-env` helper from inside a pane, typically `abundio-env run <bundle> -- <command>`. This is where credentials that should not be visible to every terminal in the Workspace live.

@@ -280,6 +280,12 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				bytesUsed: 0,
 				bytesBudget: 65536,
 			};
+		case "env_injected_summary":
+			// The demo bundle is empty, so nothing is actually injected — the
+			// status pill correctly stays hidden.
+			return null;
+		case "env_bundle_clear_injected":
+			return undefined;
 		case "env_retry_key":
 			return true;
 		case "env_vars_reveal":

@@ -11,10 +11,37 @@ those files off disk is an effective mitigation against that class, because such
 malware rarely enumerates live processes to read `/proc/<pid>/environ` or
 `KERN_PROCARGS2`.
 
-**Decision:** a Workspace owns named **Environment Bundles**. Exactly one is
+**Decision:** a Workspace owns named **Environment Bundles**. At most one is
 *injected* into every PTY's environment at spawn; the rest are *on-demand* and
 enter a process environment only when `abundio-env run` puts them there. Values
 are sealed with AES-256-GCM under a single master key in the OS credential store.
+
+## Injection is visible, and can be turned off
+
+Injection was originally always-on and invisible: nothing on screen said which
+Bundle a terminal had been spawned with, which matters most in exactly the
+workspace that has both a `dev` and a `production` Bundle. A green pill in the
+status bar names the injected Bundle and its variable count, and is hidden when
+that Bundle resolves to nothing — a pill claiming an environment that is not
+there would be worse than no pill. It is **read-only**: the status bar reports
+what is true, and acting on it belongs next to the Bundles being acted on.
+
+**Zero injected Bundles is a legitimate state**, reached with the green
+injection toggle beside the bundle row in workspace settings. That toggle is one
+control in two states rather than separate *Inject* / *Turn off* buttons, and it
+is the only place injection state is drawn in the dialog — a per-tab bolt badge
+said the same thing twice, and left the current state to be inferred from which
+button happened to be showing. The partial unique index enforces *at
+most* one, never exactly one, so nothing invents a flag for a Workspace that has
+opted out. Bundles stay saved and readable through `abundio-env`; only the
+automatic injection stops, and running terminals keep the environment they were
+spawned with until restarted.
+
+A **linked worktree** needs more than clearing its own flags — it inherits the
+main worktree's injected Bundle, and inheritance would put the environment
+straight back. Turning injection off there writes an own, non-injected row
+shadowing that Bundle: the same override mechanism used for values, applied to
+the role. The Bundle's variables still resolve through inheritance on demand.
 
 ## Threat model, stated precisely
 
