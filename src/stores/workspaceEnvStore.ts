@@ -46,11 +46,24 @@ interface WorkspaceEnvState {
 	 *  active Workspace whether or not the settings dialog was ever opened. */
 	injectedSummary: Record<string, EnvInjectedSummary | null>;
 
+	/** Where each summarised Workspace inherits Bundles from, as last passed to
+	 *  `loadInjectedSummary`. Lets an injection change fan out to the linked
+	 *  worktrees it also affects. */
+	summaryInheritFrom: Record<string, string | null>;
+
+	/** Which Workspace `bundles`/`vars` currently describe. The list is a single
+	 *  global slot, so "is a list loaded?" is not the same question as "is THIS
+	 *  workspace's list loaded?". */
+	loadedWorkspaceId: string | null;
+
 	/** Refresh `injectedSummary` for one Workspace. Cheap and key-free. */
 	loadInjectedSummary: (
 		workspaceId: string,
 		inheritFrom: string | null,
 	) => Promise<void>;
+
+	/** Refresh every known summary after an injection change on `changed`. */
+	refreshInjectedSummaries: (changed: string) => Promise<void>;
 
 	/** Stop injecting anything into new terminals in this Workspace. */
 	clearInjected: (
@@ -140,8 +153,19 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 	revealed: null,
 	dirtyInjected: new Set<string>(),
 	injectedSummary: {},
+	summaryInheritFrom: {},
+	loadedWorkspaceId: null,
 
 	loadInjectedSummary: async (workspaceId, inheritFrom) => {
+		// Remember where this Workspace inherits from: an injection change on a
+		// main worktree has to refresh its linked worktrees too, and only the
+		// caller knows that relationship.
+		set((s) => ({
+			summaryInheritFrom: {
+				...s.summaryInheritFrom,
+				[workspaceId]: inheritFrom,
+			},
+		}));
 		try {
 			const summary = await env.injectedSummary(workspaceId, inheritFrom);
 			set((s) => ({
@@ -153,19 +177,38 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 		}
 	},
 
+	/** Re-fetch every summary we have ever fetched, and mark the Workspaces that
+	 *  inherit from `changed` dirty as well. Injection is inherited, so a change
+	 *  on a main worktree silently alters what its linked worktrees inject. */
+	refreshInjectedSummaries: async (changed) => {
+		const sources = { ...get().summaryInheritFrom };
+		for (const [workspaceId, inheritFrom] of Object.entries(sources)) {
+			if (workspaceId !== changed && inheritFrom === changed) {
+				get().markInjectedDirty(workspaceId);
+			}
+		}
+		await Promise.all(
+			Object.entries(sources).map(([workspaceId, inheritFrom]) =>
+				get().loadInjectedSummary(workspaceId, inheritFrom),
+			),
+		);
+	},
+
 	clearInjected: async (workspaceId, inheritFrom) => {
 		try {
 			await env.clearInjected(workspaceId);
 			// Running terminals keep the environment they were spawned with.
 			get().markInjectedDirty(workspaceId);
 			set({ error: null });
-			// Callable from the status pill with the settings dialog closed, where
-			// there is no bundle list to refresh — only the summary.
-			if (get().bundles.length > 0) {
+			// Callable from the status pill with the settings dialog closed, or
+			// while a dialog is open for a DIFFERENT workspace — reloading the list
+			// then would overwrite that dialog's data mid-edit.
+			if (get().loadedWorkspaceId === workspaceId) {
 				await get().load(workspaceId, inheritFrom, get().selectedBundle);
 			} else {
 				await get().loadInjectedSummary(workspaceId, inheritFrom);
 			}
+			await get().refreshInjectedSummaries(workspaceId);
 		} catch (e) {
 			set({ error: message(e) });
 		}
@@ -183,6 +226,7 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 				bytesUsed: result.bytesUsed,
 				bytesBudget: result.bytesBudget,
 				loading: false,
+				loadedWorkspaceId: workspaceId,
 			});
 			// Every mutation funnels through `load`, so refreshing here is what
 			// keeps the status pill honest without a subscription of its own.
@@ -274,11 +318,12 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 
 	setInjected: async (workspaceId, inheritFrom, name) => {
 		try {
-			await env.setInjected(workspaceId, name);
+			await env.setInjected(workspaceId, inheritFrom, name);
 			// Which bundle is injected changes what every new PTY receives.
 			get().markInjectedDirty(workspaceId);
 			set({ error: null });
 			await get().load(workspaceId, inheritFrom, name);
+			await get().refreshInjectedSummaries(workspaceId);
 		} catch (e) {
 			set({ error: message(e) });
 		}
@@ -291,6 +336,7 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 			if (wasInjected) get().markInjectedDirty(workspaceId);
 			set({ error: null, revealed: null });
 			await get().load(workspaceId, inheritFrom, null);
+			if (wasInjected) await get().refreshInjectedSummaries(workspaceId);
 			return true;
 		} catch (e) {
 			set({ error: message(e) });
@@ -315,6 +361,7 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 			bundles: [],
 			vars: [],
 			keyError: null,
+			loadedWorkspaceId: null,
 		}),
 
 	markInjectedDirty: (workspaceId) =>

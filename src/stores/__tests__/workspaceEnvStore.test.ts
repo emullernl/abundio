@@ -76,6 +76,8 @@ describe("workspaceEnvStore", () => {
 			revealed: null,
 			dirtyInjected: new Set<string>(),
 			injectedSummary: {},
+			summaryInheritFrom: {},
+			loadedWorkspaceId: null,
 		});
 		// Explicit defaults, not just clearAllMocks: that clears recorded calls
 		// but NOT implementations, so a mockRejectedValue set by one test would
@@ -166,6 +168,38 @@ describe("workspaceEnvStore", () => {
 
 			await useWorkspaceEnvStore.getState().clearInjected(WS, null);
 			expect(env.list).toHaveBeenCalled();
+		});
+
+		// `bundles` is one global slot: reloading it for another workspace would
+		// overwrite an open dialog's list mid-edit.
+		it("clearInjected does not reload a list belonging to another workspace", async () => {
+			await useWorkspaceEnvStore.getState().load("ws-other", null);
+			vi.mocked(env.list).mockClear();
+
+			await useWorkspaceEnvStore.getState().clearInjected(WS, null);
+			expect(env.list).not.toHaveBeenCalled();
+			expect(useWorkspaceEnvStore.getState().loadedWorkspaceId).toBe(
+				"ws-other",
+			);
+		});
+
+		// Injection is inherited: changing the main worktree's bundle changes
+		// what its linked worktrees inject too.
+		it("setInjected refreshes summaries of workspaces inheriting from it", async () => {
+			// The pill for a linked worktree has fetched its summary already.
+			await useWorkspaceEnvStore
+				.getState()
+				.loadInjectedSummary("ws-worktree", WS);
+			vi.mocked(env.injectedSummary).mockClear();
+
+			await useWorkspaceEnvStore.getState().setInjected(WS, null, "production");
+
+			expect(env.injectedSummary).toHaveBeenCalledWith("ws-worktree", WS);
+			expect(env.setInjected).toHaveBeenCalledWith(WS, null, "production");
+			// ...and its terminals need a restart just as much as the parent's.
+			expect(
+				useWorkspaceEnvStore.getState().dirtyInjected.has("ws-worktree"),
+			).toBe(true);
 		});
 
 		it("clearInjected reports a failure instead of throwing", async () => {

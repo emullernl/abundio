@@ -213,54 +213,58 @@ function BundleActions({
 	// local row to delete.
 	const ownCount = bundles.filter((b) => !b.inherited).length;
 	const canDelete = !current.inherited && ownCount > 1;
-	// `set_injected` looks the bundle up on THIS workspace, so injecting a bundle
-	// that exists only on the main worktree would just raise NotFound. Turning an
-	// inherited one OFF is fine — that writes a local, non-injected override.
 	const injected = current.injected;
-	const canToggle = injected || !current.inherited;
+	// Naming the injected Bundle in the off-state title: with no per-tab badge,
+	// selecting an on-demand Bundle would otherwise leave nothing on screen
+	// saying what IS injected — the status pill only covers the active
+	// workspace, and this dialog opens for any workspace in the sidebar.
+	const injectedName = bundles.find((b) => b.injected)?.name;
 
 	return (
 		<div className="flex items-center" style={{ gap: 4, marginLeft: "auto" }}>
-			{canToggle && (
-				// One control, two states: this is where injection is read AND
-				// changed, so it carries the green. Splitting it into separate
-				// "Inject" and "Turn off" buttons made the current state something
-				// you had to infer from which button was showing.
-				<button
-					type="button"
-					role="switch"
-					aria-checked={injected}
-					onClick={() =>
-						injected ? onClearInjected() : onSetInjected(selected)
-					}
-					title={
-						injected
-							? "Injected into every new terminal in this workspace — click to turn off"
+			{/* One control, two states: this is where injection is read AND
+			    changed, so it carries the green. Splitting it into separate
+			    "Inject" and "Turn off" buttons made the current state something
+			    you had to infer from which button was showing.
+
+			    Offered for an inherited Bundle too — the backend materialises a
+			    local row and the parent's values still resolve through
+			    inheritance, so a worktree can run `production` while its main
+			    worktree runs `dev`. */}
+			<button
+				type="button"
+				role="switch"
+				aria-checked={injected}
+				onClick={() => (injected ? onClearInjected() : onSetInjected(selected))}
+				title={
+					injected
+						? "Injected into every new terminal in this workspace — click to turn off"
+						: injectedName
+							? `Inject ${selected} into every new terminal in this workspace, instead of ${injectedName}`
 							: `Inject ${selected} into every new terminal in this workspace`
-					}
-					className="flex items-center transition-colors"
-					style={{
-						gap: 5,
-						padding: "3px 9px",
-						borderRadius: 999,
-						fontSize: 10.5,
-						fontWeight: 500,
-						cursor: "pointer",
-						color: injected ? "var(--success)" : "var(--fg-secondary)",
-						backgroundColor: injected
-							? "color-mix(in srgb, var(--success) 14%, transparent)"
-							: "transparent",
-						border: `1px solid ${
-							injected
-								? "color-mix(in srgb, var(--success) 40%, transparent)"
-								: "var(--border)"
-						}`,
-					}}
-				>
-					{injected ? <Zap size={10} /> : <ZapOff size={10} />}
-					{injected ? "Injected" : "Inject"}
-				</button>
-			)}
+				}
+				className="flex items-center transition-colors"
+				style={{
+					gap: 5,
+					padding: "3px 9px",
+					borderRadius: 999,
+					fontSize: 10.5,
+					fontWeight: 500,
+					cursor: "pointer",
+					color: injected ? "var(--success)" : "var(--fg-secondary)",
+					backgroundColor: injected
+						? "color-mix(in srgb, var(--success) 14%, transparent)"
+						: "transparent",
+					border: `1px solid ${
+						injected
+							? "color-mix(in srgb, var(--success) 40%, transparent)"
+							: "var(--border)"
+					}`,
+				}}
+			>
+				{injected ? <Zap size={10} /> : <ZapOff size={10} />}
+				{injected ? "Injected" : "Inject"}
+			</button>
 			{canDelete && (
 				<button
 					type="button"

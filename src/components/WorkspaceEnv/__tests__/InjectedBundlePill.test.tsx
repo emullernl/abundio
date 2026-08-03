@@ -54,6 +54,7 @@ describe("InjectedBundlePill", () => {
 		useWorkspaceEnvStore.setState({
 			injectedSummary: {},
 			dirtyInjected: new Set<string>(),
+			keyError: null,
 		});
 	});
 
@@ -100,6 +101,15 @@ describe("InjectedBundlePill", () => {
 		setSummary({ bundle: "production", varCount: 2, inherited: false });
 		render();
 		expect(container.querySelector("button")).toBeNull();
+	});
+
+	// The summary counts rows without opening them; the spawn path skips rows it
+	// cannot open. A locked keychain therefore means a plain environment.
+	it("renders nothing when the credential store is unavailable", () => {
+		setSummary({ bundle: "production", varCount: 4, inherited: false });
+		useWorkspaceEnvStore.setState({ keyError: "keychain locked" });
+		render();
+		expect(pill()).toBeNull();
 	});
 
 	it("says so in the tooltip when the bundle is inherited", () => {

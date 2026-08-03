@@ -91,9 +91,9 @@ describe("BundleTabs injection toggle", () => {
 		expect(tab?.querySelector("svg")).toBeNull();
 	});
 
-	// `set_injected` resolves the bundle on THIS workspace, so a bundle that
-	// exists only on the main worktree cannot be injected from here.
-	it("offers no toggle for an inherited, non-injected bundle", () => {
+	// A worktree may run `production` while its main worktree runs `dev`: the
+	// backend materialises a local row and inheritance supplies the values.
+	it("can inject a bundle that exists only on the main worktree", () => {
 		render(
 			[
 				bundle("default", { injected: true }),
@@ -101,7 +101,18 @@ describe("BundleTabs injection toggle", () => {
 			],
 			"production",
 		);
-		expect(toggle()).toBeNull();
+		click(toggle());
+		expect(handlers.onSetInjected).toHaveBeenCalledWith("production");
+	});
+
+	// With no per-tab badge, the off-state title is the only thing naming what
+	// IS injected while an on-demand bundle is selected.
+	it("names the injected bundle in the off-state title", () => {
+		render(
+			[bundle("dev", { injected: true }), bundle("production")],
+			"production",
+		);
+		expect(toggle()?.getAttribute("title")).toContain("instead of dev");
 	});
 
 	// A worktree CAN opt out of the environment it inherits.

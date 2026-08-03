@@ -818,8 +818,16 @@ export const env = {
 	renameBundle: (workspaceId: string, from: string, to: string) =>
 		invoke<void>("env_bundle_rename", { workspaceId, from, to }),
 
-	setInjected: (workspaceId: string, name: string) =>
-		invoke<void>("env_bundle_set_injected", { workspaceId, name }),
+	setInjected: (
+		workspaceId: string,
+		inheritFromWorkspaceId: string | null,
+		name: string,
+	) =>
+		invoke<void>("env_bundle_set_injected", {
+			workspaceId,
+			inheritFromWorkspaceId,
+			name,
+		}),
 
 	/** Turn injection off: no bundle is injected until one is chosen again.
 	 *  Stored as a flag on the workspace, so a linked worktree stays opted out

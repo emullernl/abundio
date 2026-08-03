@@ -46,6 +46,20 @@ production secrets. The flag is checked before inheritance, cleared only by an
 explicit *Inject*, and deliberately not cleared by creating a Bundle: creating
 one is not choosing an environment.
 
+Dropping `merged_bundles`' old "first bundle wins if nothing is flagged"
+fallback also changed behaviour for Workspaces that never opted out, on existing
+databases that migration 014 does not backfill. A linked worktree that added its
+own Bundle while inheriting an injected parent holds rows with `injected = 0`
+(`create_own_bundle`); if that parent later stops being resolvable — its
+Workspace closed or removed, so `inheritSourceWorkspaceId` returns null — the
+fallback used to inject the worktree's first Bundle. It now injects nothing.
+That is the better default (injecting a Bundle nobody chose is worse than
+injecting none), it is visible — the pill disappears and the dialog says "No
+bundle is injected" — and it is pinned by
+`own_bundles_with_no_flag_inject_nothing_without_a_parent`. No backfill: the
+distinction between "opted out" and "never had a flag" is not worth writing a
+flag nobody asked for.
+
 ## Threat model, stated precisely
 
 **Protected:** data at rest. A copy of `abundio.db`, a stray backup, or a Time

@@ -343,16 +343,32 @@ impl EnvVarStore {
     /// Mark a Bundle injected, clearing the flag on its siblings in the same
     /// transaction. The partial unique index would reject the write otherwise.
     ///
-    /// Creates the row when the Workspace does not have one yet: the list shows
-    /// a placeholder `default` before the first variable exists, and injecting
-    /// what you can see must work. Variables of an inherited Bundle of the same
-    /// name still resolve through inheritance.
-    pub fn set_injected(&self, workspace_id: &str, name: &str) -> Result<(), AbundioError> {
+    /// Creates the row for a Bundle the Workspace can *see* but does not own —
+    /// an inherited one, or the placeholder `default` shown before the first
+    /// variable exists. Injecting what is on screen must work, and the Bundle's
+    /// variables still resolve through inheritance.
+    ///
+    /// A name visible nowhere stays a `NotFound`. Materialising those too would
+    /// turn a stale UI (a Bundle deleted or renamed in another window) into
+    /// "created an empty bundle and injected it" — the Workspace would switch to
+    /// an empty environment with nothing on screen saying so.
+    pub fn set_injected(
+        &self,
+        workspace_id: &str,
+        inherit_from: Option<&str>,
+        name: &str,
+    ) -> Result<(), AbundioError> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let row = match find_bundle(&tx, workspace_id, name)? {
             Some(row) => row,
-            None => create_own_bundle(&tx, workspace_id, None, name)?,
+            None if merged_bundles(&tx, workspace_id, inherit_from)?
+                .iter()
+                .any(|b| b.name == name) =>
+            {
+                create_own_bundle(&tx, workspace_id, inherit_from, name)?
+            }
+            None => return Err(AbundioError::NotFound(format!("bundle {name}"))),
         };
         tx.execute(
             "UPDATE workspace_env_bundles SET injected = 0, updated_at = unixepoch()
@@ -1036,9 +1052,14 @@ pub fn env_bundle_rename(
 pub fn env_bundle_set_injected(
     store: State<EnvVarStore>,
     workspace_id: String,
+    inherit_from_workspace_id: Option<String>,
     name: String,
 ) -> Result<(), AbundioError> {
-    store.set_injected(&workspace_id, &name)
+    store.set_injected(
+        &workspace_id,
+        inherit_from_workspace_id.as_deref(),
+        &name,
+    )
 }
 
 /// Turn injection off for this Workspace — no Bundle is injected until one is
@@ -1284,7 +1305,7 @@ mod tests {
         store.upsert(&key, WS, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
         store.upsert(&key, WS, None, "production", "PROD", "2").unwrap();
 
-        store.set_injected(WS, "production").unwrap();
+        store.set_injected(WS, None, "production").unwrap();
         let pairs = store.resolve_for_spawn(&key, WS, None).unwrap();
         let names: Vec<_> = pairs.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["PROD"]);
@@ -1346,7 +1367,7 @@ mod tests {
         let result = store.list(WS, None, None, Some(&key)).unwrap();
         assert_eq!(result.bundles.iter().filter(|b| b.injected).count(), 0);
         // ...and the materialised row can be injected again.
-        store.set_injected(WS, DEFAULT_BUNDLE).unwrap();
+        store.set_injected(WS, None, DEFAULT_BUNDLE).unwrap();
         let after = store.list(WS, None, None, Some(&key)).unwrap();
         assert!(after.bundles.iter().any(|b| b.injected));
     }
@@ -1373,7 +1394,7 @@ mod tests {
         store.upsert(&key, PARENT, None, "production", "PROD", "2").unwrap();
         store.clear_injected(WS).unwrap();
 
-        store.set_injected(PARENT, "production").unwrap();
+        store.set_injected(PARENT, None, "production").unwrap();
 
         assert!(
             store
@@ -1388,6 +1409,60 @@ mod tests {
             store.resolve_for_spawn(&key, PARENT, None).unwrap()[0].0,
             "PROD"
         );
+    }
+
+    // A worktree may inject a Bundle it only inherits: the row is materialised
+    // locally and the parent's values still resolve through inheritance.
+    #[test]
+    fn injecting_an_inherited_only_bundle_materialises_it() {
+        let (store, key) = test_store();
+        store.upsert(&key, PARENT, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
+        store.upsert(&key, PARENT, None, "production", "PROD", "2").unwrap();
+
+        store.set_injected(WS, Some(PARENT), "production").unwrap();
+
+        let pairs = store.resolve_for_spawn(&key, WS, Some(PARENT)).unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "PROD");
+        // The parent keeps injecting its own choice.
+        assert_eq!(
+            store.resolve_for_spawn(&key, PARENT, None).unwrap()[0].0,
+            "DEV"
+        );
+    }
+
+    // A stale UI must not silently create an empty bundle and inject it.
+    #[test]
+    fn injecting_a_name_nobody_can_see_is_not_found() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+
+        assert!(matches!(
+            store.set_injected(WS, None, "deleted-elsewhere"),
+            Err(AbundioError::NotFound(_))
+        ));
+        // The original injection is untouched.
+        assert_eq!(store.resolve_for_spawn(&key, WS, None).unwrap().len(), 1);
+    }
+
+    // Pins the behaviour change from dropping merged_bundles' first-bundle
+    // fallback: own rows with no injected flag (written while inheriting an
+    // injected parent) inject NOTHING once the parent is out of the picture,
+    // rather than silently promoting a Bundle nobody chose. See ADR-0024.
+    #[test]
+    fn own_bundles_with_no_flag_inject_nothing_without_a_parent() {
+        let (store, key) = test_store();
+        store.upsert(&key, PARENT, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
+        // Created while inheriting the parent's injected bundle, so injected = 0.
+        store.upsert(&key, WS, Some(PARENT), "local", "LOCAL", "2").unwrap();
+        assert_eq!(
+            store.resolve_for_spawn(&key, WS, Some(PARENT)).unwrap()[0].0,
+            "DEV"
+        );
+
+        // Parent gone (workspace closed / removed): inherit_from resolves to None.
+        assert!(store.resolve_for_spawn(&key, WS, None).unwrap().is_empty());
+        assert!(store.injected_summary(WS, None).unwrap().is_none());
     }
 
     // Creating a bundle is not "choose an environment" — only Inject is.
@@ -1409,7 +1484,7 @@ mod tests {
         store.upsert(&key, WS, None, DEFAULT_BUNDLE, "DEV", "1").unwrap();
         store.clear_injected(WS).unwrap();
 
-        store.set_injected(WS, DEFAULT_BUNDLE).unwrap();
+        store.set_injected(WS, None, DEFAULT_BUNDLE).unwrap();
 
         let pairs = store.resolve_for_spawn(&key, WS, None).unwrap();
         assert_eq!(pairs.len(), 1);
@@ -1508,7 +1583,7 @@ mod tests {
         let (store, key) = test_store();
         // The parent's injected bundle is deliberately NOT called "default".
         store.upsert(&key, PARENT, None, "production", "A", "parent").unwrap();
-        store.set_injected(PARENT, "production").unwrap();
+        store.set_injected(PARENT, None, "production").unwrap();
 
         // Before the override the worktree sees the parent's variables.
         let before = store.resolve_for_spawn(&key, WS, Some(PARENT)).unwrap();
@@ -1833,7 +1908,7 @@ mod tests {
         let (store, key) = test_store();
         store.upsert(&key, WS, None, "production", "A", "1").unwrap();
         store.create_bundle(WS, None, "other").unwrap();
-        store.set_injected(WS, "other").unwrap();
+        store.set_injected(WS, None, "other").unwrap();
         assert!(
             !store.has_injected_vars(WS, None).unwrap(),
             "only the injected bundle's contents count"

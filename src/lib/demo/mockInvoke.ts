@@ -281,9 +281,9 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				bytesBudget: 65536,
 			};
 		case "env_injected_summary":
-			// The demo bundle is empty, so nothing is actually injected — the
-			// status pill correctly stays hidden.
-			return null;
+			// Matches the `env_list` mock above: the demo bundle IS injected, it
+			// is just empty — so the status pill correctly stays hidden.
+			return { bundle: "default", varCount: 0, inherited: false };
 		case "env_bundle_clear_injected":
 			return undefined;
 		case "env_retry_key":

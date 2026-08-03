@@ -39,6 +39,9 @@ export function InjectedBundlePill({ workspaceId }: Props) {
 
 	const summary = useWorkspaceEnvStore((s) => s.injectedSummary[workspaceId]);
 	const loadSummary = useWorkspaceEnvStore((s) => s.loadInjectedSummary);
+	// Set by the app-wide `env-vars-unavailable` listener, so this is known
+	// whether or not the settings dialog was ever opened.
+	const keyError = useWorkspaceEnvStore((s) => s.keyError);
 
 	useEffect(() => {
 		loadSummary(workspaceId, inheritFromId);
@@ -47,6 +50,10 @@ export function InjectedBundlePill({ workspaceId }: Props) {
 	// Nothing injected, or an injected Bundle with no variables in it: in both
 	// cases a terminal starts with a plain environment.
 	if (!summary || summary.varCount === 0) return null;
+	// The summary counts rows without opening them, but the spawn path SKIPS
+	// rows it cannot open — so a locked or missing credential store means every
+	// new terminal gets a plain environment. Green must not survive that.
+	if (keyError) return null;
 
 	const plural = summary.varCount === 1 ? "" : "s";
 
