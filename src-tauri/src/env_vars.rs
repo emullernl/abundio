@@ -160,15 +160,14 @@ impl EnvVarStore {
         // Budget is measured against the injected Bundle as it will actually be
         // resolved at spawn, inheritance included — that is what lands in the
         // environment block.
-        let injected_name = bundles
-            .iter()
-            .find(|b| b.injected)
-            .map(|b| b.name.clone())
-            .unwrap_or_else(|| DEFAULT_BUNDLE.to_string());
-        let injected_vars = if injected_name == selected {
-            vars.clone()
-        } else {
-            merged_vars(&conn, workspace_id, inherit_from, &injected_name, key)?
+        // With injection off nothing lands in any environment block, so the
+        // budget is zero — not `default`'s size, which would raise an
+        // over-budget banner about a Bundle that is neither selected nor
+        // injected.
+        let injected_vars = match bundles.iter().find(|b| b.injected) {
+            None => Vec::new(),
+            Some(b) if b.name == selected => vars.clone(),
+            Some(b) => merged_vars(&conn, workspace_id, inherit_from, &b.name, key)?,
         };
         // Must match what `build_env_injection` will actually consume, or the
         // add form would accept a variable the spawn path then drops.
@@ -390,6 +389,12 @@ impl EnvVarStore {
                     insert_bundle(&tx, workspace_id, &row.name, false)?;
                 }
             }
+        } else if bundles_of(&tx, workspace_id)?.is_empty() {
+            // A Workspace with no rows yet is *shown* the placeholder `default`
+            // as injected — which is what its first variable would create. The
+            // UPDATE above matches nothing there, so without materialising the
+            // row the toggle would flip straight back to "Injected".
+            insert_bundle(&tx, workspace_id, DEFAULT_BUNDLE, false)?;
         }
         tx.commit()?;
         Ok(())
@@ -1303,6 +1308,35 @@ mod tests {
             store.resolve_bundle(&key, WS, Some(PARENT), DEFAULT_BUNDLE).unwrap().len(),
             1
         );
+    }
+
+    // The list shows a placeholder `default` as injected before any variable
+    // exists. Turning that off must stick rather than flipping straight back.
+    #[test]
+    fn clear_injected_sticks_for_a_workspace_with_no_bundles_yet() {
+        let (store, key) = test_store();
+
+        store.clear_injected(WS, None).unwrap();
+
+        let result = store.list(WS, None, None, Some(&key)).unwrap();
+        assert_eq!(result.bundles.iter().filter(|b| b.injected).count(), 0);
+        // ...and the materialised row can be injected again.
+        store.set_injected(WS, DEFAULT_BUNDLE).unwrap();
+        let after = store.list(WS, None, None, Some(&key)).unwrap();
+        assert!(after.bundles.iter().any(|b| b.injected));
+    }
+
+    #[test]
+    fn budget_is_zero_when_nothing_is_injected() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "A", "1").unwrap();
+        store.upsert(&key, WS, None, "production", "B", "2").unwrap();
+        store.clear_injected(WS, None).unwrap();
+
+        // Selecting an on-demand bundle must not measure `default` against the
+        // budget — nothing is going into any environment block.
+        let result = store.list(WS, None, Some("production"), Some(&key)).unwrap();
+        assert_eq!(result.bytes_used, 0);
     }
 
     #[test]

@@ -130,7 +130,10 @@ export function EnvVarsSection({
 				}
 			/>
 
-			{!store.bundles.some((b) => b.injected) && (
+			{/* Gated on a loaded list: the dialog resets the store on close, so an
+			    ungated notice would claim "plain environment" for a frame every
+			    time the tab opens, and after a failed load. */}
+			{store.bundles.length > 0 && !store.bundles.some((b) => b.injected) && (
 				// Without this the row simply loses its bolt, which reads as a
 				// rendering gap rather than a state. Say it outright.
 				<span style={{ fontSize: 11, color: "var(--fg-secondary)" }}>
