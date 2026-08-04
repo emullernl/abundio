@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Titlebar } from "./components/Titlebar";
 import { profiles as profilesApi } from "./lib/ipc";
+import { broadcastSliceOf } from "./lib/settingsBroadcast";
 import { useProfileStore } from "./stores/profileStore";
 import { useSettingsStore } from "./stores/settingsStore";
 
@@ -14,10 +15,9 @@ import { useSettingsStore } from "./stores/settingsStore";
  * window's title bar uses the same Overlay chrome as profile windows so the
  * native traffic lights float over a `bg-secondary` strip.
  *
- * Cross-window settings sync (theme, font, agents) is handled by the
- * `storage` event listener registered at the bottom of this file — Tauri
- * webviews share the same `localStorage` origin, so changes here propagate
- * to every other open window's settingsStore automatically.
+ * Cross-window settings sync is handled by `setupCrossWindowSync` at the bottom
+ * of this file — see its comment for why it rides Tauri events rather than the
+ * browser `storage` event.
  */
 export function SettingsApp() {
 	// Load the profile list so the Profiles section in SettingsPanel has
@@ -105,7 +105,7 @@ export function SettingsApp() {
  *
  * The bridge is SYMMETRIC — every window both publishes and applies changes:
  * - Each window subscribes to its own zustand store and, on every change to the
- *   shared appearance slice, emits `settings-store-changed` to all windows.
+ *   broadcast slice, emits `settings-store-changed` to all windows.
  * - Each window listens for that event, writes the payload into THIS window's
  *   localStorage in the shape zustand's `persist` middleware expects (other
  *   windows can't read our localStorage — Tauri 2 isolates it per WKWebView on
@@ -136,43 +136,15 @@ let crossWindowSyncInstalled = false;
 export function setupCrossWindowSync(): void {
 	if (typeof window === "undefined" || crossWindowSyncInstalled) return;
 	crossWindowSyncInstalled = true;
-	type SettingsSlice = {
-		terminalFontFamily: unknown;
-		uiFontFamily: unknown;
-		fontSize: unknown;
-		uiFontSize: unknown;
-		theme: unknown;
-		agents: unknown;
-		agentHooksEnabled: unknown;
-		gpuAccelerationEnabled: unknown;
-		smartImageDrop: unknown;
-		terminalScrollback: unknown;
-		markdownPreviewColorMode: unknown;
-		prPollEnabled: unknown;
-		prPollIntervalMinutes: unknown;
-		skippedUpdateVersion: unknown;
-		updateSnoozedUntil: unknown;
-	};
-	const sliceOf = (s: Record<string, unknown>): SettingsSlice => ({
-		terminalFontFamily: s.terminalFontFamily,
-		uiFontFamily: s.uiFontFamily,
-		fontSize: s.fontSize,
-		uiFontSize: s.uiFontSize,
-		theme: s.theme,
-		agents: s.agents,
-		agentHooksEnabled: s.agentHooksEnabled,
-		gpuAccelerationEnabled: s.gpuAccelerationEnabled,
-		smartImageDrop: s.smartImageDrop,
-		terminalScrollback: s.terminalScrollback,
-		markdownPreviewColorMode: s.markdownPreviewColorMode,
-		prPollEnabled: s.prPollEnabled,
-		prPollIntervalMinutes: s.prPollIntervalMinutes,
-		// Update suppression: skipping/snoozing in one Window must reach the
-		// others (the Rust check emits the prompt to the focused Window only),
-		// and must survive the localStorage write below. See ADR-0014.
-		skippedUpdateVersion: s.skippedUpdateVersion,
-		updateSnoozedUntil: s.updateSnoozedUntil,
-	});
+	// The slice is DERIVED from the store's persisted keys minus an explicit
+	// denylist (see lib/settingsBroadcast.ts) rather than hand-listed here. A
+	// hand-list fails closed — three settings silently stopped propagating
+	// because nobody remembered to add them — whereas a denylist fails open.
+	//
+	// Update suppression (`skippedUpdateVersion` / `updateSnoozedUntil`) rides
+	// along: skipping or snoozing in one Window must reach the others, since the
+	// Rust check emits the prompt to the focused Window only. See ADR-0014.
+	const sliceOf = broadcastSliceOf;
 	// Fully order-independent serialization: sorts object keys recursively so a
 	// payload that round-tripped through serde_json (alphabetized keys, incl.
 	// inside agent objects) fingerprints identically to the locally-built slice.
@@ -189,7 +161,7 @@ export function setupCrossWindowSync(): void {
 		}
 		return JSON.stringify(value) ?? "null";
 	};
-	const canonical = (slice: SettingsSlice) => stableStringify(slice);
+	const canonical = (slice: Record<string, unknown>) => stableStringify(slice);
 
 	let lastSerialized = "";
 

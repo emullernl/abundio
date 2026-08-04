@@ -98,6 +98,47 @@ interface SettingsState {
 	setPrPollIntervalMinutes: (minutes: number) => void;
 }
 
+/**
+ * Every key `persist` writes to localStorage — the single source of truth for
+ * `partialize`.
+ *
+ * Exported because the cross-window broadcast derives its payload from this
+ * list minus a small denylist (`NOT_BROADCAST` in `lib/settingsBroadcast.ts`).
+ * One list means a newly-added global setting propagates to other Windows *by
+ * default* instead of silently not propagating — the failure mode that lost
+ * `shellPath`, `autoCheckUpdatesEnabled` and `editorWordWrap`. See ADR-0008.
+ */
+export const PERSISTED_KEYS = [
+	"terminalFontFamily",
+	"uiFontFamily",
+	"fontSize",
+	"uiFontSize",
+	"theme",
+	"sidebarWidth",
+	"rightSidebarWidth",
+	"rightSidebarPrRatio",
+	"debugActivityMeter",
+	"activityByteThreshold",
+	"terminalScrollback",
+	"shellPath",
+	"agents",
+	"lastOpenedDevEnvId",
+	"editorWordWrap",
+	"markdownPreviewAutoOpen",
+	"markdownPreviewColorMode",
+	"agentHooksEnabled",
+	"gpuAccelerationEnabled",
+	"smartImageDrop",
+	"autoCheckUpdatesEnabled",
+	"skippedUpdateVersion",
+	"updateSnoozedUntil",
+	"prPollEnabled",
+	"prPollIntervalMinutes",
+] as const satisfies readonly (keyof SettingsState)[];
+
+export type PersistedSettingKey = (typeof PERSISTED_KEYS)[number];
+export type PersistedSettings = Pick<SettingsState, PersistedSettingKey>;
+
 // Read persisted settings from localStorage synchronously so the store's
 // initial state matches the user's chosen values from the very first render.
 // Zustand `persist` rehydrates asynchronously (microtask), and any consumer
@@ -529,33 +570,10 @@ export const useSettingsStore = create<SettingsState>()(
 				}
 				return state;
 			},
-			partialize: (state) => ({
-				terminalFontFamily: state.terminalFontFamily,
-				uiFontFamily: state.uiFontFamily,
-				fontSize: state.fontSize,
-				uiFontSize: state.uiFontSize,
-				theme: state.theme,
-				sidebarWidth: state.sidebarWidth,
-				rightSidebarWidth: state.rightSidebarWidth,
-				rightSidebarPrRatio: state.rightSidebarPrRatio,
-				debugActivityMeter: state.debugActivityMeter,
-				activityByteThreshold: state.activityByteThreshold,
-				terminalScrollback: state.terminalScrollback,
-				shellPath: state.shellPath,
-				agents: state.agents,
-				lastOpenedDevEnvId: state.lastOpenedDevEnvId,
-				editorWordWrap: state.editorWordWrap,
-				markdownPreviewAutoOpen: state.markdownPreviewAutoOpen,
-				markdownPreviewColorMode: state.markdownPreviewColorMode,
-				agentHooksEnabled: state.agentHooksEnabled,
-				gpuAccelerationEnabled: state.gpuAccelerationEnabled,
-				smartImageDrop: state.smartImageDrop,
-				autoCheckUpdatesEnabled: state.autoCheckUpdatesEnabled,
-				skippedUpdateVersion: state.skippedUpdateVersion,
-				updateSnoozedUntil: state.updateSnoozedUntil,
-				prPollEnabled: state.prPollEnabled,
-				prPollIntervalMinutes: state.prPollIntervalMinutes,
-			}),
+			partialize: (state) =>
+				Object.fromEntries(
+					PERSISTED_KEYS.map((key) => [key, state[key]]),
+				) as PersistedSettings,
 			// Merge persisted state into current state. Applied during rehydration
 			// so new builtins (agents, etc.) added in app updates are always present
 			// even when localStorage has an older snapshot without them.
