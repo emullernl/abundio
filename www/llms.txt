@@ -10,6 +10,7 @@
 - **Editor & file explorer**: A Monaco-powered editor, a tree-view explorer with Nerd Font icons, image preview, and clickable file links straight from terminal output.
 - **Git, GitHub & worktrees**: A changed-files panel, branch selector, inline diff viewer, and a GitHub PR panel for reviewing open pull requests. Worktrees of a repo are grouped in the sidebar — create or remove them in-app on any branch, with optional per-repo setup commands run automatically.
 - **Workspaces & profiles**: Bind workspaces to project folders, persist pane layouts and scrollback across sessions, and group projects into named profiles.
+- **Encrypted environment variables**: Per-workspace environment bundles sealed with AES-256-GCM under a key in your OS keychain. One bundle is injected into every terminal in the workspace; the rest reach a single command through abundio-env run. Import an existing .env file, then delete it off disk.
 - **Markdown & notes**: Live side-by-side markdown preview with Mermaid diagrams, plus a per-workspace notes editor for capturing ideas and context.
 - **Full-text search**: Search across every file in the project with cancellation support, then jump straight to files and definitions from the results.
 
