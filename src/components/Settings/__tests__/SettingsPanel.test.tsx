@@ -61,6 +61,12 @@ describe("SettingsPanel nav rail", () => {
 		return Array.from(nav.querySelectorAll("button"));
 	}
 
+	/** Resolved via aria-current, so a cosmetic restyle of the rail can't
+	 *  silently break the deep-link regression tests below. */
+	function activeLabel(): string | null | undefined {
+		return container.querySelector('nav [aria-current="page"]')?.textContent;
+	}
+
 	beforeEach(() => {
 		window.history.replaceState(null, "", "/?settings");
 		container = document.createElement("div");
@@ -95,27 +101,18 @@ describe("SettingsPanel nav rail", () => {
 	it("opens on the deep-linked section and then clears it from the URL", () => {
 		window.history.replaceState(null, "", "/?settings&section=profiles");
 		render();
-		const active = navButtons().find(
-			(b) => b.style.backgroundColor === "var(--bg-tertiary)",
-		);
-		expect(active?.textContent).toBe("Profiles");
+		expect(activeLabel()).toBe("Profiles");
 		expect(window.location.search).not.toContain("section=");
 	});
 
 	it("resolves a legacy section id from a stale URL", () => {
 		window.history.replaceState(null, "", "/?settings&section=shell");
 		render();
-		const active = navButtons().find(
-			(b) => b.style.backgroundColor === "var(--bg-tertiary)",
-		);
-		expect(active?.textContent).toBe("Terminal");
+		expect(activeLabel()).toBe("Terminal");
 	});
 
 	it("defaults to Theme when no section is requested", () => {
 		render();
-		const active = navButtons().find(
-			(b) => b.style.backgroundColor === "var(--bg-tertiary)",
-		);
-		expect(active?.textContent).toBe("Theme");
+		expect(activeLabel()).toBe("Theme");
 	});
 });

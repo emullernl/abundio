@@ -51,12 +51,17 @@ describe("settingsBroadcast", () => {
 		);
 	});
 
-	// The three regressions that motivated deriving the slice: each was editable
-	// in the Settings window but never reached the other Windows.
+	// The regressions that motivated deriving the slice: each is a global setting
+	// the hand-written list had forgotten, so it never left its own Window.
+	// `debugActivityMeter` matters most — its only consumer is TerminalSlot, and
+	// the Settings window owns no terminals, so its new Diagnostics toggle would
+	// be a permanent no-op without this.
 	it.each([
 		"shellPath",
 		"autoCheckUpdatesEnabled",
 		"editorWordWrap",
+		"debugActivityMeter",
+		"markdownPreviewAutoOpen",
 	])("includes %s in the broadcast slice", (key) => {
 		expect(Object.keys(broadcastSliceOf(persistedState()))).toContain(key);
 	});
@@ -66,6 +71,16 @@ describe("settingsBroadcast", () => {
 		for (const denied of NOT_BROADCAST) {
 			expect(keys).not.toContain(denied);
 		}
+	});
+
+	it("survives an emit round trip for a present-but-undefined key", () => {
+		// `emit` JSON-serialises, dropping undefined values. If the two sides
+		// projected differently the self-echo guard would never match and the
+		// windows would emit at each other forever.
+		const published = broadcastSliceOf({ theme: undefined });
+		const received = JSON.parse(JSON.stringify(published));
+		expect(broadcastSliceOf(received)).toEqual(published);
+		expect(published).toEqual({ theme: null });
 	});
 
 	it("omits absent keys rather than emitting them as undefined", () => {

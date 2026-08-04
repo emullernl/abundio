@@ -47,7 +47,7 @@ export function TerminalSection() {
 					description="When you drop an image onto a running agent, paste it via the clipboard so the agent recognises it — instead of inserting the file path. Other dropped files always insert their path."
 				/>
 			</div>
-			<div className="flex flex-col flex-shrink-0" style={{ minHeight: 200 }}>
+			<div className="flex flex-col flex-shrink-0" style={{ height: 200 }}>
 				<SectionLabel>Default Shell</SectionLabel>
 				<p
 					style={{

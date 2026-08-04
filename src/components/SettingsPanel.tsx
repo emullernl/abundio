@@ -66,10 +66,17 @@ export function SettingsPanel({ onClose }: Props) {
 	// back. `?settings` itself is decorative — main.tsx branches on the window
 	// label, not the query string.
 	useEffect(() => {
-		const url = new URL(window.location.href);
-		if (url.searchParams.has("section")) {
-			url.searchParams.delete("section");
-			window.history.replaceState(null, "", url.toString());
+		try {
+			const url = new URL(window.location.href);
+			if (url.searchParams.has("section")) {
+				url.searchParams.delete("section");
+				window.history.replaceState(null, "", url.toString());
+			}
+		} catch {
+			// Custom-scheme webviews (tauri://localhost) can reject the History
+			// API outright. SettingsApp is mounted without an ErrorBoundary, so an
+			// escaping throw would blank the window — and the section has already
+			// been consumed into state, making the strip pure nicety.
 		}
 	}, []);
 

@@ -89,17 +89,22 @@ export function FontPicker({
 			.map(({ font }) => font);
 	}, [fonts, query]);
 
-	// Scroll selected into view once the font list is populated
+	// Scroll the selected font into view once the list is populated.
+	//
+	// Set `scrollTop` directly rather than calling `scrollIntoView`: that scrolls
+	// EVERY scrollable ancestor, and two pickers now share the Fonts page's
+	// scroller. Each would centre its own selected row in the page — the terminal
+	// list synchronously, the interface list whenever `listSystemFonts()`
+	// resolves — leaving the page parked mid-list. This keeps it local.
 	const hasScrolled = useRef(false);
 	useEffect(() => {
-		if (!listRef.current || filtered.length === 0 || hasScrolled.current)
-			return;
+		const list = listRef.current;
+		if (!list || filtered.length === 0 || hasScrolled.current) return;
 		hasScrolled.current = true;
 		const idx = filtered.findIndex((f) => f.name === selectedFont);
 		if (idx > 0) {
-			(
-				listRef.current.children[idx] as HTMLElement | undefined
-			)?.scrollIntoView({ block: "center" });
+			const row = list.children[idx] as HTMLElement | undefined;
+			if (row) list.scrollTop = row.offsetTop - list.clientHeight / 2;
 		}
 	}, [filtered, selectedFont]);
 

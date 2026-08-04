@@ -16,6 +16,13 @@ import {
  * - `activityByteThreshold` is written at high frequency by the meter overlay;
  * - `lastOpenedDevEnvId` is a write-on-use breadcrumb, not a preference.
  *
+ * `debugActivityMeter` deliberately is NOT here, despite sitting next to
+ * `activityByteThreshold` in the store. The threshold is a stream of writes from
+ * the overlay itself; the meter is one user-initiated boolean. More decisively,
+ * its only consumer is `Terminal/TerminalSlot.tsx` and the Settings window owns
+ * no terminals — deny it and the Terminal ▸ Diagnostics toggle becomes a no-op
+ * forever, which is the very failure this derivation exists to prevent.
+ *
  * Everything else in `PERSISTED_KEYS` propagates. Adding a setting to the store
  * requires no change here — that is the point.
  */
@@ -44,7 +51,13 @@ export function broadcastSliceOf(
 ): Record<string, unknown> {
 	const slice: Record<string, unknown> = {};
 	for (const key of BROADCAST_KEYS) {
-		if (key in source) slice[key] = source[key];
+		// `?? null` is load-bearing, not defensive: Tauri's `emit` JSON-serialises
+		// the payload, which DROPS undefined-valued keys. A key that is
+		// present-but-undefined would fingerprint as `"key":null` on the
+		// publishing side (stableStringify) and be absent on the receiving one, so
+		// the self-echo guard would never match and the two windows would emit at
+		// each other forever. Both sides must project identically.
+		if (key in source) slice[key] = source[key] ?? null;
 	}
 	return slice;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fonts as fontsIpc } from "../../lib/ipc";
 import {
 	type FontEntry,
@@ -10,6 +10,24 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { FontPicker } from "./FontPicker";
 import { FontSizeControl } from "./NumberSteppers";
 import { SectionLabel } from "./primitives";
+
+/**
+ * Cached at module scope, not in component state.
+ *
+ * `FontsSection` mounts and unmounts on every nav click, so a ref-guarded fetch
+ * would re-enumerate every system font each time the user visits the page —
+ * `font-kit`'s scan is the one IPC here that actually costs something. The
+ * promise outlives the component; the font list cannot change while the app
+ * runs, so there is nothing to invalidate.
+ */
+let systemFontsPromise: Promise<string[]> | null = null;
+function loadSystemFonts(): Promise<string[]> {
+	systemFontsPromise ??= fontsIpc.listSystemFonts().catch((err) => {
+		systemFontsPromise = null; // let a later visit retry
+		throw err;
+	});
+	return systemFontsPromise;
+}
 
 /**
  * Both typefaces on one page.
@@ -31,19 +49,20 @@ export function FontsSection() {
 	const setFontSize = useSettingsStore((s) => s.setFontSize);
 
 	const [systemFonts, setSystemFonts] = useState<FontEntry[]>([]);
-	const systemFontsLoaded = useRef(false);
 	useEffect(() => {
-		if (systemFontsLoaded.current) return;
-		fontsIpc
-			.listSystemFonts()
+		let cancelled = false;
+		loadSystemFonts()
 			.then((families) => {
+				if (cancelled) return;
 				const sorted = families.slice().sort((a, b) => a.localeCompare(b));
 				setSystemFonts(sorted.map(systemFontToEntry));
-				systemFontsLoaded.current = true;
 			})
 			.catch(() => {
-				setSystemFonts([]);
+				if (!cancelled) setSystemFonts([]);
 			});
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	// The one cross-page coupling: terminal font size lives here, but its effect
@@ -62,7 +81,7 @@ export function FontsSection() {
 				<SectionLabel>Interface Font Size</SectionLabel>
 				<FontSizeControl value={uiFontSize} onChange={setUiFontSize} />
 			</div>
-			<div className="flex flex-col flex-shrink-0" style={{ minHeight: 220 }}>
+			<div className="flex flex-col flex-shrink-0" style={{ height: 220 }}>
 				<SectionLabel>Interface Font</SectionLabel>
 				<FontPicker
 					fonts={systemFonts}
@@ -86,7 +105,7 @@ export function FontsSection() {
 					onChange={handleTerminalFontSizeChange}
 				/>
 			</div>
-			<div className="flex flex-col flex-shrink-0" style={{ minHeight: 220 }}>
+			<div className="flex flex-col flex-shrink-0" style={{ height: 220 }}>
 				<SectionLabel>Terminal Font</SectionLabel>
 				<FontPicker
 					fonts={TERMINAL_FONTS}

@@ -476,7 +476,11 @@ export function AgentsSection() {
 					}}
 					style={{ marginBottom: 18 }}
 					label="Agent status hooks"
-					description="Registers hooks in Claude Code, Codex, Gemini, Qwen, Copilot and OpenCode so the status dot reflects real agent state — including a distinct dot when an agent is waiting for your input. Edits each agent's global config. When off, those entries are removed and agent status falls back to detecting terminal activity, which can't tell when an agent is waiting for your input."
+					// Deliberately does not enumerate the supported agents: that list
+					// lives in Rust (`agent_hooks::SUPPORTED_AGENTS`) and had already
+					// drifted — Kimi and Grok were missing. The per-agent rows below
+					// are the authoritative, self-updating answer.
+					description="Registers hooks in every supported agent so its status icon reflects real agent state — including a distinct icon when an agent is waiting for your input. Edits each agent's global config; expand a row below to see exactly which file and which events. When off, those entries are removed and agent status falls back to detecting terminal activity, which can't tell when an agent is waiting for your input."
 				/>
 				<SectionLabel>Coding Agents</SectionLabel>
 				<p

@@ -106,7 +106,8 @@ interface SettingsState {
  * list minus a small denylist (`NOT_BROADCAST` in `lib/settingsBroadcast.ts`).
  * One list means a newly-added global setting propagates to other Windows *by
  * default* instead of silently not propagating — the failure mode that lost
- * `shellPath`, `autoCheckUpdatesEnabled` and `editorWordWrap`. See ADR-0008.
+ * `shellPath`, `autoCheckUpdatesEnabled`, `editorWordWrap`, `debugActivityMeter`
+ * and `markdownPreviewAutoOpen`. See ADR-0008.
  */
 export const PERSISTED_KEYS = [
 	"terminalFontFamily",

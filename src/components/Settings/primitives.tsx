@@ -79,6 +79,10 @@ export function NavItem({
 		<button
 			type="button"
 			onClick={onClick}
+			// The rail is two levels deep now; without this a screen reader gets
+			// eight sibling buttons under three plain-div captions and no signal
+			// for which page is open — the active state is otherwise colour alone.
+			aria-current={isActive ? "page" : undefined}
 			className="w-full text-left flex items-center gap-2.5 rounded-md transition-all"
 			style={{
 				padding: "7px 10px",
