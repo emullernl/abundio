@@ -69,12 +69,33 @@ pub fn compute_status_fingerprint_sync(cwd: &str) -> Result<String, AbundioError
     Ok(out)
 }
 
+/// The branch HEAD is on, as a shortname.
+///
+/// Three cases, and they are easy to conflate:
+/// - **On a branch** → `Some("main")`.
+/// - **Detached** (mid-rebase, checked-out tag, bisect) → `repo.head()`
+///   *succeeds*, resolving to the direct `HEAD` reference, and `shorthand()`
+///   yields the literal `"HEAD"`. So `Some("HEAD")` means detached, and
+///   nothing else does.
+/// - **Unborn** (fresh `git init`, no commits) → `repo.head()` errors, since
+///   there is no ref to resolve. The intended branch name is still recorded in
+///   HEAD's symbolic target, so recover it there rather than reporting the
+///   repo as detached — it isn't, it's just empty.
+fn head_branch_name(repo: &Repository) -> Option<String> {
+    if let Ok(head) = repo.head() {
+        return head.shorthand().map(String::from);
+    }
+    let target = repo.find_reference("HEAD").ok()?.symbolic_target()?.to_string();
+    let name = target.strip_prefix("refs/heads/")?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
+}
+
 pub fn compute_branch_info_sync(cwd: &str) -> Result<BranchInfo, AbundioError> {
     let repo = open_repo(cwd)?;
-    let current = match repo.head() {
-        Ok(h) => h.shorthand().unwrap_or("HEAD").to_string(),
-        Err(_) => "HEAD".to_string(), // detached or empty repo
-    };
+    let current = head_branch_name(&repo).unwrap_or_else(|| "HEAD".to_string());
     let default = detect_default_branch(&repo, cwd)?;
     Ok(BranchInfo {
         default_branch: default,
@@ -547,16 +568,16 @@ mod slug_tests {
     }
 }
 
-/// Current branch shortname, or None if HEAD can't be resolved (detached,
-/// unborn, or not a repo). Used by `compute_workspace_git_summary` to drive
-/// the sidebar branch chip.
+/// Current branch shortname, or None when this isn't a repo or HEAD can't be
+/// resolved at all. Used by `compute_workspace_git_summary` to drive the
+/// sidebar branch chip and the status bar segment.
+///
+/// Shares `head_branch_name` with `compute_branch_info_sync` so the two paths
+/// agree on every HEAD state — in particular an unborn HEAD reports its
+/// intended branch from both, rather than `"HEAD"` from one and `None` from
+/// the other.
 pub fn current_branch_only(cwd: &str) -> Option<String> {
-    Repository::discover(cwd)
-        .ok()?
-        .head()
-        .ok()?
-        .shorthand()
-        .map(String::from)
+    head_branch_name(&Repository::discover(cwd).ok()?)
 }
 
 /// Public wrapper around the cached default-branch detection. The cache
@@ -1034,6 +1055,40 @@ mod tests {
         let bits = worktree_summary_bits(path);
         assert!(bits.group_key.is_some());
         assert!(bits.is_main_worktree);
+    }
+
+    #[test]
+    fn unborn_head_reports_its_intended_branch_not_detached() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+
+        // `"HEAD"` is reserved for a genuinely detached HEAD. A fresh repo is
+        // on a branch that has no commits yet, so both paths must name it —
+        // otherwise the status bar labels a brand-new repo "detached".
+        let info = compute_branch_info_sync(path).expect("branch info for fresh repo");
+        assert_ne!(info.current_branch, "HEAD");
+        assert!(!info.current_branch.is_empty());
+        // Both sources must agree; they used to diverge here ("HEAD" vs None).
+        assert_eq!(current_branch_only(path), Some(info.current_branch));
+    }
+
+    #[test]
+    fn detached_head_reports_the_head_sentinel_from_both_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let tree = repo
+            .find_tree(repo.index().unwrap().write_tree().unwrap())
+            .unwrap();
+        let oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        repo.set_head_detached(oid).unwrap();
+
+        assert_eq!(compute_branch_info_sync(path).unwrap().current_branch, "HEAD");
+        assert_eq!(current_branch_only(path), Some("HEAD".to_string()));
     }
 
     #[test]

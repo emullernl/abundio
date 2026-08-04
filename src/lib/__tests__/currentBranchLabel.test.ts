@@ -1,5 +1,38 @@
 import { describe, expect, it } from "vitest";
-import { branchLabel } from "../currentBranchLabel";
+import { branchLabel, pickBranchSource } from "../currentBranchLabel";
+
+describe("pickBranchSource", () => {
+	it("yields the branch for a git workspace", () => {
+		expect(pickBranchSource({ isGitRepo: true, currentBranch: "main" })).toBe(
+			"main",
+		);
+	});
+
+	it("yields null for a workspace that is not a repo", () => {
+		expect(
+			pickBranchSource({ isGitRepo: false, currentBranch: null }),
+		).toBeNull();
+	});
+
+	it("ignores a stale branch left on a non-repo entry", () => {
+		expect(
+			pickBranchSource({ isGitRepo: false, currentBranch: "main" }),
+		).toBeNull();
+	});
+
+	it("yields null when the workspace has no entry yet", () => {
+		// Must not inherit the previously-active workspace's branch during a
+		// switch — the whole reason this reads the keyed store.
+		expect(pickBranchSource(undefined)).toBeNull();
+		expect(pickBranchSource(null)).toBeNull();
+	});
+
+	it("yields null for a git workspace whose branch is unknown", () => {
+		expect(
+			pickBranchSource({ isGitRepo: true, currentBranch: null }),
+		).toBeNull();
+	});
+});
 
 describe("branchLabel", () => {
 	it("returns null when there is nothing to show", () => {

@@ -1,7 +1,11 @@
 import { Cpu, MemoryStick, User } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAppMetrics } from "../hooks/useAppMetrics";
-import { type BranchLabel, branchLabel } from "../lib/currentBranchLabel";
+import {
+	type BranchLabel,
+	branchLabel,
+	pickBranchSource,
+} from "../lib/currentBranchLabel";
 import {
 	cpuColor,
 	cpuTooltip,
@@ -9,7 +13,6 @@ import {
 	memoryPercent,
 	memoryTooltip,
 } from "../lib/metricsFormat";
-import { useGitChangesStore } from "../stores/gitChangesStore";
 import { useProfileStore } from "../stores/profileStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -86,10 +89,10 @@ function StatusMetric({
 function BranchSegment({ label }: { label: BranchLabel }) {
 	return (
 		<span
-			className="flex items-center gap-1.5"
+			className="flex items-center gap-1.5 min-w-0"
 			title={label.kind === "detached" ? "Detached HEAD" : label.full}
 		>
-			<GitBranch size={12} />
+			<GitBranch size={12} className="flex-shrink-0" />
 			<span className="truncate" style={{ maxWidth: 180 }}>
 				{label.kind === "detached" ? (
 					<span style={{ fontStyle: "italic", opacity: 0.7 }}>detached</span>
@@ -127,14 +130,12 @@ export function StatusBar() {
 			: null,
 	);
 
-	// The scheduler-fed store is the freshest source but only fills once a
-	// bundle has landed; the batched per-workspace summary covers the cold-start
-	// gap so the segment never blanks on a workspace switch.
-	const liveBranch = useGitChangesStore((s) => s.currentBranch);
-	const cachedBranch = useWorkspaceGitStore((s) =>
-		workspace ? (s.byWorkspaceId[workspace.id]?.currentBranch ?? null) : null,
+	// Keyed per workspace — see `pickBranchSource` for why this is the only
+	// source read here.
+	const gitInfo = useWorkspaceGitStore((s) =>
+		workspace ? (s.byWorkspaceId[workspace.id] ?? null) : null,
 	);
-	const branch = branchLabel(liveBranch ?? cachedBranch);
+	const branch = branchLabel(pickBranchSource(gitInfo));
 
 	const appMetrics = useAppMetrics();
 
@@ -205,7 +206,11 @@ export function StatusBar() {
 		>
 			{workspace ? (
 				<>
-					<div className="flex items-center gap-3">
+					{/* `min-w-0` lets the branch segment's `truncate` actually engage: a
+					    flex item won't shrink below its content's min-content width
+					    without it, so the cluster would overrun the right one instead of
+					    ellipsising in a narrow window. */}
+					<div className="flex items-center gap-3 min-w-0 overflow-hidden">
 						<span
 							className="flex items-center gap-1.5 font-medium"
 							style={{ color: "var(--accent)" }}
