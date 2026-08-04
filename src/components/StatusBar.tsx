@@ -1,6 +1,7 @@
 import { Cpu, MemoryStick, User } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAppMetrics } from "../hooks/useAppMetrics";
+import { type BranchLabel, branchLabel } from "../lib/currentBranchLabel";
 import {
 	cpuColor,
 	cpuTooltip,
@@ -8,9 +9,11 @@ import {
 	memoryPercent,
 	memoryTooltip,
 } from "../lib/metricsFormat";
+import { useGitChangesStore } from "../stores/gitChangesStore";
 import { useProfileStore } from "../stores/profileStore";
+import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { Folder, Grid, Terminal } from "./Icons";
+import { Folder, GitBranch, Grid, Terminal } from "./Icons";
 import { InjectedBundlePill } from "./WorkspaceEnv/InjectedBundlePill";
 
 function shortenPath(fullPath: string): string {
@@ -72,6 +75,37 @@ function StatusMetric({
 	);
 }
 
+/**
+ * The Active workspace's current branch — read-only, like the rest of the bar.
+ *
+ * Font, size and colour are all inherited from the bar so the segment sits in
+ * the same voice as the folder and tab beside it; the only differentiation is
+ * the dimmed `feature/` style prefix, which lets the meaningful leaf win the
+ * eye on a long name.
+ */
+function BranchSegment({ label }: { label: BranchLabel }) {
+	return (
+		<span
+			className="flex items-center gap-1.5"
+			title={label.kind === "detached" ? "Detached HEAD" : label.full}
+		>
+			<GitBranch size={12} />
+			<span className="truncate" style={{ maxWidth: 180 }}>
+				{label.kind === "detached" ? (
+					<span style={{ fontStyle: "italic", opacity: 0.7 }}>detached</span>
+				) : (
+					<>
+						{label.prefix && (
+							<span style={{ opacity: 0.55 }}>{label.prefix}</span>
+						)}
+						{label.leaf}
+					</>
+				)}
+			</span>
+		</span>
+	);
+}
+
 export function StatusBar() {
 	const workspace = useWorkspaceStore((s) =>
 		s.activeWorkspaceId
@@ -92,6 +126,15 @@ export function StatusBar() {
 			? (s.profiles.find((p) => p.id === s.activeProfileId) ?? null)
 			: null,
 	);
+
+	// The scheduler-fed store is the freshest source but only fills once a
+	// bundle has landed; the batched per-workspace summary covers the cold-start
+	// gap so the segment never blanks on a workspace switch.
+	const liveBranch = useGitChangesStore((s) => s.currentBranch);
+	const cachedBranch = useWorkspaceGitStore((s) =>
+		workspace ? (s.byWorkspaceId[workspace.id]?.currentBranch ?? null) : null,
+	);
+	const branch = branchLabel(liveBranch ?? cachedBranch);
 
 	const appMetrics = useAppMetrics();
 
@@ -175,6 +218,12 @@ export function StatusBar() {
 							<Folder size={12} />
 							{shortenPath(workspace.rootFolder)}
 						</span>
+						{branch && (
+							<>
+								<Separator />
+								<BranchSegment label={branch} />
+							</>
+						)}
 						{tab && (
 							<>
 								<Separator />
