@@ -2,6 +2,11 @@ import { Cpu, MemoryStick, User } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAppMetrics } from "../hooks/useAppMetrics";
 import {
+	type BranchLabel,
+	branchLabel,
+	pickBranchSource,
+} from "../lib/currentBranchLabel";
+import {
 	cpuColor,
 	cpuTooltip,
 	formatPercent,
@@ -9,8 +14,9 @@ import {
 	memoryTooltip,
 } from "../lib/metricsFormat";
 import { useProfileStore } from "../stores/profileStore";
+import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { Folder, Grid, Terminal } from "./Icons";
+import { Folder, GitBranch, Grid, Terminal } from "./Icons";
 import { InjectedBundlePill } from "./WorkspaceEnv/InjectedBundlePill";
 
 function shortenPath(fullPath: string): string {
@@ -72,6 +78,37 @@ function StatusMetric({
 	);
 }
 
+/**
+ * The Active workspace's current branch — read-only, like the rest of the bar.
+ *
+ * Font, size and colour are all inherited from the bar so the segment sits in
+ * the same voice as the folder and tab beside it; the only differentiation is
+ * the dimmed `feature/` style prefix, which lets the meaningful leaf win the
+ * eye on a long name.
+ */
+function BranchSegment({ label }: { label: BranchLabel }) {
+	return (
+		<span
+			className="flex items-center gap-1.5 min-w-0"
+			title={label.kind === "detached" ? "Detached HEAD" : label.full}
+		>
+			<GitBranch size={12} className="flex-shrink-0" />
+			<span className="truncate" style={{ maxWidth: 180 }}>
+				{label.kind === "detached" ? (
+					<span style={{ fontStyle: "italic", opacity: 0.7 }}>detached</span>
+				) : (
+					<>
+						{label.prefix && (
+							<span style={{ opacity: 0.55 }}>{label.prefix}</span>
+						)}
+						{label.leaf}
+					</>
+				)}
+			</span>
+		</span>
+	);
+}
+
 export function StatusBar() {
 	const workspace = useWorkspaceStore((s) =>
 		s.activeWorkspaceId
@@ -92,6 +129,13 @@ export function StatusBar() {
 			? (s.profiles.find((p) => p.id === s.activeProfileId) ?? null)
 			: null,
 	);
+
+	// Keyed per workspace — see `pickBranchSource` for why this is the only
+	// source read here.
+	const gitInfo = useWorkspaceGitStore((s) =>
+		workspace ? (s.byWorkspaceId[workspace.id] ?? null) : null,
+	);
+	const branch = branchLabel(pickBranchSource(gitInfo));
 
 	const appMetrics = useAppMetrics();
 
@@ -162,7 +206,11 @@ export function StatusBar() {
 		>
 			{workspace ? (
 				<>
-					<div className="flex items-center gap-3">
+					{/* `min-w-0` lets the branch segment's `truncate` actually engage: a
+					    flex item won't shrink below its content's min-content width
+					    without it, so the cluster would overrun the right one instead of
+					    ellipsising in a narrow window. */}
+					<div className="flex items-center gap-3 min-w-0 overflow-hidden">
 						<span
 							className="flex items-center gap-1.5 font-medium"
 							style={{ color: "var(--accent)" }}
@@ -175,6 +223,12 @@ export function StatusBar() {
 							<Folder size={12} />
 							{shortenPath(workspace.rootFolder)}
 						</span>
+						{branch && (
+							<>
+								<Separator />
+								<BranchSegment label={branch} />
+							</>
+						)}
 						{tab && (
 							<>
 								<Separator />
