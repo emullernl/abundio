@@ -53,15 +53,43 @@ pub fn quit_confirm_message(total_opened: usize, window_count: usize) -> String 
     }
 }
 
+/// Whether a string is shaped like a settings section id.
+///
+/// Deliberately a *shape* check, not a list: the canonical set of ids lives in
+/// `src/lib/settingsSections.ts` and duplicating it here would give the
+/// vocabulary two owners that drift. Lowercase ASCII and `-` covers every id
+/// past and present (`theme`, `fonts`, `terminal-font`, …) while excluding the
+/// URL metacharacters that make interpolation unsafe.
+fn is_section_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 32
+        && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+}
+
 /// Opens the singleton settings window, or focuses it if already open. Pass
 /// `initial_section` to deep-link to a specific settings section (e.g.
-/// "profiles" for the "Manage Profiles…" menu item). When the window already
-/// exists, the section is set by emitting `settings-set-section` to it.
+/// "profiles" for the "Manage Profiles…" menu item).
+///
+/// Both delivery paths are live: when the window already exists the section
+/// arrives as a `settings-set-section` event; on a cold open it is encoded in
+/// the window URL and read back by `initialSection` in
+/// `src/lib/settingsSections.ts`, which also resolves ids from older builds.
+///
+/// A section id that is not vocabulary-shaped is dropped rather than passed on
+/// — see [`is_section_id`].
 pub fn open_or_focus_settings_window(
     app: &AppHandle<Wry>,
     initial_section: Option<&str>,
 ) -> Result<(), AbundioError> {
     use tauri::Emitter;
+
+    // `open_settings_window` is invoke-able with an arbitrary `Option<String>`,
+    // so the value is not structurally limited to the internal call sites.
+    // Drop anything that isn't shaped like a section id before it reaches the
+    // URL, where a `#` would start a fragment and an `&` would inject a param.
+    // The JS side rejects unknown ids anyway; this keeps the boundary honest
+    // rather than relying on the far side to clean up.
+    let initial_section = initial_section.filter(|s| is_section_id(s));
 
     if let Some(existing) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = existing.set_focus();
@@ -75,8 +103,8 @@ pub fn open_or_focus_settings_window(
         return Ok(());
     }
 
-    // Encode the initial section in the URL so the settings window can read
-    // it during its own startup (before any IPC roundtrip would resolve).
+    // Put the initial section in the URL so the settings window can read it
+    // during its own startup (before any IPC roundtrip would resolve).
     let url_path = match initial_section {
         Some(section) => format!("index.html?settings&section={}", section),
         None => "index.html?settings".to_string(),
@@ -312,5 +340,28 @@ mod tests {
         let msg = quit_confirm_message(1, 2);
         assert!(msg.contains("1 opened workspace "), "got: {msg}");
         assert!(msg.contains("across 2 windows"), "got: {msg}");
+    }
+
+    #[test]
+    fn section_ids_accept_every_shape_the_frontend_uses() {
+        for id in [
+            "theme", "fonts", "terminal", "editor", "agents", "profiles", "github", "updates",
+            // pre-reorg ids an older build's menu could still send
+            "terminal-font", "ui-font", "shell",
+        ] {
+            assert!(is_section_id(id), "rejected {id}");
+        }
+    }
+
+    #[test]
+    fn section_ids_reject_url_metacharacters() {
+        // `open_settings_window` is invoke-able with an arbitrary string; a `#`
+        // would start a fragment and an `&` would inject a query parameter.
+        for bad in [
+            "", "pro#files", "profiles&x=1", "profiles?x", "Profiles", "pro files", "a/b", "%2e",
+        ] {
+            assert!(!is_section_id(bad), "accepted {bad:?}");
+        }
+        assert!(!is_section_id(&"a".repeat(33)), "accepted an overlong id");
     }
 }
