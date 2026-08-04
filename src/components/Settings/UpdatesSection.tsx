@@ -65,6 +65,21 @@ export function UpdatesSection() {
 
 	const busy = status === "checking" || status === "downloading";
 
+	// Update-prompt suppression (ADR-0014) was set-only: "Skip this version" and
+	// "Later" had no undo anywhere in the UI. Evaluated at render — the page
+	// mounts on a nav click, so a snooze that lapses while it is open simply
+	// disappears the next time you come back. No timer.
+	const skippedVersion = useSettingsStore((s) => s.skippedUpdateVersion);
+	const snoozedUntil = useSettingsStore((s) => s.updateSnoozedUntil);
+	const setSkippedVersion = useSettingsStore((s) => s.setSkippedUpdateVersion);
+	const setSnoozedUntil = useSettingsStore((s) => s.setUpdateSnoozedUntil);
+	const snoozeActive = snoozedUntil != null && snoozedUntil > Date.now();
+	const suppression = skippedVersion
+		? `Skipping v${skippedVersion}`
+		: snoozeActive && snoozedUntil != null
+			? `Snoozed until ${new Date(snoozedUntil).toLocaleString()}`
+			: null;
+
 	return (
 		<div className="flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto">
 			<div>
@@ -193,6 +208,60 @@ export function UpdatesSection() {
 					description="Checks on launch and periodically. Updates download in the background and install the next time you quit — your running terminals and agents are never interrupted."
 				/>
 			</div>
+
+			{suppression && (
+				<div>
+					<SectionLabel>Notifications</SectionLabel>
+					<div
+						className="flex items-center gap-3 rounded-lg"
+						style={{
+							padding: "10px 12px",
+							backgroundColor: "var(--bg-primary)",
+							border: "1px solid var(--border)",
+						}}
+					>
+						<div className="flex-1 min-w-0">
+							<div
+								style={{
+									fontSize: 13,
+									color: "var(--fg-primary)",
+									lineHeight: 1.3,
+								}}
+							>
+								{suppression}
+							</div>
+							<div
+								style={{
+									fontSize: 11,
+									color: "var(--fg-secondary)",
+									marginTop: 2,
+									lineHeight: 1.4,
+								}}
+							>
+								Update prompts are suppressed. Abundio still checks and
+								downloads in the background.
+							</div>
+						</div>
+						<button
+							type="button"
+							onClick={() => {
+								setSkippedVersion(null);
+								setSnoozedUntil(null);
+							}}
+							className="rounded-md transition-colors flex-shrink-0"
+							style={{
+								fontSize: 12,
+								padding: "7px 12px",
+								color: "var(--fg-primary)",
+								backgroundColor: "var(--bg-tertiary)",
+								border: "1px solid var(--border)",
+							}}
+						>
+							Resume update prompts
+						</button>
+					</div>
+				</div>
+			)}
 
 			<div
 				style={{

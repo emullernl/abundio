@@ -42,7 +42,8 @@ export function TypeIcon() {
 	);
 }
 
-export function LayoutIcon() {
+/** Editor page — a document with a split preview beside it. */
+export function EditorIcon() {
 	return (
 		<svg
 			aria-hidden="true"
@@ -55,9 +56,9 @@ export function LayoutIcon() {
 			strokeLinecap="round"
 			strokeLinejoin="round"
 		>
-			<rect x="3" y="3" width="18" height="18" rx="2" />
-			<path d="M3 9h18" />
-			<path d="M9 21V9" />
+			<rect x="3" y="4" width="18" height="16" rx="2" />
+			<path d="M13 4v16" />
+			<path d="M6 9h4M6 13h4" />
 		</svg>
 	);
 }

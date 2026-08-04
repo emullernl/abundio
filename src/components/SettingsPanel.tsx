@@ -1,19 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { fonts as fontsIpc } from "../lib/ipc";
+import { useEffect, useState } from "react";
 import {
-	type FontEntry,
-	systemFontToEntry,
-	TERMINAL_FONTS,
-} from "../lib/nerdFonts";
-import { setAllTerminalsFontSize } from "../lib/terminalManager";
-import { useSettingsStore } from "../stores/settingsStore";
-import { consumeRequestedSection } from "../stores/settingsUiStore";
+	initialSection,
+	normalizeSection,
+	SETTINGS_NAV,
+	type SettingsSection,
+} from "../lib/settingsSections";
 import { AgentsSection } from "./Settings/AgentsSection";
-import { FontPicker } from "./Settings/FontPicker";
+import { EditorSection } from "./Settings/EditorSection";
+import { FontsSection } from "./Settings/FontsSection";
 import { GithubSection } from "./Settings/GithubSection";
 import {
 	AgentIcon,
-	LayoutIcon,
+	EditorIcon,
 	PaletteIcon,
 	PrIcon,
 	ProfileIcon,
@@ -21,22 +19,11 @@ import {
 	TypeIcon,
 	UpdateIcon,
 } from "./Settings/icons";
-import { FontSizeControl, ScrollbackControl } from "./Settings/NumberSteppers";
 import { ProfilesSection } from "./Settings/ProfilesSection";
-import { NavItem, SectionLabel, ToggleRow } from "./Settings/primitives";
-import { ShellPicker } from "./Settings/ShellPicker";
+import { NavGroupLabel, NavItem } from "./Settings/primitives";
+import { TerminalSection } from "./Settings/TerminalSection";
 import { ThemeSection } from "./Settings/ThemeSection";
 import { UpdatesSection } from "./Settings/UpdatesSection";
-
-type Section =
-	| "theme"
-	| "terminal-font"
-	| "ui-font"
-	| "shell"
-	| "agents"
-	| "profiles"
-	| "updates"
-	| "github";
 
 interface Props {
 	/** Called when the user clicks the panel's X button. The settings window
@@ -45,74 +32,59 @@ interface Props {
 	onClose: () => void;
 }
 
-export function SettingsPanel({ onClose }: Props) {
-	const [section, setSection] = useState<Section>("theme");
+const SECTION_ICON: Record<SettingsSection, React.ReactNode> = {
+	theme: <PaletteIcon />,
+	fonts: <TypeIcon />,
+	terminal: <TerminalIcon />,
+	editor: <EditorIcon />,
+	agents: <AgentIcon />,
+	profiles: <ProfileIcon />,
+	github: <PrIcon />,
+	updates: <UpdateIcon />,
+};
 
-	// Honor "Manage Profiles…" / File menu deep-links by landing on the right
-	// section when the panel opens.
+const SECTION_BODY: Record<SettingsSection, React.ReactNode> = {
+	theme: <ThemeSection />,
+	fonts: <FontsSection />,
+	terminal: <TerminalSection />,
+	editor: <EditorSection />,
+	agents: <AgentsSection />,
+	profiles: <ProfilesSection />,
+	github: <GithubSection />,
+	updates: <UpdatesSection />,
+};
+
+export function SettingsPanel({ onClose }: Props) {
+	// Resolve the deep-linked section in a lazy initializer, not an effect: an
+	// effect would paint the default page for a frame before snapping.
+	const [section, setSection] = useState<SettingsSection>(() =>
+		initialSection(window.location.search),
+	);
+
+	// Take-once semantics, literally: strip `section=` from the URL so a reload
+	// (or Vite HMR) leaves the user where they navigated instead of snapping
+	// back. `?settings` itself is decorative — main.tsx branches on the window
+	// label, not the query string.
 	useEffect(() => {
-		const requested = consumeRequestedSection();
-		if (requested) setSection(requested as Section);
-		// Listen for `settings-set-section` events from Rust — fired by
-		// open_or_focus_settings_window when the user clicks "Manage Profiles…"
-		// and the settings window is already open.
+		const url = new URL(window.location.href);
+		if (url.searchParams.has("section")) {
+			url.searchParams.delete("section");
+			window.history.replaceState(null, "", url.toString());
+		}
+	}, []);
+
+	// The other half of the deep link: Rust emits `settings-set-section` instead
+	// of rebuilding the URL when the Settings window is already open.
+	useEffect(() => {
 		const unlisten = import("@tauri-apps/api/event").then(({ listen }) =>
 			listen<string>("settings-set-section", (event) => {
-				const s = event.payload;
-				if (
-					s === "theme" ||
-					s === "terminal-font" ||
-					s === "ui-font" ||
-					s === "shell" ||
-					s === "agents" ||
-					s === "profiles" ||
-					s === "updates" ||
-					s === "github"
-				) {
-					setSection(s);
-				}
+				const next = normalizeSection(event.payload);
+				if (next) setSection(next);
 			}),
 		);
 		return () => {
 			unlisten.then((fn) => fn()).catch(() => {});
 		};
-	}, []);
-
-	const terminalFontFamily = useSettingsStore((s) => s.terminalFontFamily);
-	const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
-	const setTerminalFontFamily = useSettingsStore(
-		(s) => s.setTerminalFontFamily,
-	);
-	const setUiFontFamily = useSettingsStore((s) => s.setUiFontFamily);
-	const fontSize = useSettingsStore((s) => s.fontSize);
-	const setFontSize = useSettingsStore((s) => s.setFontSize);
-	const terminalScrollback = useSettingsStore((s) => s.terminalScrollback);
-	const setTerminalScrollback = useSettingsStore(
-		(s) => s.setTerminalScrollback,
-	);
-	const uiFontSize = useSettingsStore((s) => s.uiFontSize);
-	const setUiFontSize = useSettingsStore((s) => s.setUiFontSize);
-	const gpuAccelerationEnabled = useSettingsStore(
-		(s) => s.gpuAccelerationEnabled,
-	);
-	const setGpuAcceleration = useSettingsStore((s) => s.setGpuAcceleration);
-	const smartImageDrop = useSettingsStore((s) => s.smartImageDrop);
-	const setSmartImageDrop = useSettingsStore((s) => s.setSmartImageDrop);
-
-	const [systemFonts, setSystemFonts] = useState<FontEntry[]>([]);
-	const systemFontsLoaded = useRef(false);
-	useEffect(() => {
-		if (systemFontsLoaded.current) return;
-		fontsIpc
-			.listSystemFonts()
-			.then((families) => {
-				const sorted = families.slice().sort((a, b) => a.localeCompare(b));
-				setSystemFonts(sorted.map(systemFontToEntry));
-				systemFontsLoaded.current = true;
-			})
-			.catch(() => {
-				setSystemFonts([]);
-			});
 	}, []);
 
 	useEffect(() => {
@@ -126,21 +98,6 @@ export function SettingsPanel({ onClose }: Props) {
 		document.addEventListener("keydown", handleEscape, true);
 		return () => document.removeEventListener("keydown", handleEscape, true);
 	}, [onClose]);
-
-	const handleTerminalFontSizeChange = useCallback(
-		(size: number) => {
-			setFontSize(size);
-			setAllTerminalsFontSize(size);
-		},
-		[setFontSize],
-	);
-
-	const handleUiFontSizeChange = useCallback(
-		(size: number) => {
-			setUiFontSize(size);
-		},
-		[setUiFontSize],
-	);
 
 	return (
 		/* Renders as the entire content of the dedicated Settings window
@@ -184,167 +141,41 @@ export function SettingsPanel({ onClose }: Props) {
 				</div>
 			</div>
 
-			{/* Body: sidebar + content */}
+			{/* Body: nav rail + content */}
 			<div className="flex flex-1 min-h-0">
-				{/* Left nav */}
-				<div
-					className="flex flex-col gap-1 flex-shrink-0"
+				{/* Left nav: group captions over leaf pages. Leaves keep their icon
+				    at the same x as the captions, so the icon column stays a clean
+				    vertical line and no extra indent is needed. */}
+				<nav
+					aria-label="Settings sections"
+					className="flex flex-col flex-shrink-0 overflow-y-auto"
 					style={{
 						width: 160,
-						padding: "12px 8px",
+						padding: "6px 8px 12px",
 						borderRight: "1px solid var(--border)",
 						backgroundColor:
 							"color-mix(in srgb, var(--bg-primary) 50%, var(--bg-secondary))",
 					}}
 				>
-					<NavItem
-						label="Theme"
-						icon={<PaletteIcon />}
-						isActive={section === "theme"}
-						onClick={() => setSection("theme")}
-					/>
-					<NavItem
-						label="Terminal Font"
-						icon={<TypeIcon />}
-						isActive={section === "terminal-font"}
-						onClick={() => setSection("terminal-font")}
-					/>
-					<NavItem
-						label="UI Font"
-						icon={<LayoutIcon />}
-						isActive={section === "ui-font"}
-						onClick={() => setSection("ui-font")}
-					/>
-					<NavItem
-						label="Shell"
-						icon={<TerminalIcon />}
-						isActive={section === "shell"}
-						onClick={() => setSection("shell")}
-					/>
-					<NavItem
-						label="Agents"
-						icon={<AgentIcon />}
-						isActive={section === "agents"}
-						onClick={() => setSection("agents")}
-					/>
-					<NavItem
-						label="Profiles"
-						icon={<ProfileIcon />}
-						isActive={section === "profiles"}
-						onClick={() => setSection("profiles")}
-					/>
-					<NavItem
-						label="Updates"
-						icon={<UpdateIcon />}
-						isActive={section === "updates"}
-						onClick={() => setSection("updates")}
-					/>
-					<NavItem
-						label="GitHub"
-						icon={<PrIcon />}
-						isActive={section === "github"}
-						onClick={() => setSection("github")}
-					/>
-				</div>
+					{SETTINGS_NAV.map((group) => (
+						<div key={group.caption} className="flex flex-col gap-1">
+							<NavGroupLabel>{group.caption}</NavGroupLabel>
+							{group.items.map((item) => (
+								<NavItem
+									key={item.id}
+									label={item.label}
+									icon={SECTION_ICON[item.id]}
+									isActive={section === item.id}
+									onClick={() => setSection(item.id)}
+								/>
+							))}
+						</div>
+					))}
+				</nav>
 
 				{/* Right content */}
 				<div className="flex-1 min-w-0 min-h-0 flex flex-col p-5 overflow-hidden">
-					{section === "theme" && <ThemeSection />}
-
-					{section === "terminal-font" && (
-						<div className="flex flex-col gap-4 flex-1 min-h-0">
-							<div className="flex-shrink-0">
-								<SectionLabel>GPU Acceleration</SectionLabel>
-								<ToggleRow
-									checked={gpuAccelerationEnabled}
-									onChange={setGpuAcceleration}
-									label="Render terminals on the GPU"
-									description="Smoother scrolling and faster paint on heavy output. When many panes are open at once, some fall back to CPU rendering automatically."
-								/>
-							</div>
-							<div className="flex-shrink-0">
-								<SectionLabel>Drag &amp; Drop</SectionLabel>
-								<ToggleRow
-									checked={smartImageDrop}
-									onChange={setSmartImageDrop}
-									label="Drop images to agents as images"
-									description="When you drop an image onto a running agent, paste it via the clipboard so the agent recognises it — instead of inserting the file path. Other dropped files always insert their path."
-								/>
-							</div>
-							<div className="flex-shrink-0">
-								<SectionLabel>Scrollback Lines</SectionLabel>
-								<ScrollbackControl
-									value={terminalScrollback}
-									onChange={setTerminalScrollback}
-								/>
-							</div>
-							<div className="flex-shrink-0">
-								<SectionLabel>Terminal Font Size</SectionLabel>
-								<FontSizeControl
-									value={fontSize}
-									onChange={handleTerminalFontSizeChange}
-								/>
-							</div>
-							<div className="flex flex-col flex-1 min-h-0">
-								<SectionLabel>Terminal Font</SectionLabel>
-								<FontPicker
-									fonts={TERMINAL_FONTS}
-									selectedFont={terminalFontFamily}
-									onSelect={setTerminalFontFamily}
-									searchPlaceholder="Search nerd fonts..."
-									previewStyle="mono"
-								/>
-							</div>
-						</div>
-					)}
-
-					{section === "ui-font" && (
-						<div className="flex flex-col gap-4 flex-1 min-h-0">
-							<div className="flex-shrink-0">
-								<SectionLabel>UI Font Size</SectionLabel>
-								<FontSizeControl
-									value={uiFontSize}
-									onChange={handleUiFontSizeChange}
-								/>
-							</div>
-							<div className="flex flex-col flex-1 min-h-0">
-								<SectionLabel>Interface Font</SectionLabel>
-								<FontPicker
-									fonts={systemFonts}
-									selectedFont={uiFontFamily}
-									onSelect={setUiFontFamily}
-									searchPlaceholder="Search UI fonts..."
-									previewStyle="ui"
-								/>
-							</div>
-						</div>
-					)}
-
-					{section === "shell" && (
-						<div className="flex flex-col flex-1 min-h-0">
-							<SectionLabel>Default Shell</SectionLabel>
-							<p
-								style={{
-									fontSize: 12,
-									color: "var(--fg-secondary)",
-									marginBottom: 12,
-									lineHeight: 1.5,
-								}}
-							>
-								Choose the shell for new terminal panes. Existing panes are not
-								affected.
-							</p>
-							<ShellPicker />
-						</div>
-					)}
-
-					{section === "agents" && <AgentsSection />}
-
-					{section === "profiles" && <ProfilesSection />}
-
-					{section === "updates" && <UpdatesSection />}
-
-					{section === "github" && <GithubSection />}
+					{SECTION_BODY[section]}
 				</div>
 			</div>
 		</div>

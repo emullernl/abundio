@@ -55,8 +55,12 @@ pub fn quit_confirm_message(total_opened: usize, window_count: usize) -> String 
 
 /// Opens the singleton settings window, or focuses it if already open. Pass
 /// `initial_section` to deep-link to a specific settings section (e.g.
-/// "profiles" for the "Manage Profiles…" menu item). When the window already
-/// exists, the section is set by emitting `settings-set-section` to it.
+/// "profiles" for the "Manage Profiles…" menu item).
+///
+/// Both delivery paths are live: when the window already exists the section
+/// arrives as a `settings-set-section` event; on a cold open it is encoded in
+/// the window URL and read back by `initialSection` in
+/// `src/lib/settingsSections.ts`, which also resolves ids from older builds.
 pub fn open_or_focus_settings_window(
     app: &AppHandle<Wry>,
     initial_section: Option<&str>,

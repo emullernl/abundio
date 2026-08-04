@@ -93,6 +93,35 @@ export function NavItem({
 	);
 }
 
+/**
+ * A group caption in the nav rail.
+ *
+ * Deliberately NOT `SectionLabel`, even though both are uppercase captions:
+ * `SectionLabel` groups controls *within* a page, this groups pages. Rendering
+ * them identically would have the two levels claiming equal rank. Quieter and
+ * more widely tracked than SectionLabel, and a plain `div` — captions are not
+ * clickable and must not take Tab focus.
+ */
+export function NavGroupLabel({ children }: { children: ReactNode }) {
+	return (
+		<div
+			className="font-semibold"
+			style={{
+				fontSize: 10,
+				color: "var(--fg-secondary)",
+				opacity: 0.65,
+				letterSpacing: "0.1em",
+				textTransform: "uppercase",
+				padding: "0 10px",
+				marginTop: 10,
+				marginBottom: 4,
+			}}
+		>
+			{children}
+		</div>
+	);
+}
+
 /* ─── Toggle switch ─── */
 export function Toggle({
 	checked,
