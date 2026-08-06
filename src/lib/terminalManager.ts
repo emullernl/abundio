@@ -9,6 +9,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import {
 	hasActiveSubagent,
+	peekPreErrorState,
 	setShellCommandRunning,
 	touchLastOutput,
 	usePtyActivityStore,
@@ -853,7 +854,18 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		managed.lastInputAt = Date.now();
 		managed.bytesSinceIdle = 0;
 		const actStore = usePtyActivityStore.getState();
-		const entry = actStore.activities[currentPtyId];
+		let entry = actStore.activities[currentPtyId];
+		// A **Mid-turn failure** painted this pane red while the Agent kept
+		// working (ADR-0026). Acknowledge it up front and re-read, so the
+		// branches below see what the pane was actually doing and the keystroke
+		// means what it would have meant without the failure — answering a
+		// permission prompt still answers it, ESC still cancels the turn.
+		// Without this the pane is in `error`, every branch below is skipped, and
+		// the fallthrough drops it to Idle for the rest of the turn.
+		if (entry?.state === "error" && peekPreErrorState(currentPtyId) !== null) {
+			actStore.clearError(currentPtyId);
+			entry = usePtyActivityStore.getState().activities[currentPtyId];
+		}
 		if (entry?.state === "waiting" && entry.detectionMode === "agent") {
 			// A waiting agent is cleared ONLY by genuine keyboard input — the
 			// user answering its prompt. Focus/mouse report sequences (which
