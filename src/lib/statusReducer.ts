@@ -32,13 +32,20 @@ export type StatusMode = "agent" | "shell";
  *  Subagent-held Stop (ADR-0022).
  *  "attach" proves hooks are live in this PTY (Grok's SessionStart): it sets
  *  `hookDriven` — silencing the byte heuristic, which Grok's welcome-screen
- *  animation would otherwise trip — and changes nothing else. */
+ *  animation would otherwise trip — and changes nothing else.
+ *  "error" is a **Turn failure**: the Turn ended in failure (Claude/Kimi/Qwen
+ *  StopFailure, Grok Stop{reason:"error"}), so acknowledging it lands on Idle.
+ *  "errorMidTurn" is a **Mid-turn failure**: an operation inside the Turn failed
+ *  and the Agent kept generating (Copilot errorOccurred, which is always
+ *  followed by an agentStop). It paints the same red icon, but acknowledging it
+ *  returns the pane to whatever it was doing — see `clearError` and ADR-0026. */
 export type StatusTransition =
 	| "working"
 	| "waiting"
 	| "ready"
 	| "idle"
 	| "error"
+	| "errorMidTurn"
 	| "resume"
 	| "attach";
 
@@ -79,6 +86,13 @@ export interface StatusState {
 	/** The main agent's turn-finished hook arrived while Subagents were alive —
 	 *  the pane "owes a Ready" once the set drains (ADR-0022). */
 	stopHeldForSubagents: boolean;
+	// ── Mid-turn failure (ADR-0026) ──
+	/** What the pane was doing when a **Mid-turn failure** turned it red. The
+	 *  Agent never stopped working, so acknowledging the failure must return it
+	 *  here rather than claim it went Idle. Invariant: non-null only while
+	 *  `state === "error"` — every route INTO Error writes this field, and every
+	 *  route out of Error clears it, so it can never go stale. */
+	preErrorState: "working" | "waiting" | null;
 }
 
 export interface StatusConfig {
@@ -159,6 +173,7 @@ export function initialStatusState(mode: StatusMode): StatusState {
 		lastEscAt: null,
 		activeSubagents: NO_SUBAGENTS,
 		stopHeldForSubagents: false,
+		preErrorState: null,
 	};
 }
 
@@ -179,19 +194,31 @@ function recordActivity(s: StatusState, now: number): StatusState {
 	if (s.state === "working") {
 		return { ...s, lastActivityAt: now };
 	}
-	return { ...s, state: "working", workingSince: now, lastActivityAt: now };
+	return {
+		...s,
+		state: "working",
+		workingSince: now,
+		lastActivityAt: now,
+		preErrorState: null,
+	};
 }
 
 /** `recordError`: → Error, preserving `hookDriven` (a shell/exit error, unlike a
- *  hook error, doesn't assert hook-drivenness). */
+ *  hook error, doesn't assert hook-drivenness). Always a **Turn failure** — its
+ *  producers are a PTY exit and a shell `command_end`, both of which mean the
+ *  work is over — so it records no `preErrorState`. */
 function recordError(s: StatusState): StatusState {
-	return { ...s, state: "error" };
+	return { ...s, state: "error", preErrorState: null };
 }
 
 /** `recordExitSuccess`: agents take the Ready hop (notification); shells skip it
  *  straight to Idle (ADR-0009). */
 function recordExitSuccess(s: StatusState): StatusState {
-	return { ...s, state: s.mode === "agent" ? "ready" : "idle" };
+	return {
+		...s,
+		state: s.mode === "agent" ? "ready" : "idle",
+		preErrorState: null,
+	};
 }
 
 /** `markIdle`: dismiss an acknowledged Ready/Error-shell alert. Never cancels an
@@ -204,8 +231,38 @@ function markIdle(s: StatusState): StatusState {
 	return { ...s, state: "idle" };
 }
 
+/** `clearError`: the user acknowledged the red icon (click, keystroke, or the
+ *  explicit store action). Where that lands depends on which kind of failure it
+ *  was — see ADR-0026.
+ *
+ *  A **Mid-turn failure** left a `preErrorState`: the Agent never stopped
+ *  working, so acknowledging it returns the pane to what it was doing — Working,
+ *  or Waiting if it was blocked on the user. Note the `click` event runs
+ *  `clearWaiting` BEFORE this, so it no-ops on the Error state and a restored
+ *  Waiting survives the click. That's deliberate: the Agent really is still
+ *  blocked, and a click is not an answer.
+ *  `workingSince`/`lastActivityAt` are deliberately NOT refreshed —
+ *  `touchLastOutput` keeps `lastActivityAt` current even while Error (the gate
+ *  in terminalManager is `hookDriven`, not `state`), so if the Agent did fall
+ *  silent the 30s backstop fires on the very next tick instead of 30s after the
+ *  click.
+ *
+ *  A **Turn failure** goes to Idle and drops the Subagent set with it: a failed
+ *  Turn has no tail worth tracking (ADR-0022 — "a failed turn never
+ *  resurrects"), and an orphaned set would hold the NEXT Turn's Stop as Working
+ *  until SUBAGENT_STALE_MS. Mirrors `clearActive` and `applyHook("idle")`. */
 function clearError(s: StatusState): StatusState {
-	return s.state === "error" ? { ...s, state: "idle" } : s;
+	if (s.state !== "error") return s;
+	if (s.preErrorState !== null) {
+		return { ...s, state: s.preErrorState, preErrorState: null };
+	}
+	return {
+		...s,
+		state: "idle",
+		preErrorState: null,
+		activeSubagents: NO_SUBAGENTS,
+		stopHeldForSubagents: false,
+	};
 }
 
 function clearWaiting(s: StatusState): StatusState {
@@ -271,6 +328,7 @@ function applyHook(
 			workingSince: now,
 			lastActivityAt: now,
 			stopHeldForSubagents: false,
+			preErrorState: null,
 		};
 	}
 	if (transition === "ready" && s.activeSubagents.length > 0) {
@@ -279,6 +337,22 @@ function applyHook(
 			state: "working",
 			hookDriven: true,
 			stopHeldForSubagents: true,
+			preErrorState: null,
+		};
+	}
+	if (transition === "errorMidTurn") {
+		// A **Mid-turn failure**: the Agent reported a failure and kept
+		// generating, so remember what it was doing. The Subagent hold is
+		// deliberately NOT cleared (unlike a Turn failure) — the Turn continues,
+		// so delegated work is still this Turn's work (ADR-0022, ADR-0026).
+		return {
+			...s,
+			state: "error",
+			hookDriven: true,
+			preErrorState:
+				s.mode === "agent" && (s.state === "working" || s.state === "waiting")
+					? s.state
+					: null,
 		};
 	}
 	if (transition === "error") {
@@ -287,6 +361,7 @@ function applyHook(
 			state: "error",
 			hookDriven: true,
 			stopHeldForSubagents: false,
+			preErrorState: null,
 		};
 	}
 	if (transition === "idle") {
@@ -299,9 +374,10 @@ function applyHook(
 			lastEscAt: null,
 			activeSubagents: NO_SUBAGENTS,
 			stopHeldForSubagents: false,
+			preErrorState: null,
 		};
 	}
-	return { ...s, state: transition, hookDriven: true };
+	return { ...s, state: transition, hookDriven: true, preErrorState: null };
 }
 
 // ── Subagent lifecycle (ADR-0022, docs/plans/subagent-aware-status.md) ──

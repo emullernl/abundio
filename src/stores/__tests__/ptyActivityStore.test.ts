@@ -8,6 +8,7 @@ import {
 	computeWorkspaceDotStatus,
 	getLastOutputAt,
 	type PtyActivityEntry,
+	peekPreErrorState,
 	selectErrorAgentCount,
 	selectErrorShellCount,
 	selectIdleAgentCount,
@@ -1259,5 +1260,85 @@ describe("hook-driven status", () => {
 			expect(selectIdleShellCount(state)).toBe(0);
 			expect(selectWorkingShellCount(state)).toBe(0);
 		});
+	});
+});
+
+describe("mid-turn failure (ADR-0026)", () => {
+	const mockSendNotification = vi.mocked(sendNotification);
+
+	beforeEach(() => {
+		mockSendNotification.mockClear();
+	});
+
+	it("survives the dispatch round-trip and restores Working", () => {
+		// The regression that matters: `preErrorState` lives outside the Zustand
+		// entry, so without the hydrate/applyStatusEvent mirroring the reducer
+		// change is a silent no-op — each dispatch rebuilds StatusState from
+		// scratch and the memory would be gone by the time clearError runs.
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-mt", "agent");
+		s.setAgentPty("pty-mt", "copilot");
+		s.applyHookEvent("pty-mt", "active");
+		s.applyHookEvent("pty-mt", "errorMidTurn");
+		expect(usePtyActivityStore.getState().activities["pty-mt"].state).toBe(
+			"error",
+		);
+		expect(peekPreErrorState("pty-mt")).toBe("working");
+
+		s.clearError("pty-mt");
+		expect(usePtyActivityStore.getState().activities["pty-mt"].state).toBe(
+			"active",
+		);
+		expect(peekPreErrorState("pty-mt")).toBeNull();
+	});
+
+	it("a Turn failure still acknowledges to idle", () => {
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-tf", "agent");
+		s.setAgentPty("pty-tf", "claude");
+		s.applyHookEvent("pty-tf", "active");
+		s.applyHookEvent("pty-tf", "error");
+		expect(peekPreErrorState("pty-tf")).toBeNull();
+		s.clearError("pty-tf");
+		expect(usePtyActivityStore.getState().activities["pty-tf"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("removePty and a re-init drop the memory", () => {
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-rm", "agent");
+		s.setAgentPty("pty-rm", "copilot");
+		s.applyHookEvent("pty-rm", "active");
+		s.applyHookEvent("pty-rm", "errorMidTurn");
+		expect(peekPreErrorState("pty-rm")).toBe("working");
+
+		usePtyActivityStore.getState().removePty("pty-rm");
+		expect(peekPreErrorState("pty-rm")).toBeNull();
+
+		// A reused ptyId must not inherit it either.
+		usePtyActivityStore.getState().initPty("pty-rm", "agent");
+		expect(peekPreErrorState("pty-rm")).toBeNull();
+	});
+
+	it("does not notify — the Agent is still working and agentStop will follow", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(false);
+		seedWorkspace("ws-1", "my-project");
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-nt", "agent");
+		s.setAgentPty("pty-nt", "copilot");
+		s.registerPane("pane-nt", "pty-nt");
+		s.applyHookEvent("pty-nt", "active");
+		mockSendNotification.mockClear();
+
+		usePtyActivityStore.getState().applyHookEvent("pty-nt", "errorMidTurn");
+		expect(mockSendNotification).not.toHaveBeenCalled();
+
+		// …but a Turn failure on the same pane still pings. (Acknowledge first:
+		// error → error is not a transition, so it would emit nothing at all.)
+		usePtyActivityStore.getState().clearError("pty-nt");
+		expect(mockSendNotification).not.toHaveBeenCalled();
+		usePtyActivityStore.getState().applyHookEvent("pty-nt", "error");
+		expect(mockSendNotification).toHaveBeenCalledTimes(1);
 	});
 });

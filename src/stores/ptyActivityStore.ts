@@ -49,6 +49,21 @@ const subagentState = new Map<
 	}
 >();
 
+// What a PTY was doing when a **Mid-turn failure** turned it red (ADR-0026).
+// Out-of-band like the maps above rather than a `PtyActivityEntry` field: it is
+// read only by `clearError` and the keystroke handler, and putting it in the
+// entry would ripple through project/entriesEqual/snap and emit same-state
+// StatusChanges. Non-null only while the entry state is "error".
+const preErrorStates = new Map<string, "working" | "waiting">();
+
+/** What the pane was doing before a **Mid-turn failure**, or null if the red
+ *  icon came from a **Turn failure** (or the PTY isn't in Error at all). Lets
+ *  the keystroke handler give a key the meaning it would have had without the
+ *  failure — answering a permission prompt still answers it. See ADR-0026. */
+export function peekPreErrorState(ptyId: string): "working" | "waiting" | null {
+	return preErrorStates.get(ptyId) ?? null;
+}
+
 /** Whether `id` is a live Subagent of this PTY — used by the translator to
  *  route OpenCode child-session events (their `session.idle` payload carries
  *  no `parentID`, so set membership is the discriminator). */
@@ -112,6 +127,7 @@ interface PtyActivityState_Store {
 			| "ready"
 			| "idle"
 			| "error"
+			| "errorMidTurn"
 			| "resume"
 			| "attach",
 	) => void;
@@ -177,6 +193,7 @@ function hydrate(
 		lastEscAt: null,
 		activeSubagents: subagentState.get(ptyId)?.subagents ?? NO_SUBAGENTS,
 		stopHeldForSubagents: subagentState.get(ptyId)?.stopHeld ?? false,
+		preErrorState: preErrorStates.get(ptyId) ?? null,
 	};
 }
 
@@ -280,6 +297,11 @@ function applyStatusEvent(
 	if (after.shellCommandRunning) shellCommandRunning.set(ptyId, true);
 	else shellCommandRunning.delete(ptyId);
 	syncSubagentState(ptyId, after);
+	if (after.preErrorState !== null) {
+		preErrorStates.set(ptyId, after.preErrorState);
+	} else {
+		preErrorStates.delete(ptyId);
+	}
 
 	const nextEntry = project(after, prevEntry);
 	const changed = !prevEntry || !entriesEqual(prevEntry, nextEntry);
@@ -330,6 +352,10 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 				}
 				return;
 			}
+			// A fresh entry starts Idle, so the mid-turn-failure memory must not
+			// survive into it (the invariant is: non-null only while Error). This
+			// set() bypasses applyStatusEvent, so clear it by hand.
+			preErrorStates.delete(ptyId);
 			set((s) => ({
 				activities: {
 					...s.activities,
@@ -509,6 +535,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			lastOutputTimestamps.delete(ptyId);
 			shellCommandRunning.delete(ptyId);
 			subagentState.delete(ptyId);
+			preErrorStates.delete(ptyId);
 			set((s) => {
 				const { [ptyId]: _, ...rest } = s.activities;
 				const { [ptyId]: _rc, ...restRunning } = s.runningCommands;
@@ -603,8 +630,13 @@ setInterval(() => {
 // store.subscribe did by scanning all activities is now implicit. See
 // docs/plans/status-machine.md.
 
-subscribeStatusChange(({ ptyId, prev, next }) => {
+subscribeStatusChange(({ ptyId, prev, next, cause }) => {
 	if (prev.state === next.state) return; // a mode-only change (e.g. sessionEnded)
+	// A **Mid-turn failure** is not worth pulling the user back to the machine:
+	// the Agent is still generating and an agentStop will follow, so this would
+	// be the first of two pings for one Turn — and the alarming one is the one
+	// the Agent handles itself. Turn failures still notify (ADR-0026).
+	if (cause.kind === "hook" && cause.transition === "errorMidTurn") return;
 	if (
 		next.state !== "ready" &&
 		next.state !== "error" &&
