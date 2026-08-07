@@ -424,6 +424,11 @@ export function initAgentTurnTracker(): void {
 			// would open a *brand-new* Turn started at click time and attributed
 			// to their mouse. The Working timer is deliberately left running: the
 			// Agent was working throughout, so that time belongs to this Turn.
+			// Accepted loss: if the promised agentStop never arrives, the Turn stays
+			// open until session end, PTY exit, or the store-removal backstop —
+			// reduceTick's idle backstop only rescues `working` (ADR-0026). With no
+			// open Turn at all (errorOccurred before the first turn-start hook) the
+			// error is dropped, as it was before this split.
 			if (cause.kind === "hook" && cause.transition === "errorMidTurn") {
 				const open = openTurns.get(ptyId);
 				if (open) open.errors += 1;

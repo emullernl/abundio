@@ -1305,6 +1305,26 @@ describe("mid-turn failure (ADR-0026)", () => {
 		);
 	});
 
+	it("a second mid-turn failure keeps the memory despite emitting no StatusChange", () => {
+		// The asymmetry worth pinning: the projected entry is identical across the
+		// second failure (error → error, same mode/hookDriven), so `changed` is
+		// false and no StatusChange fires — but the out-of-band preErrorStates map
+		// syncs *before* that check, so a regression here is invisible at the
+		// entry layer and only shows up when the user acknowledges.
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-2mt", "agent");
+		s.setAgentPty("pty-2mt", "copilot");
+		s.applyHookEvent("pty-2mt", "active");
+		s.applyHookEvent("pty-2mt", "errorMidTurn");
+		s.applyHookEvent("pty-2mt", "errorMidTurn");
+		expect(peekPreErrorState("pty-2mt")).toBe("working");
+
+		s.clearError("pty-2mt");
+		expect(usePtyActivityStore.getState().activities["pty-2mt"].state).toBe(
+			"active",
+		);
+	});
+
 	it("removePty and a re-init drop the memory", () => {
 		const s = usePtyActivityStore.getState();
 		s.initPty("pty-rm", "agent");

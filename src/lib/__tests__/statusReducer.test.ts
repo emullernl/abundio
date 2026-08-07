@@ -931,6 +931,67 @@ describe("statusReducer — mid-turn failure acknowledgement (ADR-0026)", () => 
 		expect(s.state).toBe("idle");
 	});
 
+	it("a second mid-turn failure keeps the first one's memory", () => {
+		// Two failures with no acknowledgement between them: the second must not
+		// re-derive the memory from `s.state`, which is already "error" by then.
+		const s = run(
+			mk({ state: "working" }, "agent"),
+			midTurnFail(1),
+			midTurnFail(2),
+		);
+		expect(s.preErrorState).toBe("working");
+		expect(statusReducer(s, { kind: "clearError" }).state).toBe("working");
+	});
+
+	it("a mid-turn failure on top of a Turn failure still rests at Idle", () => {
+		const s = run(
+			mk({ state: "working" }, "agent"),
+			turnFail(1),
+			midTurnFail(2),
+		);
+		expect(s.preErrorState).toBeNull();
+		expect(statusReducer(s, { kind: "clearError" }).state).toBe("idle");
+	});
+
+	it("a keystroke acknowledges a mid-turn failure like terminalManager does", () => {
+		// The reducer is the single home for every transition, so its keystroke
+		// path must not drift from terminalManager's onData.
+		const answered = run(mk({ state: "waiting" }, "agent"), midTurnFail(1), {
+			kind: "keystroke",
+			key: "answer",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(answered.state).toBe("working");
+
+		// ESC on a restored Waiting still dismisses it.
+		const dismissed = run(mk({ state: "waiting" }, "agent"), midTurnFail(1), {
+			kind: "keystroke",
+			key: "esc",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(dismissed.state).toBe("idle");
+
+		// ESC on a restored Working still cancels the turn.
+		const cancelled = run(mk({ state: "working" }, "agent"), midTurnFail(1), {
+			kind: "keystroke",
+			key: "esc",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(cancelled.state).toBe("idle");
+
+		// A Turn failure has no memory, so a keystroke still rests at Idle.
+		const turnFailed = run(mk({ state: "working" }, "agent"), turnFail(1), {
+			kind: "keystroke",
+			key: "other",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(turnFailed.state).toBe("idle");
+	});
+
 	it("every route out of Error clears the memory", () => {
 		const failed = statusReducer(
 			mk({ state: "working" }, "agent"),

@@ -345,14 +345,21 @@ function applyHook(
 		// generating, so remember what it was doing. The Subagent hold is
 		// deliberately NOT cleared (unlike a Turn failure) — the Turn continues,
 		// so delegated work is still this Turn's work (ADR-0022, ADR-0026).
+		// Already in Error? Keep the memory the FIRST failure recorded. A second
+		// errorOccurred in one Turn (two failing tool calls, a retried request)
+		// would otherwise read `"error"` off `s.state`, fall through to null, and
+		// land the acknowledgement back on Idle — the very bug this fixes.
 		return {
 			...s,
 			state: "error",
 			hookDriven: true,
 			preErrorState:
-				s.mode === "agent" && (s.state === "working" || s.state === "waiting")
-					? s.state
-					: null,
+				s.state === "error"
+					? s.preErrorState
+					: s.mode === "agent" &&
+							(s.state === "working" || s.state === "waiting")
+						? s.state
+						: null,
 		};
 	}
 	if (transition === "error") {
@@ -487,9 +494,16 @@ function reduceKeystroke(
 	escRequired: number,
 	now: number,
 ): StatusState {
+	// A **Mid-turn failure** painted this pane red while the Agent kept working
+	// (ADR-0026). Acknowledge it up front so the branches below see what the pane
+	// was actually doing and the key means what it would have meant without the
+	// failure — mirroring terminalManager's onData. A Turn failure has no memory
+	// (`preErrorState === null`) and so falls through to the Idle path below.
+	const acked =
+		s.state === "error" && s.preErrorState !== null ? clearError(s) : s;
 	// Every keystroke resets the input-gate clock and byte accumulator (the
 	// terminalManager onData top-level effect).
-	const base: StatusState = { ...s, lastInputAt: now, bytesSinceIdle: 0 };
+	const base: StatusState = { ...acked, lastInputAt: now, bytesSinceIdle: 0 };
 
 	if (base.state === "waiting" && base.mode === "agent") {
 		// A Waiting agent is answered/dismissed only by genuine input.

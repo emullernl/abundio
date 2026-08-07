@@ -51,5 +51,16 @@ through to the Idle path too.
 - `agentTurnTracker` must not finalize the Turn on `errorMidTurn` — it counts the error and
   returns. Otherwise the acknowledging `error → active` transition opens a brand-new Turn
   started at click time and attributed to the user's mouse.
+- A Mid-turn failure whose promised `agentStop` never arrives leaks an open Turn. The relay is
+  fire-and-forget, and `reduceTick`'s idle backstop only rescues a pane in `working`, so only
+  session end, PTY exit, or the store-removal backstop will close it. We accept that over a
+  second staleness scanner: the row still lands, just late. An `errorOccurred` arriving before
+  the first turn-start hook is dropped entirely — unchanged from before the split, and the only
+  path that discards a failure signal.
+- The reducer keeps the memory the *first* Mid-turn failure recorded. A second one in the same
+  Turn must not re-derive `preErrorState` from `s.state`, which is already `"error"` by then.
+  That is invisible at the store layer — the projected entry is identical, so no `StatusChange`
+  fires — yet the out-of-band `preErrorStates` map is rewritten regardless, because it syncs
+  before the `changed` check.
 - OpenCode's `session.error` keeps the conservative turn-terminal mapping; its semantics are
   undocumented and nothing in the repo establishes that generation continues past it.

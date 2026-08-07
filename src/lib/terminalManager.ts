@@ -861,6 +861,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		// `mousedown` listener registered further down. The bytes still reach the
 		// PTY, so mouse mode keeps working.
 		if (isReportSequence(data)) {
+			// The input-gate clock still moves, though. A mouse-tracking TUI
+			// redraws in response to pointer motion (selection highlight, hover
+			// states), and on a non-hook-driven agent pane that echo would
+			// otherwise be ungated output that trips the byte heuristic into
+			// Working. Only the *status* bookkeeping is deliberate-input-only.
+			managed.lastInputAt = Date.now();
+			managed.bytesSinceIdle = 0;
 			pty.write(currentPtyId, data);
 			return;
 		}
