@@ -52,6 +52,11 @@ delegated work is the truthful number.
   including delegated work. That is the point.
 - **A failed turn never resurrects.** `StopFailure` → Error clears the hold flag;
   Subagent stops afterwards only drain the set, never flip Error to Ready.
+  Acknowledging that Error (click/keystroke) drops the **set** too, mirroring the
+  ESC-cancel path: a failed Turn has no tail worth tracking, and an orphaned set
+  would otherwise hold the *next* Turn's Stop as Working until `SUBAGENT_STALE_MS`
+  (2h). A **mid-turn** failure is the exception — the Turn continues, so it keeps
+  both the set and the hold. See ADR-0026.
 - **Coverage is per-agent best-effort:** Copilot's built-in `general-purpose`
   agent emits no subagent hooks (its background tasks keep the old behavior), and
   Copilot identifies subagents by `agentName` only, so concurrent same-named

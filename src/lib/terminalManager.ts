@@ -9,6 +9,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import {
 	hasActiveSubagent,
+	peekPreErrorState,
 	setShellCommandRunning,
 	touchLastOutput,
 	usePtyActivityStore,
@@ -48,7 +49,7 @@ const ensuredAgentsThisSession = new Set<string>();
  * the terminal emit these on focus or click — they must NOT count as the user
  * "answering" a waiting agent prompt.
  */
-function isReportSequence(data: string): boolean {
+export function isReportSequence(data: string): boolean {
 	if (isFocusReport(data)) return true;
 	// SGR mouse (\x1b[<…M/m) and legacy X10 mouse (\x1b[M…)
 	if (data.startsWith("\x1b[<") || data.startsWith("\x1b[M")) return true;
@@ -850,27 +851,56 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		// docstring for the user-visible regression this fixes (p10k +
 		// screenshot/alt-tab leaving `^[[O` in the line editor).
 		if (isFocusReport(data)) return;
+		// Mouse reports are movement, not interaction. An Agent TUI that enables
+		// mouse tracking (DECSET 1002/1003) makes xterm emit an SGR report for
+		// every mouse MOVE across the pane, and those arrive here looking exactly
+		// like a keypress — so merely sweeping the pointer over a red pane
+		// acknowledged its Error, and the same fired incidentally when the window
+		// regained focus with the pointer already over the terminal. Status is
+		// driven by deliberate input only: a keystroke here, or the real DOM
+		// `mousedown` listener registered further down. The bytes still reach the
+		// PTY, so mouse mode keeps working.
+		if (isReportSequence(data)) {
+			// The input-gate clock still moves, though. A mouse-tracking TUI
+			// redraws in response to pointer motion (selection highlight, hover
+			// states), and on a non-hook-driven agent pane that echo would
+			// otherwise be ungated output that trips the byte heuristic into
+			// Working. Only the *status* bookkeeping is deliberate-input-only.
+			managed.lastInputAt = Date.now();
+			managed.bytesSinceIdle = 0;
+			pty.write(currentPtyId, data);
+			return;
+		}
 		managed.lastInputAt = Date.now();
 		managed.bytesSinceIdle = 0;
 		const actStore = usePtyActivityStore.getState();
-		const entry = actStore.activities[currentPtyId];
+		let entry = actStore.activities[currentPtyId];
+		// A **Mid-turn failure** painted this pane red while the Agent kept
+		// working (ADR-0026). Acknowledge it up front and re-read, so the
+		// branches below see what the pane was actually doing and the keystroke
+		// means what it would have meant without the failure — answering a
+		// permission prompt still answers it, ESC still cancels the turn.
+		// Without this the pane is in `error`, every branch below is skipped, and
+		// the fallthrough drops it to Idle for the rest of the turn.
+		if (entry?.state === "error" && peekPreErrorState(currentPtyId) !== null) {
+			actStore.clearError(currentPtyId);
+			entry = usePtyActivityStore.getState().activities[currentPtyId];
+		}
 		if (entry?.state === "waiting" && entry.detectionMode === "agent") {
 			// A waiting agent is cleared ONLY by genuine keyboard input — the
-			// user answering its prompt. Focus/mouse report sequences (which
-			// xterm also delivers via onData) leave it waiting. Agent-mode
-			// panes only — terminal-mode panes keep the normal behaviour.
-			if (!isReportSequence(data)) {
-				if (data === "\x1b") {
-					// Bare ESC dismisses the prompt without a choice — the
-					// agent goes back to idle, not busy.
-					actStore.clearWaiting(currentPtyId);
-				} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
-					// Enter or a 0-9 choice answers the prompt — the agent
-					// resumes working, so show it as busy right away. Any
-					// other key (typing a rejection reason, navigation, etc.)
-					// leaves the dot waiting.
-					actStore.applyHookEvent(currentPtyId, "active");
-				}
+			// user answering its prompt (ADR-0015). Focus/mouse report
+			// sequences already returned above, so anything reaching here is
+			// real input. Agent-mode panes only — terminal-mode panes keep the
+			// normal behaviour.
+			if (data === "\x1b") {
+				// Bare ESC dismisses the prompt without a choice — the agent
+				// goes back to idle, not busy.
+				actStore.clearWaiting(currentPtyId);
+			} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
+				// Enter or a 0-9 choice answers the prompt — the agent resumes
+				// working, so show it as busy right away. Any other key (typing
+				// a rejection reason, navigation, etc.) leaves the dot waiting.
+				actStore.applyHookEvent(currentPtyId, "active");
 			}
 		} else if (entry?.state === "active" && entry.detectionMode === "agent") {
 			// ESC is the user's cancel keystroke for an in-flight agent task.

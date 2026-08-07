@@ -417,6 +417,23 @@ export function initAgentTurnTracker(): void {
 			// activity byte-heuristic into Working *before* its first hook; that first
 			// hook then only flips `hookDriven` (Working→Working), and dropping it here
 			// would never open the Turn. So always let a hook "working" cause through.
+			// A **Mid-turn failure** counts an error against the Turn but does NOT
+			// end it — the Agent kept generating and an agentStop will follow
+			// (ADR-0026). Letting it through to noteState would finalize the Turn
+			// here, and then the user acknowledging the red icon (error → active)
+			// would open a *brand-new* Turn started at click time and attributed
+			// to their mouse. The Working timer is deliberately left running: the
+			// Agent was working throughout, so that time belongs to this Turn.
+			// Accepted loss: if the promised agentStop never arrives, the Turn stays
+			// open until session end, PTY exit, or the store-removal backstop —
+			// reduceTick's idle backstop only rescues `working` (ADR-0026). With no
+			// open Turn at all (errorOccurred before the first turn-start hook) the
+			// error is dropped, as it was before this split.
+			if (cause.kind === "hook" && cause.transition === "errorMidTurn") {
+				const open = openTurns.get(ptyId);
+				if (open) open.errors += 1;
+				return;
+			}
 			const startsWork =
 				cause.kind === "hook" && cause.transition === "working";
 			if (prev.state === next.state && !startsWork) return;

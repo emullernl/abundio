@@ -765,6 +765,34 @@ describe("statusReducer — Subagent hold (ADR-0022)", () => {
 		expect(s.stopHeldForSubagents).toBe(true);
 	});
 
+	it("acknowledging a Turn failure clears set and hold (ADR-0022/0026)", () => {
+		// A failed Turn has no tail worth tracking, and an orphaned set would
+		// hold the NEXT Turn's Stop as Working until SUBAGENT_STALE_MS (2h).
+		const failed = run(mk({ state: "working" }, "agent"), start("a", 0), {
+			kind: "hook",
+			transition: "error",
+			now: 1,
+		});
+		expect(failed.activeSubagents).toHaveLength(1);
+
+		const acked = statusReducer(failed, { kind: "clearError" });
+		expect(acked.state).toBe("idle");
+		expect(acked.activeSubagents).toHaveLength(0);
+		expect(acked.stopHeldForSubagents).toBe(false);
+	});
+
+	it("acknowledging a Mid-turn failure KEEPS the set — the Turn continues", () => {
+		const s = run(mk({ state: "working" }, "agent"), start("a", 0), {
+			kind: "hook",
+			transition: "errorMidTurn",
+			now: 1,
+		});
+		expect(s.state).toBe("error");
+		const acked = statusReducer(s, { kind: "clearError" });
+		expect(acked.state).toBe("working");
+		expect(acked.activeSubagents).toHaveLength(1);
+	});
+
 	it("sessionEnded / ptyExited / ESC-cancel clear set and hold", () => {
 		const held = () =>
 			run(mk({ state: "working" }, "agent"), start("a", 0), mainStop(1));
@@ -798,5 +826,212 @@ describe("statusReducer — Subagent hold (ADR-0022)", () => {
 			stop("a"), // straggler duplicate
 		);
 		expect(s.state).toBe("idle");
+	});
+});
+
+describe("statusReducer — mid-turn failure acknowledgement (ADR-0026)", () => {
+	const midTurnFail = (now = 1): StatusEvent => ({
+		kind: "hook",
+		transition: "errorMidTurn",
+		now,
+	});
+	const turnFail = (now = 1): StatusEvent => ({
+		kind: "hook",
+		transition: "error",
+		now,
+	});
+
+	it("remembers Working and restores it on acknowledgement", () => {
+		const failed = statusReducer(
+			mk({ state: "working", workingSince: 10, lastActivityAt: 20 }, "agent"),
+			midTurnFail(),
+		);
+		expect(failed.state).toBe("error");
+		expect(failed.preErrorState).toBe("working");
+		expect(failed.hookDriven).toBe(true);
+
+		const acked = statusReducer(failed, { kind: "clearError" });
+		expect(acked.state).toBe("working");
+		expect(acked.preErrorState).toBeNull();
+		// Deliberately NOT refreshed — a silent agent must hit the backstop
+		// promptly rather than 30s after the click.
+		expect(acked.workingSince).toBe(10);
+		expect(acked.lastActivityAt).toBe(20);
+	});
+
+	it("survives the click compound (clearWaiting → clearError → markIdle)", () => {
+		// This is the real code path: terminalManager's mousedown handler and the
+		// keystroke fallthrough both clear then markIdle. markIdle must not undo
+		// the restore.
+		const s = run(mk({ state: "working" }, "agent"), midTurnFail(), {
+			kind: "click",
+		});
+		expect(s.state).toBe("working");
+	});
+
+	it("remembers Waiting and restores it, held by markIdle", () => {
+		const failed = statusReducer(
+			mk({ state: "waiting" }, "agent"),
+			midTurnFail(),
+		);
+		expect(failed.preErrorState).toBe("waiting");
+
+		const acked = statusReducer(failed, { kind: "clearError" });
+		expect(acked.state).toBe("waiting");
+		expect(statusReducer(acked, { kind: "focus" }).state).toBe("waiting");
+	});
+
+	it("a click restores Waiting rather than dismissing it", () => {
+		// `click` is markIdle(clearError(clearWaiting(s))): clearWaiting runs
+		// first and no-ops on Error, so the restore survives. That is the honest
+		// outcome — the Agent really is still blocked on the user, and a click is
+		// not an answer. (A click on a Waiting pane with no failure still
+		// dismisses to Idle; only the restored case differs.)
+		const s = run(mk({ state: "waiting" }, "agent"), midTurnFail(), {
+			kind: "click",
+		});
+		expect(s.state).toBe("waiting");
+		expect(
+			run(mk({ state: "waiting" }, "agent"), { kind: "click" }).state,
+		).toBe("idle");
+	});
+
+	it("records nothing when the pane was not busy, or is a shell", () => {
+		for (const from of ["idle", "ready"] as const) {
+			const s = statusReducer(mk({ state: from }, "agent"), midTurnFail());
+			expect(s.preErrorState).toBeNull();
+			expect(statusReducer(s, { kind: "clearError" }).state).toBe("idle");
+		}
+		// Shell-mode PTYs have no Turn, so there is nothing to return to.
+		const shell = statusReducer(
+			mk({ state: "working" }, "shell"),
+			midTurnFail(),
+		);
+		expect(shell.preErrorState).toBeNull();
+		expect(statusReducer(shell, { kind: "clearError" }).state).toBe("idle");
+	});
+
+	it("a Turn failure still goes to Idle even from Working", () => {
+		const s = run(mk({ state: "working" }, "agent"), turnFail(), {
+			kind: "clearError",
+		});
+		expect(s.state).toBe("idle");
+	});
+
+	it("the memory cannot go stale across a second failure", () => {
+		// Mid-turn failure → acknowledged → a later Turn failure must land on Idle,
+		// not resurrect the first failure's memory.
+		const s = run(
+			mk({ state: "working" }, "agent"),
+			midTurnFail(1),
+			{ kind: "clearError" },
+			turnFail(2),
+			{ kind: "clearError" },
+		);
+		expect(s.state).toBe("idle");
+	});
+
+	it("a second mid-turn failure keeps the first one's memory", () => {
+		// Two failures with no acknowledgement between them: the second must not
+		// re-derive the memory from `s.state`, which is already "error" by then.
+		const s = run(
+			mk({ state: "working" }, "agent"),
+			midTurnFail(1),
+			midTurnFail(2),
+		);
+		expect(s.preErrorState).toBe("working");
+		expect(statusReducer(s, { kind: "clearError" }).state).toBe("working");
+	});
+
+	it("a mid-turn failure on top of a Turn failure still rests at Idle", () => {
+		const s = run(
+			mk({ state: "working" }, "agent"),
+			turnFail(1),
+			midTurnFail(2),
+		);
+		expect(s.preErrorState).toBeNull();
+		expect(statusReducer(s, { kind: "clearError" }).state).toBe("idle");
+	});
+
+	it("a keystroke acknowledges a mid-turn failure like terminalManager does", () => {
+		// The reducer is the single home for every transition, so its keystroke
+		// path must not drift from terminalManager's onData.
+		const answered = run(mk({ state: "waiting" }, "agent"), midTurnFail(1), {
+			kind: "keystroke",
+			key: "answer",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(answered.state).toBe("working");
+
+		// ESC on a restored Waiting still dismisses it.
+		const dismissed = run(mk({ state: "waiting" }, "agent"), midTurnFail(1), {
+			kind: "keystroke",
+			key: "esc",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(dismissed.state).toBe("idle");
+
+		// ESC on a restored Working still cancels the turn.
+		const cancelled = run(mk({ state: "working" }, "agent"), midTurnFail(1), {
+			kind: "keystroke",
+			key: "esc",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(cancelled.state).toBe("idle");
+
+		// A Turn failure has no memory, so a keystroke still rests at Idle.
+		const turnFailed = run(mk({ state: "working" }, "agent"), turnFail(1), {
+			kind: "keystroke",
+			key: "other",
+			escRequired: 1,
+			now: 2,
+		});
+		expect(turnFailed.state).toBe("idle");
+	});
+
+	it("every route out of Error clears the memory", () => {
+		const failed = statusReducer(
+			mk({ state: "working" }, "agent"),
+			midTurnFail(),
+		);
+		const routes: StatusEvent[] = [
+			{ kind: "hook", transition: "working", now: 5 },
+			{ kind: "hook", transition: "ready", now: 5 },
+			{ kind: "hook", transition: "waiting", now: 5 },
+			{ kind: "hook", transition: "idle", now: 5 },
+			{ kind: "recordOutput", now: 5 },
+			{ kind: "recordExitSuccess" },
+			{ kind: "recordError" },
+		];
+		for (const e of routes) {
+			expect(statusReducer(failed, e).preErrorState).toBeNull();
+		}
+	});
+
+	it("the idle backstop still fires on a restored-but-silent agent", () => {
+		const acked = run(
+			mk({ state: "working", workingSince: 0, lastActivityAt: 0 }, "agent"),
+			midTurnFail(1),
+			{ kind: "clearError" },
+		);
+		expect(acked.state).toBe("working");
+		const ticked = statusReducer(acked, {
+			kind: "tick",
+			now: HOOK_IDLE_BACKSTOP_MS + 1,
+		});
+		expect(ticked.state).toBe("ready");
+	});
+
+	it("clearError does not mutate its input", () => {
+		const failed = statusReducer(
+			mk({ state: "working" }, "agent"),
+			midTurnFail(),
+		);
+		const copy = structuredClone(failed);
+		statusReducer(failed, { kind: "clearError" });
+		expect(failed).toEqual(copy);
 	});
 });

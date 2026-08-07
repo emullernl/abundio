@@ -16,8 +16,28 @@ describe("mapHookEvent", () => {
 		// provisioning), so it maps straight to waiting. See ADR-0015.
 		expect(mapHookEvent("copilot", "notification")).toBe("waiting");
 		expect(mapHookEvent("copilot", "agentStop")).toBe("ready");
-		expect(mapHookEvent("copilot", "errorOccurred")).toBe("error");
+		expect(mapHookEvent("copilot", "errorOccurred")).toBe("errorMidTurn");
 		expect(mapHookEvent("copilot", "sessionEnd")).toBe("clear");
+	});
+
+	it("separates Turn failures from Mid-turn failures (ADR-0026)", () => {
+		// Copilot is the only turn-continuing failure: it keeps generating and an
+		// agentStop always follows, so acknowledging the red icon must return the
+		// pane to what it was doing rather than claim it went Idle.
+		expect(mapHookEvent("copilot", "errorOccurred")).toBe("errorMidTurn");
+
+		// Everything else is turn-terminal and stays "error". StopFailure is the
+		// failure counterpart of Stop — the two are mutually exclusive, so no Stop
+		// follows it (ADR-0022: "a failed turn never resurrects").
+		for (const agent of ["claude", "qwen", "kimi", "grok"]) {
+			expect(mapHookEvent(agent, "StopFailure")).toBe("error");
+		}
+		// Grok fires Stop AFTER StopFailure on an errored turn; the reason-branch
+		// keeps it an error rather than overwriting the icon with "ready".
+		expect(mapHookEvent("grok", "Stop", undefined, "error")).toBe("error");
+		// OpenCode's semantics are undocumented, so it keeps the conservative
+		// turn-terminal mapping until verified.
+		expect(mapHookEvent("opencode", "session.error")).toBe("error");
 	});
 
 	it("no longer maps Copilot's retired per-tool hooks", () => {

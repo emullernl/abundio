@@ -159,7 +159,8 @@ gated by a per-launch random token passed as the `ABUNDIO_HOOK_TOKEN` env var.
 | active | UserPromptSubmit | userPromptSubmitted, preToolUse, postToolUse, postToolUseFailure | BeforeAgent | UserPromptSubmit | message.part.delta, permission.replied, question.replied |
 | waiting | PermissionRequest | permissionRequest | Notification (perm matcher) | PermissionRequest | permission.asked, question.asked |
 | ready | Stop | agentStop | AfterAgent | Stop | session.idle |
-| error | StopFailure | errorOccurred | — | — | session.error |
+| error (Turn failure) | StopFailure | — | — | — | session.error |
+| errorMidTurn (Mid-turn failure) | — | errorOccurred | — | — | — |
 | clear | SessionEnd | sessionEnd | SessionEnd | — | session.deleted |
 
 Subagent lifecycle events (ADR-0022) deliberately have **no row** here — they

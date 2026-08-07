@@ -200,3 +200,54 @@ describe("turn tracker via the StatusChange seam", () => {
 		expect(__openTurnCountForTests()).toBe(0);
 	});
 });
+
+describe("mid-turn failure does not split a Turn (ADR-0026)", () => {
+	// recordTurn is spied per-test but its call list is cumulative across this
+	// file, so clear it here and assert on this test's calls alone.
+	const recorded = () =>
+		(telemetry.recordTurn as ReturnType<typeof vi.fn>).mock
+			.calls as unknown as [AgentTurnRecord][];
+
+	beforeEach(() => {
+		(telemetry.recordTurn as ReturnType<typeof vi.fn>).mockClear();
+	});
+
+	it("keeps one Turn across errorOccurred → acknowledge → agentStop", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsM", "paneM", "ptyM")],
+		});
+		register("ptyM", "paneM", "copilot", "idle", false);
+		const a = usePtyActivityStore.getState();
+		a.applyHookEvent("ptyM", "active"); // userPromptSubmitted
+		expect(__openTurnCountForTests()).toBe(1);
+
+		a.applyHookEvent("ptyM", "errorMidTurn"); // errorOccurred, agent keeps going
+		expect(__openTurnCountForTests()).toBe(1); // NOT finalized
+
+		// The user acknowledges the red icon. Without the errorMidTurn guard this
+		// error → active would open a second Turn, started at click time.
+		a.clearError("ptyM");
+		expect(__openTurnCountForTests()).toBe(1);
+
+		a.applyHookEvent("ptyM", "ready"); // agentStop
+		await vi.waitFor(() => expect(recorded().length).toBe(1));
+		const rec = recorded()[0][0];
+		// One row, ended cleanly, with the failure counted against it.
+		expect(rec.endReason).toBe("stop");
+		expect(rec.errorCount).toBe(1);
+	});
+
+	it("a Turn failure still finalizes the Turn as an error", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsT", "paneT", "ptyT")],
+		});
+		register("ptyT", "paneT", "claude", "idle", false);
+		const a = usePtyActivityStore.getState();
+		a.applyHookEvent("ptyT", "active");
+		a.applyHookEvent("ptyT", "error"); // StopFailure
+		await vi.waitFor(() => expect(recorded().length).toBe(1));
+		const rec = recorded()[0][0];
+		expect(rec.endReason).toBe("error");
+		expect(__openTurnCountForTests()).toBe(0);
+	});
+});

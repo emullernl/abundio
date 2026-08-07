@@ -15,12 +15,19 @@
 // work starts, like Grok's SessionStart. The other values are
 // PtyActivityState transitions.
 
+// "error" vs "errorMidTurn" (ADR-0026): "error" is a **Turn failure** — the
+// Turn ended in failure, so acknowledging the red icon lands on Idle and drops
+// any live Subagents. "errorMidTurn" is a **Mid-turn failure** — an operation
+// inside the Turn failed while the Agent kept generating, so acknowledging it
+// returns the pane to Working/Waiting and the Turn still ends Ready if it
+// completes. Same red icon; the difference is what clearing it means.
 export type HookTransition =
 	| "active"
 	| "waiting"
 	| "ready"
 	| "idle"
 	| "error"
+	| "errorMidTurn"
 	| "resume"
 	| "attach"
 	| "clear";
@@ -54,7 +61,12 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		// branch in mapHookEvent turns those into "waiting". preToolUse never
 		// fires for other tools, and would map to null here if it did.
 		agentStop: "ready",
-		errorOccurred: "error",
+		// Turn-continuing: Copilot reports the failure and keeps generating, and
+		// an `agentStop` always follows to end the Turn. Mapping this to a plain
+		// "error" left the pane Idle for the rest of the turn once the user
+		// acknowledged the red icon — hook-driven PTYs have no output-driven way
+		// back to Working. See ADR-0026.
+		errorOccurred: "errorMidTurn",
 		sessionEnd: "clear",
 	},
 	gemini: {

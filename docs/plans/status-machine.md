@@ -61,7 +61,8 @@ consumer. Each carries a timestamp; the reducer never reads a clock.
 |---|---|
 | `PromptSubmitted` | agent hook (`UserPromptSubmit`/`userPromptSubmitted`/`BeforeAgent`/`message.part.delta`/…) |
 | `PermissionRequested` | agent hook (`PermissionRequest`/`notification`/`permission.asked`/`question.asked`/Copilot `preToolUse` for `exit_plan_mode`,`ask_user`) |
-| `TurnStopped{ ok \| fail }` | agent hook (`Stop`/`StopFailure`/`AfterAgent`/`session.idle`/`session.error`) |
+| `TurnStopped{ ok \| fail }` | agent hook (`Stop`/`StopFailure`/`AfterAgent`/`session.idle`/`session.error`) — a **Turn failure**, so acknowledging the Error rests at Idle |
+| `MidTurnFailed` | agent hook (Copilot `errorOccurred`) — a **Mid-turn failure**: red icon, but the Turn is still open, so `preErrorState` remembers Working/Waiting and acknowledging returns there (ADR-0026) |
 | `SessionEnded` | agent hook (`SessionEnd`/`session.deleted`) — drops agent mode |
 | `ShellCommandStarted` | OSC `command_start` **or** process-monitor `CommandStarted` |
 | `ShellCommandEnded{ exit }` | OSC `command_end` **or** process-monitor `CommandFinished` **or** PTY exit |
