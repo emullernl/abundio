@@ -467,8 +467,10 @@ export function initAgentTurnTracker(): void {
 				);
 				return;
 			}
-			const startsWork =
-				cause.kind === "hook" && cause.transition === "working";
+			// A turn-start hook IS a boundary even when the dot is already Working —
+			// `startsTurn` (from `isTurnStartEvent`), not `transition === "working"`,
+			// which permission replies and OpenCode's token stream also produce.
+			const startsWork = cause.kind === "hook" && cause.startsTurn === true;
 			if (prev.state === next.state && !startsWork) return;
 			// A **hook-driven** pane has an authoritative turn-start signal, so only
 			// that signal may OPEN a Turn. Without this, any other route to Working
@@ -477,7 +479,9 @@ export function initAgentTurnTracker(): void {
 			// started at click time and attributed to their mouse — the same failure
 			// ADR-0026 blocked on the errorMidTurn path, reached from the other side.
 			// It bites only when no Turn is open, which is exactly when the idle
-			// backstop already finalized one (ADR-0027).
+			// backstop already finalized one (ADR-0027). A permission reply is also
+			// caught: it resolves to Working, but resuming after an answer is not the
+			// start of a new Turn.
 			//
 			// Narrow by construction: a hook-driven pane cannot reach Working via the
 			// byte heuristic (reduceOutput short-circuits on hookDriven), so this

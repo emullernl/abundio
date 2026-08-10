@@ -131,6 +131,7 @@ interface PtyActivityState_Store {
 			| "errorMidTurn"
 			| "resume"
 			| "attach",
+		startsTurn?: boolean,
 	) => void;
 	clearWaiting: (ptyId: string) => void;
 	clearActive: (ptyId: string) => void;
@@ -332,7 +333,15 @@ function applyStatusEvent(
 	// so the entry changed. On an already-hook-driven pane sitting at Working it
 	// emitted nothing, and the whole next Turn went unrecorded — reachable via a
 	// **Mid-turn failure** acknowledged back to Working, or simply a queued prompt.
-	const isTurnStart = event.kind === "hook" && event.transition === "working";
+	//
+	// Gated on `startsTurn` (from `isTurnStartEvent`), NOT on the transition: a
+	// permission reply also resolves to Working and is not a boundary. The one
+	// hot case left is OpenCode, whose only Working signal is per-token streaming
+	// (see TURN_START_EVENTS) — there this forces an emission per delta. That
+	// stays behaviourally inert (the tracker no-ops on an open Turn and the
+	// notification subscriber early-returns on an unchanged state); the cost is
+	// two `snap()` allocations and a listener walk.
+	const isTurnStart = event.kind === "hook" && event.startsTurn === true;
 
 	if (extra || changed) {
 		usePtyActivityStore.setState((s) => ({
@@ -437,12 +446,17 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			applyStatusEvent(ptyId, { kind: "recordError" });
 		},
 
-		applyHookEvent: (ptyId, transition) => {
+		applyHookEvent: (ptyId, transition, startsTurn) => {
 			if (!get().activities[ptyId]) return;
 			// The store's legacy "active" maps to the reducer's canonical "working".
 			const t: StatusTransition =
 				transition === "active" ? "working" : transition;
-			applyStatusEvent(ptyId, { kind: "hook", transition: t, now: Date.now() });
+			applyStatusEvent(ptyId, {
+				kind: "hook",
+				transition: t,
+				now: Date.now(),
+				startsTurn,
+			});
 		},
 
 		clearWaiting: (ptyId) => {

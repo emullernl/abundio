@@ -107,7 +107,7 @@ describe("turn tracker via the StatusChange seam", () => {
 			workspaces: [makeWorkspace("wsC", "paneC", "ptyC")],
 		});
 		register("ptyC", "paneC", "claude", "idle", false);
-		usePtyActivityStore.getState().applyHookEvent("ptyC", "active");
+		usePtyActivityStore.getState().applyHookEvent("ptyC", "active", true);
 		expect(__openTurnCountForTests()).toBe(1);
 	});
 
@@ -117,7 +117,7 @@ describe("turn tracker via the StatusChange seam", () => {
 		});
 		// Command-detected, not yet hookDriven, byte-heuristic already at Working.
 		register("ptyK", "paneK", "copilot", "active", false);
-		usePtyActivityStore.getState().applyHookEvent("ptyK", "active"); // userPromptSubmitted
+		usePtyActivityStore.getState().applyHookEvent("ptyK", "active", true); // userPromptSubmitted
 		expect(__openTurnCountForTests()).toBe(1);
 	});
 
@@ -127,7 +127,7 @@ describe("turn tracker via the StatusChange seam", () => {
 		});
 		register("ptyK", "paneK", "copilot", "active", false);
 		const a = usePtyActivityStore.getState();
-		a.applyHookEvent("ptyK", "active"); // userPromptSubmitted (Working→Working)
+		a.applyHookEvent("ptyK", "active", true); // userPromptSubmitted (Working→Working)
 		a.applyHookEvent("ptyK", "ready"); // agentStop
 		await vi.waitFor(() =>
 			expect(
@@ -170,7 +170,7 @@ describe("turn tracker via the StatusChange seam", () => {
 		expect(usePtyActivityStore.getState().detectedAgentIds.ptyA).toBe(
 			"copilot",
 		);
-		a.applyHookEvent("ptyA", "active"); // (4) userPromptSubmitted (Working→Working)
+		a.applyHookEvent("ptyA", "active", true); // (4) userPromptSubmitted (Working→Working)
 		a.applyHookEvent("ptyA", "ready"); // (5) agentStop
 		await vi.waitFor(() =>
 			expect(
@@ -222,7 +222,7 @@ describe("mid-turn failure does not split a Turn (ADR-0026)", () => {
 		});
 		register("ptyM", "paneM", "copilot", "idle", false);
 		const a = usePtyActivityStore.getState();
-		a.applyHookEvent("ptyM", "active"); // userPromptSubmitted
+		a.applyHookEvent("ptyM", "active", true); // userPromptSubmitted
 		expect(__openTurnCountForTests()).toBe(1);
 
 		a.applyHookEvent("ptyM", "errorMidTurn"); // errorOccurred, agent keeps going
@@ -247,7 +247,7 @@ describe("mid-turn failure does not split a Turn (ADR-0026)", () => {
 		});
 		register("ptyT", "paneT", "claude", "idle", false);
 		const a = usePtyActivityStore.getState();
-		a.applyHookEvent("ptyT", "active");
+		a.applyHookEvent("ptyT", "active", true);
 		a.applyHookEvent("ptyT", "error"); // StopFailure
 		await vi.waitFor(() => expect(recorded().length).toBe(1));
 		const rec = recorded()[0][0];
@@ -297,7 +297,7 @@ describe("the idle backstop ends a Turn as presumed (ADR-0027)", () => {
 			workspaces: [makeWorkspace("wsP", "paneP", "ptyP")],
 		});
 		register("ptyP", "paneP", "copilot", "idle", false);
-		usePtyActivityStore.getState().applyHookEvent("ptyP", "active");
+		usePtyActivityStore.getState().applyHookEvent("ptyP", "active", true);
 		// The agent fell silent; the scanner gives up 30s after the last output.
 		const lastOutput = Date.now() + 1_000;
 		touchLastOutput("ptyP", lastOutput);
@@ -316,7 +316,7 @@ describe("the idle backstop ends a Turn as presumed (ADR-0027)", () => {
 			workspaces: [makeWorkspace("wsD", "paneD", "ptyD")],
 		});
 		register("ptyD", "paneD", "claude", "idle", false);
-		usePtyActivityStore.getState().applyHookEvent("ptyD", "active");
+		usePtyActivityStore.getState().applyHookEvent("ptyD", "active", true);
 		// Back-date the last output far enough that a presumed end would be
 		// visible; the drain path must ignore it and use its own clock.
 		const stale = Date.now() - 60_000;
@@ -339,7 +339,7 @@ describe("the idle backstop ends a Turn as presumed (ADR-0027)", () => {
 		register("ptyN", "paneN", "copilot", "idle", false);
 		// A Turn that produced no output carries a lastOutputAt from before it began.
 		touchLastOutput("ptyN", Date.now() - 60_000);
-		usePtyActivityStore.getState().applyHookEvent("ptyN", "active");
+		usePtyActivityStore.getState().applyHookEvent("ptyN", "active", true);
 		tick("ptyN", "idle_backstop", Date.now());
 
 		await vi.waitFor(() => expect(recorded().length).toBe(1));
@@ -355,7 +355,7 @@ describe("the idle backstop ends a Turn as presumed (ADR-0027)", () => {
 		});
 		register("ptyS", "paneS", "claude", "idle", false);
 		const a = usePtyActivityStore.getState();
-		a.applyHookEvent("ptyS", "active");
+		a.applyHookEvent("ptyS", "active", true);
 		a.applyHookEvent("ptyS", "ready");
 		await vi.waitFor(() => expect(recorded().length).toBe(1));
 		expect(recorded()[0][0].endReason).toBe("stop");
@@ -374,7 +374,7 @@ describe("only a turn-start hook opens a Turn on a hook-driven pane (ADR-0027)",
 		});
 		register("ptyA", "paneA", "copilot", "idle", false);
 		const a = usePtyActivityStore.getState();
-		a.applyHookEvent("ptyA", "active"); // userPromptSubmitted
+		a.applyHookEvent("ptyA", "active", true); // userPromptSubmitted
 		a.applyHookEvent("ptyA", "ready"); // the backstop's effect: Turn closed
 		expect(__openTurnCountForTests()).toBe(0);
 
@@ -386,6 +386,27 @@ describe("only a turn-start hook opens a Turn on a hook-driven pane (ADR-0027)",
 		expect(__openTurnCountForTests()).toBe(0);
 	});
 
+	it("a permission reply resumes Working without opening a Turn", () => {
+		// PermissionResult / permission.replied / PermissionDenied all map to
+		// Working — the pane really is working again — but answering a prompt is
+		// not the start of a new Turn. With the previous `transition === "working"`
+		// test this opened a Turn timed from the user's answer whenever the
+		// previous one was already closed by a presumed end.
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsR", "paneR", "ptyR")],
+		});
+		register("ptyR", "paneR", "copilot", "idle", false);
+		const a = usePtyActivityStore.getState();
+		a.applyHookEvent("ptyR", "active", true); // userPromptSubmitted
+		a.applyHookEvent("ptyR", "ready"); // the backstop / agentStop closed it
+		expect(__openTurnCountForTests()).toBe(0);
+
+		// PermissionResult — maps to Working, but startsTurn is false.
+		a.applyHookEvent("ptyR", "active");
+		expect(usePtyActivityStore.getState().activities.ptyR.state).toBe("active");
+		expect(__openTurnCountForTests()).toBe(0);
+	});
+
 	it("still opens a Turn when a prompt lands on a pane already at Working", () => {
 		// The entry is identical across this hook (active→active, hookDriven
 		// already true), so it emits no state change — but a turn-start hook is a
@@ -394,7 +415,7 @@ describe("only a turn-start hook opens a Turn on a hook-driven pane (ADR-0027)",
 			workspaces: [makeWorkspace("wsQ", "paneQ", "ptyQ")],
 		});
 		register("ptyQ", "paneQ", "copilot", "active", true);
-		usePtyActivityStore.getState().applyHookEvent("ptyQ", "active");
+		usePtyActivityStore.getState().applyHookEvent("ptyQ", "active", true);
 		expect(__openTurnCountForTests()).toBe(1);
 	});
 
@@ -404,14 +425,14 @@ describe("only a turn-start hook opens a Turn on a hook-driven pane (ADR-0027)",
 		});
 		register("ptyB", "paneB", "copilot", "idle", false);
 		const a = usePtyActivityStore.getState();
-		a.applyHookEvent("ptyB", "active");
+		a.applyHookEvent("ptyB", "active", true);
 		a.applyHookEvent("ptyB", "ready");
 		a.applyHookEvent("ptyB", "errorMidTurn");
 		usePtyActivityStore.getState().click("ptyB");
 		expect(__openTurnCountForTests()).toBe(0);
 
 		// hookDriven and already at Working — the turn-start hook must still land.
-		usePtyActivityStore.getState().applyHookEvent("ptyB", "active");
+		usePtyActivityStore.getState().applyHookEvent("ptyB", "active", true);
 		expect(__openTurnCountForTests()).toBe(1);
 	});
 

@@ -279,6 +279,39 @@ export function mapHookEvent(
 	return HOOK_EVENT_MAP[agentId]?.[eventName] ?? null;
 }
 
+/** The hook events that mean **a new Turn may begin**, per Agent.
+ *
+ *  Deliberately NOT "every event that maps to Working". Several mid-Turn events
+ *  resolve to Working because the pane really is working again — the permission
+ *  replies (`PermissionResult` on kimi, `PermissionDenied` on grok,
+ *  `permission.replied` / `question.replied` on opencode). None of them starts a
+ *  Turn, and counting them as turn boundaries lets the tracker open a Turn timed
+ *  from a permission answer whenever the previous one is already closed — the
+ *  same "attributed to the wrong event" fabrication Rule A exists to prevent,
+ *  with a hook standing in for the mouse (ADR-0027).
+ *
+ *  **OpenCode is the asymmetric one.** It provisions no prompt-submitted hook at
+ *  all: `message.part.delta` (token streaming) is its ONLY Working signal, so the
+ *  first delta of a generation *is* its turn start and has to be listed here.
+ *  That makes the check true on a per-token hook for OpenCode panes. It stays
+ *  correct — opening a Turn is idempotent once one is open — but it is the one
+ *  Agent where "turn start" is inferred from generation rather than observed. */
+const TURN_START_EVENTS: Record<string, ReadonlySet<string>> = {
+	claude: new Set(["UserPromptSubmit"]),
+	qwen: new Set(["UserPromptSubmit"]),
+	kimi: new Set(["UserPromptSubmit"]),
+	codex: new Set(["UserPromptSubmit"]),
+	grok: new Set(["UserPromptSubmit"]),
+	copilot: new Set(["userPromptSubmitted"]),
+	gemini: new Set(["BeforeAgent"]),
+	opencode: new Set(["message.part.delta"]),
+};
+
+/** Whether this hook event may open a **Turn**. See `TURN_START_EVENTS`. */
+export function isTurnStartEvent(agentId: string, eventName: string): boolean {
+	return TURN_START_EVENTS[agentId]?.has(eventName) ?? false;
+}
+
 // ── Subagent lifecycle events (ADR-0022, docs/plans/subagent-aware-status.md) ──
 //
 // These deliberately have NO entry in HOOK_EVENT_MAP: they carry a Subagent id,

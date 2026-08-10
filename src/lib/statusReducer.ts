@@ -120,7 +120,16 @@ export const SUBAGENT_STALE_MS = 2 * 60 * 60_000;
 
 export type StatusEvent =
 	// Hook-driven transition (the translator resolved it via `mapHookEvent`).
-	| { kind: "hook"; transition: StatusTransition; now: number }
+	// `startsTurn` marks the events that may open a **Turn** (`isTurnStartEvent`),
+	// which is narrower than `transition === "working"` — permission replies and
+	// token streaming also resolve to Working mid-Turn. The reducer ignores it;
+	// it exists for Turn telemetry, which rides this cause. See ADR-0027.
+	| {
+			kind: "hook";
+			transition: StatusTransition;
+			now: number;
+			startsTurn?: boolean;
+	  }
 	// An agent was detected in this PTY (title match or any hook). → agent mode.
 	| { kind: "agentDetected" }
 	// The agent session ended (hook "clear"). → shell mode.

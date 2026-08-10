@@ -200,6 +200,18 @@ export function TerminalSlot({
 	//     a pane drag-reorder — must NOT clear the dot. Right/middle clicks
 	//     (context menu, paste) are excluded via the button guard — a right-click
 	//     must open the context menu without silently acknowledging an Error.
+	//
+	// Bound in the CAPTURE phase (onMouseDownCapture), for the same reason as the
+	// contextmenu handler below: xterm's own mousedown listener sits on
+	// `term.element`, a descendant, and when the running TUI has mouse reporting
+	// on (DECSET 1000/1002/1003 — which agent TUIs do enable) it ends in
+	// `cancel(ev)`. Today that is a no-op for propagation: `cancel` only calls
+	// `stopPropagation` when the `cancelEvents` option is true, it defaults to
+	// false, and we never set it — so a bubble-phase handler would in fact still
+	// run. But this is now the ONLY click path, and it would die silently on
+	// exactly the agent panes it exists for if anyone ever flipped that option or
+	// xterm changed the default. Capture phase costs nothing and removes the
+	// dependency entirely.
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
 			handleFocus();
@@ -357,7 +369,8 @@ export function TerminalSlot({
 				transition: "opacity 150ms ease",
 			}}
 			onFocus={handleFocus}
-			onMouseDown={handleMouseDown}
+			// Capture phase, deliberately — see handleMouseDown's comment.
+			onMouseDownCapture={handleMouseDown}
 		>
 			<TerminalTitleBar
 				paneId={paneId}

@@ -28,9 +28,29 @@ and 30 s of silence billed into `workingMs` and `durationMs`.
 
 ## The two rules
 
-**Only an authoritative signal may open a Turn on a hook-driven pane.** `noteState` opens a
-Turn on any arrival at Working; once `hookDriven`, it now requires
-`cause.kind === "hook" && transition === "working"`. The blast radius is small by construction:
+**Only an authoritative turn-start signal may open a Turn on a hook-driven pane.** `noteState`
+opens a Turn on any arrival at Working; once `hookDriven`, it now requires a hook the Agent's
+own vocabulary defines as *a prompt was submitted* — `isTurnStartEvent` / `TURN_START_EVENTS` in
+`agentHookMap.ts`, carried through the seam as `startsTurn` on the hook cause.
+
+The narrower test matters: `transition === "working"` would **not** have been "a turn-start
+hook". Permission replies resolve to Working too (`PermissionResult` on kimi, `PermissionDenied`
+on grok, `permission.replied` / `question.replied` on opencode) because the pane really is
+working again — and on a pane whose Turn a presumed end already closed, treating those as
+boundaries opens a brand-new Turn timed from the user's *answer*. That is the same
+"attributed to the wrong event" fabrication the rule exists to prevent, with a hook standing in
+for the mouse.
+
+**OpenCode is the documented exception.** It provisions no prompt-submitted hook at all — its
+only Working signal is `message.part.delta`, token streaming — so its turn start is *inferred
+from generation* rather than observed, and that event has to be listed as a turn start or
+OpenCode Turns stop recording entirely. Consequences: an OpenCode Turn silently reopens at the
+next token delta after a presumed end, and the `startsTurn` check is true per token there
+(inert — opening is idempotent while a Turn is open — but not free). The "silence over fiction"
+consequence below therefore holds fully for Claude/Copilot-style Agents and only partly for
+OpenCode.
+
+The blast radius is small by construction:
 such a pane cannot reach Working via the byte heuristic (`reduceOutput` short-circuits on
 `hookDriven`), so this blocks only tick-opened and acknowledgement-opened Turns, both
 fabrications. The documented pre-hook TUI-flood case is untouched — that pane is not yet
@@ -75,9 +95,21 @@ transition seam was built to remove.
 
 ## Consequences
 
-- **Historic rows cannot be backfilled.** The information needed to tell a backstop boundary
-  from a real one was never stored, so `presumed_end` starts at the deploy date and any
-  analysis spanning it sees a discontinuity.
+- **Byte-heuristic panes are in scope, deliberately.** Neither the branch nor `backstopRule`
+  checks `hookDriven`, so a command-detected Agent with no hook relay takes the `idle_backstop`
+  path too — on the 2s `IDLE_THRESHOLD_MS` rather than the 30s hook backstop. For those panes
+  the idle scanner is the *only* way Turns end, so effectively **all** of their rows become
+  `presumed_end`. That is the right answer rather than an oversight: a Ready inferred from a
+  byte heuristic is at least as much of a guess as one inferred from a dropped hook — there is
+  no hook contract behind it at all — so if any boundary deserves the label, that one does.
+  Do not "fix" the missing `hookDriven` check.
+- **Historic rows cannot be backfilled, and the discontinuity is in the numbers as well as the
+  label.** The information needed to tell a backstop boundary from a real one was never stored,
+  so `presumed_end` starts at the deploy date. Back-dating also shifts `endedAt`, `durationMs`
+  and `workingMs` — down by up to ~2s + one scan interval on heuristic panes, up to ~30s on
+  hook-driven ones. Any consumer spanning the deploy date sees both a new reason value and a
+  step change in durations; the CSV export (`statsCompute.ts:160`) is the one that surfaces
+  `end_reason` directly, but every duration aggregate is affected.
 - An `errorMidTurn` arriving with no open Turn still drops its error count — unchanged from
   ADR-0026, and now reachable via a preceding presumed end.
 - The `subagent_drain` boundary keeps `"stop"` deliberately, so its row still carries the tail

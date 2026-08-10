@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mapHookEvent, mapSubagentHookEvent } from "../agentHookMap";
+import {
+	isTurnStartEvent,
+	mapHookEvent,
+	mapSubagentHookEvent,
+} from "../agentHookMap";
 
 describe("mapHookEvent", () => {
 	it("maps Claude Code lifecycle events", () => {
@@ -485,5 +489,44 @@ describe("mapSubagentHookEvent (ADR-0022)", () => {
 				),
 			).toBeNull();
 		}
+	});
+});
+
+describe("isTurnStartEvent (ADR-0027)", () => {
+	it("accepts each Agent's prompt-submitted event", () => {
+		expect(isTurnStartEvent("claude", "UserPromptSubmit")).toBe(true);
+		expect(isTurnStartEvent("qwen", "UserPromptSubmit")).toBe(true);
+		expect(isTurnStartEvent("kimi", "UserPromptSubmit")).toBe(true);
+		expect(isTurnStartEvent("codex", "UserPromptSubmit")).toBe(true);
+		expect(isTurnStartEvent("grok", "UserPromptSubmit")).toBe(true);
+		expect(isTurnStartEvent("copilot", "userPromptSubmitted")).toBe(true);
+		expect(isTurnStartEvent("gemini", "BeforeAgent")).toBe(true);
+	});
+
+	it("rejects the mid-Turn events that also resolve to Working", () => {
+		// These all map to "active" because the pane really is working again —
+		// but resuming after an answer is not the start of a new Turn.
+		for (const [agent, event] of [
+			["kimi", "PermissionResult"],
+			["grok", "PermissionDenied"],
+			["opencode", "permission.replied"],
+			["opencode", "question.replied"],
+		] as const) {
+			expect(mapHookEvent(agent, event)).toBe("active");
+			expect(isTurnStartEvent(agent, event)).toBe(false);
+		}
+	});
+
+	it("treats OpenCode's token stream as its turn start — it has no other", () => {
+		// OpenCode provisions no prompt-submitted hook at all, so the first
+		// message.part.delta of a generation is the only turn-start signal there
+		// is. Listing it keeps OpenCode Turns recording; the cost is that the
+		// check is true per token on that Agent.
+		expect(isTurnStartEvent("opencode", "message.part.delta")).toBe(true);
+	});
+
+	it("is false for unknown agents and unrelated events", () => {
+		expect(isTurnStartEvent("aider", "UserPromptSubmit")).toBe(false);
+		expect(isTurnStartEvent("claude", "Stop")).toBe(false);
 	});
 });

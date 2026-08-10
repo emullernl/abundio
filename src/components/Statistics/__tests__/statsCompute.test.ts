@@ -106,7 +106,7 @@ function turn(overrides: Partial<AgentTurnRecord> = {}): AgentTurnRecord {
 		durationMs: 900_000,
 		workingMs: 600_000,
 		waitingMs: 300_000,
-		endReason: "completed",
+		endReason: "stop",
 		permissionRequestsCount: 1,
 		errorCount: 0,
 		linesAdded: 42,

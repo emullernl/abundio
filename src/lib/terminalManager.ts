@@ -18,7 +18,11 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
-import { mapHookEvent, mapSubagentHookEvent } from "./agentHookMap";
+import {
+	isTurnStartEvent,
+	mapHookEvent,
+	mapSubagentHookEvent,
+} from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { agentHooks, pty } from "./ipc";
@@ -1234,7 +1238,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				// Persist the agent identity so a hook-detected agent re-runs after a
 				// restart. Idempotent: stampAgentOnPane no-ops when already stamped.
 				useWorkspaceStore.getState().stampAgentOnPane(paneId, hookEvent.agent);
-				actStore.applyHookEvent(currentPtyId, transition);
+				actStore.applyHookEvent(
+					currentPtyId,
+					transition,
+					isTurnStartEvent(hookEvent.agent, hookEvent.event),
+				);
 			}),
 
 			// Spawn PTY concurrently with listener registration — listeners use
