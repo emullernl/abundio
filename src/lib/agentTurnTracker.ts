@@ -437,6 +437,28 @@ export function initAgentTurnTracker(): void {
 			const startsWork =
 				cause.kind === "hook" && cause.transition === "working";
 			if (prev.state === next.state && !startsWork) return;
+			// A **hook-driven** pane has an authoritative turn-start signal, so only
+			// that signal may OPEN a Turn. Without this, any other route to Working
+			// fabricates one: the user acknowledging a red icon (error → working, when
+			// a Mid-turn failure restored what the pane was doing) would open a Turn
+			// started at click time and attributed to their mouse — the same failure
+			// ADR-0026 blocked on the errorMidTurn path, reached from the other side.
+			// It bites only when no Turn is open, which is exactly when the idle
+			// backstop already finalized one (ADR-0027).
+			//
+			// Narrow by construction: a hook-driven pane cannot reach Working via the
+			// byte heuristic (reduceOutput short-circuits on hookDriven), so this
+			// blocks only tick- and acknowledgement-opened Turns. The documented
+			// pre-hook flood case above is untouched — that pane is not hookDriven
+			// yet, so its heuristic Working still opens the Turn.
+			if (
+				next.state === "active" &&
+				next.hookDriven &&
+				!startsWork &&
+				!openTurns.has(ptyId)
+			) {
+				return;
+			}
 			void noteState(ptyId, next.state);
 		}),
 	);

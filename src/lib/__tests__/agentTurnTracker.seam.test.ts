@@ -251,3 +251,58 @@ describe("mid-turn failure does not split a Turn (ADR-0026)", () => {
 		expect(__openTurnCountForTests()).toBe(0);
 	});
 });
+
+describe("only a turn-start hook opens a Turn on a hook-driven pane (ADR-0027)", () => {
+	it("acknowledging a red icon with no open Turn opens none", () => {
+		// The idle backstop has already finalized this pane's Turn, so nothing is
+		// open when a Mid-turn failure lands and the user clicks. Restoring Working
+		// on that click must not fabricate a Turn started at click time and
+		// attributed to their mouse.
+		//
+		// Today the acknowledgement rests at Idle (a mid-turn failure raised from
+		// `ready` records no memory), so this guard is not yet load-bearing — it is
+		// the precondition for widening that memory to cover `ready`, which is what
+		// makes the click land on Working. The assertion below is strengthened to
+		// check the restored state once that lands.
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsA", "paneA", "ptyA")],
+		});
+		register("ptyA", "paneA", "copilot", "idle", false);
+		const a = usePtyActivityStore.getState();
+		a.applyHookEvent("ptyA", "active"); // userPromptSubmitted
+		a.applyHookEvent("ptyA", "ready"); // the backstop's effect: Turn closed
+		expect(__openTurnCountForTests()).toBe(0);
+
+		a.applyHookEvent("ptyA", "errorMidTurn"); // errorOccurred, no open Turn
+		usePtyActivityStore.getState().click("ptyA");
+		expect(__openTurnCountForTests()).toBe(0);
+	});
+
+	it("the next real prompt still opens a Turn on that pane", () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsB", "paneB", "ptyB")],
+		});
+		register("ptyB", "paneB", "copilot", "idle", false);
+		const a = usePtyActivityStore.getState();
+		a.applyHookEvent("ptyB", "active");
+		a.applyHookEvent("ptyB", "ready");
+		a.applyHookEvent("ptyB", "errorMidTurn");
+		usePtyActivityStore.getState().click("ptyB");
+		expect(__openTurnCountForTests()).toBe(0);
+
+		// hookDriven and already at Working — the turn-start hook must still land.
+		usePtyActivityStore.getState().applyHookEvent("ptyB", "active");
+		expect(__openTurnCountForTests()).toBe(1);
+	});
+
+	it("leaves the pre-hook byte-heuristic path alone", () => {
+		// Not yet hookDriven: the TUI flood legitimately opens the Turn, and the
+		// first hook only flips hookDriven. Rule A must not touch this.
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsF", "paneF", "ptyF")],
+		});
+		register("ptyF", "paneF", "copilot", "idle", false);
+		usePtyActivityStore.getState().recordOutput("ptyF");
+		expect(__openTurnCountForTests()).toBe(1);
+	});
+});
