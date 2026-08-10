@@ -183,11 +183,14 @@ export function TerminalSlot({
 		}
 	}, [onFocus, paneId]);
 
-	// A deliberate left-click into the terminal screen counts as the user
-	// engaging with a waiting agent, so clear its sky-blue "waiting" dot to idle
-	// — the same effect ESC has in terminalManager's onData keystroke path.
-	// clearWaiting is a no-op unless the pane is actually waiting, so this is
-	// safe to call. Two deliberate restrictions:
+	// A deliberate left-click into the terminal screen is the user engaging with
+	// the pane: it dismisses a waiting agent's sky-blue dot (the same effect ESC
+	// has in terminalManager's onData keystroke path), acknowledges a red Error,
+	// and dismisses a purple Ready. All three are one `click` status event, whose
+	// internal ordering the reducer owns — notably clearWaiting runs before
+	// clearError so a **Mid-turn failure** restored to Waiting survives the click
+	// (ADR-0026). Every step no-ops unless the pane is in the matching state, so
+	// this is safe to call on any click. Two deliberate restrictions:
 	//   • We do NOT fold this into handleFocus: that also fires on programmatic
 	//     focus (tab switch via the isFocused effect), and switching to a tab
 	//     should keep showing its waiting dot, not silently clear it.
@@ -195,14 +198,15 @@ export function TerminalSlot({
 	//     mousedown is bound to the whole pane container so a click anywhere
 	//     focuses the pane, but clicks on the title bar — including the start of
 	//     a pane drag-reorder — must NOT clear the dot. Right/middle clicks
-	//     (context menu, paste) are excluded via the button guard.
+	//     (context menu, paste) are excluded via the button guard — a right-click
+	//     must open the context menu without silently acknowledging an Error.
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
 			handleFocus();
 			if (e.button !== 0) return;
 			if (!innerRef.current?.contains(e.target as Node)) return;
 			const ptyId = getTerminal(paneId)?.ptyId;
-			if (ptyId) usePtyActivityStore.getState().clearWaiting(ptyId);
+			if (ptyId) usePtyActivityStore.getState().click(ptyId);
 		},
 		[handleFocus, paneId],
 	);

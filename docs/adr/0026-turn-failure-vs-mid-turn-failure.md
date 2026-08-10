@@ -46,6 +46,17 @@ through to the Idle path too.
   Agent really is still blocked, and a click is not an answer. A **keystroke** does resolve it:
   terminalManager acknowledges the failure first and re-reads the entry, so the key means what
   it would have meant without the failure.
+  **Amendment.** As first written this was aspirational: nothing dispatched the `click` event.
+  A real click was three dispatches from two handlers — terminalManager's native `mousedown` on
+  `term.element` (`clearError` + `markIdle`) and TerminalSlot's React `onMouseDown`
+  (`clearWaiting`) — and a listener on a descendant beats React's root-delegated handler, so
+  they ran in exactly the **inverse** of the order specified here. A Mid-turn failure raised
+  while the pane was Working acknowledged correctly; one raised while it was **Waiting** was
+  restored and then immediately wiped to Idle, mid-Turn. The fix deletes the terminalManager
+  listener and has TerminalSlot dispatch the single `click` event, which also stops a
+  right-click from acknowledging an Error before opening the context menu (the native listener
+  had no button guard). The click-dismisses-Waiting behaviour it inherits is PR #140's; see the
+  amendment in ADR-0015.
 - A Mid-turn failure raises no notification. It would be the first of two pings for one Turn,
   and the alarming one is the one the Agent handles itself.
 - `agentTurnTracker` must not finalize the Turn on `errorMidTurn` — it counts the error and

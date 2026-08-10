@@ -119,6 +119,7 @@ interface PtyActivityState_Store {
 	recordExitSuccess: (ptyId: string) => void;
 	markIdle: (ptyId: string) => void;
 	clearError: (ptyId: string) => void;
+	click: (ptyId: string) => void;
 	applyHookEvent: (
 		ptyId: string,
 		transition:
@@ -388,6 +389,19 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		clearError: (ptyId) => {
 			if (!get().activities[ptyId]) return;
 			applyStatusEvent(ptyId, { kind: "clearError" });
+		},
+
+		click: (ptyId) => {
+			// A deliberate left-click on the terminal screen, as ONE event. The
+			// reducer's `click` runs clearWaiting → clearError → markIdle in that
+			// order, which matters: clearWaiting must see the Error state (where it
+			// no-ops) so a **Mid-turn failure** restored to Waiting survives the
+			// click — the Agent really is still blocked, and a click is not an
+			// answer (ADR-0026). Dispatching the three separately, from two
+			// different handlers, is what inverted that order and dropped a restored
+			// Waiting straight to Idle.
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, { kind: "click" });
 		},
 
 		recordError: (ptyId) => {

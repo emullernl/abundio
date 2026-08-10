@@ -1301,24 +1301,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		actStore.setTitle(paneId, title);
 	});
 
-	// A click in an already-focused terminal (e.g. scrolling without typing) should
-	// clear "ready" → "idle". Focus-changes and keystrokes are handled elsewhere.
-	const onTermClick = () => {
-		if (managed.ptyId) {
-			const actStore = usePtyActivityStore.getState();
-			actStore.clearError(managed.ptyId);
-			actStore.markIdle(managed.ptyId);
-		}
-	};
-	if (term.element) {
-		term.element.addEventListener("mousedown", onTermClick);
-	} else {
-		// term.open() hasn't been called yet; log so this is visible during development
-		console.warn(
-			"[terminalManager] term.element is null in initPty — mousedown idle-clear not registered for",
-			paneId,
-		);
-	}
+	// NOTE: a click in the terminal is handled by TerminalSlot's onMouseDown, which
+	// dispatches the single `click` status event. This used to be a second, native
+	// mousedown listener on term.element firing clearError + markIdle — but it ran
+	// BEFORE TerminalSlot's clearWaiting (a listener on a descendant beats React's
+	// root-delegated handler), inverting the order the reducer's `click` specifies
+	// and dropping a Mid-turn failure restored to Waiting straight to Idle. It also
+	// had no button guard, so a right-click acknowledged an Error before opening the
+	// context menu. See ADR-0026.
 
 	registerSnapshot(paneId, () => serializeAddon.serialize());
 
@@ -1328,7 +1318,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenActivity();
 		unlistenStatus();
 		unlistenHook();
-		term.element?.removeEventListener("mousedown", onTermClick);
 		escPressTimestamps.delete(currentPtyId);
 		if (managed.writeRafId !== null) {
 			cancelAnimationFrame(managed.writeRafId);
