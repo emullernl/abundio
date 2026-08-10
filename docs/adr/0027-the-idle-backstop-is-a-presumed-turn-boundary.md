@@ -86,3 +86,10 @@ transition seam was built to remove.
 - Rule A means a hook-driven pane that somehow loses its turn-start hook records nothing for
   that Turn rather than recording a Turn with a fabricated start. Silence over fiction: a
   missing row is visibly missing, a wrong one is not.
+- Rule A made a latent seam gap load-bearing, so it is now explicit: `applyStatusEvent` emits a
+  **Status transition** for a turn-start hook even when the projected entry is unchanged. Turn
+  telemetry has no other way to learn a new Turn began, and the tracker's `startsWork` exception
+  only ever worked by luck — the known case (a TUI flood tripping the byte heuristic into
+  Working before the first hook) also flipped `hookDriven`, so the entry changed. On an
+  already-hook-driven pane sitting at Working it emitted nothing and the next Turn went
+  unrecorded, reachable via an acknowledged Mid-turn failure or simply a queued prompt.

@@ -896,12 +896,13 @@ describe("statusReducer — mid-turn failure acknowledgement (ADR-0026)", () => 
 		).toBe("idle");
 	});
 
-	it("records nothing when the pane was not busy, or is a shell", () => {
-		for (const from of ["idle", "ready"] as const) {
-			const s = statusReducer(mk({ state: from }, "agent"), midTurnFail());
-			expect(s.preErrorState).toBeNull();
-			expect(statusReducer(s, { kind: "clearError" }).state).toBe("idle");
-		}
+	it("records nothing from Idle, or from a shell", () => {
+		// Idle is an observed intent — an ESC-cancel, an authoritative idle hook, or
+		// a click-dismissed Waiting. A late failure must not put the spinner back.
+		const s = statusReducer(mk({ state: "idle" }, "agent"), midTurnFail());
+		expect(s.preErrorState).toBeNull();
+		expect(statusReducer(s, { kind: "clearError" }).state).toBe("idle");
+
 		// Shell-mode PTYs have no Turn, so there is nothing to return to.
 		const shell = statusReducer(
 			mk({ state: "working" }, "shell"),
@@ -909,6 +910,32 @@ describe("statusReducer — mid-turn failure acknowledgement (ADR-0026)", () => 
 		);
 		expect(shell.preErrorState).toBeNull();
 		expect(statusReducer(shell, { kind: "clearError" }).state).toBe("idle");
+	});
+
+	it("treats Ready as Working — the backstop only guessed the Turn ended", () => {
+		// The one way a hook-driven pane reaches Ready without a turn-finished hook
+		// is the 30s idle backstop (ADR-0027). A turn-continuing failure is proof
+		// that guess was wrong, so acknowledging it returns to Working rather than
+		// resting at Idle mid-Turn.
+		const s = statusReducer(mk({ state: "ready" }, "agent"), midTurnFail());
+		expect(s.preErrorState).toBe("working");
+		expect(statusReducer(s, { kind: "clearError" }).state).toBe("working");
+	});
+
+	it("re-fires the backstop if the Agent really had fallen silent", () => {
+		// Restoring Working is safe precisely because it is not permanent: the
+		// restore deliberately does not refresh lastActivityAt, so a genuinely
+		// silent agent flips back to Ready on the very next tick.
+		const s = run(
+			mk({ state: "ready", lastActivityAt: 1_000 }, "agent"),
+			midTurnFail(2_000),
+			{ kind: "clearError" },
+		);
+		expect(s.state).toBe("working");
+		expect(
+			statusReducer(s, { kind: "tick", now: 1_000 + HOOK_IDLE_BACKSTOP_MS + 1 })
+				.state,
+		).toBe("ready");
 	});
 
 	it("a Turn failure still goes to Idle even from Working", () => {

@@ -355,6 +355,18 @@ function applyHook(
 		// errorOccurred in one Turn (two failing tool calls, a retried request)
 		// would otherwise read `"error"` off `s.state`, fall through to null, and
 		// land the acknowledgement back on Idle — the very bug this fixes.
+		//
+		// **Ready** counts as Working: the only way a hook-driven pane reaches
+		// Ready without a turn-finished hook is the 30s idle backstop, which merely
+		// *guessed* the Turn had ended — and a turn-continuing failure is proof it
+		// hadn't. If the Agent really has fallen silent the backstop simply re-fires
+		// on the next tick after acknowledgement (ADR-0027).
+		//
+		// **Idle** deliberately records nothing. Unlike Ready it is an observed
+		// intent — an ESC-cancel (`clearActive`), an authoritative idle hook, or a
+		// click-dismissed Waiting — and a late failure from the operation that was
+		// in flight must not put the spinner back, or the cancel would feel like it
+		// didn't take.
 		return {
 			...s,
 			state: "error",
@@ -362,10 +374,13 @@ function applyHook(
 			preErrorState:
 				s.state === "error"
 					? s.preErrorState
-					: s.mode === "agent" &&
-							(s.state === "working" || s.state === "waiting")
-						? s.state
-						: null,
+					: s.mode !== "agent"
+						? null
+						: s.state === "waiting"
+							? "waiting"
+							: s.state === "working" || s.state === "ready"
+								? "working"
+								: null,
 		};
 	}
 	if (transition === "error") {

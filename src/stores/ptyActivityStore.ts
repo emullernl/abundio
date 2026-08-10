@@ -324,6 +324,16 @@ function applyStatusEvent(
 	const nextEntry = project(after, prevEntry);
 	const changed = !prevEntry || !entriesEqual(prevEntry, nextEntry);
 
+	// A turn-start hook is a **Turn** boundary whether or not the icon moves, so it
+	// must reach the seam even when the projected entry is identical — Turn
+	// telemetry has no other way to learn a new Turn began. This used to hold only
+	// by luck: the known case (a command-detected Agent whose TUI flood tripped the
+	// byte heuristic into Working before its first hook) also flipped `hookDriven`,
+	// so the entry changed. On an already-hook-driven pane sitting at Working it
+	// emitted nothing, and the whole next Turn went unrecorded — reachable via a
+	// **Mid-turn failure** acknowledged back to Working, or simply a queued prompt.
+	const isTurnStart = event.kind === "hook" && event.transition === "working";
+
 	if (extra || changed) {
 		usePtyActivityStore.setState((s) => ({
 			...(extra ?? {}),
@@ -332,7 +342,7 @@ function applyStatusEvent(
 				: {}),
 		}));
 	}
-	if (changed) {
+	if (changed || isTurnStart) {
 		const prevSnap = snap(prevEntry ?? project(before, undefined));
 		emitStatusChange({
 			ptyId,

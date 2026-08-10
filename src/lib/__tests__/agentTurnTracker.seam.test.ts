@@ -369,11 +369,6 @@ describe("only a turn-start hook opens a Turn on a hook-driven pane (ADR-0027)",
 		// on that click must not fabricate a Turn started at click time and
 		// attributed to their mouse.
 		//
-		// Today the acknowledgement rests at Idle (a mid-turn failure raised from
-		// `ready` records no memory), so this guard is not yet load-bearing — it is
-		// the precondition for widening that memory to cover `ready`, which is what
-		// makes the click land on Working. The assertion below is strengthened to
-		// check the restored state once that lands.
 		useWorkspaceStore.setState({
 			workspaces: [makeWorkspace("wsA", "paneA", "ptyA")],
 		});
@@ -385,7 +380,22 @@ describe("only a turn-start hook opens a Turn on a hook-driven pane (ADR-0027)",
 
 		a.applyHookEvent("ptyA", "errorMidTurn"); // errorOccurred, no open Turn
 		usePtyActivityStore.getState().click("ptyA");
+		// The icon honestly returns to Working (the backstop's Ready was a guess,
+		// and the failure proves the Turn continued) — but no Turn is fabricated.
+		expect(usePtyActivityStore.getState().activities.ptyA.state).toBe("active");
 		expect(__openTurnCountForTests()).toBe(0);
+	});
+
+	it("still opens a Turn when a prompt lands on a pane already at Working", () => {
+		// The entry is identical across this hook (active→active, hookDriven
+		// already true), so it emits no state change — but a turn-start hook is a
+		// Turn boundary regardless of the icon and must still reach the seam.
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsQ", "paneQ", "ptyQ")],
+		});
+		register("ptyQ", "paneQ", "copilot", "active", true);
+		usePtyActivityStore.getState().applyHookEvent("ptyQ", "active");
+		expect(__openTurnCountForTests()).toBe(1);
 	});
 
 	it("the next real prompt still opens a Turn on that pane", () => {
