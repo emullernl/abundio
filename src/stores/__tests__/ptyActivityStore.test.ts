@@ -2,6 +2,7 @@ import { sendNotification } from "@tauri-apps/plugin-notification";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
 import {
+	backstopRule,
 	collectPtyIds,
 	computePtyDotStatus,
 	computeTabDotStatus,
@@ -1360,6 +1361,20 @@ describe("mid-turn failure (ADR-0026)", () => {
 		expect(mockSendNotification).not.toHaveBeenCalled();
 		usePtyActivityStore.getState().applyHookEvent("pty-nt", "error");
 		expect(mockSendNotification).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("backstopRule (ADR-0027)", () => {
+	it("calls a silent pane's backstop a presumed end", () => {
+		expect(backstopRule({ activeSubagents: [] })).toBe("idle_backstop");
+	});
+
+	it("calls a pane with live Subagents a drain", () => {
+		// There a turn-finished hook WAS observed and merely held (ADR-0022), so
+		// the boundary is not presumed — only its timing is fuzzy.
+		expect(
+			backstopRule({ activeSubagents: [{ id: "sa-1", startedAt: 0 }] }),
+		).toBe("subagent_drain");
 	});
 });
 

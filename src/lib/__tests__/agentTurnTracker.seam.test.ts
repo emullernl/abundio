@@ -9,7 +9,11 @@
 // equal-state guard — otherwise the Turn never opens and nothing records.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useProfileStore } from "../../stores/profileStore";
-import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import {
+	__emitStatusChangeForTests,
+	touchLastOutput,
+	usePtyActivityStore,
+} from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	__openTurnCountForTests,
@@ -249,6 +253,112 @@ describe("mid-turn failure does not split a Turn (ADR-0026)", () => {
 		const rec = recorded()[0][0];
 		expect(rec.endReason).toBe("error");
 		expect(__openTurnCountForTests()).toBe(0);
+	});
+});
+
+describe("the idle backstop ends a Turn as presumed (ADR-0027)", () => {
+	const recorded = () =>
+		(telemetry.recordTurn as ReturnType<typeof vi.fn>).mock
+			.calls as unknown as [AgentTurnRecord][];
+
+	beforeEach(() => {
+		(telemetry.recordTurn as ReturnType<typeof vi.fn>).mockClear();
+	});
+
+	/** Drive one scanner tick's StatusChange by hand: the real scanner is a
+	 *  module-level setInterval, so the seam is exercised via emitStatusChange. */
+	function tick(
+		ptyId: string,
+		rule: "idle_backstop" | "subagent_drain",
+		now: number,
+	) {
+		const entry = usePtyActivityStore.getState().activities[ptyId];
+		usePtyActivityStore.setState((s) => ({
+			activities: { ...s.activities, [ptyId]: { ...entry, state: "ready" } },
+		}));
+		__emitStatusChangeForTests({
+			ptyId,
+			prev: {
+				state: entry.state,
+				detectionMode: entry.detectionMode,
+				hookDriven: entry.hookDriven,
+			},
+			next: {
+				state: "ready",
+				detectionMode: entry.detectionMode,
+				hookDriven: entry.hookDriven,
+			},
+			cause: { kind: "tick", now, rule },
+		});
+	}
+
+	it("records presumed_end, timed from the last activity not the giving-up", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsP", "paneP", "ptyP")],
+		});
+		register("ptyP", "paneP", "copilot", "idle", false);
+		usePtyActivityStore.getState().applyHookEvent("ptyP", "active");
+		// The agent fell silent; the scanner gives up 30s after the last output.
+		const lastOutput = Date.now() + 1_000;
+		touchLastOutput("ptyP", lastOutput);
+		tick("ptyP", "idle_backstop", lastOutput + 30_000);
+
+		await vi.waitFor(() => expect(recorded().length).toBe(1));
+		const rec = recorded()[0][0];
+		expect(rec.endReason).toBe("presumed_end");
+		// The 30s of silence is not billed as work.
+		expect(rec.endedAt).toBe(lastOutput);
+		expect(rec.workingMs).toBeLessThan(30_000);
+	});
+
+	it("keeps a Subagent-drain tick as an observed stop", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsD", "paneD", "ptyD")],
+		});
+		register("ptyD", "paneD", "claude", "idle", false);
+		usePtyActivityStore.getState().applyHookEvent("ptyD", "active");
+		// Back-date the last output far enough that a presumed end would be
+		// visible; the drain path must ignore it and use its own clock.
+		const stale = Date.now() - 60_000;
+		touchLastOutput("ptyD", stale);
+		tick("ptyD", "subagent_drain", Date.now());
+
+		await vi.waitFor(() => expect(recorded().length).toBe(1));
+		const rec = recorded()[0][0];
+		// The turn-finished hook WAS observed here — only the tail length was
+		// inferred, and ADR-0022 bills that tail on purpose. So: not presumed, and
+		// not back-dated to the stale last-output.
+		expect(rec.endReason).toBe("stop");
+		expect(rec.endedAt).toBeGreaterThan(stale);
+	});
+
+	it("never bills negative time when the last activity predates the Turn", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsN", "paneN", "ptyN")],
+		});
+		register("ptyN", "paneN", "copilot", "idle", false);
+		// A Turn that produced no output carries a lastOutputAt from before it began.
+		touchLastOutput("ptyN", Date.now() - 60_000);
+		usePtyActivityStore.getState().applyHookEvent("ptyN", "active");
+		tick("ptyN", "idle_backstop", Date.now());
+
+		await vi.waitFor(() => expect(recorded().length).toBe(1));
+		const rec = recorded()[0][0];
+		expect(rec.endReason).toBe("presumed_end");
+		expect(rec.durationMs).toBeGreaterThanOrEqual(0);
+		expect(rec.workingMs).toBeGreaterThanOrEqual(0);
+	});
+
+	it("a real agentStop is unaffected", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [makeWorkspace("wsS", "paneS", "ptyS")],
+		});
+		register("ptyS", "paneS", "claude", "idle", false);
+		const a = usePtyActivityStore.getState();
+		a.applyHookEvent("ptyS", "active");
+		a.applyHookEvent("ptyS", "ready");
+		await vi.waitFor(() => expect(recorded().length).toBe(1));
+		expect(recorded()[0][0].endReason).toBe("stop");
 	});
 });
 

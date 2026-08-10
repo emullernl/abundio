@@ -260,6 +260,23 @@ export function subscribeStatusChange(
 	return () => statusChangeListeners.delete(fn);
 }
 
+/** Which Working→Ready backstop a scanner tick trips, given the pane's state
+ *  *before* the tick. Live Subagents mean the drain path: a turn-finished hook
+ *  was observed and merely held for the tail (ADR-0022). Anything else is pure
+ *  silence, whose boundary is a **Presumed end** (ADR-0027). Only the scanner
+ *  holds `before`, which is why the answer must ride the cause rather than be
+ *  re-derived downstream. */
+export function backstopRule(
+	before: Pick<StatusState, "activeSubagents">,
+): "idle_backstop" | "subagent_drain" {
+	return before.activeSubagents.length > 0 ? "subagent_drain" : "idle_backstop";
+}
+
+/** Test-only: publish a Status transition without going through a real event. */
+export function __emitStatusChangeForTests(c: StatusChange): void {
+	emitStatusChange(c);
+}
+
 function emitStatusChange(c: StatusChange): void {
 	for (const fn of statusChangeListeners) {
 		try {
@@ -625,7 +642,12 @@ setInterval(() => {
 			ptyId,
 			prev: snap(entry),
 			next: snap(nextEntry),
-			cause: { kind: "tick", now },
+			// Name which backstop this tick tripped. Only the scanner holds
+			// `before`, so only the scanner can tell them apart: a pane with live
+			// Subagents took the drain path (a turn-finished hook was observed and
+			// merely held, ADR-0022); anything else is pure silence and its boundary
+			// is a **Presumed end** (ADR-0027).
+			cause: { kind: "tick", now, rule: backstopRule(before) },
 		});
 	}
 

@@ -142,8 +142,14 @@ export type StatusEvent =
 	| { kind: "subagentStopped"; agentId: string; now: number }
 	// The PTY process exited.
 	| { kind: "ptyExited"; code: number | null }
-	// The global idle scanner ticked.
-	| { kind: "tick"; now: number }
+	// The global idle scanner ticked. `rule` names which backstop the scanner
+	// expects this tick to trip, so a consumer can tell the two Working→Ready
+	// backstops apart (the reducer itself ignores it): `idle_backstop` is pure
+	// silence — nothing was observed, the boundary is a **Presumed end**;
+	// `subagent_drain` releases a turn-finished hook that WAS observed and only
+	// held for a Subagent tail (ADR-0022, ADR-0027). Optional so the many
+	// hand-built ticks in tests and non-scanner callers stay valid.
+	| { kind: "tick"; now: number; rule?: "idle_backstop" | "subagent_drain" }
 	// Focus reassertion (workspace switch / projection) — acknowledge alerts.
 	| { kind: "focus" }
 	// A deliberate click/mousedown in the pane — acknowledge + dismiss Waiting.
