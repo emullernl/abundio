@@ -142,6 +142,23 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 		expect(stateOf("pty-1")).toBe("waiting");
 	});
 
+	it("survives a descendant that stops propagation (xterm mouse reporting)", () => {
+		// The handler is bound in the capture phase precisely so xterm's own
+		// mousedown listener — on a descendant, and ending in `cancel(ev)` when the
+		// TUI has mouse reporting on — cannot suppress the only click path we have.
+		// A bubble-phase binding would never see this event.
+		makeWaiting("pty-1");
+		const screen = screenEl();
+		const swallow = (e: Event) => e.stopPropagation();
+		screen?.addEventListener("mousedown", swallow);
+		try {
+			mouseDownOn(screen, 0);
+			expect(stateOf("pty-1")).toBe("idle");
+		} finally {
+			screen?.removeEventListener("mousedown", swallow);
+		}
+	});
+
 	it("is a no-op when the pane has no managed PTY yet", () => {
 		makeWaiting("pty-1");
 		currentManagedPtyId = null;

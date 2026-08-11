@@ -119,6 +119,7 @@ interface PtyActivityState_Store {
 	recordExitSuccess: (ptyId: string) => void;
 	markIdle: (ptyId: string) => void;
 	clearError: (ptyId: string) => void;
+	click: (ptyId: string) => void;
 	applyHookEvent: (
 		ptyId: string,
 		transition:
@@ -130,6 +131,7 @@ interface PtyActivityState_Store {
 			| "errorMidTurn"
 			| "resume"
 			| "attach",
+		startsTurn?: boolean,
 	) => void;
 	clearWaiting: (ptyId: string) => void;
 	clearActive: (ptyId: string) => void;
@@ -259,6 +261,23 @@ export function subscribeStatusChange(
 	return () => statusChangeListeners.delete(fn);
 }
 
+/** Which Working→Ready backstop a scanner tick trips, given the pane's state
+ *  *before* the tick. Live Subagents mean the drain path: a turn-finished hook
+ *  was observed and merely held for the tail (ADR-0022). Anything else is pure
+ *  silence, whose boundary is a **Presumed end** (ADR-0027). Only the scanner
+ *  holds `before`, which is why the answer must ride the cause rather than be
+ *  re-derived downstream. */
+export function backstopRule(
+	before: Pick<StatusState, "activeSubagents">,
+): "idle_backstop" | "subagent_drain" {
+	return before.activeSubagents.length > 0 ? "subagent_drain" : "idle_backstop";
+}
+
+/** Test-only: publish a Status transition without going through a real event. */
+export function __emitStatusChangeForTests(c: StatusChange): void {
+	emitStatusChange(c);
+}
+
 function emitStatusChange(c: StatusChange): void {
 	for (const fn of statusChangeListeners) {
 		try {
@@ -306,6 +325,24 @@ function applyStatusEvent(
 	const nextEntry = project(after, prevEntry);
 	const changed = !prevEntry || !entriesEqual(prevEntry, nextEntry);
 
+	// A turn-start hook is a **Turn** boundary whether or not the icon moves, so it
+	// must reach the seam even when the projected entry is identical — Turn
+	// telemetry has no other way to learn a new Turn began. This used to hold only
+	// by luck: the known case (a command-detected Agent whose TUI flood tripped the
+	// byte heuristic into Working before its first hook) also flipped `hookDriven`,
+	// so the entry changed. On an already-hook-driven pane sitting at Working it
+	// emitted nothing, and the whole next Turn went unrecorded — reachable via a
+	// **Mid-turn failure** acknowledged back to Working, or simply a queued prompt.
+	//
+	// Gated on `startsTurn` (from `isTurnStartEvent`), NOT on the transition: a
+	// permission reply also resolves to Working and is not a boundary. The one
+	// hot case left is OpenCode, whose only Working signal is per-token streaming
+	// (see TURN_START_EVENTS) — there this forces an emission per delta. That
+	// stays behaviourally inert (the tracker no-ops on an open Turn and the
+	// notification subscriber early-returns on an unchanged state); the cost is
+	// two `snap()` allocations and a listener walk.
+	const isTurnStart = event.kind === "hook" && event.startsTurn === true;
+
 	if (extra || changed) {
 		usePtyActivityStore.setState((s) => ({
 			...(extra ?? {}),
@@ -314,7 +351,7 @@ function applyStatusEvent(
 				: {}),
 		}));
 	}
-	if (changed) {
+	if (changed || isTurnStart) {
 		const prevSnap = snap(prevEntry ?? project(before, undefined));
 		emitStatusChange({
 			ptyId,
@@ -390,18 +427,36 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			applyStatusEvent(ptyId, { kind: "clearError" });
 		},
 
+		click: (ptyId) => {
+			// A deliberate left-click on the terminal screen, as ONE event. The
+			// reducer's `click` runs clearWaiting → clearError → markIdle in that
+			// order, which matters: clearWaiting must see the Error state (where it
+			// no-ops) so a **Mid-turn failure** restored to Waiting survives the
+			// click — the Agent really is still blocked, and a click is not an
+			// answer (ADR-0026). Dispatching the three separately, from two
+			// different handlers, is what inverted that order and dropped a restored
+			// Waiting straight to Idle.
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, { kind: "click" });
+		},
+
 		recordError: (ptyId) => {
 			// No guard: a recordError on an absent PTY creates the Error entry
 			// (mirrors the old unconditional set()).
 			applyStatusEvent(ptyId, { kind: "recordError" });
 		},
 
-		applyHookEvent: (ptyId, transition) => {
+		applyHookEvent: (ptyId, transition, startsTurn) => {
 			if (!get().activities[ptyId]) return;
 			// The store's legacy "active" maps to the reducer's canonical "working".
 			const t: StatusTransition =
 				transition === "active" ? "working" : transition;
-			applyStatusEvent(ptyId, { kind: "hook", transition: t, now: Date.now() });
+			applyStatusEvent(ptyId, {
+				kind: "hook",
+				transition: t,
+				now: Date.now(),
+				startsTurn,
+			});
 		},
 
 		clearWaiting: (ptyId) => {
@@ -611,7 +666,12 @@ setInterval(() => {
 			ptyId,
 			prev: snap(entry),
 			next: snap(nextEntry),
-			cause: { kind: "tick", now },
+			// Name which backstop this tick tripped. Only the scanner holds
+			// `before`, so only the scanner can tell them apart: a pane with live
+			// Subagents took the drain path (a turn-finished hook was observed and
+			// merely held, ADR-0022); anything else is pure silence and its boundary
+			// is a **Presumed end** (ADR-0027).
+			cause: { kind: "tick", now, rule: backstopRule(before) },
 		});
 	}
 

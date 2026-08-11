@@ -24,6 +24,7 @@
 
 import { useProfileStore } from "../stores/profileStore";
 import {
+	getLastOutputAt,
 	subscribeStatusChange,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
@@ -295,8 +296,19 @@ function finalize(
 	const t = openTurns.get(ptyId);
 	if (!t) return;
 	openTurns.delete(ptyId);
-	flushTimers(t, now);
-	return writeRecord(t, reason, now);
+	// A **Presumed end** back-dates to the last observed activity (ADR-0027), and
+	// that timestamp can predate the Turn's live timer origins — a Turn that
+	// produced no output at all carries a `lastOutputAt` from before it began.
+	// Floor at the latest origin so back-dating can never bill negative time or a
+	// negative duration; every other reason passes `now`, which is already ≥ them.
+	const end = Math.max(
+		now,
+		t.startedAt,
+		t.workingSince ?? t.startedAt,
+		t.waitingSince ?? t.startedAt,
+	);
+	flushTimers(t, end);
+	return writeRecord(t, reason, end);
 }
 
 async function writeRecord(
@@ -434,9 +446,56 @@ export function initAgentTurnTracker(): void {
 				if (open) open.errors += 1;
 				return;
 			}
-			const startsWork =
-				cause.kind === "hook" && cause.transition === "working";
+			// The idle backstop's Working→Ready is a **Presumed end** (ADR-0027): the
+			// Agent never said the Turn ended, the pane just went quiet past the
+			// window. Record it under its own reason so a guessed boundary is never
+			// read as an observed one, and time it from the last activity rather than
+			// the moment we gave up — otherwise the silence itself lands in workingMs.
+			//
+			// The Subagent-drain tick is NOT presumed: there the turn-finished hook
+			// *was* observed and only held for the tail, and that tail is Working time
+			// ADR-0022 bills on purpose, so it keeps "stop" at `now`.
+			if (
+				next.state === "ready" &&
+				cause.kind === "tick" &&
+				cause.rule === "idle_backstop"
+			) {
+				void finalize(
+					ptyId,
+					"presumed_end",
+					getLastOutputAt(ptyId) ?? cause.now,
+				);
+				return;
+			}
+			// A turn-start hook IS a boundary even when the dot is already Working —
+			// `startsTurn` (from `isTurnStartEvent`), not `transition === "working"`,
+			// which permission replies and OpenCode's token stream also produce.
+			const startsWork = cause.kind === "hook" && cause.startsTurn === true;
 			if (prev.state === next.state && !startsWork) return;
+			// A **hook-driven** pane has an authoritative turn-start signal, so only
+			// that signal may OPEN a Turn. Without this, any other route to Working
+			// fabricates one: the user acknowledging a red icon (error → working, when
+			// a Mid-turn failure restored what the pane was doing) would open a Turn
+			// started at click time and attributed to their mouse — the same failure
+			// ADR-0026 blocked on the errorMidTurn path, reached from the other side.
+			// It bites only when no Turn is open, which is exactly when the idle
+			// backstop already finalized one (ADR-0027). A permission reply is also
+			// caught: it resolves to Working, but resuming after an answer is not the
+			// start of a new Turn.
+			//
+			// Narrow by construction: a hook-driven pane cannot reach Working via the
+			// byte heuristic (reduceOutput short-circuits on hookDriven), so this
+			// blocks only tick- and acknowledgement-opened Turns. The documented
+			// pre-hook flood case above is untouched — that pane is not hookDriven
+			// yet, so its heuristic Working still opens the Turn.
+			if (
+				next.state === "active" &&
+				next.hookDriven &&
+				!startsWork &&
+				!openTurns.has(ptyId)
+			) {
+				return;
+			}
 			void noteState(ptyId, next.state);
 		}),
 	);

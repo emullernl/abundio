@@ -2,6 +2,7 @@ import { sendNotification } from "@tauri-apps/plugin-notification";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode, Tab, WorkspaceWithTabs } from "../../lib/types";
 import {
+	backstopRule,
 	collectPtyIds,
 	computePtyDotStatus,
 	computeTabDotStatus,
@@ -1360,5 +1361,100 @@ describe("mid-turn failure (ADR-0026)", () => {
 		expect(mockSendNotification).not.toHaveBeenCalled();
 		usePtyActivityStore.getState().applyHookEvent("pty-nt", "error");
 		expect(mockSendNotification).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("backstopRule (ADR-0027)", () => {
+	it("calls a silent pane's backstop a presumed end", () => {
+		expect(backstopRule({ activeSubagents: [] })).toBe("idle_backstop");
+	});
+
+	it("calls a pane with live Subagents a drain", () => {
+		// There a turn-finished hook WAS observed and merely held (ADR-0022), so
+		// the boundary is not presumed — only its timing is fuzzy.
+		expect(
+			backstopRule({ activeSubagents: [{ id: "sa-1", startedAt: 0 }] }),
+		).toBe("subagent_drain");
+	});
+});
+
+describe("the click action", () => {
+	it("leaves a Waiting restored from a Mid-turn failure waiting", () => {
+		// THE regression. A click used to be three dispatches from two different
+		// handlers — terminalManager's native mousedown listener (clearError then
+		// markIdle) fired before TerminalSlot's React onMouseDown (clearWaiting),
+		// because a listener on a descendant beats React's root-delegated handler.
+		// That inverted the reducer's clearWaiting-first order: clearError restored
+		// Waiting and the trailing clearWaiting immediately wiped it to Idle. So a
+		// Mid-turn failure raised while the pane was Working acknowledged correctly,
+		// but one raised while it was Waiting silently dropped to Idle mid-Turn.
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-cw", "agent");
+		s.setAgentPty("pty-cw", "copilot");
+		s.applyHookEvent("pty-cw", "active");
+		s.applyHookEvent("pty-cw", "waiting");
+		s.applyHookEvent("pty-cw", "errorMidTurn");
+		expect(peekPreErrorState("pty-cw")).toBe("waiting");
+
+		usePtyActivityStore.getState().click("pty-cw");
+		expect(usePtyActivityStore.getState().activities["pty-cw"].state).toBe(
+			"waiting",
+		);
+		expect(peekPreErrorState("pty-cw")).toBeNull();
+	});
+
+	it("restores Working from a Mid-turn failure raised while Working", () => {
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-cwk", "agent");
+		s.setAgentPty("pty-cwk", "copilot");
+		s.applyHookEvent("pty-cwk", "active");
+		s.applyHookEvent("pty-cwk", "errorMidTurn");
+
+		usePtyActivityStore.getState().click("pty-cwk");
+		expect(usePtyActivityStore.getState().activities["pty-cwk"].state).toBe(
+			"active",
+		);
+	});
+
+	it("still dismisses a plain Waiting pane to idle (PR #140)", () => {
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-cpw", "agent");
+		s.setAgentPty("pty-cpw", "copilot");
+		s.applyHookEvent("pty-cpw", "waiting");
+
+		usePtyActivityStore.getState().click("pty-cpw");
+		expect(usePtyActivityStore.getState().activities["pty-cpw"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("dismisses Ready, and rests a Turn failure at idle", () => {
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-cr", "agent");
+		s.setAgentPty("pty-cr", "claude");
+		s.applyHookEvent("pty-cr", "ready");
+		usePtyActivityStore.getState().click("pty-cr");
+		expect(usePtyActivityStore.getState().activities["pty-cr"].state).toBe(
+			"idle",
+		);
+
+		s.applyHookEvent("pty-cr", "active");
+		s.applyHookEvent("pty-cr", "error");
+		usePtyActivityStore.getState().click("pty-cr");
+		expect(usePtyActivityStore.getState().activities["pty-cr"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("never cancels a Working agent", () => {
+		const s = usePtyActivityStore.getState();
+		s.initPty("pty-cwork", "agent");
+		s.setAgentPty("pty-cwork", "copilot");
+		s.applyHookEvent("pty-cwork", "active");
+
+		usePtyActivityStore.getState().click("pty-cwork");
+		expect(usePtyActivityStore.getState().activities["pty-cwork"].state).toBe(
+			"active",
+		);
 	});
 });

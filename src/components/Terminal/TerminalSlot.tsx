@@ -183,11 +183,14 @@ export function TerminalSlot({
 		}
 	}, [onFocus, paneId]);
 
-	// A deliberate left-click into the terminal screen counts as the user
-	// engaging with a waiting agent, so clear its sky-blue "waiting" dot to idle
-	// — the same effect ESC has in terminalManager's onData keystroke path.
-	// clearWaiting is a no-op unless the pane is actually waiting, so this is
-	// safe to call. Two deliberate restrictions:
+	// A deliberate left-click into the terminal screen is the user engaging with
+	// the pane: it dismisses a waiting agent's sky-blue dot (the same effect ESC
+	// has in terminalManager's onData keystroke path), acknowledges a red Error,
+	// and dismisses a purple Ready. All three are one `click` status event, whose
+	// internal ordering the reducer owns — notably clearWaiting runs before
+	// clearError so a **Mid-turn failure** restored to Waiting survives the click
+	// (ADR-0026). Every step no-ops unless the pane is in the matching state, so
+	// this is safe to call on any click. Two deliberate restrictions:
 	//   • We do NOT fold this into handleFocus: that also fires on programmatic
 	//     focus (tab switch via the isFocused effect), and switching to a tab
 	//     should keep showing its waiting dot, not silently clear it.
@@ -195,14 +198,27 @@ export function TerminalSlot({
 	//     mousedown is bound to the whole pane container so a click anywhere
 	//     focuses the pane, but clicks on the title bar — including the start of
 	//     a pane drag-reorder — must NOT clear the dot. Right/middle clicks
-	//     (context menu, paste) are excluded via the button guard.
+	//     (context menu, paste) are excluded via the button guard — a right-click
+	//     must open the context menu without silently acknowledging an Error.
+	//
+	// Bound in the CAPTURE phase (onMouseDownCapture), for the same reason as the
+	// contextmenu handler below: xterm's own mousedown listener sits on
+	// `term.element`, a descendant, and when the running TUI has mouse reporting
+	// on (DECSET 1000/1002/1003 — which agent TUIs do enable) it ends in
+	// `cancel(ev)`. Today that is a no-op for propagation: `cancel` only calls
+	// `stopPropagation` when the `cancelEvents` option is true, it defaults to
+	// false, and we never set it — so a bubble-phase handler would in fact still
+	// run. But this is now the ONLY click path, and it would die silently on
+	// exactly the agent panes it exists for if anyone ever flipped that option or
+	// xterm changed the default. Capture phase costs nothing and removes the
+	// dependency entirely.
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
 			handleFocus();
 			if (e.button !== 0) return;
 			if (!innerRef.current?.contains(e.target as Node)) return;
 			const ptyId = getTerminal(paneId)?.ptyId;
-			if (ptyId) usePtyActivityStore.getState().clearWaiting(ptyId);
+			if (ptyId) usePtyActivityStore.getState().click(ptyId);
 		},
 		[handleFocus, paneId],
 	);
@@ -353,7 +369,8 @@ export function TerminalSlot({
 				transition: "opacity 150ms ease",
 			}}
 			onFocus={handleFocus}
-			onMouseDown={handleMouseDown}
+			// Capture phase, deliberately — see handleMouseDown's comment.
+			onMouseDownCapture={handleMouseDown}
 		>
 			<TerminalTitleBar
 				paneId={paneId}

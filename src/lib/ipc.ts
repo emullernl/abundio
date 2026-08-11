@@ -362,6 +362,20 @@ export type WorkspaceGitSummary = {
 // Timestamps are Unix ms (except `createdAt`, Unix seconds). Line counts are
 // `null` when unattributed (e.g. two Turns overlapped in one Workspace).
 
+/** How a **Turn** ended. `presumed_end` is the one Abundio *inferred* from
+ *  silence rather than observed from a hook (ADR-0027); the rest are observed.
+ *  Widened only in lockstep with `agentTurnTracker` — the DB column is a bare
+ *  TEXT with no CHECK, so this union is the only thing keeping a typo from
+ *  landing an unrenderable string in `agent_turn`. Rows written before ADR-0027
+ *  may carry a backstopped boundary as `"stop"`; there is no way to tell. */
+export type AgentTurnEndReason =
+	| "stop"
+	| "error"
+	| "presumed_end"
+	| "session_end"
+	| "pty_exit"
+	| "app_quit";
+
 export interface AgentTurnRecord {
 	id: string;
 	sessionId: string | null;
@@ -376,7 +390,7 @@ export interface AgentTurnRecord {
 	durationMs: number | null;
 	workingMs: number | null;
 	waitingMs: number | null;
-	endReason: string | null;
+	endReason: AgentTurnEndReason | null;
 	permissionRequestsCount: number;
 	errorCount: number;
 	linesAdded: number | null;

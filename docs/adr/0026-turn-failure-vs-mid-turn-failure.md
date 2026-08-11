@@ -46,6 +46,17 @@ through to the Idle path too.
   Agent really is still blocked, and a click is not an answer. A **keystroke** does resolve it:
   terminalManager acknowledges the failure first and re-reads the entry, so the key means what
   it would have meant without the failure.
+  **Amendment.** As first written this was aspirational: nothing dispatched the `click` event.
+  A real click was three dispatches from two handlers — terminalManager's native `mousedown` on
+  `term.element` (`clearError` + `markIdle`) and TerminalSlot's React `onMouseDown`
+  (`clearWaiting`) — and a listener on a descendant beats React's root-delegated handler, so
+  they ran in exactly the **inverse** of the order specified here. A Mid-turn failure raised
+  while the pane was Working acknowledged correctly; one raised while it was **Waiting** was
+  restored and then immediately wiped to Idle, mid-Turn. The fix deletes the terminalManager
+  listener and has TerminalSlot dispatch the single `click` event, which also stops a
+  right-click from acknowledging an Error before opening the context menu (the native listener
+  had no button guard). The click-dismisses-Waiting behaviour it inherits is PR #140's; see the
+  amendment in ADR-0015.
 - A Mid-turn failure raises no notification. It would be the first of two pings for one Turn,
   and the alarming one is the one the Agent handles itself.
 - `agentTurnTracker` must not finalize the Turn on `errorMidTurn` — it counts the error and
@@ -57,6 +68,18 @@ through to the Idle path too.
   second staleness scanner: the row still lands, just late. An `errorOccurred` arriving before
   the first turn-start hook is dropped entirely — unchanged from before the split, and the only
   path that discards a failure signal.
+- **Ready counts as Working.** The only way a hook-driven pane reaches Ready without a
+  turn-finished hook is the 30s idle backstop, which merely *guessed* the Turn had ended — and a
+  turn-continuing failure is proof the guess was wrong, so a Mid-turn failure raised from Ready
+  records `"working"`. Safe because it isn't permanent: the restore deliberately doesn't refresh
+  `lastActivityAt`, so a genuinely silent Agent flips back to Ready on the very next tick. This
+  depends on ADR-0027's Rule A — without it, restoring Working when the backstop has already
+  finalized the Turn opens a brand-new Turn attributed to the user's mouse.
+- **Idle records nothing**, deliberately. Unlike Ready it is an *observed* intent — an ESC-cancel,
+  an authoritative idle hook, or a Waiting pane the user dismissed with a click (ADR-0015) — and a
+  late failure from the operation that was in flight must not put the spinner back. The accepted
+  gap: dismiss a Waiting pane by clicking it, then take a Mid-turn failure, and acknowledging it
+  rests at Idle while the Turn continues. That `idle` is indistinguishable from a cancel.
 - The reducer keeps the memory the *first* Mid-turn failure recorded. A second one in the same
   Turn must not re-derive `preErrorState` from `s.state`, which is already `"error"` by then.
   That is invisible at the store layer — the projected entry is identical, so no `StatusChange`

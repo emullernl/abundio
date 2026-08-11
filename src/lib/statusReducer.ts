@@ -120,7 +120,16 @@ export const SUBAGENT_STALE_MS = 2 * 60 * 60_000;
 
 export type StatusEvent =
 	// Hook-driven transition (the translator resolved it via `mapHookEvent`).
-	| { kind: "hook"; transition: StatusTransition; now: number }
+	// `startsTurn` marks the events that may open a **Turn** (`isTurnStartEvent`),
+	// which is narrower than `transition === "working"` — permission replies and
+	// token streaming also resolve to Working mid-Turn. The reducer ignores it;
+	// it exists for Turn telemetry, which rides this cause. See ADR-0027.
+	| {
+			kind: "hook";
+			transition: StatusTransition;
+			now: number;
+			startsTurn?: boolean;
+	  }
 	// An agent was detected in this PTY (title match or any hook). → agent mode.
 	| { kind: "agentDetected" }
 	// The agent session ended (hook "clear"). → shell mode.
@@ -142,8 +151,14 @@ export type StatusEvent =
 	| { kind: "subagentStopped"; agentId: string; now: number }
 	// The PTY process exited.
 	| { kind: "ptyExited"; code: number | null }
-	// The global idle scanner ticked.
-	| { kind: "tick"; now: number }
+	// The global idle scanner ticked. `rule` names which backstop the scanner
+	// expects this tick to trip, so a consumer can tell the two Working→Ready
+	// backstops apart (the reducer itself ignores it): `idle_backstop` is pure
+	// silence — nothing was observed, the boundary is a **Presumed end**;
+	// `subagent_drain` releases a turn-finished hook that WAS observed and only
+	// held for a Subagent tail (ADR-0022, ADR-0027). Optional so the many
+	// hand-built ticks in tests and non-scanner callers stay valid.
+	| { kind: "tick"; now: number; rule?: "idle_backstop" | "subagent_drain" }
 	// Focus reassertion (workspace switch / projection) — acknowledge alerts.
 	| { kind: "focus" }
 	// A deliberate click/mousedown in the pane — acknowledge + dismiss Waiting.
@@ -349,6 +364,18 @@ function applyHook(
 		// errorOccurred in one Turn (two failing tool calls, a retried request)
 		// would otherwise read `"error"` off `s.state`, fall through to null, and
 		// land the acknowledgement back on Idle — the very bug this fixes.
+		//
+		// **Ready** counts as Working: the only way a hook-driven pane reaches
+		// Ready without a turn-finished hook is the 30s idle backstop, which merely
+		// *guessed* the Turn had ended — and a turn-continuing failure is proof it
+		// hadn't. If the Agent really has fallen silent the backstop simply re-fires
+		// on the next tick after acknowledgement (ADR-0027).
+		//
+		// **Idle** deliberately records nothing. Unlike Ready it is an observed
+		// intent — an ESC-cancel (`clearActive`), an authoritative idle hook, or a
+		// click-dismissed Waiting — and a late failure from the operation that was
+		// in flight must not put the spinner back, or the cancel would feel like it
+		// didn't take.
 		return {
 			...s,
 			state: "error",
@@ -356,10 +383,13 @@ function applyHook(
 			preErrorState:
 				s.state === "error"
 					? s.preErrorState
-					: s.mode === "agent" &&
-							(s.state === "working" || s.state === "waiting")
-						? s.state
-						: null,
+					: s.mode !== "agent"
+						? null
+						: s.state === "waiting"
+							? "waiting"
+							: s.state === "working" || s.state === "ready"
+								? "working"
+								: null,
 		};
 	}
 	if (transition === "error") {
