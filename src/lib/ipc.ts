@@ -350,6 +350,10 @@ export type WorkspaceGitSummary = {
 	/** Canonicalized worktree root — compared against canonical
 	 *  `list_repo_worktrees` paths so symlinked folders don't mis-reconcile. */
 	worktreeRoot: string | null;
+	/** Every GitHub `owner/repo` this workspace's remotes point at (empty when
+	 *  none). All remotes, not just `origin`, so a fork's upstream counts too.
+	 *  Feeds the Profile-scoped PR filter — see ADR-0028. */
+	repoSlugs: string[];
 };
 
 // ── Agent telemetry ──

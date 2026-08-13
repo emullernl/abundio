@@ -22,3 +22,9 @@ Two flows mutate git directly. **Add worktree** (Primary-only, also offered on a
 - Add worktree depends on the create-branch-then-add sequence, not a single libgit2 call; a failure between the two steps (branch created, worktree add fails) must clean up the orphaned branch or surface it, rather than leaving a dangling new branch.
 </content>
 </invoke>
+
+> **Update (2026-08-13).** `WorkspaceGitSummary` now also carries `repo_slugs` — every GitHub
+> `owner/repo` the workspace's remotes point at — so the same batch pass that derives worktree
+> grouping also derives GitHub identity for the Profile-scoped PR filter. It is one more thing read
+> from an already-open repository, and it stays derived-not-stored for the same reasons the grouping
+> facts are. See ADR-0028.

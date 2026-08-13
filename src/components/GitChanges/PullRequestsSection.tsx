@@ -5,14 +5,18 @@ import type { GhStatus } from "../../lib/types";
 import {
 	type MyPrsView,
 	PR_VIEW_LABELS,
+	type PrScope,
 	type PrSectionState,
 	type PrView,
 	type ReviewView,
+	scopeOf,
 	usePrStore,
 	visiblePrs,
 } from "../../stores/prStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
 
@@ -29,6 +33,8 @@ export function PullRequestsSection() {
 	const loading = usePrStore((s) => s.loading);
 	const error = usePrStore((s) => s.error);
 	const activeRepoSlug = usePrStore((s) => s.activeRepoSlug);
+	const profileRepoSlugs = usePrStore((s) => s.profileRepoSlugs);
+	const repoSlugsResolved = usePrStore((s) => s.repoSlugsResolved);
 	const storeRefreshing = usePrStore((s) => s.refreshing);
 	const reviewView = usePrStore((s) => s.reviewView);
 	const myPrsView = usePrStore((s) => s.myPrsView);
@@ -36,31 +42,38 @@ export function PullRequestsSection() {
 	const setMyPrsView = usePrStore((s) => s.setMyPrsView);
 	const prPollEnabled = useSettingsStore((s) => s.prPollEnabled);
 
-	// No Opened workspaces: there is no repo context, so both sections show
-	// their account-wide (-all) view and the repo/all selector is locked. The
-	// stored per-section preference is left untouched and restored when a
-	// workspace reopens. See CONTEXT.md / ADR-0019.
+	// No Opened workspaces: there is no Active workspace to point the Repo scope
+	// at, so a stored `-repo` view degrades to the next-narrowest scope —
+	// Profile, not account-wide (ADR-0028; this rewrites the older rule that
+	// forced `-all`). Profile scope itself needs nothing Opened: it reads the
+	// Left sidebar's Workspace list. The stored preference is left untouched and
+	// restored when a workspace reopens.
 	const noWorkspace = usePtyActivityStore(
 		(s) => s.openedWorkspaceIds.size === 0,
 	);
 	const hasRepo = !!activeRepoSlug;
-	const effReviewView: ReviewView = noWorkspace ? "review-all" : reviewView;
-	const effMyPrsView: MyPrsView = noWorkspace ? "mine-all" : myPrsView;
+	const effReviewView: ReviewView =
+		noWorkspace && reviewView === "review-repo" ? "review-profile" : reviewView;
+	const effMyPrsView: MyPrsView =
+		noWorkspace && myPrsView === "mine-repo" ? "mine-profile" : myPrsView;
+	const reviewScope = scopeOf(effReviewView);
+	const myPrsScope = scopeOf(effMyPrsView);
 
-	// Client-side All-vs-Repo filtering over the one account-wide dataset, using
-	// the shared `visiblePrs` rule with this panel's effective view.
+	// Client-side scope filtering over the one account-wide dataset, using the
+	// shared `visiblePrs` rule with this panel's effective scope.
 	const reviewPrs = useMemo(
 		() =>
 			visiblePrs(
 				reviewRequested,
-				effReviewView === "review-repo",
+				reviewScope,
 				activeRepoSlug,
+				profileRepoSlugs,
 			),
-		[effReviewView, activeRepoSlug, reviewRequested],
+		[reviewScope, activeRepoSlug, profileRepoSlugs, reviewRequested],
 	);
 	const myPrsList = useMemo(
-		() => visiblePrs(mine, effMyPrsView === "mine-repo", activeRepoSlug),
-		[effMyPrsView, activeRepoSlug, mine],
+		() => visiblePrs(mine, myPrsScope, activeRepoSlug, profileRepoSlugs),
+		[myPrsScope, activeRepoSlug, profileRepoSlugs, mine],
 	);
 
 	const reviewSection: PrSectionState = { prs: reviewPrs, loading, error };
@@ -87,6 +100,20 @@ export function PullRequestsSection() {
 		setFloorActive(true);
 		setRefreshNonce((n) => n + 1);
 		pr.refresh().catch(() => {});
+		// Also re-resolve each Workspace's GitHub remotes. The batch summary is
+		// otherwise keyed on the workspace list changing, so a remote added from a
+		// terminal (`git remote add origin …`) would stay invisible to the Profile
+		// scope until relaunch. This is the manual escape hatch.
+		useWorkspaceGitStore
+			.getState()
+			.syncWorktreeFacts(
+				useWorkspaceStore.getState().workspaces.map((w) => ({
+					id: w.id,
+					rootFolder: w.rootFolder,
+					baseBranch: w.baseBranch ?? null,
+				})),
+			)
+			.catch(() => {});
 	}, []);
 
 	// Floor timer — drop `floorActive` once the minimum spin time has elapsed.
@@ -123,16 +150,29 @@ export function PullRequestsSection() {
 		[setMyPrsView],
 	);
 
+	// Default first, then narrow → wide (Repo ⊆ Profile ⊆ All), so the list
+	// itself carries the order a scope degrades along. Repo is only offered when
+	// there is something to point it at, and dropping it leaves Profile → All in
+	// place rather than reshuffling the menu.
+	const reviewViews: ReviewView[] = noWorkspace
+		? ["review-profile", "review-all"]
+		: ["review-profile", "review-repo", "review-all"];
+	const myPrsViews: MyPrsView[] = noWorkspace
+		? ["mine-profile", "mine-all"]
+		: ["mine-profile", "mine-repo", "mine-all"];
+
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<PrSubPanel
-				views={["review-all", "review-repo"]}
+				views={reviewViews}
 				activeView={effReviewView}
 				setActiveView={handleReviewViewChange}
-				locked={noWorkspace}
+				scope={reviewScope}
 				section={reviewSection}
 				ghStatus={ghStatus}
 				hasRepo={hasRepo}
+				hasProfileRepos={profileRepoSlugs.size > 0}
+				repoSlugsResolved={repoSlugsResolved}
 				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
 				refreshing={refreshing}
@@ -144,13 +184,15 @@ export function PullRequestsSection() {
 				style={{ height: 1, backgroundColor: "var(--border)" }}
 			/>
 			<PrSubPanel
-				views={["mine-all", "mine-repo"]}
+				views={myPrsViews}
 				activeView={effMyPrsView}
 				setActiveView={handleMyPrsViewChange}
-				locked={noWorkspace}
+				scope={myPrsScope}
 				section={myPrsSection}
 				ghStatus={ghStatus}
 				hasRepo={hasRepo}
+				hasProfileRepos={profileRepoSlugs.size > 0}
+				repoSlugsResolved={repoSlugsResolved}
 				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
 				showRefresh={false}
@@ -168,13 +210,17 @@ interface PrSubPanelProps<V extends PrView> {
 	views: V[];
 	activeView: V;
 	setActiveView: (view: V) => void;
-	/** No Opened workspace: render the view as a static `(All)` label instead of
-	 *  a dropdown, since the repo/all choice is meaningless with no repo. */
-	locked?: boolean;
+	/** The effective scope behind `activeView` — drives the empty-state ladder. */
+	scope: PrScope;
 	section: PrSectionState;
 	ghStatus: GhStatus | null;
 	/** Whether the active workspace resolved to a GitHub repo (owner/repo). */
 	hasRepo: boolean;
+	/** Whether the Active profile resolved to at least one GitHub repository. */
+	hasProfileRepos: boolean;
+	/** Whether the batch workspace summary has landed yet. Before it has, an
+	 *  empty profile set means "not known", not "none". */
+	repoSlugsResolved: boolean;
 	/** Whether automatic PR polling is enabled (Settings → GitHub). */
 	pollEnabled: boolean;
 	onRefresh: () => void;
@@ -188,10 +234,12 @@ function PrSubPanel<V extends PrView>({
 	views,
 	activeView,
 	setActiveView,
-	locked,
+	scope,
 	section,
 	ghStatus,
 	hasRepo,
+	hasProfileRepos,
+	repoSlugsResolved,
 	pollEnabled,
 	onRefresh,
 	refreshing,
@@ -216,8 +264,6 @@ function PrSubPanel<V extends PrView>({
 		return () => document.removeEventListener("mousedown", handleClickOutside);
 	}, [dropdownOpen]);
 
-	const isRepoView = activeView === "review-repo" || activeView === "mine-repo";
-
 	return (
 		<div className="flex flex-col min-h-0" style={{ flex: "1 1 0%" }}>
 			{/* Header */}
@@ -234,13 +280,13 @@ function PrSubPanel<V extends PrView>({
 					style={{ color: "var(--accent)", flexShrink: 0 }}
 				/>
 
-				{/* View selector dropdown. Locked (no Opened workspace) → a
-				    non-interactive static label, since repo/all is meaningless. */}
+				{/* Scope selector. Always interactive — with no Opened workspace the
+				    Repo entry is simply absent from `views` (nothing to point at),
+				    but Profile and All stay meaningful. */}
 				<div className="relative" ref={dropdownRef}>
 					<button
 						type="button"
 						onClick={() => setDropdownOpen((o) => !o)}
-						disabled={locked}
 						className="flex items-center gap-1 rounded px-2 py-0.5 transition-colors"
 						style={{
 							backgroundColor: "var(--bg-tertiary)",
@@ -249,10 +295,10 @@ function PrSubPanel<V extends PrView>({
 							height: 24,
 							fontFamily: "var(--font-mono)",
 							border: "1px solid transparent",
-							cursor: locked ? "default" : "pointer",
+							cursor: "pointer",
 						}}
 						onMouseEnter={(e) => {
-							if (!locked) e.currentTarget.style.borderColor = "var(--border)";
+							e.currentTarget.style.borderColor = "var(--border)";
 						}}
 						onMouseLeave={(e) => {
 							e.currentTarget.style.borderColor = "transparent";
@@ -261,10 +307,10 @@ function PrSubPanel<V extends PrView>({
 						<span className="truncate" style={{ maxWidth: 160 }}>
 							{PR_VIEW_LABELS[activeView]}
 						</span>
-						{!locked && <ChevronDown size={10} />}
+						<ChevronDown size={10} />
 					</button>
 
-					{!locked && dropdownOpen && (
+					{dropdownOpen && (
 						<div
 							className="absolute top-full left-0 mt-1 rounded-lg overflow-hidden shadow-lg"
 							style={{
@@ -428,8 +474,16 @@ function PrSubPanel<V extends PrView>({
 							gh auth login
 						</span>
 					</StatusMessage>
-				) : isRepoView && !hasRepo ? (
+				) : scope === "repo" && !hasRepo ? (
 					<StatusMessage>No GitHub remote found</StatusMessage>
+				) : scope === "profile" && !repoSlugsResolved ? (
+					// The repository set is still being resolved — saying the profile
+					// has none would be a lie for the first few hundred milliseconds.
+					<StatusMessage>
+						<span className="animate-pulse">Loading repositories...</span>
+					</StatusMessage>
+				) : scope === "profile" && !hasProfileRepos ? (
+					<StatusMessage>No GitHub repositories in this profile</StatusMessage>
 				) : section.loading && section.prs.length === 0 ? (
 					<StatusMessage>
 						<span className="animate-pulse">Loading pull requests...</span>

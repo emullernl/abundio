@@ -17,6 +17,8 @@ import type { PrChange, PrStatePayload, PullRequest } from "../../lib/types";
 import {
 	handlePrChanges,
 	PR_VIEW_LABELS,
+	profilePrCounts,
+	scopeOf,
 	usePrStore,
 	visiblePrs,
 } from "../prStore";
@@ -64,10 +66,10 @@ beforeEach(() => {
 		loading: true,
 		refreshing: false,
 		activeRepoSlug: null,
+		profileRepoSlugs: new Set<string>(),
+		repoSlugsResolved: false,
 		reviewView: "review-all",
 		myPrsView: "mine-all",
-		globalReviewCount: 0,
-		globalMyPrsCount: 0,
 	});
 	useWorkspaceStore.setState({ activeWorkspaceId: "ws-1" });
 });
@@ -77,8 +79,23 @@ describe("prStore", () => {
 		it("has labels for all views", () => {
 			expect(PR_VIEW_LABELS["review-repo"]).toBe("Review Requested (Repo)");
 			expect(PR_VIEW_LABELS["review-all"]).toBe("Review Requested (All)");
+			expect(PR_VIEW_LABELS["review-profile"]).toBe(
+				"Review Requested (Profile)",
+			);
 			expect(PR_VIEW_LABELS["mine-repo"]).toBe("My Open PRs (Repo)");
 			expect(PR_VIEW_LABELS["mine-all"]).toBe("My Open PRs (All)");
+			expect(PR_VIEW_LABELS["mine-profile"]).toBe("My Open PRs (Profile)");
+		});
+	});
+
+	describe("scopeOf", () => {
+		it("maps every view to its scope", () => {
+			expect(scopeOf("review-all")).toBe("all");
+			expect(scopeOf("review-repo")).toBe("repo");
+			expect(scopeOf("review-profile")).toBe("profile");
+			expect(scopeOf("mine-all")).toBe("all");
+			expect(scopeOf("mine-repo")).toBe("repo");
+			expect(scopeOf("mine-profile")).toBe("profile");
 		});
 	});
 
@@ -97,10 +114,50 @@ describe("prStore", () => {
 			usePrStore.getState().setActiveRepoSlug("org/x");
 			expect(usePrStore.getState().activeRepoSlug).toBe("org/x");
 		});
+
+		it("setProfileRepoSlugs stores the set and its resolution", () => {
+			usePrStore
+				.getState()
+				.setProfileRepoSlugs(new Set(["org/x", "org/y"]), true);
+			const s = usePrStore.getState();
+			expect([...s.profileRepoSlugs]).toEqual(["org/x", "org/y"]);
+			expect(s.repoSlugsResolved).toBe(true);
+		});
+
+		it("lowercases slugs on the way in", () => {
+			// Git remotes carry whatever casing is in .git/config; GitHub reports
+			// canonical casing. Both setters normalise so the filter can't miss.
+			usePrStore.getState().setActiveRepoSlug("Acme/Web");
+			usePrStore.getState().setProfileRepoSlugs(new Set(["Acme/Web"]), true);
+			expect(usePrStore.getState().activeRepoSlug).toBe("acme/web");
+			expect([...usePrStore.getState().profileRepoSlugs]).toEqual(["acme/web"]);
+		});
+
+		it("keeps the same state object when the set is unchanged", () => {
+			// The pushing effect re-runs on unrelated store churn; an identical
+			// write must not invalidate the panel's memos.
+			usePrStore.getState().setProfileRepoSlugs(new Set(["org/x"]), true);
+			const first = usePrStore.getState().profileRepoSlugs;
+			usePrStore.getState().setProfileRepoSlugs(new Set(["org/x"]), true);
+			expect(usePrStore.getState().profileRepoSlugs).toBe(first);
+
+			usePrStore.getState().setProfileRepoSlugs(new Set(["org/y"]), true);
+			expect(usePrStore.getState().profileRepoSlugs).not.toBe(first);
+		});
+
+		it("an empty set can be resolved — a profile can genuinely have none", () => {
+			usePrStore.getState().setProfileRepoSlugs(new Set(), true);
+			expect(usePrStore.getState().repoSlugsResolved).toBe(true);
+		});
+
+		it("an empty set can also be unresolved — the summary hasn't answered yet", () => {
+			usePrStore.getState().setProfileRepoSlugs(new Set(), false);
+			expect(usePrStore.getState().repoSlugsResolved).toBe(false);
+		});
 	});
 
 	describe("applyPrState", () => {
-		it("sets status, raw lists, account-wide counts and clears loading", () => {
+		it("sets status and raw lists and clears loading", () => {
 			usePrStore.getState().applyPrState(
 				makePayload({
 					reviewRequested: [makePr({ number: 1 }), makePr({ number: 2 })],
@@ -111,9 +168,6 @@ describe("prStore", () => {
 			expect(s.ghStatus).toEqual({ available: true, authenticated: true });
 			expect(s.reviewRequested).toHaveLength(2);
 			expect(s.mine).toHaveLength(1);
-			// Overview-bar counts are always the full account-wide lengths.
-			expect(s.globalReviewCount).toBe(2);
-			expect(s.globalMyPrsCount).toBe(1);
 			expect(s.loading).toBe(false);
 			expect(s.error).toBe(null);
 		});
@@ -138,20 +192,114 @@ describe("prStore", () => {
 		});
 	});
 
-	describe("visiblePrs (All-vs-Repo filter)", () => {
+	describe("visiblePrs (scope filter)", () => {
+		const prA = makePr({ number: 1, repository: "org/a" });
+		const prB = makePr({ number: 2, repository: "org/b" });
+		const none = new Set<string>();
+
+		it("returns the full account-wide list in all scope", () => {
+			expect(
+				visiblePrs([prA, prB], "all", "org/a", new Set(["org/b"])),
+			).toEqual([prA, prB]);
+		});
+
+		it("filters to the active repo slug in repo scope", () => {
+			expect(visiblePrs([prA, prB], "repo", "org/a", none)).toEqual([prA]);
+		});
+
+		it("falls back to the full list in repo scope with no slug", () => {
+			expect(visiblePrs([prA, prB], "repo", null, none)).toEqual([prA, prB]);
+		});
+
+		it("filters to the profile's repositories in profile scope", () => {
+			expect(
+				visiblePrs([prA, prB], "profile", null, new Set(["org/b"])),
+			).toEqual([prB]);
+		});
+
+		it("keeps a PR matched through any of the profile's repos", () => {
+			// A fork Workspace contributes both its origin and its upstream.
+			expect(
+				visiblePrs([prA, prB], "profile", null, new Set(["org/a", "org/b"])),
+			).toEqual([prA, prB]);
+		});
+
+		it("matches regardless of the casing GitHub reports", () => {
+			// `pr.repository` is canonical casing; the set is lowercased by the
+			// store. A repo cloned as `Acme/Web` must still match.
+			const prMixed = makePr({ number: 5, repository: "Acme/Web" });
+			expect(
+				visiblePrs([prMixed], "profile", null, new Set(["acme/web"])),
+			).toEqual([prMixed]);
+			expect(visiblePrs([prMixed], "repo", "acme/web", none)).toEqual([
+				prMixed,
+			]);
+		});
+
+		it("returns nothing — not everything — when the profile has no repos", () => {
+			// The empty set must NOT read as "no filter": that would silently
+			// widen the view to account-wide. See ADR-0028.
+			expect(visiblePrs([prA, prB], "profile", "org/a", none)).toEqual([]);
+		});
+	});
+
+	describe("persist migration to v1", () => {
+		const migrate = () => {
+			const m = usePrStore.persist.getOptions().migrate;
+			if (!m) throw new Error("expected a migrate function");
+			return m;
+		};
+
+		it("resets a legacy stored preference to the Profile views", () => {
+			expect(
+				migrate()({ reviewView: "review-all", myPrsView: "mine-repo" }, 0),
+			).toEqual({
+				reviewView: "review-profile",
+				myPrsView: "mine-profile",
+			});
+		});
+
+		// There is deliberately no "leaves v1 state alone" case: zustand only
+		// calls `migrate` when the persisted version differs from `version`, so a
+		// branch for it would be unreachable and would make a future bump look
+		// already handled.
+	});
+
+	describe("profilePrCounts", () => {
 		const prA = makePr({ number: 1, repository: "org/a" });
 		const prB = makePr({ number: 2, repository: "org/b" });
 
-		it("returns the full account-wide list in all view", () => {
-			expect(visiblePrs([prA, prB], false, "org/a")).toEqual([prA, prB]);
+		it("counts only the profile's repositories", () => {
+			expect(
+				profilePrCounts({
+					reviewRequested: [prA, prB],
+					mine: [prB],
+					profileRepoSlugs: new Set(["org/a"]),
+				}),
+			).toEqual({ review: 1, mine: 0 });
 		});
 
-		it("filters to the active repo slug in repo view", () => {
-			expect(visiblePrs([prA, prB], true, "org/a")).toEqual([prA]);
-		});
+		it("tracks a slug-set change with no new payload", () => {
+			// The drift case the derived counts exist to prevent: the workspace
+			// list changed, the poller has not pushed since.
+			usePrStore
+				.getState()
+				.applyPrState(
+					makePayload({ reviewRequested: [prA, prB], mine: [prA] }),
+				);
+			usePrStore.getState().setProfileRepoSlugs(new Set(["org/a"]), true);
+			expect(profilePrCounts(usePrStore.getState())).toEqual({
+				review: 1,
+				mine: 1,
+			});
 
-		it("falls back to the full list in repo view with no slug", () => {
-			expect(visiblePrs([prA, prB], true, null)).toEqual([prA, prB]);
+			usePrStore
+				.getState()
+				.setProfileRepoSlugs(new Set(["org/a", "org/b"]), true);
+			expect(profilePrCounts(usePrStore.getState())).toEqual({
+				review: 2,
+				mine: 1,
+			});
 		});
 	});
 

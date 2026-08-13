@@ -20,6 +20,16 @@ interface WorkspaceGitState {
 	 *  info above so its many writers (fetch / setInfo / scheduler) can't clobber
 	 *  it. Populated only from the batch `git_workspaces_summary`. See ADR-0017. */
 	worktreeFacts: Record<string, WorktreeGroupFacts>;
+	/** Every GitHub `owner/repo` each workspace's remotes point at. Populated
+	 *  from the batch `git_workspaces_summary`, which `useWorktreeSync` already
+	 *  runs across the whole Active profile whenever the workspace list changes.
+	 *  Raw per-workspace data — the *set* the PR filter uses is derived from the
+	 *  current workspace list (see `profileRepoSlugs`), never from these keys, so
+	 *  entries left behind by a profile switch can't leak in. An entry present
+	 *  but empty means "asked, none found"; a *missing* entry means "not asked
+	 *  yet", which is the whole resolution signal (`repoSlugsResolvedFor`). See
+	 *  ADR-0028. */
+	repoSlugsById: Record<string, string[]>;
 	inFlight: Set<string>;
 	fetch: (
 		workspaceId: string,
@@ -52,9 +62,28 @@ interface WorkspaceGitState {
 	setWorktreeFacts: (workspaceId: string, facts: WorktreeGroupFacts) => void;
 }
 
+/** Slug entries for every workspace the batch *asked* about, not just the ones
+ *  it answered for. `git_workspaces_summary` ends in `unwrap_or_default()`, so a
+ *  panic in the blocking task resolves to an empty vec rather than rejecting —
+ *  keying off the response would leave those workspaces permanently `undefined`,
+ *  i.e. permanently "still resolving", and hang the PR section on its loading
+ *  message with no error anywhere. A workspace with no summary answers "none". */
+function slugsFromSummaries(
+	requests: { workspaceId: string }[],
+	summaries: WorkspaceGitSummary[],
+): Record<string, string[]> {
+	const byId = new Map(summaries.map((s) => [s.workspaceId, s]));
+	const slugs: Record<string, string[]> = {};
+	for (const r of requests) {
+		slugs[r.workspaceId] = byId.get(r.workspaceId)?.repoSlugs ?? [];
+	}
+	return slugs;
+}
+
 export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 	byWorkspaceId: {},
 	worktreeFacts: {},
+	repoSlugsById: {},
 	inFlight: new Set(),
 
 	fetch: async (workspaceId, cwd, baseBranch) => {
@@ -133,6 +162,10 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		}
 		set((state) => ({
 			byWorkspaceId: { ...state.byWorkspaceId, ...updates },
+			repoSlugsById: {
+				...state.repoSlugsById,
+				...slugsFromSummaries(requests, summaries),
+			},
 		}));
 		// Persist the refreshed branch names so the next startup is instant.
 		// Sequential to avoid saturating the tokio worker threads with
@@ -180,7 +213,12 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		set((s) => {
 			const { [workspaceId]: _removed, ...rest } = s.byWorkspaceId;
 			const { [workspaceId]: _f, ...restFacts } = s.worktreeFacts;
-			return { byWorkspaceId: rest, worktreeFacts: restFacts };
+			const { [workspaceId]: _s, ...restSlugs } = s.repoSlugsById;
+			return {
+				byWorkspaceId: rest,
+				worktreeFacts: restFacts,
+				repoSlugsById: restSlugs,
+			};
 		});
 	},
 
@@ -195,6 +233,22 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		try {
 			summaries = await git.workspacesSummary(requests);
 		} catch {
+			// Answer "none found" for the workspaces we asked about that have no
+			// answer yet — a missing entry reads as *unresolved*, so leaving them
+			// absent would hang the PR section on "Loading repositories…" forever
+			// on a git-layer failure. Workspaces already resolved keep their slugs:
+			// a stale-but-correct set beats a confident empty one, which would
+			// claim the Profile has no repositories at all. Grouping facts are
+			// deliberately left untouched.
+			set((state) => {
+				const filled: Record<string, string[]> = {};
+				for (const r of requests) {
+					if (state.repoSlugsById[r.workspaceId] === undefined) {
+						filled[r.workspaceId] = [];
+					}
+				}
+				return { repoSlugsById: { ...state.repoSlugsById, ...filled } };
+			});
 			return;
 		}
 		const facts: Record<string, WorktreeGroupFacts> = {};
@@ -207,6 +261,10 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		}
 		set((state) => ({
 			worktreeFacts: { ...state.worktreeFacts, ...facts },
+			repoSlugsById: {
+				...state.repoSlugsById,
+				...slugsFromSummaries(requests, summaries),
+			},
 		}));
 	},
 
@@ -215,3 +273,37 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 			worktreeFacts: { ...s.worktreeFacts, [workspaceId]: facts },
 		})),
 }));
+
+/** The set of GitHub repositories the given Workspaces resolve to — the input
+ *  to the Profile-scoped PR filter (ADR-0028).
+ *
+ *  Driven by the *workspace list*, not by the keys of `repoSlugsById`: switching
+ *  Profile reloads the list but leaves the old map entries in place, and those
+ *  must not widen the filter. Several Workspaces of one **Worktree set** collapse
+ *  to the same slug, and one Workspace can contribute several (fork + upstream). */
+/** Whether the repository set is a real answer for *this* Workspace list.
+ *
+ *  List-aware on purpose. A single global "resolved" flag goes stale twice
+ *  over: a Profile switch brings in Workspaces the previous profile's summary
+ *  never covered (so the panel would flash "no repositories"), and a Profile
+ *  with no Workspaces never triggers a summary at all (so the panel would hang
+ *  on "loading" forever — here it resolves vacuously to the empty set). */
+export function repoSlugsResolvedFor(
+	workspaces: { id: string }[],
+	repoSlugsById: Record<string, string[]>,
+	workspacesInitialized: boolean,
+): boolean {
+	if (!workspacesInitialized) return false;
+	return workspaces.every((ws) => repoSlugsById[ws.id] !== undefined);
+}
+
+export function profileRepoSlugs(
+	workspaces: { id: string }[],
+	repoSlugsById: Record<string, string[]>,
+): Set<string> {
+	const set = new Set<string>();
+	for (const ws of workspaces) {
+		for (const slug of repoSlugsById[ws.id] ?? []) set.add(slug);
+	}
+	return set;
+}

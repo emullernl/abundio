@@ -490,29 +490,58 @@ fn url_is_github(url: &str) -> bool {
 /// client-side All-vs-Repo PR filter (see ADR-0019); replaces the prior
 /// `has_github_remote` signal with the actual repo identity the filter needs.
 pub fn github_repo_slug(cwd: &str) -> Option<String> {
-    let repo = open_repo(cwd).ok()?;
+    github_repo_slugs(cwd).into_iter().next()
+}
 
-    // `origin` first.
-    if let Ok(remote) = repo.find_remote("origin") {
-        if let Some(slug) = [remote.url(), remote.pushurl()]
+/// Every GitHub `owner/repo` this workspace's remotes point at, deduplicated
+/// and in remote order (`origin` first when present). Purely local — reads the
+/// configured remotes, no network.
+///
+/// Keeping *all* of them is what lets the Profile scope match a fork: a
+/// checkout whose `origin` is `me/foo` and `upstream` is `acme/foo` contributes
+/// both, and GitHub reports a PR against the base repo. The Repo scope's
+/// `github_repo_slug` is the head of this same list, so the two filters can
+/// never disagree about which remote counts as the repo identity. See ADR-0028.
+pub fn github_repo_slugs(cwd: &str) -> Vec<String> {
+    match open_repo(cwd) {
+        Ok(repo) => github_repo_slugs_in(&repo),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// `github_repo_slugs` against an already-open repository.
+pub fn github_repo_slugs_in(repo: &Repository) -> Vec<String> {
+    let Ok(remotes) = repo.remotes() else {
+        return Vec::new();
+    };
+
+    // `origin` first, then the rest in git's order.
+    let names: Vec<String> = std::iter::once("origin".to_string())
+        .chain(
+            remotes
+                .iter()
+                .flatten()
+                .filter(|n| *n != "origin")
+                .map(str::to_string),
+        )
+        .collect();
+
+    let mut slugs: Vec<String> = Vec::new();
+    for name in names {
+        let Ok(remote) = repo.find_remote(&name) else {
+            continue;
+        };
+        for slug in [remote.url(), remote.pushurl()]
             .into_iter()
             .flatten()
-            .find_map(parse_github_slug)
+            .filter_map(parse_github_slug)
         {
-            return Some(slug);
+            if !slugs.contains(&slug) {
+                slugs.push(slug);
+            }
         }
     }
-
-    // Any other github remote.
-    let remotes = repo.remotes().ok()?;
-    remotes.iter().flatten().find_map(|name| {
-        repo.find_remote(name).ok().and_then(|remote| {
-            [remote.url(), remote.pushurl()]
-                .into_iter()
-                .flatten()
-                .find_map(parse_github_slug)
-        })
-    })
+    slugs
 }
 
 /// Parse `owner/repo` from a github.com remote URL (HTTPS or SSH forms),
@@ -577,7 +606,13 @@ mod slug_tests {
 /// intended branch from both, rather than `"HEAD"` from one and `None` from
 /// the other.
 pub fn current_branch_only(cwd: &str) -> Option<String> {
-    head_branch_name(&Repository::discover(cwd).ok()?)
+    current_branch_only_in(&Repository::discover(cwd).ok()?)
+}
+
+/// `current_branch_only` against an already-open repository — lets the batch
+/// workspace summary pay for one `discover` per workspace instead of three.
+pub fn current_branch_only_in(repo: &Repository) -> Option<String> {
+    head_branch_name(repo)
 }
 
 /// Public wrapper around the cached default-branch detection. The cache
@@ -674,18 +709,21 @@ pub struct WorktreeSummaryBits {
 
 pub fn worktree_summary_bits(cwd: &str) -> WorktreeSummaryBits {
     match Repository::discover(cwd) {
-        Ok(repo) => WorktreeSummaryBits {
-            group_key: common_git_dir(&repo).map(|p| canonicalize_lossy(&p)),
-            is_main_worktree: !repo.is_worktree()
-                && !repo.is_bare()
-                && repo.workdir().is_some(),
-            canonical_root: repo.workdir().map(canonicalize_lossy),
-        },
+        Ok(repo) => worktree_summary_bits_in(&repo),
         Err(_) => WorktreeSummaryBits {
             group_key: None,
             is_main_worktree: false,
             canonical_root: None,
         },
+    }
+}
+
+/// `worktree_summary_bits` against an already-open repository.
+pub fn worktree_summary_bits_in(repo: &Repository) -> WorktreeSummaryBits {
+    WorktreeSummaryBits {
+        group_key: common_git_dir(repo).map(|p| canonicalize_lossy(&p)),
+        is_main_worktree: !repo.is_worktree() && !repo.is_bare() && repo.workdir().is_some(),
+        canonical_root: repo.workdir().map(canonicalize_lossy),
     }
 }
 

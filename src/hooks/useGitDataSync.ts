@@ -6,6 +6,11 @@ import {
 } from "../stores/gitChangesStore";
 import { handlePrChanges, usePrStore } from "../stores/prStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
+import {
+	profileRepoSlugs,
+	repoSlugsResolvedFor,
+	useWorkspaceGitStore,
+} from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 interface SchedulerEntry {
@@ -135,6 +140,25 @@ export function useGitDataSync() {
 			for (const un of unlisteners) un();
 		};
 	}, []);
+
+	// ── Profile-scoped repository set (ADR-0028) ──
+	// The batch workspace summary (owned by `useWorktreeSync`) resolves every
+	// Workspace's GitHub remotes; this collapses them to the set the PR filter
+	// and the Overview bar chips read. Recomputed when either the workspace list
+	// or the resolved slugs change, so adding a Workspace widens the set without
+	// waiting for a poll.
+	const repoSlugsById = useWorkspaceGitStore((s) => s.repoSlugsById);
+	const workspacesInitialized = useWorkspaceStore(
+		(s) => s.workspacesInitialized,
+	);
+	useEffect(() => {
+		usePrStore
+			.getState()
+			.setProfileRepoSlugs(
+				profileRepoSlugs(workspaces, repoSlugsById),
+				repoSlugsResolvedFor(workspaces, repoSlugsById, workspacesInitialized),
+			);
+	}, [workspaces, repoSlugsById, workspacesInitialized]);
 
 	const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
 	const activeCwd = activeWorkspace?.rootFolder ?? null;

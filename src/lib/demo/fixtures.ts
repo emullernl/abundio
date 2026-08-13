@@ -776,6 +776,7 @@ export function workspaceSummary(
 			worktreeGroupKey: null,
 			isMainWorktree: false,
 			worktreeRoot: null,
+			repoSlugs: [],
 		};
 	}
 	const bundle = gitBundleForCwd(cwd);
@@ -793,6 +794,8 @@ export function workspaceSummary(
 		worktreeGroupKey: worktreeFactByRoot.get(cwd)?.groupKey ?? `${cwd}/.git`,
 		isMainWorktree: worktreeFactByRoot.get(cwd)?.isMain ?? true,
 		worktreeRoot: cwd,
+		// One remote per demo repo — enough to drive the Profile-scoped PR filter.
+		repoSlugs: [repoForCwd(cwd)],
 	};
 }
 

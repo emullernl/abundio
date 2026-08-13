@@ -18,3 +18,11 @@ The cadence is **focus-adaptive**: the user-configured interval (default 5 min, 
 - A newly-opened Window has no data until the next poll (up to an hour when backgrounded), so the poller caches its last payload and exposes `pr_poller_snapshot()` for Windows to hydrate from on mount **without** triggering a gh call. Forcing a refresh on every window-open was rejected as a milder reincarnation of per-Window traffic.
 - The empty-Opened-workspaces behaviour from ADR-0005's 2026-06-10 update (force `-all`, run from home dir) still holds, but its mechanism is now trivial: there is only ever one account-wide query (always from the home dir), and with no active repo there is simply nothing to filter to. CONTEXT.md's empty-state flagged-ambiguity entry is updated accordingly.
 - One GraphQL `search` connection is capped at `first: 100` per list (parity with the old `--limit 100`); a list exceeding 100 is logged rather than silently truncated.
+
+> **Update (2026-08-13) — superseded in part by ADR-0028.** The client-side filter now has **three**
+> scopes, not two: All, **Profile** (repositories the **Active profile**'s Workspaces resolve to) and
+> Repo — and Profile is the default. The empty-Opened-workspaces rule above changed with it: a
+> stored `-repo` view degrades to `-profile` rather than `-all`, and the scope selector is no longer
+> locked. The single account-wide query and its home-dir cwd are unchanged; scoping stays a purely
+> client-side concern. `pr-changes` notifications remain account-wide precisely because they are
+> emitted to a single Window — see ADR-0028.
