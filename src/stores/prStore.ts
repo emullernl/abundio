@@ -162,21 +162,26 @@ export const usePrStore = create<PrState>()(
 				reviewView: state.reviewView,
 				myPrsView: state.myPrsView,
 			}),
-			// v1 introduced the Profile scope as the default (ADR-0028). Existing
-			// installs carry an explicit `-all`/`-repo` in localStorage, which
-			// would beat the new default forever, so the bump resets both sections
-			// once. Anything chosen afterwards is respected. This key lives in
-			// per-webview localStorage, so each Window migrates independently —
-			// correct, since each Window has its own Active profile.
+			// Profile is the default for **fresh installs only** (ADR-0028): it is
+			// the store's initial state, and a stored preference always wins. A
+			// scope is a deliberate per-section choice, so silently rewriting one
+			// is worse than an existing user never noticing the new option.
+			//
+			// v1 marks the release that introduced the Profile scope; migrating
+			// from v0 carries the stored views across untouched. The version stays
+			// pinned rather than being removed so state written by the build that
+			// briefly *did* reset isn't discarded (an unknown version with no
+			// migrate falls back to initial state — a second reset).
 			version: 1,
-			// Only ever called for a persisted version other than 1, which today
-			// means the pre-Profile v0 state — hence the unconditional reset. A
-			// future bump must add its own branch here rather than assume this one
-			// still fits.
-			migrate: () => ({
-				reviewView: "review-profile" as ReviewView,
-				myPrsView: "mine-profile" as MyPrsView,
-			}),
+			migrate: (persisted) => {
+				const stored = (persisted ?? {}) as Partial<
+					Pick<PrState, "reviewView" | "myPrsView">
+				>;
+				return {
+					reviewView: stored.reviewView ?? "review-profile",
+					myPrsView: stored.myPrsView ?? "mine-profile",
+				};
+			},
 		},
 	),
 );

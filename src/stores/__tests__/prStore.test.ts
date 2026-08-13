@@ -250,10 +250,21 @@ describe("prStore", () => {
 			return m;
 		};
 
-		it("resets a legacy stored preference to the Profile views", () => {
+		it("keeps a legacy stored preference — Profile is for fresh installs", () => {
 			expect(
 				migrate()({ reviewView: "review-all", myPrsView: "mine-repo" }, 0),
 			).toEqual({
+				reviewView: "review-all",
+				myPrsView: "mine-repo",
+			});
+		});
+
+		it("falls back to the Profile views when a section has no stored choice", () => {
+			expect(migrate()({ reviewView: "review-repo" }, 0)).toEqual({
+				reviewView: "review-repo",
+				myPrsView: "mine-profile",
+			});
+			expect(migrate()({}, 0)).toEqual({
 				reviewView: "review-profile",
 				myPrsView: "mine-profile",
 			});
@@ -263,6 +274,14 @@ describe("prStore", () => {
 		// calls `migrate` when the persisted version differs from `version`, so a
 		// branch for it would be unreachable and would make a future bump look
 		// already handled.
+	});
+
+	it("defaults both sections to the Profile scope with nothing persisted", () => {
+		// The fresh-install path: the default is the store's initial state, not
+		// something the migration writes.
+		const { reviewView, myPrsView } = usePrStore.getInitialState();
+		expect(reviewView).toBe("review-profile");
+		expect(myPrsView).toBe("mine-profile");
 	});
 
 	describe("profilePrCounts", () => {
