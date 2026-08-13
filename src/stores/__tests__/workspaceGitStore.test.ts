@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useWorkspaceGitStore } from "../workspaceGitStore";
+import {
+	profileRepoSlugs,
+	repoSlugsResolvedFor,
+	useWorkspaceGitStore,
+} from "../workspaceGitStore";
 
 vi.mock("../../lib/ipc", () => ({
 	git: {
@@ -36,7 +40,12 @@ const twoFiles = () =>
 	] as any[]);
 
 function resetStore() {
-	useWorkspaceGitStore.setState({ byWorkspaceId: {}, inFlight: new Set() });
+	useWorkspaceGitStore.setState({
+		byWorkspaceId: {},
+		repoSlugsById: {},
+		repoSlugsResolved: false,
+		inFlight: new Set(),
+	});
 }
 
 const baseInfo = {
@@ -153,6 +162,7 @@ describe("workspaceGitStore", () => {
 				worktreeGroupKey: "/a/.git",
 				isMainWorktree: true,
 				worktreeRoot: "/a",
+				repoSlugs: ["org/a"],
 			},
 			{
 				workspaceId: "ws-b",
@@ -164,6 +174,7 @@ describe("workspaceGitStore", () => {
 				worktreeGroupKey: "/b/.git",
 				isMainWorktree: true,
 				worktreeRoot: "/b",
+				repoSlugs: ["org/b"],
 			},
 		]);
 		await useWorkspaceGitStore.getState().fetchAll([
@@ -179,6 +190,138 @@ describe("workspaceGitStore", () => {
 		expect(
 			useWorkspaceGitStore.getState().byWorkspaceId["ws-b"]?.changedFileCount,
 		).toBe(2);
+	});
+
+	describe("repo slugs (Profile-scoped PR filter, ADR-0028)", () => {
+		const summary = (
+			workspaceId: string,
+			root: string,
+			repoSlugs: string[],
+			// biome-ignore lint/suspicious/noExplicitAny: mock data
+		): any => ({
+			workspaceId,
+			isGitRepo: true,
+			currentBranch: "main",
+			changedFileCount: 0,
+			additions: 0,
+			deletions: 0,
+			worktreeGroupKey: `${root}/.git`,
+			isMainWorktree: true,
+			worktreeRoot: root,
+			repoSlugs,
+		});
+
+		it("syncWorktreeFacts records slugs and flips resolved", async () => {
+			vi.mocked(git.workspacesSummary).mockResolvedValue([
+				summary("ws-a", "/a", ["me/a", "acme/a"]),
+				summary("ws-b", "/b", []),
+			]);
+			expect(useWorkspaceGitStore.getState().repoSlugsResolved).toBe(false);
+
+			await useWorkspaceGitStore.getState().syncWorktreeFacts([
+				{ id: "ws-a", rootFolder: "/a" },
+				{ id: "ws-b", rootFolder: "/b" },
+			]);
+
+			const s = useWorkspaceGitStore.getState();
+			expect(s.repoSlugsById["ws-a"]).toEqual(["me/a", "acme/a"]);
+			expect(s.repoSlugsById["ws-b"]).toEqual([]);
+			expect(s.repoSlugsResolved).toBe(true);
+		});
+
+		it("fetchAll records slugs too", async () => {
+			vi.mocked(git.workspacesSummary).mockResolvedValue([
+				summary("ws-c", "/c", ["org/c"]),
+			]);
+			await useWorkspaceGitStore
+				.getState()
+				.fetchAll([{ id: "ws-c", rootFolder: "/c" }]);
+			expect(useWorkspaceGitStore.getState().repoSlugsById["ws-c"]).toEqual([
+				"org/c",
+			]);
+		});
+
+		it("records an empty answer when the summary IPC fails", async () => {
+			// A missing entry reads as "still resolving" in the PR section, so a
+			// failed batch must still answer for the workspaces it asked about —
+			// otherwise the panel hangs on "Loading repositories…" forever.
+			vi.mocked(git.workspacesSummary).mockRejectedValue(new Error("boom"));
+			await useWorkspaceGitStore
+				.getState()
+				.syncWorktreeFacts([{ id: "ws-e", rootFolder: "/e" }]);
+			expect(useWorkspaceGitStore.getState().repoSlugsById["ws-e"]).toEqual([]);
+			expect(useWorkspaceGitStore.getState().repoSlugsResolved).toBe(true);
+		});
+
+		it("remove drops the workspace's slugs", () => {
+			useWorkspaceGitStore.setState({ repoSlugsById: { "ws-d": ["org/d"] } });
+			useWorkspaceGitStore.getState().remove("ws-d");
+			expect(
+				useWorkspaceGitStore.getState().repoSlugsById["ws-d"],
+			).toBeUndefined();
+		});
+
+		it("profileRepoSlugs unions the listed workspaces' slugs", () => {
+			// Two worktrees of one repo collapse to a single entry; a fork
+			// Workspace contributes both of its remotes.
+			expect(
+				profileRepoSlugs([{ id: "ws-a" }, { id: "ws-b" }, { id: "ws-c" }], {
+					"ws-a": ["me/a", "acme/a"],
+					"ws-b": ["me/a"],
+					"ws-c": [],
+				}),
+			).toEqual(new Set(["me/a", "acme/a"]));
+		});
+
+		it("ignores slugs of workspaces outside the given list", () => {
+			// Switching Profile reloads the workspace list but leaves the previous
+			// profile's entries in the map — they must not widen the filter.
+			expect(
+				profileRepoSlugs([{ id: "ws-a" }], {
+					"ws-a": ["org/a"],
+					"ws-other-profile": ["org/secret"],
+				}),
+			).toEqual(new Set(["org/a"]));
+		});
+
+		it("returns an empty set when nothing resolves", () => {
+			expect(profileRepoSlugs([{ id: "ws-a" }], {})).toEqual(new Set());
+		});
+
+		describe("repoSlugsResolvedFor", () => {
+			it("is false until the workspace list itself has loaded", () => {
+				// Otherwise the pre-load empty list would read as "this profile has
+				// no repositories" on every launch.
+				expect(repoSlugsResolvedFor([], {}, false)).toBe(false);
+			});
+
+			it("is true vacuously for a profile with no workspaces", () => {
+				// Nothing triggers a summary here, so anything else hangs forever.
+				expect(repoSlugsResolvedFor([], {}, true)).toBe(true);
+			});
+
+			it("is false while any listed workspace is unanswered", () => {
+				// The profile-switch case: the new profile's workspaces aren't in the
+				// map yet, even though the previous profile's summary succeeded.
+				expect(
+					repoSlugsResolvedFor(
+						[{ id: "ws-a" }, { id: "ws-b" }],
+						{ "ws-a": ["org/a"], "ws-old": ["org/old"] },
+						true,
+					),
+				).toBe(false);
+			});
+
+			it("is true once every listed workspace has an answer, including none", () => {
+				expect(
+					repoSlugsResolvedFor(
+						[{ id: "ws-a" }, { id: "ws-b" }],
+						{ "ws-a": ["org/a"], "ws-b": [] },
+						true,
+					),
+				).toBe(true);
+			});
+		});
 	});
 
 	it("setInfo updates entry directly", () => {

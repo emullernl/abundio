@@ -61,7 +61,7 @@ import {
 	requestSwitchProfile,
 	useProfileSwitchConfirmStore,
 } from "./stores/profileSwitchConfirmStore";
-import { usePrStore } from "./stores/prStore";
+import { profilePrCounts, usePrStore } from "./stores/prStore";
 import {
 	selectErrorAgentCount,
 	selectErrorShellCount,
@@ -141,8 +141,22 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 	const idleShells = usePtyActivityStore(selectIdleShellCount);
 	const workingShells = usePtyActivityStore(selectWorkingShellCount);
 	const errorShells = usePtyActivityStore(selectErrorShellCount);
-	const reviewRequestedPrs = usePrStore((s) => s.globalReviewCount);
-	const myOpenPrs = usePrStore((s) => s.globalMyPrsCount);
+	// PR chips are Profile-scoped (ADR-0028) and derived on every read from the
+	// poller's dataset plus the profile's repository set, so they can never drift
+	// from the PR section they summarise.
+	const reviewRequested = usePrStore((s) => s.reviewRequested);
+	const minePrs = usePrStore((s) => s.mine);
+	const profileRepoSlugs = usePrStore((s) => s.profileRepoSlugs);
+	const repoSlugsResolved = usePrStore((s) => s.repoSlugsResolved);
+	const { review: reviewRequestedPrs, mine: myOpenPrs } = useMemo(
+		() =>
+			profilePrCounts({
+				reviewRequested,
+				mine: minePrs,
+				profileRepoSlugs,
+			}),
+		[reviewRequested, minePrs, profileRepoSlugs],
+	);
 	const showAgentWaiting = useSettingsStore((s) => s.agentHooksEnabled);
 	const prPollingEnabled = useSettingsStore((s) => s.prPollEnabled);
 	const statisticsOpen = useWindowUiStore((s) => s.statisticsOverlayOpen);
@@ -161,6 +175,7 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 			errorShells={errorShells}
 			reviewRequestedPrs={reviewRequestedPrs}
 			myOpenPrs={myOpenPrs}
+			prRepoSlugsResolved={repoSlugsResolved}
 			prPollingEnabled={prPollingEnabled}
 			showAgentWaiting={showAgentWaiting}
 			statisticsOpen={statisticsOpen}

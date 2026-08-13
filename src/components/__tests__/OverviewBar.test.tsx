@@ -17,6 +17,7 @@ function baseProps(): OverviewBarProps {
 		errorShells: 0,
 		reviewRequestedPrs: 0,
 		myOpenPrs: 0,
+		prRepoSlugsResolved: true,
 		prPollingEnabled: true,
 		showAgentWaiting: true,
 		statisticsOpen: false,
@@ -227,6 +228,27 @@ describe("OverviewBar", () => {
 		expect(tooltipTexts.some((t) => t.startsWith("Waiting agents"))).toBe(
 			false,
 		);
+	});
+
+	it("says the PR counts are profile-scoped, and waits for the repo set", () => {
+		act(() => {
+			root.render(
+				<OverviewBar {...baseProps()} reviewRequestedPrs={4} myOpenPrs={2} />,
+			);
+		});
+		const titleOf = (prefix: string) =>
+			Array.from(container.querySelectorAll("[title]"))
+				.map((el) => el.getAttribute("title") ?? "")
+				.find((t) => t.startsWith(prefix)) ?? "";
+		expect(titleOf("Review requested")).toContain("this profile's repos");
+		expect(titleOf("My open PRs")).toContain("this profile's repos");
+
+		// Before the repository set resolves, a count of 0 is structural, not
+		// real — the tile says so instead of reading as "nothing to do".
+		act(() => {
+			root.render(<OverviewBar {...baseProps()} prRepoSlugsResolved={false} />);
+		});
+		expect(titleOf("Review requested")).toContain("resolving");
 	});
 
 	it("includes the count in each chip's tooltip", () => {

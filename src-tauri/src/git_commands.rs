@@ -294,15 +294,22 @@ pub struct WorkspaceGitSummary {
     /// workspace against canonical `list_repo_worktrees` paths without a symlink
     /// mismatch (e.g. `/tmp` vs `/private/tmp`) deleting it. See ADR-0017.
     pub worktree_root: Option<String>,
+    /// Every GitHub `owner/repo` this workspace's remotes point at (empty when
+    /// there are none). Feeds the Profile-scoped PR filter, which is a
+    /// set-membership test — hence all remotes, not just `origin`. See ADR-0028.
+    pub repo_slugs: Vec<String>,
 }
 
-/// Resolves just the current branch name for a workspace via libgit2.
+/// Resolves the cheap per-workspace git facts via libgit2: current branch,
+/// worktree grouping bits, and GitHub repo identity. All three are config/HEAD
+/// reads on an already-open repository.
 /// Change stats are intentionally excluded — they're already computed by
 /// `git_changed_files` whenever the active workspace opens its git panel,
 /// which syncs back to the workspace chip store via the frontend.
 fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummary {
     let current_branch = git_libgit2::current_branch_only(&req.cwd);
     let bits = git_libgit2::worktree_summary_bits(&req.cwd);
+    let repo_slugs = git_libgit2::github_repo_slugs(&req.cwd);
     // A repo can be a git repo even with a detached/unborn HEAD (no branch),
     // so anchor is_git_repo on the worktree group key, not the branch name.
     let is_git_repo = bits.group_key.is_some();
@@ -316,6 +323,7 @@ fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummar
         worktree_group_key: bits.group_key,
         is_main_worktree: bits.is_main_worktree,
         worktree_root: bits.canonical_root,
+        repo_slugs,
     }
 }
 
@@ -429,6 +437,80 @@ mod tests {
         assert!(!crate::git_libgit2::has_github_remote(
             dir.path().to_str().unwrap()
         ));
+    }
+
+    #[test]
+    fn repo_slugs_empty_without_github_remote() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+        assert!(git_libgit2::github_repo_slugs(cwd).is_empty());
+
+        run_git_test(cwd, &["remote", "add", "origin", "https://gitlab.com/me/repo.git"]);
+        assert!(git_libgit2::github_repo_slugs(cwd).is_empty());
+    }
+
+    /// A fork checkout: `origin` is the fork, `upstream` the base repo. Both
+    /// must be collected or the Profile-scoped PR filter would hide PRs opened
+    /// against the base repo. See ADR-0028.
+    #[test]
+    fn repo_slugs_collects_every_github_remote_origin_first() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "upstream", "git@github.com:acme/foo.git"]);
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/me/foo.git"]);
+        run_git_test(cwd, &["remote", "add", "mirror", "https://gitlab.com/me/foo.git"]);
+
+        assert_eq!(
+            git_libgit2::github_repo_slugs(cwd),
+            vec!["me/foo".to_string(), "acme/foo".to_string()]
+        );
+    }
+
+    /// Same repo reachable through two remotes (or a separate push URL) must
+    /// appear once — the frontend builds a Set from these anyway, but keeping
+    /// the vec clean makes the store's dedup a no-op rather than a crutch.
+    #[test]
+    fn repo_slugs_deduplicates() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/me/foo.git"]);
+        run_git_test(cwd, &["remote", "add", "second", "git@github.com:me/foo.git"]);
+
+        assert_eq!(
+            git_libgit2::github_repo_slugs(cwd),
+            vec!["me/foo".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn workspaces_summary_carries_repo_slugs() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/me/foo.git"]);
+
+        let summaries = git_workspaces_summary(vec![WorkspaceGitRequest {
+            workspace_id: "ws-1".to_string(),
+            cwd: cwd.to_string(),
+            base_branch: None,
+        }])
+        .await;
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].repo_slugs, vec!["me/foo".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn workspaces_summary_repo_slugs_empty_for_non_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let summaries = git_workspaces_summary(vec![WorkspaceGitRequest {
+            workspace_id: "ws-1".to_string(),
+            cwd: dir.path().to_str().unwrap().to_string(),
+            base_branch: None,
+        }])
+        .await;
+
+        assert!(summaries[0].repo_slugs.is_empty());
+        assert!(!summaries[0].is_git_repo);
     }
 
     #[tokio::test]

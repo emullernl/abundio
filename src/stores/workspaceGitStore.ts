@@ -20,6 +20,16 @@ interface WorkspaceGitState {
 	 *  info above so its many writers (fetch / setInfo / scheduler) can't clobber
 	 *  it. Populated only from the batch `git_workspaces_summary`. See ADR-0017. */
 	worktreeFacts: Record<string, WorktreeGroupFacts>;
+	/** Every GitHub `owner/repo` each workspace's remotes point at. Populated
+	 *  from the batch `git_workspaces_summary`, which `useWorktreeSync` already
+	 *  runs across the whole Active profile whenever the workspace list changes.
+	 *  Raw per-workspace data — the *set* the PR filter uses is derived from the
+	 *  current workspace list (see `profileRepoSlugs`), never from these keys, so
+	 *  entries left behind by a profile switch can't leak in. See ADR-0028. */
+	repoSlugsById: Record<string, string[]>;
+	/** False until the first batch summary lands. Lets the PR section say
+	 *  "Loading repositories…" instead of claiming the profile has none. */
+	repoSlugsResolved: boolean;
 	inFlight: Set<string>;
 	fetch: (
 		workspaceId: string,
@@ -55,6 +65,8 @@ interface WorkspaceGitState {
 export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 	byWorkspaceId: {},
 	worktreeFacts: {},
+	repoSlugsById: {},
+	repoSlugsResolved: false,
 	inFlight: new Set(),
 
 	fetch: async (workspaceId, cwd, baseBranch) => {
@@ -122,6 +134,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		}
 		// Single state update for all workspaces at once — one React render cycle
 		const updates: Record<string, WorkspaceGitInfo> = {};
+		const slugs: Record<string, string[]> = {};
 		for (const s of summaries) {
 			updates[s.workspaceId] = {
 				isGitRepo: s.isGitRepo,
@@ -130,9 +143,12 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 				additions: s.additions,
 				deletions: s.deletions,
 			};
+			slugs[s.workspaceId] = s.repoSlugs ?? [];
 		}
 		set((state) => ({
 			byWorkspaceId: { ...state.byWorkspaceId, ...updates },
+			repoSlugsById: { ...state.repoSlugsById, ...slugs },
+			repoSlugsResolved: true,
 		}));
 		// Persist the refreshed branch names so the next startup is instant.
 		// Sequential to avoid saturating the tokio worker threads with
@@ -180,7 +196,12 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		set((s) => {
 			const { [workspaceId]: _removed, ...rest } = s.byWorkspaceId;
 			const { [workspaceId]: _f, ...restFacts } = s.worktreeFacts;
-			return { byWorkspaceId: rest, worktreeFacts: restFacts };
+			const { [workspaceId]: _s, ...restSlugs } = s.repoSlugsById;
+			return {
+				byWorkspaceId: rest,
+				worktreeFacts: restFacts,
+				repoSlugsById: restSlugs,
+			};
 		});
 	},
 
@@ -195,18 +216,33 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		try {
 			summaries = await git.workspacesSummary(requests);
 		} catch {
+			// Record "no slugs known" for the workspaces we asked about. The PR
+			// section treats a missing entry as *unresolved* and shows a loading
+			// message, so leaving them absent would hang that message forever on a
+			// git-layer failure. An answer of "none" is terminal, and Refresh
+			// retries. Grouping facts are deliberately left untouched.
+			const empty: Record<string, string[]> = {};
+			for (const r of requests) empty[r.workspaceId] = [];
+			set((state) => ({
+				repoSlugsById: { ...state.repoSlugsById, ...empty },
+				repoSlugsResolved: true,
+			}));
 			return;
 		}
 		const facts: Record<string, WorktreeGroupFacts> = {};
+		const slugs: Record<string, string[]> = {};
 		for (const s of summaries) {
 			facts[s.workspaceId] = {
 				worktreeGroupKey: s.worktreeGroupKey,
 				isMainWorktree: s.isMainWorktree,
 				worktreeRoot: s.worktreeRoot,
 			};
+			slugs[s.workspaceId] = s.repoSlugs ?? [];
 		}
 		set((state) => ({
 			worktreeFacts: { ...state.worktreeFacts, ...facts },
+			repoSlugsById: { ...state.repoSlugsById, ...slugs },
+			repoSlugsResolved: true,
 		}));
 	},
 
@@ -215,3 +251,37 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 			worktreeFacts: { ...s.worktreeFacts, [workspaceId]: facts },
 		})),
 }));
+
+/** The set of GitHub repositories the given Workspaces resolve to — the input
+ *  to the Profile-scoped PR filter (ADR-0028).
+ *
+ *  Driven by the *workspace list*, not by the keys of `repoSlugsById`: switching
+ *  Profile reloads the list but leaves the old map entries in place, and those
+ *  must not widen the filter. Several Workspaces of one **Worktree set** collapse
+ *  to the same slug, and one Workspace can contribute several (fork + upstream). */
+/** Whether the repository set is a real answer for *this* Workspace list.
+ *
+ *  List-aware on purpose. A single global "resolved" flag goes stale twice
+ *  over: a Profile switch brings in Workspaces the previous profile's summary
+ *  never covered (so the panel would flash "no repositories"), and a Profile
+ *  with no Workspaces never triggers a summary at all (so the panel would hang
+ *  on "loading" forever — here it resolves vacuously to the empty set). */
+export function repoSlugsResolvedFor(
+	workspaces: { id: string }[],
+	repoSlugsById: Record<string, string[]>,
+	workspacesInitialized: boolean,
+): boolean {
+	if (!workspacesInitialized) return false;
+	return workspaces.every((ws) => repoSlugsById[ws.id] !== undefined);
+}
+
+export function profileRepoSlugs(
+	workspaces: { id: string }[],
+	repoSlugsById: Record<string, string[]>,
+): Set<string> {
+	const set = new Set<string>();
+	for (const ws of workspaces) {
+		for (const slug of repoSlugsById[ws.id] ?? []) set.add(slug);
+	}
+	return set;
+}

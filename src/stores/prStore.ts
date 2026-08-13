@@ -14,9 +14,21 @@ import {
 import { currentNotificationTitle } from "./profileStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
-export type ReviewView = "review-all" | "review-repo";
-export type MyPrsView = "mine-all" | "mine-repo";
+export type ReviewView = "review-all" | "review-repo" | "review-profile";
+export type MyPrsView = "mine-all" | "mine-repo" | "mine-profile";
 export type PrView = ReviewView | MyPrsView;
+
+/** How wide a net a PR view casts. `profile` is the default (ADR-0028):
+ *  repositories the **Active profile**'s Workspaces resolve to. */
+export type PrScope = "all" | "repo" | "profile";
+
+export function scopeOf(view: PrView): PrScope {
+	return view.endsWith("-repo")
+		? "repo"
+		: view.endsWith("-profile")
+			? "profile"
+			: "all";
+}
 
 /** Shape the PR sub-panel renders. Built from the raw store lists by the
  *  client-side All-vs-Repo selectors below — no longer a stored per-section
@@ -46,27 +58,34 @@ interface PrState {
 	 *  no active workspace). Drives the repo-scoped filter and the repo-view
 	 *  "No GitHub remote found" empty state. */
 	activeRepoSlug: string | null;
+	/** Every GitHub `owner/repo` the **Active profile**'s Workspaces resolve to.
+	 *  Pushed in by `useGitDataSync` from the batch workspace summary; drives both
+	 *  the Profile-scoped filter and the Overview bar chips. See ADR-0028. */
+	profileRepoSlugs: Set<string>;
+	/** False until the first batch summary lands — an empty set means "this
+	 *  profile has no GitHub repositories" only once this is true. */
+	repoSlugsResolved: boolean;
 
 	reviewView: ReviewView;
 	myPrsView: MyPrsView;
-
-	/** Account-wide counts for the Overview bar — always the full list lengths,
-	 *  independent of the panel's repo/all view (per ADR-0005). */
-	globalReviewCount: number;
-	globalMyPrsCount: number;
 
 	applyPrState: (payload: PrStatePayload) => void;
 	/** Mark a manual Refresh as in-flight (spins the refresh icon). Cleared by
 	 *  the next `applyPrState`. */
 	beginRefresh: () => void;
 	setActiveRepoSlug: (slug: string | null) => void;
+	/** `resolved` is list-aware: true once the batch summary has answered for
+	 *  every Workspace currently listed (vacuously true for an empty Profile). */
+	setProfileRepoSlugs: (slugs: Set<string>, resolved: boolean) => void;
 	setReviewView: (view: ReviewView) => void;
 	setMyPrsView: (view: MyPrsView) => void;
 }
 
 export const PR_VIEW_LABELS: Record<PrView, string> = {
+	"review-profile": "Review Requested (Profile)",
 	"review-repo": "Review Requested (Repo)",
 	"review-all": "Review Requested (All)",
+	"mine-profile": "My Open PRs (Profile)",
 	"mine-repo": "My Open PRs (Repo)",
 	"mine-all": "My Open PRs (All)",
 };
@@ -81,10 +100,10 @@ export const usePrStore = create<PrState>()(
 			loading: true,
 			refreshing: false,
 			activeRepoSlug: null,
-			reviewView: "review-all",
-			myPrsView: "mine-all",
-			globalReviewCount: 0,
-			globalMyPrsCount: 0,
+			profileRepoSlugs: new Set<string>(),
+			repoSlugsResolved: false,
+			reviewView: "review-profile",
+			myPrsView: "mine-profile",
 
 			applyPrState: (payload) => {
 				const reviewRequested = payload.reviewRequested ?? [];
@@ -99,15 +118,14 @@ export const usePrStore = create<PrState>()(
 					error: payload.error ?? null,
 					loading: false,
 					refreshing: false,
-					// Account-wide counts for the Overview bar chips.
-					globalReviewCount: reviewRequested.length,
-					globalMyPrsCount: mine.length,
 				});
 			},
 
 			beginRefresh: () => set({ refreshing: true }),
 
 			setActiveRepoSlug: (activeRepoSlug) => set({ activeRepoSlug }),
+			setProfileRepoSlugs: (profileRepoSlugs, repoSlugsResolved) =>
+				set({ profileRepoSlugs, repoSlugsResolved }),
 			setReviewView: (reviewView) => set({ reviewView }),
 			setMyPrsView: (myPrsView) => set({ myPrsView }),
 		}),
@@ -119,27 +137,73 @@ export const usePrStore = create<PrState>()(
 				reviewView: state.reviewView,
 				myPrsView: state.myPrsView,
 			}),
+			// v1 introduced the Profile scope as the default (ADR-0028). Existing
+			// installs carry an explicit `-all`/`-repo` in localStorage, which
+			// would beat the new default forever, so the bump resets both sections
+			// once. Anything chosen afterwards is respected. This key lives in
+			// per-webview localStorage, so each Window migrates independently —
+			// correct, since each Window has its own Active profile.
+			version: 1,
+			migrate: (persisted, version) => {
+				const state = (persisted ?? {}) as Partial<
+					Pick<PrState, "reviewView" | "myPrsView">
+				>;
+				if (version < 1) {
+					return { reviewView: "review-profile", myPrsView: "mine-profile" };
+				}
+				return {
+					reviewView: state.reviewView ?? "review-profile",
+					myPrsView: state.myPrsView ?? "mine-profile",
+				};
+			},
 		},
 	),
 );
 
-// ── Client-side All-vs-Repo filter (single source of truth) ──
-// Repo-scoped view AND a known active repo → filter to it; otherwise (all view,
-// or no active repo) the full account-wide list. The PR panel passes its
-// *effective* view (which forces `-all` when no workspace is open), so the rule
-// lives here once rather than being duplicated in the component. A repo view
-// with a null slug naturally shows the `-all` data, which is why the
-// empty-Opened-set state can simply force the `-all` label.
+// ── Client-side scope filter (single source of truth) ──
+// One account-wide dataset from the poller, three scopes over it:
+//   repo    → the Active workspace's repository. A null slug falls through to
+//             the full list (the panel shows "No GitHub remote found" instead).
+//   profile → the Active profile's repositories. An empty set yields an EMPTY
+//             list, not the full one: "nothing matched" is the honest answer,
+//             and the panel says so rather than silently widening the view.
+//   all     → everything on the account.
+// The panel passes its *effective* scope (a stored `-repo` degrades to
+// `-profile` when no Workspace is Opened), so the rule lives here once. The
+// Overview bar chips run the same rule via `profilePrCounts`, which is why they
+// can never disagree with the section they summarise. See ADR-0028.
 
 export function visiblePrs(
 	prs: PullRequest[],
-	isRepoView: boolean,
+	scope: PrScope,
 	activeRepoSlug: string | null,
+	profileRepoSlugs: Set<string>,
 ): PullRequest[] {
-	if (isRepoView && activeRepoSlug) {
-		return prs.filter((pr) => pr.repository === activeRepoSlug);
+	if (scope === "repo") {
+		return activeRepoSlug
+			? prs.filter((pr) => pr.repository === activeRepoSlug)
+			: prs;
+	}
+	if (scope === "profile") {
+		return prs.filter((pr) => profileRepoSlugs.has(pr.repository));
 	}
 	return prs;
+}
+
+/** Profile-scoped counts for the Overview bar chips. Derived on every read
+ *  rather than stored, because they depend on two independently-changing inputs
+ *  — the poller payload and the repository set — and a cached total would drift
+ *  whenever one moved without the other (the ADR-0020 lesson). */
+export function profilePrCounts(state: {
+	reviewRequested: PullRequest[];
+	mine: PullRequest[];
+	profileRepoSlugs: Set<string>;
+}): { review: number; mine: number } {
+	const slugs = state.profileRepoSlugs;
+	return {
+		review: visiblePrs(state.reviewRequested, "profile", null, slugs).length,
+		mine: visiblePrs(state.mine, "profile", null, slugs).length,
+	};
 }
 
 // ── PR change notifications ──

@@ -515,6 +515,51 @@ pub fn github_repo_slug(cwd: &str) -> Option<String> {
     })
 }
 
+/// Every GitHub `owner/repo` this workspace's remotes point at, deduplicated
+/// and in remote order (`origin` first when present). Purely local — reads the
+/// configured remotes, no network.
+///
+/// Unlike `github_repo_slug`, this keeps *all* of them: a fork checkout whose
+/// `origin` is `me/foo` and `upstream` is `acme/foo` contributes both, so the
+/// Profile-scoped PR filter still matches PRs opened against the base repo.
+/// See ADR-0028.
+pub fn github_repo_slugs(cwd: &str) -> Vec<String> {
+    let Ok(repo) = open_repo(cwd) else {
+        return Vec::new();
+    };
+    let Ok(remotes) = repo.remotes() else {
+        return Vec::new();
+    };
+
+    // `origin` first, then the rest in git's order.
+    let names: Vec<String> = std::iter::once("origin".to_string())
+        .chain(
+            remotes
+                .iter()
+                .flatten()
+                .filter(|n| *n != "origin")
+                .map(str::to_string),
+        )
+        .collect();
+
+    let mut slugs: Vec<String> = Vec::new();
+    for name in names {
+        let Ok(remote) = repo.find_remote(&name) else {
+            continue;
+        };
+        for slug in [remote.url(), remote.pushurl()]
+            .into_iter()
+            .flatten()
+            .filter_map(parse_github_slug)
+        {
+            if !slugs.contains(&slug) {
+                slugs.push(slug);
+            }
+        }
+    }
+    slugs
+}
+
 /// Parse `owner/repo` from a github.com remote URL (HTTPS or SSH forms),
 /// stripping a trailing `.git`. Returns None for non-github URLs or anything
 /// that isn't exactly `owner/repo`.

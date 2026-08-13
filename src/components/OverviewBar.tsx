@@ -43,10 +43,14 @@ export interface OverviewBarProps {
 	workingShells: number;
 	/** Shell-mode PTYs whose last command errored. */
 	errorShells: number;
-	/** PRs across all repos where the user is a requested reviewer. */
+	/** PRs in the **Active profile**'s repositories where the user is a requested
+	 *  reviewer. Profile-scoped, not account-wide — see ADR-0028. */
 	reviewRequestedPrs: number;
-	/** User's own open PRs across all repos. */
+	/** The user's own open PRs in the Active profile's repositories. */
 	myOpenPrs: number;
+	/** Whether the profile's repository set has been resolved yet. Before it has,
+	 *  both PR tiles render dimmed rather than showing a hard 0. */
+	prRepoSlugsResolved: boolean;
 	/** Whether automatic PR polling is enabled. When false the PR tiles render
 	 *  dimmed with an explanatory tooltip rather than a misleading live count. */
 	prPollingEnabled: boolean;
@@ -152,6 +156,7 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 		errorShells,
 		reviewRequestedPrs,
 		myOpenPrs,
+		prRepoSlugsResolved,
 		prPollingEnabled,
 		showAgentWaiting,
 		statisticsOpen,
@@ -197,8 +202,14 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 					kind="review"
 					count={reviewRequestedPrs}
 					enabled={prPollingEnabled}
+					resolved={prRepoSlugsResolved}
 				/>
-				<PrTile kind="mine" count={myOpenPrs} enabled={prPollingEnabled} />
+				<PrTile
+					kind="mine"
+					count={myOpenPrs}
+					enabled={prPollingEnabled}
+					resolved={prRepoSlugsResolved}
+				/>
 			</Section>
 
 			{/* Right-aligned: the bar's one interactive affordance — opens the
@@ -501,12 +512,12 @@ const PR_DEFINITIONS: Record<
 	review: {
 		Glyph: Eye,
 		label: "Review requested",
-		description: "PRs awaiting your review across all repos",
+		description: "PRs awaiting your review in this profile's repos",
 	},
 	mine: {
 		Glyph: GitPullRequest,
 		label: "My open PRs",
-		description: "your open PRs across all repos",
+		description: "your open PRs in this profile's repos",
 	},
 };
 
@@ -514,15 +525,20 @@ function PrTile({
 	kind,
 	count,
 	enabled,
+	resolved,
 }: {
 	kind: PrKind;
 	count: number;
 	enabled: boolean;
+	/** Whether this Profile's repository set is known yet. Until it is, the count
+	 *  is structurally 0 and would read as "nothing to do" — dim it instead. */
+	resolved: boolean;
 }) {
 	const def = PR_DEFINITIONS[kind];
-	// When polling is off, never read as a live count: render dimmed with an
-	// explanatory tooltip (ADR-0019).
-	const active = enabled && count > 0;
+	// When polling is off — or the profile's repos aren't resolved yet — never
+	// read as a live count: render dimmed with an explanatory tooltip
+	// (ADR-0019, ADR-0028).
+	const active = enabled && resolved && count > 0;
 	return (
 		<TileShell
 			glyph={staticGlyph(
@@ -532,9 +548,11 @@ function PrTile({
 			active={active}
 			primary={count}
 			title={
-				enabled
-					? `${def.label} — ${def.description} (${count})`
-					: `${def.label} — PR polling is off (enable in Settings)`
+				!enabled
+					? `${def.label} — PR polling is off (enable in Settings)`
+					: !resolved
+						? `${def.label} — resolving this profile's repositories…`
+						: `${def.label} — ${def.description} (${count})`
 			}
 		/>
 	);
