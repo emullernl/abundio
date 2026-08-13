@@ -7,11 +7,16 @@ people's noise, Repo forgets the four sibling repos you are also working in toda
 user actually thinks in already exists: the **Profile**.
 
 So there is now a third scope, **Profile**: PRs whose repository is one that the Active profile's
-Workspaces resolve to. It is the default for both sub-sections, and existing installs are migrated
-onto it once (`abundio-pr-panel` persist `version: 1`) — an explicit `-all` left in localStorage
-from before would otherwise beat the new default forever. Anything the user picks afterwards
-stands. The key lives in per-webview localStorage, so each **Window** migrates independently, which
-is correct: each Window has its own Active profile.
+Workspaces resolve to. It is the default for both sub-sections **on a fresh install only**: it is
+the store's initial state, and any preference already in `abundio-pr-panel` wins. We first shipped
+this the other way — a `version: 1` bump that reset both sections onto Profile once — and reversed
+it immediately: a scope is a deliberate per-section choice, so quietly rewriting one is worse than
+an existing user simply not noticing the new option until they open the dropdown. The version stays
+pinned at 1 with a migration that carries the stored views across untouched, rather than being
+removed, because an unknown version with no `migrate` falls back to initial state — which is the
+reset again, for anyone who ran the build that had it. The key lives in per-webview localStorage,
+so each **Window** keeps its own preference, which is correct: each Window has its own Active
+profile.
 
 **Repository identity comes from the Workspace list, not from a stored field.** A Workspace stores
 only its folder; the mapping to `owner/repo` is derived live by libgit2, exactly like **Worktree

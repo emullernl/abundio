@@ -5,6 +5,18 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 	sendNotification: vi.fn(),
 }));
 
+// Captured before `../prStore` is imported — `persist` hydrates inside the
+// store initializer, so whether storage was empty *at import time* decides
+// what `getInitialState()` returns. Later tests write through the setters and
+// dirty this key, so it can't be read at assertion time.
+const storageAtImport = vi.hoisted(() => {
+	try {
+		return globalThis.localStorage?.getItem("abundio-pr-panel") ?? null;
+	} catch {
+		return null;
+	}
+});
+
 const focusMock = vi.hoisted(() => ({ blurredMs: 10_000 as number | null }));
 vi.mock("../../lib/windowFocus", () => ({
 	isAppWindowFocused: () => document.hasFocus(),
@@ -250,19 +262,79 @@ describe("prStore", () => {
 			return m;
 		};
 
-		it("resets a legacy stored preference to the Profile views", () => {
+		it("keeps a legacy stored preference — Profile is for fresh installs", () => {
 			expect(
 				migrate()({ reviewView: "review-all", myPrsView: "mine-repo" }, 0),
 			).toEqual({
+				reviewView: "review-all",
+				myPrsView: "mine-repo",
+			});
+		});
+
+		it("falls back to the Profile views when a section has no stored choice", () => {
+			expect(migrate()({ reviewView: "review-repo" }, 0)).toEqual({
+				reviewView: "review-repo",
+				myPrsView: "mine-profile",
+			});
+			expect(migrate()({}, 0)).toEqual({
 				reviewView: "review-profile",
 				myPrsView: "mine-profile",
 			});
+		});
+
+		it("rejects a stored value that isn't a view we ship", () => {
+			// Hand-edited storage, or a downgrade carrying a view from a later
+			// version. Copying it through would make `scopeOf` answer "all" —
+			// silently widening the section — and blank the dropdown label.
+			expect(
+				migrate()(
+					{ reviewView: "review-everything", myPrsView: "mine-repo" },
+					0,
+				),
+			).toEqual({
+				reviewView: "review-profile",
+				myPrsView: "mine-repo",
+			});
+			// Also guards the cross-section mix-up and non-string junk.
+			expect(migrate()({ reviewView: "mine-all", myPrsView: 42 }, 0)).toEqual({
+				reviewView: "review-profile",
+				myPrsView: "mine-profile",
+			});
+			expect(migrate()(null, 0)).toEqual({
+				reviewView: "review-profile",
+				myPrsView: "mine-profile",
+			});
+		});
+
+		it("is pinned at version 1", () => {
+			// Deliberate tripwire: `migrate` ignores its `version` argument because
+			// v0 is the only version it can see today. Bumping this constant must
+			// be a decision about what the new migration does, not a side effect —
+			// so update this assertion and give `migrate` its own branch.
+			expect(usePrStore.persist.getOptions().version).toBe(1);
 		});
 
 		// There is deliberately no "leaves v1 state alone" case: zustand only
 		// calls `migrate` when the persisted version differs from `version`, so a
 		// branch for it would be unreachable and would make a future bump look
 		// already handled.
+	});
+
+	it("defaults both sections to the Profile scope with nothing persisted", () => {
+		// The fresh-install path: the default is the store's initial state, not
+		// something the migration writes.
+		//
+		// `getInitialState()` is only the *unhydrated* default while storage is
+		// empty: `persist` hydrates inside the initializer and returns
+		// `stateFromStorage || configResult`, which is what zustand captures as
+		// the initial state. So this assertion depends on `abundio-pr-panel` being
+		// absent when `../prStore` was first imported — pinned here so a future
+		// setup file that seeds localStorage fails loudly instead of confusingly.
+		expect(storageAtImport).toBeNull();
+
+		const { reviewView, myPrsView } = usePrStore.getInitialState();
+		expect(reviewView).toBe("review-profile");
+		expect(myPrsView).toBe("mine-profile");
 	});
 
 	describe("profilePrCounts", () => {

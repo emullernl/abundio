@@ -3,11 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pr } from "../../lib/ipc";
 import type { GhStatus } from "../../lib/types";
 import {
+	MY_PRS_VIEWS,
 	type MyPrsView,
 	PR_VIEW_LABELS,
 	type PrScope,
 	type PrSectionState,
 	type PrView,
+	REVIEW_VIEWS,
 	type ReviewView,
 	scopeOf,
 	usePrStore,
@@ -150,16 +152,17 @@ export function PullRequestsSection() {
 		[setMyPrsView],
 	);
 
-	// Default first, then narrow → wide (Repo ⊆ Profile ⊆ All), so the list
-	// itself carries the order a scope degrades along. Repo is only offered when
-	// there is something to point it at, and dropping it leaves Profile → All in
-	// place rather than reshuffling the menu.
-	const reviewViews: ReviewView[] = noWorkspace
-		? ["review-profile", "review-all"]
-		: ["review-profile", "review-repo", "review-all"];
-	const myPrsViews: MyPrsView[] = noWorkspace
-		? ["mine-profile", "mine-all"]
-		: ["mine-profile", "mine-repo", "mine-all"];
+	// `REVIEW_VIEWS` / `MY_PRS_VIEWS` are already ordered default-first, then
+	// narrow → wide (Repo ⊆ Profile ⊆ All), so the menu carries the order a
+	// scope degrades along. Repo is only offered when there is something to
+	// point it at; dropping it leaves Profile → All in place rather than
+	// reshuffling the menu.
+	const reviewViews: ReviewView[] = REVIEW_VIEWS.filter(
+		(v) => !noWorkspace || v !== "review-repo",
+	);
+	const myPrsViews: MyPrsView[] = MY_PRS_VIEWS.filter(
+		(v) => !noWorkspace || v !== "mine-repo",
+	);
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
