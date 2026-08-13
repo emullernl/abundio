@@ -14,9 +14,25 @@ import {
 import { currentNotificationTitle } from "./profileStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
-export type ReviewView = "review-all" | "review-repo" | "review-profile";
-export type MyPrsView = "mine-all" | "mine-repo" | "mine-profile";
+/** Every view each sub-section can hold, in the order its dropdown offers them:
+ *  the default first, then narrow → wide. These are the single source of truth —
+ *  the types, the dropdown lists and the migration's validation all derive from
+ *  them, so a fourth scope can't be added to one and missed by another. */
+export const REVIEW_VIEWS = [
+	"review-profile",
+	"review-repo",
+	"review-all",
+] as const;
+export const MY_PRS_VIEWS = ["mine-profile", "mine-repo", "mine-all"] as const;
+
+export type ReviewView = (typeof REVIEW_VIEWS)[number];
+export type MyPrsView = (typeof MY_PRS_VIEWS)[number];
 export type PrView = ReviewView | MyPrsView;
+
+export const isReviewView = (v: unknown): v is ReviewView =>
+	REVIEW_VIEWS.includes(v as ReviewView);
+export const isMyPrsView = (v: unknown): v is MyPrsView =>
+	MY_PRS_VIEWS.includes(v as MyPrsView);
 
 /** How wide a net a PR view casts. `profile` is the default (ADR-0028):
  *  repositories the **Active profile**'s Workspaces resolve to. */
@@ -172,14 +188,28 @@ export const usePrStore = create<PrState>()(
 			// pinned rather than being removed so state written by the build that
 			// briefly *did* reset isn't discarded (an unknown version with no
 			// migrate falls back to initial state — a second reset).
+			//
+			// `migrate` below ignores its `version` argument because v0 is the only
+			// version it can see today. A future bump must branch on it rather than
+			// assume a blanket carry-across still fits — the version assertion in
+			// the store's tests is there to make that decision explicit.
 			version: 1,
 			migrate: (persisted) => {
-				const stored = (persisted ?? {}) as Partial<
-					Pick<PrState, "reviewView" | "myPrsView">
-				>;
+				// `persisted` is `unknown`: a stored value is honoured only if it is
+				// still a view we ship. Anything else — hand-edited storage, or a
+				// downgrade carrying a view added in a later version — would reach
+				// `scopeOf` as "all" and silently widen the section to account-wide
+				// (the one thing ADR-0028 says the Profile scope must never do),
+				// and render a blank dropdown label from a missing `PR_VIEW_LABELS`
+				// entry.
+				const stored = (persisted ?? {}) as Record<string, unknown>;
 				return {
-					reviewView: stored.reviewView ?? "review-profile",
-					myPrsView: stored.myPrsView ?? "mine-profile",
+					reviewView: isReviewView(stored.reviewView)
+						? stored.reviewView
+						: "review-profile",
+					myPrsView: isMyPrsView(stored.myPrsView)
+						? stored.myPrsView
+						: "mine-profile",
 				};
 			},
 		},
