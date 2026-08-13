@@ -25,11 +25,11 @@ interface WorkspaceGitState {
 	 *  runs across the whole Active profile whenever the workspace list changes.
 	 *  Raw per-workspace data — the *set* the PR filter uses is derived from the
 	 *  current workspace list (see `profileRepoSlugs`), never from these keys, so
-	 *  entries left behind by a profile switch can't leak in. See ADR-0028. */
+	 *  entries left behind by a profile switch can't leak in. An entry present
+	 *  but empty means "asked, none found"; a *missing* entry means "not asked
+	 *  yet", which is the whole resolution signal (`repoSlugsResolvedFor`). See
+	 *  ADR-0028. */
 	repoSlugsById: Record<string, string[]>;
-	/** False until the first batch summary lands. Lets the PR section say
-	 *  "Loading repositories…" instead of claiming the profile has none. */
-	repoSlugsResolved: boolean;
 	inFlight: Set<string>;
 	fetch: (
 		workspaceId: string,
@@ -62,11 +62,28 @@ interface WorkspaceGitState {
 	setWorktreeFacts: (workspaceId: string, facts: WorktreeGroupFacts) => void;
 }
 
+/** Slug entries for every workspace the batch *asked* about, not just the ones
+ *  it answered for. `git_workspaces_summary` ends in `unwrap_or_default()`, so a
+ *  panic in the blocking task resolves to an empty vec rather than rejecting —
+ *  keying off the response would leave those workspaces permanently `undefined`,
+ *  i.e. permanently "still resolving", and hang the PR section on its loading
+ *  message with no error anywhere. A workspace with no summary answers "none". */
+function slugsFromSummaries(
+	requests: { workspaceId: string }[],
+	summaries: WorkspaceGitSummary[],
+): Record<string, string[]> {
+	const byId = new Map(summaries.map((s) => [s.workspaceId, s]));
+	const slugs: Record<string, string[]> = {};
+	for (const r of requests) {
+		slugs[r.workspaceId] = byId.get(r.workspaceId)?.repoSlugs ?? [];
+	}
+	return slugs;
+}
+
 export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 	byWorkspaceId: {},
 	worktreeFacts: {},
 	repoSlugsById: {},
-	repoSlugsResolved: false,
 	inFlight: new Set(),
 
 	fetch: async (workspaceId, cwd, baseBranch) => {
@@ -134,7 +151,6 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		}
 		// Single state update for all workspaces at once — one React render cycle
 		const updates: Record<string, WorkspaceGitInfo> = {};
-		const slugs: Record<string, string[]> = {};
 		for (const s of summaries) {
 			updates[s.workspaceId] = {
 				isGitRepo: s.isGitRepo,
@@ -143,12 +159,13 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 				additions: s.additions,
 				deletions: s.deletions,
 			};
-			slugs[s.workspaceId] = s.repoSlugs ?? [];
 		}
 		set((state) => ({
 			byWorkspaceId: { ...state.byWorkspaceId, ...updates },
-			repoSlugsById: { ...state.repoSlugsById, ...slugs },
-			repoSlugsResolved: true,
+			repoSlugsById: {
+				...state.repoSlugsById,
+				...slugsFromSummaries(requests, summaries),
+			},
 		}));
 		// Persist the refreshed branch names so the next startup is instant.
 		// Sequential to avoid saturating the tokio worker threads with
@@ -216,33 +233,38 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		try {
 			summaries = await git.workspacesSummary(requests);
 		} catch {
-			// Record "no slugs known" for the workspaces we asked about. The PR
-			// section treats a missing entry as *unresolved* and shows a loading
-			// message, so leaving them absent would hang that message forever on a
-			// git-layer failure. An answer of "none" is terminal, and Refresh
-			// retries. Grouping facts are deliberately left untouched.
-			const empty: Record<string, string[]> = {};
-			for (const r of requests) empty[r.workspaceId] = [];
-			set((state) => ({
-				repoSlugsById: { ...state.repoSlugsById, ...empty },
-				repoSlugsResolved: true,
-			}));
+			// Answer "none found" for the workspaces we asked about that have no
+			// answer yet — a missing entry reads as *unresolved*, so leaving them
+			// absent would hang the PR section on "Loading repositories…" forever
+			// on a git-layer failure. Workspaces already resolved keep their slugs:
+			// a stale-but-correct set beats a confident empty one, which would
+			// claim the Profile has no repositories at all. Grouping facts are
+			// deliberately left untouched.
+			set((state) => {
+				const filled: Record<string, string[]> = {};
+				for (const r of requests) {
+					if (state.repoSlugsById[r.workspaceId] === undefined) {
+						filled[r.workspaceId] = [];
+					}
+				}
+				return { repoSlugsById: { ...state.repoSlugsById, ...filled } };
+			});
 			return;
 		}
 		const facts: Record<string, WorktreeGroupFacts> = {};
-		const slugs: Record<string, string[]> = {};
 		for (const s of summaries) {
 			facts[s.workspaceId] = {
 				worktreeGroupKey: s.worktreeGroupKey,
 				isMainWorktree: s.isMainWorktree,
 				worktreeRoot: s.worktreeRoot,
 			};
-			slugs[s.workspaceId] = s.repoSlugs ?? [];
 		}
 		set((state) => ({
 			worktreeFacts: { ...state.worktreeFacts, ...facts },
-			repoSlugsById: { ...state.repoSlugsById, ...slugs },
-			repoSlugsResolved: true,
+			repoSlugsById: {
+				...state.repoSlugsById,
+				...slugsFromSummaries(requests, summaries),
+			},
 		}));
 	},
 

@@ -124,6 +124,27 @@ describe("prStore", () => {
 			expect(s.repoSlugsResolved).toBe(true);
 		});
 
+		it("lowercases slugs on the way in", () => {
+			// Git remotes carry whatever casing is in .git/config; GitHub reports
+			// canonical casing. Both setters normalise so the filter can't miss.
+			usePrStore.getState().setActiveRepoSlug("Acme/Web");
+			usePrStore.getState().setProfileRepoSlugs(new Set(["Acme/Web"]), true);
+			expect(usePrStore.getState().activeRepoSlug).toBe("acme/web");
+			expect([...usePrStore.getState().profileRepoSlugs]).toEqual(["acme/web"]);
+		});
+
+		it("keeps the same state object when the set is unchanged", () => {
+			// The pushing effect re-runs on unrelated store churn; an identical
+			// write must not invalidate the panel's memos.
+			usePrStore.getState().setProfileRepoSlugs(new Set(["org/x"]), true);
+			const first = usePrStore.getState().profileRepoSlugs;
+			usePrStore.getState().setProfileRepoSlugs(new Set(["org/x"]), true);
+			expect(usePrStore.getState().profileRepoSlugs).toBe(first);
+
+			usePrStore.getState().setProfileRepoSlugs(new Set(["org/y"]), true);
+			expect(usePrStore.getState().profileRepoSlugs).not.toBe(first);
+		});
+
 		it("an empty set can be resolved — a profile can genuinely have none", () => {
 			usePrStore.getState().setProfileRepoSlugs(new Set(), true);
 			expect(usePrStore.getState().repoSlugsResolved).toBe(true);
@@ -203,6 +224,18 @@ describe("prStore", () => {
 			).toEqual([prA, prB]);
 		});
 
+		it("matches regardless of the casing GitHub reports", () => {
+			// `pr.repository` is canonical casing; the set is lowercased by the
+			// store. A repo cloned as `Acme/Web` must still match.
+			const prMixed = makePr({ number: 5, repository: "Acme/Web" });
+			expect(
+				visiblePrs([prMixed], "profile", null, new Set(["acme/web"])),
+			).toEqual([prMixed]);
+			expect(visiblePrs([prMixed], "repo", "acme/web", none)).toEqual([
+				prMixed,
+			]);
+		});
+
 		it("returns nothing — not everything — when the profile has no repos", () => {
 			// The empty set must NOT read as "no filter": that would silently
 			// widen the view to account-wide. See ADR-0028.
@@ -226,14 +259,10 @@ describe("prStore", () => {
 			});
 		});
 
-		it("leaves an already-migrated preference alone", () => {
-			expect(
-				migrate()({ reviewView: "review-all", myPrsView: "mine-repo" }, 1),
-			).toEqual({
-				reviewView: "review-all",
-				myPrsView: "mine-repo",
-			});
-		});
+		// There is deliberately no "leaves v1 state alone" case: zustand only
+		// calls `migrate` when the persisted version differs from `version`, so a
+		// branch for it would be unreachable and would make a future bump look
+		// already handled.
 	});
 
 	describe("profilePrCounts", () => {

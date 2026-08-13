@@ -4,15 +4,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
+// `handleRefresh` also re-runs the batch workspace summary (the recovery path
+// for a `git remote add` made in a terminal), and workspaceGitStore reaches for
+// `workspacesApi` — both must be stubbed or the Refresh test fails on the mock
+// rather than on the behaviour.
 vi.mock("../../../lib/ipc", () => ({
 	pr: { refresh: vi.fn().mockResolvedValue(undefined) },
+	git: { workspacesSummary: vi.fn().mockResolvedValue([]) },
+	workspaces: { update: vi.fn().mockResolvedValue(undefined) },
 }));
 
+import { git, pr as prIpc } from "../../../lib/ipc";
 import type { PullRequest } from "../../../lib/types";
 import { usePrStore } from "../../../stores/prStore";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../../stores/workspaceGitStore";
+import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { PullRequestsSection } from "../PullRequestsSection";
 
 const makePr = (number: number, repository: string): PullRequest => ({
@@ -59,11 +67,15 @@ describe("PullRequestsSection", () => {
 	let root: ReturnType<typeof createRoot>;
 
 	beforeEach(() => {
+		vi.clearAllMocks();
 		useSettingsStore.setState({ prPollEnabled: true });
 		usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["ws-1"]) });
-		useWorkspaceGitStore.setState({
-			repoSlugsById: { "ws-1": ["acme/web"] },
-			repoSlugsResolved: true,
+		useWorkspaceGitStore.setState({ repoSlugsById: { "ws-1": ["acme/web"] } });
+		useWorkspaceStore.setState({
+			workspaces: [
+				{ id: "ws-1", rootFolder: "/web", baseBranch: null },
+				// biome-ignore lint/suspicious/noExplicitAny: partial workspace fixture
+			] as any,
 		});
 		seed();
 		container = document.createElement("div");
@@ -112,6 +124,22 @@ describe("PullRequestsSection", () => {
 		render();
 		expect(text()).toContain("Loading repositories");
 		expect(text()).not.toContain("No GitHub repositories in this profile");
+	});
+
+	it("Refresh re-polls PRs and re-scans the workspaces' remotes", async () => {
+		render();
+		const refresh = Array.from(container.querySelectorAll("button")).find(
+			(b) => b.getAttribute("title") === "Refresh",
+		);
+		await act(async () => {
+			refresh?.click();
+		});
+		expect(prIpc.refresh).toHaveBeenCalled();
+		// The recovery path for a `git remote add` made in a terminal: without
+		// this, a new remote stays invisible to the Profile scope until relaunch.
+		expect(git.workspacesSummary).toHaveBeenCalledWith([
+			{ workspaceId: "ws-1", cwd: "/web", baseBranch: null },
+		]);
 	});
 
 	it("offers all three scopes when a workspace is opened", () => {

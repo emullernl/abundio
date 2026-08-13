@@ -150,13 +150,16 @@ export function PullRequestsSection() {
 		[setMyPrsView],
 	);
 
-	// Repo is only offered when there is something to point it at.
+	// Default first, then narrow → wide (Repo ⊆ Profile ⊆ All), so the list
+	// itself carries the order a scope degrades along. Repo is only offered when
+	// there is something to point it at, and dropping it leaves Profile → All in
+	// place rather than reshuffling the menu.
 	const reviewViews: ReviewView[] = noWorkspace
 		? ["review-profile", "review-all"]
-		: ["review-profile", "review-all", "review-repo"];
+		: ["review-profile", "review-repo", "review-all"];
 	const myPrsViews: MyPrsView[] = noWorkspace
 		? ["mine-profile", "mine-all"]
-		: ["mine-profile", "mine-all", "mine-repo"];
+		: ["mine-profile", "mine-repo", "mine-all"];
 
 	return (
 		<div className="flex flex-col h-full min-h-0">

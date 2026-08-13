@@ -54,13 +54,15 @@ interface PrState {
 	 *  only) because `pr_poller_refresh` returns before the poll completes —
 	 *  the spin must persist until the pushed `pr-state` clears it. */
 	refreshing: boolean;
-	/** The active workspace's GitHub `owner/repo`, or null (no github remote /
-	 *  no active workspace). Drives the repo-scoped filter and the repo-view
-	 *  "No GitHub remote found" empty state. */
+	/** The active workspace's GitHub `owner/repo` lowercased (see
+	 *  `setActiveRepoSlug`), or null (no github remote / no active workspace).
+	 *  Drives the repo-scoped filter and the repo-view "No GitHub remote found"
+	 *  empty state. */
 	activeRepoSlug: string | null;
-	/** Every GitHub `owner/repo` the **Active profile**'s Workspaces resolve to.
-	 *  Pushed in by `useGitDataSync` from the batch workspace summary; drives both
-	 *  the Profile-scoped filter and the Overview bar chips. See ADR-0028. */
+	/** Every GitHub `owner/repo` the **Active profile**'s Workspaces resolve to,
+	 *  lowercased. Pushed in by `useGitDataSync` from the batch workspace summary;
+	 *  drives both the Profile-scoped filter and the Overview bar chips.
+	 *  See ADR-0028. */
 	profileRepoSlugs: Set<string>;
 	/** False until the first batch summary lands — an empty set means "this
 	 *  profile has no GitHub repositories" only once this is true. */
@@ -123,9 +125,32 @@ export const usePrStore = create<PrState>()(
 
 			beginRefresh: () => set({ refreshing: true }),
 
-			setActiveRepoSlug: (activeRepoSlug) => set({ activeRepoSlug }),
-			setProfileRepoSlugs: (profileRepoSlugs, repoSlugsResolved) =>
-				set({ profileRepoSlugs, repoSlugsResolved }),
+			// Both slug setters lowercase on the way in. Slugs derived from git
+			// remotes carry whatever casing sits in `.git/config` (GitHub accepts a
+			// clone URL in any case), while `pr.repository` is GitHub's canonical
+			// `nameWithOwner` — so a repo cloned as `Acme/Web` would match nothing
+			// and the default view would look convincingly empty. Normalising here
+			// rather than in the filter keeps the comparison allocation-free.
+			setActiveRepoSlug: (slug) =>
+				set({ activeRepoSlug: slug?.toLowerCase() ?? null }),
+
+			setProfileRepoSlugs: (slugs, repoSlugsResolved) =>
+				set((s) => {
+					const profileRepoSlugs = new Set(
+						[...slugs].map((x) => x.toLowerCase()),
+					);
+					// The pushing effect re-runs on every `workspaces` /
+					// `repoSlugsById` identity change — including each batch summary
+					// and each `workspacesApi.update(lastBranch)` round-trip. Writing
+					// an identical-but-new Set would re-render the Overview bar and
+					// the PR section and invalidate both `useMemo`s (the Set is a
+					// dep) for no change at all.
+					const unchanged =
+						s.repoSlugsResolved === repoSlugsResolved &&
+						s.profileRepoSlugs.size === profileRepoSlugs.size &&
+						[...profileRepoSlugs].every((x) => s.profileRepoSlugs.has(x));
+					return unchanged ? s : { profileRepoSlugs, repoSlugsResolved };
+				}),
 			setReviewView: (reviewView) => set({ reviewView }),
 			setMyPrsView: (myPrsView) => set({ myPrsView }),
 		}),
@@ -144,18 +169,14 @@ export const usePrStore = create<PrState>()(
 			// per-webview localStorage, so each Window migrates independently —
 			// correct, since each Window has its own Active profile.
 			version: 1,
-			migrate: (persisted, version) => {
-				const state = (persisted ?? {}) as Partial<
-					Pick<PrState, "reviewView" | "myPrsView">
-				>;
-				if (version < 1) {
-					return { reviewView: "review-profile", myPrsView: "mine-profile" };
-				}
-				return {
-					reviewView: state.reviewView ?? "review-profile",
-					myPrsView: state.myPrsView ?? "mine-profile",
-				};
-			},
+			// Only ever called for a persisted version other than 1, which today
+			// means the pre-Profile v0 state — hence the unconditional reset. A
+			// future bump must add its own branch here rather than assume this one
+			// still fits.
+			migrate: () => ({
+				reviewView: "review-profile" as ReviewView,
+				myPrsView: "mine-profile" as MyPrsView,
+			}),
 		},
 	),
 );
@@ -173,6 +194,9 @@ export const usePrStore = create<PrState>()(
 // Overview bar chips run the same rule via `profilePrCounts`, which is why they
 // can never disagree with the section they summarise. See ADR-0028.
 
+/** `activeRepoSlug` and `profileRepoSlugs` must already be lowercase — the
+ *  store's setters guarantee it. `pr.repository` is lowercased per comparison so
+ *  the PR keeps GitHub's canonical casing for display. */
 export function visiblePrs(
 	prs: PullRequest[],
 	scope: PrScope,
@@ -181,11 +205,13 @@ export function visiblePrs(
 ): PullRequest[] {
 	if (scope === "repo") {
 		return activeRepoSlug
-			? prs.filter((pr) => pr.repository === activeRepoSlug)
+			? prs.filter((pr) => pr.repository.toLowerCase() === activeRepoSlug)
 			: prs;
 	}
 	if (scope === "profile") {
-		return prs.filter((pr) => profileRepoSlugs.has(pr.repository));
+		return prs.filter((pr) =>
+			profileRepoSlugs.has(pr.repository.toLowerCase()),
+		);
 	}
 	return prs;
 }

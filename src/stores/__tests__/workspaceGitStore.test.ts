@@ -43,7 +43,6 @@ function resetStore() {
 	useWorkspaceGitStore.setState({
 		byWorkspaceId: {},
 		repoSlugsById: {},
-		repoSlugsResolved: false,
 		inFlight: new Set(),
 	});
 }
@@ -211,12 +210,12 @@ describe("workspaceGitStore", () => {
 			repoSlugs,
 		});
 
-		it("syncWorktreeFacts records slugs and flips resolved", async () => {
+		it("syncWorktreeFacts records slugs per workspace", async () => {
 			vi.mocked(git.workspacesSummary).mockResolvedValue([
 				summary("ws-a", "/a", ["me/a", "acme/a"]),
 				summary("ws-b", "/b", []),
 			]);
-			expect(useWorkspaceGitStore.getState().repoSlugsResolved).toBe(false);
+			expect(useWorkspaceGitStore.getState().repoSlugsById).toEqual({});
 
 			await useWorkspaceGitStore.getState().syncWorktreeFacts([
 				{ id: "ws-a", rootFolder: "/a" },
@@ -226,7 +225,6 @@ describe("workspaceGitStore", () => {
 			const s = useWorkspaceGitStore.getState();
 			expect(s.repoSlugsById["ws-a"]).toEqual(["me/a", "acme/a"]);
 			expect(s.repoSlugsById["ws-b"]).toEqual([]);
-			expect(s.repoSlugsResolved).toBe(true);
 		});
 
 		it("fetchAll records slugs too", async () => {
@@ -241,7 +239,7 @@ describe("workspaceGitStore", () => {
 			]);
 		});
 
-		it("records an empty answer when the summary IPC fails", async () => {
+		it("records an empty answer for unanswered workspaces when the IPC fails", async () => {
 			// A missing entry reads as "still resolving" in the PR section, so a
 			// failed batch must still answer for the workspaces it asked about —
 			// otherwise the panel hangs on "Loading repositories…" forever.
@@ -250,7 +248,50 @@ describe("workspaceGitStore", () => {
 				.getState()
 				.syncWorktreeFacts([{ id: "ws-e", rootFolder: "/e" }]);
 			expect(useWorkspaceGitStore.getState().repoSlugsById["ws-e"]).toEqual([]);
-			expect(useWorkspaceGitStore.getState().repoSlugsResolved).toBe(true);
+		});
+
+		it("keeps known slugs when a later sync fails", async () => {
+			// A transient rejection must not turn a correct set into a confident
+			// empty one — that reads as "this profile has no GitHub repositories".
+			vi.mocked(git.workspacesSummary).mockResolvedValue([
+				summary("ws-f", "/f", ["org/f"]),
+			]);
+			await useWorkspaceGitStore
+				.getState()
+				.syncWorktreeFacts([{ id: "ws-f", rootFolder: "/f" }]);
+
+			vi.mocked(git.workspacesSummary).mockRejectedValue(new Error("boom"));
+			await useWorkspaceGitStore
+				.getState()
+				.syncWorktreeFacts([{ id: "ws-f", rootFolder: "/f" }]);
+
+			expect(useWorkspaceGitStore.getState().repoSlugsById["ws-f"]).toEqual([
+				"org/f",
+			]);
+		});
+
+		it("answers for every requested workspace, not just the summarised ones", async () => {
+			// git_workspaces_summary ends in unwrap_or_default(), so a panic in the
+			// blocking task resolves to a short list instead of rejecting. Keying
+			// the write off the response would leave ws-h permanently unresolved.
+			vi.mocked(git.workspacesSummary).mockResolvedValue([
+				summary("ws-g", "/g", ["org/g"]),
+			]);
+			await useWorkspaceGitStore.getState().syncWorktreeFacts([
+				{ id: "ws-g", rootFolder: "/g" },
+				{ id: "ws-h", rootFolder: "/h" },
+			]);
+
+			const s = useWorkspaceGitStore.getState();
+			expect(s.repoSlugsById["ws-g"]).toEqual(["org/g"]);
+			expect(s.repoSlugsById["ws-h"]).toEqual([]);
+			expect(
+				repoSlugsResolvedFor(
+					[{ id: "ws-g" }, { id: "ws-h" }],
+					s.repoSlugsById,
+					true,
+				),
+			).toBe(true);
 		});
 
 		it("remove drops the workspace's slugs", () => {

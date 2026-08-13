@@ -302,14 +302,27 @@ pub struct WorkspaceGitSummary {
 
 /// Resolves the cheap per-workspace git facts via libgit2: current branch,
 /// worktree grouping bits, and GitHub repo identity. All three are config/HEAD
-/// reads on an already-open repository.
+/// reads on **one** open repository — the `_in` variants exist so this batch,
+/// which runs across the whole Profile on every workspace-list change, pays for
+/// a single `Repository::discover` per workspace rather than one each.
 /// Change stats are intentionally excluded — they're already computed by
 /// `git_changed_files` whenever the active workspace opens its git panel,
 /// which syncs back to the workspace chip store via the frontend.
 fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummary {
-    let current_branch = git_libgit2::current_branch_only(&req.cwd);
-    let bits = git_libgit2::worktree_summary_bits(&req.cwd);
-    let repo_slugs = git_libgit2::github_repo_slugs(&req.cwd);
+    let repo = git2::Repository::discover(&req.cwd).ok();
+    let current_branch = repo.as_ref().and_then(git_libgit2::current_branch_only_in);
+    let bits = match repo.as_ref() {
+        Some(r) => git_libgit2::worktree_summary_bits_in(r),
+        None => git_libgit2::WorktreeSummaryBits {
+            group_key: None,
+            is_main_worktree: false,
+            canonical_root: None,
+        },
+    };
+    let repo_slugs = repo
+        .as_ref()
+        .map(git_libgit2::github_repo_slugs_in)
+        .unwrap_or_default();
     // A repo can be a git repo even with a detached/unborn HEAD (no branch),
     // so anchor is_git_repo on the worktree group key, not the branch name.
     let is_git_repo = bits.group_key.is_some();
