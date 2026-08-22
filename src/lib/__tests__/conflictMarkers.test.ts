@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	type ConflictBlock,
+	mapBlocksToSide,
 	parseConflicts,
 	resolveAll,
 	resolveBlock,
@@ -191,5 +192,99 @@ describe("resolveAll", () => {
 	it("is a no-op on a file with no conflicts", () => {
 		const src = "just\nsome\ntext\n";
 		expect(resolveAll(src, parseConflicts(src), "current")).toBe(src);
+	});
+});
+
+describe("mapBlocksToSide", () => {
+	const src = [
+		"<<<<<<< HEAD",
+		"alpha",
+		"=======",
+		"beta",
+		">>>>>>> f",
+		"shared",
+		"<<<<<<< HEAD",
+		"alpha",
+		"=======",
+		"gamma",
+		">>>>>>> f",
+		"",
+	].join("\n");
+
+	// The full "ours" document the conflict was built from.
+	const OURS = ["alpha", "shared", "alpha", ""].join("\n");
+
+	it("maps two identical sides to two different lines", () => {
+		// The monotonic cursor is the whole point: a plain indexOf would return
+		// line 1 for both blocks.
+		const blocks = parseConflicts(src);
+		expect(blocks).toHaveLength(2);
+		const ranges = mapBlocksToSide(src, blocks, OURS, "current");
+		expect(ranges[0]).toEqual({ startLine: 1, endLine: 1 });
+		expect(ranges[1]).toEqual({ startLine: 3, endLine: 3 });
+	});
+
+	it("maps a multi-line side to its full range", () => {
+		const s = "<<<<<<< HEAD\na\nb\n=======\nz\n>>>>>>> f\n";
+		const ours = "pre\na\nb\npost\n";
+		const [r] = mapBlocksToSide(s, parseConflicts(s), ours, "current");
+		expect(r).toEqual({ startLine: 2, endLine: 3 });
+	});
+
+	it("returns null when a side cannot be located", () => {
+		// Only one "alpha" in the document, so the first block consumes it and
+		// the second finds nothing after the cursor.
+		const ours = ["shared", "alpha", ""].join("\n");
+		const ranges = mapBlocksToSide(src, parseConflicts(src), ours, "current");
+		expect(ranges[0]).toEqual({ startLine: 2, endLine: 2 });
+		expect(ranges[1]).toBeNull();
+	});
+
+	it("a failed match does not desync the blocks after it", () => {
+		const s = [
+			"<<<<<<< HEAD",
+			"missing",
+			"=======",
+			"x",
+			">>>>>>> f",
+			"<<<<<<< HEAD",
+			"present",
+			"=======",
+			"y",
+			">>>>>>> f",
+			"",
+		].join("\n");
+		const ours = ["present", ""].join("\n");
+		const ranges = mapBlocksToSide(s, parseConflicts(s), ours, "current");
+		expect(ranges[0]).toBeNull();
+		expect(ranges[1]).toEqual({ startLine: 1, endLine: 1 });
+	});
+
+	it("reports an empty side as a zero-height insertion point", () => {
+		const s = "<<<<<<< HEAD\n=======\nz\n>>>>>>> f\n";
+		const [r] = mapBlocksToSide(s, parseConflicts(s), "a\nb\n", "current");
+		expect(r).not.toBeNull();
+		expect(r?.endLine).toBeLessThan(r?.startLine ?? 0);
+	});
+
+	it("returns null for the base side when there is no ancestor region", () => {
+		const s = "<<<<<<< HEAD\na\n=======\nz\n>>>>>>> f\n";
+		expect(mapBlocksToSide(s, parseConflicts(s), "a\n", "base")).toEqual([
+			null,
+		]);
+	});
+
+	it("maps the incoming side against the theirs document", () => {
+		const theirs = ["beta", "shared", "gamma", ""].join("\n");
+		const ranges = mapBlocksToSide(
+			src,
+			parseConflicts(src),
+			theirs,
+			"incoming",
+		);
+		expect(ranges).toEqual([
+			{ startLine: 1, endLine: 1 },
+			{ startLine: 3, endLine: 3 },
+		]);
 	});
 });

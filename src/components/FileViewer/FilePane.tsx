@@ -11,6 +11,10 @@ import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
 import {
+	clearActiveConflictBlock,
+	setActiveConflictBlock,
+} from "../../lib/mergeSync";
+import {
 	hasMergeView,
 	toggleMergeBase,
 	toggleMergeViewForPane,
@@ -126,6 +130,19 @@ export function FilePane({
 			void toggleMergeViewForPane(paneId);
 		}
 	}, [isUnmerged, mergeViewOpen, paneId]);
+
+	const handleCursorLine = useCallback(
+		(line: number) => {
+			if (!mergeViewOpen) return;
+			const index = conflictBlocks.findIndex(
+				(b) => line >= b.startLine && line <= b.endLine,
+			);
+			setActiveConflictBlock(paneId, index === -1 ? null : index);
+		},
+		[conflictBlocks, mergeViewOpen, paneId],
+	);
+
+	useEffect(() => () => clearActiveConflictBlock(paneId), [paneId]);
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
@@ -404,6 +421,7 @@ export function FilePane({
 						initialEditorState={null}
 						onChange={handleEditorChange}
 						forceWordWrap={isMarkdown}
+						onCursorLine={handleCursorLine}
 					/>
 				)}
 				{paneState.fileType === "diff" &&

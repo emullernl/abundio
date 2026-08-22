@@ -242,3 +242,72 @@ export function resolveAll(
 	}
 	return out;
 }
+
+/** 1-based line containing `offset`. */
+function lineOf(text: string, offset: number): number {
+	let line = 1;
+	const limit = Math.min(offset, text.length);
+	for (let i = 0; i < limit; i++) if (text[i] === "\n") line++;
+	return line;
+}
+
+export interface SideRange {
+	startLine: number;
+	/** Less than `startLine` when the side is empty — an insertion point. */
+	endLine: number;
+}
+
+/**
+ * Locate each block's chosen side within the *full* stage document, for the
+ * Merge view's highlighting.
+ *
+ * A **monotonic forward search**, not a diff: git built the conflict region out
+ * of the real stage content, so each side's text appears verbatim in that
+ * stage's document. Searching from a cursor that advances past each match is
+ * what makes repeated text unambiguous — two blocks with identical content map
+ * to two different places, which a plain `indexOf` would get wrong.
+ *
+ * Doing this without a diff computation is also what keeps us off deep
+ * `monaco-editor/esm` imports, which the CDN loader makes unsafe (ADR-0030).
+ *
+ * `null` where a block cannot be located; that block simply gets no highlight.
+ */
+export function mapBlocksToSide(
+	text: string,
+	blocks: ConflictBlock[],
+	sideText: string,
+	which: "current" | "incoming" | "base",
+): (SideRange | null)[] {
+	const out: (SideRange | null)[] = [];
+	let cursor = 0;
+
+	for (const block of blocks) {
+		const side = which === "base" ? block.base : block[which];
+		if (!side) {
+			out.push(null);
+			continue;
+		}
+		const content = text.slice(side.startOffset, side.endOffset);
+
+		if (content.length === 0) {
+			// Nothing to search for: report the insertion point we have reached.
+			const line = lineOf(sideText, cursor);
+			out.push({ startLine: line, endLine: line - 1 });
+			continue;
+		}
+
+		const idx = sideText.indexOf(content, cursor);
+		if (idx === -1) {
+			// Don't advance: a failed match must not desynchronise later blocks.
+			out.push(null);
+			continue;
+		}
+		out.push({
+			startLine: lineOf(sideText, idx),
+			endLine: lineOf(sideText, idx + content.length - 1),
+		});
+		cursor = idx + content.length;
+	}
+
+	return out;
+}

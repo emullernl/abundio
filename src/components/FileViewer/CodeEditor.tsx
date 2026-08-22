@@ -30,6 +30,8 @@ interface CodeEditorProps {
 	/** Read-only panes (the Merge view's side panes) show an index stage, which
 	 *  has no editable on-disk counterpart. */
 	readOnly?: boolean;
+	/** Fires on cursor movement, so the Merge view can follow the caret. */
+	onCursorLine?: (line: number) => void;
 }
 
 // Cache view state per tab so switching tabs preserves cursor/scroll
@@ -43,6 +45,14 @@ export interface SerializedEditorState {
 	anchorPos: number;
 	scrollTop: number;
 	scrollLeft: number;
+}
+
+/** The mounted editor for a pane, or undefined. Keyed by pane id — the `tabId`
+ *  prop is misnamed; `FilePane` passes `paneId`. */
+export function getLiveEditor(
+	paneId: string,
+): editor.IStandaloneCodeEditor | undefined {
+	return liveEditors.get(paneId);
 }
 
 export function focusEditor(tabId: string) {
@@ -99,10 +109,13 @@ export const CodeEditor = memo(function CodeEditor({
 	onChange,
 	forceWordWrap = false,
 	readOnly = false,
+	onCursorLine,
 }: CodeEditorProps) {
 	const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 	const onChangeRef = useRef(onChange);
 	onChangeRef.current = onChange;
+	const onCursorLineRef = useRef(onCursorLine);
+	onCursorLineRef.current = onCursorLine;
 	const tabIdRef = useRef(tabId);
 	tabIdRef.current = tabId;
 	const isActiveRef = useRef(isActive);
@@ -210,6 +223,10 @@ export const CodeEditor = memo(function CodeEditor({
 					);
 				}) ?? null;
 			setEditorMounted(true);
+
+			ed.onDidChangeCursorPosition((e) =>
+				onCursorLineRef.current?.(e.position.lineNumber),
+			);
 
 			// Define and apply theme, store Monaco instance for theme sync
 			defineAbundioTheme(m);

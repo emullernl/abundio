@@ -1,10 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { mapBlocksToSide, parseConflicts } from "../../lib/conflictMarkers";
 import { type GitConflictFile, git } from "../../lib/ipc";
+import {
+	getActiveConflictBlock,
+	subscribeActiveConflictBlock,
+} from "../../lib/mergeSync";
 import type { MergeSide } from "../../lib/mergeView";
 import { detectLanguage } from "../../lib/monacoShared";
 import { relativeToWorkspace } from "../../lib/resolveWorkspacePath";
 import { useExplorerStore } from "../../stores/explorerStore";
-import { CodeEditor } from "./CodeEditor";
+import { CodeEditor, getLiveEditor } from "./CodeEditor";
 
 interface Props {
 	paneId: string;
@@ -70,12 +75,63 @@ export function MergeSidePane({
 
 	const content = conflict ? stageOf(conflict, side) : null;
 
+	// The result pane drives; the sides follow. See `mergeSync`.
+	const activeBlock = useSyncExternalStore(
+		(fn) => subscribeActiveConflictBlock(sourcePaneId, fn),
+		() => getActiveConflictBlock(sourcePaneId),
+	);
+	const sourceContent = useExplorerStore(
+		(s) => s.filePanes[sourcePaneId]?.content,
+	);
+
+	const ranges = useMemo(() => {
+		if (content == null || sourceContent == null) return [];
+		const blocks = parseConflicts(sourceContent);
+		return mapBlocksToSide(sourceContent, blocks, content, side);
+	}, [content, sourceContent, side]);
+
+	// Reveal and highlight the region matching the block under the caret.
+	useEffect(() => {
+		const ed = getLiveEditor(paneId);
+		if (!ed) return;
+		const collection = ed.createDecorationsCollection([]);
+		const range = activeBlock === null ? null : ranges[activeBlock];
+		if (range && range.endLine >= range.startLine) {
+			collection.set([
+				{
+					range: {
+						startLineNumber: range.startLine,
+						startColumn: 1,
+						endLineNumber: range.endLine,
+						endColumn: 1,
+					},
+					options: {
+						isWholeLine: true,
+						className: "abundio-conflict-side-active",
+					},
+				},
+			]);
+			ed.revealRangeInCenter({
+				startLineNumber: range.startLine,
+				startColumn: 1,
+				endLineNumber: range.endLine,
+				endColumn: 1,
+			});
+		} else if (range) {
+			// An empty side: nothing to highlight, but still scroll to where the
+			// content would have gone.
+			ed.revealLineInCenter(Math.max(1, range.startLine));
+		}
+		return () => collection.clear();
+	}, [activeBlock, ranges, paneId]);
+
 	return (
+		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container
+		// biome-ignore lint/a11y/noStaticElementInteractions: layout container, click-to-focus only
 		<div
 			className="flex flex-col h-full w-full"
 			style={{ backgroundColor: "transparent" }}
 			onClick={onFocus}
-			onKeyDown={undefined}
 		>
 			<div
 				className="flex items-center gap-2 px-3 flex-shrink-0"
