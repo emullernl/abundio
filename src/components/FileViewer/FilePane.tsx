@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveLayout } from "../../hooks/useActiveLayout";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import {
@@ -12,7 +12,8 @@ import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
 import {
-	clearActiveConflictBlock,
+	getActiveConflictBlock,
+	initialMergeSelection,
 	setActiveConflictBlock,
 } from "../../lib/mergeSync";
 import {
@@ -139,7 +140,9 @@ export function FilePane({
 
 	// Published for the Merge side panes *and* held locally for the navigator's
 	// position readout, so both always agree on which block is current.
-	const [activeBlock, setActiveBlock] = useState<number | null>(null);
+	const [activeBlock, setActiveBlock] = useState<number | null>(() =>
+		getActiveConflictBlock(paneId),
+	);
 
 	const handleCursorLine = useCallback(
 		(line: number) => {
@@ -153,25 +156,62 @@ export function FilePane({
 		[conflictBlocks, paneId],
 	);
 
-	const navigateToBlock = useCallback(
-		(blockIndex: number) => {
+	/**
+	 * Make a block the current one.
+	 *
+	 * The selection is published as state first and the caret follows, rather
+	 * than the caret being the only source of truth: opening the Merge view
+	 * re-parents the result pane, so its editor can be briefly unmounted at
+	 * exactly the moment we want to select something. Publishing first means the
+	 * side panes light up regardless, and the caret catches up once the editor
+	 * is back.
+	 */
+	const selectBlock = useCallback(
+		(blockIndex: number, focus = true) => {
 			const block = conflictBlocks[blockIndex];
 			if (!block) return;
-			const ed = getLiveEditor(paneId);
-			if (!ed) return;
-			// Land on the first line of content, not the marker — that is where you
-			// would start reading. Setting the position fires onCursorLine, which
-			// publishes the active block and pulls the side panes along.
-			const line = Math.min(
-				block.current.startLine,
-				ed.getModel()?.getLineCount() ?? block.startLine,
-			);
-			ed.setPosition({ lineNumber: line, column: 1 });
-			ed.revealLineInCenter(block.startLine);
-			ed.focus();
+			setActiveBlock(blockIndex);
+			setActiveConflictBlock(paneId, blockIndex);
+
+			// Two frames, matching the pattern used elsewhere in this file for
+			// post-layout editor work.
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					const ed = getLiveEditor(paneId);
+					if (!ed) return;
+					// Land on the first line of content, not the marker — that is
+					// where you would start reading.
+					const line = Math.min(
+						block.current.startLine,
+						ed.getModel()?.getLineCount() ?? block.startLine,
+					);
+					ed.setPosition({ lineNumber: line, column: 1 });
+					ed.revealLineInCenter(block.startLine);
+					if (focus) ed.focus();
+				});
+			});
 		},
 		[conflictBlocks, paneId],
 	);
+
+	// Opening the Merge view lands on a conflict, so the side panes have
+	// something to show instead of a uniformly dimmed file. An existing
+	// selection is respected — if the caret was already in a block, that is the
+	// one you meant. Guarded by a ref so moving the caret out of every block
+	// later does not yank you back to the first one.
+	const autoSelectedRef = useRef(false);
+	useEffect(() => {
+		if (!mergeViewOpen) {
+			autoSelectedRef.current = false;
+			return;
+		}
+		if (autoSelectedRef.current) return;
+		const target = initialMergeSelection(activeBlock, conflictBlocks.length);
+		if (target === null) return;
+		autoSelectedRef.current = true;
+		// No focus steal: the user clicked a toolbar button, not the editor.
+		selectBlock(target, false);
+	}, [mergeViewOpen, conflictBlocks.length, activeBlock, selectBlock]);
 
 	// A resolved block shifts every index after it, so clamp rather than leave
 	// the navigator pointing past the end.
@@ -184,7 +224,11 @@ export function FilePane({
 		}
 	}, [activeBlock, conflictBlocks.length, paneId]);
 
-	useEffect(() => () => clearActiveConflictBlock(paneId), [paneId]);
+	// Deliberately not cleared on unmount. Opening the Merge view re-parents the
+	// result pane, so this component unmounts and remounts as part of a layout
+	// change rather than a close — clearing here would drop the user's place
+	// exactly when the side panes appear to use it. The registry holds one
+	// number per pane id, so the residue is negligible.
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
@@ -452,7 +496,7 @@ export function FilePane({
 					onToggleMergeView={() => void toggleMergeViewForPane(paneId)}
 					onToggleBase={() => void toggleMergeBase(paneId)}
 					activeBlock={activeBlock}
-					onNavigate={navigateToBlock}
+					onNavigate={selectBlock}
 				/>
 			)}
 			<div className="flex-1 min-h-0 relative">

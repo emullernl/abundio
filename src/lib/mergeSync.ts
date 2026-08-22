@@ -40,7 +40,19 @@ export function subscribeActiveConflictBlock(
 	};
 }
 
-export function clearActiveConflictBlock(sourcePaneId: string): void {
-	activeBlock.delete(sourcePaneId);
-	listeners.delete(sourcePaneId);
+/**
+ * Which block to select when the Merge view opens.
+ *
+ * Respects an existing selection — if the caret was already in a block, that is
+ * the one you meant — and otherwise starts at the first conflict, so the side
+ * panes never open on a uniformly dimmed file with nothing marked. Clamped,
+ * because blocks resolved since the selection was made shift every index.
+ */
+export function initialMergeSelection(
+	alreadySelected: number | null,
+	blockCount: number,
+): number | null {
+	if (blockCount <= 0) return null;
+	if (alreadySelected === null || alreadySelected < 0) return 0;
+	return Math.min(alreadySelected, blockCount - 1);
 }
