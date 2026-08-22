@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useActiveLayout } from "../../hooks/useActiveLayout";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import {
 	parseConflicts,
@@ -118,7 +119,7 @@ export function FilePane({
 		await gitStore.fetchChanges(cwd, gitStore.baseBranch);
 	}, [cwd, paneId, relativePath, saveFile]);
 
-	const activeLayout = useWorkspaceStore((s) => s.getActiveLayout());
+	const activeLayout = useActiveLayout();
 	const mergeViewOpen = activeLayout
 		? hasMergeView(activeLayout, paneId)
 		: false;

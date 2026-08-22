@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+	useSyncExternalStore,
+} from "react";
 import { mapBlocksToSide, parseConflicts } from "../../lib/conflictMarkers";
 import { type GitConflictFile, git } from "../../lib/ipc";
 import {
@@ -76,10 +82,17 @@ export function MergeSidePane({
 	const content = conflict ? stageOf(conflict, side) : null;
 
 	// The result pane drives; the sides follow. See `mergeSync`.
-	const activeBlock = useSyncExternalStore(
-		(fn) => subscribeActiveConflictBlock(sourcePaneId, fn),
-		() => getActiveConflictBlock(sourcePaneId),
+	// Both callbacks must be stable: an inline `subscribe` makes React tear down
+	// and re-establish the subscription on every render.
+	const subscribe = useCallback(
+		(fn: () => void) => subscribeActiveConflictBlock(sourcePaneId, fn),
+		[sourcePaneId],
 	);
+	const getSnapshot = useCallback(
+		() => getActiveConflictBlock(sourcePaneId),
+		[sourcePaneId],
+	);
+	const activeBlock = useSyncExternalStore(subscribe, getSnapshot);
 	const sourceContent = useExplorerStore(
 		(s) => s.filePanes[sourcePaneId]?.content,
 	);
