@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "abundio"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "aes-gcm",
  "arboard",
