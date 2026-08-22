@@ -19,6 +19,9 @@ function FontRow({
 	return (
 		<button
 			type="button"
+			role="option"
+			aria-selected={isSelected}
+			aria-label={font.displayName}
 			onClick={onSelect}
 			className="w-full text-left rounded-md transition-all flex items-center gap-3 group"
 			style={{
@@ -105,10 +108,12 @@ export function FontPicker({
 		const list = listRef.current;
 		if (!list || filtered.length === 0 || hasScrolled.current) return;
 		const idx = filtered.findIndex((f) => f.name === selectedFont);
-		if (idx < 0) return; // nothing selected yet — try again when the list changes
-		hasScrolled.current = true;
+		// Both guards mean "the thing I need isn't here yet", so neither latches —
+		// a later render (the async system fonts arriving) gets another go.
+		if (idx < 0) return;
 		const row = list.children[idx] as HTMLElement | undefined;
 		if (!row) return;
+		hasScrolled.current = true;
 		const centred = row.offsetTop - (list.clientHeight - row.offsetHeight) / 2;
 		list.scrollTop = Math.max(
 			0,
@@ -125,6 +130,8 @@ export function FontPicker({
 			/>
 			<div
 				ref={listRef}
+				role="listbox"
+				aria-label={searchPlaceholder}
 				className="overflow-y-auto flex flex-col flex-1 min-h-0 relative"
 			>
 				{filtered.length === 0 && (

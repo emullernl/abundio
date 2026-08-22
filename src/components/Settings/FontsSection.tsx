@@ -84,7 +84,7 @@ export function FontsSection() {
 				<SectionLabel>Interface Font Size</SectionLabel>
 				<FontSizeControl value={uiFontSize} onChange={setUiFontSize} />
 			</div>
-			<div className="flex flex-col flex-shrink-0" style={{ height: 220 }}>
+			<div className="flex flex-col flex-1 min-h-0" style={{ minHeight: 220 }}>
 				<SectionLabel>Interface Font</SectionLabel>
 				<FontPicker
 					fonts={systemFonts}
@@ -109,7 +109,7 @@ export function FontsSection() {
 				/>
 			</div>
 			<div
-				className="flex flex-col flex-1"
+				className="flex flex-col flex-1 min-h-0"
 				style={{ minHeight: 220, paddingBottom: 4 }}
 			>
 				<SectionLabel>Terminal Font</SectionLabel>

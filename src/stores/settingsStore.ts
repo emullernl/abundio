@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
 import { agentHooks, pr, updates } from "../lib/ipc";
+import { SYSTEM_UI_FONT } from "../lib/nerdFonts";
 import type { PreviewColorMode } from "../lib/previewColorMode";
 import { nextPreviewColorMode } from "../lib/previewColorMode";
 import {
@@ -175,7 +176,7 @@ const PERSISTED_DEFAULTS: {
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
-		uiFontFamily: "system-ui, -apple-system, sans-serif",
+		uiFontFamily: SYSTEM_UI_FONT.name,
 		fontSize: 14,
 		uiFontSize: 14,
 		theme: "default",
