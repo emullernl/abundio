@@ -45,6 +45,7 @@ describe("ConflictToolbar", () => {
 	let root: ReturnType<typeof createRoot>;
 	const onResolveAndStage = vi.fn(() => Promise.resolve());
 	const onAcceptAll = vi.fn();
+	const onNavigate = vi.fn();
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -60,7 +61,7 @@ describe("ConflictToolbar", () => {
 		container.remove();
 	});
 
-	function renderToolbar(content: string) {
+	function renderToolbar(content: string, activeBlock: number | null = null) {
 		act(() => {
 			root.render(
 				<ConflictToolbar
@@ -75,6 +76,8 @@ describe("ConflictToolbar", () => {
 					mergeViewOpen={false}
 					onToggleMergeView={vi.fn()}
 					onToggleBase={vi.fn()}
+					activeBlock={activeBlock}
+					onNavigate={onNavigate}
 				/>,
 			);
 		});
@@ -82,17 +85,22 @@ describe("ConflictToolbar", () => {
 
 	const button = (label: string) =>
 		[...container.querySelectorAll("button")].find(
-			(b) => b.textContent === label,
+			(b) => b.textContent === label || b.getAttribute("aria-label") === label,
 		);
 
-	it("counts the remaining conflicts", () => {
+	it("shows the remaining count as the navigator total", () => {
 		renderToolbar(CONFLICTED + CONFLICTED);
-		expect(container.textContent).toContain("2 conflicts remaining");
+		expect(container.textContent).toContain("/2");
+		expect(
+			container.querySelector('[title="2 conflicts remaining"]'),
+		).not.toBeNull();
 	});
 
-	it("uses the singular for one conflict", () => {
+	it("uses the singular in the count tooltip", () => {
 		renderToolbar(CONFLICTED);
-		expect(container.textContent).toContain("1 conflict remaining");
+		expect(
+			container.querySelector('[title="1 conflict remaining"]'),
+		).not.toBeNull();
 	});
 
 	it("keeps Resolve & stage enabled while markers remain", () => {
@@ -188,5 +196,92 @@ describe("ConflictToolbar", () => {
 			expect(container.textContent).toContain("Binary conflict");
 			expect(container.querySelectorAll("button")).toHaveLength(0);
 		});
+	});
+});
+
+describe("conflict navigator", () => {
+	let container: HTMLDivElement;
+	let root: ReturnType<typeof createRoot>;
+	const onNavigate = vi.fn();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		conflictFile.mockResolvedValue(bothModified);
+		useGitChangesStore.setState({ operationInProgress: "merge" });
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+	});
+
+	afterEach(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	function render(content: string, activeBlock: number | null) {
+		act(() => {
+			root.render(
+				<ConflictToolbar
+					paneId="p1"
+					cwd="/repo"
+					relativePath="a.ts"
+					absolutePath="/repo/a.ts"
+					blocks={parseConflicts(content)}
+					isDirty={false}
+					onAcceptAll={vi.fn()}
+					onResolveAndStage={vi.fn(() => Promise.resolve())}
+					mergeViewOpen={false}
+					onToggleMergeView={vi.fn()}
+					onToggleBase={vi.fn()}
+					activeBlock={activeBlock}
+					onNavigate={onNavigate}
+				/>,
+			);
+		});
+	}
+
+	const THREE = CONFLICTED + CONFLICTED + CONFLICTED;
+	const arrow = (label: string) =>
+		container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+
+	it("shows position over total", () => {
+		render(THREE, 1);
+		expect(container.textContent).toContain("2/3");
+	});
+
+	it("shows a placeholder when the caret is outside every block", () => {
+		render(THREE, null);
+		expect(container.textContent).toContain("—/3");
+	});
+
+	it("steps forward and back", () => {
+		render(THREE, 1);
+		act(() => arrow("Next conflict")?.click());
+		expect(onNavigate).toHaveBeenLastCalledWith(2);
+		act(() => arrow("Previous conflict")?.click());
+		expect(onNavigate).toHaveBeenLastCalledWith(0);
+	});
+
+	it("wraps at both ends", () => {
+		// A dead button at the end is worse than continuing round.
+		render(THREE, 2);
+		act(() => arrow("Next conflict")?.click());
+		expect(onNavigate).toHaveBeenLastCalledWith(0);
+
+		render(THREE, 0);
+		act(() => arrow("Previous conflict")?.click());
+		expect(onNavigate).toHaveBeenLastCalledWith(2);
+	});
+
+	it("starts at the first block when nothing is active", () => {
+		render(THREE, null);
+		act(() => arrow("Next conflict")?.click());
+		expect(onNavigate).toHaveBeenLastCalledWith(0);
+	});
+
+	it("is replaced by a done message once the markers are gone", () => {
+		render("all resolved\n", null);
+		expect(arrow("Next conflict")).toBeNull();
+		expect(container.textContent).toContain("No conflict markers left");
 	});
 });

@@ -12,7 +12,11 @@
  */
 import type { Monaco } from "@monaco-editor/react";
 import type { editor, IDisposable, languages } from "monaco-editor";
-import type { ConflictBlock, ResolveChoice } from "./conflictMarkers";
+import type {
+	ConflictBlock,
+	ResolveChoice,
+	SideRange,
+} from "./conflictMarkers";
 import { resolveBlock } from "./conflictMarkers";
 
 interface Registered {
@@ -98,6 +102,7 @@ export function clearConflictBlocks(uri: string): void {
 /** Whole-line decorations for every side and marker line of every block. */
 export function conflictDecorations(
 	blocks: ConflictBlock[],
+	activeIndex: number | null = null,
 ): editor.IModelDeltaDecoration[] {
 	const out: editor.IModelDeltaDecoration[] = [];
 	const wholeLines = (from: number, to: number, className: string) => {
@@ -128,6 +133,22 @@ export function conflictDecorations(
 		});
 
 	for (const b of blocks) {
+		if (b.index === activeIndex) {
+			// A gutter rail rather than another tint — the sides already own the
+			// background colours here.
+			out.push({
+				range: {
+					startLineNumber: b.startLine,
+					startColumn: 1,
+					endLineNumber: b.endLine,
+					endColumn: 1,
+				},
+				options: {
+					isWholeLine: true,
+					linesDecorationsClassName: "abundio-conflict-active-rail",
+				},
+			});
+		}
 		markerLine(b.startLine);
 		markerLine(b.endLine);
 		wholeLines(
@@ -148,6 +169,101 @@ export function conflictDecorations(
 			"abundio-conflict-incoming",
 		);
 	}
+	return out;
+}
+
+/**
+ * Decorations for a **Merge side pane**: every conflict region marked, the
+ * active one emphasised, and everything else dimmed.
+ *
+ * Dimming is what makes the region unmistakable — a read-only stage pane exists
+ * to show you one place, so the rest of the file should read as context. It
+ * costs at most N+1 decorations because the gaps *between* regions are spanned
+ * whole, not decorated line by line.
+ */
+export function sideDecorations(
+	ranges: (SideRange | null)[],
+	activeIndex: number | null,
+	lineCount: number,
+	side: "current" | "incoming" | "base",
+): editor.IModelDeltaDecoration[] {
+	const out: editor.IModelDeltaDecoration[] = [];
+	const sideClass = `abundio-side-${side}`;
+	const whole = (
+		from: number,
+		to: number,
+		options: editor.IModelDecorationOptions,
+	) =>
+		out.push({
+			range: {
+				startLineNumber: from,
+				startColumn: 1,
+				endLineNumber: to,
+				endColumn: 1,
+			},
+			options,
+		});
+
+	// Gaps first, so a region's own background paints over the dim layer.
+	let cursor = 1;
+	const present = ranges
+		.filter((r): r is SideRange => r !== null && r.endLine >= r.startLine)
+		.sort((a, b) => a.startLine - b.startLine);
+	for (const r of present) {
+		if (r.startLine > cursor) {
+			whole(cursor, r.startLine - 1, {
+				isWholeLine: true,
+				className: "abundio-side-dim",
+			});
+		}
+		cursor = Math.max(cursor, r.endLine + 1);
+	}
+	if (cursor <= lineCount) {
+		whole(cursor, lineCount, {
+			isWholeLine: true,
+			className: "abundio-side-dim",
+		});
+	}
+
+	ranges.forEach((range, index) => {
+		if (!range) return;
+		const active = index === activeIndex;
+		const state = active ? " abundio-side-active" : "";
+
+		if (range.endLine < range.startLine) {
+			// This side contributes nothing to the block. Mark the seam so the pane
+			// reads as "deliberately empty here" rather than as a failed lookup.
+			const line = Math.min(
+				Math.max(range.startLine, 1),
+				Math.max(lineCount, 1),
+			);
+			whole(line, line, {
+				isWholeLine: true,
+				className: `abundio-side-empty${state}`,
+				linesDecorationsClassName: `abundio-side-rail ${sideClass}${state}`,
+			});
+			return;
+		}
+
+		whole(range.startLine, range.endLine, {
+			isWholeLine: true,
+			className: `abundio-side-hit ${sideClass}${state}`,
+			linesDecorationsClassName: `abundio-side-rail ${sideClass}${state}`,
+		});
+
+		if (active) {
+			// Hard boundaries: the extent of the active block must be unambiguous.
+			whole(range.startLine, range.startLine, {
+				isWholeLine: true,
+				className: "abundio-side-edge-top",
+			});
+			whole(range.endLine, range.endLine, {
+				isWholeLine: true,
+				className: "abundio-side-edge-bottom",
+			});
+		}
+	});
+
 	return out;
 }
 

@@ -25,6 +25,10 @@ interface Props {
 	mergeViewOpen: boolean;
 	onToggleMergeView: () => void;
 	onToggleBase: () => void;
+	/** Index of the block under the caret, or null when the caret is elsewhere. */
+	activeBlock: number | null;
+	/** Move the caret to a block and reveal it. Drives the side panes too. */
+	onNavigate: (blockIndex: number) => void;
 }
 
 /**
@@ -46,6 +50,8 @@ export function ConflictToolbar({
 	mergeViewOpen,
 	onToggleMergeView,
 	onToggleBase,
+	activeBlock,
+	onNavigate,
 }: Props) {
 	const [staged, setStaged] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -161,36 +167,64 @@ export function ConflictToolbar({
 		);
 	}
 
+	// Wrap around: with a handful of conflicts, hitting the end and continuing
+	// is what you want, not a dead button.
+	const step = (delta: number) => {
+		if (blocks.length === 0) return;
+		const from = activeBlock ?? (delta > 0 ? -1 : 0);
+		onNavigate((from + delta + blocks.length) % blocks.length);
+	};
+
 	return (
 		<Bar>
-			<span
-				style={{
-					color: hasMarkers ? "var(--warning)" : "var(--success)",
-					fontWeight: 500,
-				}}
-			>
-				{hasMarkers
-					? `${blocks.length} conflict${blocks.length === 1 ? "" : "s"} remaining`
-					: "No conflict markers left"}
-			</span>
+			{hasMarkers ? (
+				<Navigator
+					position={activeBlock}
+					total={blocks.length}
+					onPrev={() => step(-1)}
+					onNext={() => step(1)}
+				/>
+			) : (
+				<span style={{ color: "var(--success)", fontWeight: 500 }}>
+					No conflict markers left
+				</span>
+			)}
 
 			{hasMarkers && (
 				<>
-					<Button disabled={busy} onClick={() => onAcceptAll("current")}>
-						Accept all current
+					<Divider />
+					{/* The dot reinforces the side's colour; the words carry the
+					    meaning, so the two are never told apart by colour alone. */}
+					<Button
+						disabled={busy}
+						label="Accept all current"
+						onClick={() => onAcceptAll("current")}
+					>
+						<Dot color="var(--success)" />
+						All current
 					</Button>
-					<Button disabled={busy} onClick={() => onAcceptAll("incoming")}>
-						Accept all incoming
+					<Button
+						disabled={busy}
+						label="Accept all incoming"
+						onClick={() => onAcceptAll("incoming")}
+					>
+						<Dot color="var(--accent)" />
+						All incoming
 					</Button>
 				</>
 			)}
 
-			<Button disabled={busy} onClick={onToggleMergeView}>
-				{mergeViewOpen ? "Close merge view" : "Merge view"}
+			<Divider />
+			<Button
+				disabled={busy}
+				onClick={onToggleMergeView}
+				pressed={mergeViewOpen}
+			>
+				Merge view
 			</Button>
 			{mergeViewOpen && conflictHasBase && (
 				<Button disabled={busy} onClick={onToggleBase}>
-					Toggle base
+					Base
 				</Button>
 			)}
 
@@ -211,6 +245,125 @@ export function ConflictToolbar({
 			</Button>
 			{error && <Err>{error}</Err>}
 		</Bar>
+	);
+}
+
+/**
+ * Position-and-total in one control: `‹ 2/5 ›`.
+ *
+ * The total doubles as the remaining count, so accepting a block visibly
+ * shrinks it — one number instead of two competing ones in a 30px bar. The
+ * counter is monospace and fixed-width so the arrows do not shift as digits
+ * change.
+ */
+function Navigator({
+	position,
+	total,
+	onPrev,
+	onNext,
+}: {
+	position: number | null;
+	total: number;
+	onPrev: () => void;
+	onNext: () => void;
+}) {
+	return (
+		<div
+			className="flex items-center flex-shrink-0 rounded overflow-hidden"
+			style={{ border: "1px solid var(--border)", height: 20 }}
+		>
+			<Arrow label="Previous conflict" onClick={onPrev} glyph="\u2039" />
+			<span
+				className="flex items-center justify-center tabular-nums"
+				style={{
+					minWidth: 46,
+					height: "100%",
+					padding: "0 6px",
+					fontSize: 11,
+					fontFamily: "var(--font-mono)",
+					color: "var(--warning)",
+					backgroundColor:
+						"color-mix(in srgb, var(--warning) 12%, transparent)",
+					borderLeft: "1px solid var(--border)",
+					borderRight: "1px solid var(--border)",
+				}}
+				title={`${total} conflict${total === 1 ? "" : "s"} remaining`}
+			>
+				{position === null ? "—" : position + 1}/{total}
+			</span>
+			<Arrow label="Next conflict" onClick={onNext} glyph="\u203a" />
+		</div>
+	);
+}
+
+function Arrow({
+	label,
+	onClick,
+	glyph,
+}: {
+	label: string;
+	onClick: () => void;
+	glyph: string;
+}) {
+	return (
+		<button
+			type="button"
+			title={label}
+			aria-label={label}
+			onClick={onClick}
+			className="flex items-center justify-center transition-colors"
+			style={{
+				width: 20,
+				height: "100%",
+				border: "none",
+				background: "transparent",
+				color: "var(--fg-secondary)",
+				cursor: "pointer",
+				fontSize: 13,
+				lineHeight: 1,
+				transitionDuration: "var(--transition-fast)",
+			}}
+			onMouseEnter={(e) => {
+				e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+				e.currentTarget.style.color = "var(--fg-primary)";
+			}}
+			onMouseLeave={(e) => {
+				e.currentTarget.style.backgroundColor = "transparent";
+				e.currentTarget.style.color = "var(--fg-secondary)";
+			}}
+		>
+			{glyph}
+		</button>
+	);
+}
+
+/** Ties an "Accept all" button to the side colour used by the rails. */
+function Dot({ color }: { color: string }) {
+	return (
+		<span
+			className="inline-block rounded-full"
+			style={{
+				width: 6,
+				height: 6,
+				marginRight: 5,
+				flexShrink: 0,
+				backgroundColor: color,
+			}}
+		/>
+	);
+}
+
+function Divider() {
+	return (
+		<span
+			className="flex-shrink-0"
+			style={{
+				width: 1,
+				height: 14,
+				backgroundColor: "var(--border)",
+				opacity: 0.7,
+			}}
+		/>
 	);
 }
 
@@ -237,26 +390,41 @@ function Button({
 	onClick,
 	disabled,
 	primary,
+	pressed,
+	label,
 }: {
 	children: React.ReactNode;
 	onClick: () => void;
 	disabled?: boolean;
 	primary?: boolean;
+	pressed?: boolean;
+	/** Full phrase for assistive tech when the visible text is abbreviated. */
+	label?: string;
 }) {
 	return (
 		<button
 			type="button"
 			onClick={onClick}
 			disabled={disabled}
-			className="rounded px-2 py-0.5 transition-colors"
+			aria-pressed={pressed}
+			aria-label={label}
+			title={label}
+			className="rounded px-2 flex items-center flex-shrink-0 transition-colors"
 			style={{
+				height: 20,
 				fontSize: 11,
 				fontFamily: "var(--font-ui)",
-				border: "1px solid var(--border)",
+				border: `1px solid ${pressed ? "var(--accent)" : "var(--border)"}`,
 				cursor: disabled ? "default" : "pointer",
 				opacity: disabled ? 0.5 : 1,
+				whiteSpace: "nowrap",
 				color: primary ? "var(--bg-primary)" : "var(--fg-primary)",
-				backgroundColor: primary ? "var(--accent)" : "var(--bg-tertiary)",
+				backgroundColor: primary
+					? "var(--accent)"
+					: pressed
+						? "color-mix(in srgb, var(--accent) 18%, transparent)"
+						: "var(--bg-tertiary)",
+				transitionDuration: "var(--transition-fast)",
 			}}
 		>
 			{children}

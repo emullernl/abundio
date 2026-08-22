@@ -141,6 +141,9 @@ export const CodeEditor = memo(function CodeEditor({
 	);
 	const conflictCommandRef = useRef<string | null>(null);
 	const [editorMounted, setEditorMounted] = useState(false);
+	// Which block the caret is in, so the active one can carry a gutter rail —
+	// tracked here rather than passed in, since the cursor already lives here.
+	const [activeConflict, setActiveConflict] = useState<number | null>(null);
 
 	useEffect(() => {
 		const ed = editorRef.current;
@@ -150,11 +153,11 @@ export const CodeEditor = memo(function CodeEditor({
 		const uri = ed.getModel()?.uri.toString();
 		if (!uri) return;
 
-		collection.set(conflictDecorations(conflictBlocks));
+		collection.set(conflictDecorations(conflictBlocks, activeConflict));
 		setConflictBlocks(uri, conflictBlocks, commandId);
 		// Only claim the glyph margin while there is something to put in it.
 		ed.updateOptions({ glyphMargin: conflictBlocks.length > 0 });
-	}, [conflictBlocks, editorMounted]);
+	}, [conflictBlocks, activeConflict, editorMounted]);
 
 	// Focus editor when this pane becomes active
 	useEffect(() => {
@@ -224,9 +227,14 @@ export const CodeEditor = memo(function CodeEditor({
 				}) ?? null;
 			setEditorMounted(true);
 
-			ed.onDidChangeCursorPosition((e) =>
-				onCursorLineRef.current?.(e.position.lineNumber),
-			);
+			ed.onDidChangeCursorPosition((e) => {
+				const line = e.position.lineNumber;
+				const index = conflictBlocksRef.current.findIndex(
+					(b) => line >= b.startLine && line <= b.endLine,
+				);
+				setActiveConflict(index === -1 ? null : index);
+				onCursorLineRef.current?.(line);
+			});
 
 			// Define and apply theme, store Monaco instance for theme sync
 			defineAbundioTheme(m);

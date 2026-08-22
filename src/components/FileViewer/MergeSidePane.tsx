@@ -5,6 +5,7 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
+import { sideDecorations } from "../../lib/conflictLenses";
 import { mapBlocksToSide, parseConflicts } from "../../lib/conflictMarkers";
 import { type GitConflictFile, git } from "../../lib/ipc";
 import {
@@ -31,6 +32,14 @@ const SIDE_LABELS: Record<MergeSide, string> = {
 	current: "Current",
 	base: "Base",
 	incoming: "Incoming",
+};
+
+/** Same roles as the rails and the result pane, so a colour always means the
+ *  same side wherever you see it. */
+const SIDE_COLORS: Record<MergeSide, string> = {
+	current: "var(--success)",
+	base: "var(--fg-secondary)",
+	incoming: "var(--accent)",
 };
 
 function stageOf(conflict: GitConflictFile, side: MergeSide): string | null {
@@ -103,39 +112,31 @@ export function MergeSidePane({
 		return mapBlocksToSide(sourceContent, blocks, content, side);
 	}, [content, sourceContent, side]);
 
-	// Reveal and highlight the region matching the block under the caret.
+	const totalBlocks = ranges.length;
+
+	// Mark every conflict region, emphasise the active one, dim the rest.
 	useEffect(() => {
 		const ed = getLiveEditor(paneId);
-		if (!ed) return;
-		const collection = ed.createDecorationsCollection([]);
-		const range = activeBlock === null ? null : ranges[activeBlock];
-		if (range && range.endLine >= range.startLine) {
-			collection.set([
-				{
-					range: {
-						startLineNumber: range.startLine,
-						startColumn: 1,
-						endLineNumber: range.endLine,
-						endColumn: 1,
-					},
-					options: {
-						isWholeLine: true,
-						className: "abundio-conflict-side-active",
-					},
-				},
-			]);
-			ed.revealRangeInCenter({
-				startLineNumber: range.startLine,
-				startColumn: 1,
-				endLineNumber: range.endLine,
-				endColumn: 1,
-			});
-		} else if (range) {
-			// An empty side: nothing to highlight, but still scroll to where the
-			// content would have gone.
-			ed.revealLineInCenter(Math.max(1, range.startLine));
-		}
+		if (!ed || content == null) return;
+		const lineCount = ed.getModel()?.getLineCount() ?? 1;
+		const collection = ed.createDecorationsCollection(
+			sideDecorations(ranges, activeBlock, lineCount, side),
+		);
 		return () => collection.clear();
+	}, [activeBlock, ranges, paneId, content, side]);
+
+	// Follow the caret. Split from the decoration effect so re-decorating (on an
+	// edit in the result pane) never yanks the viewport out from under a scroll.
+	useEffect(() => {
+		const ed = getLiveEditor(paneId);
+		const range = activeBlock === null ? null : ranges[activeBlock];
+		if (!ed || !range) return;
+		ed.revealRangeInCenter({
+			startLineNumber: range.startLine,
+			startColumn: 1,
+			endLineNumber: Math.max(range.startLine, range.endLine),
+			endColumn: 1,
+		});
 	}, [activeBlock, ranges, paneId]);
 
 	return (
@@ -155,12 +156,34 @@ export function MergeSidePane({
 					borderBottom: "1px solid var(--border)",
 					color: "var(--fg-secondary)",
 					backgroundColor: "var(--bg-secondary)",
+					// A hairline in the side's own colour, echoing its gutter rails.
+					boxShadow: `inset 0 2px 0 0 ${SIDE_COLORS[side]}`,
 				}}
 			>
+				<span
+					className="inline-block flex-shrink-0 rounded-full"
+					style={{
+						width: 6,
+						height: 6,
+						backgroundColor: SIDE_COLORS[side],
+					}}
+				/>
 				<span style={{ color: "var(--fg-primary)", fontWeight: 500 }}>
 					{SIDE_LABELS[side]}
 				</span>
-				<span style={{ opacity: 0.7 }}>read-only</span>
+				{activeBlock !== null && totalBlocks > 0 && (
+					<span
+						style={{
+							fontFamily: "var(--font-mono)",
+							fontSize: 10,
+							opacity: 0.8,
+						}}
+					>
+						{activeBlock + 1}/{totalBlocks}
+					</span>
+				)}
+				<span className="flex-1" />
+				<span style={{ opacity: 0.55 }}>read-only</span>
 			</div>
 
 			<div className="flex-1 min-h-0">

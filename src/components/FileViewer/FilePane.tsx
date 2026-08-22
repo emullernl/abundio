@@ -37,7 +37,12 @@ import {
 	type ContextMenuItem,
 	PaneContextMenu,
 } from "../Terminal/PaneContextMenu";
-import { CodeEditor, focusEditor, triggerEditorAction } from "./CodeEditor";
+import {
+	CodeEditor,
+	focusEditor,
+	getLiveEditor,
+	triggerEditorAction,
+} from "./CodeEditor";
 import { ConflictToolbar } from "./ConflictToolbar";
 import { FileChangeBanner } from "./FileChangeBanner";
 import { FilePaneTitleBar } from "./FilePaneTitleBar";
@@ -132,16 +137,52 @@ export function FilePane({
 		}
 	}, [isUnmerged, mergeViewOpen, paneId]);
 
+	// Published for the Merge side panes *and* held locally for the navigator's
+	// position readout, so both always agree on which block is current.
+	const [activeBlock, setActiveBlock] = useState<number | null>(null);
+
 	const handleCursorLine = useCallback(
 		(line: number) => {
-			if (!mergeViewOpen) return;
 			const index = conflictBlocks.findIndex(
 				(b) => line >= b.startLine && line <= b.endLine,
 			);
-			setActiveConflictBlock(paneId, index === -1 ? null : index);
+			const next = index === -1 ? null : index;
+			setActiveBlock(next);
+			setActiveConflictBlock(paneId, next);
 		},
-		[conflictBlocks, mergeViewOpen, paneId],
+		[conflictBlocks, paneId],
 	);
+
+	const navigateToBlock = useCallback(
+		(blockIndex: number) => {
+			const block = conflictBlocks[blockIndex];
+			if (!block) return;
+			const ed = getLiveEditor(paneId);
+			if (!ed) return;
+			// Land on the first line of content, not the marker — that is where you
+			// would start reading. Setting the position fires onCursorLine, which
+			// publishes the active block and pulls the side panes along.
+			const line = Math.min(
+				block.current.startLine,
+				ed.getModel()?.getLineCount() ?? block.startLine,
+			);
+			ed.setPosition({ lineNumber: line, column: 1 });
+			ed.revealLineInCenter(block.startLine);
+			ed.focus();
+		},
+		[conflictBlocks, paneId],
+	);
+
+	// A resolved block shifts every index after it, so clamp rather than leave
+	// the navigator pointing past the end.
+	useEffect(() => {
+		if (activeBlock !== null && activeBlock >= conflictBlocks.length) {
+			const next =
+				conflictBlocks.length === 0 ? null : conflictBlocks.length - 1;
+			setActiveBlock(next);
+			setActiveConflictBlock(paneId, next);
+		}
+	}, [activeBlock, conflictBlocks.length, paneId]);
 
 	useEffect(() => () => clearActiveConflictBlock(paneId), [paneId]);
 
@@ -410,6 +451,8 @@ export function FilePane({
 					mergeViewOpen={mergeViewOpen}
 					onToggleMergeView={() => void toggleMergeViewForPane(paneId)}
 					onToggleBase={() => void toggleMergeBase(paneId)}
+					activeBlock={activeBlock}
+					onNavigate={navigateToBlock}
 				/>
 			)}
 			<div className="flex-1 min-h-0 relative">
