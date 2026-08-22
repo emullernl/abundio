@@ -3,6 +3,7 @@ import { useSplitPane } from "../../hooks/useSplitPane";
 import type { PaneNode } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FilePane } from "../FileViewer/FilePane";
+import { MergeSidePane } from "../FileViewer/MergeSidePane";
 import { PaneResizer } from "./PaneResizer";
 import { TerminalSlot } from "./TerminalSlot";
 
@@ -88,6 +89,27 @@ const PreviewLeaf = memo(function PreviewLeaf({
 				onFocus={() => setFocusedPane(node.id)}
 			/>
 		</Suspense>
+	);
+});
+
+/** Leaf component for merge side panes (ADR-0030). */
+const MergeSideLeaf = memo(function MergeSideLeaf({
+	node,
+	cwd,
+}: {
+	node: PaneNode & { type: "mergeSide" };
+	cwd: string;
+}) {
+	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
+
+	return (
+		<MergeSidePane
+			paneId={node.id}
+			sourcePaneId={node.sourcePaneId}
+			side={node.side}
+			cwd={cwd}
+			onFocus={() => setFocusedPane(node.id)}
+		/>
 	);
 });
 
@@ -177,6 +199,9 @@ export function SplitContainer({ node, cwd, workspaceId }: Props) {
 	}
 	if (node.type === "preview") {
 		return <PreviewLeaf node={node} />;
+	}
+	if (node.type === "mergeSide") {
+		return <MergeSideLeaf node={node} cwd={cwd} />;
 	}
 	if (node.type === "split") {
 		return <SplitNode node={node} cwd={cwd} workspaceId={workspaceId} />;

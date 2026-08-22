@@ -10,6 +10,11 @@ import { git } from "../../lib/ipc";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
+import {
+	hasMergeView,
+	toggleMergeBase,
+	toggleMergeViewForPane,
+} from "../../lib/mergeView";
 import { findPreviewForSource } from "../../lib/paneTree";
 import { sc } from "../../lib/platform";
 import {
@@ -108,6 +113,19 @@ export function FilePane({
 		const gitStore = useGitChangesStore.getState();
 		await gitStore.fetchChanges(cwd, gitStore.baseBranch);
 	}, [cwd, paneId, relativePath, saveFile]);
+
+	const activeLayout = useWorkspaceStore((s) => s.getActiveLayout());
+	const mergeViewOpen = activeLayout
+		? hasMergeView(activeLayout, paneId)
+		: false;
+
+	// Conflict state is derived from the index, so the Merge view tears itself
+	// down when the merge finishes or is aborted — no explicit close path.
+	useEffect(() => {
+		if (!isUnmerged && mergeViewOpen) {
+			void toggleMergeViewForPane(paneId);
+		}
+	}, [isUnmerged, mergeViewOpen, paneId]);
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
@@ -371,6 +389,9 @@ export function FilePane({
 					isDirty={paneState.isDirty}
 					onAcceptAll={acceptAllConflicts}
 					onResolveAndStage={resolveAndStage}
+					mergeViewOpen={mergeViewOpen}
+					onToggleMergeView={() => void toggleMergeViewForPane(paneId)}
+					onToggleBase={() => void toggleMergeBase(paneId)}
 				/>
 			)}
 			<div className="flex-1 min-h-0 relative">

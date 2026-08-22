@@ -22,6 +22,9 @@ interface Props {
 	isDirty: boolean;
 	onAcceptAll: (choice: ResolveChoice) => void;
 	onResolveAndStage: () => Promise<void>;
+	mergeViewOpen: boolean;
+	onToggleMergeView: () => void;
+	onToggleBase: () => void;
 }
 
 /**
@@ -40,6 +43,9 @@ export function ConflictToolbar({
 	isDirty,
 	onAcceptAll,
 	onResolveAndStage,
+	mergeViewOpen,
+	onToggleMergeView,
+	onToggleBase,
 }: Props) {
 	const [staged, setStaged] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -48,6 +54,9 @@ export function ConflictToolbar({
 	const operation = useGitChangesStore((s) => s.operationInProgress);
 
 	const hasMarkers = blocks.length > 0;
+	// The ancestor pane only exists when the merge had a common ancestor — an
+	// add/add conflict has no stage 1 to show.
+	const conflictHasBase = conflict === null || conflict.kind !== "both_added";
 
 	// Only the marker-less cases need the stages: which kind of conflict this is
 	// cannot be read off a file that has no markers to read.
@@ -174,6 +183,15 @@ export function ConflictToolbar({
 						Accept all incoming
 					</Button>
 				</>
+			)}
+
+			<Button disabled={busy} onClick={onToggleMergeView}>
+				{mergeViewOpen ? "Close merge view" : "Merge view"}
+			</Button>
+			{mergeViewOpen && conflictHasBase && (
+				<Button disabled={busy} onClick={onToggleBase}>
+					Toggle base
+				</Button>
 			)}
 
 			<div className="flex-1" />

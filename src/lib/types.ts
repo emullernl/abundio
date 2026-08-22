@@ -24,6 +24,16 @@ export type PaneNode =
 			sourcePaneId: string;
 	  }
 	| {
+			// One index stage of a conflicted file, shown beside its file pane (the
+			// "source pane") in the Merge view. Read-only and owns no file — it
+			// mirrors a stage, the way a preview pane mirrors a buffer. See
+			// ADR-0030, which deliberately echoes ADR-0001's shape.
+			type: "mergeSide";
+			id: string;
+			sourcePaneId: string;
+			side: "current" | "incoming" | "base";
+	  }
+	| {
 			type: "split";
 			id: string;
 			direction: "horizontal" | "vertical";
