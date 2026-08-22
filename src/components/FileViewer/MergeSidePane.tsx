@@ -16,6 +16,10 @@ import type { ResolveChoice } from "../../lib/conflictMarkers";
 import { mapBlocksToSide, parseConflicts } from "../../lib/conflictMarkers";
 import { type GitConflictFile, git } from "../../lib/ipc";
 import {
+	buildSideAnchors,
+	registerSideEditor,
+} from "../../lib/mergeScrollSync";
+import {
 	getActiveConflictBlock,
 	subscribeActiveConflictBlock,
 } from "../../lib/mergeSync";
@@ -169,20 +173,24 @@ export function MergeSidePane({
 		return () => collection.clear();
 	}, [activeBlock, ranges, paneId, content, side, editorReady]);
 
-	// Follow the caret. Split from the decoration effect so re-decorating (on an
-	// edit in the result pane) never yanks the viewport out from under a scroll.
+	// Scroll in lockstep with the result pane and the other sides.
+	//
+	// This also replaces a per-side "reveal the active region" effect: the
+	// result pane's own reveal on navigation now propagates here, so there is
+	// one scroll authority rather than two taking turns fighting.
 	useEffect(() => {
-		if (!editorReady) return;
+		if (!editorReady || content == null) return;
 		const ed = getLiveEditor(paneId);
-		const range = activeBlock === null ? null : ranges[activeBlock];
-		if (!ed || !range) return;
-		ed.revealRangeInCenter({
-			startLineNumber: range.startLine,
-			startColumn: 1,
-			endLineNumber: Math.max(range.startLine, range.endLine),
-			endColumn: 1,
-		});
-	}, [activeBlock, ranges, paneId, editorReady]);
+		const source = sourceContent;
+		if (!ed || source == null) return;
+		const anchors = buildSideAnchors(
+			parseConflicts(source),
+			ranges,
+			source.split("\n").length,
+			ed.getModel()?.getLineCount() ?? 1,
+		);
+		return registerSideEditor(sourcePaneId, paneId, ed, anchors);
+	}, [editorReady, content, sourceContent, ranges, side, paneId, sourcePaneId]);
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container

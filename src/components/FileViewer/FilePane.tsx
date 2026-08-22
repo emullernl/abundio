@@ -11,6 +11,7 @@ import { git } from "../../lib/ipc";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
+import { registerResultEditor } from "../../lib/mergeScrollSync";
 import {
 	getActiveConflictBlock,
 	initialMergeSelection,
@@ -242,6 +243,16 @@ export function FilePane({
 	// change rather than a close — clearing here would drop the user's place
 	// exactly when the side panes appear to use it. The registry holds one
 	// number per pane id, so the residue is negligible.
+
+	// The result pane is the hub the side panes scroll against. Registered only
+	// while the Merge view is open — outside it there is nothing to sync with.
+	const [resultEditorReady, setResultEditorReady] = useState(false);
+	useEffect(() => {
+		if (!mergeViewOpen || !resultEditorReady) return;
+		const ed = getLiveEditor(paneId);
+		if (!ed) return;
+		return registerResultEditor(paneId, ed);
+	}, [mergeViewOpen, resultEditorReady, paneId]);
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
@@ -524,6 +535,7 @@ export function FilePane({
 						forceWordWrap={isMarkdown}
 						onCursorLine={handleCursorLine}
 						activeConflictBlock={activeBlock}
+						onEditorMounted={() => setResultEditorReady(true)}
 					/>
 				)}
 				{paneState.fileType === "diff" &&

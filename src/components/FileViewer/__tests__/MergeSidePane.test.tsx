@@ -49,6 +49,11 @@ function makeEditor() {
 			return { set: vi.fn(), clear: vi.fn() };
 		},
 		addCommand: vi.fn(() => "cmd-1"),
+		// Scroll-sync surface: the pane registers itself with the result pane.
+		onDidScrollChange: vi.fn(() => ({ dispose: vi.fn() })),
+		getScrollTop: () => 0,
+		setScrollTop: vi.fn(),
+		getTopForLineNumber: (n: number) => (n - 1) * 19,
 		getModel: () => ({
 			getLineCount: () => 4,
 			uri: { toString: () => "inmemory://side-1" },
