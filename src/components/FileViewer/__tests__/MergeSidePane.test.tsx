@@ -44,11 +44,15 @@ function makeEditor() {
 	const collections: unknown[][] = [];
 	return {
 		collections,
-		getModel: () => ({ getLineCount: () => 4 }),
 		createDecorationsCollection: (decos: unknown[]) => {
 			collections.push(decos);
 			return { set: vi.fn(), clear: vi.fn() };
 		},
+		addCommand: vi.fn(() => "cmd-1"),
+		getModel: () => ({
+			getLineCount: () => 4,
+			uri: { toString: () => "inmemory://side-1" },
+		}),
 		revealRangeInCenter: vi.fn(),
 	};
 }
@@ -175,5 +179,59 @@ describe("MergeSidePane", () => {
 		});
 		await render();
 		expect(container.textContent).toContain("Binary file");
+	});
+});
+
+describe("MergeSidePane action links", () => {
+	let container: HTMLDivElement;
+	let root: ReturnType<typeof createRoot>;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mountedCallbacks.length = 0;
+		conflictFile.mockResolvedValue({
+			filePath: "a.ts",
+			kind: "both_modified",
+			isBinary: false,
+			base: null,
+			ours: OURS,
+			theirs: null,
+		});
+		useExplorerStore.setState({
+			filePanes: {
+				// biome-ignore lint/suspicious/noExplicitAny: partial pane state
+				src: { filePath: "/repo/a.ts", content: SOURCE } as any,
+			},
+		});
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+	});
+
+	afterEach(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	it("registers a command on its own editor once mounted", async () => {
+		const editor = makeEditor();
+		liveEditor.current = editor;
+		await act(async () => {
+			root.render(
+				<MergeSidePane
+					paneId="side-1"
+					sourcePaneId="src"
+					side="current"
+					cwd="/repo"
+					onFocus={vi.fn()}
+				/>,
+			);
+		});
+		expect(editor.addCommand).not.toHaveBeenCalled();
+
+		await act(async () => {
+			for (const fn of mountedCallbacks) fn();
+		});
+		expect(editor.addCommand).toHaveBeenCalled();
 	});
 });

@@ -5,7 +5,14 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
-import { sideDecorations } from "../../lib/conflictLenses";
+import {
+	applyChoice,
+	clearConflictBlocks,
+	setConflictLenses,
+	sideDecorations,
+	sideLensSpecs,
+} from "../../lib/conflictLenses";
+import type { ResolveChoice } from "../../lib/conflictMarkers";
 import { mapBlocksToSide, parseConflicts } from "../../lib/conflictMarkers";
 import { type GitConflictFile, git } from "../../lib/ipc";
 import {
@@ -119,6 +126,36 @@ export function MergeSidePane({
 	// would run once against nothing and never retry — leaving the pane
 	// undecorated until some unrelated change happened to re-trigger them.
 	const [editorReady, setEditorReady] = useState(false);
+
+	// Per-region action links, the way VS Code's merge editor offers them.
+	//
+	// The lens lives on *this* (read-only) model but edits the **result** pane's
+	// buffer: a side pane shows an index stage, which has nothing to edit. The
+	// command is registered on this editor so its handler is naturally scoped to
+	// this pane, and it reaches across via the source pane's live editor.
+	useEffect(() => {
+		if (!editorReady || content == null) return;
+		const ed = getLiveEditor(paneId);
+		const uri = ed?.getModel()?.uri.toString();
+		if (!ed || !uri) return;
+
+		const commandId = ed.addCommand(0, (_ctx: unknown, ...args: unknown[]) => {
+			const resultEditor = getLiveEditor(sourcePaneId);
+			const source =
+				useExplorerStore.getState().filePanes[sourcePaneId]?.content;
+			if (!resultEditor || source == null) return;
+			applyChoice(
+				resultEditor,
+				parseConflicts(source),
+				args[0] as number,
+				args[1] as ResolveChoice,
+			);
+		});
+		if (!commandId) return;
+
+		setConflictLenses(uri, sideLensSpecs(ranges, side), commandId);
+		return () => clearConflictBlocks(uri);
+	}, [editorReady, content, paneId, sourcePaneId, ranges, side]);
 
 	// Mark every conflict region, emphasise the active one, dim the rest.
 	useEffect(() => {

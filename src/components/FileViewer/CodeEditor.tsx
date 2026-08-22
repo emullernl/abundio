@@ -6,7 +6,8 @@ import {
 	clearConflictBlocks,
 	conflictDecorations,
 	ensureConflictLensProvider,
-	setConflictBlocks,
+	resultLensSpecs,
+	setConflictLenses,
 } from "../../lib/conflictLenses";
 import { parseConflicts, type ResolveChoice } from "../../lib/conflictMarkers";
 import "./ConflictDecorations.css";
@@ -160,14 +161,18 @@ export const CodeEditor = memo(function CodeEditor({
 		const collection = decorationsRef.current;
 		const commandId = conflictCommandRef.current;
 		if (!editorMounted || !ed || !collection || !commandId) return;
+		// A read-only pane is a Merge side pane: its parent owns that model's
+		// lenses and decorations, and two writers for one URI would clobber each
+		// other. Its stage text has no markers to find anyway.
+		if (readOnly) return;
 		const uri = ed.getModel()?.uri.toString();
 		if (!uri) return;
 
 		collection.set(conflictDecorations(conflictBlocks, activeConflictBlock));
-		setConflictBlocks(uri, conflictBlocks, commandId);
+		setConflictLenses(uri, resultLensSpecs(conflictBlocks), commandId);
 		// Only claim the glyph margin while there is something to put in it.
 		ed.updateOptions({ glyphMargin: conflictBlocks.length > 0 });
-	}, [conflictBlocks, activeConflictBlock, editorMounted]);
+	}, [conflictBlocks, activeConflictBlock, editorMounted, readOnly]);
 
 	// Focus editor when this pane becomes active
 	useEffect(() => {

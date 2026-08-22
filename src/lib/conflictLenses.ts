@@ -19,8 +19,23 @@ import type {
 } from "./conflictMarkers";
 import { resolveBlock } from "./conflictMarkers";
 
+/** One action offered above a conflict region. */
+export interface ConflictLensAction {
+	title: string;
+	/** Which side the result document should end up with. */
+	choice: ResolveChoice;
+}
+
+/** A row of actions anchored above one line of one model. */
+export interface ConflictLensSpec {
+	/** 1-based line the actions sit above. */
+	line: number;
+	blockIndex: number;
+	actions: ConflictLensAction[];
+}
+
 interface Registered {
-	blocks: ConflictBlock[];
+	specs: ConflictLensSpec[];
 	/** Per-editor command id, from `ed.addCommand`. */
 	commandId: string;
 }
@@ -53,29 +68,27 @@ export function ensureConflictLensProvider(m: Monaco): void {
 		onDidChange: emitter.event,
 		provideCodeLenses(model) {
 			const entry = byUri.get(model.uri.toString());
-			if (!entry || entry.blocks.length === 0) {
+			if (!entry || entry.specs.length === 0) {
 				return { lenses: [], dispose() {} };
 			}
 			const lenses: languages.CodeLens[] = [];
-			for (const block of entry.blocks) {
+			for (const spec of entry.specs) {
 				const range = {
-					startLineNumber: block.startLine,
+					startLineNumber: spec.line,
 					startColumn: 1,
-					endLineNumber: block.startLine,
+					endLineNumber: spec.line,
 					endColumn: 1,
 				};
-				const lens = (title: string, choice: ResolveChoice) => ({
-					range,
-					command: {
-						id: entry.commandId,
-						title,
-						arguments: [block.index, choice],
-					},
-				});
-				lenses.push(lens("Accept Current", "current"));
-				lenses.push(lens("Accept Incoming", "incoming"));
-				lenses.push(lens("Accept Both", "both"));
-				if (block.base) lenses.push(lens("Accept Base", "base"));
+				for (const action of spec.actions) {
+					lenses.push({
+						range,
+						command: {
+							id: entry.commandId,
+							title: action.title,
+							arguments: [spec.blockIndex, action.choice],
+						},
+					});
+				}
 			}
 			return { lenses, dispose() {} };
 		},
@@ -85,14 +98,63 @@ export function ensureConflictLensProvider(m: Monaco): void {
 	m.languages.registerCodeLensProvider("*", provider);
 }
 
-/** Publish the blocks for one model and invalidate Monaco's lens cache. */
-export function setConflictBlocks(
+/** Publish a model's lens rows and invalidate Monaco's lens cache. */
+export function setConflictLenses(
 	uri: string,
-	blocks: ConflictBlock[],
+	specs: ConflictLensSpec[],
 	commandId: string,
 ): void {
-	byUri.set(uri, { blocks, commandId });
+	byUri.set(uri, { specs, commandId });
 	fireChange?.();
+}
+
+/** Lens rows for the result pane: every choice, above each block's opener. */
+export function resultLensSpecs(blocks: ConflictBlock[]): ConflictLensSpec[] {
+	return blocks.map((block) => ({
+		line: block.startLine,
+		blockIndex: block.index,
+		actions: [
+			{ title: "Accept Current", choice: "current" as const },
+			{ title: "Accept Incoming", choice: "incoming" as const },
+			{ title: "Accept Both", choice: "both" as const },
+			...(block.base
+				? [{ title: "Accept Base", choice: "base" as const }]
+				: []),
+		],
+	}));
+}
+
+/**
+ * Lens rows for a **Merge side pane**, above each region this side contributes.
+ *
+ * Phrased from that side's point of view, the way VS Code's merge editor does:
+ * the Current pane offers to accept *current*, and "Discard" means "take the
+ * other side instead". Spelling the discard out beats VS Code's bare "Ignore",
+ * which does not say what you end up with.
+ */
+export function sideLensSpecs(
+	ranges: (SideRange | null)[],
+	side: "current" | "incoming" | "base",
+): ConflictLensSpec[] {
+	if (side === "base") return [];
+	const mine: ResolveChoice = side;
+	const other: ResolveChoice = side === "current" ? "incoming" : "current";
+	const label = side === "current" ? "Current" : "Incoming";
+
+	const specs: ConflictLensSpec[] = [];
+	ranges.forEach((range, blockIndex) => {
+		if (!range) return;
+		specs.push({
+			line: Math.max(1, range.startLine),
+			blockIndex,
+			actions: [
+				{ title: `Accept ${label}`, choice: mine },
+				{ title: "Accept Both", choice: "both" },
+				{ title: `Discard ${label}`, choice: other },
+			],
+		});
+	});
+	return specs;
 }
 
 export function clearConflictBlocks(uri: string): void {

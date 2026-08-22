@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { conflictDecorations, sideDecorations } from "../conflictLenses";
+import {
+	conflictDecorations,
+	resultLensSpecs,
+	sideDecorations,
+	sideLensSpecs,
+} from "../conflictLenses";
 import { parseConflicts } from "../conflictMarkers";
 
 const TWO_WAY = [
@@ -161,5 +166,75 @@ describe("sideDecorations", () => {
 		expect(d).toHaveLength(1);
 		expect(d[0].range.startLineNumber).toBe(1);
 		expect(d[0].range.endLineNumber).toBe(20);
+	});
+});
+
+describe("resultLensSpecs", () => {
+	it("offers every choice above each block's opener", () => {
+		const [spec] = resultLensSpecs(parseConflicts(TWO_WAY));
+		expect(spec.line).toBe(2);
+		expect(spec.blockIndex).toBe(0);
+		expect(spec.actions.map((a) => a.title)).toEqual([
+			"Accept Current",
+			"Accept Incoming",
+			"Accept Both",
+		]);
+	});
+
+	it("offers the ancestor only under diff3", () => {
+		const [spec] = resultLensSpecs(parseConflicts(DIFF3));
+		expect(spec.actions.map((a) => a.choice)).toContain("base");
+	});
+
+	it("numbers each block so the command knows which one it edits", () => {
+		const specs = resultLensSpecs(parseConflicts(TWO_WAY + TWO_WAY));
+		expect(specs.map((s) => s.blockIndex)).toEqual([0, 1]);
+	});
+});
+
+describe("sideLensSpecs", () => {
+	const ranges = [
+		{ startLine: 3, endLine: 5 },
+		{ startLine: 10, endLine: 11 },
+	];
+
+	it("speaks from the Current side's point of view", () => {
+		const [spec] = sideLensSpecs(ranges, "current");
+		expect(spec.actions).toEqual([
+			{ title: "Accept Current", choice: "current" },
+			{ title: "Accept Both", choice: "both" },
+			// "Discard Current" means the result keeps the other side — spelled
+			// out rather than VS Code's bare "Ignore", which does not say what
+			// you end up with.
+			{ title: "Discard Current", choice: "incoming" },
+		]);
+	});
+
+	it("speaks from the Incoming side's point of view", () => {
+		const [spec] = sideLensSpecs(ranges, "incoming");
+		expect(spec.actions).toEqual([
+			{ title: "Accept Incoming", choice: "incoming" },
+			{ title: "Accept Both", choice: "both" },
+			{ title: "Discard Incoming", choice: "current" },
+		]);
+	});
+
+	it("anchors each row above its own region", () => {
+		const specs = sideLensSpecs(ranges, "current");
+		expect(specs.map((s) => s.line)).toEqual([3, 10]);
+	});
+
+	it("keeps the block index aligned with the source blocks", () => {
+		// A block this side could not be located in must not shift the indices
+		// of the ones after it, or the lens would edit the wrong conflict.
+		const specs = sideLensSpecs([null, ranges[1]], "incoming");
+		expect(specs).toHaveLength(1);
+		expect(specs[0].blockIndex).toBe(1);
+	});
+
+	it("offers nothing on the ancestor pane", () => {
+		// Base is reference only — "accept the ancestor" is already available in
+		// the result pane, and offering it here would imply the pane is editable.
+		expect(sideLensSpecs(ranges, "base")).toEqual([]);
 	});
 });
