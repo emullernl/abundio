@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * stores → ipc) resolves without a load-time crash, since the test runs through
  * the same Vite transform as the app.
  */
-describe("ipc chokepoint in demo mode", () => {
+// A generous timeout, not a slow test: each case dynamically imports `../../ipc`
+// after `vi.resetModules()`, which pulls the whole app graph — stores,
+// components, fixtures — through Vite's transform pipeline with a cold cache.
+// That is the point of the test, and it grows with the codebase, so the default
+// 5s starts failing intermittently after any change that widens the graph.
+describe("ipc chokepoint in demo mode", { timeout: 30_000 }, () => {
 	beforeEach(() => {
 		vi.resetModules();
 		vi.stubEnv("VITE_ABUNDIO_DEMO", "true");

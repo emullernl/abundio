@@ -1,0 +1,275 @@
+/* Conflict toolbar — an instrument rail rather than a row of buttons.
+ *
+ * Three visual weights carry three roles, so a control's job is legible before
+ * its label is read:
+ *   track   — where you are and how much is left (navigation + state)
+ *   ghost   — actions, text with a colour flag, no box
+ *   toggle  — a recessed well with a raised active chip: reads as a switch
+ *   primary — the single filled element on the bar
+ *
+ * Borders are used once, on the bar's own edge. At 30px, a border around every
+ * control is noise that flattens all of them to the same weight. */
+
+.abundio-ctb {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+	height: 30px;
+	padding: 0 8px 0 10px;
+	font-size: 11px;
+	font-family: var(--font-ui);
+	color: var(--fg-primary);
+	border-bottom: 1px solid var(--border);
+	background:
+		linear-gradient(
+			to bottom,
+			color-mix(in srgb, var(--warning) 9%, transparent),
+			color-mix(in srgb, var(--warning) 5%, transparent)
+		),
+		var(--bg-secondary);
+}
+
+.abundio-ctb__spacer {
+	flex: 1;
+}
+
+.abundio-ctb__divider {
+	width: 1px;
+	height: 15px;
+	flex-shrink: 0;
+	background-color: var(--border);
+}
+
+.abundio-ctb__label {
+	color: var(--fg-secondary);
+	flex-shrink: 0;
+	letter-spacing: 0.01em;
+}
+
+/* ── Track ──────────────────────────────────────────────────────────────
+ * One segment per conflict: hollow pending, filled resolved, lit current.
+ * Reading "how much is left" needs no number. */
+
+.abundio-ctb__nav {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.abundio-ctb__arrow {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: none;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--fg-secondary);
+	cursor: pointer;
+	transition:
+		background-color var(--transition-fast) ease,
+		color var(--transition-fast) ease;
+}
+.abundio-ctb__arrow:hover {
+	background-color: color-mix(in srgb, var(--fg-primary) 10%, transparent);
+	color: var(--fg-primary);
+}
+.abundio-ctb__arrow:active {
+	transform: translateY(0.5px);
+}
+
+.abundio-ctb__track {
+	display: flex;
+	align-items: center;
+	gap: 3px;
+	height: 18px;
+	padding: 0 2px;
+}
+
+.abundio-ctb__seg {
+	width: 9px;
+	height: 10px;
+	padding: 0;
+	border: none;
+	border-radius: 1.5px;
+	cursor: pointer;
+	background-color: color-mix(in srgb, var(--fg-secondary) 32%, transparent);
+	transition:
+		background-color var(--transition-fast) ease,
+		transform var(--transition-fast) ease,
+		height var(--transition-fast) ease;
+}
+.abundio-ctb__seg:hover {
+	background-color: color-mix(in srgb, var(--fg-primary) 55%, transparent);
+	transform: scaleY(1.15);
+}
+/* The one you are on: taller, saturated, and the only lit segment. */
+.abundio-ctb__seg--current {
+	height: 16px;
+	background-color: var(--warning);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 35%, transparent);
+}
+
+.abundio-ctb__count {
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+	color: var(--fg-secondary);
+	flex-shrink: 0;
+}
+
+/* ── Ghost actions ──────────────────────────────────────────────────────
+ * A 2px flag in the side's own colour — the same role colour used by the
+ * merge side panes' gutter rails, so the mapping is learned once. */
+
+.abundio-ctb__ghost {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 20px;
+	padding: 0 7px 0 5px;
+	border: none;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--fg-primary);
+	font-size: 11px;
+	font-family: var(--font-ui);
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background-color var(--transition-fast) ease;
+}
+.abundio-ctb__ghost:hover:not(:disabled) {
+	background-color: color-mix(in srgb, var(--fg-primary) 9%, transparent);
+}
+.abundio-ctb__ghost:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.abundio-ctb__flag {
+	width: 2px;
+	height: 12px;
+	border-radius: 1px;
+	flex-shrink: 0;
+}
+
+/* ── Toggle well ────────────────────────────────────────────────────────
+ * Recessed group, raised active chip. A switch should not look like a
+ * button that happens to be a different colour. */
+
+.abundio-ctb__well {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 20px;
+	padding: 2px;
+	border-radius: 4px;
+	background-color: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+	box-shadow: inset 0 1px 2px color-mix(in srgb, #000 28%, transparent);
+}
+
+.abundio-ctb__toggle {
+	height: 16px;
+	padding: 0 7px;
+	border: none;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--fg-secondary);
+	font-size: 11px;
+	font-family: var(--font-ui);
+	white-space: nowrap;
+	cursor: pointer;
+	transition:
+		background-color var(--transition-fast) ease,
+		color var(--transition-fast) ease;
+}
+.abundio-ctb__toggle:hover:not(:disabled) {
+	color: var(--fg-primary);
+}
+.abundio-ctb__toggle[aria-pressed="true"] {
+	background-color: var(--accent);
+	color: var(--bg-primary);
+	font-weight: 500;
+}
+.abundio-ctb__toggle:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+/* ── Primary ────────────────────────────────────────────────────────────
+ * The only filled control on the bar, so "what do I press when done" needs
+ * no thought. */
+
+.abundio-ctb__primary {
+	height: 20px;
+	padding: 0 10px;
+	border: none;
+	border-radius: 4px;
+	background-color: var(--accent);
+	color: var(--bg-primary);
+	font-size: 11px;
+	font-weight: 500;
+	font-family: var(--font-ui);
+	white-space: nowrap;
+	cursor: pointer;
+	box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
+	transition:
+		background-color var(--transition-fast) ease,
+		filter var(--transition-fast) ease;
+}
+.abundio-ctb__primary:hover:not(:disabled) {
+	filter: brightness(1.08);
+}
+.abundio-ctb__primary:active:not(:disabled) {
+	filter: brightness(0.95);
+}
+.abundio-ctb__primary:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* ── Status text ────────────────────────────────────────────────────────── */
+
+.abundio-ctb__dirty {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--fg-secondary);
+	flex-shrink: 0;
+}
+.abundio-ctb__dirty::before {
+	content: "";
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background-color: var(--warning);
+}
+
+.abundio-ctb__done {
+	color: var(--success);
+	font-weight: 500;
+}
+
+.abundio-ctb__code {
+	font-family: var(--font-mono);
+	font-size: 10.5px;
+	padding: 1px 5px;
+	border-radius: 3px;
+	color: var(--fg-primary);
+	background-color: color-mix(in srgb, var(--fg-primary) 10%, transparent);
+}
+
+.abundio-ctb__error {
+	color: var(--error);
+	flex-shrink: 0;
+}
+
+/* Keyboard users get a visible ring; pointer users do not. */
+.abundio-ctb button:focus-visible {
+	outline: 1px solid var(--accent);
+	outline-offset: 1px;
+}

@@ -568,7 +568,10 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 	saveFile: async (paneId) => {
 		const pane = get().filePanes[paneId];
-		if (!pane?.content || pane.fileType !== "text") return;
+		// `content == null` means "not loaded yet"; an *empty* string is a
+		// legitimate save — resolving a conflict can legitimately empty a file,
+		// and a truthiness check would silently write nothing.
+		if (!pane || pane.content == null || pane.fileType !== "text") return;
 
 		await fsApi.writeFile(pane.filePath, pane.content);
 		set((s) => {

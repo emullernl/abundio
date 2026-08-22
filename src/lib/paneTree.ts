@@ -129,7 +129,7 @@ export function collectAgentPanes(
 	return [...collectAgentPanes(tree.first), ...collectAgentPanes(tree.second)];
 }
 
-/** Collect all leaf pane IDs (terminal + file + preview) in tree order (depth-first). */
+/** Collect all leaf pane IDs (every non-split node) in tree order (depth-first). */
 export function collectPaneIds(tree: PaneNode): string[] {
 	if (tree.type !== "split") return [tree.id];
 	return [...collectPaneIds(tree.first), ...collectPaneIds(tree.second)];
@@ -243,27 +243,59 @@ export function findFilePaneByPath(
 	);
 }
 
-/** Return the preview leaf bound to the given source pane, or null. */
-export function findPreviewForSource(
+/**
+ * A pane that owns no content of its own and is bound to a **source pane** —
+ * currently a markdown **preview pane** (ADR-0001). Derived structurally, so a
+ * new variant carrying `sourcePaneId` is picked up here automatically.
+ */
+export type DerivedPaneNode = Extract<PaneNode, { sourcePaneId: string }>;
+
+function isDerived(node: PaneNode): node is DerivedPaneNode {
+	return "sourcePaneId" in node;
+}
+
+/** Return the derived leaf of the given type bound to `sourcePaneId`, or null. */
+export function findDerivedForSource<T extends DerivedPaneNode["type"]>(
 	tree: PaneNode,
 	sourcePaneId: string,
-): (PaneNode & { type: "preview" }) | null {
-	if (tree.type === "preview")
-		return tree.sourcePaneId === sourcePaneId ? tree : null;
+	type: T,
+): Extract<PaneNode, { type: T }> | null {
+	if (tree.type === type && isDerived(tree)) {
+		return tree.sourcePaneId === sourcePaneId
+			? (tree as Extract<PaneNode, { type: T }>)
+			: null;
+	}
 	if (tree.type !== "split") return null;
 	return (
-		findPreviewForSource(tree.first, sourcePaneId) ??
-		findPreviewForSource(tree.second, sourcePaneId)
+		findDerivedForSource(tree.first, sourcePaneId, type) ??
+		findDerivedForSource(tree.second, sourcePaneId, type)
 	);
 }
 
-/** Collect preview leaves whose sourcePaneId does not resolve to a node in the tree. */
-export function findOrphanPreviews(
+/** Every derived leaf bound to `sourcePaneId`, whatever its type. */
+export function findAllDerivedForSource(
 	tree: PaneNode,
-): (PaneNode & { type: "preview" })[] {
-	const orphans: (PaneNode & { type: "preview" })[] = [];
+	sourcePaneId: string,
+): DerivedPaneNode[] {
+	const found: DerivedPaneNode[] = [];
 	const walk = (node: PaneNode) => {
-		if (node.type === "preview") {
+		if (isDerived(node)) {
+			if (node.sourcePaneId === sourcePaneId) found.push(node);
+			return;
+		}
+		if (node.type !== "split") return;
+		walk(node.first);
+		walk(node.second);
+	};
+	walk(tree);
+	return found;
+}
+
+/** Derived leaves whose sourcePaneId does not resolve to a node in the tree. */
+export function findOrphanDerived(tree: PaneNode): DerivedPaneNode[] {
+	const orphans: DerivedPaneNode[] = [];
+	const walk = (node: PaneNode) => {
+		if (isDerived(node)) {
 			if (!findNode(tree, node.sourcePaneId)) orphans.push(node);
 			return;
 		}
@@ -276,12 +308,12 @@ export function findOrphanPreviews(
 }
 
 /**
- * Remove every preview node whose sourcePaneId does not resolve in the tree,
+ * Remove every derived node whose sourcePaneId does not resolve in the tree,
  * collapsing splits as needed. Returns a new tree (or null if it empties out),
  * or the original tree if there were no orphans.
  */
-export function pruneOrphanPreviews(tree: PaneNode): PaneNode | null {
-	const orphans = findOrphanPreviews(tree);
+export function pruneOrphanDerived(tree: PaneNode): PaneNode | null {
+	const orphans = findOrphanDerived(tree);
 	if (orphans.length === 0) return tree;
 	let result: PaneNode | null = tree;
 	for (const orphan of orphans) {
@@ -289,4 +321,26 @@ export function pruneOrphanPreviews(tree: PaneNode): PaneNode | null {
 		result = removeNode(result, orphan.id);
 	}
 	return result;
+}
+
+/** Return the preview leaf bound to the given source pane, or null. */
+export function findPreviewForSource(
+	tree: PaneNode,
+	sourcePaneId: string,
+): (PaneNode & { type: "preview" }) | null {
+	return findDerivedForSource(tree, sourcePaneId, "preview");
+}
+
+/** @deprecated Prefer `findOrphanDerived`, which covers every derived variant. */
+export function findOrphanPreviews(
+	tree: PaneNode,
+): (PaneNode & { type: "preview" })[] {
+	return findOrphanDerived(tree).filter(
+		(n): n is PaneNode & { type: "preview" } => n.type === "preview",
+	);
+}
+
+/** @deprecated Prefer `pruneOrphanDerived`, which covers every derived variant. */
+export function pruneOrphanPreviews(tree: PaneNode): PaneNode | null {
+	return pruneOrphanDerived(tree);
 }

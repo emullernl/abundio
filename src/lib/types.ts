@@ -24,6 +24,16 @@ export type PaneNode =
 			sourcePaneId: string;
 	  }
 	| {
+			// One index stage of a conflicted file, shown beside its file pane (the
+			// "source pane") in the Merge view. Read-only and owns no file — it
+			// mirrors a stage, the way a preview pane mirrors a buffer. See
+			// ADR-0030, which deliberately echoes ADR-0001's shape.
+			type: "mergeSide";
+			id: string;
+			sourcePaneId: string;
+			side: "current" | "incoming" | "base";
+	  }
+	| {
 			type: "split";
 			id: string;
 			direction: "horizontal" | "vertical";
@@ -205,7 +215,10 @@ export interface GitChangedFile {
 	status: string;
 	additions: number;
 	deletions: number;
-	section: "against_base" | "staged" | "unstaged";
+	/** Which pair of git endpoints this row was produced by — except
+	 *  "conflicted", which is a *state* rather than an endpoint pair and is the
+	 *  deliberate exception in this union (see CONTEXT.md). */
+	section: "conflicted" | "against_base" | "staged" | "unstaged" | "untracked";
 }
 
 export interface GitFileDiff {

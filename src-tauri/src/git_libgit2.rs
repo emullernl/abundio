@@ -26,7 +26,7 @@ use git2::{
 };
 
 use crate::error::AbundioError;
-use crate::git_commands::{BranchInfo, GitChangedFile, TreeDiffStats};
+use crate::git_commands::{BranchInfo, GitChangedFile, GitConflictFile, TreeDiffStats};
 use crate::worktree_commands::WorktreeEntry;
 
 const MAX_UNTRACKED: usize = 500;
@@ -159,6 +159,194 @@ fn resolve_base_branch(
     }
 }
 
+/// Drop entries for paths that are unmerged.
+///
+/// A conflicted path has no stage 0, so its staged/unstaged/untracked rows are
+/// meaningless — and libgit2's diff APIs are not consistent across versions
+/// about omitting them, so we do it explicitly rather than trusting them to.
+fn retain_unconflicted(
+    files: Vec<GitChangedFile>,
+    conflicted: &std::collections::HashSet<String>,
+) -> Vec<GitChangedFile> {
+    if conflicted.is_empty() {
+        return files;
+    }
+    files
+        .into_iter()
+        .filter(|f| !conflicted.contains(&f.path))
+        .collect()
+}
+
+/// One index stage's blob as text. Stage 1 = ancestor, 2 = ours, 3 = theirs.
+///
+/// Note the vocabulary: "ours"/"theirs" are git's own index terms (`git checkout
+/// --ours` addresses stage 2) and stay on this side of the IPC boundary. They
+/// invert during a rebase, so the UI says Current/Incoming instead — and for
+/// marker-less conflicts names neither side. See ADR-0029.
+fn blob_at_stage<'r>(
+    repo: &'r Repository,
+    index: &git2::Index,
+    file_path: &str,
+    stage: u16,
+) -> Option<git2::Blob<'r>> {
+    let entry = index.get_path(Path::new(file_path), stage as i32)?;
+    repo.find_blob(entry.id).ok()
+}
+
+/// The three conflict stages of an unmerged path, plus what kind of conflict it
+/// is and whether it is binary.
+pub fn compute_conflict_file_sync(
+    cwd: &str,
+    file_path: &str,
+) -> Result<GitConflictFile, AbundioError> {
+    let repo = open_repo(cwd)?;
+    // Opened once for all three stages rather than per stage.
+    let index = repo
+        .index()
+        .map_err(|e| AbundioError::Git(format!("open index: {e}")))?;
+
+    let ancestor = blob_at_stage(&repo, &index, file_path, 1);
+    let ours = blob_at_stage(&repo, &index, file_path, 2);
+    let theirs = blob_at_stage(&repo, &index, file_path, 3);
+
+    // Which stages are present *is* the conflict kind — there is nothing else to
+    // derive it from, and git's own status names map one-to-one.
+    let kind = match (ancestor.is_some(), ours.is_some(), theirs.is_some()) {
+        (true, true, true) => "both_modified",
+        (true, true, false) => "deleted_by_them",
+        (true, false, true) => "deleted_by_us",
+        (false, true, true) => "both_added",
+        (false, true, false) => "added_by_us",
+        (false, false, true) => "added_by_them",
+        // No stages at all: the path is not unmerged (already resolved, or never
+        // was). Reported rather than raised — the caller polls this from UI that
+        // can legitimately race a resolution.
+        _ => "none",
+    };
+
+    let binary_of = |b: &Option<git2::Blob<'_>>| b.as_ref().is_some_and(|b| b.is_binary());
+    let is_binary = binary_of(&ancestor) || binary_of(&ours) || binary_of(&theirs);
+
+    let text = |blob: Option<git2::Blob<'_>>| -> Option<String> {
+        if is_binary {
+            return None;
+        }
+        blob.map(|b| String::from_utf8_lossy(b.content()).to_string())
+    };
+
+    Ok(GitConflictFile {
+        file_path: file_path.to_string(),
+        kind: kind.to_string(),
+        is_binary,
+        base: text(ancestor),
+        ours: text(ours),
+        theirs: text(theirs),
+    })
+}
+
+/// Stage a single path, with `git add -A <path>` semantics.
+///
+/// **This is the only place in the codebase that writes the on-disk git index.**
+/// It is deliberate and user-initiated: the invariant Abundio holds is that the
+/// index is never written as a side effect of telemetry, polling or rendering —
+/// not that it is never written at all. See ADR-0029, and the `Safety:` note on
+/// `snapshot_worktree_tree`, which remains a strictly in-memory operation.
+///
+/// `add_path` on a conflicted path is what resolves it: libgit2 drops stages
+/// 1/2/3 and writes a stage 0 entry. When the file is gone from disk the
+/// deletion is staged instead, which is how "accept the delete" works for a
+/// delete/modify conflict with no extra command.
+pub fn stage_path_sync(cwd: &str, file_path: &str) -> Result<(), AbundioError> {
+    let repo = open_repo(cwd)?;
+    let mut index = repo
+        .index()
+        .map_err(|e| AbundioError::Git(format!("open index: {e}")))?;
+
+    let workdir = repo.workdir().ok_or_else(|| {
+        AbundioError::Git("cannot stage in a bare repository".to_string())
+    })?;
+    let rel = Path::new(file_path);
+
+    if workdir.join(rel).exists() {
+        index
+            .add_path(rel)
+            .map_err(|e| AbundioError::Git(format!("stage {file_path}: {e}")))?;
+    } else {
+        index
+            .remove_path(rel)
+            .map_err(|e| AbundioError::Git(format!("stage deletion {file_path}: {e}")))?;
+    }
+
+    index
+        .write()
+        .map_err(|e| AbundioError::Git(format!("write index: {e}")))?;
+    Ok(())
+}
+
+/// Unmerged paths, straight from the index's conflict stages.
+///
+/// Sourced from `index.conflicts()` rather than a `Status::CONFLICTED` walk:
+/// it is O(conflicts) against an already-open index instead of a full
+/// working-tree scan. Line counts are deliberately zero — an unmerged path has
+/// no stage 0, so there is no honest numstat to report.
+fn conflicted_files(repo: &Repository) -> Vec<GitChangedFile> {
+    let Ok(index) = repo.index() else {
+        return Vec::new();
+    };
+    if !index.has_conflicts() {
+        return Vec::new();
+    }
+    let Ok(conflicts) = index.conflicts() else {
+        return Vec::new();
+    };
+    let mut seen: Vec<String> = Vec::new();
+    for conflict in conflicts.flatten() {
+        // Take the path from whichever stage is present: a delete conflict is
+        // missing `our` or `their`, an add/add is missing `ancestor`.
+        let entry = conflict
+            .our
+            .as_ref()
+            .or(conflict.their.as_ref())
+            .or(conflict.ancestor.as_ref());
+        let Some(entry) = entry else { continue };
+        let path = String::from_utf8_lossy(&entry.path).to_string();
+        if !seen.contains(&path) {
+            seen.push(path);
+        }
+    }
+    seen.sort();
+    seen.into_iter()
+        .map(|path| GitChangedFile {
+            path,
+            status: "U".to_string(),
+            additions: 0,
+            deletions: 0,
+            section: "conflicted".to_string(),
+        })
+        .collect()
+}
+
+/// The multi-step git operation currently suspended in this repository, if any.
+///
+/// Uses `repo.state()` rather than probing for `.git/MERGE_HEAD` and friends:
+/// libgit2 resolves the correct gitdir, so this is right in a linked worktree
+/// (whose state files live under `<repo>/.git/worktrees/<name>/`), and it
+/// distinguishes the rebase and sequencer variants that path probing flattens.
+pub fn compute_operation_in_progress_sync(cwd: &str) -> Result<Option<String>, AbundioError> {
+    use git2::RepositoryState as S;
+    let repo = open_repo(cwd)?;
+    Ok(match repo.state() {
+        S::Clean => None,
+        S::Merge => Some("merge".to_string()),
+        S::Rebase | S::RebaseInteractive | S::RebaseMerge => Some("rebase".to_string()),
+        S::CherryPick | S::CherryPickSequence => Some("cherry_pick".to_string()),
+        S::Revert | S::RevertSequence => Some("revert".to_string()),
+        // Bisect and the mailbox-apply states are not conflict resolution and
+        // have no "continue" advice worth showing.
+        _ => None,
+    })
+}
+
 pub fn compute_changed_files_sync(
     cwd: &str,
     base_branch: Option<String>,
@@ -168,23 +356,37 @@ pub fn compute_changed_files_sync(
 
     let mut all_files = Vec::new();
 
-    // 1. against_base: merge-base of HEAD..base, diffed to HEAD.
+    // 1. conflicted: unmerged index entries. First because it is blocking, and
+    //    because a stable leading section keeps `filesEqual` on the frontend
+    //    trivially order-deterministic.
+    let conflicted = conflicted_files(&repo);
+    let conflicted_paths: std::collections::HashSet<String> =
+        conflicted.iter().map(|f| f.path.clone()).collect();
+    all_files.extend(conflicted);
+
+    // 2. against_base: merge-base of HEAD..base, diffed to HEAD.
+    //    Conflicted paths are deliberately NOT removed here: this section
+    //    compares committed history on a different axis, and dropping them
+    //    would silently shrink the branch review mid-merge.
     if let Ok(files) = diff_against_base(&repo, &base) {
         all_files.extend(files);
     }
 
-    // 2. staged: HEAD tree vs index.
+    // 3. staged: HEAD tree vs index.
     if let Ok(files) = diff_staged(&repo) {
-        all_files.extend(files);
+        all_files.extend(retain_unconflicted(files, &conflicted_paths));
     }
 
-    // 3. unstaged: index vs working tree.
+    // 4. unstaged: index vs working tree.
     if let Ok(files) = diff_unstaged(&repo) {
-        all_files.extend(files);
+        all_files.extend(retain_unconflicted(files, &conflicted_paths));
     }
 
-    // 4. untracked: from statuses (WT_NEW flag).
-    all_files.extend(untracked_files(&repo));
+    // 5. untracked: from statuses (WT_NEW flag).
+    all_files.extend(retain_unconflicted(
+        untracked_files(&repo),
+        &conflicted_paths,
+    ));
 
     Ok(all_files)
 }
@@ -195,7 +397,12 @@ pub fn compute_changed_files_sync(
 /// respecting `.gitignore`. Best-effort: `Ok(None)` when `cwd` isn't a git repo.
 ///
 /// Safety: all index mutations are in-memory — we **never** call `index.write()`,
-/// so the user's on-disk `.git/index` (staging area) is untouched. Only loose
+/// so the user's on-disk `.git/index` (staging area) is untouched. This remains
+/// true: `stage_path_sync` is the sole on-disk index writer in the codebase, and
+/// it runs only on explicit user action. The invariant this note protects is
+/// that Abundio never writes the index as a *side effect* of telemetry, polling
+/// or rendering — which is exactly what this function would otherwise be doing.
+/// See ADR-0029. Only loose
 /// tree/blob objects are written to the ODB (content-addressed, deduplicated,
 /// reaped by `git gc`), exactly as `git add -A` + `git write-tree` do. The cost
 /// is a working-tree stat-walk (a `git status`-class scan, proportional to the
@@ -427,6 +634,11 @@ pub fn file_blob_at_index(cwd: &str, file_path: &str) -> String {
     blob_string_at_index(&repo, file_path).unwrap_or_default()
 }
 
+/// Read a path's blob from index **stage 0** (the ordinary, merged entry).
+///
+/// Stage 0 is intentional: this backs the staged/unstaged diffs, which are only
+/// meaningful for a merged path. An unmerged path has no stage 0 and correctly
+/// yields `None` here — see `blob_string_at_stage` for the conflict stages.
 fn blob_string_at_index(repo: &Repository, file_path: &str) -> Option<String> {
     let index = repo.index().ok()?;
     let entry = index.get_path(std::path::Path::new(file_path), 0)?;

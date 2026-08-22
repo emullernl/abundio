@@ -14,6 +14,7 @@
  */
 import type {
 	AgentHookStatus,
+	GitConflictFile,
 	GitFetchBundle,
 	WorkspaceGitSummary,
 } from "../ipc";
@@ -143,6 +144,7 @@ const WS_DEFS: WsDef[] = [
 			},
 		],
 		git: [
+			["src/lib/pricing.ts", "U", 0, 0, "conflicted"],
 			["src/api/checkout.ts", "M", 32, 6, "against_base"],
 			["src/components/Cart.tsx", "M", 18, 4, "against_base"],
 			["src/api/__tests__/checkout.test.ts", "A", 41, 0, "staged"],
@@ -758,6 +760,11 @@ export function gitBundleForCwd(cwd: string): GitFetchBundle {
 		changedFiles: entry?.files ?? [],
 		branchInfo: entry?.branch ?? CLEAN_BRANCH,
 		statusFingerprint: `demo-fp-${cwd}`,
+		operationInProgress: (entry?.files ?? []).some(
+			(f) => f.section === "conflicted",
+		)
+			? "merge"
+			: null,
 	};
 }
 
@@ -1216,6 +1223,29 @@ export const fileContents: Record<string, string> = {
 		fileDiffs["src/api/checkout.ts"].modified,
 	[`${ACME_ROOT}/src/components/Cart.tsx`]:
 		fileDiffs["src/components/Cart.tsx"].modified,
+	// Mid-merge: the working file git wrote, markers and all. This is the
+	// "result document" the inline conflict UX edits directly.
+	[`${ACME_ROOT}/src/lib/pricing.ts`]: [
+		'import { formatMoney } from "./money";',
+		"",
+		"export function lineTotal(unitCents: number, qty: number): number {",
+		"<<<<<<< HEAD",
+		"\treturn Math.round(unitCents * qty * (1 - bulkDiscount(qty)));",
+		"=======",
+		"\treturn unitCents * qty;",
+		">>>>>>> main",
+		"}",
+		"",
+		"export function label(cents: number): string {",
+		"<<<<<<< HEAD",
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: fixture *content* — this is TypeScript source inside a demo file
+		"\treturn `${formatMoney(cents)} incl. VAT`;",
+		"=======",
+		"\treturn formatMoney(cents);",
+		">>>>>>> main",
+		"}",
+		"",
+	].join("\n"),
 	[`${ACME_ROOT}/README.md`]:
 		"# acme-web\n\nStorefront for the Acme demo shop.\n",
 	[`${ACME_ROOT}/src/lib/money.ts`]:
@@ -1253,6 +1283,46 @@ export function readFile(path: string): FileContent {
 		content,
 		mime: "text/plain",
 		size: content.length,
+	};
+}
+
+/** Index stages for the demo's one conflicted file. */
+export function conflictFile(cwd: string, filePath: string): GitConflictFile {
+	const known = `${cwd}/${filePath}` === `${ACME_ROOT}/src/lib/pricing.ts`;
+	if (!known) {
+		return {
+			filePath,
+			kind: "none",
+			isBinary: false,
+			base: null,
+			ours: null,
+			theirs: null,
+		};
+	}
+	const body = (total: string, label: string) =>
+		[
+			'import { formatMoney } from "./money";',
+			"",
+			"export function lineTotal(unitCents: number, qty: number): number {",
+			total,
+			"}",
+			"",
+			"export function label(cents: number): string {",
+			label,
+			"}",
+			"",
+		].join("\n");
+	return {
+		filePath,
+		kind: "both_modified",
+		isBinary: false,
+		base: body("\treturn unitCents * qty;", "\treturn formatMoney(cents);"),
+		ours: body(
+			"\treturn Math.round(unitCents * qty * (1 - bulkDiscount(qty)));",
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: fixture *content* — this is TypeScript source inside a demo file
+			"\treturn `${formatMoney(cents)} incl. VAT`;",
+		),
+		theirs: body("\treturn unitCents * qty;", "\treturn formatMoney(cents);"),
 	};
 }
 

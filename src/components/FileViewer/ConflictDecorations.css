@@ -1,0 +1,114 @@
+/* Conflict decorations for the inline resolution UX (ADR-0029) and the Merge
+ * view's read-only side panes (ADR-0030).
+ *
+ * Deliberately plain CSS classes reading theme variables, not Monaco theme
+ * colours: classNames pick up a theme change for free, whereas theme colours
+ * would need `defineAbundioTheme` re-run — and that early-returns on an
+ * unchanged themeKey.
+ *
+ * Two colour roles carry the whole design and are used consistently in both
+ * the result pane and the side panes:
+ *   Current side  → --success
+ *   Incoming side → --accent
+ *   Ancestor      → --fg-secondary
+ * so a region's colour tells you which side it is, wherever you are looking. */
+
+/* ── Result pane: the editable buffer with markers in it ────────────────── */
+
+.abundio-conflict-current {
+	background-color: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.abundio-conflict-incoming {
+	background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.abundio-conflict-base {
+	background-color: color-mix(in srgb, var(--fg-secondary) 12%, transparent);
+}
+
+.abundio-conflict-marker {
+	background-color: color-mix(in srgb, var(--warning) 22%, transparent);
+	font-weight: 600;
+}
+
+/* The block the caret is in — the one the side panes are showing and the one
+ * the navigator points at. A left rail in the gutter rather than yet another
+ * background tint, so it reads on top of the side colours above. */
+.abundio-conflict-active-rail {
+	border-left: 2px solid var(--warning);
+	margin-left: 2px;
+}
+
+/* ── Merge side panes: read-only, showing one index stage ───────────────── */
+
+/* Everything outside a conflict region. The pane exists to show you one place,
+ * so the rest of the file recedes to context rather than competing with it. */
+.abundio-side-dim {
+	opacity: 0.32;
+	filter: saturate(0.55);
+	transition: opacity var(--transition-fast, 120ms) ease;
+}
+
+/* A conflict region. `-hit` carries the tint, `-rail` the gutter marker, so a
+ * region can be re-coloured per side without touching the rail geometry. */
+.abundio-side-hit {
+	background-color: color-mix(in srgb, var(--fg-secondary) 8%, transparent);
+}
+
+.abundio-side-rail {
+	width: 3px;
+	margin-left: 3px;
+	background-color: var(--fg-secondary);
+	opacity: 0.45;
+}
+
+/* Per-side colour. Applied alongside `-hit` / `-rail`. */
+.abundio-side-current.abundio-side-hit {
+	background-color: color-mix(in srgb, var(--success) 13%, transparent);
+}
+.abundio-side-current.abundio-side-rail {
+	background-color: var(--success);
+}
+
+.abundio-side-incoming.abundio-side-hit {
+	background-color: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.abundio-side-incoming.abundio-side-rail {
+	background-color: var(--accent);
+}
+
+.abundio-side-base.abundio-side-hit {
+	background-color: color-mix(in srgb, var(--fg-secondary) 11%, transparent);
+}
+.abundio-side-base.abundio-side-rail {
+	background-color: var(--fg-secondary);
+}
+
+/* The region matching the block under the caret. Full opacity rail, a stronger
+ * wash, and hard boundary rules so the block's extent is unambiguous — the
+ * complaint the faint single tint could not answer. */
+.abundio-side-active.abundio-side-hit {
+	background-color: color-mix(in srgb, var(--warning) 15%, transparent);
+	box-shadow: inset 0 0 0 9999px
+		color-mix(in srgb, var(--warning) 4%, transparent);
+}
+.abundio-side-active.abundio-side-rail {
+	background-color: var(--warning);
+	opacity: 1;
+	width: 4px;
+	margin-left: 2px;
+}
+
+.abundio-side-edge-top {
+	border-top: 1px solid color-mix(in srgb, var(--warning) 65%, transparent);
+}
+.abundio-side-edge-bottom {
+	border-bottom: 1px solid color-mix(in srgb, var(--warning) 65%, transparent);
+}
+
+/* An empty side — the block contributes no lines here, so there is nothing to
+ * band. Mark the seam instead, or the pane looks like it simply failed. */
+.abundio-side-empty {
+	border-top: 2px dashed color-mix(in srgb, var(--warning) 70%, transparent);
+}

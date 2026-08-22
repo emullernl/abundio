@@ -1,14 +1,37 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useActiveLayout } from "../../hooks/useActiveLayout";
 import { useSplitPane } from "../../hooks/useSplitPane";
+import {
+	parseConflicts,
+	type ResolveChoice,
+	resolveAll,
+} from "../../lib/conflictMarkers";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
+import { git } from "../../lib/ipc";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
+import { registerResultEditor } from "../../lib/mergeScrollSync";
+import {
+	getActiveConflictBlock,
+	initialMergeSelection,
+	setActiveConflictBlock,
+} from "../../lib/mergeSync";
+import {
+	hasMergeView,
+	toggleMergeBase,
+	toggleMergeViewForPane,
+} from "../../lib/mergeView";
 import { findPreviewForSource } from "../../lib/paneTree";
 import { sc } from "../../lib/platform";
-import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
+import {
+	relativeToWorkspace,
+	resolveWorkspacePath,
+} from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
 import { PaneDropIndicator } from "../PaneDropIndicator";
@@ -16,7 +39,13 @@ import {
 	type ContextMenuItem,
 	PaneContextMenu,
 } from "../Terminal/PaneContextMenu";
-import { CodeEditor, focusEditor, triggerEditorAction } from "./CodeEditor";
+import {
+	CodeEditor,
+	focusEditor,
+	getLiveEditor,
+	triggerEditorAction,
+} from "./CodeEditor";
+import { ConflictToolbar } from "./ConflictToolbar";
 import { FileChangeBanner } from "./FileChangeBanner";
 import { FilePaneTitleBar } from "./FilePaneTitleBar";
 import { ImageViewer } from "./ImageViewer";
@@ -25,6 +54,8 @@ import { UnsupportedFile } from "./UnsupportedFile";
 interface FilePaneProps {
 	paneId: string;
 	filePath: string;
+	cwd: string;
+	workspaceId: string;
 	isDiff?: boolean;
 	diffSection?: GitChangedFile["section"];
 	isDeleted?: boolean;
@@ -35,6 +66,8 @@ interface FilePaneProps {
 export function FilePane({
 	paneId,
 	filePath,
+	cwd,
+	workspaceId,
 	isDiff,
 	diffSection,
 	isDeleted,
@@ -55,6 +88,178 @@ export function FilePane({
 		(content: string) => updateFileContent(paneId, content),
 		[paneId, updateFileContent],
 	);
+
+	// Whether the conflict toolbar shows is decided by the *index*, not by
+	// whether the buffer still has markers — an agent resolving the markers in
+	// the next pane must not remove the staging button. See ADR-0029.
+	const relativePath = relativeToWorkspace(cwd, filePath);
+	// null = git has not answered for this workspace yet. Distinct from "no
+	// conflicts": the teardown below must not act on an unanswered workspace.
+	const conflictedPaths = useWorkspaceGitStore(
+		(s) => s.byWorkspaceId[workspaceId]?.conflictedPaths ?? null,
+	);
+	const isUnmerged = relativePath
+		? (conflictedPaths?.includes(relativePath) ?? false)
+		: false;
+	const conflictBlocks = useMemo(
+		() => (isUnmerged ? parseConflicts(paneState?.content ?? "") : []),
+		[isUnmerged, paneState?.content],
+	);
+
+	const acceptAllConflicts = useCallback(
+		(choice: ResolveChoice) => {
+			const content = useExplorerStore.getState().filePanes[paneId]?.content;
+			if (content == null) return;
+			const blocks = parseConflicts(content);
+			if (blocks.length === 0) return;
+			updateFileContent(paneId, resolveAll(content, blocks, choice));
+		},
+		[paneId, updateFileContent],
+	);
+
+	const resolveAndStage = useCallback(async () => {
+		if (!relativePath) return;
+		await saveFile(paneId);
+		await git.stagePath(cwd, relativePath);
+		// The scheduler cannot see an index write (`.git/index` is excluded from
+		// the watcher on purpose), so refresh explicitly.
+		const gitStore = useGitChangesStore.getState();
+		await gitStore.fetchChanges(cwd, gitStore.baseBranch);
+	}, [cwd, paneId, relativePath, saveFile]);
+
+	const activeLayout = useActiveLayout();
+	const mergeViewOpen = activeLayout
+		? hasMergeView(activeLayout, paneId)
+		: false;
+
+	// Conflict state is derived from the index, so the Merge view tears itself
+	// down when the merge finishes or is aborted — no explicit close path.
+	//
+	// Gated on git having actually answered. Without that, a Merge view restored
+	// from the persisted layout would be closed on every launch — the conflict
+	// set is empty until the first fetch lands — and `updateLayout` would write
+	// the stripped layout back to SQLite, so it would not come back.
+	useEffect(() => {
+		if (conflictedPaths === null) return;
+		if (!isUnmerged && mergeViewOpen) {
+			void toggleMergeViewForPane(paneId);
+		}
+	}, [conflictedPaths, isUnmerged, mergeViewOpen, paneId]);
+
+	// Published for the Merge side panes *and* held locally for the navigator's
+	// position readout, so both always agree on which block is current.
+	const [activeBlock, setActiveBlock] = useState<number | null>(() =>
+		getActiveConflictBlock(paneId),
+	);
+
+	/** Publish a block as the current one, without touching the caret. */
+	const setCurrentBlock = useCallback(
+		(index: number | null) => {
+			setActiveBlock(index);
+			setActiveConflictBlock(paneId, index);
+		},
+		[paneId],
+	);
+
+	const handleCursorLine = useCallback(
+		(line: number) => {
+			const index = conflictBlocks.findIndex(
+				(b) => line >= b.startLine && line <= b.endLine,
+			);
+			// Moving the caret *into* a block selects it; moving it out keeps the
+			// last one. "Current conflict" is a pointer you step through, not a
+			// readout of where the caret happens to be — blanking it every time you
+			// edited nearby would make the navigator flicker to "—" constantly.
+			if (index !== -1) setCurrentBlock(index);
+		},
+		[conflictBlocks, setCurrentBlock],
+	);
+
+	/**
+	 * Make a block the current one.
+	 *
+	 * The selection is published as state first and the caret follows, rather
+	 * than the caret being the only source of truth: opening the Merge view
+	 * re-parents the result pane, so its editor can be briefly unmounted at
+	 * exactly the moment we want to select something. Publishing first means the
+	 * side panes light up regardless, and the caret catches up once the editor
+	 * is back.
+	 */
+	const selectBlock = useCallback(
+		(blockIndex: number) => {
+			const block = conflictBlocks[blockIndex];
+			if (!block) return;
+			setCurrentBlock(blockIndex);
+
+			// Two frames, matching the pattern used elsewhere in this file for
+			// post-layout editor work.
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					const ed = getLiveEditor(paneId);
+					if (!ed) return;
+					// Land on the first line of content, not the marker — that is
+					// where you would start reading.
+					const line = Math.min(
+						block.current.startLine,
+						ed.getModel()?.getLineCount() ?? block.startLine,
+					);
+					ed.setPosition({ lineNumber: line, column: 1 });
+					ed.revealLineInCenter(block.startLine);
+					ed.focus();
+				});
+			});
+		},
+		[conflictBlocks, paneId, setCurrentBlock],
+	);
+
+	// A conflicted file always has a current conflict, in both the standard and
+	// the Merge view — so the navigator reads "1/N" rather than "—/N" the moment
+	// the toolbar appears, and the Merge view never opens on a uniformly dimmed
+	// file with nothing marked.
+	//
+	// Pointer only: the caret is left alone. Opening a file to read one line
+	// should not scroll you somewhere else. Explicit navigation moves the caret.
+	//
+	// An existing selection is respected, and the ref keeps this to once per
+	// conflict session so it cannot fight the user's own navigation.
+	const autoSelectedRef = useRef(false);
+	useEffect(() => {
+		if (!isUnmerged || conflictBlocks.length === 0) {
+			autoSelectedRef.current = false;
+			return;
+		}
+		if (autoSelectedRef.current) return;
+		const target = initialMergeSelection(activeBlock, conflictBlocks.length);
+		if (target === null) return;
+		autoSelectedRef.current = true;
+		setCurrentBlock(target);
+	}, [isUnmerged, conflictBlocks.length, activeBlock, setCurrentBlock]);
+
+	// A resolved block shifts every index after it, so clamp rather than leave
+	// the navigator pointing past the end.
+	useEffect(() => {
+		if (activeBlock !== null && activeBlock >= conflictBlocks.length) {
+			setCurrentBlock(
+				conflictBlocks.length === 0 ? null : conflictBlocks.length - 1,
+			);
+		}
+	}, [activeBlock, conflictBlocks.length, setCurrentBlock]);
+
+	// Deliberately not cleared on unmount. Opening the Merge view re-parents the
+	// result pane, so this component unmounts and remounts as part of a layout
+	// change rather than a close — clearing here would drop the user's place
+	// exactly when the side panes appear to use it. The registry holds one
+	// number per pane id, so the residue is negligible.
+
+	// The result pane is the hub the side panes scroll against. Registered only
+	// while the Merge view is open — outside it there is nothing to sync with.
+	const [resultEditorReady, setResultEditorReady] = useState(false);
+	useEffect(() => {
+		if (!mergeViewOpen || !resultEditorReady) return;
+		const ed = getLiveEditor(paneId);
+		if (!ed) return;
+		return registerResultEditor(paneId, ed);
+	}, [mergeViewOpen, resultEditorReady, paneId]);
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
@@ -308,6 +513,23 @@ export function FilePane({
 					/>
 				</div>
 			)}
+			{isUnmerged && relativePath && paneState.fileType === "text" && (
+				<ConflictToolbar
+					paneId={paneId}
+					cwd={cwd}
+					relativePath={relativePath}
+					absolutePath={filePath}
+					blocks={conflictBlocks}
+					isDirty={paneState.isDirty}
+					onAcceptAll={acceptAllConflicts}
+					onResolveAndStage={resolveAndStage}
+					mergeViewOpen={mergeViewOpen}
+					onToggleMergeView={() => void toggleMergeViewForPane(paneId)}
+					onToggleBase={() => void toggleMergeBase(paneId)}
+					activeBlock={activeBlock}
+					onNavigate={selectBlock}
+				/>
+			)}
 			<div className="flex-1 min-h-0 relative">
 				{paneState.fileType === "text" && (
 					<CodeEditor
@@ -318,6 +540,9 @@ export function FilePane({
 						initialEditorState={null}
 						onChange={handleEditorChange}
 						forceWordWrap={isMarkdown}
+						onCursorLine={handleCursorLine}
+						activeConflictBlock={activeBlock}
+						onEditorMounted={() => setResultEditorReady(true)}
 					/>
 				)}
 				{paneState.fileType === "diff" &&

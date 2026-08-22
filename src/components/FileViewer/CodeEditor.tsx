@@ -1,6 +1,16 @@
 import Editor, { type Monaco, useMonaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	applyChoice,
+	clearConflictBlocks,
+	conflictDecorations,
+	ensureConflictLensProvider,
+	resultLensSpecs,
+	setConflictLenses,
+} from "../../lib/conflictLenses";
+import { parseConflicts, type ResolveChoice } from "../../lib/conflictMarkers";
+import "./ConflictDecorations.css";
 import { defineAbundioTheme } from "../../lib/monacoShared";
 import { registerSyncEditor, unregisterSyncEditor } from "../../lib/scrollSync";
 import { setAllTerminalsFontSize } from "../../lib/terminalManager";
@@ -18,6 +28,20 @@ interface CodeEditorProps {
 	// Markdown is prose — long logical lines — so it always wraps, overriding
 	// the global editorWordWrap setting.
 	forceWordWrap?: boolean;
+	/** Read-only panes (the Merge view's side panes) show an index stage, which
+	 *  has no editable on-disk counterpart. */
+	readOnly?: boolean;
+	/** Fires on cursor movement, so the Merge view can follow the caret. */
+	onCursorLine?: (line: number) => void;
+	/** The conflict block to mark as current. Owned by the parent rather than
+	 *  derived from the caret here, so the gutter rail, the navigator and the
+	 *  Merge side panes cannot disagree — the caret is one input to that choice,
+	 *  not the choice itself. */
+	activeConflictBlock?: number | null;
+	/** Fires once the Monaco instance exists. Monaco loads asynchronously, so a
+	 *  parent that wants to decorate this editor cannot assume it is there on
+	 *  first render — it must wait for this. */
+	onEditorMounted?: () => void;
 }
 
 // Cache view state per tab so switching tabs preserves cursor/scroll
@@ -31,6 +55,14 @@ export interface SerializedEditorState {
 	anchorPos: number;
 	scrollTop: number;
 	scrollLeft: number;
+}
+
+/** The mounted editor for a pane, or undefined. Keyed by pane id — the `tabId`
+ *  prop is misnamed; `FilePane` passes `paneId`. */
+export function getLiveEditor(
+	paneId: string,
+): editor.IStandaloneCodeEditor | undefined {
+	return liveEditors.get(paneId);
 }
 
 export function focusEditor(tabId: string) {
@@ -86,10 +118,18 @@ export const CodeEditor = memo(function CodeEditor({
 	initialEditorState,
 	onChange,
 	forceWordWrap = false,
+	readOnly = false,
+	onCursorLine,
+	onEditorMounted,
+	activeConflictBlock = null,
 }: CodeEditorProps) {
 	const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 	const onChangeRef = useRef(onChange);
 	onChangeRef.current = onChange;
+	const onCursorLineRef = useRef(onCursorLine);
+	onCursorLineRef.current = onCursorLine;
+	const onEditorMountedRef = useRef(onEditorMounted);
+	onEditorMountedRef.current = onEditorMounted;
 	const tabIdRef = useRef(tabId);
 	tabIdRef.current = tabId;
 	const isActiveRef = useRef(isActive);
@@ -103,6 +143,36 @@ export const CodeEditor = memo(function CodeEditor({
 	const monaco = useMonaco();
 
 	const pendingGotoLine = useExplorerStore((s) => s.pendingGotoLine);
+
+	// Conflict highlighting is derived from the buffer, so it works on any file
+	// containing markers — being *unmerged* is a separate question, answered by
+	// the index, and gates staging rather than rendering. See ADR-0029.
+	const conflictBlocks = useMemo(() => parseConflicts(content), [content]);
+	const conflictBlocksRef = useRef(conflictBlocks);
+	conflictBlocksRef.current = conflictBlocks;
+	const decorationsRef = useRef<editor.IEditorDecorationsCollection | null>(
+		null,
+	);
+	const conflictCommandRef = useRef<string | null>(null);
+	const [editorMounted, setEditorMounted] = useState(false);
+
+	useEffect(() => {
+		const ed = editorRef.current;
+		const collection = decorationsRef.current;
+		const commandId = conflictCommandRef.current;
+		if (!editorMounted || !ed || !collection || !commandId) return;
+		// A read-only pane is a Merge side pane: its parent owns that model's
+		// lenses and decorations, and two writers for one URI would clobber each
+		// other. Its stage text has no markers to find anyway.
+		if (readOnly) return;
+		const uri = ed.getModel()?.uri.toString();
+		if (!uri) return;
+
+		collection.set(conflictDecorations(conflictBlocks, activeConflictBlock));
+		setConflictLenses(uri, resultLensSpecs(conflictBlocks), commandId);
+		// Only claim the glyph margin while there is something to put in it.
+		ed.updateOptions({ glyphMargin: conflictBlocks.length > 0 });
+	}, [conflictBlocks, activeConflictBlock, editorMounted, readOnly]);
 
 	// Focus editor when this pane becomes active
 	useEffect(() => {
@@ -155,6 +225,22 @@ export const CodeEditor = memo(function CodeEditor({
 			// Markdown panes have a preview pane; this lets the two scroll-sync.
 			// Harmless for non-markdown files — no preview ever registers a pair.
 			registerSyncEditor(tabIdRef.current, ed);
+
+			// Conflict lenses: one global provider for the whole app, scoped per
+			// model by URI. The command is per-editor so its handler is naturally
+			// bound to this pane's buffer.
+			ensureConflictLensProvider(m);
+			decorationsRef.current = ed.createDecorationsCollection([]);
+			conflictCommandRef.current =
+				ed.addCommand(0, (_ctx: unknown, ...args: unknown[]) => {
+					applyChoice(ed, args[0] as number, args[1] as ResolveChoice);
+				}) ?? null;
+			setEditorMounted(true);
+			onEditorMountedRef.current?.();
+
+			ed.onDidChangeCursorPosition((e) =>
+				onCursorLineRef.current?.(e.position.lineNumber),
+			);
 
 			// Define and apply theme, store Monaco instance for theme sync
 			defineAbundioTheme(m);
@@ -233,6 +319,8 @@ export const CodeEditor = memo(function CodeEditor({
 				liveEditors.delete(currentTabId);
 			}
 			unregisterSyncEditor(currentTabId);
+			const uri = ed?.getModel()?.uri.toString();
+			if (uri) clearConflictBlocks(uri);
 		};
 	}, []);
 
@@ -249,6 +337,7 @@ export const CodeEditor = memo(function CodeEditor({
 			fontFamily,
 			fontSize: monacoFontSize,
 			wordWrap: effectiveWordWrap ? "on" : "off",
+			readOnly,
 			contextmenu: false,
 			minimap: { enabled: false },
 			scrollBeyondLastLine: false,
@@ -264,7 +353,7 @@ export const CodeEditor = memo(function CodeEditor({
 				horizontalScrollbarSize: 10,
 			},
 		}),
-		[fontFamily, monacoFontSize, effectiveWordWrap],
+		[fontFamily, monacoFontSize, effectiveWordWrap, readOnly],
 	);
 
 	return (

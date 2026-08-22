@@ -188,9 +188,11 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 const TabContent = memo(function TabContent({
 	layoutJson,
 	cwd,
+	workspaceId,
 }: {
 	layoutJson: string;
 	cwd: string;
+	workspaceId: string;
 }) {
 	const layout = useMemo(() => parseTabLayout(layoutJson), [layoutJson]);
 
@@ -246,7 +248,7 @@ const TabContent = memo(function TabContent({
 				</div>
 			)}
 		>
-			<SplitContainer node={layout} cwd={cwd} />
+			<SplitContainer node={layout} cwd={cwd} workspaceId={workspaceId} />
 		</ErrorBoundary>
 	);
 });
@@ -833,6 +835,7 @@ export function App() {
 													<TabContent
 														layoutJson={tab.layoutJson}
 														cwd={workspace.rootFolder}
+														workspaceId={workspace.id}
 													/>
 												</div>
 											);

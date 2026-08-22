@@ -7,11 +7,14 @@ import {
 	collectTerminals,
 	containsPane,
 	extractNode,
+	findDerivedForSource,
 	findNode,
+	findOrphanDerived,
 	findOrphanPreviews,
 	findPreviewForSource,
 	insertBesideNode,
 	parseTabLayout,
+	pruneOrphanDerived,
 	pruneOrphanPreviews,
 	removeNode,
 	replaceNode,
@@ -476,5 +479,64 @@ describe("preview panes", () => {
 		expect(findOrphanPreviews(afterFileClose as PaneNode)).toEqual([
 			previewLeaf,
 		]);
+	});
+});
+
+describe("derived panes cover more than previews", () => {
+	const mergeSide = (id: string, sourcePaneId: string): PaneNode => ({
+		type: "mergeSide",
+		id,
+		sourcePaneId,
+		side: "current",
+	});
+
+	it("prunes preview and mergeSide orphans from one mixed tree", () => {
+		const tree: PaneNode = {
+			type: "split",
+			id: "s1",
+			direction: "vertical",
+			ratio: 0.5,
+			first: leafA,
+			second: {
+				type: "split",
+				id: "s2",
+				direction: "vertical",
+				ratio: 0.5,
+				first: { type: "preview", id: "prev", sourcePaneId: "gone-1" },
+				second: mergeSide("side", "gone-2"),
+			},
+		};
+		expect(
+			findOrphanDerived(tree)
+				.map((n) => n.id)
+				.sort(),
+		).toEqual(["prev", "side"]);
+		expect(pruneOrphanDerived(tree)).toEqual(leafA);
+	});
+
+	it("keeps a mergeSide whose source resolves", () => {
+		const tree: PaneNode = {
+			type: "split",
+			id: "s1",
+			direction: "vertical",
+			ratio: 0.5,
+			first: leafA,
+			second: mergeSide("side", leafA.id),
+		};
+		expect(findOrphanDerived(tree)).toEqual([]);
+		expect(pruneOrphanDerived(tree)).toBe(tree);
+	});
+
+	it("findDerivedForSource discriminates by type", () => {
+		const tree: PaneNode = {
+			type: "split",
+			id: "s1",
+			direction: "vertical",
+			ratio: 0.5,
+			first: leafA,
+			second: mergeSide("side", leafA.id),
+		};
+		expect(findDerivedForSource(tree, leafA.id, "mergeSide")?.id).toBe("side");
+		expect(findDerivedForSource(tree, leafA.id, "preview")).toBeNull();
 	});
 });

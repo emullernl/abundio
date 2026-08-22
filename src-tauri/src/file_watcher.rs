@@ -43,14 +43,40 @@ fn is_dot_git_dir(path: &Path) -> bool {
 /// commands with `--no-optional-locks` still touch the index occasionally;
 /// we don't want those to trigger full git-change events.
 fn is_meaningful_git_change(path: &Path) -> bool {
-    let s = path.to_string_lossy();
-    s.contains(".git/HEAD")
-        || s.contains(".git/refs/")
-        || s.contains(".git/packed-refs")
-        || s.contains(".git/MERGE_HEAD")
-        || s.contains(".git/REBASE_HEAD")
-        || s.contains(".git/CHERRY_PICK_HEAD")
-        || s.contains(".git/COMMIT_EDITMSG")
+    // Match on path *components*, never on a substring of the rendered path.
+    // Two reasons: in a linked worktree these files live under
+    // `.git/worktrees/<name>/`, so a `.git/`-prefixed substring never appears;
+    // and a forward-slash substring never matches on Windows at all, so a plain
+    // branch-ref update would go unnoticed there.
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if matches!(
+        name,
+        "HEAD" | "MERGE_HEAD" | "REBASE_HEAD" | "CHERRY_PICK_HEAD" | "COMMIT_EDITMSG"
+            | "packed-refs"
+    ) {
+        return true;
+    }
+    // Anything under a `refs` directory: heads, remotes, tags.
+    path.components()
+        .any(|c| matches!(c, Component::Normal(s) if s == "refs"))
+}
+
+/// The repository's gitdir when it lies *outside* `root_path` — i.e. this
+/// workspace is a linked worktree. `None` for a main worktree (whose gitdir is
+/// the `.git` directory already covered by the recursive watch) or a non-repo.
+/// Resolved once, when the watch is established. Converting a workspace into a
+/// worktree (or `git worktree add`-ing it) afterwards is not picked up until the
+/// watcher is recreated — acceptable because workspaces are watched on open.
+fn external_gitdir(root_path: &str) -> Option<std::path::PathBuf> {
+    let repo = git2::Repository::discover(root_path).ok()?;
+    let gitdir = repo.path().to_path_buf();
+    let root = std::fs::canonicalize(root_path).ok()?;
+    let canonical = std::fs::canonicalize(&gitdir).unwrap_or(gitdir);
+    if canonical.starts_with(&root) {
+        None
+    } else {
+        Some(canonical)
+    }
 }
 
 struct WatcherEntry {
@@ -101,6 +127,17 @@ impl FileWatcher {
         watcher
             .watch(Path::new(root_path), RecursiveMode::Recursive)
             .map_err(|e| AbundioError::Watcher(e.to_string()))?;
+
+        // A *linked* worktree's gitdir lives at `<repo>/.git/worktrees/<name>/`,
+        // outside this workspace folder — so MERGE_HEAD/REBASE_HEAD changes there
+        // would never reach the recursive watch above. Without this, finishing a
+        // merge with `git merge --continue` (which touches no file in the
+        // worktree) leaves the UI believing the merge is still running.
+        if let Some(gitdir) = external_gitdir(root_path) {
+            // Best-effort: a missing or unreadable gitdir just means no second
+            // watch, which is the pre-existing behaviour.
+            let _ = watcher.watch(&gitdir, RecursiveMode::Recursive);
+        }
 
         // Spawn debounce thread
         let root = root_path.to_string();
@@ -298,6 +335,110 @@ mod tests {
         // Children of `.git` are not the dir itself.
         assert!(!is_dot_git_dir(Path::new("/projects/myapp/.git/HEAD")));
         assert!(!is_dot_git_dir(Path::new("/projects/myapp/src/main.rs")));
+    }
+
+    #[test]
+    fn meaningful_git_change_matches_main_worktree_paths() {
+        assert!(is_meaningful_git_change(Path::new("/p/app/.git/HEAD")));
+        assert!(is_meaningful_git_change(Path::new("/p/app/.git/MERGE_HEAD")));
+        assert!(is_meaningful_git_change(Path::new("/p/app/.git/REBASE_HEAD")));
+        assert!(is_meaningful_git_change(Path::new("/p/app/.git/CHERRY_PICK_HEAD")));
+        assert!(is_meaningful_git_change(Path::new("/p/app/.git/packed-refs")));
+        assert!(is_meaningful_git_change(Path::new("/p/app/.git/refs/heads/main")));
+        assert!(is_meaningful_git_change(Path::new(
+            "/p/app/.git/refs/remotes/origin/main"
+        )));
+        assert!(is_meaningful_git_change(Path::new("/p/app/.git/refs/tags/v1")));
+    }
+
+    #[test]
+    fn meaningful_git_change_matches_refs_by_component_not_substring() {
+        // Built up componentwise so the assertion holds on Windows too, where a
+        // rendered path uses backslashes and a "/refs/" substring never matches.
+        let mut p = std::path::PathBuf::from("C:");
+        for part in ["repo", ".git", "refs", "heads", "feature"] {
+            p.push(part);
+        }
+        assert!(is_meaningful_git_change(&p));
+
+        // A file merely *named* refs is not a ref directory.
+        let mut not_refs = std::path::PathBuf::from("/p/app/.git");
+        not_refs.push("refs.lock");
+        assert!(!is_meaningful_git_change(&not_refs));
+    }
+
+    #[test]
+    fn meaningful_git_change_matches_linked_worktree_paths() {
+        // A linked worktree's gitdir is `<repo>/.git/worktrees/<name>/`, so the
+        // old `.git/MERGE_HEAD` substring never matched and finishing a merge
+        // there left the UI stale.
+        assert!(is_meaningful_git_change(Path::new(
+            "/p/app/.git/worktrees/feat-x/MERGE_HEAD"
+        )));
+        assert!(is_meaningful_git_change(Path::new(
+            "/p/app/.git/worktrees/feat-x/REBASE_HEAD"
+        )));
+        assert!(is_meaningful_git_change(Path::new(
+            "/p/app/.git/worktrees/feat-x/HEAD"
+        )));
+    }
+
+    #[test]
+    fn meaningful_git_change_still_ignores_the_index() {
+        // Read-only git commands touch the index constantly; forwarding those
+        // would reintroduce the churn the filter exists to suppress.
+        assert!(!is_meaningful_git_change(Path::new("/p/app/.git/index")));
+        assert!(!is_meaningful_git_change(Path::new("/p/app/.git/index.lock")));
+        assert!(!is_meaningful_git_change(Path::new(
+            "/p/app/.git/worktrees/feat-x/index"
+        )));
+        assert!(!is_meaningful_git_change(Path::new("/p/app/.git/config")));
+    }
+
+    #[test]
+    fn external_gitdir_is_none_for_a_main_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        // The gitdir is `<root>/.git`, already covered by the recursive watch.
+        assert!(external_gitdir(root).is_none());
+    }
+
+    #[test]
+    fn external_gitdir_is_some_for_a_linked_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+        let git = |args: &[&str], cwd: &str| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+        };
+        git(&["init"], root);
+        git(&["config", "user.email", "t@example.com"], root);
+        git(&["config", "user.name", "T"], root);
+        std::fs::write(dir.path().join("a.txt"), "hello\n").unwrap();
+        git(&["add", "."], root);
+        git(&["commit", "-m", "init"], root);
+
+        let linked = dir.path().join("wt");
+        git(
+            &["worktree", "add", linked.to_str().unwrap(), "-b", "feat"],
+            root,
+        );
+
+        let found = external_gitdir(linked.to_str().unwrap());
+        assert!(found.is_some(), "linked worktree gitdir should be external");
+        let found = found.unwrap();
+        assert!(
+            found.to_string_lossy().contains("worktrees"),
+            "expected a worktrees gitdir, got {found:?}"
+        );
     }
 
     #[test]

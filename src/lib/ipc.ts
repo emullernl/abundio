@@ -229,10 +229,34 @@ export const tabs = {
 	delete: (id: string) => invoke<void>("tab_delete", { id }),
 };
 
+/** A suspended multi-step git operation. Read-only: Abundio never continues
+ *  or aborts one — it only reports that finishing it is still the user's move. */
+export type GitOperation = "merge" | "rebase" | "cherry_pick" | "revert";
+
+/** The index's conflict stages for one unmerged path. `ours`/`theirs` keep
+ *  git's index vocabulary on this side of the boundary; the UI says Current /
+ *  Incoming, and for marker-less conflicts names neither side (ADR-0029). */
+export interface GitConflictFile {
+	filePath: string;
+	kind:
+		| "both_modified"
+		| "deleted_by_us"
+		| "deleted_by_them"
+		| "both_added"
+		| "added_by_us"
+		| "added_by_them"
+		| "none";
+	isBinary: boolean;
+	base: string | null;
+	ours: string | null;
+	theirs: string | null;
+}
+
 export interface GitFetchBundle {
 	changedFiles: GitChangedFile[];
 	branchInfo: BranchInfo;
 	statusFingerprint: string;
+	operationInProgress: GitOperation | null;
 }
 
 /** Line/file churn between two worktree tree snapshots — a per-Turn working-tree
@@ -280,6 +304,20 @@ export const git = {
 			section,
 			baseBranch: baseBranch ?? null,
 		}),
+
+	/** The conflict stages of an unmerged path. The inline UX needs none of
+	 *  these — the working file already carries both sides — so this is for the
+	 *  conflict *kind*, binary detection, and the Merge view's side panes. */
+	conflictFile: (cwd: string, filePath: string) =>
+		invoke<GitConflictFile>("git_conflict_file", { cwd, filePath }),
+
+	/** `git add <path>` — Abundio's only write to git.
+	 *
+	 *  Callers MUST follow this with an explicit `fetchChanges`: `.git/index` is
+	 *  deliberately excluded from the file watcher (read-only git commands touch
+	 *  it constantly), so the Rust scheduler never sees a staging write. */
+	stagePath: (cwd: string, filePath: string) =>
+		invoke<void>("git_stage_path", { cwd, filePath }),
 
 	branchInfo: (cwd: string) => invoke<BranchInfo>("git_branch_info", { cwd }),
 
