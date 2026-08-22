@@ -159,6 +159,88 @@ fn resolve_base_branch(
     }
 }
 
+/// Drop entries for paths that are unmerged.
+///
+/// A conflicted path has no stage 0, so its staged/unstaged/untracked rows are
+/// meaningless — and libgit2's diff APIs are not consistent across versions
+/// about omitting them, so we do it explicitly rather than trusting them to.
+fn retain_unconflicted(
+    files: Vec<GitChangedFile>,
+    conflicted: &std::collections::HashSet<String>,
+) -> Vec<GitChangedFile> {
+    if conflicted.is_empty() {
+        return files;
+    }
+    files
+        .into_iter()
+        .filter(|f| !conflicted.contains(&f.path))
+        .collect()
+}
+
+/// Unmerged paths, straight from the index's conflict stages.
+///
+/// Sourced from `index.conflicts()` rather than a `Status::CONFLICTED` walk:
+/// it is O(conflicts) against an already-open index instead of a full
+/// working-tree scan. Line counts are deliberately zero — an unmerged path has
+/// no stage 0, so there is no honest numstat to report.
+fn conflicted_files(repo: &Repository) -> Vec<GitChangedFile> {
+    let Ok(index) = repo.index() else {
+        return Vec::new();
+    };
+    if !index.has_conflicts() {
+        return Vec::new();
+    }
+    let Ok(conflicts) = index.conflicts() else {
+        return Vec::new();
+    };
+    let mut seen: Vec<String> = Vec::new();
+    for conflict in conflicts.flatten() {
+        // Take the path from whichever stage is present: a delete conflict is
+        // missing `our` or `their`, an add/add is missing `ancestor`.
+        let entry = conflict
+            .our
+            .as_ref()
+            .or(conflict.their.as_ref())
+            .or(conflict.ancestor.as_ref());
+        let Some(entry) = entry else { continue };
+        let path = String::from_utf8_lossy(&entry.path).to_string();
+        if !seen.contains(&path) {
+            seen.push(path);
+        }
+    }
+    seen.sort();
+    seen.into_iter()
+        .map(|path| GitChangedFile {
+            path,
+            status: "U".to_string(),
+            additions: 0,
+            deletions: 0,
+            section: "conflicted".to_string(),
+        })
+        .collect()
+}
+
+/// The multi-step git operation currently suspended in this repository, if any.
+///
+/// Uses `repo.state()` rather than probing for `.git/MERGE_HEAD` and friends:
+/// libgit2 resolves the correct gitdir, so this is right in a linked worktree
+/// (whose state files live under `<repo>/.git/worktrees/<name>/`), and it
+/// distinguishes the rebase and sequencer variants that path probing flattens.
+pub fn compute_operation_in_progress_sync(cwd: &str) -> Result<Option<String>, AbundioError> {
+    use git2::RepositoryState as S;
+    let repo = open_repo(cwd)?;
+    Ok(match repo.state() {
+        S::Clean => None,
+        S::Merge => Some("merge".to_string()),
+        S::Rebase | S::RebaseInteractive | S::RebaseMerge => Some("rebase".to_string()),
+        S::CherryPick | S::CherryPickSequence => Some("cherry_pick".to_string()),
+        S::Revert | S::RevertSequence => Some("revert".to_string()),
+        // Bisect and the mailbox-apply states are not conflict resolution and
+        // have no "continue" advice worth showing.
+        _ => None,
+    })
+}
+
 pub fn compute_changed_files_sync(
     cwd: &str,
     base_branch: Option<String>,
@@ -168,23 +250,37 @@ pub fn compute_changed_files_sync(
 
     let mut all_files = Vec::new();
 
-    // 1. against_base: merge-base of HEAD..base, diffed to HEAD.
+    // 1. conflicted: unmerged index entries. First because it is blocking, and
+    //    because a stable leading section keeps `filesEqual` on the frontend
+    //    trivially order-deterministic.
+    let conflicted = conflicted_files(&repo);
+    let conflicted_paths: std::collections::HashSet<String> =
+        conflicted.iter().map(|f| f.path.clone()).collect();
+    all_files.extend(conflicted);
+
+    // 2. against_base: merge-base of HEAD..base, diffed to HEAD.
+    //    Conflicted paths are deliberately NOT removed here: this section
+    //    compares committed history on a different axis, and dropping them
+    //    would silently shrink the branch review mid-merge.
     if let Ok(files) = diff_against_base(&repo, &base) {
         all_files.extend(files);
     }
 
-    // 2. staged: HEAD tree vs index.
+    // 3. staged: HEAD tree vs index.
     if let Ok(files) = diff_staged(&repo) {
-        all_files.extend(files);
+        all_files.extend(retain_unconflicted(files, &conflicted_paths));
     }
 
-    // 3. unstaged: index vs working tree.
+    // 4. unstaged: index vs working tree.
     if let Ok(files) = diff_unstaged(&repo) {
-        all_files.extend(files);
+        all_files.extend(retain_unconflicted(files, &conflicted_paths));
     }
 
-    // 4. untracked: from statuses (WT_NEW flag).
-    all_files.extend(untracked_files(&repo));
+    // 5. untracked: from statuses (WT_NEW flag).
+    all_files.extend(retain_unconflicted(
+        untracked_files(&repo),
+        &conflicted_paths,
+    ));
 
     Ok(all_files)
 }
@@ -427,6 +523,11 @@ pub fn file_blob_at_index(cwd: &str, file_path: &str) -> String {
     blob_string_at_index(&repo, file_path).unwrap_or_default()
 }
 
+/// Read a path's blob from index **stage 0** (the ordinary, merged entry).
+///
+/// Stage 0 is intentional: this backs the staged/unstaged diffs, which are only
+/// meaningful for a merged path. An unmerged path has no stage 0 and correctly
+/// yields `None` here — see `blob_string_at_stage` for the conflict stages.
 fn blob_string_at_index(repo: &Repository, file_path: &str) -> Option<String> {
     let index = repo.index().ok()?;
     let entry = index.get_path(std::path::Path::new(file_path), 0)?;

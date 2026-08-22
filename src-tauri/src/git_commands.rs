@@ -145,6 +145,10 @@ pub struct GitFetchBundle {
     pub changed_files: Vec<GitChangedFile>,
     pub branch_info: BranchInfo,
     pub status_fingerprint: String,
+    /// The suspended multi-step git operation, if any: "merge" | "rebase" |
+    /// "cherry_pick" | "revert". Read-only — Abundio never continues or aborts
+    /// one, it only says that finishing it is still the user's move.
+    pub operation_in_progress: Option<String>,
 }
 
 /// Single-IPC bundle for the git-tab refresh. Returns the three pieces of
@@ -159,11 +163,13 @@ pub async fn git_fetch_bundle(
     base_branch: Option<String>,
 ) -> Result<GitFetchBundle, AbundioError> {
     tokio::task::spawn_blocking(move || {
-        let (changed_files_res, branch_info_res, fingerprint_res) = std::thread::scope(|s| {
+        let (changed_files_res, branch_info_res, fingerprint_res, op_res) =
+            std::thread::scope(|s| {
             let h_changed =
                 s.spawn(|| compute_changed_files_sync(&cwd, base_branch.clone()));
             let h_branch = s.spawn(|| compute_branch_info_sync(&cwd));
             let h_fp = s.spawn(|| compute_status_fingerprint_sync(&cwd));
+            let h_op = s.spawn(|| git_libgit2::compute_operation_in_progress_sync(&cwd));
             (
                 h_changed
                     .join()
@@ -173,12 +179,17 @@ pub async fn git_fetch_bundle(
                     .unwrap_or_else(|_| Err(AbundioError::Git("branch_info panic".into()))),
                 h_fp.join()
                     .unwrap_or_else(|_| Err(AbundioError::Git("fingerprint panic".into()))),
+                h_op.join()
+                    .unwrap_or_else(|_| Err(AbundioError::Git("operation state panic".into()))),
             )
         });
         Ok(GitFetchBundle {
             changed_files: changed_files_res?,
             branch_info: branch_info_res?,
             status_fingerprint: fingerprint_res?,
+            // Best-effort: a repo we can't read the state of shows no line
+            // rather than failing the whole bundle.
+            operation_in_progress: op_res.unwrap_or(None),
         })
     })
     .await
@@ -376,6 +387,51 @@ mod tests {
     /// Minimal subprocess git for test setup. Production code is pure libgit2;
     /// tests still shell out to `git` because constructing initial commits +
     /// configs via libgit2 is verbose and there's no perf concern in tests.
+    /// Like `run_git_test`, but tolerates a non-zero exit.
+    ///
+    /// Needed because `git merge` exits 1 when it stops on a conflict — the
+    /// whole point of the conflict fixtures — and `run_git_test` panics on that.
+    fn run_git_test_allow_fail(cwd: &str, args: &[&str]) -> std::process::Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("git command failed to spawn")
+    }
+
+    fn init_repo_test(cwd: &str) {
+        run_git_test(cwd, &["init", "-b", "main"]);
+        run_git_test(cwd, &["config", "user.email", "t@example.com"]);
+        run_git_test(cwd, &["config", "user.name", "T"]);
+        run_git_test(cwd, &["config", "commit.gpgsign", "false"]);
+    }
+
+    /// A repo stopped mid-merge with `file.txt` unmerged (base/ours/theirs =
+    /// "base\n"/"ours\n"/"theirs\n") and `calm.txt` committed and untouched.
+    fn make_conflicted_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        init_repo_test(cwd);
+
+        std::fs::write(dir.path().join("file.txt"), "base\n").unwrap();
+        std::fs::write(dir.path().join("calm.txt"), "calm\n").unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "base"]);
+
+        run_git_test(cwd, &["checkout", "-b", "feature"]);
+        std::fs::write(dir.path().join("file.txt"), "ours\n").unwrap();
+        run_git_test(cwd, &["commit", "-am", "ours"]);
+
+        run_git_test(cwd, &["checkout", "main"]);
+        std::fs::write(dir.path().join("file.txt"), "theirs\n").unwrap();
+        run_git_test(cwd, &["commit", "-am", "theirs"]);
+
+        run_git_test(cwd, &["checkout", "feature"]);
+        let out = run_git_test_allow_fail(cwd, &["merge", "main"]);
+        assert!(!out.status.success(), "merge was expected to conflict");
+        dir
+    }
+
     fn run_git_test(cwd: &str, args: &[&str]) -> String {
         let output = Command::new("git")
             .args(args)
@@ -569,6 +625,148 @@ mod tests {
         assert_eq!(diff.original, "");
         assert_eq!(diff.modified, "line1\nline2\n");
         assert_eq!(diff.file_path, "untracked.txt");
+    }
+
+    #[test]
+    fn conflicted_section_lists_the_unmerged_path_once() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let files = git_libgit2::compute_changed_files_sync(cwd, Some("main".into())).unwrap();
+
+        let conflicted: Vec<_> = files
+            .iter()
+            .filter(|f| f.section == "conflicted")
+            .collect();
+        assert_eq!(conflicted.len(), 1, "got {files:#?}");
+        assert_eq!(conflicted[0].path, "file.txt");
+        assert_eq!(conflicted[0].status, "U");
+        assert_eq!(conflicted[0].additions, 0);
+        assert_eq!(conflicted[0].deletions, 0);
+
+        // Deduped out of the three worktree/index sections: an unmerged path
+        // has no stage 0, so it has no honest entry there.
+        for section in ["staged", "unstaged", "untracked"] {
+            assert!(
+                !files
+                    .iter()
+                    .any(|f| f.section == section && f.path == "file.txt"),
+                "file.txt should not appear in {section}: {files:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn conflicted_section_is_ordered_first() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let files = git_libgit2::compute_changed_files_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(files.first().map(|f| f.section.as_str()), Some("conflicted"));
+    }
+
+    #[test]
+    fn against_base_still_lists_a_conflicted_path() {
+        // Deliberate: against_base compares committed history on a different
+        // axis. Dropping the path would silently shrink the branch review
+        // mid-merge and restore it afterwards.
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let files = git_libgit2::compute_changed_files_sync(cwd, Some("main".into())).unwrap();
+        assert!(
+            files
+                .iter()
+                .any(|f| f.section == "against_base" && f.path == "file.txt"),
+            "expected file.txt under against_base: {files:#?}"
+        );
+    }
+
+    #[test]
+    fn unconflicted_files_are_untouched_by_the_dedup() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("calm.txt"), "edited\n").unwrap();
+        let files = git_libgit2::compute_changed_files_sync(cwd, Some("main".into())).unwrap();
+        assert!(
+            files
+                .iter()
+                .any(|f| f.section == "unstaged" && f.path == "calm.txt"),
+            "calm.txt should still show as unstaged: {files:#?}"
+        );
+    }
+
+    #[test]
+    fn clean_repo_has_no_conflicted_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        init_repo_test(cwd);
+        std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "init"]);
+
+        let files = git_libgit2::compute_changed_files_sync(cwd, Some("main".into())).unwrap();
+        assert!(!files.iter().any(|f| f.section == "conflicted"));
+    }
+
+    #[test]
+    fn fingerprint_changes_when_a_conflict_is_resolved() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let before = git_libgit2::compute_status_fingerprint_sync(cwd).unwrap();
+        std::fs::write(dir.path().join("file.txt"), "resolved\n").unwrap();
+        run_git_test(cwd, &["add", "file.txt"]);
+        let after = git_libgit2::compute_status_fingerprint_sync(cwd).unwrap();
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn operation_in_progress_reports_merge_then_clears() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        assert_eq!(
+            git_libgit2::compute_operation_in_progress_sync(cwd).unwrap(),
+            Some("merge".to_string())
+        );
+        run_git_test(cwd, &["merge", "--abort"]);
+        assert_eq!(
+            git_libgit2::compute_operation_in_progress_sync(cwd).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn conflict_in_a_linked_worktree_is_seen() {
+        // libgit2 resolves the per-worktree gitdir, so both the conflicted
+        // section and the operation state must be correct here.
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        init_repo_test(cwd);
+        std::fs::write(dir.path().join("file.txt"), "base\n").unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "base"]);
+        run_git_test(cwd, &["checkout", "-b", "feature"]);
+        std::fs::write(dir.path().join("file.txt"), "ours\n").unwrap();
+        run_git_test(cwd, &["commit", "-am", "ours"]);
+        run_git_test(cwd, &["checkout", "main"]);
+        std::fs::write(dir.path().join("file.txt"), "theirs\n").unwrap();
+        run_git_test(cwd, &["commit", "-am", "theirs"]);
+
+        let linked = dir.path().join("wt");
+        let linked_s = linked.to_str().unwrap();
+        run_git_test(cwd, &["worktree", "add", linked_s, "feature"]);
+        let out = run_git_test_allow_fail(linked_s, &["merge", "main"]);
+        assert!(!out.status.success(), "merge was expected to conflict");
+
+        let files =
+            git_libgit2::compute_changed_files_sync(linked_s, Some("main".into())).unwrap();
+        assert!(
+            files
+                .iter()
+                .any(|f| f.section == "conflicted" && f.path == "file.txt"),
+            "linked worktree conflict not seen: {files:#?}"
+        );
+        assert_eq!(
+            git_libgit2::compute_operation_in_progress_sync(linked_s).unwrap(),
+            Some("merge".to_string())
+        );
     }
 
     #[test]

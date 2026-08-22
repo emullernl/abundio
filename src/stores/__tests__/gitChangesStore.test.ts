@@ -146,3 +146,98 @@ describe("gitChangesStore git-repo transition → worktree facts", () => {
 		expect(git.workspacesSummary).not.toHaveBeenCalled();
 	});
 });
+
+// biome-ignore lint/suspicious/noExplicitAny: minimal changed-file stub
+const file = (path: string, section: string, status = "M"): any => ({
+	path,
+	section,
+	status,
+	additions: 0,
+	deletions: 0,
+});
+
+describe("conflicted paths and operation state", () => {
+	beforeEach(() => {
+		useWorkspaceStore.setState({
+			workspaces: [mkWorkspace("ws-1", "/repo"), mkWorkspace("ws-2", "/other")],
+			activeWorkspaceId: "ws-1",
+			// biome-ignore lint/suspicious/noExplicitAny: partial store
+		} as any);
+		useWorkspaceGitStore.setState({ byWorkspaceId: {} });
+	});
+
+	it("writes conflictedPaths for a background workspace", () => {
+		// The pane reads its own workspace's truth: background workspaces stay
+		// mounted (ADR-0002), so this must be populated even when ws-2 is not
+		// the active workspace.
+		useGitChangesStore.getState().applyBundle("ws-2", {
+			...bundle(),
+			changedFiles: [file("a.txt", "conflicted", "U"), file("b.txt", "staged")],
+		});
+
+		expect(
+			useWorkspaceGitStore.getState().byWorkspaceId["ws-2"]?.conflictedPaths,
+		).toEqual(["a.txt"]);
+		// ...and the singleton, which mirrors the *active* workspace, is untouched.
+		expect(useGitChangesStore.getState().changedFiles).toEqual([]);
+	});
+
+	it("clears conflictedPaths once the conflict is resolved", () => {
+		const store = useGitChangesStore.getState();
+		store.applyBundle("ws-1", {
+			...bundle(),
+			changedFiles: [file("a.txt", "conflicted", "U")],
+		});
+		expect(
+			useWorkspaceGitStore.getState().byWorkspaceId["ws-1"]?.conflictedPaths,
+		).toEqual(["a.txt"]);
+
+		store.applyBundle("ws-1", {
+			...bundle(),
+			changedFiles: [file("a.txt", "staged")],
+		});
+		expect(
+			useWorkspaceGitStore.getState().byWorkspaceId["ws-1"]?.conflictedPaths,
+		).toEqual([]);
+	});
+
+	it("re-renders when a file only changes section", () => {
+		// Pins the `filesEqual` field list: it must keep comparing `section`, or
+		// unstaged -> conflicted -> staged would not repaint the tab.
+		const store = useGitChangesStore.getState();
+		store.applyBundle("ws-1", {
+			...bundle(),
+			changedFiles: [file("a.txt", "unstaged")],
+		});
+		store.applyBundle("ws-1", {
+			...bundle(),
+			changedFiles: [file("a.txt", "conflicted", "U")],
+		});
+		expect(useGitChangesStore.getState().changedFiles[0]?.section).toBe(
+			"conflicted",
+		);
+	});
+
+	it("carries operationInProgress onto the active workspace", () => {
+		useGitChangesStore.getState().applyBundle("ws-1", {
+			...bundle(),
+			operationInProgress: "rebase",
+		});
+		expect(useGitChangesStore.getState().operationInProgress).toBe("rebase");
+
+		useGitChangesStore.getState().applyBundle("ws-1", {
+			...bundle(),
+			operationInProgress: null,
+		});
+		expect(useGitChangesStore.getState().operationInProgress).toBeNull();
+	});
+
+	it("hydrates operationInProgress when switching back to a workspace", () => {
+		const store = useGitChangesStore.getState();
+		store.applyBundle("ws-1", { ...bundle(), operationInProgress: "merge" });
+		store.clear();
+		expect(useGitChangesStore.getState().operationInProgress).toBeNull();
+		store.hydrateFromWorkspace("ws-1");
+		expect(useGitChangesStore.getState().operationInProgress).toBe("merge");
+	});
+});

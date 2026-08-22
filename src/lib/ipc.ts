@@ -229,10 +229,15 @@ export const tabs = {
 	delete: (id: string) => invoke<void>("tab_delete", { id }),
 };
 
+/** A suspended multi-step git operation. Read-only: Abundio never continues
+ *  or aborts one — it only reports that finishing it is still the user's move. */
+export type GitOperation = "merge" | "rebase" | "cherry_pick" | "revert";
+
 export interface GitFetchBundle {
 	changedFiles: GitChangedFile[];
 	branchInfo: BranchInfo;
 	statusFingerprint: string;
+	operationInProgress: GitOperation | null;
 }
 
 /** Line/file churn between two worktree tree snapshots — a per-Turn working-tree

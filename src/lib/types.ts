@@ -205,7 +205,10 @@ export interface GitChangedFile {
 	status: string;
 	additions: number;
 	deletions: number;
-	section: "against_base" | "staged" | "unstaged";
+	/** Which pair of git endpoints this row was produced by — except
+	 *  "conflicted", which is a *state* rather than an endpoint pair and is the
+	 *  deliberate exception in this union (see CONTEXT.md). */
+	section: "conflicted" | "against_base" | "staged" | "unstaged" | "untracked";
 }
 
 export interface GitFileDiff {

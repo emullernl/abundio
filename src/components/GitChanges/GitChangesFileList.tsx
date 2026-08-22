@@ -15,6 +15,10 @@ const SECTION_ORDER: Array<{
 	key: string;
 	label: (base: string | null) => string;
 }> = [
+	// Conflicted leads: it is blocking, and a stable first section keeps the
+	// backend's array order — which `filesEqual` depends on — easy to reason
+	// about. Note this section is a *state*, not an endpoint pair like the rest.
+	{ key: "conflicted", label: () => "Conflicted" },
 	{ key: "against_base", label: (base) => `Against ${base ?? "base"}` },
 	{ key: "staged", label: () => "Staged" },
 	{ key: "unstaged", label: () => "Unstaged" },

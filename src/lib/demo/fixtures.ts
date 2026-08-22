@@ -758,6 +758,7 @@ export function gitBundleForCwd(cwd: string): GitFetchBundle {
 		changedFiles: entry?.files ?? [],
 		branchInfo: entry?.branch ?? CLEAN_BRANCH,
 		statusFingerprint: `demo-fp-${cwd}`,
+		operationInProgress: null,
 	};
 }
 

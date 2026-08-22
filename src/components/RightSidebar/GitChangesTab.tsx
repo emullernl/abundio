@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { git } from "../../lib/ipc";
+import { type GitOperation, git } from "../../lib/ipc";
 import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -11,6 +11,22 @@ import { GitChangesFileList } from "../GitChanges/GitChangesFileList";
 import { NotAGitRepoEmpty } from "../GitChanges/NotAGitRepoEmpty";
 import { RefreshCw } from "../Icons";
 
+/** Abundio never runs these — the line exists so the user knows the operation
+ *  is still open and what finishes it. See ADR-0029. */
+const OPERATION_LABELS: Record<GitOperation, string> = {
+	merge: "Merge",
+	rebase: "Rebase",
+	cherry_pick: "Cherry-pick",
+	revert: "Revert",
+};
+
+const OPERATION_CONTINUE: Record<GitOperation, string> = {
+	merge: "git merge --continue",
+	rebase: "git rebase --continue",
+	cherry_pick: "git cherry-pick --continue",
+	revert: "git revert --continue",
+};
+
 export function GitChangesTab() {
 	const changedFiles = useGitChangesStore((s) => s.changedFiles);
 	const baseBranch = useGitChangesStore((s) => s.baseBranch);
@@ -18,6 +34,7 @@ export function GitChangesTab() {
 	const loading = useGitChangesStore((s) => s.loading);
 	const error = useGitChangesStore((s) => s.error);
 	const fetchChanges = useGitChangesStore((s) => s.fetchChanges);
+	const operationInProgress = useGitChangesStore((s) => s.operationInProgress);
 
 	const [selectedFile, setSelectedFile] = useState<GitChangedFile | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
@@ -36,6 +53,13 @@ export function GitChangesTab() {
 	async function handleSelectFile(file: GitChangedFile) {
 		if (!cwd || !activeWorkspaceId) return;
 		setSelectedFile(file);
+		// A conflicted file is something you resolve, not something you review —
+		// so its primary action opens the editable text pane. This is also the
+		// only section `git_file_diff` has no meaningful endpoint pair for.
+		if (file.section === "conflicted") {
+			handleOpenFile(file);
+			return;
+		}
 		try {
 			const diff = await git.fileDiff(
 				cwd,
@@ -156,6 +180,32 @@ export function GitChangesTab() {
 					/>
 				</button>
 			</div>
+
+			{operationInProgress && (
+				<div
+					className="flex items-baseline gap-1.5 py-1.5 flex-shrink-0"
+					style={{
+						borderBottom: "1px solid var(--border)",
+						backgroundColor:
+							"color-mix(in srgb, var(--warning) 12%, transparent)",
+						paddingLeft: 12,
+						paddingRight: 12,
+					}}
+				>
+					<span style={{ fontSize: 11, color: "var(--fg-primary)" }}>
+						{OPERATION_LABELS[operationInProgress]} in progress — finish with
+					</span>
+					<span
+						style={{
+							fontSize: 11,
+							color: "var(--fg-primary)",
+							fontFamily: "var(--font-mono)",
+						}}
+					>
+						{OPERATION_CONTINUE[operationInProgress]}
+					</span>
+				</div>
+			)}
 
 			{currentBranch && (
 				<div

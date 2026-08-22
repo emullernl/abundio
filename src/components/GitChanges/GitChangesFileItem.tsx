@@ -14,6 +14,7 @@ const STATUS_COLORS: Record<string, string> = {
 	D: "var(--error)",
 	R: "var(--accent)",
 	"?": "var(--fg-secondary)",
+	U: "var(--error)",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -22,6 +23,7 @@ const STATUS_LABELS: Record<string, string> = {
 	D: "D",
 	R: "R",
 	"?": "U",
+	U: "U",
 };
 
 function fileName(path: string): string {
@@ -44,6 +46,10 @@ export function GitChangesFileItem({
 	const label = STATUS_LABELS[file.status] ?? file.status;
 	const dir = dirPath(file.path);
 	const isDeleted = file.status === "D";
+	// A conflicted row's own click already opens the text pane, so the nested
+	// "Open File" button would be a duplicate of it.
+	const isConflicted = file.section === "conflicted";
+	const hideOpenFile = isDeleted || isConflicted;
 
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: div used intentionally for styling — hosts a nested "Open File" button
@@ -112,7 +118,7 @@ export function GitChangesFileItem({
 					</span>
 				)}
 			</span>
-			{isDeleted ? (
+			{hideOpenFile ? (
 				<span className="flex-shrink-0" style={{ width: 18, height: 18 }} />
 			) : (
 				<button

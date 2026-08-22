@@ -1,11 +1,12 @@
 import { create } from "zustand";
 import {
 	type GitFetchBundle,
+	type GitOperation,
 	git,
 	workspaces as workspacesApi,
 } from "../lib/ipc";
 import type { GitChangedFile } from "../lib/types";
-import { useWorkspaceGitStore } from "./workspaceGitStore";
+import { conflictedPathsOf, useWorkspaceGitStore } from "./workspaceGitStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
 let fetchGeneration = 0;
@@ -25,6 +26,7 @@ interface GitChangesCacheEntry {
 	baseBranch: string | null;
 	currentBranch: string | null;
 	availableBranches: string[];
+	operationInProgress: GitOperation | null;
 }
 
 const gitChangesCache = new Map<string, GitChangesCacheEntry>();
@@ -43,6 +45,7 @@ function emptyCacheEntry(): GitChangesCacheEntry {
 		baseBranch: null,
 		currentBranch: null,
 		availableBranches: [],
+		operationInProgress: null,
 	};
 }
 
@@ -73,6 +76,9 @@ interface GitChangesState {
 	error: string | null;
 	collapsedSections: Record<string, boolean>;
 	branchSelectorOpen: boolean;
+	/** The suspended git operation, surfaced as a single read-only line in the
+	 *  Git changes tab. Abundio never continues or aborts one. */
+	operationInProgress: GitOperation | null;
 	fetchChanges: (
 		cwd: string,
 		workspaceBaseBranch?: string | null,
@@ -111,6 +117,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 	error: null,
 	collapsedSections: {},
 	branchSelectorOpen: false,
+	operationInProgress: null,
 
 	fetchChanges: async (cwd, workspaceBaseBranch) => {
 		if (inFlightFetch) {
@@ -174,6 +181,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 				const totalAdd = files.reduce((s, f) => s + f.additions, 0);
 				const totalDel = files.reduce((s, f) => s + f.deletions, 0);
 				useWorkspaceGitStore.getState().setInfo(activeId, {
+					conflictedPaths: conflictedPathsOf(files),
 					isGitRepo: true,
 					currentBranch: branchInfo.currentBranch,
 					changedFileCount: files.length,
@@ -197,6 +205,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 				const activeId = useWorkspaceStore.getState().activeWorkspaceId;
 				if (activeId) {
 					useWorkspaceGitStore.getState().setInfo(activeId, {
+						conflictedPaths: [],
 						isGitRepo: false,
 						currentBranch: null,
 						changedFileCount: 0,
@@ -228,6 +237,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			changedFiles: files,
 			baseBranch: newBaseBranch,
 			currentBranch: branchInfo.currentBranch,
+			operationInProgress: bundle.operationInProgress,
 		});
 
 		// Always: sidebar chip — keeps WorkspaceItem accurate for background
@@ -235,6 +245,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 		const totalAdd = files.reduce((s, f) => s + f.additions, 0);
 		const totalDel = files.reduce((s, f) => s + f.deletions, 0);
 		useWorkspaceGitStore.getState().setInfo(workspaceId, {
+			conflictedPaths: conflictedPathsOf(files),
 			isGitRepo: true,
 			currentBranch: branchInfo.currentBranch,
 			changedFileCount: files.length,
@@ -288,6 +299,9 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 		if (state.currentBranch !== branchInfo.currentBranch) {
 			updates.currentBranch = branchInfo.currentBranch;
 		}
+		if (state.operationInProgress !== bundle.operationInProgress) {
+			updates.operationInProgress = bundle.operationInProgress;
+		}
 		set(updates);
 	},
 
@@ -295,6 +309,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 		if (notGitRepo) {
 			const wtStore = useWorkspaceGitStore.getState();
 			wtStore.setInfo(workspaceId, {
+				conflictedPaths: [],
 				isGitRepo: false,
 				currentBranch: null,
 				changedFileCount: 0,
@@ -374,6 +389,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			baseBranch: null,
 			currentBranch: null,
 			availableBranches: [],
+			operationInProgress: null,
 			loading: false,
 			error: null,
 			branchSelectorOpen: false,
@@ -387,6 +403,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			baseBranch: entry?.baseBranch ?? null,
 			currentBranch: entry?.currentBranch ?? null,
 			availableBranches: entry?.availableBranches ?? [],
+			operationInProgress: entry?.operationInProgress ?? null,
 			loading: false,
 			error: null,
 			branchSelectorOpen: false,

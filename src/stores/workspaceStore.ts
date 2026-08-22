@@ -354,6 +354,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					isGitRepo: true,
 					currentBranch: ws.lastBranch,
 					changedFileCount: 0,
+					conflictedPaths: [],
 					additions: 0,
 					deletions: 0,
 				};

@@ -6,12 +6,25 @@ import {
 } from "../lib/ipc";
 import type { WorktreeGroupFacts } from "../lib/worktreeGrouping";
 
+/** Repo-relative paths of the unmerged rows in a changed-file list. */
+export function conflictedPathsOf(
+	files: { path: string; section: string }[],
+): string[] {
+	return files.filter((f) => f.section === "conflicted").map((f) => f.path);
+}
+
 export type WorkspaceGitInfo = {
 	isGitRepo: boolean;
 	currentBranch: string | null;
 	changedFileCount: number;
 	additions: number;
 	deletions: number;
+	/** Repo-relative paths currently unmerged in the index. Lives here rather
+	 *  than in `gitChangesStore` because that store is a singleton mirroring only
+	 *  the Active workspace, while background workspaces stay *mounted* (ADR-0002)
+	 *  — a conflict pane in a hidden workspace must read its own workspace's
+	 *  truth, not whatever happens to be active. */
+	conflictedPaths: string[];
 };
 
 interface WorkspaceGitState {
@@ -80,7 +93,7 @@ function slugsFromSummaries(
 	return slugs;
 }
 
-export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
+export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 	byWorkspaceId: {},
 	worktreeFacts: {},
 	repoSlugsById: {},
@@ -104,6 +117,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 						changedFileCount: files.length,
 						additions,
 						deletions,
+						conflictedPaths: conflictedPathsOf(files),
 					},
 				},
 				inFlight: new Set([...s.inFlight].filter((id) => id !== workspaceId)),
@@ -123,6 +137,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 							changedFileCount: 0,
 							additions: 0,
 							deletions: 0,
+							conflictedPaths: [],
 						},
 					},
 					inFlight: new Set([...s.inFlight].filter((id) => id !== workspaceId)),
@@ -151,6 +166,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 		}
 		// Single state update for all workspaces at once — one React render cycle
 		const updates: Record<string, WorkspaceGitInfo> = {};
+		const existing = get().byWorkspaceId;
 		for (const s of summaries) {
 			updates[s.workspaceId] = {
 				isGitRepo: s.isGitRepo,
@@ -158,6 +174,10 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, _get) => ({
 				changedFileCount: s.changedFileCount,
 				additions: s.additions,
 				deletions: s.deletions,
+				// The batch summary carries no per-file data, so carry the
+				// existing conflict set forward rather than clobbering it —
+				// only `applyBundle`/`fetch` know the real answer.
+				conflictedPaths: existing[s.workspaceId]?.conflictedPaths ?? [],
 			};
 		}
 		set((state) => ({
