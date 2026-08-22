@@ -1,7 +1,9 @@
+import type { editor } from "monaco-editor";
 import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 	useSyncExternalStore,
 } from "react";
@@ -84,6 +86,9 @@ export function MergeSidePane({
 	useEffect(() => {
 		if (!relativePath) return;
 		let cancelled = false;
+		// Clear first: a stale failure would otherwise keep rendering "Could not
+		// read this side" over content that loaded perfectly well on retry.
+		setError(null);
 		git
 			.conflictFile(cwd, relativePath)
 			.then((c) => {
@@ -137,41 +142,57 @@ export function MergeSidePane({
 	// buffer: a side pane shows an index stage, which has nothing to edit. The
 	// command is registered on this editor so its handler is naturally scoped to
 	// this pane, and it reaches across via the source pane's live editor.
+	// Register the command exactly once per editor.
+	//
+	// `IStandaloneCodeEditor.addCommand` has no disposal counterpart — the entry
+	// lives as long as the editor — so this must not sit in an effect that
+	// depends on `ranges`, which is derived from the result pane's *live buffer*
+	// and therefore changes on every keystroke.
+	const commandIdRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (!editorReady) return;
+		const ed = getLiveEditor(paneId);
+		if (!ed || commandIdRef.current) return;
+		commandIdRef.current =
+			ed.addCommand(0, (_ctx: unknown, ...args: unknown[]) => {
+				// applyChoice re-parses from the result model itself, so no copy of
+				// the file is threaded across panes and nothing here goes stale.
+				const resultEditor = getLiveEditor(sourcePaneId);
+				if (!resultEditor) return;
+				applyChoice(resultEditor, args[0] as number, args[1] as ResolveChoice);
+			}) ?? null;
+	}, [editorReady, paneId, sourcePaneId]);
+
+	// Publishing the rows *is* cheap, so this one may track `ranges`.
 	useEffect(() => {
 		if (!editorReady || content == null) return;
-		const ed = getLiveEditor(paneId);
-		const uri = ed?.getModel()?.uri.toString();
-		if (!ed || !uri) return;
-
-		const commandId = ed.addCommand(0, (_ctx: unknown, ...args: unknown[]) => {
-			const resultEditor = getLiveEditor(sourcePaneId);
-			const source =
-				useExplorerStore.getState().filePanes[sourcePaneId]?.content;
-			if (!resultEditor || source == null) return;
-			applyChoice(
-				resultEditor,
-				parseConflicts(source),
-				args[0] as number,
-				args[1] as ResolveChoice,
-			);
-		});
-		if (!commandId) return;
-
+		const uri = getLiveEditor(paneId)?.getModel()?.uri.toString();
+		const commandId = commandIdRef.current;
+		if (!uri || !commandId) return;
 		setConflictLenses(uri, sideLensSpecs(ranges, side), commandId);
 		return () => clearConflictBlocks(uri);
-	}, [editorReady, content, paneId, sourcePaneId, ranges, side]);
+	}, [editorReady, content, paneId, ranges, side]);
 
 	// Mark every conflict region, emphasise the active one, dim the rest.
+	// One collection, updated in place. Creating a fresh one per render would
+	// churn on every keystroke in the result pane, for the same reason as above.
+	const decorationsRef = useRef<editor.IEditorDecorationsCollection | null>(
+		null,
+	);
 	useEffect(() => {
 		if (!editorReady || content == null) return;
 		const ed = getLiveEditor(paneId);
 		if (!ed) return;
+		if (!decorationsRef.current) {
+			decorationsRef.current = ed.createDecorationsCollection([]);
+		}
 		const lineCount = ed.getModel()?.getLineCount() ?? 1;
-		const collection = ed.createDecorationsCollection(
+		decorationsRef.current.set(
 			sideDecorations(ranges, activeBlock, lineCount, side),
 		);
-		return () => collection.clear();
 	}, [activeBlock, ranges, paneId, content, side, editorReady]);
+
+	useEffect(() => () => decorationsRef.current?.clear(), []);
 
 	// Scroll in lockstep with the result pane and the other sides.
 	//

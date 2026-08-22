@@ -77,6 +77,15 @@ export function ConflictToolbar({
 	// add/add conflict has no stage 1 to show.
 	const conflictHasBase = conflict === null || conflict.kind !== "both_added";
 
+	// A pane is reused when a different file is opened into it, so this component
+	// stays mounted with a new path. Without this it would keep claiming the new
+	// file was staged, with no way back to the actions.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: resetting *on* a path change is the point
+	useEffect(() => {
+		setStaged(false);
+		setError(null);
+	}, [relativePath]);
+
 	// Only the marker-less cases need the stages: which kind of conflict this is
 	// cannot be read off a file that has no markers to read.
 	useEffect(() => {
@@ -173,7 +182,7 @@ export function ConflictToolbar({
 				>
 					Delete the file
 				</button>
-				{error && <Err />}
+				{error && <Err message={error} />}
 			</Bar>
 		);
 	}
@@ -286,7 +295,7 @@ export function ConflictToolbar({
 			>
 				{busy ? "Staging…" : "Resolve & stage"}
 			</button>
-			{error && <Err />}
+			{error && <Err message={error} />}
 		</Bar>
 	);
 }
@@ -370,6 +379,12 @@ function Bar({ children }: { children: React.ReactNode }) {
 	return <div className="abundio-ctb">{children}</div>;
 }
 
-function Err() {
-	return <span className="abundio-ctb__error">Failed</span>;
+/** The captured message is the only thing the user can act on when the one
+ *  write path in the feature fails, so it must not be swallowed. */
+function Err({ message }: { message: string }) {
+	return (
+		<span className="abundio-ctb__error" title={message}>
+			Failed — {message}
+		</span>
+	);
 }

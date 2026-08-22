@@ -160,35 +160,3 @@ export async function toggleMergeBase(paneId: string): Promise<void> {
 	);
 	await ws.updateLayout(tab.id, next);
 }
-
-/**
- * Drop side panes whose source file is no longer unmerged.
- *
- * Conflict state is derived from the index, so finishing or aborting the merge
- * tears the view down on its own — no explicit close path needed. Mirrors
- * `pruneNonMarkdownPreviews`. Returns a new tree only if something was removed.
- */
-export function pruneResolvedMergeSides(
-	tree: PaneNode,
-	isStillConflicted: (sourcePaneId: string) => boolean,
-): PaneNode {
-	let result: PaneNode = tree;
-	const sides = new Set<string>();
-	const walk = (node: PaneNode) => {
-		if (node.type === "mergeSide") {
-			sides.add(node.sourcePaneId);
-			return;
-		}
-		if (node.type !== "split") return;
-		walk(node.first);
-		walk(node.second);
-	};
-	walk(tree);
-
-	for (const sourcePaneId of sides) {
-		if (isStillConflicted(sourcePaneId)) continue;
-		const next = removeSidesFor(result, sourcePaneId);
-		if (next) result = next;
-	}
-	return result;
-}

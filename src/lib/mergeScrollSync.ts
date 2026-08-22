@@ -12,6 +12,10 @@
  *
  * The result pane is the hub: a side scroll maps to a result position first,
  * then out to the other sides. That keeps N panes consistent without N² maps.
+ *
+ * Offsets are read through Monaco's own `getTopForLineNumber` rather than a
+ * uniform line height, so the mapping holds with word wrap enabled — where a
+ * single line can occupy several visual rows.
  */
 import type { editor } from "monaco-editor";
 import type { ConflictBlock, SideRange } from "./conflictMarkers";
@@ -119,18 +123,46 @@ function group(sourcePaneId: string): Group {
 	return g;
 }
 
-/** Uniform line height, derived rather than read off an options enum. */
-function lineHeight(ed: editor.IStandaloneCodeEditor): number {
-	const h = ed.getTopForLineNumber(2) - ed.getTopForLineNumber(1);
-	return h > 0 ? h : 19;
+/**
+ * Vertical offset of a (possibly fractional) line.
+ *
+ * Goes through `getTopForLineNumber` rather than multiplying by a single line
+ * height. With word wrap on — `CodeEditor` passes the user's `editorWordWrap`
+ * setting to the side panes too — a wrapped line occupies several visual rows,
+ * so a uniform height drifts further down the document with every wrap.
+ */
+function topOfLine(ed: editor.IStandaloneCodeEditor, line: number): number {
+	const whole = Math.max(1, Math.floor(line));
+	const top = ed.getTopForLineNumber(whole);
+	const fraction = line - whole;
+	if (fraction <= 0) return top;
+	// Interpolate within the line's own height, which is its wrapped height.
+	return top + fraction * (ed.getTopForLineNumber(whole + 1) - top);
 }
 
+/** Inverse of `topOfLine`: the fractional line at the top of the viewport. */
 function topLine(ed: editor.IStandaloneCodeEditor): number {
-	return ed.getScrollTop() / lineHeight(ed) + 1;
+	const target = ed.getScrollTop();
+	if (target <= 0) return 1;
+	const lineCount = ed.getModel()?.getLineCount() ?? 1;
+
+	// Binary search rather than a division: line offsets are monotonic but not
+	// evenly spaced once any line wraps.
+	let low = 1;
+	let high = lineCount;
+	while (low < high) {
+		const mid = Math.floor((low + high + 1) / 2);
+		if (ed.getTopForLineNumber(mid) <= target) low = mid;
+		else high = mid - 1;
+	}
+	const top = ed.getTopForLineNumber(low);
+	const next = ed.getTopForLineNumber(Math.min(low + 1, lineCount + 1));
+	const height = next - top;
+	return height > 0 ? low + (target - top) / height : low;
 }
 
 function scrollToLine(ed: editor.IStandaloneCodeEditor, line: number): void {
-	ed.setScrollTop(Math.max(0, (line - 1) * lineHeight(ed)));
+	ed.setScrollTop(Math.max(0, topOfLine(ed, line)));
 }
 
 function broadcast(
@@ -169,10 +201,11 @@ export function registerResultEditor(
 	g.result = { ed, anchors: [], dispose: () => listener.dispose() };
 	return () => {
 		listener.dispose();
-		if (groups.get(sourcePaneId)?.result?.ed === ed) {
-			const cur = groups.get(sourcePaneId);
-			if (cur) cur.result = undefined;
-		}
+		const cur = groups.get(sourcePaneId);
+		if (cur?.result?.ed === ed) cur.result = undefined;
+		// Drop an emptied group, matching registerSideEditor — otherwise `groups`
+		// keeps one dead entry per pane that ever had a Merge view open.
+		if (cur && !cur.result && cur.sides.size === 0) groups.delete(sourcePaneId);
 	};
 }
 

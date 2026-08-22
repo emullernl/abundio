@@ -241,3 +241,48 @@ describe("conflicted paths and operation state", () => {
 		expect(useGitChangesStore.getState().operationInProgress).toBe("merge");
 	});
 });
+
+describe("conflictedPaths distinguishes unknown from empty", () => {
+	beforeEach(() => {
+		useWorkspaceStore.setState({
+			workspaces: [mkWorkspace("ws-1", "/repo")],
+			activeWorkspaceId: "ws-1",
+			// biome-ignore lint/suspicious/noExplicitAny: partial store
+		} as any);
+		useWorkspaceGitStore.setState({ byWorkspaceId: {} });
+	});
+
+	it("is null before git has answered", () => {
+		// The load-bearing case: an empty array would read as "no conflicts" and
+		// tear down a Merge view restored from the persisted layout, then persist
+		// the stripped layout — so it would not come back.
+		expect(
+			useWorkspaceGitStore.getState().byWorkspaceId["ws-1"]?.conflictedPaths,
+		).toBeUndefined();
+	});
+
+	it("is an empty array once git answers with no conflicts", () => {
+		useGitChangesStore.getState().applyBundle("ws-1", bundle());
+		expect(
+			useWorkspaceGitStore.getState().byWorkspaceId["ws-1"]?.conflictedPaths,
+		).toEqual([]);
+	});
+
+	it("does not overwrite a real answer with null on a summary refresh", async () => {
+		useGitChangesStore.getState().applyBundle("ws-1", {
+			...bundle(),
+			changedFiles: [file("a.txt", "conflicted", "U")],
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: mocked ipc
+		(git.workspacesSummary as any).mockResolvedValue([
+			summary({ workspaceId: "ws-1" }),
+		]);
+		await useWorkspaceGitStore
+			.getState()
+			.fetchAll([{ id: "ws-1", rootFolder: "/repo", baseBranch: null }]);
+
+		expect(
+			useWorkspaceGitStore.getState().byWorkspaceId["ws-1"]?.conflictedPaths,
+		).toEqual(["a.txt"]);
+	});
+});

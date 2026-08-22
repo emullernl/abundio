@@ -354,7 +354,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					isGitRepo: true,
 					currentBranch: ws.lastBranch,
 					changedFileCount: 0,
-					conflictedPaths: [],
+					// null, not []: git has not been asked yet, and an empty array
+					// would read as "no conflicts" and tear down a restored Merge
+					// view before the first fetch lands.
+					conflictedPaths: null,
 					additions: 0,
 					deletions: 0,
 				};

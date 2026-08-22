@@ -44,9 +44,14 @@ function makeEditor() {
 	const collections: unknown[][] = [];
 	return {
 		collections,
+		// One collection is created and then updated in place with set(), so the
+		// decorations arrive there rather than at construction time.
 		createDecorationsCollection: (decos: unknown[]) => {
-			collections.push(decos);
-			return { set: vi.fn(), clear: vi.fn() };
+			if (decos.length > 0) collections.push(decos);
+			return {
+				set: (next: unknown[]) => collections.push(next),
+				clear: vi.fn(),
+			};
 		},
 		addCommand: vi.fn(() => "cmd-1"),
 		// Scroll-sync surface: the pane registers itself with the result pane.

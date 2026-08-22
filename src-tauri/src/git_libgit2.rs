@@ -185,10 +185,10 @@ fn retain_unconflicted(
 /// marker-less conflicts names neither side. See ADR-0029.
 fn blob_at_stage<'r>(
     repo: &'r Repository,
+    index: &git2::Index,
     file_path: &str,
     stage: u16,
 ) -> Option<git2::Blob<'r>> {
-    let index = repo.index().ok()?;
     let entry = index.get_path(Path::new(file_path), stage as i32)?;
     repo.find_blob(entry.id).ok()
 }
@@ -200,10 +200,14 @@ pub fn compute_conflict_file_sync(
     file_path: &str,
 ) -> Result<GitConflictFile, AbundioError> {
     let repo = open_repo(cwd)?;
+    // Opened once for all three stages rather than per stage.
+    let index = repo
+        .index()
+        .map_err(|e| AbundioError::Git(format!("open index: {e}")))?;
 
-    let ancestor = blob_at_stage(&repo, file_path, 1);
-    let ours = blob_at_stage(&repo, file_path, 2);
-    let theirs = blob_at_stage(&repo, file_path, 3);
+    let ancestor = blob_at_stage(&repo, &index, file_path, 1);
+    let ours = blob_at_stage(&repo, &index, file_path, 2);
+    let theirs = blob_at_stage(&repo, &index, file_path, 3);
 
     // Which stages are present *is* the conflict kind — there is nothing else to
     // derive it from, and git's own status names map one-to-one.

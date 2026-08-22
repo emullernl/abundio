@@ -17,7 +17,7 @@ import type {
 	ResolveChoice,
 	SideRange,
 } from "./conflictMarkers";
-import { resolveBlock } from "./conflictMarkers";
+import { parseConflicts, resolveBlock } from "./conflictMarkers";
 
 /** One action offered above a conflict region. */
 export interface ConflictLensAction {
@@ -339,15 +339,22 @@ export function sideDecorations(
  */
 export function applyChoice(
 	ed: editor.IStandaloneCodeEditor,
-	blocks: ConflictBlock[],
 	blockIndex: number,
 	choice: ResolveChoice,
 ): void {
 	const model = ed.getModel();
-	const block = blocks[blockIndex];
-	if (!model || !block) return;
+	if (!model) return;
 
+	// Re-parse from the exact string being spliced. Offsets carried in from a
+	// caller's copy of the file are not safe here: Monaco normalises a model's
+	// EOLs on creation, so a mixed `\r\n`/`\n` file has a different length in
+	// the model than in the store, and every offset past the first divergence
+	// is shifted — `getPositionAt` would then resolve mid-line and the edit
+	// would splice across a line boundary, corrupting the buffer the user is
+	// about to stage.
 	const text = model.getValue();
+	const block = parseConflicts(text)[blockIndex];
+	if (!block) return;
 	const resolved = resolveBlock(text, block, choice);
 	// The splice is contiguous, so the edit is exactly the block's own range
 	// replaced by whatever the chosen side contributed.

@@ -43,23 +43,30 @@ fn is_dot_git_dir(path: &Path) -> bool {
 /// commands with `--no-optional-locks` still touch the index occasionally;
 /// we don't want those to trigger full git-change events.
 fn is_meaningful_git_change(path: &Path) -> bool {
-    let s = path.to_string_lossy();
-    // Match on the trailing filename rather than a `.git/`-prefixed substring:
-    // in a linked worktree these live under `.git/worktrees/<name>/`, so
-    // `.git/MERGE_HEAD` never appears in the path.
+    // Match on path *components*, never on a substring of the rendered path.
+    // Two reasons: in a linked worktree these files live under
+    // `.git/worktrees/<name>/`, so a `.git/`-prefixed substring never appears;
+    // and a forward-slash substring never matches on Windows at all, so a plain
+    // branch-ref update would go unnoticed there.
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    matches!(
+    if matches!(
         name,
         "HEAD" | "MERGE_HEAD" | "REBASE_HEAD" | "CHERRY_PICK_HEAD" | "COMMIT_EDITMSG"
             | "packed-refs"
-    ) || s.contains(".git/refs/")
-        || s.contains("/refs/heads/")
-        || s.contains("/refs/remotes/")
+    ) {
+        return true;
+    }
+    // Anything under a `refs` directory: heads, remotes, tags.
+    path.components()
+        .any(|c| matches!(c, Component::Normal(s) if s == "refs"))
 }
 
 /// The repository's gitdir when it lies *outside* `root_path` — i.e. this
 /// workspace is a linked worktree. `None` for a main worktree (whose gitdir is
 /// the `.git` directory already covered by the recursive watch) or a non-repo.
+/// Resolved once, when the watch is established. Converting a workspace into a
+/// worktree (or `git worktree add`-ing it) afterwards is not picked up until the
+/// watcher is recreated — acceptable because workspaces are watched on open.
 fn external_gitdir(root_path: &str) -> Option<std::path::PathBuf> {
     let repo = git2::Repository::discover(root_path).ok()?;
     let gitdir = repo.path().to_path_buf();
@@ -338,6 +345,26 @@ mod tests {
         assert!(is_meaningful_git_change(Path::new("/p/app/.git/CHERRY_PICK_HEAD")));
         assert!(is_meaningful_git_change(Path::new("/p/app/.git/packed-refs")));
         assert!(is_meaningful_git_change(Path::new("/p/app/.git/refs/heads/main")));
+        assert!(is_meaningful_git_change(Path::new(
+            "/p/app/.git/refs/remotes/origin/main"
+        )));
+        assert!(is_meaningful_git_change(Path::new("/p/app/.git/refs/tags/v1")));
+    }
+
+    #[test]
+    fn meaningful_git_change_matches_refs_by_component_not_substring() {
+        // Built up componentwise so the assertion holds on Windows too, where a
+        // rendered path uses backslashes and a "/refs/" substring never matches.
+        let mut p = std::path::PathBuf::from("C:");
+        for part in ["repo", ".git", "refs", "heads", "feature"] {
+            p.push(part);
+        }
+        assert!(is_meaningful_git_change(&p));
+
+        // A file merely *named* refs is not a ref directory.
+        let mut not_refs = std::path::PathBuf::from("/p/app/.git");
+        not_refs.push("refs.lock");
+        assert!(!is_meaningful_git_change(&not_refs));
     }
 
     #[test]

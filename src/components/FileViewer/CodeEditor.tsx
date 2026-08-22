@@ -233,12 +233,7 @@ export const CodeEditor = memo(function CodeEditor({
 			decorationsRef.current = ed.createDecorationsCollection([]);
 			conflictCommandRef.current =
 				ed.addCommand(0, (_ctx: unknown, ...args: unknown[]) => {
-					applyChoice(
-						ed,
-						conflictBlocksRef.current,
-						args[0] as number,
-						args[1] as ResolveChoice,
-					);
+					applyChoice(ed, args[0] as number, args[1] as ResolveChoice);
 				}) ?? null;
 			setEditorMounted(true);
 			onEditorMountedRef.current?.();

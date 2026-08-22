@@ -93,13 +93,14 @@ export function FilePane({
 	// whether the buffer still has markers — an agent resolving the markers in
 	// the next pane must not remove the staging button. See ADR-0029.
 	const relativePath = relativeToWorkspace(cwd, filePath);
-	const isUnmerged = useWorkspaceGitStore((s) =>
-		relativePath
-			? (s.byWorkspaceId[workspaceId]?.conflictedPaths?.includes(
-					relativePath,
-				) ?? false)
-			: false,
+	// null = git has not answered for this workspace yet. Distinct from "no
+	// conflicts": the teardown below must not act on an unanswered workspace.
+	const conflictedPaths = useWorkspaceGitStore(
+		(s) => s.byWorkspaceId[workspaceId]?.conflictedPaths ?? null,
 	);
+	const isUnmerged = relativePath
+		? (conflictedPaths?.includes(relativePath) ?? false)
+		: false;
 	const conflictBlocks = useMemo(
 		() => (isUnmerged ? parseConflicts(paneState?.content ?? "") : []),
 		[isUnmerged, paneState?.content],
@@ -133,11 +134,17 @@ export function FilePane({
 
 	// Conflict state is derived from the index, so the Merge view tears itself
 	// down when the merge finishes or is aborted — no explicit close path.
+	//
+	// Gated on git having actually answered. Without that, a Merge view restored
+	// from the persisted layout would be closed on every launch — the conflict
+	// set is empty until the first fetch lands — and `updateLayout` would write
+	// the stripped layout back to SQLite, so it would not come back.
 	useEffect(() => {
+		if (conflictedPaths === null) return;
 		if (!isUnmerged && mergeViewOpen) {
 			void toggleMergeViewForPane(paneId);
 		}
-	}, [isUnmerged, mergeViewOpen, paneId]);
+	}, [conflictedPaths, isUnmerged, mergeViewOpen, paneId]);
 
 	// Published for the Merge side panes *and* held locally for the navigator's
 	// position readout, so both always agree on which block is current.

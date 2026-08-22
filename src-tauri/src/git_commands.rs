@@ -220,8 +220,19 @@ pub async fn git_fetch_bundle(
 /// or index lookup. `git_stage_path` *writes* through this, so it must not grow
 /// its own copy — one validator, one set of rules.
 fn validate_repo_relative(file_path: &str) -> Result<(), AbundioError> {
+    // Every component must be a plain name. Allow-listing rather than rejecting
+    // `is_absolute()` + `ParentDir` matters on Windows, where `C:foo` is
+    // *drive-relative* — `is_absolute()` is false, so the old check passed it,
+    // yet `workdir.join("C:foo")` discards the workdir entirely because the
+    // pushed path carries a prefix. This validator stands in front of the
+    // codebase's only index write, so it should not lean on libgit2 rejecting
+    // such a path downstream.
     let fp = Path::new(file_path);
-    if fp.is_absolute() || fp.components().any(|c| c == std::path::Component::ParentDir) {
+    let mut components = fp.components().peekable();
+    if components.peek().is_none() {
+        return Err(AbundioError::Git("Invalid file path: empty".to_string()));
+    }
+    if !components.all(|c| matches!(c, std::path::Component::Normal(_))) {
         return Err(AbundioError::Git(format!("Invalid file path: {}", file_path)));
     }
     Ok(())
@@ -989,6 +1000,24 @@ mod tests {
         assert!(validate_repo_relative("/etc/passwd").is_err());
         assert!(validate_repo_relative("../outside.txt").is_err());
         assert!(validate_repo_relative("src/../../escape.txt").is_err());
+    }
+
+    #[test]
+    fn validate_repo_relative_accepts_only_plain_components() {
+        // `./foo` and an empty path are not things git hands us, and this guards
+        // the only index write in the codebase — so anything that is not a plain
+        // name is refused rather than normalised.
+        assert!(validate_repo_relative("").is_err());
+        assert!(validate_repo_relative("./src/main.rs").is_err());
+        assert!(validate_repo_relative(".").is_err());
+        // Drive-relative on Windows: `is_absolute()` is false there, so the old
+        // is_absolute + ParentDir check let it through.
+        #[cfg(windows)]
+        {
+            assert!(validate_repo_relative("C:foo").is_err());
+            assert!(validate_repo_relative("C:\\foo").is_err());
+            assert!(validate_repo_relative("\\\\server\\share\\f").is_err());
+        }
     }
 
 }

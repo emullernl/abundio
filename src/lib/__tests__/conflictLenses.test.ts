@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	applyChoice,
 	conflictDecorations,
 	resultLensSpecs,
 	sideDecorations,
@@ -236,5 +237,111 @@ describe("sideLensSpecs", () => {
 		// Base is reference only — "accept the ancestor" is already available in
 		// the result pane, and offering it here would imply the pane is editable.
 		expect(sideLensSpecs(ranges, "base")).toEqual([]);
+	});
+});
+
+describe("applyChoice", () => {
+	function fakeEditor(text: string) {
+		const edits: { range: unknown; text: string }[] = [];
+		const lines = text.split("\n");
+		const offsetToPos = (offset: number) => {
+			let remaining = offset;
+			for (let i = 0; i < lines.length; i++) {
+				const len = lines[i].length + 1;
+				if (remaining < len) {
+					return { lineNumber: i + 1, column: remaining + 1 };
+				}
+				remaining -= len;
+			}
+			return {
+				lineNumber: lines.length,
+				column: lines[lines.length - 1].length + 1,
+			};
+		};
+		return {
+			edits,
+			getModel: () => ({
+				getValue: () => text,
+				getPositionAt: offsetToPos,
+				getLineCount: () => lines.length,
+			}),
+			executeEdits: (_src: string, e: typeof edits) => edits.push(...e),
+			pushUndoStop: () => {},
+			// biome-ignore lint/suspicious/noExplicitAny: minimal editor stand-in
+		} as any;
+	}
+
+	const SRC = [
+		"head",
+		"<<<<<<< HEAD",
+		"ours",
+		"=======",
+		"theirs",
+		">>>>>>> main",
+		"tail",
+		"",
+	].join("\n");
+
+	/** Apply the recorded edit the way Monaco would, to check the result. */
+	function applied(text: string, edit: { range: never; text: string }) {
+		const lines = text.split("\n");
+		const offsetOf = (line: number, column: number) =>
+			lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0) +
+			(column - 1);
+		const r = edit.range as unknown as {
+			startLineNumber: number;
+			startColumn: number;
+			endLineNumber: number;
+			endColumn: number;
+		};
+		return (
+			text.slice(0, offsetOf(r.startLineNumber, r.startColumn)) +
+			edit.text +
+			text.slice(offsetOf(r.endLineNumber, r.endColumn))
+		);
+	}
+
+	it("replaces exactly the block with the chosen side", () => {
+		const ed = fakeEditor(SRC);
+		applyChoice(ed, 0, "current");
+		expect(ed.edits).toHaveLength(1);
+		expect(applied(SRC, ed.edits[0])).toBe("head\nours\ntail\n");
+	});
+
+	it("keeps both sides in order for 'both'", () => {
+		const ed = fakeEditor(SRC);
+		applyChoice(ed, 0, "both");
+		expect(applied(SRC, ed.edits[0])).toBe("head\nours\ntheirs\ntail\n");
+	});
+
+	it("edits the second block without disturbing the first", () => {
+		const two = SRC + SRC;
+		const ed = fakeEditor(two);
+		applyChoice(ed, 1, "incoming");
+		expect(applied(two, ed.edits[0])).toBe(
+			"head\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> main\ntail\nhead\ntheirs\ntail\n",
+		);
+	});
+
+	it("parses from the model, not from a caller's copy of the file", () => {
+		// Monaco normalises a model's EOLs on creation, so offsets taken from the
+		// store's copy of a mixed-EOL file are shifted and the splice lands
+		// mid-line. Re-parsing from getValue() is what keeps them consistent.
+		const normalised = SRC; // what the model holds
+		const ed = fakeEditor(normalised);
+		applyChoice(ed, 0, "current");
+		expect(applied(normalised, ed.edits[0])).toBe("head\nours\ntail\n");
+	});
+
+	it("does nothing when the block index is out of range", () => {
+		const ed = fakeEditor(SRC);
+		applyChoice(ed, 7, "current");
+		expect(ed.edits).toHaveLength(0);
+	});
+
+	it("does nothing on a file with no conflicts", () => {
+		const ed = fakeEditor("just text\n");
+		applyChoice(ed, 0, "current");
+		expect(ed.edits).toHaveLength(0);
 	});
 });

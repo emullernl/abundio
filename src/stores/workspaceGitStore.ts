@@ -19,12 +19,19 @@ export type WorkspaceGitInfo = {
 	changedFileCount: number;
 	additions: number;
 	deletions: number;
-	/** Repo-relative paths currently unmerged in the index. Lives here rather
-	 *  than in `gitChangesStore` because that store is a singleton mirroring only
-	 *  the Active workspace, while background workspaces stay *mounted* (ADR-0002)
-	 *  — a conflict pane in a hidden workspace must read its own workspace's
-	 *  truth, not whatever happens to be active. */
-	conflictedPaths: string[];
+	/** Repo-relative paths currently unmerged in the index, or **null** when git
+	 *  has not answered for this workspace yet.
+	 *
+	 *  The null state is load-bearing, not defensive: an empty array means "this
+	 *  workspace has no conflicts", and anything that tears down conflict UI on
+	 *  that basis would otherwise fire on every launch — before the first fetch
+	 *  lands — and persist the torn-down layout. Only act on a non-null value.
+	 *
+	 *  Lives here rather than in `gitChangesStore` because that store is a
+	 *  singleton mirroring only the Active workspace, while background workspaces
+	 *  stay *mounted* (ADR-0002) — a conflict pane in a hidden workspace must
+	 *  read its own workspace's truth, not whatever happens to be active. */
+	conflictedPaths: string[] | null;
 };
 
 interface WorkspaceGitState {
@@ -177,7 +184,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 				// The batch summary carries no per-file data, so carry the
 				// existing conflict set forward rather than clobbering it —
 				// only `applyBundle`/`fetch` know the real answer.
-				conflictedPaths: existing[s.workspaceId]?.conflictedPaths ?? [],
+				conflictedPaths: existing[s.workspaceId]?.conflictedPaths ?? null,
 			};
 		}
 		set((state) => ({

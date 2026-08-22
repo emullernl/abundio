@@ -128,12 +128,22 @@ describe("mapLine", () => {
 });
 
 describe("scroll sync wiring", () => {
-	function fakeEditor() {
+	/** `rowsPerLine` lets a test simulate word wrap: a line occupying several
+	 *  visual rows makes offsets non-uniform, which is exactly what a single
+	 *  line-height multiplication gets wrong. */
+	function fakeEditor(rowsPerLine: (line: number) => number = () => 1) {
 		let scrollTop = 0;
 		const handlers: (() => void)[] = [];
+		const topFor = (n: number) => {
+			let top = 0;
+			for (let i = 1; i < n; i++) top += rowsPerLine(i) * 20;
+			return top;
+		};
 		return {
 			scrollTops: [] as number[],
-			getTopForLineNumber: (n: number) => (n - 1) * 20,
+			getModel: () => ({ getLineCount: () => 40 }),
+			getTopForLineNumber: topFor,
+			topFor,
 			getScrollTop: () => scrollTop,
 			setScrollTop(next: number) {
 				scrollTop = next;
@@ -145,7 +155,7 @@ describe("scroll sync wiring", () => {
 			},
 			/** Simulate the user dragging this editor's scrollbar. */
 			scrollToLine(line: number) {
-				scrollTop = (line - 1) * 20;
+				scrollTop = topFor(line);
 				for (const fn of handlers) fn();
 			},
 			handlers,
@@ -165,7 +175,7 @@ describe("scroll sync wiring", () => {
 
 		// Result line 10 is the shared tail, which is side line 6.
 		result.scrollToLine(10);
-		expect(side.scrollTops.at(-1)).toBe((6 - 1) * 20);
+		expect(side.scrollTops[side.scrollTops.length - 1]).toBe(side.topFor(6));
 	});
 
 	it("drives the result pane from a side", () => {
@@ -175,7 +185,9 @@ describe("scroll sync wiring", () => {
 		registerSideEditor("src", "side-1", side, anchors);
 
 		side.scrollToLine(6);
-		expect(result.scrollTops.at(-1)).toBe((10 - 1) * 20);
+		expect(result.scrollTops[result.scrollTops.length - 1]).toBe(
+			result.topFor(10),
+		);
 	});
 
 	it("keeps two sides in step with each other", () => {
@@ -187,7 +199,9 @@ describe("scroll sync wiring", () => {
 		registerSideEditor("src", "inc", incoming, anchors);
 
 		current.scrollToLine(6);
-		expect(incoming.scrollTops.at(-1)).toBe((6 - 1) * 20);
+		expect(incoming.scrollTops[incoming.scrollTops.length - 1]).toBe(
+			incoming.topFor(6),
+		);
 	});
 
 	it("does not echo back to the pane that was scrolled", () => {
@@ -225,5 +239,75 @@ describe("scroll sync wiring", () => {
 		resultA.scrollToLine(10);
 		expect(sideA.scrollTops).toHaveLength(1);
 		expect(sideB.scrollTops).toHaveLength(0);
+	});
+});
+
+describe("scroll sync under word wrap", () => {
+	// CodeEditor passes the user's editorWordWrap setting to the side panes too,
+	// so a line can occupy several visual rows. A single line-height
+	// multiplication drifts further down the document with every wrapped line.
+	function wrappedEditor() {
+		let scrollTop = 0;
+		const handlers: (() => void)[] = [];
+		// Line 2 wraps to three rows; everything else is one.
+		const rows = (line: number) => (line === 2 ? 3 : 1);
+		const topFor = (n: number) => {
+			let top = 0;
+			for (let i = 1; i < n; i++) top += rows(i) * 20;
+			return top;
+		};
+		return {
+			scrollTops: [] as number[],
+			topFor,
+			getModel: () => ({ getLineCount: () => 40 }),
+			getTopForLineNumber: topFor,
+			getScrollTop: () => scrollTop,
+			setScrollTop(next: number) {
+				scrollTop = next;
+				(this as unknown as { scrollTops: number[] }).scrollTops.push(next);
+			},
+			onDidScrollChange(fn: () => void) {
+				handlers.push(fn);
+				return { dispose: () => handlers.splice(handlers.indexOf(fn), 1) };
+			},
+			scrollToLine(line: number) {
+				scrollTop = topFor(line);
+				for (const fn of handlers) fn();
+			},
+			// biome-ignore lint/suspicious/noExplicitAny: minimal editor stand-in
+		} as any;
+	}
+
+	beforeEach(() => resetMergeScrollSync());
+
+	it("lands on the right line when lines above have wrapped", () => {
+		const result = wrappedEditor();
+		const side = wrappedEditor();
+		registerResultEditor("src", result);
+		// Identity anchors: the two documents are the same here, so any drift is
+		// the offset arithmetic's fault, not the mapping's.
+		registerSideEditor("src", "side", side, [
+			{ result: 1, side: 1 },
+			{ result: 41, side: 41 },
+		]);
+
+		result.scrollToLine(6);
+		// A uniform 20px height would compute (6-1)*20 = 100 and land on line 4.
+		expect(side.scrollTops[side.scrollTops.length - 1]).toBe(side.topFor(6));
+	});
+
+	it("reads the top line back exactly across a wrap", () => {
+		const result = wrappedEditor();
+		const side = wrappedEditor();
+		registerResultEditor("src", result);
+		registerSideEditor("src", "side", side, [
+			{ result: 1, side: 1 },
+			{ result: 41, side: 41 },
+		]);
+
+		side.scrollToLine(9);
+		expect(result.scrollTops[result.scrollTops.length - 1]).toBe(
+			result.topFor(9),
+		);
 	});
 });

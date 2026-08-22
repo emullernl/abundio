@@ -17,7 +17,6 @@ vi.mock("../../stores/workspaceStore", () => ({
 
 import {
 	hasMergeView,
-	pruneResolvedMergeSides,
 	toggleMergeBase,
 	toggleMergeViewForPane,
 } from "../mergeView";
@@ -112,28 +111,5 @@ describe("toggleMergeBase", () => {
 			"current",
 			"incoming",
 		]);
-	});
-});
-
-describe("pruneResolvedMergeSides", () => {
-	it("drops the sides once the source is no longer conflicted", async () => {
-		await toggleMergeViewForPane("pane-1");
-		const open = updateLayout.mock.calls[0][1] as unknown as PaneNode;
-
-		const pruned = pruneResolvedMergeSides(open, () => false);
-		expect(sidesOf(pruned)).toHaveLength(0);
-		expect(pruned).toEqual(fileNode("pane-1", "/repo/a.txt"));
-	});
-
-	it("keeps the sides while the source is still conflicted", async () => {
-		await toggleMergeViewForPane("pane-1");
-		const open = updateLayout.mock.calls[0][1] as unknown as PaneNode;
-
-		expect(pruneResolvedMergeSides(open, () => true)).toBe(open);
-	});
-
-	it("is a no-op on a tree with no merge sides", () => {
-		const plain = fileNode("pane-1", "/repo/a.txt");
-		expect(pruneResolvedMergeSides(plain, () => false)).toBe(plain);
 	});
 });
