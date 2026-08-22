@@ -244,6 +244,15 @@ describe("conflict navigator", () => {
 	const arrow = (label: string) =>
 		container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
 
+	it("renders the arrows as icons, not as text", () => {
+		// Regression: a JSX *attribute* string does not process escape sequences,
+		// so glyph="\\u2039" rendered the six literal characters into the bar.
+		render(THREE, 1);
+		expect(container.textContent).not.toMatch(/\\u[0-9a-fA-F]{4}/);
+		expect(arrow("Previous conflict")?.querySelector("svg")).not.toBeNull();
+		expect(arrow("Next conflict")?.querySelector("svg")).not.toBeNull();
+	});
+
 	it("shows position over total", () => {
 		render(THREE, 1);
 		expect(container.textContent).toContain("2/3");

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ConflictBlock, ResolveChoice } from "../../lib/conflictMarkers";
 import { fs, type GitConflictFile, git } from "../../lib/ipc";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { ChevronLeft, ChevronRight } from "../Icons";
 
 /** `.git/index` is deliberately excluded from the file watcher (read-only git
  *  commands touch it constantly), so the Rust scheduler never observes a
@@ -272,7 +273,7 @@ function Navigator({
 			className="flex items-center flex-shrink-0 rounded overflow-hidden"
 			style={{ border: "1px solid var(--border)", height: 20 }}
 		>
-			<Arrow label="Previous conflict" onClick={onPrev} glyph="\u2039" />
+			<Arrow label="Previous conflict" onClick={onPrev} icon={ChevronLeft} />
 			<span
 				className="flex items-center justify-center tabular-nums"
 				style={{
@@ -291,7 +292,7 @@ function Navigator({
 			>
 				{position === null ? "—" : position + 1}/{total}
 			</span>
-			<Arrow label="Next conflict" onClick={onNext} glyph="\u203a" />
+			<Arrow label="Next conflict" onClick={onNext} icon={ChevronRight} />
 		</div>
 	);
 }
@@ -299,11 +300,13 @@ function Navigator({
 function Arrow({
 	label,
 	onClick,
-	glyph,
+	icon: Icon,
 }: {
 	label: string;
 	onClick: () => void;
-	glyph: string;
+	/** An icon component, not a text glyph: consistent with the rest of the
+	 *  chrome, and crisp at 12px where a chevron character is not. */
+	icon: (props: { size?: number }) => React.ReactElement;
 }) {
 	return (
 		<button
@@ -319,8 +322,7 @@ function Arrow({
 				background: "transparent",
 				color: "var(--fg-secondary)",
 				cursor: "pointer",
-				fontSize: 13,
-				lineHeight: 1,
+				padding: 0,
 				transitionDuration: "var(--transition-fast)",
 			}}
 			onMouseEnter={(e) => {
@@ -332,7 +334,7 @@ function Arrow({
 				e.currentTarget.style.color = "var(--fg-secondary)";
 			}}
 		>
-			{glyph}
+			<Icon size={12} />
 		</button>
 	);
 }
