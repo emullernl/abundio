@@ -1,14 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
+import {
+	parseConflicts,
+	type ResolveChoice,
+	resolveAll,
+} from "../../lib/conflictMarkers";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
+import { git } from "../../lib/ipc";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
 import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
 import { findPreviewForSource } from "../../lib/paneTree";
 import { sc } from "../../lib/platform";
-import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
+import {
+	relativeToWorkspace,
+	resolveWorkspacePath,
+} from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
 import { PaneDropIndicator } from "../PaneDropIndicator";
@@ -17,6 +28,7 @@ import {
 	PaneContextMenu,
 } from "../Terminal/PaneContextMenu";
 import { CodeEditor, focusEditor, triggerEditorAction } from "./CodeEditor";
+import { ConflictToolbar } from "./ConflictToolbar";
 import { FileChangeBanner } from "./FileChangeBanner";
 import { FilePaneTitleBar } from "./FilePaneTitleBar";
 import { ImageViewer } from "./ImageViewer";
@@ -25,6 +37,8 @@ import { UnsupportedFile } from "./UnsupportedFile";
 interface FilePaneProps {
 	paneId: string;
 	filePath: string;
+	cwd: string;
+	workspaceId: string;
 	isDiff?: boolean;
 	diffSection?: GitChangedFile["section"];
 	isDeleted?: boolean;
@@ -35,6 +49,8 @@ interface FilePaneProps {
 export function FilePane({
 	paneId,
 	filePath,
+	cwd,
+	workspaceId,
 	isDiff,
 	diffSection,
 	isDeleted,
@@ -55,6 +71,43 @@ export function FilePane({
 		(content: string) => updateFileContent(paneId, content),
 		[paneId, updateFileContent],
 	);
+
+	// Whether the conflict toolbar shows is decided by the *index*, not by
+	// whether the buffer still has markers — an agent resolving the markers in
+	// the next pane must not remove the staging button. See ADR-0029.
+	const relativePath = relativeToWorkspace(cwd, filePath);
+	const isUnmerged = useWorkspaceGitStore((s) =>
+		relativePath
+			? (s.byWorkspaceId[workspaceId]?.conflictedPaths?.includes(
+					relativePath,
+				) ?? false)
+			: false,
+	);
+	const conflictBlocks = useMemo(
+		() => (isUnmerged ? parseConflicts(paneState?.content ?? "") : []),
+		[isUnmerged, paneState?.content],
+	);
+
+	const acceptAllConflicts = useCallback(
+		(choice: ResolveChoice) => {
+			const content = useExplorerStore.getState().filePanes[paneId]?.content;
+			if (content == null) return;
+			const blocks = parseConflicts(content);
+			if (blocks.length === 0) return;
+			updateFileContent(paneId, resolveAll(content, blocks, choice));
+		},
+		[paneId, updateFileContent],
+	);
+
+	const resolveAndStage = useCallback(async () => {
+		if (!relativePath) return;
+		await saveFile(paneId);
+		await git.stagePath(cwd, relativePath);
+		// The scheduler cannot see an index write (`.git/index` is excluded from
+		// the watcher on purpose), so refresh explicitly.
+		const gitStore = useGitChangesStore.getState();
+		await gitStore.fetchChanges(cwd, gitStore.baseBranch);
+	}, [cwd, paneId, relativePath, saveFile]);
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
@@ -307,6 +360,18 @@ export function FilePane({
 						onClose={() => closePane(paneId)}
 					/>
 				</div>
+			)}
+			{isUnmerged && relativePath && paneState.fileType === "text" && (
+				<ConflictToolbar
+					paneId={paneId}
+					cwd={cwd}
+					relativePath={relativePath}
+					absolutePath={filePath}
+					blocks={conflictBlocks}
+					isDirty={paneState.isDirty}
+					onAcceptAll={acceptAllConflicts}
+					onResolveAndStage={resolveAndStage}
+				/>
 			)}
 			<div className="flex-1 min-h-0 relative">
 				{paneState.fileType === "text" && (

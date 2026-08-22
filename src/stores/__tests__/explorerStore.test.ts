@@ -331,3 +331,64 @@ describe("dismissExternalChange", () => {
 		expect(pane.isDirty).toBe(true);
 	});
 });
+
+describe("conflicted files open as ordinary text panes", () => {
+	it("saves an emptied file instead of silently no-opping", async () => {
+		// Resolving a conflict can legitimately empty a file. A truthiness guard
+		// on `content` would write nothing and then stage the unchanged file.
+		useExplorerStore.setState({
+			filePanes: {
+				p1: {
+					filePath: "/repo/a.txt",
+					fileName: "a.txt",
+					fileType: "text",
+					content: "",
+					mime: null,
+					isDirty: true,
+					language: null,
+					externallyChanged: false,
+					deletedOnDisk: false,
+					loading: false,
+					diffOriginal: null,
+					diffModified: null,
+					diffSection: null,
+					isDeleted: false,
+				},
+			},
+		});
+
+		await useExplorerStore.getState().saveFile("p1");
+
+		expect(writeFile).toHaveBeenCalledWith("/repo/a.txt", "");
+		expect(useExplorerStore.getState().filePanes.p1?.isDirty).toBe(false);
+	});
+
+	it("still refuses to save a pane whose content has not loaded", () => {
+		useExplorerStore.setState({
+			filePanes: {
+				p2: {
+					filePath: "/repo/b.txt",
+					fileName: "b.txt",
+					fileType: "text",
+					content: null,
+					mime: null,
+					isDirty: false,
+					language: null,
+					externallyChanged: false,
+					deletedOnDisk: false,
+					loading: true,
+					diffOriginal: null,
+					diffModified: null,
+					diffSection: null,
+					isDeleted: false,
+				},
+			},
+		});
+		return useExplorerStore
+			.getState()
+			.saveFile("p2")
+			.then(() => {
+				expect(writeFile).not.toHaveBeenCalledWith("/repo/b.txt", null);
+			});
+	});
+});

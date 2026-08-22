@@ -13,6 +13,10 @@ const LazyPreviewPane = lazy(() =>
 interface Props {
 	node: PaneNode;
 	cwd: string;
+	/** The owning Workspace. Threaded explicitly rather than reverse-looked-up
+	 *  from `cwd`, so a pane always reads its *own* workspace's state — hidden
+	 *  background workspaces stay mounted (ADR-0002). */
+	workspaceId: string;
 }
 
 /** Leaf component for terminal nodes — subscribes to focus state. */
@@ -43,8 +47,12 @@ const TerminalLeaf = memo(function TerminalLeaf({
 /** Leaf component for file nodes. */
 const FileLeaf = memo(function FileLeaf({
 	node,
+	cwd,
+	workspaceId,
 }: {
 	node: PaneNode & { type: "file" };
+	cwd: string;
+	workspaceId: string;
 }) {
 	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === node.id);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
@@ -53,6 +61,8 @@ const FileLeaf = memo(function FileLeaf({
 		<FilePane
 			paneId={node.id}
 			filePath={node.filePath}
+			cwd={cwd}
+			workspaceId={workspaceId}
 			isDiff={node.isDiff}
 			diffSection={node.diffSection}
 			isDeleted={node.isDeleted}
@@ -85,9 +95,11 @@ const PreviewLeaf = memo(function PreviewLeaf({
 function SplitNode({
 	node,
 	cwd,
+	workspaceId,
 }: {
 	node: PaneNode & { type: "split" };
 	cwd: string;
+	workspaceId: string;
 }) {
 	const { updateRatioLocal, persistCurrentLayout } = useSplitPane();
 	const isVertical = node.direction === "vertical";
@@ -108,7 +120,12 @@ function SplitNode({
 					overflow: "hidden",
 				}}
 			>
-				<SplitContainer key={node.first.id} node={node.first} cwd={cwd} />
+				<SplitContainer
+					key={node.first.id}
+					node={node.first}
+					cwd={cwd}
+					workspaceId={workspaceId}
+				/>
 			</div>
 			<PaneResizer
 				direction={node.direction}
@@ -125,7 +142,12 @@ function SplitNode({
 					overflow: "hidden",
 				}}
 			>
-				<SplitContainer key={node.second.id} node={node.second} cwd={cwd} />
+				<SplitContainer
+					key={node.second.id}
+					node={node.second}
+					cwd={cwd}
+					workspaceId={workspaceId}
+				/>
 			</div>
 		</div>
 	);
@@ -146,18 +168,18 @@ function UnknownPaneFallback({ type }: { type?: string }) {
 	);
 }
 
-export function SplitContainer({ node, cwd }: Props) {
+export function SplitContainer({ node, cwd, workspaceId }: Props) {
 	if (node.type === "terminal") {
 		return <TerminalLeaf nodeId={node.id} agentId={node.agentId} />;
 	}
 	if (node.type === "file") {
-		return <FileLeaf node={node} />;
+		return <FileLeaf node={node} cwd={cwd} workspaceId={workspaceId} />;
 	}
 	if (node.type === "preview") {
 		return <PreviewLeaf node={node} />;
 	}
 	if (node.type === "split") {
-		return <SplitNode node={node} cwd={cwd} />;
+		return <SplitNode node={node} cwd={cwd} workspaceId={workspaceId} />;
 	}
 	return <UnknownPaneFallback type={(node as { type?: string }).type} />;
 }

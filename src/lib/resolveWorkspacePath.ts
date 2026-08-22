@@ -12,3 +12,20 @@ export function resolveWorkspacePath(
 ): string {
 	return `${rootFolder.replace(/\/$/, "")}/${relativePath}`;
 }
+
+/**
+ * The inverse: an absolute path back to repo-relative, or `null` when the path
+ * lies outside the workspace.
+ *
+ * The git commands reject absolute paths, so anything read from a pane's
+ * `filePath` must come back through here before it is handed to `git.stagePath`
+ * or `git.conflictFile`.
+ */
+export function relativeToWorkspace(
+	rootFolder: string,
+	absolutePath: string,
+): string | null {
+	const root = rootFolder.replace(/\/$/, "");
+	if (!absolutePath.startsWith(`${root}/`)) return null;
+	return absolutePath.slice(root.length + 1);
+}
