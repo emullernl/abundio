@@ -17,6 +17,7 @@ vi.mock("../../lib/terminalManager", () => ({
 	setWebglEnabled: vi.fn(),
 }));
 
+import { SYSTEM_UI_FONT } from "../../lib/nerdFonts";
 import {
 	setActivityByteThreshold,
 	setAllTerminalsFontFamily,
@@ -37,7 +38,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	useSettingsStore.setState({
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
-		uiFontFamily: "system-ui, -apple-system, sans-serif",
+		uiFontFamily: SYSTEM_UI_FONT.name,
 		fontSize: 14,
 		uiFontSize: 14,
 		theme: "default",
