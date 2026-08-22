@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fuzzyMatch } from "../../lib/fuzzyMatch";
 import type { FontEntry } from "../../lib/nerdFonts";
 import { Check } from "../Icons";
@@ -96,16 +96,24 @@ export function FontPicker({
 	// scroller. Each would centre its own selected row in the page — the terminal
 	// list synchronously, the interface list whenever `listSystemFonts()`
 	// resolves — leaving the page parked mid-list. This keeps it local.
+	//
+	// The list is `position: relative` so a row's `offsetTop` is measured against
+	// the scroller itself; without that the offsets come from some ancestor and
+	// the maths lands the list in the wrong place.
 	const hasScrolled = useRef(false);
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const list = listRef.current;
 		if (!list || filtered.length === 0 || hasScrolled.current) return;
-		hasScrolled.current = true;
 		const idx = filtered.findIndex((f) => f.name === selectedFont);
-		if (idx > 0) {
-			const row = list.children[idx] as HTMLElement | undefined;
-			if (row) list.scrollTop = row.offsetTop - list.clientHeight / 2;
-		}
+		if (idx < 0) return; // nothing selected yet — try again when the list changes
+		hasScrolled.current = true;
+		const row = list.children[idx] as HTMLElement | undefined;
+		if (!row) return;
+		const centred = row.offsetTop - (list.clientHeight - row.offsetHeight) / 2;
+		list.scrollTop = Math.max(
+			0,
+			Math.min(centred, list.scrollHeight - list.clientHeight),
+		);
 	}, [filtered, selectedFont]);
 
 	return (
@@ -117,7 +125,7 @@ export function FontPicker({
 			/>
 			<div
 				ref={listRef}
-				className="overflow-y-auto flex flex-col flex-1 min-h-0"
+				className="overflow-y-auto flex flex-col flex-1 min-h-0 relative"
 			>
 				{filtered.length === 0 && (
 					<div

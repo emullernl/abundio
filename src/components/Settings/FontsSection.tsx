@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { fonts as fontsIpc } from "../../lib/ipc";
 import {
 	type FontEntry,
+	SYSTEM_UI_FONT,
 	systemFontToEntry,
 	TERMINAL_FONTS,
 } from "../../lib/nerdFonts";
@@ -48,17 +49,19 @@ export function FontsSection() {
 	const fontSize = useSettingsStore((s) => s.fontSize);
 	const setFontSize = useSettingsStore((s) => s.setFontSize);
 
-	const [systemFonts, setSystemFonts] = useState<FontEntry[]>([]);
+	const [systemFonts, setSystemFonts] = useState<FontEntry[]>([SYSTEM_UI_FONT]);
 	useEffect(() => {
 		let cancelled = false;
 		loadSystemFonts()
 			.then((families) => {
 				if (cancelled) return;
 				const sorted = families.slice().sort((a, b) => a.localeCompare(b));
-				setSystemFonts(sorted.map(systemFontToEntry));
+				// The shipped default heads the list: it is what a fresh install
+				// uses, and it is not a family `font-kit` can enumerate.
+				setSystemFonts([SYSTEM_UI_FONT, ...sorted.map(systemFontToEntry)]);
 			})
 			.catch(() => {
-				if (!cancelled) setSystemFonts([]);
+				if (!cancelled) setSystemFonts([SYSTEM_UI_FONT]);
 			});
 		return () => {
 			cancelled = true;
@@ -105,7 +108,10 @@ export function FontsSection() {
 					onChange={handleTerminalFontSizeChange}
 				/>
 			</div>
-			<div className="flex flex-col flex-shrink-0" style={{ height: 220 }}>
+			<div
+				className="flex flex-col flex-1"
+				style={{ minHeight: 220, paddingBottom: 4 }}
+			>
 				<SectionLabel>Terminal Font</SectionLabel>
 				<FontPicker
 					fonts={TERMINAL_FONTS}

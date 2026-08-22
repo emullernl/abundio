@@ -38,6 +38,17 @@ export const TERMINAL_FONTS: FontEntry[] = [
 ];
 
 /**
+ * The interface font the app ships with.
+ *
+ * Its `name` is the settings-store default for `uiFontFamily`, so the picker
+ * has a row to mark as selected before the user has chosen anything.
+ */
+export const SYSTEM_UI_FONT: FontEntry = {
+	name: "system-ui, -apple-system, sans-serif",
+	displayName: "System Default",
+};
+
+/**
  * Convert a raw system font family name to a FontEntry for UI (non-terminal) use.
  * Falls back to system-ui, sans-serif since this is used for the app interface,
  * not for terminal rendering where monospace would be required.
