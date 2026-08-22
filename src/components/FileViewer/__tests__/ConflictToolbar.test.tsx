@@ -301,3 +301,167 @@ describe("conflict navigator", () => {
 		expect(container.textContent).toContain("No conflict markers left");
 	});
 });
+
+describe("conflict track", () => {
+	let container: HTMLDivElement;
+	let root: ReturnType<typeof createRoot>;
+	const onNavigate = vi.fn();
+	const onToggleMergeView = vi.fn();
+	const onToggleBase = vi.fn();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		conflictFile.mockResolvedValue(bothModified);
+		useGitChangesStore.setState({ operationInProgress: "merge" });
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+	});
+
+	afterEach(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	function render(
+		content: string,
+		activeBlock: number | null,
+		mergeViewOpen = false,
+	) {
+		act(() => {
+			root.render(
+				<ConflictToolbar
+					paneId="p1"
+					cwd="/repo"
+					relativePath="a.ts"
+					absolutePath="/repo/a.ts"
+					blocks={parseConflicts(content)}
+					isDirty={false}
+					onAcceptAll={vi.fn()}
+					onResolveAndStage={vi.fn(() => Promise.resolve())}
+					mergeViewOpen={mergeViewOpen}
+					onToggleMergeView={onToggleMergeView}
+					onToggleBase={onToggleBase}
+					activeBlock={activeBlock}
+					onNavigate={onNavigate}
+				/>,
+			);
+		});
+	}
+
+	const segments = () => [
+		...container.querySelectorAll<HTMLButtonElement>(".abundio-ctb__seg"),
+	];
+	const many = (n: number) => CONFLICTED.repeat(n);
+
+	it("draws one segment per conflict", () => {
+		render(many(4), 0);
+		expect(segments()).toHaveLength(4);
+	});
+
+	it("lights only the current segment", () => {
+		render(many(4), 2);
+		const lit = segments().filter((s) =>
+			s.className.includes("abundio-ctb__seg--current"),
+		);
+		expect(lit).toHaveLength(1);
+		expect(segments()[2]).toBe(lit[0]);
+		expect(segments()[2].getAttribute("aria-current")).toBe("true");
+	});
+
+	it("jumps straight to a conflict when its segment is clicked", () => {
+		// The reason the track replaces a bare counter: any conflict is one
+		// click away rather than N steps.
+		render(many(5), 0);
+		act(() => segments()[3].click());
+		expect(onNavigate).toHaveBeenCalledWith(3);
+	});
+
+	it("labels each segment for assistive tech", () => {
+		render(many(3), 0);
+		expect(segments().map((s) => s.getAttribute("aria-label"))).toEqual([
+			"Go to conflict 1",
+			"Go to conflict 2",
+			"Go to conflict 3",
+		]);
+	});
+
+	it("falls back to the counter alone when segments would be too thin", () => {
+		render(many(20), 0);
+		expect(segments()).toHaveLength(0);
+		expect(container.textContent).toContain("1/20");
+		// Stepping still works without the track.
+		expect(
+			container.querySelector('[aria-label="Next conflict"]'),
+		).not.toBeNull();
+	});
+});
+
+describe("view toggles", () => {
+	let container: HTMLDivElement;
+	let root: ReturnType<typeof createRoot>;
+	const onToggleMergeView = vi.fn();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		conflictFile.mockResolvedValue(bothModified);
+		useGitChangesStore.setState({ operationInProgress: "merge" });
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+	});
+
+	afterEach(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	function render(mergeViewOpen: boolean) {
+		act(() => {
+			root.render(
+				<ConflictToolbar
+					paneId="p1"
+					cwd="/repo"
+					relativePath="a.ts"
+					absolutePath="/repo/a.ts"
+					blocks={parseConflicts(CONFLICTED)}
+					isDirty={false}
+					onAcceptAll={vi.fn()}
+					onResolveAndStage={vi.fn(() => Promise.resolve())}
+					mergeViewOpen={mergeViewOpen}
+					onToggleMergeView={onToggleMergeView}
+					onToggleBase={vi.fn()}
+					activeBlock={0}
+					onNavigate={vi.fn()}
+				/>,
+			);
+		});
+	}
+
+	const named = (label: string) =>
+		[...container.querySelectorAll("button")].find(
+			(b) => b.textContent === label,
+		);
+
+	it("reports toggle state through aria-pressed, not just colour", () => {
+		render(false);
+		expect(named("Merge view")?.getAttribute("aria-pressed")).toBe("false");
+		render(true);
+		expect(named("Merge view")?.getAttribute("aria-pressed")).toBe("true");
+	});
+
+	it("keeps its label stable when pressed", () => {
+		// A toggle that renames itself to "Close merge view" reads as an action
+		// and makes the pressed state ambiguous.
+		render(true);
+		expect(named("Merge view")).toBeDefined();
+		expect(named("Close merge view")).toBeUndefined();
+	});
+
+	it("disables Base until there is a merge view to put it in", () => {
+		render(false);
+		expect(named("Base")?.disabled).toBe(true);
+		render(true);
+		expect(named("Base")?.disabled).toBe(false);
+	});
+});

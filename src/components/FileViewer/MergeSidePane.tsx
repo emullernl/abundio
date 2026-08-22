@@ -190,7 +190,7 @@ export function MergeSidePane({
 			ed.getModel()?.getLineCount() ?? 1,
 		);
 		return registerSideEditor(sourcePaneId, paneId, ed, anchors);
-	}, [editorReady, content, sourceContent, ranges, side, paneId, sourcePaneId]);
+	}, [editorReady, content, sourceContent, ranges, paneId, sourcePaneId]);
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container

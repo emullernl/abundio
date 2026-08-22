@@ -3,6 +3,7 @@ import type { ConflictBlock, ResolveChoice } from "../../lib/conflictMarkers";
 import { fs, type GitConflictFile, git } from "../../lib/ipc";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { ChevronLeft, ChevronRight } from "../Icons";
+import "./ConflictToolbar.css";
 
 /** `.git/index` is deliberately excluded from the file watcher (read-only git
  *  commands touch it constantly), so the Rust scheduler never observes a
@@ -11,6 +12,17 @@ async function refreshGitChanges(cwd: string) {
 	const store = useGitChangesStore.getState();
 	await store.fetchChanges(cwd, store.baseBranch);
 }
+
+/** Beyond this the segments would be thinner than a pixel gap, so the track
+ *  degrades to the bare counter. Arrows keep working either way. */
+const MAX_SEGMENTS = 14;
+
+/** Role colours, shared with the merge side panes' gutter rails so the mapping
+ *  from colour to side is learned once and holds everywhere. */
+const SIDE_COLOR = {
+	current: "var(--success)",
+	incoming: "var(--accent)",
+} as const;
 
 interface Props {
 	paneId: string;
@@ -100,17 +112,15 @@ export function ConflictToolbar({
 	}
 
 	if (staged) {
+		const verb =
+			operation === "cherry_pick" ? "cherry-pick" : (operation ?? "merge");
 		return (
 			<Bar>
-				<span style={{ color: "var(--fg-primary)" }}>Staged.</span>
-				<span style={{ color: "var(--fg-secondary)" }}>
+				<span className="abundio-ctb__done">Staged.</span>
+				<span className="abundio-ctb__label">
 					Finish the {operation ?? "merge"} with
 				</span>
-				<code style={{ fontFamily: "var(--font-mono)" }}>
-					git{" "}
-					{operation === "cherry_pick" ? "cherry-pick" : (operation ?? "merge")}{" "}
-					--continue
-				</code>
+				<code className="abundio-ctb__code">git {verb} --continue</code>
 			</Bar>
 		);
 	}
@@ -120,7 +130,7 @@ export function ConflictToolbar({
 	if (!hasMarkers && conflict?.isBinary) {
 		return (
 			<Bar>
-				<span style={{ color: "var(--fg-secondary)" }}>
+				<span className="abundio-ctb__label">
 					Binary conflict — resolve in a terminal.
 				</span>
 			</Bar>
@@ -136,22 +146,22 @@ export function ConflictToolbar({
 	if (!hasMarkers && isDeleteConflict) {
 		return (
 			<Bar>
-				<span style={{ color: "var(--fg-primary)" }}>
+				<span>
 					This file was changed on one side of the merge and deleted on the
 					other.
 				</span>
-				<div className="flex-1" />
-				<Button
+				<span className="abundio-ctb__spacer" />
+				<button
+					type="button"
+					className="abundio-ctb__ghost"
 					disabled={busy}
-					onClick={() =>
-						run(async () => {
-							await onResolveAndStage();
-						})
-					}
+					onClick={() => run(async () => await onResolveAndStage())}
 				>
 					Keep the file
-				</Button>
-				<Button
+				</button>
+				<button
+					type="button"
+					className="abundio-ctb__ghost"
 					disabled={busy}
 					onClick={() =>
 						run(async () => {
@@ -162,14 +172,14 @@ export function ConflictToolbar({
 					}
 				>
 					Delete the file
-				</Button>
-				{error && <Err>{error}</Err>}
+				</button>
+				{error && <Err />}
 			</Bar>
 		);
 	}
 
-	// Wrap around: with a handful of conflicts, hitting the end and continuing
-	// is what you want, not a dead button.
+	// Wrap around: with a handful of conflicts, hitting the end and continuing is
+	// what you want, not a dead button.
 	const step = (delta: number) => {
 		if (blocks.length === 0) return;
 		const from = activeBlock ?? (delta > 0 ? -1 : 0);
@@ -179,268 +189,187 @@ export function ConflictToolbar({
 	return (
 		<Bar>
 			{hasMarkers ? (
-				<Navigator
+				<Track
 					position={activeBlock}
 					total={blocks.length}
 					onPrev={() => step(-1)}
 					onNext={() => step(1)}
+					onJump={onNavigate}
 				/>
 			) : (
-				<span style={{ color: "var(--success)", fontWeight: 500 }}>
-					No conflict markers left
-				</span>
+				<span className="abundio-ctb__done">No conflict markers left</span>
 			)}
 
 			{hasMarkers && (
 				<>
-					<Divider />
-					{/* The dot reinforces the side's colour; the words carry the
-					    meaning, so the two are never told apart by colour alone. */}
-					<Button
+					<span className="abundio-ctb__divider" />
+					<span className="abundio-ctb__label">Accept all</span>
+					<button
+						type="button"
+						className="abundio-ctb__ghost"
+						aria-label="Accept all current"
+						title="Accept all current"
 						disabled={busy}
-						label="Accept all current"
 						onClick={() => onAcceptAll("current")}
 					>
-						<Dot color="var(--success)" />
-						All current
-					</Button>
-					<Button
+						<span
+							className="abundio-ctb__flag"
+							style={{ backgroundColor: SIDE_COLOR.current }}
+						/>
+						current
+					</button>
+					<button
+						type="button"
+						className="abundio-ctb__ghost"
+						aria-label="Accept all incoming"
+						title="Accept all incoming"
 						disabled={busy}
-						label="Accept all incoming"
 						onClick={() => onAcceptAll("incoming")}
 					>
-						<Dot color="var(--accent)" />
-						All incoming
-					</Button>
+						<span
+							className="abundio-ctb__flag"
+							style={{ backgroundColor: SIDE_COLOR.incoming }}
+						/>
+						incoming
+					</button>
 				</>
 			)}
 
-			<Divider />
-			<Button
-				disabled={busy}
-				onClick={onToggleMergeView}
-				pressed={mergeViewOpen}
+			<span className="abundio-ctb__divider" />
+			{/* A recessed well with a raised active chip: state, not an action. */}
+			{/* biome-ignore lint/a11y/useSemanticElements: a fieldset carries form
+			    semantics and default chrome that make no sense in a 30px toolbar;
+			    role="group" is the idiomatic pairing for a segmented control */}
+			<div
+				className="abundio-ctb__well"
+				role="group"
+				aria-label="Merge view options"
 			>
-				Merge view
-			</Button>
-			{mergeViewOpen && conflictHasBase && (
-				<Button disabled={busy} onClick={onToggleBase}>
+				<button
+					type="button"
+					className="abundio-ctb__toggle"
+					aria-pressed={mergeViewOpen}
+					disabled={busy}
+					onClick={onToggleMergeView}
+				>
+					Merge view
+				</button>
+				<button
+					type="button"
+					className="abundio-ctb__toggle"
+					aria-pressed={false}
+					disabled={busy || !mergeViewOpen || !conflictHasBase}
+					title={
+						conflictHasBase
+							? "Show the common ancestor"
+							: "This conflict has no common ancestor"
+					}
+					onClick={onToggleBase}
+				>
 					Base
-				</Button>
-			)}
+				</button>
+			</div>
 
-			<div className="flex-1" />
+			<span className="abundio-ctb__spacer" />
 
-			{isDirty && (
-				<span style={{ color: "var(--fg-secondary)", fontSize: 11 }}>
-					unsaved
-				</span>
-			)}
+			{isDirty && <span className="abundio-ctb__dirty">unsaved</span>}
 
 			{/* Enabled whenever the path is unmerged — deliberately NOT gated on
 			 *  zero remaining blocks. Git lets you stage a file with markers still
 			 *  in it, and Abundio should not be stricter than git without a reason
 			 *  it can state. */}
-			<Button primary disabled={busy} onClick={() => run(onResolveAndStage)}>
+			<button
+				type="button"
+				className="abundio-ctb__primary"
+				disabled={busy}
+				onClick={() => run(onResolveAndStage)}
+			>
 				{busy ? "Staging…" : "Resolve & stage"}
-			</Button>
-			{error && <Err>{error}</Err>}
+			</button>
+			{error && <Err />}
 		</Bar>
 	);
 }
 
 /**
- * Position-and-total in one control: `‹ 2/5 ›`.
+ * Position, progress and navigation in one control.
  *
- * The total doubles as the remaining count, so accepting a block visibly
- * shrinks it — one number instead of two competing ones in a 30px bar. The
- * counter is monospace and fixed-width so the arrows do not shift as digits
- * change.
+ * One segment per conflict, the current one lit and taller. How many are left
+ * is read from the track's length rather than from a number, and any conflict
+ * is one click away — which a bare `‹ 2/5 ›` counter cannot offer.
  */
-function Navigator({
+function Track({
 	position,
 	total,
 	onPrev,
 	onNext,
+	onJump,
 }: {
 	position: number | null;
 	total: number;
 	onPrev: () => void;
 	onNext: () => void;
+	onJump: (index: number) => void;
 }) {
 	return (
-		<div
-			className="flex items-center flex-shrink-0 rounded overflow-hidden"
-			style={{ border: "1px solid var(--border)", height: 20 }}
-		>
-			<Arrow label="Previous conflict" onClick={onPrev} icon={ChevronLeft} />
+		<div className="abundio-ctb__nav">
+			<button
+				type="button"
+				className="abundio-ctb__arrow"
+				title="Previous conflict"
+				aria-label="Previous conflict"
+				onClick={onPrev}
+			>
+				<ChevronLeft size={12} />
+			</button>
+
+			{total <= MAX_SEGMENTS && (
+				// biome-ignore lint/a11y/useSemanticElements: see the toolbar group above
+				<div
+					className="abundio-ctb__track"
+					role="group"
+					aria-label="Conflicts in this file"
+				>
+					{Array.from({ length: total }, (_, i) => (
+						<button
+							// biome-ignore lint/suspicious/noArrayIndexKey: position *is* the identity
+							key={i}
+							type="button"
+							className={`abundio-ctb__seg${
+								i === position ? " abundio-ctb__seg--current" : ""
+							}`}
+							aria-label={`Go to conflict ${i + 1}`}
+							aria-current={i === position}
+							onClick={() => onJump(i)}
+						/>
+					))}
+				</div>
+			)}
+
 			<span
-				className="flex items-center justify-center tabular-nums"
-				style={{
-					minWidth: 46,
-					height: "100%",
-					padding: "0 6px",
-					fontSize: 11,
-					fontFamily: "var(--font-mono)",
-					color: "var(--warning)",
-					backgroundColor:
-						"color-mix(in srgb, var(--warning) 12%, transparent)",
-					borderLeft: "1px solid var(--border)",
-					borderRight: "1px solid var(--border)",
-				}}
+				className="abundio-ctb__count"
 				title={`${total} conflict${total === 1 ? "" : "s"} remaining`}
 			>
 				{position === null ? "—" : position + 1}/{total}
 			</span>
-			<Arrow label="Next conflict" onClick={onNext} icon={ChevronRight} />
+
+			<button
+				type="button"
+				className="abundio-ctb__arrow"
+				title="Next conflict"
+				aria-label="Next conflict"
+				onClick={onNext}
+			>
+				<ChevronRight size={12} />
+			</button>
 		</div>
-	);
-}
-
-function Arrow({
-	label,
-	onClick,
-	icon: Icon,
-}: {
-	label: string;
-	onClick: () => void;
-	/** An icon component, not a text glyph: consistent with the rest of the
-	 *  chrome, and crisp at 12px where a chevron character is not. */
-	icon: (props: { size?: number }) => React.ReactElement;
-}) {
-	return (
-		<button
-			type="button"
-			title={label}
-			aria-label={label}
-			onClick={onClick}
-			className="flex items-center justify-center transition-colors"
-			style={{
-				width: 20,
-				height: "100%",
-				border: "none",
-				background: "transparent",
-				color: "var(--fg-secondary)",
-				cursor: "pointer",
-				padding: 0,
-				transitionDuration: "var(--transition-fast)",
-			}}
-			onMouseEnter={(e) => {
-				e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
-				e.currentTarget.style.color = "var(--fg-primary)";
-			}}
-			onMouseLeave={(e) => {
-				e.currentTarget.style.backgroundColor = "transparent";
-				e.currentTarget.style.color = "var(--fg-secondary)";
-			}}
-		>
-			<Icon size={12} />
-		</button>
-	);
-}
-
-/** Ties an "Accept all" button to the side colour used by the rails. */
-function Dot({ color }: { color: string }) {
-	return (
-		<span
-			className="inline-block rounded-full"
-			style={{
-				width: 6,
-				height: 6,
-				marginRight: 5,
-				flexShrink: 0,
-				backgroundColor: color,
-			}}
-		/>
-	);
-}
-
-function Divider() {
-	return (
-		<span
-			className="flex-shrink-0"
-			style={{
-				width: 1,
-				height: 14,
-				backgroundColor: "var(--border)",
-				opacity: 0.7,
-			}}
-		/>
 	);
 }
 
 function Bar({ children }: { children: React.ReactNode }) {
-	return (
-		<div
-			className="flex items-center gap-2 px-3"
-			style={{
-				flexShrink: 0,
-				height: 30,
-				fontSize: 11,
-				fontFamily: "var(--font-ui)",
-				borderBottom: "1px solid var(--border)",
-				backgroundColor: "color-mix(in srgb, var(--warning) 10%, transparent)",
-			}}
-		>
-			{children}
-		</div>
-	);
+	return <div className="abundio-ctb">{children}</div>;
 }
 
-function Button({
-	children,
-	onClick,
-	disabled,
-	primary,
-	pressed,
-	label,
-}: {
-	children: React.ReactNode;
-	onClick: () => void;
-	disabled?: boolean;
-	primary?: boolean;
-	pressed?: boolean;
-	/** Full phrase for assistive tech when the visible text is abbreviated. */
-	label?: string;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			disabled={disabled}
-			aria-pressed={pressed}
-			aria-label={label}
-			title={label}
-			className="rounded px-2 flex items-center flex-shrink-0 transition-colors"
-			style={{
-				height: 20,
-				fontSize: 11,
-				fontFamily: "var(--font-ui)",
-				border: `1px solid ${pressed ? "var(--accent)" : "var(--border)"}`,
-				cursor: disabled ? "default" : "pointer",
-				opacity: disabled ? 0.5 : 1,
-				whiteSpace: "nowrap",
-				color: primary ? "var(--bg-primary)" : "var(--fg-primary)",
-				backgroundColor: primary
-					? "var(--accent)"
-					: pressed
-						? "color-mix(in srgb, var(--accent) 18%, transparent)"
-						: "var(--bg-tertiary)",
-				transitionDuration: "var(--transition-fast)",
-			}}
-		>
-			{children}
-		</button>
-	);
-}
-
-function Err({ children }: { children: React.ReactNode }) {
-	return (
-		<span
-			style={{ color: "var(--error)", fontSize: 11 }}
-			title={String(children)}
-		>
-			Failed
-		</span>
-	);
+function Err() {
+	return <span className="abundio-ctb__error">Failed</span>;
 }
