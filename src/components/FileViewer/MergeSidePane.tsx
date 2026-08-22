@@ -114,20 +114,28 @@ export function MergeSidePane({
 
 	const totalBlocks = ranges.length;
 
+	// Monaco loads asynchronously, so the editor does not exist on the render
+	// that first has content. Both effects below depend on this flag, or they
+	// would run once against nothing and never retry — leaving the pane
+	// undecorated until some unrelated change happened to re-trigger them.
+	const [editorReady, setEditorReady] = useState(false);
+
 	// Mark every conflict region, emphasise the active one, dim the rest.
 	useEffect(() => {
+		if (!editorReady || content == null) return;
 		const ed = getLiveEditor(paneId);
-		if (!ed || content == null) return;
+		if (!ed) return;
 		const lineCount = ed.getModel()?.getLineCount() ?? 1;
 		const collection = ed.createDecorationsCollection(
 			sideDecorations(ranges, activeBlock, lineCount, side),
 		);
 		return () => collection.clear();
-	}, [activeBlock, ranges, paneId, content, side]);
+	}, [activeBlock, ranges, paneId, content, side, editorReady]);
 
 	// Follow the caret. Split from the decoration effect so re-decorating (on an
 	// edit in the result pane) never yanks the viewport out from under a scroll.
 	useEffect(() => {
+		if (!editorReady) return;
 		const ed = getLiveEditor(paneId);
 		const range = activeBlock === null ? null : ranges[activeBlock];
 		if (!ed || !range) return;
@@ -137,7 +145,7 @@ export function MergeSidePane({
 			endLineNumber: Math.max(range.startLine, range.endLine),
 			endColumn: 1,
 		});
-	}, [activeBlock, ranges, paneId]);
+	}, [activeBlock, ranges, paneId, editorReady]);
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container
@@ -206,6 +214,7 @@ export function MergeSidePane({
 						initialEditorState={null}
 						onChange={() => {}}
 						readOnly
+						onEditorMounted={() => setEditorReady(true)}
 					/>
 				)}
 			</div>

@@ -523,6 +523,7 @@ export function FilePane({
 						onChange={handleEditorChange}
 						forceWordWrap={isMarkdown}
 						onCursorLine={handleCursorLine}
+						activeConflictBlock={activeBlock}
 					/>
 				)}
 				{paneState.fileType === "diff" &&

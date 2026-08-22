@@ -32,6 +32,15 @@ interface CodeEditorProps {
 	readOnly?: boolean;
 	/** Fires on cursor movement, so the Merge view can follow the caret. */
 	onCursorLine?: (line: number) => void;
+	/** The conflict block to mark as current. Owned by the parent rather than
+	 *  derived from the caret here, so the gutter rail, the navigator and the
+	 *  Merge side panes cannot disagree — the caret is one input to that choice,
+	 *  not the choice itself. */
+	activeConflictBlock?: number | null;
+	/** Fires once the Monaco instance exists. Monaco loads asynchronously, so a
+	 *  parent that wants to decorate this editor cannot assume it is there on
+	 *  first render — it must wait for this. */
+	onEditorMounted?: () => void;
 }
 
 // Cache view state per tab so switching tabs preserves cursor/scroll
@@ -110,12 +119,16 @@ export const CodeEditor = memo(function CodeEditor({
 	forceWordWrap = false,
 	readOnly = false,
 	onCursorLine,
+	onEditorMounted,
+	activeConflictBlock = null,
 }: CodeEditorProps) {
 	const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 	const onChangeRef = useRef(onChange);
 	onChangeRef.current = onChange;
 	const onCursorLineRef = useRef(onCursorLine);
 	onCursorLineRef.current = onCursorLine;
+	const onEditorMountedRef = useRef(onEditorMounted);
+	onEditorMountedRef.current = onEditorMounted;
 	const tabIdRef = useRef(tabId);
 	tabIdRef.current = tabId;
 	const isActiveRef = useRef(isActive);
@@ -141,9 +154,6 @@ export const CodeEditor = memo(function CodeEditor({
 	);
 	const conflictCommandRef = useRef<string | null>(null);
 	const [editorMounted, setEditorMounted] = useState(false);
-	// Which block the caret is in, so the active one can carry a gutter rail —
-	// tracked here rather than passed in, since the cursor already lives here.
-	const [activeConflict, setActiveConflict] = useState<number | null>(null);
 
 	useEffect(() => {
 		const ed = editorRef.current;
@@ -153,11 +163,11 @@ export const CodeEditor = memo(function CodeEditor({
 		const uri = ed.getModel()?.uri.toString();
 		if (!uri) return;
 
-		collection.set(conflictDecorations(conflictBlocks, activeConflict));
+		collection.set(conflictDecorations(conflictBlocks, activeConflictBlock));
 		setConflictBlocks(uri, conflictBlocks, commandId);
 		// Only claim the glyph margin while there is something to put in it.
 		ed.updateOptions({ glyphMargin: conflictBlocks.length > 0 });
-	}, [conflictBlocks, activeConflict, editorMounted]);
+	}, [conflictBlocks, activeConflictBlock, editorMounted]);
 
 	// Focus editor when this pane becomes active
 	useEffect(() => {
@@ -226,15 +236,11 @@ export const CodeEditor = memo(function CodeEditor({
 					);
 				}) ?? null;
 			setEditorMounted(true);
+			onEditorMountedRef.current?.();
 
-			ed.onDidChangeCursorPosition((e) => {
-				const line = e.position.lineNumber;
-				const index = conflictBlocksRef.current.findIndex(
-					(b) => line >= b.startLine && line <= b.endLine,
-				);
-				setActiveConflict(index === -1 ? null : index);
-				onCursorLineRef.current?.(line);
-			});
+			ed.onDidChangeCursorPosition((e) =>
+				onCursorLineRef.current?.(e.position.lineNumber),
+			);
 
 			// Define and apply theme, store Monaco instance for theme sync
 			defineAbundioTheme(m);
