@@ -185,6 +185,19 @@ pub async fn git_fetch_bundle(
     .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
 }
 
+/// Reject anything that isn't a plain repository-relative path.
+///
+/// Shared by every command that turns a caller-supplied path into a filesystem
+/// or index lookup. `git_stage_path` *writes* through this, so it must not grow
+/// its own copy — one validator, one set of rules.
+fn validate_repo_relative(file_path: &str) -> Result<(), AbundioError> {
+    let fp = Path::new(file_path);
+    if fp.is_absolute() || fp.components().any(|c| c == std::path::Component::ParentDir) {
+        return Err(AbundioError::Git(format!("Invalid file path: {}", file_path)));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn git_file_diff(
     cwd: String,
@@ -195,14 +208,7 @@ pub async fn git_file_diff(
     tokio::task::spawn_blocking(move || {
         let base = resolve_base_branch(&cwd, base_branch.clone())?;
 
-        // Validate file_path: must be relative and contain no ".." components
-        let fp = Path::new(&file_path);
-        if fp.is_absolute() || fp.components().any(|c| c == std::path::Component::ParentDir) {
-            return Err(AbundioError::Git(format!(
-                "Invalid file path: {}",
-                file_path
-            )));
-        }
+        validate_repo_relative(&file_path)?;
 
         let (original, modified) = match section.as_str() {
             "against_base" => {
@@ -564,4 +570,14 @@ mod tests {
         assert_eq!(diff.modified, "line1\nline2\n");
         assert_eq!(diff.file_path, "untracked.txt");
     }
+
+    #[test]
+    fn validate_repo_relative_rejects_escapes() {
+        assert!(validate_repo_relative("src/main.rs").is_ok());
+        assert!(validate_repo_relative("a/b/c.txt").is_ok());
+        assert!(validate_repo_relative("/etc/passwd").is_err());
+        assert!(validate_repo_relative("../outside.txt").is_err());
+        assert!(validate_repo_relative("src/../../escape.txt").is_err());
+    }
+
 }
