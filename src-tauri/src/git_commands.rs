@@ -141,6 +141,24 @@ pub async fn git_diff_trees(
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitConflictFile {
+    pub file_path: String,
+    /// Which stages exist: both_modified | deleted_by_us | deleted_by_them |
+    /// both_added | added_by_us | added_by_them | none. A pure discriminator —
+    /// the UI never renders it, because naming a side is wrong half the time
+    /// during a rebase (see ADR-0029).
+    pub kind: String,
+    pub is_binary: bool,
+    /// Stage 1/2/3 as text, or `None` when that stage is absent or the file is
+    /// binary. Deliberately no merged text: the pane owns that buffer, and a
+    /// second copy from Rust would immediately diverge from the user's edits.
+    pub base: Option<String>,
+    pub ours: Option<String>,
+    pub theirs: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitFetchBundle {
     pub changed_files: Vec<GitChangedFile>,
     pub branch_info: BranchInfo,
@@ -244,6 +262,17 @@ pub async fn git_file_diff(
                 let modified = std::fs::read_to_string(&full_path).unwrap_or_default();
                 (String::new(), modified)
             }
+            // Conflicted rows open a text pane, not a diff, so nothing should
+            // reach this arm — but a stray `diffSection: "conflicted"` from a
+            // restored layout degrades to a readable ours/theirs diff instead of
+            // failing silently in the caller's bare `catch`.
+            "conflicted" => {
+                let conflict = git_libgit2::compute_conflict_file_sync(&cwd, &file_path)?;
+                (
+                    conflict.ours.unwrap_or_default(),
+                    conflict.theirs.unwrap_or_default(),
+                )
+            }
             _ => {
                 return Err(AbundioError::Git(format!(
                     "Unknown section: {}",
@@ -257,6 +286,40 @@ pub async fn git_file_diff(
             modified,
             file_path,
         })
+    })
+    .await
+    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+}
+
+/// The conflict stages of an unmerged path.
+///
+/// The inline resolution UX needs none of these — the working-tree file already
+/// carries both sides in its markers. This exists for what the markers cannot
+/// answer: the conflict *kind* (delete/modify, add/add), binary detection, and
+/// the side content the Merge view shows.
+#[tauri::command]
+pub async fn git_conflict_file(
+    cwd: String,
+    file_path: String,
+) -> Result<GitConflictFile, AbundioError> {
+    tokio::task::spawn_blocking(move || {
+        validate_repo_relative(&file_path)?;
+        git_libgit2::compute_conflict_file_sync(&cwd, &file_path)
+    })
+    .await
+    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+}
+
+/// `git add <path>` — Abundio's only write to git.
+///
+/// Note the caller must refresh the Git changes tab itself: `.git/index` is
+/// deliberately excluded from the file watcher's meaningful-change set (read-only
+/// git commands touch it constantly), so the scheduler will not observe this.
+#[tauri::command]
+pub async fn git_stage_path(cwd: String, file_path: String) -> Result<(), AbundioError> {
+    tokio::task::spawn_blocking(move || {
+        validate_repo_relative(&file_path)?;
+        git_libgit2::stage_path_sync(&cwd, &file_path)
     })
     .await
     .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
@@ -767,6 +830,156 @@ mod tests {
             git_libgit2::compute_operation_in_progress_sync(linked_s).unwrap(),
             Some("merge".to_string())
         );
+    }
+
+    #[test]
+    fn conflict_file_returns_all_three_stages() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let c = git_libgit2::compute_conflict_file_sync(cwd, "file.txt").unwrap();
+        assert_eq!(c.kind, "both_modified");
+        assert!(!c.is_binary);
+        assert_eq!(c.base.as_deref(), Some("base\n"));
+        assert_eq!(c.ours.as_deref(), Some("ours\n"));
+        assert_eq!(c.theirs.as_deref(), Some("theirs\n"));
+    }
+
+    #[test]
+    fn conflict_file_reports_none_for_a_merged_path() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let c = git_libgit2::compute_conflict_file_sync(cwd, "calm.txt").unwrap();
+        assert_eq!(c.kind, "none");
+        assert!(c.base.is_none() && c.ours.is_none() && c.theirs.is_none());
+    }
+
+    #[test]
+    fn delete_conflict_reports_a_missing_side() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        init_repo_test(cwd);
+        std::fs::write(dir.path().join("file.txt"), "base\n").unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "base"]);
+
+        run_git_test(cwd, &["checkout", "-b", "feature"]);
+        std::fs::write(dir.path().join("file.txt"), "edited\n").unwrap();
+        run_git_test(cwd, &["commit", "-am", "edit"]);
+
+        run_git_test(cwd, &["checkout", "main"]);
+        run_git_test(cwd, &["rm", "file.txt"]);
+        run_git_test(cwd, &["commit", "-m", "remove"]);
+
+        run_git_test(cwd, &["checkout", "feature"]);
+        let out = run_git_test_allow_fail(cwd, &["merge", "main"]);
+        assert!(!out.status.success());
+
+        let c = git_libgit2::compute_conflict_file_sync(cwd, "file.txt").unwrap();
+        assert_eq!(c.kind, "deleted_by_them");
+        assert!(c.theirs.is_none());
+        assert_eq!(c.ours.as_deref(), Some("edited\n"));
+    }
+
+    #[test]
+    fn binary_conflict_sets_is_binary_and_omits_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        init_repo_test(cwd);
+        let bin = |b: u8| vec![0u8, 1, 2, b, 0, 9];
+        std::fs::write(dir.path().join("blob.bin"), bin(3)).unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "base"]);
+
+        run_git_test(cwd, &["checkout", "-b", "feature"]);
+        std::fs::write(dir.path().join("blob.bin"), bin(7)).unwrap();
+        run_git_test(cwd, &["commit", "-am", "ours"]);
+
+        run_git_test(cwd, &["checkout", "main"]);
+        std::fs::write(dir.path().join("blob.bin"), bin(11)).unwrap();
+        run_git_test(cwd, &["commit", "-am", "theirs"]);
+
+        run_git_test(cwd, &["checkout", "feature"]);
+        let out = run_git_test_allow_fail(cwd, &["merge", "main"]);
+        assert!(!out.status.success());
+
+        let c = git_libgit2::compute_conflict_file_sync(cwd, "blob.bin").unwrap();
+        assert!(c.is_binary, "expected a binary conflict: {c:#?}");
+        assert!(c.base.is_none() && c.ours.is_none() && c.theirs.is_none());
+    }
+
+    #[test]
+    fn stage_path_clears_the_conflict() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "resolved\n").unwrap();
+
+        git_libgit2::stage_path_sync(cwd, "file.txt").unwrap();
+
+        let repo = git2::Repository::open(cwd).unwrap();
+        assert!(!repo.index().unwrap().has_conflicts());
+
+        let files = git_libgit2::compute_changed_files_sync(cwd, Some("main".into())).unwrap();
+        assert!(!files.iter().any(|f| f.section == "conflicted"));
+        assert!(files
+            .iter()
+            .any(|f| f.section == "staged" && f.path == "file.txt"));
+    }
+
+    #[test]
+    fn stage_path_on_a_missing_file_stages_the_deletion() {
+        // This is how "accept the delete" works for a delete/modify conflict:
+        // remove the file, then stage the path.
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        std::fs::remove_file(dir.path().join("file.txt")).unwrap();
+
+        git_libgit2::stage_path_sync(cwd, "file.txt").unwrap();
+
+        let repo = git2::Repository::open(cwd).unwrap();
+        let index = repo.index().unwrap();
+        assert!(!index.has_conflicts());
+        assert!(index.get_path(std::path::Path::new("file.txt"), 0).is_none());
+    }
+
+    #[test]
+    fn stage_path_rejects_escaping_paths() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let index_path = dir.path().join(".git").join("index");
+        let before = std::fs::read(&index_path).unwrap();
+
+        assert!(git_libgit2::stage_path_sync(cwd, "file.txt").is_ok());
+        // The validator lives in the command layer, so assert through it.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        assert!(rt
+            .block_on(git_stage_path(cwd.to_string(), "/etc/passwd".to_string()))
+            .is_err());
+        assert!(rt
+            .block_on(git_stage_path(cwd.to_string(), "../escape".to_string()))
+            .is_err());
+        // Only the legitimate stage above changed the index.
+        assert_ne!(before, std::fs::read(&index_path).unwrap());
+    }
+
+    #[test]
+    fn file_diff_conflicted_section_falls_back_to_ours_vs_theirs() {
+        let dir = make_conflicted_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let diff = rt
+            .block_on(git_file_diff(
+                cwd.to_string(),
+                "file.txt".to_string(),
+                "conflicted".to_string(),
+                Some("main".to_string()),
+            ))
+            .unwrap();
+        assert_eq!(diff.original, "ours\n");
+        assert_eq!(diff.modified, "theirs\n");
     }
 
     #[test]

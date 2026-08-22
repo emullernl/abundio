@@ -26,7 +26,7 @@ use git2::{
 };
 
 use crate::error::AbundioError;
-use crate::git_commands::{BranchInfo, GitChangedFile, TreeDiffStats};
+use crate::git_commands::{BranchInfo, GitChangedFile, GitConflictFile, TreeDiffStats};
 use crate::worktree_commands::WorktreeEntry;
 
 const MAX_UNTRACKED: usize = 500;
@@ -177,6 +177,108 @@ fn retain_unconflicted(
         .collect()
 }
 
+/// One index stage's blob as text. Stage 1 = ancestor, 2 = ours, 3 = theirs.
+///
+/// Note the vocabulary: "ours"/"theirs" are git's own index terms (`git checkout
+/// --ours` addresses stage 2) and stay on this side of the IPC boundary. They
+/// invert during a rebase, so the UI says Current/Incoming instead — and for
+/// marker-less conflicts names neither side. See ADR-0029.
+fn blob_at_stage<'r>(
+    repo: &'r Repository,
+    file_path: &str,
+    stage: u16,
+) -> Option<git2::Blob<'r>> {
+    let index = repo.index().ok()?;
+    let entry = index.get_path(Path::new(file_path), stage as i32)?;
+    repo.find_blob(entry.id).ok()
+}
+
+/// The three conflict stages of an unmerged path, plus what kind of conflict it
+/// is and whether it is binary.
+pub fn compute_conflict_file_sync(
+    cwd: &str,
+    file_path: &str,
+) -> Result<GitConflictFile, AbundioError> {
+    let repo = open_repo(cwd)?;
+
+    let ancestor = blob_at_stage(&repo, file_path, 1);
+    let ours = blob_at_stage(&repo, file_path, 2);
+    let theirs = blob_at_stage(&repo, file_path, 3);
+
+    // Which stages are present *is* the conflict kind — there is nothing else to
+    // derive it from, and git's own status names map one-to-one.
+    let kind = match (ancestor.is_some(), ours.is_some(), theirs.is_some()) {
+        (true, true, true) => "both_modified",
+        (true, true, false) => "deleted_by_them",
+        (true, false, true) => "deleted_by_us",
+        (false, true, true) => "both_added",
+        (false, true, false) => "added_by_us",
+        (false, false, true) => "added_by_them",
+        // No stages at all: the path is not unmerged (already resolved, or never
+        // was). Reported rather than raised — the caller polls this from UI that
+        // can legitimately race a resolution.
+        _ => "none",
+    };
+
+    let binary_of = |b: &Option<git2::Blob<'_>>| b.as_ref().is_some_and(|b| b.is_binary());
+    let is_binary = binary_of(&ancestor) || binary_of(&ours) || binary_of(&theirs);
+
+    let text = |blob: Option<git2::Blob<'_>>| -> Option<String> {
+        if is_binary {
+            return None;
+        }
+        blob.map(|b| String::from_utf8_lossy(b.content()).to_string())
+    };
+
+    Ok(GitConflictFile {
+        file_path: file_path.to_string(),
+        kind: kind.to_string(),
+        is_binary,
+        base: text(ancestor),
+        ours: text(ours),
+        theirs: text(theirs),
+    })
+}
+
+/// Stage a single path, with `git add -A <path>` semantics.
+///
+/// **This is the only place in the codebase that writes the on-disk git index.**
+/// It is deliberate and user-initiated: the invariant Abundio holds is that the
+/// index is never written as a side effect of telemetry, polling or rendering —
+/// not that it is never written at all. See ADR-0029, and the `Safety:` note on
+/// `snapshot_worktree_tree`, which remains a strictly in-memory operation.
+///
+/// `add_path` on a conflicted path is what resolves it: libgit2 drops stages
+/// 1/2/3 and writes a stage 0 entry. When the file is gone from disk the
+/// deletion is staged instead, which is how "accept the delete" works for a
+/// delete/modify conflict with no extra command.
+pub fn stage_path_sync(cwd: &str, file_path: &str) -> Result<(), AbundioError> {
+    let repo = open_repo(cwd)?;
+    let mut index = repo
+        .index()
+        .map_err(|e| AbundioError::Git(format!("open index: {e}")))?;
+
+    let workdir = repo.workdir().ok_or_else(|| {
+        AbundioError::Git("cannot stage in a bare repository".to_string())
+    })?;
+    let rel = Path::new(file_path);
+
+    if workdir.join(rel).exists() {
+        index
+            .add_path(rel)
+            .map_err(|e| AbundioError::Git(format!("stage {file_path}: {e}")))?;
+    } else {
+        index
+            .remove_path(rel)
+            .map_err(|e| AbundioError::Git(format!("stage deletion {file_path}: {e}")))?;
+    }
+
+    index
+        .write()
+        .map_err(|e| AbundioError::Git(format!("write index: {e}")))?;
+    Ok(())
+}
+
 /// Unmerged paths, straight from the index's conflict stages.
 ///
 /// Sourced from `index.conflicts()` rather than a `Status::CONFLICTED` walk:
@@ -291,7 +393,12 @@ pub fn compute_changed_files_sync(
 /// respecting `.gitignore`. Best-effort: `Ok(None)` when `cwd` isn't a git repo.
 ///
 /// Safety: all index mutations are in-memory — we **never** call `index.write()`,
-/// so the user's on-disk `.git/index` (staging area) is untouched. Only loose
+/// so the user's on-disk `.git/index` (staging area) is untouched. This remains
+/// true: `stage_path_sync` is the sole on-disk index writer in the codebase, and
+/// it runs only on explicit user action. The invariant this note protects is
+/// that Abundio never writes the index as a *side effect* of telemetry, polling
+/// or rendering — which is exactly what this function would otherwise be doing.
+/// See ADR-0029. Only loose
 /// tree/blob objects are written to the ODB (content-addressed, deduplicated,
 /// reaped by `git gc`), exactly as `git add -A` + `git write-tree` do. The cost
 /// is a working-tree stat-walk (a `git status`-class scan, proportional to the

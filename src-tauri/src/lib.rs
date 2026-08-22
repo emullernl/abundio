@@ -955,6 +955,8 @@ pub fn run() {
             git_commands::git_changed_files,
             git_commands::git_fetch_bundle,
             git_commands::git_file_diff,
+            git_commands::git_conflict_file,
+            git_commands::git_stage_path,
             git_commands::git_branch_info,
             git_commands::git_list_branches,
             git_commands::git_status_fingerprint,
