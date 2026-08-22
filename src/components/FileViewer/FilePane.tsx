@@ -144,16 +144,27 @@ export function FilePane({
 		getActiveConflictBlock(paneId),
 	);
 
+	/** Publish a block as the current one, without touching the caret. */
+	const setCurrentBlock = useCallback(
+		(index: number | null) => {
+			setActiveBlock(index);
+			setActiveConflictBlock(paneId, index);
+		},
+		[paneId],
+	);
+
 	const handleCursorLine = useCallback(
 		(line: number) => {
 			const index = conflictBlocks.findIndex(
 				(b) => line >= b.startLine && line <= b.endLine,
 			);
-			const next = index === -1 ? null : index;
-			setActiveBlock(next);
-			setActiveConflictBlock(paneId, next);
+			// Moving the caret *into* a block selects it; moving it out keeps the
+			// last one. "Current conflict" is a pointer you step through, not a
+			// readout of where the caret happens to be — blanking it every time you
+			// edited nearby would make the navigator flicker to "—" constantly.
+			if (index !== -1) setCurrentBlock(index);
 		},
-		[conflictBlocks, paneId],
+		[conflictBlocks, setCurrentBlock],
 	);
 
 	/**
@@ -167,11 +178,10 @@ export function FilePane({
 	 * is back.
 	 */
 	const selectBlock = useCallback(
-		(blockIndex: number, focus = true) => {
+		(blockIndex: number) => {
 			const block = conflictBlocks[blockIndex];
 			if (!block) return;
-			setActiveBlock(blockIndex);
-			setActiveConflictBlock(paneId, blockIndex);
+			setCurrentBlock(blockIndex);
 
 			// Two frames, matching the pattern used elsewhere in this file for
 			// post-layout editor work.
@@ -187,21 +197,26 @@ export function FilePane({
 					);
 					ed.setPosition({ lineNumber: line, column: 1 });
 					ed.revealLineInCenter(block.startLine);
-					if (focus) ed.focus();
+					ed.focus();
 				});
 			});
 		},
-		[conflictBlocks, paneId],
+		[conflictBlocks, paneId, setCurrentBlock],
 	);
 
-	// Opening the Merge view lands on a conflict, so the side panes have
-	// something to show instead of a uniformly dimmed file. An existing
-	// selection is respected — if the caret was already in a block, that is the
-	// one you meant. Guarded by a ref so moving the caret out of every block
-	// later does not yank you back to the first one.
+	// A conflicted file always has a current conflict, in both the standard and
+	// the Merge view — so the navigator reads "1/N" rather than "—/N" the moment
+	// the toolbar appears, and the Merge view never opens on a uniformly dimmed
+	// file with nothing marked.
+	//
+	// Pointer only: the caret is left alone. Opening a file to read one line
+	// should not scroll you somewhere else. Explicit navigation moves the caret.
+	//
+	// An existing selection is respected, and the ref keeps this to once per
+	// conflict session so it cannot fight the user's own navigation.
 	const autoSelectedRef = useRef(false);
 	useEffect(() => {
-		if (!mergeViewOpen) {
+		if (!isUnmerged || conflictBlocks.length === 0) {
 			autoSelectedRef.current = false;
 			return;
 		}
@@ -209,20 +224,18 @@ export function FilePane({
 		const target = initialMergeSelection(activeBlock, conflictBlocks.length);
 		if (target === null) return;
 		autoSelectedRef.current = true;
-		// No focus steal: the user clicked a toolbar button, not the editor.
-		selectBlock(target, false);
-	}, [mergeViewOpen, conflictBlocks.length, activeBlock, selectBlock]);
+		setCurrentBlock(target);
+	}, [isUnmerged, conflictBlocks.length, activeBlock, setCurrentBlock]);
 
 	// A resolved block shifts every index after it, so clamp rather than leave
 	// the navigator pointing past the end.
 	useEffect(() => {
 		if (activeBlock !== null && activeBlock >= conflictBlocks.length) {
-			const next =
-				conflictBlocks.length === 0 ? null : conflictBlocks.length - 1;
-			setActiveBlock(next);
-			setActiveConflictBlock(paneId, next);
+			setCurrentBlock(
+				conflictBlocks.length === 0 ? null : conflictBlocks.length - 1,
+			);
 		}
-	}, [activeBlock, conflictBlocks.length, paneId]);
+	}, [activeBlock, conflictBlocks.length, setCurrentBlock]);
 
 	// Deliberately not cleared on unmount. Opening the Merge view re-parents the
 	// result pane, so this component unmounts and remounts as part of a layout

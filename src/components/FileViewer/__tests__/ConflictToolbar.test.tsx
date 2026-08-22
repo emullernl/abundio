@@ -253,6 +253,13 @@ describe("conflict navigator", () => {
 		expect(arrow("Next conflict")?.querySelector("svg")).not.toBeNull();
 	});
 
+	it("reads 1/N when sitting on the first conflict", () => {
+		// A conflicted file always has a current conflict, so this — not "—/3" —
+		// is what the toolbar shows the moment it appears, in either view.
+		render(THREE, 0);
+		expect(container.textContent).toContain("1/3");
+	});
+
 	it("shows position over total", () => {
 		render(THREE, 1);
 		expect(container.textContent).toContain("2/3");
