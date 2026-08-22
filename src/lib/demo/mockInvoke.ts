@@ -111,6 +111,14 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				}
 			);
 		}
+		case "git_conflict_file":
+			return fixtures.conflictFile(
+				String(args.cwd ?? ""),
+				String(args.filePath ?? ""),
+			);
+		case "git_stage_path":
+			warnOnce("git_stage_path", "[demo] staging is disabled");
+			return undefined;
 		case "git_workspaces_summary": {
 			const requests =
 				(args.requests as { workspaceId: string; cwd: string }[]) ?? [];
