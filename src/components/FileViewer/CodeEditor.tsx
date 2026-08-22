@@ -1,6 +1,15 @@
 import Editor, { type Monaco, useMonaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	applyChoice,
+	clearConflictBlocks,
+	conflictDecorations,
+	ensureConflictLensProvider,
+	setConflictBlocks,
+} from "../../lib/conflictLenses";
+import { parseConflicts, type ResolveChoice } from "../../lib/conflictMarkers";
+import "./ConflictDecorations.css";
 import { defineAbundioTheme } from "../../lib/monacoShared";
 import { registerSyncEditor, unregisterSyncEditor } from "../../lib/scrollSync";
 import { setAllTerminalsFontSize } from "../../lib/terminalManager";
@@ -18,6 +27,9 @@ interface CodeEditorProps {
 	// Markdown is prose — long logical lines — so it always wraps, overriding
 	// the global editorWordWrap setting.
 	forceWordWrap?: boolean;
+	/** Read-only panes (the Merge view's side panes) show an index stage, which
+	 *  has no editable on-disk counterpart. */
+	readOnly?: boolean;
 }
 
 // Cache view state per tab so switching tabs preserves cursor/scroll
@@ -86,6 +98,7 @@ export const CodeEditor = memo(function CodeEditor({
 	initialEditorState,
 	onChange,
 	forceWordWrap = false,
+	readOnly = false,
 }: CodeEditorProps) {
 	const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 	const onChangeRef = useRef(onChange);
@@ -103,6 +116,32 @@ export const CodeEditor = memo(function CodeEditor({
 	const monaco = useMonaco();
 
 	const pendingGotoLine = useExplorerStore((s) => s.pendingGotoLine);
+
+	// Conflict highlighting is derived from the buffer, so it works on any file
+	// containing markers — being *unmerged* is a separate question, answered by
+	// the index, and gates staging rather than rendering. See ADR-0029.
+	const conflictBlocks = useMemo(() => parseConflicts(content), [content]);
+	const conflictBlocksRef = useRef(conflictBlocks);
+	conflictBlocksRef.current = conflictBlocks;
+	const decorationsRef = useRef<editor.IEditorDecorationsCollection | null>(
+		null,
+	);
+	const conflictCommandRef = useRef<string | null>(null);
+	const [editorMounted, setEditorMounted] = useState(false);
+
+	useEffect(() => {
+		const ed = editorRef.current;
+		const collection = decorationsRef.current;
+		const commandId = conflictCommandRef.current;
+		if (!editorMounted || !ed || !collection || !commandId) return;
+		const uri = ed.getModel()?.uri.toString();
+		if (!uri) return;
+
+		collection.set(conflictDecorations(conflictBlocks));
+		setConflictBlocks(uri, conflictBlocks, commandId);
+		// Only claim the glyph margin while there is something to put in it.
+		ed.updateOptions({ glyphMargin: conflictBlocks.length > 0 });
+	}, [conflictBlocks, editorMounted]);
 
 	// Focus editor when this pane becomes active
 	useEffect(() => {
@@ -155,6 +194,22 @@ export const CodeEditor = memo(function CodeEditor({
 			// Markdown panes have a preview pane; this lets the two scroll-sync.
 			// Harmless for non-markdown files — no preview ever registers a pair.
 			registerSyncEditor(tabIdRef.current, ed);
+
+			// Conflict lenses: one global provider for the whole app, scoped per
+			// model by URI. The command is per-editor so its handler is naturally
+			// bound to this pane's buffer.
+			ensureConflictLensProvider(m);
+			decorationsRef.current = ed.createDecorationsCollection([]);
+			conflictCommandRef.current =
+				ed.addCommand(0, (_ctx: unknown, ...args: unknown[]) => {
+					applyChoice(
+						ed,
+						conflictBlocksRef.current,
+						args[0] as number,
+						args[1] as ResolveChoice,
+					);
+				}) ?? null;
+			setEditorMounted(true);
 
 			// Define and apply theme, store Monaco instance for theme sync
 			defineAbundioTheme(m);
@@ -233,6 +288,8 @@ export const CodeEditor = memo(function CodeEditor({
 				liveEditors.delete(currentTabId);
 			}
 			unregisterSyncEditor(currentTabId);
+			const uri = ed?.getModel()?.uri.toString();
+			if (uri) clearConflictBlocks(uri);
 		};
 	}, []);
 
@@ -249,6 +306,7 @@ export const CodeEditor = memo(function CodeEditor({
 			fontFamily,
 			fontSize: monacoFontSize,
 			wordWrap: effectiveWordWrap ? "on" : "off",
+			readOnly,
 			contextmenu: false,
 			minimap: { enabled: false },
 			scrollBeyondLastLine: false,
@@ -264,7 +322,7 @@ export const CodeEditor = memo(function CodeEditor({
 				horizontalScrollbarSize: 10,
 			},
 		}),
-		[fontFamily, monacoFontSize, effectiveWordWrap],
+		[fontFamily, monacoFontSize, effectiveWordWrap, readOnly],
 	);
 
 	return (

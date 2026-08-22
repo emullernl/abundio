@@ -1,0 +1,28 @@
+/* Conflict-block decorations for the inline resolution UX (ADR-0029).
+ *
+ * Deliberately plain CSS classes reading theme variables, not Monaco theme
+ * colours: classNames pick up a theme change for free, whereas theme colours
+ * would need `defineAbundioTheme` re-run — and that early-returns on an
+ * unchanged themeKey. */
+
+.abundio-conflict-current {
+	background-color: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.abundio-conflict-incoming {
+	background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.abundio-conflict-base {
+	background-color: color-mix(in srgb, var(--fg-secondary) 12%, transparent);
+}
+
+.abundio-conflict-marker {
+	background-color: color-mix(in srgb, var(--warning) 22%, transparent);
+	font-weight: 600;
+}
+
+/* Sides of the *active* block, highlighted in the Merge view's read-only panes. */
+.abundio-conflict-side-active {
+	background-color: color-mix(in srgb, var(--warning) 18%, transparent);
+}
