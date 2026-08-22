@@ -670,6 +670,16 @@ export function defineAbundioTheme(monaco: Monaco) {
 			"editorGutter.background": "#00000000",
 			"editorWidget.background": resolve("--bg-secondary"),
 			"editorWidget.border": resolve("--border"),
+			// Sticky scroll floats *over* the scrolling text, so it is an overlay
+			// widget in every sense except that Monaco defaults it to
+			// `editor.background` — which is transparent here, leaving the lines
+			// underneath visible straight through the pinned rows. Both the text
+			// and the gutter halves need their own opaque colour, since
+			// `editorGutter.background` is transparent for the same reason.
+			"editorStickyScroll.background": resolve("--bg-primary"),
+			"editorStickyScrollGutter.background": resolve("--bg-primary"),
+			"editorStickyScrollHover.background": resolve("--bg-tertiary"),
+			"editorStickyScroll.border": resolve("--border"),
 			"editor.findMatchBackground": `${resolve("--accent")}40`,
 			"editor.findMatchHighlightBackground": `${resolve("--accent")}25`,
 			"editorOverviewRuler.border": resolve("--border"),
