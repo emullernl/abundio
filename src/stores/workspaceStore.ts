@@ -15,7 +15,7 @@ import {
 	findFilePaneInTree,
 	insertBesideNode,
 	parseTabLayout,
-	pruneOrphanPreviews,
+	pruneOrphanDerived,
 	setAgentId,
 	setCwd,
 } from "../lib/paneTree";
@@ -307,7 +307,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				if (!layout) return t;
 				// Prune preview panes orphaned across sessions (their source pane
 				// no longer exists) before clearing stale ptyIds.
-				const pruned = pruneOrphanPreviews(layout) ?? layout;
+				const pruned = pruneOrphanDerived(layout) ?? layout;
 				allPaneIds.push(...collectPaneIds(pruned));
 				const cleared = clearPtyIds(pruned);
 				seedPendingAgentsForLayout(cleared);
