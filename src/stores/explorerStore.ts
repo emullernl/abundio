@@ -5,7 +5,6 @@ import {
 } from "../components/FileViewer/CodeEditor";
 import { fs as fsApi, git as gitApi, tabs as tabsApi } from "../lib/ipc";
 import { getLanguage } from "../lib/languageMap";
-import { isUnifiedDiffFile, parseUnifiedDiff } from "../lib/unifiedDiff";
 import {
 	buildFilePaneLayout,
 	pruneNonMarkdownPreviews,
@@ -18,6 +17,7 @@ import {
 	wrapInSplit,
 } from "../lib/paneTree";
 import type { DirEntry, GitChangedFile, PaneNode } from "../lib/types";
+import { isUnifiedDiffFile, parseUnifiedDiff } from "../lib/unifiedDiff";
 import { useWorkspaceStore } from "./workspaceStore";
 
 // Cache to survive unregisterFilePane calls (React Strict Mode unmount/remount and
@@ -37,6 +37,7 @@ export interface FilePaneState {
 	mime: string | null;
 	isDirty: boolean;
 	language: string | null;
+	diffSource: "git" | "file" | null;
 	externallyChanged: boolean;
 	deletedOnDisk: boolean;
 	loading: boolean;
@@ -58,6 +59,7 @@ function makeEmptyPaneState(filePath: string): FilePaneState {
 		mime: null,
 		isDirty: false,
 		language: getLanguage(ext),
+		diffSource: null,
 		externallyChanged: false,
 		deletedOnDisk: false,
 		loading: true,
@@ -131,6 +133,8 @@ interface ExplorerState {
 	) => Promise<void>;
 
 	reloadPaneFromDisk: (paneId: string) => Promise<void>;
+	openDiffAsText: (paneId: string) => void;
+	viewFileAsDiff: (paneId: string) => void;
 	reloadTabFromDisk: (paneId: string) => Promise<void>; // alias for compat
 	dismissExternalChange: (paneId: string) => void;
 
@@ -193,8 +197,6 @@ async function loadFilePaneContent(paneId: string, filePath: string) {
 
 	try {
 		const result = await fsApi.readFile(filePath);
-		const isDiffFile = isUnifiedDiffFile(filePath, result.content);
-		const parsedDiff = isDiffFile ? parseUnifiedDiff(result.content) : null;
 		useExplorerStore.setState((s) => {
 			if (!s.filePanes[paneId]) return s;
 			return {
@@ -202,12 +204,13 @@ async function loadFilePaneContent(paneId: string, filePath: string) {
 					...s.filePanes,
 					[paneId]: {
 						...s.filePanes[paneId],
-						fileType: isDiffFile ? "diff" : result.fileType,
-						content: isDiffFile ? null : result.content,
+						fileType: result.fileType,
+						content: result.content,
 						mime: result.mime,
 						loading: false,
-						diffOriginal: parsedDiff?.original ?? null,
-						diffModified: parsedDiff?.modified ?? null,
+						diffOriginal: null,
+						diffModified: null,
+						diffSource: null,
 					},
 				},
 			};
@@ -275,6 +278,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 						mime: null,
 						isDirty: false,
 						language: getLanguage(ext),
+						diffSource: "git",
 						externallyChanged: false,
 						deletedOnDisk: false,
 						loading: false,
@@ -299,7 +303,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	unregisterFilePane: (paneId) => {
 		const pane = get().filePanes[paneId];
 		if (
-			pane?.fileType === "diff" &&
+			pane?.diffSource === "git" &&
 			pane.diffOriginal != null &&
 			pane.diffModified != null
 		) {
@@ -409,6 +413,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 					mime: null,
 					isDirty: false,
 					language: getLanguage(ext),
+					diffSource: "git",
 					externallyChanged: false,
 					deletedOnDisk: false,
 					loading: false,
@@ -745,6 +750,32 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 					// Transient read failure — leave as-is
 				}
 			} else if (pane.fileType === "diff") {
+				if (pane.diffSource === "file") {
+					try {
+						const result = await fsApi.readFile(pane.filePath);
+						const rawContent = result.content ?? "";
+						const parsed = parseUnifiedDiff(rawContent);
+						set((s) => ({
+							filePanes: {
+								...s.filePanes,
+								[paneId]: {
+									...s.filePanes[paneId],
+									content: rawContent,
+									diffOriginal: parsed.original,
+									diffModified: parsed.modified,
+									language: parsed.languagePath
+										? getLanguage(parsed.languagePath.split(".").pop() ?? null)
+										: s.filePanes[paneId].language,
+									externallyChanged: false,
+									deletedOnDisk: false,
+								},
+							},
+						}));
+					} catch {
+						// ignore
+					}
+					continue;
+				}
 				if (!pane.diffSection) continue;
 				try {
 					const diff = await gitApi.fileDiff(
@@ -774,17 +805,26 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 	reloadPaneFromDisk: async (paneId) => {
 		const pane = get().filePanes[paneId];
-		if (pane?.fileType !== "text") return;
+		if (!pane || (pane.fileType !== "text" && pane.diffSource !== "file"))
+			return;
 		try {
 			const result = await fsApi.readFile(pane.filePath);
+			const rawContent = result.content ?? "";
+			const parsed =
+				pane.diffSource === "file" ? parseUnifiedDiff(rawContent) : null;
 			set((s) => ({
 				filePanes: {
 					...s.filePanes,
 					[paneId]: {
 						...s.filePanes[paneId],
-						content: result.content,
+						content: pane.diffSource === "file" ? rawContent : result.content,
 						mime: result.mime,
-						fileType: result.fileType,
+						fileType: pane.diffSource === "file" ? "diff" : result.fileType,
+						diffOriginal: parsed?.original ?? null,
+						diffModified: parsed?.modified ?? null,
+						language: parsed?.languagePath
+							? getLanguage(parsed.languagePath.split(".").pop() ?? null)
+							: s.filePanes[paneId].language,
 						isDirty: false,
 						externallyChanged: false,
 						deletedOnDisk: false,
@@ -794,6 +834,55 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		} catch {
 			// ignore
 		}
+	},
+
+	openDiffAsText: (paneId) => {
+		set((s) => {
+			const pane = s.filePanes[paneId];
+			if (pane?.diffSource !== "file") return s;
+			return {
+				filePanes: {
+					...s.filePanes,
+					[paneId]: {
+						...pane,
+						fileType: "text",
+						diffSource: null,
+						diffOriginal: null,
+						diffModified: null,
+						content: pane.content ?? "",
+						isDirty: false,
+					},
+				},
+			};
+		});
+	},
+
+	viewFileAsDiff: (paneId: string) => {
+		set((s) => {
+			const pane = s.filePanes[paneId];
+			if (!pane) return s;
+			if (
+				pane.fileType !== "text" ||
+				!isUnifiedDiffFile(pane.filePath, pane.content ?? "")
+			)
+				return s;
+			const parsed = parseUnifiedDiff(pane.content ?? "");
+			return {
+				filePanes: {
+					...s.filePanes,
+					[paneId]: {
+						...pane,
+						fileType: "diff",
+						diffSource: "file",
+						diffOriginal: parsed.original,
+						diffModified: parsed.modified,
+						language: parsed.languagePath
+							? getLanguage(parsed.languagePath.split(".").pop() ?? null)
+							: pane.language,
+					},
+				},
+			};
+		});
 	},
 
 	reloadTabFromDisk: async (paneId) => get().reloadPaneFromDisk(paneId),

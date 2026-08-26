@@ -83,6 +83,8 @@ export function FilePane({
 		(s) => s.dismissExternalChange,
 	);
 	const saveFile = useExplorerStore((s) => s.saveFile);
+	const openDiffAsText = useExplorerStore((s) => s.openDiffAsText);
+	const viewFileAsDiff = useExplorerStore((s) => s.viewFileAsDiff);
 
 	const handleEditorChange = useCallback(
 		(content: string) => updateFileContent(paneId, content),
@@ -349,6 +351,10 @@ export function FilePane({
 		paneState.fileType === "diff"
 			? paneState.filePath.replace(/^diff:/, "")
 			: null;
+	const isStandaloneDiff = paneState.diffSource === "file";
+	const isPatchFile =
+		/\.(diff|patch)$/i.test(paneState.fileName) &&
+		(paneState.content?.length ?? 0) > 0;
 
 	// Open the plain (non-diff) file backing this diff pane in the editor.
 	// Undefined for deleted files (nothing on disk to open). Resolves via the
@@ -470,6 +476,14 @@ export function FilePane({
 
 	const contextMenuItems: ContextMenuItem[] = [
 		...markdownItems,
+		...(isPatchFile && paneState.fileType === "text"
+			? [
+					{
+						label: "View Diff",
+						onClick: () => viewFileAsDiff(paneId),
+					},
+				]
+			: []),
 		...editorItems,
 		...paneItems,
 	];
@@ -557,11 +571,18 @@ export function FilePane({
 									filePath: diffRealPath,
 								}}
 								isActive={isFocused}
-								onBack={() => {
-									unregisterFilePane(paneId);
-								}}
+								language={paneState.language}
+								onBack={
+									paneState.diffSection
+										? () => unregisterFilePane(paneId)
+										: undefined
+								}
 								onOpenFile={
-									paneState.diffSection ? openPlainFileFromDiff : undefined
+									isStandaloneDiff
+										? () => openDiffAsText(paneId)
+										: paneState.diffSection
+											? openPlainFileFromDiff
+											: undefined
 								}
 							/>
 						</div>
