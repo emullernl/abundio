@@ -46,6 +46,15 @@ export function parseUnifiedDiff(source: string): ParsedUnifiedDiff {
 			}
 			continue;
 		}
+		if (line.startsWith("--- ")) {
+			const path = line.slice(4);
+			if (path !== "/dev/null") {
+				const oldPath = path.replace(/^a\//, "");
+				currentPath ??= oldPath;
+				languagePath ??= oldPath;
+			}
+			continue;
+		}
 
 		const hunk = line.match(HUNK_HEADER);
 		if (hunk) {

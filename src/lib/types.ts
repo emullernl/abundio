@@ -13,6 +13,7 @@ export type PaneNode =
 			id: string;
 			filePath: string;
 			isDiff?: boolean;
+			diffSource?: "git" | "file";
 			diffSection?: GitChangedFile["section"];
 			isDeleted?: boolean;
 	  }

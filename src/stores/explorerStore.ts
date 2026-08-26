@@ -82,6 +82,7 @@ interface ExplorerState {
 		paneId: string,
 		filePath: string,
 		isDiff?: boolean,
+		diffSource?: "git" | "file",
 		diffSection?: GitChangedFile["section"] | null,
 		isDeleted?: boolean,
 		diffOriginal?: string | null,
@@ -230,6 +231,45 @@ async function loadFilePaneContent(paneId: string, filePath: string) {
 	}
 }
 
+async function loadStandaloneDiffPaneContent(paneId: string, filePath: string) {
+	try {
+		const result = await fsApi.readFile(filePath);
+		const content = result.content ?? "";
+		const parsed = parseUnifiedDiff(content);
+		useExplorerStore.setState((s) => {
+			if (!s.filePanes[paneId]) return s;
+			return {
+				filePanes: {
+					...s.filePanes,
+					[paneId]: {
+						...s.filePanes[paneId],
+						fileType: "diff",
+						content,
+						mime: result.mime,
+						loading: false,
+						diffSource: "file",
+						diffOriginal: parsed.original,
+						diffModified: parsed.modified,
+						language: parsed.languagePath
+							? getLanguage(parsed.languagePath.split(".").pop() ?? null)
+							: null,
+					},
+				},
+			};
+		});
+	} catch {
+		useExplorerStore.setState((s) => {
+			if (!s.filePanes[paneId]) return s;
+			return {
+				filePanes: {
+					...s.filePanes,
+					[paneId]: { ...s.filePanes[paneId], loading: false },
+				},
+			};
+		});
+	}
+}
+
 export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	filePanes: {},
 	expandedDirs: {},
@@ -241,6 +281,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		paneId,
 		filePath,
 		isDiff,
+		diffSource,
 		diffSection,
 		isDeleted,
 		diffOriginal,
@@ -250,7 +291,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		// If already registered for same file, no-op
 		if (existing && existing.filePath === filePath) return;
 
-		if (isDiff) {
+		if (isDiff && diffSource !== "file") {
 			const realPath = filePath.startsWith("diff:")
 				? filePath.slice("diff:".length)
 				: filePath;
@@ -297,7 +338,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 					[paneId]: makeEmptyPaneState(filePath),
 				},
 			}));
-			loadFilePaneContent(paneId, filePath);
+			if (diffSource === "file") {
+				loadStandaloneDiffPaneContent(paneId, filePath);
+			} else {
+				loadFilePaneContent(paneId, filePath);
+			}
 		}
 	},
 
@@ -308,11 +353,16 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			pane.diffOriginal != null &&
 			pane.diffModified != null
 		) {
-			diffContentCache.set(paneId, {
+			const cached = {
 				original: pane.diffOriginal,
 				modified: pane.diffModified,
 				filePath: pane.filePath,
-			});
+			};
+			diffContentCache.set(paneId, cached);
+			setTimeout(() => {
+				if (diffContentCache.get(paneId) === cached)
+					diffContentCache.delete(paneId);
+			}, 0);
 		}
 		clearEditorStateCache(paneId);
 		set((s) => {
@@ -427,6 +477,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			type: "file",
 			id: paneId,
 			filePath,
+			diffSource: "file",
 		});
 	},
 

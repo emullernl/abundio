@@ -57,6 +57,7 @@ interface FilePaneProps {
 	cwd: string;
 	workspaceId: string;
 	isDiff?: boolean;
+	diffSource?: "git" | "file";
 	diffSection?: GitChangedFile["section"];
 	isDeleted?: boolean;
 	isFocused: boolean;
@@ -69,6 +70,7 @@ export function FilePane({
 	cwd,
 	workspaceId,
 	isDiff,
+	diffSource,
 	diffSection,
 	isDeleted,
 	isFocused,
@@ -280,6 +282,7 @@ export function FilePane({
 			paneId,
 			filePath,
 			isDiff,
+			diffSource,
 			diffSection,
 			isDeleted,
 			null,
@@ -294,6 +297,7 @@ export function FilePane({
 		paneId,
 		filePath,
 		isDiff,
+		diffSource,
 		diffSection,
 		isDeleted,
 		registerFilePane,

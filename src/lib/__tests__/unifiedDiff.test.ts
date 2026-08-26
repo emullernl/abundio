@@ -25,6 +25,22 @@ describe("parseUnifiedDiff", () => {
 		expect(result.modified).toBe("Patch failed");
 	});
 
+	it("uses the old path for deleted files", () => {
+		const result = parseUnifiedDiff(
+			[
+				"diff --git a/src/removed.ts b/src/removed.ts",
+				"--- a/src/removed.ts",
+				"+++ /dev/null",
+				"@@ -1 +0,0 @@",
+				"-export const removed = true;",
+			].join("\n"),
+		);
+
+		expect(result.languagePath).toBe("src/removed.ts");
+		expect(result.original).toBe("export const removed = true;");
+		expect(result.modified).toBe("");
+	});
+
 	it("preserves marker-like content and separates multiple files", () => {
 		const result = parseUnifiedDiff(
 			[
