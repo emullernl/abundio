@@ -5,6 +5,7 @@ import {
 } from "../components/FileViewer/CodeEditor";
 import { fs as fsApi, git as gitApi, tabs as tabsApi } from "../lib/ipc";
 import { getLanguage } from "../lib/languageMap";
+import { isUnifiedDiffFile, parseUnifiedDiff } from "../lib/unifiedDiff";
 import {
 	buildFilePaneLayout,
 	pruneNonMarkdownPreviews,
@@ -192,6 +193,8 @@ async function loadFilePaneContent(paneId: string, filePath: string) {
 
 	try {
 		const result = await fsApi.readFile(filePath);
+		const isDiffFile = isUnifiedDiffFile(filePath, result.content);
+		const parsedDiff = isDiffFile ? parseUnifiedDiff(result.content) : null;
 		useExplorerStore.setState((s) => {
 			if (!s.filePanes[paneId]) return s;
 			return {
@@ -199,10 +202,12 @@ async function loadFilePaneContent(paneId: string, filePath: string) {
 					...s.filePanes,
 					[paneId]: {
 						...s.filePanes[paneId],
-						fileType: result.fileType,
-						content: result.content,
+						fileType: isDiffFile ? "diff" : result.fileType,
+						content: isDiffFile ? null : result.content,
 						mime: result.mime,
 						loading: false,
+						diffOriginal: parsedDiff?.original ?? null,
+						diffModified: parsedDiff?.modified ?? null,
 					},
 				},
 			};

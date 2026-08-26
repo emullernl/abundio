@@ -560,7 +560,9 @@ export function FilePane({
 								onBack={() => {
 									unregisterFilePane(paneId);
 								}}
-								onOpenFile={openPlainFileFromDiff}
+								onOpenFile={
+									paneState.diffSection ? openPlainFileFromDiff : undefined
+								}
 							/>
 						</div>
 					)}
