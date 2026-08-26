@@ -29,6 +29,7 @@ import {
 	resolveWorkspacePath,
 } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
+import { isUnifiedDiffFile } from "../../lib/unifiedDiff";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
@@ -357,8 +358,8 @@ export function FilePane({
 			: null;
 	const isStandaloneDiff = paneState.diffSource === "file";
 	const isPatchFile =
-		/\.(diff|patch)$/i.test(paneState.fileName) &&
-		(paneState.content?.length ?? 0) > 0;
+		paneState.fileType === "text" &&
+		isUnifiedDiffFile(paneState.filePath, paneState.content ?? "");
 
 	// Open the plain (non-diff) file backing this diff pane in the editor.
 	// Undefined for deleted files (nothing on disk to open). Resolves via the

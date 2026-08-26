@@ -417,7 +417,10 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 	openFileAsDiff: async (workspaceId, filePath) => {
 		const result = await fsApi.readFile(filePath);
 		const content = result.content ?? "";
-		if (!isUnifiedDiffFile(filePath, content)) return;
+		if (!isUnifiedDiffFile(filePath, content)) {
+			await get().openFile(workspaceId, filePath);
+			return;
+		}
 
 		const parsed = parseUnifiedDiff(content);
 		const wsStore = useWorkspaceStore.getState();
