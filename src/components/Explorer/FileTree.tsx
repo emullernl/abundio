@@ -93,6 +93,7 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 	const entries = useExplorerStore((s) => s.dirContents[rootPath]);
 	const startCreate = useExplorerStore((s) => s.startCreate);
 	const startRename = useExplorerStore((s) => s.startRename);
+	const openFileAsDiff = useExplorerStore((s) => s.openFileAsDiff);
 	const pendingEdit = useExplorerStore((s) => s.pendingEdit);
 
 	const [menu, setMenu] = useState<{
@@ -199,6 +200,7 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 		// File entry
 		const openFile = useExplorerStore.getState().openFile;
 		const openFileInSplit = useExplorerStore.getState().openFileInSplit;
+		const isDiffFile = /\.(diff|patch)$/i.test(entry.name);
 		return [
 			{
 				label: "Open in New Tab",
@@ -221,6 +223,19 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 					openFileInSplit(workspaceId, entry.path, "horizontal");
 				},
 			},
+			...(isDiffFile
+				? [
+						{
+							label: "Open in Diff Viewer",
+							onClick: () => {
+								setMenu(null);
+								void openFileAsDiff(workspaceId, entry.path).catch(
+									console.error,
+								);
+							},
+						},
+					]
+				: []),
 			{ separator: true as const },
 			{
 				label: REVEAL_LABEL,

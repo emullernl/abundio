@@ -94,6 +94,7 @@ interface ExplorerState {
 
 	// Navigates to a file by updating the layout (or creating a new tab)
 	openFile: (workspaceId: string, filePath: string) => Promise<void>;
+	openFileAsDiff: (workspaceId: string, filePath: string) => Promise<void>;
 	openDiff: (
 		workspaceId: string,
 		filePath: string,
@@ -361,6 +362,72 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		// Markdown files open with a live preview pane beside them (auto-open).
 		const { layout: seedLayout } = buildFilePaneLayout(filePath);
 		await wsStore.createTab(workspaceId, undefined, seedLayout);
+	},
+
+	openFileAsDiff: async (workspaceId, filePath) => {
+		const result = await fsApi.readFile(filePath);
+		const content = result.content ?? "";
+		if (!isUnifiedDiffFile(filePath, content)) return;
+
+		const parsed = parseUnifiedDiff(content);
+		const wsStore = useWorkspaceStore.getState();
+		const workspace = wsStore.workspaces.find((w) => w.id === workspaceId);
+
+		if (workspace) {
+			for (const tab of workspace.tabs) {
+				const layout = parseTabLayout(tab.layoutJson);
+				if (!layout) continue;
+				const existing = findFilePaneByPath(layout, filePath);
+				if (existing) {
+					set((s) => ({
+						filePanes: {
+							...s.filePanes,
+							[existing.id]: {
+								...makeEmptyPaneState(filePath),
+								fileType: "diff",
+								content,
+								mime: result.mime,
+								loading: false,
+								language: parsed.languagePath
+									? getLanguage(parsed.languagePath.split(".").pop() ?? null)
+									: (s.filePanes[existing.id]?.language ?? null),
+								diffSource: "file",
+								diffOriginal: parsed.original,
+								diffModified: parsed.modified,
+							},
+						},
+					}));
+					wsStore.setActiveTab(workspaceId, tab.id);
+					wsStore.setFocusedPane(existing.id);
+					return;
+				}
+			}
+		}
+
+		const paneId = crypto.randomUUID();
+		set((s) => ({
+			filePanes: {
+				...s.filePanes,
+				[paneId]: {
+					...makeEmptyPaneState(filePath),
+					fileType: "diff",
+					content,
+					mime: result.mime,
+					loading: false,
+					language: parsed.languagePath
+						? getLanguage(parsed.languagePath.split(".").pop() ?? null)
+						: (s.filePanes[paneId]?.language ?? null),
+					diffSource: "file",
+					diffOriginal: parsed.original,
+					diffModified: parsed.modified,
+				},
+			},
+		}));
+		await wsStore.createTab(workspaceId, undefined, {
+			type: "file",
+			id: paneId,
+			filePath,
+		});
 	},
 
 	openDiff: (workspaceId, filePath, original, modified, section, isDeleted) => {
