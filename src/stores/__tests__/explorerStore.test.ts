@@ -64,6 +64,7 @@ function makeTextPane(overrides: Partial<FilePaneState> = {}): FilePaneState {
 		mime: "text/plain",
 		isDirty: false,
 		language: "typescript",
+		diffSource: null,
 		externallyChanged: false,
 		deletedOnDisk: false,
 		loading: false,
@@ -84,6 +85,7 @@ function makeDiffPane(overrides: Partial<FilePaneState> = {}): FilePaneState {
 		mime: null,
 		isDirty: false,
 		language: "typescript",
+		diffSource: "git",
 		externallyChanged: false,
 		deletedOnDisk: false,
 		loading: false,
@@ -346,6 +348,7 @@ describe("conflicted files open as ordinary text panes", () => {
 					mime: null,
 					isDirty: true,
 					language: null,
+					diffSource: null,
 					externallyChanged: false,
 					deletedOnDisk: false,
 					loading: false,
@@ -374,6 +377,7 @@ describe("conflicted files open as ordinary text panes", () => {
 					mime: null,
 					isDirty: false,
 					language: null,
+					diffSource: null,
 					externallyChanged: false,
 					deletedOnDisk: false,
 					loading: true,
@@ -390,5 +394,66 @@ describe("conflicted files open as ordinary text panes", () => {
 			.then(() => {
 				expect(writeFile).not.toHaveBeenCalledWith("/repo/b.txt", null);
 			});
+	});
+
+	describe("standalone patch files", () => {
+		it("opens a patch from the file tree in the diff viewer", async () => {
+			readFile.mockResolvedValue({
+				fileType: "text",
+				content: "--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new",
+				mime: "text/x-diff",
+			});
+			const { useWorkspaceStore } = await import("../workspaceStore");
+			const createTab = vi.fn(() => Promise.resolve());
+			vi.mocked(useWorkspaceStore.getState).mockReturnValueOnce({
+				workspaces: [
+					{
+						id: "ws-1",
+						rootFolder: "/tmp/ws1",
+						tabs: [{ id: "tab-1", layoutJson: PANE_LAYOUT }],
+					},
+				],
+				activeTabByWorkspace: { "ws-1": "tab-1" },
+				focusedPaneId: null,
+				setFocusedPane: vi.fn(),
+				createTab,
+			} as never);
+
+			await useExplorerStore
+				.getState()
+				.openFileAsDiff("ws-1", "/tmp/ws1/sample.diff");
+
+			expect(createTab).toHaveBeenCalledWith(
+				"ws-1",
+				undefined,
+				expect.objectContaining({
+					type: "file",
+					filePath: "/tmp/ws1/sample.diff",
+				}),
+			);
+			const pane = Object.values(useExplorerStore.getState().filePanes)[0];
+			expect(pane.diffSource).toBe("file");
+			expect(pane.diffOriginal).toBe("old");
+			expect(pane.diffModified).toBe("new");
+		});
+
+		it("switches a loaded patch from editable text to diff view", () => {
+			setPane(
+				"patch-1",
+				makeTextPane({
+					filePath: "/tmp/ws1/sample.diff",
+					fileName: "sample.diff",
+					content: "--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new",
+				}),
+			);
+
+			useExplorerStore.getState().viewFileAsDiff("patch-1");
+
+			const pane = useExplorerStore.getState().filePanes["patch-1"];
+			expect(pane.fileType).toBe("diff");
+			expect(pane.diffSource).toBe("file");
+			expect(pane.diffOriginal).toBe("old");
+			expect(pane.diffModified).toBe("new");
+		});
 	});
 });

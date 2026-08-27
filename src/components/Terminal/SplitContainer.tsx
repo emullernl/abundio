@@ -65,6 +65,7 @@ const FileLeaf = memo(function FileLeaf({
 			cwd={cwd}
 			workspaceId={workspaceId}
 			isDiff={node.isDiff}
+			diffSource={node.diffSource}
 			diffSection={node.diffSection}
 			isDeleted={node.isDeleted}
 			isFocused={isFocused}

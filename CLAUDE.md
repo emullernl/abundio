@@ -106,6 +106,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/activityGate.ts` — Activity detection gating logic.
 - `lib/terminalResetFilter.ts` — Filters terminal reset sequences.
 - `lib/base64.ts` — Base64 encoding/decoding utilities.
+- `lib/unifiedDiff.ts` — Parses unified `.diff`/`.patch` files for the read-only diff viewer.
 - `lib/types.ts` — Shared TypeScript type definitions.
 - `lib/agentIcons.tsx` — Icon components for each supported agent.
 - `lib/devEnvironments.ts` — IPC helpers and types for dev environment detection/launch.

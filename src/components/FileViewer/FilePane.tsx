@@ -29,6 +29,7 @@ import {
 	resolveWorkspacePath,
 } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
+import { isUnifiedDiffFile } from "../../lib/unifiedDiff";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
@@ -57,6 +58,7 @@ interface FilePaneProps {
 	cwd: string;
 	workspaceId: string;
 	isDiff?: boolean;
+	diffSource?: "git" | "file";
 	diffSection?: GitChangedFile["section"];
 	isDeleted?: boolean;
 	isFocused: boolean;
@@ -69,6 +71,7 @@ export function FilePane({
 	cwd,
 	workspaceId,
 	isDiff,
+	diffSource,
 	diffSection,
 	isDeleted,
 	isFocused,
@@ -83,6 +86,8 @@ export function FilePane({
 		(s) => s.dismissExternalChange,
 	);
 	const saveFile = useExplorerStore((s) => s.saveFile);
+	const openDiffAsText = useExplorerStore((s) => s.openDiffAsText);
+	const viewFileAsDiff = useExplorerStore((s) => s.viewFileAsDiff);
 
 	const handleEditorChange = useCallback(
 		(content: string) => updateFileContent(paneId, content),
@@ -278,6 +283,7 @@ export function FilePane({
 			paneId,
 			filePath,
 			isDiff,
+			diffSource,
 			diffSection,
 			isDeleted,
 			null,
@@ -292,6 +298,7 @@ export function FilePane({
 		paneId,
 		filePath,
 		isDiff,
+		diffSource,
 		diffSection,
 		isDeleted,
 		registerFilePane,
@@ -349,6 +356,10 @@ export function FilePane({
 		paneState.fileType === "diff"
 			? paneState.filePath.replace(/^diff:/, "")
 			: null;
+	const isStandaloneDiff = paneState.diffSource === "file";
+	const isPatchFile =
+		paneState.fileType === "text" &&
+		isUnifiedDiffFile(paneState.filePath, paneState.content ?? "");
 
 	// Open the plain (non-diff) file backing this diff pane in the editor.
 	// Undefined for deleted files (nothing on disk to open). Resolves via the
@@ -470,6 +481,14 @@ export function FilePane({
 
 	const contextMenuItems: ContextMenuItem[] = [
 		...markdownItems,
+		...(isPatchFile && paneState.fileType === "text"
+			? [
+					{
+						label: "View Diff",
+						onClick: () => viewFileAsDiff(paneId),
+					},
+				]
+			: []),
 		...editorItems,
 		...paneItems,
 	];
@@ -557,10 +576,19 @@ export function FilePane({
 									filePath: diffRealPath,
 								}}
 								isActive={isFocused}
-								onBack={() => {
-									unregisterFilePane(paneId);
-								}}
-								onOpenFile={openPlainFileFromDiff}
+								language={paneState.language}
+								onBack={
+									paneState.diffSection
+										? () => unregisterFilePane(paneId)
+										: undefined
+								}
+								onOpenFile={
+									isStandaloneDiff
+										? () => openDiffAsText(paneId)
+										: paneState.diffSection
+											? openPlainFileFromDiff
+											: undefined
+								}
 							/>
 						</div>
 					)}
