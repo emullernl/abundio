@@ -1,7 +1,8 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { onAction } from "@tauri-apps/plugin-notification";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { appWindow } from "./appWindow";
+import { isDemoMode } from "./demo";
 import { containsPane, parseTabLayout } from "./paneTree";
 
 interface PtyExtra {
@@ -59,7 +60,7 @@ function isNotificationExtra(value: unknown): value is NotificationExtra {
 export function handleNotificationClick(
 	extra: Record<string, unknown> | undefined,
 ): void {
-	getCurrentWindow().setFocus();
+	appWindow()?.setFocus();
 
 	if (!extra || !isNotificationExtra(extra)) return;
 
@@ -101,6 +102,9 @@ export function handleNotificationClick(
 }
 
 export function initNotificationListener(): void {
+	// The notification plugin opens an IPC channel, which needs a Tauri host —
+	// no-op in the browser demo and in tests.
+	if (isDemoMode()) return;
 	onAction((notification) => {
 		handleNotificationClick(
 			notification.extra as Record<string, unknown> | undefined,

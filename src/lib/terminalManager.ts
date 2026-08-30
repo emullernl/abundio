@@ -1,4 +1,3 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-shell";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -25,6 +24,7 @@ import {
 } from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
+import { currentWindowLabel } from "./appWindow";
 import { agentHooks, pty } from "./ipc";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
@@ -1263,7 +1263,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							// labelled — and given the environment of — whichever
 							// workspace happens to be in front.
 							...ownerSpawnContext(paneId),
-							windowLabel: getCurrentWindow().label,
+							windowLabel: currentWindowLabel(),
 						}),
 					]
 				: []),

@@ -1,5 +1,5 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { create } from "zustand";
+import { appWindow } from "../lib/appWindow";
 import { profiles as profilesApi } from "../lib/ipc";
 import type { Profile } from "../lib/types";
 import { DEFAULT_PROFILE_ID } from "../lib/types";
@@ -25,14 +25,13 @@ export function profileQualifiedTitle(profileName: string): string {
 
 function applyWindowTitle(profileName: string | null): void {
 	if (!profileName) return;
-	// Guard against running outside Tauri (e.g. jsdom unit tests where
-	// `getCurrentWindow()` returns undefined because there's no webview).
-	try {
-		const w = getCurrentWindow();
-		w?.setTitle?.(profileQualifiedTitle(profileName))?.catch?.(() => {});
-	} catch {
-		// no-op
-	}
+	// No-op outside Tauri (jsdom tests, the browser demo) — there is no OS
+	// window to title.
+	// `?.` on the method too: unit tests stub `getCurrentWindow` with just a
+	// label, so the object exists but the method may not.
+	appWindow()
+		?.setTitle?.(profileQualifiedTitle(profileName))
+		?.catch?.(() => {});
 }
 
 /** Returns the notification-bar title to use for this Window's notifications.
@@ -112,12 +111,8 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 			// or there was no seed. Pick the first profile not owned by another
 			// window. Exclude our own window's entry from the "owned" set since
 			// any id we hold here is the stale value we're about to overwrite.
-			let ownLabel: string | null = null;
-			try {
-				ownLabel = getCurrentWindow().label;
-			} catch {
-				// jsdom / outside Tauri — no label to exclude.
-			}
+			// `null` outside Tauri — no label to exclude.
+			const ownLabel = appWindow()?.label ?? null;
 			const ownedByOthers = new Set(
 				Object.entries(ownership)
 					.filter(([_pid, label]) => label !== ownLabel)

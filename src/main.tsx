@@ -1,7 +1,8 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
+import { currentWindowLabel } from "./lib/appWindow";
+import { isDemoMode } from "./lib/demo";
 import { disableNativeTextAssist } from "./lib/disableNativeTextAssist";
 import { initNotificationListener } from "./lib/notificationRouter";
 import { primaryFontFamily } from "./lib/terminalManager";
@@ -18,16 +19,6 @@ setupCrossWindowSync();
 // Stamp the opt-out attributes globally on focus instead of per component.
 disableNativeTextAssist();
 
-/** Which OS-level Abundio window is hosting this React app. The string is
- *  evaluated synchronously at module load; safe to compare against literals. */
-function currentWindowLabel(): string {
-	try {
-		return getCurrentWindow().label;
-	} catch {
-		return "main";
-	}
-}
-
 const IS_SETTINGS_WINDOW = currentWindowLabel() === "settings";
 
 // The settings window doesn't need the workspace notification router — it
@@ -39,7 +30,9 @@ if (!IS_SETTINGS_WINDOW) {
 // Probe only the main window. `!IS_SETTINGS_WINDOW` is also true for every
 // `window-*` profile window, so gating on it would fan out a capture request
 // per restored window on a multi-window launch (windows.json restoration).
-if (currentWindowLabel() === "main") {
+// Skipped in the browser demo: there is no WKWebView TCC prompt to trigger,
+// and the denial would just be console noise.
+if (currentWindowLabel() === "main" && !isDemoMode()) {
 	probeMicrophoneAccess();
 }
 

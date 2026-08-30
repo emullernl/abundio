@@ -98,6 +98,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/keybindings.ts` — Keyboard shortcut registry with capture-phase interception.
 - `lib/agents.ts` — Built-in agent definitions (Claude Code, Copilot, Gemini, Aider, Codex, OpenCode, Qwen, Kimi, Grok). `agentCommandFor()` is the single source of truth for an agent's launch string.
 - `lib/paneTree.ts` — Pure helper functions for pane tree traversal and manipulation.
+- `lib/appWindow.ts` — `appWindow()` / `appWebview()` / `currentWindowLabel()`: the guarded way to reach Tauri's window APIs. `getCurrentWindow()` **throws** where there is no Tauri webview (the browser demo, jsdom), so never import it directly.
 - `lib/platform.ts` — Platform detection (`isMac`).
 - `lib/languageMap.ts` — File extension to Monaco language mapping.
 - `lib/monacoShared.ts` — Shared Monaco editor configuration.
@@ -118,7 +119,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/notificationRouter.ts` — Routes Tauri notifications to the correct workspace.
 - `lib/pendingAgentRegistry.ts` — Tracks agents awaiting PTY attachment.
 - `lib/windowFocus.ts` — Window focus/blur detection for activity gating.
-- `lib/demo/` — Demo/simulation mode (`VITE_ABUNDIO_DEMO=true`, run via `pnpm demo` / `pnpm demo:web`). `mockInvoke`/`mockListen` stand in for Tauri `invoke`/`listen`, serving in-memory `fixtures` and `transcripts` (real PTYs, git, GitHub, filesystem are never touched). `useDemoBootstrap` opens a curated set of workspaces on launch.
+- `lib/demo/` — Demo/simulation mode (`VITE_ABUNDIO_DEMO=true`, run via `pnpm demo` / `pnpm demo:web`). `mockInvoke`/`mockListen` stand in for Tauri `invoke`/`listen`, serving in-memory `fixtures` and `transcripts` (real PTYs, git, GitHub, filesystem are never touched). `useDemoBootstrap` opens a curated set of workspaces on launch. `demo:web` runs in a plain browser, so anything reaching for a Tauri API must degrade: use `lib/appWindow.ts` for window/webview access and the `listen` exported from `lib/ipc.ts` (never `@tauri-apps/api/event` directly, which bypasses the mocks and throws).
 
 ### Data Flow
 

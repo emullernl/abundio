@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("../../../lib/ipc", () => ({
+	listen: vi.fn(() => Promise.resolve(() => {})),
 	env: {
 		list: vi.fn(),
 		createBundle: vi.fn(),

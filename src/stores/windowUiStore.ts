@@ -1,6 +1,6 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { currentWindowLabel } from "../lib/appWindow";
 
 /** Per-window UI state — collapse/expand of the left sidebar and the right
  *  sidebar, plus the right sidebar's active tab and PR-section collapsed
@@ -50,16 +50,6 @@ interface WindowUiState {
 	statisticsOverlayOpen: boolean;
 	toggleStatisticsOverlay: () => void;
 	setStatisticsOverlayOpen: (open: boolean) => void;
-}
-
-/** Synchronously resolved window label. Falls back to "main" when running
- *  outside Tauri (jsdom tests, SSR) so we still get a working store. */
-function currentWindowLabel(): string {
-	try {
-		return getCurrentWindow().label;
-	} catch {
-		return "main";
-	}
 }
 
 const persistKey = `abundio-window-ui-${currentWindowLabel()}`;

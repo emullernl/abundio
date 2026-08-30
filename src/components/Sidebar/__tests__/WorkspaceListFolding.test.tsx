@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 	getCurrentWindow: () => ({ label: "main" }),
 }));
 vi.mock("../../../lib/ipc", () => ({
+	listen: vi.fn(() => Promise.resolve(() => {})),
 	worktrees: {
 		dirty: vi.fn().mockResolvedValue(false),
 		add: vi.fn(),

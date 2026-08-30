@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { appWindow } from "./appWindow";
 
 // Tracks the Tauri window's focus state using native OS events. This is more
 // reliable than `document.hasFocus()` inside a WebView — WKWebView in
@@ -32,32 +32,39 @@ export function addWindowFocusListener(listener: Listener): () => void {
 	};
 }
 
+const focusWindow = appWindow();
+let boundToTauri = false;
 try {
-	const win = getCurrentWindow();
-	win
-		.isFocused()
-		.then((focused) => {
-			setFocused(focused);
-		})
-		.catch(() => {
-			// Non-Tauri environment (tests) — keep the default.
-		});
-	win
-		.onFocusChanged(({ payload: focused }) => {
-			setFocused(focused);
-		})
-		.catch(() => {
-			// Non-Tauri environment (tests) — keep the default.
-		});
-} catch {
-	// getCurrentWindow() throws outside Tauri (e.g. jsdom). Fall back to the
-	// document API if available.
-	if (
-		typeof document !== "undefined" &&
-		typeof document.hasFocus === "function"
-	) {
-		setFocused(document.hasFocus());
+	if (focusWindow) {
+		focusWindow
+			.isFocused()
+			.then((focused) => {
+				setFocused(focused);
+			})
+			.catch(() => {
+				// Keep the default.
+			});
+		focusWindow
+			.onFocusChanged(({ payload: focused }) => {
+				setFocused(focused);
+			})
+			.catch(() => {
+				// Keep the default.
+			});
+		boundToTauri = true;
 	}
+} catch {
+	// A partially stubbed window object (unit tests mock `getCurrentWindow` to
+	// return just a label) — fall through to the document API.
+}
+if (
+	// Outside Tauri (the browser demo, jsdom tests): use the document API when
+	// it's available.
+	!boundToTauri &&
+	typeof document !== "undefined" &&
+	typeof document.hasFocus === "function"
+) {
+	setFocused(document.hasFocus());
 }
 
 export const NOTIFICATION_BLUR_THRESHOLD_MS = 3000;
