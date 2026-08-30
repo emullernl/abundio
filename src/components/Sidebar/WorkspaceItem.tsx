@@ -1,10 +1,11 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWorkspaceDotStatus } from "../../hooks/useWorkspaceDotStatus";
 import type { WorkspaceWithTabs } from "../../lib/types";
+import type { DotStatus } from "../../stores/ptyActivityStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
-import { GitBranch, X } from "../Icons";
+import { ChevronRight, GitBranch, X } from "../Icons";
 
 // Fallback height for the collapsed sidebar's strip when no expanded
 // WorkspaceItem has mounted yet to measure. Replaced at runtime by the
@@ -44,6 +45,27 @@ if (typeof window !== "undefined") {
 // font/density change).
 let heightObserverOwner: HTMLElement | null = null;
 
+/** Fold affordance for a **Worktree set**'s Primary row. Present only on that
+ *  row; every other row leaves it undefined and renders exactly as before.
+ *  The chevron shares the status icon's 14px box (hover-swap) — the row has no
+ *  spare left padding, and a dedicated gutter would cost every row width. */
+export interface FoldControl {
+	folded: boolean;
+	toggle: () => void;
+	/** Number of Linked worktrees in the set, for the toggle's tooltip. */
+	memberCount: number;
+}
+
+/** The **Hidden rollup**: what a Folded set's Primary row reports on behalf of
+ *  the Linked worktrees it is hiding. Covers the hidden members only — the
+ *  row's own status icon keeps describing the Workspace the row activates. */
+export interface HiddenRollup {
+	count: number;
+	status: DotStatus;
+	/** One `name — Status` line per hidden worktree. */
+	tooltip: string;
+}
+
 interface Props {
 	workspace: WorkspaceWithTabs;
 	isActive: boolean;
@@ -55,6 +77,10 @@ interface Props {
 	onRename: (name: string) => void;
 	onRenameCancel: () => void;
 	onMouseDown: (e: React.MouseEvent) => void;
+	/** Set only on a Worktree set's Primary row. */
+	fold?: FoldControl;
+	/** Set only while that set is folded. */
+	hidden?: HiddenRollup;
 }
 
 function shortenPath(fullPath: string): string {
@@ -81,6 +107,8 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 	onRename,
 	onRenameCancel,
 	onMouseDown,
+	fold,
+	hidden,
 }: Props) {
 	const dotStatus = useWorkspaceDotStatus(workspace);
 	const gitInfo = useWorkspaceGitStore((s) => s.byWorkspaceId[workspace.id]);
@@ -176,8 +204,66 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 				if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<div style={{ marginTop: 3 }}>
-				<AgentStatusIcon status={dotStatus} />
+			{/* Left slot. On a Worktree set's Primary row this box hover-swaps
+			    between the workspace's own status icon and the fold chevron —
+			    there is no spare padding for a separate twisty, and a gutter on
+			    every row would cost width the sidebar doesn't have. The row's
+			    Hidden rollup (right end) stays visible throughout, so the set's
+			    signal is never fully covered. */}
+			<div
+				style={{
+					marginTop: 3,
+					position: "relative",
+					width: 14,
+					height: 14,
+					flexShrink: 0,
+				}}
+			>
+				<span
+					className={
+						fold
+							? "absolute inset-0 transition-opacity group-hover:opacity-0"
+							: "absolute inset-0"
+					}
+					style={{ transitionDuration: "150ms" }}
+				>
+					<AgentStatusIcon status={dotStatus} />
+				</span>
+				{fold && (
+					<button
+						type="button"
+						// `mousedown` would start the set drag (WorkspaceList's handler
+						// ignores anything inside a <button>, but stop it here too so the
+						// row never sees a press) and `click` would activate the
+						// workspace.
+						onMouseDown={(e) => {
+							e.stopPropagation();
+							e.preventDefault();
+						}}
+						onClick={(e) => {
+							e.stopPropagation();
+							fold.toggle();
+						}}
+						title={
+							fold.folded
+								? `Show ${fold.memberCount} linked worktree${fold.memberCount === 1 ? "" : "s"}`
+								: "Hide linked worktrees"
+						}
+						aria-label={fold.folded ? "Unfold worktrees" : "Fold worktrees"}
+						aria-expanded={!fold.folded}
+						className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+						style={{ transitionDuration: "150ms", color: "var(--fg-primary)" }}
+					>
+						<ChevronRight
+							size={13}
+							strokeWidth={2.5}
+							style={{
+								transform: fold.folded ? "none" : "rotate(90deg)",
+								transition: "transform 150ms",
+							}}
+						/>
+					</button>
+				)}
 			</div>
 			<div className="flex-1 min-w-0">
 				{isRenaming ? (
@@ -269,6 +355,29 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 					)}
 				</div>
 			</div>
+			{/* Hidden rollup — the state of the Linked worktrees this folded set is
+			    hiding, at the highest precedence among them, plus how many there
+			    are. Hidden members only: the left icon still describes the
+			    workspace this row activates. */}
+			{hidden && (
+				<div
+					className="flex items-center gap-1 flex-shrink-0"
+					style={{ marginTop: 3 }}
+					title={hidden.tooltip}
+				>
+					<AgentStatusIcon status={hidden.status} size={12} />
+					<span
+						style={{
+							fontSize: 10,
+							lineHeight: 1,
+							color: "var(--fg-secondary)",
+							fontFamily: "var(--font-mono)",
+						}}
+					>
+						{hidden.count}
+					</span>
+				</div>
+			)}
 			<button
 				type="button"
 				onClick={(e) => {

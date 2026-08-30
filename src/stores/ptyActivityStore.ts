@@ -796,6 +796,50 @@ function rollsUp(entry: PtyActivityEntry): boolean {
 	return entry.state === "error";
 }
 
+/** Precedence over already-computed statuses, highest-attention first. Used to
+ *  fold several Workspaces' statuses into one indicator — today the **Hidden
+ *  rollup** a Folded set's Primary row shows for the Linked worktrees it hides.
+ *  Kept in the same order as `computeWorkspaceDotStatus`'s own chain so the two
+ *  can't drift; a single-member rollup returns that member's status unchanged.
+ *  `cyan` (shell running) never reaches a Workspace status, but is ordered here
+ *  defensively rather than being silently dropped. */
+const DOT_STATUS_PRECEDENCE: DotStatus[] = [
+	"red",
+	"skyblue",
+	"purple",
+	"amber",
+	"cyan",
+	"green",
+	"grey",
+];
+
+export function rollupDotStatus(statuses: DotStatus[]): DotStatus {
+	for (const candidate of DOT_STATUS_PRECEDENCE) {
+		if (statuses.includes(candidate)) return candidate;
+	}
+	return "grey";
+}
+
+/** Human label for a status, for tooltips. Mirrors the Overview bar's wording. */
+export function dotStatusLabel(status: DotStatus): string {
+	switch (status) {
+		case "red":
+			return "Error";
+		case "skyblue":
+			return "Waiting";
+		case "purple":
+			return "Ready";
+		case "amber":
+			return "Working";
+		case "cyan":
+			return "Shell running";
+		case "green":
+			return "Idle";
+		case "grey":
+			return "Not opened";
+	}
+}
+
 export function computeWorkspaceDotStatus(
 	workspaceId: string,
 	tabLayouts: PaneNode[],

@@ -4,7 +4,25 @@ import { useWorkspaceDotStatus } from "../../hooks/useWorkspaceDotStatus";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
-import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
+import {
+	type HiddenRollup,
+	WORKSPACE_ITEM_HEIGHT_FALLBACK,
+	WorkspaceItem,
+} from "./WorkspaceItem";
+
+/** Colour of the Hidden-rollup badge dot, per status. The narrow strip has no
+ *  room for a second glyph, so the rollup degrades to a coloured dot in the
+ *  status icon's corner; the hover popover shows the full chip. Values match
+ *  `AgentStatusIcon`'s Tailwind colours. */
+const ROLLUP_DOT_COLOR: Record<HiddenRollup["status"], string> = {
+	red: "rgb(244 63 94)",
+	skyblue: "rgb(56 189 248)",
+	purple: "rgb(192 132 252)",
+	amber: "rgb(251 191 36)",
+	cyan: "rgb(34 211 238)",
+	green: "rgb(52 211 153)",
+	grey: "rgb(113 113 122)",
+};
 
 interface Props {
 	workspace: WorkspaceWithTabs;
@@ -15,6 +33,9 @@ interface Props {
 	onContextMenu: (e: React.MouseEvent) => void;
 	onRename: (name: string) => void;
 	onRenameCancel: () => void;
+	/** Set only on a folded set's Primary strip: the hidden Linked worktrees'
+	 *  rolled-up status, drawn as a badge dot on the status icon. */
+	hidden?: HiddenRollup;
 	/** Left indent (px) for a Linked worktree in a Worktree set; draws a rail.
 	 *  Applied as internal padding so the strip's edge — and thus the hover
 	 *  popover — stays flush with the sidebar. See ADR-0017. */
@@ -33,6 +54,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	onContextMenu,
 	onRename,
 	onRenameCancel,
+	hidden,
 	indent = 0,
 }: Props) {
 	const dotStatus = useWorkspaceDotStatus(workspace);
@@ -137,8 +159,28 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 						}}
 					/>
 				)}
-				<div style={{ flexShrink: 0, display: "flex" }}>
+				<div
+					style={{ flexShrink: 0, display: "flex", position: "relative" }}
+					title={hidden ? hidden.tooltip : undefined}
+				>
 					<AgentStatusIcon status={dotStatus} />
+					{hidden && (
+						<span
+							aria-hidden
+							style={{
+								position: "absolute",
+								right: -3,
+								bottom: -2,
+								width: 7,
+								height: 7,
+								borderRadius: "50%",
+								backgroundColor: ROLLUP_DOT_COLOR[hidden.status],
+								// Ring in the strip's own background so the dot reads as
+								// separate from the glyph it sits on.
+								boxShadow: "0 0 0 1.5px var(--bg-secondary)",
+							}}
+						/>
+					)}
 				</div>
 				<span
 					className="font-medium overflow-hidden whitespace-nowrap"
@@ -217,6 +259,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 								onRename={onRename}
 								onRenameCancel={onRenameCancel}
 								onMouseDown={() => {}}
+								hidden={hidden}
 							/>
 						)}
 					</div>,
