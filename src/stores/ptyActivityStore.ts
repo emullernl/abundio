@@ -796,6 +796,71 @@ function rollsUp(entry: PtyActivityEntry): boolean {
 	return entry.state === "error";
 }
 
+/** Precedence over already-computed statuses, highest-attention first. The
+ *  **single** ordering in this file: `computeWorkspaceDotStatus`,
+ *  `computeTabDotStatus` and the **Hidden rollup** a Folded set's Primary row
+ *  shows all reach their answer through `rollupDotStatus`, so they cannot
+ *  disagree about whether (say) `ready` outranks `active`. A single-member
+ *  rollup returns that member's status unchanged. `cyan` (shell running) never
+ *  survives the `rollsUp` filter, but is ordered here defensively rather than
+ *  being silently dropped. */
+const DOT_STATUS_PRECEDENCE: DotStatus[] = [
+	"red",
+	"skyblue",
+	"purple",
+	"amber",
+	"cyan",
+	"green",
+	"grey",
+];
+
+/** One PTY entry's contribution to an aggregate status. Only entries that pass
+ *  `rollsUp` reach this, so a shell-mode PTY is here only when it errored —
+ *  which is why `active` maps to `amber` (agent Working) with no cyan branch.
+ *  The per-PTY indicator has its own mapping (`computePtyDotStatus`), because a
+ *  shell's own dot *does* go cyan. */
+function entryDotStatus(entry: PtyActivityEntry): DotStatus {
+	switch (entry.state) {
+		case "error":
+			return "red";
+		case "waiting":
+			return "skyblue";
+		case "ready":
+			return "purple";
+		case "active":
+			return "amber";
+		default:
+			return "green";
+	}
+}
+
+export function rollupDotStatus(statuses: DotStatus[]): DotStatus {
+	for (const candidate of DOT_STATUS_PRECEDENCE) {
+		if (statuses.includes(candidate)) return candidate;
+	}
+	return "grey";
+}
+
+/** Human label for a status, for tooltips. Mirrors the Overview bar's wording. */
+export function dotStatusLabel(status: DotStatus): string {
+	switch (status) {
+		case "red":
+			return "Error";
+		case "skyblue":
+			return "Waiting";
+		case "purple":
+			return "Ready";
+		case "amber":
+			return "Working";
+		case "cyan":
+			return "Shell running";
+		case "green":
+			return "Idle";
+		case "grey":
+			return "Not opened";
+	}
+}
+
 export function computeWorkspaceDotStatus(
 	workspaceId: string,
 	tabLayouts: PaneNode[],
@@ -817,13 +882,11 @@ export function computeWorkspaceDotStatus(
 		.filter((e): e is PtyActivityEntry => Boolean(e))
 		.filter(rollsUp);
 
-	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "waiting")) return "skyblue";
-	if (entries.some((e) => e.state === "ready")) return "purple";
-	if (entries.some((e) => e.state === "active")) return "amber";
-
-	if (openedWorkspaceIds.has(workspaceId)) return "green";
-	return "grey";
+	const rolled = rollupDotStatus(entries.map(entryDotStatus));
+	// `green`/`grey` mean "nothing to report" here — which of the two depends on
+	// whether the Workspace has ever been opened, not on the PTYs.
+	if (rolled !== "green" && rolled !== "grey") return rolled;
+	return openedWorkspaceIds.has(workspaceId) ? "green" : "grey";
 }
 
 export function computeTabDotStatus(
@@ -842,13 +905,9 @@ export function computeTabDotStatus(
 		.filter((e): e is PtyActivityEntry => Boolean(e))
 		.filter(rollsUp);
 
-	if (entries.some((e) => e.state === "error")) return "red";
-	if (entries.some((e) => e.state === "waiting")) return "skyblue";
-	if (entries.some((e) => e.state === "ready")) return "purple";
-	if (entries.some((e) => e.state === "active")) return "amber";
-
-	// Tabs are only shown for the active workspace — default to green
-	return "green";
+	const rolled = rollupDotStatus(entries.map(entryDotStatus));
+	// Tabs are only shown for the active workspace — default to green.
+	return rolled === "grey" ? "green" : rolled;
 }
 
 export function computePtyDotStatus(

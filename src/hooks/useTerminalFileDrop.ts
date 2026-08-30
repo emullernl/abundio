@@ -1,5 +1,5 @@
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect } from "react";
+import { appWebview } from "../lib/appWindow";
 import { isDemoMode } from "../lib/demo";
 import {
 	buildDropText,
@@ -66,7 +66,9 @@ export function useTerminalFileDrop(): void {
 		let unlisten: (() => void) | undefined;
 		let disposed = false;
 
-		getCurrentWebview()
+		const webview = appWebview();
+		if (!webview) return;
+		webview
 			.onDragDropEvent((event) => {
 				const p = event.payload;
 				if (p.type === "over") {

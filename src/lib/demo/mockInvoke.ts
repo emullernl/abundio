@@ -294,6 +294,11 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return { bundle: "default", varCount: 0, inherited: false };
 		case "env_bundle_clear_injected":
 			return undefined;
+
+		// Per-window bookkeeping the Rust side owns; nothing to report in the
+		// demo, and it fires on every workspace open.
+		case "report_opened_workspace_count":
+			return undefined;
 		case "env_retry_key":
 			return true;
 		case "env_vars_reveal":

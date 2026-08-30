@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
+import {
+	type HiddenRollup,
+	useHiddenRollup as useRollupOf,
+} from "../../hooks/useWorkspaceDotStatus";
 import { useWorktreeProgress } from "../../hooks/useWorktreeProgress";
 import { worktrees } from "../../lib/ipc";
 import type { WorkspaceWithTabs } from "../../lib/types";
@@ -11,6 +15,7 @@ import {
 	type SetRow,
 	type WorkspaceRow,
 } from "../../lib/worktreeGrouping";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
@@ -26,6 +31,17 @@ import { WorkspaceSettingsDialog } from "../WorkspaceSettingsDialog";
 import { WorktreeProgressDialog } from "../WorktreeProgressDialog";
 import { CollapsedStrip } from "./CollapsedStrip";
 import { WorkspaceItem } from "./WorkspaceItem";
+
+const NO_HIDDEN_MEMBERS: WorkspaceWithTabs[] = [];
+
+/** The **Hidden rollup** for a set block, or `undefined` when the set is
+ *  unfolded — the Linked worktrees' own rows speak for themselves then. */
+function useHiddenRollup(
+	linked: WorkspaceWithTabs[],
+	folded: boolean,
+): HiddenRollup | undefined {
+	return useRollupOf(folded ? linked : NO_HIDDEN_MEMBERS);
+}
 
 const DRAG_THRESHOLD = 5;
 /** Left indent (px) of a Linked worktree under its Primary — shared by the
@@ -62,6 +78,10 @@ export function WorkspaceList({
 		(s) => s.createWorktreeWorkspace,
 	);
 	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
+	const foldedSetKeys = useWindowUiStore((s) => s.foldedSetKeys);
+	const toggleSetFolded = useWindowUiStore((s) => s.toggleSetFolded);
+	const setSetFolded = useWindowUiStore((s) => s.setSetFolded);
+	const foldedKeys = useMemo(() => new Set(foldedSetKeys), [foldedSetKeys]);
 
 	// "Unload Workspace" tears down the workspace's PTYs; confirm first when an
 	// agent is Working or a command is in progress.
@@ -110,6 +130,32 @@ export function WorkspaceList({
 		}
 		return map;
 	}, [rows, worktreeFacts]);
+
+	/** Whether this set's Active workspace is one of the Linked worktrees — i.e.
+	 *  folding would hide it. The fold affordance is withheld in that state
+	 *  rather than offered and ignored: the invariant below would unfold the set
+	 *  again on the very next render, so the click would look broken. */
+	const holdsActiveLinked = useCallback(
+		(row: SetRow) =>
+			Boolean(activeWorkspaceId) &&
+			row.linked.some((w) => w.id === activeWorkspaceId),
+		[activeWorkspaceId],
+	);
+
+	// A Folded set never hides the **Active workspace**. Activating a hidden
+	// Linked worktree — command palette, live-sync, an in-app Add worktree
+	// (which activates the new Workspace), launch restore — unfolds its set and
+	// persists that, so there is only ever one rendered shape per set.
+	useEffect(() => {
+		if (!activeWorkspaceId) return;
+		for (const row of rows) {
+			if (row.kind !== "set") continue;
+			if (!foldedKeys.has(row.groupKey)) continue;
+			if (row.linked.some((w) => w.id === activeWorkspaceId)) {
+				setSetFolded(row.groupKey, false);
+			}
+		}
+	}, [rows, foldedKeys, activeWorkspaceId, setSetFolded]);
 
 	const [draggedRowId, setDraggedRowId] = useState<string | null>(null);
 	const [mousePos, setMousePos] = useState<{ x: number; y: number }>({
@@ -304,6 +350,23 @@ export function WorkspaceList({
 					onClick: () => requestUnload(workspaceId),
 				},
 			];
+			const setRow = rows.find(
+				(r): r is SetRow => r.kind === "set" && r.primary.id === workspaceId,
+			);
+			if (setRow) {
+				const folded = foldedKeys.has(setRow.groupKey);
+				const blocked = !folded && holdsActiveLinked(setRow);
+				items.push({ separator: true });
+				items.push({
+					label: blocked
+						? "Fold worktrees (active worktree is in this set)"
+						: folded
+							? "Unfold worktrees"
+							: "Fold worktrees",
+					disabled: blocked,
+					onClick: () => toggleSetFolded(setRow.groupKey),
+				});
+			}
 			if (role?.isMainWorktree && ws) {
 				items.push({ separator: true });
 				items.push({
@@ -343,7 +406,16 @@ export function WorkspaceList({
 			}
 			return items;
 		},
-		[roleById, workspaces, requestUnload, requestRemoveWorktree],
+		[
+			roleById,
+			workspaces,
+			rows,
+			foldedKeys,
+			holdsActiveLinked,
+			toggleSetFolded,
+			requestUnload,
+			requestRemoveWorktree,
+		],
 	);
 
 	const contextMenuItems = contextMenu
@@ -418,6 +490,7 @@ export function WorkspaceList({
 	const renderCollapsedStrip = (
 		workspace: WorkspaceWithTabs,
 		indent: number,
+		hidden?: HiddenRollup,
 	) => {
 		const h = itemHandlers(workspace, `ws:${workspace.id}`);
 		return (
@@ -425,6 +498,7 @@ export function WorkspaceList({
 				key={workspace.id}
 				workspace={workspace}
 				indent={indent}
+				hidden={hidden}
 				isActive={h.isActive}
 				isRenaming={h.isRenaming}
 				onClick={h.onClick}
@@ -449,16 +523,20 @@ export function WorkspaceList({
 
 			{collapsed
 				? // Collapsed strips in grouped display order; Linked worktrees keep
-					// the same indentation + rail as the expanded sidebar.
-					rows.flatMap((row) =>
-						row.kind === "set"
-							? [
-									renderCollapsedStrip(row.primary, 0),
-									...row.linked.map((linked) =>
-										renderCollapsedStrip(linked, LINKED_INDENT),
-									),
-								]
-							: [renderCollapsedStrip(row.workspace, 0)],
+					// the same indentation + rail as the expanded sidebar. Folding is
+					// honoured here too — one fold state, both sidebar widths — with
+					// the hidden members' status surviving as a badge dot.
+					rows.map((row) =>
+						row.kind === "set" ? (
+							<CollapsedSetBlock
+								key={rowId(row)}
+								row={row}
+								folded={foldedKeys.has(row.groupKey)}
+								renderStrip={renderCollapsedStrip}
+							/>
+						) : (
+							renderCollapsedStrip(row.workspace, 0)
+						),
 					)
 				: rows.map((row, i) => {
 						const id = rowId(row);
@@ -475,6 +553,17 @@ export function WorkspaceList({
 									row={row}
 									isDragging={id === draggedRowId}
 									itemHandlers={itemHandlers}
+									folded={row.kind === "set" && foldedKeys.has(row.groupKey)}
+									onToggleFold={
+										row.kind === "set"
+											? () => toggleSetFolded(row.groupKey)
+											: undefined
+									}
+									foldBlockedReason={
+										row.kind === "set" && holdsActiveLinked(row)
+											? "Active worktree is in this set"
+											: undefined
+									}
 								/>
 							</div>
 						);
@@ -608,9 +697,15 @@ function WorkspaceRowView({
 	row,
 	isDragging,
 	itemHandlers,
+	folded,
+	onToggleFold,
+	foldBlockedReason,
 }: {
 	row: WorkspaceRow;
 	isDragging: boolean;
+	folded: boolean;
+	onToggleFold?: () => void;
+	foldBlockedReason?: string;
 	itemHandlers: (
 		workspace: WorkspaceWithTabs,
 		blockRowId: string,
@@ -620,6 +715,13 @@ function WorkspaceRowView({
 	>;
 }) {
 	const id = rowId(row);
+	// Hooks run unconditionally; a standalone row simply has no members to roll
+	// up, and an unfolded set hides nothing.
+	const hidden = useHiddenRollup(
+		row.kind === "set" ? row.linked : NO_HIDDEN_MEMBERS,
+		row.kind === "set" && folded,
+	);
+
 	if (row.kind === "standalone") {
 		return (
 			<WorkspaceItem
@@ -635,27 +737,66 @@ function WorkspaceRowView({
 				workspace={row.primary}
 				isDragging={false}
 				{...itemHandlers(row.primary, id)}
+				fold={
+					onToggleFold
+						? {
+								folded,
+								toggle: onToggleFold,
+								memberCount: row.linked.length,
+								blockedReason: foldBlockedReason,
+							}
+						: undefined
+				}
+				hidden={hidden}
 			/>
-			{/* Linked worktrees: indented on a vertical rail tying them to the
-			    repo above. Pixel polish via /frontend-design. */}
-			<div
-				style={{
-					position: "relative",
-					marginLeft: LINKED_INDENT,
-					paddingLeft: 10,
-					borderLeft: "2px solid var(--border)",
-				}}
-			>
-				{row.linked.map((linked) => (
-					<WorkspaceItem
-						key={linked.id}
-						workspace={linked}
-						isDragging={false}
-						{...itemHandlers(linked, id)}
-					/>
-				))}
-			</div>
+			{folded ? null : (
+				/* Linked worktrees: indented on a vertical rail tying them to the
+				   repo above. Pixel polish via /frontend-design. */
+				<div
+					style={{
+						position: "relative",
+						marginLeft: LINKED_INDENT,
+						paddingLeft: 10,
+						borderLeft: "2px solid var(--border)",
+					}}
+				>
+					{row.linked.map((linked) => (
+						<WorkspaceItem
+							key={linked.id}
+							workspace={linked}
+							isDragging={false}
+							{...itemHandlers(linked, id)}
+						/>
+					))}
+				</div>
+			)}
 		</div>
+	);
+}
+
+/** A Worktree set in the narrow sidebar: the Primary's strip, then the Linked
+ *  strips unless folded. Its own component so the rollup hooks have somewhere
+ *  to live. */
+function CollapsedSetBlock({
+	row,
+	folded,
+	renderStrip,
+}: {
+	row: SetRow;
+	folded: boolean;
+	renderStrip: (
+		workspace: WorkspaceWithTabs,
+		indent: number,
+		hidden?: HiddenRollup,
+	) => React.ReactNode;
+}) {
+	const hidden = useHiddenRollup(row.linked, folded);
+	return (
+		<>
+			{renderStrip(row.primary, 0, hidden)}
+			{!folded &&
+				row.linked.map((linked) => renderStrip(linked, LINKED_INDENT))}
+		</>
 	);
 }
 

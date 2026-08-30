@@ -7,11 +7,10 @@
 // the JS heap as the user clicks around. Everything else here is names, sizes
 // and flags.
 
-import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import type { ParsedEnvEntry } from "../lib/dotenvParse";
 import type { EnvBundleMeta, EnvInjectedSummary, EnvVarMeta } from "../lib/ipc";
-import { env } from "../lib/ipc";
+import { env, listen } from "../lib/ipc";
 
 interface RevealedValue {
 	workspaceId: string;

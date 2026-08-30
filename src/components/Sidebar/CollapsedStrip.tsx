@@ -1,9 +1,16 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useWorkspaceDotStatus } from "../../hooks/useWorkspaceDotStatus";
+import {
+	type HiddenRollup,
+	useWorkspaceDotStatus,
+} from "../../hooks/useWorkspaceDotStatus";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { AgentStatusIcon } from "../AgentStatusIcon";
+import {
+	AgentStatusIcon,
+	DOT_STATUS_ANIMATED,
+	DOT_STATUS_COLOR,
+} from "../AgentStatusIcon";
 import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
 
 interface Props {
@@ -15,6 +22,9 @@ interface Props {
 	onContextMenu: (e: React.MouseEvent) => void;
 	onRename: (name: string) => void;
 	onRenameCancel: () => void;
+	/** Set only on a folded set's Primary strip: the hidden Linked worktrees'
+	 *  rolled-up status, drawn as a badge dot on the status icon. */
+	hidden?: HiddenRollup;
 	/** Left indent (px) for a Linked worktree in a Worktree set; draws a rail.
 	 *  Applied as internal padding so the strip's edge — and thus the hover
 	 *  popover — stays flush with the sidebar. See ADR-0017. */
@@ -33,6 +43,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	onContextMenu,
 	onRename,
 	onRenameCancel,
+	hidden,
 	indent = 0,
 }: Props) {
 	const dotStatus = useWorkspaceDotStatus(workspace);
@@ -137,8 +148,35 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 						}}
 					/>
 				)}
-				<div style={{ flexShrink: 0, display: "flex" }}>
+				<div
+					style={{ flexShrink: 0, display: "flex", position: "relative" }}
+					title={hidden ? hidden.tooltip : undefined}
+				>
 					<AgentStatusIcon status={dotStatus} />
+					{hidden && (
+						<span
+							aria-hidden
+							style={{
+								position: "absolute",
+								right: -3,
+								bottom: -2,
+								width: 7,
+								height: 7,
+								borderRadius: "50%",
+								backgroundColor: DOT_STATUS_COLOR[hidden.status],
+								// Ring in the strip's own background so the dot reads as
+								// separate from the glyph it sits on.
+								boxShadow: "0 0 0 1.5px var(--bg-secondary)",
+								// A 7px dot can't carry the glyph's own motion (a spinner
+								// is mush at this size), but it must not sit still while
+								// the wide sidebar's chip moves — so an animated status
+								// breathes here. See docs/plans/foldable-worktree-sets.md.
+								animation: DOT_STATUS_ANIMATED[hidden.status]
+									? "shell-running-breathe 1.6s ease-in-out infinite"
+									: undefined,
+							}}
+						/>
+					)}
 				</div>
 				<span
 					className="font-medium overflow-hidden whitespace-nowrap"
@@ -217,6 +255,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 								onRename={onRename}
 								onRenameCancel={onRenameCancel}
 								onMouseDown={() => {}}
+								hidden={hidden}
 							/>
 						)}
 					</div>,

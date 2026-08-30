@@ -1,9 +1,9 @@
-import { emit, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { emit } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Titlebar } from "./components/Titlebar";
-import { profiles as profilesApi } from "./lib/ipc";
+import { appWindow } from "./lib/appWindow";
+import { listen, profiles as profilesApi } from "./lib/ipc";
 import { broadcastSliceOf } from "./lib/settingsBroadcast";
 import { useProfileStore } from "./stores/profileStore";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -71,8 +71,8 @@ export function SettingsApp() {
 	}, []);
 
 	function handleClose() {
-		getCurrentWindow()
-			.close()
+		appWindow()
+			?.close()
 			.catch(() => {});
 	}
 

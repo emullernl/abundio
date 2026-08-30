@@ -7,9 +7,11 @@ import {
 	computePtyDotStatus,
 	computeTabDotStatus,
 	computeWorkspaceDotStatus,
+	dotStatusLabel,
 	getLastOutputAt,
 	type PtyActivityEntry,
 	peekPreErrorState,
+	rollupDotStatus,
 	selectErrorAgentCount,
 	selectErrorShellCount,
 	selectIdleAgentCount,
@@ -1456,5 +1458,88 @@ describe("the click action", () => {
 		expect(usePtyActivityStore.getState().activities["pty-cwork"].state).toBe(
 			"active",
 		);
+	});
+});
+
+// The Hidden rollup a Folded set's Primary row shows for the Linked worktrees
+// it hides — see the "Hidden rollup" entry in CONTEXT.md.
+describe("rollupDotStatus", () => {
+	it("returns grey for no members", () => {
+		expect(rollupDotStatus([])).toBe("grey");
+	});
+
+	it("passes a single member's status through unchanged", () => {
+		for (const status of [
+			"red",
+			"skyblue",
+			"purple",
+			"amber",
+			"cyan",
+			"green",
+			"grey",
+		] as const) {
+			expect(rollupDotStatus([status])).toBe(status);
+		}
+	});
+
+	it("picks the highest-attention status", () => {
+		expect(rollupDotStatus(["green", "amber", "grey"])).toBe("amber");
+		expect(rollupDotStatus(["amber", "purple"])).toBe("purple");
+		expect(rollupDotStatus(["purple", "skyblue"])).toBe("skyblue");
+		expect(rollupDotStatus(["skyblue", "red"])).toBe("red");
+		expect(rollupDotStatus(["grey", "green"])).toBe("green");
+	});
+
+	it("agrees with computeWorkspaceDotStatus's own precedence", () => {
+		// Two workspaces, one waiting and one working: rolling up their computed
+		// statuses must match what a single workspace holding both PTYs reports.
+		const waitingPane: PaneNode = { type: "terminal", id: "p1", ptyId: "a" };
+		const workingPane: PaneNode = { type: "terminal", id: "p2", ptyId: "b" };
+		const agentEntry = (
+			state: PtyActivityEntry["state"],
+		): PtyActivityEntry => ({
+			state,
+			lastOutputAt: null,
+			hasEverReceivedOutput: true,
+			detectionMode: "agent",
+			hookDriven: false,
+		});
+		const activities: Record<string, PtyActivityEntry> = {
+			a: agentEntry("waiting"),
+			b: agentEntry("active"),
+		};
+		const opened = new Set(["ws-a", "ws-b", "ws-both"]);
+		const separate = rollupDotStatus([
+			computeWorkspaceDotStatus("ws-a", [waitingPane], activities, opened),
+			computeWorkspaceDotStatus("ws-b", [workingPane], activities, opened),
+		]);
+		const combined = computeWorkspaceDotStatus(
+			"ws-both",
+			[
+				{
+					type: "split",
+					id: "s",
+					direction: "horizontal",
+					ratio: 0.5,
+					first: waitingPane,
+					second: workingPane,
+				},
+			],
+			activities,
+			opened,
+		);
+		expect(separate).toBe(combined);
+	});
+});
+
+describe("dotStatusLabel", () => {
+	it("labels every status", () => {
+		expect(dotStatusLabel("red")).toBe("Error");
+		expect(dotStatusLabel("skyblue")).toBe("Waiting");
+		expect(dotStatusLabel("purple")).toBe("Ready");
+		expect(dotStatusLabel("amber")).toBe("Working");
+		expect(dotStatusLabel("cyan")).toBe("Shell running");
+		expect(dotStatusLabel("green")).toBe("Idle");
+		expect(dotStatusLabel("grey")).toBe("Not opened");
 	});
 });

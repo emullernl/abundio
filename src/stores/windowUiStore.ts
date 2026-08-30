@@ -1,6 +1,6 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { currentWindowLabel } from "../lib/appWindow";
 
 /** Per-window UI state — collapse/expand of the left sidebar and the right
  *  sidebar, plus the right sidebar's active tab and PR-section collapsed
@@ -32,22 +32,24 @@ interface WindowUiState {
 	togglePrSectionCollapsed: () => void;
 	setPrSectionCollapsed: (collapsed: boolean) => void;
 
+	/** Worktree sets whose Linked worktree rows are hidden in the Left sidebar
+	 *  — **Folded sets**. Keyed by the set's git-derived `worktreeGroupKey`
+	 *  (never a Workspace id: grouping itself is derived from git, see
+	 *  ADR-0017). Per-Window like the sidebars, so two Windows showing the same
+	 *  repository may disagree. Keys are never pruned: a key whose group is not
+	 *  currently a rendered set simply has no effect, which is also what makes
+	 *  the async git-facts window at launch a non-event. Deliberately *not*
+	 *  called "collapsed" — that word means the sidebar itself is narrow. */
+	foldedSetKeys: string[];
+	toggleSetFolded: (groupKey: string) => void;
+	setSetFolded: (groupKey: string, folded: boolean) => void;
+
 	/** The Statistics overlay covers the workspace stack (terminals stay alive
 	 *  behind it via the portal registry) and shows agent Turn stats for this
 	 *  Window's Active profile. Per-Window, like the sidebars. See ADR-0018. */
 	statisticsOverlayOpen: boolean;
 	toggleStatisticsOverlay: () => void;
 	setStatisticsOverlayOpen: (open: boolean) => void;
-}
-
-/** Synchronously resolved window label. Falls back to "main" when running
- *  outside Tauri (jsdom tests, SSR) so we still get a working store. */
-function currentWindowLabel(): string {
-	try {
-		return getCurrentWindow().label;
-	} catch {
-		return "main";
-	}
 }
 
 const persistKey = `abundio-window-ui-${currentWindowLabel()}`;
@@ -79,6 +81,23 @@ export const useWindowUiStore = create<WindowUiState>()(
 				set((s) => ({ prSectionCollapsed: !s.prSectionCollapsed })),
 			setPrSectionCollapsed: (collapsed) =>
 				set({ prSectionCollapsed: collapsed }),
+			foldedSetKeys: [],
+			toggleSetFolded: (groupKey) =>
+				set((s) => ({
+					foldedSetKeys: s.foldedSetKeys.includes(groupKey)
+						? s.foldedSetKeys.filter((k) => k !== groupKey)
+						: [...s.foldedSetKeys, groupKey],
+				})),
+			setSetFolded: (groupKey, folded) =>
+				set((s) => {
+					const has = s.foldedSetKeys.includes(groupKey);
+					if (has === folded) return s;
+					return {
+						foldedSetKeys: folded
+							? [...s.foldedSetKeys, groupKey]
+							: s.foldedSetKeys.filter((k) => k !== groupKey),
+					};
+				}),
 			statisticsOverlayOpen: false,
 			toggleStatisticsOverlay: () =>
 				set((s) => ({ statisticsOverlayOpen: !s.statisticsOverlayOpen })),
@@ -107,6 +126,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				rightSidebarActiveTab: s.rightSidebarActiveTab,
 				prSectionCollapsed: s.prSectionCollapsed,
 				statisticsOverlayOpen: s.statisticsOverlayOpen,
+				foldedSetKeys: s.foldedSetKeys,
 			}),
 		},
 	),

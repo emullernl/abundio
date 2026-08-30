@@ -2,6 +2,38 @@ import { AlertTriangle, Check, Circle, HelpCircle, Moon } from "lucide-react";
 import { memo } from "react";
 import type { DotStatus } from "../stores/ptyActivityStore";
 
+/**
+ * The colour each status is drawn in, as a CSS value — the same palette the
+ * glyphs below carry as Tailwind text classes. Colocated with them so a
+ * recolour touches one file: the narrow sidebar's **Hidden rollup** badge is a
+ * 7px dot with no glyph to identify it, so it reads this rather than repeating
+ * the hex values where a drift would be invisible.
+ */
+export const DOT_STATUS_COLOR: Record<DotStatus, string> = {
+	// Tailwind v4 emits a theme variable only while some utility still uses that
+	// colour — every one of these is used by a glyph below — but each carries a
+	// literal fallback so a dropped utility can never render an invisible dot.
+	grey: "var(--color-zinc-500, rgb(113 113 122))",
+	green: "var(--color-emerald-400, rgb(52 211 153))",
+	amber: "var(--color-amber-400, rgb(251 191 36))",
+	cyan: "var(--color-cyan-400, rgb(34 211 238))",
+	purple: "var(--color-purple-400, rgb(192 132 252))",
+	red: "var(--color-rose-500, rgb(244 63 94))",
+	skyblue: "var(--color-sky-400, rgb(56 189 248))",
+};
+
+/** Whether a status animates. The badge dot can't carry the glyph's own motion
+ *  at 7px, but it must not sit still while the wide sidebar's chip moves. */
+export const DOT_STATUS_ANIMATED: Record<DotStatus, boolean> = {
+	grey: false,
+	green: false,
+	amber: true,
+	cyan: true,
+	purple: true,
+	red: true,
+	skyblue: true,
+};
+
 interface AgentStatusIconProps {
 	status: DotStatus;
 	size?: number;

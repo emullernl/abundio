@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { create } from "zustand";
+import { appWindow } from "../lib/appWindow";
 import { useProfileStore } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 
@@ -40,12 +40,8 @@ export async function requestSwitchProfile(targetId: string): Promise<void> {
 	// of switching THIS window's profile (which would create a conflicting
 	// ownership state).
 	const ownerLabel = profileStore.ownershipMap[targetId];
-	let thisWindowLabel: string | null = null;
-	try {
-		thisWindowLabel = getCurrentWindow().label;
-	} catch {
-		// outside Tauri (jsdom tests) — skip the focus path
-	}
+	// `null` outside Tauri — skip the focus path.
+	const thisWindowLabel = appWindow()?.label ?? null;
 	if (ownerLabel && thisWindowLabel && ownerLabel !== thisWindowLabel) {
 		await invoke("focus_window", { label: ownerLabel }).catch(() => {});
 		return;

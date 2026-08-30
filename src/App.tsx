@@ -1,6 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
@@ -33,9 +31,10 @@ import {
 	finalizeAllOpenTurns,
 	initAgentTurnTracker,
 } from "./lib/agentTurnTracker";
+import { appWindow } from "./lib/appWindow";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
-import { updates, windowSession } from "./lib/ipc";
+import { listen, updates, windowSession } from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
@@ -347,9 +346,7 @@ export function App() {
 	// Confirm before closing a Window that has ≥1 Opened workspace (when no
 	// unsaved files take precedence). See ADR-0016.
 	const [workspaceCloseRequested, setWorkspaceCloseRequested] = useState(false);
-	const appWindowRef = useRef<Awaited<
-		ReturnType<typeof getCurrentWindow>
-	> | null>(null);
+	const appWindowRef = useRef<ReturnType<typeof appWindow>>(null);
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
 	);
@@ -485,21 +482,24 @@ export function App() {
 	}, []);
 
 	const proceedWithClose = useCallback(async () => {
-		const appWindow = appWindowRef.current ?? getCurrentWindow();
+		const win = appWindowRef.current ?? appWindow();
 		await Promise.race([
 			// Best-effort: persist scrollback and flush any open agent Turns
 			// (orphan recovery on next launch is the backstop if this races).
 			Promise.all([saveAllSnapshots(), finalizeAllOpenTurns("app_quit")]),
 			new Promise((r) => setTimeout(r, 2000)),
 		]);
-		appWindow.destroy();
+		win?.destroy();
 	}, []);
 
 	// Save terminal snapshots before the window closes
 	useEffect(() => {
-		const appWindow = getCurrentWindow();
-		appWindowRef.current = appWindow;
-		const unlisten = appWindow.onCloseRequested(async (event) => {
+		// `null` outside Tauri (the browser demo): there is no OS window whose
+		// close we could intercept, so skip the listener entirely.
+		const win = appWindow();
+		if (!win) return;
+		appWindowRef.current = win;
+		const unlisten = win.onCloseRequested(async (event) => {
 			event.preventDefault();
 			const dirtyPaneCount = Object.values(
 				useExplorerStore.getState().filePanes,
