@@ -1538,6 +1538,7 @@ describe("dotStatusLabel", () => {
 		expect(dotStatusLabel("skyblue")).toBe("Waiting");
 		expect(dotStatusLabel("purple")).toBe("Ready");
 		expect(dotStatusLabel("amber")).toBe("Working");
+		expect(dotStatusLabel("cyan")).toBe("Shell running");
 		expect(dotStatusLabel("green")).toBe("Idle");
 		expect(dotStatusLabel("grey")).toBe("Not opened");
 	});

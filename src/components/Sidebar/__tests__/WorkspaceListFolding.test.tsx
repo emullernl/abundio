@@ -79,7 +79,7 @@ function workspace(
 	};
 }
 
-const PRIMARY = workspace("ws-primary", "abundio", 0);
+const PRIMARY = workspace("ws-primary", "abundio", 0, "pty-primary");
 const LINKED_A = workspace("ws-a", "feat-a", 1, "pty-a");
 const LINKED_B = workspace("ws-b", "feat-b", 2);
 const STANDALONE = workspace("ws-solo", "other-repo", 3);
@@ -164,7 +164,6 @@ describe("WorkspaceList — folded Worktree sets", () => {
 	});
 
 	it("chevron toggles the fold without activating the workspace", () => {
-		render();
 		const beginWorkspaceSwitch = vi.fn();
 		useWorkspaceStore.setState({ beginWorkspaceSwitch });
 		render();
@@ -235,6 +234,53 @@ describe("WorkspaceList — folded Worktree sets", () => {
 	it("honours the fold in the narrow sidebar too", () => {
 		useWindowUiStore.setState({ foldedSetKeys: [GROUP_KEY] });
 		render("collapsed");
+		expect(names()).toEqual(["abundio", "other-repo"]);
+	});
+
+	it("rolls up the hidden members only, never the Primary", () => {
+		// The single most reversible-by-accident property: someone "fixes" the
+		// rollup to include the primary and every other test still passes.
+		usePtyActivityStore.setState({
+			activities: { "pty-primary": agentEntry("error") },
+			openedWorkspaceIds: new Set([PRIMARY.id, LINKED_A.id]),
+		});
+		useWindowUiStore.setState({ foldedSetKeys: [GROUP_KEY] });
+		render();
+		const chip = container.querySelector<HTMLElement>("[title*='feat-a']");
+		expect(chip?.textContent).toContain("2");
+		// Idle + never-opened hidden members — the primary's Error stays out of it.
+		expect(chip?.getAttribute("title")).toBe(
+			"feat-a — Idle\nfeat-b — Not opened",
+		);
+	});
+
+	it("withholds the fold control while the set holds the Active workspace", () => {
+		// Folding here would be undone by the auto-unfold invariant on the very
+		// next render, so the affordance is absent rather than dead.
+		useWorkspaceStore.setState({ activeWorkspaceId: LINKED_A.id });
+		render();
+		expect(foldButton()?.disabled).toBe(true);
+		act(() => {
+			foldButton()?.dispatchEvent(
+				new MouseEvent("click", { bubbles: true, cancelable: true }),
+			);
+		});
+		expect(useWindowUiStore.getState().foldedSetKeys).toEqual([]);
+		expect(names()).toEqual(["abundio", "feat-a", "feat-b", "other-repo"]);
+	});
+
+	it("offers the fold control again once the Active workspace leaves the set", () => {
+		useWorkspaceStore.setState({ activeWorkspaceId: LINKED_A.id });
+		render();
+		act(() => {
+			useWorkspaceStore.setState({ activeWorkspaceId: STANDALONE.id });
+		});
+		expect(foldButton()?.disabled).toBe(false);
+		act(() => {
+			foldButton()?.dispatchEvent(
+				new MouseEvent("click", { bubbles: true, cancelable: true }),
+			);
+		});
 		expect(names()).toEqual(["abundio", "other-repo"]);
 	});
 });

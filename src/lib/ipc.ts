@@ -38,9 +38,9 @@ import type {
 function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 	return isDemoMode() ? mockInvoke<T>(cmd, args) : realInvoke<T>(cmd, args);
 }
-/** Subscribe to a Tauri event — demo-aware, like `invoke` above. Exported as
- *  `listenEvent` for the few app-level listeners that live outside this file
- *  (App/Settings roots, workspaceEnvStore): importing `listen` straight from
+/** Subscribe to a Tauri event — demo-aware, like `invoke` above. Exported for
+ *  the few app-level listeners that live outside this file (App/Settings
+ *  roots, workspaceEnvStore): importing `listen` straight from
  *  `@tauri-apps/api/event` bypasses the demo mocks *and* throws in a plain
  *  browser, which is how `pnpm demo:web` used to fill its console. */
 export function listen<T>(

@@ -43,6 +43,14 @@ is narrow*. The new state is therefore **folded**, and it is honoured in both si
   attention-only filter: the chip *is* `<AgentStatusIcon>`, so a folded set answers "is anything
   running in there?" the same way an unfolded one does. Accepted consequence: a folded primary row
   can show two moving icons (its own, and the rollup).
+- **The fold affordance is withheld while the set holds the Active workspace.**
+  The invariant below (a Folded set never hides the Active workspace) would
+  unfold the set on the very next render, so offering the chevron there would be
+  a dead control, not a working one. The chevron is therefore absent and the
+  context-menu item is disabled and says why — rather than the alternatives of
+  folding and moving activation to the Primary (a workspace switch is far too
+  large a side effect for a chevron click) or a half-folded set (a shape this
+  plan rejects everywhere else).
 - **Attention does not override the fold.** A hidden worktree reaching waiting or error only recolours
   the chip — no pulse, no auto-unfold. Folding is a view preference the user chose. It changes what
   is drawn, never what is notified: OS notifications from a hidden worktree fire exactly as they do
@@ -58,7 +66,12 @@ is narrow*. The new state is therefore **folded**, and it is honoured in both si
   Folded-ness is signalled by the missing rows and the chip, not by a permanently visible chevron.
 - **Narrow sidebar** — fold applies there too (one fold state, both widths): a folded set renders
   only the primary's `CollapsedStrip`. The strip keeps the primary's own icon and gains a small
-  corner badge dot coloured by the rollup state (animated when the rollup is). The existing hover
+  corner badge dot coloured by the rollup state. The dot **breathes** whenever
+  the rollup's status animates: it cannot reproduce the glyph's own motion — a
+  spinner is mush at 7px — but it must not sit still while the wide sidebar's
+  chip moves. Its colour comes from `DOT_STATUS_COLOR`, exported beside the
+  glyphs in `AgentStatusIcon`, so a recolour can't drift into the one indicator
+  with no glyph to identify it. The existing hover
   popover renders a full `WorkspaceItem`, so it shows the real chip and tooltip. No chevron fits in a
   56px strip, so toggling happens through the strip's existing right-click menu.
 - **Key lifecycle: keep, never prune.** Folding only affects a rendered `SetRow`; when the group is
@@ -79,8 +92,10 @@ is narrow*. The new state is therefore **folded**, and it is honoured in both si
 1. `stores/windowUiStore.ts` — add `foldedSetKeys: string[]`, `toggleSetFolded(key)`,
    `setSetFolded(key, folded)`; add the field to `partialize`. No `version` bump needed (an absent
    key rehydrates as the default `[]`).
-2. `stores/ptyActivityStore.ts` — extract `rollupDotStatus(statuses: DotStatus[]): DotStatus` from
-   `computeWorkspaceDotStatus`'s precedence chain and reuse it there.
+2. `stores/ptyActivityStore.ts` — `rollupDotStatus(statuses: DotStatus[])` plus an
+   `entryDotStatus(entry)` map, and **rewrite** `computeWorkspaceDotStatus` and `computeTabDotStatus`
+   to go through them. Adding the helper beside the existing `if (entries.some(…))` ladders would
+   leave three independent orderings and a comment claiming an invariant nothing enforces.
 3. `components/Sidebar/WorkspaceList.tsx` — read `foldedSetKeys`; pass `isFolded` + `onToggleFold`
    into `WorkspaceRowView`; skip rendering `row.linked` when folded (both the expanded branch and
    the `collapsed` strip branch). Add the context-menu item, shown only when the target Workspace's
@@ -94,8 +109,10 @@ is narrow*. The new state is therefore **folded**, and it is honoured in both si
    the strip's status icon.
 5. Rollup input — the hidden members' statuses come from the same `useWorkspaceDotStatus` per
    workspace; computing them for hidden rows means keeping those subscriptions alive even though the
-   rows are unmounted. Hoist the per-member status read into the set's renderer (a small
-   `useSetRollup(row)` hook) rather than mounting hidden `WorkspaceItem`s off-screen.
+   rows are unmounted. Hoist the per-member status read into a `useHiddenRollup(members)` hook rather
+   than mounting hidden `WorkspaceItem`s off-screen. One subscription, selecting a **statuses key**
+   (a primitive): status, count and tooltip are derived from it, so the tooltip's string is built
+   only when a member's status changes rather than on every PTY tick.
 6. Auto-unfold — in `WorkspaceList`, an effect that clears the key of the set containing
    `activeWorkspaceId` (using `buildWorkspaceRows`' output, so it can never disagree with what is
    rendered).

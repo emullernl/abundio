@@ -37,48 +37,33 @@ export function useWorkspaceDotStatus(workspace: WorkspaceWithTabs): DotStatus {
 	);
 }
 
-/**
- * The **Hidden rollup** for a Folded set: one status covering the Linked
- * worktrees whose rows are hidden, at the highest precedence among them.
- *
- * Hoisted here rather than read inside each row because the rows in question
- * are unmounted — folding must not take the sidebar's agent signal with it.
- * Returns a primitive so the store subscription stays referentially stable.
- */
-export function useHiddenRollupStatus(
-	hidden: WorkspaceWithTabs[],
-): DotStatus | null {
-	const members = useMemo(
-		() =>
-			hidden.map((ws) => ({
-				id: ws.id,
-				layouts: tabLayoutsOf(ws.tabs),
-			})),
-		[hidden],
-	);
-
-	return usePtyActivityStore((s) => {
-		if (members.length === 0) return null;
-		return rollupDotStatus(
-			members.map((m) =>
-				computeWorkspaceDotStatus(
-					m.id,
-					m.layouts,
-					s.activities,
-					s.openedWorkspaceIds,
-					s.panePtyMap,
-				),
-			),
-		);
-	});
+/** What a Folded set's Primary row reports for the members it hides. */
+export interface HiddenRollup {
+	count: number;
+	status: DotStatus;
+	/** One `name — Status` line per hidden worktree, in render order. */
+	tooltip: string;
 }
 
 /**
- * Tooltip text for the Hidden rollup — one `name — Status` line per hidden
- * worktree, in render order. A separate subscription from
- * `useHiddenRollupStatus` so both selectors return primitives.
+ * The **Hidden rollup** for a Folded set: the status covering the Linked
+ * worktrees whose rows are hidden — at the highest precedence among them —
+ * plus their count and a per-member tooltip.
+ *
+ * Hoisted out of the rows because the rows in question are unmounted while
+ * folded: this is what keeps folding from taking the sidebar's agent signal
+ * with it. Returns `undefined` when nothing is hidden.
+ *
+ * The single store subscription yields a **statuses key** (a primitive, so
+ * Zustand's default equality bails the re-render when nothing changed); the
+ * count/status/tooltip are derived from it. That matters for cost, not just
+ * referential stability: the store ticks on PTY activity, and the tooltip is
+ * a `title` attribute a user reads once in a while — so its string is built
+ * only when a member's status actually changes, not on every tick.
  */
-export function useHiddenRollupTooltip(hidden: WorkspaceWithTabs[]): string {
+export function useHiddenRollup(
+	hidden: WorkspaceWithTabs[],
+): HiddenRollup | undefined {
 	const members = useMemo(
 		() =>
 			hidden.map((ws) => ({
@@ -89,18 +74,29 @@ export function useHiddenRollupTooltip(hidden: WorkspaceWithTabs[]): string {
 		[hidden],
 	);
 
-	return usePtyActivityStore((s) =>
+	const statusesKey = usePtyActivityStore((s) =>
 		members
-			.map((m) => {
-				const status = computeWorkspaceDotStatus(
+			.map((m) =>
+				computeWorkspaceDotStatus(
 					m.id,
 					m.layouts,
 					s.activities,
 					s.openedWorkspaceIds,
 					s.panePtyMap,
-				);
-				return `${m.name} — ${dotStatusLabel(status)}`;
-			})
-			.join("\n"),
+				),
+			)
+			.join(","),
 	);
+
+	return useMemo(() => {
+		if (members.length === 0) return undefined;
+		const statuses = statusesKey.split(",") as DotStatus[];
+		return {
+			count: members.length,
+			status: rollupDotStatus(statuses),
+			tooltip: members
+				.map((m, i) => `${m.name} — ${dotStatusLabel(statuses[i])}`)
+				.join("\n"),
+		};
+	}, [members, statusesKey]);
 }

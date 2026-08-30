@@ -1,28 +1,17 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useWorkspaceDotStatus } from "../../hooks/useWorkspaceDotStatus";
-import type { WorkspaceWithTabs } from "../../lib/types";
-import { useSettingsStore } from "../../stores/settingsStore";
-import { AgentStatusIcon } from "../AgentStatusIcon";
 import {
 	type HiddenRollup,
-	WORKSPACE_ITEM_HEIGHT_FALLBACK,
-	WorkspaceItem,
-} from "./WorkspaceItem";
-
-/** Colour of the Hidden-rollup badge dot, per status. The narrow strip has no
- *  room for a second glyph, so the rollup degrades to a coloured dot in the
- *  status icon's corner; the hover popover shows the full chip. Values match
- *  `AgentStatusIcon`'s Tailwind colours. */
-const ROLLUP_DOT_COLOR: Record<HiddenRollup["status"], string> = {
-	red: "rgb(244 63 94)",
-	skyblue: "rgb(56 189 248)",
-	purple: "rgb(192 132 252)",
-	amber: "rgb(251 191 36)",
-	cyan: "rgb(34 211 238)",
-	green: "rgb(52 211 153)",
-	grey: "rgb(113 113 122)",
-};
+	useWorkspaceDotStatus,
+} from "../../hooks/useWorkspaceDotStatus";
+import type { WorkspaceWithTabs } from "../../lib/types";
+import { useSettingsStore } from "../../stores/settingsStore";
+import {
+	AgentStatusIcon,
+	DOT_STATUS_ANIMATED,
+	DOT_STATUS_COLOR,
+} from "../AgentStatusIcon";
+import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
 
 interface Props {
 	workspace: WorkspaceWithTabs;
@@ -174,10 +163,17 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 								width: 7,
 								height: 7,
 								borderRadius: "50%",
-								backgroundColor: ROLLUP_DOT_COLOR[hidden.status],
+								backgroundColor: DOT_STATUS_COLOR[hidden.status],
 								// Ring in the strip's own background so the dot reads as
 								// separate from the glyph it sits on.
 								boxShadow: "0 0 0 1.5px var(--bg-secondary)",
+								// A 7px dot can't carry the glyph's own motion (a spinner
+								// is mush at this size), but it must not sit still while
+								// the wide sidebar's chip moves — so an animated status
+								// breathes here. See docs/plans/foldable-worktree-sets.md.
+								animation: DOT_STATUS_ANIMATED[hidden.status]
+									? "shell-running-breathe 1.6s ease-in-out infinite"
+									: undefined,
 							}}
 						/>
 					)}

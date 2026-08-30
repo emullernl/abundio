@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
 import {
-	useHiddenRollupStatus,
-	useHiddenRollupTooltip,
+	type HiddenRollup,
+	useHiddenRollup as useRollupOf,
 } from "../../hooks/useWorkspaceDotStatus";
 import { useWorktreeProgress } from "../../hooks/useWorktreeProgress";
 import { worktrees } from "../../lib/ipc";
@@ -30,24 +30,17 @@ import {
 import { WorkspaceSettingsDialog } from "../WorkspaceSettingsDialog";
 import { WorktreeProgressDialog } from "../WorktreeProgressDialog";
 import { CollapsedStrip } from "./CollapsedStrip";
-import { type HiddenRollup, WorkspaceItem } from "./WorkspaceItem";
+import { WorkspaceItem } from "./WorkspaceItem";
 
 const NO_HIDDEN_MEMBERS: WorkspaceWithTabs[] = [];
 
-/** The **Hidden rollup** for a set block: the status + count + tooltip covering
- *  the Linked worktrees a fold is hiding, or `undefined` when the set is
- *  unfolded (their own rows speak for themselves then). The members' statuses
- *  are read here, not in their rows, precisely because those rows are
- *  unmounted while folded — folding must not take the agent signal with it. */
+/** The **Hidden rollup** for a set block, or `undefined` when the set is
+ *  unfolded — the Linked worktrees' own rows speak for themselves then. */
 function useHiddenRollup(
 	linked: WorkspaceWithTabs[],
 	folded: boolean,
 ): HiddenRollup | undefined {
-	const members = folded ? linked : NO_HIDDEN_MEMBERS;
-	const status = useHiddenRollupStatus(members);
-	const tooltip = useHiddenRollupTooltip(members);
-	if (!folded || members.length === 0 || status === null) return undefined;
-	return { count: members.length, status, tooltip };
+	return useRollupOf(folded ? linked : NO_HIDDEN_MEMBERS);
 }
 
 const DRAG_THRESHOLD = 5;
@@ -137,6 +130,17 @@ export function WorkspaceList({
 		}
 		return map;
 	}, [rows, worktreeFacts]);
+
+	/** Whether this set's Active workspace is one of the Linked worktrees — i.e.
+	 *  folding would hide it. The fold affordance is withheld in that state
+	 *  rather than offered and ignored: the invariant below would unfold the set
+	 *  again on the very next render, so the click would look broken. */
+	const holdsActiveLinked = useCallback(
+		(row: SetRow) =>
+			Boolean(activeWorkspaceId) &&
+			row.linked.some((w) => w.id === activeWorkspaceId),
+		[activeWorkspaceId],
+	);
 
 	// A Folded set never hides the **Active workspace**. Activating a hidden
 	// Linked worktree — command palette, live-sync, an in-app Add worktree
@@ -351,9 +355,15 @@ export function WorkspaceList({
 			);
 			if (setRow) {
 				const folded = foldedKeys.has(setRow.groupKey);
+				const blocked = !folded && holdsActiveLinked(setRow);
 				items.push({ separator: true });
 				items.push({
-					label: folded ? "Unfold worktrees" : "Fold worktrees",
+					label: blocked
+						? "Fold worktrees (active worktree is in this set)"
+						: folded
+							? "Unfold worktrees"
+							: "Fold worktrees",
+					disabled: blocked,
 					onClick: () => toggleSetFolded(setRow.groupKey),
 				});
 			}
@@ -401,6 +411,7 @@ export function WorkspaceList({
 			workspaces,
 			rows,
 			foldedKeys,
+			holdsActiveLinked,
 			toggleSetFolded,
 			requestUnload,
 			requestRemoveWorktree,
@@ -548,6 +559,11 @@ export function WorkspaceList({
 											? () => toggleSetFolded(row.groupKey)
 											: undefined
 									}
+									foldBlockedReason={
+										row.kind === "set" && holdsActiveLinked(row)
+											? "Active worktree is in this set"
+											: undefined
+									}
 								/>
 							</div>
 						);
@@ -683,11 +699,13 @@ function WorkspaceRowView({
 	itemHandlers,
 	folded,
 	onToggleFold,
+	foldBlockedReason,
 }: {
 	row: WorkspaceRow;
 	isDragging: boolean;
 	folded: boolean;
 	onToggleFold?: () => void;
+	foldBlockedReason?: string;
 	itemHandlers: (
 		workspace: WorkspaceWithTabs,
 		blockRowId: string,
@@ -725,6 +743,7 @@ function WorkspaceRowView({
 								folded,
 								toggle: onToggleFold,
 								memberCount: row.linked.length,
+								blockedReason: foldBlockedReason,
 							}
 						: undefined
 				}

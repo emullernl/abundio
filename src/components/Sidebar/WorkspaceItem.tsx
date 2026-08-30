@@ -1,7 +1,9 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useWorkspaceDotStatus } from "../../hooks/useWorkspaceDotStatus";
+import {
+	type HiddenRollup,
+	useWorkspaceDotStatus,
+} from "../../hooks/useWorkspaceDotStatus";
 import type { WorkspaceWithTabs } from "../../lib/types";
-import type { DotStatus } from "../../stores/ptyActivityStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
@@ -54,16 +56,10 @@ export interface FoldControl {
 	toggle: () => void;
 	/** Number of Linked worktrees in the set, for the toggle's tooltip. */
 	memberCount: number;
-}
-
-/** The **Hidden rollup**: what a Folded set's Primary row reports on behalf of
- *  the Linked worktrees it is hiding. Covers the hidden members only — the
- *  row's own status icon keeps describing the Workspace the row activates. */
-export interface HiddenRollup {
-	count: number;
-	status: DotStatus;
-	/** One `name — Status` line per hidden worktree. */
-	tooltip: string;
+	/** When set, folding is unavailable and why. A Folded set may not hide the
+	 *  **Active workspace**, so an unfolded set holding it offers no chevron at
+	 *  all rather than one that silently does nothing. */
+	blockedReason?: string;
 }
 
 interface Props {
@@ -219,39 +215,46 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 					flexShrink: 0,
 				}}
 			>
-				<span
+				<div
 					className={
-						fold
+						fold && !fold.blockedReason
 							? "absolute inset-0 transition-opacity group-hover:opacity-0"
 							: "absolute inset-0"
 					}
 					style={{ transitionDuration: "150ms" }}
 				>
 					<AgentStatusIcon status={dotStatus} />
-				</span>
+				</div>
 				{fold && (
 					<button
 						type="button"
-						// `mousedown` would start the set drag (WorkspaceList's handler
-						// ignores anything inside a <button>, but stop it here too so the
-						// row never sees a press) and `click` would activate the
-						// workspace.
+						// `mousedown` would otherwise start the set drag. No
+						// `preventDefault()` — WorkspaceList's handler already bails on
+						// anything inside a <button>, and preventing the default would
+						// only cost the button its mouse focus.
 						onMouseDown={(e) => {
 							e.stopPropagation();
-							e.preventDefault();
 						}}
 						onClick={(e) => {
 							e.stopPropagation();
+							if (fold.blockedReason) return;
 							fold.toggle();
 						}}
+						disabled={Boolean(fold.blockedReason)}
 						title={
-							fold.folded
+							fold.blockedReason ??
+							(fold.folded
 								? `Show ${fold.memberCount} linked worktree${fold.memberCount === 1 ? "" : "s"}`
-								: "Hide linked worktrees"
+								: "Hide linked worktrees")
 						}
 						aria-label={fold.folded ? "Unfold worktrees" : "Fold worktrees"}
 						aria-expanded={!fold.folded}
-						className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+						aria-disabled={Boolean(fold.blockedReason)}
+						className={
+							fold.blockedReason
+								? "absolute inset-0 hidden"
+								: "absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+						}
 						style={{ transitionDuration: "150ms", color: "var(--fg-primary)" }}
 					>
 						<ChevronRight
