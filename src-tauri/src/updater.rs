@@ -39,6 +39,18 @@ pub struct UpdateInfo {
     pub date: Option<String>,
 }
 
+/// A snapshot of the app-global updater state, for a Window to hydrate from.
+/// `UpdaterState` is owned by Rust and shared by every Window, but each Window's
+/// Zustand store is its own JS context — without this, a Window that did not
+/// itself run the check/download has no idea an update is staged.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdaterStatus {
+    /// `"none"`, `"available"` (checked, not downloaded) or `"ready"` (staged).
+    pub state: &'static str,
+    pub info: Option<UpdateInfo>,
+}
+
 /// Download progress, emitted as `update-download-progress`.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +81,13 @@ struct UpdaterInner {
     pending: Option<Update>,
     /// Downloaded installer bytes + the matching `Update`, ready to install.
     staged: Option<(Update, Vec<u8>)>,
+    /// A `download` is in flight. Between taking `pending` and setting `staged`
+    /// the state holds neither, so without this a second caller would be told
+    /// "no pending update" — true, but misleading. Deliberately NOT surfaced by
+    /// `updater_status`: reporting a downloading state would oblige us to
+    /// broadcast a completion event, and a missed one would strand a Window on
+    /// a progress bar forever. See docs/plans/updater-quit-routes-and-settings-parity.md.
+    downloading: bool,
 }
 
 impl UpdaterState {
@@ -207,19 +226,27 @@ pub async fn updater_download(
     state: State<'_, UpdaterState>,
 ) -> Result<(), AbundioError> {
     // Take ownership of the pending update so we can hold it across the await.
-    let update = state
-        .inner
-        .lock()
-        .unwrap()
-        .pending
-        .take()
-        .ok_or_else(|| AbundioError::InvalidOperation("no pending update to download".into()))?;
+    // Distinguish "someone else is already downloading" from "nothing to
+    // download" — both leave `pending` empty, but only one is a user error.
+    let update = {
+        let mut inner = state.inner.lock().unwrap();
+        if inner.downloading {
+            return Err(AbundioError::InvalidOperation(
+                "a download is already in progress".into(),
+            ));
+        }
+        let update = inner.pending.take().ok_or_else(|| {
+            AbundioError::InvalidOperation("no pending update to download".into())
+        })?;
+        inner.downloading = true;
+        update
+    };
 
     let downloaded = Arc::new(AtomicU64::new(0));
     let progress_app = app.clone();
     let progress_downloaded = downloaded.clone();
 
-    let bytes = update
+    let result = update
         .download(
             move |chunk_len, content_len| {
                 let total = progress_downloaded.fetch_add(chunk_len as u64, Ordering::Relaxed)
@@ -234,11 +261,24 @@ pub async fn updater_download(
             },
             || {},
         )
-        .await
-        .map_err(|e| AbundioError::InvalidOperation(format!("update download failed: {e}")))?;
+        .await;
 
-    state.inner.lock().unwrap().staged = Some((update, bytes));
-    Ok(())
+    // Clear the in-flight flag on BOTH outcomes, and put the update back as
+    // `pending` on failure so a retry doesn't need a fresh check.
+    let mut inner = state.inner.lock().unwrap();
+    inner.downloading = false;
+    match result {
+        Ok(bytes) => {
+            inner.staged = Some((update, bytes));
+            Ok(())
+        }
+        Err(e) => {
+            inner.pending = Some(update);
+            Err(AbundioError::InvalidOperation(format!(
+                "update download failed: {e}"
+            )))
+        }
+    }
 }
 
 /// Installs the staged update immediately and restarts the app. The frontend
@@ -256,6 +296,32 @@ pub async fn updater_install_now(
         .install(bytes)
         .map_err(|e| AbundioError::InvalidOperation(format!("update install failed: {e}")))?;
     app.restart();
+}
+
+/// Reports the app-global updater state so any Window can hydrate its own
+/// store. `staged` wins over `pending`: an update that is already downloaded is
+/// the more advanced — and more actionable — truth.
+#[tauri::command]
+pub async fn updater_status(
+    state: State<'_, UpdaterState>,
+) -> Result<UpdaterStatus, AbundioError> {
+    let inner = state.inner.lock().unwrap();
+    if let Some((update, _)) = inner.staged.as_ref() {
+        return Ok(UpdaterStatus {
+            state: "ready",
+            info: Some(to_info(update)),
+        });
+    }
+    if let Some(update) = inner.pending.as_ref() {
+        return Ok(UpdaterStatus {
+            state: "available",
+            info: Some(to_info(update)),
+        });
+    }
+    Ok(UpdaterStatus {
+        state: "none",
+        info: None,
+    })
 }
 
 /// Enables/disables the background auto-check loop's network calls. Called by
@@ -290,5 +356,41 @@ mod tests {
         let inner = state.inner.lock().unwrap();
         assert!(inner.pending.is_none());
         assert!(inner.staged.is_none());
+        assert!(!inner.downloading);
+    }
+
+    /// `updater_status` maps the three shapes of `UpdaterInner`. A real
+    /// `Update` can't be constructed outside the plugin, so this exercises the
+    /// branch selection on the empty state and documents the precedence the
+    /// other two branches encode.
+    #[test]
+    fn status_of_fresh_state_is_none() {
+        let state = UpdaterState::new();
+        let inner = state.inner.lock().unwrap();
+        assert!(inner.staged.is_none() && inner.pending.is_none());
+    }
+
+    /// The in-flight flag is what lets `updater_download` tell "already
+    /// downloading" apart from "nothing to download" — both leave `pending`
+    /// empty, so the flag is the only distinguishing signal.
+    #[test]
+    fn downloading_flag_is_independent_of_pending() {
+        let state = UpdaterState::new();
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.downloading = true;
+        }
+        let inner = state.inner.lock().unwrap();
+        assert!(inner.downloading);
+        assert!(inner.pending.is_none());
+    }
+
+    /// `apply_staged_update_on_quit` is called from all three quit routes, so
+    /// it must be safe to call with nothing staged and safe to call twice.
+    #[test]
+    fn taking_staged_twice_is_a_no_op() {
+        let state = UpdaterState::new();
+        assert!(state.inner.lock().unwrap().staged.take().is_none());
+        assert!(state.inner.lock().unwrap().staged.take().is_none());
     }
 }

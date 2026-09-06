@@ -246,6 +246,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		// ── Updater — inert in demo (never touches the network) ──
 		case "updater_check":
 			return null;
+		case "updater_status":
+			return { state: "none", info: null };
 		case "updater_download":
 		case "updater_install_now":
 		case "updater_set_auto_check":

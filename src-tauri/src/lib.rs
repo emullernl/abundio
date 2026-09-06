@@ -325,6 +325,45 @@ fn no_profile_windows_open(app: &AppHandle<Wry>) -> bool {
         .all(|label| !window_management::is_profile_window_label(label))
 }
 
+/// Quit-time work shared by every **Quit route**: snapshot the full set of open
+/// Windows to `windows.json`, then apply any staged update.
+///
+/// Idempotent via the `QuittingFlag`, and it must be — the routes overlap. On a
+/// menu quit `perform_quit` has already done both and set the flag; by the time
+/// `Exit` arrives the per-window `Destroyed` handlers have emptied
+/// `ActiveProfileState`, so re-saving would replace the good snapshot with an
+/// empty one. On a Dock quit no `Destroyed` fires at all, the flag is still
+/// clear, and this is the *only* thing that runs — hence the full snapshot here
+/// is the correct one.
+///
+/// Applying the update sits inside the guard deliberately: whichever route set
+/// the flag already took the staged bytes, and a re-attempt within the same quit
+/// would face identical conditions.
+fn on_app_exit(app: &AppHandle<Wry>) {
+    let already_handled = app
+        .try_state::<profile_store::QuittingFlag>()
+        .map(|f| {
+            let mut guard = f.0.lock().unwrap();
+            let was = *guard;
+            *guard = true;
+            was
+        })
+        .unwrap_or(true);
+    if already_handled {
+        return;
+    }
+    if let Some(state) = app.try_state::<profile_store::ActiveProfileState>() {
+        let snapshot = window_persistence::snapshot_from_state(&state);
+        if let Err(e) = window_persistence::save(&snapshot) {
+            eprintln!("[abundio] failed to persist windows.json at exit: {e}");
+        }
+    }
+    // Apply a staged update (if any) AFTER persisting windows.json, so the
+    // restoration snapshot is never lost to a stalled or failed install.
+    // See ADR-0014.
+    updater::apply_staged_update_on_quit(app);
+}
+
 /// Runs the actual app quit: marks the `QuittingFlag` so per-window `Destroyed`
 /// events skip their incremental `windows.json` saves, snapshots the full
 /// pre-quit window set, applies any staged update, then exits. Shared by the
@@ -1000,6 +1039,7 @@ pub fn run() {
             updater::updater_check,
             updater::updater_download,
             updater::updater_install_now,
+            updater::updater_status,
             updater::updater_set_auto_check,
             clipboard_image::set_clipboard_image_from_path,
         ])
@@ -1011,35 +1051,18 @@ pub fn run() {
             // open windows and their profiles to windows.json. Subsequent
             // window Destroyed events see the QuittingFlag and skip their
             // per-window save logic, preserving the full pre-quit set.
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                let already_handled = app_handle
-                    .try_state::<profile_store::QuittingFlag>()
-                    .map(|f| {
-                        let mut guard = f.0.lock().unwrap();
-                        let was = *guard;
-                        *guard = true;
-                        was
-                    })
-                    .unwrap_or(true);
-                if already_handled {
-                    return;
-                }
-                if let Some(state) =
-                    app_handle.try_state::<profile_store::ActiveProfileState>()
-                {
-                    let snapshot = window_persistence::snapshot_from_state(&state);
-                    if let Err(e) = window_persistence::save(&snapshot) {
-                        eprintln!(
-                            "[abundio] failed to persist windows.json at exit: {e}"
-                        );
-                    }
-                }
-                // Apply a staged update (if any) AFTER persisting windows.json,
-                // so the restoration snapshot is never lost to a stalled or
-                // failed install. The quit-app menu path already applied it (and
-                // also saved first), so this covers the direct ExitRequested
-                // paths (dock quit, OS shutdown). See ADR-0014.
-                updater::apply_staged_update_on_quit(app_handle);
+            // Every quit route must land here. `ExitRequested` is emitted only
+            // when the LAST window is destroyed (tauri-runtime-wry), which
+            // Dock-icon Quit / OS shutdown never do — `[NSApp terminate:]` goes
+            // straight to tao's `applicationWillTerminate`, which emits only
+            // `LoopDestroyed` → `RunEvent::Exit`. Handling both is what makes
+            // "installs on the next natural quit" true for all three routes.
+            // See the `Quit route` entry in CONTEXT.md and ADR-0014.
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                on_app_exit(app_handle);
             }
         });
 }

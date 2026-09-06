@@ -740,6 +740,15 @@ export interface UpdateInfo {
 	date: string | null;
 }
 
+/** A snapshot of the app-global updater state. Mirrors the Rust `UpdaterStatus`.
+ *  Each Window has its own Zustand store but they all share one Rust
+ *  `UpdaterState`, so a Window that didn't run the check/download itself needs
+ *  this to learn an update is staged. */
+export interface UpdaterStatus {
+	state: "none" | "available" | "ready";
+	info: UpdateInfo | null;
+}
+
 /** Download progress for a staging update. `total` is null until known. */
 export interface UpdateDownloadProgress {
 	downloaded: number;
@@ -758,6 +767,9 @@ export const updates = {
 	/** Install the staged update immediately and restart the app. The caller
 	 *  must confirm first — this terminates all Windows, PTYs and Agents. */
 	installNow: () => invoke<void>("updater_install_now"),
+
+	/** Read the app-global updater state, for hydrating a freshly-mounted view. */
+	status: () => invoke<UpdaterStatus>("updater_status"),
 
 	/** Enable/disable background auto-checks (the app-wide Rust flag). */
 	setAutoCheck: (enabled: boolean) =>
