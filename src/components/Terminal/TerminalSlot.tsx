@@ -9,7 +9,7 @@ import {
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { pty } from "../../lib/ipc";
-import { sc } from "../../lib/platform";
+import { isMac, sc } from "../../lib/platform";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import {
 	copyTerminalSelection,
@@ -30,6 +30,15 @@ import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { SearchBar } from "./SearchBar";
 import { TerminalTitleBar } from "./TerminalTitleBar";
+
+/** The gesture that opens a context menu. On macOS **Ctrl+click** is the
+ *  system-level secondary click, and a webview may deliver it as button 0 with
+ *  `ctrlKey` rather than as button 2 — in a mouse-reporting pane that would be
+ *  forwarded to the app as a left-click report and wipe the selection, the very
+ *  bug the button-2 guard exists to stop. Cover both spellings. */
+function isSecondaryClick(e: MouseEvent): boolean {
+	return e.button === 2 || (isMac && e.button === 0 && e.ctrlKey);
+}
 
 function TerminalLoader({ paneId }: { paneId: string }) {
 	const [visible, setVisible] = useState(true);
@@ -223,7 +232,10 @@ export function TerminalSlot({
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
 			handleFocus();
-			if (e.button !== 0) return;
+			// Secondary clicks are excluded: they open the context menu, and that
+			// must not silently acknowledge an Error. On macOS that includes
+			// Ctrl+click, which the webview may spell as button 0 + ctrlKey.
+			if (e.button !== 0 || isSecondaryClick(e.nativeEvent)) return;
 			if (!innerRef.current?.contains(e.target as Node)) return;
 			const ptyId = getTerminal(paneId)?.ptyId;
 			if (ptyId) usePtyActivityStore.getState().click(ptyId);
@@ -293,15 +305,38 @@ export function TerminalSlot({
 	// loses hover feedback until the selection is dropped (any click does that).
 	// Gated on `buttons === 0` so an in-progress drag is never touched — that is
 	// how the selection gets extended.
+	//
+	// BOTH guards stand down unless the app is actually reporting the mouse. In
+	// a pane with no mouse tracking — a plain shell, Claude Code, most panes —
+	// xterm sends nothing on movement, so there is no selection to protect and
+	// the guards would be pure cost: `stopPropagation()` on the container keeps
+	// the event from the `.xterm-screen` descendant, where xterm's Linkifier
+	// listens for the hover that underlines URLs and file links.
 	useEffect(() => {
 		const el = containerRef.current;
 		if (!el) return;
+		const isReportingMouse = () =>
+			getTerminal(paneId)?.term.modes.mouseTrackingMode !== "none";
 		const onMouseDown = (e: MouseEvent) => {
-			if (e.button === 2 && !forwardingRightClick.current) e.stopPropagation();
+			if (!isSecondaryClick(e) || forwardingRightClick.current) return;
+			if (!isReportingMouse()) return;
+			e.stopPropagation();
+			// xterm's own mousedown handler runs `preventDefault()` + `focus()`
+			// before it looks at any tracking state, and we just cut it off. Both
+			// halves matter: without them the browser's default action on the
+			// non-focusable screen div blurs xterm's hidden helper textarea and
+			// the pane stops taking keystrokes once the menu closes. Calling
+			// focus() alone is not enough — the default action runs after us and
+			// undoes it. `contextmenu` is dispatched independently of this
+			// mousedown's default action, so our menu still opens.
+			e.preventDefault();
+			getTerminal(paneId)?.term.focus();
 		};
 		const onMouseMove = (e: MouseEvent) => {
 			if (e.buttons !== 0) return;
-			if (getTerminal(paneId)?.term.hasSelection()) e.stopPropagation();
+			const managed = getTerminal(paneId);
+			if (!managed || managed.term.modes.mouseTrackingMode === "none") return;
+			if (managed.term.hasSelection()) e.stopPropagation();
 		};
 		el.addEventListener("mousedown", onMouseDown, true);
 		el.addEventListener("mousemove", onMouseMove, true);
@@ -328,7 +363,6 @@ export function TerminalSlot({
 		const shared = {
 			bubbles: true,
 			cancelable: true,
-			view: window,
 			button: 2,
 			clientX: at.x,
 			clientY: at.y,
