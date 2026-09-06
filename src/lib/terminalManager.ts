@@ -36,7 +36,11 @@ import { stripResetSequences } from "./terminalResetFilter";
 import { modifiedNavKeySequence } from "./terminalWordJump";
 import { normalFontWeightFor, transparentBg } from "./themeUtils";
 import type { PaneNode } from "./types";
-import { MAX_WEBGL_CONTEXTS, pickWebglPanes } from "./webglBudget";
+import {
+	MAX_WEBGL_CONTEXTS,
+	pickWebglPanes,
+	webglReconcilePlan,
+} from "./webglBudget";
 import { addWindowFocusListener } from "./windowFocus";
 import { inheritSourceWorkspaceId } from "./worktreeGrouping";
 
@@ -91,7 +95,15 @@ const CSS_GENERIC_FAMILIES =
  *  has different glyph metrics and looks like the wrong font. */
 function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 	if (managed.webglAddon || retries <= 0) return;
-	if (webglContextCount() >= MAX_WEBGL_CONTEXTS) return;
+	if (liveWebglContexts >= MAX_WEBGL_CONTEXTS) {
+		if (!loggedWebglCap) {
+			loggedWebglCap = true;
+			console.debug(
+				`[abundio] WebGL context cap reached (${MAX_WEBGL_CONTEXTS}); further panes render on xterm's DOM renderer.`,
+			);
+		}
+		return;
+	}
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => {
@@ -110,6 +122,7 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 		});
 		managed.term.loadAddon(webgl);
 		managed.webglAddon = webgl;
+		liveWebglContexts++;
 	} catch (err) {
 		console.warn(
 			"[abundio] WebGL renderer failed to load; xterm will fall back to DOM renderer (glyph metrics will look off).",
@@ -124,14 +137,24 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
  *  decides who is worth retrying after a loss. */
 let webglBudget: ReadonlySet<string> = new Set();
 
-/** Live WebGL contexts across every terminal in this window. */
-function webglContextCount(): number {
-	let count = 0;
-	for (const managed of instances.values()) {
-		if (managed.webglAddon) count++;
-	}
-	return count;
+/** Live WebGL contexts in this window, maintained by tryLoadWebgl/unloadWebgl
+ *  rather than counted, so the reconcile loop stays linear and the number is
+ *  cheap enough to read from the debug overlay. */
+let liveWebglContexts = 0;
+
+/** Live WebGL contexts across every terminal in this window. Exported so the
+ *  debug overlay can show whether the cap is binding — a refused context is
+ *  otherwise indistinguishable from everything working, since the pane keeps
+ *  rendering on xterm's DOM renderer. */
+export function webglContextCount(): number {
+	return liveWebglContexts;
 }
+
+/** Logged once per session, not per refusal: at the cap this fires on every
+ *  reconcile, and the interesting part is that the ceiling was reached at all
+ *  — chiefly to check whether MAX_WEBGL_CONTEXTS is right for WKWebView, whose
+ *  own limit is undocumented. */
+let loggedWebglCap = false;
 
 /** Master switch for GPU rendering, mirrored from the persisted
  *  `gpuAccelerationEnabled` setting. While false, ensureWebglLoaded is a no-op
@@ -139,19 +162,45 @@ function webglContextCount(): number {
  *  store calls setWebglEnabled(false) on rehydration if the user disabled it. */
 let webglEnabled = true;
 
+/** Bring the live WebGL contexts in line with `webglBudget`: dispose what fell
+ *  out of the budget, then hand the freed slots to what is in it, in the
+ *  budget's own priority order.
+ *
+ *  The two passes are load-bearing. Interleaving them — walking `instances`
+ *  once and loading or unloading each pane as it comes — refuses every promoted
+ *  pane while the cap is still saturated by panes this same loop has yet to
+ *  dispose, and `instances` is in creation order, which has nothing to do with
+ *  priority. Switching to a workspace whose panes hold no contexts could end
+ *  with zero live contexts and the visible workspace entirely on the DOM
+ *  renderer, with nothing scheduled to correct it. See `webglReconcilePlan`.
+ *
+ *  This is the single gate the callers of ensureWebglLoaded lean on: they may
+ *  spend a slot on a pane the budget doesn't cover, and the next reconcile
+ *  takes it back. */
+function reconcileWebgl(): void {
+	const loaded = new Set<string>();
+	for (const [paneId, managed] of instances) {
+		if (managed.webglAddon) loaded.add(paneId);
+	}
+	const budget: ReadonlySet<string> = webglEnabled ? webglBudget : new Set();
+	const { toUnload, toLoad } = webglReconcilePlan(loaded, budget);
+	for (const paneId of toUnload) unloadWebgl(paneId);
+	for (const paneId of toLoad) ensureWebglLoaded(paneId);
+}
+
 /** Flip GPU rendering on/off and reconcile every live terminal: enabling loads
- *  a WebGL context on each pane, disabling disposes them. Called by the
- *  settings store when the user toggles GPU acceleration. */
+ *  a WebGL context on each budgeted pane, disabling disposes them all. Called
+ *  by the settings store when the user toggles GPU acceleration.
+ *
+ *  Re-enabling goes through the reconciler rather than looping `instances`
+ *  directly: with more panes than the cap allows, `instances` order would hand
+ *  the slots to whichever terminals were created first — quite possibly all
+ *  background ones — and nothing would correct it, since flipping this setting
+ *  doesn't touch the workspace store the reconciler subscribes to. */
 export function setWebglEnabled(enabled: boolean): void {
 	if (webglEnabled === enabled) return;
 	webglEnabled = enabled;
-	for (const paneId of instances.keys()) {
-		if (enabled) {
-			ensureWebglLoaded(paneId);
-		} else {
-			unloadWebgl(paneId);
-		}
-	}
+	reconcileWebgl();
 }
 
 /** Ensure the WebGL renderer is loaded on a terminal. The store subscription
@@ -176,6 +225,7 @@ export function unloadWebgl(paneId: string): void {
 	if (!managed?.webglAddon) return;
 	managed.webglAddon.dispose();
 	managed.webglAddon = null;
+	liveWebglContexts--;
 }
 
 /** Strip the comma-separated fallback list and any quotes from a CSS font-family
@@ -497,11 +547,11 @@ setTimeout(() => {
 		if (!activeWorkspaceId) return;
 
 		// Compute the set of paneIds that should keep a WebGL context — panes of
-		// any opened workspace, best-first, up to MAX_WEBGL_CONTEXTS. Policy
-		// lives in `webglBudget.ts`; the reasoning for holding contexts across
-		// switches (rather than the older "active tab only" gate, which cost a
-		// measured ~3s on warm switches) and for capping them is documented
-		// there. Panes outside the budget render on xterm's DOM renderer.
+		// any opened workspace, best-first, up to MAX_WEBGL_CONTEXTS. Policy and
+		// its reasoning (why contexts are held across switches rather than
+		// rebuilt per visible tab, and why they are capped) live in
+		// `webglBudget.ts`. Panes outside the budget render on xterm's DOM
+		// renderer.
 		const openedIds = usePtyActivityStore.getState().openedWorkspaceIds;
 		const liveWebglPaneIds = pickWebglPanes({
 			workspaces: state.workspaces.map((workspace) => ({
@@ -534,17 +584,14 @@ setTimeout(() => {
 			if (managed.ptyId) {
 				activityStore.initPty(managed.ptyId);
 			}
-			// Reconcile WebGL: load for panes the budget covers; unload for the
-			// rest — orphans (paneId still in `instances` but no longer in any
-			// opened workspace's layout; rare, a tear-down race) and panes that
-			// lost their place in the budget, whose contexts are what the panes
-			// on screen need.
-			if (liveWebglPaneIds.has(paneId)) {
-				ensureWebglLoaded(paneId);
-			} else {
-				unloadWebgl(paneId);
-			}
 		}
+
+		// Then WebGL, in its own pass. Panes that lost their place in the budget
+		// give their contexts up before the panes that gained one ask for them,
+		// which is the only order that works once the cap binds — and it also
+		// covers orphans (a paneId still in `instances` but no longer in any
+		// opened workspace's layout; rare, a tear-down race).
+		reconcileWebgl();
 	});
 }, 0);
 
