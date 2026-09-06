@@ -9,7 +9,7 @@ import {
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { pty } from "../../lib/ipc";
-import { sc } from "../../lib/platform";
+import { isMac, sc } from "../../lib/platform";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import {
 	copyTerminalSelection,
@@ -30,6 +30,15 @@ import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { SearchBar } from "./SearchBar";
 import { TerminalTitleBar } from "./TerminalTitleBar";
+
+/** The gesture that opens a context menu. On macOS **Ctrl+click** is the
+ *  system-level secondary click, and a webview may deliver it as button 0 with
+ *  `ctrlKey` rather than as button 2 — in a mouse-reporting pane that would be
+ *  forwarded to the app as a left-click report and wipe the selection, the very
+ *  bug the button-2 guard exists to stop. Cover both spellings. */
+function isSecondaryClick(e: MouseEvent): boolean {
+	return e.button === 2 || (isMac && e.button === 0 && e.ctrlKey);
+}
 
 function TerminalLoader({ paneId }: { paneId: string }) {
 	const [visible, setVisible] = useState(true);
@@ -126,7 +135,15 @@ export function TerminalSlot({
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
 		y: number;
+		// Whether the foreground app had mouse tracking on when the menu opened.
+		// Captured here rather than read at render time: it decides whether the
+		// "Send Right Click" item is offered, and it must describe the click the
+		// user actually made.
+		mouseTracking: boolean;
 	} | null>(null);
+	// Set for the duration of a deliberate right-click forward, so the guard
+	// below lets that one synthetic event through to xterm.
+	const forwardingRightClick = useRef(false);
 	const searchPaneId = useWorkspaceStore((s) => s.searchPaneId);
 	const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
@@ -215,7 +232,10 @@ export function TerminalSlot({
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
 			handleFocus();
-			if (e.button !== 0) return;
+			// Secondary clicks are excluded: they open the context menu, and that
+			// must not silently acknowledge an Error. On macOS that includes
+			// Ctrl+click, which the webview may spell as button 0 + ctrlKey.
+			if (e.button !== 0 || isSecondaryClick(e.nativeEvent)) return;
 			if (!innerRef.current?.contains(e.target as Node)) return;
 			const ptyId = getTerminal(paneId)?.ptyId;
 			if (ptyId) usePtyActivityStore.getState().click(ptyId);
@@ -241,11 +261,124 @@ export function TerminalSlot({
 			e.preventDefault();
 			e.stopPropagation();
 			handleFocus();
-			setContextMenu({ x: e.clientX, y: e.clientY });
+			setContextMenu({
+				x: e.clientX,
+				y: e.clientY,
+				mouseTracking:
+					getTerminal(paneId)?.term.modes.mouseTrackingMode !== "none",
+			});
 		};
 		el.addEventListener("contextmenu", handler, true);
 		return () => el.removeEventListener("contextmenu", handler, true);
-	}, [handleFocus]);
+	}, [handleFocus, paneId]);
+
+	// Keep the right button away from the foreground app. When a TUI turns on
+	// mouse tracking (DECSET 1000/1002/1003 — the GitHub Copilot CLI does at
+	// startup and never turns it off), xterm's "always on" mousedown listener
+	// forwards EVERY button to the PTY as a mouse report, right button included.
+	// That report goes out via `triggerDataEvent(report, true)`, and the `true`
+	// marks it as user input — which makes xterm's SelectionService clear the
+	// selection. So a right-click meant to open Copy destroyed the very thing it
+	// was going to copy. (Verified against xterm 6.0.0: with 1003 on, a right
+	// mousedown emits `ESC[<2;8;1M` and the selection goes empty; with tracking
+	// off nothing is sent and the selection survives.)
+	//
+	// Intercepting `contextmenu` above is too late — the damage is done on
+	// mousedown. So swallow button 2 here, in the CAPTURE phase on the pane
+	// container, before xterm's listener on the descendant `.xterm` element runs.
+	// In Abundio the right button is a UI gesture (our PaneContextMenu), never
+	// the app's; the trade-off is that a TUI wanting its own right-click menu
+	// (tmux with mouse mode) won't see it.
+	//
+	// stopPropagation only, deliberately NOT preventDefault: the `contextmenu`
+	// event is derived from this mousedown, and suppressing it would take our
+	// own menu down with it.
+	// Same treatment for pointer MOVEMENT, but only while a selection is up.
+	// DECSET 1003 ("any event") reports every move, not just clicks — so with
+	// Copilot running, merely moving the mouse toward the right-click position
+	// emits `ESC[<35;…M`, which is user input, which clears the selection. The
+	// button-2 guard alone therefore fixed nothing in the pane it was written
+	// for: the selection was already gone before the click landed.
+	//
+	// While the pane holds a selection, movement belongs to the selection rather
+	// than to the app: the user is on their way to Copy. The cost is that a TUI
+	// loses hover feedback until the selection is dropped (any click does that).
+	// Gated on `buttons === 0` so an in-progress drag is never touched — that is
+	// how the selection gets extended.
+	//
+	// BOTH guards stand down unless the app is actually reporting the mouse. In
+	// a pane with no mouse tracking — a plain shell, Claude Code, most panes —
+	// xterm sends nothing on movement, so there is no selection to protect and
+	// the guards would be pure cost: `stopPropagation()` on the container keeps
+	// the event from the `.xterm-screen` descendant, where xterm's Linkifier
+	// listens for the hover that underlines URLs and file links.
+	useEffect(() => {
+		const el = containerRef.current;
+		if (!el) return;
+		const isReportingMouse = () =>
+			getTerminal(paneId)?.term.modes.mouseTrackingMode !== "none";
+		const onMouseDown = (e: MouseEvent) => {
+			if (!isSecondaryClick(e) || forwardingRightClick.current) return;
+			if (!isReportingMouse()) return;
+			e.stopPropagation();
+			// xterm's own mousedown handler runs `preventDefault()` + `focus()`
+			// before it looks at any tracking state, and we just cut it off. Both
+			// halves matter: without them the browser's default action on the
+			// non-focusable screen div blurs xterm's hidden helper textarea and
+			// the pane stops taking keystrokes once the menu closes. Calling
+			// focus() alone is not enough — the default action runs after us and
+			// undoes it. `contextmenu` is dispatched independently of this
+			// mousedown's default action, so our menu still opens.
+			e.preventDefault();
+			getTerminal(paneId)?.term.focus();
+		};
+		const onMouseMove = (e: MouseEvent) => {
+			if (e.buttons !== 0) return;
+			const managed = getTerminal(paneId);
+			if (!managed || managed.term.modes.mouseTrackingMode === "none") return;
+			if (managed.term.hasSelection()) e.stopPropagation();
+		};
+		el.addEventListener("mousedown", onMouseDown, true);
+		el.addEventListener("mousemove", onMouseMove, true);
+		return () => {
+			el.removeEventListener("mousedown", onMouseDown, true);
+			el.removeEventListener("mousemove", onMouseMove, true);
+		};
+	}, [paneId]);
+
+	// Escape hatch for TUIs that own the right button themselves (tmux with mouse
+	// mode opens its own pane menu). Rather than encoding a mouse report by hand
+	// — the bytes depend on the app's active protocol AND encoding — we replay
+	// the click as a real DOM event and let xterm do the encoding. The ref opens
+	// the guard for exactly this one event. mouseup goes to the document, which
+	// is where xterm registers its release listener once a press is forwarded.
+	const handleSendRightClick = useCallback(() => {
+		const managed = getTerminal(paneId);
+		const at = contextMenu;
+		if (!managed || !at) return;
+		const screen =
+			managed.term.element?.querySelector(".xterm-screen") ??
+			managed.term.element;
+		if (!screen) return;
+		const shared = {
+			bubbles: true,
+			cancelable: true,
+			button: 2,
+			clientX: at.x,
+			clientY: at.y,
+		};
+		forwardingRightClick.current = true;
+		try {
+			screen.dispatchEvent(
+				new MouseEvent("mousedown", { ...shared, buttons: 2 }),
+			);
+			document.dispatchEvent(
+				new MouseEvent("mouseup", { ...shared, buttons: 0 }),
+			);
+		} finally {
+			forwardingRightClick.current = false;
+		}
+	}, [paneId, contextMenu]);
 
 	const handleCopy = useCallback(() => {
 		copyTerminalSelection(paneId);
@@ -322,6 +455,14 @@ export function TerminalSlot({
 			shortcut: sc("⌘V", "Ctrl+Shift+V"),
 			onClick: handlePaste,
 		},
+		...(contextMenu?.mouseTracking
+			? [
+					{
+						label: "Send Right Click to Terminal",
+						onClick: handleSendRightClick,
+					} satisfies ContextMenuItem,
+				]
+			: []),
 		{ separator: true },
 		{ label: "Find", shortcut: sc("⌘F", "Ctrl+F"), onClick: toggleSearch },
 		{ label: "Clear Terminal", onClick: handleClear },

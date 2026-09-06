@@ -568,6 +568,15 @@ export async function createTerminal(
 		// Lift normal-text weight on light themes so they read as bold as the dark
 		// themes do (see normalFontWeightFor).
 		fontWeight: normalFontWeightFor(options.theme),
+		// Let Option+drag select text even while a TUI has mouse tracking on
+		// (DECSET 1000/1002/1003). xterm disables its selection service for the
+		// whole time an app is reporting the mouse, so without this a pane
+		// running the GitHub Copilot CLI — which turns on 1003 at startup and
+		// keeps it on — cannot be selected from at all. `shouldForceSelection`
+		// is the supported escape hatch; on Windows/Linux it is Shift+drag and
+		// needs no option, on macOS it is Option+drag and is off by default.
+		// Same gesture iTerm2 and Ghostty use.
+		macOptionClickForcesSelection: true,
 		// Auto-adjust foreground when a cell's fg/bg contrast is too low, so
 		// prompt segments that paint light text on a light ANSI colour (common
 		// in powerline themes) stay readable. 4.5 = WCAG AA for normal text.
