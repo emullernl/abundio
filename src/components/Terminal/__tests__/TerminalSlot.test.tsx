@@ -6,6 +6,10 @@ import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 // The PTY whose ManagedTerminal getTerminal() returns for our pane. Tests reach
 // in to flip which ptyId (or none) is reported so we can exercise the lookup.
 let currentManagedPtyId: string | null = "pty-1";
+// The xterm state the guards below read: whether the pane holds a selection and
+// whether the foreground app is reporting the mouse.
+let currentHasSelection = false;
+let currentMouseTrackingMode = "none";
 
 // Mock the heavy IO + child modules so the only thing rendered is TerminalSlot's
 // own container div. We keep the real ptyActivityStore so clearWaiting actually
@@ -13,7 +17,15 @@ let currentManagedPtyId: string | null = "pty-1";
 vi.mock("../../../lib/terminalManager", () => ({
 	getTerminal: () =>
 		currentManagedPtyId
-			? { ptyId: currentManagedPtyId, ready: false, settled: false }
+			? {
+					ptyId: currentManagedPtyId,
+					ready: false,
+					settled: false,
+					term: {
+						hasSelection: () => currentHasSelection,
+						modes: { mouseTrackingMode: currentMouseTrackingMode },
+					},
+				}
 			: null,
 	resetTerminal: vi.fn(),
 	getPaneRevision: () => 0,
@@ -72,6 +84,8 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 
 	beforeEach(() => {
 		currentManagedPtyId = "pty-1";
+		currentHasSelection = false;
+		currentMouseTrackingMode = "none";
 		usePtyActivityStore.setState({ activities: {}, panePtyMap: {} });
 		container = document.createElement("div");
 		document.body.appendChild(container);
@@ -164,5 +178,88 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 		currentManagedPtyId = null;
 		mouseDownOn(screenEl(), 0);
 		expect(stateOf("pty-1")).toBe("waiting");
+	});
+});
+
+// A TUI that turns on mouse tracking (DECSET 1000/1002/1003 — the GitHub
+// Copilot CLI does) makes xterm forward mouse events to the PTY as reports, and
+// every report counts as user input, which clears the terminal selection. These
+// guards keep the right button and (while a selection is up) pointer movement
+// away from xterm's own listeners, which sit on a descendant of the pane
+// container. The stand-in below plays xterm's part: it must not be reached.
+describe("TerminalSlot — mouse events withheld from a mouse-reporting app", () => {
+	let container: HTMLDivElement;
+	let root: ReturnType<typeof createRoot>;
+	let reachedXterm: string[];
+
+	beforeEach(() => {
+		currentManagedPtyId = "pty-1";
+		currentHasSelection = false;
+		currentMouseTrackingMode = "any";
+		reachedXterm = [];
+		usePtyActivityStore.setState({ activities: {}, panePtyMap: {} });
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+		act(() => {
+			root.render(
+				<TerminalSlot
+					paneId="pane-2"
+					isFocused={false}
+					onFocus={() => {}}
+					onSplitHorizontal={() => {}}
+					onSplitVertical={() => {}}
+					onClose={() => {}}
+				/>,
+			);
+		});
+		// xterm's listeners live on `.xterm`, a descendant of the pane container.
+		const screen = xtermTargets["pane-2"];
+		screen?.addEventListener("mousedown", (e) =>
+			reachedXterm.push(`mousedown:${(e as MouseEvent).button}`),
+		);
+		screen?.addEventListener("mousemove", () => reachedXterm.push("mousemove"));
+	});
+
+	afterEach(() => {
+		act(() => {
+			root.unmount();
+		});
+		container.remove();
+	});
+
+	function dispatch(type: string, init: MouseEventInit) {
+		act(() => {
+			xtermTargets["pane-2"]?.dispatchEvent(
+				new MouseEvent(type, { bubbles: true, ...init }),
+			);
+		});
+	}
+
+	it("does not deliver a right mousedown to xterm", () => {
+		dispatch("mousedown", { button: 2, buttons: 2 });
+		expect(reachedXterm).toEqual([]);
+	});
+
+	it("still delivers a left mousedown to xterm", () => {
+		dispatch("mousedown", { button: 0, buttons: 1 });
+		expect(reachedXterm).toEqual(["mousedown:0"]);
+	});
+
+	it("delivers pointer movement while there is no selection", () => {
+		dispatch("mousemove", { buttons: 0 });
+		expect(reachedXterm).toEqual(["mousemove"]);
+	});
+
+	it("withholds pointer movement while the pane holds a selection", () => {
+		currentHasSelection = true;
+		dispatch("mousemove", { buttons: 0 });
+		expect(reachedXterm).toEqual([]);
+	});
+
+	it("never withholds movement with a button held, so a drag still extends", () => {
+		currentHasSelection = true;
+		dispatch("mousemove", { buttons: 1 });
+		expect(reachedXterm).toEqual(["mousemove"]);
 	});
 });

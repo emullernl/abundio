@@ -126,7 +126,15 @@ export function TerminalSlot({
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
 		y: number;
+		// Whether the foreground app had mouse tracking on when the menu opened.
+		// Captured here rather than read at render time: it decides whether the
+		// "Send Right Click" item is offered, and it must describe the click the
+		// user actually made.
+		mouseTracking: boolean;
 	} | null>(null);
+	// Set for the duration of a deliberate right-click forward, so the guard
+	// below lets that one synthetic event through to xterm.
+	const forwardingRightClick = useRef(false);
 	const searchPaneId = useWorkspaceStore((s) => s.searchPaneId);
 	const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
@@ -241,11 +249,102 @@ export function TerminalSlot({
 			e.preventDefault();
 			e.stopPropagation();
 			handleFocus();
-			setContextMenu({ x: e.clientX, y: e.clientY });
+			setContextMenu({
+				x: e.clientX,
+				y: e.clientY,
+				mouseTracking:
+					getTerminal(paneId)?.term.modes.mouseTrackingMode !== "none",
+			});
 		};
 		el.addEventListener("contextmenu", handler, true);
 		return () => el.removeEventListener("contextmenu", handler, true);
-	}, [handleFocus]);
+	}, [handleFocus, paneId]);
+
+	// Keep the right button away from the foreground app. When a TUI turns on
+	// mouse tracking (DECSET 1000/1002/1003 — the GitHub Copilot CLI does at
+	// startup and never turns it off), xterm's "always on" mousedown listener
+	// forwards EVERY button to the PTY as a mouse report, right button included.
+	// That report goes out via `triggerDataEvent(report, true)`, and the `true`
+	// marks it as user input — which makes xterm's SelectionService clear the
+	// selection. So a right-click meant to open Copy destroyed the very thing it
+	// was going to copy. (Verified against xterm 6.0.0: with 1003 on, a right
+	// mousedown emits `ESC[<2;8;1M` and the selection goes empty; with tracking
+	// off nothing is sent and the selection survives.)
+	//
+	// Intercepting `contextmenu` above is too late — the damage is done on
+	// mousedown. So swallow button 2 here, in the CAPTURE phase on the pane
+	// container, before xterm's listener on the descendant `.xterm` element runs.
+	// In Abundio the right button is a UI gesture (our PaneContextMenu), never
+	// the app's; the trade-off is that a TUI wanting its own right-click menu
+	// (tmux with mouse mode) won't see it.
+	//
+	// stopPropagation only, deliberately NOT preventDefault: the `contextmenu`
+	// event is derived from this mousedown, and suppressing it would take our
+	// own menu down with it.
+	// Same treatment for pointer MOVEMENT, but only while a selection is up.
+	// DECSET 1003 ("any event") reports every move, not just clicks — so with
+	// Copilot running, merely moving the mouse toward the right-click position
+	// emits `ESC[<35;…M`, which is user input, which clears the selection. The
+	// button-2 guard alone therefore fixed nothing in the pane it was written
+	// for: the selection was already gone before the click landed.
+	//
+	// While the pane holds a selection, movement belongs to the selection rather
+	// than to the app: the user is on their way to Copy. The cost is that a TUI
+	// loses hover feedback until the selection is dropped (any click does that).
+	// Gated on `buttons === 0` so an in-progress drag is never touched — that is
+	// how the selection gets extended.
+	useEffect(() => {
+		const el = containerRef.current;
+		if (!el) return;
+		const onMouseDown = (e: MouseEvent) => {
+			if (e.button === 2 && !forwardingRightClick.current) e.stopPropagation();
+		};
+		const onMouseMove = (e: MouseEvent) => {
+			if (e.buttons !== 0) return;
+			if (getTerminal(paneId)?.term.hasSelection()) e.stopPropagation();
+		};
+		el.addEventListener("mousedown", onMouseDown, true);
+		el.addEventListener("mousemove", onMouseMove, true);
+		return () => {
+			el.removeEventListener("mousedown", onMouseDown, true);
+			el.removeEventListener("mousemove", onMouseMove, true);
+		};
+	}, [paneId]);
+
+	// Escape hatch for TUIs that own the right button themselves (tmux with mouse
+	// mode opens its own pane menu). Rather than encoding a mouse report by hand
+	// — the bytes depend on the app's active protocol AND encoding — we replay
+	// the click as a real DOM event and let xterm do the encoding. The ref opens
+	// the guard for exactly this one event. mouseup goes to the document, which
+	// is where xterm registers its release listener once a press is forwarded.
+	const handleSendRightClick = useCallback(() => {
+		const managed = getTerminal(paneId);
+		const at = contextMenu;
+		if (!managed || !at) return;
+		const screen =
+			managed.term.element?.querySelector(".xterm-screen") ??
+			managed.term.element;
+		if (!screen) return;
+		const shared = {
+			bubbles: true,
+			cancelable: true,
+			view: window,
+			button: 2,
+			clientX: at.x,
+			clientY: at.y,
+		};
+		forwardingRightClick.current = true;
+		try {
+			screen.dispatchEvent(
+				new MouseEvent("mousedown", { ...shared, buttons: 2 }),
+			);
+			document.dispatchEvent(
+				new MouseEvent("mouseup", { ...shared, buttons: 0 }),
+			);
+		} finally {
+			forwardingRightClick.current = false;
+		}
+	}, [paneId, contextMenu]);
 
 	const handleCopy = useCallback(() => {
 		copyTerminalSelection(paneId);
@@ -322,6 +421,14 @@ export function TerminalSlot({
 			shortcut: sc("⌘V", "Ctrl+Shift+V"),
 			onClick: handlePaste,
 		},
+		...(contextMenu?.mouseTracking
+			? [
+					{
+						label: "Send Right Click to Terminal",
+						onClick: handleSendRightClick,
+					} satisfies ContextMenuItem,
+				]
+			: []),
 		{ separator: true },
 		{ label: "Find", shortcut: sc("⌘F", "Ctrl+F"), onClick: toggleSearch },
 		{ label: "Clear Terminal", onClick: handleClear },
