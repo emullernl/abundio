@@ -217,6 +217,21 @@ pub async fn updater_check(
     }
 }
 
+/// Clears `UpdaterInner::downloading` however `updater_download` leaves — normal
+/// return, `?`, panic, or the command future being dropped when its invoking
+/// Window closes mid-download. Without this the flag latches `true` for the rest
+/// of the process and every later download from every Window is refused with
+/// "a download is already in progress", with no command able to reset it.
+struct DownloadGuard<'a>(&'a Mutex<UpdaterInner>);
+
+impl Drop for DownloadGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.0.lock() {
+            inner.downloading = false;
+        }
+    }
+}
+
 /// Downloads the pending update's installer, emitting `update-download-progress`
 /// as bytes arrive, and stages it for install. The bundle is NOT applied here —
 /// that happens on quit (default) or via `updater_install_now`.
@@ -241,6 +256,8 @@ pub async fn updater_download(
         inner.downloading = true;
         update
     };
+    // Own the flag from here on — see `DownloadGuard`.
+    let _guard = DownloadGuard(&state.inner);
 
     let downloaded = Arc::new(AtomicU64::new(0));
     let progress_app = app.clone();
@@ -263,10 +280,9 @@ pub async fn updater_download(
         )
         .await;
 
-    // Clear the in-flight flag on BOTH outcomes, and put the update back as
+    // The flag is cleared by `_guard` on every exit path. Put the update back as
     // `pending` on failure so a retry doesn't need a fresh check.
     let mut inner = state.inner.lock().unwrap();
-    inner.downloading = false;
     match result {
         Ok(bytes) => {
             inner.staged = Some((update, bytes));
@@ -292,9 +308,16 @@ pub async fn updater_install_now(
     let staged = state.inner.lock().unwrap().staged.take();
     let (update, bytes) =
         staged.ok_or_else(|| AbundioError::InvalidOperation("no staged update to install".into()))?;
-    update
-        .install(bytes)
-        .map_err(|e| AbundioError::InvalidOperation(format!("update install failed: {e}")))?;
+    if let Err(e) = update.install(&bytes) {
+        // Re-stage rather than dropping the bundle, exactly as
+        // `apply_staged_update_on_quit` does. The macOS admin-authorisation
+        // prompt is user-cancellable, and losing the download to a cancelled
+        // dialog would force a full re-check and re-download.
+        state.inner.lock().unwrap().staged = Some((update, bytes));
+        return Err(AbundioError::InvalidOperation(format!(
+            "update install failed: {e}"
+        )));
+    }
     app.restart();
 }
 
@@ -383,6 +406,30 @@ mod tests {
         let inner = state.inner.lock().unwrap();
         assert!(inner.downloading);
         assert!(inner.pending.is_none());
+    }
+
+    /// The guard is what makes the flag safe against a panic or a dropped
+    /// (cancelled) command future — the paths that skip the normal reset.
+    #[test]
+    fn download_guard_clears_the_flag_on_drop() {
+        let state = UpdaterState::new();
+        state.inner.lock().unwrap().downloading = true;
+        {
+            let _guard = DownloadGuard(&state.inner);
+        }
+        assert!(!state.inner.lock().unwrap().downloading);
+    }
+
+    #[test]
+    fn download_guard_clears_the_flag_while_unwinding() {
+        let state = UpdaterState::new();
+        state.inner.lock().unwrap().downloading = true;
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = DownloadGuard(&state.inner);
+            panic!("download blew up");
+        }));
+        assert!(unwound.is_err());
+        assert!(!state.inner.lock().unwrap().downloading);
     }
 
     /// `apply_staged_update_on_quit` is called from all three quit routes, so

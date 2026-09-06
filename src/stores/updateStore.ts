@@ -99,6 +99,12 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 			if (respectSuppression && (isSkipped(info.version) || isSnoozed())) {
 				return;
 			}
+			// Re-read after the round-trip: a check or download may have started
+			// while `status()` was in flight, and that is a more current truth
+			// than this snapshot. Guarding only before the await would let a
+			// reply arriving mid-download flip the row back to "Install update".
+			const settled = get().status;
+			if (settled === "checking" || settled === "downloading") return;
 			set({
 				status: state === "ready" ? "ready" : "available",
 				info,

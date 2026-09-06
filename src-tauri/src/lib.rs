@@ -326,15 +326,18 @@ fn no_profile_windows_open(app: &AppHandle<Wry>) -> bool {
 }
 
 /// Quit-time work shared by every **Quit route**: snapshot the full set of open
-/// Windows to `windows.json`, then apply any staged update.
+/// Windows to `windows.json`, then apply any staged update. The single body all
+/// three routes run — `perform_quit` (menu quit) calls it directly, and the run
+/// loop calls it for both `ExitRequested` and `Exit`.
 ///
 /// Idempotent via the `QuittingFlag`, and it must be — the routes overlap. On a
-/// menu quit `perform_quit` has already done both and set the flag; by the time
-/// `Exit` arrives the per-window `Destroyed` handlers have emptied
+/// menu quit this has already run once via `perform_quit`; by the time `Exit`
+/// arrives the per-window `Destroyed` handlers have emptied
 /// `ActiveProfileState`, so re-saving would replace the good snapshot with an
-/// empty one. On a Dock quit no `Destroyed` fires at all, the flag is still
-/// clear, and this is the *only* thing that runs — hence the full snapshot here
-/// is the correct one.
+/// empty one. The same protects a re-entrant `perform_quit` (a second Cmd+Q
+/// while windows tear down). On a Dock quit no `Destroyed` fires at all, the
+/// flag is still clear, and this is the *only* thing that runs — hence the full
+/// snapshot here is the correct one.
 ///
 /// Applying the update sits inside the guard deliberately: whichever route set
 /// the flag already took the staged bytes, and a re-attempt within the same quit
@@ -364,23 +367,19 @@ fn on_app_exit(app: &AppHandle<Wry>) {
     updater::apply_staged_update_on_quit(app);
 }
 
-/// Runs the actual app quit: marks the `QuittingFlag` so per-window `Destroyed`
-/// events skip their incremental `windows.json` saves, snapshots the full
-/// pre-quit window set, applies any staged update, then exits. Shared by the
-/// confirmed and no-confirmation-needed quit-app paths. See ADR-0016 / ADR-0007.
+/// Runs the actual app quit: the shared quit-time work, then exit. Used by the
+/// confirmed and no-confirmation-needed `quit-app` paths. See ADR-0016 / ADR-0007.
+///
+/// Delegating to `on_app_exit` is what makes a re-entrant quit safe.
+/// `app.exit(0)` posts to the event loop rather than terminating synchronously,
+/// and `QuitConfirmInFlight` gates only the *dialog* branch — so a second Cmd+Q
+/// while windows are tearing down lands here again. Doing the snapshot inline
+/// (as this used to) would save it a second time, after the `Destroyed` handlers
+/// had emptied `ActiveProfileState`, replacing the good `windows.json` with an
+/// empty one. `on_app_exit`'s `QuittingFlag` guard makes the second call a
+/// no-op instead.
 fn perform_quit(app: &AppHandle<Wry>) {
-    if let Some(flag) = app.try_state::<profile_store::QuittingFlag>() {
-        *flag.0.lock().unwrap() = true;
-    }
-    if let Some(state) = app.try_state::<profile_store::ActiveProfileState>() {
-        let snapshot = window_persistence::snapshot_from_state(&state);
-        if let Err(e) = window_persistence::save(&snapshot) {
-            eprintln!("[abundio] failed to persist windows.json at quit: {e}");
-        }
-    }
-    // Apply a staged update (if any) on this quit — the default "install on
-    // quit" contract. See ADR-0014.
-    updater::apply_staged_update_on_quit(app);
+    on_app_exit(app);
     app.exit(0);
 }
 
@@ -549,9 +548,11 @@ pub fn run() {
             // Active profile cache (set by the frontend after rehydrating its
             // settings store). Used by the menu rebuild.
             app.manage(profile_store::ActiveProfileState::default());
-            // Flag flipped on by `RunEvent::ExitRequested` so per-window
+            // Flag flipped on by `on_app_exit` (from `perform_quit`, or from
+            // either `RunEvent::ExitRequested` or `RunEvent::Exit`) so per-window
             // Destroyed events know to skip their save-to-windows.json logic
-            // — the quit handler captured the full pre-quit state once.
+            // — the quit handler captured the full pre-quit state once. It also
+            // makes `on_app_exit` itself idempotent across overlapping routes.
             app.manage(profile_store::QuittingFlag::default());
             // Per-window Opened-workspace counts (pushed by the frontend),
             // summed at quit time to drive the quit confirmation. See ADR-0016.
@@ -1046,11 +1047,6 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            // The first time the app receives an exit request (Cmd+Q, app
-            // menu Quit, our own `app.exit(0)`), snapshot the full set of
-            // open windows and their profiles to windows.json. Subsequent
-            // window Destroyed events see the QuittingFlag and skip their
-            // per-window save logic, preserving the full pre-quit set.
             // Every quit route must land here. `ExitRequested` is emitted only
             // when the LAST window is destroyed (tauri-runtime-wry), which
             // Dock-icon Quit / OS shutdown never do — `[NSApp terminate:]` goes
