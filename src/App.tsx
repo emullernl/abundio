@@ -437,6 +437,10 @@ export function App() {
 	// to the focused Window; download progress streams in while staging. The
 	// UpdatePrompt renders from useUpdateStore. See ADR-0014.
 	useEffect(() => {
+		// Adopt whatever the app-global Rust state already holds — another Window
+		// may have downloaded before this one existed. Suppression applies: the
+		// prompt is a notification, so "Later"/"Skip" must still silence it.
+		useUpdateStore.getState().hydrate({ respectSuppression: true });
 		const unlistenAvailable = updates.onUpdateAvailable((info) => {
 			useUpdateStore.getState().setAvailable(info);
 		});

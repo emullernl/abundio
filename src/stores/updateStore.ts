@@ -11,6 +11,9 @@ import { useSettingsStore } from "./settingsStore";
  * → `download` (eager, install-on-quit by default) → optional `installNow`
  * (restart) guarded by a confirm at the call site.
  *
+ * `pending`/`staged` live in Rust and are app-global, so a Window that did none
+ * of the above still needs `hydrate` on mount to learn where the update got to.
+ *
  * One store instance per Window (Zustand is per-JS-context); the prompt and the
  * Settings section both read it within their own Window.
  */
@@ -34,6 +37,11 @@ interface UpdateStoreState {
 
 	/** Sink for the Rust `update-available` event. Respects the skipped version. */
 	setAvailable: (info: UpdateInfo) => void;
+	/** Adopt the app-global Rust updater state into this Window's store.
+	 *  `respectSuppression` is true for the prompt (a notification, which must
+	 *  obey "Later"/"Skip") and false for the Settings section (a status display,
+	 *  which must never hide the truth). */
+	hydrate: (opts?: { respectSuppression?: boolean }) => Promise<void>;
 	/** Run a check. `manual` surfaces an "up to date" result and ignores skip. */
 	check: (opts?: { manual?: boolean }) => Promise<void>;
 	/** Download + stage the available update (applied on quit). */
@@ -78,6 +86,34 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	setAvailable: (info) => {
 		if (isSkipped(info.version) || isSnoozed()) return;
 		set({ status: "available", info, dismissed: false, error: null });
+	},
+
+	hydrate: async ({ respectSuppression = true } = {}) => {
+		// Never clobber work this Window is already doing — a check or download
+		// in flight holds a more current truth than the snapshot does.
+		const current = get().status;
+		if (current === "checking" || current === "downloading") return;
+		try {
+			const { state, info } = await updates.status();
+			if (state === "none" || !info) return;
+			if (respectSuppression && (isSkipped(info.version) || isSnoozed())) {
+				return;
+			}
+			// Re-read after the round-trip: a check or download may have started
+			// while `status()` was in flight, and that is a more current truth
+			// than this snapshot. Guarding only before the await would let a
+			// reply arriving mid-download flip the row back to "Install update".
+			const settled = get().status;
+			if (settled === "checking" || settled === "downloading") return;
+			set({
+				status: state === "ready" ? "ready" : "available",
+				info,
+				error: null,
+			});
+		} catch {
+			// A failed hydrate is not worth surfacing — the view simply keeps
+			// its "Check for updates" affordance.
+		}
 	},
 
 	check: async ({ manual = false } = {}) => {

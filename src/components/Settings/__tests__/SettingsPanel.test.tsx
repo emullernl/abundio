@@ -9,7 +9,10 @@ vi.mock("../../../lib/ipc", () => ({
 	shells: { listAvailable: () => Promise.resolve([]) },
 	agentHooks: { status: () => Promise.resolve([]) },
 	fs: { revealInFolder: () => Promise.resolve() },
-	updates: { onDownloadProgress: () => Promise.resolve(() => {}) },
+	updates: {
+		onDownloadProgress: () => Promise.resolve(() => {}),
+		status: () => Promise.resolve({ state: "none", info: null }),
+	},
 	pr: {},
 }));
 vi.mock("@tauri-apps/api/app", () => ({
