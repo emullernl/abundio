@@ -36,6 +36,7 @@ import { stripResetSequences } from "./terminalResetFilter";
 import { modifiedNavKeySequence } from "./terminalWordJump";
 import { normalFontWeightFor, transparentBg } from "./themeUtils";
 import type { PaneNode } from "./types";
+import { MAX_WEBGL_CONTEXTS, pickWebglPanes } from "./webglBudget";
 import { addWindowFocusListener } from "./windowFocus";
 import { inheritSourceWorkspaceId } from "./worktreeGrouping";
 
@@ -90,11 +91,21 @@ const CSS_GENERIC_FAMILIES =
  *  has different glyph metrics and looks like the wrong font. */
 function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 	if (managed.webglAddon || retries <= 0) return;
+	if (webglContextCount() >= MAX_WEBGL_CONTEXTS) return;
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => {
 			webgl.dispose();
 			managed.webglAddon = null;
+			// Only retry for a pane that is still supposed to hold a context.
+			// A loss usually means the browser evicted us to satisfy someone
+			// else's request, and retrying then just evicts them back — the two
+			// panes trade the same context forever (visible as a permanently
+			// blank canvas plus an endless "Too many active WebGL contexts"
+			// log). Staying on the DOM renderer is the correct outcome there;
+			// the reconciler hands this pane a context again if it becomes one
+			// of the panes the budget covers.
+			if (!webglBudget.has(managed.paneId)) return;
 			requestAnimationFrame(() => tryLoadWebgl(managed, retries - 1));
 		});
 		managed.term.loadAddon(webgl);
@@ -105,6 +116,21 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 			err,
 		);
 	}
+}
+
+/** Pane ids the reconciler has decided may hold a WebGL context, newest
+ *  decision wins. Empty until the first store update, which is fine: the cap in
+ *  tryLoadWebgl is what actually bounds context creation, and this set only
+ *  decides who is worth retrying after a loss. */
+let webglBudget: ReadonlySet<string> = new Set();
+
+/** Live WebGL contexts across every terminal in this window. */
+function webglContextCount(): number {
+	let count = 0;
+	for (const managed of instances.values()) {
+		if (managed.webglAddon) count++;
+	}
+	return count;
 }
 
 /** Master switch for GPU rendering, mirrored from the persisted
@@ -130,8 +156,9 @@ export function setWebglEnabled(enabled: boolean): void {
 
 /** Ensure the WebGL renderer is loaded on a terminal. The store subscription
  *  below is the authoritative gate that decides which panes get WebGL; this
- *  function trusts its caller and just no-ops if the addon is already present
- *  or the pane isn't tracked. The actual WebGL context creation may still fail
+ *  function trusts its caller and just no-ops if the addon is already present,
+ *  the pane isn't tracked, or the window is already at MAX_WEBGL_CONTEXTS.
+ *  The actual WebGL context creation may still fail
  *  silently for a 0×0 / offscreen container — projectInto retries once the
  *  container is sized. */
 export function ensureWebglLoaded(paneId: string): void {
@@ -469,27 +496,29 @@ setTimeout(() => {
 		const { activeWorkspaceId, focusedPaneId } = state;
 		if (!activeWorkspaceId) return;
 
-		// Compute the set of paneIds that should keep a WebGL context — every
-		// pane belonging to any opened workspace. Previous policy gated on
-		// "active tab only" to stay under the browser's ~16 WebGL contexts per
-		// page cap, but that meant disposing + recreating contexts on every
-		// workspace/tab switch, which is the dominant cost during the
-		// commit→paint window (measured ~3s for warm switches with multiple
-		// panes). Keeping contexts loaded across switches makes the common case
-		// (well under 16 panes total) instant; overflow falls back to xterm's
-		// DOM renderer via tryLoadWebgl's catch.
+		// Compute the set of paneIds that should keep a WebGL context — panes of
+		// any opened workspace, best-first, up to MAX_WEBGL_CONTEXTS. Policy
+		// lives in `webglBudget.ts`; the reasoning for holding contexts across
+		// switches (rather than the older "active tab only" gate, which cost a
+		// measured ~3s on warm switches) and for capping them is documented
+		// there. Panes outside the budget render on xterm's DOM renderer.
 		const openedIds = usePtyActivityStore.getState().openedWorkspaceIds;
-		const liveWebglPaneIds = new Set<string>();
-		for (const workspace of state.workspaces) {
-			if (!openedIds.has(workspace.id)) continue;
-			for (const tab of workspace.tabs) {
-				const layout = parseTabLayout(tab.layoutJson);
-				if (!layout) continue;
-				for (const id of collectPaneIds(layout)) {
-					liveWebglPaneIds.add(id);
-				}
-			}
-		}
+		const liveWebglPaneIds = pickWebglPanes({
+			workspaces: state.workspaces.map((workspace) => ({
+				id: workspace.id,
+				tabs: workspace.tabs.map((tab) => {
+					const layout = parseTabLayout(tab.layoutJson);
+					return {
+						id: tab.id,
+						paneIds: layout ? collectPaneIds(layout) : [],
+					};
+				}),
+			})),
+			openedWorkspaceIds: openedIds,
+			activeWorkspaceId,
+			activeTabByWorkspace: state.activeTabByWorkspace,
+		});
+		webglBudget = liveWebglPaneIds;
 
 		const activityStore = usePtyActivityStore.getState();
 		for (const [paneId, managed] of instances) {
@@ -505,10 +534,11 @@ setTimeout(() => {
 			if (managed.ptyId) {
 				activityStore.initPty(managed.ptyId);
 			}
-			// Reconcile WebGL: load for panes in any opened workspace; unload for
-			// any orphans (paneId still in `instances` but no longer referenced
-			// by any opened workspace's layout — rare; happens during tear-down
-			// races).
+			// Reconcile WebGL: load for panes the budget covers; unload for the
+			// rest — orphans (paneId still in `instances` but no longer in any
+			// opened workspace's layout; rare, a tear-down race) and panes that
+			// lost their place in the budget, whose contexts are what the panes
+			// on screen need.
 			if (liveWebglPaneIds.has(paneId)) {
 				ensureWebglLoaded(paneId);
 			} else {
