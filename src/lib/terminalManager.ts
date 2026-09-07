@@ -478,16 +478,20 @@ function installMouseReportingHooks(managed: ManagedTerminal): void {
  *  that should get a look at it. */
 function installClipboardHook(managed: ManagedTerminal): void {
 	managed.term.parser.registerOscHandler(52, (data) => {
-		// Replayed scrollback carries the OSC 52s of a session that has ended.
-		// Honouring them would overwrite whatever the user has on their clipboard
-		// right now, at app start, with something they copied yesterday. Same
-		// reasoning as the mouse hooks — except that here a live PTY's log is no
-		// better, because the program already got its write when those bytes were
-		// first produced.
-		if (managed.restoring) return true;
-		const action = parseOsc52(data);
+		const action = parseOsc52(data, { restoring: managed.restoring });
 		if (action.kind === "write") {
-			void writeClipboardText(action.text).catch(() => {});
+			void writeClipboardText(action.text).catch((err) => {
+				// Never swallowed. The bug this hook exists to fix was "the program
+				// says copied and nothing lands, with nothing anywhere to say so";
+				// an empty catch would rebuild it one layer down, leaving a repeat
+				// report indistinguishable from the sequence never arriving.
+				console.warn("[osc52] clipboard write failed", err);
+			});
+		} else {
+			// `read-refused` especially: that is the one case where a program may
+			// sit waiting for a reply that is never coming, and this line is what
+			// makes a hang report legible.
+			console.debug(`[osc52] ignored: ${action.reason}`);
 		}
 		return true;
 	});
