@@ -29,6 +29,13 @@ export function PaneContextMenu({ x, y, items, onClose }: Props) {
 
 	useEffect(() => {
 		function handleClickOutside(e: MouseEvent) {
+			// The button that opens this menu is left to close it itself, on click.
+			// Closing here on its mousedown would let the click that follows
+			// immediately reopen the menu, so it could never be dismissed from the
+			// control that raised it.
+			if ((e.target as HTMLElement)?.closest?.("[data-pane-menu-anchor]")) {
+				return;
+			}
 			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
 				onClose();
 			}

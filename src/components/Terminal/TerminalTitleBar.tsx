@@ -41,14 +41,24 @@ interface ButtonProps {
 	icon: React.ComponentType<{ size?: number }>;
 	onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
 	label: string;
+	/** Marks this button as the thing that raises the pane menu, so the menu's
+	 *  outside-click handler leaves its mousedown alone and the button can close
+	 *  what it opened. */
+	menuAnchor?: boolean;
 }
 
-function TitleBarButton({ icon: Icon, onClick, label }: ButtonProps) {
+function TitleBarButton({
+	icon: Icon,
+	onClick,
+	label,
+	menuAnchor,
+}: ButtonProps) {
 	return (
 		<button
 			type="button"
 			title={label}
 			aria-label={label}
+			data-pane-menu-anchor={menuAnchor ? "" : undefined}
 			onClick={(e) => {
 				e.stopPropagation();
 				onClick(e);
@@ -246,6 +256,7 @@ export function TerminalTitleBar({
 					onOpenMenu({ x: r.left, y: r.bottom + 2 });
 				}}
 				label="Pane Menu"
+				menuAnchor
 			/>
 			<TitleBarButton
 				icon={SquareSplitVertical}

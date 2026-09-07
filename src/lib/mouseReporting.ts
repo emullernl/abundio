@@ -151,3 +151,63 @@ export function mouseTransitionSequence(
 ): string {
 	return blocked ? MOUSE_MODES_OFF_SEQUENCE : mouseModesOnSequence(wanted);
 }
+
+/** What a pane knows about itself when a DECSET/DECRST arrives. */
+export interface MouseHookContext {
+	/** Whether the pane currently refuses to hand over the mouse. */
+	blocked: boolean;
+	/** Whether xterm is replaying saved scrollback rather than live output. */
+	restoring: boolean;
+	/** Whether a sweep this module wrote is still being parsed. */
+	sweeping: boolean;
+}
+
+/** What the DECSET hook should do: swallow the sequence or not, and which
+ *  modes to record as wanted. */
+export function decsetOutcome(
+	params: (number | number[])[],
+	ctx: Pick<MouseHookContext, "blocked" | "restoring">,
+): { handled: boolean; record: number[] } {
+	const modes = mouseModesIn(params);
+	if (modes.length === 0) return { handled: false, record: [] };
+	// Restored scrollback is a picture of a dead session — and the serialize
+	// addon really does write mouse DECSETs into it. Swallow them whatever the
+	// pane's answer is, and record nothing: the program that asked exited with
+	// the last app run, so a freshly spawned shell must not inherit its badge,
+	// still less have `?1003h` replayed into it by a later badge click.
+	if (ctx.restoring) return { handled: true, record: [] };
+	return { handled: shouldSwallowDecset(params, ctx.blocked), record: modes };
+}
+
+/** Which modes the DECRST hook should forget. Never swallows — see
+ *  MOUSE_MODES_OFF_SEQUENCE for why that asymmetry is load-bearing. */
+export function decrstOutcome(
+	params: (number | number[])[],
+	ctx: Pick<MouseHookContext, "restoring" | "sweeping">,
+): { forget: number[] } {
+	// A restored disable is history too, and our own sweep is not the program
+	// changing its mind — skipping the bookkeeping there is what preserves the
+	// replay set across a block, so the badge stays and the user can undo.
+	if (ctx.restoring || ctx.sweeping) return { forget: [] };
+	return { forget: mouseModesIn(params) };
+}
+
+/**
+ * Whether xterm's live state has to be moved to match a pane's answer.
+ *
+ * The equality reads oddly and is the point: equal means the pane is on the
+ * WRONG side of its own answer — blocking while reporting (sweep it off), or
+ * allowing while silent (replay what it wants). Comparing the new answer
+ * against the previous one instead would call a mixed-DECSET pane "unchanged"
+ * and skip the sweep that the mouse badge exists to perform.
+ */
+export function needsMouseSync(blocked: boolean, reporting: boolean): boolean {
+	return blocked === reporting;
+}
+
+/** The answer the mouse badge's click should set, given what the badge is
+ *  showing. Derived from the badge rather than from the pane's stored answer so
+ *  the click honours the label the user just read. */
+export function nextMouseBlockFor(badge: MouseBadgeState): boolean {
+	return badge === "reporting";
+}

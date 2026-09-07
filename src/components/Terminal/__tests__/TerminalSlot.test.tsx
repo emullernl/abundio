@@ -381,6 +381,21 @@ describe("TerminalSlot — a mouse-reporting app owns the mouse", () => {
 		});
 	});
 
+	// The reporting pane's early return is scoped to the terminal surface. The
+	// title bar is our chrome — the program cannot see it and never received the
+	// click — so right-clicking there still opens the menu, which matters when it
+	// is the pane's only remaining route to Copy.
+	it("still opens the pane menu on a right-click outside the terminal", () => {
+		act(() => {
+			container
+				.querySelector("[data-pane-id]")
+				?.dispatchEvent(
+					new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+				);
+		});
+		expect(capturedMenuItems.current.length).toBeGreaterThan(0);
+	});
+
 	// The escape hatch #170 needed is gone: the right button reaches the program
 	// directly now, so there is nothing left to replay.
 	it("no longer offers Send Right Click to Terminal", () => {

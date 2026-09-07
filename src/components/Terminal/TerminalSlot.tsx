@@ -261,7 +261,19 @@ export function TerminalSlot({
 			// The right button belongs to the program while it is reporting
 			// (ADR-0031); it already received this click as a mouse report on
 			// mousedown. The pane menu is reached from the title bar instead.
-			if (getTerminal(paneId)?.term.modes.mouseTrackingMode !== "none") return;
+			//
+			// Scoped to the terminal surface, though: this listener sits on the
+			// pane container, and the title bar renders inside it. That chrome is
+			// ours no matter what the program is doing — the program cannot see it
+			// and never received this click — so right-clicking there still opens
+			// the menu.
+			const onTerminal = innerRef.current?.contains(e.target as Node);
+			if (
+				onTerminal &&
+				getTerminal(paneId)?.term.modes.mouseTrackingMode !== "none"
+			) {
+				return;
+			}
 			setContextMenu({ x: e.clientX, y: e.clientY });
 		};
 		el.addEventListener("contextmenu", handler, true);
@@ -436,7 +448,9 @@ export function TerminalSlot({
 				onSplitDown={onSplitHorizontal}
 				onSplitRight={onSplitVertical}
 				onClose={onClose}
-				onOpenMenu={(anchor) => setContextMenu(anchor)}
+				onOpenMenu={(anchor) =>
+					setContextMenu((open) => (open ? null : anchor))
+				}
 			/>
 			{debugMeterEnabled && <DebugActivityMeter paneId={paneId} />}
 			<TerminalLoader paneId={paneId} />

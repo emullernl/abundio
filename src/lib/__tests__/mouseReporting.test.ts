@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+	decrstOutcome,
+	decsetOutcome,
 	hasTrackingMode,
 	MOUSE_MODES_OFF_SEQUENCE,
 	mouseBadgeStateFor,
 	mouseModesIn,
 	mouseModesOnSequence,
 	mouseTransitionSequence,
+	needsMouseSync,
+	nextMouseBlockFor,
 	shouldSwallowDecset,
 } from "../mouseReporting";
 
@@ -149,5 +153,117 @@ describe("mouseTransitionSequence", () => {
 	// DECSET slipped through, where `wanted` may not tell the whole story.
 	it("sweeps even when nothing is recorded as wanted", () => {
 		expect(mouseTransitionSequence(true, [])).toBe(MOUSE_MODES_OFF_SEQUENCE);
+	});
+});
+
+describe("decsetOutcome", () => {
+	const live = { blocked: true, restoring: false };
+
+	it("swallows and records a mouse-only DECSET while blocking", () => {
+		expect(decsetOutcome([1002], live)).toEqual({
+			handled: true,
+			record: [1002],
+		});
+	});
+
+	it("records without swallowing when the pane is not blocking", () => {
+		// The same hook that refuses the mouse also observes the program taking
+		// it — that is what keeps the badge honest in an unblocked pane.
+		expect(decsetOutcome([1002], { blocked: false, restoring: false })).toEqual(
+			{ handled: false, record: [1002] },
+		);
+	});
+
+	it("records a mixed DECSET it had to let through", () => {
+		// Fails open, so the program HAS the mouse; the badge must know.
+		expect(decsetOutcome([1049, 1002], live)).toEqual({
+			handled: false,
+			record: [1002],
+		});
+	});
+
+	it("ignores a sequence with no mouse modes in it", () => {
+		expect(decsetOutcome([1049], live)).toEqual({ handled: false, record: [] });
+	});
+
+	// The serialize addon writes `?1000h`/`?1002h`/`?1003h` into a snapshot, so
+	// without this a pane whose last session ran Copilot would come back showing
+	// a badge over a fresh shell — and clicking it would replay 1003 into that
+	// shell, which would then receive raw reports on every click.
+	describe("while restoring scrollback", () => {
+		const restoring = { blocked: true, restoring: true };
+
+		it("swallows a restored DECSET without recording it", () => {
+			expect(decsetOutcome([1003], restoring)).toEqual({
+				handled: true,
+				record: [],
+			});
+		});
+
+		it("swallows it even when the pane is not blocking", () => {
+			// The program that asked exited with the last app run either way.
+			expect(
+				decsetOutcome([1003], { blocked: false, restoring: true }),
+			).toEqual({ handled: true, record: [] });
+		});
+
+		it("still ignores sequences that are not about the mouse", () => {
+			expect(decsetOutcome([1049], restoring)).toEqual({
+				handled: false,
+				record: [],
+			});
+		});
+	});
+});
+
+describe("decrstOutcome", () => {
+	const live = { restoring: false, sweeping: false };
+
+	it("forgets the modes the program gave up", () => {
+		expect(decrstOutcome([1002, 1006], live)).toEqual({ forget: [1002, 1006] });
+	});
+
+	// Our own sweep is not the program changing its mind. Forgetting here would
+	// empty the replay set the badge needs to hand the mouse back.
+	it("forgets nothing during our own sweep", () => {
+		expect(decrstOutcome([1002], { restoring: false, sweeping: true })).toEqual(
+			{ forget: [] },
+		);
+	});
+
+	it("forgets nothing while restoring scrollback", () => {
+		expect(decrstOutcome([1002], { restoring: true, sweeping: false })).toEqual(
+			{ forget: [] },
+		);
+	});
+});
+
+describe("needsMouseSync", () => {
+	it("sweeps a pane that is blocking yet reporting", () => {
+		// The mixed-DECSET fail-open case. Comparing against the pane's previous
+		// answer would call this unchanged and skip the sweep entirely.
+		expect(needsMouseSync(true, true)).toBe(true);
+	});
+
+	it("replays for a pane that allows but is silent", () => {
+		expect(needsMouseSync(false, false)).toBe(true);
+	});
+
+	it("leaves a pane already on the right side alone", () => {
+		expect(needsMouseSync(true, false)).toBe(false);
+		expect(needsMouseSync(false, true)).toBe(false);
+	});
+});
+
+describe("nextMouseBlockFor", () => {
+	// The badge is the label the user just read: "receiving the mouse — click to
+	// block", or "blocked — click to allow". The click has to agree with it, even
+	// where that disagrees with the pane's stored answer.
+	it("blocks a pane whose badge says it is reporting", () => {
+		expect(nextMouseBlockFor("reporting")).toBe(true);
+	});
+
+	it("allows a pane whose badge says it is blocked", () => {
+		expect(nextMouseBlockFor("blocked")).toBe(false);
 	});
 });
