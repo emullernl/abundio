@@ -214,11 +214,13 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 
 // A TUI that turns on mouse tracking (DECSET 1000/1002/1003 — the GitHub
 // Copilot CLI does) makes xterm forward mouse events to the PTY as reports, and
-// every report counts as user input, which clears the terminal selection. These
-// guards keep the right button and (while a selection is up) pointer movement
-// away from xterm's own listeners, which sit on a descendant of the pane
-// container. The stand-in below plays xterm's part: it must not be reached.
-describe("TerminalSlot — mouse events withheld from a mouse-reporting app", () => {
+// every report counts as user input, which clears the terminal selection.
+//
+// Since ADR-0031 the right button follows the mouse: it reaches the program,
+// and the pane menu moves to a title-bar button. What is still withheld is bare
+// pointer movement while a selection is up — otherwise the walk to that button
+// would wipe the selection on the way. The stand-in below plays xterm's part.
+describe("TerminalSlot — a mouse-reporting app owns the mouse", () => {
 	let container: HTMLDivElement;
 	let root: ReturnType<typeof createRoot>;
 	let reachedXterm: string[];
@@ -275,9 +277,56 @@ describe("TerminalSlot — mouse events withheld from a mouse-reporting app", ()
 		return event;
 	}
 
-	it("does not deliver a right mousedown to xterm", () => {
+	function openMenuAt(x: number, y: number) {
+		act(() => {
+			xtermTargets["pane-2"]?.dispatchEvent(
+				new MouseEvent("contextmenu", {
+					bubbles: true,
+					cancelable: true,
+					button: 2,
+					clientX: x,
+					clientY: y,
+				}),
+			);
+		});
+	}
+
+	// The reversal of #170. The program asked for the mouse; it gets all of it.
+	it("delivers a right mousedown to the program", () => {
 		dispatch("mousedown", { button: 2, buttons: 2 });
-		expect(reachedXterm).toEqual([]);
+		expect(reachedXterm).toEqual(["mousedown:2"]);
+	});
+
+	it("leaves xterm to do its own preventDefault and focus", () => {
+		const event = dispatch("mousedown", { button: 2, buttons: 2 });
+		expect(event.defaultPrevented).toBe(false);
+		expect(termFocusCalls).toBe(0);
+	});
+
+	it("delivers macOS Ctrl+click to the program too", () => {
+		dispatch("mousedown", { button: 0, buttons: 1, ctrlKey: true });
+		expect(reachedXterm).toEqual(["mousedown:0"]);
+	});
+
+	it("does not open the pane menu on right-click", () => {
+		openMenuAt(10, 20);
+		expect(capturedMenuItems.current).toEqual([]);
+	});
+
+	// Not about our menu: xterm's own contextmenu listener moves its hidden
+	// textarea under the cursor, which on Windows WebView2 pastes the clipboard
+	// straight into the PTY. It must never run, menu or no menu.
+	it("still swallows the contextmenu event it declines to act on", () => {
+		let reachedScreen = false;
+		xtermTargets["pane-2"]?.addEventListener(
+			"contextmenu",
+			() => {
+				reachedScreen = true;
+			},
+			false,
+		);
+		openMenuAt(10, 20);
+		expect(reachedScreen).toBe(false);
 	});
 
 	it("still delivers a left mousedown to xterm", () => {
@@ -290,6 +339,9 @@ describe("TerminalSlot — mouse events withheld from a mouse-reporting app", ()
 		expect(reachedXterm).toEqual(["mousemove"]);
 	});
 
+	// The guard that survived, and matters more than it used to: Copy now lives
+	// behind a title-bar button, so the pointer has further to travel before the
+	// user gets there.
 	it("withholds pointer movement while the pane holds a selection", () => {
 		currentHasSelection = true;
 		dispatch("mousemove", { buttons: 0 });
@@ -302,24 +354,9 @@ describe("TerminalSlot — mouse events withheld from a mouse-reporting app", ()
 		expect(reachedXterm).toEqual(["mousemove"]);
 	});
 
-	// Both halves of what xterm's own handler would have done. focus() alone is
-	// not enough: the browser's default action runs after us and blurs the hidden
-	// helper textarea again, so the pane stops taking keystrokes.
-	it("focuses the terminal it just cut off, so keystrokes still land", () => {
-		const event = dispatch("mousedown", { button: 2, buttons: 2 });
-		expect(termFocusCalls).toBe(1);
-		expect(event.defaultPrevented).toBe(true);
-	});
-
-	it("treats macOS Ctrl+click as a secondary click", () => {
-		dispatch("mousedown", { button: 0, buttons: 1, ctrlKey: true });
-		expect(reachedXterm).toEqual([]);
-	});
-
-	// Everything above is justified by the app reporting the mouse. With no
-	// reporting there is nothing to protect against and plenty to lose — the
-	// same `stopPropagation()` would starve xterm's Linkifier of the hover that
-	// underlines URLs and file paths.
+	// With no reporting there is nothing to protect against and plenty to lose —
+	// the same `stopPropagation()` would starve xterm's Linkifier of the hover
+	// that underlines URLs and file paths, and right-click is still ours.
 	describe("and left alone when the app is not reporting the mouse", () => {
 		beforeEach(() => {
 			currentMouseTrackingMode = "none";
@@ -328,9 +365,13 @@ describe("TerminalSlot — mouse events withheld from a mouse-reporting app", ()
 		it("delivers a right mousedown to xterm", () => {
 			const event = dispatch("mousedown", { button: 2, buttons: 2 });
 			expect(reachedXterm).toEqual(["mousedown:2"]);
-			// xterm does its own preventDefault + focus on this path.
 			expect(event.defaultPrevented).toBe(false);
 			expect(termFocusCalls).toBe(0);
+		});
+
+		it("opens the pane menu on right-click", () => {
+			openMenuAt(10, 20);
+			expect(capturedMenuItems.current.length).toBeGreaterThan(0);
 		});
 
 		it("delivers pointer movement even while a selection is up", () => {
@@ -340,68 +381,30 @@ describe("TerminalSlot — mouse events withheld from a mouse-reporting app", ()
 		});
 	});
 
-	// The context menu's escape hatch for TUIs that want the right button
-	// themselves (tmux with mouse mode). It replays the click as a real DOM
-	// event, which means it has to get past the guard above.
-	describe("Send Right Click to Terminal", () => {
-		function openMenuAt(x: number, y: number) {
-			act(() => {
-				xtermTargets["pane-2"]?.dispatchEvent(
-					new MouseEvent("contextmenu", {
-						bubbles: true,
-						button: 2,
-						clientX: x,
-						clientY: y,
-					}),
+	// The reporting pane's early return is scoped to the terminal surface. The
+	// title bar is our chrome — the program cannot see it and never received the
+	// click — so right-clicking there still opens the menu, which matters when it
+	// is the pane's only remaining route to Copy.
+	it("still opens the pane menu on a right-click outside the terminal", () => {
+		act(() => {
+			container
+				.querySelector("[data-pane-id]")
+				?.dispatchEvent(
+					new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
 				);
-			});
-		}
-
-		function menuItem(label: string) {
-			return capturedMenuItems.current.find((i) => i.label === label);
-		}
-
-		it("is offered when the app is reporting the mouse", () => {
-			openMenuAt(10, 20);
-			expect(menuItem("Send Right Click to Terminal")).toBeDefined();
 		});
+		expect(capturedMenuItems.current.length).toBeGreaterThan(0);
+	});
 
-		it("is not offered when the app is not reporting the mouse", () => {
-			currentMouseTrackingMode = "none";
-			openMenuAt(10, 20);
-			expect(menuItem("Send Right Click to Terminal")).toBeUndefined();
-		});
-
-		it("delivers the withheld button-2 press to xterm when invoked", () => {
-			openMenuAt(10, 20);
-			reachedXterm = [];
-			act(() => {
-				menuItem("Send Right Click to Terminal")?.onClick?.();
-			});
-			expect(reachedXterm).toEqual(["mousedown:2"]);
-		});
-
-		it("replays the click at the original coordinates, not the menu's", () => {
-			const seen: { x: number; y: number }[] = [];
-			xtermTargets["pane-2"]?.addEventListener("mousedown", (e) => {
-				const m = e as MouseEvent;
-				seen.push({ x: m.clientX, y: m.clientY });
-			});
-			openMenuAt(137, 42);
-			act(() => {
-				menuItem("Send Right Click to Terminal")?.onClick?.();
-			});
-			expect(seen).toEqual([{ x: 137, y: 42 }]);
-		});
-
-		it("closes the guard again once the replay is done", () => {
-			openMenuAt(10, 20);
-			act(() => {
-				menuItem("Send Right Click to Terminal")?.onClick?.();
-			});
-			reachedXterm = [];
-			dispatch("mousedown", { button: 2, buttons: 2 });
-			expect(reachedXterm).toEqual([]);
-		});
+	// The escape hatch #170 needed is gone: the right button reaches the program
+	// directly now, so there is nothing left to replay.
+	it("no longer offers Send Right Click to Terminal", () => {
+		currentMouseTrackingMode = "none";
+		openMenuAt(10, 20);
+		expect(
+			capturedMenuItems.current.find(
+				(i) => i.label === "Send Right Click to Terminal",
+			),
+		).toBeUndefined();
 	});
 });

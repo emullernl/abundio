@@ -9,6 +9,10 @@ export function TerminalSection() {
 		(s) => s.gpuAccelerationEnabled,
 	);
 	const setGpuAcceleration = useSettingsStore((s) => s.setGpuAcceleration);
+	const blockMouseReporting = useSettingsStore((s) => s.blockMouseReporting);
+	const setBlockMouseReporting = useSettingsStore(
+		(s) => s.setBlockMouseReporting,
+	);
 	const smartImageDrop = useSettingsStore((s) => s.smartImageDrop);
 	const setSmartImageDrop = useSettingsStore((s) => s.setSmartImageDrop);
 	const terminalScrollback = useSettingsStore((s) => s.terminalScrollback);
@@ -29,6 +33,15 @@ export function TerminalSection() {
 					onChange={setGpuAcceleration}
 					label="Render terminals on the GPU"
 					description="Smoother scrolling and faster paint on heavy output. When many panes are open at once, some fall back to CPU rendering automatically."
+				/>
+			</div>
+			<div className="flex-shrink-0">
+				<SectionLabel>Mouse</SectionLabel>
+				<ToggleRow
+					checked={blockMouseReporting}
+					onChange={setBlockMouseReporting}
+					label="Block mouse reporting"
+					description="Stop programs from taking the mouse, so click-drag selection and right-click keep working in every pane. Turning this off lets tmux, vim and agent TUIs handle clicks themselves — and hands them the right button. Either way, any pane can be flipped on its own from the mouse badge in its title bar."
 				/>
 			</div>
 			<div className="flex-shrink-0">

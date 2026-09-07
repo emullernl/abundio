@@ -10,6 +10,7 @@ import {
 	setAllTerminalsFontSize,
 	setAllTerminalsScrollback,
 	setAllTerminalsTheme,
+	setMouseReportingBlocked,
 	setActivityByteThreshold as setTerminalActivityByteThreshold,
 	setWebglEnabled,
 } from "../lib/terminalManager";
@@ -46,6 +47,11 @@ interface SettingsState {
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
+	/** Refuse to hand the mouse to programs running in a terminal pane, so
+	 *  click-drag selection and right-click keep working everywhere. The default
+	 *  for every pane; the pane's mouse badge overrides it one pane at a time.
+	 *  See ADR-0031. */
+	blockMouseReporting: boolean;
 	/** When an image is dropped onto a running agent, paste it via the clipboard
 	 *  (so the agent recognises it) instead of inserting its file path. See the
 	 *  "Smart image drop" term in CONTEXT.md. */
@@ -91,6 +97,7 @@ interface SettingsState {
 	/** Resolves once (un)provisioning has settled — see `toggleAgent`. */
 	setAgentHooksEnabled: (enabled: boolean) => Promise<void>;
 	setGpuAcceleration: (enabled: boolean) => void;
+	setBlockMouseReporting: (enabled: boolean) => void;
 	setSmartImageDrop: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
@@ -130,6 +137,7 @@ export const PERSISTED_KEYS = [
 	"markdownPreviewColorMode",
 	"agentHooksEnabled",
 	"gpuAccelerationEnabled",
+	"blockMouseReporting",
 	"smartImageDrop",
 	"autoCheckUpdatesEnabled",
 	"skippedUpdateVersion",
@@ -167,6 +175,7 @@ const PERSISTED_DEFAULTS: {
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
+	blockMouseReporting: boolean;
 	smartImageDrop: boolean;
 	autoCheckUpdatesEnabled: boolean;
 	skippedUpdateVersion: string | null;
@@ -194,6 +203,7 @@ const PERSISTED_DEFAULTS: {
 		markdownPreviewColorMode: "auto" as PreviewColorMode,
 		agentHooksEnabled: true,
 		gpuAccelerationEnabled: true,
+		blockMouseReporting: true,
 		smartImageDrop: true,
 		autoCheckUpdatesEnabled: true,
 		skippedUpdateVersion: null as string | null,
@@ -290,6 +300,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.gpuAccelerationEnabled === "boolean"
 					? s.gpuAccelerationEnabled
 					: defaults.gpuAccelerationEnabled,
+			blockMouseReporting:
+				typeof s.blockMouseReporting === "boolean"
+					? s.blockMouseReporting
+					: defaults.blockMouseReporting,
 			smartImageDrop:
 				typeof s.smartImageDrop === "boolean"
 					? s.smartImageDrop
@@ -342,6 +356,7 @@ export const useSettingsStore = create<SettingsState>()(
 			markdownPreviewColorMode: PERSISTED_DEFAULTS.markdownPreviewColorMode,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
+			blockMouseReporting: PERSISTED_DEFAULTS.blockMouseReporting,
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
 			skippedUpdateVersion: PERSISTED_DEFAULTS.skippedUpdateVersion,
@@ -460,6 +475,10 @@ export const useSettingsStore = create<SettingsState>()(
 				setWebglEnabled(gpuAccelerationEnabled);
 				set({ gpuAccelerationEnabled });
 			},
+			setBlockMouseReporting: (blockMouseReporting) => {
+				setMouseReportingBlocked(blockMouseReporting);
+				set({ blockMouseReporting });
+			},
 			setSmartImageDrop: (smartImageDrop) => set({ smartImageDrop }),
 			setAutoCheckUpdatesEnabled: (autoCheckUpdatesEnabled) => {
 				// Rust holds the app-wide auto-check flag (the background loop
@@ -495,7 +514,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 8,
+			version: 9,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -570,6 +589,12 @@ export const useSettingsStore = create<SettingsState>()(
 				if (version < 8) {
 					state = { updateSnoozedUntil: null, ...state };
 				}
+				// v9: refuse mouse reporting by default (ADR-0031). Additive
+				// default-true key; PERSISTED_DEFAULTS + merge already supply it —
+				// this only guarantees it exists during the rehydrate window.
+				if (version < 9) {
+					state = { blockMouseReporting: true, ...state };
+				}
 				return state;
 			},
 			partialize: (state) =>
@@ -643,6 +668,12 @@ export const useSettingsStore = create<SettingsState>()(
 				if (state?.gpuAccelerationEnabled === false) {
 					setWebglEnabled(false);
 				}
+				// Always pushed, not only when false. This same handler runs on
+				// cross-Window sync (ADR-0008), where the flag may need turning back
+				// ON — a one-directional push would leave the other Window blocking
+				// after the user un-blocked here. setMouseReportingBlocked no-ops
+				// when the value is unchanged, so the extra call costs nothing.
+				setMouseReportingBlocked(state?.blockMouseReporting ?? true);
 				// Sync the Rust-side auto-check flag with the persisted setting on
 				// startup. Rust defaults this OFF and waits for this explicit push
 				// (see updater.rs), so always send the value — not only when
