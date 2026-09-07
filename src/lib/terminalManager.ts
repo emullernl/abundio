@@ -286,6 +286,12 @@ export interface ManagedTerminal {
 	 *  sequences could wipe restored content. For reconnections it's written
 	 *  immediately after listeners are registered. */
 	restoreData: string | Uint8Array | null;
+	/** Whether `restoreData` belongs to a PTY that is still running — a
+	 *  switch-away and back, where the log replays live output arriving late
+	 *  rather than a dead session's history. Read only while `restoring` is set.
+	 *  See the mouse hooks: getting this wrong drops the mouse for a program
+	 *  that never went anywhere. */
+	restoreIsLive: boolean;
 	/** True while replaying saved scrollback — suppresses forwarding xterm query responses to the PTY */
 	restoring: boolean;
 	/** True until the terminal receives its first focus — suppresses activity tracking during shell startup */
@@ -401,10 +407,6 @@ function isBlocked(managed: ManagedTerminal): boolean {
 	return paneMouseOverrides.get(managed.paneId) ?? blockMouseReportingGlobally;
 }
 
-export function isPaneMouseBlocked(paneId: string): boolean {
-	return paneMouseOverrides.get(paneId) ?? blockMouseReportingGlobally;
-}
-
 /** What the pane's mouse badge should show. Read through `subscribePaneRevision`
  *  — the hooks below bump the revision whenever any of this changes. */
 export function mouseBadgeState(paneId: string): MouseBadgeState {
@@ -430,12 +432,20 @@ function installMouseReportingHooks(managed: ManagedTerminal): void {
 	term.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
 		const { handled, record } = decsetOutcome(params, {
 			blocked: isBlocked(managed),
-			restoring: managed.restoring,
+			replayingHistory: managed.restoring && !managed.restoreIsLive,
 		});
-		if (record.length > 0) {
-			for (const m of record) managed.wantedMouseModes.add(m);
-			bumpPaneRevision(managed.paneId);
+		// Only bump when the set actually grew. Programs re-assert their mouse
+		// modes constantly — fzf, vim and shell prompts toggle 1002/1006 around
+		// every invocation — and each bump re-renders every subscriber for the
+		// pane.
+		let changed = false;
+		for (const m of record) {
+			if (!managed.wantedMouseModes.has(m)) {
+				managed.wantedMouseModes.add(m);
+				changed = true;
+			}
 		}
+		if (changed) bumpPaneRevision(managed.paneId);
 		return handled;
 	});
 
@@ -444,13 +454,14 @@ function installMouseReportingHooks(managed: ManagedTerminal): void {
 	// false and xterm applies the disable as usual.
 	term.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
 		const { forget } = decrstOutcome(params, {
-			restoring: managed.restoring,
+			replayingHistory: managed.restoring && !managed.restoreIsLive,
 			sweeping: managed.sweepingMouseModes > 0,
 		});
-		if (forget.length > 0) {
-			for (const m of forget) managed.wantedMouseModes.delete(m);
-			bumpPaneRevision(managed.paneId);
+		let changed = false;
+		for (const m of forget) {
+			if (managed.wantedMouseModes.delete(m)) changed = true;
 		}
+		if (changed) bumpPaneRevision(managed.paneId);
 		return false;
 	});
 }
@@ -491,7 +502,15 @@ function syncMouseState(managed: ManagedTerminal, blocked: boolean): void {
 
 /** Point this pane at an explicit answer, overriding the global setting. */
 export function setPaneMouseBlocked(paneId: string, blocked: boolean): void {
-	paneMouseOverrides.set(paneId, blocked);
+	// An answer that agrees with the setting is not an override. Storing it would
+	// make a badge round-trip — click, click again — silently detach the pane
+	// from Settings forever, since setMouseReportingBlocked skips any pane
+	// holding one. "Flip it back" should mean what it looks like.
+	if (blocked === blockMouseReportingGlobally) {
+		paneMouseOverrides.delete(paneId);
+	} else {
+		paneMouseOverrides.set(paneId, blocked);
+	}
 	const managed = instances.get(paneId);
 	if (managed) syncMouseState(managed, blocked);
 }
@@ -884,6 +903,7 @@ export async function createTerminal(
 		ptyId: initialPtyId,
 		cleanup: null,
 		restoreData: null,
+		restoreIsLive: false,
 		restoring: false,
 		suppressActivity: true,
 		focused: false,
@@ -1013,6 +1033,9 @@ async function loadScrollback(
 		restoreData = snapshot ?? log;
 	}
 	managed.restoreData = restoreData;
+	// A non-empty ptyId here means we are reattaching to a process that is still
+	// running, so what we are about to replay is its live output, not history.
+	managed.restoreIsLive = !!currentPtyId;
 }
 
 /** Write any parked scrollback into xterm now, under the `restoring` guard so
@@ -1817,6 +1840,9 @@ export async function restartPanePty(
 	managed.bytesSinceIdle = 0;
 	managed.lastOutputChunkAt = 0;
 	managed.restoreData = snapshot;
+	// A restart spawns a new PTY, so the parked scrollback describes the program
+	// that just died however fresh it is.
+	managed.restoreIsLive = false;
 	managed.restoring = false;
 	// These three are what the previous implementation missed. After the first
 	// spawn `flushStartupBuffer` sets startupBuffer to null and leaves

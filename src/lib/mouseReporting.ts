@@ -156,8 +156,15 @@ export function mouseTransitionSequence(
 export interface MouseHookContext {
 	/** Whether the pane currently refuses to hand over the mouse. */
 	blocked: boolean;
-	/** Whether xterm is replaying saved scrollback rather than live output. */
-	restoring: boolean;
+	/** Whether xterm is replaying a scrollback whose program is **gone** — a
+	 *  cold start after the app restarted.
+	 *
+	 *  Emphatically not "is replaying scrollback". A workspace switch-away
+	 *  disposes the xterm instance while the PTY keeps running (ADR-0020), and
+	 *  switching back replays that pane's raw log to a program that is still
+	 *  there and still expects the mouse. Those bytes are live output arriving
+	 *  late, not history, and must be treated as such. */
+	replayingHistory: boolean;
 	/** Whether a sweep this module wrote is still being parsed. */
 	sweeping: boolean;
 }
@@ -166,16 +173,24 @@ export interface MouseHookContext {
  *  modes to record as wanted. */
 export function decsetOutcome(
 	params: (number | number[])[],
-	ctx: Pick<MouseHookContext, "blocked" | "restoring">,
+	ctx: Pick<MouseHookContext, "blocked" | "replayingHistory">,
 ): { handled: boolean; record: number[] } {
 	const modes = mouseModesIn(params);
 	if (modes.length === 0) return { handled: false, record: [] };
-	// Restored scrollback is a picture of a dead session — and the serialize
+	// A dead session's scrollback is a picture, not a request — and the serialize
 	// addon really does write mouse DECSETs into it. Swallow them whatever the
 	// pane's answer is, and record nothing: the program that asked exited with
 	// the last app run, so a freshly spawned shell must not inherit its badge,
 	// still less have `?1003h` replayed into it by a later badge click.
-	if (ctx.restoring) return { handled: true, record: [] };
+	//
+	// Swallowed under the same all-or-nothing rule as the live path, though. The
+	// snapshot is ours and emits one mode per sequence, but the raw PTY log is
+	// arbitrary program output, and dropping an `\e[?1049;1002h` whole would take
+	// the alternate-screen switch with it — the "visible, unrecoverable mess"
+	// ADR-0031 fails open to avoid.
+	if (ctx.replayingHistory) {
+		return { handled: shouldSwallowDecset(params, true), record: [] };
+	}
 	return { handled: shouldSwallowDecset(params, ctx.blocked), record: modes };
 }
 
@@ -183,12 +198,13 @@ export function decsetOutcome(
  *  MOUSE_MODES_OFF_SEQUENCE for why that asymmetry is load-bearing. */
 export function decrstOutcome(
 	params: (number | number[])[],
-	ctx: Pick<MouseHookContext, "restoring" | "sweeping">,
+	ctx: Pick<MouseHookContext, "replayingHistory" | "sweeping">,
 ): { forget: number[] } {
-	// A restored disable is history too, and our own sweep is not the program
-	// changing its mind — skipping the bookkeeping there is what preserves the
-	// replay set across a block, so the badge stays and the user can undo.
-	if (ctx.restoring || ctx.sweeping) return { forget: [] };
+	// A dead session's disable is a picture too, and our own sweep is not the
+	// program changing its mind — skipping the bookkeeping there is what
+	// preserves the replay set across a block, so the badge stays and the user
+	// can undo.
+	if (ctx.replayingHistory || ctx.sweeping) return { forget: [] };
 	return { forget: mouseModesIn(params) };
 }
 

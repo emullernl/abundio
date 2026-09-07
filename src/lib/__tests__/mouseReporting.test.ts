@@ -157,7 +157,7 @@ describe("mouseTransitionSequence", () => {
 });
 
 describe("decsetOutcome", () => {
-	const live = { blocked: true, restoring: false };
+	const live = { blocked: true, replayingHistory: false };
 
 	it("swallows and records a mouse-only DECSET while blocking", () => {
 		expect(decsetOutcome([1002], live)).toEqual({
@@ -169,9 +169,9 @@ describe("decsetOutcome", () => {
 	it("records without swallowing when the pane is not blocking", () => {
 		// The same hook that refuses the mouse also observes the program taking
 		// it — that is what keeps the badge honest in an unblocked pane.
-		expect(decsetOutcome([1002], { blocked: false, restoring: false })).toEqual(
-			{ handled: false, record: [1002] },
-		);
+		expect(
+			decsetOutcome([1002], { blocked: false, replayingHistory: false }),
+		).toEqual({ handled: false, record: [1002] });
 	});
 
 	it("records a mixed DECSET it had to let through", () => {
@@ -190,11 +190,11 @@ describe("decsetOutcome", () => {
 	// without this a pane whose last session ran Copilot would come back showing
 	// a badge over a fresh shell — and clicking it would replay 1003 into that
 	// shell, which would then receive raw reports on every click.
-	describe("while restoring scrollback", () => {
-		const restoring = { blocked: true, restoring: true };
+	describe("while replaying a dead session's scrollback", () => {
+		const history = { blocked: true, replayingHistory: true };
 
 		it("swallows a restored DECSET without recording it", () => {
-			expect(decsetOutcome([1003], restoring)).toEqual({
+			expect(decsetOutcome([1003], history)).toEqual({
 				handled: true,
 				record: [],
 			});
@@ -203,21 +203,50 @@ describe("decsetOutcome", () => {
 		it("swallows it even when the pane is not blocking", () => {
 			// The program that asked exited with the last app run either way.
 			expect(
-				decsetOutcome([1003], { blocked: false, restoring: true }),
+				decsetOutcome([1003], { blocked: false, replayingHistory: true }),
 			).toEqual({ handled: true, record: [] });
 		});
 
+		// The snapshot is ours and emits one mode per sequence, but the raw PTY
+		// log is arbitrary program output. Dropping a mixed sequence whole would
+		// take the alternate-screen switch with it.
+		it("still fails open on a mixed DECSET", () => {
+			expect(decsetOutcome([1049, 1002], history)).toEqual({
+				handled: false,
+				record: [],
+			});
+		});
+
 		it("still ignores sequences that are not about the mouse", () => {
-			expect(decsetOutcome([1049], restoring)).toEqual({
+			expect(decsetOutcome([1049], history)).toEqual({
 				handled: false,
 				record: [],
 			});
 		});
 	});
+
+	// A workspace switch-away disposes the xterm instance while the PTY keeps
+	// running (ADR-0020), and switching back replays that pane's raw log. Copilot
+	// is still there and still expects the mouse, so those DECSETs are live
+	// output arriving late — treating them as history drops the badge (and, with
+	// blocking off, the mouse itself) for a program that never went anywhere.
+	describe("while replaying a live PTY's log", () => {
+		it("records and swallows exactly as it would live output", () => {
+			expect(
+				decsetOutcome([1003], { blocked: true, replayingHistory: false }),
+			).toEqual({ handled: true, record: [1003] });
+		});
+
+		it("lets the modes through for a pane that allows the mouse", () => {
+			expect(
+				decsetOutcome([1003], { blocked: false, replayingHistory: false }),
+			).toEqual({ handled: false, record: [1003] });
+		});
+	});
 });
 
 describe("decrstOutcome", () => {
-	const live = { restoring: false, sweeping: false };
+	const live = { replayingHistory: false, sweeping: false };
 
 	it("forgets the modes the program gave up", () => {
 		expect(decrstOutcome([1002, 1006], live)).toEqual({ forget: [1002, 1006] });
@@ -226,15 +255,22 @@ describe("decrstOutcome", () => {
 	// Our own sweep is not the program changing its mind. Forgetting here would
 	// empty the replay set the badge needs to hand the mouse back.
 	it("forgets nothing during our own sweep", () => {
-		expect(decrstOutcome([1002], { restoring: false, sweeping: true })).toEqual(
-			{ forget: [] },
-		);
+		expect(
+			decrstOutcome([1002], { replayingHistory: false, sweeping: true }),
+		).toEqual({ forget: [] });
 	});
 
-	it("forgets nothing while restoring scrollback", () => {
-		expect(decrstOutcome([1002], { restoring: true, sweeping: false })).toEqual(
-			{ forget: [] },
-		);
+	it("forgets nothing while replaying a dead session", () => {
+		expect(
+			decrstOutcome([1002], { replayingHistory: true, sweeping: false }),
+		).toEqual({ forget: [] });
+	});
+
+	// Symmetric with the DECSET hook: a live log replay is output, so its
+	// disables count. Set/reset ordering in the log converges on the state the
+	// program is actually in.
+	it("forgets the modes a live log replay disables", () => {
+		expect(decrstOutcome([1002], live)).toEqual({ forget: [1002] });
 	});
 });
 

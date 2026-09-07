@@ -33,7 +33,17 @@ export function PaneContextMenu({ x, y, items, onClose }: Props) {
 			// Closing here on its mousedown would let the click that follows
 			// immediately reopen the menu, so it could never be dismissed from the
 			// control that raised it.
-			if ((e.target as HTMLElement)?.closest?.("[data-pane-menu-anchor]")) {
+			//
+			// Scoped to THIS pane's button: another pane's is an ordinary outside
+			// click and must close us, or clicking it would leave two pane menus
+			// on screen at once, with ours dismissable only by Escape.
+			const anchor = (e.target as HTMLElement)?.closest?.(
+				"[data-pane-menu-anchor]",
+			);
+			if (
+				anchor &&
+				menuRef.current?.closest("[data-pane-id]")?.contains(anchor)
+			) {
 				return;
 			}
 			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
