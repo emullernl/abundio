@@ -25,6 +25,7 @@ import {
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { currentWindowLabel } from "./appWindow";
+import { writeClipboardText } from "./clipboard";
 import { agentHooks, pty } from "./ipc";
 import {
 	decrstOutcome,
@@ -35,6 +36,7 @@ import {
 	needsMouseSync,
 	nextMouseBlockFor,
 } from "./mouseReporting";
+import { parseOsc52 } from "./osc52";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
@@ -463,6 +465,35 @@ function installMouseReportingHooks(managed: ManagedTerminal): void {
 		}
 		if (changed) bumpPaneRevision(managed.paneId);
 		return false;
+	});
+}
+
+/** Carry a program's OSC 52 clipboard writes through to the real clipboard.
+ *
+ *  xterm.js ships no handler for this, so without one a TUI's "copy" is parsed
+ *  and dropped: Copilot CLI and Claude Code both print "copied to clipboard"
+ *  the moment they emit the sequence, and neither can learn it went nowhere.
+ *
+ *  Returns true either way, refusals included — there is no fallback handler
+ *  that should get a look at it. */
+function installClipboardHook(managed: ManagedTerminal): void {
+	managed.term.parser.registerOscHandler(52, (data) => {
+		const action = parseOsc52(data, { restoring: managed.restoring });
+		if (action.kind === "write") {
+			void writeClipboardText(action.text).catch((err) => {
+				// Never swallowed. The bug this hook exists to fix was "the program
+				// says copied and nothing lands, with nothing anywhere to say so";
+				// an empty catch would rebuild it one layer down, leaving a repeat
+				// report indistinguishable from the sequence never arriving.
+				console.warn("[osc52] clipboard write failed", err);
+			});
+		} else {
+			// `read-refused` especially: that is the one case where a program may
+			// sit waiting for a reply that is never coming, and this line is what
+			// makes a hang report legible.
+			console.debug(`[osc52] ignored: ${action.reason}`);
+		}
+		return true;
 	});
 }
 
@@ -933,6 +964,7 @@ export async function createTerminal(
 	};
 
 	installMouseReportingHooks(managed);
+	installClipboardHook(managed);
 
 	// Modified-nav-key handling for the shell line editor. xterm turns these into
 	// CSI sequences (`\e[1;Nx`, `\e[3;N~`, …) that the default bash/zsh keymaps
