@@ -471,19 +471,26 @@ function installMouseReportingHooks(managed: ManagedTerminal): void {
  *  there is no sequence that would tell it. */
 function applyMouseBlock(managed: ManagedTerminal, blocked: boolean): void {
 	const seq = mouseTransitionSequence(blocked, managed.wantedMouseModes);
-	if (seq && blocked) {
-		// The guard spans only the parse of this one write, and xterm preserves
-		// write order, so the sole thing it can mis-attribute is a DECRST the
-		// program itself queued inside that window — leaving one stale entry in
-		// the replay set, which the next DECRST or a PTY restart clears.
-		managed.sweepingMouseModes++;
-		managed.term.write(seq, () => {
-			managed.sweepingMouseModes--;
-			bumpPaneRevision(managed.paneId);
-		});
-	} else if (seq) {
-		managed.term.write(seq);
+	if (!seq) {
+		bumpPaneRevision(managed.paneId);
+		return;
 	}
+	// The sweep guard spans only the parse of this one write, and xterm preserves
+	// write order, so the sole thing it can mis-attribute is a DECRST the program
+	// itself queued inside that window — leaving one stale entry in the replay
+	// set, which the next DECRST or a PTY restart clears.
+	if (blocked) managed.sweepingMouseModes++;
+	managed.term.write(seq, () => {
+		if (blocked) managed.sweepingMouseModes--;
+		// THE bump that matters, and it has to be this one. `term.write` is
+		// asynchronous, so the badge reads `mouseTrackingMode` before xterm has
+		// parsed a line of this — meaning a pane that was just handed the mouse
+		// still looks blocked. Both directions need it, not just the sweep: the
+		// badge is the only feedback the click has.
+		bumpPaneRevision(managed.paneId);
+	});
+	// Not redundant with the above: this one repaints anything reading the pane's
+	// answer rather than xterm's state, without waiting for the write to land.
 	bumpPaneRevision(managed.paneId);
 }
 
