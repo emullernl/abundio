@@ -100,11 +100,14 @@ pub fn menu_inputs(app: &AppHandle<Wry>) -> MenuInputs {
 ///
 /// `ActiveProfileState::set_for_window` inserts without an exclusivity check
 /// (unlike `try_claim`), so two Windows can transiently map to one profile. A
-/// plain `find_map` over the `HashMap` would then pick an arbitrary one — and
-/// `snapshot()` builds a fresh map with a fresh hash seed on every call, so
-/// two reads could pick differently. That would flap the signature against the
-/// label `build_menu` actually renders: spurious rebuilds (the very flicker
-/// this cache exists to stop) or, worse, a match that leaves the wrong
+/// plain `find_map` over the `HashMap` would then pick an arbitrary one, and
+/// `HashMap` iteration order is unspecified and shifts as the map is mutated —
+/// an insert that triggers a resize reorders everything — so two reads taken
+/// across an ownership change can legitimately disagree. (Cloning is not the
+/// hazard: `snapshot()` clones the `RandomState` with the table, so a clone
+/// iterates in its source's order.) A disagreement flaps the signature against
+/// the label `build_menu` actually renders: spurious rebuilds (the very
+/// flicker this cache exists to stop) or, worse, a match that leaves the wrong
 /// "(this window)" / "(open elsewhere)" suffix on screen. Lowest label wins,
 /// so the choice is stable.
 fn owner_of<'a>(
@@ -119,13 +122,26 @@ fn owner_of<'a>(
 }
 
 /// Serialises every input `build_menu` renders from: the focused window's
-/// label (it decides the "Switch Profile" checkmark and the "(this window)"
-/// vs "(open elsewhere)" suffix), the profile list in order, and which window
-/// owns each profile. Two calls that produce the same string produce the same
-/// menu, so the second one can be skipped. See [`MenuSignature`].
+/// label and the profile it is showing (together they decide the "Switch
+/// Profile" checkmark and the "(this window)" vs "(open elsewhere)" suffix),
+/// the profile list in order, and which window owns each profile. Two calls
+/// that produce the same string produce the same menu, so the second one can
+/// be skipped. See [`MenuSignature`].
 pub fn format_menu_signature(focused_window_label: Option<&str>, inputs: &MenuInputs) -> String {
     let mut out = String::with_capacity(64 + inputs.profiles.len() * 64);
     push_field(&mut out, focused_window_label.unwrap_or(""));
+    // The checkmark comes from the focused window's own entry, which is what
+    // `build_menu` reads. It is NOT recoverable from the per-profile owner
+    // below: `owner_of` reports the lowest label owning a profile, so when two
+    // windows transiently map to one profile, that window releasing it leaves
+    // every other field unchanged while the checkmark disappears.
+    push_field(
+        &mut out,
+        focused_window_label
+            .and_then(|l| inputs.ownership.get(l))
+            .map(String::as_str)
+            .unwrap_or(""),
+    );
     for profile in &inputs.profiles {
         push_field(&mut out, &profile.id);
         push_field(&mut out, &profile.name);
@@ -503,10 +519,16 @@ pub fn rebuild_menu_for_focused_window(app: &AppHandle<Wry>) {
         .webview_windows()
         .iter()
         .find_map(|(label, w)| w.is_focused().unwrap_or(false).then(|| label.clone()))
-        // Fall back to the first window if none reports focused — happens on
-        // startup before the OS has assigned focus, and during rapid
-        // open/close events.
-        .or_else(|| app.webview_windows().keys().next().cloned());
+        // Fall back to a window if none reports focused — happens on startup
+        // before the OS has assigned focus, and during rapid open/close
+        // events. On Windows the focus query can also catch the in-between
+        // moment while focus bounces between the parent HWND and the WebView2
+        // child, which is the premise of this whole cache. Take the lowest
+        // label rather than an arbitrary `HashMap` pick: this label is the
+        // signature's first field, so an unstable choice would flap the entire
+        // cache entry and rebuild on every bounce. Same reasoning as
+        // `owner_of`.
+        .or_else(|| app.webview_windows().keys().min().cloned());
 
     // Bail out when the menu we would build is the one already on screen.
     // `set_menu` resizes every window on Windows/Linux, so a no-op rebuild is
@@ -1319,7 +1341,7 @@ mod menu_signature_tests {
         }
         assert_eq!(owner_of(&ownership, "a"), Some("main"));
 
-        // Fresh maps get a fresh hash seed; the pick must not follow it.
+        // Insertion order must not leak into the pick.
         let first = format_menu_signature(
             Some("main"),
             &inputs(&[("a", "Work")], &[("window-9", "a"), ("main", "a")]),
@@ -1333,6 +1355,41 @@ mod menu_signature_tests {
                 )
             );
         }
+    }
+
+    /// The "Switch Profile" checkmark comes from the focused window's own
+    /// entry, not from `owner_of`. With two windows transiently on one profile,
+    /// the focused one releasing it changes the checkmark while leaving every
+    /// other encoded field identical — so the signature has to carry it or the
+    /// rebuild is skipped and a window keeps a checkmark next to a profile it
+    /// no longer shows.
+    #[test]
+    fn focused_window_releasing_its_profile_changes_the_signature() {
+        let both = inputs(&[("a", "Work")], &[("main", "a"), ("window-2", "a")]);
+        let released = inputs(&[("a", "Work")], &[("main", "a")]);
+        // `owner_of` reports "main" for both, so everything else matches.
+        assert_eq!(owner_of(&both.ownership, "a"), owner_of(&released.ownership, "a"));
+        assert_ne!(
+            format_menu_signature(Some("window-2"), &both),
+            format_menu_signature(Some("window-2"), &released)
+        );
+    }
+
+    /// The mirror case, and the invariant the cache actually needs: the
+    /// signature tracks what `build_menu` *renders*, not the raw state. With
+    /// "main" focused and owning the profile, the extra "window-2" entry
+    /// changes nothing on screen — `owner_of` reports "main" either way, so the
+    /// checkmark, the "(this window)" suffix and the dimming are all identical
+    /// — and skipping that rebuild is correct, not a missed update.
+    #[test]
+    fn a_change_the_menu_cannot_show_does_not_force_a_rebuild() {
+        assert_eq!(
+            format_menu_signature(
+                Some("main"),
+                &inputs(&[("a", "Work")], &[("main", "a"), ("window-2", "a")])
+            ),
+            format_menu_signature(Some("main"), &inputs(&[("a", "Work")], &[("main", "a")]))
+        );
     }
 
     #[test]
