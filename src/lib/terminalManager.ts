@@ -25,6 +25,7 @@ import {
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { currentWindowLabel } from "./appWindow";
+import { writeClipboardText } from "./clipboard";
 import { agentHooks, pty } from "./ipc";
 import {
 	decrstOutcome,
@@ -35,6 +36,7 @@ import {
 	needsMouseSync,
 	nextMouseBlockFor,
 } from "./mouseReporting";
+import { parseOsc52 } from "./osc52";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
@@ -463,6 +465,31 @@ function installMouseReportingHooks(managed: ManagedTerminal): void {
 		}
 		if (changed) bumpPaneRevision(managed.paneId);
 		return false;
+	});
+}
+
+/** Carry a program's OSC 52 clipboard writes through to the real clipboard.
+ *
+ *  xterm.js ships no handler for this, so without one a TUI's "copy" is parsed
+ *  and dropped: Copilot CLI and Claude Code both print "copied to clipboard"
+ *  the moment they emit the sequence, and neither can learn it went nowhere.
+ *
+ *  Returns true either way, refusals included — there is no fallback handler
+ *  that should get a look at it. */
+function installClipboardHook(managed: ManagedTerminal): void {
+	managed.term.parser.registerOscHandler(52, (data) => {
+		// Replayed scrollback carries the OSC 52s of a session that has ended.
+		// Honouring them would overwrite whatever the user has on their clipboard
+		// right now, at app start, with something they copied yesterday. Same
+		// reasoning as the mouse hooks — except that here a live PTY's log is no
+		// better, because the program already got its write when those bytes were
+		// first produced.
+		if (managed.restoring) return true;
+		const action = parseOsc52(data);
+		if (action.kind === "write") {
+			void writeClipboardText(action.text).catch(() => {});
+		}
+		return true;
 	});
 }
 
@@ -933,6 +960,7 @@ export async function createTerminal(
 	};
 
 	installMouseReportingHooks(managed);
+	installClipboardHook(managed);
 
 	// Modified-nav-key handling for the shell line editor. xterm turns these into
 	// CSI sequences (`\e[1;Nx`, `\e[3;N~`, …) that the default bash/zsh keymaps
