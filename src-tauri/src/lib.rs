@@ -39,6 +39,80 @@ use profile_store::ProfileStore;
 use pty_manager::PtyManager;
 use workspace_store::WorkspaceStore;
 
+/// Fingerprint of everything `build_menu` reads, so a rebuild can be skipped
+/// when the menu would come out identical.
+///
+/// Rebuilding is not free. `AppHandle::set_menu` is genuinely app-wide only on
+/// macOS (one NSMenu, swapped invisibly). On Windows and Linux it first
+/// *removes* the native menu bar from every window and then adds a new one —
+/// two changes to the window's non-client area, so the client area grows and
+/// shrinks again. The webview relayouts both times, our `ResizeObserver`
+/// refits the terminal, and the row change is pushed to the PTY, which makes a
+/// full-screen TUI redraw. The user sees the menu bar and the status bar blink
+/// and the whole window jump.
+///
+/// That would be tolerable if it happened rarely, but `WindowEvent::Focused`
+/// fires often on Windows: the WebView2 surface is a child HWND, so focus
+/// bounces between it and the parent window during ordinary use, and every
+/// bounce used to trigger an unconditional rebuild.
+#[derive(Default)]
+pub struct MenuSignature(pub std::sync::Mutex<Option<String>>);
+
+impl MenuSignature {
+    fn matches(&self, candidate: &str) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).as_deref() == Some(candidate)
+    }
+
+    fn store(&self, signature: String) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(signature);
+    }
+}
+
+/// Serialises every input `build_menu` renders from: the focused window's
+/// label (it decides the "Switch Profile" checkmark and the "(this window)"
+/// vs "(open elsewhere)" suffix), the profile list in order, and which window
+/// owns each profile. Two calls that produce the same string produce the same
+/// menu, so the second one can be skipped. See [`MenuSignature`].
+pub fn menu_signature(app: &AppHandle<Wry>, focused_window_label: Option<&str>) -> String {
+    let ownership = app
+        .try_state::<profile_store::ActiveProfileState>()
+        .map(|s| s.snapshot())
+        .unwrap_or_default();
+    let profiles = app
+        .try_state::<ProfileStore>()
+        .and_then(|s| s.list().ok())
+        .unwrap_or_default();
+
+    format_menu_signature(focused_window_label, &profiles, &ownership)
+}
+
+/// The pure half of [`menu_signature`], split out so it can be tested without
+/// an `AppHandle`. `ownership` maps window label -> profile id.
+fn format_menu_signature(
+    focused_window_label: Option<&str>,
+    profiles: &[profile_store::Profile],
+    ownership: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut out = String::with_capacity(64 + profiles.len() * 64);
+    out.push_str(focused_window_label.unwrap_or("-"));
+    for profile in profiles {
+        let owner = ownership
+            .iter()
+            .find_map(|(label, pid)| (pid == &profile.id).then_some(label.as_str()))
+            .unwrap_or("-");
+        // U+0001 / U+0002 separate the fields and the records. Neither can
+        // occur in a profile name or a window label, so two different inputs
+        // cannot serialise to the same signature.
+        out.push('\u{2}');
+        out.push_str(&profile.id);
+        out.push('\u{1}');
+        out.push_str(&profile.name);
+        out.push('\u{1}');
+        out.push_str(owner);
+    }
+    out
+}
+
 /// Builds the application menu for the currently focused Window. Reads the
 /// per-window profile ownership map from `ActiveProfileState` and the profile
 /// list from `ProfileStore` (managed state). The "Switch Profile" submenu's
@@ -414,10 +488,29 @@ pub fn rebuild_menu_for_focused_window(app: &AppHandle<Wry>) {
         // startup before the OS has assigned focus, and during rapid
         // open/close events.
         .or_else(|| app.webview_windows().keys().next().cloned());
+
+    // Bail out when the menu we would build is the one already on screen.
+    // `set_menu` resizes every window on Windows/Linux, so a no-op rebuild is
+    // a visible jump, not just wasted work. See [`MenuSignature`].
+    let signature = menu_signature(app, focused_label.as_deref());
+    let cache = app.try_state::<MenuSignature>();
+    if let Some(cache) = &cache {
+        if cache.matches(&signature) {
+            return;
+        }
+    }
+
     match build_menu(app, focused_label.as_deref()) {
         Ok(menu) => {
             if let Err(e) = app.set_menu(menu) {
                 eprintln!("[abundio] failed to set menu: {e}");
+                return;
+            }
+            // Only record the signature once the menu is actually up, so a
+            // failed set_menu is retried by the next rebuild rather than
+            // suppressed by a cache entry that never matched reality.
+            if let Some(cache) = &cache {
+                cache.store(signature);
             }
         }
         Err(e) => eprintln!("[abundio] failed to build menu: {e}"),
@@ -565,8 +658,13 @@ pub fn run() {
             // focused yet (we're still in setup), so the menu falls back to
             // building against the first window once one exists; the focus
             // listener below triggers a rebuild as soon as one comes online.
+            app.manage(MenuSignature::default());
             let menu = build_menu(&app.handle(), None)?;
             app.set_menu(menu)?;
+            // Seed the cache with what we just put on screen, so the first
+            // focus event doesn't rebuild an identical menu.
+            app.state::<MenuSignature>()
+                .store(menu_signature(&app.handle(), None));
 
             // Initialize PTY manager
             let pty_mgr = PtyManager::new();
@@ -1061,4 +1159,97 @@ pub fn run() {
                 on_app_exit(app_handle);
             }
         });
+}
+
+#[cfg(test)]
+mod menu_signature_tests {
+    use super::format_menu_signature;
+    use crate::profile_store::Profile;
+    use std::collections::HashMap;
+
+    fn profile(id: &str, name: &str) -> Profile {
+        Profile {
+            id: id.to_string(),
+            name: name.to_string(),
+            position: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn ownership(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(label, pid)| (label.to_string(), pid.to_string()))
+            .collect()
+    }
+
+    /// The whole point: a repeated Focused(true) on the same window with
+    /// nothing else changed must not rebuild the menu. See MenuSignature.
+    #[test]
+    fn identical_inputs_produce_identical_signatures() {
+        let profiles = vec![profile("a", "Work"), profile("b", "Personal")];
+        let owners = ownership(&[("main", "a")]);
+        assert_eq!(
+            format_menu_signature(Some("main"), &profiles, &owners),
+            format_menu_signature(Some("main"), &profiles, &owners)
+        );
+    }
+
+    #[test]
+    fn focused_window_change_changes_the_signature() {
+        let profiles = vec![profile("a", "Work")];
+        let owners = ownership(&[("main", "a")]);
+        assert_ne!(
+            format_menu_signature(Some("main"), &profiles, &owners),
+            format_menu_signature(Some("window-2"), &profiles, &owners)
+        );
+    }
+
+    #[test]
+    fn rename_changes_the_signature() {
+        let owners = ownership(&[]);
+        assert_ne!(
+            format_menu_signature(Some("main"), &[profile("a", "Work")], &owners),
+            format_menu_signature(Some("main"), &[profile("a", "Client")], &owners)
+        );
+    }
+
+    #[test]
+    fn reorder_changes_the_signature() {
+        let owners = ownership(&[]);
+        let forward = vec![profile("a", "Work"), profile("b", "Personal")];
+        let reversed = vec![profile("b", "Personal"), profile("a", "Work")];
+        assert_ne!(
+            format_menu_signature(Some("main"), &forward, &owners),
+            format_menu_signature(Some("main"), &reversed, &owners)
+        );
+    }
+
+    /// Ownership drives both the dimming and the "(this window)" /
+    /// "(open elsewhere)" suffix in the File menu.
+    #[test]
+    fn ownership_change_changes_the_signature() {
+        let profiles = vec![profile("a", "Work")];
+        assert_ne!(
+            format_menu_signature(Some("main"), &profiles, &ownership(&[("main", "a")])),
+            format_menu_signature(Some("main"), &profiles, &ownership(&[("window-2", "a")]))
+        );
+        assert_ne!(
+            format_menu_signature(Some("main"), &profiles, &ownership(&[("main", "a")])),
+            format_menu_signature(Some("main"), &profiles, &ownership(&[]))
+        );
+    }
+
+    /// Field boundaries must be unambiguous — a name that "absorbs" the next
+    /// field would let two different profile lists share one signature and
+    /// leave a stale menu on screen.
+    #[test]
+    fn adjacent_fields_cannot_collide() {
+        let owners = ownership(&[]);
+        assert_ne!(
+            format_menu_signature(Some("main"), &[profile("a", "b"), profile("c", "d")], &owners),
+            format_menu_signature(Some("main"), &[profile("a", "bc"), profile("", "d")], &owners)
+        );
+    }
 }
