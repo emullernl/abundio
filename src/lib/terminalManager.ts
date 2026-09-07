@@ -26,6 +26,13 @@ import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { currentWindowLabel } from "./appWindow";
 import { agentHooks, pty } from "./ipc";
+import {
+	type MouseBadgeState,
+	mouseBadgeStateFor,
+	mouseModesIn,
+	mouseTransitionSequence,
+	shouldSwallowDecset,
+} from "./mouseReporting";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
@@ -314,6 +321,22 @@ export interface ManagedTerminal {
 	pendingWrites: Uint8Array[];
 	/** rAF handle for the pending write flush, or null if none scheduled */
 	writeRafId: number | null;
+	/** Mouse modes this pane's program has asked for and not withdrawn — whether
+	 *  or not we granted them. Populated from every DECSET we see, emptied by the
+	 *  matching DECRSTs. Two jobs: it is what a replay re-asserts when the pane
+	 *  stops blocking (a program asks once and never again), and its contents
+	 *  drive the mouse badge. Cleared on PTY restart — it describes a program,
+	 *  and after a restart that program is gone. See ADR-0031. */
+	wantedMouseModes: Set<number>;
+	/** Non-zero while a synthetic DECRST sweep from applyMouseBlock is in flight,
+	 *  so the DECRST hook doesn't mistake our own writes for the program
+	 *  releasing the mouse and wipe the replay set. */
+	sweepingMouseModes: number;
+	/** This pane's answer to "may the program have the mouse", or null to follow
+	 *  the global `Block mouse reporting` setting. Set only by the mouse badge,
+	 *  and deliberately NOT cleared by restartPanePty: it is a decision about the
+	 *  pane, not about whichever program happened to be running. */
+	mouseBlockOverride: boolean | null;
 	/** Deferred PTY init closure. Populated by createTerminal, consumed by the
 	 *  first projectInto callback (via ensurePtySpawned). We spawn the PTY at
 	 *  the real target dimensions rather than the xterm default 80×24 so the
@@ -358,6 +381,129 @@ function bumpPaneRevision(paneId: string): void {
 	const set = paneListeners.get(paneId);
 	if (!set) return;
 	for (const l of set) l();
+}
+
+/** Master switch for refusing mouse reporting, mirrored from the persisted
+ *  `blockMouseReporting` setting. Supplies the default for every pane; a pane
+ *  whose `mouseBlockOverride` is set ignores it. Defaults to true, matching
+ *  PERSISTED_DEFAULTS — the settings store pushes the persisted value on
+ *  rehydration. See ADR-0031. */
+let blockMouseReportingGlobally = true;
+
+/** Whether this pane currently refuses to hand the mouse to its program: its
+ *  own override if it has one, otherwise the global setting. */
+function isBlocked(managed: ManagedTerminal): boolean {
+	return managed.mouseBlockOverride ?? blockMouseReportingGlobally;
+}
+
+export function isPaneMouseBlocked(paneId: string): boolean {
+	const managed = instances.get(paneId);
+	return managed ? isBlocked(managed) : blockMouseReportingGlobally;
+}
+
+/** What the pane's mouse badge should show. Read through `subscribePaneRevision`
+ *  — the hooks below bump the revision whenever any of this changes. */
+export function mouseBadgeState(paneId: string): MouseBadgeState {
+	const managed = instances.get(paneId);
+	if (!managed) return "none";
+	return mouseBadgeStateFor(
+		managed.term.modes.mouseTrackingMode,
+		managed.wantedMouseModes,
+	);
+}
+
+/** Register the DECSET/DECRST hooks. Both stay registered for the terminal's
+ *  whole life and read the block state at call time — nothing is added or
+ *  disposed when the setting changes.
+ *
+ *  That matters for more than tidiness. The DECSET hook returning `false` lets
+ *  xterm's own handler run, so the same hook that refuses the mouse also
+ *  *observes* the program taking it, which is what keeps `wantedMouseModes`
+ *  (and therefore the badge and the replay) correct in an unblocked pane. */
+function installMouseReportingHooks(managed: ManagedTerminal): void {
+	const { term } = managed;
+
+	term.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
+		const modes = mouseModesIn(params);
+		if (modes.length === 0) return false;
+		for (const m of modes) managed.wantedMouseModes.add(m);
+		bumpPaneRevision(managed.paneId);
+		return shouldSwallowDecset(params, isBlocked(managed));
+	});
+
+	// DECRST is never swallowed — see MOUSE_MODES_OFF_SEQUENCE for why the
+	// asymmetry is load-bearing. This hook only watches, so it always returns
+	// false and xterm applies the disable as usual.
+	term.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
+		const modes = mouseModesIn(params);
+		if (modes.length === 0) return false;
+		// Our own sweep is not the program changing its mind: skipping the
+		// removal is what preserves the replay set across a block, so the badge
+		// stays visible and the user can hand the mouse back.
+		if (managed.sweepingMouseModes === 0) {
+			for (const m of modes) managed.wantedMouseModes.delete(m);
+			bumpPaneRevision(managed.paneId);
+		}
+		return false;
+	});
+}
+
+/** Write the transition into xterm: sweep the mouse off, or replay what the
+ *  pane refused. Never reaches the PTY — the program is not told, because
+ *  there is no sequence that would tell it. */
+function applyMouseBlock(managed: ManagedTerminal, blocked: boolean): void {
+	const seq = mouseTransitionSequence(blocked, managed.wantedMouseModes);
+	if (seq && blocked) {
+		// The guard spans only the parse of this one write, and xterm preserves
+		// write order, so the sole thing it can mis-attribute is a DECRST the
+		// program itself queued inside that window — leaving one stale entry in
+		// the replay set, which the next DECRST or a PTY restart clears.
+		managed.sweepingMouseModes++;
+		managed.term.write(seq, () => {
+			managed.sweepingMouseModes--;
+			bumpPaneRevision(managed.paneId);
+		});
+	} else if (seq) {
+		managed.term.write(seq);
+	}
+	bumpPaneRevision(managed.paneId);
+}
+
+/** Point this pane at an explicit answer, overriding the global setting. */
+export function setPaneMouseBlocked(paneId: string, blocked: boolean): void {
+	const managed = instances.get(paneId);
+	if (!managed) return;
+	const was = isBlocked(managed);
+	managed.mouseBlockOverride = blocked;
+	if (was === blocked) {
+		bumpPaneRevision(paneId);
+		return;
+	}
+	applyMouseBlock(managed, blocked);
+}
+
+/** The mouse badge's click: flip this pane to the opposite of what it is doing
+ *  now, whether that came from the setting or from a previous click. */
+export function togglePaneMouseBlocked(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed) return;
+	setPaneMouseBlocked(paneId, !isBlocked(managed));
+}
+
+/** Flip the global setting and bring every pane that still follows it into
+ *  line. Panes carrying their own override are left alone — that is the whole
+ *  point of an override. Called by the settings store.
+ *
+ *  Unblocking replays, rather than waiting for programs to re-ask: they will
+ *  not. Without that, unticking the box in Settings would appear to do nothing
+ *  until every running TUI was restarted. */
+export function setMouseReportingBlocked(blocked: boolean): void {
+	if (blockMouseReportingGlobally === blocked) return;
+	blockMouseReportingGlobally = blocked;
+	for (const managed of instances.values()) {
+		if (managed.mouseBlockOverride !== null) continue;
+		applyMouseBlock(managed, blocked);
+	}
 }
 
 // Background activity listeners for PTYs whose terminals have been destroyed (workspace switch)
@@ -739,8 +885,13 @@ export async function createTerminal(
 		startupShellReady: false,
 		pendingWrites: [],
 		writeRafId: null,
+		wantedMouseModes: new Set(),
+		sweepingMouseModes: 0,
+		mouseBlockOverride: null,
 		deferredInit: null,
 	};
+
+	installMouseReportingHooks(managed);
 
 	// Modified-nav-key handling for the shell line editor. xterm turns these into
 	// CSI sequences (`\e[1;Nx`, `\e[3;N~`, …) that the default bash/zsh keymaps
@@ -1633,6 +1784,13 @@ export async function restartPanePty(
 	}
 
 	managed.term.reset();
+	// term.reset() clears xterm's own mouse modes, so drop our record of what the
+	// old program wanted alongside them — it describes a process that no longer
+	// exists, and leaving it would strand a mouse badge on the fresh shell.
+	// `mouseBlockOverride` deliberately survives: it is the user's decision about
+	// this pane, and a restart to pick up an Environment Bundle must not quietly
+	// revoke it. See ADR-0031.
+	managed.wantedMouseModes.clear();
 	managed.ptyId = "";
 	bumpPaneRevision(paneId);
 	managed.ready = false;
