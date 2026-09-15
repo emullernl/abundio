@@ -87,7 +87,8 @@ interface Props {
 	hidden?: HiddenRollup;
 }
 
-function shortenPath(fullPath: string): string {
+/** A workspace folder with the home directory shown as `~`. */
+export function shortenPath(fullPath: string): string {
 	const home = "/Users/";
 	if (fullPath.startsWith(home)) {
 		const afterHome = fullPath.slice(home.length);

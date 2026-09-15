@@ -12,7 +12,11 @@ import {
 	DOT_STATUS_COLOR,
 } from "../AgentStatusIcon";
 import { RollupIcon } from "../RollupIcon";
-import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
+import {
+	shortenPath,
+	WORKSPACE_ITEM_HEIGHT_FALLBACK,
+	WorkspaceItem,
+} from "./WorkspaceItem";
 
 interface Props {
 	workspace: WorkspaceWithTabs;
@@ -200,19 +204,38 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 						/>
 					)}
 				</div>
-				<span
-					className="font-medium overflow-hidden whitespace-nowrap"
+				{/* Name over folder, as in the expanded row — each level with the
+				    rollup icon beside it. Both fade out at the strip's edge. */}
+				<div
+					className="flex flex-col overflow-hidden whitespace-nowrap min-w-0"
 					style={{
-						color: "var(--fg-primary)",
-						fontSize: 12,
-						letterSpacing: "0.01em",
+						gap: 3,
 						maskImage: "linear-gradient(to right, black 40%, transparent 100%)",
 						WebkitMaskImage:
 							"linear-gradient(to right, black 40%, transparent 100%)",
 					}}
 				>
-					{workspace.name}
-				</span>
+					<span
+						className="font-medium"
+						style={{
+							color: "var(--fg-primary)",
+							fontSize: 12,
+							lineHeight: "12px",
+							letterSpacing: "0.01em",
+						}}
+					>
+						{workspace.name}
+					</span>
+					<span
+						style={{
+							color: "var(--fg-secondary)",
+							fontSize: 10,
+							lineHeight: "12px",
+						}}
+					>
+						{shortenPath(workspace.rootFolder)}
+					</span>
+				</div>
 			</div>
 
 			{open &&
