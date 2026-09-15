@@ -187,10 +187,10 @@ describe("WorkspaceList — folded Worktree sets", () => {
 		const chip = container.querySelector<HTMLElement>("[data-hidden-rollup]");
 		expect(chip).toBeTruthy();
 		expect(chip?.textContent).toContain("2");
-		// The count's tooltip names every hidden worktree and its state.
-		expect(
-			chip?.querySelector("[title*='feat-a']")?.getAttribute("title"),
-		).toBe("feat-a — Waiting\nfeat-b — Not opened");
+		// The whole chip's tooltip names every hidden worktree and its state.
+		expect(chip?.getAttribute("title")).toBe(
+			"feat-a — Waiting\nfeat-b — Not opened",
+		);
 		// Each rollup icon hovers to its own breakdown, summed over hidden members.
 		expect(
 			chip?.querySelector("[data-rollup='agent']")?.getAttribute("title"),
@@ -267,9 +267,7 @@ describe("WorkspaceList — folded Worktree sets", () => {
 		});
 		useWindowUiStore.setState({ foldedSetKeys: [GROUP_KEY] });
 		render();
-		const chip = container
-			.querySelector("[data-hidden-rollup]")
-			?.querySelector<HTMLElement>("[title*='feat-a']");
+		const chip = container.querySelector<HTMLElement>("[data-hidden-rollup]");
 		// Idle + never-opened hidden members — the primary's Error stays out of it.
 		expect(chip?.getAttribute("title")).toBe(
 			"feat-a — Idle\nfeat-b — Not opened",

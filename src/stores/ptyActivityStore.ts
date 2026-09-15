@@ -952,6 +952,46 @@ export function rollupTooltip(kind: RollupKind, counts: StatusCounts): string {
 	return `${kind === "agent" ? "Agents" : "Terminals"}: ${parts.join(" · ")}`;
 }
 
+// ── Rollup keys ──
+// Components subscribe to a rollup through a string key rather than the
+// object: the store changes on every status transition anywhere, and a
+// primitive lets Zustand's default equality skip the re-render unless this
+// rollup changed. Fixed shape, so a hand-rolled format is both cheaper than
+// JSON and exact: `<n|o>|<agent>|<terminal>`, each rollup `-` or
+// `status:error,waiting,ready,working,idle`.
+
+function encodeKind(r: KindRollup | null): string {
+	if (!r) return "-";
+	const c = r.counts;
+	return `${r.status}:${c.error},${c.waiting},${c.ready},${c.working},${c.idle}`;
+}
+
+function decodeKind(key: string): KindRollup | null {
+	if (key === "-") return null;
+	const [status, nums] = key.split(":");
+	const [error, waiting, ready, working, idle] = nums.split(",").map(Number);
+	return {
+		status: status as DotStatus,
+		counts: { error, waiting, ready, working, idle },
+	};
+}
+
+/** Encodes rollups as a primitive store-selector key. A Tab's rollups have
+ *  no `notOpened` and encode as opened. */
+export function encodeRollups(r: Rollups & { notOpened?: boolean }): string {
+	return `${r.notOpened ? "n" : "o"}|${encodeKind(r.agent)}|${encodeKind(r.terminal)}`;
+}
+
+/** The inverse of `encodeRollups`. */
+export function decodeRollups(key: string): WorkspaceRollups {
+	const [flag, agent, terminal] = key.split("|");
+	return {
+		agent: decodeKind(agent),
+		terminal: decodeKind(terminal),
+		notOpened: flag === "n",
+	};
+}
+
 export function computeWorkspaceRollups(
 	workspaceId: string,
 	tabLayouts: PaneNode[],

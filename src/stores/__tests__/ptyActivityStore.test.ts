@@ -7,7 +7,9 @@ import {
 	computePtyDotStatus,
 	computeTabRollups,
 	computeWorkspaceRollups,
+	decodeRollups,
 	dotStatusLabel,
+	encodeRollups,
 	getLastOutputAt,
 	mergeRollups,
 	mostUrgentStatus,
@@ -564,6 +566,52 @@ describe("mergeRollups", () => {
 			agent: null,
 			terminal: null,
 		});
+	});
+});
+
+describe("encodeRollups / decodeRollups", () => {
+	it.each([
+		{ agent: null, terminal: null, notOpened: true },
+		{ agent: null, terminal: null, notOpened: false },
+		{
+			agent: {
+				status: "skyblue" as const,
+				counts: counts({ waiting: 2, working: 1, idle: 3 }),
+			},
+			terminal: null,
+			notOpened: false,
+		},
+		{
+			agent: {
+				status: "red" as const,
+				counts: counts({ error: 12, ready: 4 }),
+			},
+			terminal: {
+				status: "cyan" as const,
+				counts: counts({ working: 1, idle: 40 }),
+			},
+			notOpened: false,
+		},
+	])("round-trips %j exactly", (rollups) => {
+		expect(decodeRollups(encodeRollups(rollups))).toEqual(rollups);
+	});
+
+	it("encodes a Tab's rollups (no notOpened) as opened", () => {
+		expect(
+			decodeRollups(encodeRollups({ agent: null, terminal: null })),
+		).toEqual({ agent: null, terminal: null, notOpened: false });
+	});
+
+	it("gives different keys to rollups that differ only in a count", () => {
+		const a = {
+			agent: null,
+			terminal: { status: "green" as const, counts: counts({ idle: 1 }) },
+		};
+		const b = {
+			agent: null,
+			terminal: { status: "green" as const, counts: counts({ idle: 2 }) },
+		};
+		expect(encodeRollups(a)).not.toBe(encodeRollups(b));
 	});
 });
 

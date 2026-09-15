@@ -5,7 +5,9 @@ import {
 	computeTabRollups,
 	computeWorkspaceRollups,
 	type DotStatus,
+	decodeRollups,
 	dotStatusLabel,
+	encodeRollups,
 	mergeRollups,
 	mostUrgentStatus,
 	type Rollups,
@@ -24,15 +26,14 @@ function tabLayoutsOf(tabs: WorkspaceWithTabs["tabs"]): PaneNode[] {
 	return layouts;
 }
 
-// Rollups are objects, and the store ticks on every PTY activity. Selecting a
-// serialized key (a primitive) lets Zustand's default equality bail the
-// re-render until a count actually changes; the object is rebuilt from it.
+// Rollups are objects, and the store changes on every status transition in
+// any pane. Selecting an encoded key (a primitive) lets Zustand's default
+// equality bail the re-render until this rollup actually changes; the object
+// is rebuilt from the key. See "Rollup keys" in ptyActivityStore.
 type StoreState = ReturnType<typeof usePtyActivityStore.getState>;
 
-function useRollupsKey<T>(select: (s: StoreState) => string): T {
-	const key = usePtyActivityStore(select);
-	return useMemo(() => JSON.parse(key) as T, [key]);
-}
+/** Separates hidden members' keys; never produced by `encodeRollups`. */
+const MEMBER_SEPARATOR = ";";
 
 /** A Workspace's **Agent rollup** and **Terminal rollup**. */
 export function useWorkspaceRollups(
@@ -42,8 +43,8 @@ export function useWorkspaceRollups(
 		() => tabLayoutsOf(workspace.tabs),
 		[workspace.tabs],
 	);
-	return useRollupsKey((s) =>
-		JSON.stringify(
+	const key = usePtyActivityStore((s: StoreState) =>
+		encodeRollups(
 			computeWorkspaceRollups(
 				workspace.id,
 				tabLayouts,
@@ -53,13 +54,18 @@ export function useWorkspaceRollups(
 			),
 		),
 	);
+	return useMemo(() => decodeRollups(key), [key]);
 }
 
 /** A Tab's **Agent rollup** and **Terminal rollup**. */
 export function useTabRollups(tab: Tab): Rollups {
-	return useRollupsKey((s) =>
-		JSON.stringify(computeTabRollups(tab, s.activities, s.panePtyMap)),
+	const key = usePtyActivityStore((s: StoreState) =>
+		encodeRollups(computeTabRollups(tab, s.activities, s.panePtyMap)),
 	);
+	return useMemo(() => {
+		const { agent, terminal } = decodeRollups(key);
+		return { agent, terminal };
+	}, [key]);
 }
 
 /** What a Folded set's Primary row reports for the members it hides. */
@@ -103,22 +109,25 @@ export function useHiddenRollup(
 		[hidden],
 	);
 
-	const perMember = useRollupsKey<WorkspaceRollups[]>((s) =>
-		JSON.stringify(
-			members.map((m) =>
-				computeWorkspaceRollups(
-					m.id,
-					m.layouts,
-					s.activities,
-					s.openedWorkspaceIds,
-					s.panePtyMap,
+	const key = usePtyActivityStore((s: StoreState) =>
+		members
+			.map((m) =>
+				encodeRollups(
+					computeWorkspaceRollups(
+						m.id,
+						m.layouts,
+						s.activities,
+						s.openedWorkspaceIds,
+						s.panePtyMap,
+					),
 				),
-			),
-		),
+			)
+			.join(MEMBER_SEPARATOR),
 	);
 
 	return useMemo(() => {
 		if (members.length === 0) return undefined;
+		const perMember = key.split(MEMBER_SEPARATOR).map(decodeRollups);
 		const merged = mergeRollups(perMember);
 		const notOpened = perMember.every((r) => r.notOpened);
 		return {
@@ -130,5 +139,5 @@ export function useHiddenRollup(
 				.map((m, i) => `${m.name} — ${memberLabel(perMember[i])}`)
 				.join("\n"),
 		};
-	}, [members, perMember]);
+	}, [members, key]);
 }

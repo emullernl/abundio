@@ -3,6 +3,7 @@ import {
 	type HiddenRollup,
 	useWorkspaceRollups,
 } from "../../hooks/useWorkspaceRollups";
+import { shortenPath } from "../../lib/shortenPath";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
 	dotStatusLabel,
@@ -85,20 +86,6 @@ interface Props {
 	fold?: FoldControl;
 	/** Set only while that set is folded. */
 	hidden?: HiddenRollup;
-}
-
-/** A workspace folder with the home directory shown as `~`. */
-export function shortenPath(fullPath: string): string {
-	const home = "/Users/";
-	if (fullPath.startsWith(home)) {
-		const afterHome = fullPath.slice(home.length);
-		const slashIdx = afterHome.indexOf("/");
-		if (slashIdx !== -1) {
-			return `~${afterHome.slice(slashIdx)}`;
-		}
-		return "~";
-	}
-	return fullPath;
 }
 
 export const WorkspaceItem = memo(function WorkspaceItem({
@@ -386,9 +373,12 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			    slot, plus how many there are. Hidden members only: the left
 			    icons still describe the workspace this row activates. */}
 			{hidden && (
+				// The member list covers the whole chip; each rollup icon's own
+				// breakdown wins while hovering that icon (innermost title).
 				<div
 					className="flex flex-col items-end flex-shrink-0"
 					data-hidden-rollup
+					title={hidden.membersTooltip}
 				>
 					<div
 						className="flex items-center gap-1"
@@ -400,7 +390,6 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 							<RollupIcon kind="agent" rollup={hidden.agent} size={12} />
 						)}
 						<span
-							title={hidden.membersTooltip}
 							style={{
 								fontSize: 10,
 								lineHeight: 1,

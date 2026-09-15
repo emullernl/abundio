@@ -4,6 +4,7 @@ import {
 	type HiddenRollup,
 	useWorkspaceRollups,
 } from "../../hooks/useWorkspaceRollups";
+import { shortenPath } from "../../lib/shortenPath";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
 import {
@@ -12,11 +13,7 @@ import {
 	DOT_STATUS_COLOR,
 } from "../AgentStatusIcon";
 import { RollupIcon } from "../RollupIcon";
-import {
-	shortenPath,
-	WORKSPACE_ITEM_HEIGHT_FALLBACK,
-	WorkspaceItem,
-} from "./WorkspaceItem";
+import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
 
 interface Props {
 	workspace: WorkspaceWithTabs;
@@ -38,6 +35,14 @@ interface Props {
 }
 
 const STRIP_WIDTH = 56;
+/** The strip's rollup icons are a size down from the expanded row's 14px, so
+ *  each strip's pair stays clear of its neighbours'. The name and folder lines
+ *  use the same height, so each sits level with its icon. */
+const STRIP_ICON_SIZE = 12;
+/** Space between the Agent and Terminal rollups — and between the name and
+ *  folder lines. Smaller than the expanded row's `ROLLUP_ROW_GAP` (4px) to
+ *  match the smaller icons. */
+const STRIP_ROLLUP_GAP = 3;
 const POPOVER_DELAY_MS = 100;
 
 export const CollapsedStrip = memo(function CollapsedStrip({
@@ -155,61 +160,71 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 					/>
 				)}
 				{/* Agent rollup over Terminal rollup, as in the expanded row's left
-				    slot (ADR-0032) but a size down, so each strip's pair stays
-				    clear of its neighbours'. Each cell keeps its height when empty
-				    so the icons never swap places. */}
+				    slot (ADR-0032). Each cell keeps its height when empty so the
+				    icons never swap places. */}
 				<div
 					style={{
 						flexShrink: 0,
 						display: "flex",
 						flexDirection: "column",
-						gap: 3,
-						width: 12,
-						position: "relative",
+						gap: STRIP_ROLLUP_GAP,
+						width: STRIP_ICON_SIZE,
 					}}
 					title={hidden ? hidden.membersTooltip : undefined}
 				>
-					<div style={{ height: 12 }}>
+					{/* The Hidden-rollup badge hangs off this top cell's top-right
+					    corner, so it stays attached to the name's line whether or
+					    not a Terminal rollup is drawn below. */}
+					<div style={{ height: STRIP_ICON_SIZE, position: "relative" }}>
 						{rollups.notOpened ? (
-							<AgentStatusIcon status="grey" size={12} />
+							<AgentStatusIcon status="grey" size={STRIP_ICON_SIZE} />
 						) : (
-							<RollupIcon kind="agent" rollup={rollups.agent} size={12} />
+							<RollupIcon
+								kind="agent"
+								rollup={rollups.agent}
+								size={STRIP_ICON_SIZE}
+							/>
+						)}
+						{hidden && (
+							<span
+								aria-hidden
+								data-hidden-badge={hidden.badge}
+								style={{
+									position: "absolute",
+									right: -3,
+									top: -2,
+									width: 7,
+									height: 7,
+									borderRadius: "50%",
+									backgroundColor: DOT_STATUS_COLOR[hidden.badge],
+									// Ring in the strip's own background so the dot reads as
+									// separate from the glyph it sits on.
+									boxShadow: "0 0 0 1.5px var(--bg-secondary)",
+									// A 7px dot can't carry the glyph's own motion (a spinner
+									// is mush at this size), but it must not sit still while
+									// the wide sidebar's chip moves — so an animated status
+									// breathes here. See docs/plans/foldable-worktree-sets.md.
+									animation: DOT_STATUS_ANIMATED[hidden.badge]
+										? "shell-running-breathe 1.6s ease-in-out infinite"
+										: undefined,
+								}}
+							/>
 						)}
 					</div>
-					<div style={{ height: 12 }}>
-						<RollupIcon kind="terminal" rollup={rollups.terminal} size={12} />
-					</div>
-					{hidden && (
-						<span
-							aria-hidden
-							style={{
-								position: "absolute",
-								right: -3,
-								top: 7,
-								width: 7,
-								height: 7,
-								borderRadius: "50%",
-								backgroundColor: DOT_STATUS_COLOR[hidden.badge],
-								// Ring in the strip's own background so the dot reads as
-								// separate from the glyph it sits on.
-								boxShadow: "0 0 0 1.5px var(--bg-secondary)",
-								// A 7px dot can't carry the glyph's own motion (a spinner
-								// is mush at this size), but it must not sit still while
-								// the wide sidebar's chip moves — so an animated status
-								// breathes here. See docs/plans/foldable-worktree-sets.md.
-								animation: DOT_STATUS_ANIMATED[hidden.badge]
-									? "shell-running-breathe 1.6s ease-in-out infinite"
-									: undefined,
-							}}
+					<div style={{ height: STRIP_ICON_SIZE }}>
+						<RollupIcon
+							kind="terminal"
+							rollup={rollups.terminal}
+							size={STRIP_ICON_SIZE}
 						/>
-					)}
+					</div>
 				</div>
 				{/* Name over folder, as in the expanded row — each level with the
 				    rollup icon beside it. Both fade out at the strip's edge. */}
 				<div
 					className="flex flex-col overflow-hidden whitespace-nowrap min-w-0"
 					style={{
-						gap: 3,
+						gap: STRIP_ROLLUP_GAP,
 						maskImage: "linear-gradient(to right, black 40%, transparent 100%)",
 						WebkitMaskImage:
 							"linear-gradient(to right, black 40%, transparent 100%)",
@@ -220,7 +235,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 						style={{
 							color: "var(--fg-primary)",
 							fontSize: 12,
-							lineHeight: "12px",
+							lineHeight: `${STRIP_ICON_SIZE}px`,
 							letterSpacing: "0.01em",
 						}}
 					>
@@ -230,7 +245,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 						style={{
 							color: "var(--fg-secondary)",
 							fontSize: 10,
-							lineHeight: "12px",
+							lineHeight: `${STRIP_ICON_SIZE}px`,
 						}}
 					>
 						{shortenPath(workspace.rootFolder)}
