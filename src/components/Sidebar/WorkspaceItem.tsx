@@ -1,18 +1,26 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
 	type HiddenRollup,
-	useWorkspaceDotStatus,
-} from "../../hooks/useWorkspaceDotStatus";
+	useWorkspaceRollups,
+} from "../../hooks/useWorkspaceRollups";
 import type { WorkspaceWithTabs } from "../../lib/types";
-import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import {
+	dotStatusLabel,
+	usePtyActivityStore,
+} from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
 import { ChevronRight, GitBranch, X } from "../Icons";
+import { RollupIcon } from "../RollupIcon";
 
 // Fallback height for the collapsed sidebar's strip when no expanded
 // WorkspaceItem has mounted yet to measure. Replaced at runtime by the
 // `--workspace-item-height` CSS var written below.
 export const WORKSPACE_ITEM_HEIGHT_FALLBACK = 56;
+
+/** Space between the Agent rollup (level with the name) and the Terminal
+ *  rollup (level with the path) in a row's left slot and right end. */
+const ROLLUP_ROW_GAP = 4;
 
 const WORKSPACE_ITEM_HEIGHT_LS_KEY = "abundio-workspace-item-height";
 
@@ -106,7 +114,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 	fold,
 	hidden,
 }: Props) {
-	const dotStatus = useWorkspaceDotStatus(workspace);
+	const rollups = useWorkspaceRollups(workspace);
 	const gitInfo = useWorkspaceGitStore((s) => s.byWorkspaceId[workspace.id]);
 	// A workspace is "loaded" once it has been opened in this session.
 	// Loaded (but not active) workspaces keep the accent chip and change stats.
@@ -200,73 +208,87 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 				if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			{/* Left slot. On a Worktree set's Primary row this box hover-swaps
-			    between the workspace's own status icon and the fold chevron —
-			    there is no spare padding for a separate twisty, and a gutter on
-			    every row would cost width the sidebar doesn't have. The row's
-			    Hidden rollup (right end) stays visible throughout, so the set's
-			    signal is never fully covered. */}
-			<div
-				style={{
-					marginTop: 3,
-					position: "relative",
-					width: 14,
-					height: 14,
-					flexShrink: 0,
-				}}
-			>
+			{/* Left slot: the Agent rollup beside the name, the Terminal rollup
+			    beside the path (ADR-0032). On a Worktree set's Primary row the
+			    top cell hover-swaps between the Agent rollup and the fold
+			    chevron — there is no spare padding for a separate twisty, and a
+			    gutter on every row would cost width the sidebar doesn't have.
+			    The Terminal rollup and the row's Hidden rollup (right end) stay
+			    visible throughout, so the set's signal is never fully covered. */}
+			<div className="flex flex-col" style={{ width: 14, flexShrink: 0 }}>
 				<div
-					className={
-						fold && !fold.blockedReason
-							? "absolute inset-0 transition-opacity group-hover:opacity-0"
-							: "absolute inset-0"
-					}
-					style={{ transitionDuration: "150ms" }}
+					style={{
+						marginTop: 3,
+						position: "relative",
+						width: 14,
+						height: 14,
+					}}
 				>
-					<AgentStatusIcon status={dotStatus} />
-				</div>
-				{fold && (
-					<button
-						type="button"
-						// `mousedown` would otherwise start the set drag. No
-						// `preventDefault()` — WorkspaceList's handler already bails on
-						// anything inside a <button>, and preventing the default would
-						// only cost the button its mouse focus.
-						onMouseDown={(e) => {
-							e.stopPropagation();
-						}}
-						onClick={(e) => {
-							e.stopPropagation();
-							if (fold.blockedReason) return;
-							fold.toggle();
-						}}
-						disabled={Boolean(fold.blockedReason)}
-						title={
-							fold.blockedReason ??
-							(fold.folded
-								? `Show ${fold.memberCount} linked worktree${fold.memberCount === 1 ? "" : "s"}`
-								: "Hide linked worktrees")
-						}
-						aria-label={fold.folded ? "Unfold worktrees" : "Fold worktrees"}
-						aria-expanded={!fold.folded}
-						aria-disabled={Boolean(fold.blockedReason)}
+					<div
 						className={
-							fold.blockedReason
-								? "absolute inset-0 hidden"
-								: "absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+							fold && !fold.blockedReason
+								? "absolute inset-0 transition-opacity group-hover:opacity-0"
+								: "absolute inset-0"
 						}
-						style={{ transitionDuration: "150ms", color: "var(--fg-primary)" }}
+						style={{ transitionDuration: "150ms" }}
 					>
-						<ChevronRight
-							size={13}
-							strokeWidth={2.5}
-							style={{
-								transform: fold.folded ? "none" : "rotate(90deg)",
-								transition: "transform 150ms",
+						{rollups.notOpened ? (
+							<span className="flex" title={dotStatusLabel("grey")}>
+								<AgentStatusIcon status="grey" />
+							</span>
+						) : (
+							<RollupIcon kind="agent" rollup={rollups.agent} />
+						)}
+					</div>
+					{fold && (
+						<button
+							type="button"
+							// `mousedown` would otherwise start the set drag. No
+							// `preventDefault()` — WorkspaceList's handler already bails on
+							// anything inside a <button>, and preventing the default would
+							// only cost the button its mouse focus.
+							onMouseDown={(e) => {
+								e.stopPropagation();
 							}}
-						/>
-					</button>
-				)}
+							onClick={(e) => {
+								e.stopPropagation();
+								if (fold.blockedReason) return;
+								fold.toggle();
+							}}
+							disabled={Boolean(fold.blockedReason)}
+							title={
+								fold.blockedReason ??
+								(fold.folded
+									? `Show ${fold.memberCount} linked worktree${fold.memberCount === 1 ? "" : "s"}`
+									: "Hide linked worktrees")
+							}
+							aria-label={fold.folded ? "Unfold worktrees" : "Fold worktrees"}
+							aria-expanded={!fold.folded}
+							aria-disabled={Boolean(fold.blockedReason)}
+							className={
+								fold.blockedReason
+									? "absolute inset-0 hidden"
+									: "absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+							}
+							style={{
+								transitionDuration: "150ms",
+								color: "var(--fg-primary)",
+							}}
+						>
+							<ChevronRight
+								size={13}
+								strokeWidth={2.5}
+								style={{
+									transform: fold.folded ? "none" : "rotate(90deg)",
+									transition: "transform 150ms",
+								}}
+							/>
+						</button>
+					)}
+				</div>
+				<div style={{ marginTop: ROLLUP_ROW_GAP, height: 14 }}>
+					<RollupIcon kind="terminal" rollup={rollups.terminal} />
+				</div>
 			</div>
 			<div className="flex-1 min-w-0">
 				{isRenaming ? (
@@ -358,27 +380,42 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 					)}
 				</div>
 			</div>
-			{/* Hidden rollup — the state of the Linked worktrees this folded set is
-			    hiding, at the highest precedence among them, plus how many there
-			    are. Hidden members only: the left icon still describes the
-			    workspace this row activates. */}
+			{/* Hidden rollup — the Agent and Terminal rollups summed across the
+			    Linked worktrees this folded set is hiding, stacked like the left
+			    slot, plus how many there are. Hidden members only: the left
+			    icons still describe the workspace this row activates. */}
 			{hidden && (
 				<div
-					className="flex items-center gap-1 flex-shrink-0"
-					style={{ marginTop: 3 }}
-					title={hidden.tooltip}
+					className="flex flex-col items-end flex-shrink-0"
+					data-hidden-rollup
 				>
-					<AgentStatusIcon status={hidden.status} size={12} />
-					<span
-						style={{
-							fontSize: 10,
-							lineHeight: 1,
-							color: "var(--fg-secondary)",
-							fontFamily: "var(--font-mono)",
-						}}
+					<div
+						className="flex items-center gap-1"
+						style={{ marginTop: 3, height: 14 }}
 					>
-						{hidden.count}
-					</span>
+						{hidden.notOpened ? (
+							<AgentStatusIcon status="grey" size={12} />
+						) : (
+							<RollupIcon kind="agent" rollup={hidden.agent} size={12} />
+						)}
+						<span
+							title={hidden.membersTooltip}
+							style={{
+								fontSize: 10,
+								lineHeight: 1,
+								color: "var(--fg-secondary)",
+								fontFamily: "var(--font-mono)",
+							}}
+						>
+							{hidden.count}
+						</span>
+					</div>
+					<div
+						className="flex items-center"
+						style={{ marginTop: ROLLUP_ROW_GAP, height: 14 }}
+					>
+						<RollupIcon kind="terminal" rollup={hidden.terminal} size={12} />
+					</div>
 				</div>
 			)}
 			<button

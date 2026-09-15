@@ -2,8 +2,8 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
 	type HiddenRollup,
-	useWorkspaceDotStatus,
-} from "../../hooks/useWorkspaceDotStatus";
+	useWorkspaceRollups,
+} from "../../hooks/useWorkspaceRollups";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
 import {
@@ -11,6 +11,7 @@ import {
 	DOT_STATUS_ANIMATED,
 	DOT_STATUS_COLOR,
 } from "../AgentStatusIcon";
+import { RollupIcon } from "../RollupIcon";
 import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
 
 interface Props {
@@ -23,7 +24,8 @@ interface Props {
 	onRename: (name: string) => void;
 	onRenameCancel: () => void;
 	/** Set only on a folded set's Primary strip: the hidden Linked worktrees'
-	 *  rolled-up status, drawn as a badge dot on the status icon. */
+	 *  rolled-up status, drawn as a badge dot on the status icons — the more
+	 *  urgent of its two rollups, as there is room for one only. */
 	hidden?: HiddenRollup;
 	/** Left indent (px) for a Linked worktree in a Worktree set; draws a rail.
 	 *  Applied as internal padding so the strip's edge — and thus the hover
@@ -46,7 +48,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	hidden,
 	indent = 0,
 }: Props) {
-	const dotStatus = useWorkspaceDotStatus(workspace);
+	const rollups = useWorkspaceRollups(workspace);
 	const sidebarWidth = useSettingsStore((s) => s.sidebarWidth);
 
 	const [open, setOpen] = useState(false);
@@ -148,22 +150,42 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 						}}
 					/>
 				)}
+				{/* Agent rollup over Terminal rollup, as in the expanded row's left
+				    slot (ADR-0032) but a size down, so each strip's pair stays
+				    clear of its neighbours'. Each cell keeps its height when empty
+				    so the icons never swap places. */}
 				<div
-					style={{ flexShrink: 0, display: "flex", position: "relative" }}
-					title={hidden ? hidden.tooltip : undefined}
+					style={{
+						flexShrink: 0,
+						display: "flex",
+						flexDirection: "column",
+						gap: 3,
+						width: 12,
+						position: "relative",
+					}}
+					title={hidden ? hidden.membersTooltip : undefined}
 				>
-					<AgentStatusIcon status={dotStatus} />
+					<div style={{ height: 12 }}>
+						{rollups.notOpened ? (
+							<AgentStatusIcon status="grey" size={12} />
+						) : (
+							<RollupIcon kind="agent" rollup={rollups.agent} size={12} />
+						)}
+					</div>
+					<div style={{ height: 12 }}>
+						<RollupIcon kind="terminal" rollup={rollups.terminal} size={12} />
+					</div>
 					{hidden && (
 						<span
 							aria-hidden
 							style={{
 								position: "absolute",
 								right: -3,
-								bottom: -2,
+								top: 7,
 								width: 7,
 								height: 7,
 								borderRadius: "50%",
-								backgroundColor: DOT_STATUS_COLOR[hidden.status],
+								backgroundColor: DOT_STATUS_COLOR[hidden.badge],
 								// Ring in the strip's own background so the dot reads as
 								// separate from the glyph it sits on.
 								boxShadow: "0 0 0 1.5px var(--bg-secondary)",
@@ -171,7 +193,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 								// is mush at this size), but it must not sit still while
 								// the wide sidebar's chip moves — so an animated status
 								// breathes here. See docs/plans/foldable-worktree-sets.md.
-								animation: DOT_STATUS_ANIMATED[hidden.status]
+								animation: DOT_STATUS_ANIMATED[hidden.badge]
 									? "shell-running-breathe 1.6s ease-in-out infinite"
 									: undefined,
 							}}

@@ -1,16 +1,20 @@
 import { useMemo } from "react";
 import { parseTabLayout } from "../lib/paneTree";
-import type { PaneNode, WorkspaceWithTabs } from "../lib/types";
+import type { PaneNode, Tab, WorkspaceWithTabs } from "../lib/types";
 import {
-	computeWorkspaceDotStatus,
+	computeTabRollups,
+	computeWorkspaceRollups,
 	type DotStatus,
 	dotStatusLabel,
-	rollupDotStatus,
+	mergeRollups,
+	mostUrgentStatus,
+	type Rollups,
 	usePtyActivityStore,
+	type WorkspaceRollups,
 } from "../stores/ptyActivityStore";
 
-/** A workspace's parsed tab layouts — the shape every dot-status computation
- *  takes. Shared by the per-workspace hook and the Hidden rollup hooks. */
+/** A workspace's parsed tab layouts — the shape every rollup computation
+ *  takes. Shared by the per-workspace hook and the Hidden rollup hook. */
 function tabLayoutsOf(tabs: WorkspaceWithTabs["tabs"]): PaneNode[] {
 	const layouts: PaneNode[] = [];
 	for (const tab of tabs) {
@@ -20,46 +24,71 @@ function tabLayoutsOf(tabs: WorkspaceWithTabs["tabs"]): PaneNode[] {
 	return layouts;
 }
 
-export function useWorkspaceDotStatus(workspace: WorkspaceWithTabs): DotStatus {
+// Rollups are objects, and the store ticks on every PTY activity. Selecting a
+// serialized key (a primitive) lets Zustand's default equality bail the
+// re-render until a count actually changes; the object is rebuilt from it.
+type StoreState = ReturnType<typeof usePtyActivityStore.getState>;
+
+function useRollupsKey<T>(select: (s: StoreState) => string): T {
+	const key = usePtyActivityStore(select);
+	return useMemo(() => JSON.parse(key) as T, [key]);
+}
+
+/** A Workspace's **Agent rollup** and **Terminal rollup**. */
+export function useWorkspaceRollups(
+	workspace: WorkspaceWithTabs,
+): WorkspaceRollups {
 	const tabLayouts = useMemo(
 		() => tabLayoutsOf(workspace.tabs),
 		[workspace.tabs],
 	);
-
-	return usePtyActivityStore((s) =>
-		computeWorkspaceDotStatus(
-			workspace.id,
-			tabLayouts,
-			s.activities,
-			s.openedWorkspaceIds,
-			s.panePtyMap,
+	return useRollupsKey((s) =>
+		JSON.stringify(
+			computeWorkspaceRollups(
+				workspace.id,
+				tabLayouts,
+				s.activities,
+				s.openedWorkspaceIds,
+				s.panePtyMap,
+			),
 		),
 	);
 }
 
+/** A Tab's **Agent rollup** and **Terminal rollup**. */
+export function useTabRollups(tab: Tab): Rollups {
+	return useRollupsKey((s) =>
+		JSON.stringify(computeTabRollups(tab, s.activities, s.panePtyMap)),
+	);
+}
+
 /** What a Folded set's Primary row reports for the members it hides. */
-export interface HiddenRollup {
+export interface HiddenRollup extends Rollups {
 	count: number;
-	status: DotStatus;
-	/** One `name — Status` line per hidden worktree, in render order. */
-	tooltip: string;
+	/** Every hidden member was never opened and has nothing to report. */
+	notOpened: boolean;
+	/** The one status the narrow sidebar's badge has room for. */
+	badge: DotStatus;
+	/** One `name — Status` line per hidden worktree, in render order, each at
+	 *  the more urgent of that member's two rollups. */
+	membersTooltip: string;
+}
+
+function memberLabel(r: WorkspaceRollups): string {
+	if (r.notOpened) return dotStatusLabel("grey");
+	const status = mostUrgentStatus(r);
+	// An opened worktree with no PTYs has nothing to report: Idle, not "Not opened".
+	return dotStatusLabel(status === "grey" ? "green" : status);
 }
 
 /**
- * The **Hidden rollup** for a Folded set: the status covering the Linked
- * worktrees whose rows are hidden — at the highest precedence among them —
- * plus their count and a per-member tooltip.
+ * The **Hidden rollup** for a Folded set: an Agent rollup and a Terminal
+ * rollup summed across the Linked worktrees whose rows are hidden, plus their
+ * count and a per-member tooltip.
  *
  * Hoisted out of the rows because the rows in question are unmounted while
- * folded: this is what keeps folding from taking the sidebar's agent signal
- * with it. Returns `undefined` when nothing is hidden.
- *
- * The single store subscription yields a **statuses key** (a primitive, so
- * Zustand's default equality bails the re-render when nothing changed); the
- * count/status/tooltip are derived from it. That matters for cost, not just
- * referential stability: the store ticks on PTY activity, and the tooltip is
- * a `title` attribute a user reads once in a while — so its string is built
- * only when a member's status actually changes, not on every tick.
+ * folded: this is what keeps folding from taking the sidebar's signal with it.
+ * Returns `undefined` when nothing is hidden.
  */
 export function useHiddenRollup(
 	hidden: WorkspaceWithTabs[],
@@ -74,29 +103,32 @@ export function useHiddenRollup(
 		[hidden],
 	);
 
-	const statusesKey = usePtyActivityStore((s) =>
-		members
-			.map((m) =>
-				computeWorkspaceDotStatus(
+	const perMember = useRollupsKey<WorkspaceRollups[]>((s) =>
+		JSON.stringify(
+			members.map((m) =>
+				computeWorkspaceRollups(
 					m.id,
 					m.layouts,
 					s.activities,
 					s.openedWorkspaceIds,
 					s.panePtyMap,
 				),
-			)
-			.join(","),
+			),
+		),
 	);
 
 	return useMemo(() => {
 		if (members.length === 0) return undefined;
-		const statuses = statusesKey.split(",") as DotStatus[];
+		const merged = mergeRollups(perMember);
+		const notOpened = perMember.every((r) => r.notOpened);
 		return {
+			...merged,
 			count: members.length,
-			status: rollupDotStatus(statuses),
-			tooltip: members
-				.map((m, i) => `${m.name} — ${dotStatusLabel(statuses[i])}`)
+			notOpened,
+			badge: mostUrgentStatus(merged),
+			membersTooltip: members
+				.map((m, i) => `${m.name} — ${memberLabel(perMember[i])}`)
 				.join("\n"),
 		};
-	}, [members, statusesKey]);
+	}, [members, perMember]);
 }

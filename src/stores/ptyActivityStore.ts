@@ -786,24 +786,9 @@ export type DotStatus =
 	| "red"
 	| "skyblue";
 
-/** Asymmetric rollup: agent-mode PTYs propagate every state to the
- *  Tab/Workspace dot; shell-mode PTYs propagate only Error. Working, Ready
- *  (unreachable for shells but defensive) and Waiting from a shell are
- *  suppressed so a backgrounded `npm run dev` doesn't permanently colour its
- *  Tab dot. See ADR-0009. */
-function rollsUp(entry: PtyActivityEntry): boolean {
-	if (entry.detectionMode === "agent") return true;
-	return entry.state === "error";
-}
-
-/** Precedence over already-computed statuses, highest-attention first. The
- *  **single** ordering in this file: `computeWorkspaceDotStatus`,
- *  `computeTabDotStatus` and the **Hidden rollup** a Folded set's Primary row
- *  shows all reach their answer through `rollupDotStatus`, so they cannot
- *  disagree about whether (say) `ready` outranks `active`. A single-member
- *  rollup returns that member's status unchanged. `cyan` (shell running) never
- *  survives the `rollsUp` filter, but is ordered here defensively rather than
- *  being silently dropped. */
+/** Precedence over already-computed statuses, highest-attention first. Used
+ *  wherever two statuses must collapse into one — the narrow sidebar's single
+ *  Hidden-rollup badge, and a hidden worktree's line in its tooltip. */
 const DOT_STATUS_PRECEDENCE: DotStatus[] = [
 	"red",
 	"skyblue",
@@ -813,26 +798,6 @@ const DOT_STATUS_PRECEDENCE: DotStatus[] = [
 	"green",
 	"grey",
 ];
-
-/** One PTY entry's contribution to an aggregate status. Only entries that pass
- *  `rollsUp` reach this, so a shell-mode PTY is here only when it errored —
- *  which is why `active` maps to `amber` (agent Working) with no cyan branch.
- *  The per-PTY indicator has its own mapping (`computePtyDotStatus`), because a
- *  shell's own dot *does* go cyan. */
-function entryDotStatus(entry: PtyActivityEntry): DotStatus {
-	switch (entry.state) {
-		case "error":
-			return "red";
-		case "waiting":
-			return "skyblue";
-		case "ready":
-			return "purple";
-		case "active":
-			return "amber";
-		default:
-			return "green";
-	}
-}
 
 export function rollupDotStatus(statuses: DotStatus[]): DotStatus {
 	for (const candidate of DOT_STATUS_PRECEDENCE) {
@@ -861,53 +826,167 @@ export function dotStatusLabel(status: DotStatus): string {
 	}
 }
 
-export function computeWorkspaceDotStatus(
+// A Tab or Workspace carries two rollups, never one mixed icon: the **Agent
+// rollup** over its agent-mode PTYs and the **Terminal rollup** over its
+// shell-mode PTYs. A rollup with no PTYs of its kind is `null` — drawn as no
+// icon, not as Idle. See ADR-0032 and CONTEXT.md.
+
+export type RollupKind = "agent" | "terminal";
+
+/** How many PTYs of one kind sit in each state. */
+export interface StatusCounts {
+	error: number;
+	waiting: number;
+	ready: number;
+	working: number;
+	idle: number;
+}
+
+export interface KindRollup {
+	status: DotStatus;
+	counts: StatusCounts;
+}
+
+export interface Rollups {
+	agent: KindRollup | null;
+	terminal: KindRollup | null;
+}
+
+export interface WorkspaceRollups extends Rollups {
+	/** Never opened in this Window and nothing to report: drawn as the single
+	 *  grey "Not opened" icon, with both rollups `null`. */
+	notOpened: boolean;
+}
+
+/** Most urgent first — the order of both the precedence and the tooltip. */
+const COUNT_ORDER: Array<[keyof StatusCounts, string]> = [
+	["error", "Error"],
+	["waiting", "Waiting"],
+	["ready", "Ready"],
+	["working", "Working"],
+	["idle", "Idle"],
+];
+
+function emptyCounts(): StatusCounts {
+	return { error: 0, waiting: 0, ready: 0, working: 0, idle: 0 };
+}
+
+function countKey(state: PtyActivityState): keyof StatusCounts {
+	return state === "active" ? "working" : state;
+}
+
+function totalOf(counts: StatusCounts): number {
+	return (
+		counts.error + counts.waiting + counts.ready + counts.working + counts.idle
+	);
+}
+
+/** The status a rollup draws. Working is amber for Agents and cyan for
+ *  terminals, as at the pane (ADR-0009). Shells never reach Waiting or Ready,
+ *  but they are ranked here rather than silently dropped. */
+function statusOfCounts(kind: RollupKind, counts: StatusCounts): DotStatus {
+	if (counts.error > 0) return "red";
+	if (counts.waiting > 0) return "skyblue";
+	if (counts.ready > 0) return "purple";
+	if (counts.working > 0) return kind === "agent" ? "amber" : "cyan";
+	return "green";
+}
+
+function rollupOf(kind: RollupKind, counts: StatusCounts): KindRollup | null {
+	if (totalOf(counts) === 0) return null;
+	return { status: statusOfCounts(kind, counts), counts };
+}
+
+function tallyEntries(entries: PtyActivityEntry[]): Rollups {
+	const agent = emptyCounts();
+	const terminal = emptyCounts();
+	for (const entry of entries) {
+		const counts = entry.detectionMode === "agent" ? agent : terminal;
+		counts[countKey(entry.state)]++;
+	}
+	return {
+		agent: rollupOf("agent", agent),
+		terminal: rollupOf("terminal", terminal),
+	};
+}
+
+function entriesFor(
+	ptyIds: string[],
+	activities: Record<string, PtyActivityEntry>,
+): PtyActivityEntry[] {
+	return ptyIds
+		.map((id) => activities[id])
+		.filter((e): e is PtyActivityEntry => Boolean(e));
+}
+
+/** Sums several sets of rollups into one — the **Hidden rollup** across a
+ *  Folded set's hidden members. */
+export function mergeRollups(list: Rollups[]): Rollups {
+	const sum = (kind: RollupKind): KindRollup | null => {
+		const counts = emptyCounts();
+		for (const r of list) {
+			const part = r[kind];
+			if (!part) continue;
+			for (const [key] of COUNT_ORDER) counts[key] += part.counts[key];
+		}
+		return rollupOf(kind, counts);
+	};
+	return { agent: sum("agent"), terminal: sum("terminal") };
+}
+
+/** The more urgent of the two rollups, for places with room for one icon
+ *  only. `grey` when there is nothing to report. */
+export function mostUrgentStatus(rollups: Rollups): DotStatus {
+	const present: DotStatus[] = [];
+	if (rollups.agent) present.push(rollups.agent.status);
+	if (rollups.terminal) present.push(rollups.terminal.status);
+	return rollupDotStatus(present);
+}
+
+/** Hover text for one rollup icon: its full breakdown, most urgent first,
+ *  zero counts left out — e.g. "Agents: 2 Waiting · 1 Working · 3 Idle". */
+export function rollupTooltip(kind: RollupKind, counts: StatusCounts): string {
+	const parts = COUNT_ORDER.filter(([key]) => counts[key] > 0).map(
+		([key, label]) => `${counts[key]} ${label}`,
+	);
+	return `${kind === "agent" ? "Agents" : "Terminals"}: ${parts.join(" · ")}`;
+}
+
+export function computeWorkspaceRollups(
 	workspaceId: string,
 	tabLayouts: PaneNode[],
 	activities: Record<string, PtyActivityEntry>,
 	openedWorkspaceIds: Set<string>,
 	panePtyMap?: Record<string, string>,
-): DotStatus {
-	const allPtyIds: string[] = [];
+): WorkspaceRollups {
+	const ptyIds: string[] = [];
 	for (const layout of tabLayouts) {
-		allPtyIds.push(...collectPtyIds(layout, panePtyMap));
+		ptyIds.push(...collectPtyIds(layout, panePtyMap));
 	}
-
-	if (allPtyIds.length === 0) {
-		return openedWorkspaceIds.has(workspaceId) ? "green" : "grey";
+	const rollups = tallyEntries(entriesFor(ptyIds, activities));
+	// A Workspace not opened in this Window reads "Not opened" unless one of its
+	// PTYs has something worth saying anyway. `grey` here means no PTYs at all,
+	// `green` means all of them idle — neither is worth saying.
+	const urgent = mostUrgentStatus(rollups);
+	if (
+		!openedWorkspaceIds.has(workspaceId) &&
+		(urgent === "green" || urgent === "grey")
+	) {
+		return { agent: null, terminal: null, notOpened: true };
 	}
-
-	const entries = allPtyIds
-		.map((id) => activities[id])
-		.filter((e): e is PtyActivityEntry => Boolean(e))
-		.filter(rollsUp);
-
-	const rolled = rollupDotStatus(entries.map(entryDotStatus));
-	// `green`/`grey` mean "nothing to report" here — which of the two depends on
-	// whether the Workspace has ever been opened, not on the PTYs.
-	if (rolled !== "green" && rolled !== "grey") return rolled;
-	return openedWorkspaceIds.has(workspaceId) ? "green" : "grey";
+	return { ...rollups, notOpened: false };
 }
 
-export function computeTabDotStatus(
+export function computeTabRollups(
 	tab: Tab,
 	activities: Record<string, PtyActivityEntry>,
 	panePtyMap?: Record<string, string>,
-): DotStatus {
+): Rollups {
 	const layout = parseTabLayout(tab.layoutJson);
-	if (!layout) return "green";
-
-	const ptyIds = collectPtyIds(layout, panePtyMap);
-	if (ptyIds.length === 0) return "grey";
-
-	const entries = ptyIds
-		.map((id) => activities[id])
-		.filter((e): e is PtyActivityEntry => Boolean(e))
-		.filter(rollsUp);
-
-	const rolled = rollupDotStatus(entries.map(entryDotStatus));
-	// Tabs are only shown for the active workspace — default to green.
-	return rolled === "grey" ? "green" : rolled;
+	if (!layout) return { agent: null, terminal: null };
+	return tallyEntries(
+		entriesFor(collectPtyIds(layout, panePtyMap), activities),
+	);
 }
 
 export function computePtyDotStatus(

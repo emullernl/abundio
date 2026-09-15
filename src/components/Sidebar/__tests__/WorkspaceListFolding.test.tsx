@@ -184,13 +184,34 @@ describe("WorkspaceList — folded Worktree sets", () => {
 		});
 		useWindowUiStore.setState({ foldedSetKeys: [GROUP_KEY] });
 		render();
-		const chip = container.querySelector<HTMLElement>("[title*='feat-a']");
+		const chip = container.querySelector<HTMLElement>("[data-hidden-rollup]");
 		expect(chip).toBeTruthy();
 		expect(chip?.textContent).toContain("2");
-		// Tooltip names every hidden worktree and its state.
-		expect(chip?.getAttribute("title")).toBe(
-			"feat-a — Waiting\nfeat-b — Not opened",
-		);
+		// The count's tooltip names every hidden worktree and its state.
+		expect(
+			chip?.querySelector("[title*='feat-a']")?.getAttribute("title"),
+		).toBe("feat-a — Waiting\nfeat-b — Not opened");
+		// Each rollup icon hovers to its own breakdown, summed over hidden members.
+		expect(
+			chip?.querySelector("[data-rollup='agent']")?.getAttribute("title"),
+		).toBe("Agents: 1 Waiting");
+		expect(chip?.querySelector("[data-rollup='terminal']")).toBeNull();
+	});
+
+	it("gives a row its own Agent and Terminal rollups, each with a breakdown", () => {
+		usePtyActivityStore.setState({
+			activities: {
+				"pty-primary": { ...agentEntry("active"), detectionMode: "shell" },
+			},
+			openedWorkspaceIds: new Set([PRIMARY.id]),
+		});
+		render();
+		const rows = container.querySelectorAll("[data-rollup]");
+		// Only the Primary has a PTY, and it is a shell: one Terminal rollup,
+		// no Agent rollup (absent, not Idle).
+		expect(rows).toHaveLength(1);
+		expect(rows[0].getAttribute("data-rollup")).toBe("terminal");
+		expect(rows[0].getAttribute("title")).toBe("Terminals: 1 Working");
 	});
 
 	it("keeps the rollup live while the hidden rows are unmounted", () => {
@@ -246,8 +267,9 @@ describe("WorkspaceList — folded Worktree sets", () => {
 		});
 		useWindowUiStore.setState({ foldedSetKeys: [GROUP_KEY] });
 		render();
-		const chip = container.querySelector<HTMLElement>("[title*='feat-a']");
-		expect(chip?.textContent).toContain("2");
+		const chip = container
+			.querySelector("[data-hidden-rollup]")
+			?.querySelector<HTMLElement>("[title*='feat-a']");
 		// Idle + never-opened hidden members — the primary's Error stays out of it.
 		expect(chip?.getAttribute("title")).toBe(
 			"feat-a — Idle\nfeat-b — Not opened",
