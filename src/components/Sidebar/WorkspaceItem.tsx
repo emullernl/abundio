@@ -3,6 +3,10 @@ import {
 	type HiddenRollup,
 	useWorkspaceRollups,
 } from "../../hooks/useWorkspaceRollups";
+import {
+	branchStatTooltip,
+	uncommittedTooltip,
+} from "../../lib/dirtyWorkspace";
 import { shortenPath } from "../../lib/shortenPath";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
@@ -11,6 +15,7 @@ import {
 } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
+import { DirtyMarker } from "../DirtyMarker";
 import { ChevronRight, GitBranch, X } from "../Icons";
 import { RollupIcon } from "../RollupIcon";
 
@@ -104,6 +109,9 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 }: Props) {
 	const rollups = useWorkspaceRollups(workspace);
 	const gitInfo = useWorkspaceGitStore((s) => s.byWorkspaceId[workspace.id]);
+	const uncommitted = useWorkspaceGitStore(
+		(s) => s.uncommittedById[workspace.id],
+	);
 	// A workspace is "loaded" once it has been opened in this session.
 	// Loaded (but not active) workspaces keep the accent chip and change stats.
 	// Workspaces that have never been opened only show the cached branch name, dimmed.
@@ -335,6 +343,15 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 									style={{ flexShrink: 0 }}
 								/>
 								<span className="truncate">{gitInfo.currentBranch}</span>
+								{/* Full warning colour even on the dimmed chip of an
+								    unopened workspace — uncommitted work nobody is
+								    looking at is the case the marker exists for. */}
+								{uncommitted?.dirty && (
+									<DirtyMarker
+										title={uncommittedTooltip(uncommitted)}
+										style={{ marginLeft: 1 }}
+									/>
+								)}
 							</div>
 						)}
 					</div>
@@ -350,6 +367,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 						<span
 							className="flex items-center gap-1 flex-shrink-0"
 							style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}
+							title={branchStatTooltip(gitInfo, workspace.baseBranch)}
 						>
 							<span style={{ color: "var(--fg-secondary)" }}>
 								{gitInfo.changedFileCount}F
@@ -399,6 +417,9 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 						>
 							{hidden.count}
 						</span>
+						{hidden.dirty && (
+							<DirtyMarker title="Uncommitted changes in a hidden worktree" />
+						)}
 					</div>
 					<div
 						className="flex items-center"
