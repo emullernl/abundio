@@ -13,24 +13,12 @@ import {
 	memoryPercent,
 	memoryTooltip,
 } from "../lib/metricsFormat";
+import { shortenPath } from "../lib/shortenPath";
 import { useProfileStore } from "../stores/profileStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Folder, GitBranch, Grid, Terminal } from "./Icons";
 import { InjectedBundlePill } from "./WorkspaceEnv/InjectedBundlePill";
-
-function shortenPath(fullPath: string): string {
-	const home = "/Users/";
-	if (fullPath.startsWith(home)) {
-		const afterHome = fullPath.slice(home.length);
-		const slashIdx = afterHome.indexOf("/");
-		if (slashIdx !== -1) {
-			return `~${afterHome.slice(slashIdx)}`;
-		}
-		return "~";
-	}
-	return fullPath;
-}
 
 function Separator() {
 	return (

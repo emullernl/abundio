@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-	computeWorkspaceDotStatus,
+	computeWorkspaceRollups,
+	mostUrgentStatus,
 	usePtyActivityStore,
 } from "../../../stores/ptyActivityStore";
 import type { PaneNode } from "../../types";
@@ -23,13 +24,14 @@ function preSeed(wsId: string): void {
 
 function dot(wsId: string): string {
 	const s = usePtyActivityStore.getState();
-	return computeWorkspaceDotStatus(
+	const rollups = computeWorkspaceRollups(
 		wsId,
 		layoutsFor(wsId),
 		s.activities,
 		s.openedWorkspaceIds,
 		s.panePtyMap,
 	);
+	return rollups.notOpened ? "grey" : mostUrgentStatus(rollups);
 }
 
 describe("demo status pre-seeding (visible without spawning a PTY)", () => {

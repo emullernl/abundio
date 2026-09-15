@@ -5,13 +5,19 @@ import {
 	backstopRule,
 	collectPtyIds,
 	computePtyDotStatus,
-	computeTabDotStatus,
-	computeWorkspaceDotStatus,
+	computeTabRollups,
+	computeWorkspaceRollups,
+	decodeRollups,
 	dotStatusLabel,
+	encodeRollups,
 	getLastOutputAt,
+	mergeRollups,
+	mostUrgentStatus,
 	type PtyActivityEntry,
 	peekPreErrorState,
 	rollupDotStatus,
+	rollupTooltip,
+	type StatusCounts,
 	selectErrorAgentCount,
 	selectErrorShellCount,
 	selectIdleAgentCount,
@@ -297,199 +303,186 @@ describe("collectPtyIds", () => {
 	});
 });
 
-describe("computeWorkspaceDotStatus", () => {
-	const makeEntry = (
-		state: string,
-		mode: "agent" | "shell" = "shell",
-	): PtyActivityEntry => ({
-		state: state as PtyActivityEntry["state"],
-		lastOutputAt: 0,
-		hasEverReceivedOutput: true,
-		detectionMode: mode,
-		hookDriven: false,
+// Tab and Workspace carry an Agent rollup and a Terminal rollup, never one
+// mixed icon — see ADR-0032 and the "Agent rollup" entry in CONTEXT.md.
+const rollupEntry = (
+	state: PtyActivityEntry["state"],
+	mode: "agent" | "shell",
+): PtyActivityEntry => ({
+	state,
+	lastOutputAt: 0,
+	hasEverReceivedOutput: true,
+	detectionMode: mode,
+	hookDriven: false,
+});
+
+const pane = (id: string): PaneNode => ({
+	type: "terminal",
+	id: `p-${id}`,
+	ptyId: id,
+});
+
+const splitOf = (a: PaneNode, b: PaneNode): PaneNode => ({
+	type: "split",
+	id: `s-${a.id}-${b.id}`,
+	direction: "horizontal",
+	ratio: 0.5,
+	first: a,
+	second: b,
+});
+
+const counts = (partial: Partial<StatusCounts>): StatusCounts => ({
+	error: 0,
+	waiting: 0,
+	ready: 0,
+	working: 0,
+	idle: 0,
+	...partial,
+});
+
+describe("computeWorkspaceRollups", () => {
+	const opened = new Set(["s1"]);
+
+	it("is 'Not opened' for a never-opened workspace with no PTYs", () => {
+		expect(computeWorkspaceRollups("s1", [], {}, new Set())).toEqual({
+			agent: null,
+			terminal: null,
+			notOpened: true,
+		});
 	});
 
-	it("returns grey when no ptyIds", () => {
-		expect(computeWorkspaceDotStatus("s1", [], {}, new Set())).toBe("grey");
+	it("shows no icon at all for an opened workspace with no PTYs", () => {
+		expect(computeWorkspaceRollups("s1", [], {}, opened)).toEqual({
+			agent: null,
+			terminal: null,
+			notOpened: false,
+		});
 	});
 
-	it("returns red when any PTY is in error (shell or agent — Error always propagates)", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{ "pty-1": makeEntry("error", "shell") },
-				new Set(),
-			),
-		).toBe("red");
+	it("splits agent-mode and shell-mode PTYs into their own rollups", () => {
+		const r = computeWorkspaceRollups(
+			"s1",
+			[splitOf(pane("a"), pane("b"))],
+			{
+				a: rollupEntry("waiting", "agent"),
+				b: rollupEntry("active", "shell"),
+			},
+			opened,
+		);
+		expect(r.agent).toEqual({
+			status: "skyblue",
+			counts: counts({ waiting: 1 }),
+		});
+		expect(r.terminal).toEqual({
+			status: "cyan",
+			counts: counts({ working: 1 }),
+		});
 	});
 
-	it("returns amber when an agent-mode PTY is active", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{ "pty-1": makeEntry("active", "agent") },
-				new Set(),
-			),
-		).toBe("amber");
+	it("rolls a shell's Working up as cyan (no longer suppressed, ADR-0032)", () => {
+		const r = computeWorkspaceRollups(
+			"s1",
+			[pane("a")],
+			{ a: rollupEntry("active", "shell") },
+			opened,
+		);
+		expect(r.terminal?.status).toBe("cyan");
+		expect(r.agent).toBeNull();
 	});
 
-	it("does NOT roll up a shell-mode active to amber — shell Working stays at the pane (ADR-0009)", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		// Workspace is opened (in the set) so the green/grey fallback returns green.
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{ "pty-1": makeEntry("active", "shell") },
-				new Set(["s1"]),
-			),
-		).toBe("green");
+	it("keeps a shell's Error out of the Agent rollup", () => {
+		const r = computeWorkspaceRollups(
+			"s1",
+			[splitOf(pane("a"), pane("b"))],
+			{
+				a: rollupEntry("error", "shell"),
+				b: rollupEntry("active", "agent"),
+			},
+			opened,
+		);
+		expect(r.agent?.status).toBe("amber");
+		expect(r.terminal?.status).toBe("red");
 	});
 
-	it("returns purple when an agent-mode PTY is ready", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{ "pty-1": makeEntry("ready", "agent") },
-				new Set(),
-			),
-		).toBe("purple");
-	});
-
-	it("returns green when all idle and workspace opened", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{ "pty-1": makeEntry("idle") },
-				new Set(["s1"]),
-			),
-		).toBe("green");
-	});
-
-	it("returns grey when all idle but workspace not opened", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{ "pty-1": makeEntry("idle") },
-				new Set(),
-			),
-		).toBe("grey");
-	});
-
-	it("error takes priority over active across agent-mode panes", () => {
-		const layout: PaneNode = {
-			type: "split",
-			id: "s",
-			direction: "horizontal",
-			ratio: 0.5,
-			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
-			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
+	it("ranks agent states error > waiting > ready > working > idle", () => {
+		const status = (...states: PtyActivityEntry["state"][]) => {
+			const activities: Record<string, PtyActivityEntry> = {};
+			const layouts = states.map((state, i) => {
+				activities[`pty-${i}`] = rollupEntry(state, "agent");
+				return pane(`pty-${i}`);
+			});
+			return computeWorkspaceRollups("s1", layouts, activities, opened).agent
+				?.status;
 		};
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{
-					"pty-1": makeEntry("error", "agent"),
-					"pty-2": makeEntry("active", "agent"),
-				},
-				new Set(),
-			),
-		).toBe("red");
+		expect(status("idle", "active")).toBe("amber");
+		expect(status("active", "ready")).toBe("purple");
+		expect(status("ready", "waiting")).toBe("skyblue");
+		expect(status("waiting", "error")).toBe("red");
+		expect(status("idle")).toBe("green");
 	});
 
-	it("a shell-mode error still rolls up over an agent in active state", () => {
-		// Confirms shell Error breaks through even when an agent is busy.
-		const layout: PaneNode = {
-			type: "split",
-			id: "s",
-			direction: "horizontal",
-			ratio: 0.5,
-			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
-			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
-		};
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{
-					"pty-1": makeEntry("error", "shell"),
-					"pty-2": makeEntry("active", "agent"),
-				},
-				new Set(),
-			),
-		).toBe("red");
+	it("counts every state across tabs", () => {
+		const r = computeWorkspaceRollups(
+			"s1",
+			[splitOf(pane("a"), pane("b")), splitOf(pane("c"), pane("d"))],
+			{
+				a: rollupEntry("waiting", "agent"),
+				b: rollupEntry("waiting", "agent"),
+				c: rollupEntry("idle", "agent"),
+				d: rollupEntry("idle", "shell"),
+			},
+			opened,
+		);
+		expect(r.agent?.counts).toEqual(counts({ waiting: 2, idle: 1 }));
+		expect(r.terminal?.counts).toEqual(counts({ idle: 1 }));
 	});
 
-	it("agent activity overrides a backgrounded shell command's would-be amber", () => {
-		// [agent: active, shell: active] — only the agent contributes to the
-		// rollup, but its active state is what the user sees.
-		const layout: PaneNode = {
-			type: "split",
-			id: "s",
-			direction: "horizontal",
-			ratio: 0.5,
-			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
-			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
-		};
-		expect(
-			computeWorkspaceDotStatus(
-				"s1",
-				[layout],
-				{
-					"pty-1": makeEntry("active", "agent"),
-					"pty-2": makeEntry("active", "shell"),
-				},
-				new Set(),
-			),
-		).toBe("amber");
+	it("skips panes whose PTY has no activity entry", () => {
+		const r = computeWorkspaceRollups(
+			"s1",
+			[splitOf(pane("a"), pane("ghost"))],
+			{ a: rollupEntry("idle", "shell") },
+			opened,
+		);
+		expect(r.agent).toBeNull();
+		expect(r.terminal?.counts).toEqual(counts({ idle: 1 }));
 	});
 
-	it("ready takes priority over active across agent-mode panes", () => {
-		const layout: PaneNode = {
-			type: "split",
-			id: "s",
-			direction: "horizontal",
-			ratio: 0.5,
-			first: { type: "terminal", id: "p1", ptyId: "pty-1" },
-			second: { type: "terminal", id: "p2", ptyId: "pty-2" },
-		};
+	it("reads 'Not opened' when unopened and everything is idle", () => {
 		expect(
-			computeWorkspaceDotStatus(
+			computeWorkspaceRollups(
 				"s1",
-				[layout],
-				{
-					"pty-1": makeEntry("ready", "agent"),
-					"pty-2": makeEntry("active", "agent"),
-				},
+				[pane("a")],
+				{ a: rollupEntry("idle", "agent") },
 				new Set(),
 			),
-		).toBe("purple");
+		).toEqual({ agent: null, terminal: null, notOpened: true });
+	});
+
+	it("still reports an unopened workspace's PTY that has something to say", () => {
+		const r = computeWorkspaceRollups(
+			"s1",
+			[pane("a")],
+			{ a: rollupEntry("error", "shell") },
+			new Set(),
+		);
+		expect(r.notOpened).toBe(false);
+		expect(r.terminal?.status).toBe("red");
+	});
+
+	it("uses panePtyMap for panes whose layout ptyId is still empty", () => {
+		const r = computeWorkspaceRollups(
+			"s1",
+			[{ type: "terminal", id: "p1", ptyId: "" }],
+			{ mapped: rollupEntry("active", "agent") },
+			opened,
+			{ p1: "mapped" },
+		);
+		expect(r.agent?.status).toBe("amber");
 	});
 });
 
-describe("computeTabDotStatus", () => {
-	const makeEntry = (
-		state: string,
-		mode: "agent" | "shell" = "shell",
-	): PtyActivityEntry => ({
-		state: state as PtyActivityEntry["state"],
-		lastOutputAt: 0,
-		hasEverReceivedOutput: true,
-		detectionMode: mode,
-		hookDriven: false,
-	});
-
+describe("computeTabRollups", () => {
 	const makeTab = (layoutJson: string): Tab => ({
 		id: "t1",
 		workspaceId: "s1",
@@ -500,44 +493,140 @@ describe("computeTabDotStatus", () => {
 		updatedAt: 0,
 	});
 
-	it("returns green for invalid JSON", () => {
-		expect(computeTabDotStatus(makeTab("invalid"), {})).toBe("green");
+	it("has no rollups for invalid JSON", () => {
+		expect(computeTabRollups(makeTab("invalid"), {})).toEqual({
+			agent: null,
+			terminal: null,
+		});
 	});
 
-	it("returns amber when an agent-mode PTY is active", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(
-			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
-				"pty-1": makeEntry("active", "agent"),
-			}),
-		).toBe("amber");
+	it("splits a tab's panes by mode", () => {
+		const layout = splitOf(pane("a"), pane("b"));
+		const r = computeTabRollups(makeTab(JSON.stringify(layout)), {
+			a: rollupEntry("ready", "agent"),
+			b: rollupEntry("error", "shell"),
+		});
+		expect(r.agent?.status).toBe("purple");
+		expect(r.terminal?.status).toBe("red");
 	});
 
-	it("returns green when a shell-mode PTY is running a command — Working doesn't propagate (ADR-0009)", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
+	it("has only a Terminal rollup when no Agent runs in the tab", () => {
+		const r = computeTabRollups(makeTab(JSON.stringify(pane("a"))), {
+			a: rollupEntry("idle", "shell"),
+		});
+		expect(r.agent).toBeNull();
+		expect(r.terminal?.status).toBe("green");
+	});
+});
+
+describe("rollupTooltip", () => {
+	it("lists every non-zero count, most urgent first", () => {
 		expect(
-			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
-				"pty-1": makeEntry("active", "shell"),
-			}),
-		).toBe("green");
+			rollupTooltip("agent", counts({ idle: 3, waiting: 2, working: 1 })),
+		).toBe("Agents: 2 Waiting · 1 Working · 3 Idle");
 	});
 
-	it("returns red when a shell-mode PTY errored — Error always propagates", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
+	it("names terminals for the Terminal rollup", () => {
+		expect(rollupTooltip("terminal", counts({ working: 1, idle: 4 }))).toBe(
+			"Terminals: 1 Working · 4 Idle",
+		);
+	});
+});
+
+describe("mergeRollups", () => {
+	it("sums counts across members and re-derives each status", () => {
+		const a = computeWorkspaceRollups(
+			"a",
+			[pane("a1")],
+			{ a1: rollupEntry("waiting", "agent") },
+			new Set(["a"]),
+		);
+		const b = computeWorkspaceRollups(
+			"b",
+			[splitOf(pane("b1"), pane("b2"))],
+			{
+				b1: rollupEntry("active", "agent"),
+				b2: rollupEntry("active", "shell"),
+			},
+			new Set(["b"]),
+		);
+		const merged = mergeRollups([a, b]);
+		expect(merged.agent).toEqual({
+			status: "skyblue",
+			counts: counts({ waiting: 1, working: 1 }),
+		});
+		expect(merged.terminal).toEqual({
+			status: "cyan",
+			counts: counts({ working: 1 }),
+		});
+	});
+
+	it("leaves a rollup absent when no member has that kind", () => {
+		expect(mergeRollups([{ agent: null, terminal: null }])).toEqual({
+			agent: null,
+			terminal: null,
+		});
+	});
+});
+
+describe("encodeRollups / decodeRollups", () => {
+	it.each([
+		{ agent: null, terminal: null, notOpened: true },
+		{ agent: null, terminal: null, notOpened: false },
+		{
+			agent: {
+				status: "skyblue" as const,
+				counts: counts({ waiting: 2, working: 1, idle: 3 }),
+			},
+			terminal: null,
+			notOpened: false,
+		},
+		{
+			agent: {
+				status: "red" as const,
+				counts: counts({ error: 12, ready: 4 }),
+			},
+			terminal: {
+				status: "cyan" as const,
+				counts: counts({ working: 1, idle: 40 }),
+			},
+			notOpened: false,
+		},
+	])("round-trips %j exactly", (rollups) => {
+		expect(decodeRollups(encodeRollups(rollups))).toEqual(rollups);
+	});
+
+	it("encodes a Tab's rollups (no notOpened) as opened", () => {
 		expect(
-			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
-				"pty-1": makeEntry("error", "shell"),
+			decodeRollups(encodeRollups({ agent: null, terminal: null })),
+		).toEqual({ agent: null, terminal: null, notOpened: false });
+	});
+
+	it("gives different keys to rollups that differ only in a count", () => {
+		const a = {
+			agent: null,
+			terminal: { status: "green" as const, counts: counts({ idle: 1 }) },
+		};
+		const b = {
+			agent: null,
+			terminal: { status: "green" as const, counts: counts({ idle: 2 }) },
+		};
+		expect(encodeRollups(a)).not.toBe(encodeRollups(b));
+	});
+});
+
+describe("mostUrgentStatus", () => {
+	it("picks the more urgent of the two rollups", () => {
+		expect(
+			mostUrgentStatus({
+				agent: { status: "amber", counts: counts({ working: 1 }) },
+				terminal: { status: "red", counts: counts({ error: 1 }) },
 			}),
 		).toBe("red");
 	});
 
-	it("returns green when all idle", () => {
-		const layout: PaneNode = { type: "terminal", id: "p1", ptyId: "pty-1" };
-		expect(
-			computeTabDotStatus(makeTab(JSON.stringify(layout)), {
-				"pty-1": makeEntry("idle"),
-			}),
-		).toBe("green");
+	it("is grey when there is nothing to report", () => {
+		expect(mostUrgentStatus({ agent: null, terminal: null })).toBe("grey");
 	});
 });
 
@@ -1138,9 +1227,9 @@ describe("hook-driven status", () => {
 		).toBe("skyblue");
 	});
 
-	it("waiting takes priority over ready and active", () => {
+	it("waiting takes priority over ready in the Agent rollup", () => {
 		expect(
-			computeWorkspaceDotStatus(
+			computeWorkspaceRollups(
 				"s1",
 				[split()],
 				{
@@ -1148,13 +1237,13 @@ describe("hook-driven status", () => {
 					"pty-2": makeEntry("ready"),
 				},
 				new Set(),
-			),
+			).agent?.status,
 		).toBe("skyblue");
 	});
 
-	it("error takes priority over waiting", () => {
+	it("error takes priority over waiting in the Agent rollup", () => {
 		expect(
-			computeWorkspaceDotStatus(
+			computeWorkspaceRollups(
 				"s1",
 				[split()],
 				{
@@ -1162,7 +1251,7 @@ describe("hook-driven status", () => {
 					"pty-2": makeEntry("waiting"),
 				},
 				new Set(),
-			),
+			).agent?.status,
 		).toBe("red");
 	});
 
@@ -1461,8 +1550,8 @@ describe("the click action", () => {
 	});
 });
 
-// The Hidden rollup a Folded set's Primary row shows for the Linked worktrees
-// it hides — see the "Hidden rollup" entry in CONTEXT.md.
+// Collapses statuses where there is room for one icon only — the narrow
+// sidebar's Hidden-rollup badge. See the "Hidden rollup" entry in CONTEXT.md.
 describe("rollupDotStatus", () => {
 	it("returns grey for no members", () => {
 		expect(rollupDotStatus([])).toBe("grey");
@@ -1488,47 +1577,6 @@ describe("rollupDotStatus", () => {
 		expect(rollupDotStatus(["purple", "skyblue"])).toBe("skyblue");
 		expect(rollupDotStatus(["skyblue", "red"])).toBe("red");
 		expect(rollupDotStatus(["grey", "green"])).toBe("green");
-	});
-
-	it("agrees with computeWorkspaceDotStatus's own precedence", () => {
-		// Two workspaces, one waiting and one working: rolling up their computed
-		// statuses must match what a single workspace holding both PTYs reports.
-		const waitingPane: PaneNode = { type: "terminal", id: "p1", ptyId: "a" };
-		const workingPane: PaneNode = { type: "terminal", id: "p2", ptyId: "b" };
-		const agentEntry = (
-			state: PtyActivityEntry["state"],
-		): PtyActivityEntry => ({
-			state,
-			lastOutputAt: null,
-			hasEverReceivedOutput: true,
-			detectionMode: "agent",
-			hookDriven: false,
-		});
-		const activities: Record<string, PtyActivityEntry> = {
-			a: agentEntry("waiting"),
-			b: agentEntry("active"),
-		};
-		const opened = new Set(["ws-a", "ws-b", "ws-both"]);
-		const separate = rollupDotStatus([
-			computeWorkspaceDotStatus("ws-a", [waitingPane], activities, opened),
-			computeWorkspaceDotStatus("ws-b", [workingPane], activities, opened),
-		]);
-		const combined = computeWorkspaceDotStatus(
-			"ws-both",
-			[
-				{
-					type: "split",
-					id: "s",
-					direction: "horizontal",
-					ratio: 0.5,
-					first: waitingPane,
-					second: workingPane,
-				},
-			],
-			activities,
-			opened,
-		);
-		expect(separate).toBe(combined);
 	});
 });
 

@@ -1,14 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTabRollups } from "../hooks/useWorkspaceRollups";
 import { useDragPaneStore } from "../lib/dragPaneStore";
 import { collectFilePaneIds, parseTabLayout } from "../lib/paneTree";
 import type { Tab } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
-import {
-	computeTabDotStatus,
-	usePtyActivityStore,
-} from "../stores/ptyActivityStore";
-import { AgentStatusIcon } from "./AgentStatusIcon";
 import { Terminal } from "./Icons";
+import { RollupIcon } from "./RollupIcon";
 
 interface TabBarProps {
 	tabs: Tab[];
@@ -306,13 +303,18 @@ function CloseButton({
 	);
 }
 
-/** Per-tab status dot that only re-renders when this tab's computed status changes. */
-const TabStatusDot = memo(function TabStatusDot({ tab }: { tab: Tab }) {
-	const tabDot = usePtyActivityStore((s) =>
-		computeTabDotStatus(tab, s.activities, s.panePtyMap),
+/** A tab's Agent rollup and Terminal rollup, side by side with the Agent
+ *  first. An absent rollup takes no space. Re-renders only when a count
+ *  changes. See ADR-0032. */
+const TabRollupIcons = memo(function TabRollupIcons({ tab }: { tab: Tab }) {
+	const { agent, terminal } = useTabRollups(tab);
+	if (!agent && !terminal) return null;
+	return (
+		<span className="flex items-center gap-1 flex-shrink-0">
+			<RollupIcon kind="agent" rollup={agent} size={12} />
+			<RollupIcon kind="terminal" rollup={terminal} size={12} />
+		</span>
 	);
-	if (tabDot === "grey") return null;
-	return <AgentStatusIcon status={tabDot} size={12} />;
 });
 
 export function TabBar({
@@ -439,7 +441,7 @@ export function TabBar({
 							commitRename={commitRename}
 							cancelRename={cancelRename}
 							icon={<Terminal size={12} />}
-							statusDot={<TabStatusDot tab={tab} />}
+							statusDot={<TabRollupIcons tab={tab} />}
 						/>
 					);
 				})}

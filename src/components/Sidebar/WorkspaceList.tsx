@@ -3,7 +3,7 @@ import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace
 import {
 	type HiddenRollup,
 	useHiddenRollup as useRollupOf,
-} from "../../hooks/useWorkspaceDotStatus";
+} from "../../hooks/useWorkspaceRollups";
 import { useWorktreeProgress } from "../../hooks/useWorktreeProgress";
 import { worktrees } from "../../lib/ipc";
 import type { WorkspaceWithTabs } from "../../lib/types";
