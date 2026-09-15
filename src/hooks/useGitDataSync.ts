@@ -51,6 +51,9 @@ export function useGitDataSync() {
 				entry.cancelled = true;
 				entry.unlisten?.();
 				git.schedulerStop(wsId).catch(() => {});
+				// No more live pushes: let the batched summary refresh its
+				// Dirty marker from here on.
+				useWorkspaceGitStore.getState().endLiveUncommitted(wsId);
 				active.delete(wsId);
 			}
 		}

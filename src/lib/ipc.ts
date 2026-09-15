@@ -397,6 +397,9 @@ export type WorkspaceGitSummary = {
 	 *  none). All remotes, not just `origin`, so a fork's upstream counts too.
 	 *  Feeds the Profile-scoped PR filter — see ADR-0028. */
 	repoSlugs: string[];
+	/** The working tree holds uncommitted work — a **Dirty workspace**. Commits
+	 *  ahead of the base branch do not count. False for a non-repo. */
+	isDirty: boolean;
 };
 
 // ── Agent telemetry ──

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { branchStatOf } from "../lib/dirtyWorkspace";
 import {
 	type GitFetchBundle,
 	type GitOperation,
@@ -178,16 +179,14 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			// Keep sidebar chip and stats in sync without extra IPC calls
 			const activeId = useWorkspaceStore.getState().activeWorkspaceId;
 			if (activeId) {
-				const totalAdd = files.reduce((s, f) => s + f.additions, 0);
-				const totalDel = files.reduce((s, f) => s + f.deletions, 0);
-				useWorkspaceGitStore.getState().setInfo(activeId, {
+				const wtStore = useWorkspaceGitStore.getState();
+				wtStore.setInfo(activeId, {
 					conflictedPaths: conflictedPathsOf(files),
 					isGitRepo: true,
 					currentBranch: branchInfo.currentBranch,
-					changedFileCount: files.length,
-					additions: totalAdd,
-					deletions: totalDel,
+					...branchStatOf(files),
 				});
+				wtStore.setLiveUncommitted(activeId, files);
 				workspacesApi
 					.update(activeId, { lastBranch: branchInfo.currentBranch })
 					.catch(() => {});
@@ -204,7 +203,8 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			if (/not a git repository/i.test(errMsg)) {
 				const activeId = useWorkspaceStore.getState().activeWorkspaceId;
 				if (activeId) {
-					useWorkspaceGitStore.getState().setInfo(activeId, {
+					const wtStore = useWorkspaceGitStore.getState();
+					wtStore.setInfo(activeId, {
 						conflictedPaths: [],
 						isGitRepo: false,
 						currentBranch: null,
@@ -212,6 +212,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 						additions: 0,
 						deletions: 0,
 					});
+					wtStore.clearUncommitted(activeId);
 				}
 			}
 		} finally {
@@ -242,16 +243,14 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 
 		// Always: sidebar chip — keeps WorkspaceItem accurate for background
 		// workspaces too (per the unified-dispatch decision in the plan).
-		const totalAdd = files.reduce((s, f) => s + f.additions, 0);
-		const totalDel = files.reduce((s, f) => s + f.deletions, 0);
-		useWorkspaceGitStore.getState().setInfo(workspaceId, {
+		const chipStore = useWorkspaceGitStore.getState();
+		chipStore.setInfo(workspaceId, {
 			conflictedPaths: conflictedPathsOf(files),
 			isGitRepo: true,
 			currentBranch: branchInfo.currentBranch,
-			changedFileCount: files.length,
-			additions: totalAdd,
-			deletions: totalDel,
+			...branchStatOf(files),
 		});
+		chipStore.setLiveUncommitted(workspaceId, files);
 		// Persist the branch to the workspace_store, but ONLY when it actually
 		// changed. Every `invoke` carries ~100-1000 ms of WKWebView main-thread
 		// overhead in this app, and the scheduler pushes a bundle on every
@@ -316,6 +315,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 				additions: 0,
 				deletions: 0,
 			});
+			wtStore.clearUncommitted(workspaceId);
 			// Symmetric to applyBundle: a folder that's no longer a repo (e.g.
 			// `.git` was removed mid-session) must drop its stale worktree facts
 			// so the "Add worktree" affordance disappears. Gated on a still-held

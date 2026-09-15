@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { worktrees } from "../lib/ipc";
+import { addWindowFocusListener } from "../lib/windowFocus";
 import { distinctGroupKeys } from "../lib/worktreeGrouping";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -106,6 +107,30 @@ export function useWorktreeSync(): void {
 			cancelled = true;
 		};
 	}, [signature]);
+
+	// Refresh unopened workspaces' Dirty markers when the Window regains focus.
+	// Opened workspaces are live through their scheduler; an unopened one mostly
+	// changes from outside Abundio, which the user returns from by focusing us.
+	useEffect(() => {
+		let inFlight = false;
+		return addWindowFocusListener((focused) => {
+			if (!focused || inFlight) return;
+			const list = useWorkspaceStore.getState().workspaces.map((w) => ({
+				id: w.id,
+				rootFolder: w.rootFolder,
+				baseBranch: w.baseBranch ?? null,
+			}));
+			if (list.length === 0) return;
+			inFlight = true;
+			useWorkspaceGitStore
+				.getState()
+				.syncWorktreeFacts(list)
+				.catch(() => {})
+				.finally(() => {
+					inFlight = false;
+				});
+		});
+	}, []);
 
 	// Live reconcile on CLI worktree add/remove. Registered once.
 	useEffect(() => {

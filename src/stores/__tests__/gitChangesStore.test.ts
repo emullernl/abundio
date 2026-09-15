@@ -286,3 +286,46 @@ describe("conflictedPaths distinguishes unknown from empty", () => {
 		).toEqual(["a.txt"]);
 	});
 });
+
+describe("Dirty workspace and Branch stat from bundles", () => {
+	beforeEach(() => {
+		useWorkspaceGitStore.setState({ byWorkspaceId: {}, uncommittedById: {} });
+	});
+
+	it("applyBundle records a live dirtiness value for a background workspace", () => {
+		useWorkspaceStore.setState({
+			workspaces: [mkWorkspace("ws-1", "/repo"), mkWorkspace("ws-2", "/other")],
+			activeWorkspaceId: "ws-1",
+		});
+		useGitChangesStore.getState().applyBundle("ws-2", {
+			...bundle(),
+			changedFiles: [file("a.txt", "staged"), file("b.txt", "untracked", "?")],
+		});
+		expect(useWorkspaceGitStore.getState().uncommittedById["ws-2"]).toEqual({
+			dirty: true,
+			breakdown: { staged: 1, unstaged: 0, untracked: 1, conflicted: 0 },
+		});
+	});
+
+	it("applyBundle counts a path in two sections as one file", () => {
+		useGitChangesStore.getState().applyBundle("ws-1", {
+			...bundle(),
+			changedFiles: [file("a.txt", "against_base"), file("a.txt", "unstaged")],
+		});
+		expect(
+			useWorkspaceGitStore.getState().byWorkspaceId["ws-1"]?.changedFileCount,
+		).toBe(1);
+	});
+
+	it("applyError(notGitRepo) forgets dirtiness", () => {
+		useWorkspaceGitStore
+			.getState()
+			.setLiveUncommitted("ws-1", [file("a.txt", "staged")]);
+		useGitChangesStore
+			.getState()
+			.applyError("ws-1", "Not a git repository", true);
+		expect(
+			useWorkspaceGitStore.getState().uncommittedById["ws-1"],
+		).toBeUndefined();
+	});
+});
