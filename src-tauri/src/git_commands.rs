@@ -389,6 +389,10 @@ pub struct WorkspaceGitSummary {
     /// there are none). Feeds the Profile-scoped PR filter, which is a
     /// set-membership test — hence all remotes, not just `origin`. See ADR-0028.
     pub repo_slugs: Vec<String>,
+    /// True when the working tree holds uncommitted work (untracked, unstaged,
+    /// staged or conflicted) — a **Dirty workspace**. Commits ahead of the base
+    /// branch do not count. Always false for a non-repo.
+    pub is_dirty: bool,
 }
 
 /// Resolves the cheap per-workspace git facts via libgit2: current branch,
@@ -417,6 +421,10 @@ fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummar
     // A repo can be a git repo even with a detached/unborn HEAD (no branch),
     // so anchor is_git_repo on the worktree group key, not the branch name.
     let is_git_repo = bits.group_key.is_some();
+    let is_dirty = is_git_repo
+        && repo
+            .as_ref()
+            .is_some_and(git_libgit2::worktree_is_dirty_in);
     WorkspaceGitSummary {
         workspace_id: req.workspace_id,
         is_git_repo,
@@ -428,6 +436,7 @@ fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummar
         is_main_worktree: bits.is_main_worktree,
         worktree_root: bits.canonical_root,
         repo_slugs,
+        is_dirty,
     }
 }
 
@@ -649,6 +658,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspaces_summary_reports_dirty_working_tree() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let summarize = || {
+            git_workspaces_summary(vec![WorkspaceGitRequest {
+                workspace_id: "ws-1".to_string(),
+                cwd: cwd.to_string(),
+                base_branch: None,
+            }])
+        };
+
+        assert!(!summarize().await[0].is_dirty, "fresh commit is clean");
+
+        std::fs::write(dir.path().join("initial.txt"), "changed\n").unwrap();
+        assert!(summarize().await[0].is_dirty, "unstaged edit is dirty");
+
+        run_git_test(cwd, &["commit", "-am", "second"]);
+        assert!(
+            !summarize().await[0].is_dirty,
+            "committed work is clean"
+        );
+    }
+
+    #[tokio::test]
     async fn workspaces_summary_repo_slugs_empty_for_non_repo() {
         let dir = tempfile::tempdir().unwrap();
         let summaries = git_workspaces_summary(vec![WorkspaceGitRequest {
@@ -660,6 +693,7 @@ mod tests {
 
         assert!(summaries[0].repo_slugs.is_empty());
         assert!(!summaries[0].is_git_repo);
+        assert!(!summaries[0].is_dirty);
     }
 
     #[tokio::test]

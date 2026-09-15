@@ -1140,9 +1140,17 @@ pub fn remove_worktree(primary_cwd: &str, worktree_path: &str) -> Result<(), Abu
 /// True if the worktree at `cwd` has any staged or unstaged change, or an
 /// untracked file — used to escalate the Remove-worktree confirmation.
 pub fn worktree_is_dirty(cwd: &str) -> bool {
-    let Ok(repo) = open_repo(cwd) else {
-        return false;
-    };
+    match open_repo(cwd) {
+        Ok(repo) => worktree_is_dirty_in(&repo),
+        Err(_) => false,
+    }
+}
+
+/// [`worktree_is_dirty`] on an already-open repository, so the batched
+/// workspace summary pays for one `Repository::discover` per workspace. This is
+/// the single definition of a **Dirty workspace** — the sidebar's Dirty marker
+/// and the Remove-worktree confirmation must never disagree.
+pub fn worktree_is_dirty_in(repo: &Repository) -> bool {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(false)
