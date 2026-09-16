@@ -32,6 +32,12 @@ import {
 	initAgentTurnTracker,
 } from "./lib/agentTurnTracker";
 import { appWindow } from "./lib/appWindow";
+import {
+	type BusyCounts,
+	buildWindowCloseMessage,
+	busyCounts,
+	hasBusyWork,
+} from "./lib/busyPty";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
 import { listen, updates, windowSession } from "./lib/ipc";
@@ -345,7 +351,10 @@ export function App() {
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
 	// Confirm before closing a Window that has ≥1 Opened workspace (when no
 	// unsaved files take precedence). See ADR-0016.
-	const [workspaceCloseRequested, setWorkspaceCloseRequested] = useState(false);
+	// The busy tally captured when the close was requested, so the dialog names
+	// what was busy at that moment rather than re-reading a moving store.
+	const [workspaceCloseRequested, setWorkspaceCloseRequested] =
+		useState<BusyCounts | null>(null);
 	const appWindowRef = useRef<ReturnType<typeof appWindow>>(null);
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
@@ -508,14 +517,13 @@ export function App() {
 			const dirtyPaneCount = Object.values(
 				useExplorerStore.getState().filePanes,
 			).filter((p) => p.isDirty).length;
-			const openedCount =
-				usePtyActivityStore.getState().openedWorkspaceIds.size;
-			switch (decideWindowClose(dirtyPaneCount, openedCount)) {
+			const counts = busyCounts(usePtyActivityStore.getState().activities);
+			switch (decideWindowClose(dirtyPaneCount, hasBusyWork(counts))) {
 				case "save-confirm":
 					setAppCloseRequested(true);
 					return;
 				case "workspace-confirm":
-					setWorkspaceCloseRequested(true);
+					setWorkspaceCloseRequested(counts);
 					return;
 				default:
 					await proceedWithClose();
@@ -526,22 +534,25 @@ export function App() {
 		};
 	}, [proceedWithClose]);
 
-	// Mirror this Window's Opened-workspace count into Rust so the quit
-	// confirmation can sum across all Windows. usePtyActivityStore is a vanilla
-	// store (no subscribeWithSelector), so this listener intentionally runs on
-	// every PTY tick — that's fine: the body is just a Set.size read + integer
-	// compare, and the `last` guard means we only issue the IPC when the count
-	// actually changes. See ADR-0016.
+	// Mirror this Window's busy tally into Rust so the quit confirmation can sum
+	// across all Windows. usePtyActivityStore is a vanilla store (no
+	// subscribeWithSelector), so this listener intentionally runs on every PTY
+	// tick — that's fine: the body is a tally plus three integer compares, and
+	// the `last` guard means we only issue the IPC when the tuple actually
+	// changes. Counts are far stabler than status transitions: panes flickering
+	// between Idle and Working move a number only when one crosses a boundary.
+	// See ADR-0034 (superseding ADR-0016's Opened-workspace count).
 	useEffect(() => {
-		let last = -1;
-		const report = (size: number) => {
-			if (size === last) return;
-			last = size;
-			windowSession.reportOpenedWorkspaceCount(size).catch(() => {});
+		let last = "";
+		const report = (counts: BusyCounts) => {
+			const key = `${counts.working}/${counts.waiting}/${counts.commands}`;
+			if (key === last) return;
+			last = key;
+			windowSession.reportBusyCounts(counts).catch(() => {});
 		};
-		report(usePtyActivityStore.getState().openedWorkspaceIds.size);
+		report(busyCounts(usePtyActivityStore.getState().activities));
 		return usePtyActivityStore.subscribe((state) => {
-			report(state.openedWorkspaceIds.size);
+			report(busyCounts(state.activities));
 		});
 	}, []);
 
@@ -997,25 +1008,19 @@ export function App() {
 						/>
 					);
 				})()}
-			{workspaceCloseRequested &&
-				(() => {
-					const n = openedWorkspaceIds.size;
-					return (
-						<ConfirmDialog
-							title="Close window?"
-							message={`You have ${n} opened workspace${
-								n === 1 ? "" : "s"
-							} in this window with running agents and terminal processes. Closing the window will terminate them.`}
-							confirmLabel="Close window"
-							confirmVariant="danger"
-							onConfirm={() => {
-								setWorkspaceCloseRequested(false);
-								proceedWithClose().catch(() => {});
-							}}
-							onCancel={() => setWorkspaceCloseRequested(false)}
-						/>
-					);
-				})()}
+			{workspaceCloseRequested && (
+				<ConfirmDialog
+					title="Close window?"
+					message={buildWindowCloseMessage(workspaceCloseRequested)}
+					confirmLabel="Close window"
+					confirmVariant="danger"
+					onConfirm={() => {
+						setWorkspaceCloseRequested(null);
+						proceedWithClose().catch(() => {});
+					}}
+					onCancel={() => setWorkspaceCloseRequested(null)}
+				/>
+			)}
 			<DragPanePreview />
 			<UpdatePrompt />
 		</div>

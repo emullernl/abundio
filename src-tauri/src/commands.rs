@@ -4,7 +4,7 @@ use crate::error::AbundioError;
 use crate::file_watcher::FileWatcher;
 use crate::git_scheduler::GitScheduler;
 use crate::profile_store::{
-    ActiveProfileState, OpenedCountState, Profile, ProfileStore, ProfileUpdate,
+    ActiveProfileState, BusyCounts, BusyCountsState, Profile, ProfileStore, ProfileUpdate,
 };
 use crate::pty_manager::PtyManager;
 use crate::workspace_store::{
@@ -215,21 +215,22 @@ pub async fn get_active_profile_for_window(
     Ok(state.get_for_window(window.label()))
 }
 
-/// The frontend pushes its Window's current count of **Opened workspaces**
-/// whenever the set changes, so Rust can sum across all Windows at quit time and
-/// decide whether to confirm (see ADR-0016). Auxiliary windows (settings) never
-/// own workspaces and are ignored defensively, mirroring `set_active_profile_id`.
+/// The frontend pushes its Window's **busy tally** whenever the tuple changes,
+/// so Rust can sum across all Windows at quit time and decide whether to
+/// confirm — and what the confirmation should say (see ADR-0034). Auxiliary
+/// windows (settings) never own workspaces and are ignored defensively,
+/// mirroring `set_active_profile_id`.
 #[tauri::command]
-pub async fn report_opened_workspace_count(
+pub async fn report_busy_counts(
     window: Window,
-    state: State<'_, OpenedCountState>,
-    count: usize,
+    state: State<'_, BusyCountsState>,
+    counts: BusyCounts,
 ) -> Result<(), AbundioError> {
     let label = window.label().to_string();
     if !crate::window_management::is_profile_window_label(&label) {
         return Ok(());
     }
-    state.set_for_window(&label, count);
+    state.set_for_window(&label, counts);
     Ok(())
 }
 

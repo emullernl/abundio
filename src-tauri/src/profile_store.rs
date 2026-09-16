@@ -49,17 +49,42 @@ pub struct ActiveProfileState(pub Mutex<HashMap<String, String>>);
 #[derive(Default)]
 pub struct QuittingFlag(pub Mutex<bool>);
 
-/// Tracks how many **Opened workspaces** each Window currently has live, keyed
-/// by the Tauri window label. The frontend pushes its window's count via
-/// `report_opened_workspace_count` whenever its `openedWorkspaceIds` set
-/// changes, and the `Destroyed` handler drops the entry when a window closes.
+/// One Window's busy tally: agents mid-turn, agents blocked on the user, and
+/// shell commands in flight. Mirrored up from the frontend, which is the only
+/// side that knows a PTY's status. See ADR-0034.
+#[derive(Default, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BusyCounts {
+    pub working: usize,
+    pub waiting: usize,
+    pub commands: usize,
+}
+
+impl BusyCounts {
+    /// Anything **Busy** — a Working agent or a running command.
+    pub fn has_busy_work(&self) -> bool {
+        self.working > 0 || self.commands > 0
+    }
+
+    /// The stricter test Quit uses: Busy, *or* an agent waiting on the user.
+    /// Quit takes down every Window, including ones the user cannot see, and a
+    /// Waiting agent holds finished work with a question on it. See ADR-0034.
+    pub fn blocks_quit(&self) -> bool {
+        self.has_busy_work() || self.waiting > 0
+    }
+}
+
+/// Tracks each Window's **busy tally**, keyed by the Tauri window label. The
+/// frontend pushes its window's tuple via `report_busy_counts` whenever the
+/// tuple changes, and the `Destroyed` handler drops the entry when a window
+/// closes.
 ///
-/// Rust reads the sum at quit time to decide whether to show the
-/// "you have N opened workspaces" confirmation — the count lives in each
-/// window's frontend, so this map is the only place a cross-window total can be
-/// computed. See ADR-0016.
+/// Rust reads the sum at quit time to decide whether to confirm, and what the
+/// confirmation should say — status lives in each window's frontend, so this
+/// map is the only place a cross-window total can be computed. See ADR-0034,
+/// which supersedes ADR-0016's Opened-workspace count.
 #[derive(Default)]
-pub struct OpenedCountState(pub Mutex<HashMap<String, usize>>);
+pub struct BusyCountsState(pub Mutex<HashMap<String, BusyCounts>>);
 
 /// Guards against stacking multiple quit-confirmation dialogs. The native quit
 /// dialog is non-blocking (`show` returns immediately and the menu handler
@@ -70,24 +95,31 @@ pub struct OpenedCountState(pub Mutex<HashMap<String, usize>>);
 #[derive(Default)]
 pub struct QuitConfirmInFlight(pub Mutex<bool>);
 
-impl OpenedCountState {
-    /// Records the Opened-workspace count for the given Window.
-    pub fn set_for_window(&self, window_label: &str, count: usize) {
+impl BusyCountsState {
+    /// Records the busy tally for the given Window.
+    pub fn set_for_window(&self, window_label: &str, counts: BusyCounts) {
         self.0
             .lock()
             .unwrap()
-            .insert(window_label.to_string(), count);
+            .insert(window_label.to_string(), counts);
     }
 
     /// Drops the entry for a Window (called when it's destroyed) so its stale
-    /// count can't inflate the quit-time total.
+    /// tally can't inflate the quit-time total.
     pub fn remove_for_window(&self, window_label: &str) {
         self.0.lock().unwrap().remove(window_label);
     }
 
-    /// Total Opened workspaces across all Windows.
-    pub fn total(&self) -> usize {
-        self.0.lock().unwrap().values().sum()
+    /// The tally summed across all Windows.
+    pub fn total(&self) -> BusyCounts {
+        let map = self.0.lock().unwrap();
+        let mut total = BusyCounts::default();
+        for c in map.values() {
+            total.working += c.working;
+            total.waiting += c.waiting;
+            total.commands += c.commands;
+        }
+        total
     }
 }
 
@@ -385,21 +417,29 @@ mod tests {
     }
 
     #[test]
-    fn opened_count_state_sums_across_windows() {
-        let state = OpenedCountState::default();
-        assert_eq!(state.total(), 0);
-        state.set_for_window("main", 1);
-        state.set_for_window("window-2", 3);
-        assert_eq!(state.total(), 4);
-        // A re-report replaces (not accumulates) the window's count.
-        state.set_for_window("main", 2);
-        assert_eq!(state.total(), 5);
-        // Removing a window drops its contribution so a stale count can't
+    fn busy_counts_state_sums_across_windows() {
+        let c = |working, waiting, commands| BusyCounts {
+            working,
+            waiting,
+            commands,
+        };
+        let state = BusyCountsState::default();
+        assert!(!state.total().blocks_quit());
+        state.set_for_window("main", c(1, 0, 2));
+        state.set_for_window("window-2", c(0, 3, 1));
+        let total = state.total();
+        assert_eq!((total.working, total.waiting, total.commands), (1, 3, 3));
+        // A re-report replaces (not accumulates) the window's tally.
+        state.set_for_window("main", c(2, 0, 0));
+        let total = state.total();
+        assert_eq!((total.working, total.waiting, total.commands), (2, 3, 1));
+        // Removing a window drops its contribution so a stale tally can't
         // inflate the quit-time total.
         state.remove_for_window("window-2");
-        assert_eq!(state.total(), 2);
+        let total = state.total();
+        assert_eq!((total.working, total.waiting, total.commands), (2, 0, 0));
         state.remove_for_window("main");
-        assert_eq!(state.total(), 0);
+        assert!(!state.total().blocks_quit());
     }
 
     #[test]

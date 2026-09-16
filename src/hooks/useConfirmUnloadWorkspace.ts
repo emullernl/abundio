@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { isBusyPty } from "../lib/busyPty";
 import { parseTabLayout } from "../lib/paneTree";
 import {
 	collectPtyIds,
@@ -58,11 +59,16 @@ function makeIsAgentWorking(
 
 /** A shell command in flight, read off the PTY's status entry — the same field
  *  the **Status indicator** reads, so the icon and this confirmation can never
- *  disagree about whether a terminal is busy (ADR-0034). */
+ *  disagree about whether a terminal is busy (ADR-0034). Together with
+ *  `makeIsAgentWorking` above this is exactly `isBusyPty`, split in two because
+ *  the dialog names which half fired. */
 function makeIsCommandRunning(
 	activities: Record<string, PtyActivityEntry>,
 ): (ptyId: string) => boolean {
-	return (ptyId) => activities[ptyId]?.shellCommandRunning === true;
+	return (ptyId) => {
+		const entry = activities[ptyId];
+		return entry?.detectionMode !== "agent" && isBusyPty(entry);
+	};
 }
 
 /** OR the Working signals across every tab of the workspace. */

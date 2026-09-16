@@ -298,8 +298,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return undefined;
 
 		// Per-window bookkeeping the Rust side owns; nothing to report in the
-		// demo, and it fires on every workspace open.
-		case "report_opened_workspace_count":
+		// demo, and it fires whenever the busy tally changes.
+		case "report_busy_counts":
 			return undefined;
 		case "env_retry_key":
 			return true;

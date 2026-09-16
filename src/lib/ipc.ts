@@ -215,11 +215,16 @@ export const profiles = {
 /** Per-Window session reporting — pushes state the Rust side needs to aggregate
  *  across Windows. See ADR-0016. */
 export const windowSession = {
-	/** Report this Window's current count of Opened workspaces. The Rust side
-	 *  mirrors it into a per-window map and sums across all Windows at quit time
-	 *  to decide whether to show the quit confirmation. */
-	reportOpenedWorkspaceCount: (count: number) =>
-		invoke<void>("report_opened_workspace_count", { count }),
+	/** Report this Window's busy tally — Working agents, Waiting agents and
+	 *  running commands. The Rust side mirrors it into a per-window map and sums
+	 *  across all Windows at quit time to decide whether to show the quit
+	 *  confirmation, and what it should say. Sent only when the tuple changes.
+	 *  See ADR-0034. */
+	reportBusyCounts: (counts: {
+		working: number;
+		waiting: number;
+		commands: number;
+	}) => invoke<void>("report_busy_counts", { counts }),
 };
 
 export const tabs = {
