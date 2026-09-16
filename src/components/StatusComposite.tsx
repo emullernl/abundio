@@ -26,10 +26,11 @@ interface StatusCompositeProps {
 	 *  and the Tab bar use the shared default — see ADR-0033 on why they must
 	 *  not disagree. */
 	size?: number;
-	/** Rendered in place of the primary while set, at the same size and in the
-	 *  same box. A Worktree set's Primary row hover-swaps its fold chevron in
-	 *  here; the badge is covered with it, which ADR-0033 accepts. */
-	children?: React.ReactNode;
+	/** Swapped in on hover of the enclosing `.group`, covering the **whole**
+	 *  composite — primary and badge alike. A Worktree set's Primary row puts
+	 *  its fold chevron here. ADR-0033 accepts that this hides the badge too:
+	 *  ADR-0032's "never fully covered" promise assumed two separate icons. */
+	overlay?: React.ReactNode;
 }
 
 /** The **Status badge**: the Terminal rollup, small, on the primary's
@@ -79,14 +80,14 @@ const Badge = memo(function Badge({
 export const StatusComposite = memo(function StatusComposite({
 	rollups,
 	size = PRIMARY_SIZE,
-	children,
+	overlay,
 }: StatusCompositeProps) {
 	const notOpened = "notOpened" in rollups && rollups.notOpened;
 	const { primary, badge } = compositeParts(rollups);
 	const badgeSize = Math.round((BADGE_SIZE / PRIMARY_SIZE) * size);
 	const overhang = Math.round((BADGE_OVERHANG / PRIMARY_SIZE) * size);
 
-	if (!notOpened && !primary && !children) return null;
+	if (!notOpened && !primary && !overlay) return null;
 
 	return (
 		<span
@@ -97,25 +98,34 @@ export const StatusComposite = memo(function StatusComposite({
 			}
 			title={notOpened ? dotStatusLabel("grey") : compositeTooltip(rollups)}
 		>
-			{children ?? (
-				<>
-					{notOpened ? (
-						<AgentStatusIcon status="grey" size={size} />
-					) : (
-						primary && (
-							<AgentStatusIcon status={primary.rollup.status} size={size} />
-						)
-					)}
-					{badge && (
-						<span
-							className="absolute flex"
-							data-status-badge={badge.status}
-							style={{ right: -overhang, bottom: -overhang / 2 }}
-						>
-							<Badge status={badge.status} size={badgeSize} />
-						</span>
-					)}
-				</>
+			<span
+				className={
+					overlay
+						? "absolute inset-0 transition-opacity duration-150 group-hover:opacity-0"
+						: "contents"
+				}
+			>
+				{notOpened ? (
+					<AgentStatusIcon status="grey" size={size} />
+				) : (
+					primary && (
+						<AgentStatusIcon status={primary.rollup.status} size={size} />
+					)
+				)}
+				{badge && (
+					<span
+						className="absolute flex"
+						data-status-badge={badge.status}
+						style={{ right: -overhang, bottom: -Math.round(overhang / 2) }}
+					>
+						<Badge status={badge.status} size={badgeSize} />
+					</span>
+				)}
+			</span>
+			{overlay && (
+				<span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+					{overlay}
+				</span>
 			)}
 		</span>
 	);

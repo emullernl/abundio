@@ -1,4 +1,5 @@
 import type {
+	DotStatus,
 	KindRollup,
 	RollupKind,
 	Rollups,
@@ -84,6 +85,19 @@ export function compositeParts(rollups: Rollups): CompositeParts {
 		};
 	}
 	return { primary: null, badge: null };
+}
+
+/**
+ * Does this status want the reader's attention *now*?
+ *
+ * Error, Waiting and Ready — exactly the set that earns an OS notification.
+ * Used by the narrow strip's **Hidden rollup** `+N` label, which has no room
+ * for a second composite: it stays neutral grey for the mundane Idle and
+ * Working cases and tints only for these, so a colour there always means
+ * "something in here wants you" and never "N things are running". See ADR-0033.
+ */
+export function isAttentionStatus(status: DotStatus): boolean {
+	return status === "red" || status === "skyblue" || status === "purple";
 }
 
 /**

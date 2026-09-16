@@ -103,20 +103,24 @@ describe("StatusComposite", () => {
 		).toBe("Agents: 1 Waiting\nTerminals: 2 Working");
 	});
 
-	it("lets a caller swap the whole composite out, badge included", () => {
+	it("layers an overlay over the whole composite, badge included", () => {
 		// A Worktree set's Primary row hover-swaps its fold chevron in here.
-		// ADR-0033 accepts that this covers the badge too.
+		// Both the primary and the badge sit in one layer that fades out
+		// together, so the chevron can never appear beside a stray badge —
+		// ADR-0033 accepts covering the badge, but not half-covering it.
 		const { container } = render(
 			<StatusComposite
 				rollups={{
 					agent: rollup("green", { idle: 1 }),
 					terminal: rollup("red", { error: 1 }),
 				}}
-			>
-				<span data-testid="chevron" />
-			</StatusComposite>,
+				overlay={<span data-testid="chevron" />}
+			/>,
 		);
 		expect(container.querySelector("[data-testid='chevron']")).not.toBeNull();
-		expect(container.querySelector("[data-status-badge]")).toBeNull();
+		const badge = container.querySelector("[data-status-badge]");
+		expect(badge).not.toBeNull();
+		// The badge lives inside the layer that fades on hover, not outside it.
+		expect(badge?.closest(".group-hover\\:opacity-0")).not.toBeNull();
 	});
 });

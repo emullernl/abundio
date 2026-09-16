@@ -6,16 +6,13 @@ import {
 } from "../../hooks/useWorkspaceRollups";
 import { uncommittedTooltip } from "../../lib/dirtyWorkspace";
 import { shortenPath } from "../../lib/shortenPath";
+import { isAttentionStatus, PRIMARY_SIZE } from "../../lib/statusComposite";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
-import {
-	AgentStatusIcon,
-	DOT_STATUS_ANIMATED,
-	DOT_STATUS_COLOR,
-} from "../AgentStatusIcon";
+import { DOT_STATUS_COLOR } from "../AgentStatusIcon";
 import { DirtyEdge, DirtyRing } from "../DirtyMarker";
-import { RollupIcon } from "../RollupIcon";
+import { compositeWidth, StatusComposite } from "../StatusComposite";
 import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
 
 interface Props {
@@ -167,78 +164,52 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 						}}
 					/>
 				)}
-				{/* Agent rollup over Terminal rollup, as in the expanded row's left
-				    slot (ADR-0032). Each cell keeps its height when empty so the
-				    icons never swap places. */}
+				{/* One **Status composite** for the workspace, at the same geometry
+				    as the expanded row so nothing jumps when the sidebar is
+				    collapsed or expanded — and so the hover popover, which draws
+				    that row directly on top of this strip, lines up exactly
+				    (ADR-0033). */}
 				<div
-					style={{
-						flexShrink: 0,
-						display: "flex",
-						flexDirection: "column",
-						gap: STRIP_ROLLUP_GAP,
-						width: STRIP_ICON_SIZE,
-					}}
+					className="flex items-center flex-shrink-0 relative"
+					style={{ width: compositeWidth(), height: PRIMARY_SIZE }}
 					title={hidden ? hidden.membersTooltip : undefined}
 				>
-					{/* The Hidden-rollup badge hangs off this top cell's top-right
-					    corner, so it stays attached to the name's line whether or
-					    not a Terminal rollup is drawn below. */}
-					<div style={{ height: STRIP_ICON_SIZE, position: "relative" }}>
-						{rollups.notOpened ? (
-							<AgentStatusIcon status="grey" size={STRIP_ICON_SIZE} />
-						) : (
-							<RollupIcon
-								kind="agent"
-								rollup={rollups.agent}
-								size={STRIP_ICON_SIZE}
-							/>
-						)}
-						{hidden && (
-							<span
-								aria-hidden
-								data-hidden-badge={hidden.badge}
-								style={{
-									position: "absolute",
-									right: -3,
-									top: -2,
-									width: 7,
-									height: 7,
-									borderRadius: "50%",
-									backgroundColor: DOT_STATUS_COLOR[hidden.badge],
-									// Ring in the strip's own background so the dot reads as
-									// separate from the glyph it sits on.
-									boxShadow: "0 0 0 1.5px var(--bg-secondary)",
-									// A 7px dot can't carry the glyph's own motion (a spinner
-									// is mush at this size), but it must not sit still while
-									// the wide sidebar's chip moves — so an animated status
-									// breathes here. See docs/plans/foldable-worktree-sets.md.
-									animation: DOT_STATUS_ANIMATED[hidden.badge]
-										? "shell-running-breathe 1.6s ease-in-out infinite"
-										: undefined,
-								}}
-							/>
-						)}
-					</div>
-					{/* A hidden member's Dirty marker hangs off this bottom cell's
-					    bottom-right corner, mirroring the Hidden-rollup badge at the
-					    top cell's top-right, so the two never collide. The strip's
-					    own dirtiness is the edge bar, as in the expanded row. */}
-					<div style={{ height: STRIP_ICON_SIZE, position: "relative" }}>
-						<RollupIcon
-							kind="terminal"
-							rollup={rollups.terminal}
-							size={STRIP_ICON_SIZE}
+					<StatusComposite rollups={rollups} />
+					{/* A hidden member's Dirty marker sits at the composite's
+					    TOP-right: the bottom-right corner now belongs to the Status
+					    badge, so the two would otherwise collide. The strip's own
+					    dirtiness is the edge bar, as in the expanded row. */}
+					{hiddenDirty && (
+						<DirtyRing
+							title="Uncommitted changes in a hidden worktree"
+							size={7}
+							cutout="var(--bg-secondary)"
+							style={{ position: "absolute", right: -3, top: -2 }}
 						/>
-						{hiddenDirty && (
-							<DirtyRing
-								title="Uncommitted changes in a hidden worktree"
-								size={7}
-								cutout="var(--bg-secondary)"
-								style={{ position: "absolute", right: -3, bottom: -2 }}
-							/>
-						)}
-					</div>
+					)}
 				</div>
+				{/* The Hidden rollup, with no room here for a second composite: a
+				    `+N` count, neutral grey for the mundane Idle and Working cases
+				    and tinted only for Error / Waiting / Ready — the same set that
+				    earns an OS notification, so a colour means "something in here
+				    wants you", never "N things are running" (ADR-0033). */}
+				{hidden && (
+					<span
+						data-hidden-count={hidden.badge}
+						title={hidden.membersTooltip}
+						style={{
+							flexShrink: 0,
+							fontSize: 10,
+							lineHeight: 1,
+							fontFamily: "var(--font-mono)",
+							color: isAttentionStatus(hidden.badge)
+								? DOT_STATUS_COLOR[hidden.badge]
+								: "var(--fg-secondary)",
+						}}
+					>
+						+{hidden.count}
+					</span>
+				)}
 				{/* Name over folder, as in the expanded row — each level with the
 				    rollup icon beside it. Both fade out at the strip's edge. */}
 				<div

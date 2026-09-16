@@ -193,14 +193,17 @@ describe("WorkspaceList — folded Worktree sets", () => {
 		expect(chip?.getAttribute("title")).toBe(
 			"feat-a — Waiting\nfeat-b — Not opened",
 		);
-		// Each rollup icon hovers to its own breakdown, summed over hidden members.
-		expect(
-			chip?.querySelector("[data-rollup='agent']")?.getAttribute("title"),
-		).toBe("Agents: 1 Waiting");
-		expect(chip?.querySelector("[data-rollup='terminal']")).toBeNull();
+		// The composite hovers to the breakdown, summed over hidden members.
+		const composite = chip?.querySelector<HTMLElement>(
+			"[data-status-composite]",
+		);
+		expect(composite?.getAttribute("data-status-composite")).toBe("skyblue");
+		expect(composite?.getAttribute("title")).toBe("Agents: 1 Waiting");
+		// No terminal rollup among the hidden members, so no badge.
+		expect(chip?.querySelector("[data-status-badge]")).toBeNull();
 	});
 
-	it("gives a row its own Agent and Terminal rollups, each with a breakdown", () => {
+	it("gives a row its own composite, with the breakdown on hover", () => {
 		usePtyActivityStore.setState({
 			activities: {
 				"pty-primary": { ...agentEntry("active"), detectionMode: "shell" },
@@ -208,12 +211,19 @@ describe("WorkspaceList — folded Worktree sets", () => {
 			openedWorkspaceIds: new Set([PRIMARY.id]),
 		});
 		render();
-		const rows = container.querySelectorAll("[data-rollup]");
-		// Only the Primary has a PTY, and it is a shell: one Terminal rollup,
-		// no Agent rollup (absent, not Idle).
-		expect(rows).toHaveLength(1);
-		expect(rows[0].getAttribute("data-rollup")).toBe("terminal");
-		expect(rows[0].getAttribute("title")).toBe("Terminals: 1 Working");
+		const composites = [
+			...container.querySelectorAll<HTMLElement>("[data-status-composite]"),
+		].map((el) => el.getAttribute("data-status-composite"));
+		// Only the Primary has a PTY, and it is a shell: its Terminal rollup is
+		// promoted to primary. The other three were never opened in this Window,
+		// so they keep the grey "Not opened" icon.
+		expect(composites).toEqual(["cyan", "grey", "grey", "grey"]);
+		const primary = container.querySelector<HTMLElement>(
+			"[data-status-composite='cyan']",
+		);
+		expect(primary?.getAttribute("title")).toBe("Terminals: 1 Working");
+		// No Agent rollup and no second terminal rollup, so no badge anywhere.
+		expect(container.querySelector("[data-status-badge]")).toBeNull();
 	});
 
 	it("keeps the rollup live while the hidden rows are unmounted", () => {
@@ -281,12 +291,9 @@ describe("WorkspaceList — folded Worktree sets", () => {
 		// next render, so the affordance is absent rather than dead.
 		useWorkspaceStore.setState({ activeWorkspaceId: LINKED_A.id });
 		render();
-		expect(foldButton()?.disabled).toBe(true);
-		act(() => {
-			foldButton()?.dispatchEvent(
-				new MouseEvent("click", { bubbles: true, cancelable: true }),
-			);
-		});
+		// Absent, not merely disabled — the composite renders with no overlay at
+		// all, so there is nothing to click.
+		expect(foldButton()).toBeNull();
 		expect(useWindowUiStore.getState().foldedSetKeys).toEqual([]);
 		expect(names()).toEqual(["abundio", "feat-a", "feat-b", "other-repo"]);
 	});
