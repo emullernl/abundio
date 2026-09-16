@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
 import { fs as fsApi, type GitOperation, git } from "../../lib/ipc";
@@ -48,6 +48,8 @@ export function GitChangesTab() {
 		x: number;
 		y: number;
 		file: GitChangedFile;
+		/** Opened from the keyboard, so the menu must take focus itself. */
+		fromKeyboard: boolean;
 	} | null>(null);
 
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -60,6 +62,15 @@ export function GitChangesTab() {
 			? s.byWorkspaceId[activeWorkspaceId]?.isGitRepo
 			: undefined,
 	);
+
+	// The **Row menu**'s target row is captured by value, but its *workspace* is
+	// not: this tab is not keyed by workspace, so an open menu would otherwise
+	// survive a switch and resolve the old repo's path against the new root.
+	// A pointer-driven switch closes the menu incidentally (the click reaches
+	// PaneContextMenu's outside handler); the command palette switches from the
+	// keyboard alone and does not.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: clears on switch only
+	useEffect(() => setMenu(null), [activeWorkspaceId]);
 
 	async function handleSelectFile(file: GitChangedFile) {
 		if (!cwd || !activeWorkspaceId) return;
@@ -315,7 +326,9 @@ export function GitChangesTab() {
 							baseBranch={baseBranch}
 							onSelectFile={handleSelectFile}
 							onOpenFile={handleOpenFile}
-							onContextMenu={(x, y, file) => setMenu({ x, y, file })}
+							onContextMenu={(x, y, file, fromKeyboard) =>
+								setMenu({ x, y, file, fromKeyboard })
+							}
 							selectedFile={selectedFile}
 							menuTargetFile={menu?.file ?? null}
 						/>
@@ -323,11 +336,12 @@ export function GitChangesTab() {
 				)}
 			</div>
 
-			{menu && (
+			{menu && cwd && (
 				<PaneContextMenu
 					x={menu.x}
 					y={menu.y}
 					items={buildMenuItems()}
+					autoFocus={menu.fromKeyboard}
 					onClose={() => setMenu(null)}
 				/>
 			)}

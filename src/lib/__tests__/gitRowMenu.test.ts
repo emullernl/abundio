@@ -4,7 +4,6 @@ import {
 	type GitRowMenuAction,
 	type GitRowMenuEntry,
 	gitRowMenuEntries,
-	revealLabel,
 } from "../gitRowMenu";
 
 function actions(entries: GitRowMenuEntry[]): GitRowMenuAction[] {
@@ -21,25 +20,47 @@ function disabledIds(entries: GitRowMenuEntry[]) {
 		.map((e) => e.id);
 }
 
+/** Every row shape the Git changes tab can produce. */
+const ROW_SHAPES = [
+	{ status: "M", section: "unstaged" },
+	{ status: "D", section: "staged" },
+	{ status: "?", section: "untracked" },
+	{ status: "U", section: "conflicted" },
+];
+
 describe("gitRowMenuEntries", () => {
-	it("holds no git writes and no terminal handoff", () => {
+	it("holds no git writes and no terminal handoff, on any row shape", () => {
 		// The Row menu is read-only by design: Resolve & stage stays Abundio's
-		// one deliberate writer to the index (ADR-0029).
-		const labels = actions(
-			gitRowMenuEntries({ status: "M", section: "unstaged" }),
-		).map((e) => e.label.toLowerCase());
-		for (const forbidden of ["stage", "unstage", "discard", "revert", "run"]) {
-			expect(labels.some((l) => l.includes(forbidden))).toBe(false);
+		// one deliberate writer to the index (ADR-0029). Checked across every row
+		// shape, because the obvious way to slip a write in is to gate it on a
+		// section or status the roster is never inspected under.
+		const forbidden = [
+			"stage",
+			"unstage",
+			"discard",
+			"revert",
+			"restore",
+			"checkout",
+			"reset",
+			"clean",
+			"delete",
+			"run",
+		];
+		for (const file of ROW_SHAPES) {
+			const labels = actions(gitRowMenuEntries(file)).map((e) =>
+				e.label.toLowerCase(),
+			);
+			for (const word of forbidden) {
+				expect(
+					labels.some((l) => l.includes(word)),
+					`${word} in ${file.section}/${file.status}`,
+				).toBe(false);
+			}
 		}
 	});
 
 	it("keeps the same shape on every row", () => {
-		const shapes = [
-			{ status: "M", section: "unstaged" },
-			{ status: "D", section: "staged" },
-			{ status: "?", section: "untracked" },
-			{ status: "U", section: "conflicted" },
-		].map((f) => ids(gitRowMenuEntries(f)));
+		const shapes = ROW_SHAPES.map((f) => ids(gitRowMenuEntries(f)));
 
 		for (const shape of shapes) {
 			expect(shape).toEqual(shapes[0]);
@@ -70,11 +91,5 @@ describe("gitRowMenuEntries", () => {
 		expect(order.indexOf("copy-relative-path")).toBeLessThan(
 			order.indexOf("copy-path"),
 		);
-	});
-
-	it("names the file manager per platform", () => {
-		expect(revealLabel("MacIntel")).toBe("Reveal in Finder");
-		expect(revealLabel("Win32")).toBe("Reveal in Explorer");
-		expect(revealLabel("Linux x86_64")).toBe("Reveal in File Manager");
 	});
 });

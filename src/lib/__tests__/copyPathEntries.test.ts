@@ -43,6 +43,27 @@ describe("copyPathEntries", () => {
 		expect(copyPathEntries(ROOT, ROOT)[0].text).toBeNull();
 	});
 
+	it("keeps each Windows form in the convention its destination wants", () => {
+		// Deliberate, and documented on the module: the relative form is
+		// normalised to `/` for shells and git, the absolute form keeps the
+		// native `\` it arrived with for other Windows apps.
+		const [relative, absolute] = copyPathEntries(
+			"C:\\Users\\me\\repo",
+			"C:\\Users\\me\\repo\\src\\lib\\ipc.ts",
+		);
+		expect(relative.text).toBe("src/lib/ipc.ts");
+		expect(absolute.text).toBe("C:\\Users\\me\\repo\\src\\lib\\ipc.ts");
+	});
+
+	it("matches a Windows root case-insensitively", () => {
+		// The same drive can be spelled `C:` or `c:`.
+		const [relative] = copyPathEntries(
+			"C:\\Users\\me\\repo",
+			"c:\\Users\\me\\repo\\README.md",
+		);
+		expect(relative.text).toBe("README.md");
+	});
+
 	it("never yields an empty absolute path", () => {
 		expect(copyPathEntries(ROOT, `${ROOT}/a.txt`)[1].text).toBeTruthy();
 	});

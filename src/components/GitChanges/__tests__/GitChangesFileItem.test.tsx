@@ -61,7 +61,7 @@ describe("GitChangesFileItem — Row menu trigger", () => {
 				}),
 			);
 		});
-		expect(onContextMenu).toHaveBeenCalledWith(120, 340);
+		expect(onContextMenu).toHaveBeenCalledWith(120, 340, false);
 	});
 
 	it("does not select the row — that would open a pane", () => {
@@ -87,6 +87,37 @@ describe("GitChangesFileItem — Row menu trigger", () => {
 			);
 		});
 		expect(onContextMenu).toHaveBeenCalledTimes(1);
+	});
+
+	it("tells the menu it was opened from the keyboard, so it takes focus", () => {
+		const { row, onContextMenu } = renderRow();
+		act(() => {
+			row.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true }),
+			);
+		});
+		expect(onContextMenu.mock.calls[0][2]).toBe(true);
+	});
+
+	it("opens the row's menu from the nested Open File button too", () => {
+		// A right-click there opens it (the event bubbles), so the key must not
+		// go dead while that button holds focus.
+		const { row, onContextMenu } = renderRow();
+		const openFile = row.querySelector("button") as HTMLElement;
+		act(() => {
+			openFile.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true }),
+			);
+		});
+		expect(onContextMenu).toHaveBeenCalledTimes(1);
+	});
+
+	it("advertises the menu to assistive tech", () => {
+		const { row } = renderRow();
+		expect(row.getAttribute("aria-haspopup")).toBe("menu");
+		expect(row.getAttribute("aria-expanded")).toBe("false");
+		const open = renderRow({ isMenuTarget: true });
+		expect(open.row.getAttribute("aria-expanded")).toBe("true");
 	});
 
 	it("ignores a bare F10", () => {

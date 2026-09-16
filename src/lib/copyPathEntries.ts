@@ -12,6 +12,14 @@ import { relativeToWorkspace } from "./resolveWorkspacePath";
  * A path outside the workspace root has no relative form, so that entry carries
  * `text: null` and is rendered **disabled rather than dropped** — the menu keeps
  * one shape either way.
+ *
+ * **On Windows the two entries deliberately disagree about separators.** The
+ * relative form comes from `relativeToWorkspace`, which normalises to `/`
+ * (libgit2 wants that form, and it is what a shell or a git command will be
+ * given); the absolute form is passed through untouched, so in the Explorer it
+ * keeps the native `\` it came from the Rust file explorer with. The same row
+ * therefore yields `src/lib/ipc.ts` and `C:\Users\me\repo\src\lib\ipc.ts`.
+ * That is right for each destination — do not "fix" it in either direction.
  */
 export const COPY_PATH_LABELS = {
 	relative: "Copy Relative Path",

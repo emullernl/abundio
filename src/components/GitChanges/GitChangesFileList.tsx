@@ -8,7 +8,12 @@ interface Props {
 	baseBranch: string | null;
 	onSelectFile: (file: GitChangedFile) => void;
 	onOpenFile: (file: GitChangedFile) => void;
-	onContextMenu: (x: number, y: number, file: GitChangedFile) => void;
+	onContextMenu: (
+		x: number,
+		y: number,
+		file: GitChangedFile,
+		fromKeyboard: boolean,
+	) => void;
 	selectedFile: GitChangedFile | null;
 	/** The row the **Row menu** is open on, if any. */
 	menuTargetFile: GitChangedFile | null;
@@ -157,7 +162,9 @@ export function GitChangesFileList({
 										}
 										onClick={() => onSelectFile(file)}
 										onOpenFile={() => onOpenFile(file)}
-										onContextMenu={(x, y) => onContextMenu(x, y, file)}
+										onContextMenu={(x, y, fromKeyboard) =>
+											onContextMenu(x, y, file, fromKeyboard)
+										}
 									/>
 								))}
 							</div>

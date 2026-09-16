@@ -14,6 +14,7 @@
  */
 
 import { COPY_PATH_LABELS } from "./copyPathEntries";
+import { revealLabel } from "./platform";
 
 export type GitRowMenuActionId =
 	| "open-diff"
@@ -38,17 +39,6 @@ export type GitRowMenuEntry = GitRowMenuAction | GitRowMenuSeparator;
 export interface GitRowMenuTarget {
 	status: string;
 	section: string;
-}
-
-/**
- * Platform wording for the "show this in the OS file manager" action, matching
- * the Explorer tab's own label.
- */
-export function revealLabel(platform: string = navigator.platform): string {
-	const p = platform.toLowerCase();
-	if (p.includes("mac")) return "Reveal in Finder";
-	if (p.includes("win")) return "Reveal in Explorer";
-	return "Reveal in File Manager";
 }
 
 export function gitRowMenuEntries(

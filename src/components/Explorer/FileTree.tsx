@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import { copyPathEntries } from "../../lib/copyPathEntries";
 import { fs as fsApi } from "../../lib/ipc";
+import { revealLabel } from "../../lib/platform";
 import type { DirEntry } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -15,11 +16,7 @@ interface FileTreeProps {
 	workspaceId: string;
 }
 
-const REVEAL_LABEL = navigator.platform.toLowerCase().includes("mac")
-	? "Reveal in Finder"
-	: navigator.platform.toLowerCase().includes("win")
-		? "Reveal in Explorer"
-		: "Reveal in File Manager";
+const REVEAL_LABEL = revealLabel();
 
 function dirname(p: string): string {
 	return p.substring(0, p.lastIndexOf("/"));
