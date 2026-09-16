@@ -15,7 +15,7 @@ import {
 } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
-import { DirtyMarker } from "../DirtyMarker";
+import { DirtyEdge, DirtyRing } from "../DirtyMarker";
 import { ChevronRight, GitBranch, X } from "../Icons";
 import { RollupIcon } from "../RollupIcon";
 
@@ -188,6 +188,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			onContextMenu={onContextMenu}
 			className="group flex items-start gap-2.5 pr-3 py-2.5 rounded-lg cursor-pointer transition-colors select-none"
 			style={{
+				position: "relative",
 				paddingLeft: 8,
 				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
 				borderLeft: isActive
@@ -343,15 +344,6 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 									style={{ flexShrink: 0 }}
 								/>
 								<span className="truncate">{gitInfo.currentBranch}</span>
-								{/* Full warning colour even on the dimmed chip of an
-								    unopened workspace — uncommitted work nobody is
-								    looking at is the case the marker exists for. */}
-								{uncommitted?.dirty && (
-									<DirtyMarker
-										title={uncommittedTooltip(uncommitted)}
-										style={{ marginLeft: 1 }}
-									/>
-								)}
 							</div>
 						)}
 					</div>
@@ -418,7 +410,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 							{hidden.count}
 						</span>
 						{hidden.dirty && (
-							<DirtyMarker title="Uncommitted changes in a hidden worktree" />
+							<DirtyRing title="Uncommitted changes in a hidden worktree" />
 						)}
 					</div>
 					<div
@@ -428,6 +420,12 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 						<RollupIcon kind="terminal" rollup={hidden.terminal} size={12} />
 					</div>
 				</div>
+			)}
+			{/* The row's own Dirty marker. Full strength on a never-opened
+			    workspace too — uncommitted work nobody is looking at is the case
+			    it exists for. */}
+			{uncommitted?.dirty && (
+				<DirtyEdge title={uncommittedTooltip(uncommitted)} />
 			)}
 			<button
 				type="button"

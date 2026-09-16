@@ -190,7 +190,7 @@ describe("CollapsedStrip", () => {
 			expect(marker()).toBeNull();
 		});
 
-		it("draws a ring for the workspace's own uncommitted work", () => {
+		it("draws an edge bar for the workspace's own uncommitted work", () => {
 			useWorkspaceGitStore.setState({
 				uncommittedById: {
 					"ws-1": {
@@ -201,31 +201,32 @@ describe("CollapsedStrip", () => {
 			});
 			render(workspace([]));
 			expect(marker()?.getAttribute("title")).toBe("Uncommitted: 2 unstaged");
+			expect(marker()?.style.width).toBe("3px");
 		});
 
-		it("draws the same ring when only a hidden member is dirty", () => {
+		it("draws a ring on the rollup when only a hidden member is dirty", () => {
 			render(workspace([]), hiddenRollup(true));
 			expect(marker()?.getAttribute("title")).toBe(
 				"Uncommitted changes in a hidden worktree",
 			);
 		});
 
-		it("says both when the workspace and a hidden member are dirty", () => {
+		it("keeps the two apart: an edge bar for itself, a ring for the hidden member", () => {
 			useWorkspaceGitStore.setState({
 				uncommittedById: { "ws-1": { dirty: true, breakdown: null } },
 			});
 			render(workspace([]), hiddenRollup(true));
-			expect(container.querySelectorAll("[data-dirty-marker]")).toHaveLength(1);
-			expect(marker()?.getAttribute("title")).toBe(
-				"Uncommitted changes · also in a hidden worktree",
-			);
+			const titles = [
+				...container.querySelectorAll<HTMLElement>("[data-dirty-marker]"),
+			].map((el) => el.getAttribute("title"));
+			expect(titles).toEqual([
+				"Uncommitted changes in a hidden worktree",
+				"Uncommitted changes",
+			]);
 		});
 
-		it("is hollow, so it never reads as a filled status badge", () => {
-			useWorkspaceGitStore.setState({
-				uncommittedById: { "ws-1": { dirty: true, breakdown: null } },
-			});
-			render(workspace([]));
+		it("draws the hidden member's marker hollow, so it never reads as a status badge", () => {
+			render(workspace([]), hiddenRollup(true));
 			expect(marker()?.style.border).toContain("var(--warning)");
 			expect(marker()?.style.backgroundColor).not.toContain("--warning");
 		});

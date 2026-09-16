@@ -14,7 +14,7 @@ import {
 	DOT_STATUS_ANIMATED,
 	DOT_STATUS_COLOR,
 } from "../AgentStatusIcon";
-import { DirtyMarker } from "../DirtyMarker";
+import { DirtyEdge, DirtyRing } from "../DirtyMarker";
 import { RollupIcon } from "../RollupIcon";
 import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
 
@@ -66,14 +66,6 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	);
 	const ownDirty = uncommitted?.dirty === true;
 	const hiddenDirty = hidden?.dirty === true;
-	// One ring for both, as the strip has room for one — the same merge its
-	// Hidden-rollup badge makes. The tooltip says which.
-	let dirtyTitle = "Uncommitted changes in a hidden worktree";
-	if (uncommitted && ownDirty) {
-		dirtyTitle = hiddenDirty
-			? `${uncommittedTooltip(uncommitted)} · also in a hidden worktree`
-			: uncommittedTooltip(uncommitted);
-	}
 	const sidebarWidth = useSettingsStore((s) => s.sidebarWidth);
 
 	const [open, setOpen] = useState(false);
@@ -227,18 +219,19 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 							/>
 						)}
 					</div>
-					{/* The Dirty marker hangs off this bottom cell's bottom-right
-					    corner, mirroring the Hidden-rollup badge at the top cell's
-					    top-right, so the two never collide. */}
+					{/* A hidden member's Dirty marker hangs off this bottom cell's
+					    bottom-right corner, mirroring the Hidden-rollup badge at the
+					    top cell's top-right, so the two never collide. The strip's
+					    own dirtiness is the edge bar, as in the expanded row. */}
 					<div style={{ height: STRIP_ICON_SIZE, position: "relative" }}>
 						<RollupIcon
 							kind="terminal"
 							rollup={rollups.terminal}
 							size={STRIP_ICON_SIZE}
 						/>
-						{(ownDirty || hiddenDirty) && (
-							<DirtyMarker
-								title={dirtyTitle}
+						{hiddenDirty && (
+							<DirtyRing
+								title="Uncommitted changes in a hidden worktree"
 								size={7}
 								cutout="var(--bg-secondary)"
 								style={{ position: "absolute", right: -3, bottom: -2 }}
@@ -278,6 +271,9 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 						{shortenPath(workspace.rootFolder)}
 					</span>
 				</div>
+				{ownDirty && uncommitted && (
+					<DirtyEdge title={uncommittedTooltip(uncommitted)} />
+				)}
 			</div>
 
 			{open &&

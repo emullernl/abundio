@@ -24,13 +24,14 @@ sentence in **Hidden rollup**.
   `GitScheduler` bundle. Not opened: the batched `git_workspaces_summary`, which gains `isDirty`.
 - **Refresh for unopened Workspaces** — whenever the batch already runs (Workspace list change) **and**
   when the Window regains focus. No timer: agents run in opened Workspaces, which are already live.
-- **Shape** — a **hollow ring** in `--warning`, inside the branch chip, only while dirty. Hollow
-  because a filled circle in the sidebar is a status badge (amber = Working). Full colour even on the
-  dimmed chip of an unopened Workspace.
-- **Folded set** — the Hidden rollup draws a ring when any hidden member is dirty; its member tooltip
-  marks which ones.
-- **Narrow sidebar** — a ring on the bottom-right corner of the Terminal rollup cell, meaning "this
-  Workspace or a hidden member is dirty" (mirrors the Hidden-rollup badge at the Agent cell's top-right).
+- **Shape** — a 3px **bar down the row's right edge** in `--warning`, in both sidebar widths, only
+  while dirty. Full strength on an unopened Workspace's row too. Rejected: tinting the row
+  background (it already carries active and hover, and most rows are dirty at once, so the tint stops
+  being a signal) and the first build's ring inside the branch chip (too quiet at row scale).
+- **Folded set** — hidden members have no row to bar, so the Hidden rollup carries the marker's
+  **hollow ring** form when any of them is dirty; its member tooltip marks which ones. In the narrow
+  sidebar that ring sits on the Terminal rollup cell's bottom-right corner, mirroring the
+  Hidden-rollup badge at the Agent cell's top-right. A row's *own* dirtiness is always the bar.
 - **Tooltip** — opened: `Uncommitted: 2 staged · 3 unstaged · 1 untracked` (+ `· 1 conflicted`), by
   distinct path per Section. Unopened: `Uncommitted changes`. No click action of its own.
 - **Branch stat** — kept as branch size against base, now with a `vs <base>` tooltip, and its file
@@ -80,13 +81,14 @@ Pure helpers (tested): `uncommittedOf(files)`, `branchStatOf(files)` (distinct p
 
 ### UI
 
-- `WorkspaceItem`: ring inside the branch chip after the name (`data-dirty-marker`), `title` = tooltip.
-  Branch stat gets `title="vs <base>: N files, +A −D, including uncommitted"` (base =
+- `WorkspaceItem`: `DirtyEdge` bar on the (now relatively positioned) row (`data-dirty-marker`),
+  `title` = tooltip. Branch stat gets `title="vs <base>: N files, +A −D, including uncommitted"` (base =
   `workspace.baseBranch`, else "the default branch").
 - `useHiddenRollup` gains `dirty: boolean`; dirty members' tooltip lines end in `· uncommitted`.
-  `WorkspaceItem` draws the ring after the hidden count.
-- `CollapsedStrip`: ring at the Terminal cell's bottom-right when own **or** hidden dirty.
-- Shared `DirtyMarker` component so all three placements look the same.
+  `WorkspaceItem` draws a `DirtyRing` after the hidden count.
+- `CollapsedStrip`: the same edge bar, plus a `DirtyRing` at the Terminal cell's bottom-right for
+  hidden members.
+- `DirtyMarker.tsx` exports both forms, so every placement reads the same.
 
 ### Demo
 
@@ -99,3 +101,4 @@ distinct paths for its count.
 2. Rust: `is_dirty` in the workspace summary (+ tests).
 3. Store: `uncommittedById`, helpers, distinct-path Branch stat, bundle/sync wiring, focus refresh (+ tests).
 4. UI: Dirty marker in chip, Hidden rollup and narrow strip; Branch stat tooltip; demo fixture (+ tests).
+5. UI revision: the chip ring becomes a row-edge bar (the ring stays for hidden members).
