@@ -30,7 +30,15 @@ import { useSettingsStore } from "../../stores/settingsStore";
  *
  * **Links open outside.** A plain `<a>` click navigates the whole webview away
  * from the app, and there is no router to come back from — the window would just
- * be showing github.com. Every link is intercepted and handed to the OS browser.
+ * be showing github.com. Every link is intercepted and handed to the OS browser,
+ * including the **middle click**, which does not fire `onClick` at all and would
+ * otherwise sail straight past the guard into exactly that failure.
+ *
+ * Only `http(s)` is handed on. `rehype-sanitize`'s `defaultSchema` already
+ * limits hrefs to six protocols, which closes the `javascript:` hole — but the
+ * other four (`mailto`, `xmpp`, `irc`, `ircs`) are meaningless in a release note
+ * and would still be handed to an OS handler, so network-sourced Markdown gets
+ * the smallest surface that does the job.
  */
 
 const REPO_URL = "https://github.com/emullernl/abundio";
@@ -48,6 +56,14 @@ const REHYPE_PLUGINS = [
 	],
 ];
 
+/** Whether this href is something we are willing to hand to the OS browser.
+ *  Exported for tests. */
+export function isExternalHref(href: string | undefined): href is string {
+	if (!href) return false;
+	const scheme = href.slice(0, href.indexOf(":")).toLowerCase();
+	return scheme === "http" || scheme === "https";
+}
+
 interface ReleaseNotesMarkdownProps {
 	body: string;
 }
@@ -64,20 +80,27 @@ export function ReleaseNotesMarkdown({ body }: ReleaseNotesMarkdownProps) {
 				href,
 				children,
 				...rest
-			}: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-				<a
-					{...rest}
-					href={href}
-					onClick={(e) => {
-						// Keep the href for hover/copy-link, but never let the webview
-						// follow it — see the component doc.
-						e.preventDefault();
-						if (href) open(href).catch(() => {});
-					}}
-				>
-					{children}
-				</a>
-			),
+			}: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+				// Both handlers do the same thing: stop the webview navigating,
+				// then hand an http(s) href to the OS. Anything else is dropped
+				// rather than launched — see the component doc.
+				const intercept = (e: React.MouseEvent) => {
+					e.preventDefault();
+					if (isExternalHref(href)) open(href).catch(() => {});
+				};
+				return (
+					<a
+						{...rest}
+						href={href}
+						onClick={intercept}
+						// onClick never fires for a middle click, which would open the
+						// link *in the webview* — the exact navigation this guards.
+						onAuxClick={intercept}
+					>
+						{children}
+					</a>
+				);
+			},
 		}),
 		[],
 	);

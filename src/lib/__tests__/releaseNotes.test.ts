@@ -123,7 +123,9 @@ describe("selectReleaseNotes — ahead (a dev build)", () => {
 });
 
 describe("selectReleaseNotes — behind (fell off the fetched page)", () => {
-	const view = selectReleaseNotes("0.1.0", RELEASES);
+	// hasMore: GitHub had releases beyond the page, so 0.1.0's own release is
+	// real and simply not in this list.
+	const view = selectReleaseNotes("0.1.0", RELEASES, true);
 
 	it("shows everything fetched, since all of it is new to the user", () => {
 		expect(view.entries).toHaveLength(4);
@@ -139,6 +141,45 @@ describe("selectReleaseNotes — behind (fell off the fetched page)", () => {
 
 	it("does not claim the version has no notes — they exist, off-page", () => {
 		expect(view.missingCurrentVersion).toBeNull();
+	});
+});
+
+describe("selectReleaseNotes — older than everything, but nothing more exists", () => {
+	// Same shape as "behind", opposite truth: this is the whole of GitHub's
+	// history, so 0.1.0 was never published rather than having fallen off a page.
+	const view = selectReleaseNotes("0.1.0", RELEASES, false);
+
+	it("does not point at older releases that do not exist", () => {
+		expect(view.showOlderLink).toBe(false);
+	});
+
+	it("says plainly that this version has no published notes", () => {
+		expect(view.missingCurrentVersion).toBe("0.1.0");
+	});
+
+	it("still lists everything, which is all genuinely newer", () => {
+		expect(view.entries).toHaveLength(4);
+		expect(view.heading).toBe("What's new since 0.1.0");
+	});
+});
+
+describe("selectReleaseNotes — hasMore only speaks to the off-page case", () => {
+	it("is ignored when the running version is present", () => {
+		const withMore = selectReleaseNotes("0.4.0", RELEASES, true);
+		const withoutMore = selectReleaseNotes("0.4.0", RELEASES, false);
+		expect(withMore).toEqual(withoutMore);
+		expect(withMore.showOlderLink).toBe(false);
+	});
+
+	it("is ignored for a dev build running ahead of everything", () => {
+		const view = selectReleaseNotes("9.9.9", RELEASES, true);
+		expect(view.heading).toBe("Recent releases");
+		expect(view.missingCurrentVersion).toBe("9.9.9");
+		expect(view.showOlderLink).toBe(false);
+	});
+
+	it("defaults to false, the conservative claim", () => {
+		expect(selectReleaseNotes("0.1.0", RELEASES).showOlderLink).toBe(false);
 	});
 });
 

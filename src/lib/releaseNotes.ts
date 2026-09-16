@@ -17,9 +17,6 @@ import type { ReleaseNote } from "./ipc";
  *    in the heading and an "older releases" escape hatch is offered.
  */
 
-/** How many releases Rust fetches. Mirrors `RELEASES_PAGE_SIZE` in updater.rs. */
-export const RELEASES_PAGE_SIZE = 30;
-
 export interface ReleaseNotesEntry {
 	release: ReleaseNote;
 	/** The release matching the version the user is running right now. */
@@ -85,6 +82,13 @@ function entry(
 export function selectReleaseNotes(
 	currentVersion: string,
 	releases: ReleaseNote[],
+	/**
+	 * Whether GitHub had releases beyond the page we fetched. Comes from Rust,
+	 * counted before filtering — the frontend cannot derive it, because a full
+	 * page of 30 can arrive here as a handful of entries once prereleases and
+	 * non-semver tags are dropped.
+	 */
+	hasMore = false,
 ): ReleaseNotesView {
 	const sorted = [...releases].sort((a, b) =>
 		compareVersions(b.version, a.version),
@@ -123,15 +127,24 @@ export function selectReleaseNotes(
 		};
 	}
 
-	// Behind: older than every release we fetched, so the running version's own
-	// release exists but sits on a page we did not ask for. Everything fetched
-	// is new to the user, and there is more beyond it.
+	// Older than every release we fetched. Two very different situations, and
+	// `hasMore` is the only thing that tells them apart:
+	//
+	//  - there are more releases beyond this page, so the running version's own
+	//    release is real and simply sits on a page we did not ask for; or
+	//  - this is everything GitHub has, so the running version was never
+	//    published at all — and claiming "older releases on GitHub" would point
+	//    at releases that do not exist, while suppressing the honest
+	//    "no published release notes for vX" line.
+	//
+	// Either way everything fetched is new to the user, so the list is the same;
+	// only the two claims we make around it differ.
 	if (newer.length === sorted.length) {
 		return {
 			heading: `What's new since ${currentVersion}`,
 			entries: sorted.map((r, i) => entry(r, false, i === 0)),
-			missingCurrentVersion: null,
-			showOlderLink: true,
+			missingCurrentVersion: hasMore ? null : currentVersion,
+			showOlderLink: hasMore,
 		};
 	}
 

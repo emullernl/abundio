@@ -5,14 +5,21 @@ import { useUpdateStore } from "../stores/updateStore";
 import { ReleaseNotesMarkdown } from "./Settings/ReleaseNotesMarkdown";
 
 /**
- * "You're now on Abundio X" — shown once, on the first launch after an upgrade.
- * See ADR-0036.
+ * "You're now on Abundio X" — shown after an upgrade, and **kept coming back
+ * until it is dismissed**. See ADR-0036.
  *
  * Rust decides whether this appears at all: it compares the running version
  * against the app-global `last_seen_version`, fetches the notes, and emits
  * `whats-new` to a single Profile-bound Window. So by the time this renders,
  * the notes are already in hand — there is no loading state and no failure
  * state, because a failed fetch simply never emits and tries again next launch.
+ *
+ * `last_seen_version` only advances when the card is actually dismissed (or when
+ * the fetch found no notes for this version), so quitting or closing the Window
+ * without touching it brings the card back next launch. That is deliberate:
+ * these notes are shown once per upgrade at most, so guaranteed delivery beats
+ * guaranteed-once. Marking it seen at emit time would lose the card to a crash,
+ * a quit, or simply to it being emitted to a Window the user was not looking at.
  *
  * Non-blocking and bottom-right, like the update prompt, for ADR-0014's reason:
  * nothing about an update interrupts live PTYs and mid-turn Agents. It shares

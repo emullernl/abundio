@@ -1220,7 +1220,6 @@ pub fn run() {
             updater::updater_status,
             updater::updater_set_auto_check,
             updater::updater_release_notes,
-            updater::updater_release_notes_for,
             updater::updater_mark_version_seen,
             clipboard_image::set_clipboard_image_from_path,
         ])

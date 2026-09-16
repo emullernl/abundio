@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import { type ReleaseNote, type UpdateInfo, updates } from "../lib/ipc";
+import {
+	type ReleaseNote,
+	type ReleaseNotesPage,
+	type UpdateInfo,
+	updates,
+} from "../lib/ipc";
 import { useSettingsStore } from "./settingsStore";
 
 /**
@@ -56,8 +61,10 @@ interface UpdateStoreState {
 
 	// ── Release notes (ADR-0036) ──
 
-	/** Published releases, newest first. Null until the first fetch resolves. */
-	notes: ReleaseNote[] | null;
+	/** Published releases, newest first. Null until the first fetch resolves.
+	 *  Deliberately **kept** when a later fetch fails, so a failed refresh does
+	 *  not throw away a list that is already on screen. */
+	notes: ReleaseNotesPage | null;
 	notesStatus: "idle" | "loading" | "loaded" | "error";
 	/** Fetch the release list. `refresh` spends a request to bypass the hourly
 	 *  Rust-side cache — used by the manual "Check for updates" button. */
@@ -200,15 +207,21 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	notesStatus: "idle",
 
 	fetchNotes: async ({ refresh = false } = {}) => {
-		if (get().notesStatus === "loading") return;
+		// The in-flight guard exists for the duplicate-mount case, but it must
+		// not swallow a refresh: the Settings window opens straight onto this
+		// section, so "Check for updates" is routinely clicked while the mount
+		// fetch is still resolving. Dropping it there would quietly serve the
+		// hourly cache to a user who explicitly asked for current truth.
+		if (get().notesStatus === "loading" && !refresh) return;
 		set({ notesStatus: "loading" });
 		try {
 			const notes = await updates.releaseNotes(refresh);
 			set({ notes, notesStatus: "loaded" });
 		} catch {
-			// Offline, rate-limited, or GitHub is down. The section says so and
-			// offers a retry; the error text itself is not worth surfacing, since
-			// there is nothing the user can do differently with it.
+			// Offline, rate-limited, or GitHub is down. The error text is not
+			// worth surfacing — there is nothing the user can do differently with
+			// it — and `notes` is left alone so an already-rendered list survives
+			// a failed refresh rather than being replaced by an error.
 			set({ notesStatus: "error" });
 		}
 	},

@@ -30,8 +30,10 @@ const NOTE: ReleaseNote = {
 	url: "https://example.test/0.4.0",
 };
 
+const PAGE = { releases: [NOTE], hasMore: false };
+
 beforeEach(() => {
-	releaseNotes.mockReset().mockResolvedValue([NOTE]);
+	releaseNotes.mockReset().mockResolvedValue(PAGE);
 	markVersionSeen.mockClear();
 	useUpdateStore.setState({
 		notes: null,
@@ -41,9 +43,9 @@ beforeEach(() => {
 });
 
 describe("fetchNotes", () => {
-	it("stores the list and marks itself loaded", async () => {
+	it("stores the page and marks itself loaded", async () => {
 		await useUpdateStore.getState().fetchNotes();
-		expect(useUpdateStore.getState().notes).toEqual([NOTE]);
+		expect(useUpdateStore.getState().notes).toEqual(PAGE);
 		expect(useUpdateStore.getState().notesStatus).toBe("loaded");
 	});
 
@@ -59,18 +61,51 @@ describe("fetchNotes", () => {
 		expect(useUpdateStore.getState().notes).toBeNull();
 	});
 
-	it("does not start a second fetch while one is in flight", async () => {
-		let release!: (v: ReleaseNote[]) => void;
-		releaseNotes.mockReturnValue(
-			new Promise<ReleaseNote[]>((resolve) => {
-				release = resolve;
-			}),
-		);
-		const first = useUpdateStore.getState().fetchNotes();
+	it("keeps an already-loaded page when a later fetch fails", async () => {
 		await useUpdateStore.getState().fetchNotes();
-		expect(releaseNotes).toHaveBeenCalledTimes(1);
-		release([NOTE]);
-		await first;
+		releaseNotes.mockRejectedValue(new Error("offline"));
+		await useUpdateStore.getState().fetchNotes({ refresh: true });
+		expect(useUpdateStore.getState().notesStatus).toBe("error");
+		// The view falls back to what it had rather than blanking out.
+		expect(useUpdateStore.getState().notes).toEqual(PAGE);
+	});
+
+	describe("the in-flight guard", () => {
+		function deferred() {
+			let resolve!: (v: typeof PAGE) => void;
+			const promise = new Promise<typeof PAGE>((r) => {
+				resolve = r;
+			});
+			return { promise, resolve };
+		}
+
+		it("drops a duplicate plain fetch", async () => {
+			const first = deferred();
+			releaseNotes.mockReturnValue(first.promise);
+			const inFlight = useUpdateStore.getState().fetchNotes();
+			await useUpdateStore.getState().fetchNotes();
+			expect(releaseNotes).toHaveBeenCalledTimes(1);
+			first.resolve(PAGE);
+			await inFlight;
+		});
+
+		/// The Settings window opens straight onto this section, so clicking
+		/// "Check for updates" while the mount fetch is still resolving is a real
+		/// window, not an engineered race. Dropping it would serve the hourly
+		/// cache to someone who explicitly asked for current truth.
+		it("lets a refresh through while a plain fetch is in flight", async () => {
+			const first = deferred();
+			releaseNotes.mockReturnValue(first.promise);
+			const inFlight = useUpdateStore.getState().fetchNotes();
+
+			releaseNotes.mockResolvedValue(PAGE);
+			await useUpdateStore.getState().fetchNotes({ refresh: true });
+
+			expect(releaseNotes).toHaveBeenCalledTimes(2);
+			expect(releaseNotes).toHaveBeenLastCalledWith(true);
+			first.resolve(PAGE);
+			await inFlight;
+		});
 	});
 });
 

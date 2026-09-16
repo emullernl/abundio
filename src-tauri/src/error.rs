@@ -26,6 +26,14 @@ pub enum AbundioError {
     InvalidOperation(String),
     #[error("Clipboard error: {0}")]
     Clipboard(String),
+    /// An upstream asked us to back off. `wait` is how long the caller should
+    /// refuse to retry for; it never reaches the frontend (only `message` does),
+    /// but the release-notes cache reads it to size its negative entry.
+    #[error("{message}")]
+    RateLimited {
+        message: String,
+        wait: std::time::Duration,
+    },
     /// Environment-variable crypto or credential-store failure. The message is
     /// deliberately coarse — it is serialized straight to the frontend, so it
     /// must never carry plaintext or key material.

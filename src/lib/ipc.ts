@@ -768,6 +768,16 @@ export interface ReleaseNote {
 	url: string;
 }
 
+/** One page of release notes. `hasMore` is computed Rust-side **before**
+ *  prereleases and non-semver tags are filtered out, so a full page of 30 can
+ *  arrive here as a handful of entries and still report `true`. It is what lets
+ *  `selectReleaseNotes` tell "your version fell off the page" apart from "your
+ *  version was never published". See ADR-0036. */
+export interface ReleaseNotesPage {
+	releases: ReleaseNote[];
+	hasMore: boolean;
+}
+
 /** Download progress for a staging update. `total` is null until known. */
 export interface UpdateDownloadProgress {
 	downloaded: number;
@@ -798,7 +808,7 @@ export const updates = {
 	 *  Cached app-globally for an hour; `refresh` spends a request to bypass it.
 	 *  Which entries are shown is decided by `selectReleaseNotes`. */
 	releaseNotes: (refresh = false) =>
-		invoke<ReleaseNote[]>("updater_release_notes", { refresh }),
+		invoke<ReleaseNotesPage>("updater_release_notes", { refresh }),
 
 	/** Marks the running version's notes as seen, so the What's new card does
 	 *  not return on the next launch. App-global, not per-Window. */

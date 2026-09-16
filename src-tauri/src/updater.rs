@@ -40,6 +40,17 @@ const RELEASES_PAGE_SIZE: usize = 30;
 const NOTES_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
 /// Guards against a hung connection holding the What's new check open at launch.
 const NOTES_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a *failed* fetch is remembered. Without this the rate-limited state
+/// is the one state with no brake: every Settings mount, every Retry and every
+/// "Check for updates" click would go straight back out to a GitHub that is
+/// refusing us, spending the budget it is waiting for us to stop spending.
+/// Short, so a user who reconnects is not locked out for long.
+const NOTES_ERROR_TTL: Duration = Duration::from_secs(60);
+/// Back-off when GitHub says we are rate-limited but gives no reset time.
+const RATE_LIMIT_FALLBACK_BACKOFF: Duration = Duration::from_secs(10 * 60);
+/// Ceiling on a server-supplied back-off, so a bad `X-RateLimit-Reset` cannot
+/// wedge the feature shut for the rest of the session.
+const MAX_RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(60 * 60);
 /// `settings` key holding the newest version whose notes the user has seen.
 const LAST_SEEN_VERSION_KEY: &str = "last_seen_version";
 
@@ -78,6 +89,20 @@ pub struct ReleaseNote {
     pub body: String,
     pub published_at: Option<String>,
     pub url: String,
+}
+
+/// One page of release notes, plus whether GitHub had more to give.
+///
+/// `has_more` is computed **before** filtering, because `parse_releases` drops
+/// prereleases, drafts and non-semver tags — so a full page of 30 can arrive at
+/// the frontend as a handful of entries. Without this the frontend cannot tell
+/// "your version fell off the page" from "your version was never published",
+/// and the anchoring rule would claim older releases exist that do not.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseNotesPage {
+    pub releases: Vec<ReleaseNote>,
+    pub has_more: bool,
 }
 
 /// The subset of GitHub's release JSON we read. Everything else is ignored, so
@@ -136,8 +161,15 @@ struct UpdaterInner {
     downloading: bool,
     /// Last successful release-notes fetch and when it landed. App-global, so
     /// the Settings page in one Window and the What's new check share one
-    /// result rather than each spending a request. See ADR-0036.
-    notes: Option<(Instant, Vec<ReleaseNote>)>,
+    /// result rather than each spending a request. Behind an `Arc` because the
+    /// What's new check only reads it, and copying 30 Markdown bodies to answer
+    /// "which release am I on?" is pure waste. See ADR-0036.
+    notes: Option<(Instant, Arc<ReleaseNotesPage>)>,
+    /// Last *failed* fetch: when it happened, how long to honour it for, and
+    /// what to say meanwhile. Separate from `notes` so a failure never evicts a
+    /// good list. The duration is per-failure because a rate-limited response
+    /// tells us when it lifts, while an offline one gets the short default.
+    notes_error: Option<(Instant, Duration, String)>,
 }
 
 impl UpdaterState {
@@ -177,21 +209,6 @@ fn is_newer(a: &str, b: &str) -> bool {
     }
 }
 
-/// Rejects anything that is not a bare `major.minor.patch`.
-///
-/// The command takes a *version*, never a URL, and builds the request path from
-/// `GITHUB_REPO`; this is what keeps a frontend-supplied string from steering
-/// the request anywhere.
-fn validate_version(version: &str) -> Result<(), AbundioError> {
-    if parse_version(version).is_some() {
-        Ok(())
-    } else {
-        Err(AbundioError::InvalidOperation(format!(
-            "invalid version: {version}"
-        )))
-    }
-}
-
 /// Turns GitHub's releases JSON into the list the frontend renders.
 ///
 /// Drops prereleases (CI publishes with `prerelease: false` and the updater
@@ -200,11 +217,14 @@ fn validate_version(version: &str) -> Result<(), AbundioError> {
 /// unauthenticated API does not return them, which is ADR-0014's publish-is-the-gate
 /// rule enforced by GitHub). Tags that are not `vMAJOR.MINOR.PATCH` are skipped
 /// rather than guessed at. Order is preserved: GitHub returns newest first.
-fn parse_releases(json: &str) -> Result<Vec<ReleaseNote>, AbundioError> {
+fn parse_releases(json: &str) -> Result<ReleaseNotesPage, AbundioError> {
     let raw: Vec<GithubRelease> = serde_json::from_str(json).map_err(|e| {
         AbundioError::InvalidOperation(format!("could not read GitHub releases: {e}"))
     })?;
-    Ok(raw
+    // Counted before the filter: a full page means GitHub had at least this
+    // many, whatever we then discard. See `ReleaseNotesPage::has_more`.
+    let has_more = raw.len() >= RELEASES_PAGE_SIZE;
+    let releases = raw
         .into_iter()
         .filter(|r| !r.prerelease && !r.draft)
         .filter_map(|r| {
@@ -219,7 +239,11 @@ fn parse_releases(json: &str) -> Result<Vec<ReleaseNote>, AbundioError> {
                 }),
             })
         })
-        .collect())
+        .collect();
+    Ok(ReleaseNotesPage {
+        releases,
+        has_more,
+    })
 }
 
 /// Installs rustls' process-wide default crypto provider, once.
@@ -257,14 +281,35 @@ fn build_client() -> Result<reqwest::Client, AbundioError> {
 /// Unauthenticated: these are public releases, and asking the user for a token
 /// to read their own changelog would be absurd. That caps us at 60 requests per
 /// hour per IP, which is what `NOTES_CACHE_TTL` is sized against.
-async fn fetch_releases(app: &AppHandle) -> Result<Vec<ReleaseNote>, AbundioError> {
+async fn fetch_releases(app: &AppHandle) -> Result<ReleaseNotesPage, AbundioError> {
     let agent = format!("Abundio/{}", app.package_info().version);
     fetch_releases_as(&agent).await
 }
 
+/// How long GitHub wants us to wait, if this response says we are rate-limited.
+///
+/// `x-ratelimit-remaining: 0` is the signal (a 403 can mean other things), and
+/// `x-ratelimit-reset` is a Unix timestamp. Clamped, because a clock skew or a
+/// malformed header must not wedge release notes shut for the session.
+fn rate_limit_backoff(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let header = |name: &str| headers.get(name)?.to_str().ok()?.parse::<u64>().ok();
+    if header("x-ratelimit-remaining") != Some(0) {
+        return None;
+    }
+    let Some(reset) = header("x-ratelimit-reset") else {
+        return Some(RATE_LIMIT_FALLBACK_BACKOFF);
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let wait = Duration::from_secs(reset.saturating_sub(now));
+    Some(wait.clamp(NOTES_ERROR_TTL, MAX_RATE_LIMIT_BACKOFF))
+}
+
 /// The network half, with no Tauri in it — so it can be exercised for real
 /// against GitHub by the ignored test at the bottom of this file.
-async fn fetch_releases_as(user_agent: &str) -> Result<Vec<ReleaseNote>, AbundioError> {
+async fn fetch_releases_as(user_agent: &str) -> Result<ReleaseNotesPage, AbundioError> {
     let url = format!(
         "https://api.github.com/repos/{GITHUB_REPO}/releases?per_page={RELEASES_PAGE_SIZE}"
     );
@@ -281,10 +326,15 @@ async fn fetch_releases_as(user_agent: &str) -> Result<Vec<ReleaseNote>, Abundio
             AbundioError::InvalidOperation(format!("could not reach GitHub: {e}"))
         })?;
     if !response.status().is_success() {
-        return Err(AbundioError::InvalidOperation(format!(
-            "GitHub returned {}",
-            response.status()
-        )));
+        let status = response.status();
+        // A rate-limited response carries how long to wait; honour it so the
+        // negative cache backs off for exactly as long as GitHub wants.
+        let backoff = rate_limit_backoff(response.headers());
+        let message = format!("GitHub returned {status}");
+        return Err(match backoff {
+            Some(wait) => AbundioError::RateLimited { message, wait },
+            None => AbundioError::InvalidOperation(message),
+        });
     }
     let body = response.text().await.map_err(|e| {
         AbundioError::InvalidOperation(format!("could not read GitHub response: {e}"))
@@ -292,29 +342,66 @@ async fn fetch_releases_as(user_agent: &str) -> Result<Vec<ReleaseNote>, Abundio
     parse_releases(&body)
 }
 
+/// How long a cached failure should be honoured for.
+fn error_backoff(err: &AbundioError) -> Duration {
+    match err {
+        AbundioError::RateLimited { wait, .. } => *wait,
+        _ => NOTES_ERROR_TTL,
+    }
+}
+
 /// Returns the cached release list, fetching when it is missing or stale.
 ///
-/// The cache lock is never held across the network call — two Windows asking at
-/// once may both fetch, which costs a request but cannot deadlock.
+/// `refresh` bypasses the *success* cache but deliberately **not** the failure
+/// one. That is what makes the error branch's Retry honest: while GitHub is
+/// refusing us, clicking Retry (or holding down "Check for updates") returns the
+/// remembered failure instead of spending another request against the budget we
+/// are waiting on. See ADR-0036.
+///
+/// The cache lock is never held across the network call. Two Windows opening
+/// Settings at the same moment therefore each spend a request — the cache makes
+/// repeat visits free, not concurrent first visits.
 async fn releases_cached(
     app: &AppHandle,
     refresh: bool,
-) -> Result<Vec<ReleaseNote>, AbundioError> {
-    if !refresh {
-        if let Some(state) = app.try_state::<UpdaterState>() {
-            let inner = state.inner.lock().unwrap();
-            if let Some((fetched_at, releases)) = inner.notes.as_ref() {
+) -> Result<Arc<ReleaseNotesPage>, AbundioError> {
+    if let Some(state) = app.try_state::<UpdaterState>() {
+        let inner = state.inner.lock().unwrap();
+        if let Some((failed_at, wait, message)) = inner.notes_error.as_ref() {
+            if failed_at.elapsed() < *wait {
+                return Err(AbundioError::InvalidOperation(message.clone()));
+            }
+        }
+        if !refresh {
+            if let Some((fetched_at, page)) = inner.notes.as_ref() {
                 if fetched_at.elapsed() < NOTES_CACHE_TTL {
-                    return Ok(releases.clone());
+                    return Ok(page.clone());
                 }
             }
         }
     }
-    let releases = fetch_releases(app).await?;
-    if let Some(state) = app.try_state::<UpdaterState>() {
-        state.inner.lock().unwrap().notes = Some((Instant::now(), releases.clone()));
+    match fetch_releases(app).await {
+        Ok(page) => {
+            let page = Arc::new(page);
+            if let Some(state) = app.try_state::<UpdaterState>() {
+                let mut inner = state.inner.lock().unwrap();
+                inner.notes = Some((Instant::now(), page.clone()));
+                // A success clears the back-off, so a reconnecting user is not
+                // held to the remainder of a stale one.
+                inner.notes_error = None;
+            }
+            Ok(page)
+        }
+        Err(e) => {
+            if let Some(state) = app.try_state::<UpdaterState>() {
+                let mut inner = state.inner.lock().unwrap();
+                inner.notes_error = Some((Instant::now(), error_backoff(&e), e.to_string()));
+                // `notes` is deliberately left alone: a failed refresh must not
+                // throw away a list that is already on screen.
+            }
+            Err(e)
+        }
     }
-    Ok(releases)
 }
 
 fn to_info(update: &Update) -> UpdateInfo {
@@ -477,7 +564,7 @@ pub fn start_whats_new_check(app: AppHandle) {
         let Some(store) = app.try_state::<WorkspaceStore>() else {
             return;
         };
-        match releases.iter().find(|r| r.version == running) {
+        match releases.releases.iter().find(|r| r.version == running) {
             Some(note) if !note.body.is_empty() => {
                 emit_to_focused_profile_window(&app, "whats-new", note.clone());
             }
@@ -666,20 +753,11 @@ pub async fn updater_set_auto_check(
 pub async fn updater_release_notes(
     app: AppHandle,
     refresh: Option<bool>,
-) -> Result<Vec<ReleaseNote>, AbundioError> {
-    releases_cached(&app, refresh.unwrap_or(false)).await
-}
-
-/// Returns the notes for one specific version, or `None` when that version has
-/// no published release. Takes a *version*, never a URL — see `validate_version`.
-#[tauri::command]
-pub async fn updater_release_notes_for(
-    app: AppHandle,
-    version: String,
-) -> Result<Option<ReleaseNote>, AbundioError> {
-    validate_version(&version)?;
-    let releases = releases_cached(&app, false).await?;
-    Ok(releases.into_iter().find(|r| r.version == version))
+) -> Result<ReleaseNotesPage, AbundioError> {
+    let page = releases_cached(&app, refresh.unwrap_or(false)).await?;
+    // The one unavoidable copy: a command result has to be owned to serialize.
+    // Everything upstream of here shares the `Arc`.
+    Ok((*page).clone())
 }
 
 /// Marks the running version's notes as seen, so the What's new card does not
@@ -792,9 +870,8 @@ mod tests {
             "1.2", "1.2.3.4", "v1.2.3", "1.2.3-beta", "", "abc", "1.2.x", "-1.2.3",
         ] {
             assert_eq!(parse_version(bad), None, "{bad} should not parse");
-            assert!(validate_version(bad).is_err(), "{bad} should be rejected");
         }
-        assert!(validate_version("1.2.3").is_ok());
+        assert!(parse_version("1.2.3").is_some());
     }
 
     #[test]
@@ -814,13 +891,18 @@ mod tests {
         assert!(!is_newer("0.1.0", "nightly"));
     }
 
+    /// Shorthand: the filtered list from a JSON page.
+    fn parsed(json: &str) -> Vec<ReleaseNote> {
+        parse_releases(json).unwrap().releases
+    }
+
     #[test]
     fn parses_releases_newest_first_and_strips_the_v() {
         let json = r#"[
             {"tag_name":"v0.4.0","body":"newer","published_at":"2026-02-01T00:00:00Z","html_url":"https://example.test/4"},
             {"tag_name":"v0.3.0","body":"older","published_at":"2026-01-01T00:00:00Z","html_url":"https://example.test/3"}
         ]"#;
-        let releases = parse_releases(json).unwrap();
+        let releases = parsed(json);
         assert_eq!(releases.len(), 2);
         assert_eq!(releases[0].version, "0.4.0");
         assert_eq!(releases[0].body, "newer");
@@ -837,7 +919,7 @@ mod tests {
             {"tag_name":"v0.4.0","body":"draft","draft":true},
             {"tag_name":"v0.3.0","body":"real"}
         ]"#;
-        let releases = parse_releases(json).unwrap();
+        let releases = parsed(json);
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].version, "0.3.0");
     }
@@ -849,7 +931,7 @@ mod tests {
             {"tag_name":"v1.0.0-rc1","body":"y"},
             {"tag_name":"v1.0.0","body":"z"}
         ]"#;
-        let releases = parse_releases(json).unwrap();
+        let releases = parsed(json);
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].version, "1.0.0");
     }
@@ -858,25 +940,160 @@ mod tests {
     /// rule can find the running version, and the frontend words the empty case.
     #[test]
     fn keeps_releases_with_an_empty_body() {
-        let json = r#"[{"tag_name":"v1.0.0"}]"#;
-        let releases = parse_releases(json).unwrap();
+        let releases = parsed(r#"[{"tag_name":"v1.0.0"}]"#);
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].body, "");
         assert_eq!(releases[0].published_at, None);
-        assert_eq!(releases[0].url, "https://github.com/emullernl/abundio/releases/tag/v1.0.0");
+        assert_eq!(
+            releases[0].url,
+            "https://github.com/emullernl/abundio/releases/tag/v1.0.0"
+        );
     }
 
     /// Unknown fields must not break the parse — GitHub adds them over time.
     #[test]
     fn ignores_unknown_fields() {
         let json = r#"[{"tag_name":"v1.0.0","body":"b","reactions":{"+1":3},"assets":[]}]"#;
-        assert_eq!(parse_releases(json).unwrap().len(), 1);
+        assert_eq!(parsed(json).len(), 1);
     }
 
     #[test]
     fn malformed_json_is_an_error_not_an_empty_list() {
         assert!(parse_releases("not json").is_err());
         assert!(parse_releases("{}").is_err());
+    }
+
+    // ── has_more: the discriminator the frontend anchors on ──
+
+    /// Counted before filtering. A short page means GitHub had nothing more, so
+    /// a running version missing from it was never published — as opposed to
+    /// having fallen off a full page.
+    #[test]
+    fn a_short_page_reports_no_more() {
+        let json = r#"[{"tag_name":"v1.0.0","body":"a"},{"tag_name":"v0.9.0","body":"b"}]"#;
+        assert!(!parse_releases(json).unwrap().has_more);
+    }
+
+    #[test]
+    fn a_full_page_reports_more() {
+        let items: Vec<String> = (0..RELEASES_PAGE_SIZE)
+            .map(|i| format!(r#"{{"tag_name":"v1.0.{i}","body":"x"}}"#))
+            .collect();
+        let json = format!("[{}]", items.join(","));
+        let page = parse_releases(&json).unwrap();
+        assert!(page.has_more);
+        assert_eq!(page.releases.len(), RELEASES_PAGE_SIZE);
+    }
+
+    /// The case that makes counting-before-filtering load-bearing: a full page
+    /// that filters down to almost nothing still means more exist.
+    #[test]
+    fn a_full_page_of_prereleases_still_reports_more() {
+        let items: Vec<String> = (0..RELEASES_PAGE_SIZE)
+            .map(|i| format!(r#"{{"tag_name":"v1.0.{i}","body":"x","prerelease":true}}"#))
+            .collect();
+        let json = format!("[{}]", items.join(","));
+        let page = parse_releases(&json).unwrap();
+        assert!(page.has_more);
+        assert!(page.releases.is_empty());
+    }
+
+    #[test]
+    fn an_empty_page_reports_no_more() {
+        let page = parse_releases("[]").unwrap();
+        assert!(!page.has_more);
+        assert!(page.releases.is_empty());
+    }
+
+    // ── Negative cache back-off ──
+
+    /// An ordinary failure (offline, 500) gets the short default.
+    #[test]
+    fn ordinary_failures_back_off_briefly() {
+        let err = AbundioError::InvalidOperation("could not reach GitHub".into());
+        assert_eq!(error_backoff(&err), NOTES_ERROR_TTL);
+    }
+
+    /// A rate-limited failure backs off for as long as GitHub asked.
+    #[test]
+    fn rate_limited_failures_back_off_for_as_long_as_asked() {
+        let err = AbundioError::RateLimited {
+            message: "GitHub returned 403".into(),
+            wait: Duration::from_secs(900),
+        };
+        assert_eq!(error_backoff(&err), Duration::from_secs(900));
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
+        let mut map = reqwest::header::HeaderMap::new();
+        for (k, v) in pairs {
+            map.insert(
+                reqwest::header::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                v.parse().unwrap(),
+            );
+        }
+        map
+    }
+
+    /// A 403 is not automatically a rate limit — `remaining: 0` is the signal.
+    #[test]
+    fn no_backoff_when_requests_remain() {
+        assert_eq!(
+            rate_limit_backoff(&headers(&[("x-ratelimit-remaining", "57")])),
+            None
+        );
+        assert_eq!(rate_limit_backoff(&headers(&[])), None);
+    }
+
+    #[test]
+    fn backs_off_until_the_reset_time() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let reset = (now + 600).to_string();
+        let wait = rate_limit_backoff(&headers(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", &reset),
+        ]))
+        .unwrap();
+        assert!(wait > Duration::from_secs(540) && wait <= Duration::from_secs(600));
+    }
+
+    /// Rate-limited with no reset header: fall back rather than hammering.
+    #[test]
+    fn backs_off_by_default_when_no_reset_is_given() {
+        assert_eq!(
+            rate_limit_backoff(&headers(&[("x-ratelimit-remaining", "0")])),
+            Some(RATE_LIMIT_FALLBACK_BACKOFF)
+        );
+    }
+
+    /// A reset in the past (clock skew) must still back off a little, and an
+    /// absurd one must not wedge the feature shut.
+    #[test]
+    fn clamps_a_nonsensical_reset_time() {
+        let past = rate_limit_backoff(&headers(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "1"),
+        ]))
+        .unwrap();
+        assert_eq!(past, NOTES_ERROR_TTL);
+
+        let absurd = rate_limit_backoff(&headers(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "99999999999"),
+        ]))
+        .unwrap();
+        assert_eq!(absurd, MAX_RATE_LIMIT_BACKOFF);
+    }
+
+    #[test]
+    fn ignores_unparseable_rate_limit_headers() {
+        assert_eq!(
+            rate_limit_backoff(&headers(&[("x-ratelimit-remaining", "lots")])),
+            None
+        );
     }
 
     /// Regression test for a panic, not a failure: reqwest is built with
@@ -905,9 +1122,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "hits the network"]
     async fn live_github_release_notes_fetch() {
-        let releases = fetch_releases_as("Abundio/test").await.unwrap();
-        assert!(!releases.is_empty(), "expected published releases");
-        for r in &releases {
+        let page = fetch_releases_as("Abundio/test").await.unwrap();
+        assert!(!page.releases.is_empty(), "expected published releases");
+        for r in &page.releases {
             assert!(parse_version(&r.version).is_some(), "bad version {}", r.version);
             assert!(r.url.starts_with("https://github.com/"), "bad url {}", r.url);
         }

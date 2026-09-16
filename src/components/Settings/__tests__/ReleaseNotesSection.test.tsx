@@ -45,6 +45,10 @@ function release(version: string): ReleaseNote {
 	};
 }
 
+function page(versions: string[], hasMore = false) {
+	return { releases: versions.map(release), hasMore };
+}
+
 let container: HTMLDivElement;
 // biome-ignore lint/suspicious/noExplicitAny: React 19 root handle
 let root: any;
@@ -75,21 +79,21 @@ afterEach(() => {
 
 describe("ReleaseNotesSection", () => {
 	it("fetches on mount, without spending a refresh", async () => {
-		releaseNotes.mockResolvedValue([release("0.4.0")]);
+		releaseNotes.mockResolvedValue(page(["0.4.0"]));
 		await render("0.4.0");
 		expect(releaseNotes).toHaveBeenCalledTimes(1);
 		expect(releaseNotes).toHaveBeenCalledWith(false);
 	});
 
 	it("renders nothing until the running version is known", async () => {
-		releaseNotes.mockResolvedValue([release("0.4.0")]);
+		releaseNotes.mockResolvedValue(page(["0.4.0"]));
 		// An empty version would make the anchoring rule call every release newer.
 		await render("");
 		expect(container.textContent).toBe("");
 	});
 
 	it("still fetches while the version resolves — the list does not depend on it", async () => {
-		releaseNotes.mockResolvedValue([release("0.4.0")]);
+		releaseNotes.mockResolvedValue(page(["0.4.0"]));
 		await render("");
 		expect(releaseNotes).toHaveBeenCalledTimes(1);
 		// And the arriving version renders from the same fetch, not a second one.
@@ -99,11 +103,7 @@ describe("ReleaseNotesSection", () => {
 	});
 
 	it("lists newer releases above the running one", async () => {
-		releaseNotes.mockResolvedValue([
-			release("0.6.0"),
-			release("0.5.0"),
-			release("0.4.0"),
-		]);
+		releaseNotes.mockResolvedValue(page(["0.6.0", "0.5.0", "0.4.0"]));
 		await render("0.4.0");
 		const versions = [...container.querySelectorAll(".font-mono")].map(
 			(el) => el.textContent,
@@ -114,7 +114,7 @@ describe("ReleaseNotesSection", () => {
 	});
 
 	it("expands exactly one release by default", async () => {
-		releaseNotes.mockResolvedValue([release("0.6.0"), release("0.4.0")]);
+		releaseNotes.mockResolvedValue(page(["0.6.0", "0.4.0"]));
 		await render("0.4.0");
 		expect(
 			container.querySelectorAll("[data-testid='notes-body']"),
@@ -123,7 +123,7 @@ describe("ReleaseNotesSection", () => {
 	});
 
 	it("expands and collapses on click", async () => {
-		releaseNotes.mockResolvedValue([release("0.6.0"), release("0.4.0")]);
+		releaseNotes.mockResolvedValue(page(["0.6.0", "0.4.0"]));
 		await render("0.4.0");
 		const rows = [...container.querySelectorAll("button[aria-expanded]")];
 		expect(rows[1].getAttribute("aria-expanded")).toBe("false");
@@ -135,7 +135,7 @@ describe("ReleaseNotesSection", () => {
 	});
 
 	it("says a dev build has no published notes, and still shows history", async () => {
-		releaseNotes.mockResolvedValue([release("0.4.0"), release("0.3.0")]);
+		releaseNotes.mockResolvedValue(page(["0.4.0", "0.3.0"]));
 		await render("0.9.0");
 		expect(container.textContent).toContain(
 			"No published release notes for v0.9.0",
@@ -145,9 +145,58 @@ describe("ReleaseNotesSection", () => {
 	});
 
 	it("offers the older-releases link when the version fell off the page", async () => {
-		releaseNotes.mockResolvedValue([release("0.6.0"), release("0.5.0")]);
+		releaseNotes.mockResolvedValue(page(["0.6.0", "0.5.0"], true));
 		await render("0.1.0");
 		expect(container.textContent).toContain("Older releases on GitHub");
+	});
+
+	it("does not promise older releases when GitHub had no more", async () => {
+		releaseNotes.mockResolvedValue(page(["0.6.0", "0.5.0"], false));
+		await render("0.1.0");
+		expect(container.textContent).not.toContain("Older releases on GitHub");
+		expect(container.textContent).toContain(
+			"No published release notes for v0.1.0",
+		);
+	});
+
+	describe("expansion state across a refresh", () => {
+		it("hands the expanded slot to a newly published release", async () => {
+			// Up to date: your own release is the only entry, so it is expanded.
+			releaseNotes.mockResolvedValue(page(["0.4.0"]));
+			await render("0.4.0");
+			expect(
+				container.querySelectorAll("[data-testid='notes-body']"),
+			).toHaveLength(1);
+
+			// A newer release appears. The rows are keyed by version, so the 0.4.0
+			// row is re-used — it must still pick up its new defaultExpanded.
+			releaseNotes.mockResolvedValue(page(["0.5.0", "0.4.0"]));
+			await act(async () => {
+				await useUpdateStore.getState().fetchNotes({ refresh: true });
+			});
+			const bodies = [
+				...container.querySelectorAll("[data-testid='notes-body']"),
+			].map((el) => el.textContent);
+			expect(bodies).toEqual(["notes for 0.5.0"]);
+		});
+
+		it("keeps a row the user opened by hand", async () => {
+			releaseNotes.mockResolvedValue(page(["0.5.0", "0.4.0"]));
+			await render("0.4.0");
+			const rows = [...container.querySelectorAll("button[aria-expanded]")];
+			await act(async () => {
+				(rows[1] as HTMLButtonElement).click();
+			});
+			expect(container.textContent).toContain("notes for 0.4.0");
+
+			releaseNotes.mockResolvedValue(page(["0.6.0", "0.5.0", "0.4.0"]));
+			await act(async () => {
+				await useUpdateStore.getState().fetchNotes({ refresh: true });
+			});
+			// The explicit toggle survives the refresh; the default moves on.
+			expect(container.textContent).toContain("notes for 0.4.0");
+			expect(container.textContent).toContain("notes for 0.6.0");
+		});
 	});
 
 	describe("when the fetch fails", () => {
@@ -176,13 +225,30 @@ describe("ReleaseNotesSection", () => {
 			expect(container.textContent).toContain("Retry");
 		});
 
+		it("keeps an already-loaded list when a later refresh fails", async () => {
+			releaseNotes.mockResolvedValue(page(["0.5.0", "0.4.0"]));
+			await render("0.4.0");
+			expect(container.textContent).toContain("v0.5.0");
+
+			releaseNotes.mockRejectedValue(new Error("offline"));
+			await act(async () => {
+				await useUpdateStore.getState().fetchNotes({ refresh: true });
+			});
+			// Losing a rendered list to a blip would be worse than a note about it.
+			expect(container.textContent).toContain("v0.5.0");
+			expect(container.textContent).toContain("Couldn't refresh");
+			expect(container.textContent).not.toContain(
+				"Couldn't load release notes",
+			);
+		});
+
 		it("spends a refresh on Retry", async () => {
 			releaseNotes.mockRejectedValue(new Error("offline"));
 			await render("0.4.0");
 			const retry = [...container.querySelectorAll("button")].find(
 				(b) => b.textContent === "Retry",
 			);
-			releaseNotes.mockResolvedValue([release("0.4.0")]);
+			releaseNotes.mockResolvedValue(page(["0.4.0"]));
 			await act(async () => {
 				retry?.click();
 			});
