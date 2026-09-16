@@ -389,16 +389,29 @@ pub struct WorkspaceGitSummary {
     /// there are none). Feeds the Profile-scoped PR filter, which is a
     /// set-membership test — hence all remotes, not just `origin`. See ADR-0028.
     pub repo_slugs: Vec<String>,
+    /// True when the working tree holds uncommitted work (untracked, unstaged,
+    /// staged or conflicted) — a **Dirty workspace**. Commits ahead of the base
+    /// branch do not count. Always false for a non-repo.
+    pub is_dirty: bool,
 }
 
-/// Resolves the cheap per-workspace git facts via libgit2: current branch,
-/// worktree grouping bits, and GitHub repo identity. All three are config/HEAD
-/// reads on **one** open repository — the `_in` variants exist so this batch,
-/// which runs across the whole Profile on every workspace-list change, pays for
-/// a single `Repository::discover` per workspace rather than one each.
-/// Change stats are intentionally excluded — they're already computed by
-/// `git_changed_files` whenever the active workspace opens its git panel,
-/// which syncs back to the workspace chip store via the frontend.
+/// Resolves the per-workspace git facts via libgit2: current branch, worktree
+/// grouping bits, GitHub repo identity, and whether the working tree is dirty.
+/// All of them run against **one** open repository — the `_in` variants exist so
+/// this batch, which runs across the whole Profile on every workspace-list
+/// change, pays for a single `Repository::discover` per workspace rather than
+/// one each.
+///
+/// The first three are config/HEAD reads and cost almost nothing. `is_dirty` is
+/// **not**: it is a full `repo.statuses()` walk, proportional to the number of
+/// non-ignored files in the worktree. That is why the caller runs the requests
+/// concurrently rather than in one serial pass, and why the frontend asks only
+/// about workspaces whose dirtiness isn't already live (see
+/// `uncommittedFromSummaries`).
+///
+/// Change *stats* remain excluded — they're computed by `git_changed_files`
+/// whenever a workspace's scheduler runs, and synced back to the workspace chip
+/// store via the frontend.
 fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummary {
     let repo = git2::Repository::discover(&req.cwd).ok();
     let current_branch = repo.as_ref().and_then(git_libgit2::current_branch_only_in);
@@ -417,6 +430,7 @@ fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummar
     // A repo can be a git repo even with a detached/unborn HEAD (no branch),
     // so anchor is_git_repo on the worktree group key, not the branch name.
     let is_git_repo = bits.group_key.is_some();
+    let is_dirty = is_git_repo && repo.as_ref().is_some_and(git_libgit2::worktree_is_dirty_in);
     WorkspaceGitSummary {
         workspace_id: req.workspace_id,
         is_git_repo,
@@ -428,14 +442,22 @@ fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummar
         is_main_worktree: bits.is_main_worktree,
         worktree_root: bits.canonical_root,
         repo_slugs,
+        is_dirty,
     }
 }
 
-/// Fetch the current branch for every workspace in a single IPC call.
-/// Runs inside `spawn_blocking` so the tokio runtime is never blocked.
-/// Intentionally limited to branch detection only (one subprocess per
-/// workspace) — running diff commands for all workspaces at startup causes
-/// too many concurrent process forks and degrades overall app responsiveness.
+/// Fetch the cheap git facts for every workspace in a single IPC call: branch,
+/// worktree grouping, repo slugs and working-tree dirtiness.
+///
+/// Still no diffs — line counts stay with the per-workspace scheduler — but
+/// dirtiness makes each request a working-tree status walk, so the requests run
+/// on **one `spawn_blocking` task each** rather than serially inside one. The
+/// per-workspace work is independent and CPU/IO bound, so a Profile with a dozen
+/// large repos no longer pays for a dozen sequential scans. The tokio runtime
+/// itself is never blocked either way.
+///
+/// A workspace whose task panics is simply absent from the result: callers
+/// already treat a missing entry as "no answer for this one".
 #[tauri::command]
 pub async fn git_workspaces_summary(
     requests: Vec<WorkspaceGitRequest>,
@@ -443,14 +465,17 @@ pub async fn git_workspaces_summary(
     if requests.is_empty() {
         return Vec::new();
     }
-    tokio::task::spawn_blocking(move || {
-        requests
-            .into_iter()
-            .map(compute_workspace_git_summary)
-            .collect()
-    })
-    .await
-    .unwrap_or_default()
+    let mut tasks = tokio::task::JoinSet::new();
+    for req in requests {
+        tasks.spawn_blocking(move || compute_workspace_git_summary(req));
+    }
+    let mut summaries = Vec::new();
+    while let Some(joined) = tasks.join_next().await {
+        if let Ok(summary) = joined {
+            summaries.push(summary);
+        }
+    }
+    summaries
 }
 
 #[cfg(test)]
@@ -649,6 +674,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspaces_summary_reports_dirty_working_tree() {
+        let dir = setup_temp_git_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let summarize = || {
+            git_workspaces_summary(vec![WorkspaceGitRequest {
+                workspace_id: "ws-1".to_string(),
+                cwd: cwd.to_string(),
+                base_branch: None,
+            }])
+        };
+
+        assert!(!summarize().await[0].is_dirty, "fresh commit is clean");
+
+        std::fs::write(dir.path().join("initial.txt"), "changed\n").unwrap();
+        assert!(summarize().await[0].is_dirty, "unstaged edit is dirty");
+
+        run_git_test(cwd, &["commit", "-am", "second"]);
+        assert!(!summarize().await[0].is_dirty, "committed work is clean");
+    }
+
+    #[tokio::test]
     async fn workspaces_summary_repo_slugs_empty_for_non_repo() {
         let dir = tempfile::tempdir().unwrap();
         let summaries = git_workspaces_summary(vec![WorkspaceGitRequest {
@@ -660,6 +706,7 @@ mod tests {
 
         assert!(summaries[0].repo_slugs.is_empty());
         assert!(!summaries[0].is_git_repo);
+        assert!(!summaries[0].is_dirty);
     }
 
     #[tokio::test]

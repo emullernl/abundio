@@ -14,6 +14,7 @@ import {
 	usePtyActivityStore,
 	type WorkspaceRollups,
 } from "../stores/ptyActivityStore";
+import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 
 /** A workspace's parsed tab layouts — the shape every rollup computation
  *  takes. Shared by the per-workspace hook and the Hidden rollup hook. */
@@ -75,8 +76,12 @@ export interface HiddenRollup extends Rollups {
 	notOpened: boolean;
 	/** The one status the narrow sidebar's badge has room for. */
 	badge: DotStatus;
+	/** At least one hidden member is a **Dirty workspace** — folding a set
+	 *  must never hide uncommitted work. */
+	dirty: boolean;
 	/** One `name — Status` line per hidden worktree, in render order, each at
-	 *  the more urgent of that member's two rollups. */
+	 *  the more urgent of that member's two rollups, ending in `· uncommitted`
+	 *  when that member is dirty. */
 	membersTooltip: string;
 }
 
@@ -125,6 +130,12 @@ export function useHiddenRollup(
 			.join(MEMBER_SEPARATOR),
 	);
 
+	// One character per member ("1" dirty, "0" not): a primitive, so the row
+	// re-renders only when some hidden member's dirtiness actually flips.
+	const dirtyKey = useWorkspaceGitStore((s) =>
+		members.map((m) => (s.uncommittedById[m.id]?.dirty ? "1" : "0")).join(""),
+	);
+
 	return useMemo(() => {
 		if (members.length === 0) return undefined;
 		const perMember = key.split(MEMBER_SEPARATOR).map(decodeRollups);
@@ -135,9 +146,13 @@ export function useHiddenRollup(
 			count: members.length,
 			notOpened,
 			badge: mostUrgentStatus(merged),
+			dirty: dirtyKey.includes("1"),
 			membersTooltip: members
-				.map((m, i) => `${m.name} — ${memberLabel(perMember[i])}`)
+				.map(
+					(m, i) =>
+						`${m.name} — ${memberLabel(perMember[i])}${dirtyKey[i] === "1" ? " · uncommitted" : ""}`,
+				)
 				.join("\n"),
 		};
-	}, [members, key]);
+	}, [members, key, dirtyKey]);
 }

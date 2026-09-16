@@ -12,6 +12,7 @@
  * on load, so transcripts and agent dots are keyed by the stable **paneId**
  * (delivered as `pty_spawn`'s `logId` arg), not by ptyId.
  */
+import { branchStatOf, uncommittedOf } from "../dirtyWorkspace";
 import type {
 	AgentHookStatus,
 	GitConflictFile,
@@ -784,18 +785,16 @@ export function workspaceSummary(
 			isMainWorktree: false,
 			worktreeRoot: null,
 			repoSlugs: [],
+			isDirty: false,
 		};
 	}
 	const bundle = gitBundleForCwd(cwd);
-	const additions = bundle.changedFiles.reduce((n, f) => n + f.additions, 0);
-	const deletions = bundle.changedFiles.reduce((n, f) => n + f.deletions, 0);
 	return {
 		workspaceId,
 		isGitRepo: true,
 		currentBranch: bundle.branchInfo.currentBranch,
-		changedFileCount: bundle.changedFiles.length,
-		additions,
-		deletions,
+		...branchStatOf(bundle.changedFiles),
+		isDirty: uncommittedOf(bundle.changedFiles).dirty,
 		// Roots listed in WORKTREE_SETS group into a Worktree set; every other
 		// repo is its own standalone main worktree.
 		worktreeGroupKey: worktreeFactByRoot.get(cwd)?.groupKey ?? `${cwd}/.git`,

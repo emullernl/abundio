@@ -111,6 +111,7 @@ describe("WorkspaceList — folded Worktree sets", () => {
 				[LINKED_B.id]: { worktreeGroupKey: GROUP_KEY, isMainWorktree: false },
 			},
 			byWorkspaceId: {},
+			uncommittedById: {},
 		});
 		usePtyActivityStore.setState({
 			activities: {},
@@ -302,5 +303,109 @@ describe("WorkspaceList — folded Worktree sets", () => {
 			);
 		});
 		expect(names()).toEqual(["abundio", "other-repo"]);
+	});
+
+	describe("Dirty marker", () => {
+		const markers = () => [
+			...container.querySelectorAll<HTMLElement>("[data-dirty-marker]"),
+		];
+		const chipOf = (branch: string) =>
+			container.querySelector<HTMLElement>(`[title='${branch}']`);
+		const gitInfo = (branch: string) => ({
+			isGitRepo: true,
+			currentBranch: branch,
+			changedFileCount: 0,
+			additions: 0,
+			deletions: 0,
+			conflictedPaths: [],
+		});
+
+		it("bars the right edge of a dirty workspace's row, even when unopened", () => {
+			useWorkspaceGitStore.setState({
+				byWorkspaceId: {
+					[STANDALONE.id]: gitInfo("main"),
+					[PRIMARY.id]: gitInfo("trunk"),
+				},
+				uncommittedById: {
+					[STANDALONE.id]: { dirty: true, breakdown: null },
+					[PRIMARY.id]: { dirty: false, breakdown: null },
+				},
+			});
+			render();
+			expect(markers()).toHaveLength(1);
+			expect(markers()[0].getAttribute("title")).toBe("Uncommitted changes");
+			// On the dirty workspace's own row — the one its branch chip is in.
+			const row = markers()[0].parentElement;
+			expect(row?.contains(chipOf("main") as Node)).toBe(true);
+			expect(row?.contains(chipOf("trunk") as Node)).toBe(false);
+			// The row background is untouched: it still carries active and hover.
+			expect(row?.style.backgroundColor).toBe("transparent");
+		});
+
+		it("does not count committed history: a Branch stat alone draws no marker", () => {
+			usePtyActivityStore.setState({
+				openedWorkspaceIds: new Set([STANDALONE.id]),
+			});
+			useWorkspaceGitStore.setState({
+				byWorkspaceId: {
+					[STANDALONE.id]: {
+						...gitInfo("feature"),
+						changedFileCount: 5,
+						additions: 200,
+						deletions: 30,
+					},
+				},
+				uncommittedById: {
+					[STANDALONE.id]: {
+						dirty: false,
+						breakdown: { staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+					},
+				},
+			});
+			render();
+			expect(markers()).toHaveLength(0);
+			const stat = container.querySelector<HTMLElement>(
+				"[title^='vs the default branch']",
+			);
+			expect(stat?.getAttribute("title")).toBe(
+				"vs the default branch: 5 files, +200 −30, including uncommitted",
+			);
+		});
+
+		it("carries a hidden member's dirtiness into the Hidden rollup and its tooltip", () => {
+			useWorkspaceGitStore.setState({
+				uncommittedById: { [LINKED_B.id]: { dirty: true, breakdown: null } },
+			});
+			useWindowUiStore.setState({ foldedSetKeys: [GROUP_KEY] });
+			render();
+			const chip = container.querySelector<HTMLElement>("[data-hidden-rollup]");
+			expect(chip?.querySelector("[data-dirty-marker]")).toBeTruthy();
+			expect(chip?.getAttribute("title")).toBe(
+				"feat-a — Not opened\nfeat-b — Not opened · uncommitted",
+			);
+		});
+
+		it("leaves the Hidden rollup ringless when only the Primary is dirty (its own bar says that)", () => {
+			useWorkspaceGitStore.setState({
+				uncommittedById: { [PRIMARY.id]: { dirty: true, breakdown: null } },
+			});
+			useWindowUiStore.setState({ foldedSetKeys: [GROUP_KEY] });
+			render();
+			const chip = container.querySelector<HTMLElement>("[data-hidden-rollup]");
+			expect(chip?.querySelector("[data-dirty-marker]")).toBeNull();
+			expect(markers()).toHaveLength(1);
+		});
+
+		it("shows a hidden member's dirtiness on the folded Primary's narrow strip", () => {
+			useWorkspaceGitStore.setState({
+				uncommittedById: { [LINKED_A.id]: { dirty: true, breakdown: null } },
+			});
+			useWindowUiStore.setState({ foldedSetKeys: [GROUP_KEY] });
+			render("collapsed");
+			expect(markers()).toHaveLength(1);
+			expect(markers()[0].getAttribute("title")).toBe(
+				"Uncommitted changes in a hidden worktree",
+			);
+		});
 	});
 });

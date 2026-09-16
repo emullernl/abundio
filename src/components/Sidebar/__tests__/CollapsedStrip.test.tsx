@@ -10,6 +10,7 @@ import {
 	type PtyActivityEntry,
 	usePtyActivityStore,
 } from "../../../stores/ptyActivityStore";
+import { useWorkspaceGitStore } from "../../../stores/workspaceGitStore";
 import { DOT_STATUS_COLOR } from "../../AgentStatusIcon";
 import { CollapsedStrip } from "../CollapsedStrip";
 
@@ -66,6 +67,7 @@ describe("CollapsedStrip", () => {
 			panePtyMap: {},
 			openedWorkspaceIds: new Set<string>(),
 		});
+		useWorkspaceGitStore.setState({ uncommittedById: {} });
 		container = document.createElement("div");
 		document.body.appendChild(container);
 		root = createRoot(container);
@@ -154,6 +156,7 @@ describe("CollapsedStrip", () => {
 			count: 2,
 			notOpened: false,
 			badge: "red",
+			dirty: false,
 			membersTooltip: "feat-a — Error\nfeat-b — Working",
 		});
 		const badge = container.querySelector<HTMLElement>("[data-hidden-badge]");
@@ -164,6 +167,69 @@ describe("CollapsedStrip", () => {
 	it("has no badge when nothing is hidden", () => {
 		render(workspace([]));
 		expect(container.querySelector("[data-hidden-badge]")).toBeNull();
+	});
+
+	describe("Dirty marker", () => {
+		const marker = () =>
+			container.querySelector<HTMLElement>("[data-dirty-marker]");
+		const hiddenRollup = (dirty: boolean): HiddenRollup => ({
+			agent: null,
+			terminal: null,
+			count: 1,
+			notOpened: true,
+			badge: "grey",
+			dirty,
+			membersTooltip: "feat-a — Not opened",
+		});
+
+		it("draws no ring for a clean workspace", () => {
+			useWorkspaceGitStore.setState({
+				uncommittedById: { "ws-1": { dirty: false, breakdown: null } },
+			});
+			render(workspace([]), hiddenRollup(false));
+			expect(marker()).toBeNull();
+		});
+
+		it("draws an edge bar for the workspace's own uncommitted work", () => {
+			useWorkspaceGitStore.setState({
+				uncommittedById: {
+					"ws-1": {
+						dirty: true,
+						breakdown: { staged: 0, unstaged: 2, untracked: 0, conflicted: 0 },
+					},
+				},
+			});
+			render(workspace([]));
+			expect(marker()?.getAttribute("title")).toBe("Uncommitted: 2 unstaged");
+			expect(marker()?.style.width).toBe("3px");
+		});
+
+		it("draws a ring on the rollup when only a hidden member is dirty", () => {
+			render(workspace([]), hiddenRollup(true));
+			expect(marker()?.getAttribute("title")).toBe(
+				"Uncommitted changes in a hidden worktree",
+			);
+		});
+
+		it("keeps the two apart: an edge bar for itself, a ring for the hidden member", () => {
+			useWorkspaceGitStore.setState({
+				uncommittedById: { "ws-1": { dirty: true, breakdown: null } },
+			});
+			render(workspace([]), hiddenRollup(true));
+			const titles = [
+				...container.querySelectorAll<HTMLElement>("[data-dirty-marker]"),
+			].map((el) => el.getAttribute("title"));
+			expect(titles).toEqual([
+				"Uncommitted changes in a hidden worktree",
+				"Uncommitted changes",
+			]);
+		});
+
+		it("draws the hidden member's marker hollow, so it never reads as a status badge", () => {
+			render(workspace([]), hiddenRollup(true));
+			expect(marker()?.style.border).toContain("var(--warning)");
+			expect(marker()?.style.backgroundColor).not.toContain("--warning");
+		});
 	});
 });
 

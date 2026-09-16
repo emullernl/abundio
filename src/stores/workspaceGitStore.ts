@@ -1,9 +1,16 @@
 import { create } from "zustand";
 import {
+	branchStatOf,
+	type Uncommitted,
+	uncommittedEqual,
+	uncommittedOf,
+} from "../lib/dirtyWorkspace";
+import {
 	git,
 	type WorkspaceGitSummary,
 	workspaces as workspacesApi,
 } from "../lib/ipc";
+import type { GitChangedFile } from "../lib/types";
 import type { WorktreeGroupFacts } from "../lib/worktreeGrouping";
 
 /** Repo-relative paths of the unmerged rows in a changed-file list. */
@@ -50,6 +57,16 @@ interface WorkspaceGitState {
 	 *  yet", which is the whole resolution signal (`repoSlugsResolvedFor`). See
 	 *  ADR-0028. */
 	repoSlugsById: Record<string, string[]>;
+	/** Whether each workspace is a **Dirty workspace**. Its own map, like
+	 *  `worktreeFacts`, because several writers replace `WorkspaceGitInfo`
+	 *  wholesale via `setInfo` and would clobber a field there.
+	 *
+	 *  Two writers with different freshness: live values (non-null `breakdown`)
+	 *  from scheduler bundles, and yes/no values from the batched summary. The
+	 *  batch never overwrites a live entry — a summary computed just before an
+	 *  edit can land after the bundle that reported the edit. A missing entry
+	 *  means "not known yet" and draws no marker. */
+	uncommittedById: Record<string, Uncommitted>;
 	inFlight: Set<string>;
 	fetch: (
 		workspaceId: string,
@@ -80,6 +97,13 @@ interface WorkspaceGitState {
 		}[],
 	) => Promise<void>;
 	setWorktreeFacts: (workspaceId: string, facts: WorktreeGroupFacts) => void;
+	/** Record a live dirtiness answer derived from this workspace's changed files. */
+	setLiveUncommitted: (workspaceId: string, files: GitChangedFile[]) => void;
+	/** The workspace's scheduler stopped: keep the last answer, but let the next
+	 *  batched summary refresh it. */
+	endLiveUncommitted: (workspaceId: string) => void;
+	/** Forget dirtiness entirely — the folder stopped being a repository. */
+	clearUncommitted: (workspaceId: string) => void;
 }
 
 /** Slug entries for every workspace the batch *asked* about, not just the ones
@@ -104,6 +128,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 	byWorkspaceId: {},
 	worktreeFacts: {},
 	repoSlugsById: {},
+	uncommittedById: {},
 	inFlight: new Set(),
 
 	fetch: async (workspaceId, cwd, baseBranch) => {
@@ -113,17 +138,13 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 				git.branchInfo(cwd),
 				git.changedFiles(cwd, baseBranch ?? null).catch(() => []),
 			]);
-			const additions = files.reduce((s, f) => s + f.additions, 0);
-			const deletions = files.reduce((s, f) => s + f.deletions, 0);
 			set((s) => ({
 				byWorkspaceId: {
 					...s.byWorkspaceId,
 					[workspaceId]: {
 						isGitRepo: true,
 						currentBranch: branchInfo.currentBranch,
-						changedFileCount: files.length,
-						additions,
-						deletions,
+						...branchStatOf(files),
 						conflictedPaths: conflictedPathsOf(files),
 					},
 				},
@@ -209,8 +230,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 	refreshWorkspace: async (workspaceId, cwd, baseBranch) => {
 		try {
 			const files = await git.changedFiles(cwd, baseBranch ?? null);
-			const additions = files.reduce((s, f) => s + f.additions, 0);
-			const deletions = files.reduce((s, f) => s + f.deletions, 0);
+			const stat = branchStatOf(files);
 			set((s) => {
 				const existing = s.byWorkspaceId[workspaceId];
 				if (!existing) return s;
@@ -219,9 +239,7 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 						...s.byWorkspaceId,
 						[workspaceId]: {
 							...existing,
-							changedFileCount: files.length,
-							additions,
-							deletions,
+							...stat,
 						},
 					},
 				};
@@ -241,10 +259,12 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 			const { [workspaceId]: _removed, ...rest } = s.byWorkspaceId;
 			const { [workspaceId]: _f, ...restFacts } = s.worktreeFacts;
 			const { [workspaceId]: _s, ...restSlugs } = s.repoSlugsById;
+			const { [workspaceId]: _u, ...restUncommitted } = s.uncommittedById;
 			return {
 				byWorkspaceId: rest,
 				worktreeFacts: restFacts,
 				repoSlugsById: restSlugs,
+				uncommittedById: restUncommitted,
 			};
 		});
 	},
@@ -292,6 +312,10 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 				...state.repoSlugsById,
 				...slugsFromSummaries(requests, summaries),
 			},
+			uncommittedById: uncommittedFromSummaries(
+				state.uncommittedById,
+				summaries,
+			),
 		}));
 	},
 
@@ -299,7 +323,59 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 		set((s) => ({
 			worktreeFacts: { ...s.worktreeFacts, [workspaceId]: facts },
 		})),
+
+	setLiveUncommitted: (workspaceId, files) =>
+		set((s) => {
+			const next = uncommittedOf(files);
+			const prev = s.uncommittedById[workspaceId];
+			// Keep the reference when nothing changed, so memoised rows reading
+			// this entry don't re-render on every scheduler push.
+			if (prev && uncommittedEqual(prev, next)) return s;
+			return {
+				uncommittedById: { ...s.uncommittedById, [workspaceId]: next },
+			};
+		}),
+
+	endLiveUncommitted: (workspaceId) =>
+		set((s) => {
+			const prev = s.uncommittedById[workspaceId];
+			if (!prev || prev.breakdown === null) return s;
+			return {
+				uncommittedById: {
+					...s.uncommittedById,
+					[workspaceId]: { dirty: prev.dirty, breakdown: null },
+				},
+			};
+		}),
+
+	clearUncommitted: (workspaceId) =>
+		set((s) => {
+			if (!(workspaceId in s.uncommittedById)) return s;
+			const { [workspaceId]: _u, ...rest } = s.uncommittedById;
+			return { uncommittedById: rest };
+		}),
 }));
+
+/** Merge a batched summary's yes/no dirtiness into the map. Live entries (a
+ *  non-null breakdown) are left alone — they come from the scheduler and are
+ *  fresher than any batch. Unchanged entries keep their reference. */
+export function uncommittedFromSummaries(
+	current: Record<string, Uncommitted>,
+	summaries: WorkspaceGitSummary[],
+): Record<string, Uncommitted> {
+	let next = current;
+	for (const s of summaries) {
+		// Read from `next`, so the loop stays self-consistent even if a batch
+		// ever answered twice for one workspace.
+		const prev = next[s.workspaceId];
+		if (prev?.breakdown) continue;
+		const dirty = s.isGitRepo && s.isDirty;
+		if (prev && prev.dirty === dirty) continue;
+		if (next === current) next = { ...current };
+		next[s.workspaceId] = { dirty, breakdown: null };
+	}
+	return next;
+}
 
 /** The set of GitHub repositories the given Workspaces resolve to — the input
  *  to the Profile-scoped PR filter (ADR-0028).

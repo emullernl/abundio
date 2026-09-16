@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	profileRepoSlugs,
 	repoSlugsResolvedFor,
+	uncommittedFromSummaries,
 	useWorkspaceGitStore,
 } from "../workspaceGitStore";
 
@@ -166,6 +167,7 @@ describe("workspaceGitStore", () => {
 				isMainWorktree: true,
 				worktreeRoot: "/a",
 				repoSlugs: ["org/a"],
+				isDirty: false,
 			},
 			{
 				workspaceId: "ws-b",
@@ -178,6 +180,7 @@ describe("workspaceGitStore", () => {
 				isMainWorktree: true,
 				worktreeRoot: "/b",
 				repoSlugs: ["org/b"],
+				isDirty: true,
 			},
 		]);
 		await useWorkspaceGitStore.getState().fetchAll([
@@ -500,5 +503,158 @@ describe("workspaceGitStore", () => {
 		expect(
 			useWorkspaceGitStore.getState().byWorkspaceId["ws-del"],
 		).toBeUndefined();
+	});
+});
+
+describe("Dirty workspace state", () => {
+	// biome-ignore lint/suspicious/noExplicitAny: partial summary stub
+	const summary = (workspaceId: string, isDirty: boolean): any => ({
+		workspaceId,
+		isGitRepo: true,
+		currentBranch: "main",
+		changedFileCount: 0,
+		additions: 0,
+		deletions: 0,
+		worktreeGroupKey: `/${workspaceId}/.git`,
+		isMainWorktree: true,
+		worktreeRoot: `/${workspaceId}`,
+		repoSlugs: [],
+		isDirty,
+	});
+	// biome-ignore lint/suspicious/noExplicitAny: minimal changed-file stub
+	const file = (path: string, section: string): any => ({
+		path,
+		section,
+		status: "M",
+		additions: 1,
+		deletions: 0,
+	});
+
+	beforeEach(() => {
+		useWorkspaceGitStore.setState({ uncommittedById: {}, worktreeFacts: {} });
+	});
+
+	it("syncWorktreeFacts records yes/no dirtiness for every summarised workspace", async () => {
+		vi.mocked(git.workspacesSummary).mockResolvedValue([
+			summary("ws-a", true),
+			summary("ws-b", false),
+		]);
+		await useWorkspaceGitStore.getState().syncWorktreeFacts([
+			{ id: "ws-a", rootFolder: "/ws-a" },
+			{ id: "ws-b", rootFolder: "/ws-b" },
+		]);
+		expect(useWorkspaceGitStore.getState().uncommittedById).toEqual({
+			"ws-a": { dirty: true, breakdown: null },
+			"ws-b": { dirty: false, breakdown: null },
+		});
+	});
+
+	it("a non-repo summary is never dirty", async () => {
+		vi.mocked(git.workspacesSummary).mockResolvedValue([
+			{ ...summary("ws-n", true), isGitRepo: false },
+		]);
+		await useWorkspaceGitStore
+			.getState()
+			.syncWorktreeFacts([{ id: "ws-n", rootFolder: "/ws-n" }]);
+		expect(useWorkspaceGitStore.getState().uncommittedById["ws-n"]?.dirty).toBe(
+			false,
+		);
+	});
+
+	it("a batch summary never overwrites a live value", async () => {
+		const store = useWorkspaceGitStore.getState();
+		store.setLiveUncommitted("ws-a", [file("a.ts", "unstaged")]);
+		// The batch was computed before the edit and lands after the bundle.
+		vi.mocked(git.workspacesSummary).mockResolvedValue([
+			summary("ws-a", false),
+		]);
+		await store.syncWorktreeFacts([{ id: "ws-a", rootFolder: "/ws-a" }]);
+
+		const u = useWorkspaceGitStore.getState().uncommittedById["ws-a"];
+		expect(u?.dirty).toBe(true);
+		expect(u?.breakdown?.unstaged).toBe(1);
+	});
+
+	it("once live pushes end, the next batch may refresh the value", async () => {
+		const store = useWorkspaceGitStore.getState();
+		store.setLiveUncommitted("ws-a", [file("a.ts", "unstaged")]);
+		store.endLiveUncommitted("ws-a");
+		expect(useWorkspaceGitStore.getState().uncommittedById["ws-a"]).toEqual({
+			dirty: true,
+			breakdown: null,
+		});
+
+		vi.mocked(git.workspacesSummary).mockResolvedValue([
+			summary("ws-a", false),
+		]);
+		await store.syncWorktreeFacts([{ id: "ws-a", rootFolder: "/ws-a" }]);
+		expect(useWorkspaceGitStore.getState().uncommittedById["ws-a"]?.dirty).toBe(
+			false,
+		);
+	});
+
+	it("setLiveUncommitted keeps the entry's reference when nothing changed", () => {
+		const store = useWorkspaceGitStore.getState();
+		store.setLiveUncommitted("ws-a", [file("a.ts", "staged")]);
+		const first = useWorkspaceGitStore.getState().uncommittedById["ws-a"];
+		store.setLiveUncommitted("ws-a", [file("other.ts", "staged")]);
+		expect(useWorkspaceGitStore.getState().uncommittedById["ws-a"]).toBe(first);
+	});
+
+	it("setLiveUncommitted ignores committed history", () => {
+		useWorkspaceGitStore
+			.getState()
+			.setLiveUncommitted("ws-a", [file("a.ts", "against_base")]);
+		expect(useWorkspaceGitStore.getState().uncommittedById["ws-a"]?.dirty).toBe(
+			false,
+		);
+	});
+
+	it("clearUncommitted and remove drop the entry", () => {
+		const store = useWorkspaceGitStore.getState();
+		store.setLiveUncommitted("ws-a", [file("a.ts", "staged")]);
+		store.setLiveUncommitted("ws-b", [file("b.ts", "staged")]);
+		store.clearUncommitted("ws-a");
+		store.remove("ws-b");
+		expect(useWorkspaceGitStore.getState().uncommittedById).toEqual({});
+	});
+
+	it("uncommittedFromSummaries returns the same map when nothing changed", () => {
+		const current = { "ws-a": { dirty: true, breakdown: null } };
+		expect(uncommittedFromSummaries(current, [summary("ws-a", true)])).toBe(
+			current,
+		);
+	});
+});
+
+describe("Branch stat counts distinct paths", () => {
+	it("fetch counts a file listed in two sections once", async () => {
+		vi.mocked(git.branchInfo).mockResolvedValue({
+			currentBranch: "feature",
+			defaultBranch: "main",
+			// biome-ignore lint/suspicious/noExplicitAny: mock data
+		} as any);
+		vi.mocked(git.changedFiles).mockResolvedValue([
+			{
+				path: "a.ts",
+				status: "M",
+				additions: 4,
+				deletions: 1,
+				section: "against_base",
+			},
+			{
+				path: "a.ts",
+				status: "M",
+				additions: 2,
+				deletions: 0,
+				section: "unstaged",
+			},
+			// biome-ignore lint/suspicious/noExplicitAny: mock data
+		] as any);
+		await useWorkspaceGitStore.getState().fetch("ws-stat", "/repo");
+		const info = useWorkspaceGitStore.getState().byWorkspaceId["ws-stat"];
+		expect(info?.changedFileCount).toBe(1);
+		expect(info?.additions).toBe(6);
+		expect(info?.deletions).toBe(1);
 	});
 });
