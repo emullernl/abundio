@@ -181,7 +181,14 @@ export function SettingsPanel({ onClose }: Props) {
 				</nav>
 
 				{/* Right content */}
-				<div className="flex-1 min-w-0 min-h-0 flex flex-col p-5 overflow-hidden">
+				{/* Padding is inline, not `p-5`: globals.css has an unlayered
+				    `* { padding: 0 }` reset, and unlayered rules beat Tailwind's
+				    layered utilities — so every `p-*`/`m-*` class in the app is
+				    silently dead. */}
+				<div
+					className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden"
+					style={{ padding: "18px 22px 22px" }}
+				>
 					{SECTION_BODY[section]}
 				</div>
 			</div>
