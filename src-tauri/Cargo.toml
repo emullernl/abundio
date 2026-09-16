@@ -28,6 +28,12 @@ portable-pty = "0.8"
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Release-notes fetch from the GitHub API (ADR-0036). reqwest is already in the
+# tree via tauri-plugin-updater; these are exactly the features that plugin
+# resolves, so this adds no new crates and no second TLS stack. `rustls-no-provider`
+# relies on rustls' `ring` feature (also enabled by the updater) for the default
+# crypto provider — if that ever changes, this needs a provider of its own.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"

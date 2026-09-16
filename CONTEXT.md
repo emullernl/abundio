@@ -244,6 +244,12 @@ _Avoid_: PR filter, PR view mode, repo group (collides with **Profile**'s sense 
 **Update**: A newer published Abundio release the running app can fetch and apply via the Tauri updater. App-global, not per-Profile. Lifecycle: *available* → *downloading* → *staged* → *installed on quit*. By default applied only on the next natural quit so live **PTY**s and **Agent** turns survive; an explicit, confirmed "restart now" is the exception. The version check runs in Rust and surfaces in the focused **Window** only; the *staged* state lives in Rust and is app-global, so every **Window** reads the same one. See ADR-0014.
 _Avoid_: upgrade, patch, version bump.
 
+**Release notes**: The Markdown body of a **published** GitHub Release — the single source of truth for "what changed", with no `CHANGELOG` in the repository. Rendered in-app rather than linked out: the **Updates section** shows the running version's notes plus every newer release's, and the **What's new card** shows the running version's alone. Fetched from the GitHub API in Rust (one page of 30, newest first, prereleases dropped) and cached app-globally for an hour; drafts are invisible to the unauthenticated API, which is exactly ADR-0014's rule that clicking *Publish* is the gate. An **Update**'s own notes also arrive for free on `UpdateInfo.body`, which is used only as the offline fallback.
+_Avoid_: changelog, release body, patch notes.
+
+**What's new card**: The one-time card shown after Abundio starts on a version newer than the last one whose **Release notes** the user saw. Bottom-right and non-blocking, like the update prompt, and it takes that corner's priority while it is up. Gated in Rust on `last_seen_version` (the app-global `settings` key-value table) versus the running version, and emitted to the focused **Window** only — the same `emit_to_focused` rule the update prompt uses, and the reason this cannot live in `localStorage`, which is per-webview on macOS. The version is marked seen only once notes were actually fetched, so an offline launch shows nothing and tries again later rather than burning the flag.
+_Avoid_: changelog popup, welcome dialog, release dialog.
+
 **Quit route**: One of the three ways Abundio's process ends, each reaching different code. **Menu quit** (Cmd+Q / "Quit Abundio") runs our custom `quit-app` handler *before* windows tear down. **Last-window quit** closes the final **Profile-bound window**, whose `Destroyed` handler calls `exit(0)`, which raises `RunEvent::ExitRequested`. **Dock quit** (Dock icon → Quit, and OS shutdown/logout) is `[NSApp terminate:]`: it raises **only** `RunEvent::Exit`, never `ExitRequested`, and may destroy no windows at all. Anything that must happen at quit — persisting `windows.json`, installing a staged **Update** — has to cover all three or it silently skips one.
 
 **Shell-mode PTY**: A PTY that Abundio has not currently detected as running an Agent — a plain shell. Its counterpart, an **agent-mode PTY**, has its status indicator driven by Agent hooks. A single PTY flips between the two as Agents are launched in it and exit.
@@ -256,6 +262,9 @@ _Avoid_: file paste; "drag and drop" unqualified (collides with pane reordering)
 _Avoid_: image paste, paste-as-clipboard.
 
 ## Relationships
+
+- A published **Release notes** body exists for every **Update**, but not for every running version: a development build, or a release still in draft, has none — which is a different state from "we could not reach GitHub" and is worded differently in the UI.
+- The **What's new card** and the update prompt share one corner of a **Profile-bound Window**; at most one is on screen, and the What's new card wins until dismissed.
 
 - Every **Workspace** belongs to exactly one **Profile**; the Workspace ↔ Profile assignment is set at creation and not editable afterwards.
 - Each **Profile-bound Window** shows exactly one **Profile**, and each Profile is shown in at most one Window. Opening a new Window requires picking a Profile that is not already shown elsewhere (or creating a new "Untitled" Profile inline from the File menu).
@@ -283,6 +292,8 @@ _Avoid_: image paste, paste-as-clipboard.
 
 ## Flagged ambiguities
 
+- "Release notes" and "changelog" were used interchangeably — resolved to **Release notes**, and there is deliberately **no** `CHANGELOG` file in the repository. The GitHub Release body is the only place they are authored, so the app reads them over the network at runtime. The consequence is accepted rather than worked around: with no cached copy on disk, an offline user cannot read their own version's notes at all.
+- "Show the release notes" does not mean "open the GitHub page". Notes are **rendered in-app** with the Markdown renderer; the link out survives only as a fallback when the fetch fails and as an "older releases" escape hatch. The `#123` shorthand in a release body is *not* linked by the API — the app linkifies PR references itself, and deliberately leaves `@mentions` and commit SHAs as plain text.
 - "The updater in the Settings window" is not a thing — there is **one** updater, app-global and owned by Rust. The **Settings window** and the update prompt card are two *views* of the same `UpdaterState`, differing only in which buttons they offer. A behavioural difference between them is therefore always either (a) a missing button or (b) a **Quit route** that skips the install — never "two updaters".
 - "Quit" was used as if it were one event. It is three (**Quit route**), and Tauri's `RunEvent::ExitRequested` fires for only two of them — it is emitted when the last window is *destroyed*, which **Dock quit** never does. `RunEvent::Exit` is the only event common to all three.
 - "Window" has two meanings in Abundio code and conversation, and they are unrelated: the **Window** entity (OS-level application window — a Tauri `WebviewWindow`) is canonical; the historical use of "window" to mean a **Pane** is forbidden. When discussing Panes, use "pane" or "split"; when discussing Windows, capitalise to disambiguate where ambiguity would arise.

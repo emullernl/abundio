@@ -740,6 +740,9 @@ pub fn run() {
             // loop honours the frontend's auto-check setting. See ADR-0014.
             app.manage(updater::UpdaterState::new());
             updater::start_auto_check(app.handle().clone());
+            // What's new after an upgrade — compares the running version against
+            // `last_seen_version` and emits `whats-new` to one Window. See ADR-0036.
+            updater::start_whats_new_check(app.handle().clone());
 
             // App-global GitHub PR poller. One `gh api graphql` call (both PR
             // lists, with CI + approval status) on a focus-adaptive cadence,
@@ -1216,6 +1219,9 @@ pub fn run() {
             updater::updater_install_now,
             updater::updater_status,
             updater::updater_set_auto_check,
+            updater::updater_release_notes,
+            updater::updater_release_notes_for,
+            updater::updater_mark_version_seen,
             clipboard_image::set_clipboard_image_from_path,
         ])
         .build(tauri::generate_context!())

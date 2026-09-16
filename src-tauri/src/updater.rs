@@ -15,18 +15,33 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::error::AbundioError;
+use crate::workspace_store::WorkspaceStore;
 
 /// Delay before the first auto-check so it stays off the launch critical path.
 const INITIAL_CHECK_DELAY: Duration = Duration::from_secs(8);
 /// Interval between background auto-checks for long-running sessions.
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// The repository whose Releases hold the release notes. Never taken from the
+/// frontend — `updater_release_notes` accepts no URL, only a validated version.
+const GITHUB_REPO: &str = "emullernl/abundio";
+/// One page of releases, newest first. Deliberately not paginated: see ADR-0036.
+const RELEASES_PAGE_SIZE: usize = 30;
+/// How long a fetched release list is reused. Matches GitHub's unauthenticated
+/// budget of 60 requests per hour per IP — the Settings page fetches on every
+/// mount, so without this a few visits would exhaust it.
+const NOTES_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
+/// Guards against a hung connection holding the What's new check open at launch.
+const NOTES_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// `settings` key holding the newest version whose notes the user has seen.
+const LAST_SEEN_VERSION_KEY: &str = "last_seen_version";
 
 /// Update metadata surfaced to the frontend. Mirrors the relevant fields of
 /// `tauri_plugin_updater::Update`.
@@ -49,6 +64,37 @@ pub struct UpdaterStatus {
     /// `"none"`, `"available"` (checked, not downloaded) or `"ready"` (staged).
     pub state: &'static str,
     pub info: Option<UpdateInfo>,
+}
+
+/// One published GitHub Release, reduced to what the app renders. See ADR-0036.
+///
+/// `version` has the tag's leading `v` stripped, so it compares directly against
+/// the running version. `body` is raw Markdown — the frontend renders it through
+/// the sanitizing Markdown pipeline, never as HTML.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseNote {
+    pub version: String,
+    pub body: String,
+    pub published_at: Option<String>,
+    pub url: String,
+}
+
+/// The subset of GitHub's release JSON we read. Everything else is ignored, so
+/// the API growing new fields cannot break the parse.
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    html_url: Option<String>,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
 }
 
 /// Download progress, emitted as `update-download-progress`.
@@ -88,6 +134,10 @@ struct UpdaterInner {
     /// broadcast a completion event, and a missed one would strand a Window on
     /// a progress bar forever. See docs/plans/updater-quit-routes-and-settings-parity.md.
     downloading: bool,
+    /// Last successful release-notes fetch and when it landed. App-global, so
+    /// the Settings page in one Window and the What's new check share one
+    /// result rather than each spending a request. See ADR-0036.
+    notes: Option<(Instant, Vec<ReleaseNote>)>,
 }
 
 impl UpdaterState {
@@ -98,6 +148,142 @@ impl UpdaterState {
             auto_check: AtomicBool::new(false),
         }
     }
+}
+
+// ── Release notes (ADR-0036) ──
+
+/// Splits a `major.minor.patch` string into its three numbers.
+///
+/// Deliberately strict rather than a full semver implementation:
+/// `scripts/release.sh` refuses to tag anything that is not exactly three
+/// numbers, so a tag with a suffix is not a release this app can be running.
+fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+/// True when `a` is strictly newer than `b`. Unparseable versions are never
+/// newer — a version we cannot read must not trigger a What's new card.
+fn is_newer(a: &str, b: &str) -> bool {
+    match (parse_version(a), parse_version(b)) {
+        (Some(a), Some(b)) => a > b,
+        _ => false,
+    }
+}
+
+/// Rejects anything that is not a bare `major.minor.patch`.
+///
+/// The command takes a *version*, never a URL, and builds the request path from
+/// `GITHUB_REPO`; this is what keeps a frontend-supplied string from steering
+/// the request anywhere.
+fn validate_version(version: &str) -> Result<(), AbundioError> {
+    if parse_version(version).is_some() {
+        Ok(())
+    } else {
+        Err(AbundioError::InvalidOperation(format!(
+            "invalid version: {version}"
+        )))
+    }
+}
+
+/// Turns GitHub's releases JSON into the list the frontend renders.
+///
+/// Drops prereleases (CI publishes with `prerelease: false` and the updater
+/// resolves `releases/latest`, which skips them — listing one would advertise a
+/// version the updater will never offer) and drafts (belt and braces: the
+/// unauthenticated API does not return them, which is ADR-0014's publish-is-the-gate
+/// rule enforced by GitHub). Tags that are not `vMAJOR.MINOR.PATCH` are skipped
+/// rather than guessed at. Order is preserved: GitHub returns newest first.
+fn parse_releases(json: &str) -> Result<Vec<ReleaseNote>, AbundioError> {
+    let raw: Vec<GithubRelease> = serde_json::from_str(json).map_err(|e| {
+        AbundioError::InvalidOperation(format!("could not read GitHub releases: {e}"))
+    })?;
+    Ok(raw
+        .into_iter()
+        .filter(|r| !r.prerelease && !r.draft)
+        .filter_map(|r| {
+            let version = r.tag_name.strip_prefix('v').unwrap_or(&r.tag_name);
+            parse_version(version)?;
+            Some(ReleaseNote {
+                version: version.to_string(),
+                body: r.body.unwrap_or_default().trim().to_string(),
+                published_at: r.published_at,
+                url: r.html_url.unwrap_or_else(|| {
+                    format!("https://github.com/{GITHUB_REPO}/releases/tag/{}", r.tag_name)
+                }),
+            })
+        })
+        .collect())
+}
+
+/// Fetches one page of published releases from GitHub.
+///
+/// Unauthenticated: these are public releases, and asking the user for a token
+/// to read their own changelog would be absurd. That caps us at 60 requests per
+/// hour per IP, which is what `NOTES_CACHE_TTL` is sized against.
+async fn fetch_releases(app: &AppHandle) -> Result<Vec<ReleaseNote>, AbundioError> {
+    let url = format!(
+        "https://api.github.com/repos/{GITHUB_REPO}/releases?per_page={RELEASES_PAGE_SIZE}"
+    );
+    let client = reqwest::Client::builder()
+        .timeout(NOTES_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|e| AbundioError::InvalidOperation(format!("http client: {e}")))?;
+    let response = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        // GitHub rejects requests without one.
+        .header(
+            "User-Agent",
+            format!("Abundio/{}", app.package_info().version),
+        )
+        .send()
+        .await
+        .map_err(|e| {
+            AbundioError::InvalidOperation(format!("could not reach GitHub: {e}"))
+        })?;
+    if !response.status().is_success() {
+        return Err(AbundioError::InvalidOperation(format!(
+            "GitHub returned {}",
+            response.status()
+        )));
+    }
+    let body = response.text().await.map_err(|e| {
+        AbundioError::InvalidOperation(format!("could not read GitHub response: {e}"))
+    })?;
+    parse_releases(&body)
+}
+
+/// Returns the cached release list, fetching when it is missing or stale.
+///
+/// The cache lock is never held across the network call — two Windows asking at
+/// once may both fetch, which costs a request but cannot deadlock.
+async fn releases_cached(
+    app: &AppHandle,
+    refresh: bool,
+) -> Result<Vec<ReleaseNote>, AbundioError> {
+    if !refresh {
+        if let Some(state) = app.try_state::<UpdaterState>() {
+            let inner = state.inner.lock().unwrap();
+            if let Some((fetched_at, releases)) = inner.notes.as_ref() {
+                if fetched_at.elapsed() < NOTES_CACHE_TTL {
+                    return Ok(releases.clone());
+                }
+            }
+        }
+    }
+    let releases = fetch_releases(app).await?;
+    if let Some(state) = app.try_state::<UpdaterState>() {
+        state.inner.lock().unwrap().notes = Some((Instant::now(), releases.clone()));
+    }
+    Ok(releases)
 }
 
 fn to_info(update: &Update) -> UpdateInfo {
@@ -119,17 +305,24 @@ async fn check_and_emit(app: &AppHandle) -> Result<(), String> {
         if let Some(state) = app.try_state::<UpdaterState>() {
             state.inner.lock().unwrap().pending = Some(update);
         }
-        emit_update_available(app, &info);
+        emit_to_focused_profile_window(app, "update-available", info);
     }
     Ok(())
 }
 
-/// Emits `update-available` to the focused Window, but only when it is a
-/// Profile-bound Window — the Settings auxiliary window has no listener, so
-/// targeting it would silently drop the prompt. Falls back to any Profile-bound
-/// Window otherwise. Preserves ADR-0014's "focused Window only" intent for the
-/// multi-Profile-window case while never stranding the event on Settings.
-fn emit_update_available(app: &AppHandle, info: &UpdateInfo) {
+/// Emits to the focused Window, but only when it is a Profile-bound Window —
+/// the Settings auxiliary window has no listener, so targeting it would silently
+/// drop the event. Falls back to any Profile-bound Window otherwise. Preserves
+/// ADR-0014's "focused Window only" intent for the multi-Profile-window case
+/// while never stranding the event on Settings.
+///
+/// Shared by `update-available` and `whats-new` (ADR-0036): both are one-card-per-app
+/// notifications, and both would otherwise appear once per open Window.
+fn emit_to_focused_profile_window<P: Serialize + Clone>(
+    app: &AppHandle,
+    event: &str,
+    payload: P,
+) {
     let windows = app.webview_windows();
     let focused_profile = windows.iter().find_map(|(label, w)| {
         (w.is_focused().unwrap_or(false)
@@ -143,7 +336,7 @@ fn emit_update_available(app: &AppHandle, info: &UpdateInfo) {
             .cloned()
     });
     if let Some(label) = target {
-        let _ = app.emit_to(label.as_str(), "update-available", info);
+        let _ = app.emit_to(label.as_str(), event, payload);
     }
 }
 
@@ -192,7 +385,82 @@ pub fn apply_staged_update_on_quit(app: &AppHandle) {
     }
 }
 
+// ── What's new after an upgrade (ADR-0036) ──
+
+/// Decides whether a version bump is worth a What's new card.
+///
+/// A fresh install (`last_seen` is `None`) is deliberately **not** a bump: the
+/// user never upgraded from anything, so a changelog would be noise. A downgrade
+/// is not one either, and it must not rewrite the flag — going back up to a
+/// version already seen should stay quiet.
+fn should_show_whats_new(running: &str, last_seen: Option<&str>) -> bool {
+    match last_seen {
+        None => false,
+        Some(seen) => is_newer(running, seen),
+    }
+}
+
+/// Runs the What's new check shortly after launch: compare the running version
+/// against `last_seen_version`, fetch the notes, and emit `whats-new` to one
+/// Window. See ADR-0036.
+///
+/// The flag advances **only** once notes were actually in hand, so an offline
+/// launch shows nothing and tries again next time rather than silently
+/// consuming the card. The one exception is a fetch that succeeded and found no
+/// release for this version — a development build, or one still in draft. That
+/// is an answer rather than a failure, so it marks the version seen; otherwise
+/// every launch of a dev build would re-fetch forever.
+pub fn start_whats_new_check(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(INITIAL_CHECK_DELAY).await;
+
+        let running = app.package_info().version.to_string();
+        let Some(store) = app.try_state::<WorkspaceStore>() else {
+            return;
+        };
+        let last_seen = store.get_setting(LAST_SEEN_VERSION_KEY).ok().flatten();
+
+        // Fresh install: record where we came in, and never show a card for it.
+        if last_seen.is_none() {
+            let _ = store.set_setting(LAST_SEEN_VERSION_KEY, &running);
+            return;
+        }
+        if !should_show_whats_new(&running, last_seen.as_deref()) {
+            return;
+        }
+
+        // Drop the state borrow before awaiting — `State` is not held across the
+        // network call, and the store is re-borrowed afterwards.
+        drop(store);
+
+        let releases = match releases_cached(&app, false).await {
+            Ok(releases) => releases,
+            // Offline, rate-limited, or GitHub is down. Leave the flag alone so
+            // a later launch still gets the card.
+            Err(e) => {
+                eprintln!("[abundio] what's new: could not fetch release notes: {e}");
+                return;
+            }
+        };
+
+        let Some(store) = app.try_state::<WorkspaceStore>() else {
+            return;
+        };
+        match releases.iter().find(|r| r.version == running) {
+            Some(note) if !note.body.is_empty() => {
+                emit_to_focused_profile_window(&app, "whats-new", note.clone());
+            }
+            // Fetched successfully, but this version has no published notes.
+            // Settled, not pending — mark it seen so we stop asking.
+            _ => {
+                let _ = store.set_setting(LAST_SEEN_VERSION_KEY, &running);
+            }
+        }
+    });
+}
+
 // ── Commands ──
+
 
 /// Manual check (the Settings "Check for updates" button). Stashes any found
 /// update as `pending` and returns its info; `None` means up to date.
@@ -359,6 +627,41 @@ pub async fn updater_set_auto_check(
     Ok(())
 }
 
+/// Returns the published release notes, newest first — one page, prereleases
+/// dropped. `refresh` bypasses the hourly cache (the Settings "Check for
+/// updates" button). Which of these entries the user actually sees is decided
+/// frontend-side by `selectReleaseNotes`. See ADR-0036.
+#[tauri::command]
+pub async fn updater_release_notes(
+    app: AppHandle,
+    refresh: Option<bool>,
+) -> Result<Vec<ReleaseNote>, AbundioError> {
+    releases_cached(&app, refresh.unwrap_or(false)).await
+}
+
+/// Returns the notes for one specific version, or `None` when that version has
+/// no published release. Takes a *version*, never a URL — see `validate_version`.
+#[tauri::command]
+pub async fn updater_release_notes_for(
+    app: AppHandle,
+    version: String,
+) -> Result<Option<ReleaseNote>, AbundioError> {
+    validate_version(&version)?;
+    let releases = releases_cached(&app, false).await?;
+    Ok(releases.into_iter().find(|r| r.version == version))
+}
+
+/// Marks the running version's notes as seen, so the What's new card does not
+/// return on the next launch. Called when the card is dismissed.
+#[tauri::command]
+pub async fn updater_mark_version_seen(
+    app: AppHandle,
+    store: State<'_, WorkspaceStore>,
+) -> Result<(), AbundioError> {
+    let running = app.package_info().version.to_string();
+    store.set_setting(LAST_SEEN_VERSION_KEY, &running)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +742,136 @@ mod tests {
         let state = UpdaterState::new();
         assert!(state.inner.lock().unwrap().staged.take().is_none());
         assert!(state.inner.lock().unwrap().staged.take().is_none());
+    }
+
+    // ── Release notes (ADR-0036) ──
+
+    #[test]
+    fn parses_three_part_versions() {
+        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_version("0.0.0"), Some((0, 0, 0)));
+        assert_eq!(parse_version("10.20.30"), Some((10, 20, 30)));
+    }
+
+    /// `scripts/release.sh` tags nothing but bare three-part versions, so
+    /// anything else is not a release this app can be running.
+    #[test]
+    fn rejects_everything_that_is_not_three_numbers() {
+        for bad in [
+            "1.2", "1.2.3.4", "v1.2.3", "1.2.3-beta", "", "abc", "1.2.x", "-1.2.3",
+        ] {
+            assert_eq!(parse_version(bad), None, "{bad} should not parse");
+            assert!(validate_version(bad).is_err(), "{bad} should be rejected");
+        }
+        assert!(validate_version("1.2.3").is_ok());
+    }
+
+    #[test]
+    fn compares_versions_numerically_not_lexically() {
+        // The case a string compare gets wrong.
+        assert!(is_newer("0.10.0", "0.9.0"));
+        assert!(!is_newer("0.9.0", "0.10.0"));
+        assert!(is_newer("1.0.0", "0.99.99"));
+        assert!(!is_newer("1.2.3", "1.2.3"));
+    }
+
+    /// A version we cannot read must never look newer — it would fire a What's
+    /// new card for a version whose notes we could not identify anyway.
+    #[test]
+    fn unparseable_versions_are_never_newer() {
+        assert!(!is_newer("nightly", "0.1.0"));
+        assert!(!is_newer("0.1.0", "nightly"));
+    }
+
+    #[test]
+    fn parses_releases_newest_first_and_strips_the_v() {
+        let json = r#"[
+            {"tag_name":"v0.4.0","body":"newer","published_at":"2026-02-01T00:00:00Z","html_url":"https://example.test/4"},
+            {"tag_name":"v0.3.0","body":"older","published_at":"2026-01-01T00:00:00Z","html_url":"https://example.test/3"}
+        ]"#;
+        let releases = parse_releases(json).unwrap();
+        assert_eq!(releases.len(), 2);
+        assert_eq!(releases[0].version, "0.4.0");
+        assert_eq!(releases[0].body, "newer");
+        assert_eq!(releases[0].url, "https://example.test/4");
+        assert_eq!(releases[1].version, "0.3.0");
+    }
+
+    /// The updater resolves `releases/latest`, which skips prereleases — listing
+    /// one would advertise a version it will never offer.
+    #[test]
+    fn drops_prereleases_and_drafts() {
+        let json = r#"[
+            {"tag_name":"v0.5.0","body":"beta","prerelease":true},
+            {"tag_name":"v0.4.0","body":"draft","draft":true},
+            {"tag_name":"v0.3.0","body":"real"}
+        ]"#;
+        let releases = parse_releases(json).unwrap();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].version, "0.3.0");
+    }
+
+    #[test]
+    fn skips_tags_that_are_not_versions() {
+        let json = r#"[
+            {"tag_name":"nightly","body":"x"},
+            {"tag_name":"v1.0.0-rc1","body":"y"},
+            {"tag_name":"v1.0.0","body":"z"}
+        ]"#;
+        let releases = parse_releases(json).unwrap();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].version, "1.0.0");
+    }
+
+    /// A release with no body is still a release — it is kept so the anchoring
+    /// rule can find the running version, and the frontend words the empty case.
+    #[test]
+    fn keeps_releases_with_an_empty_body() {
+        let json = r#"[{"tag_name":"v1.0.0"}]"#;
+        let releases = parse_releases(json).unwrap();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].body, "");
+        assert_eq!(releases[0].published_at, None);
+        assert_eq!(releases[0].url, "https://github.com/emullernl/abundio/releases/tag/v1.0.0");
+    }
+
+    /// Unknown fields must not break the parse — GitHub adds them over time.
+    #[test]
+    fn ignores_unknown_fields() {
+        let json = r#"[{"tag_name":"v1.0.0","body":"b","reactions":{"+1":3},"assets":[]}]"#;
+        assert_eq!(parse_releases(json).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn malformed_json_is_an_error_not_an_empty_list() {
+        assert!(parse_releases("not json").is_err());
+        assert!(parse_releases("{}").is_err());
+    }
+
+    // ── What's new gate ──
+
+    /// A fresh install never upgraded from anything, so it gets no card — the
+    /// caller seeds the flag instead.
+    #[test]
+    fn fresh_install_shows_no_whats_new() {
+        assert!(!should_show_whats_new("0.4.0", None));
+    }
+
+    #[test]
+    fn upgrade_shows_whats_new() {
+        assert!(should_show_whats_new("0.4.0", Some("0.3.0")));
+        assert!(should_show_whats_new("0.10.0", Some("0.9.0")));
+    }
+
+    #[test]
+    fn same_version_shows_nothing() {
+        assert!(!should_show_whats_new("0.4.0", Some("0.4.0")));
+    }
+
+    /// Going back down must stay quiet — and must not rewrite the flag, or
+    /// returning to the newer version would show its card a second time.
+    #[test]
+    fn downgrade_shows_nothing() {
+        assert!(!should_show_whats_new("0.3.0", Some("0.4.0")));
     }
 }
