@@ -757,6 +757,17 @@ export interface UpdaterStatus {
 	info: UpdateInfo | null;
 }
 
+/** One published GitHub Release, reduced to what the app renders. Mirrors the
+ *  Rust `ReleaseNote`. `version` has the tag's leading `v` stripped and `body`
+ *  is raw Markdown — render it through `ReleaseNotesMarkdown`, never as HTML.
+ *  See ADR-0036. */
+export interface ReleaseNote {
+	version: string;
+	body: string;
+	publishedAt: string | null;
+	url: string;
+}
+
 /** Download progress for a staging update. `total` is null until known. */
 export interface UpdateDownloadProgress {
 	downloaded: number;
@@ -782,6 +793,23 @@ export const updates = {
 	/** Enable/disable background auto-checks (the app-wide Rust flag). */
 	setAutoCheck: (enabled: boolean) =>
 		invoke<void>("updater_set_auto_check", { enabled }),
+
+	/** Published release notes, newest first — one page, prereleases dropped.
+	 *  Cached app-globally for an hour; `refresh` spends a request to bypass it.
+	 *  Which entries are shown is decided by `selectReleaseNotes`. */
+	releaseNotes: (refresh = false) =>
+		invoke<ReleaseNote[]>("updater_release_notes", { refresh }),
+
+	/** Marks the running version's notes as seen, so the What's new card does
+	 *  not return on the next launch. App-global, not per-Window. */
+	markVersionSeen: () => invoke<void>("updater_mark_version_seen"),
+
+	/** Fires (focused Window only) when the app has started on a version newer
+	 *  than the last one whose notes the user saw. See ADR-0036. */
+	onWhatsNew: (
+		callback: (note: ReleaseNote) => void,
+	): Promise<UnlistenFn> =>
+		listen<ReleaseNote>("whats-new", (event) => callback(event.payload)),
 
 	/** Fires (focused Window only) when the Rust background loop finds an update. */
 	onUpdateAvailable: (
