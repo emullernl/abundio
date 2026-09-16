@@ -5,6 +5,11 @@ import { distinctGroupKeys } from "../lib/worktreeGrouping";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
+/** Least time between two focus-triggered Dirty-marker refreshes. Long enough
+ *  that flicking between windows costs nothing, short enough that coming back to
+ *  Abundio after real work elsewhere shows the truth. */
+const FOCUS_REFRESH_MIN_INTERVAL_MS = 10_000;
+
 function basename(path: string): string {
 	return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
@@ -111,16 +116,31 @@ export function useWorktreeSync(): void {
 	// Refresh unopened workspaces' Dirty markers when the Window regains focus.
 	// Opened workspaces are live through their scheduler; an unopened one mostly
 	// changes from outside Abundio, which the user returns from by focusing us.
+	//
+	// Restricted to workspaces with no live answer, because each summary is a
+	// working-tree status walk: asking about the opened ones would scan the
+	// repositories the user is actively working in — usually the largest — and
+	// then throw the answer away (`uncommittedFromSummaries` keeps the live one).
+	// Rate-limited for the same reason: `inFlight` stops overlap but not
+	// repetition, and alt-tabbing back and forth would otherwise cost a scan per
+	// repository per transition, in every open Window.
 	useEffect(() => {
 		let inFlight = false;
+		let lastRefreshAt = 0;
 		return addWindowFocusListener((focused) => {
 			if (!focused || inFlight) return;
-			const list = useWorkspaceStore.getState().workspaces.map((w) => ({
-				id: w.id,
-				rootFolder: w.rootFolder,
-				baseBranch: w.baseBranch ?? null,
-			}));
+			if (Date.now() - lastRefreshAt < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
+			const live = useWorkspaceGitStore.getState().uncommittedById;
+			const list = useWorkspaceStore
+				.getState()
+				.workspaces.filter((w) => !live[w.id]?.breakdown)
+				.map((w) => ({
+					id: w.id,
+					rootFolder: w.rootFolder,
+					baseBranch: w.baseBranch ?? null,
+				}));
 			if (list.length === 0) return;
+			lastRefreshAt = Date.now();
 			inFlight = true;
 			useWorkspaceGitStore
 				.getState()

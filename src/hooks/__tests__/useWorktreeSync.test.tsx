@@ -71,6 +71,7 @@ describe("useWorktreeSync focus refresh", () => {
 		useWorkspaceGitStore.setState({
 			syncWorktreeFacts: sync,
 			worktreeFacts: {},
+			uncommittedById: {},
 		});
 		// biome-ignore lint/suspicious/noExplicitAny: partial store
 		useWorkspaceStore.setState({ workspaces: [ws("a"), ws("b")] } as any);
@@ -95,6 +96,66 @@ describe("useWorktreeSync focus refresh", () => {
 		]);
 	});
 
+	it("asks only about workspaces with no live answer", async () => {
+		// A live breakdown means a scheduler is pushing this workspace's
+		// dirtiness; asking the batch about it would scan a large repository and
+		// then discard the answer.
+		useWorkspaceGitStore.setState({
+			uncommittedById: {
+				a: {
+					dirty: true,
+					breakdown: { staged: 1, unstaged: 0, untracked: 0, conflicted: 0 },
+				},
+				b: { dirty: false, breakdown: null },
+			},
+		});
+		await act(async () => {
+			for (const l of focusListeners) l(true);
+		});
+		expect(sync.mock.calls[0][0].map((w: { id: string }) => w.id)).toEqual([
+			"b",
+		]);
+	});
+
+	it("does not call out at all when every workspace is live", async () => {
+		useWorkspaceGitStore.setState({
+			uncommittedById: {
+				a: {
+					dirty: false,
+					breakdown: { staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+				},
+				b: {
+					dirty: false,
+					breakdown: { staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+				},
+			},
+		});
+		await act(async () => {
+			for (const l of focusListeners) l(true);
+		});
+		expect(sync).not.toHaveBeenCalled();
+	});
+
+	it("rate-limits repeated focus transitions", async () => {
+		vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
+		await act(async () => {
+			for (const l of focusListeners) l(true);
+		});
+		// Flicking away and back moments later costs nothing.
+		vi.setSystemTime(1_002_000);
+		await act(async () => {
+			for (const l of focusListeners) l(true);
+		});
+		expect(sync).toHaveBeenCalledTimes(1);
+		// Coming back after real work elsewhere refreshes.
+		vi.setSystemTime(1_020_000);
+		await act(async () => {
+			for (const l of focusListeners) l(true);
+		});
+		expect(sync).toHaveBeenCalledTimes(2);
+		vi.useRealTimers();
+	});
+
 	it("does nothing on blur", async () => {
 		await act(async () => {
 			for (const l of focusListeners) l(false);
@@ -103,6 +164,7 @@ describe("useWorktreeSync focus refresh", () => {
 	});
 
 	it("does not stack refreshes while one is in flight", async () => {
+		vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
 		let resolve: () => void = () => {};
 		sync.mockImplementation(
 			() =>
@@ -116,10 +178,13 @@ describe("useWorktreeSync focus refresh", () => {
 		});
 		expect(sync).toHaveBeenCalledTimes(1);
 		await act(async () => resolve());
+		// Past the cooldown, so only the in-flight guard can be under test here.
+		vi.setSystemTime(1_060_000);
 		await act(async () => {
 			for (const l of focusListeners) l(true);
 		});
 		expect(sync).toHaveBeenCalledTimes(2);
+		vi.useRealTimers();
 	});
 
 	it("unsubscribes on unmount", () => {

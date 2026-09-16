@@ -1147,9 +1147,14 @@ pub fn worktree_is_dirty(cwd: &str) -> bool {
 }
 
 /// [`worktree_is_dirty`] on an already-open repository, so the batched
-/// workspace summary pays for one `Repository::discover` per workspace. This is
-/// the single definition of a **Dirty workspace** — the sidebar's Dirty marker
-/// and the Remove-worktree confirmation must never disagree.
+/// workspace summary pays for one `Repository::discover` per workspace.
+///
+/// This is the definition of a **Dirty workspace** for a workspace the app has
+/// not opened, and for the Remove-worktree confirmation. An *opened* workspace's
+/// marker is derived instead by the frontend from `compute_changed_files_sync`
+/// rows (`lib/dirtyWorkspace.ts`) — a different computation for the same
+/// question, and nothing in the types keeps the two honest. The agreement is
+/// enforced by test (`dirtiness_agrees_between_the_status_walk_and_the_changed_file_sections`).
 pub fn worktree_is_dirty_in(repo: &Repository) -> bool {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
@@ -1554,5 +1559,100 @@ mod tests {
         let e = snap(&wt_path);
         let st = stats(&wt_path, &s, &e);
         assert_eq!((st.additions, st.deletions, st.files), (1, 0, 1));
+    }
+
+    /// The two paths that decide a **Dirty workspace** must agree, or the same
+    /// Workspace would be dirty in the sidebar and clean in the Remove-worktree
+    /// confirmation (or the reverse) depending only on whether it happens to be
+    /// opened: a not-yet-opened Workspace is answered by `worktree_is_dirty`,
+    /// an opened one by the frontend classifying `compute_changed_files_sync`
+    /// rows (`lib/dirtyWorkspace.ts`). Nothing structurally ties the two
+    /// together, so pin them to each other here.
+    #[test]
+    fn dirtiness_agrees_between_the_status_walk_and_the_changed_file_sections() {
+        /// Dirtiness the way the frontend derives it: every section except
+        /// `against_base`, which is committed history.
+        fn dirty_from_sections(cwd: &std::path::Path) -> bool {
+            compute_changed_files_sync(cwd.to_str().unwrap(), None)
+                .unwrap()
+                .iter()
+                .any(|f| f.section != "against_base")
+        }
+        fn assert_agree(cwd: &std::path::Path, expected: bool, case: &str) {
+            let walk = worktree_is_dirty(cwd.to_str().unwrap());
+            let sections = dirty_from_sections(cwd);
+            assert_eq!(walk, expected, "{case}: status walk");
+            assert_eq!(sections, expected, "{case}: changed-file sections");
+        }
+
+        let dir = repo_with_commit();
+        let p = dir.path();
+        assert_agree(p, false, "clean");
+
+        std::fs::write(p.join("untracked.txt"), "x\n").unwrap();
+        assert_agree(p, true, "untracked file");
+        std::fs::remove_file(p.join("untracked.txt")).unwrap();
+
+        // An untracked file inside an untracked *directory*: the one place the
+        // two paths use different recursion settings.
+        std::fs::create_dir(p.join("nested")).unwrap();
+        std::fs::write(p.join("nested/deep.txt"), "x\n").unwrap();
+        assert_agree(p, true, "untracked directory");
+        std::fs::remove_dir_all(p.join("nested")).unwrap();
+
+        std::fs::write(p.join("initial.txt"), "changed\n").unwrap();
+        assert_agree(p, true, "unstaged edit");
+        run_git(p, &["add", "initial.txt"]);
+        assert_agree(p, true, "staged edit");
+        run_git(p, &["commit", "-m", "second"]);
+        assert_agree(p, false, "committed — ahead of nothing, and clean");
+
+        // Ignored files are not uncommitted work.
+        std::fs::write(p.join(".gitignore"), "ignored.txt\n").unwrap();
+        run_git(p, &["add", ".gitignore"]);
+        run_git(p, &["commit", "-m", "ignore"]);
+        std::fs::write(p.join("ignored.txt"), "x\n").unwrap();
+        assert_agree(p, false, "ignored file only");
+
+        // A typechange (file → symlink) reaches the two paths by different
+        // routes: a status bit on one side, a diff entry on the other.
+        std::fs::remove_file(p.join("initial.txt")).unwrap();
+        std::os::unix::fs::symlink("ignored.txt", p.join("initial.txt")).unwrap();
+        assert_agree(p, true, "typechange");
+        std::fs::remove_file(p.join("initial.txt")).unwrap();
+        run_git(p, &["checkout", "--", "initial.txt"]);
+        assert_agree(p, false, "typechange reverted");
+    }
+
+    /// A repository stopped mid-merge is dirty on both paths — the conflicted
+    /// state has no stage 0, so it is the case most likely to slip past one.
+    #[test]
+    fn a_conflicted_repository_is_dirty_on_both_paths() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        // `git init` picks master or main depending on the user's config.
+        let base = run_git(p, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        run_git(p, &["checkout", "-b", "feature"]);
+        std::fs::write(p.join("initial.txt"), "ours\n").unwrap();
+        run_git(p, &["commit", "-am", "ours"]);
+        run_git(p, &["checkout", &base]);
+        std::fs::write(p.join("initial.txt"), "theirs\n").unwrap();
+        run_git(p, &["commit", "-am", "theirs"]);
+        run_git(p, &["checkout", "feature"]);
+        // Expected to exit non-zero: stopping on the conflict is the point.
+        let _ = std::process::Command::new("git")
+            .args(["merge", &base])
+            .current_dir(p)
+            .output()
+            .unwrap();
+
+        assert!(worktree_is_dirty(p.to_str().unwrap()), "status walk");
+        let files = compute_changed_files_sync(p.to_str().unwrap(), None).unwrap();
+        assert!(
+            files.iter().any(|f| f.section == "conflicted"),
+            "changed-file sections: {files:#?}"
+        );
     }
 }

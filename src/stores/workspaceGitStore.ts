@@ -365,9 +365,11 @@ export function uncommittedFromSummaries(
 ): Record<string, Uncommitted> {
 	let next = current;
 	for (const s of summaries) {
-		const prev = current[s.workspaceId];
+		// Read from `next`, so the loop stays self-consistent even if a batch
+		// ever answered twice for one workspace.
+		const prev = next[s.workspaceId];
 		if (prev?.breakdown) continue;
-		const dirty = s.isGitRepo && s.isDirty === true;
+		const dirty = s.isGitRepo && s.isDirty;
 		if (prev && prev.dirty === dirty) continue;
 		if (next === current) next = { ...current };
 		next[s.workspaceId] = { dirty, breakdown: null };

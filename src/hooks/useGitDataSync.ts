@@ -104,6 +104,11 @@ export function useGitDataSync() {
 				entry.cancelled = true;
 				entry.unlisten?.();
 				git.schedulerStop(wsId).catch(() => {});
+				// Symmetric with the per-workspace stop above. A live entry is
+				// treated as fresher than any batched summary, so one left behind
+				// here could never be refreshed again — invisible at window
+				// teardown, but the store is module-level and outlives this hook.
+				useWorkspaceGitStore.getState().endLiveUncommitted(wsId);
 			}
 			active.clear();
 		};
