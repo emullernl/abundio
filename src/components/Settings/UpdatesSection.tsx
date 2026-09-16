@@ -1,11 +1,11 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { open } from "@tauri-apps/plugin-shell";
 import { useEffect, useState } from "react";
 import { updates as updatesIpc } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { releaseNotesUrl, useUpdateStore } from "../../stores/updateStore";
+import { useUpdateStore } from "../../stores/updateStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SectionLabel, ToggleRow } from "./primitives";
+import { ReleaseNotesSection } from "./ReleaseNotesSection";
 
 export function UpdatesSection() {
 	const status = useUpdateStore((s) => s.status);
@@ -17,6 +17,7 @@ export function UpdatesSection() {
 	const download = useUpdateStore((s) => s.download);
 	const installNow = useUpdateStore((s) => s.installNow);
 	const hydrate = useUpdateStore((s) => s.hydrate);
+	const fetchNotes = useUpdateStore((s) => s.fetchNotes);
 	const [confirmRestart, setConfirmRestart] = useState(false);
 	const autoCheck = useSettingsStore((s) => s.autoCheckUpdatesEnabled);
 	const setAutoCheck = useSettingsStore((s) => s.setAutoCheckUpdatesEnabled);
@@ -154,7 +155,13 @@ export function UpdatesSection() {
 						) : (
 							<button
 								type="button"
-								onClick={() => check({ manual: true })}
+								onClick={() => {
+									check({ manual: true });
+									// A manual check is the user asking for the current
+									// truth, so spend a request rather than serving the
+									// hourly cache.
+									fetchNotes({ refresh: true });
+								}}
 								disabled={busy}
 								className="rounded-md transition-colors"
 								style={{
@@ -184,29 +191,6 @@ export function UpdatesSection() {
 							{statusText}
 						</div>
 					)}
-					{(status === "available" ||
-						status === "downloading" ||
-						status === "ready") &&
-						info && (
-							<button
-								type="button"
-								onClick={() =>
-									open(releaseNotesUrl(info.version)).catch(() => {})
-								}
-								className="text-left transition-colors"
-								style={{
-									fontSize: 12,
-									color: "var(--accent)",
-									marginTop: 6,
-									background: "transparent",
-									border: "none",
-									padding: 0,
-									cursor: "pointer",
-								}}
-							>
-								View release notes ↗
-							</button>
-						)}
 					{status === "downloading" && (
 						<div
 							className="rounded-full overflow-hidden"
@@ -292,6 +276,11 @@ export function UpdatesSection() {
 						</div>
 					</div>
 				)}
+
+				{/* Last on the page: the notes are unbounded in length, and putting
+				    them here keeps the controls above reachable without scrolling.
+				    See ADR-0036. */}
+				<ReleaseNotesSection currentVersion={currentVersion} />
 
 				<div
 					style={{

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { type UpdateInfo, updates } from "../lib/ipc";
+import { type ReleaseNote, type UpdateInfo, updates } from "../lib/ipc";
 import { useSettingsStore } from "./settingsStore";
 
 /**
@@ -53,6 +53,23 @@ interface UpdateStoreState {
 	/** "Skip this version" — persist it so it never re-prompts (until newer). */
 	skipVersion: () => void;
 	setProgress: (downloaded: number, total: number | null) => void;
+
+	// ── Release notes (ADR-0036) ──
+
+	/** Published releases, newest first. Null until the first fetch resolves. */
+	notes: ReleaseNote[] | null;
+	notesStatus: "idle" | "loading" | "loaded" | "error";
+	/** Fetch the release list. `refresh` spends a request to bypass the hourly
+	 *  Rust-side cache — used by the manual "Check for updates" button. */
+	fetchNotes: (opts?: { refresh?: boolean }) => Promise<void>;
+
+	/** The notes for a version the user has just upgraded onto, when Rust
+	 *  decided they are worth a card. Null the rest of the time — which is
+	 *  almost always. */
+	whatsNew: ReleaseNote | null;
+	setWhatsNew: (note: ReleaseNote) => void;
+	/** Dismiss the card and record the version as seen, app-globally. */
+	dismissWhatsNew: () => void;
 }
 
 function isSkipped(version: string): boolean {
@@ -176,4 +193,33 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	},
 
 	setProgress: (downloaded, total) => set({ downloaded, total }),
+
+	// ── Release notes (ADR-0036) ──
+
+	notes: null,
+	notesStatus: "idle",
+
+	fetchNotes: async ({ refresh = false } = {}) => {
+		if (get().notesStatus === "loading") return;
+		set({ notesStatus: "loading" });
+		try {
+			const notes = await updates.releaseNotes(refresh);
+			set({ notes, notesStatus: "loaded" });
+		} catch {
+			// Offline, rate-limited, or GitHub is down. The section says so and
+			// offers a retry; the error text itself is not worth surfacing, since
+			// there is nothing the user can do differently with it.
+			set({ notesStatus: "error" });
+		}
+	},
+
+	whatsNew: null,
+	setWhatsNew: (note) => set({ whatsNew: note }),
+
+	dismissWhatsNew: () => {
+		set({ whatsNew: null });
+		// Rust owns the flag: localStorage is per-webview on macOS, so a
+		// per-Window copy would show the card again in the next Window.
+		updates.markVersionSeen().catch(() => {});
+	},
 }));

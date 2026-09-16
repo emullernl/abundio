@@ -68,9 +68,7 @@ describe("linkifyPrRefs — what it must leave alone", () => {
 	});
 
 	it("does not nest a link inside a link", () => {
-		const tree = root([
-			el("a", [text("see #180")]),
-		]);
+		const tree = root([el("a", [text("see #180")])]);
 		tree.children[0].properties.href = "https://example.test";
 		linkifyPrRefs(tree, REPO);
 		expect(render(tree)).toBe("[see #180](https://example.test)");

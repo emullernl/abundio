@@ -806,9 +806,7 @@ export const updates = {
 
 	/** Fires (focused Window only) when the app has started on a version newer
 	 *  than the last one whose notes the user saw. See ADR-0036. */
-	onWhatsNew: (
-		callback: (note: ReleaseNote) => void,
-	): Promise<UnlistenFn> =>
+	onWhatsNew: (callback: (note: ReleaseNote) => void): Promise<UnlistenFn> =>
 		listen<ReleaseNote>("whats-new", (event) => callback(event.payload)),
 
 	/** Fires (focused Window only) when the Rust background loop finds an update. */

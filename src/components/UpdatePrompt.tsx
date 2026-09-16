@@ -21,11 +21,17 @@ export function UpdatePrompt() {
 	const installNow = useUpdateStore((s) => s.installNow);
 	const dismissLater = useUpdateStore((s) => s.dismissLater);
 	const skipVersion = useUpdateStore((s) => s.skipVersion);
+	const whatsNew = useUpdateStore((s) => s.whatsNew);
 
 	const [confirmRestart, setConfirmRestart] = useState(false);
 
+	// Both cards claim the bottom-right corner. The What's new card wins while
+	// it is up: it is a one-time "you just upgraded" moment, whereas this prompt
+	// will keep re-offering itself (and already has Later and Skip). Holding it
+	// back also means neither card has to know the other's height. See ADR-0036.
 	const visible =
 		!dismissed &&
+		whatsNew == null &&
 		info != null &&
 		(status === "available" || status === "downloading" || status === "ready");
 
