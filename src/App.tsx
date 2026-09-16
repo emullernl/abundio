@@ -20,6 +20,7 @@ import { SplitContainer } from "./components/Terminal/SplitContainer";
 import { TerminalPool } from "./components/Terminal/TerminalPool";
 import { Titlebar } from "./components/Titlebar";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { WhatsNewCard } from "./components/WhatsNewCard";
 import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
@@ -459,9 +460,15 @@ export function App() {
 				useUpdateStore.getState().setProgress(downloaded, total);
 			},
 		);
+		// "You're now on Abundio X", emitted by Rust to one Window on the first
+		// launch after an upgrade. See ADR-0036.
+		const unlistenWhatsNew = updates.onWhatsNew((note) => {
+			useUpdateStore.getState().setWhatsNew(note);
+		});
 		return () => {
 			unlistenAvailable.then((fn) => fn()).catch(() => {});
 			unlistenProgress.then((fn) => fn()).catch(() => {});
+			unlistenWhatsNew.then((fn) => fn()).catch(() => {});
 		};
 	}, []);
 
@@ -1032,6 +1039,7 @@ export function App() {
 			)}
 			<DragPanePreview />
 			<UpdatePrompt />
+			<WhatsNewCard />
 		</div>
 	);
 }

@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -760,6 +760,38 @@ impl WorkspaceStore {
             other => AbundioError::Db(other),
         })
     }
+
+    // ── App-global settings (the `settings` key-value table) ──
+    //
+    // Scalars that belong to the whole app rather than to a Workspace, a Tab or
+    // a Profile. The table has existed since 001_init.sql; `last_seen_version`
+    // (the What's new card's gate — see ADR-0036) is its first key. It lives
+    // here, and not in the frontend's `localStorage`-backed settings store,
+    // because localStorage is per-webview on macOS: every Window would keep its
+    // own copy and each would show its own card.
+
+    /// Reads an app-global setting. `None` when the key was never written —
+    /// callers must treat "absent" and "empty" as different (a fresh install has
+    /// no `last_seen_version`, which is not the same as having seen "").
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(AbundioError::Db)
+    }
+
+    /// Writes an app-global setting, replacing any existing value.
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [key, value],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -774,6 +806,49 @@ mod tests {
     }
 
     const DEFAULT_PID: &str = "00000000-0000-0000-0000-000000000001";
+
+    // ── App-global settings ──
+
+    /// A never-written key reads as `None`, not as an empty string — the What's
+    /// new card depends on telling a fresh install (no `last_seen_version`)
+    /// apart from a version that was genuinely seen. See ADR-0036.
+    #[test]
+    fn missing_setting_reads_as_none() {
+        let store = test_store();
+        assert_eq!(store.get_setting("last_seen_version").unwrap(), None);
+    }
+
+    #[test]
+    fn setting_round_trips() {
+        let store = test_store();
+        store.set_setting("last_seen_version", "0.4.0").unwrap();
+        assert_eq!(
+            store.get_setting("last_seen_version").unwrap(),
+            Some("0.4.0".to_string())
+        );
+    }
+
+    /// Writing the same key again replaces rather than failing on the primary
+    /// key — every What's new dismissal writes this key.
+    #[test]
+    fn setting_write_is_idempotent_and_overwrites() {
+        let store = test_store();
+        store.set_setting("last_seen_version", "0.4.0").unwrap();
+        store.set_setting("last_seen_version", "0.5.0").unwrap();
+        assert_eq!(
+            store.get_setting("last_seen_version").unwrap(),
+            Some("0.5.0".to_string())
+        );
+    }
+
+    #[test]
+    fn settings_keys_are_independent() {
+        let store = test_store();
+        store.set_setting("a", "1").unwrap();
+        store.set_setting("b", "2").unwrap();
+        assert_eq!(store.get_setting("a").unwrap(), Some("1".to_string()));
+        assert_eq!(store.get_setting("b").unwrap(), Some("2".to_string()));
+    }
 
     #[test]
     fn create_workspace_returns_workspace_with_tab() {
