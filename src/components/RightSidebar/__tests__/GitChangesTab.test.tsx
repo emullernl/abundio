@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { GitChangedFile } from "../../../lib/types";
+import type { GitChangedFile, WorkspaceWithTabs } from "../../../lib/types";
 import { useGitChangesStore } from "../../../stores/gitChangesStore";
 import { useWorkspaceGitStore } from "../../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
@@ -25,15 +25,31 @@ const FILE: GitChangedFile = {
 	deletions: 0,
 };
 
-function workspace(id: string, rootFolder: string) {
+/**
+ * A faithful `WorkspaceWithTabs`, `tabs` included.
+ *
+ * `terminalManager` registers a workspace-store subscriber from inside a
+ * `setTimeout` (terminalManager.ts:760) and that subscriber maps
+ * `workspace.tabs`. Whether the timer fires during this test is a race, so a
+ * `tabs`-less fixture passes or throws depending on machine speed — it lost
+ * that race locally and won it on CI. The fixture is valid either way now.
+ */
+function workspace(id: string, rootFolder: string): WorkspaceWithTabs {
 	return {
 		id,
 		name: id,
 		rootFolder,
+		agentPresetsJson: "",
+		fileTabsJson: "",
 		baseBranch: "main",
-	} as unknown as ReturnType<
-		typeof useWorkspaceStore.getState
-	>["workspaces"][number];
+		lastBranch: null,
+		position: 0,
+		profileId: "p",
+		createdAt: 0,
+		updatedAt: 0,
+		worktreeSetupCommands: "",
+		tabs: [],
+	};
 }
 
 describe("GitChangesTab — Row menu lifetime", () => {
@@ -60,8 +76,8 @@ describe("GitChangesTab — Row menu lifetime", () => {
 		useWorkspaceStore.setState({
 			activeWorkspaceId: "a",
 			workspaces: [workspace("a", "/repos/a"), workspace("b", "/repos/b")],
-			// biome-ignore lint/suspicious/noExplicitAny: partial store fixture
-		} as any);
+			activeTabByWorkspace: {},
+		});
 
 		container = document.createElement("div");
 		document.body.appendChild(container);
