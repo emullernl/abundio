@@ -44,7 +44,7 @@ import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
 import { modifiedNavKeySequence } from "./terminalWordJump";
-import { normalFontWeightFor, transparentBg } from "./themeUtils";
+import { terminalThemeFor } from "./themeUtils";
 import type { PaneNode } from "./types";
 import {
 	MAX_WEBGL_CONTEXTS,
@@ -858,10 +858,6 @@ export async function createTerminal(
 		// Let the pane's default-background cells render see-through so the
 		// workspace ambient gradient shows behind the terminal (see transparentBg).
 		allowTransparency: true,
-		theme: transparentBg(options.theme),
-		// Lift normal-text weight on light themes so they read as bold as the dark
-		// themes do (see normalFontWeightFor).
-		fontWeight: normalFontWeightFor(options.theme),
 		// Let Option+drag select text even while a TUI has mouse tracking on
 		// (DECSET 1000/1002/1003). xterm disables its selection service for the
 		// whole time an app is reporting the mouse, so without this a pane
@@ -871,10 +867,11 @@ export async function createTerminal(
 		// needs no option, on macOS it is Option+drag and is off by default.
 		// Same gesture iTerm2 and Ghostty use.
 		macOptionClickForcesSelection: true,
-		// Auto-adjust foreground when a cell's fg/bg contrast is too low, so
-		// prompt segments that paint light text on a light ANSI colour (common
-		// in powerline themes) stay readable. 4.5 = WCAG AA for normal text.
-		minimumContrastRatio: 4.5,
+		// Everything derived from the theme — the see-through background, the
+		// light-theme text weight, the contrast floor and any Dim slot override —
+		// in one spread, so this site and setAllTerminalsTheme cannot drift.
+		// See ADR-0035.
+		...terminalThemeFor(options.theme),
 	});
 
 	// Open a URL in the OS browser — unless the foreground app is reporting
@@ -1749,11 +1746,12 @@ export function setAllTerminalsScrollback(scrollback: number): void {
 
 /** Update theme on all terminal instances */
 export function setAllTerminalsTheme(theme: ITheme): void {
+	const derived = terminalThemeFor(theme);
 	for (const managed of instances.values()) {
-		managed.term.options.theme = transparentBg(theme);
-		// Switch the normal-text weight too (light themes render heavier — see
-		// normalFontWeightFor) so a dark↔light switch updates boldness in place.
-		managed.term.options.fontWeight = normalFontWeightFor(theme);
+		// Every theme-derived option, not just the palette: the normal-text weight
+		// (light themes render heavier) and the contrast floor both vary by theme,
+		// so a dark↔light switch must carry them across too. See ADR-0035.
+		Object.assign(managed.term.options, derived);
 		// WebGL caches rasterized glyphs in a texture atlas with the old fg/bg
 		// colors baked in — clear it so refresh() rebuilds against the new theme.
 		managed.webglAddon?.clearTextureAtlas();
