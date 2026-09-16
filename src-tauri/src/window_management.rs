@@ -69,18 +69,27 @@ pub fn describe_busy(counts: &crate::profile_store::BusyCounts) -> String {
 /// fired on every quit and was usually untrue. `window_count` lets us drop the
 /// awkward "across 1 window" clause when everything is in a single Window. See
 /// ADR-0034. Pure so it can be unit-tested without a dialog.
+///
+/// `None` when nothing is busy: there is no dialog to show, and a quiet
+/// Abundio quits silently. Returning an Option rather than a sentence with a
+/// hole in it keeps that contract in the type instead of in a doc comment —
+/// the caller's `blocks_quit()` guard and this function can no longer disagree
+/// about what "nothing busy" renders as.
 pub fn quit_confirm_message(
     counts: &crate::profile_store::BusyCounts,
     window_count: usize,
-) -> String {
+) -> Option<String> {
     let what = describe_busy(counts);
-    if window_count <= 1 {
+    if what.is_empty() {
+        return None;
+    }
+    Some(if window_count <= 1 {
         format!("You have {what}. Quitting will terminate them. Quit Abundio?")
     } else {
         format!(
             "You have {what} across {window_count} windows. Quitting will terminate them. Quit Abundio?"
         )
-    }
+    })
 }
 
 /// Whether a string is shaped like a settings section id.
@@ -354,7 +363,7 @@ mod tests {
 
     #[test]
     fn quit_message_names_what_is_busy() {
-        let msg = quit_confirm_message(&counts(1, 0, 0), 1);
+        let msg = quit_confirm_message(&counts(1, 0, 0), 1).expect("busy");
         assert!(msg.contains("1 agent working"), "got: {msg}");
         assert!(!msg.contains("across"), "single window omits 'across': {msg}");
         // The old wording claimed agents and processes whether or not any
@@ -364,7 +373,7 @@ mod tests {
 
     #[test]
     fn quit_message_pluralises_and_joins_every_clause() {
-        let msg = quit_confirm_message(&counts(2, 1, 3), 1);
+        let msg = quit_confirm_message(&counts(2, 1, 3), 1).expect("busy");
         assert!(
             msg.contains("2 agents working, 1 agent waiting on you and 3 running commands"),
             "got: {msg}"
@@ -373,24 +382,43 @@ mod tests {
 
     #[test]
     fn quit_message_multi_window_says_across() {
-        let msg = quit_confirm_message(&counts(0, 0, 4), 3);
+        let msg = quit_confirm_message(&counts(0, 0, 4), 3).expect("busy");
         assert!(msg.contains("4 running commands"), "got: {msg}");
         assert!(msg.contains("across 3 windows"), "got: {msg}");
     }
 
     #[test]
     fn quit_message_mentions_only_the_nonzero_clauses() {
-        let msg = quit_confirm_message(&counts(0, 1, 0), 1);
+        let msg = quit_confirm_message(&counts(0, 1, 0), 1).expect("busy");
         assert!(msg.contains("1 agent waiting on you"), "got: {msg}");
         assert!(!msg.contains("working"), "got: {msg}");
         assert!(!msg.contains("command"), "got: {msg}");
     }
 
     #[test]
-    fn describe_busy_is_empty_when_nothing_is_busy() {
-        // The caller treats an empty description as "no dialog" — a quiet
-        // Abundio quits silently (ADR-0034).
+    fn no_quit_message_when_nothing_is_busy() {
+        // A quiet Abundio quits silently (ADR-0034). The absence of a message
+        // and the caller's `blocks_quit()` guard must agree — so this asserts
+        // both, rather than only that the description is empty.
         assert_eq!(describe_busy(&counts(0, 0, 0)), "");
+        assert!(quit_confirm_message(&counts(0, 0, 0), 1).is_none());
+        assert!(quit_confirm_message(&counts(0, 0, 0), 3).is_none());
+        assert!(!counts(0, 0, 0).blocks_quit());
+    }
+
+    #[test]
+    fn a_message_exists_for_everything_that_blocks_quit() {
+        // The guard and the wording cannot drift apart: anything that stops a
+        // quit must have something to say about why.
+        for c in [
+            counts(1, 0, 0),
+            counts(0, 1, 0),
+            counts(0, 0, 1),
+            counts(2, 3, 4),
+        ] {
+            assert!(c.blocks_quit());
+            assert!(quit_confirm_message(&c, 1).is_some());
+        }
     }
 
     #[test]

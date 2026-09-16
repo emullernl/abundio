@@ -5,7 +5,7 @@ import { collectFilePaneIds, parseTabLayout } from "../lib/paneTree";
 import type { Tab } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
 import { Terminal } from "./Icons";
-import { compositeWidth, StatusComposite } from "./StatusComposite";
+import { StatusComposite } from "./StatusComposite";
 
 interface TabBarProps {
 	tabs: Tab[];
@@ -309,16 +309,7 @@ function CloseButton({
 const TabRollupIcons = memo(function TabRollupIcons({ tab }: { tab: Tab }) {
 	const rollups = useTabRollups(tab);
 	if (!rollups.agent && !rollups.terminal) return null;
-	// The badge's overhang has to be reserved, or it would collide with the tab
-	// name beside it.
-	return (
-		<span
-			className="flex items-center flex-shrink-0"
-			style={{ width: compositeWidth() }}
-		>
-			<StatusComposite rollups={rollups} />
-		</span>
-	);
+	return <StatusComposite rollups={rollups} />;
 });
 
 export function TabBar({

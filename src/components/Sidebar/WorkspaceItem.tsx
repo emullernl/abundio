@@ -14,7 +14,7 @@ import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { DirtyEdge, DirtyRing } from "../DirtyMarker";
 import { ChevronRight, GitBranch, X } from "../Icons";
-import { compositeWidth, StatusComposite } from "../StatusComposite";
+import { StatusComposite } from "../StatusComposite";
 
 // Fallback height for the collapsed sidebar's strip when no expanded
 // WorkspaceItem has mounted yet to measure. Replaced at runtime by the
@@ -207,10 +207,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			    retires ADR-0032's "never fully covered" promise: that reasoning
 			    assumed two separate icons. The row's Hidden rollup at the right
 			    end stays visible throughout. */}
-			<div
-				className="flex self-center"
-				style={{ width: compositeWidth(), flexShrink: 0 }}
-			>
+			<div className="flex self-center flex-shrink-0">
 				<StatusComposite
 					rollups={rollups}
 					overlay={

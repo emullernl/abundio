@@ -50,14 +50,24 @@ export interface CompositeParts {
 	badge: KindRollup | null;
 }
 
-/** Is this Terminal rollup worth a badge? Only Error and Working — a terminal's
- *  Idle never earns one, because the badge exists to surface what wants
- *  attention and idle shells are the normal case. The suppression belongs to
- *  the badge, not to the rollup: when the Terminal rollup *is* the primary it
- *  shows Idle as usual. See ADR-0033. */
+/** Is this Terminal rollup worth a badge? Anything but Idle — a terminal's Idle
+ *  never earns one, because the badge exists to surface what wants attention
+ *  and idle shells are the normal case. The suppression belongs to the badge,
+ *  not to the rollup: when the Terminal rollup *is* the primary it shows Idle
+ *  as usual. See ADR-0033.
+ *
+ *  Tested on the status rather than on `error`/`working` counts. `green` is
+ *  reachable only when every shell is Idle, so this suppresses exactly the case
+ *  the ADR names — where whitelisting two counts would also silently drop a
+ *  shell-mode PTY sitting at **Waiting** or **Ready**. Those are not supposed
+ *  to happen (ADR-0009), but they are reachable: the reducer's `sessionEnded`
+ *  flips `mode` to `"shell"` while *preserving* `state`, so an Agent at Waiting
+ *  or Ready when its session ends becomes a shell-mode PTY still in that state.
+ *  `statusOfCounts` ranks both for terminals for the same reason — "ranked here
+ *  rather than silently dropped". */
 function badgeWorthy(terminal: KindRollup | null): boolean {
 	if (!terminal) return false;
-	return terminal.counts.error > 0 || terminal.counts.working > 0;
+	return terminal.status !== "green";
 }
 
 /**

@@ -60,24 +60,12 @@ export function hasBusyWork(c: BusyCounts): boolean {
 	return c.working > 0 || c.commands > 0;
 }
 
-/** The stricter test Quit uses: Busy, *or* an agent waiting on the user. Quit
- *  takes down every Window, including ones the user cannot see, and a Waiting
- *  agent holds finished work with a question on it. See ADR-0034. */
-export function blocksQuit(c: BusyCounts): boolean {
-	return hasBusyWork(c) || c.waiting > 0;
-}
-
-/** Sum the busy counts of several Windows. */
-export function sumBusyCounts(list: BusyCounts[]): BusyCounts {
-	return list.reduce(
-		(acc, c) => ({
-			working: acc.working + c.working,
-			waiting: acc.waiting + c.waiting,
-			commands: acc.commands + c.commands,
-		}),
-		NO_BUSY,
-	);
-}
+// Quit's own policy — the stricter "Busy *or* a Waiting agent" test and the
+// cross-window sum — lives only in Rust (`BusyCounts::blocks_quit` and
+// `BusyCountsState::total`), because the quit menu handler and its native
+// dialog both run there. TypeScript deliberately keeps no second copy: two
+// implementations of one rule with a caller on only one side is the drift
+// ADR-0034 exists to remove.
 
 function plural(n: number, one: string, many: string): string {
 	return `${n} ${n === 1 ? one : many}`;
@@ -85,7 +73,12 @@ function plural(n: number, one: string, many: string): string {
 
 /** The clauses naming what is busy, most urgent first, zeroes omitted — e.g.
  *  "2 agents working, 1 agent waiting on you and 3 running commands". Returns
- *  an empty string when nothing is busy, which callers treat as "no dialog". */
+ *  an empty string when nothing is busy.
+ *
+ *  Mirrored by `window_management::describe_busy` in Rust, which words the
+ *  native quit dialog. The duplication is unavoidable — that dialog is rendered
+ *  from Rust and never sees this code — so **keep the two wordings in step**;
+ *  they have no compiler or test tying them together. */
 export function describeBusy(c: BusyCounts): string {
 	const parts: string[] = [];
 	if (c.working > 0) {
@@ -102,7 +95,13 @@ export function describeBusy(c: BusyCounts): string {
 	return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
-/** Body text for the Close window confirmation. */
-export function buildWindowCloseMessage(c: BusyCounts): string {
-	return `This window has ${describeBusy(c)}. Closing it will terminate them.`;
+/** Body text for the Close window confirmation, or `null` when nothing is busy
+ *  and there is therefore no dialog to show. Returning `null` rather than a
+ *  sentence with a hole in it puts "nothing busy means no dialog" in the type
+ *  instead of a doc comment — the same contract `quit_confirm_message` carries
+ *  on the Rust side. */
+export function buildWindowCloseMessage(c: BusyCounts): string | null {
+	const what = describeBusy(c);
+	if (!what) return null;
+	return `This window has ${what}. Closing it will terminate them.`;
 }

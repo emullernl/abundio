@@ -995,8 +995,23 @@ pub fn run() {
                         .keys()
                         .filter(|l| window_management::is_profile_window_label(l))
                         .count();
-                    let message =
-                        window_management::quit_confirm_message(&totals, window_count);
+                    // `blocks_quit()` above already established there is
+                    // something to say; `None` here would mean the two had
+                    // drifted apart, so fall through to quitting rather than
+                    // show a dialog with a hole in it.
+                    let Some(message) =
+                        window_management::quit_confirm_message(&totals, window_count)
+                    else {
+                        // Release the in-flight guard set just above, so a
+                        // cancelled quit could still re-prompt later.
+                        if let Some(flag) =
+                            app.try_state::<profile_store::QuitConfirmInFlight>()
+                        {
+                            *flag.0.lock().unwrap() = false;
+                        }
+                        perform_quit(app);
+                        return;
+                    };
                     let app_handle = app.clone();
                     // Non-blocking: the callback fires when the dialog is
                     // dismissed. Returning from the menu handler without exiting

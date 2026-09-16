@@ -114,6 +114,22 @@ describe("compositeParts — when the badge appears", () => {
 		expect(badge).toBeNull();
 	});
 
+	it("badges a terminal rollup at Waiting or Ready", () => {
+		// Shells are not supposed to reach these (ADR-0009), but they can: the
+		// reducer's `sessionEnded` flips mode to "shell" while preserving state,
+		// so an Agent at Waiting or Ready when its session ends lands here. They
+		// are attention states, so dropping their badge would be the worst case
+		// to drop.
+		for (const status of ["skyblue", "purple"] as const) {
+			const key = status === "skyblue" ? "waiting" : "ready";
+			const r: Rollups = {
+				agent: agent("green", { idle: 1 }),
+				terminal: terminal(status, { [key]: 1 }),
+			};
+			expect(compositeParts(r).badge?.status).toBe(status);
+		}
+	});
+
 	it("badges a mixed terminal rollup that holds any Error or Working", () => {
 		const r: Rollups = {
 			agent: agent("green", { idle: 1 }),

@@ -3,7 +3,6 @@ import {
 	BADGE_FORM,
 	BADGE_OVERHANG,
 	BADGE_SIZE,
-	COMPOSITE_WIDTH,
 	compositeParts,
 	compositeTooltip,
 	PRIMARY_SIZE,
@@ -92,7 +91,11 @@ export const StatusComposite = memo(function StatusComposite({
 	return (
 		<span
 			className="relative flex flex-shrink-0"
-			style={{ width: size, height: size }}
+			// The box reserves the badge's overhang, so no call site has to
+			// remember to — a badge can never collide with the text beside it.
+			// The primary glyph sits at the left of that box; the trailing strip
+			// is the badge's room.
+			style={{ width: compositeWidth(size), height: size }}
 			data-status-composite={
 				notOpened ? "grey" : (primary?.rollup.status ?? "none")
 			}
@@ -101,8 +104,11 @@ export const StatusComposite = memo(function StatusComposite({
 			<span
 				className={
 					overlay
-						? "absolute inset-0 transition-opacity duration-150 group-hover:opacity-0"
+						? "absolute transition-opacity duration-150 group-hover:opacity-0"
 						: "contents"
+				}
+				style={
+					overlay ? { left: 0, top: 0, width: size, height: size } : undefined
 				}
 			>
 				{notOpened ? (
@@ -116,14 +122,27 @@ export const StatusComposite = memo(function StatusComposite({
 					<span
 						className="absolute flex"
 						data-status-badge={badge.status}
-						style={{ right: -overhang, bottom: -Math.round(overhang / 2) }}
+						// Centred on the primary's lower-right corner: the glyph
+						// occupies [0, size] and the box is `size + overhang` wide,
+						// so the badge straddles x = size and the rest of the
+						// overhang is the clear space the reservation buys.
+						style={{
+							left: size - Math.round(badgeSize / 2),
+							bottom: -Math.round(overhang / 2),
+						}}
 					>
 						<Badge status={badge.status} size={badgeSize} />
 					</span>
 				)}
 			</span>
 			{overlay && (
-				<span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+				// Covers the primary's square only, not the badge's reserved
+				// strip — so a swapped-in chevron stays centred on the glyph it
+				// replaces rather than drifting right.
+				<span
+					className="absolute flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+					style={{ left: 0, top: 0, width: size, height: size }}
+				>
 					{overlay}
 				</span>
 			)}
@@ -131,11 +150,9 @@ export const StatusComposite = memo(function StatusComposite({
 	);
 });
 
-/** The width a composite occupies including its badge's overhang, at a given
- *  primary size. Call sites reserve this so a badge can never collide with the
- *  text beside it. */
+/** The width a composite occupies, including its badge's overhang, at a given
+ *  primary size. `StatusComposite` reserves this itself; exported for the rare
+ *  call site that needs to reason about the width without rendering one. */
 export function compositeWidth(size: number = PRIMARY_SIZE): number {
-	return size === PRIMARY_SIZE
-		? COMPOSITE_WIDTH
-		: size + Math.round((BADGE_OVERHANG / PRIMARY_SIZE) * size);
+	return size + Math.round((BADGE_OVERHANG / PRIMARY_SIZE) * size);
 }

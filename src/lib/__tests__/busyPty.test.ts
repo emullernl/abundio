@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { PtyActivityEntry } from "../../stores/ptyActivityStore";
 import {
-	blocksQuit,
 	buildWindowCloseMessage,
 	busyCounts,
 	describeBusy,
 	hasBusyWork,
 	isBusyPty,
 	NO_BUSY,
-	sumBusyCounts,
 } from "../busyPty";
 
 function entry(
@@ -86,37 +84,21 @@ describe("busyCounts", () => {
 	});
 });
 
-describe("hasBusyWork / blocksQuit", () => {
-	it("treats a Waiting agent as quit-blocking but not Busy", () => {
-		const c = { working: 0, waiting: 1, commands: 0 };
-		expect(hasBusyWork(c)).toBe(false);
-		expect(blocksQuit(c)).toBe(true);
+describe("hasBusyWork", () => {
+	it("does not count a Waiting agent", () => {
+		// Unload and window close act on Workspaces the user is looking at and
+		// chose to close. Quit is the stricter one, and its policy lives only in
+		// Rust (`BusyCounts::blocks_quit`).
+		expect(hasBusyWork({ working: 0, waiting: 1, commands: 0 })).toBe(false);
 	});
 
-	it("agrees on Working agents and running commands", () => {
-		for (const c of [
-			{ working: 1, waiting: 0, commands: 0 },
-			{ working: 0, waiting: 0, commands: 1 },
-		]) {
-			expect(hasBusyWork(c)).toBe(true);
-			expect(blocksQuit(c)).toBe(true);
-		}
+	it("counts Working agents and running commands", () => {
+		expect(hasBusyWork({ working: 1, waiting: 0, commands: 0 })).toBe(true);
+		expect(hasBusyWork({ working: 0, waiting: 0, commands: 1 })).toBe(true);
 	});
 
 	it("is quiet when nothing is busy", () => {
 		expect(hasBusyWork(NO_BUSY)).toBe(false);
-		expect(blocksQuit(NO_BUSY)).toBe(false);
-	});
-});
-
-describe("sumBusyCounts", () => {
-	it("adds each field across Windows", () => {
-		expect(
-			sumBusyCounts([
-				{ working: 1, waiting: 0, commands: 2 },
-				{ working: 0, waiting: 3, commands: 1 },
-			]),
-		).toEqual({ working: 1, waiting: 3, commands: 3 });
 	});
 });
 
@@ -151,5 +133,22 @@ describe("buildWindowCloseMessage", () => {
 		).toBe(
 			"This window has 1 agent working and 2 running commands. Closing it will terminate them.",
 		);
+	});
+
+	it("is null when nothing is busy, rather than a sentence with a hole in it", () => {
+		expect(buildWindowCloseMessage(NO_BUSY)).toBeNull();
+	});
+
+	it("has a message for everything hasBusyWork stops for", () => {
+		// The guard and the wording cannot drift apart: anything that raises the
+		// dialog must have something to say about why.
+		for (const c of [
+			{ working: 1, waiting: 0, commands: 0 },
+			{ working: 0, waiting: 0, commands: 1 },
+			{ working: 2, waiting: 3, commands: 4 },
+		]) {
+			expect(hasBusyWork(c)).toBe(true);
+			expect(buildWindowCloseMessage(c)).not.toBeNull();
+		}
 	});
 });

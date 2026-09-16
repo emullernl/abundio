@@ -12,7 +12,7 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { DOT_STATUS_COLOR } from "../AgentStatusIcon";
 import { DirtyEdge, DirtyRing } from "../DirtyMarker";
-import { compositeWidth, StatusComposite } from "../StatusComposite";
+import { StatusComposite } from "../StatusComposite";
 import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
 
 interface Props {
@@ -171,7 +171,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 				    (ADR-0033). */}
 				<div
 					className="flex items-center flex-shrink-0 relative"
-					style={{ width: compositeWidth(), height: PRIMARY_SIZE }}
+					style={{ height: PRIMARY_SIZE }}
 					title={hidden ? hidden.membersTooltip : undefined}
 				>
 					<StatusComposite rollups={rollups} />

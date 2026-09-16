@@ -351,10 +351,11 @@ export function App() {
 	const [appCloseRequested, setAppCloseRequested] = useState(false);
 	// Confirm before closing a Window that has ≥1 Opened workspace (when no
 	// unsaved files take precedence). See ADR-0016.
-	// The busy tally captured when the close was requested, so the dialog names
-	// what was busy at that moment rather than re-reading a moving store.
-	const [workspaceCloseRequested, setWorkspaceCloseRequested] =
-		useState<BusyCounts | null>(null);
+	// The message built when the close was requested, so the dialog names what
+	// was busy at that moment rather than re-reading a moving store.
+	const [workspaceCloseRequested, setWorkspaceCloseRequested] = useState<
+		string | null
+	>(null);
 	const appWindowRef = useRef<ReturnType<typeof appWindow>>(null);
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
@@ -522,9 +523,17 @@ export function App() {
 				case "save-confirm":
 					setAppCloseRequested(true);
 					return;
-				case "workspace-confirm":
-					setWorkspaceCloseRequested(counts);
+				case "workspace-confirm": {
+					const message = buildWindowCloseMessage(counts);
+					// `null` would mean `hasBusyWork` and the wording had drifted
+					// apart; close rather than show a dialog with a hole in it.
+					if (message) {
+						setWorkspaceCloseRequested(message);
+						return;
+					}
+					await proceedWithClose();
 					return;
+				}
 				default:
 					await proceedWithClose();
 			}
@@ -1011,7 +1020,7 @@ export function App() {
 			{workspaceCloseRequested && (
 				<ConfirmDialog
 					title="Close window?"
-					message={buildWindowCloseMessage(workspaceCloseRequested)}
+					message={workspaceCloseRequested}
 					confirmLabel="Close window"
 					confirmVariant="danger"
 					onConfirm={() => {
