@@ -12,7 +12,6 @@ vi.mock("../../stores/ptyActivityStore", async () => {
 	>("../../stores/ptyActivityStore");
 	return {
 		collectPtyIds: actual.collectPtyIds,
-		isShellCommandRunning: vi.fn(() => false),
 		usePtyActivityStore: {
 			getState: vi.fn(() => ({
 				agentPtyIds: new Set(),

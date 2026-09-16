@@ -49,6 +49,7 @@ function entry(
 		hasEverReceivedOutput: true,
 		detectionMode,
 		hookDriven: false,
+		shellCommandRunning: false,
 	};
 }
 

@@ -91,6 +91,7 @@ function agentEntry(state: PtyActivityEntry["state"]): PtyActivityEntry {
 		hasEverReceivedOutput: true,
 		detectionMode: "agent",
 		hookDriven: false,
+		shellCommandRunning: false,
 	};
 }
 
