@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { type GitOperation, git } from "../../lib/ipc";
+import { writeClipboardText } from "../../lib/clipboard";
+import { gitRowMenuEntries } from "../../lib/gitRowMenu";
+import { fs as fsApi, type GitOperation, git } from "../../lib/ipc";
 import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -10,6 +12,8 @@ import { BranchSelector } from "../GitChanges/BranchSelector";
 import { GitChangesFileList } from "../GitChanges/GitChangesFileList";
 import { NotAGitRepoEmpty } from "../GitChanges/NotAGitRepoEmpty";
 import { RefreshCw } from "../Icons";
+import type { ContextMenuItem } from "../Terminal/PaneContextMenu";
+import { PaneContextMenu } from "../Terminal/PaneContextMenu";
 
 /** Abundio never runs these — the line exists so the user knows the operation
  *  is still open and what finishes it. See ADR-0029. */
@@ -38,6 +42,13 @@ export function GitChangesTab() {
 
 	const [selectedFile, setSelectedFile] = useState<GitChangedFile | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
+	// The **Row menu**'s target is captured *by value*, so a refresh that drops
+	// the row from the list leaves the menu open and its path actions correct.
+	const [menu, setMenu] = useState<{
+		x: number;
+		y: number;
+		file: GitChangedFile;
+	} | null>(null);
 
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -91,6 +102,49 @@ export function GitChangesTab() {
 			.catch(() => {
 				// Failed to open file (e.g. createTab rejected) — nothing to recover
 			});
+	}
+
+	function buildMenuItems(): ContextMenuItem[] {
+		if (!menu || !cwd) return [];
+		const { file } = menu;
+		const close = () => setMenu(null);
+
+		const run: Record<string, () => void> = {
+			"open-diff": () => {
+				close();
+				handleSelectFile(file);
+			},
+			"open-file": () => {
+				close();
+				handleOpenFile(file);
+			},
+			reveal: () => {
+				close();
+				fsApi
+					.revealInFolder(resolveWorkspacePath(cwd, file.path))
+					.catch(console.error);
+			},
+			"copy-relative-path": () => {
+				close();
+				writeClipboardText(file.path).catch(console.error);
+			},
+			"copy-path": () => {
+				close();
+				writeClipboardText(resolveWorkspacePath(cwd, file.path)).catch(
+					console.error,
+				);
+			},
+		};
+
+		return gitRowMenuEntries(file).map((entry) =>
+			"separator" in entry
+				? { separator: true as const }
+				: {
+						label: entry.label,
+						disabled: entry.disabled,
+						onClick: run[entry.id],
+					},
+		);
 	}
 
 	async function handleRefresh() {
@@ -261,11 +315,22 @@ export function GitChangesTab() {
 							baseBranch={baseBranch}
 							onSelectFile={handleSelectFile}
 							onOpenFile={handleOpenFile}
+							onContextMenu={(x, y, file) => setMenu({ x, y, file })}
 							selectedFile={selectedFile}
+							menuTargetFile={menu?.file ?? null}
 						/>
 					</div>
 				)}
 			</div>
+
+			{menu && (
+				<PaneContextMenu
+					x={menu.x}
+					y={menu.y}
+					items={buildMenuItems()}
+					onClose={() => setMenu(null)}
+				/>
+			)}
 		</div>
 	);
 }

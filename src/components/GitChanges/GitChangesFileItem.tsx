@@ -4,8 +4,13 @@ import { File } from "../Icons";
 interface Props {
 	file: GitChangedFile;
 	isSelected: boolean;
+	/** The row the **Row menu** is currently open on. Deliberately separate from
+	 *  `isSelected`: selecting a row opens a file pane, and asking what a menu
+	 *  holds must not open one. */
+	isMenuTarget: boolean;
 	onClick: () => void;
 	onOpenFile: () => void;
+	onContextMenu: (x: number, y: number) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -39,8 +44,10 @@ function dirPath(path: string): string {
 export function GitChangesFileItem({
 	file,
 	isSelected,
+	isMenuTarget,
 	onClick,
 	onOpenFile,
+	onContextMenu,
 }: Props) {
 	const color = STATUS_COLORS[file.status] ?? "var(--fg-secondary)";
 	const label = STATUS_LABELS[file.status] ?? file.status;
@@ -57,12 +64,26 @@ export function GitChangesFileItem({
 			role="button"
 			tabIndex={0}
 			onClick={onClick}
+			onContextMenu={(e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				onContextMenu(e.clientX, e.clientY);
+			}}
 			onKeyDown={(e) => {
 				// Only respond to keys targeted at the row itself — otherwise a
 				// keypress on the nested "Open File" button bubbles up here and
 				// opens the diff too (its keydown isn't stopped by the click-time
 				// stopPropagation). Space is handled to match native button behavior.
 				if (e.target !== e.currentTarget) return;
+				// The row advertises itself as a button, so the menu it carries has
+				// to be reachable without a pointer. Anchored to the row's own box
+				// rather than a cursor that is somewhere else entirely.
+				if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+					e.preventDefault();
+					const rect = e.currentTarget.getBoundingClientRect();
+					onContextMenu(rect.left + 12, rect.bottom);
+					return;
+				}
 				if (e.key === "Enter") {
 					onClick();
 				} else if (e.key === " ") {
@@ -80,6 +101,12 @@ export function GitChangesFileItem({
 				borderLeft: isSelected
 					? "2px solid var(--accent)"
 					: "2px solid transparent",
+				// A ring, not a background: the hover handlers below write
+				// backgroundColor directly, so a background highlight would be wiped
+				// the moment the pointer left the row on its way to the menu. The
+				// ring also reads clearly as "this is what the menu is about" rather
+				// than as a second selected row.
+				boxShadow: isMenuTarget ? "inset 0 0 0 1px var(--accent)" : undefined,
 			}}
 			onMouseEnter={(e) => {
 				if (!isSelected)

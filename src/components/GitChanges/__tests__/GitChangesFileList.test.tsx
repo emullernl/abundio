@@ -38,7 +38,9 @@ describe("GitChangesFileList — conflicted section", () => {
 					baseBranch="main"
 					onSelectFile={vi.fn()}
 					onOpenFile={vi.fn()}
+					onContextMenu={vi.fn()}
 					selectedFile={null}
+					menuTargetFile={null}
 				/>,
 			);
 		});
