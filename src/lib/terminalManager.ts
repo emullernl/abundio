@@ -5,7 +5,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { type ITheme, Terminal } from "@xterm/xterm";
+import { type ITerminalOptions, type ITheme, Terminal } from "@xterm/xterm";
 import {
 	hasActiveSubagent,
 	peekPreErrorState,
@@ -1744,14 +1744,28 @@ export function setAllTerminalsScrollback(scrollback: number): void {
 	}
 }
 
+/**
+ * Copy every theme-derived option onto one terminal's options.
+ *
+ * Exported and taking a bare options bag purely so the drift this exists to
+ * prevent is testable: `instances` is private and each entry wraps a real xterm.
+ * The failure mode is a refactor that goes back to assigning `theme` and
+ * `fontWeight` by hand — the exact shape that lost `minimumContrastRatio` the
+ * first time — which a test on this function catches and one on
+ * `terminalThemeFor` alone does not. See ADR-0035.
+ */
+export function applyDerivedThemeOptions(
+	options: Partial<ITerminalOptions>,
+	derived: ReturnType<typeof terminalThemeFor>,
+): void {
+	Object.assign(options, derived);
+}
+
 /** Update theme on all terminal instances */
 export function setAllTerminalsTheme(theme: ITheme): void {
 	const derived = terminalThemeFor(theme);
 	for (const managed of instances.values()) {
-		// Every theme-derived option, not just the palette: the normal-text weight
-		// (light themes render heavier) and the contrast floor both vary by theme,
-		// so a dark↔light switch must carry them across too. See ADR-0035.
-		Object.assign(managed.term.options, derived);
+		applyDerivedThemeOptions(managed.term.options, derived);
 		// WebGL caches rasterized glyphs in a texture atlas with the old fg/bg
 		// colors baked in — clear it so refresh() rebuilds against the new theme.
 		managed.webglAddon?.clearTextureAtlas();
