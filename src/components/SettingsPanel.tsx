@@ -181,10 +181,21 @@ export function SettingsPanel({ onClose }: Props) {
 				</nav>
 
 				{/* Right content */}
-				{/* Padding is inline, not `p-5`: globals.css has an unlayered
-				    `* { padding: 0 }` reset, and unlayered rules beat Tailwind's
-				    layered utilities — so every `p-*`/`m-*` class in the app is
-				    silently dead. */}
+				{/* Padding is inline, not `p-5`: `globals.css:273` has an unlayered
+				    `* { margin: 0; padding: 0 }` reset, and an unlayered normal
+				    declaration beats a layered one whatever its specificity — so
+				    every spacing utility in the app (`p-*`, `m-*`, and the
+				    margin-based `space-x-*`/`space-y-*`, which the repo happens
+				    not to use) is silently dead. Two escape hatches: a layered
+				    `!important` still wins, because importance is compared before
+				    layers, so `p-5!` works today; and the real repair is one line
+				    — wrap that reset in `@layer base { … }`, which Tailwind's
+				    preflight already duplicates. It is deferred for the app-wide
+				    layout sweep it would trigger, not because it is hard.
+
+				    The numbers below were tuned by eye against the nav rail, in
+				    the header's asymmetric idiom. They are not a restoration of
+				    `p-5`'s symmetric 20px — that value never once rendered. */}
 				<div
 					className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden"
 					style={{ padding: "18px 22px 22px" }}
