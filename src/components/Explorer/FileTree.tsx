@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { writeClipboardText } from "../../lib/clipboard";
+import { copyPathEntries } from "../../lib/copyPathEntries";
 import { fs as fsApi } from "../../lib/ipc";
 import type { DirEntry } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -119,6 +121,20 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 		setMenu({ x, y, entry });
 	};
 
+	/** See `copyPathEntries` — an entry with no relative form (outside the
+	 *  workspace root) is disabled rather than dropped. */
+	const copyPathItems = (absolutePath: string): ContextMenuItem[] =>
+		copyPathEntries(rootPath, absolutePath).map((entry) => ({
+			label: entry.label,
+			disabled: entry.text === null,
+			onClick: () => {
+				setMenu(null);
+				if (entry.text !== null) {
+					writeClipboardText(entry.text).catch(console.error);
+				}
+			},
+		}));
+
 	const buildMenuItems = (): ContextMenuItem[] => {
 		if (!menu) return [];
 		const { entry } = menu;
@@ -175,6 +191,8 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 						fsApi.revealInFolder(entry.path).catch(console.error);
 					},
 				},
+				{ separator: true as const },
+				...copyPathItems(entry.path),
 				{ separator: true as const },
 				{
 					label: "Rename",
@@ -244,6 +262,8 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 					fsApi.revealInFolder(entry.path).catch(console.error);
 				},
 			},
+			{ separator: true as const },
+			...copyPathItems(entry.path),
 			{ separator: true as const },
 			{
 				label: "Rename",

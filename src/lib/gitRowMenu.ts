@@ -13,6 +13,8 @@
  * because the file happens to be deleted.
  */
 
+import { COPY_PATH_LABELS } from "./copyPathEntries";
+
 export type GitRowMenuActionId =
 	| "open-diff"
 	| "open-file"
@@ -67,9 +69,9 @@ export function gitRowMenuEntries(
 		{ separator: true },
 		{
 			id: "copy-relative-path",
-			label: "Copy Relative Path",
+			label: COPY_PATH_LABELS.relative,
 			disabled: false,
 		},
-		{ id: "copy-path", label: "Copy Path", disabled: false },
+		{ id: "copy-path", label: COPY_PATH_LABELS.absolute, disabled: false },
 	];
 }
