@@ -82,6 +82,7 @@ function registerAgentPty(ptyId: string, paneId: string, agentId = "claude") {
 				hasEverReceivedOutput: true,
 				detectionMode: "agent",
 				hookDriven: true,
+				shellCommandRunning: false,
 			},
 		},
 	}));

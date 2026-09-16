@@ -1,10 +1,7 @@
 import { useCallback, useState } from "react";
+import { isBusyPty } from "../lib/busyPty";
 import { parseTabLayout } from "../lib/paneTree";
-import {
-	collectPtyIds,
-	isShellCommandRunning,
-	usePtyActivityStore,
-} from "../stores/ptyActivityStore";
+import { collectPtyIds, usePtyActivityStore } from "../stores/ptyActivityStore";
 import { requestTabCloseWithDirtyCheck } from "../stores/tabCloseConfirmStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
@@ -51,12 +48,21 @@ function detectRunningForTab(tabId: string): RunningSignals {
 		.workspaces.flatMap((w) => w.tabs)
 		.find((t) => t.id === tabId);
 	if (!tab) return { hasAgent: false, hasCommand: false };
-	const { agentPtyIds, panePtyMap } = usePtyActivityStore.getState();
+	const { activities, agentPtyIds, panePtyMap } =
+		usePtyActivityStore.getState();
 	return detectRunningInLayout(
 		tab.layoutJson,
 		agentPtyIds,
 		panePtyMap,
-		isShellCommandRunning,
+		// Read off the PTY's status entry, the same field the **Status
+		// indicator** reads, so the icon and this confirmation can never
+		// disagree about whether a terminal is busy (ADR-0034). Agent-mode PTYs
+		// are already covered by the `agentPtyIds` test above, which is
+		// deliberately looser — an idle agent still prompts.
+		(ptyId) => {
+			const entry = activities[ptyId];
+			return entry?.detectionMode !== "agent" && isBusyPty(entry);
+		},
 	);
 }
 

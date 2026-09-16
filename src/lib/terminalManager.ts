@@ -9,7 +9,6 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import {
 	hasActiveSubagent,
 	peekPreErrorState,
-	setShellCommandRunning,
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
@@ -1330,7 +1329,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// If that flag stays true, the idle scanner will never
 						// transition active → ready (purple) for the agent.
 						if (!managed.suppressActivity && !nowIsAgent) {
-							setShellCommandRunning(currentPtyId, true);
+							actState.setShellCommandRunning(currentPtyId, true);
 							actState.recordOutput(currentPtyId);
 						}
 					} else if (cmd.type === "command_end") {
@@ -1349,7 +1348,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						}
 						const wasAgentMode = currentEntry?.detectionMode === "agent";
 						if (!managed.suppressActivity && !wasAgentMode) {
-							setShellCommandRunning(currentPtyId, false);
+							freshState.setShellCommandRunning(currentPtyId, false);
 							const outcome = classifyShellExit(cmd.exitCode);
 							if (outcome === "error") {
 								freshState.recordError(currentPtyId);
@@ -1412,10 +1411,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				const entry = actStore.activities[currentPtyId];
 				if (entry?.detectionMode !== "shell") return;
 				if (activity.type === "commandStarted") {
-					setShellCommandRunning(currentPtyId, true);
+					actStore.setShellCommandRunning(currentPtyId, true);
 					actStore.recordOutput(currentPtyId);
 				} else if (activity.type === "commandFinished") {
-					setShellCommandRunning(currentPtyId, false);
+					actStore.setShellCommandRunning(currentPtyId, false);
 					if (entry.state === "active") {
 						// Shells skip the Ready hop — recordExitSuccess routes a
 						// shell-mode PTY straight to Idle regardless of focus.

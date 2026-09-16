@@ -54,6 +54,7 @@ function entry(
 		hasEverReceivedOutput: true,
 		detectionMode,
 		hookDriven: false,
+		shellCommandRunning: false,
 	};
 }
 
@@ -96,17 +97,18 @@ describe("CollapsedStrip", () => {
 		});
 	}
 
-	const rollup = (kind: "agent" | "terminal") =>
-		container.querySelector<HTMLElement>(`[data-rollup='${kind}']`);
+	const composite = () =>
+		container.querySelector<HTMLElement>("[data-status-composite]");
+	const badge = () =>
+		container.querySelector<HTMLElement>("[data-status-badge]");
 
 	it("shows the single grey icon for a never-opened workspace", () => {
 		render(workspace([]));
-		expect(rollup("agent")).toBeNull();
-		expect(rollup("terminal")).toBeNull();
+		expect(composite()?.getAttribute("data-status-composite")).toBe("grey");
 		expect(container.querySelector(".text-zinc-500")).not.toBeNull();
 	});
 
-	it("stacks the Agent rollup over the Terminal rollup, each with its breakdown", () => {
+	it("leads with the Agent rollup and badges the Terminal rollup", () => {
 		usePtyActivityStore.setState({
 			activities: {
 				a: entry("waiting", "agent"),
@@ -115,27 +117,33 @@ describe("CollapsedStrip", () => {
 			openedWorkspaceIds: new Set(["ws-1"]),
 		});
 		render(workspace(["a", "b"]));
-		const agent = rollup("agent");
-		const terminal = rollup("terminal");
-		expect(agent?.getAttribute("title")).toBe("Agents: 1 Waiting");
-		expect(terminal?.getAttribute("title")).toBe("Terminals: 1 Working");
-		// Agent above Terminal in document order.
-		if (!agent || !terminal) throw new Error("both rollups should render");
-		expect(
-			agent.compareDocumentPosition(terminal) &
-				Node.DOCUMENT_POSITION_FOLLOWING,
-		).toBeTruthy();
+		expect(composite()?.getAttribute("data-status-composite")).toBe("skyblue");
+		expect(badge()?.getAttribute("data-status-badge")).toBe("cyan");
+		// One tooltip carries both, since an 8px badge is a poor hover target.
+		expect(composite()?.getAttribute("title")).toBe(
+			"Agents: 1 Waiting\nTerminals: 1 Working",
+		);
 	});
 
-	it("draws nothing for an absent rollup — not Idle, not grey", () => {
+	it("promotes the Terminal rollup to primary when there are no Agents", () => {
 		usePtyActivityStore.setState({
 			activities: { b: entry("idle", "shell") },
 			openedWorkspaceIds: new Set(["ws-1"]),
 		});
 		render(workspace(["b"]));
-		expect(rollup("agent")).toBeNull();
-		expect(rollup("terminal")).not.toBeNull();
+		// Idle shows here — the suppression belongs to the badge, not the rollup.
+		expect(composite()?.getAttribute("data-status-composite")).toBe("green");
+		expect(badge()).toBeNull();
 		expect(container.querySelector(".text-zinc-500")).toBeNull();
+	});
+
+	it("draws nothing at all when the workspace has no PTYs of either kind", () => {
+		usePtyActivityStore.setState({
+			activities: {},
+			openedWorkspaceIds: new Set(["ws-1"]),
+		});
+		render(workspace([]));
+		expect(composite()).toBeNull();
 	});
 
 	it("shows the folder under the name, with the home directory as ~", () => {
@@ -148,7 +156,10 @@ describe("CollapsedStrip", () => {
 		expect(texts[name + 1]).toBe("~/code/acme-web");
 	});
 
-	it("colours the Hidden-rollup badge from the more urgent hidden status", () => {
+	const hiddenCount = () =>
+		container.querySelector<HTMLElement>("[data-hidden-count]");
+
+	it("tints the Hidden-rollup count when a hidden member wants attention", () => {
 		usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["ws-1"]) });
 		render(workspace([]), {
 			agent: { status: "amber", counts: counts({ working: 1 }) },
@@ -159,14 +170,30 @@ describe("CollapsedStrip", () => {
 			dirty: false,
 			membersTooltip: "feat-a — Error\nfeat-b — Working",
 		});
-		const badge = container.querySelector<HTMLElement>("[data-hidden-badge]");
-		expect(badge?.getAttribute("data-hidden-badge")).toBe("red");
-		expect(badge?.style.backgroundColor).toBe(DOT_STATUS_COLOR.red);
+		expect(hiddenCount()?.textContent).toBe("+2");
+		expect(hiddenCount()?.style.color).toBe(DOT_STATUS_COLOR.red);
 	});
 
-	it("has no badge when nothing is hidden", () => {
+	it("leaves the Hidden-rollup count neutral for a merely-working member", () => {
+		// Amber Working is mundane: a colour here would read as "N things are
+		// running" rather than "something wants you" (ADR-0033).
+		usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["ws-1"]) });
+		render(workspace([]), {
+			agent: { status: "amber", counts: counts({ working: 1 }) },
+			terminal: null,
+			count: 3,
+			notOpened: false,
+			badge: "amber",
+			dirty: false,
+			membersTooltip: "feat-a — Working",
+		});
+		expect(hiddenCount()?.textContent).toBe("+3");
+		expect(hiddenCount()?.style.color).toBe("var(--fg-secondary)");
+	});
+
+	it("has no hidden count when nothing is hidden", () => {
 		render(workspace([]));
-		expect(container.querySelector("[data-hidden-badge]")).toBeNull();
+		expect(hiddenCount()).toBeNull();
 	});
 
 	describe("Dirty marker", () => {

@@ -22,3 +22,5 @@ ADR-0009 gave each Tab and Workspace one mixed status icon: every state of an ag
 
 - An opened Workspace with no PTYs at all (only file panes) shows an empty left slot, where it used to show green.
 - Only drawing changes. OS notifications (shell Error still notifies) and the Overview bar, which already counted Agents and Terminals separately, are unaffected.
+
+**Update**: the Layout bullet above is superseded by ADR-0033, which draws the two rollups as one **Status composite** (a larger Primary icon with the Terminal rollup as a small corner badge) rather than two icons of equal weight. The model this ADR defines — two ladders, absent≠Idle, permanent cyan accepted, hover breakdowns — is unchanged.

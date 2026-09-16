@@ -33,10 +33,6 @@ const SCAN_INTERVAL_MS = 2000;
 // to avoid triggering re-renders on every output chunk.
 const lastOutputTimestamps = new Map<string, number>();
 
-// Track whether a shell command is currently running (between command_start and command_end).
-// Stored outside Zustand like lastOutputTimestamps to avoid re-renders.
-const shellCommandRunning = new Map<string, boolean>();
-
 // Live Subagents + the "Stop held" flag per PTY (ADR-0022,
 // docs/plans/subagent-aware-status.md). Stored outside Zustand like the maps
 // above: per-Start/Stop churn must not re-render — only the resulting state
@@ -83,14 +79,6 @@ export function touchLastOutput(ptyId: string, now?: number): void {
 	lastOutputTimestamps.set(ptyId, now ?? Date.now());
 }
 
-export function isShellCommandRunning(ptyId: string): boolean {
-	return shellCommandRunning.get(ptyId) ?? false;
-}
-
-export function setShellCommandRunning(ptyId: string, running: boolean): void {
-	shellCommandRunning.set(ptyId, running);
-}
-
 // ── Types ──
 
 export interface PtyActivityEntry {
@@ -101,6 +89,14 @@ export interface PtyActivityEntry {
 	// True once an Agent hook event has driven this PTY's state. Hook events
 	// are authoritative, so the byte-accumulation heuristic backs off.
 	hookDriven: boolean;
+	/** A shell command is in flight (between `command_start` and `command_end`).
+	 *  Lives on the entry rather than in an out-of-band map so that the one
+	 *  question "is this terminal busy?" has one answer: the **Status
+	 *  indicator** and the close confirmations both read it from here, and a
+	 *  **Busy PTY** is a pure function of this object. Also what suppresses the
+	 *  idle backstop, so a long *silent* build keeps counting as busy
+	 *  (`reduceTick`). See ADR-0034. */
+	shellCommandRunning: boolean;
 }
 
 interface PtyActivityState_Store {
@@ -115,6 +111,7 @@ interface PtyActivityState_Store {
 
 	initPty: (ptyId: string, mode?: PtyDetectionMode) => void;
 	recordOutput: (ptyId: string) => void;
+	setShellCommandRunning: (ptyId: string, running: boolean) => void;
 	recordError: (ptyId: string) => void;
 	recordExitSuccess: (ptyId: string) => void;
 	markIdle: (ptyId: string) => void;
@@ -187,7 +184,7 @@ function hydrate(
 		workingSince: entry?.lastOutputAt ?? null,
 		lastActivityAt:
 			lastOutputTimestamps.get(ptyId) ?? entry?.lastOutputAt ?? null,
-		shellCommandRunning: shellCommandRunning.get(ptyId) ?? false,
+		shellCommandRunning: entry?.shellCommandRunning ?? false,
 		bytesSinceIdle: 0,
 		thresholdHitTimes: [],
 		lastInputAt: 0,
@@ -222,6 +219,7 @@ function project(
 		hasEverReceivedOutput: prev?.hasEverReceivedOutput ?? true,
 		detectionMode: st.mode,
 		hookDriven: st.hookDriven,
+		shellCommandRunning: st.shellCommandRunning,
 	};
 }
 
@@ -231,7 +229,11 @@ function entriesEqual(a: PtyActivityEntry, b: PtyActivityEntry): boolean {
 		a.lastOutputAt === b.lastOutputAt &&
 		a.hasEverReceivedOutput === b.hasEverReceivedOutput &&
 		a.detectionMode === b.detectionMode &&
-		a.hookDriven === b.hookDriven
+		a.hookDriven === b.hookDriven &&
+		// Must be compared, or the write-skip would leave the store's copy stale
+		// while the reducer's stayed fresh — the exact drift moving this field
+		// onto the entry exists to remove (ADR-0034).
+		a.shellCommandRunning === b.shellCommandRunning
 	);
 }
 
@@ -313,8 +315,6 @@ function applyStatusEvent(
 	if (after.lastActivityAt !== null) {
 		lastOutputTimestamps.set(ptyId, after.lastActivityAt);
 	}
-	if (after.shellCommandRunning) shellCommandRunning.set(ptyId, true);
-	else shellCommandRunning.delete(ptyId);
 	syncSubagentState(ptyId, after);
 	if (after.preErrorState !== null) {
 		preErrorStates.set(ptyId, after.preErrorState);
@@ -402,9 +402,29 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 						hasEverReceivedOutput: true,
 						detectionMode: mode ?? "shell",
 						hookDriven: false,
+						shellCommandRunning: false,
 					},
 				},
 			}));
+		},
+
+		setShellCommandRunning: (ptyId, running) => {
+			// Deliberately not a reducer event: this only records *that* a command
+			// is in flight. The status moves that go with it (recordOutput on
+			// start, recordError / recordExitSuccess on end) are dispatched by
+			// terminalManager, which is the only caller and the only place that
+			// knows the exit code. Skips the set() when unchanged, preserving the
+			// hot-path no-re-render the out-of-band map used to give.
+			set((s) => {
+				const entry = s.activities[ptyId];
+				if (!entry || entry.shellCommandRunning === running) return s;
+				return {
+					activities: {
+						...s.activities,
+						[ptyId]: { ...entry, shellCommandRunning: running },
+					},
+				};
+			});
 		},
 
 		recordOutput: (ptyId) => {
@@ -513,9 +533,9 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			}
 			const newSet = new Set(s.agentPtyIds);
 			newSet.add(ptyId);
-			// Clear shell command tracking — agent mode doesn't use shell integration
-			// sequences, so command_end will never fire to clear this flag.
-			shellCommandRunning.delete(ptyId);
+			// Shell command tracking is cleared by the `agentDetected` event below:
+			// agent mode doesn't use shell integration sequences, so command_end
+			// will never fire to clear the flag.
 			const detectedUpdate = agentId
 				? { detectedAgentIds: { ...s.detectedAgentIds, [ptyId]: agentId } }
 				: {};
@@ -588,7 +608,6 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 
 		removePty: (ptyId) => {
 			lastOutputTimestamps.delete(ptyId);
-			shellCommandRunning.delete(ptyId);
 			subagentState.delete(ptyId);
 			preErrorStates.delete(ptyId);
 			set((s) => {

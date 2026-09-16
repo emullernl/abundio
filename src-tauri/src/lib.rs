@@ -701,7 +701,7 @@ pub fn run() {
             app.manage(profile_store::QuittingFlag::default());
             // Per-window Opened-workspace counts (pushed by the frontend),
             // summed at quit time to drive the quit confirmation. See ADR-0016.
-            app.manage(profile_store::OpenedCountState::default());
+            app.manage(profile_store::BusyCountsState::default());
             // Guards against stacking quit-confirmation dialogs on a repeated
             // Cmd+Q (the native dialog is non-blocking). See ADR-0016.
             app.manage(profile_store::QuitConfirmInFlight::default());
@@ -901,10 +901,10 @@ pub fn run() {
                 {
                     ww.forget_window(&app_handle, &label);
                 }
-                // Drop this window's Opened-workspace count so it can't inflate
-                // the quit-time total. See ADR-0016.
+                // Drop this window's busy tally so it can't inflate the
+                // quit-time total. See ADR-0034.
                 if let Some(counts) =
-                    app_handle.try_state::<profile_store::OpenedCountState>()
+                    app_handle.try_state::<profile_store::BusyCountsState>()
                 {
                     counts.remove_for_window(&label);
                 }
@@ -958,21 +958,26 @@ pub fn run() {
                 // of tauri-runtime-wry::lib.rs), so we can't rely on it for
                 // the menu-driven quit path.
                 //
-                // Confirm first if any Opened workspaces (live agents / PTYs)
-                // would be lost. The per-window counts live in each window's
-                // frontend and are mirrored into OpenedCountState, so this is
-                // the only place a cross-window total exists. Shown as a NATIVE
+                // Confirm first only if something is actually **Busy** — a
+                // Working agent, an agent waiting on the user, or a running
+                // command. A quiet Abundio quits without asking: scrollback,
+                // Windows, Workspaces and layouts all restore, and a prompt the
+                // user always gets is a prompt they stop reading (ADR-0034,
+                // superseding ADR-0016's Opened-workspace count). The per-window
+                // tallies live in each window's frontend and are mirrored into
+                // BusyCountsState, so this is the only place a cross-window
+                // total exists. Shown as a NATIVE
                 // dialog because the quit decision runs here in Rust (the
                 // frontend never sees the quit-app path) and it must work even
                 // if a webview is hung. This gates ONLY the custom quit-app menu
                 // item (Cmd+Q / "Quit Abundio"); dock-icon Quit and OS shutdown
                 // go through ExitRequested AFTER windows tear down — too late to
                 // gate gracefully. See ADR-0016.
-                let total_opened = app
-                    .try_state::<profile_store::OpenedCountState>()
+                let totals = app
+                    .try_state::<profile_store::BusyCountsState>()
                     .map(|s| s.total())
-                    .unwrap_or(0);
-                if total_opened > 0 {
+                    .unwrap_or_default();
+                if totals.blocks_quit() {
                     // The native dialog is non-blocking, so a second Cmd+Q while
                     // it's open would re-enter here and stack another dialog.
                     // Skip if one is already in flight. See ADR-0016.
@@ -990,8 +995,23 @@ pub fn run() {
                         .keys()
                         .filter(|l| window_management::is_profile_window_label(l))
                         .count();
-                    let message =
-                        window_management::quit_confirm_message(total_opened, window_count);
+                    // `blocks_quit()` above already established there is
+                    // something to say; `None` here would mean the two had
+                    // drifted apart, so fall through to quitting rather than
+                    // show a dialog with a hole in it.
+                    let Some(message) =
+                        window_management::quit_confirm_message(&totals, window_count)
+                    else {
+                        // Release the in-flight guard set just above, so a
+                        // cancelled quit could still re-prompt later.
+                        if let Some(flag) =
+                            app.try_state::<profile_store::QuitConfirmInFlight>()
+                        {
+                            *flag.0.lock().unwrap() = false;
+                        }
+                        perform_quit(app);
+                        return;
+                    };
                     let app_handle = app.clone();
                     // Non-blocking: the callback fires when the dialog is
                     // dismissed. Returning from the menu handler without exiting
@@ -1104,7 +1124,7 @@ pub fn run() {
             commands::profile_delete,
             commands::profile_reorder,
             commands::set_active_profile_id,
-            commands::report_opened_workspace_count,
+            commands::report_busy_counts,
             commands::get_active_profile_for_window,
             commands::get_profile_ownership_map,
             commands::open_window_with_profile,

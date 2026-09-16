@@ -12,7 +12,6 @@ vi.mock("../../stores/ptyActivityStore", async () => {
 	>("../../stores/ptyActivityStore");
 	return {
 		collectPtyIds: actual.collectPtyIds,
-		isShellCommandRunning: vi.fn(() => false),
 		usePtyActivityStore: {
 			getState: vi.fn(() => ({ activities: {}, panePtyMap: {} })),
 		},
@@ -141,6 +140,7 @@ describe("detectWorkForWorkspace", () => {
 		hasEverReceivedOutput: true,
 		detectionMode: mode,
 		hookDriven: false,
+		shellCommandRunning: false,
 	});
 
 	it("returns no signals for a missing workspace id", async () => {
@@ -192,7 +192,7 @@ describe("detectWorkForWorkspace", () => {
 	});
 
 	it("ORs Working signals across tabs (agent in one tab, command in another)", async () => {
-		const { usePtyActivityStore, isShellCommandRunning } = await import(
+		const { usePtyActivityStore } = await import(
 			"../../stores/ptyActivityStore"
 		);
 		vi.mocked(useWorkspaceStore.getState).mockReturnValue({
@@ -207,13 +207,16 @@ describe("detectWorkForWorkspace", () => {
 			],
 			closeWorkspace: vi.fn(),
 		} as never);
+		// Both signals now come off the same `activities` map — the shell's
+		// busyness is a field on its status entry, not a separate module map
+		// (ADR-0034).
 		vi.mocked(usePtyActivityStore.getState).mockReturnValue({
-			activities: { "pty-agent": entry("active", "agent") },
+			activities: {
+				"pty-agent": entry("active", "agent"),
+				"pty-busy": { ...entry("active", "shell"), shellCommandRunning: true },
+			},
 			panePtyMap: {},
 		} as never);
-		vi.mocked(isShellCommandRunning).mockImplementation(
-			(id) => id === "pty-busy",
-		);
 
 		expect(detectWorkForWorkspace("ws-1")).toEqual({
 			hasWorkingAgent: true,

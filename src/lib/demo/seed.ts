@@ -7,10 +7,7 @@
  *    navigates to the pane and triggers a real spawn (which then re-seeds the
  *    real ptyId; the synthetic entry is harmlessly orphaned).
  */
-import {
-	setShellCommandRunning,
-	usePtyActivityStore,
-} from "../../stores/ptyActivityStore";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import type { DemoPaneSpec } from "./fixtures";
 
 export function seedPaneActivity(
@@ -28,7 +25,7 @@ export function seedPaneActivity(
 	} else if (spec.state === "active") {
 		// Hold the shell "active" (cyan) stably: both markIdle and the idle
 		// scanner skip a pane with shellCommandRunning set.
-		setShellCommandRunning(ptyId, true);
+		store.setShellCommandRunning(ptyId, true);
 		store.recordOutput(ptyId);
 	}
 }

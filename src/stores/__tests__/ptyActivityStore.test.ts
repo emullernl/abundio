@@ -26,7 +26,6 @@ import {
 	selectWaitingAgentCount,
 	selectWorkingAgentCount,
 	selectWorkingShellCount,
-	setShellCommandRunning,
 	touchLastOutput,
 	usePtyActivityStore,
 } from "../ptyActivityStore";
@@ -183,7 +182,8 @@ describe("store actions", () => {
 	});
 
 	it("markIdle does not override active state while a shell command is running", () => {
-		const { initPty, recordOutput, markIdle } = usePtyActivityStore.getState();
+		const { initPty, recordOutput, markIdle, setShellCommandRunning } =
+			usePtyActivityStore.getState();
 		initPty("pty-1");
 		recordOutput("pty-1");
 		setShellCommandRunning("pty-1", true);
@@ -199,6 +199,40 @@ describe("store actions", () => {
 		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
 			"idle",
 		);
+	});
+
+	it("keeps shellCommandRunning on the entry across events that project an otherwise-identical entry", () => {
+		// The projection skips the set() when the entry is unchanged. If
+		// `shellCommandRunning` were left out of that comparison — or out of the
+		// projection — the store's copy would go stale while the reducer's stayed
+		// fresh, and the close confirmations would stop seeing a busy terminal
+		// even as the pane still drew cyan. That drift is what moving the field
+		// onto the entry exists to remove (ADR-0034).
+		const { initPty, recordOutput, setShellCommandRunning } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		setShellCommandRunning("pty-1", true);
+
+		// Working → Working: nothing else about the entry moves.
+		recordOutput("pty-1");
+		const entry = usePtyActivityStore.getState().activities["pty-1"];
+		expect(entry.state).toBe("active");
+		expect(entry.shellCommandRunning).toBe(true);
+	});
+
+	it("clears shellCommandRunning when the PTY is detected as an agent", () => {
+		// Agent mode never emits shell-integration command_end, so a flag left
+		// set here would pin the pane Working forever.
+		const { initPty, recordOutput, setShellCommandRunning, setAgentPty } =
+			usePtyActivityStore.getState();
+		initPty("pty-1");
+		recordOutput("pty-1");
+		setShellCommandRunning("pty-1", true);
+		setAgentPty("pty-1", "claude");
+		expect(
+			usePtyActivityStore.getState().activities["pty-1"].shellCommandRunning,
+		).toBe(false);
 	});
 
 	it("markIdle still clears ready state in agent mode", () => {
@@ -314,6 +348,7 @@ const rollupEntry = (
 	hasEverReceivedOutput: true,
 	detectionMode: mode,
 	hookDriven: false,
+	shellCommandRunning: false,
 });
 
 const pane = (id: string): PaneNode => ({
@@ -640,6 +675,7 @@ describe("computePtyDotStatus", () => {
 		hasEverReceivedOutput: true,
 		detectionMode: mode,
 		hookDriven: false,
+		shellCommandRunning: false,
 	});
 
 	it("returns green for unknown ptyId", () => {
@@ -1101,6 +1137,7 @@ describe("hook-driven status", () => {
 		hasEverReceivedOutput: true,
 		detectionMode: mode,
 		hookDriven: false,
+		shellCommandRunning: false,
 	});
 
 	const split = (): PaneNode => ({

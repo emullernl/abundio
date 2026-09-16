@@ -32,25 +32,64 @@ pub fn generate_window_label() -> String {
     format!("window-{}", uuid::Uuid::new_v4())
 }
 
-/// Body text for the quit confirmation shown when **Opened workspaces** would be
-/// lost on quit. `window_count` lets us drop the awkward "across 1 window"
-/// clause when everything is in a single Window. See ADR-0016. Pure so it can
-/// be unit-tested without a dialog.
-pub fn quit_confirm_message(total_opened: usize, window_count: usize) -> String {
-    let ws = if total_opened == 1 {
-        "workspace"
-    } else {
-        "workspaces"
-    };
-    if window_count <= 1 {
-        format!(
-            "You have {total_opened} opened {ws} with running agents and terminal processes. Quit Abundio?"
-        )
-    } else {
-        format!(
-            "You have {total_opened} opened {ws} across {window_count} windows with running agents and terminal processes. Quit Abundio?"
-        )
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// The clauses naming what is busy, most urgent first, zeroes omitted — e.g.
+/// "2 agents working, 1 agent waiting on you and 3 running commands". Empty
+/// when nothing is busy, which the caller treats as "no dialog".
+pub fn describe_busy(counts: &crate::profile_store::BusyCounts) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if counts.working > 0 {
+        parts.push(format!("{} working", plural(counts.working, "agent", "agents")));
     }
+    if counts.waiting > 0 {
+        parts.push(format!(
+            "{} waiting on you",
+            plural(counts.waiting, "agent", "agents")
+        ));
+    }
+    if counts.commands > 0 {
+        parts.push(plural(counts.commands, "running command", "running commands"));
+    }
+    match parts.len() {
+        0 => String::new(),
+        1 => parts.remove(0),
+        _ => {
+            let last = parts.pop().unwrap();
+            format!("{} and {last}", parts.join(", "))
+        }
+    }
+}
+
+/// Body text for the quit confirmation, naming what is actually busy rather
+/// than how many Workspaces happen to be open — the old wording claimed
+/// "running agents and terminal processes" whether or not any existed, so it
+/// fired on every quit and was usually untrue. `window_count` lets us drop the
+/// awkward "across 1 window" clause when everything is in a single Window. See
+/// ADR-0034. Pure so it can be unit-tested without a dialog.
+///
+/// `None` when nothing is busy: there is no dialog to show, and a quiet
+/// Abundio quits silently. Returning an Option rather than a sentence with a
+/// hole in it keeps that contract in the type instead of in a doc comment —
+/// the caller's `blocks_quit()` guard and this function can no longer disagree
+/// about what "nothing busy" renders as.
+pub fn quit_confirm_message(
+    counts: &crate::profile_store::BusyCounts,
+    window_count: usize,
+) -> Option<String> {
+    let what = describe_busy(counts);
+    if what.is_empty() {
+        return None;
+    }
+    Some(if window_count <= 1 {
+        format!("You have {what}. Quitting will terminate them. Quit Abundio?")
+    } else {
+        format!(
+            "You have {what} across {window_count} windows. Quitting will terminate them. Quit Abundio?"
+        )
+    })
 }
 
 /// Whether a string is shaped like a settings section id.
@@ -314,32 +353,81 @@ mod tests {
         assert_eq!(next_untitled_name(&list), "Untitled 2");
     }
 
-    #[test]
-    fn quit_message_singular_single_window() {
-        let msg = quit_confirm_message(1, 1);
-        assert!(msg.contains("1 opened workspace "), "got: {msg}");
-        assert!(!msg.contains("across"), "single window omits 'across': {msg}");
+    fn counts(working: usize, waiting: usize, commands: usize) -> crate::profile_store::BusyCounts {
+        crate::profile_store::BusyCounts {
+            working,
+            waiting,
+            commands,
+        }
     }
 
     #[test]
-    fn quit_message_plural_multi_window() {
-        let msg = quit_confirm_message(5, 3);
-        assert!(msg.contains("5 opened workspaces"), "got: {msg}");
+    fn quit_message_names_what_is_busy() {
+        let msg = quit_confirm_message(&counts(1, 0, 0), 1).expect("busy");
+        assert!(msg.contains("1 agent working"), "got: {msg}");
+        assert!(!msg.contains("across"), "single window omits 'across': {msg}");
+        // The old wording claimed agents and processes whether or not any
+        // existed — the whole point of ADR-0034 is that it no longer does.
+        assert!(!msg.contains("opened workspace"), "got: {msg}");
+    }
+
+    #[test]
+    fn quit_message_pluralises_and_joins_every_clause() {
+        let msg = quit_confirm_message(&counts(2, 1, 3), 1).expect("busy");
+        assert!(
+            msg.contains("2 agents working, 1 agent waiting on you and 3 running commands"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn quit_message_multi_window_says_across() {
+        let msg = quit_confirm_message(&counts(0, 0, 4), 3).expect("busy");
+        assert!(msg.contains("4 running commands"), "got: {msg}");
         assert!(msg.contains("across 3 windows"), "got: {msg}");
     }
 
     #[test]
-    fn quit_message_plural_single_window() {
-        let msg = quit_confirm_message(3, 1);
-        assert!(msg.contains("3 opened workspaces "), "got: {msg}");
-        assert!(!msg.contains("across"), "single window omits 'across': {msg}");
+    fn quit_message_mentions_only_the_nonzero_clauses() {
+        let msg = quit_confirm_message(&counts(0, 1, 0), 1).expect("busy");
+        assert!(msg.contains("1 agent waiting on you"), "got: {msg}");
+        assert!(!msg.contains("working"), "got: {msg}");
+        assert!(!msg.contains("command"), "got: {msg}");
     }
 
     #[test]
-    fn quit_message_singular_multi_window() {
-        let msg = quit_confirm_message(1, 2);
-        assert!(msg.contains("1 opened workspace "), "got: {msg}");
-        assert!(msg.contains("across 2 windows"), "got: {msg}");
+    fn no_quit_message_when_nothing_is_busy() {
+        // A quiet Abundio quits silently (ADR-0034). The absence of a message
+        // and the caller's `blocks_quit()` guard must agree — so this asserts
+        // both, rather than only that the description is empty.
+        assert_eq!(describe_busy(&counts(0, 0, 0)), "");
+        assert!(quit_confirm_message(&counts(0, 0, 0), 1).is_none());
+        assert!(quit_confirm_message(&counts(0, 0, 0), 3).is_none());
+        assert!(!counts(0, 0, 0).blocks_quit());
+    }
+
+    #[test]
+    fn a_message_exists_for_everything_that_blocks_quit() {
+        // The guard and the wording cannot drift apart: anything that stops a
+        // quit must have something to say about why.
+        for c in [
+            counts(1, 0, 0),
+            counts(0, 1, 0),
+            counts(0, 0, 1),
+            counts(2, 3, 4),
+        ] {
+            assert!(c.blocks_quit());
+            assert!(quit_confirm_message(&c, 1).is_some());
+        }
+    }
+
+    #[test]
+    fn waiting_alone_blocks_quit_but_is_not_busy_work() {
+        // Unload and window close stop only for Busy work; quit also stops for
+        // an agent holding a finished turn with a question on it.
+        let c = counts(0, 1, 0);
+        assert!(!c.has_busy_work());
+        assert!(c.blocks_quit());
     }
 
     #[test]

@@ -76,6 +76,7 @@ function register(
 				hasEverReceivedOutput: true,
 				detectionMode: "agent",
 				hookDriven,
+				shellCommandRunning: false,
 			},
 		},
 	}));
@@ -159,6 +160,7 @@ describe("turn tracker via the StatusChange seam", () => {
 					hasEverReceivedOutput: true,
 					detectionMode: "shell",
 					hookDriven: false,
+					shellCommandRunning: false,
 				},
 			},
 		}));
@@ -197,6 +199,7 @@ describe("turn tracker via the StatusChange seam", () => {
 					hasEverReceivedOutput: true,
 					detectionMode: "shell",
 					hookDriven: false,
+					shellCommandRunning: false,
 				},
 			},
 		}));
