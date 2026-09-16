@@ -222,28 +222,59 @@ fn parse_releases(json: &str) -> Result<Vec<ReleaseNote>, AbundioError> {
         .collect())
 }
 
+/// Installs rustls' process-wide default crypto provider, once.
+///
+/// We build reqwest with `rustls-no-provider` to match what tauri-plugin-updater
+/// already resolves, which keeps this off a second TLS stack — but that feature
+/// means exactly what it says: rustls having its `ring` backend *compiled in* is
+/// not the same as a provider being *installed*, and `Client::build()` panics
+/// with "No provider set" when it goes looking. The updater plugin installs one
+/// for its own client, so nothing is inherited here.
+///
+/// `install_default` returns `Err` when a provider is already set, which is a
+/// success for our purposes — any provider will do.
+fn ensure_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
+/// Builds the HTTP client used for release notes.
+///
+/// Separate from `fetch_releases` so it can be tested without the network:
+/// building the client is where the missing-provider panic lived.
+fn build_client() -> Result<reqwest::Client, AbundioError> {
+    ensure_crypto_provider();
+    reqwest::Client::builder()
+        .timeout(NOTES_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|e| AbundioError::InvalidOperation(format!("http client: {e}")))
+}
+
 /// Fetches one page of published releases from GitHub.
 ///
 /// Unauthenticated: these are public releases, and asking the user for a token
 /// to read their own changelog would be absurd. That caps us at 60 requests per
 /// hour per IP, which is what `NOTES_CACHE_TTL` is sized against.
 async fn fetch_releases(app: &AppHandle) -> Result<Vec<ReleaseNote>, AbundioError> {
+    let agent = format!("Abundio/{}", app.package_info().version);
+    fetch_releases_as(&agent).await
+}
+
+/// The network half, with no Tauri in it — so it can be exercised for real
+/// against GitHub by the ignored test at the bottom of this file.
+async fn fetch_releases_as(user_agent: &str) -> Result<Vec<ReleaseNote>, AbundioError> {
     let url = format!(
         "https://api.github.com/repos/{GITHUB_REPO}/releases?per_page={RELEASES_PAGE_SIZE}"
     );
-    let client = reqwest::Client::builder()
-        .timeout(NOTES_REQUEST_TIMEOUT)
-        .build()
-        .map_err(|e| AbundioError::InvalidOperation(format!("http client: {e}")))?;
+    let client = build_client()?;
     let response = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         // GitHub rejects requests without one.
-        .header(
-            "User-Agent",
-            format!("Abundio/{}", app.package_info().version),
-        )
+        .header("User-Agent", user_agent)
         .send()
         .await
         .map_err(|e| {
@@ -846,6 +877,40 @@ mod tests {
     fn malformed_json_is_an_error_not_an_empty_list() {
         assert!(parse_releases("not json").is_err());
         assert!(parse_releases("{}").is_err());
+    }
+
+    /// Regression test for a panic, not a failure: reqwest is built with
+    /// `rustls-no-provider`, and without an installed provider `build()` panics
+    /// with "No provider set" — which took down the tokio worker and left the
+    /// Settings page on "Loading…" forever, since the command never replied.
+    #[test]
+    fn builds_an_https_client_without_panicking() {
+        assert!(build_client().is_ok());
+    }
+
+    /// The provider install must tolerate being called repeatedly, and must
+    /// tolerate another component (tauri-plugin-updater) having got there first.
+    #[test]
+    fn installing_the_crypto_provider_is_idempotent() {
+        ensure_crypto_provider();
+        ensure_crypto_provider();
+        assert!(build_client().is_ok());
+    }
+
+    /// Hits the real GitHub API. Ignored by default so the suite stays offline
+    /// and off the 60-per-hour rate limit; run it deliberately with
+    /// `cargo test -- --ignored live_github`. It is the test that would have
+    /// caught the missing crypto provider, which no fixture-based test could:
+    /// the panic was in building the client, not in anything we parse.
+    #[tokio::test]
+    #[ignore = "hits the network"]
+    async fn live_github_release_notes_fetch() {
+        let releases = fetch_releases_as("Abundio/test").await.unwrap();
+        assert!(!releases.is_empty(), "expected published releases");
+        for r in &releases {
+            assert!(parse_version(&r.version).is_some(), "bad version {}", r.version);
+            assert!(r.url.starts_with("https://github.com/"), "bad url {}", r.url);
+        }
     }
 
     // ── What's new gate ──
