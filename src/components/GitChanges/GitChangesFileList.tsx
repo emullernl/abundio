@@ -8,7 +8,15 @@ interface Props {
 	baseBranch: string | null;
 	onSelectFile: (file: GitChangedFile) => void;
 	onOpenFile: (file: GitChangedFile) => void;
+	onContextMenu: (
+		x: number,
+		y: number,
+		file: GitChangedFile,
+		fromKeyboard: boolean,
+	) => void;
 	selectedFile: GitChangedFile | null;
+	/** The row the **Row menu** is open on, if any. */
+	menuTargetFile: GitChangedFile | null;
 }
 
 const SECTION_ORDER: Array<{
@@ -30,7 +38,9 @@ export function GitChangesFileList({
 	baseBranch,
 	onSelectFile,
 	onOpenFile,
+	onContextMenu,
 	selectedFile,
+	menuTargetFile,
 }: Props) {
 	const collapsedSections = useGitChangesStore((s) => s.collapsedSections);
 	const toggleSection = useGitChangesStore((s) => s.toggleSection);
@@ -146,8 +156,15 @@ export function GitChangesFileList({
 											selectedFile?.path === file.path &&
 											selectedFile?.section === file.section
 										}
+										isMenuTarget={
+											menuTargetFile?.path === file.path &&
+											menuTargetFile?.section === file.section
+										}
 										onClick={() => onSelectFile(file)}
 										onOpenFile={() => onOpenFile(file)}
+										onContextMenu={(x, y, fromKeyboard) =>
+											onContextMenu(x, y, file, fromKeyboard)
+										}
 									/>
 								))}
 							</div>

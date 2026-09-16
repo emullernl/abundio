@@ -21,11 +21,35 @@ interface Props {
 	x: number;
 	y: number;
 	items: ContextMenuItem[];
+	/** Opened without a pointer — take focus, and hand it back on close.
+	 *
+	 *  Off by default: every pointer-opened menu sits immediately after its
+	 *  anchor in the DOM, so stealing focus there would move the caret away
+	 *  from wherever the user actually was. */
+	autoFocus?: boolean;
 	onClose: () => void;
 }
 
-export function PaneContextMenu({ x, y, items, onClose }: Props) {
+export function PaneContextMenu({
+	x,
+	y,
+	items,
+	autoFocus = false,
+	onClose,
+}: Props) {
 	const menuRef = useRef<HTMLDivElement>(null);
+
+	// Focus the first item the user can actually act on — a disabled leading
+	// item (the Row menu's "Open Diff" on a conflicted row) would otherwise
+	// swallow the focus and leave the menu looking inert.
+	useEffect(() => {
+		if (!autoFocus) return;
+		const opener = document.activeElement as HTMLElement | null;
+		menuRef.current
+			?.querySelector<HTMLButtonElement>("button:not([disabled])")
+			?.focus();
+		return () => opener?.focus?.();
+	}, [autoFocus]);
 
 	useEffect(() => {
 		function handleClickOutside(e: MouseEvent) {

@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { type GitOperation, git } from "../../lib/ipc";
+import { useEffect, useState } from "react";
+import { writeClipboardText } from "../../lib/clipboard";
+import { gitRowMenuEntries } from "../../lib/gitRowMenu";
+import { fs as fsApi, type GitOperation, git } from "../../lib/ipc";
 import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -10,6 +12,8 @@ import { BranchSelector } from "../GitChanges/BranchSelector";
 import { GitChangesFileList } from "../GitChanges/GitChangesFileList";
 import { NotAGitRepoEmpty } from "../GitChanges/NotAGitRepoEmpty";
 import { RefreshCw } from "../Icons";
+import type { ContextMenuItem } from "../Terminal/PaneContextMenu";
+import { PaneContextMenu } from "../Terminal/PaneContextMenu";
 
 /** Abundio never runs these — the line exists so the user knows the operation
  *  is still open and what finishes it. See ADR-0029. */
@@ -38,6 +42,15 @@ export function GitChangesTab() {
 
 	const [selectedFile, setSelectedFile] = useState<GitChangedFile | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
+	// The **Row menu**'s target is captured *by value*, so a refresh that drops
+	// the row from the list leaves the menu open and its path actions correct.
+	const [menu, setMenu] = useState<{
+		x: number;
+		y: number;
+		file: GitChangedFile;
+		/** Opened from the keyboard, so the menu must take focus itself. */
+		fromKeyboard: boolean;
+	} | null>(null);
 
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -49,6 +62,15 @@ export function GitChangesTab() {
 			? s.byWorkspaceId[activeWorkspaceId]?.isGitRepo
 			: undefined,
 	);
+
+	// The **Row menu**'s target row is captured by value, but its *workspace* is
+	// not: this tab is not keyed by workspace, so an open menu would otherwise
+	// survive a switch and resolve the old repo's path against the new root.
+	// A pointer-driven switch closes the menu incidentally (the click reaches
+	// PaneContextMenu's outside handler); the command palette switches from the
+	// keyboard alone and does not.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: clears on switch only
+	useEffect(() => setMenu(null), [activeWorkspaceId]);
 
 	async function handleSelectFile(file: GitChangedFile) {
 		if (!cwd || !activeWorkspaceId) return;
@@ -91,6 +113,49 @@ export function GitChangesTab() {
 			.catch(() => {
 				// Failed to open file (e.g. createTab rejected) — nothing to recover
 			});
+	}
+
+	function buildMenuItems(): ContextMenuItem[] {
+		if (!menu || !cwd) return [];
+		const { file } = menu;
+		const close = () => setMenu(null);
+
+		const run: Record<string, () => void> = {
+			"open-diff": () => {
+				close();
+				handleSelectFile(file);
+			},
+			"open-file": () => {
+				close();
+				handleOpenFile(file);
+			},
+			reveal: () => {
+				close();
+				fsApi
+					.revealInFolder(resolveWorkspacePath(cwd, file.path))
+					.catch(console.error);
+			},
+			"copy-relative-path": () => {
+				close();
+				writeClipboardText(file.path).catch(console.error);
+			},
+			"copy-path": () => {
+				close();
+				writeClipboardText(resolveWorkspacePath(cwd, file.path)).catch(
+					console.error,
+				);
+			},
+		};
+
+		return gitRowMenuEntries(file).map((entry) =>
+			"separator" in entry
+				? { separator: true as const }
+				: {
+						label: entry.label,
+						disabled: entry.disabled,
+						onClick: run[entry.id],
+					},
+		);
 	}
 
 	async function handleRefresh() {
@@ -261,11 +326,25 @@ export function GitChangesTab() {
 							baseBranch={baseBranch}
 							onSelectFile={handleSelectFile}
 							onOpenFile={handleOpenFile}
+							onContextMenu={(x, y, file, fromKeyboard) =>
+								setMenu({ x, y, file, fromKeyboard })
+							}
 							selectedFile={selectedFile}
+							menuTargetFile={menu?.file ?? null}
 						/>
 					</div>
 				)}
 			</div>
+
+			{menu && cwd && (
+				<PaneContextMenu
+					x={menu.x}
+					y={menu.y}
+					items={buildMenuItems()}
+					autoFocus={menu.fromKeyboard}
+					onClose={() => setMenu(null)}
+				/>
+			)}
 		</div>
 	);
 }
