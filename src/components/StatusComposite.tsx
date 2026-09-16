@@ -1,0 +1,131 @@
+import { memo } from "react";
+import {
+	BADGE_FORM,
+	BADGE_OVERHANG,
+	BADGE_SIZE,
+	COMPOSITE_WIDTH,
+	compositeParts,
+	compositeTooltip,
+	PRIMARY_SIZE,
+} from "../lib/statusComposite";
+import {
+	type DotStatus,
+	dotStatusLabel,
+	type Rollups,
+	type WorkspaceRollups,
+} from "../stores/ptyActivityStore";
+import {
+	AgentStatusIcon,
+	DOT_STATUS_ANIMATED,
+	DOT_STATUS_COLOR,
+} from "./AgentStatusIcon";
+
+interface StatusCompositeProps {
+	rollups: Rollups | WorkspaceRollups;
+	/** Override the primary's size; the badge scales with it. The narrow strip
+	 *  and the Tab bar use the shared default — see ADR-0033 on why they must
+	 *  not disagree. */
+	size?: number;
+	/** Rendered in place of the primary while set, at the same size and in the
+	 *  same box. A Worktree set's Primary row hover-swaps its fold chevron in
+	 *  here; the badge is covered with it, which ADR-0033 accepts. */
+	children?: React.ReactNode;
+}
+
+/** The **Status badge**: the Terminal rollup, small, on the primary's
+ *  lower-right. A glyph by default; `BADGE_FORM` swaps every badge to a plain
+ *  dot in one place if 8px proves too small for the chevron. */
+const Badge = memo(function Badge({
+	status,
+	size,
+}: {
+	status: DotStatus;
+	size: number;
+}) {
+	if (BADGE_FORM === "glyph") {
+		return <AgentStatusIcon status={status} size={size} />;
+	}
+	return (
+		<span
+			aria-hidden
+			style={{
+				display: "block",
+				width: size,
+				height: size,
+				borderRadius: "50%",
+				backgroundColor: DOT_STATUS_COLOR[status],
+				// Ring in the row's own background so the dot reads as separate
+				// from the glyph it sits beside.
+				boxShadow: "0 0 0 1.5px var(--bg-secondary)",
+				// A dot can't carry the glyph's motion at this size, but it must
+				// not sit still while the pane's icon moves.
+				animation: DOT_STATUS_ANIMATED[status]
+					? "shell-running-breathe 1.6s ease-in-out infinite"
+					: undefined,
+			}}
+		/>
+	);
+});
+
+/**
+ * One **Status composite** — a Tab's or Workspace's whole status as a single
+ * mark: a **Primary icon** with an optional **Status badge** on its lower-right
+ * corner (ADR-0033, replacing ADR-0032's two icons of equal weight).
+ *
+ * Renders nothing when there are no PTYs of either kind — "absent, not Idle" is
+ * unchanged from ADR-0032. A Workspace never opened in this Window draws the
+ * grey "Not opened" icon in the primary's place.
+ */
+export const StatusComposite = memo(function StatusComposite({
+	rollups,
+	size = PRIMARY_SIZE,
+	children,
+}: StatusCompositeProps) {
+	const notOpened = "notOpened" in rollups && rollups.notOpened;
+	const { primary, badge } = compositeParts(rollups);
+	const badgeSize = Math.round((BADGE_SIZE / PRIMARY_SIZE) * size);
+	const overhang = Math.round((BADGE_OVERHANG / PRIMARY_SIZE) * size);
+
+	if (!notOpened && !primary && !children) return null;
+
+	return (
+		<span
+			className="relative flex flex-shrink-0"
+			style={{ width: size, height: size }}
+			data-status-composite={
+				notOpened ? "grey" : (primary?.rollup.status ?? "none")
+			}
+			title={notOpened ? dotStatusLabel("grey") : compositeTooltip(rollups)}
+		>
+			{children ?? (
+				<>
+					{notOpened ? (
+						<AgentStatusIcon status="grey" size={size} />
+					) : (
+						primary && (
+							<AgentStatusIcon status={primary.rollup.status} size={size} />
+						)
+					)}
+					{badge && (
+						<span
+							className="absolute flex"
+							data-status-badge={badge.status}
+							style={{ right: -overhang, bottom: -overhang / 2 }}
+						>
+							<Badge status={badge.status} size={badgeSize} />
+						</span>
+					)}
+				</>
+			)}
+		</span>
+	);
+});
+
+/** The width a composite occupies including its badge's overhang, at a given
+ *  primary size. Call sites reserve this so a badge can never collide with the
+ *  text beside it. */
+export function compositeWidth(size: number = PRIMARY_SIZE): number {
+	return size === PRIMARY_SIZE
+		? COMPOSITE_WIDTH
+		: size + Math.round((BADGE_OVERHANG / PRIMARY_SIZE) * size);
+}
