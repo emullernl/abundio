@@ -43,6 +43,7 @@ import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import { stripResetSequences } from "./terminalResetFilter";
+import { registerTerminalSettings } from "./terminalSettingsBridge";
 import { modifiedNavKeySequence } from "./terminalWordJump";
 import { terminalThemeFor } from "./themeUtils";
 import type { PaneNode } from "./types";
@@ -2029,3 +2030,22 @@ export function teardownTerminal(paneId: string): void {
 	pty.deleteLog(paneId).catch(() => {});
 	actStore.removePane(paneId);
 }
+
+// Hand the settings store its setters, now that every binding above exists.
+//
+// This line, and not a static import in `settingsStore`, is what keeps the
+// store's rehydrate from running inside this module's temporal dead zone. See
+// `terminalSettingsBridge.ts` for the failure it replaces. Last statement in
+// the file deliberately: registration flushes whatever the store queued during
+// hydration, so anything declared below it would be in the dead zone again.
+registerTerminalSettings({
+	setAllTerminalsFontFamily: (fontFamily) => {
+		void setAllTerminalsFontFamily(fontFamily);
+	},
+	setAllTerminalsFontSize,
+	setAllTerminalsScrollback,
+	setAllTerminalsTheme,
+	setActivityByteThreshold,
+	setWebglEnabled,
+	setMouseReportingBlocked,
+});

@@ -5,15 +5,7 @@ import { agentHooks, pr, updates } from "../lib/ipc";
 import { SYSTEM_UI_FONT } from "../lib/nerdFonts";
 import type { PreviewColorMode } from "../lib/previewColorMode";
 import { nextPreviewColorMode } from "../lib/previewColorMode";
-import {
-	setAllTerminalsFontFamily,
-	setAllTerminalsFontSize,
-	setAllTerminalsScrollback,
-	setAllTerminalsTheme,
-	setMouseReportingBlocked,
-	setActivityByteThreshold as setTerminalActivityByteThreshold,
-	setWebglEnabled,
-} from "../lib/terminalManager";
+import { withTerminalSettings } from "../lib/terminalSettingsBridge";
 import { applyTheme, getTheme } from "../lib/themes";
 import type { CodingAgent } from "../lib/types";
 
@@ -334,6 +326,100 @@ const PERSISTED_DEFAULTS: {
 	}
 })();
 
+/**
+ * Push rehydrated settings out to everything that lives outside the store:
+ * xterm instances, the mouse-reporting master switch, and the Rust side.
+ *
+ * Called on first hydration AND on every cross-Window sync (ADR-0008), so each
+ * push must be safe to repeat and must send the value in BOTH directions — a
+ * one-directional push would leave the other Window stuck on the old answer.
+ */
+function applyRehydratedSettings(state: SettingsState | undefined): void {
+	if (state?.activityByteThreshold != null) {
+		withTerminalSettings((t) =>
+			t.setActivityByteThreshold(state.activityByteThreshold),
+		);
+	}
+	if (state?.terminalScrollback != null) {
+		withTerminalSettings((t) =>
+			t.setAllTerminalsScrollback(state.terminalScrollback),
+		);
+	}
+	// Fix race: terminals created before rehydration have default font/theme.
+	if (state?.terminalFontFamily) {
+		withTerminalSettings((t) =>
+			t.setAllTerminalsFontFamily(state.terminalFontFamily),
+		);
+	}
+	if (state?.fontSize) {
+		withTerminalSettings((t) => t.setAllTerminalsFontSize(state.fontSize));
+	}
+	if (state?.theme) {
+		// applyTheme writes CSS variables to :root — without this,
+		// rehydrate (e.g. cross-window theme sync after the user
+		// picks a new theme in the Settings window) would update
+		// the in-memory `theme` value but leave UI colours frozen.
+		applyTheme(getTheme(state.theme));
+		withTerminalSettings((t) =>
+			t.setAllTerminalsTheme(getTheme(state.theme).terminal),
+		);
+	}
+	if (state?.uiFontFamily) {
+		document.documentElement.style.setProperty("--font-ui", state.uiFontFamily);
+	}
+	if (state?.terminalFontFamily) {
+		document.documentElement.style.setProperty(
+			"--font-mono",
+			state.terminalFontFamily,
+		);
+	}
+	if (state?.uiFontSize) {
+		document.documentElement.style.setProperty(
+			"--ui-font-size",
+			`${state.uiFontSize}px`,
+		);
+	}
+	// Re-sync agent hook provisioning with the persisted setting on
+	// startup. Uses the once-per-process startup command so that, with
+	// multiple Windows open, only the first rehydrate actually rewrites
+	// the global agent configs. See ADR-0003 (Revisited).
+	if (state?.agentHooksEnabled) {
+		agentHooks
+			.provisionStartup(true, provisionableAgentIds(state.agents))
+			.catch((err) => {
+				console.error("[agentHooks] startup provision failed:", err);
+			});
+	}
+	// Always pushed, not only when false. This same handler runs on
+	// cross-Window sync (ADR-0008), where GPU may need turning back ON —
+	// a one-directional push would leave the other Window on the DOM
+	// renderer after the user re-enabled acceleration here.
+	// setWebglEnabled no-ops when the value is unchanged.
+	withTerminalSettings((t) =>
+		t.setWebglEnabled(state?.gpuAccelerationEnabled ?? true),
+	);
+	// Always pushed, not only when false. This same handler runs on
+	// cross-Window sync (ADR-0008), where the flag may need turning back
+	// ON — a one-directional push would leave the other Window blocking
+	// after the user un-blocked here. setMouseReportingBlocked no-ops
+	// when the value is unchanged, so the extra call costs nothing.
+	withTerminalSettings((t) =>
+		t.setMouseReportingBlocked(state?.blockMouseReporting ?? true),
+	);
+	// Sync the Rust-side auto-check flag with the persisted setting on
+	// startup. Rust defaults this OFF and waits for this explicit push
+	// (see updater.rs), so always send the value — not only when
+	// disabled — otherwise auto-check would never turn on.
+	updates.setAutoCheck(state?.autoCheckUpdatesEnabled ?? true).catch(() => {});
+	// Push the persisted PR-poller config to Rust on startup +
+	// cross-window sync. The poller defaults to enabled/5min, but a
+	// custom interval or "Off" must be applied. See ADR-0019.
+	pr.setConfig(
+		state?.prPollEnabled ?? true,
+		state?.prPollIntervalMinutes ?? 5,
+	).catch(() => {});
+}
+
 export const useSettingsStore = create<SettingsState>()(
 	persist(
 		(set, get) => ({
@@ -370,7 +456,9 @@ export const useSettingsStore = create<SettingsState>()(
 					"--font-mono",
 					terminalFontFamily,
 				);
-				setAllTerminalsFontFamily(terminalFontFamily);
+				withTerminalSettings((t) =>
+					t.setAllTerminalsFontFamily(terminalFontFamily),
+				);
 				set({ terminalFontFamily });
 			},
 			setUiFontFamily: (uiFontFamily) => {
@@ -388,7 +476,7 @@ export const useSettingsStore = create<SettingsState>()(
 			setTheme: (themeName) => {
 				const fullTheme = getTheme(themeName);
 				applyTheme(fullTheme);
-				setAllTerminalsTheme(fullTheme.terminal);
+				withTerminalSettings((t) => t.setAllTerminalsTheme(fullTheme.terminal));
 				set({ theme: themeName });
 			},
 			setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
@@ -398,11 +486,11 @@ export const useSettingsStore = create<SettingsState>()(
 			toggleDebugActivityMeter: () =>
 				set((state) => ({ debugActivityMeter: !state.debugActivityMeter })),
 			setActivityByteThreshold: (n) => {
-				setTerminalActivityByteThreshold(n);
+				withTerminalSettings((t) => t.setActivityByteThreshold(n));
 				set({ activityByteThreshold: n });
 			},
 			setTerminalScrollback: (n) => {
-				setAllTerminalsScrollback(n);
+				withTerminalSettings((t) => t.setAllTerminalsScrollback(n));
 				set({ terminalScrollback: n });
 			},
 			addAgent: (name, command, args) => {
@@ -472,11 +560,13 @@ export const useSettingsStore = create<SettingsState>()(
 					});
 			},
 			setGpuAcceleration: (gpuAccelerationEnabled) => {
-				setWebglEnabled(gpuAccelerationEnabled);
+				withTerminalSettings((t) => t.setWebglEnabled(gpuAccelerationEnabled));
 				set({ gpuAccelerationEnabled });
 			},
 			setBlockMouseReporting: (blockMouseReporting) => {
-				setMouseReportingBlocked(blockMouseReporting);
+				withTerminalSettings((t) =>
+					t.setMouseReportingBlocked(blockMouseReporting),
+				);
 				set({ blockMouseReporting });
 			},
 			setSmartImageDrop: (smartImageDrop) => set({ smartImageDrop }),
@@ -612,82 +702,24 @@ export const useSettingsStore = create<SettingsState>()(
 					? mergeAgentsWithBuiltins(persistedState.agents)
 					: currentState.agents,
 			}),
-			onRehydrateStorage: () => (state) => {
-				if (state?.activityByteThreshold != null) {
-					setTerminalActivityByteThreshold(state.activityByteThreshold);
+			onRehydrateStorage: () => (state, error) => {
+				if (error) {
+					// zustand swallows a throw from this callback into its own promise
+					// chain, so without this line a failed rehydrate is completely
+					// invisible — which is exactly how this handler silently stopped
+					// applying anything at all. See terminalSettingsBridge.ts.
+					console.error("[settings] rehydrate failed", error);
+					return;
 				}
-				if (state?.terminalScrollback != null) {
-					setAllTerminalsScrollback(state.terminalScrollback);
+				try {
+					applyRehydratedSettings(state);
+				} catch (err) {
+					// Contain the throw here rather than letting it reach persist's
+					// .catch — that re-enters this callback with the error (so the side
+					// effects above it have already run) and leaves `hasHydrated` false
+					// with onFinishHydration listeners unfired.
+					console.error("[settings] applying rehydrated settings failed", err);
 				}
-				// Fix race: terminals created before rehydration have default font/theme.
-				if (state?.terminalFontFamily) {
-					setAllTerminalsFontFamily(state.terminalFontFamily);
-				}
-				if (state?.fontSize) {
-					setAllTerminalsFontSize(state.fontSize);
-				}
-				if (state?.theme) {
-					// applyTheme writes CSS variables to :root — without this,
-					// rehydrate (e.g. cross-window theme sync after the user
-					// picks a new theme in the Settings window) would update
-					// the in-memory `theme` value but leave UI colours frozen.
-					applyTheme(getTheme(state.theme));
-					setAllTerminalsTheme(getTheme(state.theme).terminal);
-				}
-				if (state?.uiFontFamily) {
-					document.documentElement.style.setProperty(
-						"--font-ui",
-						state.uiFontFamily,
-					);
-				}
-				if (state?.terminalFontFamily) {
-					document.documentElement.style.setProperty(
-						"--font-mono",
-						state.terminalFontFamily,
-					);
-				}
-				if (state?.uiFontSize) {
-					document.documentElement.style.setProperty(
-						"--ui-font-size",
-						`${state.uiFontSize}px`,
-					);
-				}
-				// Re-sync agent hook provisioning with the persisted setting on
-				// startup. Uses the once-per-process startup command so that, with
-				// multiple Windows open, only the first rehydrate actually rewrites
-				// the global agent configs. See ADR-0003 (Revisited).
-				if (state?.agentHooksEnabled) {
-					agentHooks
-						.provisionStartup(true, provisionableAgentIds(state.agents))
-						.catch((err) => {
-							console.error("[agentHooks] startup provision failed:", err);
-						});
-				}
-				// The module flag in terminalManager defaults to true — only
-				// push a change when the user has disabled GPU acceleration.
-				if (state?.gpuAccelerationEnabled === false) {
-					setWebglEnabled(false);
-				}
-				// Always pushed, not only when false. This same handler runs on
-				// cross-Window sync (ADR-0008), where the flag may need turning back
-				// ON — a one-directional push would leave the other Window blocking
-				// after the user un-blocked here. setMouseReportingBlocked no-ops
-				// when the value is unchanged, so the extra call costs nothing.
-				setMouseReportingBlocked(state?.blockMouseReporting ?? true);
-				// Sync the Rust-side auto-check flag with the persisted setting on
-				// startup. Rust defaults this OFF and waits for this explicit push
-				// (see updater.rs), so always send the value — not only when
-				// disabled — otherwise auto-check would never turn on.
-				updates
-					.setAutoCheck(state?.autoCheckUpdatesEnabled ?? true)
-					.catch(() => {});
-				// Push the persisted PR-poller config to Rust on startup +
-				// cross-window sync. The poller defaults to enabled/5min, but a
-				// custom interval or "Off" must be applied. See ADR-0019.
-				pr.setConfig(
-					state?.prPollEnabled ?? true,
-					state?.prPollIntervalMinutes ?? 5,
-				).catch(() => {});
 			},
 		},
 	),

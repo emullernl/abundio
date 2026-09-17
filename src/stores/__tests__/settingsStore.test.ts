@@ -10,29 +10,29 @@ vi.mock("../../lib/themes", () => ({
 	})),
 }));
 
-vi.mock("../../lib/terminalManager", () => ({
-	setAllTerminalsTheme: vi.fn(),
-	setAllTerminalsFontFamily: vi.fn(),
-	setActivityByteThreshold: vi.fn(),
-	setWebglEnabled: vi.fn(),
-}));
-
 import { SYSTEM_UI_FONT } from "../../lib/nerdFonts";
-import {
-	setActivityByteThreshold,
-	setAllTerminalsFontFamily,
-	setAllTerminalsTheme,
-	setWebglEnabled,
-} from "../../lib/terminalManager";
+import { registerTerminalSettings } from "../../lib/terminalSettingsBridge";
 import { applyTheme, getTheme } from "../../lib/themes";
 import { useSettingsStore } from "../settingsStore";
 
 const mockApplyTheme = vi.mocked(applyTheme);
 const mockGetTheme = vi.mocked(getTheme);
-const mockSetAllTerminalsTheme = vi.mocked(setAllTerminalsTheme);
-const mockSetAllTerminalsFontFamily = vi.mocked(setAllTerminalsFontFamily);
-const mockSetActivityByteThreshold = vi.mocked(setActivityByteThreshold);
-const mockSetWebglEnabled = vi.mocked(setWebglEnabled);
+// The store reaches terminals through the bridge, never by importing
+// `terminalManager` — that cycle is what broke rehydration. Stand in for
+// `terminalManager` by registering here. See terminalSettingsBridge.ts.
+const mockSetAllTerminalsTheme = vi.fn();
+const mockSetAllTerminalsFontFamily = vi.fn();
+const mockSetActivityByteThreshold = vi.fn();
+const mockSetWebglEnabled = vi.fn();
+registerTerminalSettings({
+	setAllTerminalsFontFamily: mockSetAllTerminalsFontFamily,
+	setAllTerminalsFontSize: vi.fn(),
+	setAllTerminalsScrollback: vi.fn(),
+	setAllTerminalsTheme: mockSetAllTerminalsTheme,
+	setActivityByteThreshold: mockSetActivityByteThreshold,
+	setWebglEnabled: mockSetWebglEnabled,
+	setMouseReportingBlocked: vi.fn(),
+});
 
 beforeEach(() => {
 	vi.clearAllMocks();
