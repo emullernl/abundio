@@ -64,7 +64,7 @@ describe("GitChangesFileItem — Row menu trigger", () => {
 		expect(onContextMenu).toHaveBeenCalledWith(120, 340, false);
 	});
 
-	it("is not text-selectable, so right-click cannot select the filename", () => {
+	it("keeps the row unselectable (select-none)", () => {
 		const { row } = renderRow();
 		expect(row.className).toContain("select-none");
 	});

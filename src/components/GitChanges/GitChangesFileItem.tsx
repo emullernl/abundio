@@ -71,6 +71,12 @@ export function GitChangesFileItem({
 			onContextMenu={(e) => {
 				e.preventDefault();
 				e.stopPropagation();
+				// Deliberately NOT clearing the document selection the way the
+				// Explorer's FileTreeItem does. The row itself can no longer be
+				// selected (select-none below), so the only selection left to clear
+				// is one the user made somewhere else — usually text they highlighted
+				// in the DiffViewer. Throwing that away because they right-clicked a
+				// file row loses work they did on purpose.
 				onContextMenu(e.clientX, e.clientY, false);
 			}}
 			onKeyDown={(e) => {
