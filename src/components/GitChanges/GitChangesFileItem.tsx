@@ -101,7 +101,10 @@ export function GitChangesFileItem({
 					onClick();
 				}
 			}}
-			className="w-full flex items-center gap-2 py-1 text-left transition-colors group cursor-pointer"
+			// select-none: a right-click on selectable text makes the browser select
+			// the word under the cursor as it opens the menu, so the row would flash a
+			// text selection behind its own menu. The row acts as a button, not prose.
+			className="w-full flex items-center gap-2 py-1 text-left transition-colors group cursor-pointer select-none"
 			style={{
 				height: 28,
 				// Inline padding instead of Tailwind px-3 to avoid specificity issues with the borderLeft style
