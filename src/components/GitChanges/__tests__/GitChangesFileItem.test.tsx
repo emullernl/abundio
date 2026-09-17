@@ -64,6 +64,11 @@ describe("GitChangesFileItem — Row menu trigger", () => {
 		expect(onContextMenu).toHaveBeenCalledWith(120, 340, false);
 	});
 
+	it("keeps the row unselectable (select-none)", () => {
+		const { row } = renderRow();
+		expect(row.className).toContain("select-none");
+	});
+
 	it("does not select the row — that would open a pane", () => {
 		const { row, onClick } = renderRow();
 		act(() => {
