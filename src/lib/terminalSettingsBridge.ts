@@ -24,6 +24,10 @@ import type { ITheme } from "@xterm/xterm";
  * `terminalManager` says it exists.
  */
 export interface TerminalSettings {
+	/** Fire-and-forget: the real implementation is `async` (it awaits
+	 *  `document.fonts.load` before touching any pane), so unlike every other
+	 *  setter here this one returns before it has finished. See the ordering
+	 *  caveat on `withTerminalSettings`. */
 	setAllTerminalsFontFamily(fontFamily: string): void;
 	setAllTerminalsFontSize(fontSize: number): void;
 	setAllTerminalsScrollback(scrollback: number): void;
@@ -47,20 +51,58 @@ export function registerTerminalSettings(impl: TerminalSettings): void {
 /**
  * Run `fn` against the terminal setters, now or as soon as they exist.
  *
- * Queued calls run in the order they were made, so a rehydrate that pushes
- * font, theme and scrollback still applies them in the order the handler wrote
- * them. After registration this is a plain synchronous call — which is what
- * every settings *action* gets, since those only ever fire long after startup.
+ * Queued calls are *invoked* in the order they were made, so a rehydrate that
+ * pushes font, theme and scrollback reaches the setters in the order the
+ * handler wrote them. Their *effects* land in that order too, with one
+ * exception: `setAllTerminalsFontFamily` is async under the hood and applies
+ * after its font load resolves, so a theme or scrollback push made after it
+ * will touch the panes first. Nothing depends on that today — they write
+ * disjoint xterm options — but do not build an ordering guarantee on it.
+ *
+ * After registration this is a plain synchronous call, which is what every
+ * settings *action* gets, since those only ever fire long after startup.
  */
 export function withTerminalSettings(
 	fn: (terminals: TerminalSettings) => void,
 ): void {
-	if (terminals) fn(terminals);
-	else queued.push(fn);
+	if (terminals) {
+		fn(terminals);
+		return;
+	}
+	queued.push(fn);
+	warnIfNobodyRegisters();
+}
+
+/**
+ * Dev-only tripwire for the one way this module can fail silently.
+ *
+ * Queueing is only ever correct because `terminalManager` is guaranteed to be
+ * evaluated — every window's entry point pulls it in through a static import,
+ * which is hoisted regardless of the `IS_SETTINGS_WINDOW` branching below it in
+ * `main.tsx`. That is a thin thread: delete the last such import in a tidy-up
+ * and every push here becomes a permanent no-op, with the queue growing one
+ * closure per cross-Window rehydrate — exactly the silent failure this module
+ * exists to kill, wearing a different hat.
+ *
+ * One warning per session, on a macrotask so it fires after the module graph
+ * has finished evaluating.
+ */
+let registrationWatchdogArmed = false;
+function warnIfNobodyRegisters(): void {
+	if (!import.meta.env.DEV || registrationWatchdogArmed) return;
+	registrationWatchdogArmed = true;
+	setTimeout(() => {
+		if (terminals) return;
+		console.error(
+			`[terminalSettingsBridge] nothing registered terminal setters; ${queued.length} settings push(es) are stranded. ` +
+				"Does this window's entry point still import lib/terminalManager?",
+		);
+	}, 0);
 }
 
 /** Test-only: drop the registration and any queued calls. */
 export function resetTerminalSettingsForTest(): void {
 	terminals = null;
 	queued.length = 0;
+	registrationWatchdogArmed = false;
 }

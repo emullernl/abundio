@@ -390,11 +390,14 @@ function applyRehydratedSettings(state: SettingsState | undefined): void {
 				console.error("[agentHooks] startup provision failed:", err);
 			});
 	}
-	// The module flag in terminalManager defaults to true — only
-	// push a change when the user has disabled GPU acceleration.
-	if (state?.gpuAccelerationEnabled === false) {
-		withTerminalSettings((t) => t.setWebglEnabled(false));
-	}
+	// Always pushed, not only when false. This same handler runs on
+	// cross-Window sync (ADR-0008), where GPU may need turning back ON —
+	// a one-directional push would leave the other Window on the DOM
+	// renderer after the user re-enabled acceleration here.
+	// setWebglEnabled no-ops when the value is unchanged.
+	withTerminalSettings((t) =>
+		t.setWebglEnabled(state?.gpuAccelerationEnabled ?? true),
+	);
 	// Always pushed, not only when false. This same handler runs on
 	// cross-Window sync (ADR-0008), where the flag may need turning back
 	// ON — a one-directional push would leave the other Window blocking
@@ -708,7 +711,15 @@ export const useSettingsStore = create<SettingsState>()(
 					console.error("[settings] rehydrate failed", error);
 					return;
 				}
-				applyRehydratedSettings(state);
+				try {
+					applyRehydratedSettings(state);
+				} catch (err) {
+					// Contain the throw here rather than letting it reach persist's
+					// .catch — that re-enters this callback with the error (so the side
+					// effects above it have already run) and leaves `hasHydrated` false
+					// with onFinishHydration listeners unfired.
+					console.error("[settings] applying rehydrated settings failed", err);
+				}
 			},
 		},
 	),

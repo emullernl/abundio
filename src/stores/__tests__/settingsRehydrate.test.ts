@@ -67,6 +67,31 @@ it("hands a stored mouse-reporting answer of false to terminalManager", async ()
 	expect(calls).toEqual([false]);
 });
 
+it("pushes GPU acceleration in both directions, not only when disabled", async () => {
+	// `gpuAccelerationEnabled` crosses Window boundaries (it is not in
+	// NOT_BROADCAST), and the receiving side's only reaction is a rehydrate. A
+	// push that fired only on `false` would leave the other Window on the DOM
+	// renderer for the rest of the session after the user re-enabled it here.
+	localStorage.setItem(
+		"abundio-settings",
+		JSON.stringify({ state: { gpuAccelerationEnabled: true }, version: 9 }),
+	);
+	const bridge = await import("../../lib/terminalSettingsBridge");
+	const calls: boolean[] = [];
+	bridge.registerTerminalSettings({
+		setAllTerminalsFontFamily: () => {},
+		setAllTerminalsFontSize: () => {},
+		setAllTerminalsScrollback: () => {},
+		setAllTerminalsTheme: () => {},
+		setActivityByteThreshold: () => {},
+		setWebglEnabled: (enabled) => calls.push(enabled),
+		setMouseReportingBlocked: () => {},
+	});
+	await import("../settingsStore");
+
+	expect(calls).toEqual([true]);
+});
+
 it("queues pushes made before terminalManager registers, in order", async () => {
 	const bridge = await import("../../lib/terminalSettingsBridge");
 	bridge.resetTerminalSettingsForTest();
