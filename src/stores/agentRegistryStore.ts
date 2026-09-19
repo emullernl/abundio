@@ -11,21 +11,51 @@ interface AgentRegistryState {
 	reload: (commands: string[]) => Promise<void>;
 }
 
-async function scan(
+/** The scan currently in flight, and the commands it was started with.
+ *
+ *  Callers that arrive mid-scan join it rather than returning early: both of
+ *  them (first-run **Agent seeding** and the Settings "Match to installed"
+ *  button) act on `installedCommands` the moment their promise resolves, and an
+ *  early return hands them the empty set the in-flight scan is about to
+ *  replace. See ADR-0037.
+ *
+ *  The commands are kept because joining on the *existence* of a scan is not
+ *  the same as joining on a scan that answers your question: a caller asking
+ *  about a command the in-flight scan never looked up would be told, with no
+ *  error, that it isn't installed. */
+let inFlight: { promise: Promise<void>; commands: Set<string> } | null = null;
+
+function scan(
 	set: (partial: Partial<AgentRegistryState>) => void,
 	commands: string[],
 ): Promise<void> {
 	set({ loading: true });
-	try {
-		const installed = await agentRegistryApi.listInstalled(commands);
-		set({
-			installedCommands: new Set(installed),
-			loaded: true,
-			loading: false,
+	const promise = agentRegistryApi
+		.listInstalled(commands)
+		.then((installed) => {
+			set({
+				installedCommands: new Set(installed),
+				loaded: true,
+				loading: false,
+			});
+		})
+		.catch(() => {
+			set({ installedCommands: new Set(), loaded: true, loading: false });
+		})
+		.finally(() => {
+			if (inFlight?.promise === promise) inFlight = null;
 		});
-	} catch {
-		set({ installedCommands: new Set(), loaded: true, loading: false });
-	}
+	inFlight = { promise, commands: new Set(commands) };
+	return promise;
+}
+
+/** Join the in-flight scan when it covers everything the caller asked about,
+ *  otherwise wait for it and then scan again — the caller gets an answer to
+ *  its own question either way. `null` means there is nothing to join. */
+function joinable(commands: string[]): Promise<void> | null {
+	if (!inFlight) return null;
+	const covered = commands.every((c) => inFlight?.commands.has(c));
+	return covered ? inFlight.promise : null;
 }
 
 export const useAgentRegistryStore = create<AgentRegistryState>((set, get) => ({
@@ -34,12 +64,20 @@ export const useAgentRegistryStore = create<AgentRegistryState>((set, get) => ({
 	loading: false,
 
 	load: async (commands) => {
-		if (get().loaded || get().loading) return;
+		if (get().loaded) return;
+		const join = joinable(commands);
+		if (join) return join;
+		if (inFlight) await inFlight.promise;
 		await scan(set, commands);
 	},
 
 	reload: async (commands) => {
-		if (get().loading) return;
+		const join = joinable(commands);
+		if (join) return join;
+		// Queue behind the in-flight scan rather than racing it: two concurrent
+		// scans would both write `installedCommands`, and the later-started one
+		// is not necessarily the later to finish.
+		if (inFlight) await inFlight.promise;
 		await scan(set, commands);
 	},
 }));

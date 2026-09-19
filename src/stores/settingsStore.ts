@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { seedWatchedFromInstalled } from "../lib/agentSeeding";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
 import { agentHooks, pr, updates } from "../lib/ipc";
 import { SYSTEM_UI_FONT } from "../lib/nerdFonts";
@@ -78,6 +79,16 @@ interface SettingsState {
 	/** Resolves once hook provisioning for the new state has settled, so callers
 	 *  (e.g. Settings) can refresh the per-agent footprint afterwards. */
 	toggleAgent: (id: string) => Promise<void>;
+	/** Set every built-in Agent's Watched toggle from the commands found on
+	 *  `$PATH`, leaving custom Agents alone, then re-sync hook provisioning.
+	 *  The rule lives in `lib/agentSeeding.ts` and is shared by the first-run
+	 *  seed and the Settings button, so the two cannot drift. See ADR-0037.
+	 *
+	 *  `"empty-scan"` means the scan found nothing and nothing was changed —
+	 *  treated as a failed scan, never as a machine with no Agents. */
+	matchAgentsToInstalled: (
+		installed: Set<string>,
+	) => Promise<"changed" | "already-matching" | "empty-scan">;
 	updateAgent: (
 		id: string,
 		updates: Partial<Pick<CodingAgent, "name" | "command" | "args">>,
@@ -526,6 +537,28 @@ export const useSettingsStore = create<SettingsState>()(
 					.catch((err) => {
 						console.error("[agentHooks] provision failed:", err);
 					});
+			},
+			matchAgentsToInstalled: async (installed) => {
+				if (installed.size === 0) return "empty-scan";
+				const before = get().agents;
+				const after = seedWatchedFromInstalled(before, installed);
+				// Identity, not deep equality: seedWatchedFromInstalled returns the
+				// input when nothing moved, so this skips a redundant store write,
+				// a re-provision and the cross-Window broadcast that rides on it.
+				if (after === before) return "already-matching";
+				set({ agents: after });
+				// Same re-sync toggleAgent does. It matters at first run too:
+				// `provisionStartup` has already run for all nine built-ins by the
+				// time the scan lands, so an Agent seeded off that happens to have
+				// a stale config dir must lose its entries here.
+				if (get().agentHooksEnabled) {
+					await agentHooks
+						.provision(true, provisionableAgentIds(after))
+						.catch((err) => {
+							console.error("[agentHooks] provision failed:", err);
+						});
+				}
+				return "changed";
 			},
 			updateAgent: (id, updates) => {
 				set((s) => ({

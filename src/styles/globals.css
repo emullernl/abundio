@@ -375,6 +375,20 @@ body,
 	display: none !important;
 }
 
+/* Transient acknowledgement text (e.g. the Settings ▸ Agents match result).
+   Fades and rises slightly rather than appearing, because these lines land in
+   dense rows where a hard swap reads as a glitch. */
+@keyframes abundio-fade-in {
+	from {
+		opacity: 0;
+		transform: translateY(2px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
 /* Shimmer text animation — silver-white gradient sweep */
 @keyframes shimmer {
 	0% {

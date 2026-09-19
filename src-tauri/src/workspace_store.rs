@@ -792,7 +792,98 @@ impl WorkspaceStore {
         )?;
         Ok(())
     }
+
+    // ── Agent seeding (ADR-0037) ──
+
+    /// Whether this install still owes a seeding — a database an earlier
+    /// launch created but never seeded from, because the `$PATH` scan came back
+    /// empty or the user quit inside the five seconds `shell_path()` can take.
+    pub fn agent_seeding_is_pending(&self) -> Result<bool, AbundioError> {
+        Ok(self.get_setting(AGENT_SEEDING_PENDING_KEY)?.is_some())
+    }
+
+    /// Records that this install was created by this launch and has not seeded
+    /// yet, so later launches can tell it apart from a database that predates
+    /// the feature entirely. Without it, "the file exists" is true on every
+    /// launch after the first and a failed first scan would have its claim
+    /// spent unseeded the very next time the app starts. Idempotent.
+    pub fn mark_agent_seeding_pending(&self) -> Result<(), AbundioError> {
+        self.set_setting(AGENT_SEEDING_PENDING_KEY, "1")
+    }
+
+    /// Spends the one-time claim. Called on the upgrade path at startup, and
+    /// again by the frontend once a seed has actually been applied.
+    ///
+    /// An existing install keeps the toggles it has: switching an Agent off
+    /// also removes its hooks, so seeding a configured app would move switches
+    /// the user is relying on. Idempotent, and clears the pending marker since
+    /// nothing is owed any more.
+    pub fn mark_agent_seeding_done(&self) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, '1')
+             ON CONFLICT(key) DO NOTHING",
+            [AGENT_SEEDING_KEY],
+        )?;
+        conn.execute(
+            "DELETE FROM settings WHERE key = ?1",
+            [AGENT_SEEDING_PENDING_KEY],
+        )?;
+        Ok(())
+    }
+
+    /// Whether the one-time claim has already been spent.
+    pub fn agent_seeding_is_done(&self) -> Result<bool, AbundioError> {
+        Ok(self.get_setting(AGENT_SEEDING_KEY)?.is_some())
+    }
 }
+
+/// What startup should record about **Agent seeding**, given the three facts it
+/// can observe. Pure, because this is the part of the mechanism where a wrong
+/// answer is silent: it doesn't fail, it just leaves a user with nine toggles
+/// they never set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeedingStartupAction {
+    /// This launch created the database. Note that a seed is owed, so a later
+    /// launch can still tell this apart from an upgrade.
+    MarkPending,
+    /// The database predates **Agent seeding** entirely — the upgrade path.
+    /// Spend the claim without seeding.
+    MarkDone,
+    /// Either seeding already happened, or an earlier launch created this
+    /// install and still owes a seed. Leave the claim alone so it can retry.
+    Nothing,
+}
+
+/// Decide what startup should record. See [`SeedingStartupAction`].
+///
+/// The ordering matters: `pending` is only meaningful while `seeded` is false,
+/// and "the file already existed" means *upgrade* only when no earlier launch
+/// claimed it as a new install.
+pub fn seeding_startup_action(
+    db_was_absent: bool,
+    seeded: bool,
+    pending: bool,
+) -> SeedingStartupAction {
+    if seeded {
+        SeedingStartupAction::Nothing
+    } else if db_was_absent {
+        SeedingStartupAction::MarkPending
+    } else if pending {
+        SeedingStartupAction::Nothing
+    } else {
+        SeedingStartupAction::MarkDone
+    }
+}
+
+/// App-global `settings` key recording that **Agent seeding** has had its one
+/// chance — whether it was used (a new install) or spent unseeded (an upgrade).
+pub const AGENT_SEEDING_KEY: &str = "agents_seeded";
+
+/// App-global `settings` key marking an install this app created but has not
+/// seeded yet. Its absence on a database that already existed is what
+/// identifies the upgrade path.
+pub const AGENT_SEEDING_PENDING_KEY: &str = "agents_seeding_pending";
 
 #[cfg(test)]
 mod tests {
@@ -848,6 +939,93 @@ mod tests {
         store.set_setting("b", "2").unwrap();
         assert_eq!(store.get_setting("a").unwrap(), Some("1".to_string()));
         assert_eq!(store.get_setting("b").unwrap(), Some("2".to_string()));
+    }
+
+    // ── Agent seeding (ADR-0037) ──
+
+    /// The truth table startup depends on. A wrong answer here is silent — it
+    /// doesn't fail, it leaves a user with nine toggles they never set.
+    #[test]
+    fn startup_marks_a_brand_new_install_as_pending() {
+        assert_eq!(
+            seeding_startup_action(true, false, false),
+            SeedingStartupAction::MarkPending
+        );
+    }
+
+    /// The bug this table exists to prevent: on launch 2 of a new install whose
+    /// first scan found nothing, the database file exists — but the pending
+    /// marker says an earlier launch created it and still owes a seed, so the
+    /// claim must survive for this launch to retry.
+    #[test]
+    fn startup_leaves_an_unseeded_new_install_alone() {
+        assert_eq!(
+            seeding_startup_action(false, false, true),
+            SeedingStartupAction::Nothing
+        );
+    }
+
+    /// A database that already existed and was never marked pending predates
+    /// the feature — spend the claim without seeding, so an upgrade keeps the
+    /// toggles (and the hooks) the user has.
+    #[test]
+    fn startup_spends_the_claim_on_an_upgrade() {
+        assert_eq!(
+            seeding_startup_action(false, false, false),
+            SeedingStartupAction::MarkDone
+        );
+    }
+
+    /// Once seeded, nothing startup observes can change the answer.
+    #[test]
+    fn startup_does_nothing_once_seeding_is_done() {
+        for db_was_absent in [true, false] {
+            for pending in [true, false] {
+                assert_eq!(
+                    seeding_startup_action(db_was_absent, true, pending),
+                    SeedingStartupAction::Nothing,
+                    "seeded should win over ({db_was_absent}, {pending})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn seeding_pending_round_trips_and_is_idempotent() {
+        let store = test_store();
+        assert!(!store.agent_seeding_is_pending().unwrap());
+        store.mark_agent_seeding_pending().unwrap();
+        store.mark_agent_seeding_pending().unwrap();
+        assert!(store.agent_seeding_is_pending().unwrap());
+    }
+
+    /// Committing clears the debt as well as spending the claim, so a later
+    /// launch reads a plain "done" rather than "done but still owed".
+    #[test]
+    fn marking_done_spends_the_claim_and_clears_pending() {
+        let store = test_store();
+        store.mark_agent_seeding_pending().unwrap();
+        store.mark_agent_seeding_done().unwrap();
+
+        assert!(store.agent_seeding_is_done().unwrap());
+        assert!(!store.agent_seeding_is_pending().unwrap());
+    }
+
+    #[test]
+    fn marking_done_is_idempotent() {
+        let store = test_store();
+        store.mark_agent_seeding_done().unwrap();
+        store.mark_agent_seeding_done().unwrap();
+        assert!(store.agent_seeding_is_done().unwrap());
+    }
+
+    /// A fresh install has written neither key — that pair of absences is what
+    /// the startup decision reads.
+    #[test]
+    fn both_seeding_keys_are_absent_on_a_fresh_store() {
+        let store = test_store();
+        assert_eq!(store.get_setting(AGENT_SEEDING_KEY).unwrap(), None);
+        assert_eq!(store.get_setting(AGENT_SEEDING_PENDING_KEY).unwrap(), None);
     }
 
     #[test]

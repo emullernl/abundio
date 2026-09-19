@@ -433,6 +433,132 @@ function AddAgentForm({
 	);
 }
 
+/* ─── Match-to-installed action ─── */
+
+/**
+ * Re-runs **Agent seeding** on demand: a `$PATH` rescan, then the built-in
+ * Agents' Watched toggles set from what it found. The same rule a first run
+ * applies (`lib/agentSeeding.ts`), so the button can never drift from it.
+ *
+ * Deliberately **not** called "Detect": in this section that word belongs to
+ * the green *Detected* badge, which means one thing — the command is on
+ * `$PATH`. This button acts on the toggles instead. See ADR-0037 and the
+ * *Installed* / *Watched* entries in CONTEXT.md.
+ *
+ * No confirm dialog — every effect is one toggle-flip away from undone.
+ */
+function MatchToInstalledButton({ onDone }: { onDone: () => void }) {
+	const [busy, setBusy] = useState(false);
+	const [result, setResult] = useState<MatchOutcome | null>(null);
+	const [hovered, setHovered] = useState(false);
+
+	// The result line is a transient acknowledgement, not state: it says the
+	// press landed, then gets out of the way. The rows themselves are the
+	// lasting answer.
+	useEffect(() => {
+		if (!result) return;
+		const t = setTimeout(() => setResult(null), 6000);
+		return () => clearTimeout(t);
+	}, [result]);
+
+	const run = useCallback(async () => {
+		setBusy(true);
+		setResult(null);
+		let outcome: MatchOutcome = "failed";
+		try {
+			const { agents, matchAgentsToInstalled } = useSettingsStore.getState();
+			// Rescan first: the section's last scan may predate an install made
+			// minutes ago, and matching against a stale set is the one way this
+			// button could switch off an Agent that is actually there.
+			await useAgentRegistryStore
+				.getState()
+				.reload(agents.map((a) => a.command));
+			const installed = useAgentRegistryStore.getState().installedCommands;
+			outcome = await matchAgentsToInstalled(installed);
+		} catch {
+			// Stays "failed" — deliberately not "empty-scan". That message names
+			// the PATH as the culprit, and it is only allowed to say so when the
+			// scan genuinely came back empty.
+			outcome = "failed";
+		} finally {
+			setResult(outcome);
+			setBusy(false);
+		}
+		// Outside the try: a throw from refreshing the hook footprint happens
+		// *after* the toggles have already moved, and must not be reported as a
+		// match that didn't happen while the rows below visibly changed.
+		onDone();
+	}, [onDone]);
+
+	const message = result ? MATCH_MESSAGE[result] : null;
+
+	return (
+		<div className="flex items-center gap-2.5 min-w-0">
+			{message && (
+				<span
+					className="truncate"
+					style={{
+						fontSize: 11,
+						lineHeight: 1.3,
+						color: HOOK_TONE_COLOR[message.tone],
+						// Fades in rather than appearing: the button sits in a dense
+						// row of badges, and a hard swap there reads as a glitch.
+						animation: "abundio-fade-in 160ms ease-out",
+					}}
+				>
+					{message.text}
+				</span>
+			)}
+			<button
+				type="button"
+				onClick={run}
+				disabled={busy}
+				onMouseEnter={() => setHovered(true)}
+				onMouseLeave={() => setHovered(false)}
+				title="Switch each built-in agent on if its command is on your PATH, off if it isn't. Your own custom agents are left alone."
+				className="flex-shrink-0 rounded"
+				style={{
+					fontSize: 10,
+					fontWeight: 600,
+					letterSpacing: "0.05em",
+					textTransform: "uppercase",
+					padding: "4px 8px",
+					color: busy ? "var(--fg-secondary)" : "var(--fg-primary)",
+					backgroundColor:
+						hovered && !busy
+							? "color-mix(in srgb, var(--fg-primary) 8%, transparent)"
+							: "transparent",
+					border: "1px solid var(--border)",
+					cursor: busy ? "default" : "pointer",
+					opacity: busy ? 0.5 : 1,
+					transition: "background-color 120ms ease, opacity 120ms ease",
+				}}
+			>
+				{busy ? "Matching\u2026" : "Match to installed"}
+			</button>
+		</div>
+	);
+}
+
+/** `settingsStore.matchAgentsToInstalled`'s result, plus `"failed"` for a throw
+ *  on the way there — which is not the same thing and must not borrow the
+ *  empty-scan wording. */
+type MatchOutcome = "changed" | "already-matching" | "empty-scan" | "failed";
+
+const MATCH_MESSAGE: Record<MatchOutcome, { text: string; tone: HookTone }> = {
+	changed: { text: "Toggles now match what's installed.", tone: "success" },
+	"already-matching": { text: "Already matching.", tone: "muted" },
+	// Never phrased as "no agents found". An empty scan means the login shell
+	// didn't answer far more often than it means the machine has none, and
+	// saying the wrong one sends the user looking in the wrong place. Which is
+	// also why anything that isn't an empty scan gets the generic line below.
+	"empty-scan": {
+		text: "Couldn't read your shell's PATH \u2014 nothing changed.",
+		tone: "warning",
+	},
+	failed: { text: "Couldn't match \u2014 nothing changed.", tone: "error" },
+};
+
 export function AgentsSection() {
 	const agents = useSettingsStore((s) => s.agents);
 	const addAgent = useSettingsStore((s) => s.addAgent);
@@ -482,7 +608,13 @@ export function AgentsSection() {
 					// are the authoritative, self-updating answer.
 					description="Registers hooks in every supported agent so its status icon reflects real agent state — including a distinct icon when an agent is waiting for your input. Edits each agent's global config; expand a row below to see exactly which file and which events. When off, those entries are removed and agent status falls back to detecting terminal activity, which can't tell when an agent is waiting for your input."
 				/>
-				<SectionLabel>Coding Agents</SectionLabel>
+				{/* The label and the action share a baseline: the button operates on
+				    the toggles in the rows below, so it belongs to their heading and
+				    not to the Add-agent form at the foot of the pane. */}
+				<div className="flex items-baseline justify-between gap-3">
+					<SectionLabel>Coding Agents</SectionLabel>
+					<MatchToInstalledButton onDone={refreshHookStatuses} />
+				</div>
 				<p
 					style={{
 						fontSize: 12,
@@ -491,8 +623,11 @@ export function AgentsSection() {
 						lineHeight: 1.5,
 					}}
 				>
-					Agents are detected by matching the command run in a terminal. Enable
-					or disable detection per agent, or add your own.
+					Choose which agents Abundio watches for. A watched agent is offered in
+					the launch menus, recognised when you run it in a terminal, and given
+					status hooks. <strong style={{ fontWeight: 600 }}>Detected</strong>{" "}
+					means the command was found on your PATH — separate from whether you
+					want it watched.
 				</p>
 				<div className="flex flex-col gap-0.5">
 					{agents.map((agent) => (

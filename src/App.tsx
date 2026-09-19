@@ -41,7 +41,7 @@ import {
 } from "./lib/busyPty";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
-import { listen, updates, windowSession } from "./lib/ipc";
+import { agentRegistry, listen, updates, windowSession } from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
@@ -472,10 +472,35 @@ export function App() {
 		};
 	}, []);
 
-	// Detect installed agent CLIs once at startup.
+	// Scan `$PATH` for installed agent CLIs once at startup and, on a genuinely
+	// new install, seed the per-Agent Watched toggles from the result so the
+	// launch menus describe this machine instead of listing all nine built-ins.
+	//
+	// The order is load-bearing: **scan → claim → seed → commit**. Claiming
+	// before the scan has found something would burn the one-time claim on a
+	// login shell that timed out; committing before the seed has landed would
+	// burn it on a seed that never happened. Nothing reaches disk until the
+	// toggles are actually set, so any failure in between simply leaves the
+	// claim for the next launch. See ADR-0037.
 	useEffect(() => {
-		const commands = useSettingsStore.getState().agents.map((a) => a.command);
-		useAgentRegistryStore.getState().load(commands);
+		const settings = useSettingsStore.getState();
+		const registry = useAgentRegistryStore.getState();
+		registry
+			.load(settings.agents.map((a) => a.command))
+			.then(async () => {
+				const installed = useAgentRegistryStore.getState().installedCommands;
+				if (installed.size === 0) return;
+				if (!(await agentRegistry.claimSeeding())) return;
+				await useSettingsStore.getState().matchAgentsToInstalled(installed);
+				await agentRegistry.commitSeeding();
+			})
+			.catch((err) => {
+				// Must never take the app down with it. Nothing durable has been
+				// written unless the commit itself succeeded, so the toggles stay
+				// as they are and the next launch — which still holds the claim —
+				// tries again.
+				console.error("[agents] first-run seeding failed:", err);
+			});
 	}, []);
 
 	// Agent Turn telemetry: wire the tracker to the activity store. Turns are
