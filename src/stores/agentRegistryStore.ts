@@ -11,21 +11,34 @@ interface AgentRegistryState {
 	reload: (commands: string[]) => Promise<void>;
 }
 
-async function scan(
+/** The scan currently in flight, if any. Callers that arrive mid-scan join it
+ *  rather than returning early: both of them (first-run **Agent seeding** and
+ *  the Settings "Match to installed" button) act on `installedCommands` the
+ *  moment their promise resolves, and an early return hands them the empty set
+ *  the in-flight scan is about to replace. See ADR-0037. */
+let inFlight: Promise<void> | null = null;
+
+function scan(
 	set: (partial: Partial<AgentRegistryState>) => void,
 	commands: string[],
 ): Promise<void> {
 	set({ loading: true });
-	try {
-		const installed = await agentRegistryApi.listInstalled(commands);
-		set({
-			installedCommands: new Set(installed),
-			loaded: true,
-			loading: false,
+	inFlight = agentRegistryApi
+		.listInstalled(commands)
+		.then((installed) => {
+			set({
+				installedCommands: new Set(installed),
+				loaded: true,
+				loading: false,
+			});
+		})
+		.catch(() => {
+			set({ installedCommands: new Set(), loaded: true, loading: false });
+		})
+		.finally(() => {
+			inFlight = null;
 		});
-	} catch {
-		set({ installedCommands: new Set(), loaded: true, loading: false });
-	}
+	return inFlight;
 }
 
 export const useAgentRegistryStore = create<AgentRegistryState>((set, get) => ({
@@ -34,12 +47,13 @@ export const useAgentRegistryStore = create<AgentRegistryState>((set, get) => ({
 	loading: false,
 
 	load: async (commands) => {
-		if (get().loaded || get().loading) return;
+		if (get().loaded) return;
+		if (inFlight) return inFlight;
 		await scan(set, commands);
 	},
 
 	reload: async (commands) => {
-		if (get().loading) return;
+		if (inFlight) return inFlight;
 		await scan(set, commands);
 	},
 }));

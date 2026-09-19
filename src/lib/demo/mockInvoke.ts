@@ -210,6 +210,10 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			const requested = (args.commands as string[]) ?? [];
 			return requested.filter((c) => fixtures.installedAgentCommands.has(c));
 		}
+		// The demo's agent set is curated, so seeding must never run against it
+		// — and the demo has no install to seed anyway. See ADR-0037.
+		case "agents_claim_seeding":
+			return false;
 		case "agent_hooks_provision":
 		case "agent_hooks_provision_startup":
 			return undefined;

@@ -689,6 +689,11 @@ export const shells = {
 export const agentRegistry = {
 	listInstalled: (commands: string[]) =>
 		invoke<string[]>("list_installed_agent_commands", { commands }),
+	/** Claim the one-time right to seed the per-Agent Watched toggles from what
+	 *  is installed. `true` means this caller should seed. Call it only after a
+	 *  scan has actually found something — spending the claim on a shell that
+	 *  timed out would leave the toggles unseeded forever. See ADR-0037. */
+	claimSeeding: () => invoke<boolean>("agents_claim_seeding"),
 };
 
 /** On-disk registration state of one Agent's hooks (mirrors Rust `HookConfigState`). */

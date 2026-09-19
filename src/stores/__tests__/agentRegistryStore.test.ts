@@ -52,6 +52,28 @@ describe("agentRegistryStore", () => {
 		]);
 	});
 
+	// Both seeding callers read `installedCommands` the instant their promise
+	// resolves. A caller that arrives mid-scan must therefore join that scan,
+	// not return to the empty set it is about to replace. See ADR-0037.
+	it("a caller arriving mid-scan waits for the in-flight scan", async () => {
+		let release: (v: string[]) => void = () => {};
+		mockApi.listInstalled.mockReturnValueOnce(
+			new Promise<string[]>((resolve) => {
+				release = resolve;
+			}),
+		);
+
+		const first = useAgentRegistryStore.getState().load(["claude"]);
+		const second = useAgentRegistryStore.getState().reload(["claude"]);
+		release(["claude"]);
+		await Promise.all([first, second]);
+
+		expect(mockApi.listInstalled).toHaveBeenCalledTimes(1);
+		expect([...useAgentRegistryStore.getState().installedCommands]).toEqual([
+			"claude",
+		]);
+	});
+
 	it("on backend failure, marks loaded with an empty set", async () => {
 		mockApi.listInstalled.mockRejectedValue(new Error("boom"));
 

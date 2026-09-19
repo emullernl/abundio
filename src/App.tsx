@@ -41,7 +41,7 @@ import {
 } from "./lib/busyPty";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
-import { listen, updates, windowSession } from "./lib/ipc";
+import { agentRegistry, listen, updates, windowSession } from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
@@ -472,10 +472,31 @@ export function App() {
 		};
 	}, []);
 
-	// Detect installed agent CLIs once at startup.
+	// Scan `$PATH` for installed agent CLIs once at startup and, on a genuinely
+	// new install, seed the per-Agent Watched toggles from the result so the
+	// launch menus describe this machine instead of listing all nine built-ins.
+	//
+	// The order is load-bearing: **scan → claim → seed**. The claim is spent
+	// once per install, so claiming before the scan has found something would
+	// burn it on a login shell that timed out, and no later launch would retry.
+	// See ADR-0037.
 	useEffect(() => {
-		const commands = useSettingsStore.getState().agents.map((a) => a.command);
-		useAgentRegistryStore.getState().load(commands);
+		const settings = useSettingsStore.getState();
+		const registry = useAgentRegistryStore.getState();
+		registry
+			.load(settings.agents.map((a) => a.command))
+			.then(async () => {
+				const installed = useAgentRegistryStore.getState().installedCommands;
+				if (installed.size === 0) return;
+				if (!(await agentRegistry.claimSeeding())) return;
+				await useSettingsStore.getState().matchAgentsToInstalled(installed);
+			})
+			.catch((err) => {
+				// A failed claim or seed must never take the app down with it —
+				// the toggles simply stay as they are and the next launch, which
+				// still holds the claim, tries again.
+				console.error("[agents] first-run seeding failed:", err);
+			});
 	}, []);
 
 	// Agent Turn telemetry: wire the tracker to the activity store. Turns are
