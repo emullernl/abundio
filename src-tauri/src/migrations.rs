@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use std::sync::OnceLock;
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("001_init", include_str!("../migrations/001_init.sql")),
@@ -605,6 +606,27 @@ mod tests {
     }
 }
 
+/// Whether this process started with no database on disk — i.e. a genuinely
+/// new install, as opposed to an upgrade.
+///
+/// Sampled inside [`open_db`], *after* the previous-epoch import and *before*
+/// `Connection::open` creates the file. That ordering is the whole answer: a
+/// returning user's database is already in place by the time we look (either it
+/// was never moved, or `import_legacy_state_if_needed` has just copied it
+/// there — see ADR-0025), so absence at that instant means nobody has ever run
+/// this app.
+///
+/// Memoised, because `open_db` is called more than once during startup and
+/// every call after the first would see the file the first one created.
+///
+/// Returns `false` before the first `open_db` — nothing can meaningfully ask
+/// this question before the database has been opened.
+static DB_WAS_ABSENT_AT_STARTUP: OnceLock<bool> = OnceLock::new();
+
+pub fn db_was_absent_at_startup() -> bool {
+    *DB_WAS_ABSENT_AT_STARTUP.get().unwrap_or(&false)
+}
+
 pub fn open_db() -> Result<Connection, rusqlite::Error> {
     // On first run of this data epoch, seed it from the previous version's
     // database (a copy, so older builds keep working — see app_paths.rs).
@@ -612,6 +634,11 @@ pub fn open_db() -> Result<Connection, rusqlite::Error> {
     crate::app_paths::import_legacy_state_if_needed();
 
     let db_path = crate::app_paths::db_path();
+
+    // Sample before `Connection::open` below, which creates the file. See
+    // DB_WAS_ABSENT_AT_STARTUP.
+    let _ = DB_WAS_ABSENT_AT_STARTUP.set(!db_path.exists());
+
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }

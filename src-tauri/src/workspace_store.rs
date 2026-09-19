@@ -792,7 +792,46 @@ impl WorkspaceStore {
         )?;
         Ok(())
     }
+
+    // ── Agent seeding (ADR-0037) ──
+
+    /// Claims the one-time right to seed the per-Agent **Watched** toggles from
+    /// what is **Installed** on `$PATH`. Returns `true` to exactly one caller,
+    /// ever, on this install.
+    ///
+    /// Atomic by construction: `ON CONFLICT DO NOTHING` makes the read and the
+    /// write one statement, so two Windows racing here cannot both win. It
+    /// lives in this table rather than the frontend's `localStorage` because
+    /// localStorage is per-webview on macOS — each Window would hold its own
+    /// copy, seed independently, and then broadcast the result over the
+    /// toggles the user had already set elsewhere.
+    ///
+    /// Callers must scan `$PATH` first and claim only once the scan has
+    /// actually found something: claiming up front and then declining to seed
+    /// would spend the single claim on a shell timeout, and no later launch
+    /// would retry.
+    pub fn claim_agent_seeding(&self) -> Result<bool, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let inserted = conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO NOTHING",
+            [AGENT_SEEDING_KEY, "1"],
+        )?;
+        Ok(inserted > 0)
+    }
+
+    /// Spends the claim without seeding anything — the upgrade path. An
+    /// existing install keeps the toggles it has: switching an Agent off also
+    /// removes its hooks, so seeding a configured app would move switches the
+    /// user is relying on. Idempotent.
+    pub fn mark_agent_seeding_done(&self) -> Result<(), AbundioError> {
+        self.claim_agent_seeding().map(|_| ())
+    }
 }
+
+/// App-global `settings` key recording that **Agent seeding** has had its one
+/// chance — whether it was used (a new install) or spent unseeded (an upgrade).
+pub const AGENT_SEEDING_KEY: &str = "agents_seeded";
 
 #[cfg(test)]
 mod tests {
@@ -848,6 +887,44 @@ mod tests {
         store.set_setting("b", "2").unwrap();
         assert_eq!(store.get_setting("a").unwrap(), Some("1".to_string()));
         assert_eq!(store.get_setting("b").unwrap(), Some("2".to_string()));
+    }
+
+    // ── Agent seeding (ADR-0037) ──
+
+    /// The claim is the whole mechanism: exactly one caller, ever, may seed.
+    #[test]
+    fn agent_seeding_can_be_claimed_only_once() {
+        let store = test_store();
+        assert!(store.claim_agent_seeding().unwrap());
+        assert!(!store.claim_agent_seeding().unwrap());
+        assert!(!store.claim_agent_seeding().unwrap());
+    }
+
+    /// The upgrade path spends the claim without seeding, so a later caller —
+    /// a second Window, or the next launch — cannot seed a configured app.
+    #[test]
+    fn marking_done_spends_the_claim() {
+        let store = test_store();
+        store.mark_agent_seeding_done().unwrap();
+        assert!(!store.claim_agent_seeding().unwrap());
+    }
+
+    #[test]
+    fn marking_done_is_idempotent() {
+        let store = test_store();
+        store.mark_agent_seeding_done().unwrap();
+        store.mark_agent_seeding_done().unwrap();
+        assert!(!store.claim_agent_seeding().unwrap());
+    }
+
+    /// A fresh install has never written the key — that absence is what the
+    /// startup check reads to decide whether to spend the claim unseeded.
+    #[test]
+    fn agent_seeding_key_is_absent_on_a_fresh_store() {
+        let store = test_store();
+        assert_eq!(store.get_setting(AGENT_SEEDING_KEY).unwrap(), None);
+        store.claim_agent_seeding().unwrap();
+        assert!(store.get_setting(AGENT_SEEDING_KEY).unwrap().is_some());
     }
 
     #[test]

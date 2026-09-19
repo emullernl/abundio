@@ -678,6 +678,17 @@ pub fn run() {
             // spawned task, or two connections could race the same migration.
             let conn = migrations::open_db().expect("Failed to open database");
             let store = WorkspaceStore::new(conn);
+
+            // Agent seeding is for new installs only (ADR-0037). An upgrade
+            // keeps whatever the user has set — switching an Agent off also
+            // removes its hooks — so spend the one-time claim here, unused,
+            // the moment we can see this database predates this launch.
+            if !migrations::db_was_absent_at_startup() {
+                if let Err(e) = store.mark_agent_seeding_done() {
+                    log::warn!("[agents] could not mark agent seeding as done: {e}");
+                }
+            }
+
             app.manage(store);
 
             let profile_conn = migrations::open_db().expect("Failed to open database");
@@ -1210,6 +1221,7 @@ pub fn run() {
             env_vars::env_vars_reorder,
             env_vars::env_retry_key,
             agent_registry::list_installed_agent_commands,
+            agent_registry::agents_claim_seeding,
             commands::agent_hooks_provision,
             commands::agent_hooks_provision_startup,
             commands::ensure_agent_hooks,
