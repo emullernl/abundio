@@ -476,10 +476,12 @@ export function App() {
 	// new install, seed the per-Agent Watched toggles from the result so the
 	// launch menus describe this machine instead of listing all nine built-ins.
 	//
-	// The order is load-bearing: **scan → claim → seed**. The claim is spent
-	// once per install, so claiming before the scan has found something would
-	// burn it on a login shell that timed out, and no later launch would retry.
-	// See ADR-0037.
+	// The order is load-bearing: **scan → claim → seed → commit**. Claiming
+	// before the scan has found something would burn the one-time claim on a
+	// login shell that timed out; committing before the seed has landed would
+	// burn it on a seed that never happened. Nothing reaches disk until the
+	// toggles are actually set, so any failure in between simply leaves the
+	// claim for the next launch. See ADR-0037.
 	useEffect(() => {
 		const settings = useSettingsStore.getState();
 		const registry = useAgentRegistryStore.getState();
@@ -490,11 +492,13 @@ export function App() {
 				if (installed.size === 0) return;
 				if (!(await agentRegistry.claimSeeding())) return;
 				await useSettingsStore.getState().matchAgentsToInstalled(installed);
+				await agentRegistry.commitSeeding();
 			})
 			.catch((err) => {
-				// A failed claim or seed must never take the app down with it —
-				// the toggles simply stay as they are and the next launch, which
-				// still holds the claim, tries again.
+				// Must never take the app down with it. Nothing durable has been
+				// written unless the commit itself succeeded, so the toggles stay
+				// as they are and the next launch — which still holds the claim —
+				// tries again.
 				console.error("[agents] first-run seeding failed:", err);
 			});
 	}, []);

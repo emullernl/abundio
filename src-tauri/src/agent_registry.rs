@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::State;
 
 use crate::dev_environments::find_in_path;
@@ -15,20 +17,43 @@ pub fn list_installed_agent_commands(commands: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Set once a Window has taken the claim in this process, so a second Window
+/// cannot seed concurrently. Process-local on purpose: a Tauri app is one
+/// process, so this covers every Window, and unlike a database write it leaves
+/// nothing behind if the seed never completes.
+static SEEDING_CLAIMED_THIS_LAUNCH: AtomicBool = AtomicBool::new(false);
+
 /// Claims the one-time right to seed the per-Agent **Watched** toggles from
-/// what is **Installed**. `true` means this caller should seed; `false` means
-/// somebody already has (or this is an upgrade, where startup spends the claim
-/// unseeded). See ADR-0037.
+/// what is **Installed**. `true` means this caller should seed, and must then
+/// call [`agents_commit_seeding`]. See ADR-0037.
 ///
-/// The frontend must call this only *after* a `$PATH` scan has found at least
-/// one installed Agent — an empty scan is far likelier to be a shell that
-/// timed out than a machine with no coding CLIs, and spending the claim on it
-/// would leave the toggles unseeded forever.
+/// The claim is deliberately **not** written to the database here. Committing
+/// it up front spends it even when the seed never lands — an exception on the
+/// way, or a quit before zustand persists `abundio-settings` — and no later
+/// launch would retry. So the claim is split: mutual exclusion between Windows
+/// comes from a process-local flag, durability comes from
+/// [`agents_commit_seeding`] after the toggles are actually set.
+///
+/// Callers must scan `$PATH` first and claim only once the scan has found
+/// something. An empty scan is read as a failed scan, never as a machine with
+/// no Agents.
 #[tauri::command]
 pub async fn agents_claim_seeding(
     store: State<'_, WorkspaceStore>,
 ) -> Result<bool, AbundioError> {
-    store.claim_agent_seeding()
+    if store.agent_seeding_is_done()? {
+        return Ok(false);
+    }
+    // `swap` rather than load-then-store: two Windows can reach this at once.
+    Ok(!SEEDING_CLAIMED_THIS_LAUNCH.swap(true, Ordering::SeqCst))
+}
+
+/// Spends the claim, now that a seed has actually been applied. Idempotent.
+#[tauri::command]
+pub async fn agents_commit_seeding(
+    store: State<'_, WorkspaceStore>,
+) -> Result<(), AbundioError> {
+    store.mark_agent_seeding_done()
 }
 
 #[cfg(test)]

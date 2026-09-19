@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use std::path::Path;
 use std::sync::OnceLock;
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -181,6 +182,43 @@ fn split_fk_pragmas(sql: &str) -> (String, String, String) {
     (prefix, body, suffix)
 }
 
+/// Whether this process started with no database on disk — i.e. a genuinely
+/// new install, as opposed to an upgrade.
+///
+/// Sampled inside [`open_db`], *after* the previous-epoch import and *before*
+/// `Connection::open` creates the file. That ordering is the whole answer: a
+/// returning user's database is already in place by the time we look (either it
+/// was never moved, or `import_legacy_state_if_needed` has just copied it
+/// there — see ADR-0025), so absence at that instant means nobody has ever run
+/// this app.
+///
+/// Memoised, because `open_db` is called more than once during startup and
+/// every call after the first would see the file the first one created.
+static DB_WAS_ABSENT_AT_STARTUP: OnceLock<bool> = OnceLock::new();
+
+/// The sampling itself, pure and takeable against a temp dir. [`open_db`] keeps
+/// only the `OnceLock::set`, so the interesting half is testable without the
+/// process-global memoisation — which a test could set exactly once, poisoning
+/// every other test in the binary.
+fn sample_db_absence(db_path: &Path) -> bool {
+    !db_path.exists()
+}
+
+/// See [`DB_WAS_ABSENT_AT_STARTUP`].
+///
+/// Callers must run after the first [`open_db`]. Before that there is no answer,
+/// and the `false` returned here is read by its caller as "this is an existing
+/// install" — which silently disables **Agent seeding** for every new install
+/// (ADR-0037). The `debug_assert` turns that into a test failure rather than a
+/// shipped bug with no symptom but a toggle set nobody asked for.
+pub fn db_was_absent_at_startup() -> bool {
+    debug_assert!(
+        DB_WAS_ABSENT_AT_STARTUP.get().is_some(),
+        "db_was_absent_at_startup called before the first open_db"
+    );
+    *DB_WAS_ABSENT_AT_STARTUP.get().unwrap_or(&false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +227,35 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn
+    }
+
+    // ── Fresh-install sampling (ADR-0037) ──
+
+    /// The whole point: a path with nothing at it means nobody has ever run
+    /// this app. `open_db` samples this before `Connection::open` creates the
+    /// file, so it is the one moment the answer is still available.
+    #[test]
+    fn sample_db_absence_is_true_when_the_file_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(super::sample_db_absence(&dir.path().join("abundio.db")));
+    }
+
+    #[test]
+    fn sample_db_absence_is_false_once_the_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("abundio.db");
+        std::fs::write(&db, b"").unwrap();
+        assert!(!super::sample_db_absence(&db));
+    }
+
+    /// An empty file still counts as present — the upgrade path must not treat
+    /// a database `Connection::open` created a moment ago as a new install.
+    #[test]
+    fn sample_db_absence_does_not_care_about_the_file_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("abundio.db");
+        std::fs::write(&db, b"not a database").unwrap();
+        assert!(!super::sample_db_absence(&db));
     }
 
     #[test]
@@ -606,27 +673,6 @@ mod tests {
     }
 }
 
-/// Whether this process started with no database on disk — i.e. a genuinely
-/// new install, as opposed to an upgrade.
-///
-/// Sampled inside [`open_db`], *after* the previous-epoch import and *before*
-/// `Connection::open` creates the file. That ordering is the whole answer: a
-/// returning user's database is already in place by the time we look (either it
-/// was never moved, or `import_legacy_state_if_needed` has just copied it
-/// there — see ADR-0025), so absence at that instant means nobody has ever run
-/// this app.
-///
-/// Memoised, because `open_db` is called more than once during startup and
-/// every call after the first would see the file the first one created.
-///
-/// Returns `false` before the first `open_db` — nothing can meaningfully ask
-/// this question before the database has been opened.
-static DB_WAS_ABSENT_AT_STARTUP: OnceLock<bool> = OnceLock::new();
-
-pub fn db_was_absent_at_startup() -> bool {
-    *DB_WAS_ABSENT_AT_STARTUP.get().unwrap_or(&false)
-}
-
 pub fn open_db() -> Result<Connection, rusqlite::Error> {
     // On first run of this data epoch, seed it from the previous version's
     // database (a copy, so older builds keep working — see app_paths.rs).
@@ -637,7 +683,7 @@ pub fn open_db() -> Result<Connection, rusqlite::Error> {
 
     // Sample before `Connection::open` below, which creates the file. See
     // DB_WAS_ABSENT_AT_STARTUP.
-    let _ = DB_WAS_ABSENT_AT_STARTUP.set(!db_path.exists());
+    let _ = DB_WAS_ABSENT_AT_STARTUP.set(sample_db_absence(&db_path));
 
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).ok();

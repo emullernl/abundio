@@ -8,18 +8,18 @@ Vocabulary is fixed by CONTEXT.md: **Installed** (on `$PATH`, live, the green *D
 
 `migrations.rs::open_db` already runs `import_legacy_state_if_needed()` before `Connection::open`, so the file's absence at that instant is exactly "new user".
 
-- Add `fn db_was_absent_at_startup() -> bool`, memoised in a `OnceLock<bool>` set on the **first** `open_db` call (it is called two or three times at startup; later calls must not observe the file the first one created).
-- Test: absent → true; a second call after the file exists → still true.
+- `sample_db_absence(&Path)` is the pure half, tested against a tempdir. `open_db` keeps only the `OnceLock::set`, so the memoisation — process-global, settable once, and so poisonous to a test binary — stays out of the tests.
+- `db_was_absent_at_startup()` `debug_assert`s that sampling has happened. Its `false` default is read by its caller as "existing install", which would silently disable seeding for every new install; the assert turns a misplaced call into a test failure instead.
 
 ## 2. Rust: the one-time claim
 
-Uses the existing app-global `settings` key-value table (`workspace_store.rs:764`) — no migration needed. Key: `agents_seeded`.
+Uses the existing app-global `settings` key-value table (`workspace_store.rs:764`) — no migration needed. Two keys: `agents_seeded` (the claim, spent) and `agents_seeding_pending` (this install was created by an earlier launch and still owes a seed).
 
-- `WorkspaceStore::claim_agent_seeding() -> Result<bool, AbundioError>`: inside a single transaction, return `false` if the key exists; otherwise write it and return `true`. Must be atomic — two Windows can call it at once.
-- `WorkspaceStore::mark_agent_seeding_done()` for the existing-install path (idempotent).
-- In `lib.rs` setup, after the store is built: if `!db_was_absent_at_startup()` and the key is absent, mark it done.
-- `#[tauri::command] agents_claim_seeding` in `commands.rs`, returning `Result<bool, AbundioError>`.
-- Tests: a fresh in-memory store claims once and only once; marking done makes the claim return false.
+- `seeding_startup_action(db_was_absent, seeded, pending) -> SeedingStartupAction` is pure and holds the whole decision. **The file's existence alone cannot decide it**: that is true on every launch after the first, so a new install whose first scan came back empty would have its claim spent unseeded on launch 2.
+- `mark_agent_seeding_pending()` / `mark_agent_seeding_done()` (the latter also clears pending) / `agent_seeding_is_done()` / `agent_seeding_is_pending()`.
+- `agents_claim_seeding` writes **nothing durable**: mutual exclusion between Windows is a process-local `AtomicBool` (a Tauri app is one process), so a seed that never completes leaves the claim intact. `agents_commit_seeding` spends it afterwards.
+- In `lib.rs` setup, apply `seeding_startup_action` to the store.
+- Tests: the three-state truth table, the pending round-trip, commit clearing pending, idempotence.
 
 ## 3. Frontend: the seeding rule
 
@@ -38,19 +38,21 @@ seedWatchedFromInstalled(agents: CodingAgent[], installed: Set<string>): CodingA
 In `App.tsx`, where the startup scan already lives (`useAgentRegistryStore.getState().load(commands)`):
 
 - `await` the scan, then **if** it found at least one Installed Agent, call `agents_claim_seeding()`.
-- Only if the claim returns `true`, apply `seedWatchedFromInstalled` to `settingsStore.agents`, then re-provision hooks the way `toggleAgent` does (`agentHooks.provision(agentHooksEnabled, provisionableAgentIds(...))`) — `provisionStartup` has already run for all nine by then, and an Agent seeded off that happens to have a stale config dir must lose its entries.
-- Order is load-bearing: **scan → claim → seed**. Never claim first.
+- Only if the claim returns `true`, apply `seedWatchedFromInstalled` to `settingsStore.agents`, re-provision hooks the way `toggleAgent` does, then call `agents_commit_seeding()`.
+- Order is load-bearing: **scan → claim → seed → commit**. Never claim first, and never commit before the seed has landed.
 - No gating of the launch menus. For the few seconds before the seed lands the pickers list all nine; they then settle.
+
+`agentRegistryStore` keeps the commands alongside the in-flight scan, so a caller joins it only when that scan covers what the caller asked about; otherwise it queues a fresh scan behind it.
 
 ## 5. Settings ▸ Agents
 
 - Add a *Match toggles to installed agents* button. It calls `reload()` then applies the same `seedWatchedFromInstalled`, then refreshes hook statuses. No confirm dialog; every effect is one toggle-flip away from undone.
-- When the rescan finds nothing Installed, the button changes nothing and says so inline rather than switching everything off.
+- When the rescan finds nothing Installed, the button changes nothing and says so inline rather than switching everything off. A *thrown* failure gets its own generic line — the PATH wording stays attached to the one thing that actually means a PATH problem — and the hook-footprint refresh runs outside the `try`, so a failure there can't report a match that did happen as one that didn't.
 - Reword the section copy: the toggle is no longer described as "detection". Something like "Choose which agents Abundio watches for — enable or disable each, or add your own." The green *Detected* badge keeps its meaning (Installed) and is the only place that word appears.
 
 ## 6. Demo mode
 
-`src/lib/demo/mockInvoke` must answer `agents_claim_seeding` (return `false` — the demo should never seed, its fixture agent set is curated).
+`src/lib/demo/mockInvoke` must answer `agents_claim_seeding` (return `false` — the demo should never seed, its fixture agent set is curated) and `agents_commit_seeding`.
 
 ## 7. Checks
 

@@ -74,6 +74,33 @@ describe("agentRegistryStore", () => {
 		]);
 	});
 
+	// Joining on the *existence* of a scan is not the same as joining on a scan
+	// that answers your question. A caller asking about a command the in-flight
+	// scan never looked up would otherwise be told, with no error, that it is
+	// not installed. See ADR-0037.
+	it("does not join an in-flight scan that omits a requested command", async () => {
+		let release: (v: string[]) => void = () => {};
+		mockApi.listInstalled.mockReturnValueOnce(
+			new Promise<string[]>((resolve) => {
+				release = resolve;
+			}),
+		);
+		mockApi.listInstalled.mockResolvedValueOnce(["claude", "mine"]);
+
+		const first = useAgentRegistryStore.getState().load(["claude"]);
+		// "mine" was added after the first scan started, so its answer isn't in
+		// there — this must wait and scan again rather than join.
+		const second = useAgentRegistryStore.getState().reload(["claude", "mine"]);
+		release(["claude"]);
+		await Promise.all([first, second]);
+
+		expect(mockApi.listInstalled).toHaveBeenCalledTimes(2);
+		expect([...useAgentRegistryStore.getState().installedCommands]).toEqual([
+			"claude",
+			"mine",
+		]);
+	});
+
 	it("on backend failure, marks loaded with an empty set", async () => {
 		mockApi.listInstalled.mockRejectedValue(new Error("boom"));
 

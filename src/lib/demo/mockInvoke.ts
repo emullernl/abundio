@@ -214,6 +214,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		// — and the demo has no install to seed anyway. See ADR-0037.
 		case "agents_claim_seeding":
 			return false;
+		case "agents_commit_seeding":
+			return undefined;
 		case "agent_hooks_provision":
 		case "agent_hooks_provision_startup":
 			return undefined;

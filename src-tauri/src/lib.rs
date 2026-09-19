@@ -679,14 +679,29 @@ pub fn run() {
             let conn = migrations::open_db().expect("Failed to open database");
             let store = WorkspaceStore::new(conn);
 
-            // Agent seeding is for new installs only (ADR-0037). An upgrade
-            // keeps whatever the user has set — switching an Agent off also
-            // removes its hooks — so spend the one-time claim here, unused,
-            // the moment we can see this database predates this launch.
-            if !migrations::db_was_absent_at_startup() {
-                if let Err(e) = store.mark_agent_seeding_done() {
-                    log::warn!("[agents] could not mark agent seeding as done: {e}");
+            // Agent seeding is for new installs only (ADR-0037). Which case
+            // this is cannot be read from the database file's existence alone:
+            // that is true on every launch after the first, so a new install
+            // whose first scan came back empty would have its claim spent
+            // unseeded the very next time the app started. The pending marker
+            // is what separates "created by an earlier launch, still owes a
+            // seed" from "predates the feature".
+            let action = workspace_store::seeding_startup_action(
+                migrations::db_was_absent_at_startup(),
+                store.agent_seeding_is_done().unwrap_or(false),
+                store.agent_seeding_is_pending().unwrap_or(false),
+            );
+            let recorded = match action {
+                workspace_store::SeedingStartupAction::MarkPending => {
+                    store.mark_agent_seeding_pending()
                 }
+                workspace_store::SeedingStartupAction::MarkDone => {
+                    store.mark_agent_seeding_done()
+                }
+                workspace_store::SeedingStartupAction::Nothing => Ok(()),
+            };
+            if let Err(e) = recorded {
+                log::warn!("[agents] could not record agent seeding state ({action:?}): {e}");
             }
 
             app.manage(store);
@@ -1222,6 +1237,7 @@ pub fn run() {
             env_vars::env_retry_key,
             agent_registry::list_installed_agent_commands,
             agent_registry::agents_claim_seeding,
+            agent_registry::agents_commit_seeding,
             commands::agent_hooks_provision,
             commands::agent_hooks_provision_startup,
             commands::ensure_agent_hooks,

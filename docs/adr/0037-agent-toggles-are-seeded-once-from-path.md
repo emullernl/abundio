@@ -24,19 +24,33 @@ If the scan reports **zero** Installed Agents, seeding does not run and the clai
 
 The same guard covers the manual *Match toggles to installed agents* action, which otherwise turns a slow shell into "the button switched everything off".
 
-## Scan first, claim second
+## Scan, claim, seed, commit — in that order
 
-The one-time-ness is a compare-and-set on the app-global `settings` table (`agents_seeded`), not a localStorage key: localStorage is per-WKWebView on macOS, so every **Window** keeps its own copy and each would seed independently — and, because windows broadcast their own store changes, a second Window's seed would overwrite toggles the user had set in the first. Same reasoning that put `last_seen_version` in that table (ADR-0036).
+The one-time-ness lives in the app-global `settings` table, not in localStorage: localStorage is per-WKWebView on macOS, so every **Window** keeps its own copy and each would seed independently — and, because windows broadcast their own store changes, a second Window's seed would overwrite toggles the user had set in the first. Same reasoning that put `last_seen_version` in that table (ADR-0036).
 
-The claim is taken **after** the scan returns a non-empty result. Claiming up front and then declining to seed would burn the only chance on a shell timeout, and no later launch would retry.
+Each step is placed where a failure costs nothing:
 
-## Existing installs are marked seeded, not seeded
+- **Claim after the scan returns something.** Claiming up front and then declining to seed would spend the only chance on a shell timeout.
+- **Commit after the seed lands.** The claim itself writes nothing durable — mutual exclusion between Windows is a process-local flag, which is sufficient because a Tauri app is one process. `agents_seeded` is written only once the toggles are actually set. An exception on the way, or a quit before zustand persists `abundio-settings`, therefore leaves the claim intact rather than spending it on a seed that never happened.
+
+## Telling an upgrade from an install that hasn't seeded yet
 
 An upgrade must not move switches a user is relying on, and switching an Agent off also removes its hooks. So an existing install has `agents_seeded` written without anything being seeded.
 
-"Existing" is decided by whether the database file was there: `open_db` runs the previous-epoch import (ADR-0025) *before* `Connection::open`, so a returning user's file exists by the time we look, and absence at that instant means a genuinely new user. Memoised in a `OnceLock` because `open_db` is called more than once during startup — by the second call the file exists regardless.
+**The database file's existence cannot decide this on its own.** It is true on every launch after the first, not just for upgrades — so a new install whose first scan came back empty (or that was quit inside the five seconds `shell_path()` can take) would have its claim spent unseeded on the *second* launch, reaching silently the exact state this decision set out to avoid.
 
-The cost is accepted: current users keep all nine built-ins switched on and only see the change if they press the button.
+So a launch that finds no database records `agents_seeding_pending`, and startup reads three facts:
+
+| `agents_seeded` | db was absent | `agents_seeding_pending` | action |
+|---|---|---|---|
+| set | — | — | nothing; already decided |
+| — | yes | — | mark pending: this launch created the install |
+| — | no | yes | nothing: an earlier launch created it and still owes a seed, so the claim survives to retry |
+| — | no | no | mark done: this database predates the feature — the upgrade path |
+
+"The database was absent" is sampled in `open_db`, which runs the previous-epoch import (ADR-0025) *before* `Connection::open`; a returning user's file is in place by the time we look. Memoised in a `OnceLock` because `open_db` is called more than once during startup — by the second call the file exists regardless.
+
+The cost of the upgrade path is accepted: current users keep all nine built-ins switched on and only see the change if they press the button.
 
 ## A new built-in still arrives switched on
 

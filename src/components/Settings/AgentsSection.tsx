@@ -464,6 +464,7 @@ function MatchToInstalledButton({ onDone }: { onDone: () => void }) {
 	const run = useCallback(async () => {
 		setBusy(true);
 		setResult(null);
+		let outcome: MatchOutcome = "failed";
 		try {
 			const { agents, matchAgentsToInstalled } = useSettingsStore.getState();
 			// Rescan first: the section's last scan may predate an install made
@@ -473,13 +474,20 @@ function MatchToInstalledButton({ onDone }: { onDone: () => void }) {
 				.getState()
 				.reload(agents.map((a) => a.command));
 			const installed = useAgentRegistryStore.getState().installedCommands;
-			setResult(await matchAgentsToInstalled(installed));
-			onDone();
+			outcome = await matchAgentsToInstalled(installed);
 		} catch {
-			setResult("empty-scan");
+			// Stays "failed" — deliberately not "empty-scan". That message names
+			// the PATH as the culprit, and it is only allowed to say so when the
+			// scan genuinely came back empty.
+			outcome = "failed";
 		} finally {
+			setResult(outcome);
 			setBusy(false);
 		}
+		// Outside the try: a throw from refreshing the hook footprint happens
+		// *after* the toggles have already moved, and must not be reported as a
+		// match that didn't happen while the rows below visibly changed.
+		onDone();
 	}, [onDone]);
 
 	const message = result ? MATCH_MESSAGE[result] : null;
@@ -492,7 +500,7 @@ function MatchToInstalledButton({ onDone }: { onDone: () => void }) {
 					style={{
 						fontSize: 11,
 						lineHeight: 1.3,
-						color: MATCH_TONE_COLOR[message.tone],
+						color: HOOK_TONE_COLOR[message.tone],
 						// Fades in rather than appearing: the button sits in a dense
 						// row of badges, and a hard swap there reads as a glitch.
 						animation: "abundio-fade-in 160ms ease-out",
@@ -532,22 +540,24 @@ function MatchToInstalledButton({ onDone }: { onDone: () => void }) {
 	);
 }
 
-/** Mirrors `settingsStore.matchAgentsToInstalled`'s result. */
-type MatchOutcome = "changed" | "already-matching" | "empty-scan";
+/** `settingsStore.matchAgentsToInstalled`'s result, plus `"failed"` for a throw
+ *  on the way there — which is not the same thing and must not borrow the
+ *  empty-scan wording. */
+type MatchOutcome = "changed" | "already-matching" | "empty-scan" | "failed";
 
 const MATCH_MESSAGE: Record<MatchOutcome, { text: string; tone: HookTone }> = {
 	changed: { text: "Toggles now match what's installed.", tone: "success" },
 	"already-matching": { text: "Already matching.", tone: "muted" },
 	// Never phrased as "no agents found". An empty scan means the login shell
 	// didn't answer far more often than it means the machine has none, and
-	// saying the wrong one sends the user looking in the wrong place.
+	// saying the wrong one sends the user looking in the wrong place. Which is
+	// also why anything that isn't an empty scan gets the generic line below.
 	"empty-scan": {
 		text: "Couldn't read your shell's PATH \u2014 nothing changed.",
 		tone: "warning",
 	},
+	failed: { text: "Couldn't match \u2014 nothing changed.", tone: "error" },
 };
-
-const MATCH_TONE_COLOR = HOOK_TONE_COLOR;
 
 export function AgentsSection() {
 	const agents = useSettingsStore((s) => s.agents);
