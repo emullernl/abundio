@@ -10,6 +10,16 @@ A Prompt action is a name, a body with `{{placeholder}}`s, a **scope** (`all` or
 
 Two ways to fire: a button in the **Action bar**, or the **Command palette** targeting the focused pane. Two ways to author: the in-pane popover, or Settings ▸ Prompt actions.
 
+## Status
+
+Built on `feat/prompt-actions` in three commits (the eight below were grouped):
+
+1. `53fdc6d` — table, store, IPC
+2. `720d168` — pure core, IPC wrappers, zustand store
+3. `4d65af8` — Action bar, parameter dialog, attachments, popover, Settings section, palette, demo mode
+
+468 Rust tests, 1679 frontend tests, `tsc --noEmit` and `vite build` all pass. **The runtime check on the Waiting guard has not been done yet** — see Testing.
+
 ## Commits, in order, on one branch
 
 ### 1. Store and IPC
