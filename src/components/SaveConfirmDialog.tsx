@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef } from "react";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 interface SaveConfirmDialogProps {
 	fileName: string;
@@ -15,6 +16,11 @@ export function SaveConfirmDialog({
 	onCancel,
 }: SaveConfirmDialogProps) {
 	const saveRef = useRef<HTMLButtonElement>(null);
+
+	// Same dead backdrop handler ConfirmDialog had: the card stops propagation
+	// and focus starts on Save inside it. Escape cancels — it must not choose
+	// between saving and discarding on the user's behalf.
+	useEscapeKey(onCancel);
 
 	useEffect(() => {
 		saveRef.current?.focus();

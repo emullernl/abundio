@@ -20,6 +20,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { CornerDownLeft } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import {
 	allFilled,
 	deriveParams,
@@ -53,7 +54,7 @@ export function ParameterDialog({
 	);
 	const firstRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
 
-	useEscape(onCancel);
+	useEscapeKey(onCancel);
 
 	useEffect(() => {
 		const el = firstRef.current;
@@ -210,26 +211,6 @@ export function ParameterDialog({
 			</motion.div>
 		</AnimatePresence>
 	);
-}
-
-/**
- * Close on Escape, from a document-level capture listener.
- *
- * The obvious `onKeyDown` on the backdrop does not work here: the card stops
- * propagation so keystrokes cannot reach the terminal behind it, and focus is
- * placed inside the card on mount — so the backdrop's handler never runs and
- * Escape did nothing. `PaneContextMenu` already solves it this way.
- */
-function useEscape(onClose: () => void) {
-	useEffect(() => {
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key !== "Escape") return;
-			e.stopPropagation();
-			onClose();
-		};
-		document.addEventListener("keydown", onKey, true);
-		return () => document.removeEventListener("keydown", onKey, true);
-	}, [onClose]);
 }
 
 interface FieldProps {
