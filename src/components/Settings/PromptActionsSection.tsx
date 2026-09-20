@@ -79,7 +79,7 @@ export function PromptActionsSection() {
 				{actions.length === 0 ? (
 					<EmptyState onAdd={add} />
 				) : (
-					<div className="flex flex-col gap-1.5">
+					<div className="flex flex-col gap-2">
 						{actions.map((action, i) => (
 							<ActionRow
 								key={action.id}
@@ -101,7 +101,7 @@ export function PromptActionsSection() {
 			{actions.length > 0 && (
 				<button
 					type="button"
-					className="self-start inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors"
+					className="self-start inline-flex items-center gap-1.5 rounded-md px-3 py-2 transition-colors"
 					style={{
 						fontSize: 12,
 						color: "var(--fg-secondary)",
@@ -156,7 +156,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 			</p>
 			<button
 				type="button"
-				className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5"
+				className="inline-flex items-center gap-1.5 rounded-md px-3 py-2"
 				style={{
 					fontSize: 12,
 					backgroundColor: "var(--accent)",
@@ -228,7 +228,7 @@ function ActionRow({
 				backgroundColor: "var(--bg-primary)",
 			}}
 		>
-			<div className="flex items-center gap-2.5 px-3 py-2">
+			<div className="flex items-center gap-2.5 px-3.5 py-2.5">
 				<button
 					type="button"
 					aria-label={expanded ? "Collapse" : "Expand"}
@@ -299,12 +299,12 @@ function ActionRow({
 
 			{expanded && (
 				<div
-					className="flex flex-col gap-3.5 px-3 pb-3.5 pt-1"
+					className="flex flex-col gap-4 px-3.5 pb-4 pt-3.5"
 					style={{ borderTop: "1px solid var(--border)" }}
 				>
 					<Labelled label="Name">
 						<input
-							className="rounded-md px-2 py-1.5"
+							className="rounded-md px-2.5 py-2"
 							style={inputStyle}
 							value={action.name}
 							onChange={(e) =>
@@ -315,7 +315,7 @@ function ActionRow({
 
 					<Labelled label="Sends">
 						<textarea
-							className="rounded-md px-2 py-1.5"
+							className="rounded-md px-2.5 py-2"
 							style={{ ...inputStyle, resize: "vertical" }}
 							rows={4}
 							value={action.body}
@@ -411,7 +411,7 @@ function ParamEditor({
 	onChange: (patch: Partial<ParamMeta>) => void;
 }) {
 	return (
-		<div className="flex flex-col gap-1.5">
+		<div className="flex flex-col gap-2">
 			<div className="flex items-center gap-2">
 				<span
 					className="truncate"
@@ -425,7 +425,7 @@ function ParamEditor({
 					{name}
 				</span>
 				<select
-					className="rounded-md px-2 py-1"
+					className="rounded-md px-2.5 py-1.5"
 					style={{ ...inputStyle, fontSize: 11, width: 120 }}
 					value={meta.type}
 					onChange={(e) => onChange({ type: e.target.value as ParamType })}
@@ -439,7 +439,7 @@ function ParamEditor({
 
 				{meta.type !== "attachment" && meta.type !== "toggle" && (
 					<input
-						className="rounded-md px-2 py-1 flex-1"
+						className="rounded-md px-2.5 py-1.5 flex-1"
 						style={{ ...inputStyle, fontSize: 11 }}
 						placeholder="default"
 						value={meta.defaultValue ?? ""}
@@ -450,7 +450,7 @@ function ParamEditor({
 
 			{meta.type === "choice" && (
 				<input
-					className="rounded-md px-2 py-1"
+					className="rounded-md px-2.5 py-1.5"
 					style={{ ...inputStyle, fontSize: 11 }}
 					placeholder="Options, comma separated"
 					value={(meta.options ?? []).join(", ")}
@@ -470,14 +470,14 @@ function ParamEditor({
 			{meta.type === "toggle" && (
 				<div className="flex items-center gap-2">
 					<input
-						className="rounded-md px-2 py-1 flex-1"
+						className="rounded-md px-2.5 py-1.5 flex-1"
 						style={{ ...inputStyle, fontSize: 11 }}
 						placeholder="text when on"
 						value={meta.onText ?? ""}
 						onChange={(e) => onChange({ onText: e.target.value })}
 					/>
 					<input
-						className="rounded-md px-2 py-1 flex-1"
+						className="rounded-md px-2.5 py-1.5 flex-1"
 						style={{ ...inputStyle, fontSize: 11 }}
 						placeholder="text when off"
 						value={meta.offText ?? ""}
@@ -517,7 +517,7 @@ function ScopeEditor({
 	return (
 		<div className="flex flex-col gap-2">
 			<select
-				className="rounded-md px-2 py-1.5"
+				className="rounded-md px-2.5 py-2"
 				style={{ ...inputStyle, fontSize: 12 }}
 				value={scope.kind}
 				onChange={(e) =>
@@ -577,7 +577,7 @@ function Labelled({
 	children: React.ReactNode;
 }) {
 	return (
-		<div className="flex flex-col gap-1.5">
+		<div className="flex flex-col gap-2">
 			<span
 				style={{
 					fontFamily: "var(--font-mono)",

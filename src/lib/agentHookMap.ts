@@ -2,7 +2,13 @@
 //
 // Hooks are authoritative ground truth for Agent status — see
 // docs/plans/agent-hooks-status-integration.md. "clear" means the Agent
-// session ended (drop agent mode); "idle" means the user cancelled the turn
+// session ended AND the process is gone (drop agent mode). "sessionReset"
+// means the *session* ended but the Agent is still running and ready for the
+// next prompt — Claude Code's `/clear`. It finalizes the open Turn and starts a
+// new session id, but must NOT drop agent mode: doing so takes the Agent icon
+// out of the title bar, flips the status icon to shell, and unmounts the
+// pane's Action bar, all while the Agent is sitting there waiting for input.
+// "idle" means the user cancelled the turn
 // (Kimi's Interrupt) — the pane goes straight to Idle, NOT Ready: the user
 // just acted in the pane, so there is nothing unacknowledged, and an
 // interrupt is not a clean finish (see CONTEXT.md's Ready definition).
@@ -30,6 +36,7 @@ export type HookTransition =
 	| "errorMidTurn"
 	| "resume"
 	| "attach"
+	| "sessionReset"
 	| "clear";
 
 // Per-agent (event name → transition). Event names match each Agent's own
@@ -258,6 +265,20 @@ export function mapHookEvent(
 		if (permissionMode === "plan" && message === "Tool permission requested") {
 			return "resume";
 		}
+	}
+	// Claude Code fires SessionEnd for `/clear` as well as for a real exit,
+	// discriminated by `reason`. `/clear` ends the session and immediately
+	// begins a new one in the *same process*, so treating it as a process exit
+	// is wrong in a visible way — the pane leaves agent mode while the Agent is
+	// still running.
+	//
+	// Only "clear" is special-cased. "logout", "prompt_input_exit" and "other"
+	// keep the conservative mapping, and they do not need to be precise: when
+	// the process really exits, the shell's own `command_end` marker drops agent
+	// mode anyway (see terminalManager's command_end branch). That backstop is
+	// what makes narrowing this safe.
+	if (agentId === "claude" && eventName === "SessionEnd") {
+		return stopReason === "clear" ? "sessionReset" : "clear";
 	}
 	if (agentId === "grok" && eventName === "Stop") {
 		if (stopReason === "cancelled") return "idle";

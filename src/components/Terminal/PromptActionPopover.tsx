@@ -35,7 +35,7 @@ interface PromptActionPopoverProps {
 	onClose: () => void;
 }
 
-const WIDTH = 380;
+const WIDTH = 420;
 const PARAM_TYPES: ParamType[] = [
 	"text",
 	"number",
@@ -131,11 +131,11 @@ export function PromptActionPopover({
 					onClick={(e) => e.stopPropagation()}
 					onKeyDown={(e) => e.stopPropagation()}
 				>
-					<div className="flex flex-col gap-3 px-4 py-3.5">
+					<div className="flex flex-col gap-4 px-5 py-4">
 						<input
 							ref={nameRef}
 							placeholder="Button name"
-							className="rounded-lg px-2.5 py-1.5"
+							className="rounded-lg px-3 py-2"
 							style={inputStyle}
 							value={name}
 							onChange={(e) => setName(e.target.value)}
@@ -144,7 +144,7 @@ export function PromptActionPopover({
 						<div className="flex flex-col gap-1">
 							<textarea
 								placeholder="What to send. Use {{name}} for a value to ask for."
-								className="rounded-lg px-2.5 py-1.5"
+								className="rounded-lg px-3 py-2"
 								style={{ ...inputStyle, resize: "vertical" }}
 								rows={4}
 								value={body}
@@ -168,7 +168,7 @@ export function PromptActionPopover({
 						{/* Parameters appear as you type placeholders — the name lives in
 						    the body and nowhere else, so there is nothing to declare. */}
 						{derived.map((p) => (
-							<div key={p.name} className="flex items-center gap-2">
+							<div key={p.name} className="flex items-center gap-2.5">
 								<span
 									className="truncate"
 									style={{
@@ -181,7 +181,7 @@ export function PromptActionPopover({
 									{p.name}
 								</span>
 								<select
-									className="rounded-md px-2 py-1 flex-1"
+									className="rounded-md px-2.5 py-1.5 flex-1"
 									style={{ ...inputStyle, fontSize: 11 }}
 									value={p.meta.type}
 									onChange={(e) =>
@@ -219,7 +219,7 @@ export function PromptActionPopover({
 					</div>
 
 					<div
-						className="flex items-center justify-between gap-2 px-4 py-2.5"
+						className="flex items-center justify-between gap-3 px-5 py-3.5"
 						style={{ borderTop: "1px solid var(--border)" }}
 					>
 						<button
@@ -243,7 +243,7 @@ export function PromptActionPopover({
 						<div className="flex items-center gap-2">
 							<button
 								type="button"
-								className="rounded-lg px-3 py-1.5"
+								className="rounded-lg px-3.5 py-2"
 								style={{
 									fontSize: 12,
 									color: "var(--fg-secondary)",
@@ -256,7 +256,7 @@ export function PromptActionPopover({
 							<button
 								type="button"
 								disabled={!ready}
-								className="rounded-lg px-3 py-1.5"
+								className="rounded-lg px-3.5 py-2"
 								style={{
 									fontSize: 12,
 									backgroundColor: "var(--accent)",

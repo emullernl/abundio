@@ -1536,6 +1536,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				// A hook event proves an agent runs in this PTY — adopt agent mode
 				// even if title-based detection missed it.
 				actStore.setAgentPty(currentPtyId, hookEvent.agent);
+				if (transition === "sessionReset") {
+					// Claude Code's `/clear`: the session ended, the Agent did not.
+					// Finalize the open Turn so telemetry closes cleanly and the next
+					// prompt opens a fresh session — but stay in agent mode, keep the
+					// stamped agent, and land on Idle rather than Ready (the user just
+					// acted in the pane, so there is nothing unacknowledged).
+					void trackSessionEnd(currentPtyId);
+					actStore.applyHookEvent(currentPtyId, "idle");
+					return;
+				}
 				if (transition === "clear") {
 					// SessionEnd: finalize any open Turn before agent mode is dropped.
 					void trackSessionEnd(currentPtyId);

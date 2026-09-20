@@ -93,8 +93,8 @@ export function ParameterDialog({
 					exit={{ opacity: 0, scale: 0.97, y: 8 }}
 					transition={{ duration: 0.15, ease: [0.2, 0, 0, 1] }}
 					style={{
-						width: 480,
-						maxHeight: "80vh",
+						width: 520,
+						maxHeight: "82vh",
 						backgroundColor: "var(--bg-secondary)",
 						border: "1px solid var(--border)",
 						boxShadow:
@@ -105,7 +105,7 @@ export function ParameterDialog({
 				>
 					{/* The accent stripe names which button is about to speak. */}
 					<div
-						className="flex items-center gap-2 px-5 py-3"
+						className="flex items-center gap-2 px-6 py-4"
 						style={{
 							borderBottom: "1px solid var(--border)",
 							borderLeft: "2px solid var(--accent)",
@@ -122,7 +122,7 @@ export function ParameterDialog({
 						</span>
 					</div>
 
-					<div className="flex flex-col gap-4 px-5 py-4 overflow-y-auto">
+					<div className="flex flex-col gap-5 px-6 py-5 overflow-y-auto">
 						{params.map((p, i) => (
 							<Field
 								key={p.name}
@@ -139,7 +139,7 @@ export function ParameterDialog({
 					</div>
 
 					<div
-						className="flex items-center justify-between gap-3 px-5 py-3"
+						className="flex items-center justify-between gap-4 px-6 py-4"
 						style={{ borderTop: "1px solid var(--border)" }}
 					>
 						<span
@@ -155,7 +155,7 @@ export function ParameterDialog({
 						<div className="flex items-center gap-2">
 							<button
 								type="button"
-								className="rounded-lg px-3 py-1.5 transition-colors"
+								className="rounded-lg px-3.5 py-2 transition-colors"
 								style={{
 									fontSize: 12,
 									color: "var(--fg-secondary)",
@@ -168,7 +168,7 @@ export function ParameterDialog({
 							<button
 								type="button"
 								disabled={!ready}
-								className="rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-opacity"
+								className="rounded-lg px-3.5 py-2 flex items-center gap-1.5 transition-opacity"
 								style={{
 									fontSize: 12,
 									backgroundColor: "var(--accent)",
@@ -217,7 +217,7 @@ function Field({
 	return (
 		/* Not a <label>: every control below except the plain input is a custom
 		   element, so there is nothing for htmlFor to point at. */
-		<div className="flex flex-col gap-1.5">
+		<div className="flex flex-col gap-2">
 			<span
 				style={{
 					fontFamily: "var(--font-mono)",
@@ -228,7 +228,9 @@ function Field({
 			>
 				{name}
 				{!filled && (
-					<span style={{ color: "var(--accent)", marginLeft: 6 }}>
+					<span
+						style={{ color: "var(--accent)", marginLeft: 10, opacity: 0.9 }}
+					>
 						required
 					</span>
 				)}
@@ -239,7 +241,7 @@ function Field({
 			) : meta.type === "choice" ? (
 				<select
 					ref={inputRef}
-					className="rounded-lg px-2.5 py-1.5"
+					className="rounded-lg px-3 py-2"
 					style={fieldStyle}
 					value={String(value ?? "")}
 					onChange={(e) => onChange(e.target.value)}
@@ -326,7 +328,7 @@ function GrowingTextField({
 		return (
 			<textarea
 				ref={inputRef}
-				className="rounded-lg px-2.5 py-1.5"
+				className="rounded-lg px-3 py-2"
 				style={fieldStyle}
 				rows={rows}
 				value={value}
@@ -340,7 +342,7 @@ function GrowingTextField({
 		<input
 			ref={inputRef}
 			type={numeric ? "number" : "text"}
-			className="rounded-lg px-2.5 py-1.5"
+			className="rounded-lg px-3 py-2"
 			style={fieldStyle}
 			value={value}
 			onChange={(e) => onChange(e.target.value)}
@@ -367,7 +369,7 @@ function ToggleField({
 	return (
 		<button
 			type="button"
-			className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left"
+			className="flex items-center gap-3 rounded-lg px-3 py-2 text-left"
 			style={{ ...fieldStyle, cursor: "pointer" }}
 			onClick={() => onChange(!value)}
 		>
@@ -416,7 +418,7 @@ function BodyPreview({
 }) {
 	const resolved = resolveBody(action.body, action.params, values);
 	return (
-		<div className="flex flex-col gap-1.5">
+		<div className="flex flex-col gap-2">
 			<span
 				style={{
 					fontFamily: "var(--font-mono)",
@@ -428,7 +430,7 @@ function BodyPreview({
 				will send
 			</span>
 			<pre
-				className="rounded-lg px-2.5 py-2 overflow-auto whitespace-pre-wrap break-words"
+				className="rounded-lg px-3 py-2.5 overflow-auto whitespace-pre-wrap break-words"
 				style={{
 					fontFamily: "var(--font-mono)",
 					fontSize: 11,
