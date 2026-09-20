@@ -12,13 +12,15 @@ Two ways to fire: a button in the **Action bar**, or the **Command palette** tar
 
 ## Status
 
-Built on `feat/prompt-actions` in three commits (the eight below were grouped):
+Built on `feat/prompt-actions`. The build order below was grouped into three commits; the rest of the branch is fixes found by using it and by review.
 
-1. `53fdc6d` — table, store, IPC
-2. `720d168` — pure core, IPC wrappers, zustand store
-3. `4d65af8` — Action bar, parameter dialog, attachments, popover, Settings section, palette, demo mode
+468 Rust tests, 1714 frontend tests, `tsc --noEmit`, `vite build` and Biome all pass. Every UI change was checked in a browser via `pnpm demo:web`, which now reaches the Settings window through `?window=settings`.
 
-468 Rust tests, 1679 frontend tests, `tsc --noEmit` and `vite build` all pass. **The runtime check on the Waiting guard has not been done yet** — see Testing.
+**Outstanding:**
+
+- The last link of the **Waiting** guard needs the running app — see Testing. The seam below it is covered and mutation-checked.
+- Dropping the dead `agent_presets_json` column is deferred to a separate fix, at the user's request. The method is written up below.
+- Two pre-existing flakes surfaced under full-suite load, both in files this branch does not touch: `settingsRehydrate.test.ts` and `base64.test.ts` ("handles a large payload"). Each passes in isolation and on repeated full runs.
 
 ## Commits, in order, on one branch
 
