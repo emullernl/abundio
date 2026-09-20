@@ -120,7 +120,7 @@ export function AttachmentField({
 								style={{
 									padding: "5px 8px",
 									fontFamily: "var(--font-mono)",
-									fontSize: 10,
+									fontSize: 11,
 									color: "var(--fg-primary)",
 									backgroundColor:
 										"color-mix(in srgb, var(--accent) 14%, transparent)",
@@ -161,13 +161,7 @@ export function AttachmentField({
 				>
 					<ImagePlus size={11} />
 					{paths.length > 0 && !multiple ? "Replace…" : "Choose file…"}
-					<span
-						style={{
-							fontFamily: "var(--font-mono)",
-							fontSize: 10,
-							opacity: 0.6,
-						}}
-					>
+					<span style={{ fontSize: 11, opacity: 0.7 }}>
 						{busy ? "saving…" : "or ⌘V here"}
 					</span>
 				</button>

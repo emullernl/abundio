@@ -401,6 +401,12 @@ const fieldBase: React.CSSProperties = {
 	border: "1px solid var(--border)",
 	outline: "none",
 	width: "100%",
+	// Inline, and on the base so no variant can forget it: every `p-*` utility
+	// in this app is dead (globals.css:273 has an unlayered `* { padding: 0 }`
+	// reset, and an unlayered normal declaration beats a layered one whatever
+	// its specificity). A control with no padding puts its text and its
+	// placeholder hard against the border. See the note in SettingsPanel.tsx.
+	padding: "0 12px",
 };
 
 /** The UI font at 13px — a name is prose, not code. */
@@ -417,6 +423,7 @@ const bodyInputStyle: React.CSSProperties = {
 	fontFamily: "var(--font-mono)",
 	fontSize: 12.5,
 	lineHeight: 1.55,
+	padding: "10px 12px",
 };
 
 const selectStyle: React.CSSProperties = {
@@ -424,4 +431,5 @@ const selectStyle: React.CSSProperties = {
 	fontSize: 12,
 	height: 30,
 	width: "auto",
+	padding: "0 8px",
 };

@@ -694,6 +694,12 @@ const fieldBase: React.CSSProperties = {
 	border: "1px solid var(--border)",
 	outline: "none",
 	width: "100%",
+	// Inline, and on the base so no variant can forget it: every `p-*` utility
+	// in this app is dead (globals.css:273 has an unlayered `* { padding: 0 }`
+	// reset, and an unlayered normal declaration beats a layered one whatever
+	// its specificity). A control with no padding puts its text and its
+	// placeholder hard against the border. See the note in SettingsPanel.tsx.
+	padding: "0 12px",
 };
 
 /** The UI font — a name and a default value are prose, not code. */
@@ -701,7 +707,6 @@ const textInputStyle: React.CSSProperties = {
 	...fieldBase,
 	fontSize: 13,
 	height: 36,
-	padding: "0 12px",
 };
 
 /** Mono, because this one really is a prompt the agent reads verbatim, and its
