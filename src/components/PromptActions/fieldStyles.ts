@@ -38,7 +38,8 @@ export const paramBodyInputStyle: React.CSSProperties = {
 	padding: "10px 12px",
 };
 
-/** Less right padding than a text field: a `<select>` draws its own arrow. */
+/** The closed `Select` control. Less left padding than a text field; the room
+ *  on the right for the chevron is added by `Select` itself, which draws it. */
 export const paramSelectStyle: React.CSSProperties = {
 	...fieldBase,
 	fontSize: 12,
