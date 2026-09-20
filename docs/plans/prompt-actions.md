@@ -107,7 +107,17 @@ Three layers, with an honest claim about what each buys.
 
 **Component/store** — bar visibility (agent mode ∧ in-scope ∧ non-empty), ordering, position numbering, and the two awkward scope cases: an unresolved Agent id showing global-only, and an emptied scope set rendering nothing.
 
-**Runtime** — the **Waiting** guard. A green unit test proves the component reads a flag; it proves nothing about whether the flag is set when an Agent is really asking permission, which is the only thing that matters. Verified by launching the app and driving an Agent into a real permission prompt. To stop this being the step everyone skips, add a **dev-only trigger that forces a pane into Waiting** (precedent: `DebugActivityMeter`).
+**Seam** (`firePromptAction.guard.test.ts`) — the Waiting guard against the **real status machine**, not a hand-stubbed state. It drives `ptyActivityStore.applyHookEvent(ptyId, "waiting")` — the same transition a real permission hook causes, through the same reducer — then calls `firePromptAction` and asserts nothing reached the PTY and focus was not stolen. Mutation-checked: disabling the guard fails four of its six cases.
+
+**Runtime** — one link remains, and only the running app can close it: that a real Agent's permission hook *arrives* and produces that transition. That is the hook pipeline (ADR-0015); it predates this feature and is the same signal the status icon has always been driven by, so it is inherited rather than new. The Debug palette entries *Simulate Agent Waiting* / *Clear Agent Waiting* drive the real reducer, so the check is:
+
+1. `pnpm tauri dev`, open a workspace, launch Claude Code in a pane.
+2. Author a prompt action so the bar has a button.
+3. Ask the agent to do something needing permission, and wait for the status icon to go **Waiting**.
+4. The bar's buttons should grey out, and clicking one should do nothing.
+5. Answer the permission prompt; the buttons should come back.
+
+Step 3 can be replaced by *Debug: Simulate Agent Waiting* in the command palette to test steps 4–5 alone, which is what the seam test already covers.
 
 ## Demo mode
 
