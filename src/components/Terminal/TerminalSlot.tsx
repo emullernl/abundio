@@ -8,9 +8,20 @@ import {
 } from "react";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
+import { firePromptAction } from "../../lib/firePromptAction";
 import { pty } from "../../lib/ipc";
 import { isMac, sc } from "../../lib/platform";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
+import {
+	registerPaneFire,
+	unregisterPaneFire,
+} from "../../lib/promptActionRegistry";
+import {
+	actionsForPane,
+	deriveParams,
+	initialValues,
+	type PromptAction,
+} from "../../lib/promptActions";
 import {
 	copyTerminalSelection,
 	pasteIntoTerminal,
@@ -21,15 +32,34 @@ import {
 	resetTerminal,
 	subscribePaneRevision,
 } from "../../lib/terminalManager";
+import { usePromptActionStore } from "../../stores/promptActionStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { FileDropHighlight } from "../FileDropHighlight";
 import { PaneDropIndicator } from "../PaneDropIndicator";
+import { ActionBar, PROMPT_ACTION_ATTR } from "./ActionBar";
 import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
+import { ParameterDialog } from "./ParameterDialog";
+import { PromptActionPopover } from "./PromptActionPopover";
 import { SearchBar } from "./SearchBar";
 import { TerminalTitleBar } from "./TerminalTitleBar";
+
+/** What to tell the user when a send was refused. `waiting` should not reach
+ *  the dialog — the bar disables its buttons — but a palette entry can still
+ *  open one, so it is covered. */
+function refusalMessage(reason: "no-terminal" | "waiting" | "empty"): string {
+	switch (reason) {
+		case "empty":
+			return "Nothing to send — fill in at least one field.";
+		case "waiting":
+			return "The agent is waiting for a permission answer.";
+		default:
+			return "This pane has no running terminal.";
+	}
+}
 
 /** The gesture that opens a context menu. On macOS **Ctrl+click** is the
  *  system-level secondary click, and a webview may deliver it as button 0 with
@@ -140,6 +170,79 @@ export function TerminalSlot({
 	const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
 	const debugMeterEnabled = useSettingsStore((s) => s.debugActivityMeter);
+
+	// Prompt action overlays. Both are pane-local: a dialog belongs to the pane
+	// whose Agent is about to be spoken to, not to the window.
+	const [paramAction, setParamAction] = useState<PromptAction | null>(null);
+	const [addAnchor, setAddAnchor] = useState<{ x: number; y: number } | null>(
+		null,
+	);
+	const [editing, setEditing] = useState<{
+		action: PromptAction;
+		anchor: { x: number; y: number };
+	} | null>(null);
+	const [actionMenu, setActionMenu] = useState<{
+		action: PromptAction;
+		x: number;
+		y: number;
+	} | null>(null);
+	// Deleting is irreversible and there is no undo, so the menu asks first —
+	// and this menu is a small target reached by right-click, where a misclick
+	// is easy.
+	const [pendingDelete, setPendingDelete] = useState<PromptAction | null>(null);
+
+	// The Agent this pane actually resolved to, which is what scopes its Prompt
+	// actions. Distinct from the `agentId` prop, which is the id the *layout*
+	// remembers from a previous session and may name an Agent that is not
+	// running now.
+	const detectedAgentId = usePtyActivityStore((s) => {
+		const ptyId = s.panePtyMap[paneId];
+		return ptyId ? s.detectedAgentIds[ptyId] : undefined;
+	});
+
+	// Fire the Nth bar button for this pane, on behalf of the app-level digit
+	// binding (Cmd+1..9 / Ctrl+Shift+1..9). The slot is **positional** — it
+	// names a place in this pane's bar, not a particular Prompt action — so it
+	// has to be resolved here, against the same ordered list the bar drew.
+	const showActionBar = useSettingsStore((s) => s.showActionBar);
+
+	useEffect(() => {
+		const run = (action: PromptAction, stageOnly: boolean) => {
+			// Any parameters at all means ask first; none means fire from the click.
+			if (deriveParams(action.body, action.params).length > 0) {
+				setParamAction(action);
+				return;
+			}
+			firePromptAction(
+				paneId,
+				action.body,
+				action.params,
+				initialValues(action.body, action.params),
+				{ stageOnly, actionId: action.id },
+			);
+		};
+		registerPaneFire(paneId, {
+			bySlot: (slot, stageOnly) => {
+				// The bar's *keyboard slots* belong to the bar: with the setting off
+				// there is no strip, no position numbers and no feedback, so a live
+				// Cmd+1 would paste a prompt and press Enter with nothing on screen
+				// to explain it. Gated here and not around the registration itself —
+				// `byAction` is the Command palette, which both the setting's
+				// description and settingsStore promise still reaches every action.
+				if (!showActionBar) return;
+				const ordered = actionsForPane(
+					usePromptActionStore.getState().actions,
+					detectedAgentId,
+					{ barOnly: true },
+				);
+				const action = ordered[slot - 1];
+				if (!action) return; // digit past the end of the bar: do nothing
+				run(action, stageOnly);
+			},
+			byAction: run,
+		});
+		return () => unregisterPaneFire(paneId);
+	}, [paneId, detectedAgentId, showActionBar]);
 
 	useEffect(() => {
 		if (!innerRef.current) return;
@@ -258,6 +361,25 @@ export function TerminalSlot({
 			e.preventDefault();
 			e.stopPropagation();
 			handleFocus();
+
+			// A right-click on an Action bar button edits that action rather than
+			// opening the pane menu. Routed here rather than from a handler on the
+			// button itself, because this listener is capture-phase and swallows
+			// the event before any bubble-phase handler could see it.
+			const onActionButton = (e.target as HTMLElement | null)?.closest?.(
+				`[${PROMPT_ACTION_ATTR}]`,
+			);
+			if (onActionButton) {
+				const id = onActionButton.getAttribute(PROMPT_ACTION_ATTR);
+				const hit = usePromptActionStore
+					.getState()
+					.actions.find((a) => a.id === id);
+				if (hit) {
+					setActionMenu({ action: hit, x: e.clientX, y: e.clientY });
+					return;
+				}
+			}
+
 			// The right button belongs to the program while it is reporting
 			// (ADR-0031); it already received this click as a mouse report on
 			// mousedown. The pane menu is reached from the title bar instead.
@@ -402,6 +524,22 @@ export function TerminalSlot({
 			disabled: isAgentMode || enabledAgents.length === 0,
 			submenu: agentSubmenu,
 		},
+		// The only entry point before an Action bar exists: with no action in
+		// scope the bar does not render at all, so its `+` is not there either.
+		// The `⋯` menu is present in every pane, which is what makes this
+		// reachable. Offered only in an agent pane — a Prompt action has nothing
+		// to talk to in a shell.
+		{
+			label: "Add Prompt Action…",
+			disabled: !isAgentMode,
+			onClick: () => {
+				const r = containerRef.current?.getBoundingClientRect();
+				setAddAnchor({
+					x: (r?.right ?? window.innerWidth) - 12,
+					y: (r?.bottom ?? window.innerHeight) - 12,
+				});
+			},
+		},
 		{ separator: true },
 		{
 			label: "Split Right",
@@ -459,6 +597,102 @@ export function TerminalSlot({
 				className="w-full flex-1 min-h-0"
 				style={{ overflow: "hidden" }}
 			/>
+			{/* Below the terminal body, so it takes rows from it — the existing
+			    ResizeObserver on `innerRef` drives the xterm refit on appear and
+			    disappear. The space is deliberately not reserved. */}
+			<ActionBar
+				paneId={paneId}
+				onRequestParams={setParamAction}
+				onAddAction={setAddAnchor}
+			/>
+			{actionMenu && (
+				<PaneContextMenu
+					x={actionMenu.x}
+					y={actionMenu.y}
+					items={[
+						{
+							label: "Edit Action…",
+							onClick: () =>
+								setEditing({
+									action: actionMenu.action,
+									anchor: { x: actionMenu.x, y: actionMenu.y },
+								}),
+						},
+						{
+							label: actionMenu.action.showInBar
+								? "Hide from Action Bar"
+								: "Show in Action Bar",
+							onClick: () =>
+								void usePromptActionStore
+									.getState()
+									.updateAction(actionMenu.action.id, {
+										showInBar: !actionMenu.action.showInBar,
+									}),
+						},
+						{ separator: true },
+						{
+							label: "Delete Action…",
+							onClick: () => setPendingDelete(actionMenu.action),
+						},
+					]}
+					onClose={() => setActionMenu(null)}
+				/>
+			)}
+			{pendingDelete && (
+				<ConfirmDialog
+					title="Delete this prompt action?"
+					message={`“${pendingDelete.name}” will be removed from every agent pane and from the command palette. This cannot be undone.`}
+					confirmLabel="Delete action"
+					confirmVariant="danger"
+					onConfirm={() => {
+						void usePromptActionStore.getState().deleteAction(pendingDelete.id);
+						setPendingDelete(null);
+					}}
+					onCancel={() => setPendingDelete(null)}
+				/>
+			)}
+			{editing && (
+				<PromptActionPopover
+					anchor={editing.anchor}
+					defaultAgentId={detectedAgentId}
+					editing={editing.action}
+					onClose={() => setEditing(null)}
+				/>
+			)}
+			{paramAction && (
+				<ParameterDialog
+					// Keyed, so swapping actions while the dialog is open (a digit
+					// shortcut still fires behind it) rebuilds the form instead of
+					// leaving the previous action's values and focus in place.
+					key={paramAction.id}
+					action={paramAction}
+					onCancel={() => setParamAction(null)}
+					onSubmit={(values, stageOnly) => {
+						const result = firePromptAction(
+							paneId,
+							paramAction.body,
+							paramAction.params,
+							values,
+							{ stageOnly, actionId: paramAction.id },
+						);
+						if (result.ok) {
+							setParamAction(null);
+							return null;
+						}
+						// Stay open and say why. Closing on a refusal looks exactly
+						// like a successful send, and the `empty` case is reachable
+						// with every field legitimately left blank.
+						return refusalMessage(result.reason);
+					}}
+				/>
+			)}
+			{addAnchor && (
+				<PromptActionPopover
+					anchor={addAnchor}
+					defaultAgentId={detectedAgentId}
+					onClose={() => setAddAnchor(null)}
+				/>
+			)}
 			{searchOpen && searchAddon && (
 				<SearchBar searchAddon={searchAddon} onClose={toggleSearch} />
 			)}

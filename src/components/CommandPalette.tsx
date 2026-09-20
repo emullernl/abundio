@@ -1,13 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSplitPane } from "../hooks/useSplitPane";
+import { isAgentPane } from "../lib/firePromptAction";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { triggerAction } from "../lib/keybindings";
+import { firePaneAction } from "../lib/promptActionRegistry";
+import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
 import { useProfileStore } from "../stores/profileStore";
 import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
+import { usePromptActionStore } from "../stores/promptActionStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -17,6 +21,9 @@ interface PaletteItem {
 	label: string;
 	category: string;
 	action: () => void;
+	/** Listed but not selectable. Used where an entry exists but cannot run
+	 *  right now, so the reason is visible rather than a silent no-op. */
+	disabled?: boolean;
 }
 
 interface Props {
@@ -42,6 +49,7 @@ export function CommandPalette({
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
+	const promptActionList = usePromptActionStore((s) => s.actions);
 	const { splitPane, closePane } = useSplitPane();
 
 	const items = useMemo<PaletteItem[]>(() => {
@@ -142,7 +150,71 @@ export function CommandPalette({
 			}
 		}
 
+		// Prompt actions — only for the focused pane, and only when that pane is
+		// an agent-mode PTY. Firing one into a shell would type a paragraph at a
+		// prompt and press Enter, which is arbitrary shell execution of prompt
+		// text, not a wrong-pane annoyance. Scope-filtered the same way the
+		// Action bar is, but ignoring Show in bar — the palette is how you reach
+		// the ones you keep out of the bar.
+		if (focusedPaneId && isAgentPane(getTerminal(focusedPaneId)?.ptyId)) {
+			const agentId = (() => {
+				const ptyId = getTerminal(focusedPaneId)?.ptyId;
+				return ptyId
+					? usePtyActivityStore.getState().detectedAgentIds[ptyId]
+					: undefined;
+			})();
+			// Disabled while the agent is Waiting, matching the bar. firePromptAction
+			// refuses either way, but without this the entry closes the palette and
+			// does nothing — the guard would be invisible on this path.
+			const ptyId = getTerminal(focusedPaneId)?.ptyId;
+			const waiting = ptyId
+				? !canFire(usePtyActivityStore.getState().activities[ptyId]?.state)
+				: false;
+			for (const action of actionsForPane(promptActionList, agentId, {
+				barOnly: false,
+			})) {
+				result.push({
+					id: `prompt-action-${action.id}`,
+					label: waiting
+						? `${buttonLabel(action)} — agent is waiting for permission`
+						: buttonLabel(action),
+					category: "Prompt Actions",
+					disabled: waiting,
+					action: () => firePaneAction(focusedPaneId, action),
+				});
+			}
+		}
+
 		// Debug
+		//
+		// The Waiting guard on a Prompt action is the one rule a unit test cannot
+		// prove: a green test shows the button reads a flag, not that the flag is
+		// set when an Agent is really asking permission. Verifying it for real
+		// otherwise means coaxing an Agent into a permission prompt every time
+		// someone touches this code, which is the step people skip. This drives
+		// the same reducer transition the real hook does.
+		if (focusedPaneId) {
+			result.push({
+				id: "action-debug-simulate-waiting",
+				label: "Debug: Simulate Agent Waiting",
+				category: "Debug",
+				action: () => {
+					const ptyId = getTerminal(focusedPaneId)?.ptyId;
+					if (!ptyId) return;
+					usePtyActivityStore.getState().applyHookEvent(ptyId, "waiting");
+				},
+			});
+			result.push({
+				id: "action-debug-clear-waiting",
+				label: "Debug: Clear Agent Waiting",
+				category: "Debug",
+				action: () => {
+					const ptyId = getTerminal(focusedPaneId)?.ptyId;
+					if (!ptyId) return;
+					usePtyActivityStore.getState().clearWaiting(ptyId);
+				},
+			});
+		}
 		result.push({
 			id: "action-toggle-debug-meter",
 			label: `Debug Activity Meter: ${debugActivityMeter ? "On" : "Off"}`,
@@ -174,6 +246,7 @@ export function CommandPalette({
 		agents,
 		profilesList,
 		activeProfileId,
+		promptActionList,
 	]);
 
 	const filtered = useMemo(() => {
@@ -217,6 +290,9 @@ export function CommandPalette({
 				setSelectedIndex((i) => Math.max(i - 1, 0));
 			} else if (e.key === "Enter" && filtered[selectedIndex]) {
 				e.preventDefault();
+				// A disabled entry keeps the palette open rather than closing on a
+				// no-op, so the reason in its label stays on screen.
+				if (filtered[selectedIndex].disabled) return;
 				filtered[selectedIndex].action();
 				onClose();
 			} else if (e.key === "Escape") {
@@ -299,7 +375,9 @@ export function CommandPalette({
 								)}
 								<button
 									type="button"
+									disabled={item.disabled}
 									onClick={() => {
+										if (item.disabled) return;
 										item.action();
 										onClose();
 									}}
@@ -309,6 +387,8 @@ export function CommandPalette({
 										padding: "8px 12px",
 										fontSize: 14,
 										width: "calc(100% - 12px)",
+										opacity: item.disabled ? 0.45 : 1,
+										cursor: item.disabled ? "not-allowed" : "pointer",
 										color:
 											i === selectedIndex
 												? "var(--bg-primary)"

@@ -8,6 +8,7 @@
  * Keyed off the stable **paneId** (`pty_spawn`'s `logId` arg), because
  * `workspaceStore.loadWorkspaces` clears layout ptyIds on load.
  */
+import type { PromptActionRow } from "../types";
 import * as fixtures from "./fixtures";
 import { publish } from "./mockBus";
 import { seedPaneActivity } from "./seed";
@@ -24,6 +25,59 @@ function warnOnce(key: string, message: string): void {
 	warned.add(key);
 	console.warn(message);
 }
+
+/**
+ * Prompt actions for the demo, mutable for the session.
+ *
+ * Deliberately a small, plausible set rather than an empty list: a real install
+ * seeds none (a stock "/review" would assume a slash command only some installs
+ * have), but a demo whose headline feature renders nothing shows nothing.
+ */
+const demoPromptActions: PromptActionRow[] = [
+	{
+		id: "demo-action-review",
+		name: "Review changes",
+		body: "/review",
+		scopeKind: "set",
+		scopeAgentIds: ["claude"],
+		paramsJson: "{}",
+		showInBar: true,
+		position: 0,
+		createdAt: 0,
+		updatedAt: 0,
+	},
+	{
+		id: "demo-action-explain",
+		name: "Explain",
+		body: "Explain what {{symbol}} does and where it is used.",
+		scopeKind: "all",
+		scopeAgentIds: [],
+		paramsJson: JSON.stringify({ symbol: { type: "text" } }),
+		showInBar: true,
+		position: 1,
+		createdAt: 0,
+		updatedAt: 0,
+	},
+	{
+		id: "demo-action-test",
+		name: "Write a test",
+		body: "Write a unit test for {{target}}.\n\n{{thorough}}",
+		scopeKind: "all",
+		scopeAgentIds: [],
+		paramsJson: JSON.stringify({
+			target: { type: "text" },
+			thorough: {
+				type: "toggle",
+				onText: "Cover the edge cases exhaustively.",
+				offText: "Keep it to the happy path.",
+			},
+		}),
+		showInBar: true,
+		position: 2,
+		createdAt: 0,
+		updatedAt: 0,
+	},
+];
 
 function seedPane(paneId: string, ptyId: string): void {
 	publish(`pty-status-${ptyId}`, { type: "running" });
@@ -197,7 +251,25 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "pty_read_log":
 		case "pty_read_snapshot":
 			return null;
-		case "pty_write":
+		// Echo what was written back onto the pane's output channel, so a Prompt
+		// action fired in the demo visibly types into the fake agent instead of
+		// doing nothing at all. Not a raw echo: the bracketed-paste wrappers
+		// would render as stray text, and a bare `\r` would return the cursor to
+		// column zero so the next output overwrote what was just "typed".
+		//
+		// This changes demo typing generally — today typing into a demo pane does
+		// nothing — which is an improvement, but is broader than Prompt actions.
+		case "pty_write": {
+			const ptyId = String(args.ptyId ?? "");
+			const raw = String(args.data ?? "");
+			if (!ptyId || !raw) return undefined;
+			const echo = raw
+				// biome-ignore lint/suspicious/noControlCharactersInRegex: terminal escapes
+				.replace(/\u001b\[20[01]~/g, "")
+				.replace(/\r\n?/g, "\r\n");
+			if (echo) publish(`pty-output-${ptyId}`, { data: encodeBase64(echo) });
+			return undefined;
+		}
 		case "pty_resize":
 		case "pty_kill":
 		case "pty_write_snapshot":
@@ -272,6 +344,63 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return fixtures.devEnvironments;
 		case "launch_dev_environment":
 			return undefined;
+
+		// ── Prompt actions ──
+		// Served from an in-memory list so the Action bar, the parameter dialog
+		// and the Settings section all render. Writes are accepted and kept for
+		// the session; nothing is persisted.
+		case "prompt_actions_list":
+			return demoPromptActions;
+		case "prompt_action_create": {
+			const input = (args.action ?? {}) as Record<string, unknown>;
+			const row = {
+				id: `demo-action-${demoPromptActions.length + 1}`,
+				name: String(input.name ?? "Untitled"),
+				body: String(input.body ?? ""),
+				scopeKind: (input.scopeKind as "all" | "set") ?? "all",
+				scopeAgentIds: (input.scopeAgentIds as string[]) ?? [],
+				paramsJson: String(input.paramsJson ?? "{}"),
+				showInBar: input.showInBar !== false,
+				position: demoPromptActions.length,
+				createdAt: 0,
+				updatedAt: 0,
+			};
+			demoPromptActions.push(row);
+			publish("prompt-actions-changed", undefined);
+			return row;
+		}
+		case "prompt_action_update": {
+			const id = String(args.id ?? "");
+			const patch = (args.updates ?? {}) as Record<string, unknown>;
+			const row = demoPromptActions.find((a) => a.id === id);
+			if (!row) throw new Error(`Not found: prompt action ${id}`);
+			Object.assign(row, patch);
+			publish("prompt-actions-changed", undefined);
+			return row;
+		}
+		case "prompt_action_delete": {
+			const id = String(args.id ?? "");
+			const at = demoPromptActions.findIndex((a) => a.id === id);
+			if (at >= 0) demoPromptActions.splice(at, 1);
+			publish("prompt-actions-changed", undefined);
+			return undefined;
+		}
+		case "prompt_actions_reorder": {
+			const ids = (args.ids as string[]) ?? [];
+			for (const [i, id] of ids.entries()) {
+				const row = demoPromptActions.find((a) => a.id === id);
+				if (row) row.position = i;
+			}
+			demoPromptActions.sort((a, b) => a.position - b.position);
+			publish("prompt-actions-changed", undefined);
+			return undefined;
+		}
+		// An attachment cannot really be saved in `demo:web` — a browser File has
+		// no filesystem path, and paths are the whole mechanism (ADR-0038). Hand
+		// back a canned path so the dialog looks complete in a screenshot while
+		// being honest that nothing was written.
+		case "prompt_attachment_save":
+			return "/Users/demo/Screenshots/login-error.png";
 
 		// ── Environment variables — inert in demo ──
 		// Demo mode never touches the OS credential store, so every Workspace

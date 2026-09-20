@@ -19,6 +19,9 @@ import type {
 	PrChange,
 	Profile,
 	ProfileUpdate,
+	PromptActionCreate,
+	PromptActionRow,
+	PromptActionUpdate,
 	PrStatePayload,
 	PtyActivityType,
 	PtyStatusType,
@@ -840,6 +843,38 @@ export const updates = {
 		listen<UpdateDownloadProgress>("update-download-progress", (event) =>
 			callback(event.payload),
 		),
+};
+
+export const promptActions = {
+	list: () => invoke<PromptActionRow[]>("prompt_actions_list"),
+
+	create: (action: PromptActionCreate) =>
+		invoke<PromptActionRow>("prompt_action_create", { action }),
+
+	update: (id: string, updates: PromptActionUpdate) =>
+		invoke<PromptActionRow>("prompt_action_update", { id, updates }),
+
+	delete: (id: string) => invoke<void>("prompt_action_delete", { id }),
+
+	reorder: (ids: string[]) => invoke<void>("prompt_actions_reorder", { ids }),
+
+	/** Fires in every Window when the list changes. Deliberately payload-free —
+	 *  the receiver re-reads. Shipping the list would reintroduce the whole-array
+	 *  clobbering this storage choice exists to avoid (ADR-0039). */
+	onChanged: (callback: () => void) =>
+		listen<void>("prompt-actions-changed", () => callback()),
+};
+
+export const promptAttachments = {
+	/** Write a pasted bitmap to a content-hashed file and return its path. Only
+	 *  a paste comes here — a picked file already has a path (ADR-0038).
+	 *
+	 *  Base64, as PTY data already is. Sending `number[]` made a 5 MB screenshot
+	 *  several million JSON numbers, which froze the webview while it was
+	 *  serialised — and Rust's size guard only runs after all of that has been
+	 *  built and transferred, so the failure arrived far too late to be useful. */
+	save: (base64: string, extension: string) =>
+		invoke<string>("prompt_attachment_save", { base64, extension }),
 };
 
 export const clipboardImage = {

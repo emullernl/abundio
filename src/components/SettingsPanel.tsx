@@ -15,11 +15,13 @@ import {
 	PaletteIcon,
 	PrIcon,
 	ProfileIcon,
+	PromptActionIcon,
 	TerminalIcon,
 	TypeIcon,
 	UpdateIcon,
 } from "./Settings/icons";
 import { ProfilesSection } from "./Settings/ProfilesSection";
+import { PromptActionsSection } from "./Settings/PromptActionsSection";
 import { NavGroupLabel, NavItem } from "./Settings/primitives";
 import { TerminalSection } from "./Settings/TerminalSection";
 import { ThemeSection } from "./Settings/ThemeSection";
@@ -38,6 +40,7 @@ const SECTION_ICON: Record<SettingsSection, React.ReactNode> = {
 	terminal: <TerminalIcon />,
 	editor: <EditorIcon />,
 	agents: <AgentIcon />,
+	"prompt-actions": <PromptActionIcon />,
 	profiles: <ProfileIcon />,
 	github: <PrIcon />,
 	updates: <UpdateIcon />,
@@ -49,6 +52,7 @@ const SECTION_BODY: Record<SettingsSection, React.ReactNode> = {
 	terminal: <TerminalSection />,
 	editor: <EditorSection />,
 	agents: <AgentsSection />,
+	"prompt-actions": <PromptActionsSection />,
 	profiles: <ProfilesSection />,
 	github: <GithubSection />,
 	updates: <UpdatesSection />,

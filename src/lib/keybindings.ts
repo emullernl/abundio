@@ -25,10 +25,35 @@ type KeyAction =
 	| "toggle-statistics-overlay"
 	| "open-settings"
 	| "copy"
-	| "paste";
+	| "paste"
+	// Fires the Nth button in the focused pane's Action bar. The number is
+	// **positional** — it names a slot in the bar, not a Prompt action.
+	| "prompt-action-1"
+	| "prompt-action-2"
+	| "prompt-action-3"
+	| "prompt-action-4"
+	| "prompt-action-5"
+	| "prompt-action-6"
+	| "prompt-action-7"
+	| "prompt-action-8"
+	| "prompt-action-9";
 
 interface KeyBinding {
 	key: string;
+	/**
+	 * Match the **physical** key (`KeyboardEvent.code`) instead of `key`.
+	 *
+	 * `key` carries the character produced, which is wrong for any binding on
+	 * the digit row. `Ctrl+Shift+1` reports `key: "!"`, so a binding written as
+	 * `key: "1"` never matches at all. Layout makes it worse in the other
+	 * direction: on AZERTY the unshifted `Digit1` key produces `"&"`, so even
+	 * the Shift-free `Cmd+1` would miss.
+	 *
+	 * `code` is the key's position on the board, so it is the same on every
+	 * layout and unaffected by Shift. `key` stays the default because for
+	 * letters it is the more forgiving match.
+	 */
+	code?: string;
 	meta: boolean;
 	shift: boolean;
 	ctrl: boolean;
@@ -38,6 +63,7 @@ interface KeyBinding {
 	action: KeyAction;
 }
 
+import { hasOverlay } from "../hooks/useEscapeKey";
 import { isMac } from "./platform";
 
 // Actions that must always fire even when Monaco is focused — workspace/pane/tab
@@ -249,6 +275,33 @@ if (!isMac) {
 	);
 }
 
+// Action bar position numbers: Cmd+1..9 on macOS, Ctrl+Shift+1..9 elsewhere.
+//
+// The bindings are chosen to be *invisible to the terminal*, not merely unused
+// by Abundio (which binds no digits at all). macOS `Cmd` is not a terminal
+// modifier, so xterm.js never forwards a Cmd-chord to the PTY and no Agent can
+// see it.
+//
+// On Linux/Windows `Ctrl+<digit>` is unusable — `Ctrl+2` is NUL, `Ctrl+3` is
+// ESC, `Ctrl+4` is FS and so on across the row, all in constant use. And
+// `Ctrl+Alt+<digit>` is unusable too, despite matching the split-pane
+// precedent, because `Ctrl+Alt` **is AltGr** on European keyboard layouts and
+// would swallow characters the user needs to type. That leaves Ctrl+Shift.
+for (let n = 1; n <= 9; n++) {
+	DEFAULT_BINDINGS.push({
+		key: String(n),
+		// Matched by position, not by character — see `KeyBinding.code`. Without
+		// this the Windows/Linux chord cannot fire at all (Shift turns `1` into
+		// `!`), and the macOS one misses on layouts where the digit row is
+		// shifted, such as AZERTY.
+		code: `Digit${n}`,
+		meta: isMac,
+		shift: !isMac,
+		ctrl: !isMac,
+		action: `prompt-action-${n}` as KeyAction,
+	});
+}
+
 type ActionHandler = () => void;
 
 const handlers = new Map<KeyAction, ActionHandler>();
@@ -266,8 +319,11 @@ export function triggerAction(action: KeyAction) {
 }
 
 function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
+	const keyMatches = binding.code
+		? e.code === binding.code
+		: e.key.toLowerCase() === binding.key.toLowerCase();
 	return (
-		e.key.toLowerCase() === binding.key.toLowerCase() &&
+		keyMatches &&
 		e.metaKey === binding.meta &&
 		e.shiftKey === binding.shift &&
 		e.ctrlKey === binding.ctrl &&
@@ -275,9 +331,20 @@ function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
 	);
 }
 
+/** Actions that must not reach *past* an open modal.
+ *
+ *  Firing a Prompt action submits to the Agent, so a digit pressed while a
+ *  dialog has the user's attention would send a prompt they never confirmed —
+ *  from behind the thing they are looking at. For a parameterised action the
+ *  open dialog merely swaps; for a parameterless one it goes straight out. */
+function isSuppressedByOverlay(action: KeyAction): boolean {
+	return action.startsWith("prompt-action-");
+}
+
 export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of DEFAULT_BINDINGS) {
 		if (matchesBinding(e, binding)) {
+			if (isSuppressedByOverlay(binding.action) && hasOverlay()) return;
 			// When Monaco is focused, let it handle any key that isn't a
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.

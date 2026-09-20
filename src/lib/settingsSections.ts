@@ -18,6 +18,7 @@ export const SETTINGS_SECTIONS = [
 	"terminal",
 	"editor",
 	"agents",
+	"prompt-actions",
 	"profiles",
 	"github",
 	"updates",
@@ -56,6 +57,7 @@ export const SETTINGS_NAV: ReadonlyArray<{
 		caption: "Application",
 		items: [
 			{ id: "agents", label: "Agents" },
+			{ id: "prompt-actions", label: "Prompt actions" },
 			{ id: "profiles", label: "Profiles" },
 			{ id: "github", label: "GitHub" },
 			{ id: "updates", label: "Updates" },

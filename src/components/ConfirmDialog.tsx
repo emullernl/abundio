@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 interface ConfirmDialogProps {
 	title: string;
@@ -20,6 +21,11 @@ export function ConfirmDialog({
 	onCancel,
 }: ConfirmDialogProps) {
 	const confirmRef = useRef<HTMLButtonElement>(null);
+
+	// The backdrop's own onKeyDown below never fires — the card stops
+	// propagation and focus starts on the confirm button inside it — so Escape
+	// did nothing until this. Cancelling is the safe direction here.
+	useEscapeKey(onCancel);
 
 	useEffect(() => {
 		confirmRef.current?.focus();

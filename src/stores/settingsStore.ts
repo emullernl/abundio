@@ -49,6 +49,11 @@ interface SettingsState {
 	 *  (so the agent recognises it) instead of inserting its file path. See the
 	 *  "Smart image drop" term in CONTEXT.md. */
 	smartImageDrop: boolean;
+	/** Whether the Action bar renders at the bottom of agent panes. Off hides
+	 *  the strip everywhere without deleting anyone's Prompt actions — the
+	 *  Command palette still reaches them. A preference, which is why it lives
+	 *  here and the actions themselves do not (ADR-0039). */
+	showActionBar: boolean;
 	/** Whether the app checks for updates on launch + periodically. */
 	autoCheckUpdatesEnabled: boolean;
 	/** Update version the user chose to skip; suppresses its prompt until a
@@ -102,6 +107,7 @@ interface SettingsState {
 	setGpuAcceleration: (enabled: boolean) => void;
 	setBlockMouseReporting: (enabled: boolean) => void;
 	setSmartImageDrop: (enabled: boolean) => void;
+	setShowActionBar: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
 	setUpdateSnoozedUntil: (until: number | null) => void;
@@ -142,6 +148,7 @@ export const PERSISTED_KEYS = [
 	"gpuAccelerationEnabled",
 	"blockMouseReporting",
 	"smartImageDrop",
+	"showActionBar",
 	"autoCheckUpdatesEnabled",
 	"skippedUpdateVersion",
 	"updateSnoozedUntil",
@@ -180,6 +187,7 @@ const PERSISTED_DEFAULTS: {
 	gpuAccelerationEnabled: boolean;
 	blockMouseReporting: boolean;
 	smartImageDrop: boolean;
+	showActionBar: boolean;
 	autoCheckUpdatesEnabled: boolean;
 	skippedUpdateVersion: string | null;
 	updateSnoozedUntil: number | null;
@@ -208,6 +216,7 @@ const PERSISTED_DEFAULTS: {
 		gpuAccelerationEnabled: true,
 		blockMouseReporting: true,
 		smartImageDrop: true,
+		showActionBar: true,
 		autoCheckUpdatesEnabled: true,
 		skippedUpdateVersion: null as string | null,
 		updateSnoozedUntil: null as number | null,
@@ -311,6 +320,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.smartImageDrop === "boolean"
 					? s.smartImageDrop
 					: defaults.smartImageDrop,
+			showActionBar:
+				typeof s.showActionBar === "boolean"
+					? s.showActionBar
+					: defaults.showActionBar,
 			autoCheckUpdatesEnabled:
 				typeof s.autoCheckUpdatesEnabled === "boolean"
 					? s.autoCheckUpdatesEnabled
@@ -455,6 +468,7 @@ export const useSettingsStore = create<SettingsState>()(
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
 			blockMouseReporting: PERSISTED_DEFAULTS.blockMouseReporting,
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
+			showActionBar: PERSISTED_DEFAULTS.showActionBar,
 			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
 			skippedUpdateVersion: PERSISTED_DEFAULTS.skippedUpdateVersion,
 			updateSnoozedUntil: PERSISTED_DEFAULTS.updateSnoozedUntil,
@@ -603,6 +617,7 @@ export const useSettingsStore = create<SettingsState>()(
 				set({ blockMouseReporting });
 			},
 			setSmartImageDrop: (smartImageDrop) => set({ smartImageDrop }),
+			setShowActionBar: (showActionBar) => set({ showActionBar }),
 			setAutoCheckUpdatesEnabled: (autoCheckUpdatesEnabled) => {
 				// Rust holds the app-wide auto-check flag (the background loop
 				// reads it). Push the change immediately so any Window's toggle
@@ -637,7 +652,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 9,
+			version: 10,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -695,6 +710,12 @@ export const useSettingsStore = create<SettingsState>()(
 				// guarantees the key exists during the rehydrate window.
 				if (version < 6) {
 					state = { smartImageDrop: true, ...state };
+				}
+				// v10: the Action bar (default on). Additive default-true key;
+				// PERSISTED_DEFAULTS + merge already supply it, so this only
+				// guarantees the key exists during the rehydrate window.
+				if (version < 10) {
+					state = { showActionBar: true, ...state };
 				}
 				// v7: app-global PR poller (ADR-0019). Additive default keys;
 				// PERSISTED_DEFAULTS + merge already supply them — this only

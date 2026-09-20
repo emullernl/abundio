@@ -312,3 +312,46 @@ export interface LaunchFile {
 	line?: number;
 	column?: number;
 }
+
+// ── Prompt actions ──
+
+/**
+ * A **Prompt action** as it crosses the IPC boundary.
+ *
+ * `scopeKind` + `scopeAgentIds` are kept flat here because that is the shape of
+ * the row; the frontend folds them into the `ActionScope` union in
+ * `lib/promptActions.ts`. `paramsJson` stays a string on this side of the wire
+ * for the same reason — Rust never parses it beyond checking it is an object.
+ */
+export interface PromptActionRow {
+	id: string;
+	name: string;
+	body: string;
+	scopeKind: "all" | "set";
+	scopeAgentIds: string[];
+	paramsJson: string;
+	showInBar: boolean;
+	position: number;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface PromptActionCreate {
+	name: string;
+	body: string;
+	scopeKind?: "all" | "set";
+	scopeAgentIds?: string[];
+	paramsJson?: string;
+	showInBar?: boolean;
+}
+
+/** A partial update — omitted fields are left alone, so the in-pane popover can
+ *  rename an action without round-tripping a row it never loaded. */
+export interface PromptActionUpdate {
+	name?: string;
+	body?: string;
+	scopeKind?: "all" | "set";
+	scopeAgentIds?: string[];
+	paramsJson?: string;
+	showInBar?: boolean;
+}

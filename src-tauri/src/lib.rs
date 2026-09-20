@@ -21,6 +21,8 @@ pub mod migrations;
 pub mod pr_poller;
 pub mod process_monitor;
 pub mod profile_store;
+pub mod prompt_actions;
+pub mod prompt_attachments;
 pub mod pty_manager;
 pub mod search;
 pub mod updater;
@@ -716,6 +718,17 @@ pub fn run() {
             let env_conn = migrations::open_db().expect("Failed to open database");
             app.manage(env_vars::EnvVarStore::new(env_conn));
 
+            // Own connection for the same reason: the Action bar reads this on
+            // every pane render, and must not queue behind a git or telemetry
+            // write holding the WorkspaceStore mutex.
+            let prompt_actions_conn = migrations::open_db().expect("Failed to open database");
+            app.manage(prompt_actions::PromptActionStore::new(prompt_actions_conn));
+
+            // Pasted Prompt action attachments are a cache, not user data
+            // (ADR-0038). Nothing owns their lifetime, so they are swept by age
+            // at startup. Best-effort: this must never stop the app opening.
+            prompt_attachments::sweep();
+
             // Active profile cache (set by the frontend after rehydrating its
             // settings store). Used by the menu rebuild.
             app.manage(profile_store::ActiveProfileState::default());
@@ -1222,6 +1235,12 @@ pub fn run() {
             search::fs_search_cancel,
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
+            prompt_attachments::prompt_attachment_save,
+            prompt_actions::prompt_actions_list,
+            prompt_actions::prompt_action_create,
+            prompt_actions::prompt_action_update,
+            prompt_actions::prompt_action_delete,
+            prompt_actions::prompt_actions_reorder,
             env_vars::env_list,
             env_vars::env_bundle_create,
             env_vars::env_bundle_rename,

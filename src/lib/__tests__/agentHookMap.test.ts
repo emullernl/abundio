@@ -14,6 +14,33 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("claude", "SessionEnd")).toBe("clear");
 	});
 
+	it("treats Claude Code's /clear as a session reset, not a process exit", () => {
+		// `/clear` fires SessionEnd with reason "clear" and immediately starts a
+		// new session in the SAME process. Mapping it to "clear" dropped the pane
+		// out of agent mode while the agent sat there waiting for input — the
+		// agent icon left the title bar, the status icon flipped to shell, and
+		// the Action bar unmounted.
+		expect(mapHookEvent("claude", "SessionEnd", undefined, "clear")).toBe(
+			"sessionReset",
+		);
+	});
+
+	it("keeps every other SessionEnd reason on the process-exit mapping", () => {
+		// Narrow on purpose. These do not need to be precise: when the process
+		// really exits, the shell's own command_end marker drops agent mode
+		// anyway, which is what makes special-casing only "clear" safe.
+		for (const reason of [
+			"logout",
+			"prompt_input_exit",
+			"other",
+			undefined,
+		] as const) {
+			expect(mapHookEvent("claude", "SessionEnd", undefined, reason)).toBe(
+				"clear",
+			);
+		}
+	});
+
 	it("drives Copilot Waiting from the notification hook, not permissionRequest", () => {
 		expect(mapHookEvent("copilot", "userPromptSubmitted")).toBe("active");
 		// notification reaches us only as permission_prompt (matcher-scoped at

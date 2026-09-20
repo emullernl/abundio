@@ -6,6 +6,10 @@ import { appWindow } from "./lib/appWindow";
 import { listen, profiles as profilesApi } from "./lib/ipc";
 import { broadcastSliceOf } from "./lib/settingsBroadcast";
 import { useProfileStore } from "./stores/profileStore";
+import {
+	usePromptActionStore,
+	watchPromptActions,
+} from "./stores/promptActionStore";
 import { useSettingsStore } from "./stores/settingsStore";
 
 /**
@@ -51,6 +55,19 @@ export function SettingsApp() {
 	// profile window opening, a profile window closing) need to push fresh
 	// data into the settings window's stores so the Profiles section and
 	// delete-confirm message reflect reality.
+
+	// Prompt actions live in SQLite, not settingsStore (ADR-0039), so each root
+	// loads them itself and subscribes to the payload-free change broadcast.
+	// Tauri events do not propagate between webview roots, so App and
+	// SettingsApp each need their own listener.
+	useEffect(() => {
+		void usePromptActionStore.getState().load();
+		const unwatch = watchPromptActions();
+		return () => {
+			unwatch.then((fn) => fn()).catch(() => {});
+		};
+	}, []);
+
 	useEffect(() => {
 		const unlistenOwnership = listen("profile-ownership-changed", () => {
 			useProfileStore

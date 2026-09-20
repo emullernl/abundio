@@ -161,3 +161,24 @@ export function PrIcon() {
 		</svg>
 	);
 }
+
+/** Settings ▸ Prompt actions. A cursor over a rail of buttons — the Action bar
+ *  seen edge-on, rather than a generic "lightning = quick" cliché. */
+export function PromptActionIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<rect x="2" y="4" width="20" height="9" rx="2" />
+			<path d="M6 17h4M14 17h4M6 21h12" />
+		</svg>
+	);
+}
