@@ -1,4 +1,7 @@
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import {
 	handleKeyDown,
 	initKeybindings,
@@ -238,6 +241,23 @@ describe("initKeybindings", () => {
 	});
 });
 
+/** Mount a throwaway overlay through the real hook, so the suppression is
+ *  tested against the same stack the dialogs use. */
+function pushOverlay(): () => void {
+	const container = document.createElement("div");
+	document.body.appendChild(container);
+	const root = createRoot(container);
+	function Overlay() {
+		useEscapeKey(() => {});
+		return null;
+	}
+	act(() => root.render(<Overlay />));
+	return () => {
+		act(() => root.unmount());
+		container.remove();
+	};
+}
+
 describe("prompt action digit shortcuts", () => {
 	afterEach(() => {
 		for (let n = 1; n <= 9; n++) {
@@ -303,6 +323,38 @@ describe("prompt action digit shortcuts", () => {
 			}),
 		);
 		expect(one).not.toHaveBeenCalled();
+	});
+
+	it("does not fire while a modal overlay is open", () => {
+		// Firing submits, so a digit pressed behind a dialog would send a prompt
+		// the user never confirmed — from behind the thing they are looking at.
+		const handler = vi.fn();
+		registerAction(
+			"prompt-action-1" as Parameters<typeof registerAction>[0],
+			handler,
+		);
+
+		const release = pushOverlay();
+		handleKeyDown(
+			makeKeyEvent({
+				key: isMac ? "1" : "!",
+				code: "Digit1",
+				[modKey]: true,
+				shiftKey: !isMac,
+			}),
+		);
+		expect(handler).not.toHaveBeenCalled();
+
+		release();
+		handleKeyDown(
+			makeKeyEvent({
+				key: isMac ? "1" : "!",
+				code: "Digit1",
+				[modKey]: true,
+				shiftKey: !isMac,
+			}),
+		);
+		expect(handler).toHaveBeenCalledOnce();
 	});
 
 	it("does not fire without its modifiers", () => {

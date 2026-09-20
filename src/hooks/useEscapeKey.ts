@@ -54,6 +54,16 @@ function stopListeningIfIdle() {
 }
 
 /**
+ * True while any overlay registered here is on screen.
+ *
+ * Used to suppress keystrokes that would act on what is *behind* the overlay.
+ * The stack already tracks exactly this, so nothing else has to.
+ */
+export function hasOverlay(): boolean {
+	return stack.length > 0;
+}
+
+/**
  * Register `onEscape` for as long as the component is mounted.
  *
  * The callback is read through a ref, so a caller passing an inline arrow does

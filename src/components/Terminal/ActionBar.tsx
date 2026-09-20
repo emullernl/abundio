@@ -12,8 +12,11 @@
  * line number rather than a badge, and brightens to the accent on hover so the
  * digit reads as a key you can press.
  *
- * Renders nothing at all when no action is in scope — not an empty bar. A
- * feature the user has not adopted costs them no terminal rows.
+ * Present in every agent-mode pane, **including when it holds nothing** — an
+ * empty bar shows an *Add a prompt action* invitation instead of buttons.
+ * Nothing is seeded on a fresh install, so a bar that hid itself when empty
+ * would leave the feature with no visible entry point. See the in-body note
+ * below and the `Action bar` entry in CONTEXT.md.
  */
 
 import { AnimatePresence, motion } from "framer-motion";

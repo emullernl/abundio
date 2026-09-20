@@ -19,6 +19,7 @@
 import { ImagePlus, Paperclip, X } from "lucide-react";
 import { useState } from "react";
 import { promptAttachments } from "../../lib/ipc";
+import { isMac } from "../../lib/platform";
 import type { ParamValue } from "../../lib/promptActions";
 
 interface AttachmentFieldProps {
@@ -195,7 +196,7 @@ export function AttachmentField({
 					<ImagePlus size={11} />
 					{paths.length > 0 && !multiple ? "Replace…" : "Choose file…"}
 					<span style={{ fontSize: 11, opacity: 0.7 }}>
-						{busy ? "saving…" : "or ⌘V here"}
+						{busy ? "saving…" : `or ${isMac ? "⌘V" : "Ctrl+V"} here`}
 					</span>
 				</button>
 			</div>

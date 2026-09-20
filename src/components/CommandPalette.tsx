@@ -6,7 +6,7 @@ import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { triggerAction } from "../lib/keybindings";
 import { firePaneAction } from "../lib/promptActionRegistry";
-import { actionsForPane, buttonLabel } from "../lib/promptActions";
+import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
 import { useProfileStore } from "../stores/profileStore";
@@ -21,6 +21,9 @@ interface PaletteItem {
 	label: string;
 	category: string;
 	action: () => void;
+	/** Listed but not selectable. Used where an entry exists but cannot run
+	 *  right now, so the reason is visible rather than a silent no-op. */
+	disabled?: boolean;
 }
 
 interface Props {
@@ -160,13 +163,23 @@ export function CommandPalette({
 					? usePtyActivityStore.getState().detectedAgentIds[ptyId]
 					: undefined;
 			})();
+			// Disabled while the agent is Waiting, matching the bar. firePromptAction
+			// refuses either way, but without this the entry closes the palette and
+			// does nothing — the guard would be invisible on this path.
+			const ptyId = getTerminal(focusedPaneId)?.ptyId;
+			const waiting = ptyId
+				? !canFire(usePtyActivityStore.getState().activities[ptyId]?.state)
+				: false;
 			for (const action of actionsForPane(promptActionList, agentId, {
 				barOnly: false,
 			})) {
 				result.push({
 					id: `prompt-action-${action.id}`,
-					label: buttonLabel(action),
+					label: waiting
+						? `${buttonLabel(action)} — agent is waiting for permission`
+						: buttonLabel(action),
 					category: "Prompt Actions",
+					disabled: waiting,
 					action: () => firePaneAction(focusedPaneId, action),
 				});
 			}
@@ -277,6 +290,9 @@ export function CommandPalette({
 				setSelectedIndex((i) => Math.max(i - 1, 0));
 			} else if (e.key === "Enter" && filtered[selectedIndex]) {
 				e.preventDefault();
+				// A disabled entry keeps the palette open rather than closing on a
+				// no-op, so the reason in its label stays on screen.
+				if (filtered[selectedIndex].disabled) return;
 				filtered[selectedIndex].action();
 				onClose();
 			} else if (e.key === "Escape") {
@@ -359,7 +375,9 @@ export function CommandPalette({
 								)}
 								<button
 									type="button"
+									disabled={item.disabled}
 									onClick={() => {
+										if (item.disabled) return;
 										item.action();
 										onClose();
 									}}
@@ -369,6 +387,8 @@ export function CommandPalette({
 										padding: "8px 12px",
 										fontSize: 14,
 										width: "calc(100% - 12px)",
+										opacity: item.disabled ? 0.45 : 1,
+										cursor: item.disabled ? "not-allowed" : "pointer",
 										color:
 											i === selectedIndex
 												? "var(--bg-primary)"

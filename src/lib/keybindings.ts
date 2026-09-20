@@ -63,6 +63,7 @@ interface KeyBinding {
 	action: KeyAction;
 }
 
+import { hasOverlay } from "../hooks/useEscapeKey";
 import { isMac } from "./platform";
 
 // Actions that must always fire even when Monaco is focused — workspace/pane/tab
@@ -330,9 +331,20 @@ function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
 	);
 }
 
+/** Actions that must not reach *past* an open modal.
+ *
+ *  Firing a Prompt action submits to the Agent, so a digit pressed while a
+ *  dialog has the user's attention would send a prompt they never confirmed —
+ *  from behind the thing they are looking at. For a parameterised action the
+ *  open dialog merely swaps; for a parameterless one it goes straight out. */
+function isSuppressedByOverlay(action: KeyAction): boolean {
+	return action.startsWith("prompt-action-");
+}
+
 export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of DEFAULT_BINDINGS) {
 		if (matchesBinding(e, binding)) {
+			if (isSuppressedByOverlay(binding.action) && hasOverlay()) return;
 			// When Monaco is focused, let it handle any key that isn't a
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.

@@ -47,6 +47,20 @@ import { PromptActionPopover } from "./PromptActionPopover";
 import { SearchBar } from "./SearchBar";
 import { TerminalTitleBar } from "./TerminalTitleBar";
 
+/** What to tell the user when a send was refused. `waiting` should not reach
+ *  the dialog — the bar disables its buttons — but a palette entry can still
+ *  open one, so it is covered. */
+function refusalMessage(reason: "no-terminal" | "waiting" | "empty"): string {
+	switch (reason) {
+		case "empty":
+			return "Nothing to send — fill in at least one field.";
+		case "waiting":
+			return "The agent is waiting for a permission answer.";
+		default:
+			return "This pane has no running terminal.";
+	}
+}
+
 /** The gesture that opens a context menu. On macOS **Ctrl+click** is the
  *  system-level secondary click, and a webview may deliver it as button 0 with
  *  `ctrlKey` rather than as button 2 — in a mouse-reporting pane that would be
@@ -190,14 +204,9 @@ export function TerminalSlot({
 	// binding (Cmd+1..9 / Ctrl+Shift+1..9). The slot is **positional** — it
 	// names a place in this pane's bar, not a particular Prompt action — so it
 	// has to be resolved here, against the same ordered list the bar drew.
-	// The bar's keyboard slots belong to the bar. With the setting off there is
-	// no strip, no position numbers and no feedback, so a live Cmd+1 would paste
-	// a prompt and press Enter with nothing on screen to explain it. The
-	// setting's own description says the palette is what still reaches actions.
 	const showActionBar = useSettingsStore((s) => s.showActionBar);
 
 	useEffect(() => {
-		if (!showActionBar) return;
 		const run = (action: PromptAction, stageOnly: boolean) => {
 			// Any parameters at all means ask first; none means fire from the click.
 			if (deriveParams(action.body, action.params).length > 0) {
@@ -214,6 +223,13 @@ export function TerminalSlot({
 		};
 		registerPaneFire(paneId, {
 			bySlot: (slot, stageOnly) => {
+				// The bar's *keyboard slots* belong to the bar: with the setting off
+				// there is no strip, no position numbers and no feedback, so a live
+				// Cmd+1 would paste a prompt and press Enter with nothing on screen
+				// to explain it. Gated here and not around the registration itself —
+				// `byAction` is the Command palette, which both the setting's
+				// description and settingsStore promise still reaches every action.
+				if (!showActionBar) return;
 				const ordered = actionsForPane(
 					usePromptActionStore.getState().actions,
 					detectedAgentId,
@@ -652,14 +668,21 @@ export function TerminalSlot({
 					action={paramAction}
 					onCancel={() => setParamAction(null)}
 					onSubmit={(values, stageOnly) => {
-						firePromptAction(
+						const result = firePromptAction(
 							paneId,
 							paramAction.body,
 							paramAction.params,
 							values,
 							{ stageOnly, actionId: paramAction.id },
 						);
-						setParamAction(null);
+						if (result.ok) {
+							setParamAction(null);
+							return null;
+						}
+						// Stay open and say why. Closing on a refusal looks exactly
+						// like a successful send, and the `empty` case is reachable
+						// with every field legitimately left blank.
+						return refusalMessage(result.reason);
 					}}
 				/>
 			)}

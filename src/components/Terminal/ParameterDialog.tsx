@@ -21,6 +21,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { CornerDownLeft } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { isMac } from "../../lib/platform";
 import {
 	allFilled,
 	deriveParams,
@@ -36,7 +37,13 @@ import { AttachmentField } from "./AttachmentField";
 
 interface ParameterDialogProps {
 	action: PromptAction;
-	onSubmit: (values: Record<string, ParamValue>, stageOnly: boolean) => void;
+	/** Returns the refusal reason to show, or null when the send went out. The
+	 *  dialog stays open on a refusal — closing it would be indistinguishable
+	 *  from a successful send, and firing normally submits. */
+	onSubmit: (
+		values: Record<string, ParamValue>,
+		stageOnly: boolean,
+	) => string | null;
 	onCancel: () => void;
 }
 
@@ -70,9 +77,11 @@ export function ParameterDialog({
 		setValues((v) => ({ ...v, [name]: value }));
 	}
 
+	const [refusal, setRefusal] = useState<string | null>(null);
+
 	function submit(stageOnly: boolean) {
 		if (!ready) return;
-		onSubmit(values, stageOnly);
+		setRefusal(onSubmit(values, stageOnly));
 	}
 
 	return (
@@ -157,15 +166,27 @@ export function ParameterDialog({
 							borderTop: "1px solid var(--border)",
 						}}
 					>
-						<span
-							style={{
-								fontSize: 11,
-								color: "var(--fg-secondary)",
-								opacity: 0.8,
-							}}
-						>
-							Hold ⌥ to stage without sending
-						</span>
+						{refusal ? (
+							<span
+								style={{
+									fontSize: 11,
+									color: "var(--warning, #d99a2b)",
+									lineHeight: 1.4,
+								}}
+							>
+								{refusal}
+							</span>
+						) : (
+							<span
+								style={{
+									fontSize: 11,
+									color: "var(--fg-secondary)",
+									opacity: 0.8,
+								}}
+							>
+								Hold {isMac ? "⌥" : "Alt"} to stage without sending
+							</span>
+						)}
 						<div className="flex items-center gap-2">
 							<button
 								type="button"
@@ -354,6 +375,10 @@ function GrowingTextField({
 			// inserted by hand, since the element cannot hold one on its own.
 			if (!multiline) {
 				e.preventDefault();
+				// A number field cannot hold a newline, and `selectionStart` raises
+				// InvalidStateError on input[type=number] — the `?? value.length`
+				// below was written for a null return, which is not what happens.
+				if (numeric) return;
 				const el = e.currentTarget as HTMLInputElement;
 				const at = el.selectionStart ?? value.length;
 				onChange(`${value.slice(0, at)}\n${value.slice(at)}`);

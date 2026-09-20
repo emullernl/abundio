@@ -65,6 +65,11 @@ export function PromptActionPopover({
 	//
 	// When editing, the existing scope wins over the pane's Agent — the user
 	// already answered this question once.
+	// `save` is async and the store offers no optimistic write to lean on, so
+	// without this a double-click (or Enter-then-click) posts twice and creates
+	// two identical actions — which then sit adjacent in every bar and shift
+	// every later position number by one.
+	const [saving, setSaving] = useState(false);
 	const [scopeToAgent, setScopeToAgent] = useState(
 		editing ? editing.scope.kind === "set" : !!defaultAgentId,
 	);
@@ -100,7 +105,8 @@ export function PromptActionPopover({
 	const ready = name.trim().length > 0 && body.trim().length > 0;
 
 	async function save() {
-		if (!ready) return;
+		if (!ready || saving) return;
+		setSaving(true);
 		// Editing keeps whatever set was authored in Settings — which may name
 		// several Agents — rather than collapsing it to this pane's one.
 		// An action already scoped to a set keeps that set verbatim, **including
@@ -136,6 +142,8 @@ export function PromptActionPopover({
 		}
 		onClose();
 	}
+
+	const canSave = ready && !saving;
 
 	// Keep the card on screen: it is anchored to a `+` that may sit near the
 	// right or bottom edge of a small pane.
@@ -332,7 +340,7 @@ export function PromptActionPopover({
 							</button>
 							<button
 								type="button"
-								disabled={!ready}
+								disabled={!canSave}
 								className="rounded-lg"
 								style={{
 									padding: "0 16px",
@@ -341,8 +349,8 @@ export function PromptActionPopover({
 									fontWeight: 500,
 									backgroundColor: "var(--accent)",
 									color: "var(--bg-primary)",
-									opacity: ready ? 1 : 0.35,
-									cursor: ready ? "pointer" : "not-allowed",
+									opacity: canSave ? 1 : 0.35,
+									cursor: canSave ? "pointer" : "not-allowed",
 								}}
 								onClick={save}
 							>

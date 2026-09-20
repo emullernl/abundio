@@ -58,6 +58,9 @@ export function PromptActionsSection() {
 	// Held here rather than in the row: the row unmounts as soon as the delete
 	// lands, which would tear down a dialog it owned mid-transition.
 	const [pendingDelete, setPendingDelete] = useState<PromptAction | null>(null);
+	// Same reason as the popover's: two posts create two identical rows and
+	// shift every later position number.
+	const [adding, setAdding] = useState(false);
 	const [expanded, setExpanded] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -65,10 +68,17 @@ export function PromptActionsSection() {
 	}, [load]);
 
 	async function add() {
-		// Created empty and filled in afterwards. The row is a draft until it has
-		// a body, and a draft is never offered in a bar — see `actionsForPane`.
-		const created = await createAction({ name: "New action", body: "" });
-		if (created) setExpanded(created.id);
+		if (adding) return;
+		setAdding(true);
+		try {
+			// Created empty and filled in afterwards. The row is a draft until it
+			// has a body, and a draft is never offered in a bar — see
+			// `actionsForPane`.
+			const created = await createAction({ name: "New action", body: "" });
+			if (created) setExpanded(created.id);
+		} finally {
+			setAdding(false);
+		}
 	}
 
 	function move(id: string, delta: number) {
@@ -171,6 +181,7 @@ export function PromptActionsSection() {
 						border: "1px solid var(--border)",
 						backgroundColor: "var(--bg-primary)",
 					}}
+					disabled={adding}
 					onClick={add}
 				>
 					<Plus />

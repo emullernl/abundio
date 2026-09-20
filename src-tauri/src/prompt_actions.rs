@@ -259,6 +259,11 @@ impl PromptActionStore {
             )
             .unwrap_or(0);
 
+        // One reading, not two: `list()` orders by `position ASC, created_at ASC`,
+        // and the documented tie-break for two Windows racing to the same
+        // position rests on `created_at`. Two calls straddling a tick would make
+        // a fresh row look edited, by a second, for no reason.
+        let created_at = now();
         let action = PromptAction {
             id: Uuid::new_v4().to_string(),
             name: req.name.trim().to_string(),
@@ -268,8 +273,8 @@ impl PromptActionStore {
             params_json,
             show_in_bar,
             position: next_pos,
-            created_at: now(),
-            updated_at: now(),
+            created_at,
+            updated_at: created_at,
         };
 
         conn.execute(

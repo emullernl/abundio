@@ -85,8 +85,24 @@ export const usePromptActionStore = create<PromptActionState>((set, get) => ({
 
 	updateAction: async (id, patch) => {
 		try {
-			await ipc.update(id, toUpdate(patch));
-			await get().load();
+			const row = await ipc.update(id, toUpdate(patch));
+			// Splice the returned row in rather than re-reading the whole list.
+			//
+			// The re-read left `actions` stale for the length of the round-trip,
+			// and Settings builds its next write *from* `actions` — so blurring two
+			// parameter fields in quick succession (an ordinary Tab) read the
+			// pre-first-edit params and sent them back, silently undoing the first
+			// edit. That is ADR-0039's read-modify-write race one level down, inside
+			// a single row.
+			//
+			// This is not an optimistic write: the row applied is the one Rust
+			// returned, so this Window's copy is still never authoritative. The
+			// payload-free broadcast continues to drive a full re-read for changes
+			// made anywhere else.
+			set((s) => ({
+				actions: s.actions.map((a) => (a.id === id ? fromRow(row) : a)),
+				error: null,
+			}));
 		} catch (e) {
 			set({ error: String(e) });
 		}
