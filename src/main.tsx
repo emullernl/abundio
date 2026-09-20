@@ -19,7 +19,14 @@ setupCrossWindowSync();
 // Stamp the opt-out attributes globally on focus instead of per component.
 disableNativeTextAssist();
 
-const IS_SETTINGS_WINDOW = currentWindowLabel() === "settings";
+// In a real build the label decides. In `pnpm demo:web` there is no Tauri
+// window, so `currentWindowLabel()` always answers "main" and the Settings
+// window is unreachable — `?window=settings` opens it there. Demo-gated: the
+// query string must never be able to reroute a real window.
+const IS_SETTINGS_WINDOW =
+	currentWindowLabel() === "settings" ||
+	(isDemoMode() &&
+		new URLSearchParams(window.location.search).get("window") === "settings");
 
 // The settings window doesn't need the workspace notification router — it
 // has no workspaces / PTYs / notification routing of its own.

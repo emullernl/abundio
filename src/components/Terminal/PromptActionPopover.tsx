@@ -35,7 +35,7 @@ interface PromptActionPopoverProps {
 	onClose: () => void;
 }
 
-const WIDTH = 420;
+const WIDTH = 460;
 const PARAM_TYPES: ParamType[] = [
 	"text",
 	"number",
@@ -131,104 +131,158 @@ export function PromptActionPopover({
 					onClick={(e) => e.stopPropagation()}
 					onKeyDown={(e) => e.stopPropagation()}
 				>
-					<div className="flex flex-col gap-4 px-5 py-4">
-						<input
-							ref={nameRef}
-							placeholder="Button name"
-							className="rounded-lg px-3 py-2"
-							style={inputStyle}
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-						/>
+					<header
+						style={{
+							padding: "16px 20px 14px",
+							borderBottom: "1px solid var(--border)",
+						}}
+					>
+						<h2 style={{ fontSize: 14, color: "var(--fg-primary)" }}>
+							New prompt action
+						</h2>
+						<p
+							style={{
+								fontSize: 12,
+								color: "var(--fg-secondary)",
+								marginTop: 3,
+								lineHeight: 1.45,
+							}}
+						>
+							A button under this pane that sends a prompt to the agent.
+						</p>
+					</header>
 
-						<div className="flex flex-col gap-1">
+					<div className="flex flex-col gap-5" style={{ padding: "20px" }}>
+						<Field label="Button name">
+							<input
+								ref={nameRef}
+								placeholder="Review changes"
+								className="rounded-lg"
+								style={textInputStyle}
+								value={name}
+								onChange={(e) => setName(e.target.value)}
+							/>
+						</Field>
+
+						<Field
+							label="Sends"
+							hint={
+								derived.length > 0
+									? `Asks for ${derived.length} ${
+											derived.length === 1 ? "value" : "values"
+										} before sending`
+									: "Wrap a word in {{ }} to be asked for it first"
+							}
+						>
 							<textarea
-								placeholder="What to send. Use {{name}} for a value to ask for."
-								className="rounded-lg px-3 py-2"
-								style={{ ...inputStyle, resize: "vertical" }}
-								rows={4}
+								placeholder="/review"
+								className="rounded-lg"
+								style={{
+									...bodyInputStyle,
+									minHeight: 92,
+									resize: "vertical",
+								}}
 								value={body}
 								onChange={(e) => setBody(e.target.value)}
 							/>
-							{derived.length > 0 && (
-								<span
-									style={{
-										fontFamily: "var(--font-mono)",
-										fontSize: 10,
-										color: "var(--fg-secondary)",
-										opacity: 0.6,
-									}}
-								>
-									asks for {derived.length}{" "}
-									{derived.length === 1 ? "value" : "values"} before sending
-								</span>
-							)}
-						</div>
+						</Field>
 
 						{/* Parameters appear as you type placeholders — the name lives in
 						    the body and nowhere else, so there is nothing to declare. */}
-						{derived.map((p) => (
-							<div key={p.name} className="flex items-center gap-2.5">
-								<span
-									className="truncate"
-									style={{
-										fontFamily: "var(--font-mono)",
-										fontSize: 11,
-										color: "var(--fg-primary)",
-										minWidth: 90,
-									}}
-								>
-									{p.name}
-								</span>
-								<select
-									className="rounded-md px-2.5 py-1.5 flex-1"
-									style={{ ...inputStyle, fontSize: 11 }}
-									value={p.meta.type}
-									onChange={(e) =>
-										setParams((m) => ({
-											...m,
-											[p.name]: {
-												...(m[p.name] ?? { type: "text" }),
-												type: e.target.value as ParamType,
-											} as ParamMeta,
-										}))
-									}
-								>
-									{PARAM_TYPES.map((t) => (
-										<option key={t} value={t}>
-											{t}
-										</option>
+						{derived.length > 0 && (
+							<Field label="Asks for">
+								<div className="flex flex-col gap-2">
+									{derived.map((p) => (
+										<div
+											key={p.name}
+											className="flex items-center gap-3 rounded-lg"
+											style={{
+												padding: "0 12px",
+												height: 40,
+												backgroundColor: "var(--bg-primary)",
+												border: "1px solid var(--border)",
+											}}
+										>
+											<span
+												className="truncate flex-1"
+												style={{
+													fontFamily: "var(--font-mono)",
+													fontSize: 12,
+													color: "var(--fg-primary)",
+												}}
+											>
+												{p.name}
+											</span>
+											<select
+												className="rounded-md"
+												style={{ ...selectStyle, width: 132 }}
+												value={p.meta.type}
+												onChange={(e) =>
+													setParams((m) => ({
+														...m,
+														[p.name]: {
+															...(m[p.name] ?? { type: "text" }),
+															type: e.target.value as ParamType,
+														} as ParamMeta,
+													}))
+												}
+											>
+												{PARAM_TYPES.map((t) => (
+													<option key={t} value={t}>
+														{t}
+													</option>
+												))}
+											</select>
+										</div>
 									))}
-								</select>
-							</div>
-						))}
+								</div>
+							</Field>
+						)}
 
 						{defaultAgentId && (
-							<label
-								className="flex items-center gap-2 cursor-pointer"
-								style={{ fontSize: 11, color: "var(--fg-secondary)" }}
-							>
-								<input
-									type="checkbox"
-									checked={scopeToAgent}
-									onChange={(e) => setScopeToAgent(e.target.checked)}
-								/>
-								Only for {agentName ?? defaultAgentId}
-							</label>
+							<Field label="Offered for">
+								{/* A segmented pair rather than a bare checkbox: the choice is
+								    between two named things, and "only for X" as a tickbox
+								    hides the alternative it is toggling away from. */}
+								<div
+									className="flex rounded-lg gap-1"
+									style={{
+										padding: 4,
+										backgroundColor: "var(--bg-primary)",
+										border: "1px solid var(--border)",
+									}}
+								>
+									<ScopeChoice
+										selected={scopeToAgent}
+										onClick={() => setScopeToAgent(true)}
+									>
+										{agentName ?? defaultAgentId} only
+									</ScopeChoice>
+									<ScopeChoice
+										selected={!scopeToAgent}
+										onClick={() => setScopeToAgent(false)}
+									>
+										All agents
+									</ScopeChoice>
+								</div>
+							</Field>
 						)}
 					</div>
 
-					<div
-						className="flex items-center justify-between gap-3 px-5 py-3.5"
-						style={{ borderTop: "1px solid var(--border)" }}
+					<footer
+						className="flex items-center justify-between gap-3"
+						style={{
+							padding: "14px 20px",
+							borderTop: "1px solid var(--border)",
+						}}
 					>
 						<button
 							type="button"
-							className="inline-flex items-center gap-1 transition-opacity"
+							className="inline-flex items-center gap-1 transition-opacity hover:opacity-100"
 							style={{
-								fontSize: 11,
+								fontSize: 12,
 								color: "var(--fg-secondary)",
-								opacity: 0.7,
+								opacity: 0.8,
 							}}
 							onClick={() => {
 								invoke("open_settings_window", {
@@ -238,14 +292,16 @@ export function PromptActionPopover({
 							}}
 						>
 							Edit in Settings
-							<ArrowUpRight size={11} />
+							<ArrowUpRight size={12} />
 						</button>
 						<div className="flex items-center gap-2">
 							<button
 								type="button"
-								className="rounded-lg px-3.5 py-2"
+								className="rounded-lg"
 								style={{
-									fontSize: 12,
+									padding: "0 16px",
+									height: 34,
+									fontSize: 13,
 									color: "var(--fg-secondary)",
 									border: "1px solid var(--border)",
 								}}
@@ -256,9 +312,12 @@ export function PromptActionPopover({
 							<button
 								type="button"
 								disabled={!ready}
-								className="rounded-lg px-3.5 py-2"
+								className="rounded-lg"
 								style={{
-									fontSize: 12,
+									padding: "0 16px",
+									height: 34,
+									fontSize: 13,
+									fontWeight: 500,
 									backgroundColor: "var(--accent)",
 									color: "var(--bg-primary)",
 									opacity: ready ? 1 : 0.35,
@@ -266,22 +325,103 @@ export function PromptActionPopover({
 								}}
 								onClick={save}
 							>
-								Add
+								Add action
 							</button>
 						</div>
-					</div>
+					</footer>
 				</motion.div>
 			</motion.div>
 		</AnimatePresence>
 	);
 }
 
-const inputStyle: React.CSSProperties = {
-	fontFamily: "var(--font-mono)",
-	fontSize: 12,
+/** Label over control. The label is UI-font sentence case, not 10px lowercase
+ *  mono — mono is for the prompt body and the placeholder names, which are
+ *  code; a form label is prose and should read like the rest of the app. */
+function Field({
+	label,
+	hint,
+	children,
+}: {
+	label: string;
+	hint?: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<div className="flex flex-col gap-2">
+			<span style={{ fontSize: 12, color: "var(--fg-primary)", opacity: 0.85 }}>
+				{label}
+			</span>
+			{children}
+			{hint && (
+				<span
+					style={{
+						fontSize: 11,
+						color: "var(--fg-secondary)",
+						opacity: 0.75,
+						lineHeight: 1.4,
+					}}
+				>
+					{hint}
+				</span>
+			)}
+		</div>
+	);
+}
+
+function ScopeChoice({
+	selected,
+	onClick,
+	children,
+}: {
+	selected: boolean;
+	onClick: () => void;
+	children: React.ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			className="flex-1 rounded-md truncate transition-colors"
+			style={{
+				height: 30,
+				fontSize: 12,
+				color: selected ? "var(--bg-primary)" : "var(--fg-secondary)",
+				backgroundColor: selected ? "var(--accent)" : "transparent",
+			}}
+			onClick={onClick}
+		>
+			{children}
+		</button>
+	);
+}
+
+const fieldBase: React.CSSProperties = {
 	color: "var(--fg-primary)",
 	backgroundColor: "var(--bg-primary)",
 	border: "1px solid var(--border)",
 	outline: "none",
 	width: "100%",
+};
+
+/** The UI font at 13px — a name is prose, not code. */
+const textInputStyle: React.CSSProperties = {
+	...fieldBase,
+	fontSize: 13,
+	height: 36,
+};
+
+/** Mono, because this one really is a prompt the agent will read verbatim and
+ *  its `{{placeholders}}` are tokens. */
+const bodyInputStyle: React.CSSProperties = {
+	...fieldBase,
+	fontFamily: "var(--font-mono)",
+	fontSize: 12.5,
+	lineHeight: 1.55,
+};
+
+const selectStyle: React.CSSProperties = {
+	...fieldBase,
+	fontSize: 12,
+	height: 30,
+	width: "auto",
 };

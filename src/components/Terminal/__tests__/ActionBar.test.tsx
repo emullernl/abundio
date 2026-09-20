@@ -148,7 +148,7 @@ describe("ActionBar", () => {
 				action({
 					id: "s",
 					name: "Scoped",
-					scope: { kind: "set", agentIds: ["claude-code"] },
+					scope: { kind: "set", agentIds: ["claude"] },
 				}),
 			],
 		});
@@ -158,7 +158,7 @@ describe("ActionBar", () => {
 	});
 
 	it("puts agent-scoped actions first, so they take the low digits", () => {
-		setPane({ agentId: "claude-code" });
+		setPane({ agentId: "claude" });
 		usePromptActionStore.setState({
 			actions: [
 				action({ id: "g", name: "Global", position: 0 }),
@@ -166,7 +166,7 @@ describe("ActionBar", () => {
 					id: "s",
 					name: "Scoped",
 					position: 1,
-					scope: { kind: "set", agentIds: ["claude-code"] },
+					scope: { kind: "set", agentIds: ["claude"] },
 				}),
 			],
 		});
@@ -182,7 +182,7 @@ describe("ActionBar", () => {
 
 	it("never offers an action whose scope set has emptied out", () => {
 		// Its only Agent was deleted. Kept in Settings, never rendered here.
-		setPane({ agentId: "claude-code" });
+		setPane({ agentId: "claude" });
 		usePromptActionStore.setState({
 			actions: [action({ scope: { kind: "set", agentIds: [] } })],
 		});
@@ -191,7 +191,7 @@ describe("ActionBar", () => {
 	});
 
 	it("honours Show in bar", () => {
-		setPane({ agentId: "claude-code" });
+		setPane({ agentId: "claude" });
 		usePromptActionStore.setState({
 			actions: [action({ name: "Hidden", showInBar: false })],
 		});
@@ -202,7 +202,7 @@ describe("ActionBar", () => {
 	it("marks a parameterised action with a trailing ellipsis", () => {
 		// The macOS menu convention. It matters here because a plain click
 		// otherwise submits straight to the agent.
-		setPane({ agentId: "claude-code" });
+		setPane({ agentId: "claude" });
 		usePromptActionStore.setState({
 			actions: [action({ name: "Explain", body: "Explain {{symbol}}" })],
 		});
@@ -211,7 +211,7 @@ describe("ActionBar", () => {
 	});
 
 	it("numbers only the first nine buttons", () => {
-		setPane({ agentId: "claude-code" });
+		setPane({ agentId: "claude" });
 		usePromptActionStore.setState({
 			actions: Array.from({ length: 11 }, (_, i) =>
 				action({ id: `a${i}`, name: `Act${i}`, position: i }),
@@ -226,7 +226,7 @@ describe("ActionBar", () => {
 	});
 
 	it("disables every button while the agent is Waiting", () => {
-		setPane({ agentId: "claude-code", state: "waiting" });
+		setPane({ agentId: "claude", state: "waiting" });
 		usePromptActionStore.setState({ actions: [action()] });
 		render();
 		const btn = [...container.querySelectorAll("button")].find((b) =>
@@ -237,7 +237,7 @@ describe("ActionBar", () => {
 
 	it("leaves buttons live while the agent is Working", () => {
 		// Queuing a follow-up mid-turn is a real workflow.
-		setPane({ agentId: "claude-code", state: "active" });
+		setPane({ agentId: "claude", state: "active" });
 		usePromptActionStore.setState({ actions: [action()] });
 		render();
 		const btn = [...container.querySelectorAll("button")].find((b) =>
@@ -248,7 +248,7 @@ describe("ActionBar", () => {
 
 	it("asks for parameters instead of firing when the action has any", () => {
 		const onRequestParams = vi.fn();
-		setPane({ agentId: "claude-code" });
+		setPane({ agentId: "claude" });
 		const a = action({ name: "Explain", body: "Explain {{symbol}}" });
 		usePromptActionStore.setState({ actions: [a] });
 		render(onRequestParams);

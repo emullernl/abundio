@@ -104,25 +104,33 @@ export function ParameterDialog({
 					onKeyDown={(e) => e.stopPropagation()}
 				>
 					{/* The accent stripe names which button is about to speak. */}
-					<div
-						className="flex items-center gap-2 px-6 py-4"
+					<header
 						style={{
+							padding: "16px 24px",
 							borderBottom: "1px solid var(--border)",
 							borderLeft: "2px solid var(--accent)",
 						}}
 					>
-						<span
+						<h2 style={{ fontSize: 14, color: "var(--fg-primary)" }}>
+							{action.name}
+						</h2>
+						<p
 							style={{
-								fontFamily: "var(--font-mono)",
 								fontSize: 12,
-								color: "var(--fg-primary)",
+								color: "var(--fg-secondary)",
+								marginTop: 3,
 							}}
 						>
-							{action.name}
-						</span>
-					</div>
+							{params.length === 1
+								? "Fill this in, then send it to the agent."
+								: `Fill these ${params.length} in, then send them to the agent.`}
+						</p>
+					</header>
 
-					<div className="flex flex-col gap-5 px-6 py-5 overflow-y-auto">
+					<div
+						className="flex flex-col gap-5 overflow-y-auto"
+						style={{ padding: "20px 24px" }}
+					>
 						{params.map((p, i) => (
 							<Field
 								key={p.name}
@@ -139,25 +147,29 @@ export function ParameterDialog({
 					</div>
 
 					<div
-						className="flex items-center justify-between gap-4 px-6 py-4"
-						style={{ borderTop: "1px solid var(--border)" }}
+						className="flex items-center justify-between gap-4"
+						style={{
+							padding: "16px 24px",
+							borderTop: "1px solid var(--border)",
+						}}
 					>
 						<span
 							style={{
-								fontFamily: "var(--font-mono)",
-								fontSize: 10,
+								fontSize: 11,
 								color: "var(--fg-secondary)",
-								opacity: 0.6,
+								opacity: 0.8,
 							}}
 						>
-							⌥ Send to stage without submitting
+							Hold ⌥ to stage without sending
 						</span>
 						<div className="flex items-center gap-2">
 							<button
 								type="button"
-								className="rounded-lg px-3.5 py-2 transition-colors"
+								className="rounded-lg transition-colors"
 								style={{
-									fontSize: 12,
+									padding: "0 14px",
+									height: 34,
+									fontSize: 13,
 									color: "var(--fg-secondary)",
 									border: "1px solid var(--border)",
 								}}
@@ -168,9 +180,12 @@ export function ParameterDialog({
 							<button
 								type="button"
 								disabled={!ready}
-								className="rounded-lg px-3.5 py-2 flex items-center gap-1.5 transition-opacity"
+								className="rounded-lg flex items-center justify-center gap-1.5 transition-opacity"
 								style={{
-									fontSize: 12,
+									padding: "0 16px",
+									height: 34,
+									fontSize: 13,
+									fontWeight: 500,
 									backgroundColor: "var(--accent)",
 									color: "var(--bg-primary)",
 									opacity: ready ? 1 : 0.35,
@@ -218,19 +233,20 @@ function Field({
 		/* Not a <label>: every control below except the plain input is a custom
 		   element, so there is nothing for htmlFor to point at. */
 		<div className="flex flex-col gap-2">
-			<span
-				style={{
-					fontFamily: "var(--font-mono)",
-					fontSize: 10,
-					color: "var(--fg-secondary)",
-					opacity: 0.8,
-				}}
-			>
-				{name}
+			<span className="flex items-baseline gap-2.5">
+				{/* The parameter's own name, in mono because it IS the {{token}} the
+				    body carries. The "required" tag beside it is prose. */}
+				<span
+					style={{
+						fontFamily: "var(--font-mono)",
+						fontSize: 12,
+						color: "var(--fg-primary)",
+					}}
+				>
+					{name}
+				</span>
 				{!filled && (
-					<span
-						style={{ color: "var(--accent)", marginLeft: 10, opacity: 0.9 }}
-					>
+					<span style={{ fontSize: 11, color: "var(--accent)", opacity: 0.9 }}>
 						required
 					</span>
 				)}
@@ -241,7 +257,7 @@ function Field({
 			) : meta.type === "choice" ? (
 				<select
 					ref={inputRef}
-					className="rounded-lg px-3 py-2"
+					className="rounded-lg"
 					style={fieldStyle}
 					value={String(value ?? "")}
 					onChange={(e) => onChange(e.target.value)}
@@ -273,14 +289,22 @@ function Field({
 }
 
 const fieldStyle: React.CSSProperties = {
-	fontFamily: "var(--font-mono)",
-	fontSize: 12,
+	// The UI font at 13px: a value the user types is prose, and mono at the
+	// same nominal size reads much denser. Only the prompt body itself, and the
+	// parameter names that are `{{tokens}}` in it, stay monospaced.
+	fontSize: 13,
 	color: "var(--fg-primary)",
 	backgroundColor: "var(--bg-primary)",
 	border: "1px solid var(--border)",
 	outline: "none",
 	width: "100%",
 	resize: "none",
+	lineHeight: 1.5,
+	// Inline, because every `p-*` utility in this app is dead: globals.css:273
+	// has an unlayered `* { padding: 0 }` reset, and an unlayered normal
+	// declaration beats a layered one whatever its specificity. See the note in
+	// SettingsPanel.tsx.
+	padding: "9px 12px",
 };
 
 /**
@@ -328,7 +352,7 @@ function GrowingTextField({
 		return (
 			<textarea
 				ref={inputRef}
-				className="rounded-lg px-3 py-2"
+				className="rounded-lg"
 				style={fieldStyle}
 				rows={rows}
 				value={value}
@@ -342,7 +366,7 @@ function GrowingTextField({
 		<input
 			ref={inputRef}
 			type={numeric ? "number" : "text"}
-			className="rounded-lg px-3 py-2"
+			className="rounded-lg"
 			style={fieldStyle}
 			value={value}
 			onChange={(e) => onChange(e.target.value)}
@@ -369,7 +393,7 @@ function ToggleField({
 	return (
 		<button
 			type="button"
-			className="flex items-center gap-3 rounded-lg px-3 py-2 text-left"
+			className="flex items-center gap-3 rounded-lg text-left"
 			style={{ ...fieldStyle, cursor: "pointer" }}
 			onClick={() => onChange(!value)}
 		>
@@ -419,19 +443,13 @@ function BodyPreview({
 	const resolved = resolveBody(action.body, action.params, values);
 	return (
 		<div className="flex flex-col gap-2">
-			<span
-				style={{
-					fontFamily: "var(--font-mono)",
-					fontSize: 10,
-					color: "var(--fg-secondary)",
-					opacity: 0.6,
-				}}
-			>
-				will send
+			<span style={{ fontSize: 12, color: "var(--fg-primary)", opacity: 0.85 }}>
+				Will send
 			</span>
 			<pre
-				className="rounded-lg px-3 py-2.5 overflow-auto whitespace-pre-wrap break-words"
+				className="rounded-lg overflow-auto whitespace-pre-wrap break-words"
 				style={{
+					padding: "10px 12px",
 					fontFamily: "var(--font-mono)",
 					fontSize: 11,
 					lineHeight: 1.5,

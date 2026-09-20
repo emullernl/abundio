@@ -39,7 +39,7 @@ const demoPromptActions: PromptActionRow[] = [
 		name: "Review changes",
 		body: "/review",
 		scopeKind: "set",
-		scopeAgentIds: ["claude-code"],
+		scopeAgentIds: ["claude"],
 		paramsJson: "{}",
 		showInBar: true,
 		position: 0,

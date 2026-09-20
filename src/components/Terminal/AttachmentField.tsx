@@ -103,8 +103,9 @@ export function AttachmentField({
 	return (
 		<div className="flex flex-col gap-1.5">
 			<div
-				className="rounded-lg px-3 py-3 flex flex-col gap-2.5"
+				className="rounded-lg flex flex-col gap-2.5"
 				style={{
+					padding: 12,
 					backgroundColor: "var(--bg-primary)",
 					border:
 						"1px dashed color-mix(in srgb, var(--border) 80%, transparent)",
@@ -115,8 +116,9 @@ export function AttachmentField({
 						{paths.map((p) => (
 							<span
 								key={p}
-								className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 max-w-full"
+								className="inline-flex items-center gap-1.5 rounded-md max-w-full"
 								style={{
+									padding: "5px 8px",
 									fontFamily: "var(--font-mono)",
 									fontSize: 10,
 									color: "var(--fg-primary)",
@@ -146,9 +148,11 @@ export function AttachmentField({
 				    it opens the picker, so the same control does both jobs. */}
 				<button
 					type="button"
-					className="inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 self-start transition-colors"
+					className="inline-flex items-center gap-2 rounded-md self-start transition-colors"
 					style={{
-						fontSize: 11,
+						padding: "0 12px",
+						height: 32,
+						fontSize: 12,
 						color: "var(--fg-secondary)",
 						border: "1px solid var(--border)",
 					}}
