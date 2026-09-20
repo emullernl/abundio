@@ -33,6 +33,7 @@ import {
 } from "../../lib/promptActions";
 import { usePromptActionStore } from "../../stores/promptActionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { ChevronDown, ChevronRight, Plus, X } from "../Icons";
 import { DraftInput } from "../PromptActions/DraftInput";
 import {
@@ -52,6 +53,11 @@ export function PromptActionsSection() {
 	const createAction = usePromptActionStore((s) => s.createAction);
 	const reorderActions = usePromptActionStore((s) => s.reorderActions);
 	const error = usePromptActionStore((s) => s.error);
+	const deleteAction = usePromptActionStore((s) => s.deleteAction);
+
+	// Held here rather than in the row: the row unmounts as soon as the delete
+	// lands, which would tear down a dialog it owned mid-transition.
+	const [pendingDelete, setPendingDelete] = useState<PromptAction | null>(null);
 	const [expanded, setExpanded] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -132,11 +138,26 @@ export function PromptActionsSection() {
 									setExpanded((e) => (e === action.id ? null : action.id))
 								}
 								onMove={(d) => move(action.id, d)}
+								onRequestDelete={() => setPendingDelete(action)}
 							/>
 						))}
 					</div>
 				)}
 			</div>
+
+			{pendingDelete && (
+				<ConfirmDialog
+					title="Delete this prompt action?"
+					message={`“${pendingDelete.name}” will be removed from every agent pane and from the command palette. This cannot be undone.`}
+					confirmLabel="Delete action"
+					confirmVariant="danger"
+					onConfirm={() => {
+						void deleteAction(pendingDelete.id);
+						setPendingDelete(null);
+					}}
+					onCancel={() => setPendingDelete(null)}
+				/>
+			)}
 
 			{actions.length > 0 && (
 				<button
@@ -226,6 +247,7 @@ interface ActionRowProps {
 	expanded: boolean;
 	onToggle: () => void;
 	onMove: (delta: number) => void;
+	onRequestDelete: () => void;
 }
 
 function ActionRow({
@@ -236,9 +258,9 @@ function ActionRow({
 	expanded,
 	onToggle,
 	onMove,
+	onRequestDelete,
 }: ActionRowProps) {
 	const updateAction = usePromptActionStore((s) => s.updateAction);
-	const deleteAction = usePromptActionStore((s) => s.deleteAction);
 	const agents = useSettingsStore((s) => s.agents);
 
 	const derived = useMemo(
@@ -378,7 +400,7 @@ function ActionRow({
 					<IconButton
 						label={`Delete ${action.name}`}
 						title="Delete"
-						onClick={() => void deleteAction(action.id)}
+						onClick={onRequestDelete}
 						icon={<X />}
 					/>
 				</div>

@@ -36,6 +36,7 @@ import { usePromptActionStore } from "../../stores/promptActionStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { FileDropHighlight } from "../FileDropHighlight";
 import { PaneDropIndicator } from "../PaneDropIndicator";
 import { ActionBar, PROMPT_ACTION_ATTR } from "./ActionBar";
@@ -171,6 +172,10 @@ export function TerminalSlot({
 		x: number;
 		y: number;
 	} | null>(null);
+	// Deleting is irreversible and there is no undo, so the menu asks first —
+	// and this menu is a small target reached by right-click, where a misclick
+	// is easy.
+	const [pendingDelete, setPendingDelete] = useState<PromptAction | null>(null);
 
 	// The Agent this pane actually resolved to, which is what scopes its Prompt
 	// actions. Distinct from the `agentId` prop, which is the id the *layout*
@@ -610,14 +615,24 @@ export function TerminalSlot({
 						},
 						{ separator: true },
 						{
-							label: "Delete Action",
-							onClick: () =>
-								void usePromptActionStore
-									.getState()
-									.deleteAction(actionMenu.action.id),
+							label: "Delete Action…",
+							onClick: () => setPendingDelete(actionMenu.action),
 						},
 					]}
 					onClose={() => setActionMenu(null)}
+				/>
+			)}
+			{pendingDelete && (
+				<ConfirmDialog
+					title="Delete this prompt action?"
+					message={`“${pendingDelete.name}” will be removed from every agent pane and from the command palette. This cannot be undone.`}
+					confirmLabel="Delete action"
+					confirmVariant="danger"
+					onConfirm={() => {
+						void usePromptActionStore.getState().deleteAction(pendingDelete.id);
+						setPendingDelete(null);
+					}}
+					onCancel={() => setPendingDelete(null)}
 				/>
 			)}
 			{editing && (
