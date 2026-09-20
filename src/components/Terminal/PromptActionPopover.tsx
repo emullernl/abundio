@@ -21,13 +21,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	type ActionScope,
 	deriveParams,
-	type ParamMeta,
 	type ParamMetaMap,
-	type ParamType,
 	type PromptAction,
 } from "../../lib/promptActions";
 import { usePromptActionStore } from "../../stores/promptActionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import {
+	paramBodyInputStyle,
+	paramTextInputStyle,
+} from "../PromptActions/fieldStyles";
+import { ParameterEditor } from "../PromptActions/ParameterEditor";
 
 interface PromptActionPopoverProps {
 	anchor: { x: number; y: number };
@@ -41,14 +44,6 @@ interface PromptActionPopoverProps {
 }
 
 const WIDTH = 460;
-const PARAM_TYPES: ParamType[] = [
-	"text",
-	"number",
-	"choice",
-	"toggle",
-	"attachment",
-];
-
 export function PromptActionPopover({
 	anchor,
 	defaultAgentId,
@@ -201,7 +196,7 @@ export function PromptActionPopover({
 								ref={nameRef}
 								placeholder="Review changes"
 								className="rounded-lg"
-								style={textInputStyle}
+								style={paramTextInputStyle}
 								value={name}
 								onChange={(e) => setName(e.target.value)}
 							/>
@@ -221,7 +216,7 @@ export function PromptActionPopover({
 								placeholder="/review"
 								className="rounded-lg"
 								style={{
-									...bodyInputStyle,
+									...paramBodyInputStyle,
 									minHeight: 92,
 									resize: "vertical",
 								}}
@@ -234,72 +229,23 @@ export function PromptActionPopover({
 						    the body and nowhere else, so there is nothing to declare. */}
 						{derived.length > 0 && (
 							<Field label="Asks for">
-								<div className="flex flex-col gap-2">
+								<div className="flex flex-col gap-2.5">
 									{derived.map((p) => (
-										<div
+										<ParameterEditor
 											key={p.name}
-											className="flex items-center gap-3 rounded-lg"
-											style={{
-												padding: "0 12px",
-												height: 40,
-												backgroundColor: "var(--bg-primary)",
-												border: "1px solid var(--border)",
-											}}
-										>
-											<span
-												className="truncate flex-1"
-												style={{
-													fontFamily: "var(--font-mono)",
-													fontSize: 12,
-													color: "var(--fg-primary)",
-												}}
-											>
-												{p.name}
-											</span>
-											<label
-												className="flex items-center gap-1.5 shrink-0 cursor-pointer"
-												style={{
-													fontSize: 11,
-													color: "var(--fg-secondary)",
-												}}
-												title="Left empty, an optional value and the gap around it disappear from the prompt"
-											>
-												<input
-													type="checkbox"
-													checked={p.meta.required !== false}
-													onChange={(e) =>
-														setParams((m) => ({
-															...m,
-															[p.name]: {
-																...(m[p.name] ?? { type: "text" }),
-																required: e.target.checked,
-															} as ParamMeta,
-														}))
-													}
-												/>
-												Required
-											</label>
-											<select
-												className="rounded-md"
-												style={{ ...selectStyle, width: 116 }}
-												value={p.meta.type}
-												onChange={(e) =>
-													setParams((m) => ({
-														...m,
-														[p.name]: {
-															...(m[p.name] ?? { type: "text" }),
-															type: e.target.value as ParamType,
-														} as ParamMeta,
-													}))
-												}
-											>
-												{PARAM_TYPES.map((t) => (
-													<option key={t} value={t}>
-														{t}
-													</option>
-												))}
-											</select>
-										</div>
+											name={p.name}
+											meta={p.meta}
+											compact
+											onChange={(patch) =>
+												setParams((m) => ({
+													...m,
+													[p.name]: {
+														...(m[p.name] ?? { type: "text" }),
+														...patch,
+													},
+												}))
+											}
+										/>
 									))}
 								</div>
 							</Field>
@@ -460,42 +406,3 @@ function ScopeChoice({
 		</button>
 	);
 }
-
-const fieldBase: React.CSSProperties = {
-	color: "var(--fg-primary)",
-	backgroundColor: "var(--bg-primary)",
-	border: "1px solid var(--border)",
-	outline: "none",
-	width: "100%",
-	// Inline, and on the base so no variant can forget it: every `p-*` utility
-	// in this app is dead (globals.css:273 has an unlayered `* { padding: 0 }`
-	// reset, and an unlayered normal declaration beats a layered one whatever
-	// its specificity). A control with no padding puts its text and its
-	// placeholder hard against the border. See the note in SettingsPanel.tsx.
-	padding: "0 12px",
-};
-
-/** The UI font at 13px — a name is prose, not code. */
-const textInputStyle: React.CSSProperties = {
-	...fieldBase,
-	fontSize: 13,
-	height: 36,
-};
-
-/** Mono, because this one really is a prompt the agent will read verbatim and
- *  its `{{placeholders}}` are tokens. */
-const bodyInputStyle: React.CSSProperties = {
-	...fieldBase,
-	fontFamily: "var(--font-mono)",
-	fontSize: 12.5,
-	lineHeight: 1.55,
-	padding: "10px 12px",
-};
-
-const selectStyle: React.CSSProperties = {
-	...fieldBase,
-	fontSize: 12,
-	height: 30,
-	width: "auto",
-	padding: "0 8px",
-};

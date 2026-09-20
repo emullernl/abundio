@@ -28,32 +28,21 @@ import {
 	deriveParams,
 	type ParamMeta,
 	type ParamMetaMap,
-	type ParamType,
 	type PromptAction,
 } from "../../lib/promptActions";
 import { usePromptActionStore } from "../../stores/promptActionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ChevronDown, ChevronRight, Plus, X } from "../Icons";
+import {
+	paramBodyInputStyle as bodyInputStyle,
+	paramSelectStyle as selectStyle,
+	paramTextInputStyle as textInputStyle,
+} from "../PromptActions/fieldStyles";
+import { ParameterEditor } from "../PromptActions/ParameterEditor";
 import { SectionLabel, ToggleRow } from "./primitives";
 
 /** A form is unreadable stretched across an ultrawide window. */
 const COLUMN = 760;
-
-const PARAM_TYPES: ParamType[] = [
-	"text",
-	"number",
-	"choice",
-	"toggle",
-	"attachment",
-];
-
-const PARAM_TYPE_HINT: Record<ParamType, string> = {
-	text: "A line of text. Grows on Shift+Enter.",
-	number: "Checked before sending.",
-	choice: "One of a fixed list you define.",
-	toggle: "Contributes wording you write, not “true”.",
-	attachment: "A file. Its path goes into the prompt.",
-};
 
 export function PromptActionsSection() {
 	const actions = usePromptActionStore((s) => s.actions);
@@ -384,7 +373,7 @@ function ActionRow({
 						<Field label="Asks for">
 							<div className="flex flex-col gap-2.5">
 								{derived.map((p) => (
-									<ParamEditor
+									<ParameterEditor
 										key={p.name}
 										name={p.name}
 										meta={p.meta}
@@ -485,187 +474,6 @@ function Field({
 	);
 }
 
-function ParamEditor({
-	name,
-	meta,
-	onChange,
-}: {
-	name: string;
-	meta: ParamMeta;
-	onChange: (patch: Partial<ParamMeta>) => void;
-}) {
-	return (
-		<div
-			className="rounded-lg flex flex-col gap-3"
-			style={{
-				padding: "12px 14px",
-				backgroundColor: "var(--bg-primary)",
-				border: "1px solid var(--border)",
-			}}
-		>
-			<div className="flex items-center gap-3">
-				{/* Mono, because this is the `{{token}}` as it appears in the body. */}
-				<span
-					className="truncate rounded-md"
-					style={{
-						padding: "0 8px",
-						fontFamily: "var(--font-mono)",
-						fontSize: 12,
-						lineHeight: "22px",
-						color: "var(--fg-primary)",
-						backgroundColor:
-							"color-mix(in srgb, var(--accent) 14%, transparent)",
-					}}
-				>
-					{name}
-				</span>
-				<select
-					className="rounded-md"
-					style={{ ...selectStyle, width: 138 }}
-					value={meta.type}
-					onChange={(e) => onChange({ type: e.target.value as ParamType })}
-				>
-					{PARAM_TYPES.map((t) => (
-						<option key={t} value={t}>
-							{t}
-						</option>
-					))}
-				</select>
-				<span
-					className="truncate"
-					style={{ fontSize: 11, color: "var(--fg-secondary)", opacity: 0.75 }}
-				>
-					{PARAM_TYPE_HINT[meta.type]}
-				</span>
-			</div>
-
-			{meta.type !== "attachment" && meta.type !== "toggle" && (
-				<input
-					className="rounded-md"
-					style={{ ...textInputStyle, height: 32, fontSize: 12 }}
-					placeholder="Default value (optional)"
-					value={meta.defaultValue ?? ""}
-					onChange={(e) => onChange({ defaultValue: e.target.value })}
-				/>
-			)}
-
-			{meta.type === "choice" && (
-				<OptionsInput
-					options={meta.options ?? []}
-					onChange={(options) => onChange({ options })}
-				/>
-			)}
-
-			{/* A toggle contributes author-written text, never `true`/`false` — a
-			    literal boolean in a prompt says nothing an agent can act on. */}
-			{meta.type === "toggle" && (
-				<div className="flex items-center gap-2.5">
-					<input
-						className="rounded-md flex-1"
-						style={{ ...textInputStyle, height: 32, fontSize: 12 }}
-						placeholder="Text when on"
-						value={meta.onText ?? ""}
-						onChange={(e) => onChange({ onText: e.target.value })}
-					/>
-					<input
-						className="rounded-md flex-1"
-						style={{ ...textInputStyle, height: 32, fontSize: 12 }}
-						placeholder="Text when off"
-						value={meta.offText ?? ""}
-						onChange={(e) => onChange({ offText: e.target.value })}
-					/>
-				</div>
-			)}
-
-			<div className="flex items-center gap-5">
-				{/* A toggle has no required/optional question: both of its states are
-				    meaningful and the author wrote text for each. */}
-				{meta.type !== "toggle" && (
-					<label
-						className="flex items-center gap-2.5 cursor-pointer"
-						style={{ fontSize: 12, color: "var(--fg-secondary)" }}
-						title="Left empty, an optional value and the gap around it disappear from the prompt"
-					>
-						<input
-							type="checkbox"
-							checked={meta.required !== false}
-							onChange={(e) => onChange({ required: e.target.checked })}
-						/>
-						Required
-					</label>
-				)}
-
-				{meta.type === "attachment" && (
-					<label
-						className="flex items-center gap-2.5 cursor-pointer"
-						style={{ fontSize: 12, color: "var(--fg-secondary)" }}
-					>
-						<input
-							type="checkbox"
-							checked={meta.multiple ?? false}
-							onChange={(e) => onChange({ multiple: e.target.checked })}
-						/>
-						Allow several files
-					</label>
-				)}
-			</div>
-		</div>
-	);
-}
-
-/**
- * The comma-separated options for a `choice` parameter.
- *
- * Holds the raw text locally and parses alongside it, rather than deriving the
- * displayed value from the parsed array. Round-tripping through
- * `split(",").filter(Boolean).join(", ")` on every keystroke deletes the comma
- * the moment it is typed — `low,` parses to `["low"]`, which renders back as
- * `low` — so the list could never be extended past its first entry.
- *
- * The draft re-seeds only when the incoming options differ from what it already
- * represents, so a parent re-render cannot reformat the text mid-edit.
- */
-function OptionsInput({
-	options,
-	onChange,
-}: {
-	options: string[];
-	onChange: (options: string[]) => void;
-}) {
-	const [draft, setDraft] = useState(() => options.join(", "));
-
-	useEffect(() => {
-		setDraft((current) =>
-			parseOptions(current).join("\u0000") === options.join("\u0000")
-				? current
-				: options.join(", "),
-		);
-	}, [options]);
-
-	return (
-		<input
-			className="rounded-md"
-			style={{ ...textInputStyle, height: 32, fontSize: 12 }}
-			placeholder="Options, comma separated — low, medium, high"
-			value={draft}
-			onChange={(e) => {
-				setDraft(e.target.value);
-				onChange(parseOptions(e.target.value));
-			}}
-			onBlur={() => setDraft(parseOptions(draft).join(", "))}
-		/>
-	);
-}
-
-/** Trailing and empty entries are dropped, so a half-typed `low, ` yields one
- *  option while the text still shows the comma the user just pressed. */
-function parseOptions(raw: string): string[] {
-	return raw
-		.split(",")
-		.map((o) => o.trim())
-		.filter(Boolean);
-}
-
 function ScopeEditor({
 	scope,
 	agents,
@@ -745,46 +553,3 @@ function ScopeEditor({
 		</div>
 	);
 }
-
-// Padding is inline on every control below, never a `p-*` utility: globals.css
-// :273 has an unlayered `* { padding: 0 }` reset, and an unlayered normal
-// declaration beats a layered one whatever its specificity, so every spacing
-// utility in this app is silently dead. See the note in SettingsPanel.tsx.
-const fieldBase: React.CSSProperties = {
-	color: "var(--fg-primary)",
-	backgroundColor: "var(--bg-primary)",
-	border: "1px solid var(--border)",
-	outline: "none",
-	width: "100%",
-	// Inline, and on the base so no variant can forget it: every `p-*` utility
-	// in this app is dead (globals.css:273 has an unlayered `* { padding: 0 }`
-	// reset, and an unlayered normal declaration beats a layered one whatever
-	// its specificity). A control with no padding puts its text and its
-	// placeholder hard against the border. See the note in SettingsPanel.tsx.
-	padding: "0 12px",
-};
-
-/** The UI font — a name and a default value are prose, not code. */
-const textInputStyle: React.CSSProperties = {
-	...fieldBase,
-	fontSize: 13,
-	height: 36,
-};
-
-/** Mono, because this one really is a prompt the agent reads verbatim, and its
- *  `{{placeholders}}` are tokens. */
-const bodyInputStyle: React.CSSProperties = {
-	...fieldBase,
-	fontFamily: "var(--font-mono)",
-	fontSize: 12.5,
-	lineHeight: 1.6,
-	padding: "10px 12px",
-};
-
-const selectStyle: React.CSSProperties = {
-	...fieldBase,
-	fontSize: 12,
-	height: 32,
-	width: "auto",
-	padding: "0 8px",
-};
