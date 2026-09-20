@@ -20,6 +20,7 @@ import { useEffect, useState } from "react";
 import type { ParamMeta, ParamType } from "../../lib/promptActions";
 import { DraftInput } from "./DraftInput";
 import { paramSelectStyle, paramTextInputStyle } from "./fieldStyles";
+import { Select } from "./Select";
 
 export const PARAM_TYPES: ParamType[] = [
 	"text",
@@ -78,18 +79,15 @@ export function ParameterEditor({
 				>
 					{name}
 				</span>
-				<select
+				<Select
 					className="rounded-md"
-					style={{ ...paramSelectStyle, width: compact ? 116 : 138 }}
+					style={paramSelectStyle}
+					width={compact ? 116 : 138}
+					aria-label={`Type of ${name}`}
 					value={meta.type}
-					onChange={(e) => onChange({ type: e.target.value as ParamType })}
-				>
-					{PARAM_TYPES.map((t) => (
-						<option key={t} value={t}>
-							{t}
-						</option>
-					))}
-				</select>
+					options={PARAM_TYPES.map((t) => ({ value: t, label: t }))}
+					onChange={(v) => onChange({ type: v as ParamType })}
+				/>
 				{!compact && (
 					<span
 						className="truncate"

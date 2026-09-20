@@ -33,6 +33,7 @@ import {
 	type PromptAction,
 	resolveBody,
 } from "../../lib/promptActions";
+import { Select } from "../PromptActions/Select";
 import { AttachmentField } from "./AttachmentField";
 
 interface ParameterDialogProps {
@@ -59,7 +60,7 @@ export function ParameterDialog({
 	const [values, setValues] = useState<Record<string, ParamValue>>(() =>
 		initialValues(action.body, action.params),
 	);
-	const firstRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
+	const firstRef = useRef<HTMLInputElement>(null);
 
 	useEscapeKey(onCancel);
 
@@ -67,7 +68,8 @@ export function ParameterDialog({
 		const el = firstRef.current;
 		el?.focus();
 		// Select the authored default so typing replaces it rather than appending
-		// to it. Only a text input can select; a <select> cannot.
+		// to it. Guarded because the first field may be a toggle or an
+		// attachment, neither of which is a text input.
 		if (el instanceof HTMLInputElement) el.select();
 	}, []);
 
@@ -292,20 +294,15 @@ function Field({
 			{meta.type === "toggle" ? (
 				<ToggleField meta={meta} value={value === true} onChange={onChange} />
 			) : meta.type === "choice" ? (
-				<select
-					ref={inputRef}
+				<Select
 					className="rounded-lg"
 					style={fieldStyle}
+					width="100%"
+					aria-label={name}
 					value={String(value ?? "")}
-					onChange={(e) => onChange(e.target.value)}
-				>
-					<option value="">Choose…</option>
-					{(meta.options ?? []).map((o) => (
-						<option key={o} value={o}>
-							{o}
-						</option>
-					))}
-				</select>
+					options={(meta.options ?? []).map((o) => ({ value: o, label: o }))}
+					onChange={onChange}
+				/>
 			) : meta.type === "attachment" ? (
 				<AttachmentField
 					multiple={meta.multiple ?? false}

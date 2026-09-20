@@ -42,6 +42,7 @@ import {
 	paramTextInputStyle as textInputStyle,
 } from "../PromptActions/fieldStyles";
 import { ParameterEditor } from "../PromptActions/ParameterEditor";
+import { Select } from "../PromptActions/Select";
 import { SectionLabel, ToggleRow } from "./primitives";
 
 /** A form is unreadable stretched across an ultrawide window. */
@@ -567,23 +568,24 @@ function ScopeEditor({
 
 	return (
 		<div className="flex flex-col gap-3">
-			<select
+			{/* `all` and a set naming every current agent are different values on
+			    purpose: `all` picks up an agent added tomorrow, a set does not. */}
+			<Select
 				className="rounded-lg"
-				style={{ ...selectStyle, height: 36, fontSize: 13, width: "100%" }}
+				style={{ ...selectStyle, height: 36, fontSize: 13 }}
+				width="100%"
+				aria-label="Offered for"
 				value={scope.kind}
-				onChange={(e) =>
+				options={[
+					{ value: "all", label: "All agents" },
+					{ value: "set", label: "Only the agents I pick…" },
+				]}
+				onChange={(v) =>
 					onChange(
-						e.target.value === "all"
-							? { kind: "all" }
-							: { kind: "set", agentIds: selected },
+						v === "all" ? { kind: "all" } : { kind: "set", agentIds: selected },
 					)
 				}
-			>
-				{/* `all` and a set naming every current agent are different values on
-				    purpose: `all` picks up an agent added tomorrow, a set does not. */}
-				<option value="all">All agents</option>
-				<option value="set">Only the agents I pick…</option>
-			</select>
+			/>
 
 			{scope.kind === "set" && (
 				<div
