@@ -19,6 +19,9 @@ import type {
 	PrChange,
 	Profile,
 	ProfileUpdate,
+	PromptActionCreate,
+	PromptActionRow,
+	PromptActionUpdate,
 	PrStatePayload,
 	PtyActivityType,
 	PtyStatusType,
@@ -840,6 +843,26 @@ export const updates = {
 		listen<UpdateDownloadProgress>("update-download-progress", (event) =>
 			callback(event.payload),
 		),
+};
+
+export const promptActions = {
+	list: () => invoke<PromptActionRow[]>("prompt_actions_list"),
+
+	create: (action: PromptActionCreate) =>
+		invoke<PromptActionRow>("prompt_action_create", { action }),
+
+	update: (id: string, updates: PromptActionUpdate) =>
+		invoke<PromptActionRow>("prompt_action_update", { id, updates }),
+
+	delete: (id: string) => invoke<void>("prompt_action_delete", { id }),
+
+	reorder: (ids: string[]) => invoke<void>("prompt_actions_reorder", { ids }),
+
+	/** Fires in every Window when the list changes. Deliberately payload-free —
+	 *  the receiver re-reads. Shipping the list would reintroduce the whole-array
+	 *  clobbering this storage choice exists to avoid (ADR-0039). */
+	onChanged: (callback: () => void) =>
+		listen<void>("prompt-actions-changed", () => callback()),
 };
 
 export const clipboardImage = {
