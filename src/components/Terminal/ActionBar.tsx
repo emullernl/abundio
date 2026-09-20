@@ -141,8 +141,10 @@ export function ActionBar({
 					scrollbarWidth: "none",
 					// Fade the live edges instead of showing a scrollbar — a scrollbar
 					// in a 24px rail would eat a third of it.
+					// Only the right edge fades. A left fade would eat the first
+					// segment's digit, which sits flush against the pane border.
 					maskImage:
-						"linear-gradient(to right, transparent 0, black 10px, black calc(100% - 14px), transparent 100%)",
+						"linear-gradient(to right, black 0, black calc(100% - 14px), transparent 100%)",
 				}}
 				onWheel={(e) => {
 					// A trackpad flick down over a horizontal rail should move it.
@@ -254,9 +256,11 @@ function ActionButton({ action, number, disabled, onFire }: ActionButtonProps) {
 			// swallows the event before any bubble-phase handler here could see
 			// it. See PROMPT_ACTION_ATTR.
 			{...{ [PROMPT_ACTION_ATTR]: action.id }}
-			className="group shrink-0 flex items-center gap-[5px] transition-colors select-none"
+			className="group shrink-0 flex items-stretch transition-colors select-none"
 			style={{
-				padding: "0 9px",
+				// No left padding: the powerline segment is flush to the button's
+				// edge, the way a status-line segment is flush to its separator.
+				padding: number !== null ? "0 10px 0 0" : "0 10px",
 				fontFamily: "var(--font-mono)",
 				fontSize: 11,
 				lineHeight: `${BAR_HEIGHT}px`,
@@ -279,20 +283,76 @@ function ActionButton({ action, number, disabled, onFire }: ActionButtonProps) {
 			}}
 			onClick={(e) => onFire(e.altKey)}
 		>
-			{number !== null && (
-				<span
-					// A gutter line number, not a badge. Dim enough to recede, and it
-					// turns accent on hover so the digit reads as a key you press.
-					className="tabular-nums opacity-45 transition-colors group-hover:opacity-100 group-hover:text-[var(--accent)] group-disabled:opacity-45 group-disabled:text-[var(--fg-secondary)]"
-					style={{ color: "var(--fg-secondary)", fontSize: 10 }}
-				>
-					{number}
-				</span>
-			)}
-			<span className="truncate">{label}</span>
+			{number !== null && <PowerlineDigit number={number} muted={disabled} />}
+			<span className="truncate self-center">{label}</span>
 		</button>
 	);
 }
+
+/**
+ * The **position number**, drawn as a powerline segment.
+ *
+ * A filled block carrying the digit, closed by `U+E0B0` — the right-pointing
+ * solid separator every powerline/starship prompt is built from — rendered in
+ * the segment's own colour against the bar's transparent background, so the
+ * block appears to taper into the terminal.
+ *
+ * The glyph is safe to rely on: Abundio **bundles** its terminal fonts and
+ * every one is a `… Nerd Font Mono` variant (see `TERMINAL_FONTS`), and
+ * `--font-mono` defaults to one. There is no fallback to guard against.
+ *
+ * The separator is sized to the bar's full height rather than the label's
+ * 11px, because powerline glyphs are drawn to fill their whole cell — at the
+ * text size it renders as a small arrowhead floating mid-line instead of a
+ * tapering edge.
+ */
+function PowerlineDigit({ number, muted }: { number: number; muted: boolean }) {
+	// Disabled panes keep the shape but lose the colour, so a Waiting bar reads
+	// as "not now" rather than as a different design.
+	const fill = muted
+		? "color-mix(in srgb, var(--fg-secondary) 25%, transparent)"
+		: "var(--accent)";
+
+	return (
+		<span
+			className="flex items-stretch shrink-0 transition-colors"
+			aria-hidden="true"
+		>
+			<span
+				className="tabular-nums flex items-center"
+				style={{
+					// Wide enough that the block dominates its own taper. At the
+					// digit's natural width the two are the same size and the segment
+					// reads as an arrowhead rather than as an edge.
+					padding: "0 7px",
+					backgroundColor: fill,
+					color: "var(--bg-primary)",
+					fontSize: 11,
+					fontWeight: 600,
+				}}
+			>
+				{number}
+			</span>
+			<span
+				style={{
+					color: fill,
+					// Sized to the cell, not to the label — see above.
+					fontSize: BAR_HEIGHT,
+					lineHeight: `${BAR_HEIGHT}px`,
+					// The glyph carries side bearings that would open a gap between
+					// the block and its own taper.
+					marginLeft: -1,
+					marginRight: 3,
+				}}
+			>
+				{POWERLINE_RIGHT}
+			</span>
+		</span>
+	);
+}
+
+/** U+E0B0, the solid right-pointing powerline separator. */
+const POWERLINE_RIGHT = "\ue0b0";
 
 /** Height reserved when the bar is present. Exported so a caller sizing the
  *  terminal body can account for it without re-deriving the constant. */
