@@ -382,6 +382,14 @@ describe("actionsForPane", () => {
 		).toEqual(["b", "a"]);
 	});
 
+	it("never offers an action with no body yet", () => {
+		// Settings creates the row first and the user fills it in. Offering it
+		// would put a button in the bar that pastes nothing and then submits.
+		const draft = action({ id: "d", name: "Draft", body: "   " });
+		expect(actionsForPane([draft], "claude", { barOnly: true })).toEqual([]);
+		expect(actionsForPane([draft], "claude", { barOnly: false })).toEqual([]);
+	});
+
 	it("returns nothing when no action is in scope", () => {
 		// The caller renders no bar at all in this case — not an empty bar.
 		expect(actionsForPane([scoped], "aider", { barOnly: true })).toEqual([]);

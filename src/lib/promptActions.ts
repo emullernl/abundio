@@ -380,7 +380,15 @@ export function actionsForPane(
 	opts: { barOnly: boolean },
 ): PromptAction[] {
 	const inScope = actions.filter(
-		(a) => isInScope(a.scope, agentId) && (!opts.barOnly || a.showInBar),
+		(a) =>
+			// A body-less action is a draft: Settings creates the row and the user
+			// fills it in afterwards. Never offer one — a button that pastes
+			// nothing and then presses Enter would submit an empty prompt to a live
+			// Agent. Kept and shown in Settings, exactly like an action whose scope
+			// set has emptied out.
+			a.body.trim().length > 0 &&
+			isInScope(a.scope, agentId) &&
+			(!opts.barOnly || a.showInBar),
 	);
 	const byPosition = (a: PromptAction, b: PromptAction) =>
 		a.position - b.position;

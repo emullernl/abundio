@@ -161,11 +161,12 @@ fn validate(name: &str, body: &str) -> Result<(), AbundioError> {
             "Name is longer than {MAX_NAME_LEN} characters"
         )));
     }
-    if body.trim().is_empty() {
-        return Err(AbundioError::InvalidOperation(
-            "A prompt action needs a body — that is what gets sent".into(),
-        ));
-    }
+    // An **empty body is allowed**, and deliberately so: Settings creates a row
+    // first and lets the user fill it in, so a half-authored action is a normal
+    // intermediate state rather than an error. What must never happen is such an
+    // action reaching a bar or firing — that is enforced where actions are
+    // *offered* (`actionsForPane` skips them), the same way an action whose
+    // scope set has emptied out is kept but never rendered.
     if body.len() > MAX_BODY_LEN {
         return Err(AbundioError::InvalidOperation(format!(
             "Body is longer than {MAX_BODY_LEN} bytes"
@@ -529,13 +530,27 @@ mod tests {
     }
 
     #[test]
-    fn blank_body_is_refused() {
-        // The body is the only thing that actually gets sent; an action with
-        // none is a button that fires nothing.
+    fn a_blank_body_is_allowed_as_a_draft() {
+        // Settings creates the row, then the user fills it in. Refusing this
+        // made every "Add action" button in Settings fail silently. Keeping such
+        // an action out of a bar is the frontend's job, at the point of offer.
         let s = store();
-        let mut a = new_action("Empty");
-        a.body = "   \n  ".into();
-        assert!(s.create(a).is_err());
+        let mut a = new_action("Draft");
+        a.body = "".into();
+        let created = s.create(a).unwrap();
+        assert_eq!(created.body, "");
+
+        // And it can still be emptied by an edit.
+        let updated = s
+            .update(
+                &created.id,
+                PromptActionUpdate {
+                    body: Some("   ".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.body, "   ");
     }
 
     #[test]
@@ -600,14 +615,14 @@ mod tests {
 
     #[test]
     fn update_validates_the_merged_row_not_the_patch() {
-        // Clearing only the body must be refused even though the patch says
-        // nothing about the name.
+        // Clearing only the *name* must be refused even though the patch says
+        // nothing about the body.
         let s = store();
         let a = s.create(new_action("Review")).unwrap();
         let res = s.update(
             &a.id,
             PromptActionUpdate {
-                body: Some("  ".into()),
+                name: Some("   ".into()),
                 ..Default::default()
             },
         );

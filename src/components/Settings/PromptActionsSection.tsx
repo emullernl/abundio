@@ -49,6 +49,7 @@ export function PromptActionsSection() {
 	const load = usePromptActionStore((s) => s.load);
 	const createAction = usePromptActionStore((s) => s.createAction);
 	const reorderActions = usePromptActionStore((s) => s.reorderActions);
+	const error = usePromptActionStore((s) => s.error);
 	const [expanded, setExpanded] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -56,6 +57,8 @@ export function PromptActionsSection() {
 	}, [load]);
 
 	async function add() {
+		// Created empty and filled in afterwards. The row is a draft until it has
+		// a body, and a draft is never offered in a bar — see `actionsForPane`.
 		const created = await createAction({ name: "New action", body: "" });
 		if (created) setExpanded(created.id);
 	}
@@ -88,6 +91,28 @@ export function PromptActionsSection() {
 					pane. Order decides the keyboard shortcut — the first nine get{" "}
 					<Shortcut n={1} /> through <Shortcut n={9} />.
 				</p>
+
+				{/* Never swallow a write failure. An earlier version stored the
+				    error here and rendered nothing, so both Add buttons appeared to
+				    do nothing at all. */}
+				{error && (
+					<div
+						className="rounded-lg"
+						style={{
+							padding: "10px 12px",
+							marginBottom: 14,
+							fontSize: 12,
+							lineHeight: 1.5,
+							color: "var(--error, #f87171)",
+							backgroundColor:
+								"color-mix(in srgb, var(--error, #f87171) 12%, transparent)",
+							border:
+								"1px solid color-mix(in srgb, var(--error, #f87171) 35%, transparent)",
+						}}
+					>
+						{error}
+					</div>
+				)}
 
 				{actions.length === 0 ? (
 					<EmptyState onAdd={add} />
@@ -292,6 +317,23 @@ function ActionRow({
 				>
 					{action.name}
 				</button>
+
+				{action.body.trim().length === 0 && (
+					<span
+						className="shrink-0 rounded-md"
+						style={{
+							padding: "0 8px",
+							fontSize: 11,
+							lineHeight: "20px",
+							color: "var(--warning, #d99a2b)",
+							backgroundColor:
+								"color-mix(in srgb, var(--warning, #d99a2b) 14%, transparent)",
+						}}
+						title="Until this has a body there is nothing to send, so it is not offered in any pane"
+					>
+						Needs a body
+					</span>
+				)}
 
 				<span
 					className="truncate shrink-0 rounded-md"
