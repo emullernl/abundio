@@ -44,6 +44,11 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "5"
 dashmap = "6"
 base64 = "0.22"
+
+# Content-hashed names for pasted Prompt action attachments, so re-pasting the
+# same image is free and two different images can never collide on a filename.
+# See ADR-0038.
+sha2 = "0.10"
 crossbeam-channel = "0.5"
 thiserror = "2"
 log = "0.4"

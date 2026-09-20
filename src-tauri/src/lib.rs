@@ -22,6 +22,7 @@ pub mod pr_poller;
 pub mod process_monitor;
 pub mod profile_store;
 pub mod prompt_actions;
+pub mod prompt_attachments;
 pub mod pty_manager;
 pub mod search;
 pub mod updater;
@@ -723,6 +724,11 @@ pub fn run() {
             let prompt_actions_conn = migrations::open_db().expect("Failed to open database");
             app.manage(prompt_actions::PromptActionStore::new(prompt_actions_conn));
 
+            // Pasted Prompt action attachments are a cache, not user data
+            // (ADR-0038). Nothing owns their lifetime, so they are swept by age
+            // at startup. Best-effort: this must never stop the app opening.
+            prompt_attachments::sweep();
+
             // Active profile cache (set by the frontend after rehydrating its
             // settings store). Used by the menu rebuild.
             app.manage(profile_store::ActiveProfileState::default());
@@ -1229,6 +1235,7 @@ pub fn run() {
             search::fs_search_cancel,
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
+            prompt_attachments::prompt_attachment_save,
             prompt_actions::prompt_actions_list,
             prompt_actions::prompt_action_create,
             prompt_actions::prompt_action_update,

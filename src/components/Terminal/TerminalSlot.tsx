@@ -8,9 +8,20 @@ import {
 } from "react";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
+import { firePromptAction } from "../../lib/firePromptAction";
 import { pty } from "../../lib/ipc";
 import { isMac, sc } from "../../lib/platform";
 import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
+import {
+	registerPaneFire,
+	unregisterPaneFire,
+} from "../../lib/promptActionRegistry";
+import {
+	actionsForPane,
+	deriveParams,
+	initialValues,
+	type PromptAction,
+} from "../../lib/promptActions";
 import {
 	copyTerminalSelection,
 	pasteIntoTerminal,
@@ -21,13 +32,17 @@ import {
 	resetTerminal,
 	subscribePaneRevision,
 } from "../../lib/terminalManager";
+import { usePromptActionStore } from "../../stores/promptActionStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FileDropHighlight } from "../FileDropHighlight";
 import { PaneDropIndicator } from "../PaneDropIndicator";
+import { ActionBar } from "./ActionBar";
 import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
+import { ParameterDialog } from "./ParameterDialog";
+import { PromptActionPopover } from "./PromptActionPopover";
 import { SearchBar } from "./SearchBar";
 import { TerminalTitleBar } from "./TerminalTitleBar";
 
@@ -140,6 +155,57 @@ export function TerminalSlot({
 	const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
 	const debugMeterEnabled = useSettingsStore((s) => s.debugActivityMeter);
+
+	// Prompt action overlays. Both are pane-local: a dialog belongs to the pane
+	// whose Agent is about to be spoken to, not to the window.
+	const [paramAction, setParamAction] = useState<PromptAction | null>(null);
+	const [addAnchor, setAddAnchor] = useState<{ x: number; y: number } | null>(
+		null,
+	);
+
+	// The Agent this pane actually resolved to, which is what scopes its Prompt
+	// actions. Distinct from the `agentId` prop, which is the id the *layout*
+	// remembers from a previous session and may name an Agent that is not
+	// running now.
+	const detectedAgentId = usePtyActivityStore((s) => {
+		const ptyId = s.panePtyMap[paneId];
+		return ptyId ? s.detectedAgentIds[ptyId] : undefined;
+	});
+
+	// Fire the Nth bar button for this pane, on behalf of the app-level digit
+	// binding (Cmd+1..9 / Ctrl+Shift+1..9). The slot is **positional** — it
+	// names a place in this pane's bar, not a particular Prompt action — so it
+	// has to be resolved here, against the same ordered list the bar drew.
+	useEffect(() => {
+		const run = (action: PromptAction, stageOnly: boolean) => {
+			// Any parameters at all means ask first; none means fire from the click.
+			if (deriveParams(action.body, action.params).length > 0) {
+				setParamAction(action);
+				return;
+			}
+			firePromptAction(
+				paneId,
+				action.body,
+				action.params,
+				initialValues(action.body, action.params),
+				{ stageOnly },
+			);
+		};
+		registerPaneFire(paneId, {
+			bySlot: (slot, stageOnly) => {
+				const ordered = actionsForPane(
+					usePromptActionStore.getState().actions,
+					detectedAgentId,
+					{ barOnly: true },
+				);
+				const action = ordered[slot - 1];
+				if (!action) return; // digit past the end of the bar: do nothing
+				run(action, stageOnly);
+			},
+			byAction: run,
+		});
+		return () => unregisterPaneFire(paneId);
+	}, [paneId, detectedAgentId]);
 
 	useEffect(() => {
 		if (!innerRef.current) return;
@@ -402,6 +468,22 @@ export function TerminalSlot({
 			disabled: isAgentMode || enabledAgents.length === 0,
 			submenu: agentSubmenu,
 		},
+		// The only entry point before an Action bar exists: with no action in
+		// scope the bar does not render at all, so its `+` is not there either.
+		// The `⋯` menu is present in every pane, which is what makes this
+		// reachable. Offered only in an agent pane — a Prompt action has nothing
+		// to talk to in a shell.
+		{
+			label: "Add Prompt Action…",
+			disabled: !isAgentMode,
+			onClick: () => {
+				const r = containerRef.current?.getBoundingClientRect();
+				setAddAnchor({
+					x: (r?.right ?? window.innerWidth) - 12,
+					y: (r?.bottom ?? window.innerHeight) - 12,
+				});
+			},
+		},
 		{ separator: true },
 		{
 			label: "Split Right",
@@ -459,6 +541,37 @@ export function TerminalSlot({
 				className="w-full flex-1 min-h-0"
 				style={{ overflow: "hidden" }}
 			/>
+			{/* Below the terminal body, so it takes rows from it — the existing
+			    ResizeObserver on `innerRef` drives the xterm refit on appear and
+			    disappear. The space is deliberately not reserved. */}
+			<ActionBar
+				paneId={paneId}
+				onRequestParams={setParamAction}
+				onAddAction={setAddAnchor}
+			/>
+			{paramAction && (
+				<ParameterDialog
+					action={paramAction}
+					onCancel={() => setParamAction(null)}
+					onSubmit={(values, stageOnly) => {
+						firePromptAction(
+							paneId,
+							paramAction.body,
+							paramAction.params,
+							values,
+							{ stageOnly },
+						);
+						setParamAction(null);
+					}}
+				/>
+			)}
+			{addAnchor && (
+				<PromptActionPopover
+					anchor={addAnchor}
+					defaultAgentId={detectedAgentId}
+					onClose={() => setAddAnchor(null)}
+				/>
+			)}
 			{searchOpen && searchAddon && (
 				<SearchBar searchAddon={searchAddon} onClose={toggleSearch} />
 			)}

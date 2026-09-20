@@ -14,6 +14,8 @@ export function TerminalSection() {
 		(s) => s.setBlockMouseReporting,
 	);
 	const smartImageDrop = useSettingsStore((s) => s.smartImageDrop);
+	const showActionBar = useSettingsStore((s) => s.showActionBar);
+	const setShowActionBar = useSettingsStore((s) => s.setShowActionBar);
 	const setSmartImageDrop = useSettingsStore((s) => s.setSmartImageDrop);
 	const terminalScrollback = useSettingsStore((s) => s.terminalScrollback);
 	const setTerminalScrollback = useSettingsStore(
@@ -58,6 +60,15 @@ export function TerminalSection() {
 					onChange={setSmartImageDrop}
 					label="Drop images to agents as images"
 					description="When you drop an image onto a running agent, paste it via the clipboard so the agent recognises it — instead of inserting the file path. Other dropped files always insert their path."
+				/>
+			</div>
+			<div className="flex-shrink-0">
+				<SectionLabel>Action Bar</SectionLabel>
+				<ToggleRow
+					checked={showActionBar}
+					onChange={setShowActionBar}
+					label="Show prompt actions under agent panes"
+					description="A strip of one-click prompts along the bottom of any pane running an agent. Turning it off hides the strip without deleting anything — the command palette still reaches every action."
 				/>
 			</div>
 			<div className="flex flex-col flex-shrink-0" style={{ height: 200 }}>

@@ -46,6 +46,7 @@ import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
+import { firePaneSlot } from "./lib/promptActionRegistry";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
 import {
 	copyTerminalSelection,
@@ -67,6 +68,10 @@ import {
 	requestSwitchProfile,
 	useProfileSwitchConfirmStore,
 } from "./stores/profileSwitchConfirmStore";
+import {
+	usePromptActionStore,
+	watchPromptActions,
+} from "./stores/promptActionStore";
 import { profilePrCounts, usePrStore } from "./stores/prStore";
 import {
 	selectErrorAgentCount,
@@ -626,6 +631,18 @@ export function App() {
 		};
 	}, []);
 
+	// Prompt actions live in SQLite, not settingsStore (ADR-0039), so each root
+	// loads them itself and subscribes to the payload-free change broadcast.
+	// Tauri events do not propagate between webview roots, so App and
+	// SettingsApp each need their own listener.
+	useEffect(() => {
+		void usePromptActionStore.getState().load();
+		const unwatch = watchPromptActions();
+		return () => {
+			unwatch.then((fn) => fn()).catch(() => {});
+		};
+	}, []);
+
 	// A profile rename (or create/delete/reorder) in any window — typically
 	// the Settings window — needs to update this window's profile list AND
 	// re-apply the window title from the (possibly renamed) active profile.
@@ -662,6 +679,15 @@ export function App() {
 			const paneId = useWorkspaceStore.getState().focusedPaneId;
 			if (paneId) void pasteIntoTerminal(paneId);
 		});
+		// Action bar position numbers. Resolved against the focused pane, because
+		// the number names a slot in *that* pane's bar (see promptActionRegistry).
+		for (let n = 1; n <= 9; n++) {
+			registerAction(
+				`prompt-action-${n}` as Parameters<typeof registerAction>[0],
+				() =>
+					firePaneSlot(useWorkspaceStore.getState().focusedPaneId, n, false),
+			);
+		}
 		registerAction("navigate-up", () => navigatePane("up"));
 		registerAction("navigate-down", () => navigatePane("down"));
 		registerAction("navigate-left", () => navigatePane("left"));

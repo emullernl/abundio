@@ -865,6 +865,13 @@ export const promptActions = {
 		listen<void>("prompt-actions-changed", () => callback()),
 };
 
+export const promptAttachments = {
+	/** Write a pasted bitmap to a content-hashed file and return its path. Only
+	 *  a paste comes here — a picked file already has a path (ADR-0038). */
+	save: (bytes: number[], extension: string) =>
+		invoke<string>("prompt_attachment_save", { bytes, extension }),
+};
+
 export const clipboardImage = {
 	/** Decode an image file and place it on the OS clipboard as PNG, so a running
 	 *  agent ingests it via its Ctrl+V clipboard-image path. Backs the "Smart

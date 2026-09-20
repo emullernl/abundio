@@ -25,7 +25,18 @@ type KeyAction =
 	| "toggle-statistics-overlay"
 	| "open-settings"
 	| "copy"
-	| "paste";
+	| "paste"
+	// Fires the Nth button in the focused pane's Action bar. The number is
+	// **positional** — it names a slot in the bar, not a Prompt action.
+	| "prompt-action-1"
+	| "prompt-action-2"
+	| "prompt-action-3"
+	| "prompt-action-4"
+	| "prompt-action-5"
+	| "prompt-action-6"
+	| "prompt-action-7"
+	| "prompt-action-8"
+	| "prompt-action-9";
 
 interface KeyBinding {
 	key: string;
@@ -247,6 +258,28 @@ if (!isMac) {
 		{ key: "c", meta: false, shift: true, ctrl: true, action: "copy" },
 		{ key: "v", meta: false, shift: true, ctrl: true, action: "paste" },
 	);
+}
+
+// Action bar position numbers: Cmd+1..9 on macOS, Ctrl+Shift+1..9 elsewhere.
+//
+// The bindings are chosen to be *invisible to the terminal*, not merely unused
+// by Abundio (which binds no digits at all). macOS `Cmd` is not a terminal
+// modifier, so xterm.js never forwards a Cmd-chord to the PTY and no Agent can
+// see it.
+//
+// On Linux/Windows `Ctrl+<digit>` is unusable — `Ctrl+2` is NUL, `Ctrl+3` is
+// ESC, `Ctrl+4` is FS and so on across the row, all in constant use. And
+// `Ctrl+Alt+<digit>` is unusable too, despite matching the split-pane
+// precedent, because `Ctrl+Alt` **is AltGr** on European keyboard layouts and
+// would swallow characters the user needs to type. That leaves Ctrl+Shift.
+for (let n = 1; n <= 9; n++) {
+	DEFAULT_BINDINGS.push({
+		key: String(n),
+		meta: isMac,
+		shift: !isMac,
+		ctrl: !isMac,
+		action: `prompt-action-${n}` as KeyAction,
+	});
 }
 
 type ActionHandler = () => void;

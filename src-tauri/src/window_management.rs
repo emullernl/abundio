@@ -433,7 +433,15 @@ mod tests {
     #[test]
     fn section_ids_accept_every_shape_the_frontend_uses() {
         for id in [
-            "theme", "fonts", "terminal", "editor", "agents", "profiles", "github", "updates",
+            "theme",
+            "fonts",
+            "terminal",
+            "editor",
+            "agents",
+            "prompt-actions",
+            "profiles",
+            "github",
+            "updates",
             // pre-reorg ids an older build's menu could still send
             "terminal-font", "ui-font", "shell",
         ] {
