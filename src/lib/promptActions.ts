@@ -42,6 +42,9 @@ export interface ParamMeta {
 	offText?: string;
 	/** `attachment` only: allow more than one file. */
 	multiple?: boolean;
+	/** Defaults to **true** when absent, so every Parameter authored before this
+	 *  flag existed stays required. See `isRequired`. */
+	required?: boolean;
 }
 
 export type ParamMetaMap = Record<string, ParamMeta>;
@@ -192,11 +195,19 @@ export function resolveValue(meta: ParamMeta, value: ParamValue): string {
  * legitimate prompt. Only the interpolated values are sanitised. Do not
  * "fix" this asymmetry; it is load-bearing, and there is a test asserting it.
  *
- * A placeholder with no supplied value is left **as written**. Every Parameter
- * is required and the dialog's Send stays disabled until all are filled, so
- * reaching here with one missing means something upstream is wrong — leaving
- * the `{{name}}` visible surfaces that, where silently substituting an empty
- * string would send a sentence with a hole in it to a live Agent.
+ * A placeholder whose Parameter was never collected at all is left **as
+ * written**. A *required* Parameter cannot reach here empty — the dialog's Send
+ * stays disabled until it is filled — so a visible `{{name}}` surfaces a bug
+ * rather than hiding it behind an empty string.
+ *
+ * An **optional** Parameter left empty is a different case, and substituting
+ * "" is not enough: it leaves a hole in the sentence, `Review the file:
+ * focusing on .` So the placeholder is erased *with its surrounding
+ * whitespace*, and a line left with nothing but that placeholder is dropped
+ * entirely. This is deliberately the smallest cleanup that reads correctly —
+ * it collapses the gap the removal opened and nothing else. It is **not** a
+ * conditional-section engine: the author cannot mark arbitrary prose as
+ * belonging to a Parameter, and `{{#if}}` remains out of scope.
  */
 export function resolveBody(
 	body: string,
@@ -204,12 +215,48 @@ export function resolveBody(
 	values: Record<string, ParamValue>,
 ): string {
 	const masked = maskEscapes(body);
-	const resolved = masked.replace(PLACEHOLDER, (whole, name: string) => {
-		if (!(name in values)) return whole;
-		const meta = params[name] ?? DEFAULT_META;
-		return resolveValue(meta, values[name]);
+
+	// Pass 1: drop any line that is nothing but an omitted optional placeholder
+	// (plus whitespace). Done line-wise first, because once the placeholder is
+	// replaced in-place there is no way to tell a line that held only it from a
+	// line that was blank to begin with.
+	const lines = masked.split("\n");
+	const kept = lines.filter((line) => {
+		const trimmed = line.trim();
+		const match = /^\{\{([A-Za-z0-9_.-]+)\}\}$/.exec(trimmed);
+		if (!match) return true;
+		return !isOmitted(match[1], params, values);
 	});
+
+	// Pass 2: replace the rest, eating one side's spaces with the placeholder so
+	// `for {{x}} today` does not become `for  today`.
+	const resolved = kept
+		.join("\n")
+		.replace(
+			new RegExp(`[ \\t]*${PLACEHOLDER.source}`, "g"),
+			(whole, name: string) => {
+				if (!(name in values)) return whole;
+				const meta = params[name] ?? DEFAULT_META;
+				if (isOmitted(name, params, values)) return "";
+				// Put back the leading space the pattern consumed.
+				const lead = /^[ \t]*/.exec(whole)?.[0] ?? "";
+				return lead + resolveValue(meta, values[name]);
+			},
+		);
 	return unmaskEscapes(resolved);
+}
+
+/** True when an **optional** Parameter was left empty, so its placeholder and
+ *  the gap around it should disappear rather than resolve to "". */
+function isOmitted(
+	name: string,
+	params: ParamMetaMap,
+	values: Record<string, ParamValue>,
+): boolean {
+	if (!(name in values)) return false;
+	const meta = params[name] ?? DEFAULT_META;
+	if (isRequired(meta)) return false;
+	return !isFilled(meta, values[name]);
 }
 
 /** Values pre-filled when the parameter dialog opens — authored defaults only. */
@@ -237,6 +284,23 @@ export function initialValues(
  * A `toggle` is always filled — both of its states are meaningful, and the
  * author wrote text for each.
  */
+/**
+ * Whether a Parameter must be filled before the action may fire.
+ *
+ * Required is the default, and absent means required — so an action authored
+ * before the flag existed keeps the behaviour it was written against.
+ *
+ * An *optional* Parameter left empty erases its placeholder rather than
+ * substituting nothing in place, because "" in the middle of a sentence leaves
+ * a hole in it: `Review the file:  focusing on .` See `resolveBody`.
+ */
+export function isRequired(meta: ParamMeta): boolean {
+	// A toggle is never required: both of its states are meaningful and the
+	// author wrote text for each, so there is nothing for the user to supply.
+	if (meta.type === "toggle") return false;
+	return meta.required !== false;
+}
+
 export function isFilled(meta: ParamMeta, value: ParamValue): boolean {
 	if (meta.type === "toggle") return true;
 	if (meta.type === "attachment") {
@@ -249,13 +313,14 @@ export function isFilled(meta: ParamMeta, value: ParamValue): boolean {
 	return String(value).trim().length > 0;
 }
 
+/** Whether the action may fire: every *required* Parameter is filled. */
 export function allFilled(
 	body: string,
 	params: ParamMetaMap,
 	values: Record<string, ParamValue>,
 ): boolean {
-	return deriveParams(body, params).every(({ name, meta }) =>
-		isFilled(meta, values[name] ?? ""),
+	return deriveParams(body, params).every(
+		({ name, meta }) => !isRequired(meta) || isFilled(meta, values[name] ?? ""),
 	);
 }
 

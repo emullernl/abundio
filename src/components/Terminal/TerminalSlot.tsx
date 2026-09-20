@@ -38,7 +38,7 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FileDropHighlight } from "../FileDropHighlight";
 import { PaneDropIndicator } from "../PaneDropIndicator";
-import { ActionBar } from "./ActionBar";
+import { ActionBar, PROMPT_ACTION_ATTR } from "./ActionBar";
 import { DebugActivityMeter } from "./DebugActivityMeter";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { ParameterDialog } from "./ParameterDialog";
@@ -162,6 +162,15 @@ export function TerminalSlot({
 	const [addAnchor, setAddAnchor] = useState<{ x: number; y: number } | null>(
 		null,
 	);
+	const [editing, setEditing] = useState<{
+		action: PromptAction;
+		anchor: { x: number; y: number };
+	} | null>(null);
+	const [actionMenu, setActionMenu] = useState<{
+		action: PromptAction;
+		x: number;
+		y: number;
+	} | null>(null);
 
 	// The Agent this pane actually resolved to, which is what scopes its Prompt
 	// actions. Distinct from the `agentId` prop, which is the id the *layout*
@@ -324,6 +333,25 @@ export function TerminalSlot({
 			e.preventDefault();
 			e.stopPropagation();
 			handleFocus();
+
+			// A right-click on an Action bar button edits that action rather than
+			// opening the pane menu. Routed here rather than from a handler on the
+			// button itself, because this listener is capture-phase and swallows
+			// the event before any bubble-phase handler could see it.
+			const onActionButton = (e.target as HTMLElement | null)?.closest?.(
+				`[${PROMPT_ACTION_ATTR}]`,
+			);
+			if (onActionButton) {
+				const id = onActionButton.getAttribute(PROMPT_ACTION_ATTR);
+				const hit = usePromptActionStore
+					.getState()
+					.actions.find((a) => a.id === id);
+				if (hit) {
+					setActionMenu({ action: hit, x: e.clientX, y: e.clientY });
+					return;
+				}
+			}
+
 			// The right button belongs to the program while it is reporting
 			// (ADR-0031); it already received this click as a mouse report on
 			// mousedown. The pane menu is reached from the title bar instead.
@@ -549,6 +577,50 @@ export function TerminalSlot({
 				onRequestParams={setParamAction}
 				onAddAction={setAddAnchor}
 			/>
+			{actionMenu && (
+				<PaneContextMenu
+					x={actionMenu.x}
+					y={actionMenu.y}
+					items={[
+						{
+							label: "Edit Action…",
+							onClick: () =>
+								setEditing({
+									action: actionMenu.action,
+									anchor: { x: actionMenu.x, y: actionMenu.y },
+								}),
+						},
+						{
+							label: actionMenu.action.showInBar
+								? "Hide from Action Bar"
+								: "Show in Action Bar",
+							onClick: () =>
+								void usePromptActionStore
+									.getState()
+									.updateAction(actionMenu.action.id, {
+										showInBar: !actionMenu.action.showInBar,
+									}),
+						},
+						{ separator: true },
+						{
+							label: "Delete Action",
+							onClick: () =>
+								void usePromptActionStore
+									.getState()
+									.deleteAction(actionMenu.action.id),
+						},
+					]}
+					onClose={() => setActionMenu(null)}
+				/>
+			)}
+			{editing && (
+				<PromptActionPopover
+					anchor={editing.anchor}
+					defaultAgentId={detectedAgentId}
+					editing={editing.action}
+					onClose={() => setEditing(null)}
+				/>
+			)}
 			{paramAction && (
 				<ParameterDialog
 					action={paramAction}

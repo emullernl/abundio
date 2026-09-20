@@ -550,19 +550,9 @@ function ParamEditor({
 			)}
 
 			{meta.type === "choice" && (
-				<input
-					className="rounded-md"
-					style={{ ...textInputStyle, height: 32, fontSize: 12 }}
-					placeholder="Options, comma separated — low, medium, high"
-					value={(meta.options ?? []).join(", ")}
-					onChange={(e) =>
-						onChange({
-							options: e.target.value
-								.split(",")
-								.map((o) => o.trim())
-								.filter(Boolean),
-						})
-					}
+				<OptionsInput
+					options={meta.options ?? []}
+					onChange={(options) => onChange({ options })}
 				/>
 			)}
 
@@ -587,21 +577,93 @@ function ParamEditor({
 				</div>
 			)}
 
-			{meta.type === "attachment" && (
-				<label
-					className="flex items-center gap-2.5"
-					style={{ fontSize: 12, color: "var(--fg-secondary)" }}
-				>
-					<input
-						type="checkbox"
-						checked={meta.multiple ?? false}
-						onChange={(e) => onChange({ multiple: e.target.checked })}
-					/>
-					Allow several files
-				</label>
-			)}
+			<div className="flex items-center gap-5">
+				{/* A toggle has no required/optional question: both of its states are
+				    meaningful and the author wrote text for each. */}
+				{meta.type !== "toggle" && (
+					<label
+						className="flex items-center gap-2.5 cursor-pointer"
+						style={{ fontSize: 12, color: "var(--fg-secondary)" }}
+						title="Left empty, an optional value and the gap around it disappear from the prompt"
+					>
+						<input
+							type="checkbox"
+							checked={meta.required !== false}
+							onChange={(e) => onChange({ required: e.target.checked })}
+						/>
+						Required
+					</label>
+				)}
+
+				{meta.type === "attachment" && (
+					<label
+						className="flex items-center gap-2.5 cursor-pointer"
+						style={{ fontSize: 12, color: "var(--fg-secondary)" }}
+					>
+						<input
+							type="checkbox"
+							checked={meta.multiple ?? false}
+							onChange={(e) => onChange({ multiple: e.target.checked })}
+						/>
+						Allow several files
+					</label>
+				)}
+			</div>
 		</div>
 	);
+}
+
+/**
+ * The comma-separated options for a `choice` parameter.
+ *
+ * Holds the raw text locally and parses alongside it, rather than deriving the
+ * displayed value from the parsed array. Round-tripping through
+ * `split(",").filter(Boolean).join(", ")` on every keystroke deletes the comma
+ * the moment it is typed — `low,` parses to `["low"]`, which renders back as
+ * `low` — so the list could never be extended past its first entry.
+ *
+ * The draft re-seeds only when the incoming options differ from what it already
+ * represents, so a parent re-render cannot reformat the text mid-edit.
+ */
+function OptionsInput({
+	options,
+	onChange,
+}: {
+	options: string[];
+	onChange: (options: string[]) => void;
+}) {
+	const [draft, setDraft] = useState(() => options.join(", "));
+
+	useEffect(() => {
+		setDraft((current) =>
+			parseOptions(current).join("\u0000") === options.join("\u0000")
+				? current
+				: options.join(", "),
+		);
+	}, [options]);
+
+	return (
+		<input
+			className="rounded-md"
+			style={{ ...textInputStyle, height: 32, fontSize: 12 }}
+			placeholder="Options, comma separated — low, medium, high"
+			value={draft}
+			onChange={(e) => {
+				setDraft(e.target.value);
+				onChange(parseOptions(e.target.value));
+			}}
+			onBlur={() => setDraft(parseOptions(draft).join(", "))}
+		/>
+	);
+}
+
+/** Trailing and empty entries are dropped, so a half-typed `low, ` yields one
+ *  option while the text still shows the comma the user just pressed. */
+function parseOptions(raw: string): string[] {
+	return raw
+		.split(",")
+		.map((o) => o.trim())
+		.filter(Boolean);
 }
 
 function ScopeEditor({

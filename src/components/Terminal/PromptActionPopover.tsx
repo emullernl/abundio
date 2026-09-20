@@ -24,14 +24,19 @@ import {
 	type ParamMeta,
 	type ParamMetaMap,
 	type ParamType,
+	type PromptAction,
 } from "../../lib/promptActions";
 import { usePromptActionStore } from "../../stores/promptActionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 
 interface PromptActionPopoverProps {
 	anchor: { x: number; y: number };
-	/** The Agent this pane resolved to, if any. Seeds the scope. */
+	/** The Agent this pane resolved to, if any. Seeds the scope of a new action
+	 *  and is ignored when editing an existing one. */
 	defaultAgentId: string | undefined;
+	/** Present when editing rather than creating. The same card serves both:
+	 *  the fields are identical, and a second component would drift. */
+	editing?: PromptAction;
 	onClose: () => void;
 }
 
@@ -47,12 +52,13 @@ const PARAM_TYPES: ParamType[] = [
 export function PromptActionPopover({
 	anchor,
 	defaultAgentId,
+	editing,
 	onClose,
 }: PromptActionPopoverProps) {
 	const nameRef = useRef<HTMLInputElement>(null);
-	const [name, setName] = useState("");
-	const [body, setBody] = useState("");
-	const [params, setParams] = useState<ParamMetaMap>({});
+	const [name, setName] = useState(editing?.name ?? "");
+	const [body, setBody] = useState(editing?.body ?? "");
+	const [params, setParams] = useState<ParamMetaMap>(editing?.params ?? {});
 
 	// Scope defaults to *this pane's Agent*, not to all agents. The motivating
 	// case is a slash command, and slash commands are agent-specific — `/review`
@@ -60,14 +66,32 @@ export function PromptActionPopover({
 	// to `all` would quietly put broken buttons in every other Agent's bar.
 	//
 	// With no resolved Agent id, `all` is the only honest answer available.
-	const [scopeToAgent, setScopeToAgent] = useState(!!defaultAgentId);
+	//
+	// When editing, the existing scope wins over the pane's Agent — the user
+	// already answered this question once.
+	const [scopeToAgent, setScopeToAgent] = useState(
+		editing ? editing.scope.kind === "set" : !!defaultAgentId,
+	);
 
 	const createAction = usePromptActionStore((s) => s.createAction);
+	const updateAction = usePromptActionStore((s) => s.updateAction);
 	const agents = useSettingsStore((s) => s.agents);
-	const agentName = useMemo(
-		() => agents.find((a) => a.id === defaultAgentId)?.name,
-		[agents, defaultAgentId],
-	);
+	/** What the "…only" half of the scope pair is actually offering. When editing
+	 *  an action already scoped to several Agents, that is the set it targets —
+	 *  not this pane's Agent, which would silently narrow it on save. */
+	const scopedLabel = useMemo(() => {
+		const ids =
+			editing?.scope.kind === "set" && editing.scope.agentIds.length > 0
+				? editing.scope.agentIds
+				: defaultAgentId
+					? [defaultAgentId]
+					: [];
+		const names = ids.map((id) => agents.find((a) => a.id === id)?.name ?? id);
+		if (names.length === 0) return null;
+		if (names.length === 1) return `${names[0]} only`;
+		if (names.length === 2) return `${names[0]} and ${names[1]}`;
+		return `${names.length} agents`;
+	}, [agents, defaultAgentId, editing]);
 
 	const derived = useMemo(() => deriveParams(body, params), [body, params]);
 
@@ -79,16 +103,33 @@ export function PromptActionPopover({
 
 	async function save() {
 		if (!ready) return;
+		// Editing keeps whatever set was authored in Settings — which may name
+		// several Agents — rather than collapsing it to this pane's one.
+		const scopedIds =
+			editing?.scope.kind === "set" && editing.scope.agentIds.length > 0
+				? editing.scope.agentIds
+				: defaultAgentId
+					? [defaultAgentId]
+					: [];
 		const scope: ActionScope =
-			scopeToAgent && defaultAgentId
-				? { kind: "set", agentIds: [defaultAgentId] }
+			scopeToAgent && scopedIds.length > 0
+				? { kind: "set", agentIds: scopedIds }
 				: { kind: "all" };
 		// Only metadata for parameters the body still refers to — an entry whose
 		// placeholder was deleted mid-edit is inert, but there is no reason to
 		// persist it.
 		const live: ParamMetaMap = {};
 		for (const p of derived) live[p.name] = p.meta;
-		await createAction({ name: name.trim(), body, scope, params: live });
+		if (editing) {
+			await updateAction(editing.id, {
+				name: name.trim(),
+				body,
+				scope,
+				params: live,
+			});
+		} else {
+			await createAction({ name: name.trim(), body, scope, params: live });
+		}
 		onClose();
 	}
 
@@ -138,7 +179,7 @@ export function PromptActionPopover({
 						}}
 					>
 						<h2 style={{ fontSize: 14, color: "var(--fg-primary)" }}>
-							New prompt action
+							{editing ? "Edit prompt action" : "New prompt action"}
 						</h2>
 						<p
 							style={{
@@ -148,7 +189,9 @@ export function PromptActionPopover({
 								lineHeight: 1.45,
 							}}
 						>
-							A button under this pane that sends a prompt to the agent.
+							{editing
+								? "Changes apply everywhere this action appears."
+								: "A button under this pane that sends a prompt to the agent."}
 						</p>
 					</header>
 
@@ -213,9 +256,32 @@ export function PromptActionPopover({
 											>
 												{p.name}
 											</span>
+											<label
+												className="flex items-center gap-1.5 shrink-0 cursor-pointer"
+												style={{
+													fontSize: 11,
+													color: "var(--fg-secondary)",
+												}}
+												title="Left empty, an optional value and the gap around it disappear from the prompt"
+											>
+												<input
+													type="checkbox"
+													checked={p.meta.required !== false}
+													onChange={(e) =>
+														setParams((m) => ({
+															...m,
+															[p.name]: {
+																...(m[p.name] ?? { type: "text" }),
+																required: e.target.checked,
+															} as ParamMeta,
+														}))
+													}
+												/>
+												Required
+											</label>
 											<select
 												className="rounded-md"
-												style={{ ...selectStyle, width: 132 }}
+												style={{ ...selectStyle, width: 116 }}
 												value={p.meta.type}
 												onChange={(e) =>
 													setParams((m) => ({
@@ -239,7 +305,7 @@ export function PromptActionPopover({
 							</Field>
 						)}
 
-						{defaultAgentId && (
+						{scopedLabel && (
 							<Field label="Offered for">
 								{/* A segmented pair rather than a bare checkbox: the choice is
 								    between two named things, and "only for X" as a tickbox
@@ -256,7 +322,7 @@ export function PromptActionPopover({
 										selected={scopeToAgent}
 										onClick={() => setScopeToAgent(true)}
 									>
-										{agentName ?? defaultAgentId} only
+										{scopedLabel}
 									</ScopeChoice>
 									<ScopeChoice
 										selected={!scopeToAgent}
@@ -325,7 +391,7 @@ export function PromptActionPopover({
 								}}
 								onClick={save}
 							>
-								Add action
+								{editing ? "Save changes" : "Add action"}
 							</button>
 						</div>
 					</footer>

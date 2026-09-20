@@ -25,6 +25,7 @@ import {
 	deriveParams,
 	initialValues,
 	isFilled,
+	isRequired,
 	type ParamMeta,
 	type ParamValue,
 	type PromptAction,
@@ -227,6 +228,7 @@ function Field({
 	onChange,
 	onSubmit,
 }: FieldProps) {
+	const required = isRequired(meta);
 	const filled = isFilled(meta, value);
 
 	return (
@@ -245,9 +247,20 @@ function Field({
 				>
 					{name}
 				</span>
-				{!filled && (
-					<span style={{ fontSize: 11, color: "var(--accent)", opacity: 0.9 }}>
-						required
+				{required ? (
+					!filled && (
+						<span
+							style={{ fontSize: 11, color: "var(--accent)", opacity: 0.9 }}
+						>
+							required
+						</span>
+					)
+				) : (
+					<span
+						style={{ fontSize: 11, color: "var(--fg-secondary)", opacity: 0.7 }}
+						title="Leave it empty and it drops out of the prompt entirely"
+					>
+						optional
 					</span>
 				)}
 			</span>

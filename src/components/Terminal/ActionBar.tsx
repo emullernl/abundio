@@ -40,6 +40,18 @@ interface ActionBarProps {
 	onAddAction: (anchor: { x: number; y: number }) => void;
 }
 
+/**
+ * Marks a bar button with its Prompt action id.
+ *
+ * The pane's `contextmenu` listener is registered in the **capture** phase and
+ * calls `stopPropagation` unconditionally — it has to, because xterm's own
+ * listener moves a hidden textarea under the cursor, which on Windows WebView2
+ * pastes the clipboard straight into the PTY. A bubble-phase `onContextMenu`
+ * here would therefore never run. So the button advertises itself instead, and
+ * `TerminalSlot` reads this off the event target to decide which menu to open.
+ */
+export const PROMPT_ACTION_ATTR = "data-prompt-action-id";
+
 /** Matches the title bar's 22px, one notch taller for the touch target. */
 const BAR_HEIGHT = 24;
 
@@ -201,7 +213,11 @@ function ActionButton({ action, number, disabled, onFire }: ActionButtonProps) {
 		<button
 			type="button"
 			disabled={disabled}
-			className="group shrink-0 flex items-center gap-[5px] transition-colors"
+			// Read by TerminalSlot's capture-phase contextmenu handler, which
+			// swallows the event before any bubble-phase handler here could see
+			// it. See PROMPT_ACTION_ATTR.
+			{...{ [PROMPT_ACTION_ATTR]: action.id }}
+			className="group shrink-0 flex items-center gap-[5px] transition-colors select-none"
 			style={{
 				padding: "0 9px",
 				fontFamily: "var(--font-mono)",

@@ -7,6 +7,7 @@ import {
 	deriveParams,
 	initialValues,
 	isInScope,
+	isRequired,
 	orphanedParamMeta,
 	type ParamMetaMap,
 	type PromptAction,
@@ -228,6 +229,66 @@ describe("allFilled", () => {
 		const params: ParamMetaMap = { f: { type: "attachment" } };
 		expect(allFilled("{{f}}", params, { f: [] })).toBe(false);
 		expect(allFilled("{{f}}", params, { f: ["/tmp/a.png"] })).toBe(true);
+	});
+});
+
+describe("optional parameters", () => {
+	it("treats an absent required flag as required", () => {
+		// Actions authored before the flag existed keep their behaviour.
+		expect(isRequired({ type: "text" })).toBe(true);
+		expect(isRequired({ type: "text", required: true })).toBe(true);
+		expect(isRequired({ type: "text", required: false })).toBe(false);
+	});
+
+	it("never requires a toggle — both its states are meaningful", () => {
+		expect(isRequired({ type: "toggle" })).toBe(false);
+		expect(isRequired({ type: "toggle", required: true })).toBe(false);
+	});
+
+	it("lets an action fire with an optional field left empty", () => {
+		const params: ParamMetaMap = {
+			a: { type: "text" },
+			b: { type: "text", required: false },
+		};
+		expect(allFilled("{{a}} {{b}}", params, { a: "x", b: "" })).toBe(true);
+		expect(allFilled("{{a}} {{b}}", params, { a: "", b: "" })).toBe(false);
+	});
+
+	it("erases an omitted optional placeholder with the gap around it", () => {
+		// Substituting "" alone would leave "Review src/app.ts  today".
+		const out = resolveBody(
+			"Review {{file}} {{focus}} today",
+			{ file: { type: "text" }, focus: { type: "text", required: false } },
+			{ file: "src/app.ts", focus: "" },
+		);
+		expect(out).toBe("Review src/app.ts today");
+	});
+
+	it("drops a line that held nothing but an omitted optional placeholder", () => {
+		const out = resolveBody(
+			"Write a test for {{target}}.\n\n{{extra}}\n\nThanks.",
+			{ target: { type: "text" }, extra: { type: "text", required: false } },
+			{ target: "parse()", extra: "" },
+		);
+		expect(out).toBe("Write a test for parse().\n\n\nThanks.");
+		expect(out).not.toContain("{{extra}}");
+	});
+
+	it("keeps an optional placeholder that WAS filled", () => {
+		const out = resolveBody(
+			"Review {{file}} {{focus}}",
+			{ file: { type: "text" }, focus: { type: "text", required: false } },
+			{ file: "a.ts", focus: "for races" },
+		);
+		expect(out).toBe("Review a.ts for races");
+	});
+
+	it("still leaves a required placeholder written out when unsupplied", () => {
+		// A required field cannot legitimately arrive empty, so showing it
+		// surfaces the bug rather than hiding it behind an empty string.
+		expect(
+			resolveBody("Fix {{file}}", { file: { type: "text" } }, { file: "" }),
+		).toBe("Fix ");
 	});
 });
 
