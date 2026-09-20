@@ -87,10 +87,15 @@ export function ActionBar({
 	// of truth.
 	const isAgentPane = detectionMode === "agent";
 
-	// No bar at all when nothing is in scope, and none while the first load is
-	// still in flight — so a cold start never flashes a bar in and back out.
-	if (!showActionBar || !isAgentPane || !loaded || visible.length === 0)
-		return null;
+	// The bar is present in every agent pane, even with nothing in it — that is
+	// what makes the feature findable, since nothing is seeded on a fresh
+	// install and an invisible `+` cannot be clicked. It costs one terminal row.
+	//
+	// `loaded` is still gated on, but only to keep the *empty* bar from
+	// rendering its invitation for a frame before the real buttons arrive. The
+	// bar's presence no longer depends on how many actions there are, so there
+	// is no appear/disappear flicker on load either way.
+	if (!showActionBar || !isAgentPane) return null;
 
 	const fireable = canFire(state);
 
@@ -147,6 +152,34 @@ export function ActionBar({
 					el.scrollLeft += e.deltaY;
 				}}
 			>
+				{loaded && visible.length === 0 && (
+					<button
+						type="button"
+						className="shrink-0 flex items-center gap-1.5 transition-colors select-none"
+						style={{
+							padding: "0 10px",
+							fontFamily: "var(--font-mono)",
+							fontSize: 11,
+							lineHeight: `${BAR_HEIGHT}px`,
+							whiteSpace: "nowrap",
+							color: "var(--fg-secondary)",
+							opacity: 0.55,
+						}}
+						onMouseEnter={(e) => {
+							e.currentTarget.style.opacity = "1";
+						}}
+						onMouseLeave={(e) => {
+							e.currentTarget.style.opacity = "0.55";
+						}}
+						onClick={(e) => {
+							const r = e.currentTarget.getBoundingClientRect();
+							onAddAction({ x: r.right, y: r.top });
+						}}
+					>
+						<Plus size={11} />
+						Add a prompt action
+					</button>
+				)}
 				{visible.map((action, index) => (
 					<ActionButton
 						key={action.id}
@@ -159,34 +192,38 @@ export function ActionBar({
 			</div>
 
 			{/* Outside the scroller on purpose: the way to add an action must never
-			    scroll out of reach. */}
-			<button
-				type="button"
-				className="shrink-0 flex items-center justify-center transition-colors"
-				style={{
-					width: 24,
-					color: "var(--fg-secondary)",
-					opacity: 0.55,
-					borderLeft:
-						"1px solid color-mix(in srgb, var(--border) 30%, transparent)",
-				}}
-				title="Add prompt action…"
-				aria-label="Add prompt action"
-				onMouseEnter={(e) => {
-					e.currentTarget.style.opacity = "1";
-					e.currentTarget.style.color = "var(--accent)";
-				}}
-				onMouseLeave={(e) => {
-					e.currentTarget.style.opacity = "0.55";
-					e.currentTarget.style.color = "var(--fg-secondary)";
-				}}
-				onClick={(e) => {
-					const r = e.currentTarget.getBoundingClientRect();
-					onAddAction({ x: r.right, y: r.top });
-				}}
-			>
-				<Plus size={12} />
-			</button>
+			    scroll out of reach. Hidden while the bar is empty, where the
+			    left-aligned invitation already says it better than a bare icon
+			    stranded at the far edge. */}
+			{visible.length > 0 && (
+				<button
+					type="button"
+					className="shrink-0 flex items-center justify-center transition-colors"
+					style={{
+						width: 24,
+						color: "var(--fg-secondary)",
+						opacity: 0.55,
+						borderLeft:
+							"1px solid color-mix(in srgb, var(--border) 30%, transparent)",
+					}}
+					title="Add prompt action…"
+					aria-label="Add prompt action"
+					onMouseEnter={(e) => {
+						e.currentTarget.style.opacity = "1";
+						e.currentTarget.style.color = "var(--accent)";
+					}}
+					onMouseLeave={(e) => {
+						e.currentTarget.style.opacity = "0.55";
+						e.currentTarget.style.color = "var(--fg-secondary)";
+					}}
+					onClick={(e) => {
+						const r = e.currentTarget.getBoundingClientRect();
+						onAddAction({ x: r.right, y: r.top });
+					}}
+				>
+					<Plus size={12} />
+				</button>
+			)}
 		</div>
 	);
 }

@@ -42,7 +42,7 @@ Firing itself goes through `term.paste()` — the same call `fileDrop` uses, whi
 
 ### 3. Action bar
 
-Renders when the PTY is in **agent mode** (`agentPtyIds`) **and** something is in scope. Global-scoped actions show immediately; agent-scoped ones flow in when `detectedAgentIds[ptyId]` resolves, because a PTY can be in agent mode with no known Agent id (`ptyActivityStore.ts:518-531`).
+Renders in every **agent mode** pane, including an empty one — where it shows an *Add a prompt action* invitation and drops the trailing `+`. Nothing is seeded, so a bar that hid itself when empty would leave the feature with no visible way in. Global-scoped actions show immediately; agent-scoped ones flow in when `detectedAgentIds[ptyId]` resolves, because a PTY can be in agent mode with no known Agent id (`ptyActivityStore.ts:518-531`).
 
 Order: agent-scoped first, then global, each in authored order (reordering lives in Settings). Horizontal overflow scrolls, vertical wheel mapped to horizontal, fade masks at the live edges, no scrollbar and no arrows. Appear/disappear refits xterm; the space is not reserved.
 

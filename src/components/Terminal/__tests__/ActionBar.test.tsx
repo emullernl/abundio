@@ -106,28 +106,49 @@ describe("ActionBar", () => {
 		});
 	}
 
-	it("renders nothing when no action is in scope", () => {
-		// Not an empty bar — no bar. A feature the user has not adopted costs
-		// them no terminal rows.
+	it("still renders, with an invitation, when no action is in scope", () => {
+		// The bar is present in every agent pane. Nothing is seeded on a fresh
+		// install, so an absent bar would leave the feature with no visible way
+		// in at all.
 		setPane({});
 		render();
-		expect(container.textContent).toBe("");
-		expect(container.querySelector("button")).toBeNull();
+		expect(container.textContent).toContain("Add a prompt action");
+	});
+
+	it("drops the trailing + while empty, so there is only one way in", () => {
+		setPane({});
+		render();
+		expect(
+			container.querySelector('button[aria-label="Add prompt action"]'),
+		).toBeNull();
+	});
+
+	it("shows the trailing + once there is something in the bar", () => {
+		setPane({ agentId: "claude" });
+		usePromptActionStore.setState({ actions: [action()] });
+		render();
+		expect(
+			container.querySelector('button[aria-label="Add prompt action"]'),
+		).not.toBeNull();
+		expect(container.textContent).not.toContain("Add a prompt action");
 	});
 
 	it("renders nothing in a shell pane", () => {
+		// A prompt has nothing to talk to in a bare shell.
 		setPane({ agentMode: false });
 		usePromptActionStore.setState({ actions: [action()] });
 		render();
 		expect(container.querySelector("button")).toBeNull();
 	});
 
-	it("renders nothing while the first load is still in flight", () => {
-		// Otherwise a cold start flashes a bar in and back out.
+	it("withholds the invitation while the first load is in flight", () => {
+		// The bar itself is there either way; only its empty-state copy waits,
+		// so a cold start does not show "Add a prompt action" for a frame before
+		// the real buttons arrive.
 		setPane({});
 		usePromptActionStore.setState({ actions: [action()], loaded: false });
 		render();
-		expect(container.querySelector("button")).toBeNull();
+		expect(container.textContent).not.toContain("Add a prompt action");
 	});
 
 	it("renders nothing when the global toggle is off", () => {
@@ -181,13 +202,15 @@ describe("ActionBar", () => {
 	});
 
 	it("never offers an action whose scope set has emptied out", () => {
-		// Its only Agent was deleted. Kept in Settings, never rendered here.
+		// Its only Agent was deleted. Kept in Settings, never rendered here —
+		// the bar falls back to its empty state.
 		setPane({ agentId: "claude" });
 		usePromptActionStore.setState({
 			actions: [action({ scope: { kind: "set", agentIds: [] } })],
 		});
 		render();
-		expect(container.querySelector("button")).toBeNull();
+		expect(container.textContent).toContain("Add a prompt action");
+		expect(container.textContent).not.toContain("Review");
 	});
 
 	it("honours Show in bar", () => {
