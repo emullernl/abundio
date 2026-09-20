@@ -16,9 +16,11 @@
  * feature the user has not adopted costs them no terminal rows.
  */
 
+import { AnimatePresence, motion } from "framer-motion";
 import { Plus } from "lucide-react";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { firePromptAction } from "../../lib/firePromptAction";
+import { type PulseEvent, subscribePulse } from "../../lib/promptActionPulse";
 import {
 	actionsForPane,
 	buttonLabel,
@@ -77,6 +79,11 @@ export function ActionBar({
 	const actions = usePromptActionStore((s) => s.actions);
 	const loaded = usePromptActionStore((s) => s.loaded);
 
+	// Which button last sent, and when. Nonce rather than a boolean so two sends
+	// of the same action re-trigger the animation instead of collapsing into one.
+	const [fired, setFired] = useState<PulseEvent | null>(null);
+	useEffect(() => subscribePulse(paneId, setFired), [paneId]);
+
 	const visible = useMemo(
 		() => actionsForPane(actions, agentId, { barOnly: true }),
 		[actions, agentId],
@@ -111,9 +118,7 @@ export function ActionBar({
 			action.body,
 			action.params,
 			initialValues(action.body, action.params),
-			{
-				stageOnly: altKey,
-			},
+			{ stageOnly: altKey, actionId: action.id },
 		);
 	}
 
@@ -188,6 +193,7 @@ export function ActionBar({
 						action={action}
 						number={positionNumber(index)}
 						disabled={!fireable}
+						pulseNonce={fired?.actionId === action.id ? fired.nonce : undefined}
 						onFire={(altKey) => fire(action, altKey)}
 					/>
 				))}
@@ -234,10 +240,18 @@ interface ActionButtonProps {
 	action: PromptAction;
 	number: number | null;
 	disabled: boolean;
+	/** Bumped each time this action sends. See `promptActionPulse`. */
+	pulseNonce: number | undefined;
 	onFire: (altKey: boolean) => void;
 }
 
-function ActionButton({ action, number, disabled, onFire }: ActionButtonProps) {
+function ActionButton({
+	action,
+	number,
+	disabled,
+	pulseNonce,
+	onFire,
+}: ActionButtonProps) {
 	const label = buttonLabel(action);
 
 	// The tooltip is the only place the user can read what this button will
@@ -256,7 +270,7 @@ function ActionButton({ action, number, disabled, onFire }: ActionButtonProps) {
 			// swallows the event before any bubble-phase handler here could see
 			// it. See PROMPT_ACTION_ATTR.
 			{...{ [PROMPT_ACTION_ATTR]: action.id }}
-			className="group shrink-0 flex items-stretch transition-colors select-none"
+			className="group relative overflow-hidden shrink-0 flex items-stretch transition-colors select-none"
 			style={{
 				// No left padding: the powerline segment is flush to the button's
 				// edge, the way a status-line segment is flush to its separator.
@@ -283,8 +297,15 @@ function ActionButton({ action, number, disabled, onFire }: ActionButtonProps) {
 			}}
 			onClick={(e) => onFire(e.altKey)}
 		>
-			{number !== null && <PowerlineDigit number={number} muted={disabled} />}
+			{number !== null && (
+				<PowerlineDigit
+					number={number}
+					muted={disabled}
+					pulseNonce={pulseNonce}
+				/>
+			)}
 			<span className="truncate self-center">{label}</span>
+			<SendSweep nonce={pulseNonce} />
 		</button>
 	);
 }
@@ -306,17 +327,37 @@ function ActionButton({ action, number, disabled, onFire }: ActionButtonProps) {
  * text size it renders as a small arrowhead floating mid-line instead of a
  * tapering edge.
  */
-function PowerlineDigit({ number, muted }: { number: number; muted: boolean }) {
+function PowerlineDigit({
+	number,
+	muted,
+	pulseNonce,
+}: {
+	number: number;
+	muted: boolean;
+	pulseNonce: number | undefined;
+}) {
 	// Disabled panes keep the shape but lose the colour, so a Waiting bar reads
 	// as "not now" rather than as a different design.
 	const fill = muted
 		? "color-mix(in srgb, var(--fg-secondary) 25%, transparent)"
 		: "var(--accent)";
 
+	const reduced = prefersReducedMotion();
+
 	return (
-		<span
+		<motion.span
 			className="flex items-stretch shrink-0 transition-colors"
 			aria-hidden="true"
+			// Keyed on the nonce so a second send of the same action replays rather
+			// than being treated as the same animation still running.
+			key={pulseNonce ?? "idle"}
+			animate={
+				pulseNonce === undefined || reduced
+					? {}
+					: // A single brightening beat, not a loop: the prompt left once.
+						{ filter: ["brightness(1)", "brightness(1.9)", "brightness(1)"] }
+			}
+			transition={{ duration: 0.45, ease: "easeOut", times: [0, 0.18, 1] }}
 		>
 			<span
 				className="tabular-nums flex items-center"
@@ -347,7 +388,49 @@ function PowerlineDigit({ number, muted }: { number: number; muted: boolean }) {
 			>
 				{POWERLINE_RIGHT}
 			</span>
-		</span>
+		</motion.span>
+	);
+}
+
+/**
+ * A highlight that runs left-to-right across the button when it sends.
+ *
+ * The prompt travels *out* of the pane, so the sweep travels with it. Drawn as
+ * an absolutely-positioned overlay rather than a background on the button
+ * itself, so it cannot disturb the powerline segment's own colours or the
+ * label's layout, and `pointer-events: none` keeps it out of the way of the
+ * click that started it.
+ */
+function SendSweep({ nonce }: { nonce: number | undefined }) {
+	if (prefersReducedMotion()) return null;
+	return (
+		<AnimatePresence>
+			{nonce !== undefined && (
+				<motion.span
+					key={nonce}
+					className="absolute inset-y-0 pointer-events-none"
+					style={{
+						width: "45%",
+						background:
+							"linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 45%, transparent), transparent)",
+					}}
+					initial={{ left: "-45%", opacity: 0.9 }}
+					animate={{ left: "100%", opacity: 0 }}
+					exit={{ opacity: 0 }}
+					transition={{ duration: 0.5, ease: "easeOut" }}
+				/>
+			)}
+		</AnimatePresence>
+	);
+}
+
+/** Honoured rather than assumed: a repeated flash is exactly the kind of motion
+ *  the setting exists to suppress. Read per call — it is cheap, and a user can
+ *  change it while the app is open. */
+function prefersReducedMotion(): boolean {
+	return (
+		typeof window !== "undefined" &&
+		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
 	);
 }
 

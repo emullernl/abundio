@@ -8,6 +8,7 @@
 
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { pulse } from "./promptActionPulse";
 import {
 	canFire,
 	type ParamMetaMap,
@@ -17,6 +18,10 @@ import {
 import { getTerminal } from "./terminalManager";
 
 export interface FireOptions {
+	/** The Prompt action's id, so the **Action bar** can pulse the button that
+	 *  actually sent. Optional only because the resolution helpers below do not
+	 *  need it; every real call site passes one. */
+	actionId?: string;
 	/** Alt/Option-click: paste the text but withhold the trailing `\r`, so it
 	 *  sits in the Agent's prompt box for the user to add to. */
 	stageOnly?: boolean;
@@ -69,6 +74,10 @@ export function firePromptAction(
 	// Focus lands in the terminal, never on the button — the next thing the user
 	// does is watch or type.
 	managed.term.focus();
+
+	// After the write, not before: the pulse says "that went out", so it must
+	// not fire for a refused send.
+	if (opts.actionId) pulse(paneId, opts.actionId);
 	return { ok: true };
 }
 

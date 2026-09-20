@@ -197,7 +197,7 @@ export function TerminalSlot({
 				action.body,
 				action.params,
 				initialValues(action.body, action.params),
-				{ stageOnly },
+				{ stageOnly, actionId: action.id },
 			);
 		};
 		registerPaneFire(paneId, {
@@ -631,7 +631,7 @@ export function TerminalSlot({
 							paramAction.body,
 							paramAction.params,
 							values,
-							{ stageOnly },
+							{ stageOnly, actionId: paramAction.id },
 						);
 						setParamAction(null);
 					}}
