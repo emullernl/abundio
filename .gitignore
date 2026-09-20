@@ -6,3 +6,4 @@ app-icon.png
 *.tsbuildinfo
 .DS_Store
 .claude
+.pnpm-store/
