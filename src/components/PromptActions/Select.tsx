@@ -24,14 +24,65 @@
  * resize rather than tracking them, so it can never be left floating away from
  * the control it belongs to.
  *
- * Escape closes the list and not the dialog around it, because `useEscapeKey`
- * dispatches to the topmost overlay and the list mounts last.
+ * ## Escape belongs to the open list, not to the control
+ *
+ * `useEscapeKey` is registered by `SelectList`, which exists only while the
+ * list is open — never by `Select` itself. Registering for the control's whole
+ * life broke Escape in *both* directions, because the hook's dispatcher
+ * swallows the key before calling whichever handler is topmost:
+ *
+ * - A **closed** Select nested in `PromptActionPopover` mounts later than the
+ *   popover (it appears as soon as a `{{placeholder}}` is typed), so it sat on
+ *   top, no-oped, and ate the key — the popover could no longer be closed.
+ * - An **open** Select inside `ParameterDialog` lost the key to the dialog:
+ *   React flushes effects child-first, so the order is `[select, dialog]` and
+ *   the *dialog* is topmost. Escape discarded everything typed into it.
+ *
+ * Mounting the registration with the list fixes both: while open it is pushed
+ * last and wins, and while closed it does not compete at all.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { Check, ChevronDown } from "../Icons";
+
+/**
+ * The open list.
+ *
+ * A component of its own for one reason: it owns the `useEscapeKey`
+ * registration, which must exist only while the list is on screen. See the note
+ * at the top of the file for what registering it on the control instead broke.
+ */
+function SelectList({
+	listRef,
+	id,
+	activeId,
+	onEscape,
+	children,
+	...rest
+}: {
+	listRef: React.RefObject<HTMLDivElement | null>;
+	id: string;
+	activeId: string;
+	onEscape: () => void;
+	children: React.ReactNode;
+} & React.HTMLAttributes<HTMLDivElement>) {
+	useEscapeKey(onEscape);
+	return (
+		<div
+			{...rest}
+			ref={listRef}
+			id={id}
+			role="listbox"
+			// biome-ignore lint/a11y/noNoninteractiveTabindex: the listbox takes focus while open, per the aria-activedescendant pattern
+			tabIndex={0}
+			aria-activedescendant={activeId}
+		>
+			{children}
+		</div>
+	);
+}
 
 export interface SelectOption {
 	value: string;
@@ -67,6 +118,11 @@ export function Select({
 	placeholder = "Choose…",
 	"aria-label": ariaLabel,
 }: SelectProps) {
+	// Instance-scoped, because `aria-activedescendant` resolves against the whole
+	// document and `ParameterEditor` renders one Select per parameter. Nothing in
+	// the component enforces that only one list is ever open.
+	const uid = useId();
+	const listId = `${uid}-listbox`;
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const [open, setOpen] = useState(false);
@@ -97,10 +153,6 @@ export function Select({
 		close();
 	}
 
-	useEscapeKey(() => {
-		if (open) close();
-	});
-
 	// Dismiss on anything that would move the control out from under the list.
 	// Closing beats re-measuring: a list that follows a scrolling pane is more
 	// surprising than one that goes away.
@@ -109,7 +161,20 @@ export function Select({
 		// `setOpen` directly rather than `close`: this path never refocuses (the
 		// user is scrolling or clicking elsewhere), and it keeps the effect from
 		// depending on a function identity that changes every render.
-		const dismiss = () => setOpen(false);
+		const dismiss = (e: Event) => {
+			// A capture listener on `window` sees scrolls from every descendant,
+			// which is exactly why it is registered that way — ancestor panes do
+			// not bubble their scrolls. But the portalled list is a descendant of
+			// `document.body` too, and it scrolls: a wheel over it, and the
+			// `scrollIntoView` below when arrowing past the last visible row, both
+			// land here. Without this guard the dropdown closed itself on the one
+			// case scroll-into-view exists for.
+			// `instanceof Node`, not a truthiness check: `resize` targets `window`,
+			// which is truthy and not a Node, and `contains` throws on it.
+			const target = e.target;
+			if (target instanceof Node && listRef.current?.contains(target)) return;
+			setOpen(false);
+		};
 		window.addEventListener("resize", dismiss);
 		window.addEventListener("scroll", dismiss, true);
 		const onPointerDown = (e: MouseEvent) => {
@@ -166,8 +231,11 @@ export function Select({
 			e.preventDefault();
 			commit(active);
 		} else if (e.key === "Tab") {
-			// Tab commits nothing and lets focus move on, as a native select does.
-			close(false);
+			// Tab commits nothing, as a native select does. Focus returns to the
+			// trigger *synchronously*, so the browser's own Tab handling continues
+			// from there — `close(false)` left focus on a portal that unmounts a
+			// moment later, and Tab resumed from nowhere.
+			close();
 		}
 	}
 
@@ -194,8 +262,10 @@ export function Select({
 				ref={triggerRef}
 				type="button"
 				className={className}
+				role="combobox"
 				aria-haspopup="listbox"
 				aria-expanded={open}
+				aria-controls={open ? listId : undefined}
 				aria-label={ariaLabel}
 				style={{
 					...style,
@@ -226,11 +296,11 @@ export function Select({
 			{open &&
 				rect &&
 				createPortal(
-					<div
-						ref={listRef}
-						role="listbox"
-						tabIndex={0}
-						aria-activedescendant={`select-option-${active}`}
+					<SelectList
+						listRef={listRef}
+						id={listId}
+						onEscape={close}
+						activeId={`${uid}-option-${active}`}
 						className="fixed rounded-lg overflow-y-auto"
 						style={{
 							left: Math.max(
@@ -256,12 +326,16 @@ export function Select({
 							const isSelected = option.value === value;
 							const isActive = i === active;
 							return (
-								<button
+								// biome-ignore lint/a11y/useKeyWithClickEvents: the listbox owns the keyboard; rows are pointer targets only
+								<div
 									key={option.value}
-									id={`select-option-${i}`}
+									id={`${uid}-option-${i}`}
 									data-index={i}
-									type="button"
 									role="option"
+									// Focusable programmatically but out of the tab order: the
+									// listbox holds focus and points here with
+									// `aria-activedescendant`.
+									tabIndex={-1}
 									aria-selected={isSelected}
 									className="w-full flex items-center gap-2 rounded-md text-left"
 									style={{
@@ -281,10 +355,10 @@ export function Select({
 										{isSelected && <Check />}
 									</span>
 									<span className="truncate">{option.label}</span>
-								</button>
+								</div>
 							);
 						})}
-					</div>,
+					</SelectList>,
 					document.body,
 				)}
 		</span>

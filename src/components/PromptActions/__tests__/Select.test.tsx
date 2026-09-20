@@ -162,6 +162,50 @@ describe("Select", () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
+	it("survives its own scrolling", () => {
+		// A capture listener on `window` sees descendant scrolls, and the list is
+		// a descendant of body. Wheeling it, or `scrollIntoView` while arrowing
+		// past the last visible row, would otherwise close the dropdown — the one
+		// case scroll-into-view exists for.
+		openWith(render());
+		const list = listbox();
+		act(() => {
+			list?.dispatchEvent(new Event("scroll", { bubbles: false }));
+		});
+		expect(listbox()).not.toBeNull();
+	});
+
+	it("survives a scroll from a row inside it", () => {
+		// What `scrollIntoView` on a highlighted row actually targets.
+		openWith(render());
+		act(() => {
+			options()[1].dispatchEvent(new Event("scroll", { bubbles: false }));
+		});
+		expect(listbox()).not.toBeNull();
+	});
+
+	it("gives each instance its own option ids", () => {
+		// `aria-activedescendant` resolves against the whole document, and
+		// ParameterEditor renders one Select per parameter.
+		act(() => {
+			root.render(
+				<>
+					<Select value="text" options={OPTIONS} onChange={onChange} />
+					<Select value="text" options={OPTIONS} onChange={onChange} />
+				</>,
+			);
+		});
+		const triggers = [...container.querySelectorAll("button")];
+		act(() => triggers[0].click());
+		const first = options().map((o) => o.id);
+		act(() => {
+			document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+		});
+		act(() => triggers[1].click());
+		const second = options().map((o) => o.id);
+		expect(first[0]).not.toBe(second[0]);
+	});
+
 	it("does not run past either end of the list", () => {
 		const trigger = render("text");
 		openWith(trigger);
