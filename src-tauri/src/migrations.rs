@@ -50,6 +50,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "014_add_env_injection_disabled",
         include_str!("../migrations/014_add_env_injection_disabled.sql"),
     ),
+    (
+        "015_add_prompt_actions",
+        include_str!("../migrations/015_add_prompt_actions.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
