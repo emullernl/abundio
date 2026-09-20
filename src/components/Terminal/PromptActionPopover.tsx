@@ -90,6 +90,8 @@ export function PromptActionPopover({
 
 	const derived = useMemo(() => deriveParams(body, params), [body, params]);
 
+	useEscape(onClose);
+
 	useEffect(() => {
 		nameRef.current?.focus();
 	}, []);
@@ -100,14 +102,20 @@ export function PromptActionPopover({
 		if (!ready) return;
 		// Editing keeps whatever set was authored in Settings — which may name
 		// several Agents — rather than collapsing it to this pane's one.
+		// An action already scoped to a set keeps that set verbatim, **including
+		// an empty one**. An empty set is the documented "its only Agent was
+		// deleted" state: kept, never offered, and the user's to change. Falling
+		// back to this pane's Agent would silently re-point it, and falling
+		// through to `all` would silently broaden it to every Agent.
 		const scopedIds =
-			editing?.scope.kind === "set" && editing.scope.agentIds.length > 0
+			editing?.scope.kind === "set"
 				? editing.scope.agentIds
 				: defaultAgentId
 					? [defaultAgentId]
 					: [];
+		const keepsExistingSet = editing?.scope.kind === "set";
 		const scope: ActionScope =
-			scopeToAgent && scopedIds.length > 0
+			scopeToAgent && (keepsExistingSet || scopedIds.length > 0)
 				? { kind: "set", agentIds: scopedIds }
 				: { kind: "all" };
 		// Only metadata for parameters the body still refers to — an entry whose
@@ -345,6 +353,26 @@ export function PromptActionPopover({
 			</motion.div>
 		</AnimatePresence>
 	);
+}
+
+/**
+ * Close on Escape, from a document-level capture listener.
+ *
+ * The obvious `onKeyDown` on the backdrop does not work here: the card stops
+ * propagation so keystrokes cannot reach the terminal behind it, and focus is
+ * placed inside the card on mount — so the backdrop's handler never runs and
+ * Escape did nothing. `PaneContextMenu` already solves it this way.
+ */
+function useEscape(onClose: () => void) {
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			e.stopPropagation();
+			onClose();
+		};
+		document.addEventListener("keydown", onKey, true);
+		return () => document.removeEventListener("keydown", onKey, true);
+	}, [onClose]);
 }
 
 /** Label over control. The label is UI-font sentence case, not 10px lowercase

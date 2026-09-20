@@ -132,8 +132,16 @@ pub fn sweep() {
 // ── IPC ──
 
 /// Save a pasted bitmap and return the path to interpolate into the prompt.
+///
+/// Takes base64 rather than a byte array: a `number[]` of a few megabytes is
+/// millions of JSON numbers, and building it froze the webview long before this
+/// function could reject the size.
 #[tauri::command]
-pub fn prompt_attachment_save(bytes: Vec<u8>, extension: String) -> Result<String, AbundioError> {
+pub fn prompt_attachment_save(base64: String, extension: String) -> Result<String, AbundioError> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.as_bytes())
+        .map_err(|e| AbundioError::InvalidOperation(format!("Attachment is not valid base64: {e}")))?;
     save(&bytes, &extension)
 }
 

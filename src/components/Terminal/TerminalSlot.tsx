@@ -185,7 +185,14 @@ export function TerminalSlot({
 	// binding (Cmd+1..9 / Ctrl+Shift+1..9). The slot is **positional** — it
 	// names a place in this pane's bar, not a particular Prompt action — so it
 	// has to be resolved here, against the same ordered list the bar drew.
+	// The bar's keyboard slots belong to the bar. With the setting off there is
+	// no strip, no position numbers and no feedback, so a live Cmd+1 would paste
+	// a prompt and press Enter with nothing on screen to explain it. The
+	// setting's own description says the palette is what still reaches actions.
+	const showActionBar = useSettingsStore((s) => s.showActionBar);
+
 	useEffect(() => {
+		if (!showActionBar) return;
 		const run = (action: PromptAction, stageOnly: boolean) => {
 			// Any parameters at all means ask first; none means fire from the click.
 			if (deriveParams(action.body, action.params).length > 0) {
@@ -214,7 +221,7 @@ export function TerminalSlot({
 			byAction: run,
 		});
 		return () => unregisterPaneFire(paneId);
-	}, [paneId, detectedAgentId]);
+	}, [paneId, detectedAgentId, showActionBar]);
 
 	useEffect(() => {
 		if (!innerRef.current) return;
@@ -623,6 +630,10 @@ export function TerminalSlot({
 			)}
 			{paramAction && (
 				<ParameterDialog
+					// Keyed, so swapping actions while the dialog is open (a digit
+					// shortcut still fires behind it) rebuilds the form instead of
+					// leaving the previous action's values and focus in place.
+					key={paramAction.id}
 					action={paramAction}
 					onCancel={() => setParamAction(null)}
 					onSubmit={(values, stageOnly) => {

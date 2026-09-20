@@ -23,6 +23,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { isMac } from "../../lib/platform";
 import {
 	type ActionScope,
 	deriveParams,
@@ -33,6 +34,7 @@ import {
 import { usePromptActionStore } from "../../stores/promptActionStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ChevronDown, ChevronRight, Plus, X } from "../Icons";
+import { DraftInput } from "../PromptActions/DraftInput";
 import {
 	paramBodyInputStyle as bodyInputStyle,
 	paramSelectStyle as selectStyle,
@@ -159,9 +161,7 @@ export function PromptActionsSection() {
 }
 
 function Shortcut({ n }: { n: number }) {
-	const label = navigator.platform.startsWith("Mac")
-		? `⌘${n}`
-		: `Ctrl+Shift+${n}`;
+	const label = isMac ? `⌘${n}` : `Ctrl+Shift+${n}`;
 	return (
 		<kbd
 			style={{
@@ -289,8 +289,12 @@ function ActionRow({
 					{expanded ? <ChevronDown /> : <ChevronRight />}
 				</button>
 
-				{/* The digit that fires this button. Blank past the ninth, rather than
-				    a number nothing will fire. */}
+				{/* This action's place in the order, which is what the position
+				    numbers are drawn from. It is NOT reliably the digit that fires
+				    it: a pane sorts agent-scoped actions ahead of global ones and
+				    drops whatever is out of scope, so the same action can be 3 here
+				    and 1 in a pane. Asserting a chord here would be a lie, and
+				    firing submits. Blank past the ninth. */}
 				<span
 					className="shrink-0 inline-flex items-center justify-center tabular-nums rounded-md"
 					style={{
@@ -304,7 +308,11 @@ function ActionRow({
 							? "color-mix(in srgb, var(--fg-primary) 8%, transparent)"
 							: "transparent",
 					}}
-					title={numbered ? `Fires with shortcut ${slot}` : "Not in the bar"}
+					title={
+						numbered
+							? "Order in the bar. The exact digit depends on the pane — agent-specific actions come first there."
+							: "Not shown in the bar"
+					}
 				>
 					{numbered ? slot : "–"}
 				</span>
@@ -386,13 +394,11 @@ function ActionRow({
 					}}
 				>
 					<Field label="Button name">
-						<input
+						<DraftInput
 							className="rounded-lg"
 							style={textInputStyle}
 							value={action.name}
-							onChange={(e) =>
-								void updateAction(action.id, { name: e.target.value })
-							}
+							onCommit={(name) => void updateAction(action.id, { name })}
 						/>
 					</Field>
 
@@ -400,14 +406,13 @@ function ActionRow({
 						label="Sends"
 						hint="Wrap a word in double braces to be asked for it before sending."
 					>
-						<textarea
+						<DraftInput
+							multiline
 							className="rounded-lg"
 							style={{ ...bodyInputStyle, minHeight: 104, resize: "vertical" }}
 							placeholder="/review"
 							value={action.body}
-							onChange={(e) =>
-								void updateAction(action.id, { body: e.target.value })
-							}
+							onCommit={(body) => void updateAction(action.id, { body })}
 						/>
 					</Field>
 

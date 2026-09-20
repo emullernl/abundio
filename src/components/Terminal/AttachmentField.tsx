@@ -37,6 +37,28 @@ const MIME_EXT: Record<string, string> = {
 	"image/tiff": "tiff",
 };
 
+/** Matches `MAX_BYTES` in `prompt_attachments.rs`. */
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/** Encode without a giant intermediate array. `FileReader` hands back a data
+ *  URL, whose payload after the comma is exactly the base64 we want. */
+function toBase64(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onerror = () => reject(reader.error ?? new Error("Read failed"));
+		reader.onload = () => {
+			const url = String(reader.result ?? "");
+			const comma = url.indexOf(",");
+			if (comma < 0) {
+				reject(new Error("Could not read the pasted image"));
+				return;
+			}
+			resolve(url.slice(comma + 1));
+		};
+		reader.readAsDataURL(file);
+	});
+}
+
 function basename(p: string): string {
 	const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
 	return i >= 0 ? p.slice(i + 1) : p;
@@ -87,11 +109,22 @@ export function AttachmentField({
 			return;
 		}
 
+		// Checked here, before anything is encoded. Rust checks too, but only
+		// after the whole payload has crossed the IPC boundary — far too late to
+		// spare the webview the work.
+		if (file.size > MAX_ATTACHMENT_BYTES) {
+			setError(
+				`That image is ${Math.round(file.size / (1024 * 1024))} MB — the limit is ${
+					MAX_ATTACHMENT_BYTES / (1024 * 1024)
+				} MB`,
+			);
+			return;
+		}
+
 		setBusy(true);
 		setError(null);
 		try {
-			const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-			const path = await promptAttachments.save(bytes, ext);
+			const path = await promptAttachments.save(await toBase64(file), ext);
 			add([path]);
 		} catch (err) {
 			setError(String(err));

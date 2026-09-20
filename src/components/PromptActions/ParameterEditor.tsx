@@ -18,6 +18,7 @@
 
 import { useEffect, useState } from "react";
 import type { ParamMeta, ParamType } from "../../lib/promptActions";
+import { DraftInput } from "./DraftInput";
 import { paramSelectStyle, paramTextInputStyle } from "./fieldStyles";
 
 export const PARAM_TYPES: ParamType[] = [
@@ -104,12 +105,12 @@ export function ParameterEditor({
 			</div>
 
 			{meta.type !== "attachment" && meta.type !== "toggle" && (
-				<input
+				<DraftInput
 					className="rounded-md"
 					style={small}
 					placeholder="Default value (optional)"
 					value={meta.defaultValue ?? ""}
-					onChange={(e) => onChange({ defaultValue: e.target.value })}
+					onCommit={(defaultValue) => onChange({ defaultValue })}
 				/>
 			)}
 
@@ -128,19 +129,19 @@ export function ParameterEditor({
 						compact ? "flex flex-col gap-2.5" : "flex items-center gap-2.5"
 					}
 				>
-					<input
+					<DraftInput
 						className="rounded-md flex-1"
 						style={small}
 						placeholder="Text when on"
 						value={meta.onText ?? ""}
-						onChange={(e) => onChange({ onText: e.target.value })}
+						onCommit={(onText) => onChange({ onText })}
 					/>
-					<input
+					<DraftInput
 						className="rounded-md flex-1"
 						style={small}
 						placeholder="Text when off"
 						value={meta.offText ?? ""}
-						onChange={(e) => onChange({ offText: e.target.value })}
+						onCommit={(offText) => onChange({ offText })}
 					/>
 				</div>
 			)}
@@ -216,11 +217,12 @@ function OptionsInput({
 			style={{ ...paramTextInputStyle, height: 32, fontSize: 12 }}
 			placeholder="Options, comma separated — low, medium, high"
 			value={draft}
-			onChange={(e) => {
-				setDraft(e.target.value);
-				onChange(parseOptions(e.target.value));
+			onChange={(e) => setDraft(e.target.value)}
+			onBlur={() => {
+				const parsed = parseOptions(draft);
+				setDraft(parsed.join(", "));
+				onChange(parsed);
 			}}
-			onBlur={() => setDraft(parseOptions(draft).join(", "))}
 		/>
 	);
 }

@@ -867,9 +867,14 @@ export const promptActions = {
 
 export const promptAttachments = {
 	/** Write a pasted bitmap to a content-hashed file and return its path. Only
-	 *  a paste comes here — a picked file already has a path (ADR-0038). */
-	save: (bytes: number[], extension: string) =>
-		invoke<string>("prompt_attachment_save", { bytes, extension }),
+	 *  a paste comes here — a picked file already has a path (ADR-0038).
+	 *
+	 *  Base64, as PTY data already is. Sending `number[]` made a 5 MB screenshot
+	 *  several million JSON numbers, which froze the webview while it was
+	 *  serialised — and Rust's size guard only runs after all of that has been
+	 *  built and transferred, so the failure arrived far too late to be useful. */
+	save: (base64: string, extension: string) =>
+		invoke<string>("prompt_attachment_save", { base64, extension }),
 };
 
 export const clipboardImage = {

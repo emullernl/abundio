@@ -40,6 +40,20 @@ type KeyAction =
 
 interface KeyBinding {
 	key: string;
+	/**
+	 * Match the **physical** key (`KeyboardEvent.code`) instead of `key`.
+	 *
+	 * `key` carries the character produced, which is wrong for any binding on
+	 * the digit row. `Ctrl+Shift+1` reports `key: "!"`, so a binding written as
+	 * `key: "1"` never matches at all. Layout makes it worse in the other
+	 * direction: on AZERTY the unshifted `Digit1` key produces `"&"`, so even
+	 * the Shift-free `Cmd+1` would miss.
+	 *
+	 * `code` is the key's position on the board, so it is the same on every
+	 * layout and unaffected by Shift. `key` stays the default because for
+	 * letters it is the more forgiving match.
+	 */
+	code?: string;
 	meta: boolean;
 	shift: boolean;
 	ctrl: boolean;
@@ -275,6 +289,11 @@ if (!isMac) {
 for (let n = 1; n <= 9; n++) {
 	DEFAULT_BINDINGS.push({
 		key: String(n),
+		// Matched by position, not by character — see `KeyBinding.code`. Without
+		// this the Windows/Linux chord cannot fire at all (Shift turns `1` into
+		// `!`), and the macOS one misses on layouts where the digit row is
+		// shifted, such as AZERTY.
+		code: `Digit${n}`,
 		meta: isMac,
 		shift: !isMac,
 		ctrl: !isMac,
@@ -299,8 +318,11 @@ export function triggerAction(action: KeyAction) {
 }
 
 function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
+	const keyMatches = binding.code
+		? e.code === binding.code
+		: e.key.toLowerCase() === binding.key.toLowerCase();
 	return (
-		e.key.toLowerCase() === binding.key.toLowerCase() &&
+		keyMatches &&
 		e.metaKey === binding.meta &&
 		e.shiftKey === binding.shift &&
 		e.ctrlKey === binding.ctrl &&

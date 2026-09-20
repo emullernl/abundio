@@ -292,6 +292,20 @@ describe("optional parameters", () => {
 	});
 });
 
+describe("an all-optional body", () => {
+	it("resolves to nothing when its only placeholder is left empty", () => {
+		// `actionsForPane` cannot catch this — the *body* is non-empty, it is the
+		// resolution that is. firePromptAction refuses to submit the result, or
+		// the agent would spend a turn on a blank prompt.
+		const out = resolveBody(
+			"{{note}}",
+			{ note: { type: "text", required: false } },
+			{ note: "" },
+		);
+		expect(out.trim()).toBe("");
+	});
+});
+
 describe("canFire", () => {
 	it("refuses while the Agent is Waiting", () => {
 		// A permission prompt has redefined what keystrokes mean: the paste would

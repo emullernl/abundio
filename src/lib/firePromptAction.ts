@@ -29,7 +29,7 @@ export interface FireOptions {
 
 export type FireResult =
 	| { ok: true }
-	| { ok: false; reason: "no-terminal" | "waiting" };
+	| { ok: false; reason: "no-terminal" | "waiting" | "empty" };
 
 /**
  * Write a resolved prompt into a pane's PTY.
@@ -64,6 +64,13 @@ export function firePromptAction(
 	useWorkspaceStore.getState().setFocusedPane(paneId);
 
 	const text = resolveBody(body, params, values);
+
+	// A body of only optional placeholders resolves to nothing when they are
+	// left empty. Pasting "" and then pressing Enter would submit a blank prompt
+	// to a live Agent — a turn spent on nothing. `actionsForPane` cannot catch
+	// this: the *body* is non-empty, it is the resolution that is.
+	if (text.trim().length === 0) return { ok: false, reason: "empty" };
+
 	managed.term.paste(text);
 	if (!opts.stageOnly) {
 		// `\r`, not `\n`: a TUI's line discipline reads CR as submit, and xterm's

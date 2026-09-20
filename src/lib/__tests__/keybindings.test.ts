@@ -11,6 +11,7 @@ function makeKeyEvent(
 ): KeyboardEvent {
 	return new KeyboardEvent("keydown", {
 		key: opts.key,
+		code: opts.code,
 		metaKey: opts.metaKey ?? false,
 		shiftKey: opts.shiftKey ?? false,
 		ctrlKey: opts.ctrlKey ?? false,
@@ -234,5 +235,83 @@ describe("initKeybindings", () => {
 		expect(handler).toHaveBeenCalledOnce();
 
 		unregisterAction("command-palette");
+	});
+});
+
+describe("prompt action digit shortcuts", () => {
+	afterEach(() => {
+		for (let n = 1; n <= 9; n++) {
+			unregisterAction(
+				`prompt-action-${n}` as Parameters<typeof registerAction>[0],
+			);
+		}
+	});
+
+	it("fires on the physical digit key, whatever character Shift produces", () => {
+		// The bug this guards: `Ctrl+Shift+1` reports `key: "!"`, so a binding
+		// written against `key: "1"` never matched and the Windows/Linux
+		// shortcuts could not fire at all.
+		const handler = vi.fn();
+		registerAction(
+			"prompt-action-1" as Parameters<typeof registerAction>[0],
+			handler,
+		);
+
+		handleKeyDown(
+			makeKeyEvent({
+				key: isMac ? "1" : "!",
+				code: "Digit1",
+				[modKey]: true,
+				shiftKey: !isMac,
+			}),
+		);
+		expect(handler).toHaveBeenCalledOnce();
+	});
+
+	it("fires on a layout where the digit row is shifted", () => {
+		// AZERTY produces "&" from the Digit1 key, so matching the character
+		// would miss even the Shift-free macOS chord.
+		const handler = vi.fn();
+		registerAction(
+			"prompt-action-1" as Parameters<typeof registerAction>[0],
+			handler,
+		);
+
+		handleKeyDown(
+			makeKeyEvent({
+				key: "&",
+				code: "Digit1",
+				[modKey]: true,
+				shiftKey: !isMac,
+			}),
+		);
+		expect(handler).toHaveBeenCalledOnce();
+	});
+
+	it("does not fire for a different digit", () => {
+		const one = vi.fn();
+		registerAction(
+			"prompt-action-1" as Parameters<typeof registerAction>[0],
+			one,
+		);
+		handleKeyDown(
+			makeKeyEvent({
+				key: "2",
+				code: "Digit2",
+				[modKey]: true,
+				shiftKey: !isMac,
+			}),
+		);
+		expect(one).not.toHaveBeenCalled();
+	});
+
+	it("does not fire without its modifiers", () => {
+		const handler = vi.fn();
+		registerAction(
+			"prompt-action-1" as Parameters<typeof registerAction>[0],
+			handler,
+		);
+		handleKeyDown(makeKeyEvent({ key: "1", code: "Digit1" }));
+		expect(handler).not.toHaveBeenCalled();
 	});
 });

@@ -20,6 +20,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { firePromptAction } from "../../lib/firePromptAction";
+import { isMac } from "../../lib/platform";
 import { type PulseEvent, subscribePulse } from "../../lib/promptActionPulse";
 import {
 	actionsForPane,
@@ -260,7 +261,9 @@ function ActionButton({
 		action.body.length > 240 ? `${action.body.slice(0, 240)}…` : action.body;
 	const title = disabled
 		? `${action.name} — the agent is waiting for a permission answer`
-		: `${action.name}\n\n${preview}${number ? `\n\n⌘${number}` : ""}`;
+		: `${action.name}\n\n${preview}${
+				number ? `\n\n${shortcutLabel(number)}` : ""
+			}`;
 
 	return (
 		<button
@@ -432,6 +435,13 @@ function prefersReducedMotion(): boolean {
 		typeof window !== "undefined" &&
 		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
 	);
+}
+
+/** The chord that fires a given slot, spelled for this platform. `⌘n` is
+ *  macOS-only; elsewhere it is Ctrl+Shift+n (see `keybindings.ts` for why the
+ *  digit row cannot take a bare Ctrl). */
+function shortcutLabel(n: number): string {
+	return isMac ? `⌘${n}` : `Ctrl+Shift+${n}`;
 }
 
 /** U+E0B0, the solid right-pointing powerline separator. */
