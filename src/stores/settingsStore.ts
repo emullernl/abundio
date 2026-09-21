@@ -29,6 +29,9 @@ interface SettingsState {
 	sidebarWidth: number;
 	rightSidebarWidth: number;
 	rightSidebarPrRatio: number;
+	/** Height share of the **Branch commits** section, carved out of the tab
+	 *  content's side of `rightSidebarPrRatio`. See `lib/rightSidebarLayout.ts`. */
+	rightSidebarCommitsShare: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 	terminalScrollback: number;
@@ -76,6 +79,7 @@ interface SettingsState {
 	setSidebarWidth: (width: number) => void;
 	setRightSidebarWidth: (width: number) => void;
 	setRightSidebarPrRatio: (ratio: number) => void;
+	setRightSidebarCommitsShare: (share: number) => void;
 	toggleDebugActivityMeter: () => void;
 	setActivityByteThreshold: (n: number) => void;
 	setTerminalScrollback: (n: number) => void;
@@ -135,6 +139,7 @@ export const PERSISTED_KEYS = [
 	"sidebarWidth",
 	"rightSidebarWidth",
 	"rightSidebarPrRatio",
+	"rightSidebarCommitsShare",
 	"debugActivityMeter",
 	"activityByteThreshold",
 	"terminalScrollback",
@@ -174,6 +179,9 @@ const PERSISTED_DEFAULTS: {
 	sidebarWidth: number;
 	rightSidebarWidth: number;
 	rightSidebarPrRatio: number;
+	/** Height share of the **Branch commits** section, carved out of the tab
+	 *  content's side of `rightSidebarPrRatio`. See `lib/rightSidebarLayout.ts`. */
+	rightSidebarCommitsShare: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 	terminalScrollback: number;
@@ -203,6 +211,7 @@ const PERSISTED_DEFAULTS: {
 		sidebarWidth: 280,
 		rightSidebarWidth: 360,
 		rightSidebarPrRatio: 0.5,
+		rightSidebarCommitsShare: 0.2,
 		debugActivityMeter: false,
 		activityByteThreshold: 1024,
 		terminalScrollback: 1000,
@@ -264,6 +273,10 @@ const PERSISTED_DEFAULTS: {
 					: defaults.sidebarWidth,
 			rightSidebarWidth: rawRightSidebarWidth,
 			rightSidebarPrRatio: rawRightSidebarPrRatio,
+			rightSidebarCommitsShare:
+				typeof s.rightSidebarCommitsShare === "number"
+					? s.rightSidebarCommitsShare
+					: defaults.rightSidebarCommitsShare,
 			debugActivityMeter:
 				typeof s.debugActivityMeter === "boolean"
 					? s.debugActivityMeter
@@ -455,6 +468,7 @@ export const useSettingsStore = create<SettingsState>()(
 			sidebarWidth: PERSISTED_DEFAULTS.sidebarWidth,
 			rightSidebarWidth: PERSISTED_DEFAULTS.rightSidebarWidth,
 			rightSidebarPrRatio: PERSISTED_DEFAULTS.rightSidebarPrRatio,
+			rightSidebarCommitsShare: PERSISTED_DEFAULTS.rightSidebarCommitsShare,
 			debugActivityMeter: PERSISTED_DEFAULTS.debugActivityMeter,
 			activityByteThreshold: PERSISTED_DEFAULTS.activityByteThreshold,
 			terminalScrollback: PERSISTED_DEFAULTS.terminalScrollback,
@@ -508,6 +522,8 @@ export const useSettingsStore = create<SettingsState>()(
 			setRightSidebarWidth: (rightSidebarWidth) => set({ rightSidebarWidth }),
 			setRightSidebarPrRatio: (rightSidebarPrRatio) =>
 				set({ rightSidebarPrRatio }),
+			setRightSidebarCommitsShare: (rightSidebarCommitsShare) =>
+				set({ rightSidebarCommitsShare }),
 			toggleDebugActivityMeter: () =>
 				set((state) => ({ debugActivityMeter: !state.debugActivityMeter })),
 			setActivityByteThreshold: (n) => {

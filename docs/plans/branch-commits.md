@@ -39,8 +39,8 @@ Section).
    `explorerStore.openCommitDiff`, `FilePane` loads content for a restored
    pane with none, and the real-path derivations learn the new key.
 4. **Layout.** `windowUiStore.commitsSectionCollapsed`,
-   `settingsStore.rightSidebarCommitsShare` (global, broadcast like the PR
-   ratio), a pure `rightSidebarShares` helper for the three-way split, and a
-   second `SectionDivider`.
-5. **UI.** `CommitsSection` (header, rows, expansion, menu) with pure helpers
+   `settingsStore.rightSidebarCommitsShare` (global, and like the PR ratio in
+   `NOT_BROADCAST` — drag-derived), and a pure `lib/rightSidebarLayout.ts` for
+   the three-way split and the two drags.
+5. **UI.** Second `SectionDivider` in `RightSidebar`; `CommitsSection` (header, rows, expansion, menu) with pure helpers
    (`initials`, `relativeTime`, `commitMenuEntries`) in `lib/`.
