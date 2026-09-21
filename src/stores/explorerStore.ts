@@ -3,6 +3,12 @@ import {
 	clearEditorStateCache,
 	getSerializableEditorState,
 } from "../components/FileViewer/CodeEditor";
+import {
+	commitDiffKey,
+	diffPaneName,
+	diffRealPath,
+	parseCommitDiffKey,
+} from "../lib/commitDiffKey";
 import { fs as fsApi, git as gitApi, tabs as tabsApi } from "../lib/ipc";
 import { getLanguage } from "../lib/languageMap";
 import {
@@ -104,6 +110,29 @@ interface ExplorerState {
 		section?: GitChangedFile["section"] | null,
 		isDeleted?: boolean,
 	) => void;
+	/** Open (or focus) the read-only **Commit diff pane** for one file at one
+	 *  commit. Keyed per commit, so it never replaces the live `diff:` pane. */
+	openCommitDiff: (
+		workspaceId: string,
+		oid: string,
+		filePath: string,
+		original: string,
+		modified: string,
+		isDeleted?: boolean,
+	) => void;
+	/** Shared body of `openDiff` / `openCommitDiff`, by pane key. */
+	openDiffPane: (
+		workspaceId: string,
+		diffKey: string,
+		original: string,
+		modified: string,
+		section: GitChangedFile["section"] | null,
+		isDeleted: boolean,
+	) => void;
+	/** Fill a Commit diff pane that has no content — one restored from a saved
+	 *  layout, since diff content lives only in memory. Commits are immutable,
+	 *  so this runs once and never again. */
+	loadCommitDiff: (paneId: string, cwd: string) => Promise<void>;
 
 	// Inline create / rename in the file tree
 	startCreate: (parentDir: string, kind: "file" | "folder") => void;
@@ -292,13 +321,11 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		if (existing && existing.filePath === filePath) return;
 
 		if (isDiff && diffSource !== "file") {
-			const realPath = filePath.startsWith("diff:")
-				? filePath.slice("diff:".length)
-				: filePath;
+			const realPath = diffRealPath(filePath);
 			const ext = realPath.includes(".")
 				? realPath.split(".").pop() || null
 				: null;
-			const fileName = `${realPath.split("/").pop() || "file"} (diff)`;
+			const fileName = diffPaneName(filePath);
 			// Recover diff content from cache (survives unregisterFilePane due to
 			// React Strict Mode unmount/remount or async layout updates).
 			const cached = diffContentCache.get(paneId);
@@ -484,9 +511,60 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		});
 	},
 
-	openDiff: (workspaceId, filePath, original, modified, section, isDeleted) => {
-		const diffKey = `diff:${filePath}`;
+	openDiff: (workspaceId, filePath, original, modified, section, isDeleted) =>
+		get().openDiffPane(
+			workspaceId,
+			`diff:${filePath}`,
+			original,
+			modified,
+			section ?? null,
+			isDeleted ?? false,
+		),
 
+	openCommitDiff: (workspaceId, oid, filePath, original, modified, isDeleted) =>
+		get().openDiffPane(
+			workspaceId,
+			commitDiffKey(oid, filePath),
+			original,
+			modified,
+			null,
+			isDeleted ?? false,
+		),
+
+	loadCommitDiff: async (paneId, cwd) => {
+		const pane = get().filePanes[paneId];
+		const commit = pane ? parseCommitDiffKey(pane.filePath) : null;
+		if (!pane || !commit || pane.diffOriginal != null) return;
+		try {
+			const diff = await gitApi.commitFileDiff(cwd, commit.oid, commit.path);
+			set((s) => {
+				const current = s.filePanes[paneId];
+				// The pane may have closed, or been re-pointed, while we waited.
+				if (!current || current.filePath !== pane.filePath) return s;
+				return {
+					filePanes: {
+						...s.filePanes,
+						[paneId]: {
+							...current,
+							diffOriginal: diff.original,
+							diffModified: diff.modified,
+						},
+					},
+				};
+			});
+		} catch {
+			// The commit is gone (rebased away, gc'd) — the pane stays empty.
+		}
+	},
+
+	openDiffPane: (
+		workspaceId,
+		diffKey,
+		original,
+		modified,
+		section,
+		isDeleted,
+	) => {
 		const wsStore = useWorkspaceStore.getState();
 		const workspace = wsStore.workspaces.find((w) => w.id === workspaceId);
 
@@ -519,7 +597,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
 		// Seed diff content eagerly so FilePane has it when it mounts
 		const newPaneId = crypto.randomUUID();
-		const realPath = filePath;
+		const realPath = diffRealPath(diffKey);
 		const ext = realPath.includes(".")
 			? realPath.split(".").pop() || null
 			: null;
@@ -528,7 +606,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				...s.filePanes,
 				[newPaneId]: {
 					filePath: diffKey,
-					fileName: `${realPath.split("/").pop() || "file"} (diff)`,
+					fileName: diffPaneName(diffKey),
 					fileType: "diff",
 					content: null,
 					mime: null,
