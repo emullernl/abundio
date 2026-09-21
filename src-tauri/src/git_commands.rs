@@ -1217,6 +1217,36 @@ mod tests {
     }
 
     #[test]
+    fn branch_commits_recompute_when_head_base_or_remote_moves() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let first = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(first.total, 2);
+        // Unchanged repository: same answer (served from the cache).
+        let again = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(again.total, 2);
+
+        // HEAD moves.
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "three"]);
+        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(bc.total, 3);
+        assert_eq!(bc.commits[0].subject, "three");
+
+        // A remote-tracking ref moves: on_remote must follow.
+        assert!(!bc.commits[0].on_remote);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &head]);
+        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+        assert!(bc.commits.iter().all(|c| c.on_remote));
+
+        // The base moves (main catches up to HEAD~1).
+        let one = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/heads/main", &one]);
+        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(bc.total, 1);
+    }
+
+    #[test]
     fn commit_files_and_diff_are_first_parent_to_commit() {
         let dir = make_branch_repo();
         let cwd = dir.path().to_str().unwrap();

@@ -140,6 +140,16 @@ describe("CommitsSection", () => {
 		expect(text()).toContain("Base branch not found");
 	});
 
+	it("shows a failed refresh's own error, not a missing base", () => {
+		render({
+			branchCommits: null,
+			currentBranch: "feature",
+			error: "index is locked",
+		});
+		expect(text()).toContain("index is locked");
+		expect(text()).not.toContain("Base branch not found");
+	});
+
 	it("shows how many were left out past the cap", () => {
 		render({ branchCommits: { ...list(commit("a1")), total: 1285 } });
 		expect(text()).toContain("(1,285)");

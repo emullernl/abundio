@@ -203,9 +203,11 @@ function CommitsBody() {
 	if (!activeWorkspaceId || !cwd) return null;
 	if (isGitRepo === false) return <Message>Not a git repository</Message>;
 	if (!branchCommits) {
-		// A bundle has arrived (it names the branch) yet carried no commit
-		// list: the base branch does not resolve to a commit.
-		if (currentBranch || error) return <Message>Base branch not found</Message>;
+		// A failed refresh says why; it is not evidence about the base branch.
+		if (error) return <Message>Could not read commits: {error}</Message>;
+		// A bundle arrived (it names the branch) yet carried no commit list:
+		// only then is the base branch the thing that failed to resolve.
+		if (currentBranch) return <Message>Base branch not found</Message>;
 		return (
 			<Message>
 				<span className="animate-pulse">Loading commits…</span>

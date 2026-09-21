@@ -53,11 +53,14 @@ export function RightSidebar({ titlebarHeight }: Props) {
 		prCollapsed,
 	});
 
+	// Bounded by the commits' *drawn* share, not the saved one:
+	// `rightSidebarShares` shrinks the commits when the PRs are tall, and a
+	// saved share bigger than what is drawn would pin this divider in place.
 	const handlePrDividerResize = useCallback(
 		(y: number) => {
-			setLocalRatio(prRatioFromDrag(y, commitsCollapsed ? 0 : commits));
+			setLocalRatio(prRatioFromDrag(y, shares.commits));
 		},
-		[commits, commitsCollapsed],
+		[shares.commits],
 	);
 
 	const handlePrDividerResizeEnd = useCallback(() => {

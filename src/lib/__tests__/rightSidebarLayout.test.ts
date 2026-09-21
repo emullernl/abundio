@@ -54,6 +54,20 @@ describe("drags", () => {
 		expect(commitsShareFromDrag(0, 0.4)).toBeCloseTo(0.5);
 	});
 
+	it("the PR divider still moves when the commits share is oversized", () => {
+		// A share saved while PRs were collapsed can exceed the room left once
+		// they expand; the drag must not collapse to one fixed value.
+		expect(prRatioFromDrag(0.5, 0.9)).toBeCloseTo(0.9);
+		const s = rightSidebarShares({
+			prRatio: 0.5,
+			commitsShare: 0.9,
+			commitsCollapsed: false,
+			prCollapsed: false,
+		});
+		expect(prRatioFromDrag(0.6, s.commits)).toBeCloseTo(0.6);
+		expect(prRatioFromDrag(0.3, s.commits)).toBeCloseTo(0.5);
+	});
+
 	it("the PR divider cannot push into the commits' height", () => {
 		expect(prRatioFromDrag(0.7, 0.2)).toBe(0.7);
 		expect(prRatioFromDrag(0.1, 0.2)).toBeCloseTo(0.3);

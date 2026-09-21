@@ -53,5 +53,8 @@ export function commitsShareFromDrag(y: number, prShare: number): number {
  *  section starts at `y`, and the commits keep their height, so the tab
  *  content absorbs the change. */
 export function prRatioFromDrag(y: number, commitsShare: number): number {
-	return clamp(y, commitsShare + MIN_SHARE, 1 - MIN_SHARE);
+	const hi = 1 - MIN_SHARE;
+	// Never let the lower bound pass the upper one, or every drag would
+	// return the same value and the divider would not move.
+	return clamp(y, Math.min(commitsShare + MIN_SHARE, hi), hi);
 }

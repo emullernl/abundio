@@ -539,6 +539,25 @@ pub fn compute_branch_commits_sync(
     };
     let base_oid = resolve_base_oid(&repo, &base)?;
 
+    // The scheduler calls this on every fs event, and the walk below reads the
+    // whole `base..HEAD` range — thousands of commits when the local base
+    // branch has not been pulled in months. The answer depends only on HEAD,
+    // the base, and where the remote-tracking refs point (for `on_remote`), so
+    // it is recomputed only when one of those has moved.
+    let cache_key = format!(
+        "{}\n{}\n{}\n{}",
+        head.id(),
+        base,
+        base_oid,
+        remote_refs_fingerprint(&repo)
+    );
+    let cache_slot = repo.path().to_string_lossy().to_string();
+    if let Some(hit) = branch_commits_cache().get(&cache_slot) {
+        if hit.0 == cache_key {
+            return Ok(hit.1.clone());
+        }
+    }
+
     let walk_err = |e: git2::Error| AbundioError::Git(format!("revwalk: {e}"));
     let mut walk = repo.revwalk().map_err(walk_err)?;
     walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
@@ -576,11 +595,38 @@ pub fn compute_branch_commits_sync(
             }
         })
         .collect();
-    Ok(BranchCommits {
+    let result = BranchCommits {
         base,
         total,
         commits,
-    })
+    };
+    branch_commits_cache().insert(cache_slot, (cache_key, result.clone()));
+    Ok(result)
+}
+
+/// Last `compute_branch_commits_sync` answer per repository gitdir (a linked
+/// worktree has its own, since its HEAD differs), with the key it was
+/// computed for. One entry per repository, overwritten on change, so it
+/// cannot grow past the number of opened Workspaces.
+fn branch_commits_cache() -> &'static DashMap<String, (String, BranchCommits)> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<DashMap<String, (String, BranchCommits)>> = OnceLock::new();
+    CACHE.get_or_init(DashMap::new)
+}
+
+/// Every remote-tracking ref and the commit it points at, sorted. Changes
+/// exactly when a fetch or push moves one, which is when `on_remote` can.
+fn remote_refs_fingerprint(repo: &Repository) -> String {
+    let mut refs: Vec<String> = repo
+        .references_glob("refs/remotes/*")
+        .map(|it| {
+            it.flatten()
+                .filter_map(|r| Some(format!("{}={}", r.name()?, r.target()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    refs.sort();
+    refs.join(",")
 }
 
 /// Commits in `base..head` that no remote-tracking ref reaches. Bounded by the
