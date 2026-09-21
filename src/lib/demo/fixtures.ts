@@ -21,7 +21,10 @@ import type {
 } from "../ipc";
 import type {
 	AvailableShell,
+	BranchCommit,
+	BranchCommits,
 	BranchInfo,
+	CommitFile,
 	DetectedDevEnvironment,
 	DirEntry,
 	FileContent,
@@ -754,10 +757,70 @@ const CLEAN_BRANCH: BranchInfo = {
 	currentBranch: "main",
 };
 
+const DEMO_AUTHORS = [
+	["Ada Lovelace", "ada@example.com"],
+	["Grace Hopper", "grace@example.com"],
+] as const;
+
+/** A stable fake 40-hex id, so a commit keeps its oid across bundle pushes. */
+function demoOid(seed: string): string {
+	let h = 2166136261;
+	let out = "";
+	for (let round = 0; out.length < 40; round++) {
+		for (const ch of `${seed}#${round}`) {
+			h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+		}
+		out += (h >>> 0).toString(16).padStart(8, "0");
+	}
+	return out.slice(0, 40);
+}
+
+/** oid → files, for `git_commit_files` / `git_commit_file_diff`. */
+export const commitFilesByOid: Record<string, CommitFile[]> = {};
+
+/** One demo commit per `against_base` file, newest first; only the oldest is
+ *  on a remote, so the menu shows "Open on GitHub" both enabled and disabled.
+ *  Times are relative to now so the rows read "2h", "1d" in any year. */
+function branchCommitsForCwd(cwd: string): BranchCommits | null {
+	const entry = gitByRoot[cwd];
+	if (!entry) return null;
+	const base = entry.branch.defaultBranch;
+	const touched = entry.files.filter((f) => f.section === "against_base");
+	const now = Math.floor(Date.now() / 1000);
+	const commits: BranchCommit[] = touched
+		.map((f, i) => {
+			const oid = demoOid(`${cwd}:${f.path}`);
+			commitFilesByOid[oid] = [
+				{
+					path: f.path,
+					status: f.status,
+					additions: f.additions,
+					deletions: f.deletions,
+				},
+			];
+			const name = f.path.split("/").pop() ?? f.path;
+			const [authorName, authorEmail] = DEMO_AUTHORS[i % DEMO_AUTHORS.length];
+			const subject = `${f.status === "A" ? "Add" : "Update"} ${name}`;
+			return {
+				oid,
+				subject,
+				message: `${subject}\n\nPart of ${entry.branch.currentBranch}.`,
+				authorName,
+				authorEmail,
+				time: now - (touched.length - i) * 5 * 3600,
+				isMerge: false,
+				onRemote: i === 0,
+			};
+		})
+		.reverse();
+	return { base, total: commits.length, commits };
+}
+
 /** Resolve a fetch bundle from a workspace cwd. */
 export function gitBundleForCwd(cwd: string): GitFetchBundle {
 	const entry = gitByRoot[cwd];
 	return {
+		branchCommits: branchCommitsForCwd(cwd),
 		changedFiles: entry?.files ?? [],
 		branchInfo: entry?.branch ?? CLEAN_BRANCH,
 		statusFingerprint: `demo-fp-${cwd}`,

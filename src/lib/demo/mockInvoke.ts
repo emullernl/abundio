@@ -165,6 +165,18 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				}
 			);
 		}
+		case "git_commit_files":
+			return fixtures.commitFilesByOid[String(args.oid ?? "")] ?? [];
+		case "git_commit_file_diff": {
+			const filePath = String(args.filePath ?? "");
+			return (
+				fixtures.fileDiffs[filePath] ?? {
+					filePath,
+					original: "",
+					modified: fixtures.fileContents[filePath] ?? "",
+				}
+			);
+		}
 		case "git_conflict_file":
 			return fixtures.conflictFile(
 				String(args.cwd ?? ""),

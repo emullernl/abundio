@@ -233,6 +233,36 @@ export interface BranchInfo {
 	currentBranch: string;
 }
 
+/** One row of the **Branch commits** section (see CONTEXT.md). */
+export interface BranchCommit {
+	oid: string;
+	subject: string;
+	/** Full message, subject included — shown in the row's tooltip. */
+	message: string;
+	authorName: string;
+	authorEmail: string;
+	/** Author time, seconds since the Unix epoch. */
+	time: number;
+	isMerge: boolean;
+	/** Reachable from some remote-tracking branch. Gates "Open on GitHub". */
+	onRemote: boolean;
+}
+
+/** `base..HEAD`, newest first. `commits` is capped (200); `total` is not. */
+export interface BranchCommits {
+	base: string;
+	total: number;
+	commits: BranchCommit[];
+}
+
+/** A file one commit touched, against its first parent. */
+export interface CommitFile {
+	path: string;
+	status: string;
+	additions: number;
+	deletions: number;
+}
+
 // ── GitHub CLI ──
 
 export interface GhStatus {

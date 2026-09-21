@@ -8,7 +8,9 @@ import type {
 	AgentHookEvent,
 	AppMetrics,
 	AvailableShell,
+	BranchCommits,
 	BranchInfo,
+	CommitFile,
 	DetectedDevEnvironment,
 	DirEntry,
 	FileContent,
@@ -270,6 +272,8 @@ export interface GitFetchBundle {
 	branchInfo: BranchInfo;
 	statusFingerprint: string;
 	operationInProgress: GitOperation | null;
+	/** Null when the base branch cannot be resolved to a commit. */
+	branchCommits: BranchCommits | null;
 }
 
 /** Line/file churn between two worktree tree snapshots — a per-Turn working-tree
@@ -317,6 +321,14 @@ export const git = {
 			section,
 			baseBranch: baseBranch ?? null,
 		}),
+
+	/** Files one commit touched (first parent → commit). Immutable per oid. */
+	commitFiles: (cwd: string, oid: string) =>
+		invoke<CommitFile[]>("git_commit_files", { cwd, oid }),
+
+	/** One file as one commit changed it — the **Commit diff pane**'s content. */
+	commitFileDiff: (cwd: string, oid: string, filePath: string) =>
+		invoke<GitFileDiff>("git_commit_file_diff", { cwd, oid, filePath }),
 
 	/** The conflict stages of an unmerged path. The inline UX needs none of
 	 *  these — the working file already carries both sides — so this is for the
