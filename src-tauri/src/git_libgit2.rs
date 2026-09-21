@@ -26,7 +26,10 @@ use git2::{
 };
 
 use crate::error::AbundioError;
-use crate::git_commands::{BranchInfo, GitChangedFile, GitConflictFile, TreeDiffStats};
+use crate::git_commands::{
+    BranchCommit, BranchCommits, BranchInfo, CommitFile, GitChangedFile, GitConflictFile,
+    TreeDiffStats,
+};
 use crate::worktree_commands::WorktreeEntry;
 
 const MAX_UNTRACKED: usize = 500;
@@ -509,6 +512,179 @@ fn diff_against_base(
         .diff_tree_to_tree(Some(&merge_base_tree), Some(&head_tree), Some(&mut opts))
         .map_err(|e| AbundioError::Git(format!("diff tree to tree: {e}")))?;
     diff_to_changed_files(&diff, "against_base")
+}
+
+/// How many **Branch commits** rows are sent. The count past this is reported
+/// in `BranchCommits::total`, never silently dropped.
+pub const BRANCH_COMMITS_CAP: usize = 200;
+
+/// The commits on HEAD that `base` does not have — `git log <base>..HEAD` —
+/// newest first. Merge commits are included along with every commit they
+/// brought in, as `git log` does. Errors when the base cannot be resolved; the
+/// bundle treats that as "no section data" rather than a failed refresh.
+pub fn compute_branch_commits_sync(
+    cwd: &str,
+    base_branch: Option<String>,
+) -> Result<BranchCommits, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let base = resolve_base_branch(&repo, cwd, base_branch)?;
+    let empty = |base: String| BranchCommits {
+        base,
+        total: 0,
+        commits: Vec::new(),
+    };
+    // An unborn branch has no commits, so none are ahead of anything.
+    let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) else {
+        return Ok(empty(base));
+    };
+    let base_oid = resolve_base_oid(&repo, &base)?;
+
+    let walk_err = |e: git2::Error| AbundioError::Git(format!("revwalk: {e}"));
+    let mut walk = repo.revwalk().map_err(walk_err)?;
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+        .map_err(walk_err)?;
+    walk.push(head.id()).map_err(walk_err)?;
+    walk.hide(base_oid).map_err(walk_err)?;
+
+    let mut total = 0;
+    let mut oids = Vec::new();
+    for oid in walk.flatten() {
+        total += 1;
+        if oids.len() < BRANCH_COMMITS_CAP {
+            oids.push(oid);
+        }
+    }
+    if oids.is_empty() {
+        return Ok(empty(base));
+    }
+
+    let unpushed = unpushed_oids(&repo, head.id(), base_oid);
+    let commits = oids
+        .into_iter()
+        .filter_map(|oid| repo.find_commit(oid).ok())
+        .map(|c| {
+            let author = c.author();
+            BranchCommit {
+                oid: c.id().to_string(),
+                subject: c.summary().unwrap_or("").to_string(),
+                message: c.message().unwrap_or("").trim_end().to_string(),
+                author_name: author.name().unwrap_or("").to_string(),
+                author_email: author.email().unwrap_or("").to_string(),
+                time: author.when().seconds(),
+                is_merge: c.parent_count() > 1,
+                on_remote: !unpushed.contains(&c.id()),
+            }
+        })
+        .collect();
+    Ok(BranchCommits {
+        base,
+        total,
+        commits,
+    })
+}
+
+/// Commits in `base..head` that no remote-tracking ref reaches. Bounded by the
+/// same range as the section, so a large repository costs no more than the
+/// list itself. On any error everything counts as unpushed, which only ever
+/// disables "Open on GitHub" — never wrongly enables it.
+fn unpushed_oids(repo: &Repository, head: Oid, base: Oid) -> std::collections::HashSet<Oid> {
+    let everything = || -> std::collections::HashSet<Oid> {
+        let Ok(mut w) = repo.revwalk() else {
+            return Default::default();
+        };
+        if w.push(head).is_err() || w.hide(base).is_err() {
+            return Default::default();
+        }
+        w.flatten().collect()
+    };
+    let Ok(mut walk) = repo.revwalk() else {
+        return everything();
+    };
+    if walk.push(head).is_err() || walk.hide(base).is_err() {
+        return everything();
+    }
+    if let Ok(refs) = repo.references_glob("refs/remotes/*") {
+        for r in refs.flatten() {
+            // `origin/HEAD` is symbolic; its target is hidden on its own.
+            if let Some(target) = r.target() {
+                // A ref to a missing object fails to hide; skip it rather than
+                // abandoning the walk.
+                let _ = walk.hide(target);
+            }
+        }
+    }
+    walk.flatten().collect()
+}
+
+fn find_commit_by_hex<'r>(
+    repo: &'r Repository,
+    oid: &str,
+) -> Result<git2::Commit<'r>, AbundioError> {
+    let oid = Oid::from_str(oid).map_err(|e| AbundioError::Git(format!("bad commit id: {e}")))?;
+    repo.find_commit(oid)
+        .map_err(|e| AbundioError::Git(format!("find commit: {e}")))
+}
+
+/// The trees a commit is measured between: its first parent (none for a root
+/// commit) and itself. First parent is what `git show` and GitHub use, and for
+/// a merge it answers "what did the merge bring into this branch".
+fn commit_trees<'r>(
+    commit: &git2::Commit<'r>,
+) -> Result<(Option<git2::Tree<'r>>, git2::Tree<'r>), AbundioError> {
+    let tree = commit
+        .tree()
+        .map_err(|e| AbundioError::Git(format!("commit tree: {e}")))?;
+    let parent_tree = match commit.parent(0) {
+        Ok(p) => Some(
+            p.tree()
+                .map_err(|e| AbundioError::Git(format!("parent tree: {e}")))?,
+        ),
+        Err(_) => None,
+    };
+    Ok((parent_tree, tree))
+}
+
+pub fn commit_files_sync(cwd: &str, oid: &str) -> Result<Vec<CommitFile>, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let commit = find_commit_by_hex(&repo, oid)?;
+    let (parent_tree, tree) = commit_trees(&commit)?;
+    let mut opts = DiffOptions::new();
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))
+        .map_err(|e| AbundioError::Git(format!("diff commit: {e}")))?;
+    let mut files: Vec<CommitFile> = diff_to_changed_files(&diff, "commit")?
+        .into_iter()
+        .map(|f| CommitFile {
+            path: f.path,
+            status: f.status,
+            additions: f.additions,
+            deletions: f.deletions,
+        })
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// `(original, modified)` for one path in one commit. A side where the path
+/// does not exist (added, deleted, root commit) is the empty string, matching
+/// `git_file_diff`.
+pub fn commit_file_diff_sync(
+    cwd: &str,
+    oid: &str,
+    file_path: &str,
+) -> Result<(String, String), AbundioError> {
+    let repo = open_repo(cwd)?;
+    let commit = find_commit_by_hex(&repo, oid)?;
+    let (parent_tree, tree) = commit_trees(&commit)?;
+    let read = |tree: &git2::Tree| -> String {
+        tree.get_path(Path::new(file_path))
+            .ok()
+            .and_then(|e| repo.find_blob(e.id()).ok())
+            .map(|b| String::from_utf8_lossy(b.content()).to_string())
+            .unwrap_or_default()
+    };
+    let original = parent_tree.as_ref().map(read).unwrap_or_default();
+    Ok((original, read(&tree)))
 }
 
 fn diff_staged(repo: &Repository) -> Result<Vec<GitChangedFile>, AbundioError> {
