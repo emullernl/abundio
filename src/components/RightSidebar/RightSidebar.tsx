@@ -1,10 +1,16 @@
 import { useCallback, useState } from "react";
+import {
+	commitsShareFromDrag,
+	prRatioFromDrag,
+	rightSidebarShares,
+} from "../../lib/rightSidebarLayout";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { Explorer } from "../Explorer/Explorer";
 import { NotesPanel } from "../Notes/NotesPanel";
 import { SearchPanel } from "../Search/SearchPanel";
 import { RightSidebarCollapsedStrip } from "./CollapsedStrip";
+import { CommitsSection } from "./CommitsSection";
 import { GitChangesTab } from "./GitChangesTab";
 import { PrSection } from "./PrSection";
 import { RightSidebarResizer } from "./Resizer";
@@ -15,31 +21,65 @@ interface Props {
 	titlebarHeight: number;
 }
 
-/** Right sidebar: in-workspace toolbox. Tabs (Git changes / Explorer / Search)
- *  sit above an always-anchored, collapsible Pull Requests section. See
- *  ADR-0010. */
+/** Right sidebar: in-workspace toolbox. Tabs (Git changes / Explorer / Search
+ *  / Notes) sit above two always-anchored, collapsible **Anchored sections** —
+ *  Branch commits, then Pull Requests — each with its own divider. See
+ *  ADR-0010 and `lib/rightSidebarLayout.ts`. */
 export function RightSidebar({ titlebarHeight }: Props) {
 	const open = useWindowUiStore((s) => s.rightSidebarOpen);
 	const activeTab = useWindowUiStore((s) => s.rightSidebarActiveTab);
 	const prCollapsed = useWindowUiStore((s) => s.prSectionCollapsed);
+	const commitsCollapsed = useWindowUiStore((s) => s.commitsSectionCollapsed);
 
 	const width = useSettingsStore((s) => s.rightSidebarWidth);
 	const prRatio = useSettingsStore((s) => s.rightSidebarPrRatio);
 	const setPrRatio = useSettingsStore((s) => s.setRightSidebarPrRatio);
 
+	const commitsShare = useSettingsStore((s) => s.rightSidebarCommitsShare);
+	const setCommitsShare = useSettingsStore(
+		(s) => s.setRightSidebarCommitsShare,
+	);
+
+	// Live drag values; persisted only on mouseup, like every other divider.
 	const [localRatio, setLocalRatio] = useState<number | null>(null);
+	const [localCommits, setLocalCommits] = useState<number | null>(null);
 	const ratio = localRatio ?? prRatio;
+	const commits = localCommits ?? commitsShare;
 
-	const handleDividerResize = useCallback((r: number) => {
-		setLocalRatio(r);
-	}, []);
+	const shares = rightSidebarShares({
+		prRatio: ratio,
+		commitsShare: commits,
+		commitsCollapsed,
+		prCollapsed,
+	});
 
-	const handleDividerResizeEnd = useCallback(() => {
+	const handlePrDividerResize = useCallback(
+		(y: number) => {
+			setLocalRatio(prRatioFromDrag(y, commitsCollapsed ? 0 : commits));
+		},
+		[commits, commitsCollapsed],
+	);
+
+	const handlePrDividerResizeEnd = useCallback(() => {
 		if (localRatio !== null) {
 			setPrRatio(localRatio);
 			setLocalRatio(null);
 		}
 	}, [localRatio, setPrRatio]);
+
+	const handleCommitsDividerResize = useCallback(
+		(y: number) => {
+			setLocalCommits(commitsShareFromDrag(y, shares.pr));
+		},
+		[shares.pr],
+	);
+
+	const handleCommitsDividerResizeEnd = useCallback(() => {
+		if (localCommits !== null) {
+			setCommitsShare(localCommits);
+			setLocalCommits(null);
+		}
+	}, [localCommits, setCommitsShare]);
 
 	if (!open) {
 		return <RightSidebarCollapsedStrip titlebarHeight={titlebarHeight} />;
@@ -64,12 +104,11 @@ export function RightSidebar({ titlebarHeight }: Props) {
 			<RightSidebarResizer titlebarHeight={titlebarHeight} />
 			<RightSidebarTabStrip />
 
-			{/* Top half: active tab content. When the PR section is collapsed,
-			 *  the tab content stretches to fill all available height; when the
-			 *  PR section is expanded, the two share the height via prRatio. */}
+			{/* Active tab content. Takes whatever the expanded Anchored sections
+			 *  leave, including the share of any collapsed one. */}
 			<div
 				className="flex flex-col min-h-0"
-				style={{ flex: prCollapsed ? "1 1 0%" : `${ratio} 1 0%` }}
+				style={{ flex: `${shares.tab} 1 0%` }}
 			>
 				{activeTab === "git" && <GitChangesTab />}
 				{activeTab === "explorer" && <Explorer />}
@@ -77,10 +116,27 @@ export function RightSidebar({ titlebarHeight }: Props) {
 				{activeTab === "notes" && <NotesPanel />}
 			</div>
 
+			{!commitsCollapsed && (
+				<SectionDivider
+					onResize={handleCommitsDividerResize}
+					onResizeEnd={handleCommitsDividerResizeEnd}
+				/>
+			)}
+
+			{/* Branch commits. Collapsed: only its header pins. */}
+			<div
+				className="flex flex-col flex-shrink-0 min-h-0"
+				style={{
+					flex: commitsCollapsed ? "0 0 auto" : `${shares.commits} 1 0%`,
+				}}
+			>
+				<CommitsSection />
+			</div>
+
 			{!prCollapsed && (
 				<SectionDivider
-					onResize={handleDividerResize}
-					onResizeEnd={handleDividerResizeEnd}
+					onResize={handlePrDividerResize}
+					onResizeEnd={handlePrDividerResizeEnd}
 				/>
 			)}
 
@@ -90,7 +146,7 @@ export function RightSidebar({ titlebarHeight }: Props) {
 			<div
 				className="flex flex-col flex-shrink-0 min-h-0"
 				style={{
-					flex: prCollapsed ? "0 0 auto" : `${1 - ratio} 1 0%`,
+					flex: prCollapsed ? "0 0 auto" : `${shares.pr} 1 0%`,
 				}}
 			>
 				<PrSection />

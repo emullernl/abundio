@@ -180,6 +180,15 @@ export function PanelRight({ size, ...props }: IconProps) {
 	);
 }
 
+export function GitCommit({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<circle cx="12" cy="12" r="3.5" />
+			<path d="M3 12h5.5M15.5 12H21" />
+		</svg>
+	);
+}
+
 export function GitPullRequest({ size, ...props }: IconProps) {
 	return (
 		<svg aria-hidden="true" {...defaults(size)} {...props}>
