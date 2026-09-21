@@ -65,6 +65,7 @@ const list = (...cs: BranchCommit[]): BranchCommits => ({
 	base: "main",
 	total: cs.length,
 	commits: cs,
+	githubSlug: "o/r",
 });
 
 describe("CommitsSection", () => {
@@ -166,7 +167,13 @@ describe("CommitsSection", () => {
 	it("expands a commit to its files and opens a commit diff pane", async () => {
 		const oid = "9f3e1a7c0ffee00000000000000000000000beef";
 		commitFiles.mockResolvedValue([
-			{ path: "src/x.ts", status: "M", additions: 3, deletions: 1 },
+			{
+				path: "src/x.ts",
+				status: "M",
+				additions: 3,
+				deletions: 1,
+				isBinary: false,
+			},
 		]);
 		commitFileDiff.mockResolvedValue({ original: "o", modified: "m" });
 		const openCommitDiff = vi.fn();
@@ -199,6 +206,78 @@ describe("CommitsSection", () => {
 			(b) => b.textContent === label,
 		) as HTMLButtonElement | undefined;
 	}
+
+	it("disables Open on GitHub without a GitHub remote", () => {
+		render({
+			branchCommits: {
+				...list(commit("a1", { onRemote: true })),
+				githubSlug: null,
+			},
+		});
+		const row = container.querySelector("[aria-haspopup]") as HTMLElement;
+		act(() => {
+			row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+		expect(menuButton("Open on GitHub")?.disabled).toBe(true);
+	});
+
+	it("says a failed file read failed, and retries on re-expand", async () => {
+		commitFiles.mockRejectedValueOnce(new Error("locked"));
+		const err = vi.spyOn(console, "error").mockImplementation(() => {});
+		render({ branchCommits: list(commit("a1")) });
+		const row = container.querySelector("[aria-expanded]") as HTMLElement;
+		await act(async () => row.click());
+		expect(text()).toContain("Could not read this commit's files");
+		expect(text()).not.toContain("No file changes");
+
+		commitFiles.mockResolvedValueOnce([
+			{
+				path: "y.ts",
+				status: "A",
+				additions: 1,
+				deletions: 0,
+				isBinary: false,
+			},
+		]);
+		await act(async () => row.click()); // collapse
+		await act(async () => row.click()); // expand again
+		expect(commitFiles).toHaveBeenCalledTimes(2);
+		expect(text()).toContain("y.ts");
+		err.mockRestore();
+	});
+
+	it("does not lose a toggle when two land in the same batch", async () => {
+		commitFiles.mockResolvedValue([]);
+		render({ branchCommits: list(commit("a1")) });
+		const row = container.querySelector("[aria-expanded]") as HTMLElement;
+		await act(async () => {
+			row.click();
+			row.click();
+		});
+		expect(row.getAttribute("aria-expanded")).toBe("false");
+	});
+
+	it("shows a binary file but does not open it", async () => {
+		commitFiles.mockResolvedValue([
+			{
+				path: "logo.png",
+				status: "M",
+				additions: 0,
+				deletions: 0,
+				isBinary: true,
+			},
+		]);
+		render({ branchCommits: list(commit("bin1")) });
+		const row = container.querySelector("[aria-expanded]") as HTMLElement;
+		await act(async () => row.click());
+		const fileRow = [...container.querySelectorAll("button")].find((b) =>
+			b.textContent?.includes("logo.png"),
+		) as HTMLButtonElement;
+		expect(fileRow.disabled).toBe(true);
+		expect(fileRow.textContent).toContain("binary");
+		await act(async () => fileRow.click());
+		expect(commitFileDiff).not.toHaveBeenCalled();
+	});
 
 	it("disables Open on GitHub for an unpushed commit", () => {
 		render({ branchCommits: list(commit("a1", { onRemote: false })) });

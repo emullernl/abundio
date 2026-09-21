@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-shell";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
 	commitMenuEntries,
 	commitTooltip,
@@ -34,10 +34,17 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 // A commit's file list never changes, so it is fetched once per commit per
-// repository for the life of the window. Keyed by cwd too: two Workspaces can
-// hold the same oid (a Worktree set shares its objects) but not the same root.
+// repository. Keyed by cwd too: two Workspaces can hold the same oid (a
+// Worktree set shares its objects) but not the same root. Bounded, because one
+// merge of a long-lived branch can touch tens of thousands of files and the
+// backing call is cheap to repeat: past the cap it is simply emptied.
+const COMMIT_FILES_CACHE_CAP = 100;
 const commitFilesCache = new Map<string, CommitFile[]>();
 const filesKey = (cwd: string, oid: string) => `${cwd}\0${oid}`;
+function rememberCommitFiles(key: string, list: CommitFile[]) {
+	if (commitFilesCache.size >= COMMIT_FILES_CACHE_CAP) commitFilesCache.clear();
+	commitFilesCache.set(key, list);
+}
 
 /** Re-render once a minute so "now" becomes "1m" without a git refresh. */
 function useNowSecs(): number {
@@ -169,20 +176,21 @@ function CommitsBody() {
 			? s.byWorkspaceId[activeWorkspaceId]?.isGitRepo
 			: undefined,
 	);
-	const slug = useWorkspaceGitStore((s) =>
-		activeWorkspaceId
-			? (s.repoSlugsById[activeWorkspaceId]?.[0] ?? null)
-			: null,
-	);
 	const branchCommits = useGitChangesStore((s) => s.branchCommits);
+	// From the same remote `onRemote` was judged against, so a fork checkout
+	// never links a commit to the repository that does not have it.
+	const slug = branchCommits?.githubSlug ?? null;
 	const currentBranch = useGitChangesStore((s) => s.currentBranch);
 	const error = useGitChangesStore((s) => s.error);
 	const now = useNowSecs();
 
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-	const [files, setFiles] = useState<Record<string, CommitFile[] | "loading">>(
-		{},
-	);
+	// The source of truth for toggles. Two clicks in one batch (a double-click)
+	// must each see the other's result, which render-closure state cannot give.
+	const expandedRef = useRef<Set<string>>(new Set());
+	const [files, setFiles] = useState<
+		Record<string, CommitFile[] | "loading" | "error">
+	>({});
 	// Captured by value, like the Git changes Row menu: a refresh that drops
 	// the commit (a rebase) leaves the menu open and its actions still right.
 	const [menu, setMenu] = useState<{
@@ -195,6 +203,7 @@ function CommitsBody() {
 	// Expansion and menus belong to one Workspace's history.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: resets on switch only
 	useEffect(() => {
+		expandedRef.current = new Set();
 		setExpanded(new Set());
 		setFiles({});
 		setMenu(null);
@@ -220,14 +229,17 @@ function CommitsBody() {
 
 	async function toggleCommit(oid: string) {
 		if (!cwd) return;
-		const next = new Set(expanded);
-		if (next.has(oid)) {
-			next.delete(oid);
-			setExpanded(next);
+		const next = new Set(expandedRef.current);
+		const wasOpen = next.delete(oid);
+		if (!wasOpen) next.add(oid);
+		expandedRef.current = next;
+		setExpanded(next);
+		if (wasOpen) {
+			// Forget the entry so re-expanding retries a failed read; a good
+			// list comes straight back from the module cache.
+			setFiles(({ [oid]: _drop, ...rest }) => rest);
 			return;
 		}
-		next.add(oid);
-		setExpanded(next);
 		const key = filesKey(cwd, oid);
 		const cached = commitFilesCache.get(key);
 		if (cached) {
@@ -237,10 +249,12 @@ function CommitsBody() {
 		setFiles((f) => ({ ...f, [oid]: "loading" }));
 		try {
 			const list = await git.commitFiles(cwd, oid);
-			commitFilesCache.set(key, list);
+			rememberCommitFiles(key, list);
 			setFiles((f) => ({ ...f, [oid]: list }));
-		} catch {
-			setFiles((f) => ({ ...f, [oid]: [] }));
+		} catch (e) {
+			console.error(e);
+			// Not `[]`: that would read as "this commit changed nothing".
+			setFiles((f) => ({ ...f, [oid]: "error" }));
 		}
 	}
 
@@ -258,8 +272,11 @@ function CommitsBody() {
 					diff.modified,
 					file.status === "D",
 				);
-		} catch {
-			// The commit is gone (rebased away) — the next refresh drops its row.
+		} catch (e) {
+			// Usually the commit is gone (rebased away) and the next refresh
+			// drops its row — but say so, since a click that does nothing is
+			// otherwise indistinguishable from any other failure.
+			console.error(e);
 		}
 	}
 
@@ -310,6 +327,8 @@ function CommitsBody() {
 									<RailLine muted>
 										<span className="animate-pulse">Loading files…</span>
 									</RailLine>
+								) : fileList === "error" ? (
+									<RailLine muted>Could not read this commit's files</RailLine>
 								) : fileList.length === 0 ? (
 									<RailLine muted>No file changes</RailLine>
 								) : (
@@ -512,11 +531,19 @@ function CommitFileRow({
 	const dir = file.path.includes("/")
 		? file.path.slice(0, file.path.lastIndexOf("/"))
 		: "";
+	// A text diff of a binary blob is only replacement characters, so the row
+	// says what it is instead of opening a pane full of them.
+	const binary = file.isBinary;
 	return (
 		<button
 			type="button"
-			onClick={onOpen}
-			title={`Open diff of ${file.path} at this commit`}
+			onClick={binary ? undefined : onOpen}
+			disabled={binary}
+			title={
+				binary
+					? `${file.path} is a binary file`
+					: `Open diff of ${file.path} at this commit`
+			}
 			className="relative w-full flex items-center gap-2 text-left select-none transition-colors"
 			style={{
 				height: FILE_ROW_HEIGHT,
@@ -524,7 +551,8 @@ function CommitFileRow({
 				paddingRight: 10,
 				background: "transparent",
 				border: "none",
-				cursor: "pointer",
+				cursor: binary ? "default" : "pointer",
+				opacity: binary ? 0.6 : 1,
 				transitionDuration: "var(--transition-fast)",
 			}}
 			onMouseEnter={(e) => {
@@ -563,10 +591,11 @@ function CommitFileRow({
 				className="flex-shrink-0 flex items-center gap-1"
 				style={{ fontSize: 11, fontVariantNumeric: "tabular-nums" }}
 			>
-				{file.additions > 0 && (
+				{binary && <span style={{ color: "var(--fg-secondary)" }}>binary</span>}
+				{!binary && file.additions > 0 && (
 					<span style={{ color: "var(--success)" }}>+{file.additions}</span>
 				)}
-				{file.deletions > 0 && (
+				{!binary && file.deletions > 0 && (
 					<span style={{ color: "var(--error)" }}>−{file.deletions}</span>
 				)}
 			</span>

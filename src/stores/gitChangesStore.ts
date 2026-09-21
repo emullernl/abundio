@@ -61,6 +61,7 @@ export function branchCommitsEqual(
 	if (a === b) return true;
 	if (!a || !b) return false;
 	if (a.base !== b.base || a.total !== b.total) return false;
+	if (a.githubSlug !== b.githubSlug) return false;
 	if (a.commits.length !== b.commits.length) return false;
 	for (let i = 0; i < a.commits.length; i++) {
 		if (
@@ -222,6 +223,19 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 					.catch(() => {});
 			}
 		} catch (e) {
+			// Same rule as `applyError`: a failed refresh's commit list is stale,
+			// in the cache too, or a switch away and back would resurrect it.
+			// Before the generation check, as the success path writes the cache
+			// before it: the cache belongs to the workspace, not the singleton.
+			if (startedForWorkspaceId) {
+				const existing = gitChangesCache.get(startedForWorkspaceId);
+				if (existing) {
+					gitChangesCache.set(startedForWorkspaceId, {
+						...existing,
+						branchCommits: null,
+					});
+				}
+			}
 			if (gen !== fetchGeneration) return; // stale response
 			const errMsg = e instanceof Error ? e.message : String(e);
 			set({

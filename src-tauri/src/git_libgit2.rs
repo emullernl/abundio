@@ -528,28 +528,33 @@ pub fn compute_branch_commits_sync(
 ) -> Result<BranchCommits, AbundioError> {
     let repo = open_repo(cwd)?;
     let base = resolve_base_branch(&repo, cwd, base_branch)?;
-    let empty = |base: String| BranchCommits {
-        base,
-        total: 0,
-        commits: Vec::new(),
-    };
+    let github = github_remote(&repo);
     // An unborn branch has no commits, so none are ahead of anything.
     let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) else {
-        return Ok(empty(base));
+        return Ok(BranchCommits {
+            base,
+            total: 0,
+            commits: Vec::new(),
+            github_slug: github.map(|(_, slug)| slug),
+        });
     };
     let base_oid = resolve_base_oid(&repo, &base)?;
 
     // The scheduler calls this on every fs event, and the walk below reads the
     // whole `base..HEAD` range — thousands of commits when the local base
     // branch has not been pulled in months. The answer depends only on HEAD,
-    // the base, and where the remote-tracking refs point (for `on_remote`), so
-    // it is recomputed only when one of those has moved.
+    // the base, and the GitHub remote and where its tracking refs point (for
+    // `on_remote`), so it is recomputed only when one of those has moved.
     let cache_key = format!(
-        "{}\n{}\n{}\n{}",
+        "{}\n{}\n{}\n{:?}\n{:016x}",
         head.id(),
         base,
         base_oid,
-        remote_refs_fingerprint(&repo)
+        github,
+        github
+            .as_ref()
+            .map(|(remote, _)| remote_refs_fingerprint(&repo, remote))
+            .unwrap_or(0)
     );
     let cache_slot = repo.path().to_string_lossy().to_string();
     if let Some(hit) = branch_commits_cache().get(&cache_slot) {
@@ -573,11 +578,12 @@ pub fn compute_branch_commits_sync(
             oids.push(oid);
         }
     }
-    if oids.is_empty() {
-        return Ok(empty(base));
-    }
 
-    let unpushed = unpushed_oids(&repo, head.id(), base_oid);
+    // `None` — no GitHub remote, or the walk failed — means nothing counts as
+    // pushed, which only ever disables "Open on GitHub".
+    let unpushed = github
+        .as_ref()
+        .and_then(|(remote, _)| unpushed_oids(&repo, head.id(), base_oid, remote));
     let commits = oids
         .into_iter()
         .filter_map(|oid| repo.find_commit(oid).ok())
@@ -591,14 +597,17 @@ pub fn compute_branch_commits_sync(
                 author_email: author.email().unwrap_or("").to_string(),
                 time: author.when().seconds(),
                 is_merge: c.parent_count() > 1,
-                on_remote: !unpushed.contains(&c.id()),
+                on_remote: unpushed.as_ref().is_some_and(|u| !u.contains(&c.id())),
             }
         })
         .collect();
+    // An empty range is cached like any other: a Workspace resting on its
+    // base branch is the state this is asked about most often.
     let result = BranchCommits {
         base,
         total,
         commits,
+        github_slug: github.map(|(_, slug)| slug),
     };
     branch_commits_cache().insert(cache_slot, (cache_key, result.clone()));
     Ok(result)
@@ -614,52 +623,81 @@ fn branch_commits_cache() -> &'static DashMap<String, (String, BranchCommits)> {
     CACHE.get_or_init(DashMap::new)
 }
 
-/// Every remote-tracking ref and the commit it points at, sorted. Changes
-/// exactly when a fetch or push moves one, which is when `on_remote` can.
-fn remote_refs_fingerprint(repo: &Repository) -> String {
-    let mut refs: Vec<String> = repo
-        .references_glob("refs/remotes/*")
-        .map(|it| {
-            it.flatten()
-                .filter_map(|r| Some(format!("{}={}", r.name()?, r.target()?)))
-                .collect()
-        })
-        .unwrap_or_default();
-    refs.sort();
-    refs.join(",")
+/// The one remote "Open on GitHub" links to: `(remote name, owner/repo)`.
+/// The first remote, `origin` first, whose URL is a GitHub repository — the
+/// same order `github_repo_slugs_in` uses. Choosing the remote here, beside
+/// the reachability check, keeps the link and the "is it pushed?" answer
+/// about the *same* repository; for a fork checkout, a commit pushed only to
+/// the other remote would otherwise link to a page that does not exist.
+fn github_remote(repo: &Repository) -> Option<(String, String)> {
+    let remotes = repo.remotes().ok()?;
+    let names = std::iter::once("origin").chain(
+        remotes
+            .iter()
+            .flatten()
+            .filter(|n| *n != "origin")
+            .collect::<Vec<_>>(),
+    );
+    for name in names {
+        let Ok(remote) = repo.find_remote(name) else {
+            continue;
+        };
+        let slug = [remote.url(), remote.pushurl()]
+            .into_iter()
+            .flatten()
+            .find_map(parse_github_slug);
+        if let Some(slug) = slug {
+            return Some((name.to_string(), slug));
+        }
+    }
+    None
 }
 
-/// Commits in `base..head` that no remote-tracking ref reaches. Bounded by the
-/// same range as the section, so a large repository costs no more than the
-/// list itself. On any error everything counts as unpushed, which only ever
-/// disables "Open on GitHub" — never wrongly enables it.
-fn unpushed_oids(repo: &Repository, head: Oid, base: Oid) -> std::collections::HashSet<Oid> {
-    let everything = || -> std::collections::HashSet<Oid> {
-        let Ok(mut w) = repo.revwalk() else {
-            return Default::default();
-        };
-        if w.push(head).is_err() || w.hide(base).is_err() {
-            return Default::default();
+/// A hash of the remote's tracking refs and the commits they point at.
+/// Changes when a fetch or push moves one, which is when `on_remote` can.
+/// A hash, not the list itself: this runs on every refresh, and a busy
+/// clone can carry thousands of remote refs. A collision costs at most one
+/// stale list until the next change.
+fn remote_refs_fingerprint(repo: &Repository, remote: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut pairs: Vec<(String, Oid)> = Vec::new();
+    if let Ok(refs) = repo.references_glob(&format!("refs/remotes/{remote}/*")) {
+        for r in refs.flatten() {
+            if let (Some(name), Some(target)) = (r.name(), r.target()) {
+                pairs.push((name.to_string(), target));
+            }
         }
-        w.flatten().collect()
-    };
-    let Ok(mut walk) = repo.revwalk() else {
-        return everything();
-    };
-    if walk.push(head).is_err() || walk.hide(base).is_err() {
-        return everything();
     }
-    if let Ok(refs) = repo.references_glob("refs/remotes/*") {
+    pairs.sort();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    pairs.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Commits in `base..head` that none of `remote`'s tracking refs reach.
+/// Bounded by the same range as the section, so a large repository costs no
+/// more than the list itself. `None` when the walk cannot be set up; the
+/// caller then treats every commit as unpushed.
+fn unpushed_oids(
+    repo: &Repository,
+    head: Oid,
+    base: Oid,
+    remote: &str,
+) -> Option<std::collections::HashSet<Oid>> {
+    let mut walk = repo.revwalk().ok()?;
+    walk.push(head).ok()?;
+    walk.hide(base).ok()?;
+    if let Ok(refs) = repo.references_glob(&format!("refs/remotes/{remote}/*")) {
         for r in refs.flatten() {
             // `origin/HEAD` is symbolic; its target is hidden on its own.
             if let Some(target) = r.target() {
-                // A ref to a missing object fails to hide; skip it rather than
-                // abandoning the walk.
+                // A ref to a missing object fails to hide; skipping it can
+                // only leave a commit counted as unpushed.
                 let _ = walk.hide(target);
             }
         }
     }
-    walk.flatten().collect()
+    Some(walk.flatten().collect())
 }
 
 fn find_commit_by_hex<'r>(
@@ -698,9 +736,19 @@ pub fn commit_files_sync(cwd: &str, oid: &str) -> Result<Vec<CommitFile>, Abundi
     let diff = repo
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))
         .map_err(|e| AbundioError::Git(format!("diff commit: {e}")))?;
+    // The side that holds the file: the commit, or the parent for a delete.
+    let is_binary = |path: &str| -> bool {
+        [Some(&tree), parent_tree.as_ref()]
+            .into_iter()
+            .flatten()
+            .find_map(|t| t.get_path(Path::new(path)).ok())
+            .and_then(|e| repo.find_blob(e.id()).ok())
+            .is_some_and(|b| b.is_binary())
+    };
     let mut files: Vec<CommitFile> = diff_to_changed_files(&diff, "commit")?
         .into_iter()
         .map(|f| CommitFile {
+            is_binary: is_binary(&f.path),
             path: f.path,
             status: f.status,
             additions: f.additions,

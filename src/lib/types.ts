@@ -244,7 +244,8 @@ export interface BranchCommit {
 	/** Author time, seconds since the Unix epoch. */
 	time: number;
 	isMerge: boolean;
-	/** Reachable from some remote-tracking branch. Gates "Open on GitHub". */
+	/** On the GitHub remote named by `BranchCommits.githubSlug`. Gates
+	 *  "Open on GitHub". */
 	onRemote: boolean;
 }
 
@@ -253,6 +254,9 @@ export interface BranchCommits {
 	base: string;
 	total: number;
 	commits: BranchCommit[];
+	/** `owner/repo` "Open on GitHub" links to — the same remote `onRemote` was
+	 *  judged against. Null when the repository has no GitHub remote. */
+	githubSlug: string | null;
 }
 
 /** A file one commit touched, against its first parent. */
@@ -261,6 +265,8 @@ export interface CommitFile {
 	status: string;
 	additions: number;
 	deletions: number;
+	/** Shown but not clickable: a text diff of it would be unreadable. */
+	isBinary: boolean;
 }
 
 // ── GitHub CLI ──

@@ -345,6 +345,7 @@ describe("Branch commits from bundles", () => {
 		base: "main",
 		total: cs.length,
 		commits: cs,
+		githubSlug: "o/r" as string | null,
 	});
 
 	beforeEach(() => {
@@ -397,6 +398,20 @@ describe("Branch commits from bundles", () => {
 		);
 	});
 
+	it("drops the cached list when the invoke fallback fails too", async () => {
+		const store = useGitChangesStore.getState();
+		store.applyBundle("ws-1", {
+			...bundle(),
+			branchCommits: commits(commit("a")),
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: added to the ipc mock here
+		(git as any).fetchBundle = vi.fn().mockRejectedValue(new Error("locked"));
+		await store.fetchChanges("/repo", null);
+		expect(useGitChangesStore.getState().branchCommits).toBeNull();
+		store.hydrateFromWorkspace("ws-1");
+		expect(useGitChangesStore.getState().branchCommits).toBeNull();
+	});
+
 	it("drops the list when the refresh fails, in the cache too", () => {
 		const store = useGitChangesStore.getState();
 		store.applyBundle("ws-1", {
@@ -413,13 +428,20 @@ describe("Branch commits from bundles", () => {
 describe("branchCommitsEqual", () => {
 	it("treats two nulls as equal and null vs a list as different", () => {
 		expect(branchCommitsEqual(null, null)).toBe(true);
-		expect(branchCommitsEqual(null, { base: "m", total: 0, commits: [] })).toBe(
-			false,
-		);
+		expect(
+			branchCommitsEqual(null, {
+				base: "m",
+				total: 0,
+				commits: [],
+				githubSlug: null,
+			}),
+		).toBe(false);
 	});
 	it("notices a base or total change", () => {
-		const a = { base: "main", total: 0, commits: [] };
+		const a = { base: "main", total: 0, commits: [], githubSlug: null };
 		expect(branchCommitsEqual(a, { ...a, base: "dev" })).toBe(false);
 		expect(branchCommitsEqual(a, { ...a, total: 300 })).toBe(false);
+		// A remote added or renamed changes where "Open on GitHub" goes.
+		expect(branchCommitsEqual(a, { ...a, githubSlug: "o/r" })).toBe(false);
 	});
 });

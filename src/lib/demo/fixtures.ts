@@ -796,6 +796,7 @@ function branchCommitsForCwd(cwd: string): BranchCommits | null {
 					status: f.status,
 					additions: f.additions,
 					deletions: f.deletions,
+					isBinary: false,
 				},
 			];
 			const name = f.path.split("/").pop() ?? f.path;
@@ -813,7 +814,13 @@ function branchCommitsForCwd(cwd: string): BranchCommits | null {
 			};
 		})
 		.reverse();
-	return { base, total: commits.length, commits };
+	const repoName = cwd.split("/").filter(Boolean).pop() ?? "repo";
+	return {
+		base,
+		total: commits.length,
+		commits,
+		githubSlug: `acme/${repoName}`,
+	};
 }
 
 /** Resolve a fetch bundle from a workspace cwd. */

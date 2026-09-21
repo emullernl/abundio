@@ -52,8 +52,9 @@ pub struct BranchCommit {
     /// Author time, seconds since the Unix epoch.
     pub time: i64,
     pub is_merge: bool,
-    /// Reachable from some `refs/remotes/*` ref. Gates "Open on GitHub": an
-    /// unpushed commit has no page there.
+    /// Reachable from a tracking ref of the GitHub remote named by
+    /// `BranchCommits::github_slug`. Gates "Open on GitHub": a commit that
+    /// remote does not have has no page there.
     pub on_remote: bool,
 }
 
@@ -66,6 +67,9 @@ pub struct BranchCommits {
     pub base: String,
     pub total: usize,
     pub commits: Vec<BranchCommit>,
+    /// `owner/repo` of the GitHub remote "Open on GitHub" links to, chosen
+    /// alongside `on_remote` so the two describe the same repository.
+    pub github_slug: Option<String>,
 }
 
 /// One file a single commit touched, measured against its first parent.
@@ -76,6 +80,9 @@ pub struct CommitFile {
     pub status: String,
     pub additions: i32,
     pub deletions: i32,
+    /// Git's own binary test on the blob. Such a row is shown but not
+    /// clickable: a text diff of it would only be replacement characters.
+    pub is_binary: bool,
 }
 
 /// Line/file churn between two worktree snapshots — a per-Turn working-tree
@@ -1207,19 +1214,82 @@ mod tests {
     fn branch_commits_marks_commits_a_remote_branch_reaches() {
         let dir = make_branch_repo();
         let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
         let one = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
         // Simulate `origin/feature` having been pushed at `one`.
         run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &one]);
         let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(bc.github_slug.as_deref(), Some("o/r"));
         let by_subject = |s: &str| bc.commits.iter().find(|c| c.subject == s).unwrap();
         assert!(by_subject("one").on_remote);
         assert!(!by_subject("two").on_remote);
     }
 
     #[test]
+    fn branch_commits_without_a_github_remote_are_never_on_remote() {
+        // Reachable from a remote ref, but not a GitHub one: there is no page
+        // to link to, so nothing may enable "Open on GitHub".
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://gitlab.com/o/r.git"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &head]);
+        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(bc.github_slug, None);
+        assert!(bc.commits.iter().all(|c| !c.on_remote));
+    }
+
+    #[test]
+    fn branch_commits_judge_pushed_against_the_linked_remote_only() {
+        // A fork checkout: `origin` is the fork, `upstream` the original. The
+        // link goes to origin, so a commit only upstream has is not "on
+        // remote" — its origin page would not exist.
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/me/r.git"]);
+        run_git_test(cwd, &["remote", "add", "upstream", "https://github.com/org/r.git"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/upstream/feature", &head]);
+        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(bc.github_slug.as_deref(), Some("me/r"));
+        assert!(bc.commits.iter().all(|c| !c.on_remote));
+    }
+
+    #[test]
+    fn branch_commits_on_the_base_branch_carry_the_slug_and_cache() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "git@github.com:o/r.git"]);
+        run_git_test(cwd, &["checkout", "main"]);
+        for _ in 0..2 {
+            let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
+            assert_eq!(bc.total, 0);
+            assert_eq!(bc.github_slug.as_deref(), Some("o/r"));
+        }
+    }
+
+    #[test]
+    fn commit_files_flag_binary_blobs() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("img.bin"), [0u8, 159, 146, 150, 0, 1]).unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "binary"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &head).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].is_binary);
+        // And a text file is not.
+        let two = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &two).unwrap();
+        assert!(files.iter().all(|f| !f.is_binary));
+    }
+
+    #[test]
     fn branch_commits_recompute_when_head_base_or_remote_moves() {
         let dir = make_branch_repo();
         let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
         let first = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
         assert_eq!(first.total, 2);
         // Unchanged repository: same answer (served from the cache).
