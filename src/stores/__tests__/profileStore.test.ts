@@ -7,6 +7,10 @@ vi.mock("@tauri-apps/api/window", () => ({
 	}),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+	invoke: vi.fn(() => Promise.resolve()),
+}));
+
 vi.mock("../../lib/ipc", () => ({
 	profiles: {
 		list: vi.fn(() =>
@@ -45,8 +49,11 @@ vi.mock("../../lib/ipc", () => ({
 	},
 }));
 
+import { invoke } from "@tauri-apps/api/core";
 import { profiles as profilesApi } from "../../lib/ipc";
 import { useProfileStore } from "../profileStore";
+import { usePtyActivityStore } from "../ptyActivityStore";
+import { useWorkspaceStore } from "../workspaceStore";
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -236,5 +243,45 @@ describe("deleteProfile", () => {
 		const list = useProfileStore.getState().profiles;
 		expect(list).toHaveLength(1);
 		expect(list[0].id).toBe("p-default");
+	});
+});
+
+describe("switchProfile", () => {
+	const closeWorkspace = vi.fn(() => Promise.resolve());
+	const loadWorkspaces = vi.fn(() => Promise.resolve());
+
+	beforeEach(() => {
+		closeWorkspace.mockClear();
+		loadWorkspaces.mockClear();
+		useWorkspaceStore.setState({ closeWorkspace, loadWorkspaces });
+		usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["ws-1"]) });
+		useProfileStore.setState({ activeProfileId: "p-default" });
+	});
+
+	it("claims the profile in Rust, closes opened workspaces and swaps", async () => {
+		await useProfileStore.getState().switchProfile("p-work");
+		expect(profilesApi.setActiveProfileId).toHaveBeenCalledWith("p-work");
+		expect(closeWorkspace).toHaveBeenCalledWith("ws-1");
+		expect(loadWorkspaces).toHaveBeenCalled();
+		expect(useProfileStore.getState().activeProfileId).toBe("p-work");
+	});
+
+	// Another Window got there first (e.g. while this one's confirm dialog was
+	// up): Rust refuses, and this Window must keep its workspaces and profile.
+	it("changes nothing when Rust refuses the claim", async () => {
+		vi.mocked(profilesApi.setActiveProfileId).mockRejectedValueOnce(
+			new Error("already open in window main"),
+		);
+		vi.mocked(profilesApi.getOwnershipMap).mockResolvedValueOnce({
+			"p-work": "main",
+		});
+		await useProfileStore.getState().switchProfile("p-work");
+		expect(closeWorkspace).not.toHaveBeenCalled();
+		expect(loadWorkspaces).not.toHaveBeenCalled();
+		expect(useProfileStore.getState().activeProfileId).toBe("p-default");
+		expect(useProfileStore.getState().ownershipMap).toEqual({
+			"p-work": "main",
+		});
+		expect(invoke).toHaveBeenCalledWith("focus_window", { label: "main" });
 	});
 });

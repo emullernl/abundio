@@ -496,7 +496,9 @@ fn perform_quit(app: &AppHandle<Wry>) {
 
 /// Emits an event to the currently-focused webview only. Used for "open
 /// settings" / "switch profile" intents from the native menu — those are
-/// always per-window and shouldn't fan out to other Windows.
+/// always per-window and shouldn't fan out to other Windows. The frontend must
+/// hear these through `listenToThisWindow`: a global JS `listen` receives
+/// targeted events too, which would undo the targeting.
 pub fn emit_to_focused<S: serde::Serialize + Clone>(
     app: &AppHandle<Wry>,
     event: &str,
@@ -507,9 +509,20 @@ pub fn emit_to_focused<S: serde::Serialize + Clone>(
             return app.emit_to(label.as_str(), event, payload.clone());
         }
     }
-    // Fallback: no window reported focused (rare, e.g. during a focus
-    // transition) — broadcast so the action isn't lost.
-    app.emit(event, payload.clone())
+    // No window reported focused (a focus transition, or on macOS every Window
+    // minimised while the menu bar still works). Pick exactly one Profile-bound
+    // Window — never broadcast, which would run a one-window action such as a
+    // Profile switch in every Window at once. Lowest label, so the pick is
+    // stable rather than `HashMap` order.
+    let fallback = app
+        .webview_windows()
+        .into_keys()
+        .filter(|label| window_management::is_profile_window_label(label))
+        .min();
+    match fallback {
+        Some(label) => app.emit_to(label.as_str(), event, payload.clone()),
+        None => Ok(()),
+    }
 }
 
 /// Rebuilds the application menu, sourcing the focused-window label from the

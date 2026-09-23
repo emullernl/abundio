@@ -175,6 +175,9 @@ pub async fn profile_reorder(
 /// per-window ownership map, rebuilds the native menu, and broadcasts a
 /// `profile-ownership-changed` event so other Windows can refresh their UI.
 ///
+/// Errors when another Window already owns the profile, so the "one Profile,
+/// at most one Window" rule holds even if two Windows try the same switch.
+///
 /// Rejects calls from auxiliary windows (e.g. settings) — those never own a
 /// profile by definition (ADR-0007), and accepting their writes would pollute
 /// the ownership map. The frontend bypasses this command in those windows,
@@ -193,7 +196,13 @@ pub async fn set_active_profile_id(
     }
     match profile_id {
         Some(ref id) => {
-            state.set_for_window(&label, id);
+            // A Profile is shown in at most one Window. Refuse, rather than
+            // record a second owner, when another Window already has it.
+            if let Some(owner) = state.try_claim(&label, id) {
+                return Err(AbundioError::InvalidOperation(format!(
+                    "profile {id} is already open in window {owner}"
+                )));
+            }
         }
         None => {
             state.remove_for_window(&label);
