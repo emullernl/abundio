@@ -184,9 +184,9 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	// sidebar it walks. Not Cmd+Option: Monaco uses Cmd+Option+Up/Down to add a
 	// cursor, and these are workspace-global, so they would take it over.
 	// Monaco binds nothing to Ctrl+Cmd, and a Cmd chord never reaches the PTY.
-	// Windows/Linux: Ctrl+Shift+PageDown / PageUp — not
-	// Ctrl+Alt+arrows, which GNOME takes for switching desktops (and Ctrl+Alt
-	// is AltGr on European layouts).
+	// Windows/Linux: Ctrl+Shift+PageDown / PageUp — the tab cycle plus Shift.
+	// Not Ctrl+Alt+arrows, which GNOME takes for switching desktops (and
+	// Ctrl+Alt is AltGr on European layouts).
 	{
 		key: isMac ? "ArrowDown" : "PageDown",
 		meta: isMac,
@@ -276,25 +276,46 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "b", meta: isMac, shift: true, ctrl: !isMac, action: "add-worktree" },
 	{ key: "t", meta: isMac, shift: false, ctrl: !isMac, action: "new-tab" },
 	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
-	// Brackets match by position (`code`): with Shift held, `key` reports `}` /
-	// `{` on US layouts and something else again on others, so a `key: "]"`
-	// binding silently never fires.
-	{
-		key: "]",
-		code: "BracketRight",
-		meta: isMac,
-		shift: true,
-		ctrl: !isMac,
-		action: "next-tab",
-	},
-	{
-		key: "[",
-		code: "BracketLeft",
-		meta: isMac,
-		shift: true,
-		ctrl: !isMac,
-		action: "prev-tab",
-	},
+	// Tab cycle. macOS: Cmd+Shift+] / [, matched by position (`code`): with
+	// Shift held, `key` reports `}` / `{` on US layouts and something else again
+	// on others, so a `key: "]"` binding silently never fires.
+	// Windows/Linux: Ctrl+PageDown / PageUp — the GNOME Terminal, Konsole,
+	// VS Code and browser convention. Not Ctrl+Shift+] / [, which is Monaco's
+	// fold / unfold there (these are workspace-global, so they would take it
+	// over); Monaco scrolls with Alt+PageUp/Down on these platforms, leaving
+	// Ctrl free.
+	isMac
+		? {
+				key: "]",
+				code: "BracketRight",
+				meta: true,
+				shift: true,
+				ctrl: false,
+				action: "next-tab",
+			}
+		: {
+				key: "PageDown",
+				meta: false,
+				shift: false,
+				ctrl: true,
+				action: "next-tab",
+			},
+	isMac
+		? {
+				key: "[",
+				code: "BracketLeft",
+				meta: true,
+				shift: true,
+				ctrl: false,
+				action: "prev-tab",
+			}
+		: {
+				key: "PageUp",
+				meta: false,
+				shift: false,
+				ctrl: true,
+				action: "prev-tab",
+			},
 	{
 		key: "=",
 		meta: isMac,

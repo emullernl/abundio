@@ -420,32 +420,63 @@ describe("tab cycle bindings", () => {
 		unregisterAction("prev-tab");
 	});
 
-	it("match the physical bracket key, whatever character Shift produces", () => {
+	it.skipIf(!isMac)(
+		"match the physical bracket key, whatever character Shift produces",
+		() => {
+			const next = vi.fn();
+			const prev = vi.fn();
+			registerAction("next-tab", next);
+			registerAction("prev-tab", prev);
+
+			// Shift+] reports `}` on a US layout — the old `key: "]"` never matched.
+			handleKeyDown(
+				makeKeyEvent({
+					key: "}",
+					code: "BracketRight",
+					[modKey]: true,
+					shiftKey: true,
+				}),
+			);
+			handleKeyDown(
+				makeKeyEvent({
+					key: "{",
+					code: "BracketLeft",
+					[modKey]: true,
+					shiftKey: true,
+				}),
+			);
+			expect(next).toHaveBeenCalledOnce();
+			expect(prev).toHaveBeenCalledOnce();
+		},
+	);
+
+	it.skipIf(isMac)("Ctrl+PageDown / PageUp cycle tabs on Windows/Linux", () => {
 		const next = vi.fn();
 		const prev = vi.fn();
 		registerAction("next-tab", next);
 		registerAction("prev-tab", prev);
-
-		// Shift+] reports `}` on a US layout — the old `key: "]"` never matched.
-		handleKeyDown(
-			makeKeyEvent({
-				key: "}",
-				code: "BracketRight",
-				[modKey]: true,
-				shiftKey: true,
-			}),
-		);
-		handleKeyDown(
-			makeKeyEvent({
-				key: "{",
-				code: "BracketLeft",
-				[modKey]: true,
-				shiftKey: true,
-			}),
-		);
+		handleKeyDown(makeKeyEvent({ key: "PageDown", ctrlKey: true }));
+		handleKeyDown(makeKeyEvent({ key: "PageUp", ctrlKey: true }));
 		expect(next).toHaveBeenCalledOnce();
 		expect(prev).toHaveBeenCalledOnce();
 	});
+
+	it.skipIf(isMac)(
+		"leave Ctrl+Shift+] / [ to Monaco's fold on Windows/Linux",
+		() => {
+			const next = vi.fn();
+			registerAction("next-tab", next);
+			handleKeyDown(
+				makeKeyEvent({
+					key: "}",
+					code: "BracketRight",
+					ctrlKey: true,
+					shiftKey: true,
+				}),
+			);
+			expect(next).not.toHaveBeenCalled();
+		},
+	);
 });
 
 describe("pane and workspace cycle bindings (Windows/Linux)", () => {

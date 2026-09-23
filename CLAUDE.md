@@ -264,8 +264,8 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | New workspace | `Cmd+Shift+N` | `Ctrl+Shift+N` |
 | New tab | `Cmd+T` | `Ctrl+T` |
 | Close tab | `Cmd+W` | `Ctrl+W` |
-| Next tab | `Cmd+Shift+]` | `Ctrl+Shift+]` |
-| Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
+| Next tab | `Cmd+Shift+]` | `Ctrl+PageDown` |
+| Previous tab | `Cmd+Shift+[` | `Ctrl+PageUp` |
 | Increase font size | `Cmd+=` | `Ctrl+=` |
 | Decrease font size | `Cmd+-` | `Ctrl+-` |
 | Save file | `Cmd+S` | `Ctrl+S` |

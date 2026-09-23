@@ -18,12 +18,13 @@ New terms are in `CONTEXT.md`: **Focused pane**, **Pane cycle**, **Directional m
 | Action | macOS | Windows/Linux |
 |---|---|---|
 | Workspace cycle next / prev | `Ctrl+Cmd+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
-| Tab cycle next / prev (existing, now by `code`) | `Cmd+Shift+]` / `[` | `Ctrl+Shift+]` / `[` |
+| Tab cycle next / prev (existing, now by `code`) | `Cmd+Shift+]` / `[` | `Ctrl+PageDown` / `PageUp` |
 | Pane cycle next / prev | `Ctrl+Cmd+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Directional move (rewritten) | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
 | Add worktree | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 
 - macOS uses `Ctrl+Cmd`, not `Cmd+Option`: Monaco binds `Cmd+Option+↑/↓` (add cursor) and `Cmd+Option+[`/`]` (fold), and these shortcuts are workspace-global (revised after trying it).
+- Windows/Linux tabs move from `Ctrl+Shift+]`/`[` to `Ctrl+PageDown`/`PageUp`: the old keys are Monaco's fold/unfold there. Monaco scrolls with `Alt+PageUp/Down` on those platforms, so `Ctrl` is free (revised after trying it).
 - No `Ctrl+Alt` on Windows/Linux: it is AltGr on European layouts. Bracket and arrow bindings match `KeyboardEvent.code`.
 - **Workspace cycle** visits only **Opened workspaces**, in Left sidebar order (`flattenRowsToIds(buildWorkspaceRows(...))`), wrapping. It never opens a Workspace. Landing on a hidden Linked worktree unfolds its set (the existing invariant in `WorkspaceList`). It scrolls the sidebar row into view.
 - **Pane cycle** visits every Pane type in depth-first tree order, wrapping.
