@@ -812,6 +812,7 @@ function commitHistoryForCwd(cwd: string): CommitHistory | null {
 					additions: f.additions,
 					deletions: f.deletions,
 					isBinary: false,
+					isSubmodule: false,
 				},
 			];
 			const name = f.path.split("/").pop() ?? f.path;

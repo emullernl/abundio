@@ -274,6 +274,8 @@ export interface CommitFile {
 	deletions: number;
 	/** Shown but not clickable: a text diff of it would be unreadable. */
 	isBinary: boolean;
+	/** A submodule pointer, not a file: nothing on either side to diff. */
+	isSubmodule: boolean;
 }
 
 // ── GitHub CLI ──

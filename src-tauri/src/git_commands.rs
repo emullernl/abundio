@@ -92,6 +92,9 @@ pub struct CommitFile {
     /// Git's own binary test on the blob. Such a row is shown but not
     /// clickable: a text diff of it would only be replacement characters.
     pub is_binary: bool,
+    /// A submodule pointer (a commit in another repository), not a file.
+    /// Shown but not clickable: it has no text on either side to diff.
+    pub is_submodule: bool,
 }
 
 /// Line/file churn between two worktree snapshots — a per-Turn working-tree
@@ -1215,6 +1218,29 @@ mod tests {
     }
 
     #[test]
+    fn commit_history_never_lists_a_parent_before_its_child_on_a_time_tie() {
+        // Every commit below has the same committer and author second, so
+        // time order alone is free to put a parent first.
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        init_repo_test(cwd);
+        for i in 0..12 {
+            let out = Command::new("git")
+                .args(["commit", "--allow-empty", "-m", &format!("c{i}")])
+                .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+                .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        }
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("nope".into())).unwrap();
+        let subjects: Vec<_> = h.commits.iter().map(|c| c.subject.clone()).collect();
+        let want: Vec<_> = (0..12).rev().map(|i| format!("c{i}")).collect();
+        assert_eq!(subjects, want);
+    }
+
+    #[test]
     fn commit_history_with_an_unknown_base_is_plain_head_history() {
         let dir = make_branch_repo();
         let cwd = dir.path().to_str().unwrap();
@@ -1340,6 +1366,31 @@ mod tests {
         let files = git_libgit2::commit_files_sync(cwd, &h.commits[0].oid).unwrap();
         let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["c.txt"]);
+    }
+
+    #[test]
+    fn commit_files_flag_a_submodule_bump() {
+        // A gitlink written straight into the index: no nested repository or
+        // network needed, and it is exactly what `git submodule update` +
+        // commit records.
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let fake = "1234567890abcdef1234567890abcdef12345678";
+        run_git_test(
+            cwd,
+            &["update-index", "--add", "--cacheinfo", &format!("160000,{fake},vendor/lib")],
+        );
+        run_git_test(cwd, &["commit", "-m", "add submodule"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &head).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "vendor/lib");
+        assert!(files[0].is_submodule);
+        assert!(!files[0].is_binary);
+        // Ordinary files are not submodules.
+        let two = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &two).unwrap();
+        assert!(files.iter().all(|f| !f.is_submodule));
     }
 
     #[test]

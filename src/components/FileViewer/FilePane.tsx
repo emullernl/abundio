@@ -581,6 +581,23 @@ export function FilePane({
 					/>
 				)}
 				{paneState.fileType === "diff" &&
+					paneState.diffOriginal == null &&
+					paneState.diffLoadFailed && (
+						<div
+							className="absolute inset-0 flex items-center justify-center text-center"
+							style={{
+								color: "var(--fg-secondary)",
+								fontSize: 13,
+								padding: "0 24px",
+								backgroundColor: "var(--bg-primary)",
+							}}
+						>
+							This commit is no longer in the repository — it may have been
+							rebased away. Close this pane, or open the file from the Commits
+							section again.
+						</div>
+					)}
+				{paneState.fileType === "diff" &&
 					paneState.diffOriginal != null &&
 					paneState.diffModified != null &&
 					diffRealPath != null && (

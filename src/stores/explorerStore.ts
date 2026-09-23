@@ -52,6 +52,10 @@ export interface FilePaneState {
 	diffModified: string | null;
 	diffSection: GitChangedFile["section"] | null;
 	isDeleted: boolean;
+	/** A Commit diff pane whose content could not be fetched — the commit
+	 *  was rebased away or garbage-collected. The pane says so instead of
+	 *  staying blank. */
+	diffLoadFailed?: boolean;
 }
 
 function makeEmptyPaneState(filePath: string): FilePaneState {
@@ -548,12 +552,25 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 							...current,
 							diffOriginal: diff.original,
 							diffModified: diff.modified,
+							diffLoadFailed: false,
 						},
 					},
 				};
 			});
-		} catch {
-			// The commit is gone (rebased away, gc'd) — the pane stays empty.
+		} catch (e) {
+			// Usually the commit is gone (rebased away, gc'd). A diff pane with no
+			// content renders nothing, so record it and let the pane explain.
+			console.error(e);
+			set((s) => {
+				const current = s.filePanes[paneId];
+				if (!current || current.filePath !== pane.filePath) return s;
+				return {
+					filePanes: {
+						...s.filePanes,
+						[paneId]: { ...current, diffLoadFailed: true },
+					},
+				};
+			});
 		}
 	},
 

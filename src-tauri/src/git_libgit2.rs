@@ -653,13 +653,46 @@ fn push_history(
     let mut walk = repo.revwalk().map_err(walk_err)?;
     walk.set_sorting(git2::Sort::TIME).map_err(walk_err)?;
     walk.push(from).map_err(walk_err)?;
-    for oid in walk.flatten() {
-        if rows.len() >= COMMIT_HISTORY_CAP {
-            break;
-        }
-        rows.push((oid, shared));
-    }
+    let room = COMMIT_HISTORY_CAP - rows.len();
+    let batch: Vec<Oid> = walk.flatten().take(room).collect();
+    rows.extend(children_first(repo, batch).into_iter().map(|o| (o, shared)));
     Ok(())
+}
+
+/// Reorder a time-sorted batch so no commit comes before one of its children
+/// in the batch. Time order alone cannot promise that: commits made in the
+/// same second (a scripted series, a fast rebase) tie, and a tie may list the
+/// parent first. Stable — among commits free to go next, the one earliest in
+/// time order goes — so this only ever moves a tied pair. A full topological
+/// walk would fix it too, but reads the whole history before the first row.
+fn children_first(repo: &Repository, batch: Vec<Oid>) -> Vec<Oid> {
+    use std::collections::{BTreeSet, HashMap};
+    let pos: HashMap<Oid, usize> = batch.iter().enumerate().map(|(i, o)| (*o, i)).collect();
+    // For each commit, how many of its children in the batch are still unplaced.
+    let mut waiting = vec![0usize; batch.len()];
+    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); batch.len()];
+    for (i, oid) in batch.iter().enumerate() {
+        if let Ok(c) = repo.find_commit(*oid) {
+            for p in c.parent_ids() {
+                if let Some(&j) = pos.get(&p) {
+                    parents[i].push(j);
+                    waiting[j] += 1;
+                }
+            }
+        }
+    }
+    let mut ready: BTreeSet<usize> = (0..batch.len()).filter(|&i| waiting[i] == 0).collect();
+    let mut out = Vec::with_capacity(batch.len());
+    while let Some(i) = ready.pop_first() {
+        out.push(batch[i]);
+        for &j in &parents[i] {
+            waiting[j] -= 1;
+            if waiting[j] == 0 {
+                ready.insert(j);
+            }
+        }
+    }
+    out
 }
 
 /// Last `compute_commit_history_sync` answer per repository gitdir (a linked
@@ -802,19 +835,28 @@ pub fn commit_files_sync(cwd: &str, oid: &str) -> Result<Vec<CommitFile>, Abundi
     let diff = repo
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))
         .map_err(|e| AbundioError::Git(format!("diff commit: {e}")))?;
-    // The side that holds the file: the commit, or the parent for a delete.
-    let is_binary = |path: &str| -> bool {
+    // The side that holds the path: the commit, or the parent for a delete.
+    let entry = |path: &str| {
         [Some(&tree), parent_tree.as_ref()]
             .into_iter()
             .flatten()
             .find_map(|t| t.get_path(Path::new(path)).ok())
-            .and_then(|e| repo.find_blob(e.id()).ok())
-            .is_some_and(|b| b.is_binary())
     };
     let mut files: Vec<CommitFile> = diff_to_changed_files(&diff, "commit")?
         .into_iter()
-        .map(|f| CommitFile {
-            is_binary: is_binary(&f.path),
+        .map(|f| {
+            let e = entry(&f.path);
+            // Mode 160000: a gitlink. Its id names a commit in another
+            // repository, so there is no blob here to read or test.
+            let is_submodule = e.as_ref().is_some_and(|e| e.filemode() == 0o160000);
+            let is_binary = !is_submodule
+                && e.and_then(|e| repo.find_blob(e.id()).ok())
+                    .is_some_and(|b| b.is_binary());
+            (f, is_binary, is_submodule)
+        })
+        .map(|(f, is_binary, is_submodule)| CommitFile {
+            is_binary,
+            is_submodule,
             path: f.path,
             status: f.status,
             additions: f.additions,

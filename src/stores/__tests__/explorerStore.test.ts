@@ -528,6 +528,19 @@ describe("Commit diff panes", () => {
 		expect(commitFileDiff).toHaveBeenCalledTimes(1);
 	});
 
+	it("says so when the commit is gone, instead of staying blank", async () => {
+		const err = vi.spyOn(console, "error").mockImplementation(() => {});
+		useExplorerStore
+			.getState()
+			.registerFilePane("p", KEY, true, "git", null, false, null, null);
+		commitFileDiff.mockRejectedValue(new Error("find commit: not found"));
+		await useExplorerStore.getState().loadCommitDiff("p", "/tmp/ws1");
+		const pane = useExplorerStore.getState().filePanes.p;
+		expect(pane.diffLoadFailed).toBe(true);
+		expect(pane.diffOriginal).toBeNull();
+		err.mockRestore();
+	});
+
 	it("does not load for a live diff pane", async () => {
 		useExplorerStore
 			.getState()

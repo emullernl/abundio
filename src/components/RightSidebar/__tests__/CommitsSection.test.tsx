@@ -186,7 +186,8 @@ describe("CommitsSection", () => {
 		expect(text()).toContain(
 			`Showing the latest ${COMMIT_HISTORY_CAP} commits`,
 		);
-	});
+		// 200 rows in jsdom take ~1s alone and far longer under a loaded full run.
+	}, 30_000);
 
 	it("hides the body but keeps the header when collapsed", () => {
 		useWindowUiStore.setState({ commitsSectionCollapsed: true });
@@ -318,6 +319,35 @@ describe("CommitsSection", () => {
 
 	// Each test uses its own oid: commit file lists are cached per oid at
 	// module level, for the life of the window — and of this test file.
+	it("shows a submodule bump but does not open it", async () => {
+		commitFiles.mockResolvedValue([
+			{
+				path: "vendor/lib",
+				status: "M",
+				additions: 0,
+				deletions: 0,
+				isBinary: false,
+				isSubmodule: true,
+			},
+		]);
+		render({ commitHistory: list(commit("sub1")) });
+		const row = container.querySelector("[aria-expanded]") as HTMLElement;
+		await act(async () => row.click());
+		const fileRow = [...container.querySelectorAll("button")].find((b) =>
+			b.textContent?.includes("lib"),
+		) as HTMLButtonElement;
+		expect(fileRow.getAttribute("aria-disabled")).toBe("true");
+		expect(fileRow.textContent).toContain("submodule");
+		await act(async () => fileRow.click());
+		expect(commitFileDiff).not.toHaveBeenCalled();
+		act(() => {
+			fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+		expect(menuButton("Open Diff")?.disabled).toBe(true);
+		expect(menuButton("Open File")?.disabled).toBe(true);
+		expect(menuButton("Copy Relative Path")?.disabled).toBe(false);
+	});
+
 	async function openFileMenu(
 		oid: string,
 		file: Partial<import("../../../lib/types").CommitFile> = {},

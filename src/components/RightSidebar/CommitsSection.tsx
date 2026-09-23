@@ -648,11 +648,14 @@ function CommitFileRow({
 	// not `disabled`: a disabled button receives no right-click, and the Row
 	// menu's path actions still apply to a binary file.
 	const binary = file.isBinary;
+	const submodule = file.isSubmodule;
+	// Rows with nothing to show as text: a binary blob or a submodule pointer.
+	const noDiff = binary || submodule;
 	return (
 		<button
 			type="button"
-			onClick={binary ? undefined : onOpen}
-			aria-disabled={binary || undefined}
+			onClick={noDiff ? undefined : onOpen}
+			aria-disabled={noDiff || undefined}
 			aria-haspopup="menu"
 			onContextMenu={(e) => {
 				e.preventDefault();
@@ -667,9 +670,11 @@ function CommitFileRow({
 				}
 			}}
 			title={
-				binary
-					? `${file.path} is a binary file`
-					: `Open diff of ${file.path} at this commit`
+				submodule
+					? `${file.path} is a submodule — this commit moved it to another commit of that repository`
+					: binary
+						? `${file.path} is a binary file`
+						: `Open diff of ${file.path} at this commit`
 			}
 			className="relative w-full flex items-center gap-2 text-left select-none transition-colors"
 			style={{
@@ -679,8 +684,8 @@ function CommitFileRow({
 				background: "transparent",
 				border: "none",
 				boxShadow: isMenuTarget ? "inset 0 0 0 1px var(--accent)" : undefined,
-				cursor: binary ? "default" : "pointer",
-				opacity: binary ? 0.6 : 1,
+				cursor: noDiff ? "default" : "pointer",
+				opacity: noDiff ? 0.6 : 1,
 				transitionDuration: "var(--transition-fast)",
 			}}
 			onMouseEnter={(e) => {
@@ -719,11 +724,15 @@ function CommitFileRow({
 				className="flex-shrink-0 flex items-center gap-1"
 				style={{ fontSize: 11, fontVariantNumeric: "tabular-nums" }}
 			>
-				{binary && <span style={{ color: "var(--fg-secondary)" }}>binary</span>}
-				{!binary && file.additions > 0 && (
+				{noDiff && (
+					<span style={{ color: "var(--fg-secondary)" }}>
+						{submodule ? "submodule" : "binary"}
+					</span>
+				)}
+				{!noDiff && file.additions > 0 && (
 					<span style={{ color: "var(--success)" }}>+{file.additions}</span>
 				)}
-				{!binary && file.deletions > 0 && (
+				{!noDiff && file.deletions > 0 && (
 					<span style={{ color: "var(--error)" }}>−{file.deletions}</span>
 				)}
 			</span>

@@ -42,6 +42,9 @@ export interface GitRowMenuTarget {
 	/** A binary file has no readable text diff. Only a **Commits** file row
 	 *  knows this; Git changes rows leave it unset. */
 	isBinary?: boolean;
+	/** A submodule pointer: no text to diff, and on disk it is a folder that
+	 *  a file pane cannot open. Also only known to a **Commits** file row. */
+	isSubmodule?: boolean;
 }
 
 export function gitRowMenuEntries(
@@ -50,6 +53,7 @@ export function gitRowMenuEntries(
 ): GitRowMenuEntry[] {
 	// A deleted path has nothing on disk to open or point the file manager at.
 	const isDeleted = file.status === "D";
+	const isSubmodule = file.isSubmodule === true;
 	// An unmerged path has no stage 0, so no endpoint pair to diff — the
 	// Conflicted section's rows open a text pane instead. See ADR-0029.
 	const isConflicted = file.section === "conflicted";
@@ -58,9 +62,9 @@ export function gitRowMenuEntries(
 		{
 			id: "open-diff",
 			label: "Open Diff",
-			disabled: isConflicted || file.isBinary === true,
+			disabled: isConflicted || file.isBinary === true || isSubmodule,
 		},
-		{ id: "open-file", label: "Open File", disabled: isDeleted },
+		{ id: "open-file", label: "Open File", disabled: isDeleted || isSubmodule },
 		{ separator: true },
 		{ id: "reveal", label: reveal, disabled: isDeleted },
 		{ separator: true },
