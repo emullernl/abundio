@@ -33,6 +33,10 @@ import {
 	type PromptAction,
 	resolveBody,
 } from "../../lib/promptActions";
+import {
+	primaryButtonClass,
+	secondaryButtonClass,
+} from "../PromptActions/fieldStyles";
 import { Select } from "../PromptActions/Select";
 import { AttachmentField } from "./AttachmentField";
 
@@ -192,13 +196,11 @@ export function ParameterDialog({
 						<div className="flex items-center gap-2">
 							<button
 								type="button"
-								className="rounded-lg transition-colors"
+								className={`${secondaryButtonClass} rounded-lg`}
 								style={{
 									padding: "0 14px",
 									height: 34,
 									fontSize: 13,
-									color: "var(--fg-secondary)",
-									border: "1px solid var(--border)",
 								}}
 								onClick={onCancel}
 							>
@@ -207,7 +209,7 @@ export function ParameterDialog({
 							<button
 								type="button"
 								disabled={!ready}
-								className="rounded-lg flex items-center justify-center gap-1.5 transition-opacity"
+								className={`${primaryButtonClass} rounded-lg`}
 								style={{
 									padding: "0 16px",
 									height: 34,
@@ -216,7 +218,6 @@ export function ParameterDialog({
 									backgroundColor: "var(--accent)",
 									color: "var(--bg-primary)",
 									opacity: ready ? 1 : 0.35,
-									cursor: ready ? "pointer" : "not-allowed",
 								}}
 								title={
 									ready

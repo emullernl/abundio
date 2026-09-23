@@ -85,7 +85,7 @@ image = { version = "0.25", default-features = false, features = [
 # Cross-platform image-to-clipboard on Windows/Linux (macOS uses a native PNG
 # path — see clipboard_image.rs). Already pulled in transitively by
 # tauri-plugin-clipboard-manager; pinned here so the direct dependency is explicit.
-arboard = "3"
+arboard = "3.4" # 3.4+ for `get().file_list()` (prompt_attachments.rs)
 # Secure temp-file creation (O_EXCL, 0600, RAII cleanup) for the macOS PNG
 # clipboard path in clipboard_image.rs. Also used by tests.
 tempfile = "3"

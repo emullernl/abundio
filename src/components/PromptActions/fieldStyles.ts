@@ -47,3 +47,35 @@ export const paramSelectStyle: React.CSSProperties = {
 	width: "auto",
 	padding: "0 8px",
 };
+
+/*
+ * Button states. Colour, border and the hover/pressed states live in classes,
+ * never in an inline `style`: an inline declaration beats any `hover:` or
+ * `active:` utility, so the state would silently never show. Sizing and
+ * padding stay inline (see the padding note above).
+ *
+ * Every state is gated on `enabled:` so a disabled button reacts to nothing.
+ * Pressed is a small sink (`scale` + a darker fill) rather than a colour swap
+ * alone, so the click reads even where two theme colours sit close together.
+ */
+
+/** A bordered, quiet button — Cancel, Choose file…, Paste from clipboard. */
+export const secondaryButtonClass =
+	"inline-flex items-center justify-center gap-2 transition-[background-color,border-color,color,transform] duration-100 " +
+	"border border-[var(--border)] text-[var(--fg-secondary)] cursor-pointer " +
+	"enabled:hover:bg-[var(--bg-tertiary)] enabled:hover:text-[var(--fg-primary)] " +
+	"enabled:hover:border-[color-mix(in_srgb,var(--fg-secondary)_60%,transparent)] " +
+	"enabled:active:scale-[0.97] " +
+	"enabled:active:bg-[color-mix(in_srgb,var(--bg-tertiary)_80%,var(--fg-primary)_20%)] " +
+	"disabled:opacity-60 disabled:cursor-default";
+
+/** The accent-filled action — Send. Hover lifts it with a soft accent ring;
+ *  pressed darkens and sinks it. Its fill stays inline, since filter and
+ *  shadow are what change. */
+export const primaryButtonClass =
+	"inline-flex items-center justify-center gap-1.5 transition-[filter,box-shadow,transform] duration-100 " +
+	"cursor-pointer disabled:cursor-not-allowed " +
+	"enabled:hover:brightness-110 " +
+	"enabled:hover:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_28%,transparent)] " +
+	"enabled:active:brightness-90 enabled:active:scale-[0.97] " +
+	"enabled:active:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_20%,transparent)]";

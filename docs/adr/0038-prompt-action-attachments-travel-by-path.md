@@ -35,7 +35,7 @@ The trade is that the Agent must be willing to open a file it is handed. Every A
 
 ## A pasted image has to become a file
 
-Cmd+V in the parameter dialog yields a bitmap with no path, so Abundio materialises it: a PNG under `app_paths::versioned_root()/prompt-attachments/`, named by content hash. This is the part with no clean answer — **nothing owns the file's lifetime**. The Agent may open it immediately, or in ten minutes, or never, and it may quote the path into its own transcript long after.
+The parameter dialog's **Paste from clipboard** button, given an image rather than a copied file, yields a bitmap with no path, so Abundio materialises it: Rust reads the clipboard and writes a PNG under `app_paths::versioned_root()/prompt-attachments/`, named by content hash. This is the part with no clean answer — **nothing owns the file's lifetime**. The Agent may open it immediately, or in ten minutes, or never, and it may quote the path into its own transcript long after.
 
 So the directory is treated as a **cache, not as user data**: content-hashed names make re-pasting the same image free, and a sweep at startup drops anything older than a set age. The sweep is deliberately far past any live **Turn** — an attachment still being read hours later is a case we accept losing rather than a case we try to track. It lives under the versioned root because it is epoch state an older build has no business reading (ADR-0025).
 
