@@ -27,7 +27,7 @@ use git2::{
 
 use crate::error::AbundioError;
 use crate::git_commands::{
-    BranchCommit, BranchCommits, BranchInfo, CommitFile, GitChangedFile, GitConflictFile,
+    HistoryCommit, CommitHistory, BranchInfo, CommitFile, GitChangedFile, GitConflictFile,
     TreeDiffStats,
 };
 use crate::worktree_commands::WorktreeEntry;
@@ -514,42 +514,58 @@ fn diff_against_base(
     diff_to_changed_files(&diff, "against_base")
 }
 
-/// How many **Branch commits** rows are sent. The count past this is reported
-/// in `BranchCommits::total`, never silently dropped.
-pub const BRANCH_COMMITS_CAP: usize = 200;
+/// How many **Commits** rows are sent. The Ahead count past this is still
+/// reported in `CommitHistory::ahead`, never silently dropped.
+pub const COMMIT_HISTORY_CAP: usize = 200;
 
-/// The commits on HEAD that `base` does not have — `git log <base>..HEAD` —
-/// newest first. Merge commits are included along with every commit they
-/// brought in, as `git log` does. Errors when the base cannot be resolved; the
-/// bundle treats that as "no section data" rather than a failed refresh.
-pub fn compute_branch_commits_sync(
+/// The **Commits** section's list for the Workspace at `cwd`: every Ahead
+/// commit (`git log <base>..HEAD`), then the Shared history (`git log
+/// <merge-base>`), newest first and `COMMIT_HISTORY_CAP` rows in all. Merge
+/// commits are listed along with the commits they brought in, as `git log`
+/// does.
+///
+/// Two walks rather than one `git log HEAD` split at a line: a branch that
+/// has merged its base in has Ahead and Shared commits interleaved in plain
+/// log order, and no single divider could separate them. The Shared walk
+/// starts at the merge-base, so it is the base *as the branch last saw it* —
+/// base commits the branch does not contain are never listed.
+///
+/// A base that cannot be resolved (no default branch, a deleted or mistyped
+/// base, unrelated histories) is not an error: the list is HEAD's history
+/// with `base: None` and nothing marked Shared.
+pub fn compute_commit_history_sync(
     cwd: &str,
     base_branch: Option<String>,
-) -> Result<BranchCommits, AbundioError> {
+) -> Result<CommitHistory, AbundioError> {
     let repo = open_repo(cwd)?;
-    let base = resolve_base_branch(&repo, cwd, base_branch)?;
     let github = github_remote(&repo);
-    // An unborn branch has no commits, so none are ahead of anything.
+    // An unborn branch has no commits at all.
     let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) else {
-        return Ok(BranchCommits {
-            base,
-            total: 0,
+        return Ok(CommitHistory {
+            base: resolve_base_branch(&repo, cwd, base_branch).ok(),
+            ahead: 0,
             commits: Vec::new(),
             github_slug: github.map(|(_, slug)| slug),
         });
     };
-    let base_oid = resolve_base_oid(&repo, &base)?;
+    // (name, tip, merge-base), or None — every step is allowed to fail.
+    let base = resolve_base_branch(&repo, cwd, base_branch)
+        .ok()
+        .and_then(|name| {
+            let tip = resolve_base_oid(&repo, &name).ok()?;
+            let merge_base = repo.merge_base(head.id(), tip).ok()?;
+            Some((name, tip, merge_base))
+        });
 
-    // The scheduler calls this on every fs event, and the walk below reads the
-    // whole `base..HEAD` range — thousands of commits when the local base
+    // The scheduler calls this on every fs event, and the Ahead walk reads
+    // the whole `base..HEAD` range — thousands of commits when the local base
     // branch has not been pulled in months. The answer depends only on HEAD,
     // the base, and the GitHub remote and where its tracking refs point (for
     // `on_remote`), so it is recomputed only when one of those has moved.
     let cache_key = format!(
-        "{}\n{}\n{}\n{:?}\n{:016x}",
+        "{}\n{:?}\n{:?}\n{:016x}",
         head.id(),
         base,
-        base_oid,
         github,
         github
             .as_ref()
@@ -557,39 +573,48 @@ pub fn compute_branch_commits_sync(
             .unwrap_or(0)
     );
     let cache_slot = repo.path().to_string_lossy().to_string();
-    if let Some(hit) = branch_commits_cache().get(&cache_slot) {
+    if let Some(hit) = commit_history_cache().get(&cache_slot) {
         if hit.0 == cache_key {
             return Ok(hit.1.clone());
         }
     }
 
     let walk_err = |e: git2::Error| AbundioError::Git(format!("revwalk: {e}"));
-    let mut walk = repo.revwalk().map_err(walk_err)?;
-    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
-        .map_err(walk_err)?;
-    walk.push(head.id()).map_err(walk_err)?;
-    walk.hide(base_oid).map_err(walk_err)?;
+    // (oid, shared)
+    let mut rows: Vec<(Oid, bool)> = Vec::new();
+    let mut ahead = 0;
 
-    let mut total = 0;
-    let mut oids = Vec::new();
-    for oid in walk.flatten() {
-        total += 1;
-        if oids.len() < BRANCH_COMMITS_CAP {
-            oids.push(oid);
+    match &base {
+        Some((_, tip, merge_base)) => {
+            // Ahead: bounded by the range, so topological order is affordable.
+            let mut walk = repo.revwalk().map_err(walk_err)?;
+            walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+                .map_err(walk_err)?;
+            walk.push(head.id()).map_err(walk_err)?;
+            walk.hide(*tip).map_err(walk_err)?;
+            for oid in walk.flatten() {
+                ahead += 1;
+                if rows.len() < COMMIT_HISTORY_CAP {
+                    rows.push((oid, false));
+                }
+            }
+            push_history(&repo, *merge_base, true, &mut rows)?;
         }
+        None => push_history(&repo, head.id(), false, &mut rows)?,
     }
 
     // `None` — no GitHub remote, or the walk failed — means nothing counts as
     // pushed, which only ever disables "Open on GitHub".
-    let unpushed = github
-        .as_ref()
-        .and_then(|(remote, _)| unpushed_oids(&repo, head.id(), base_oid, remote));
-    let commits = oids
+    let pushed = github.as_ref().and_then(|(remote, _)| {
+        let shown: std::collections::HashSet<Oid> = rows.iter().map(|(o, _)| *o).collect();
+        pushed_among(&repo, head.id(), remote, &shown)
+    });
+    let commits = rows
         .into_iter()
-        .filter_map(|oid| repo.find_commit(oid).ok())
-        .map(|c| {
+        .filter_map(|(oid, shared)| Some((repo.find_commit(oid).ok()?, shared)))
+        .map(|(c, shared)| {
             let author = c.author();
-            BranchCommit {
+            HistoryCommit {
                 oid: c.id().to_string(),
                 subject: c.summary().unwrap_or("").to_string(),
                 message: c.message().unwrap_or("").trim_end().to_string(),
@@ -597,29 +622,53 @@ pub fn compute_branch_commits_sync(
                 author_email: author.email().unwrap_or("").to_string(),
                 time: author.when().seconds(),
                 is_merge: c.parent_count() > 1,
-                on_remote: unpushed.as_ref().is_some_and(|u| !u.contains(&c.id())),
+                shared,
+                on_remote: pushed.as_ref().is_some_and(|p| p.contains(&c.id())),
             }
         })
         .collect();
-    // An empty range is cached like any other: a Workspace resting on its
-    // base branch is the state this is asked about most often.
-    let result = BranchCommits {
-        base,
-        total,
+    let result = CommitHistory {
+        base: base.map(|(name, _, _)| name),
+        ahead,
         commits,
         github_slug: github.map(|(_, slug)| slug),
     };
-    branch_commits_cache().insert(cache_slot, (cache_key, result.clone()));
+    commit_history_cache().insert(cache_slot, (cache_key, result.clone()));
     Ok(result)
 }
 
-/// Last `compute_branch_commits_sync` answer per repository gitdir (a linked
+/// Fill `rows` up to the cap with `from` and its ancestors, newest first.
+/// Time order only: a topological sort would read the whole history before
+/// yielding the first commit, and this walk has no range to bound it.
+fn push_history(
+    repo: &Repository,
+    from: Oid,
+    shared: bool,
+    rows: &mut Vec<(Oid, bool)>,
+) -> Result<(), AbundioError> {
+    if rows.len() >= COMMIT_HISTORY_CAP {
+        return Ok(());
+    }
+    let walk_err = |e: git2::Error| AbundioError::Git(format!("revwalk: {e}"));
+    let mut walk = repo.revwalk().map_err(walk_err)?;
+    walk.set_sorting(git2::Sort::TIME).map_err(walk_err)?;
+    walk.push(from).map_err(walk_err)?;
+    for oid in walk.flatten() {
+        if rows.len() >= COMMIT_HISTORY_CAP {
+            break;
+        }
+        rows.push((oid, shared));
+    }
+    Ok(())
+}
+
+/// Last `compute_commit_history_sync` answer per repository gitdir (a linked
 /// worktree has its own, since its HEAD differs), with the key it was
 /// computed for. One entry per repository, overwritten on change, so it
 /// cannot grow past the number of opened Workspaces.
-fn branch_commits_cache() -> &'static DashMap<String, (String, BranchCommits)> {
+fn commit_history_cache() -> &'static DashMap<String, (String, CommitHistory)> {
     use std::sync::OnceLock;
-    static CACHE: OnceLock<DashMap<String, (String, BranchCommits)>> = OnceLock::new();
+    static CACHE: OnceLock<DashMap<String, (String, CommitHistory)>> = OnceLock::new();
     CACHE.get_or_init(DashMap::new)
 }
 
@@ -674,30 +723,47 @@ fn remote_refs_fingerprint(repo: &Repository, remote: &str) -> u64 {
     hasher.finish()
 }
 
-/// Commits in `base..head` that none of `remote`'s tracking refs reach.
-/// Bounded by the same range as the section, so a large repository costs no
-/// more than the list itself. `None` when the walk cannot be set up; the
-/// caller then treats every commit as unpushed.
-fn unpushed_oids(
+/// Past this many unpushed commits the answer is given up on (and every row
+/// counts as unpushed). A never-fetched clone has *all* of history unpushed;
+/// this keeps that case from walking it on every refresh.
+const UNPUSHED_WALK_LIMIT: usize = 5_000;
+
+/// Which of `shown` some tracking ref of `remote` reaches. Walks HEAD with the
+/// remote's refs hidden, which yields exactly the unpushed commits — normally
+/// a handful. `None` when the walk cannot be set up or hits the limit; the
+/// caller then treats every commit as unpushed, which can only ever disable
+/// "Open on GitHub", never wrongly enable it.
+fn pushed_among(
     repo: &Repository,
     head: Oid,
-    base: Oid,
     remote: &str,
+    shown: &std::collections::HashSet<Oid>,
 ) -> Option<std::collections::HashSet<Oid>> {
     let mut walk = repo.revwalk().ok()?;
     walk.push(head).ok()?;
-    walk.hide(base).ok()?;
+    let mut any_ref = false;
     if let Ok(refs) = repo.references_glob(&format!("refs/remotes/{remote}/*")) {
         for r in refs.flatten() {
             // `origin/HEAD` is symbolic; its target is hidden on its own.
             if let Some(target) = r.target() {
                 // A ref to a missing object fails to hide; skipping it can
                 // only leave a commit counted as unpushed.
-                let _ = walk.hide(target);
+                any_ref |= walk.hide(target).is_ok();
             }
         }
     }
-    Some(walk.flatten().collect())
+    // Nothing fetched from this remote: nothing is on it.
+    if !any_ref {
+        return Some(Default::default());
+    }
+    let mut unpushed = std::collections::HashSet::new();
+    for oid in walk.flatten() {
+        if unpushed.len() >= UNPUSHED_WALK_LIMIT {
+            return None;
+        }
+        unpushed.insert(oid);
+    }
+    Some(shown.difference(&unpushed).copied().collect())
 }
 
 fn find_commit_by_hex<'r>(

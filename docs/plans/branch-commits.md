@@ -44,3 +44,35 @@ Section).
    the three-way split and the two drags.
 5. **UI.** Second `SectionDivider` in `RightSidebar`; `CommitsSection` (header, rows, expansion, menu) with pure helpers
    (`initials`, `relativeTime`, `commitMenuEntries`) in `lib/`.
+
+## Revision (2026-09-23): Commits — ahead + shared history
+
+The section becomes **Commits** (see `CONTEXT.md`: **Commits**, **Ahead
+commits**, **Shared history**). Decided in a second grilling session.
+
+- One list, newest first, 200 rows, hard stop ("Showing the latest 200
+  commits"). No paging.
+- Order: all of `<base>..HEAD` (Ahead), then a divider named after the base,
+  then `git log <merge-base>` (Shared history) filling the rest of the 200.
+  Built as two walks, so a branch that merged the base in never interleaves.
+  Shared history is the base *as the branch last saw it* — base commits the
+  branch does not contain are never shown.
+- Header: "COMMITS · N ahead of <base>". On the base branch: no divider, no
+  count. More than 200 ahead: no divider fits, header still gives the count.
+- Base unresolvable: HEAD's history with no divider and no count; header
+  says "base unknown". Replaces "Base branch not found".
+- Styling: Ahead rows keep the accent rail and nodes; Shared rows get a grey
+  rail and grey nodes, text unchanged.
+- Delivered on the same branch / PR #189 (still open).
+
+### Commits
+
+6. **Rust.** `compute_branch_commits_sync` → returns `ahead: usize` (true
+   count), `commits` (ahead first, then shared, 200 total) each with a
+   `shared: bool`, and `base: Option<String>` (None = unresolved, list still
+   filled from HEAD). Cache key unchanged in spirit (HEAD, base, merge-base,
+   GitHub remote refs). Tests: on base, ahead + shared, merged-base-in, base
+   unresolvable, >200 ahead.
+7. **Frontend.** Types, store equality, `CommitsSection` header / divider /
+   grey rail / bottom line, demo fixtures, rename "Branch commits" in UI
+   strings and comments.

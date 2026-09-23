@@ -23,7 +23,7 @@ interface Props {
 
 /** Right sidebar: in-workspace toolbox. Tabs (Git changes / Explorer / Search
  *  / Notes) sit above two always-anchored, collapsible **Anchored sections** —
- *  Branch commits, then Pull Requests — each with its own divider. See
+ *  Commits, then Pull Requests — each with its own divider. See
  *  ADR-0010 and `lib/rightSidebarLayout.ts`. */
 export function RightSidebar({ titlebarHeight }: Props) {
 	const open = useWindowUiStore((s) => s.rightSidebarOpen);
@@ -126,7 +126,7 @@ export function RightSidebar({ titlebarHeight }: Props) {
 				/>
 			)}
 
-			{/* Branch commits. Collapsed: only its header pins. */}
+			{/* Commits. Collapsed: only its header pins. */}
 			<div
 				className="flex flex-col flex-shrink-0 min-h-0"
 				style={{

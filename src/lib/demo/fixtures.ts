@@ -21,10 +21,9 @@ import type {
 } from "../ipc";
 import type {
 	AvailableShell,
-	BranchCommit,
-	BranchCommits,
 	BranchInfo,
 	CommitFile,
+	CommitHistory,
 	DetectedDevEnvironment,
 	DirEntry,
 	FileContent,
@@ -32,6 +31,7 @@ import type {
 	GhStatus,
 	GitChangedFile,
 	GitFileDiff,
+	HistoryCommit,
 	PaneNode,
 	Profile,
 	PullRequest,
@@ -781,13 +781,13 @@ export const commitFilesByOid: Record<string, CommitFile[]> = {};
 /** One demo commit per `against_base` file, newest first; only the oldest is
  *  on a remote, so the menu shows "Open on GitHub" both enabled and disabled.
  *  Times are relative to now so the rows read "2h", "1d" in any year. */
-function branchCommitsForCwd(cwd: string): BranchCommits | null {
+function commitHistoryForCwd(cwd: string): CommitHistory | null {
 	const entry = gitByRoot[cwd];
 	if (!entry) return null;
 	const base = entry.branch.defaultBranch;
 	const touched = entry.files.filter((f) => f.section === "against_base");
 	const now = Math.floor(Date.now() / 1000);
-	const commits: BranchCommit[] = touched
+	const commits: HistoryCommit[] = touched
 		.map((f, i) => {
 			const oid = demoOid(`${cwd}:${f.path}`);
 			commitFilesByOid[oid] = [
@@ -827,7 +827,7 @@ function branchCommitsForCwd(cwd: string): BranchCommits | null {
 export function gitBundleForCwd(cwd: string): GitFetchBundle {
 	const entry = gitByRoot[cwd];
 	return {
-		branchCommits: branchCommitsForCwd(cwd),
+		commitHistory: commitHistoryForCwd(cwd),
 		changedFiles: entry?.files ?? [],
 		branchInfo: entry?.branch ?? CLEAN_BRANCH,
 		statusFingerprint: `demo-fp-${cwd}`,

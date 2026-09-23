@@ -1,15 +1,15 @@
 import { open } from "@tauri-apps/plugin-shell";
 import { useEffect, useRef, useState } from "react";
+import { writeClipboardText } from "../../lib/clipboard";
 import {
 	commitMenuEntries,
 	commitTooltip,
 	githubCommitUrl,
 	initials,
 	relativeTime,
-} from "../../lib/branchCommits";
-import { writeClipboardText } from "../../lib/clipboard";
+} from "../../lib/commitHistory";
 import { git } from "../../lib/ipc";
-import type { BranchCommit, CommitFile } from "../../lib/types";
+import type { CommitFile, HistoryCommit } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -56,18 +56,18 @@ function useNowSecs(): number {
 	return now;
 }
 
-/** The **Branch commits** Anchored section: the commits on the Active
+/** The **Commits** Anchored section: the commits on the Active
  *  workspace's branch that its base does not have yet. See CONTEXT.md.
  *  Like `PrSection`, it always renders its header; the body is hidden when
  *  collapsed and the parent sizes it. */
 export function CommitsSection() {
 	const collapsed = useWindowUiStore((s) => s.commitsSectionCollapsed);
 	const toggle = useWindowUiStore((s) => s.toggleCommitsSectionCollapsed);
-	const branchCommits = useGitChangesStore((s) => s.branchCommits);
+	const commitHistory = useGitChangesStore((s) => s.commitHistory);
 	const baseBranch = useGitChangesStore((s) => s.baseBranch);
 
-	const base = branchCommits?.base ?? baseBranch;
-	const count = branchCommits?.total;
+	const base = commitHistory?.base ?? baseBranch;
+	const count = commitHistory?.total;
 
 	return (
 		<div
@@ -98,7 +98,7 @@ export function CommitsSection() {
 				onMouseLeave={(e) => {
 					e.currentTarget.style.backgroundColor = "transparent";
 				}}
-				title={collapsed ? "Expand Branch Commits" : "Collapse Branch Commits"}
+				title={collapsed ? "Expand Commits" : "Collapse Commits"}
 			>
 				{collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
 				<GitCommit size={12} style={{ color: "var(--accent)" }} />
@@ -111,7 +111,7 @@ export function CommitsSection() {
 						textTransform: "uppercase",
 					}}
 				>
-					Branch Commits
+					Commits
 				</span>
 				{count != null && (
 					<span
@@ -176,10 +176,10 @@ function CommitsBody() {
 			? s.byWorkspaceId[activeWorkspaceId]?.isGitRepo
 			: undefined,
 	);
-	const branchCommits = useGitChangesStore((s) => s.branchCommits);
+	const commitHistory = useGitChangesStore((s) => s.commitHistory);
 	// From the same remote `onRemote` was judged against, so a fork checkout
 	// never links a commit to the repository that does not have it.
-	const slug = branchCommits?.githubSlug ?? null;
+	const slug = commitHistory?.githubSlug ?? null;
 	const currentBranch = useGitChangesStore((s) => s.currentBranch);
 	const error = useGitChangesStore((s) => s.error);
 	const now = useNowSecs();
@@ -196,7 +196,7 @@ function CommitsBody() {
 	const [menu, setMenu] = useState<{
 		x: number;
 		y: number;
-		commit: BranchCommit;
+		commit: HistoryCommit;
 		fromKeyboard: boolean;
 	} | null>(null);
 
@@ -211,7 +211,7 @@ function CommitsBody() {
 
 	if (!activeWorkspaceId || !cwd) return null;
 	if (isGitRepo === false) return <Message>Not a git repository</Message>;
-	if (!branchCommits) {
+	if (!commitHistory) {
 		// A failed refresh says why; it is not evidence about the base branch.
 		if (error) return <Message>Could not read commits: {error}</Message>;
 		// A bundle arrived (it names the branch) yet carried no commit list:
@@ -223,8 +223,8 @@ function CommitsBody() {
 			</Message>
 		);
 	}
-	if (branchCommits.total === 0) {
-		return <Message>No commits ahead of {branchCommits.base}</Message>;
+	if (commitHistory.total === 0) {
+		return <Message>No commits ahead of {commitHistory.base}</Message>;
 	}
 
 	async function toggleCommit(oid: string) {
@@ -258,7 +258,7 @@ function CommitsBody() {
 		}
 	}
 
-	async function openFileDiff(commit: BranchCommit, file: CommitFile) {
+	async function openFileDiff(commit: HistoryCommit, file: CommitFile) {
 		if (!cwd || !activeWorkspaceId) return;
 		try {
 			const diff = await git.commitFileDiff(cwd, commit.oid, file.path);
@@ -301,12 +301,12 @@ function CommitsBody() {
 		}));
 	}
 
-	const hidden = branchCommits.total - branchCommits.commits.length;
+	const hidden = commitHistory.total - commitHistory.commits.length;
 
 	return (
 		<>
 			<ul style={{ paddingTop: 4, listStyle: "none" }}>
-				{branchCommits.commits.map((commit, i) => {
+				{commitHistory.commits.map((commit, i) => {
 					const isOpen = expanded.has(commit.oid);
 					const fileList = files[commit.oid];
 					return (
@@ -349,7 +349,7 @@ function CommitsBody() {
 					</li>
 				)}
 				<li>
-					<BaseTerminus base={branchCommits.base} />
+					<BaseTerminus base={commitHistory.base} />
 				</li>
 			</ul>
 			{menu && (
@@ -421,7 +421,7 @@ function CommitRow({
 	onToggle,
 	onContextMenu,
 }: {
-	commit: BranchCommit;
+	commit: HistoryCommit;
 	isHead: boolean;
 	isOpen: boolean;
 	isMenuTarget: boolean;

@@ -233,8 +233,8 @@ export interface BranchInfo {
 	currentBranch: string;
 }
 
-/** One row of the **Branch commits** section (see CONTEXT.md). */
-export interface BranchCommit {
+/** One row of the **Commits** section (see CONTEXT.md). */
+export interface HistoryCommit {
 	oid: string;
 	subject: string;
 	/** Full message, subject included — shown in the row's tooltip. */
@@ -244,16 +244,16 @@ export interface BranchCommit {
 	/** Author time, seconds since the Unix epoch. */
 	time: number;
 	isMerge: boolean;
-	/** On the GitHub remote named by `BranchCommits.githubSlug`. Gates
+	/** On the GitHub remote named by `CommitHistory.githubSlug`. Gates
 	 *  "Open on GitHub". */
 	onRemote: boolean;
 }
 
 /** `base..HEAD`, newest first. `commits` is capped (200); `total` is not. */
-export interface BranchCommits {
+export interface CommitHistory {
 	base: string;
 	total: number;
-	commits: BranchCommit[];
+	commits: HistoryCommit[];
 	/** `owner/repo` "Open on GitHub" links to — the same remote `onRemote` was
 	 *  judged against. Null when the repository has no GitHub remote. */
 	githubSlug: string | null;

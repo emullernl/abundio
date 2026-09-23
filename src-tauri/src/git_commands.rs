@@ -39,10 +39,10 @@ pub struct BranchInfo {
     pub current_branch: String,
 }
 
-/// One commit in the **Branch commits** section (see CONTEXT.md).
+/// One commit in the **Commits** section (see CONTEXT.md).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BranchCommit {
+pub struct HistoryCommit {
     pub oid: String,
     pub subject: String,
     /// The full message, subject included — for the row's tooltip.
@@ -52,21 +52,30 @@ pub struct BranchCommit {
     /// Author time, seconds since the Unix epoch.
     pub time: i64,
     pub is_merge: bool,
+    /// Below the divider: **Shared history**, which the base branch also has.
+    /// False for an **Ahead commit**, and for every row when the base is
+    /// unknown (there is no divider then).
+    pub shared: bool,
     /// Reachable from a tracking ref of the GitHub remote named by
-    /// `BranchCommits::github_slug`. Gates "Open on GitHub": a commit that
+    /// `CommitHistory::github_slug`. Gates "Open on GitHub": a commit that
     /// remote does not have has no page there.
     pub on_remote: bool,
 }
 
-/// The commits on HEAD that the base branch does not have (`base..HEAD`),
-/// newest first, capped at `BRANCH_COMMITS_CAP`. `total` is the true count, so
-/// the UI can say how many were left out.
+/// The **Commits** section's list: the Workspace's recent history, newest
+/// first, capped at `COMMIT_HISTORY_CAP` rows. First every **Ahead commit**
+/// (`base..HEAD`), then the **Shared history** from where the branch last met
+/// its base — so the two halves never interleave. See CONTEXT.md.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BranchCommits {
-    pub base: String,
-    pub total: usize,
-    pub commits: Vec<BranchCommit>,
+pub struct CommitHistory {
+    /// The base branch the divider is named after. `None` when it cannot be
+    /// resolved; the list is then plain HEAD history with no divider.
+    pub base: Option<String>,
+    /// The true number of Ahead commits, even past the row cap. 0 when the
+    /// base is unknown.
+    pub ahead: usize,
+    pub commits: Vec<HistoryCommit>,
     /// `owner/repo` of the GitHub remote "Open on GitHub" links to, chosen
     /// alongside `on_remote` so the two describe the same repository.
     pub github_slug: Option<String>,
@@ -215,7 +224,7 @@ pub struct GitFetchBundle {
     pub operation_in_progress: Option<String>,
     /// `None` when the base branch cannot be resolved to a commit. Best-effort
     /// like `operation_in_progress`: it never fails the bundle.
-    pub branch_commits: Option<BranchCommits>,
+    pub commit_history: Option<CommitHistory>,
 }
 
 /// Single-IPC bundle for the git-tab refresh. Returns the three pieces of
@@ -235,7 +244,7 @@ pub async fn git_fetch_bundle(
             let h_changed =
                 s.spawn(|| compute_changed_files_sync(&cwd, base_branch.clone()));
             let h_commits = s.spawn(|| {
-                git_libgit2::compute_branch_commits_sync(&cwd, base_branch.clone())
+                git_libgit2::compute_commit_history_sync(&cwd, base_branch.clone())
             });
             let h_branch = s.spawn(|| compute_branch_info_sync(&cwd));
             let h_fp = s.spawn(|| compute_status_fingerprint_sync(&cwd));
@@ -263,7 +272,7 @@ pub async fn git_fetch_bundle(
             // Best-effort: a repo we can't read the state of shows no line
             // rather than failing the whole bundle.
             operation_in_progress: op_res.unwrap_or(None),
-            branch_commits: commits_res.ok(),
+            commit_history: commits_res.ok(),
         })
     })
     .await
@@ -1144,54 +1153,180 @@ mod tests {
         dir
     }
 
-    #[test]
-    fn branch_commits_lists_only_commits_ahead_of_base_newest_first() {
-        let dir = make_branch_repo();
-        let cwd = dir.path().to_str().unwrap();
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.base, "main");
-        assert_eq!(bc.total, 2);
-        let subjects: Vec<_> = bc.commits.iter().map(|c| c.subject.as_str()).collect();
-        assert_eq!(subjects, ["two", "one"]);
-        assert_eq!(bc.commits[0].message, "two\n\nbody line");
-        assert_eq!(bc.commits[0].author_name, "T");
-        assert!(!bc.commits[0].is_merge);
-        // No remotes at all: nothing is on a remote.
-        assert!(bc.commits.iter().all(|c| !c.on_remote));
+    fn subjects(h: &CommitHistory) -> Vec<(&str, bool)> {
+        h.commits.iter().map(|c| (c.subject.as_str(), c.shared)).collect()
     }
 
     #[test]
-    fn branch_commits_empty_on_the_base_branch_itself() {
+    fn commit_history_lists_ahead_then_shared_history() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.base.as_deref(), Some("main"));
+        assert_eq!(h.ahead, 2);
+        assert_eq!(subjects(&h), [("two", false), ("one", false), ("base", true)]);
+        assert_eq!(h.commits[0].message, "two\n\nbody line");
+        assert_eq!(h.commits[0].author_name, "T");
+    }
+
+    #[test]
+    fn commit_history_on_the_base_branch_is_its_latest_commits() {
         let dir = make_branch_repo();
         let cwd = dir.path().to_str().unwrap();
         run_git_test(cwd, &["checkout", "main"]);
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.total, 0);
-        assert!(bc.commits.is_empty());
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "main2"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.ahead, 0);
+        // Everything is shared: the UI draws no divider above the first row.
+        assert_eq!(subjects(&h), [("main2", true), ("base", true)]);
     }
 
     #[test]
-    fn branch_commits_errors_for_an_unknown_base() {
+    fn commit_history_shows_the_base_as_the_branch_last_saw_it() {
+        // main moves on after the branch left it; those commits are not in
+        // the Workspace and must not be listed.
         let dir = make_branch_repo();
         let cwd = dir.path().to_str().unwrap();
-        assert!(git_libgit2::compute_branch_commits_sync(cwd, Some("nope".into())).is_err());
+        run_git_test(cwd, &["checkout", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "later on main"]);
+        run_git_test(cwd, &["checkout", "feature"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(subjects(&h), [("two", false), ("one", false), ("base", true)]);
     }
 
     #[test]
-    fn branch_commits_reports_true_total_past_the_cap() {
+    fn commit_history_does_not_interleave_when_the_base_was_merged_in() {
         let dir = make_branch_repo();
         let cwd = dir.path().to_str().unwrap();
-        let extra = git_libgit2::BRANCH_COMMITS_CAP + 3;
+        run_git_test(cwd, &["checkout", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "main2"]);
+        run_git_test(cwd, &["checkout", "feature"]);
+        run_git_test(cwd, &["merge", "--no-ff", "-m", "merge main", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "three"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        // The merge is ahead; main2 is shared now (the merge-base moved up).
+        assert_eq!(h.ahead, 4);
+        let s = subjects(&h);
+        let first_shared = s.iter().position(|(_, shared)| *shared).unwrap();
+        assert!(s[..first_shared].iter().all(|(_, shared)| !shared));
+        assert!(s[first_shared..].iter().all(|(_, shared)| *shared));
+        assert_eq!(s[first_shared].0, "main2");
+        assert!(h.commits.iter().any(|c| c.is_merge && !c.shared));
+    }
+
+    #[test]
+    fn commit_history_with_an_unknown_base_is_plain_head_history() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("nope".into())).unwrap();
+        assert_eq!(h.base, None);
+        assert_eq!(h.ahead, 0);
+        assert_eq!(subjects(&h), [("two", false), ("one", false), ("base", false)]);
+    }
+
+    #[test]
+    fn commit_history_caps_rows_but_not_the_ahead_count() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let extra = git_libgit2::COMMIT_HISTORY_CAP + 3;
         for i in 0..extra {
             run_git_test(cwd, &["commit", "--allow-empty", "-m", &format!("e{i}")]);
         }
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.total, extra + 2);
-        assert_eq!(bc.commits.len(), git_libgit2::BRANCH_COMMITS_CAP);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.ahead, extra + 2);
+        assert_eq!(h.commits.len(), git_libgit2::COMMIT_HISTORY_CAP);
+        // All ahead: no shared row fits.
+        assert!(h.commits.iter().all(|c| !c.shared));
     }
 
     #[test]
-    fn branch_commits_include_merged_in_commits_and_flag_the_merge() {
+    fn commit_history_marks_commits_the_github_remote_reaches() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+        let one = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        // Simulate `origin/feature` having been pushed at `one`.
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &one]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.github_slug.as_deref(), Some("o/r"));
+        let by = |s: &str| h.commits.iter().find(|c| c.subject == s).unwrap();
+        assert!(!by("two").on_remote);
+        assert!(by("one").on_remote);
+        // Shared history below a pushed commit is pushed too.
+        assert!(by("base").on_remote);
+    }
+
+    #[test]
+    fn commit_history_shared_rows_on_an_unpushed_base_are_not_on_remote() {
+        // Local main carries a commit nobody pushed; being below the divider
+        // must not make it linkable.
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+        let base = run_git_test(cwd, &["rev-parse", "main"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/main", &base]);
+        run_git_test(cwd, &["checkout", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "local only"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        let by = |s: &str| h.commits.iter().find(|c| c.subject == s).unwrap();
+        assert!(by("local only").shared);
+        assert!(!by("local only").on_remote);
+        assert!(by("base").on_remote);
+    }
+
+    #[test]
+    fn commit_history_never_on_remote_without_a_github_remote() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://gitlab.com/o/r.git"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &head]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.github_slug, None);
+        assert!(h.commits.iter().all(|c| !c.on_remote));
+    }
+
+    #[test]
+    fn commit_history_judges_pushed_against_the_linked_remote_only() {
+        // A fork checkout: the link goes to origin, so a commit only upstream
+        // has is not "on remote" — its origin page would not exist.
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/me/r.git"]);
+        run_git_test(cwd, &["remote", "add", "upstream", "https://github.com/org/r.git"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/upstream/feature", &head]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.github_slug.as_deref(), Some("me/r"));
+        assert!(h.commits.iter().all(|c| !c.on_remote));
+    }
+
+    #[test]
+    fn commit_history_recomputes_when_head_base_or_remote_moves() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+        let get = || git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(get().ahead, 2);
+        assert_eq!(get().ahead, 2); // served from the cache
+
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "three"]);
+        let h = get();
+        assert_eq!(h.ahead, 3);
+        assert_eq!(h.commits[0].subject, "three");
+        assert!(!h.commits[0].on_remote);
+
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &head]);
+        assert!(get().commits.iter().all(|c| c.on_remote));
+
+        let one = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/heads/main", &one]);
+        assert_eq!(get().ahead, 1);
+    }
+
+    #[test]
+    fn commit_history_merge_files_are_against_the_first_parent() {
         let dir = make_branch_repo();
         let cwd = dir.path().to_str().unwrap();
         run_git_test(cwd, &["checkout", "-b", "side", "main"]);
@@ -1200,72 +1335,11 @@ mod tests {
         run_git_test(cwd, &["commit", "-m", "side"]);
         run_git_test(cwd, &["checkout", "feature"]);
         run_git_test(cwd, &["merge", "--no-ff", "-m", "merge side", "side"]);
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.total, 4);
-        assert!(bc.commits[0].is_merge);
-        assert!(bc.commits.iter().any(|c| c.subject == "side"));
-        // The merge's files are against its first parent: what it brought in.
-        let files = git_libgit2::commit_files_sync(cwd, &bc.commits[0].oid).unwrap();
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert!(h.commits[0].is_merge);
+        let files = git_libgit2::commit_files_sync(cwd, &h.commits[0].oid).unwrap();
         let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["c.txt"]);
-    }
-
-    #[test]
-    fn branch_commits_marks_commits_a_remote_branch_reaches() {
-        let dir = make_branch_repo();
-        let cwd = dir.path().to_str().unwrap();
-        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
-        let one = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
-        // Simulate `origin/feature` having been pushed at `one`.
-        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &one]);
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.github_slug.as_deref(), Some("o/r"));
-        let by_subject = |s: &str| bc.commits.iter().find(|c| c.subject == s).unwrap();
-        assert!(by_subject("one").on_remote);
-        assert!(!by_subject("two").on_remote);
-    }
-
-    #[test]
-    fn branch_commits_without_a_github_remote_are_never_on_remote() {
-        // Reachable from a remote ref, but not a GitHub one: there is no page
-        // to link to, so nothing may enable "Open on GitHub".
-        let dir = make_branch_repo();
-        let cwd = dir.path().to_str().unwrap();
-        run_git_test(cwd, &["remote", "add", "origin", "https://gitlab.com/o/r.git"]);
-        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
-        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &head]);
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.github_slug, None);
-        assert!(bc.commits.iter().all(|c| !c.on_remote));
-    }
-
-    #[test]
-    fn branch_commits_judge_pushed_against_the_linked_remote_only() {
-        // A fork checkout: `origin` is the fork, `upstream` the original. The
-        // link goes to origin, so a commit only upstream has is not "on
-        // remote" — its origin page would not exist.
-        let dir = make_branch_repo();
-        let cwd = dir.path().to_str().unwrap();
-        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/me/r.git"]);
-        run_git_test(cwd, &["remote", "add", "upstream", "https://github.com/org/r.git"]);
-        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
-        run_git_test(cwd, &["update-ref", "refs/remotes/upstream/feature", &head]);
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.github_slug.as_deref(), Some("me/r"));
-        assert!(bc.commits.iter().all(|c| !c.on_remote));
-    }
-
-    #[test]
-    fn branch_commits_on_the_base_branch_carry_the_slug_and_cache() {
-        let dir = make_branch_repo();
-        let cwd = dir.path().to_str().unwrap();
-        run_git_test(cwd, &["remote", "add", "origin", "git@github.com:o/r.git"]);
-        run_git_test(cwd, &["checkout", "main"]);
-        for _ in 0..2 {
-            let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-            assert_eq!(bc.total, 0);
-            assert_eq!(bc.github_slug.as_deref(), Some("o/r"));
-        }
     }
 
     #[test]
@@ -1283,37 +1357,6 @@ mod tests {
         let two = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
         let files = git_libgit2::commit_files_sync(cwd, &two).unwrap();
         assert!(files.iter().all(|f| !f.is_binary));
-    }
-
-    #[test]
-    fn branch_commits_recompute_when_head_base_or_remote_moves() {
-        let dir = make_branch_repo();
-        let cwd = dir.path().to_str().unwrap();
-        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
-        let first = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(first.total, 2);
-        // Unchanged repository: same answer (served from the cache).
-        let again = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(again.total, 2);
-
-        // HEAD moves.
-        run_git_test(cwd, &["commit", "--allow-empty", "-m", "three"]);
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.total, 3);
-        assert_eq!(bc.commits[0].subject, "three");
-
-        // A remote-tracking ref moves: on_remote must follow.
-        assert!(!bc.commits[0].on_remote);
-        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
-        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &head]);
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert!(bc.commits.iter().all(|c| c.on_remote));
-
-        // The base moves (main catches up to HEAD~1).
-        let one = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
-        run_git_test(cwd, &["update-ref", "refs/heads/main", &one]);
-        let bc = git_libgit2::compute_branch_commits_sync(cwd, Some("main".into())).unwrap();
-        assert_eq!(bc.total, 1);
     }
 
     #[test]

@@ -1,11 +1,11 @@
 /**
  * Height split of the Right sidebar: tab content, then the two **Anchored
- * sections** — Branch commits and Pull Requests — each with a divider above it.
+ * sections** — Commits and Pull Requests — each with a divider above it.
  *
  * Two stored numbers, both fractions of the sidebar's height:
- *  - `prRatio` — where the PR section starts. It predates Branch commits and
+ *  - `prRatio` — where the PR section starts. It predates Commits and
  *    keeps its meaning, so a user's tuned PR height survives the upgrade.
- *  - `commitsShare` — Branch commits' height, carved out of the space above
+ *  - `commitsShare` — Commits' height, carved out of the space above
  *    the PR section (the tab content gives it up, not the PRs).
  *
  * A collapsed section has no share (it pins its header); its height goes to
@@ -41,7 +41,7 @@ export function rightSidebarShares(opts: {
 const clamp = (v: number, lo: number, hi: number) =>
 	Math.min(hi, Math.max(lo, v));
 
-/** Dragging the divider above Branch commits to height fraction `y`: the tab
+/** Dragging the divider above Commits to height fraction `y`: the tab
  *  content ends at `y`, the commits fill down to the PR section (or to the
  *  bottom when PRs are collapsed). */
 export function commitsShareFromDrag(y: number, prShare: number): number {

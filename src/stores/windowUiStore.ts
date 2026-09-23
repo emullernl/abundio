@@ -18,7 +18,7 @@ interface WindowUiState {
 	rightSidebarOpen: boolean;
 	rightSidebarActiveTab: RightSidebarTab;
 	prSectionCollapsed: boolean;
-	/** The **Branch commits** Anchored section's collapse state. */
+	/** The **Commits** Anchored section's collapse state. */
 	commitsSectionCollapsed: boolean;
 
 	toggleSidebar: () => void;

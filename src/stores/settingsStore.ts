@@ -29,7 +29,7 @@ interface SettingsState {
 	sidebarWidth: number;
 	rightSidebarWidth: number;
 	rightSidebarPrRatio: number;
-	/** Height share of the **Branch commits** section, carved out of the tab
+	/** Height share of the **Commits** section, carved out of the tab
 	 *  content's side of `rightSidebarPrRatio`. See `lib/rightSidebarLayout.ts`. */
 	rightSidebarCommitsShare: number;
 	debugActivityMeter: boolean;
@@ -179,7 +179,7 @@ const PERSISTED_DEFAULTS: {
 	sidebarWidth: number;
 	rightSidebarWidth: number;
 	rightSidebarPrRatio: number;
-	/** Height share of the **Branch commits** section, carved out of the tab
+	/** Height share of the **Commits** section, carved out of the tab
 	 *  content's side of `rightSidebarPrRatio`. See `lib/rightSidebarLayout.ts`. */
 	rightSidebarCommitsShare: number;
 	debugActivityMeter: boolean;

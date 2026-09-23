@@ -5,7 +5,7 @@ import {
 	githubCommitUrl,
 	initials,
 	relativeTime,
-} from "../branchCommits";
+} from "../commitHistory";
 
 describe("initials", () => {
 	it("takes the first and last word", () => {

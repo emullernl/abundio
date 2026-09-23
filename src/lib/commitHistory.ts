@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the **Branch commits** section (see CONTEXT.md).
+ * Pure helpers for the **Commits** section (see CONTEXT.md).
  *
  * The section's right-click menu follows the Git changes **Row menu**: it is
  * read-only (no revert, reset or cherry-pick — `Resolve & stage` stays
@@ -7,7 +7,7 @@
  * disabled, never dropped, so the menu keeps one shape on every row.
  */
 
-import type { BranchCommit } from "./types";
+import type { HistoryCommit } from "./types";
 
 /** "Emil Müller" → "EM", "cher" → "C", "" → "?". First and last word, so a
  *  middle name does not push the surname out. */
@@ -51,7 +51,7 @@ export interface CommitMenuAction {
 /** `slug` is the Workspace's first GitHub `owner/repo`, or null. GitHub has
  *  no page for a commit that was never pushed, so that disables the item too. */
 export function commitMenuEntries(
-	commit: Pick<BranchCommit, "onRemote">,
+	commit: Pick<HistoryCommit, "onRemote">,
 	slug: string | null,
 ): CommitMenuAction[] {
 	return [
@@ -65,7 +65,7 @@ export function commitMenuEntries(
 }
 
 /** The row tooltip: short hash, author, local date, then the full message. */
-export function commitTooltip(commit: BranchCommit): string {
+export function commitTooltip(commit: HistoryCommit): string {
 	const date = new Date(commit.time * 1000).toLocaleString();
 	const who = commit.authorEmail
 		? `${commit.authorName} <${commit.authorEmail}>`

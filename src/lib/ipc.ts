@@ -8,9 +8,9 @@ import type {
 	AgentHookEvent,
 	AppMetrics,
 	AvailableShell,
-	BranchCommits,
 	BranchInfo,
 	CommitFile,
+	CommitHistory,
 	DetectedDevEnvironment,
 	DirEntry,
 	FileContent,
@@ -273,7 +273,7 @@ export interface GitFetchBundle {
 	statusFingerprint: string;
 	operationInProgress: GitOperation | null;
 	/** Null when the base branch cannot be resolved to a commit. */
-	branchCommits: BranchCommits | null;
+	commitHistory: CommitHistory | null;
 }
 
 /** Line/file churn between two worktree tree snapshots — a per-Turn working-tree

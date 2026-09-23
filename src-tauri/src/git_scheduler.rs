@@ -190,7 +190,7 @@ fn compute_bundle(
         let h_changed =
             s.spawn(|| compute_changed_files_sync(root_path, base_branch.clone()));
         let h_commits = s.spawn(|| {
-            crate::git_libgit2::compute_branch_commits_sync(root_path, base_branch.clone())
+            crate::git_libgit2::compute_commit_history_sync(root_path, base_branch.clone())
         });
         let h_branch = s.spawn(|| compute_branch_info_sync(root_path));
         let h_fp = s.spawn(|| compute_status_fingerprint_sync(root_path));
@@ -218,6 +218,6 @@ fn compute_bundle(
         branch_info: branch_res?,
         status_fingerprint: fp_res?,
         operation_in_progress: op_res.unwrap_or(None),
-        branch_commits: commits_res.ok(),
+        commit_history: commits_res.ok(),
     })
 }

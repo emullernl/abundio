@@ -3,8 +3,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
-	BranchCommit,
-	BranchCommits,
+	CommitHistory,
+	HistoryCommit,
 	WorkspaceWithTabs,
 } from "../../../lib/types";
 import { useExplorerStore } from "../../../stores/explorerStore";
@@ -48,8 +48,8 @@ function workspace(id: string, rootFolder: string): WorkspaceWithTabs {
 
 const commit = (
 	oid: string,
-	over: Partial<BranchCommit> = {},
-): BranchCommit => ({
+	over: Partial<HistoryCommit> = {},
+): HistoryCommit => ({
 	oid,
 	subject: `subject ${oid}`,
 	message: `subject ${oid}`,
@@ -61,7 +61,7 @@ const commit = (
 	...over,
 });
 
-const list = (...cs: BranchCommit[]): BranchCommits => ({
+const list = (...cs: HistoryCommit[]): CommitHistory => ({
 	base: "main",
 	total: cs.length,
 	commits: cs,
@@ -76,7 +76,7 @@ describe("CommitsSection", () => {
 		state: Partial<ReturnType<typeof useGitChangesStore.getState>>,
 	) {
 		useGitChangesStore.setState({
-			branchCommits: null,
+			commitHistory: null,
 			baseBranch: "main",
 			currentBranch: "feature",
 			error: null,
@@ -113,8 +113,8 @@ describe("CommitsSection", () => {
 	const text = () => container.textContent ?? "";
 
 	it("lists the branch's commits with initials, age and the count", () => {
-		render({ branchCommits: list(commit("a1"), commit("b2")) });
-		expect(text()).toContain("Branch Commits");
+		render({ commitHistory: list(commit("a1"), commit("b2")) });
+		expect(text()).toContain("Commits");
 		expect(text()).toContain("(2)");
 		expect(text()).toContain("vs main");
 		expect(text()).toContain("subject a1");
@@ -123,7 +123,7 @@ describe("CommitsSection", () => {
 	});
 
 	it("says so when nothing is ahead of the base", () => {
-		render({ branchCommits: list() });
+		render({ commitHistory: list() });
 		expect(text()).toContain("No commits ahead of main");
 	});
 
@@ -137,13 +137,13 @@ describe("CommitsSection", () => {
 	});
 
 	it("reports an unresolvable base once a bundle has arrived", () => {
-		render({ branchCommits: null, currentBranch: "feature" });
+		render({ commitHistory: null, currentBranch: "feature" });
 		expect(text()).toContain("Base branch not found");
 	});
 
 	it("shows a failed refresh's own error, not a missing base", () => {
 		render({
-			branchCommits: null,
+			commitHistory: null,
 			currentBranch: "feature",
 			error: "index is locked",
 		});
@@ -152,15 +152,15 @@ describe("CommitsSection", () => {
 	});
 
 	it("shows how many were left out past the cap", () => {
-		render({ branchCommits: { ...list(commit("a1")), total: 1285 } });
+		render({ commitHistory: { ...list(commit("a1")), total: 1285 } });
 		expect(text()).toContain("(1,285)");
 		expect(text()).toContain("1,284 more not shown");
 	});
 
 	it("hides the body but keeps the header when collapsed", () => {
 		useWindowUiStore.setState({ commitsSectionCollapsed: true });
-		render({ branchCommits: list(commit("a1")) });
-		expect(text()).toContain("Branch Commits");
+		render({ commitHistory: list(commit("a1")) });
+		expect(text()).toContain("Commits");
 		expect(text()).not.toContain("subject a1");
 	});
 
@@ -178,7 +178,7 @@ describe("CommitsSection", () => {
 		commitFileDiff.mockResolvedValue({ original: "o", modified: "m" });
 		const openCommitDiff = vi.fn();
 		useExplorerStore.setState({ openCommitDiff });
-		render({ branchCommits: list(commit(oid)) });
+		render({ commitHistory: list(commit(oid)) });
 
 		const row = container.querySelector("[aria-expanded]") as HTMLElement;
 		await act(async () => row.click());
@@ -209,7 +209,7 @@ describe("CommitsSection", () => {
 
 	it("disables Open on GitHub without a GitHub remote", () => {
 		render({
-			branchCommits: {
+			commitHistory: {
 				...list(commit("a1", { onRemote: true })),
 				githubSlug: null,
 			},
@@ -224,7 +224,7 @@ describe("CommitsSection", () => {
 	it("says a failed file read failed, and retries on re-expand", async () => {
 		commitFiles.mockRejectedValueOnce(new Error("locked"));
 		const err = vi.spyOn(console, "error").mockImplementation(() => {});
-		render({ branchCommits: list(commit("a1")) });
+		render({ commitHistory: list(commit("a1")) });
 		const row = container.querySelector("[aria-expanded]") as HTMLElement;
 		await act(async () => row.click());
 		expect(text()).toContain("Could not read this commit's files");
@@ -248,7 +248,7 @@ describe("CommitsSection", () => {
 
 	it("does not lose a toggle when two land in the same batch", async () => {
 		commitFiles.mockResolvedValue([]);
-		render({ branchCommits: list(commit("a1")) });
+		render({ commitHistory: list(commit("a1")) });
 		const row = container.querySelector("[aria-expanded]") as HTMLElement;
 		await act(async () => {
 			row.click();
@@ -267,7 +267,7 @@ describe("CommitsSection", () => {
 				isBinary: true,
 			},
 		]);
-		render({ branchCommits: list(commit("bin1")) });
+		render({ commitHistory: list(commit("bin1")) });
 		const row = container.querySelector("[aria-expanded]") as HTMLElement;
 		await act(async () => row.click());
 		const fileRow = [...container.querySelectorAll("button")].find((b) =>
@@ -280,7 +280,7 @@ describe("CommitsSection", () => {
 	});
 
 	it("disables Open on GitHub for an unpushed commit", () => {
-		render({ branchCommits: list(commit("a1", { onRemote: false })) });
+		render({ commitHistory: list(commit("a1", { onRemote: false })) });
 		const row = container.querySelector("[aria-haspopup]") as HTMLElement;
 		act(() => {
 			row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
@@ -290,7 +290,7 @@ describe("CommitsSection", () => {
 	});
 
 	it("opens a pushed commit on GitHub", () => {
-		render({ branchCommits: list(commit("a1", { onRemote: true })) });
+		render({ commitHistory: list(commit("a1", { onRemote: true })) });
 		const row = container.querySelector("[aria-haspopup]") as HTMLElement;
 		act(() => {
 			row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));

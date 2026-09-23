@@ -5,7 +5,7 @@ interface Props {
 	onResizeEnd: () => void;
 }
 
-/** Horizontal drag handle above an expanded Anchored section (Branch commits
+/** Horizontal drag handle above an expanded Anchored section (Commits
  *  or Pull Requests). Reports the pointer's height fraction; the caller turns
  *  it into a share. Renders only while that section is expanded — collapsed,
  *  the section pins itself at its header height and the divider has no role. */

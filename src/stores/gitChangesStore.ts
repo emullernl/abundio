@@ -6,7 +6,7 @@ import {
 	git,
 	workspaces as workspacesApi,
 } from "../lib/ipc";
-import type { BranchCommits, GitChangedFile } from "../lib/types";
+import type { CommitHistory, GitChangedFile } from "../lib/types";
 import { conflictedPathsOf, useWorkspaceGitStore } from "./workspaceGitStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
@@ -28,7 +28,7 @@ interface GitChangesCacheEntry {
 	currentBranch: string | null;
 	availableBranches: string[];
 	operationInProgress: GitOperation | null;
-	branchCommits: BranchCommits | null;
+	commitHistory: CommitHistory | null;
 }
 
 const gitChangesCache = new Map<string, GitChangesCacheEntry>();
@@ -48,15 +48,15 @@ function emptyCacheEntry(): GitChangesCacheEntry {
 		currentBranch: null,
 		availableBranches: [],
 		operationInProgress: null,
-		branchCommits: null,
+		commitHistory: null,
 	};
 }
 
 /** Same list, same order, same remote reachability. A bundle push on every
  *  fs event must not re-render the section when nothing about it moved. */
-export function branchCommitsEqual(
-	a: BranchCommits | null,
-	b: BranchCommits | null,
+export function commitHistoryEqual(
+	a: CommitHistory | null,
+	b: CommitHistory | null,
 ): boolean {
 	if (a === b) return true;
 	if (!a || !b) return false;
@@ -103,9 +103,9 @@ interface GitChangesState {
 	/** The suspended git operation, surfaced as a single read-only line in the
 	 *  Git changes tab. Abundio never continues or aborts one. */
 	operationInProgress: GitOperation | null;
-	/** The **Branch commits** section's data for the Active workspace. Null
+	/** The **Commits** section's data for the Active workspace. Null
 	 *  before the first bundle, or when the base branch cannot be resolved. */
-	branchCommits: BranchCommits | null;
+	commitHistory: CommitHistory | null;
 	fetchChanges: (
 		cwd: string,
 		workspaceBaseBranch?: string | null,
@@ -145,7 +145,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 	collapsedSections: {},
 	branchSelectorOpen: false,
 	operationInProgress: null,
-	branchCommits: null,
+	commitHistory: null,
 
 	fetchChanges: async (cwd, workspaceBaseBranch) => {
 		if (inFlightFetch) {
@@ -181,7 +181,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 					changedFiles: files,
 					baseBranch: newBaseBranch,
 					currentBranch: branchInfo.currentBranch,
-					branchCommits: bundle.branchCommits,
+					commitHistory: bundle.commitHistory,
 				});
 			}
 			if (gen !== fetchGeneration) return; // stale singleton
@@ -203,8 +203,8 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			if (state.currentBranch !== branchInfo.currentBranch) {
 				updates.currentBranch = branchInfo.currentBranch;
 			}
-			if (!branchCommitsEqual(state.branchCommits, bundle.branchCommits)) {
-				updates.branchCommits = bundle.branchCommits;
+			if (!commitHistoryEqual(state.commitHistory, bundle.commitHistory)) {
+				updates.commitHistory = bundle.commitHistory;
 			}
 			set(updates);
 			// Keep sidebar chip and stats in sync without extra IPC calls
@@ -232,7 +232,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 				if (existing) {
 					gitChangesCache.set(startedForWorkspaceId, {
 						...existing,
-						branchCommits: null,
+						commitHistory: null,
 					});
 				}
 			}
@@ -242,7 +242,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 				loading: false,
 				error: errMsg,
 				changedFiles: [],
-				branchCommits: null,
+				commitHistory: null,
 			});
 			// Sync non-git status so sidebar chip and panel stay consistent
 			if (/not a git repository/i.test(errMsg)) {
@@ -284,7 +284,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			baseBranch: newBaseBranch,
 			currentBranch: branchInfo.currentBranch,
 			operationInProgress: bundle.operationInProgress,
-			branchCommits: bundle.branchCommits,
+			commitHistory: bundle.commitHistory,
 		});
 
 		// Always: sidebar chip — keeps WorkspaceItem accurate for background
@@ -347,8 +347,8 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 		if (state.operationInProgress !== bundle.operationInProgress) {
 			updates.operationInProgress = bundle.operationInProgress;
 		}
-		if (!branchCommitsEqual(state.branchCommits, bundle.branchCommits)) {
-			updates.branchCommits = bundle.branchCommits;
+		if (!commitHistoryEqual(state.commitHistory, bundle.commitHistory)) {
+			updates.commitHistory = bundle.commitHistory;
 		}
 		set(updates);
 	},
@@ -388,7 +388,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 		// cache as well, or a switch away and back would resurrect it.
 		const existing = gitChangesCache.get(workspaceId);
 		if (existing) {
-			gitChangesCache.set(workspaceId, { ...existing, branchCommits: null });
+			gitChangesCache.set(workspaceId, { ...existing, commitHistory: null });
 		}
 		const activeId = useWorkspaceStore.getState().activeWorkspaceId;
 		if (workspaceId !== activeId) return;
@@ -396,7 +396,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			loading: false,
 			error: message,
 			changedFiles: [],
-			branchCommits: null,
+			commitHistory: null,
 		});
 	},
 
@@ -450,7 +450,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			currentBranch: null,
 			availableBranches: [],
 			operationInProgress: null,
-			branchCommits: null,
+			commitHistory: null,
 			loading: false,
 			error: null,
 			branchSelectorOpen: false,
@@ -465,7 +465,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			currentBranch: entry?.currentBranch ?? null,
 			availableBranches: entry?.availableBranches ?? [],
 			operationInProgress: entry?.operationInProgress ?? null,
-			branchCommits: entry?.branchCommits ?? null,
+			commitHistory: entry?.commitHistory ?? null,
 			loading: false,
 			error: null,
 			branchSelectorOpen: false,
