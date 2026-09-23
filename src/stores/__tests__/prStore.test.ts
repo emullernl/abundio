@@ -17,6 +17,14 @@ const storageAtImport = vi.hoisted(() => {
 	}
 });
 
+vi.mock("../../lib/ipc", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../lib/ipc")>();
+	return {
+		...actual,
+		pr: { ...actual.pr, markRead: vi.fn().mockResolvedValue(undefined) },
+	};
+});
+
 const focusMock = vi.hoisted(() => ({ blurredMs: 10_000 as number | null }));
 vi.mock("../../lib/windowFocus", () => ({
 	isAppWindowFocused: () => document.hasFocus(),
@@ -25,12 +33,14 @@ vi.mock("../../lib/windowFocus", () => ({
 	NOTIFICATION_BLUR_THRESHOLD_MS: 3000,
 }));
 
+import { pr as prIpc } from "../../lib/ipc";
 import type { PrChange, PrStatePayload, PullRequest } from "../../lib/types";
 import {
 	handlePrChanges,
 	PR_VIEW_LABELS,
 	profilePrCounts,
 	scopeOf,
+	unreadCount,
 	usePrStore,
 	visiblePrs,
 } from "../prStore";
@@ -54,6 +64,7 @@ const makePr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
 	isDraft: false,
 	labels: [],
 	repository: "org/repo",
+	unreadThreadId: null,
 	...overrides,
 });
 
@@ -65,6 +76,7 @@ const makePayload = (
 	reviewRequested: [],
 	mine: [],
 	error: null,
+	unreadError: null,
 	...overrides,
 });
 
@@ -201,6 +213,39 @@ describe("prStore", () => {
 			expect(s.ghStatus).toEqual({ available: true, authenticated: false });
 			expect(s.error).toBe("boom");
 			expect(s.loading).toBe(false);
+		});
+	});
+
+	describe("Unread PRs", () => {
+		it("applyPrState carries the unread error through", () => {
+			usePrStore.getState().applyPrState(makePayload({ unreadError: "403" }));
+			expect(usePrStore.getState().unreadError).toBe("403");
+			usePrStore.getState().applyPrState(makePayload());
+			expect(usePrStore.getState().unreadError).toBeNull();
+		});
+
+		it("markRead clears the thread in both lists and tells GitHub", () => {
+			const a = makePr({ number: 1, unreadThreadId: "7" });
+			const b = makePr({ number: 2, unreadThreadId: "8" });
+			usePrStore.setState({ reviewRequested: [a], mine: [b] });
+			usePrStore.getState().markRead("7");
+			const s = usePrStore.getState();
+			expect(s.reviewRequested[0].unreadThreadId).toBeNull();
+			expect(s.mine[0].unreadThreadId).toBe("8");
+			// An untouched list keeps its identity (no needless re-render).
+			expect(s.mine[0]).toBe(b);
+			expect(prIpc.markRead).toHaveBeenCalledWith("7");
+		});
+
+		it("unreadCount counts only PRs with an unread thread", () => {
+			expect(
+				unreadCount([
+					makePr({ unreadThreadId: "1" }),
+					makePr(),
+					makePr({ unreadThreadId: "2" }),
+				]),
+			).toBe(2);
+			expect(unreadCount([])).toBe(0);
 		});
 	});
 

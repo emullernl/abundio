@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-shell";
 import type { PullRequest } from "../../lib/types";
+import { usePrStore } from "../../stores/prStore";
 import { ExternalLink } from "../Icons";
 
 interface Props {
@@ -83,6 +84,12 @@ function CiDot({ status }: { status: string }) {
 export function PullRequestItem({ pr, showStatus }: Props) {
 	const hasStatus =
 		showStatus && (pr.reviewDecision || pr.statusCheckRollup || pr.isDraft);
+	const unread = pr.unreadThreadId !== null;
+
+	const handleOpen = () => {
+		open(pr.url);
+		if (pr.unreadThreadId) usePrStore.getState().markRead(pr.unreadThreadId);
+	};
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: hover effect container
@@ -101,8 +108,21 @@ export function PullRequestItem({ pr, showStatus }: Props) {
 				e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			{/* Row 1: number + title + open link */}
+			{/* Row 1: unread dot + number + title + open link */}
 			<div className="flex items-center gap-1.5 min-w-0">
+				{unread && (
+					<span
+						className="flex-shrink-0 rounded-full"
+						role="img"
+						aria-label="Unread"
+						title="Unread activity on GitHub"
+						style={{
+							width: 6,
+							height: 6,
+							backgroundColor: "var(--accent)",
+						}}
+					/>
+				)}
 				<span
 					className="flex-shrink-0"
 					style={{
@@ -115,7 +135,11 @@ export function PullRequestItem({ pr, showStatus }: Props) {
 				</span>
 				<span
 					className="truncate flex-1 min-w-0"
-					style={{ fontSize: 11, color: "var(--fg-primary)" }}
+					style={{
+						fontSize: 11,
+						color: "var(--fg-primary)",
+						fontWeight: unread ? 600 : undefined,
+					}}
 				>
 					{pr.title}
 				</span>
@@ -123,7 +147,7 @@ export function PullRequestItem({ pr, showStatus }: Props) {
 					<button
 						type="button"
 						title="Open in browser"
-						onClick={() => open(pr.url)}
+						onClick={handleOpen}
 						className="flex items-center justify-center rounded transition-opacity opacity-0 group-hover:opacity-70 hover:!opacity-100 flex-shrink-0"
 						style={{
 							width: 18,

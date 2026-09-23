@@ -42,6 +42,10 @@ pub struct PrStatePayload {
 	pub review_requested: Vec<PullRequest>,
 	pub mine: Vec<PullRequest>,
 	pub error: Option<String>,
+	/// Why the unread markers couldn't be fetched (e.g. a fine-grained token
+	/// with no notifications access). The PR lists are still good; the panel
+	/// shows a quiet note instead of letting "no markers" pass as "all read".
+	pub unread_error: Option<String>,
 }
 
 /// A single notification-worthy change, with a preformatted `body`. The
@@ -134,6 +138,18 @@ impl PrPoller {
 		self.shared.notify.notify_one();
 	}
 
+	/// Clear `thread_id`'s unread marker from both cached payloads and return
+	/// the updated snapshot to broadcast, or `None` if no cached PR carried it.
+	/// Touching `last_success` too keeps the notification baseline in step.
+	pub fn clear_unread(&self, thread_id: &str) -> Option<PrStatePayload> {
+		if let Some(p) = self.shared.last_success.lock().unwrap().as_mut() {
+			clear_unread_in(p, thread_id);
+		}
+		let mut last = self.shared.last.lock().unwrap();
+		let p = last.as_mut()?;
+		clear_unread_in(p, thread_id).then(|| p.clone())
+	}
+
 	/// Last emitted payload, for new Windows to hydrate from without a gh call.
 	pub fn snapshot(&self) -> Option<PrStatePayload> {
 		self.shared.last.lock().unwrap().clone()
@@ -142,6 +158,18 @@ impl PrPoller {
 	fn shared(&self) -> PollerShared {
 		self.shared.clone()
 	}
+}
+
+/// Returns whether any PR in `payload` carried `thread_id`.
+fn clear_unread_in(payload: &mut PrStatePayload, thread_id: &str) -> bool {
+	let mut hit = false;
+	for pr in payload.review_requested.iter_mut().chain(payload.mine.iter_mut()) {
+		if pr.unread_thread_id.as_deref() == Some(thread_id) {
+			pr.unread_thread_id = None;
+			hit = true;
+		}
+	}
+	hit
 }
 
 /// True if any Abundio Window is frontmost (Settings included).
@@ -171,13 +199,25 @@ fn build_payload_blocking() -> PrStatePayload {
 		};
 	}
 	match gh_commands::fetch_prs() {
-		Ok((review_requested, mine)) => PrStatePayload {
-			available: true,
-			authenticated: true,
-			review_requested,
-			mine,
-			error: None,
-		},
+		Ok((mut review_requested, mut mine)) => {
+			// A failure here costs only the markers, never the lists.
+			let unread_error = match gh_commands::fetch_unread_pr_threads() {
+				Ok(threads) => {
+					gh_commands::apply_unread(&mut review_requested, &threads);
+					gh_commands::apply_unread(&mut mine, &threads);
+					None
+				}
+				Err(e) => Some(pr_error_message(e)),
+			};
+			PrStatePayload {
+				available: true,
+				authenticated: true,
+				review_requested,
+				mine,
+				error: None,
+				unread_error,
+			}
+		}
 		Err(e) => PrStatePayload {
 			available: true,
 			authenticated: true,
@@ -378,6 +418,23 @@ pub async fn pr_poller_refresh(poller: State<'_, PrPoller>) -> Result<(), Abundi
 	Ok(())
 }
 
+/// Mark a PR's notification thread read: clear the marker in every Window at
+/// once (broadcast from the cache — no refetch), then tell GitHub. A failed
+/// PATCH is returned, and the next poll brings the marker back.
+#[tauri::command]
+pub async fn pr_mark_read(
+	app: AppHandle,
+	poller: State<'_, PrPoller>,
+	thread_id: String,
+) -> Result<(), AbundioError> {
+	if let Some(payload) = poller.clear_unread(&thread_id) {
+		let _ = app.emit("pr-state", &payload);
+	}
+	tokio::task::spawn_blocking(move || gh_commands::mark_thread_read(&thread_id))
+		.await
+		.map_err(|e| AbundioError::Git(format!("mark-read task failed: {}", e)))?
+}
+
 #[tauri::command]
 pub async fn pr_poller_snapshot(
 	poller: State<'_, PrPoller>,
@@ -407,6 +464,7 @@ mod tests {
 			review_requested: review,
 			mine,
 			error: None,
+			unread_error: None,
 		}
 	}
 
@@ -467,5 +525,31 @@ mod tests {
 		let poller = PrPoller::new();
 		*poller.shared.last_fetch.lock().unwrap() = Some(Instant::now());
 		assert!(!gap_elapsed(&poller.shared, 5));
+	}
+
+	#[test]
+	fn clear_unread_updates_both_caches_and_both_lists() {
+		let poller = PrPoller::new();
+		let mut a = pr("org/repo", 1, "", "");
+		a.unread_thread_id = Some("55".into());
+		let mut b = pr("org/repo", 2, "", "");
+		b.unread_thread_id = Some("66".into());
+		let p = payload(vec![a], vec![b]);
+		*poller.shared.last.lock().unwrap() = Some(p.clone());
+		*poller.shared.last_success.lock().unwrap() = Some(p);
+
+		let out = poller.clear_unread("55").expect("thread 55 was cached");
+		assert_eq!(out.review_requested[0].unread_thread_id, None);
+		assert_eq!(out.mine[0].unread_thread_id.as_deref(), Some("66"));
+		let baseline = poller.shared.last_success.lock().unwrap().clone().unwrap();
+		assert_eq!(baseline.review_requested[0].unread_thread_id, None);
+	}
+
+	#[test]
+	fn clear_unread_unknown_thread_is_none() {
+		let poller = PrPoller::new();
+		assert!(poller.clear_unread("1").is_none(), "nothing cached");
+		*poller.shared.last.lock().unwrap() = Some(payload(vec![], vec![]));
+		assert!(poller.clear_unread("1").is_none(), "no PR carries it");
 	}
 }

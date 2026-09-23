@@ -293,6 +293,8 @@ export interface PrStatePayload {
 	reviewRequested: PullRequest[];
 	mine: PullRequest[];
 	error: string | null;
+	/** Why the unread markers couldn't be fetched. The lists are still good. */
+	unreadError: string | null;
 }
 
 /** One notification descriptor from the single-target `pr-changes` event. */
@@ -317,6 +319,9 @@ export interface PullRequest {
 	isDraft: boolean;
 	labels: string[];
 	repository: string;
+	/** Id of the PR's GitHub notification thread when that thread is unread,
+	 *  else null. GitHub owns the flag — see **Unread PR** in CONTEXT.md. */
+	unreadThreadId: string | null;
 }
 
 export interface AvailableShell {

@@ -1227,6 +1227,7 @@ pub fn run() {
             pr_poller::pr_poller_set_config,
             pr_poller::pr_poller_refresh,
             pr_poller::pr_poller_snapshot,
+            pr_poller::pr_mark_read,
             git_commands::git_repo_slug,
             git_commands::git_snapshot_worktree,
             git_commands::git_diff_trees,

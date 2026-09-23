@@ -585,6 +585,10 @@ export const pr = {
 	 *  flag and the min-gap, and re-checks gh auth. */
 	refresh: () => invoke<void>("pr_poller_refresh"),
 
+	/** Mark a PR's notification thread read on GitHub. Rust clears the marker
+	 *  in every Window's cache first, then sends the PATCH. */
+	markRead: (threadId: string) => invoke<void>("pr_mark_read", { threadId }),
+
 	/** Push the persisted polling config: enabled + focused interval (minutes). */
 	setConfig: (enabled: boolean, minutes: number) =>
 		invoke<void>("pr_poller_set_config", { enabled, minutes }),

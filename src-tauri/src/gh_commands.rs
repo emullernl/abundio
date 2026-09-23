@@ -10,6 +10,7 @@
 use crate::error::AbundioError;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::collections::HashMap;
 use std::process::Command;
 use std::sync::RwLock;
 
@@ -35,6 +36,10 @@ pub struct PullRequest {
 	pub is_draft: bool,
 	pub labels: Vec<String>,
 	pub repository: String,
+	/// Id of the PR's GitHub notification thread when that thread is **unread**
+	/// for the user, else `None`. Both the unread flag and the handle
+	/// `pr_mark_read` needs. Filled by `apply_unread` after the GraphQL fetch.
+	pub unread_thread_id: Option<String>,
 }
 
 // ── gh runner ──
@@ -310,6 +315,7 @@ fn node_to_pr(node: GqlPrNode) -> PullRequest {
 		is_draft: node.is_draft,
 		labels: node.labels.nodes.into_iter().map(|l| l.name).collect(),
 		repository: node.repository.name_with_owner,
+		unread_thread_id: None,
 	}
 }
 
@@ -336,6 +342,86 @@ pub fn parse_combined_prs(json: &str) -> Result<(Vec<PullRequest>, Vec<PullReque
 			.collect()
 	};
 	Ok((to_prs(resp.data.review_requested), to_prs(resp.data.mine)))
+}
+
+// ── Unread notification threads ──
+//
+// Whether the user has read a PR is GitHub's call, not Abundio's: the flag is
+// the PR's notification thread being unread, which clears when they open the
+// PR on github.com, read it in their inbox, or on another device. GraphQL has
+// no notifications API, so this is a second (REST) call per poll.
+
+/// One JSON object per line per unread PR thread (`tojson` keeps it on one
+/// line whatever gh does to pretty-print). `--jq` runs per page under
+/// `--paginate`, so line-per-thread output sidesteps the back-to-back arrays
+/// raw `--paginate` would print.
+const UNREAD_JQ: &str = r#".[] | select(.subject.type == "PullRequest") | {id, url: .subject.url} | tojson"#;
+
+/// `(lowercased owner/repo, number)` → thread id, for every unread PR thread.
+pub type UnreadThreads = HashMap<(String, i32), String>;
+
+/// Fetch the user's unread PR notification threads. The endpoint returns only
+/// unread threads by default (`all=false`).
+pub fn fetch_unread_pr_threads() -> Result<UnreadThreads, AbundioError> {
+	let output = run_gh(
+		"",
+		&["api", "notifications?per_page=50", "--paginate", "--jq", UNREAD_JQ],
+	)?;
+	Ok(parse_unread_threads(&output))
+}
+
+#[derive(Debug, Deserialize)]
+struct UnreadLine {
+	id: String,
+	url: Option<String>,
+}
+
+/// Parse `UNREAD_JQ` output. Lines that don't parse, or whose subject URL isn't
+/// a PR, are skipped — a missing marker is better than failing the whole set.
+pub fn parse_unread_threads(output: &str) -> UnreadThreads {
+	output
+		.lines()
+		.filter_map(|line| serde_json::from_str::<UnreadLine>(line.trim()).ok())
+		.filter_map(|l| Some((pr_key_from_api_url(l.url.as_deref()?)?, l.id)))
+		.collect()
+}
+
+/// `https://api.github.com/repos/Owner/Repo/pulls/12` → `("owner/repo", 12)`.
+/// Lowercased because `nameWithOwner` and the notification URL need not agree
+/// on casing after a rename.
+fn pr_key_from_api_url(url: &str) -> Option<(String, i32)> {
+	let rest = &url[url.find("/repos/")? + "/repos/".len()..];
+	let mut parts = rest.split('/');
+	let (owner, repo, kind, number) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+	if kind != "pulls" || parts.next().is_some() {
+		return None;
+	}
+	Some((format!("{}/{}", owner, repo).to_lowercase(), number.parse().ok()?))
+}
+
+/// Stamp each PR with its unread thread id (or clear it).
+pub fn apply_unread(prs: &mut [PullRequest], threads: &UnreadThreads) {
+	for pr in prs {
+		pr.unread_thread_id = threads
+			.get(&(pr.repository.to_lowercase(), pr.number))
+			.cloned();
+	}
+}
+
+/// Mark one notification thread read on GitHub. The id is interpolated into a
+/// URL path, so anything but digits is refused.
+pub fn mark_thread_read(thread_id: &str) -> Result<(), AbundioError> {
+	if thread_id.is_empty() || !thread_id.bytes().all(|b| b.is_ascii_digit()) {
+		return Err(AbundioError::InvalidOperation(format!(
+			"invalid notification thread id: {}",
+			thread_id
+		)));
+	}
+	run_gh(
+		"",
+		&["api", "-X", "PATCH", &format!("notifications/threads/{}", thread_id)],
+	)?;
+	Ok(())
 }
 
 #[cfg(test)]
@@ -506,5 +592,65 @@ mod tests {
 		assert!(offline_message("gh: Bad credentials (HTTP 401)").is_none());
 		assert!(offline_message("GraphQL: Field 'foo' doesn't exist on type 'PullRequest'").is_none());
 		assert!(offline_message("API rate limit exceeded").is_none());
+	}
+
+	#[test]
+	fn parse_unread_threads_keys_by_lowercased_repo_and_number() {
+		let out = concat!(
+			r#"{"id":"111","url":"https://api.github.com/repos/Org/Repo/pulls/42"}"#,
+			"\n",
+			r#"{"id":"222","url":"https://api.github.com/repos/org/other/pulls/7"}"#,
+			"\n",
+		);
+		let t = parse_unread_threads(out);
+		assert_eq!(t.len(), 2);
+		assert_eq!(t.get(&("org/repo".to_string(), 42)), Some(&"111".to_string()));
+		assert_eq!(t.get(&("org/other".to_string(), 7)), Some(&"222".to_string()));
+	}
+
+	#[test]
+	fn parse_unread_threads_skips_junk_and_non_pr_urls() {
+		let out = concat!(
+			"not json\n",
+			"\n",
+			r#"{"id":"1","url":null}"#,
+			"\n",
+			r#"{"id":"2","url":"https://api.github.com/repos/o/r/issues/3"}"#,
+			"\n",
+			r#"{"id":"3","url":"https://api.github.com/repos/o/r/pulls/x"}"#,
+			"\n",
+			r#"{"id":"4","url":"https://api.github.com/repos/o/r/pulls/5"}"#,
+		);
+		let t = parse_unread_threads(out);
+		assert_eq!(t.len(), 1);
+		assert_eq!(t.get(&("o/r".to_string(), 5)), Some(&"4".to_string()));
+	}
+
+	#[test]
+	fn apply_unread_sets_and_clears() {
+		let mut prs = vec![
+			PullRequest { number: 42, repository: "Org/Repo".into(), ..Default::default() },
+			PullRequest {
+				number: 8,
+				repository: "org/repo".into(),
+				unread_thread_id: Some("stale".into()),
+				..Default::default()
+			},
+		];
+		let mut t = UnreadThreads::new();
+		t.insert(("org/repo".to_string(), 42), "111".to_string());
+		apply_unread(&mut prs, &t);
+		assert_eq!(prs[0].unread_thread_id.as_deref(), Some("111"));
+		assert_eq!(prs[1].unread_thread_id, None, "a PR with no unread thread is read");
+	}
+
+	#[test]
+	fn mark_thread_read_rejects_non_numeric_ids() {
+		for bad in ["", "12/../../user", "abc", "1 2"] {
+			assert!(matches!(
+				mark_thread_read(bad),
+				Err(AbundioError::InvalidOperation(_))
+			));
+		}
 	}
 }
