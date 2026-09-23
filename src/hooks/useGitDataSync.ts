@@ -136,6 +136,15 @@ export function useGitDataSync() {
 			})
 			.catch(() => {});
 
+		pr.onUnreadCleared((threadId) =>
+			usePrStore.getState().clearUnread(threadId),
+		)
+			.then((un) => {
+				if (cancelled) un();
+				else unlisteners.push(un);
+			})
+			.catch(() => {});
+
 		pr.onPrChanges((changes) => handlePrChanges(changes))
 			.then((un) => {
 				if (cancelled) un();

@@ -361,13 +361,33 @@ const UNREAD_JQ: &str = r#".[] | select(.subject.type == "PullRequest") | {id, u
 pub type UnreadThreads = HashMap<(String, i32), String>;
 
 /// Fetch the user's unread PR notification threads. The endpoint returns only
-/// unread threads by default (`all=false`).
-pub fn fetch_unread_pr_threads() -> Result<UnreadThreads, AbundioError> {
-	let output = run_gh(
-		"",
-		&["api", "notifications?per_page=50", "--paginate", "--jq", UNREAD_JQ],
-	)?;
+/// unread threads by default (`all=false`), but of *every* type, so an
+/// unbounded call walks the user's whole inbox on every poll. `since` bounds
+/// it; see `unread_since`.
+pub fn fetch_unread_pr_threads(since: &str) -> Result<UnreadThreads, AbundioError> {
+	let endpoint = format!("notifications?per_page=50&since={}", since);
+	let output = run_gh("", &["api", &endpoint, "--paginate", "--jq", UNREAD_JQ])?;
 	Ok(parse_unread_threads(&output))
+}
+
+/// Lower bound for the notifications fetch: the oldest `createdAt` across the
+/// listed PRs. A PR's thread can have no activity from before the PR existed,
+/// so nothing we could mark is lost. (`updatedAt` would not be safe: it moves
+/// on events that notify no one, such as a label change, and can pass the
+/// thread's own last update.) `None` when there are no PRs, or one lacks a
+/// timestamp — then there is nothing to bound by, or bounding is unsafe.
+/// GitHub's ISO-8601 UTC timestamps order correctly as strings.
+pub fn unread_since<'a>(prs: impl IntoIterator<Item = &'a PullRequest>) -> Option<String> {
+	let mut oldest: Option<&str> = None;
+	for pr in prs {
+		if pr.created_at.is_empty() {
+			return None;
+		}
+		if oldest.map_or(true, |o| pr.created_at.as_str() < o) {
+			oldest = Some(&pr.created_at);
+		}
+	}
+	oldest.map(str::to_string)
 }
 
 #[derive(Debug, Deserialize)]
@@ -642,6 +662,16 @@ mod tests {
 		apply_unread(&mut prs, &t);
 		assert_eq!(prs[0].unread_thread_id.as_deref(), Some("111"));
 		assert_eq!(prs[1].unread_thread_id, None, "a PR with no unread thread is read");
+	}
+
+	#[test]
+	fn unread_since_is_the_oldest_created_at() {
+		let pr = |created: &str| PullRequest { created_at: created.into(), ..Default::default() };
+		let a = [pr("2026-09-01T10:00:00Z"), pr("2026-03-02T08:00:00Z"), pr("2026-05-01T00:00:00Z")];
+		assert_eq!(unread_since(&a).as_deref(), Some("2026-03-02T08:00:00Z"));
+		assert_eq!(unread_since(&[] as &[PullRequest]), None, "no PRs, nothing to fetch");
+		let b = [pr("2026-09-01T10:00:00Z"), pr("")];
+		assert_eq!(unread_since(&b), None, "a missing timestamp can't bound safely");
 	}
 
 	#[test]

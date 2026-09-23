@@ -237,6 +237,19 @@ describe("prStore", () => {
 			expect(prIpc.markRead).toHaveBeenCalledWith("7");
 		});
 
+		it("clearUnread clears locally, leaves a Refresh spinning, calls no IPC", () => {
+			usePrStore.setState({
+				reviewRequested: [makePr({ unreadThreadId: "7" })],
+				refreshing: true,
+			});
+			usePrStore.getState().clearUnread("7");
+			const s = usePrStore.getState();
+			expect(s.reviewRequested[0].unreadThreadId).toBeNull();
+			// Another Window's mark-read is not a finished poll.
+			expect(s.refreshing).toBe(true);
+			expect(prIpc.markRead).not.toHaveBeenCalled();
+		});
+
 		it("unreadCount counts only PRs with an unread thread", () => {
 			expect(
 				unreadCount([

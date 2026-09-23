@@ -96,6 +96,10 @@ interface PrState {
 	/** The user opened this PR: clear its marker now and mark the thread read
 	 *  on GitHub. Rust also rebroadcasts, so other Windows clear too. */
 	markRead: (threadId: string) => void;
+	/** Clear one thread's marker locally, without telling GitHub. What
+	 *  `markRead` does first, and what other Windows do on `pr-unread-cleared`.
+	 *  Leaves `refreshing` alone: no poll has finished. */
+	clearUnread: (threadId: string) => void;
 	/** Mark a manual Refresh as in-flight (spins the refresh icon). Cleared by
 	 *  the next `applyPrState`. */
 	beginRefresh: () => void;
@@ -150,6 +154,12 @@ export const usePrStore = create<PrState>()(
 			},
 
 			markRead: (threadId) => {
+				usePrStore.getState().clearUnread(threadId);
+				// A failed PATCH needs no rollback: the next poll restores the marker.
+				prIpc.markRead(threadId).catch(() => {});
+			},
+
+			clearUnread: (threadId) => {
 				const clear = (prs: PullRequest[]) =>
 					prs.some((p) => p.unreadThreadId === threadId)
 						? prs.map((p) =>
@@ -162,8 +172,6 @@ export const usePrStore = create<PrState>()(
 					reviewRequested: clear(s.reviewRequested),
 					mine: clear(s.mine),
 				}));
-				// A failed PATCH needs no rollback: the next poll restores the marker.
-				prIpc.markRead(threadId).catch(() => {});
 			},
 
 			beginRefresh: () => set({ refreshing: true }),

@@ -599,6 +599,13 @@ export const pr = {
 	): Promise<UnlistenFn> =>
 		listen<PrStatePayload>("pr-state", (event) => callback(event.payload)),
 
+	/** A thread was marked read (from any Window): clear its marker locally.
+	 *  Deliberately not a `pr-state` — that one ends a Refresh spin. */
+	onUnreadCleared: (
+		callback: (threadId: string) => void,
+	): Promise<UnlistenFn> =>
+		listen<string>("pr-unread-cleared", (event) => callback(event.payload)),
+
 	/** Notification descriptors — emitted to ONE Window so N Windows don't
 	 *  each fire duplicate OS notifications. */
 	onPrChanges: (callback: (changes: PrChange[]) => void): Promise<UnlistenFn> =>
