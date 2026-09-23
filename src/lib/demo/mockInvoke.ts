@@ -413,8 +413,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		// no filesystem path, and paths are the whole mechanism (ADR-0038). Hand
 		// back a canned path so the dialog looks complete in a screenshot while
 		// being honest that nothing was written.
-		case "prompt_attachment_save":
-			return "/Users/demo/Screenshots/login-error.png";
+		case "prompt_attachment_from_clipboard":
+			return ["/Users/demo/Screenshots/login-error.png"];
 
 		// ── Environment variables — inert in demo ──
 		// Demo mode never touches the OS credential store, so every Workspace

@@ -1220,7 +1220,7 @@ pub fn run() {
             search::fs_search_cancel,
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
-            prompt_attachments::prompt_attachment_save,
+            prompt_attachments::prompt_attachment_from_clipboard,
             prompt_actions::prompt_actions_list,
             prompt_actions::prompt_action_create,
             prompt_actions::prompt_action_update,

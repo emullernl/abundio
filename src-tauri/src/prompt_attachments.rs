@@ -7,7 +7,7 @@
 //! user's clipboard alone.
 //!
 //! A file chosen from the picker already has a path and never comes here. Only
-//! a **pasted bitmap** does, because a paste yields bytes with no path, so
+//! a **pasted bitmap** does, because a clipboard image has no path, so
 //! Abundio has to materialise it.
 //!
 //! ## Lifetime
@@ -129,20 +129,93 @@ pub fn sweep() {
     }
 }
 
+/// Longest side a pasted image is saved at. The clipboard hands over raw
+/// pixels, so a pasted photo is re-encoded as PNG, which is lossless and far
+/// larger than the JPEG it came from — a 6000×4000 photo easily passes
+/// [`MAX_BYTES`]. 4096 px keeps every screenshot (even 5K) sharp while bringing
+/// photos back under the limit, and no Agent looks at more detail than that.
+const MAX_IMAGE_SIDE: u32 = 4096;
+
+/// Encode raw RGBA pixels (as the clipboard hands them over) to PNG bytes,
+/// scaling down first so the longest side is at most [`MAX_IMAGE_SIDE`].
+fn rgba_to_png(width: usize, height: usize, rgba: Vec<u8>) -> Result<Vec<u8>, AbundioError> {
+    use std::io::Cursor;
+    let (w, h) = (
+        u32::try_from(width).map_err(|_| AbundioError::Clipboard("image too wide".into()))?,
+        u32::try_from(height).map_err(|_| AbundioError::Clipboard("image too tall".into()))?,
+    );
+    let img = image::RgbaImage::from_raw(w, h, rgba).ok_or_else(|| {
+        AbundioError::Clipboard("clipboard image has the wrong number of bytes".into())
+    })?;
+    let img = fit_within(img, MAX_IMAGE_SIDE);
+    let mut png = Vec::new();
+    img.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| AbundioError::Clipboard(format!("png encode failed: {e}")))?;
+    Ok(png)
+}
+
+/// Scale `img` down, keeping its aspect ratio, so neither side exceeds
+/// `max_side`. An image already small enough is returned untouched.
+fn fit_within(img: image::RgbaImage, max_side: u32) -> image::RgbaImage {
+    let (w, h) = img.dimensions();
+    let longest = w.max(h);
+    if longest <= max_side {
+        return img;
+    }
+    let scale = f64::from(max_side) / f64::from(longest);
+    let nw = ((f64::from(w) * scale).round() as u32).max(1);
+    let nh = ((f64::from(h) * scale).round() as u32).max(1);
+    image::imageops::resize(&img, nw, nh, image::imageops::FilterType::Triangle)
+}
+
+/// What "Paste from clipboard" attaches, as paths. Empty when there is nothing to attach.
+///
+/// **Copied files come first.** Copying a file in Finder also puts that file's
+/// *icon* on the clipboard as a picture, so reading the image first would
+/// silently attach a generic icon instead of the file. A copied file already
+/// has a path, so it is used as-is, like a picked one (ADR-0038) — and it may
+/// be any kind of file, which an Attachment accepts.
+fn paths_from_clipboard_blocking() -> Result<Vec<String>, AbundioError> {
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| AbundioError::Clipboard(format!("clipboard open failed: {e}")))?;
+
+    match clipboard.get().file_list() {
+        Ok(files) if !files.is_empty() => {
+            return Ok(files
+                .into_iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect());
+        }
+        // No files: fall through to the image. A read error here is not worth
+        // failing over either — the image read below reports its own.
+        _ => {}
+    }
+
+    let data = match clipboard.get_image() {
+        Ok(data) => data,
+        // Text or nothing at all: not an error, just nothing to attach.
+        Err(arboard::Error::ContentNotAvailable) => return Ok(Vec::new()),
+        Err(e) => return Err(AbundioError::Clipboard(format!("read failed: {e}"))),
+    };
+    let png = rgba_to_png(data.width, data.height, data.bytes.into_owned())?;
+    Ok(vec![save(&png, "png")?])
+}
+
 // ── IPC ──
 
-/// Save a pasted bitmap and return the path to interpolate into the prompt.
+/// Back the dialog's **Paste from clipboard** button: return the path(s) to interpolate
+/// into the prompt for whatever is on the OS clipboard — copied files as they
+/// are, or an image saved as a PNG. Empty when there is nothing to attach.
 ///
-/// Takes base64 rather than a byte array: a `number[]` of a few megabytes is
-/// millions of JSON numbers, and building it froze the webview long before this
-/// function could reject the size.
+/// Read here rather than from a webview `paste` event: WebKit only delivers
+/// paste to an editable element, so the dialog's Cmd+V never arrived (and the
+/// bytes no longer have to cross IPC as base64). The clipboard hands back
+/// decoded pixels whatever the source format, so a pasted image is always PNG.
 #[tauri::command]
-pub fn prompt_attachment_save(base64: String, extension: String) -> Result<String, AbundioError> {
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(base64.as_bytes())
-        .map_err(|e| AbundioError::InvalidOperation(format!("Attachment is not valid base64: {e}")))?;
-    save(&bytes, &extension)
+pub async fn prompt_attachment_from_clipboard() -> Result<Vec<String>, AbundioError> {
+    tauri::async_runtime::spawn_blocking(paths_from_clipboard_blocking)
+        .await
+        .map_err(|e| AbundioError::Clipboard(format!("task join failed: {e}")))?
 }
 
 #[cfg(test)]
@@ -170,6 +243,41 @@ mod tests {
     #[test]
     fn an_unsupported_extension_is_refused() {
         assert!(save(b"data", "../evil").is_err());
+    }
+
+    #[test]
+    fn rgba_pixels_become_a_decodable_png() {
+        let rgba = vec![255, 0, 0, 255, 0, 255, 0, 255]; // 2×1: red, green
+        let png = rgba_to_png(2, 1, rgba).unwrap();
+        let back = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(back.dimensions(), (2, 1));
+        assert_eq!(back.get_pixel(1, 0).0, [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn a_large_image_is_scaled_down_keeping_its_shape() {
+        let img = image::RgbaImage::new(6000, 4000);
+        let out = fit_within(img, 4096);
+        assert_eq!(out.dimensions(), (4096, 2731));
+    }
+
+    #[test]
+    fn a_small_image_is_left_alone() {
+        let img = image::RgbaImage::new(1920, 1080);
+        assert_eq!(fit_within(img, 4096).dimensions(), (1920, 1080));
+    }
+
+    #[test]
+    fn a_very_thin_image_never_scales_to_zero() {
+        let img = image::RgbaImage::new(10000, 1);
+        assert_eq!(fit_within(img, 4096).dimensions(), (4096, 1));
+    }
+
+    #[test]
+    fn a_short_pixel_buffer_is_refused() {
+        assert!(rgba_to_png(2, 2, vec![0; 4]).is_err());
     }
 
     #[test]

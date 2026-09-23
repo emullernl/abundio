@@ -23,7 +23,7 @@ vi.mock("../../../lib/ipc", () => ({
 		reorder: vi.fn(),
 		onChanged: vi.fn().mockResolvedValue(() => {}),
 	},
-	promptAttachments: { save: vi.fn() },
+	promptAttachments: { fromClipboard: vi.fn() },
 }));
 vi.mock("../../../lib/firePromptAction", () => ({
 	firePromptAction: vi.fn(),

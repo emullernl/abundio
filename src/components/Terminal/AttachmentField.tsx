@@ -5,21 +5,23 @@
  *
  * - **File picker** — Tauri's dialog returns real paths. Nothing is copied;
  *   the file stays where the user keeps it.
- * - **Cmd+V** — a paste yields bytes with no path, so it is written to a
- *   content-hashed file under the versioned root and *that* path is used.
+ * - **Paste from clipboard** — a button, not Cmd+V. Rust reads the OS clipboard: files
+ *   copied in Finder/Explorer attach by their own paths; otherwise the image
+ *   is written to a content-hashed PNG under the versioned root and *that*
+ *   path is used. A keyboard paste cannot work here: WebKit only fires `paste` on an
+ *   editable element, so on macOS Cmd+V on a button never arrived at all.
  * - **Drag-drop of a pasted-looking image** is not handled here: OS file drops
  *   are delivered app-wide by Tauri and are already owned by
  *   `useTerminalFileDrop`, which targets panes. Intercepting them for a modal
  *   would fight that.
  *
- * The value is always **paths**, never bytes — see ADR-0038. Nothing here
- * touches the OS clipboard or synthesises a `Ctrl+V`.
+ * The value is always **paths**, never bytes — see ADR-0038. The clipboard is
+ * only ever read, never written, and no `Ctrl+V` is synthesised.
  */
 
-import { ImagePlus, Paperclip, X } from "lucide-react";
+import { ClipboardPaste, ImagePlus, Paperclip, X } from "lucide-react";
 import { useState } from "react";
 import { promptAttachments } from "../../lib/ipc";
-import { isMac } from "../../lib/platform";
 import type { ParamValue } from "../../lib/promptActions";
 
 interface AttachmentFieldProps {
@@ -28,37 +30,20 @@ interface AttachmentFieldProps {
 	onChange: (v: ParamValue) => void;
 }
 
-/** Map a pasted image's MIME type to the extension Rust will accept. */
-const MIME_EXT: Record<string, string> = {
-	"image/png": "png",
-	"image/jpeg": "jpg",
-	"image/gif": "gif",
-	"image/webp": "webp",
-	"image/bmp": "bmp",
-	"image/tiff": "tiff",
+const buttonStyle: React.CSSProperties = {
+	padding: "0 12px",
+	height: 32,
+	fontSize: 12,
 };
 
-/** Matches `MAX_BYTES` in `prompt_attachments.rs`. */
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-
-/** Encode without a giant intermediate array. `FileReader` hands back a data
- *  URL, whose payload after the comma is exactly the base64 we want. */
-function toBase64(file: File): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const reader = new FileReader();
-		reader.onerror = () => reject(reader.error ?? new Error("Read failed"));
-		reader.onload = () => {
-			const url = String(reader.result ?? "");
-			const comma = url.indexOf(",");
-			if (comma < 0) {
-				reject(new Error("Could not read the pasted image"));
-				return;
-			}
-			resolve(url.slice(comma + 1));
-		};
-		reader.readAsDataURL(file);
-	});
-}
+/** Colour and border live in classes, not `buttonStyle`: an inline style
+ *  beats any `hover:` utility, so the hover state would never show. */
+const buttonClass =
+	"inline-flex items-center gap-2 rounded-md transition-colors cursor-pointer " +
+	"border border-[var(--border)] text-[var(--fg-secondary)] " +
+	"enabled:hover:bg-[var(--bg-tertiary)] enabled:hover:text-[var(--fg-primary)] " +
+	"enabled:hover:border-[var(--fg-secondary)] " +
+	"disabled:opacity-60 disabled:cursor-default";
 
 function basename(p: string): string {
 	const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
@@ -95,38 +80,13 @@ export function AttachmentField({
 		}
 	}
 
-	async function handlePaste(e: React.ClipboardEvent) {
-		const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
-			i.type.startsWith("image/"),
-		);
-		if (!item) return; // a text paste is not ours to intercept
-		e.preventDefault();
-		const file = item.getAsFile();
-		if (!file) return;
-
-		const ext = MIME_EXT[item.type];
-		if (!ext) {
-			setError(`Cannot attach a ${item.type} image`);
-			return;
-		}
-
-		// Checked here, before anything is encoded. Rust checks too, but only
-		// after the whole payload has crossed the IPC boundary — far too late to
-		// spare the webview the work.
-		if (file.size > MAX_ATTACHMENT_BYTES) {
-			setError(
-				`That image is ${Math.round(file.size / (1024 * 1024))} MB — the limit is ${
-					MAX_ATTACHMENT_BYTES / (1024 * 1024)
-				} MB`,
-			);
-			return;
-		}
-
+	async function pasteImage() {
 		setBusy(true);
 		setError(null);
 		try {
-			const path = await promptAttachments.save(await toBase64(file), ext);
-			add([path]);
+			const pasted = await promptAttachments.fromClipboard();
+			if (pasted.length > 0) add(pasted);
+			else setError("There is no image or file on the clipboard");
 		} catch (err) {
 			setError(String(err));
 		} finally {
@@ -176,29 +136,27 @@ export function AttachmentField({
 					</div>
 				)}
 
-				{/* The paste target is the button itself, not a tabIndex'd div: a
-				    paste event goes to the focused element, and a button is
-				    focusable and interactive without any a11y contortions. Clicking
-				    it opens the picker, so the same control does both jobs. */}
-				<button
-					type="button"
-					className="inline-flex items-center gap-2 rounded-md self-start transition-colors"
-					style={{
-						padding: "0 12px",
-						height: 32,
-						fontSize: 12,
-						color: "var(--fg-secondary)",
-						border: "1px solid var(--border)",
-					}}
-					onPaste={handlePaste}
-					onClick={pick}
-				>
-					<ImagePlus size={11} />
-					{paths.length > 0 && !multiple ? "Replace…" : "Choose file…"}
-					<span style={{ fontSize: 11, opacity: 0.7 }}>
-						{busy ? "saving…" : `or ${isMac ? "⌘V" : "Ctrl+V"} here`}
-					</span>
-				</button>
+				<div className="flex flex-wrap gap-2">
+					<button
+						type="button"
+						className={buttonClass}
+						style={buttonStyle}
+						onClick={pick}
+					>
+						<ImagePlus size={11} />
+						{paths.length > 0 && !multiple ? "Replace…" : "Choose file…"}
+					</button>
+					<button
+						type="button"
+						className={buttonClass}
+						style={buttonStyle}
+						onClick={pasteImage}
+						disabled={busy}
+					>
+						<ClipboardPaste size={11} />
+						{busy ? "Saving…" : "Paste from clipboard"}
+					</button>
+				</div>
 			</div>
 
 			{error && (
