@@ -9,28 +9,24 @@ import {
 
 describe("shouldSweep", () => {
 	it("sweeps a change to a different pane", () => {
-		expect(shouldSweep("a", "b", true, false, true)).toBe(true);
+		expect(shouldSweep("a", "b", true, true)).toBe(true);
 	});
 
 	it("sweeps focus arriving from nothing, once focus has been seen", () => {
-		expect(shouldSweep(null, "b", true, false, true)).toBe(true);
+		expect(shouldSweep(null, "b", true, true)).toBe(true);
 	});
 
 	it("skips the first focus after the Window opens", () => {
-		expect(shouldSweep(null, "a", false, false, true)).toBe(false);
+		expect(shouldSweep(null, "a", false, true)).toBe(false);
 	});
 
 	it("never sweeps re-focusing the same pane, or focus going away", () => {
-		expect(shouldSweep("a", "a", true, false, true)).toBe(false);
-		expect(shouldSweep("a", null, true, false, true)).toBe(false);
-	});
-
-	it("skips a switch of Active workspace", () => {
-		expect(shouldSweep("a", "b", true, true, true)).toBe(false);
+		expect(shouldSweep("a", "a", true, true)).toBe(false);
+		expect(shouldSweep("a", null, true, true)).toBe(false);
 	});
 
 	it("is off when the setting is off", () => {
-		expect(shouldSweep("a", "b", true, false, false)).toBe(false);
+		expect(shouldSweep("a", "b", true, false)).toBe(false);
 	});
 });
 
@@ -74,15 +70,6 @@ describe("installFocusSweep", () => {
 		expect(useFocusSweepStore.getState().paneId).toBe("c");
 		useFocusSweepStore.getState().finish(useFocusSweepStore.getState().nonce);
 		expect(useFocusSweepStore.getState().paneId).toBeNull();
-	});
-
-	it("does not sweep a workspace switch, but does sweep moves after it", () => {
-		useWorkspaceStore.setState({ activeWorkspaceId: "w1" });
-		focus("a");
-		useWorkspaceStore.setState({ activeWorkspaceId: "w2", focusedPaneId: "b" });
-		expect(useFocusSweepStore.getState().paneId).toBeNull();
-		focus("c");
-		expect(useFocusSweepStore.getState().paneId).toBe("c");
 	});
 
 	it("respects the setting at the moment focus moves", () => {

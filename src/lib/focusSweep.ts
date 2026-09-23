@@ -6,25 +6,16 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
  * The **Focus sweep** trigger rule. A sweep plays whenever the Focused pane
  * changes to a *different* Pane, whatever caused it — except the first focus
  * after the Window opens, when every Pane is appearing at once and a sweep is
- * noise — and except a switch of Active workspace, where the whole view
- * changes and already says where you are. Re-focusing the already-focused Pane
- * changes nothing, so it never sweeps; neither does the Window regaining OS
- * focus, for the same reason.
+ * noise. Re-focusing the already-focused Pane changes nothing, so it never
+ * sweeps; neither does the Window regaining OS focus, for the same reason.
  */
 export function shouldSweep(
 	prev: string | null,
 	next: string | null,
 	hasFocusedBefore: boolean,
-	workspaceChanged: boolean,
 	enabled: boolean,
 ): boolean {
-	return (
-		enabled &&
-		hasFocusedBefore &&
-		!workspaceChanged &&
-		next !== null &&
-		next !== prev
-	);
+	return enabled && hasFocusedBefore && next !== null && next !== prev;
 }
 
 interface FocusSweepState {
@@ -55,8 +46,6 @@ export function installFocusSweep(): () => void {
 				prev,
 				next,
 				hasFocusedBefore,
-				// `setActiveWorkspace` moves both in one update.
-				state.activeWorkspaceId !== prevState.activeWorkspaceId,
 				useSettingsStore.getState().focusSweep,
 			)
 		) {
