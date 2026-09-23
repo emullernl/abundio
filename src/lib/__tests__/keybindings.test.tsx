@@ -413,3 +413,37 @@ describe("prompt action digit shortcuts", () => {
 		expect(handler).not.toHaveBeenCalled();
 	});
 });
+
+describe("tab cycle bindings", () => {
+	afterEach(() => {
+		unregisterAction("next-tab");
+		unregisterAction("prev-tab");
+	});
+
+	it("match the physical bracket key, whatever character Shift produces", () => {
+		const next = vi.fn();
+		const prev = vi.fn();
+		registerAction("next-tab", next);
+		registerAction("prev-tab", prev);
+
+		// Shift+] reports `}` on a US layout — the old `key: "]"` never matched.
+		handleKeyDown(
+			makeKeyEvent({
+				key: "}",
+				code: "BracketRight",
+				[modKey]: true,
+				shiftKey: true,
+			}),
+		);
+		handleKeyDown(
+			makeKeyEvent({
+				key: "{",
+				code: "BracketLeft",
+				[modKey]: true,
+				shiftKey: true,
+			}),
+		);
+		expect(next).toHaveBeenCalledOnce();
+		expect(prev).toHaveBeenCalledOnce();
+	});
+});

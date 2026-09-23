@@ -201,8 +201,25 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "n", meta: isMac, shift: true, ctrl: !isMac, action: "new-workspace" },
 	{ key: "t", meta: isMac, shift: false, ctrl: !isMac, action: "new-tab" },
 	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
-	{ key: "]", meta: isMac, shift: true, ctrl: !isMac, action: "next-tab" },
-	{ key: "[", meta: isMac, shift: true, ctrl: !isMac, action: "prev-tab" },
+	// Brackets match by position (`code`): with Shift held, `key` reports `}` /
+	// `{` on US layouts and something else again on others, so a `key: "]"`
+	// binding silently never fires.
+	{
+		key: "]",
+		code: "BracketRight",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "next-tab",
+	},
+	{
+		key: "[",
+		code: "BracketLeft",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "prev-tab",
+	},
 	{
 		key: "=",
 		meta: isMac,
