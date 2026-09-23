@@ -60,9 +60,9 @@ export interface CompositeParts {
  *  reachable only when every shell is Idle, so this suppresses exactly the case
  *  the ADR names — where whitelisting two counts would also silently drop a
  *  shell-mode PTY sitting at **Waiting** or **Ready**. Those are not supposed
- *  to happen (ADR-0009), but they are reachable: the reducer's `sessionEnded`
+ *  to happen (ADR-0009), but they are reachable: the reducer's `agentExited`
  *  flips `mode` to `"shell"` while *preserving* `state`, so an Agent at Waiting
- *  or Ready when its session ends becomes a shell-mode PTY still in that state.
+ *  or Ready when its process exits becomes a shell-mode PTY still in that state.
  *  `statusOfCounts` ranks both for terminals for the same reason — "ranked here
  *  rather than silently dropped". */
 function badgeWorthy(terminal: KindRollup | null): boolean {

@@ -194,18 +194,18 @@ describe("statusReducer — agent/session mode flips", () => {
 		expect(statusReducer(before, { kind: "agentDetected" })).toBe(before);
 	});
 
-	it("sessionEnded flips agent → shell and drops hookDriven (state untouched)", () => {
+	it("agentExited flips agent → shell and drops hookDriven (state untouched)", () => {
 		const s = statusReducer(mk({ state: "ready", hookDriven: true }, "agent"), {
-			kind: "sessionEnded",
+			kind: "agentExited",
 		});
 		expect(s.mode).toBe("shell");
 		expect(s.hookDriven).toBe(false);
 		expect(s.state).toBe("ready");
 	});
 
-	it("sessionEnded is idempotent when already shell", () => {
+	it("agentExited is idempotent when already shell", () => {
 		const before = mk({}, "shell");
-		expect(statusReducer(before, { kind: "sessionEnded" })).toBe(before);
+		expect(statusReducer(before, { kind: "agentExited" })).toBe(before);
 	});
 });
 
@@ -793,11 +793,11 @@ describe("statusReducer — Subagent hold (ADR-0022)", () => {
 		expect(acked.activeSubagents).toHaveLength(1);
 	});
 
-	it("sessionEnded / ptyExited / ESC-cancel clear set and hold", () => {
+	it("agentExited / ptyExited / ESC-cancel clear set and hold", () => {
 		const held = () =>
 			run(mk({ state: "working" }, "agent"), start("a", 0), mainStop(1));
 
-		const ended = statusReducer(held(), { kind: "sessionEnded" });
+		const ended = statusReducer(held(), { kind: "agentExited" });
 		expect(ended.activeSubagents).toHaveLength(0);
 		expect(ended.stopHeldForSubagents).toBe(false);
 

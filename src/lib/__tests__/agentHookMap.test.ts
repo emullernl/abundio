@@ -11,32 +11,46 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("claude", "PermissionRequest")).toBe("waiting");
 		expect(mapHookEvent("claude", "Stop")).toBe("ready");
 		expect(mapHookEvent("claude", "StopFailure")).toBe("error");
-		expect(mapHookEvent("claude", "SessionEnd")).toBe("clear");
+		expect(mapHookEvent("claude", "SessionEnd")).toBe("sessionReset");
 	});
 
-	it("treats Claude Code's /clear as a session reset, not a process exit", () => {
-		// `/clear` fires SessionEnd with reason "clear" and immediately starts a
-		// new session in the SAME process. Mapping it to "clear" dropped the pane
-		// out of agent mode while the agent sat there waiting for input — the
-		// agent icon left the title bar, the status icon flipped to shell, and
-		// the Action bar unmounted.
-		expect(mapHookEvent("claude", "SessionEnd", undefined, "clear")).toBe(
-			"sessionReset",
-		);
+	it("maps every Agent's Session end to a session reset, never an exit", () => {
+		// A Session end is not a process exit: Claude Code and Copilot both fire
+		// it on `/clear`, which starts a new session in the SAME process. Mapping
+		// it to an exit dropped the pane out of agent mode while the agent sat
+		// there waiting for input. Leaving agent mode belongs to command_end.
+		const sessionEnds = [
+			["claude", "SessionEnd"],
+			["copilot", "sessionEnd"],
+			["gemini", "SessionEnd"],
+			["qwen", "SessionEnd"],
+			["kimi", "SessionEnd"],
+			["grok", "SessionEnd"],
+			["opencode", "session.deleted"],
+		] as const;
+		for (const [agent, event] of sessionEnds) {
+			expect(mapHookEvent(agent, event)).toBe("sessionReset");
+		}
 	});
 
-	it("keeps every other SessionEnd reason on the process-exit mapping", () => {
-		// Narrow on purpose. These do not need to be precise: when the process
-		// really exits, the shell's own command_end marker drops agent mode
-		// anyway, which is what makes special-casing only "clear" safe.
+	it("ignores the Session end reason, which cannot tell /clear from /exit", () => {
+		// Copilot reports `reason: "user_exit"` for `/clear` and `/exit` alike
+		// (verified against copilot 1.0.88 with a logging hook), so no reason
+		// may be read as "the process is gone".
 		for (const reason of [
+			"clear",
+			"user_exit",
 			"logout",
 			"prompt_input_exit",
+			"complete",
 			"other",
 			undefined,
 		] as const) {
 			expect(mapHookEvent("claude", "SessionEnd", undefined, reason)).toBe(
-				"clear",
+				"sessionReset",
+			);
+			expect(mapHookEvent("copilot", "sessionEnd", undefined, reason)).toBe(
+				"sessionReset",
 			);
 		}
 	});
@@ -48,7 +62,7 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("copilot", "notification")).toBe("waiting");
 		expect(mapHookEvent("copilot", "agentStop")).toBe("ready");
 		expect(mapHookEvent("copilot", "errorOccurred")).toBe("errorMidTurn");
-		expect(mapHookEvent("copilot", "sessionEnd")).toBe("clear");
+		expect(mapHookEvent("copilot", "sessionEnd")).toBe("sessionReset");
 	});
 
 	it("separates Turn failures from Mid-turn failures (ADR-0026)", () => {
@@ -103,7 +117,7 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("qwen", "UserPromptSubmit")).toBe("active");
 		expect(mapHookEvent("qwen", "Stop")).toBe("ready");
 		expect(mapHookEvent("qwen", "StopFailure")).toBe("error");
-		expect(mapHookEvent("qwen", "SessionEnd")).toBe("clear");
+		expect(mapHookEvent("qwen", "SessionEnd")).toBe("sessionReset");
 		expect(mapHookEvent("qwen", "BeforeAgent")).toBeNull();
 		expect(mapHookEvent("qwen", "AfterAgent")).toBeNull();
 	});
@@ -115,7 +129,7 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("kimi", "PermissionResult")).toBe("active");
 		expect(mapHookEvent("kimi", "Stop")).toBe("ready");
 		expect(mapHookEvent("kimi", "StopFailure")).toBe("error");
-		expect(mapHookEvent("kimi", "SessionEnd")).toBe("clear");
+		expect(mapHookEvent("kimi", "SessionEnd")).toBe("sessionReset");
 	});
 
 	it("maps Kimi's Interrupt to idle, never ready (user-cancel is acknowledged)", () => {
@@ -147,7 +161,7 @@ describe("mapHookEvent", () => {
 		// and is a no-op otherwise, so the per-tool-call frequency is safe.
 		expect(mapHookEvent("grok", "PreToolUse")).toBe("resume");
 		expect(mapHookEvent("grok", "StopFailure")).toBe("error");
-		expect(mapHookEvent("grok", "SessionEnd")).toBe("clear");
+		expect(mapHookEvent("grok", "SessionEnd")).toBe("sessionReset");
 		// Unprovisioned per-tool/compaction noise stays unmapped.
 		expect(mapHookEvent("grok", "PostToolUse")).toBeNull();
 		expect(mapHookEvent("grok", "PostToolUseFailure")).toBeNull();
@@ -363,7 +377,7 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("opencode", "question.replied")).toBe("active");
 		expect(mapHookEvent("opencode", "session.idle")).toBe("ready");
 		expect(mapHookEvent("opencode", "session.error")).toBe("error");
-		expect(mapHookEvent("opencode", "session.deleted")).toBe("clear");
+		expect(mapHookEvent("opencode", "session.deleted")).toBe("sessionReset");
 		// message.updated is intentionally unmapped — it fires post-idle and
 		// would resurrect "active" on a finished turn.
 		expect(mapHookEvent("opencode", "message.updated")).toBeNull();

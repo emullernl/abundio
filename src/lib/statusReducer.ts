@@ -22,7 +22,9 @@ export type StatusDotState = "idle" | "working" | "waiting" | "ready" | "error";
 export type StatusMode = "agent" | "shell";
 
 /** A hook-driven transition, as resolved by `mapHookEvent` on the translator
- *  side (the "clear" transition is modelled as the `sessionEnded` event).
+ *  side. A **Session end** hook maps to "sessionReset", which the translator
+ *  turns into an "idle" hook; it never leaves agent mode — only the shell's
+ *  `command_end` does, as the `agentExited` event.
  *  "idle" is an authoritative user-cancel (Kimi's `Interrupt`): straight to
  *  Idle — not Ready, the user just acted so nothing is unacknowledged — and
  *  the delegated-work set is dropped, mirroring the ESC cancel path.
@@ -132,8 +134,9 @@ export type StatusEvent =
 	  }
 	// An agent was detected in this PTY (title match or any hook). → agent mode.
 	| { kind: "agentDetected" }
-	// The agent session ended (hook "clear"). → shell mode.
-	| { kind: "sessionEnded" }
+	// The Agent's launching command finished (shell `command_end`). → shell mode.
+	// The only way out of agent mode: an Agent's Session end hook never is.
+	| { kind: "agentExited" }
 	// Shell-integration `command_start` (or process-monitor `CommandStarted`).
 	| { kind: "shellCommandStarted"; now: number }
 	// Shell-integration `command_end` (or process-monitor `CommandFinished`,
@@ -615,7 +618,7 @@ export function statusReducer(
 			return s.mode === "agent"
 				? s
 				: { ...s, mode: "agent", shellCommandRunning: false };
-		case "sessionEnded":
+		case "agentExited":
 			return s.mode === "shell"
 				? s
 				: {

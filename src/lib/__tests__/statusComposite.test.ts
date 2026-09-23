@@ -116,7 +116,7 @@ describe("compositeParts — when the badge appears", () => {
 
 	it("badges a terminal rollup at Waiting or Ready", () => {
 		// Shells are not supposed to reach these (ADR-0009), but they can: the
-		// reducer's `sessionEnded` flips mode to "shell" while preserving state,
+		// reducer's `agentExited` flips mode to "shell" while preserving state,
 		// so an Agent at Waiting or Ready when its session ends lands here. They
 		// are attention states, so dropping their badge would be the worst case
 		// to drop.

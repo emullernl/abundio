@@ -21,8 +21,13 @@ import {
 	mapHookEvent,
 	mapSubagentHookEvent,
 } from "./agentHookMap";
+import {
+	activityAction,
+	applyAgentExit,
+	applySessionEnd,
+	isSessionEnd,
+} from "./agentModeEvents";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
-import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
 import { agentHooks, pty } from "./ipc";
@@ -1334,17 +1339,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						actState.setRunningCommand(currentPtyId, null);
 						managed.startupShellReady = true;
 						tryFlushStartup(managed);
-						// Exit agent mode when the command finishes — re-fetch
-						// state since setAgentPty above may have mutated it
+						// Exit agent mode when the command finishes (reads fresh state,
+						// since setAgentPty above may have mutated it).
+						const wasAgentMode = applyAgentExit(currentPtyId, paneId);
 						const freshState = usePtyActivityStore.getState();
-						const currentEntry = freshState.activities[currentPtyId];
-						if (currentEntry?.detectionMode === "agent") {
-							freshState.clearAgentPty(currentPtyId);
-							// Agent exited while the shell survives (manual /exit, Ctrl+C,
-							// or a crash): forget it so it does NOT auto-relaunch next time.
-							useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
-						}
-						const wasAgentMode = currentEntry?.detectionMode === "agent";
 						if (!managed.suppressActivity && !wasAgentMode) {
 							freshState.setShellCommandRunning(currentPtyId, false);
 							const outcome = classifyShellExit(cmd.exitCode);
@@ -1401,13 +1399,21 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onActivity(currentPtyId, (activity) => {
-				if (managed.suppressActivity) return;
-
+				// The child-process poll (shells without integration). See
+				// activityAction: an agent-mode commandFinished is the Agent
+				// process exiting, handled even while suppressActivity is set.
 				const actStore = usePtyActivityStore.getState();
-
-				// Shell command tracking — only applies in shell mode
 				const entry = actStore.activities[currentPtyId];
-				if (entry?.detectionMode !== "shell") return;
+				const action = activityAction(
+					activity.type,
+					entry?.detectionMode,
+					managed.suppressActivity,
+				);
+				if (action === "agentExit") {
+					applyAgentExit(currentPtyId, paneId);
+					return;
+				}
+				if (action === "ignore" || !entry) return;
 				if (activity.type === "commandStarted") {
 					actStore.setShellCommandRunning(currentPtyId, true);
 					actStore.recordOutput(currentPtyId);
@@ -1533,28 +1539,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					return;
 				}
 				const actStore = usePtyActivityStore.getState();
+				if (isSessionEnd(transition)) {
+					// A Session end (`/clear`, or a real exit — Copilot's payload
+					// cannot tell them apart). Handled before the adoption below:
+					// it must never put an exited Agent's PTY back into agent mode.
+					applySessionEnd(currentPtyId);
+					return;
+				}
 				// A hook event proves an agent runs in this PTY — adopt agent mode
 				// even if title-based detection missed it.
 				actStore.setAgentPty(currentPtyId, hookEvent.agent);
-				if (transition === "sessionReset") {
-					// Claude Code's `/clear`: the session ended, the Agent did not.
-					// Finalize the open Turn so telemetry closes cleanly and the next
-					// prompt opens a fresh session — but stay in agent mode, keep the
-					// stamped agent, and land on Idle rather than Ready (the user just
-					// acted in the pane, so there is nothing unacknowledged).
-					void trackSessionEnd(currentPtyId);
-					actStore.applyHookEvent(currentPtyId, "idle");
-					return;
-				}
-				if (transition === "clear") {
-					// SessionEnd: finalize any open Turn before agent mode is dropped.
-					void trackSessionEnd(currentPtyId);
-					actStore.clearAgentPty(currentPtyId);
-					// Agent ended while the shell survives: forget it so it does NOT
-					// auto-relaunch next time.
-					useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
-					return;
-				}
 				// Persist the agent identity so a hook-detected agent re-runs after a
 				// restart. Idempotent: stampAgentOnPane no-ops when already stamped.
 				useWorkspaceStore.getState().stampAgentOnPane(paneId, hookEvent.agent);
