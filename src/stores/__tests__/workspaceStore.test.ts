@@ -216,6 +216,37 @@ describe("workspaceStore", () => {
 			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBeNull();
 		});
 
+		it("a fast switch supersedes a slow switch still waiting on its frames", () => {
+			vi.useFakeTimers();
+			mockOpenedWorkspaceIds = new Set(["s3"]);
+
+			useWorkspaceStore.setState({ activeWorkspaceId: "s1" });
+			useWorkspaceStore.getState().beginWorkspaceSwitch("s2"); // slow
+			useWorkspaceStore.getState().beginWorkspaceSwitch("s3"); // fast
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s3");
+			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBeNull();
+
+			// The slow switch's frames land — and must not undo the fast one.
+			vi.runAllTimers();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s3");
+
+			vi.useRealTimers();
+		});
+
+		it("switching back to the active workspace cancels a pending slow switch", () => {
+			vi.useFakeTimers();
+
+			useWorkspaceStore.setState({ activeWorkspaceId: "s1" });
+			useWorkspaceStore.getState().beginWorkspaceSwitch("s2"); // slow
+			useWorkspaceStore.getState().beginWorkspaceSwitch("s1");
+			expect(useWorkspaceStore.getState().switchingWorkspaceId).toBeNull();
+
+			vi.runAllTimers();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("s1");
+
+			vi.useRealTimers();
+		});
+
 		it("is a no-op when target equals current active workspace", () => {
 			vi.useFakeTimers();
 			const rafSpy = vi.spyOn(globalThis, "requestAnimationFrame");

@@ -95,6 +95,13 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 
 	useEffect(() => () => cancelClose(), [cancelClose]);
 
+	// Keep the Active workspace's strip on screen, as `WorkspaceItem` does for
+	// the expanded rail — a keyboard Workspace cycle can land off-screen.
+	useEffect(() => {
+		if (isActive && !hidden)
+			stripRef.current?.scrollIntoView?.({ block: "nearest" });
+	}, [isActive, hidden]);
+
 	// Keep popover position fresh while open: window resize, list scroll, etc.
 	// Capture-phase scroll listener catches scroll events from any container.
 	useEffect(() => {
