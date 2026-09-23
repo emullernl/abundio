@@ -211,6 +211,34 @@ describe("terminal copy/paste (Linux/Windows)", () => {
 		},
 	);
 
+	it.skipIf(isMac)(
+		"paste into a text input inside a dialog keeps its native handling",
+		() => {
+			const paste = vi.fn();
+			registerAction("paste", paste);
+			focus("input");
+			const release = pushOverlay();
+			const e = makeKeyEvent({ key: "v", ctrlKey: true, shiftKey: true });
+			const preventSpy = vi.spyOn(e, "preventDefault");
+			handleKeyDown(e);
+			release();
+			expect(paste).not.toHaveBeenCalled();
+			expect(preventSpy).not.toHaveBeenCalled();
+		},
+	);
+
+	it.skipIf(isMac)("copy still works behind an open dialog", () => {
+		// Deliberate asymmetry: copying the terminal's selection from behind a
+		// dialog is harmless; pasting into it is not.
+		const copy = vi.fn();
+		registerAction("copy", copy);
+		focus("button");
+		const release = pushOverlay();
+		handleKeyDown(makeKeyEvent({ key: "c", ctrlKey: true, shiftKey: true }));
+		release();
+		expect(copy).toHaveBeenCalledOnce();
+	});
+
 	it.skipIf(isMac)("Ctrl+Shift+C triggers copy", () => {
 		const handler = vi.fn();
 		registerAction("copy", handler);

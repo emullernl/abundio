@@ -136,6 +136,7 @@ export function AttachmentField({
 						className={buttonClass}
 						style={buttonStyle}
 						onClick={pick}
+						disabled={busy}
 					>
 						<ImagePlus size={11} />
 						{paths.length > 0 && !multiple ? "Replace…" : "Choose file…"}
@@ -148,7 +149,7 @@ export function AttachmentField({
 						disabled={busy}
 					>
 						<ClipboardPaste size={11} />
-						{busy ? "Saving…" : "Paste from clipboard"}
+						{busy ? "Pasting…" : "Paste from clipboard"}
 					</button>
 				</div>
 			</div>
