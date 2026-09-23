@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { applyAgentExit, applySessionEnd } from "../agentModeEvents";
+import {
+	activityAction,
+	applyAgentExit,
+	applySessionEnd,
+	isSessionEnd,
+} from "../agentModeEvents";
 import { onSessionEnd } from "../agentTurnTracker";
 
 vi.mock("../agentTurnTracker", async (importOriginal) => ({
@@ -103,5 +108,46 @@ describe("applyAgentExit", () => {
 
 		expect(entry().detectionMode).toBe("shell");
 		expect(stampAgentOnPane).not.toHaveBeenCalled();
+	});
+});
+
+describe("isSessionEnd", () => {
+	it("routes a Session end around adoption, so it cannot resurrect an exited Agent", () => {
+		expect(isSessionEnd("sessionReset")).toBe(true);
+	});
+
+	it("adopts agent mode for every other transition", () => {
+		for (const t of [
+			"active",
+			"waiting",
+			"ready",
+			"idle",
+			"error",
+			"errorMidTurn",
+			"resume",
+			"attach",
+		] as const) {
+			expect(isSessionEnd(t)).toBe(false);
+		}
+	});
+});
+
+describe("activityAction", () => {
+	it("treats an agent-mode commandFinished as the Agent exiting, even while suppressed", () => {
+		// An unfocused pane may never clear suppressActivity, so gating the exit
+		// on it would strand the pane in agent mode.
+		expect(activityAction("commandFinished", "agent", true)).toBe("agentExit");
+		expect(activityAction("commandFinished", "agent", false)).toBe("agentExit");
+	});
+
+	it("ignores an agent-mode commandStarted (the Agent's own launch)", () => {
+		expect(activityAction("commandStarted", "agent", false)).toBe("ignore");
+	});
+
+	it("does shell bookkeeping in shell mode unless suppressed", () => {
+		expect(activityAction("commandStarted", "shell", false)).toBe("shell");
+		expect(activityAction("commandFinished", "shell", false)).toBe("shell");
+		expect(activityAction("commandFinished", "shell", true)).toBe("ignore");
+		expect(activityAction("commandFinished", undefined, false)).toBe("ignore");
 	});
 });

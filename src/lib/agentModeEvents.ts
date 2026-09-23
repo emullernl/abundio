@@ -6,7 +6,9 @@
 
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import type { HookTransition } from "./agentHookMap";
 import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
+import type { PtyDetectionMode } from "./types";
 
 /**
  * The Agent's launching command finished, so the Agent process has exited
@@ -19,7 +21,9 @@ import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
  */
 export function applyAgentExit(ptyId: string, paneId: string): boolean {
 	const store = usePtyActivityStore.getState();
-	if (store.activities[ptyId]?.detectionMode !== "agent") return false;
+	// Gate on what clearAgentPty itself gates on, so `true` always means the
+	// PTY really left agent mode.
+	if (!store.agentPtyIds.has(ptyId)) return false;
 	store.clearAgentPty(ptyId);
 	useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
 	return true;
@@ -45,4 +49,30 @@ export function applySessionEnd(ptyId: string): void {
 	if (store.activities[ptyId]?.detectionMode === "agent") {
 		store.applyHookEvent(ptyId, "idle");
 	}
+}
+
+/** Whether a PTY's hook listener takes the Session end path. It must be
+ *  checked BEFORE adoption: every other hook puts the PTY into agent mode and
+ *  stamps the Agent, and a Session end landing just after the Agent exited must
+ *  not resurrect it. */
+export function isSessionEnd(
+	transition: HookTransition,
+): transition is "sessionReset" {
+	return transition === "sessionReset";
+}
+
+/** What a PTY's activity listener does with a child-process poll event (the
+ *  backend's stand-in for shell integration, in shells without it).
+ *  `commandFinished` in agent mode means the Agent process exited: that is an
+ *  agent exit even while `suppressActivity` is set — as for command_end — since
+ *  an unfocused pane may never clear the flag. Everything else is shell-mode
+ *  bookkeeping, skipped while suppressed and in agent mode. */
+export function activityAction(
+	activity: "commandStarted" | "commandFinished",
+	mode: PtyDetectionMode | undefined,
+	suppressed: boolean,
+): "agentExit" | "shell" | "ignore" {
+	if (activity === "commandFinished" && mode === "agent") return "agentExit";
+	if (suppressed || mode !== "shell") return "ignore";
+	return "shell";
 }

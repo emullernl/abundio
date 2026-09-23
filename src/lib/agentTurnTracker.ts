@@ -255,8 +255,8 @@ export function noteState(
 	transitionTimers(open, state, now);
 }
 
-/** A Session end hook ("sessionReset") — finalize an open Turn and end the session so the next
- *  Agent launch in this PTY starts a fresh session. */
+/** A Session end hook ("sessionReset") — finalize an open Turn and end the
+ *  session so the next Agent launch in this PTY starts a fresh session. */
 export function onSessionEnd(ptyId: string): Promise<void> | void {
 	const p = finalize(ptyId, "session_end", nowMs());
 	sessionByPty.delete(ptyId);

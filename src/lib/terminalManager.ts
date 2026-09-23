@@ -21,7 +21,12 @@ import {
 	mapHookEvent,
 	mapSubagentHookEvent,
 } from "./agentHookMap";
-import { applyAgentExit, applySessionEnd } from "./agentModeEvents";
+import {
+	activityAction,
+	applyAgentExit,
+	applySessionEnd,
+	isSessionEnd,
+} from "./agentModeEvents";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
@@ -1394,22 +1399,21 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onActivity(currentPtyId, (activity) => {
-				// The child-process poll (shells without integration) proving the
-				// Agent process exited — this shell's stand-in for command_end, and
-				// like it, not gated on suppressActivity.
-				if (
-					activity.type === "commandFinished" &&
-					applyAgentExit(currentPtyId, paneId)
-				) {
+				// The child-process poll (shells without integration). See
+				// activityAction: an agent-mode commandFinished is the Agent
+				// process exiting, handled even while suppressActivity is set.
+				const actStore = usePtyActivityStore.getState();
+				const entry = actStore.activities[currentPtyId];
+				const action = activityAction(
+					activity.type,
+					entry?.detectionMode,
+					managed.suppressActivity,
+				);
+				if (action === "agentExit") {
+					applyAgentExit(currentPtyId, paneId);
 					return;
 				}
-				if (managed.suppressActivity) return;
-
-				const actStore = usePtyActivityStore.getState();
-
-				// Shell command tracking — only applies in shell mode
-				const entry = actStore.activities[currentPtyId];
-				if (entry?.detectionMode !== "shell") return;
+				if (action === "ignore" || !entry) return;
 				if (activity.type === "commandStarted") {
 					actStore.setShellCommandRunning(currentPtyId, true);
 					actStore.recordOutput(currentPtyId);
@@ -1535,7 +1539,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					return;
 				}
 				const actStore = usePtyActivityStore.getState();
-				if (transition === "sessionReset") {
+				if (isSessionEnd(transition)) {
 					// A Session end (`/clear`, or a real exit — Copilot's payload
 					// cannot tell them apart). Handled before the adoption below:
 					// it must never put an exited Agent's PTY back into agent mode.

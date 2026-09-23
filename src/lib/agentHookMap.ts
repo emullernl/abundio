@@ -9,8 +9,11 @@
 // tell them apart. It finalizes the open Turn and must never drop agent mode:
 // doing so took the Agent icon out of the title bar, flipped the status icon to
 // shell, and unmounted the pane's Action bar, all while the Agent sat there
-// waiting for input. Leaving agent mode belongs to the shell's `command_end`
-// alone — the launching command finished, so the Agent process is gone.
+// waiting for input. Leaving agent mode belongs to the Agent process exiting
+// alone, as the directly-spawned shell reports it (`command_end`, or the
+// child-process poll) — see applyAgentExit. Known gap: an Agent run from a
+// nested shell (`nix develop`, `poetry shell`, a typed `bash`) stays in agent
+// mode until that inner shell exits, since only its exit is reported.
 // "idle" means the user cancelled the turn
 // (Kimi's Interrupt) — the pane goes straight to Idle, NOT Ready: the user
 // just acted in the pane, so there is nothing unacknowledged, and an
