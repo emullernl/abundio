@@ -1,9 +1,10 @@
-import { lazy, memo, Suspense } from "react";
+import { lazy, memo, type ReactNode, Suspense } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import type { PaneNode } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FilePane } from "../FileViewer/FilePane";
 import { MergeSidePane } from "../FileViewer/MergeSidePane";
+import { FocusSweep } from "./FocusSweep";
 import { PaneResizer } from "./PaneResizer";
 import { TerminalSlot } from "./TerminalSlot";
 
@@ -191,7 +192,34 @@ function UnknownPaneFallback({ type }: { type?: string }) {
 	);
 }
 
+/** Wraps a leaf so its **Focus sweep** can draw over it. */
+function LeafFrame({
+	paneId,
+	children,
+}: {
+	paneId: string;
+	children: ReactNode;
+}) {
+	return (
+		<div className="relative w-full h-full">
+			{children}
+			<FocusSweep paneId={paneId} />
+		</div>
+	);
+}
+
 export function SplitContainer({ node, cwd, workspaceId }: Props) {
+	if (node.type === "split") {
+		return <SplitNode node={node} cwd={cwd} workspaceId={workspaceId} />;
+	}
+	return (
+		<LeafFrame paneId={node.id}>
+			<LeafContent node={node} cwd={cwd} workspaceId={workspaceId} />
+		</LeafFrame>
+	);
+}
+
+function LeafContent({ node, cwd, workspaceId }: Props) {
 	if (node.type === "terminal") {
 		return <TerminalLeaf nodeId={node.id} agentId={node.agentId} />;
 	}
@@ -203,9 +231,6 @@ export function SplitContainer({ node, cwd, workspaceId }: Props) {
 	}
 	if (node.type === "mergeSide") {
 		return <MergeSideLeaf node={node} cwd={cwd} />;
-	}
-	if (node.type === "split") {
-		return <SplitNode node={node} cwd={cwd} workspaceId={workspaceId} />;
 	}
 	return <UnknownPaneFallback type={(node as { type?: string }).type} />;
 }

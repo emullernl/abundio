@@ -49,6 +49,8 @@ export function CommandPalette({
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
+	const focusSweep = useSettingsStore((s) => s.focusSweep);
+	const setFocusSweep = useSettingsStore((s) => s.setFocusSweep);
 	const promptActionList = usePromptActionStore((s) => s.actions);
 	const { splitPane, closePane } = useSplitPane();
 
@@ -150,6 +152,13 @@ export function CommandPalette({
 			label: "Open Settings",
 			category: "Actions",
 			action: () => triggerAction("open-settings"),
+		});
+
+		result.push({
+			id: "action-toggle-focus-sweep",
+			label: focusSweep ? "Turn Off Focus Sweep" : "Turn On Focus Sweep",
+			category: "Actions",
+			action: () => setFocusSweep(!focusSweep),
 		});
 
 		result.push({
@@ -274,6 +283,8 @@ export function CommandPalette({
 		profilesList,
 		activeProfileId,
 		promptActionList,
+		focusSweep,
+		setFocusSweep,
 	]);
 
 	const filtered = useMemo(() => {

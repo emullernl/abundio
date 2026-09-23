@@ -41,6 +41,7 @@ import {
 } from "./lib/busyPty";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
+import { installFocusSweep } from "./lib/focusSweep";
 import {
 	agentRegistry,
 	listen,
@@ -419,6 +420,8 @@ export function App() {
 		const cleanup = initKeybindings();
 		return cleanup;
 	}, []);
+
+	useEffect(() => installFocusSweep(), []);
 
 	// Per-Workspace Notes: load the active workspace's note, and flush the
 	// previous one's pending edit before swapping (the editor only debounces).
