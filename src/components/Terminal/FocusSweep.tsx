@@ -1,5 +1,5 @@
-import { memo, useLayoutEffect, useRef } from "react";
-import { useFocusSweepStore } from "../../lib/focusSweep";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useFocusSweepStore, waitForSmoothFrames } from "../../lib/focusSweep";
 
 /**
  * The **Focus sweep** overlay for one Pane: a comet — bright head, fading tail
@@ -23,13 +23,24 @@ export const FocusSweep = memo(function FocusSweep({
 
 function SweepRun({ nonce }: { nonce: number }) {
 	const ref = useRef<SVGSVGElement>(null);
+	// The stroke animation runs on the main thread, and the focus change that
+	// starts a sweep is often the same update that makes the main thread
+	// busiest — a workspace switch stalls it for ~250 ms while the newly
+	// visible panes lay out and repaint. Started at once, the sweep freezes on
+	// its first frame and resumes nearly finished, so it reads as cut short.
+	// Hold it until frames are flowing again; normally that costs ~2 frames.
+	const [started, setStarted] = useState(false);
+	useEffect(() => waitForSmoothFrames(() => setStarted(true)), []);
 
 	useLayoutEffect(() => {
+		if (!started) return;
 		const el = ref.current;
 		if (!el) return;
 		const { width, height } = el.getBoundingClientRect();
 		el.style.setProperty("--sweep-perimeter", `${2 * (width + height)}px`);
-	}, []);
+	}, [started]);
+
+	if (!started) return null;
 
 	return (
 		<svg

@@ -57,3 +57,39 @@ export function installFocusSweep(): () => void {
 		if (next !== null) hasFocusedBefore = true;
 	});
 }
+
+/** A frame gap under this counts as smooth (60 Hz is ~17 ms; 30 Hz ~33 ms). */
+const SMOOTH_FRAME_MS = 34;
+/** Consecutive smooth frames required before a sweep starts. */
+const SMOOTH_FRAMES_NEEDED = 2;
+/** Start anyway after this long, so a sweep is never withheld indefinitely. */
+const MAX_WAIT_MS = 1000;
+
+/**
+ * Call `start` once the main thread is painting smoothly again — after
+ * `SMOOTH_FRAMES_NEEDED` consecutive frames each under `SMOOTH_FRAME_MS` —
+ * or after `MAX_WAIT_MS`, whichever comes first. Returns a cancel function.
+ * `now` and `raf` are injectable for tests.
+ */
+export function waitForSmoothFrames(
+	start: () => void,
+	raf: (cb: FrameRequestCallback) => number = requestAnimationFrame,
+	cancelRaf: (id: number) => void = cancelAnimationFrame,
+	now: () => number = () => performance.now(),
+): () => void {
+	const begin = now();
+	let last = begin;
+	let smooth = 0;
+	let id = 0;
+	const tick = (t: number) => {
+		smooth = t - last < SMOOTH_FRAME_MS ? smooth + 1 : 0;
+		last = t;
+		if (smooth >= SMOOTH_FRAMES_NEEDED || t - begin >= MAX_WAIT_MS) {
+			start();
+			return;
+		}
+		id = raf(tick);
+	};
+	id = raf(tick);
+	return () => cancelRaf(id);
+}

@@ -5,6 +5,7 @@ import {
 	installFocusSweep,
 	shouldSweep,
 	useFocusSweepStore,
+	waitForSmoothFrames,
 } from "../focusSweep";
 
 describe("shouldSweep", () => {
@@ -77,5 +78,46 @@ describe("installFocusSweep", () => {
 		useSettingsStore.setState({ focusSweep: false });
 		focus("b");
 		expect(useFocusSweepStore.getState().paneId).toBeNull();
+	});
+});
+
+describe("waitForSmoothFrames", () => {
+	/** Drive `waitForSmoothFrames` with a scripted list of frame gaps. */
+	function run(gaps: number[]): number | null {
+		let pending: FrameRequestCallback | null = null;
+		let t = 0;
+		let startedAt: number | null = null;
+		waitForSmoothFrames(
+			() => {
+				startedAt = t;
+			},
+			(cb) => {
+				pending = cb;
+				return 1;
+			},
+			() => {},
+			() => 0,
+		);
+		for (const gap of gaps) {
+			const cb = pending as FrameRequestCallback | null;
+			if (!cb || startedAt !== null) break;
+			pending = null;
+			t += gap;
+			cb(t);
+		}
+		return startedAt;
+	}
+
+	it("starts after two smooth frames when nothing is busy", () => {
+		expect(run([16, 17, 16])).toBe(33);
+	});
+
+	it("waits out a stall, like the one a workspace switch causes", () => {
+		// Measured in the demo: one normal frame, then 120 + 180 ms of layout.
+		expect(run([19, 120, 180, 20, 20, 20])).toBe(359);
+	});
+
+	it("gives up waiting after a second", () => {
+		expect(run([400, 400, 400, 400])).toBe(1200);
 	});
 });
