@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceWithTabs } from "../../lib/types";
-import { useGitChangesStore } from "../gitChangesStore";
+import { commitHistoryEqual, useGitChangesStore } from "../gitChangesStore";
 import { useWorkspaceGitStore } from "../workspaceGitStore";
 import { useWorkspaceStore } from "../workspaceStore";
 
@@ -327,5 +327,138 @@ describe("Dirty workspace and Branch stat from bundles", () => {
 		expect(
 			useWorkspaceGitStore.getState().uncommittedById["ws-1"],
 		).toBeUndefined();
+	});
+});
+
+describe("Commits from bundles", () => {
+	const commit = (oid: string, onRemote = false) => ({
+		oid,
+		subject: oid,
+		message: oid,
+		authorName: "T",
+		authorEmail: "t@example.com",
+		time: 0,
+		isMerge: false,
+		shared: false,
+		onRemote,
+	});
+	const commits = (...cs: ReturnType<typeof commit>[]) => ({
+		base: "main" as string | null,
+		ahead: cs.length,
+		commits: cs,
+		githubSlug: "o/r" as string | null,
+	});
+
+	beforeEach(() => {
+		useWorkspaceStore.setState({
+			workspaces: [mkWorkspace("ws-1", "/repo"), mkWorkspace("ws-2", "/b")],
+			activeWorkspaceId: "ws-1",
+			// biome-ignore lint/suspicious/noExplicitAny: partial store
+		} as any);
+		useGitChangesStore.getState().clear();
+	});
+
+	it("carries commitHistory onto the active workspace", () => {
+		const bc = commits(commit("a"), commit("b"));
+		useGitChangesStore
+			.getState()
+			.applyBundle("ws-1", { ...bundle(), commitHistory: bc });
+		expect(useGitChangesStore.getState().commitHistory).toEqual(bc);
+	});
+
+	it("keeps the same object when nothing about the list moved", () => {
+		const store = useGitChangesStore.getState();
+		store.applyBundle("ws-1", {
+			...bundle(),
+			commitHistory: commits(commit("a")),
+		});
+		const first = useGitChangesStore.getState().commitHistory;
+		store.applyBundle("ws-1", {
+			...bundle(),
+			commitHistory: commits(commit("a")),
+		});
+		expect(useGitChangesStore.getState().commitHistory).toBe(first);
+		// A commit crossing the divider (base caught up) is a change too.
+		store.applyBundle("ws-1", {
+			...bundle(),
+			commitHistory: commits({ ...commit("a"), shared: true }),
+		});
+		expect(useGitChangesStore.getState().commitHistory?.commits[0].shared).toBe(
+			true,
+		);
+		const second = useGitChangesStore.getState().commitHistory;
+		expect(second).not.toBe(first);
+		// A push is a change, even with the same oids.
+		store.applyBundle("ws-1", {
+			...bundle(),
+			commitHistory: commits(commit("a", true)),
+		});
+		expect(useGitChangesStore.getState().commitHistory).not.toBe(first);
+	});
+
+	it("does not show a background workspace's commits, but hydrates them", () => {
+		const store = useGitChangesStore.getState();
+		store.applyBundle("ws-2", {
+			...bundle(),
+			commitHistory: commits(commit("z")),
+		});
+		expect(useGitChangesStore.getState().commitHistory).toBeNull();
+		store.hydrateFromWorkspace("ws-2");
+		expect(useGitChangesStore.getState().commitHistory?.commits[0].oid).toBe(
+			"z",
+		);
+	});
+
+	it("drops the cached list when the invoke fallback fails too", async () => {
+		const store = useGitChangesStore.getState();
+		store.applyBundle("ws-1", {
+			...bundle(),
+			commitHistory: commits(commit("a")),
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: added to the ipc mock here
+		(git as any).fetchBundle = vi.fn().mockRejectedValue(new Error("locked"));
+		await store.fetchChanges("/repo", null);
+		expect(useGitChangesStore.getState().commitHistory).toBeNull();
+		store.hydrateFromWorkspace("ws-1");
+		expect(useGitChangesStore.getState().commitHistory).toBeNull();
+	});
+
+	it("drops the list when the refresh fails, in the cache too", () => {
+		const store = useGitChangesStore.getState();
+		store.applyBundle("ws-1", {
+			...bundle(),
+			commitHistory: commits(commit("a")),
+		});
+		store.applyError("ws-1", "boom", false);
+		expect(useGitChangesStore.getState().commitHistory).toBeNull();
+		store.hydrateFromWorkspace("ws-1");
+		expect(useGitChangesStore.getState().commitHistory).toBeNull();
+	});
+});
+
+describe("commitHistoryEqual", () => {
+	it("treats two nulls as equal and null vs a list as different", () => {
+		expect(commitHistoryEqual(null, null)).toBe(true);
+		expect(
+			commitHistoryEqual(null, {
+				base: "m",
+				ahead: 0,
+				commits: [],
+				githubSlug: null,
+			}),
+		).toBe(false);
+	});
+	it("notices a base or ahead-count change", () => {
+		const a = {
+			base: "main" as string | null,
+			ahead: 0,
+			commits: [],
+			githubSlug: null,
+		};
+		expect(commitHistoryEqual(a, { ...a, base: "dev" })).toBe(false);
+		expect(commitHistoryEqual(a, { ...a, base: null })).toBe(false);
+		expect(commitHistoryEqual(a, { ...a, ahead: 300 })).toBe(false);
+		// A remote added or renamed changes where "Open on GitHub" goes.
+		expect(commitHistoryEqual(a, { ...a, githubSlug: "o/r" })).toBe(false);
 	});
 });

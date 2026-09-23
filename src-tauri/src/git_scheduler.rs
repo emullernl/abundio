@@ -186,9 +186,12 @@ fn compute_bundle(
     root_path: &str,
     base_branch: Option<String>,
 ) -> Result<GitFetchBundle, AbundioError> {
-    let (changed_res, branch_res, fp_res, op_res) = std::thread::scope(|s| {
+    let (changed_res, branch_res, fp_res, op_res, commits_res) = std::thread::scope(|s| {
         let h_changed =
             s.spawn(|| compute_changed_files_sync(root_path, base_branch.clone()));
+        let h_commits = s.spawn(|| {
+            crate::git_libgit2::compute_commit_history_sync(root_path, base_branch.clone())
+        });
         let h_branch = s.spawn(|| compute_branch_info_sync(root_path));
         let h_fp = s.spawn(|| compute_status_fingerprint_sync(root_path));
         let h_op = s.spawn(|| {
@@ -205,6 +208,9 @@ fn compute_bundle(
                 .unwrap_or_else(|_| Err(AbundioError::Git("fingerprint panic".into()))),
             h_op.join()
                 .unwrap_or_else(|_| Err(AbundioError::Git("operation state panic".into()))),
+            h_commits
+                .join()
+                .unwrap_or_else(|_| Err(AbundioError::Git("branch commits panic".into()))),
         )
     });
     Ok(GitFetchBundle {
@@ -212,5 +218,6 @@ fn compute_bundle(
         branch_info: branch_res?,
         status_fingerprint: fp_res?,
         operation_in_progress: op_res.unwrap_or(None),
+        commit_history: commits_res.ok(),
     })
 }

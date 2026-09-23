@@ -39,6 +39,64 @@ pub struct BranchInfo {
     pub current_branch: String,
 }
 
+/// One commit in the **Commits** section (see CONTEXT.md).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryCommit {
+    pub oid: String,
+    pub subject: String,
+    /// The full message, subject included — for the row's tooltip.
+    pub message: String,
+    pub author_name: String,
+    pub author_email: String,
+    /// Author time, seconds since the Unix epoch.
+    pub time: i64,
+    pub is_merge: bool,
+    /// Below the divider: **Shared history**, which the base branch also has.
+    /// False for an **Ahead commit**, and for every row when the base is
+    /// unknown (there is no divider then).
+    pub shared: bool,
+    /// Reachable from a tracking ref of the GitHub remote named by
+    /// `CommitHistory::github_slug`. Gates "Open on GitHub": a commit that
+    /// remote does not have has no page there.
+    pub on_remote: bool,
+}
+
+/// The **Commits** section's list: the Workspace's recent history, newest
+/// first, capped at `COMMIT_HISTORY_CAP` rows. First every **Ahead commit**
+/// (`base..HEAD`), then the **Shared history** from where the branch last met
+/// its base — so the two halves never interleave. See CONTEXT.md.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitHistory {
+    /// The base branch the divider is named after. `None` when it cannot be
+    /// resolved; the list is then plain HEAD history with no divider.
+    pub base: Option<String>,
+    /// The true number of Ahead commits, even past the row cap. 0 when the
+    /// base is unknown.
+    pub ahead: usize,
+    pub commits: Vec<HistoryCommit>,
+    /// `owner/repo` of the GitHub remote "Open on GitHub" links to, chosen
+    /// alongside `on_remote` so the two describe the same repository.
+    pub github_slug: Option<String>,
+}
+
+/// One file a single commit touched, measured against its first parent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitFile {
+    pub path: String,
+    pub status: String,
+    pub additions: i32,
+    pub deletions: i32,
+    /// Git's own binary test on the blob. Such a row is shown but not
+    /// clickable: a text diff of it would only be replacement characters.
+    pub is_binary: bool,
+    /// A submodule pointer (a commit in another repository), not a file.
+    /// Shown but not clickable: it has no text on either side to diff.
+    pub is_submodule: bool,
+}
+
 /// Line/file churn between two worktree snapshots — a per-Turn working-tree
 /// diff (see ADR-0021). Each field is independently non-negative.
 #[derive(Debug, Clone, Serialize)]
@@ -167,6 +225,9 @@ pub struct GitFetchBundle {
     /// "cherry_pick" | "revert". Read-only — Abundio never continues or aborts
     /// one, it only says that finishing it is still the user's move.
     pub operation_in_progress: Option<String>,
+    /// `None` when the base branch cannot be resolved to a commit. Best-effort
+    /// like `operation_in_progress`: it never fails the bundle.
+    pub commit_history: Option<CommitHistory>,
 }
 
 /// Single-IPC bundle for the git-tab refresh. Returns the three pieces of
@@ -181,10 +242,13 @@ pub async fn git_fetch_bundle(
     base_branch: Option<String>,
 ) -> Result<GitFetchBundle, AbundioError> {
     tokio::task::spawn_blocking(move || {
-        let (changed_files_res, branch_info_res, fingerprint_res, op_res) =
+        let (changed_files_res, branch_info_res, fingerprint_res, op_res, commits_res) =
             std::thread::scope(|s| {
             let h_changed =
                 s.spawn(|| compute_changed_files_sync(&cwd, base_branch.clone()));
+            let h_commits = s.spawn(|| {
+                git_libgit2::compute_commit_history_sync(&cwd, base_branch.clone())
+            });
             let h_branch = s.spawn(|| compute_branch_info_sync(&cwd));
             let h_fp = s.spawn(|| compute_status_fingerprint_sync(&cwd));
             let h_op = s.spawn(|| git_libgit2::compute_operation_in_progress_sync(&cwd));
@@ -199,6 +263,9 @@ pub async fn git_fetch_bundle(
                     .unwrap_or_else(|_| Err(AbundioError::Git("fingerprint panic".into()))),
                 h_op.join()
                     .unwrap_or_else(|_| Err(AbundioError::Git("operation state panic".into()))),
+                h_commits
+                    .join()
+                    .unwrap_or_else(|_| Err(AbundioError::Git("branch commits panic".into()))),
             )
         });
         Ok(GitFetchBundle {
@@ -208,6 +275,7 @@ pub async fn git_fetch_bundle(
             // Best-effort: a repo we can't read the state of shows no line
             // rather than failing the whole bundle.
             operation_in_progress: op_res.unwrap_or(None),
+            commit_history: commits_res.ok(),
         })
     })
     .await
@@ -292,6 +360,36 @@ pub async fn git_file_diff(
             }
         };
 
+        Ok(GitFileDiff {
+            original,
+            modified,
+            file_path,
+        })
+    })
+    .await
+    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+}
+
+/// The files one commit touched, against its first parent (a root commit
+/// against the empty tree). Commits are immutable, so the frontend caches this.
+#[tauri::command]
+pub async fn git_commit_files(cwd: String, oid: String) -> Result<Vec<CommitFile>, AbundioError> {
+    tokio::task::spawn_blocking(move || git_libgit2::commit_files_sync(&cwd, &oid))
+        .await
+        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+}
+
+/// One file as a single commit changed it: first parent → commit. Feeds the
+/// read-only **Commit diff pane**, which is never re-read from disk.
+#[tauri::command]
+pub async fn git_commit_file_diff(
+    cwd: String,
+    oid: String,
+    file_path: String,
+) -> Result<GitFileDiff, AbundioError> {
+    tokio::task::spawn_blocking(move || {
+        validate_repo_relative(&file_path)?;
+        let (original, modified) = git_libgit2::commit_file_diff_sync(&cwd, &oid, &file_path)?;
         Ok(GitFileDiff {
             original,
             modified,
@@ -1038,6 +1136,316 @@ mod tests {
             .unwrap();
         assert_eq!(diff.original, "ours\n");
         assert_eq!(diff.modified, "theirs\n");
+    }
+
+    /// main: `base`; feature: `one`, `two` (two edits `a.txt`, adds `b.txt`).
+    fn make_branch_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        init_repo_test(cwd);
+        std::fs::write(dir.path().join("a.txt"), "base\n").unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "base"]);
+        run_git_test(cwd, &["checkout", "-b", "feature"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        run_git_test(cwd, &["commit", "-am", "one"]);
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "new\n").unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "two\n\nbody line"]);
+        dir
+    }
+
+    fn subjects(h: &CommitHistory) -> Vec<(&str, bool)> {
+        h.commits.iter().map(|c| (c.subject.as_str(), c.shared)).collect()
+    }
+
+    #[test]
+    fn commit_history_lists_ahead_then_shared_history() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.base.as_deref(), Some("main"));
+        assert_eq!(h.ahead, 2);
+        assert_eq!(subjects(&h), [("two", false), ("one", false), ("base", true)]);
+        assert_eq!(h.commits[0].message, "two\n\nbody line");
+        assert_eq!(h.commits[0].author_name, "T");
+    }
+
+    #[test]
+    fn commit_history_on_the_base_branch_is_its_latest_commits() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["checkout", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "main2"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.ahead, 0);
+        // Everything is shared: the UI draws no divider above the first row.
+        assert_eq!(subjects(&h), [("main2", true), ("base", true)]);
+    }
+
+    #[test]
+    fn commit_history_shows_the_base_as_the_branch_last_saw_it() {
+        // main moves on after the branch left it; those commits are not in
+        // the Workspace and must not be listed.
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["checkout", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "later on main"]);
+        run_git_test(cwd, &["checkout", "feature"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(subjects(&h), [("two", false), ("one", false), ("base", true)]);
+    }
+
+    #[test]
+    fn commit_history_does_not_interleave_when_the_base_was_merged_in() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["checkout", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "main2"]);
+        run_git_test(cwd, &["checkout", "feature"]);
+        run_git_test(cwd, &["merge", "--no-ff", "-m", "merge main", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "three"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        // The merge is ahead; main2 is shared now (the merge-base moved up).
+        assert_eq!(h.ahead, 4);
+        let s = subjects(&h);
+        let first_shared = s.iter().position(|(_, shared)| *shared).unwrap();
+        assert!(s[..first_shared].iter().all(|(_, shared)| !shared));
+        assert!(s[first_shared..].iter().all(|(_, shared)| *shared));
+        assert_eq!(s[first_shared].0, "main2");
+        assert!(h.commits.iter().any(|c| c.is_merge && !c.shared));
+    }
+
+    #[test]
+    fn commit_history_never_lists_a_parent_before_its_child_on_a_time_tie() {
+        // Every commit below has the same committer and author second, so
+        // time order alone is free to put a parent first.
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_str().unwrap();
+        init_repo_test(cwd);
+        for i in 0..12 {
+            let out = Command::new("git")
+                .args(["commit", "--allow-empty", "-m", &format!("c{i}")])
+                .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+                .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        }
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("nope".into())).unwrap();
+        let subjects: Vec<_> = h.commits.iter().map(|c| c.subject.clone()).collect();
+        let want: Vec<_> = (0..12).rev().map(|i| format!("c{i}")).collect();
+        assert_eq!(subjects, want);
+    }
+
+    #[test]
+    fn commit_history_with_an_unknown_base_is_plain_head_history() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("nope".into())).unwrap();
+        assert_eq!(h.base, None);
+        assert_eq!(h.ahead, 0);
+        assert_eq!(subjects(&h), [("two", false), ("one", false), ("base", false)]);
+    }
+
+    #[test]
+    fn commit_history_caps_rows_but_not_the_ahead_count() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let extra = git_libgit2::COMMIT_HISTORY_CAP + 3;
+        for i in 0..extra {
+            run_git_test(cwd, &["commit", "--allow-empty", "-m", &format!("e{i}")]);
+        }
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.ahead, extra + 2);
+        assert_eq!(h.commits.len(), git_libgit2::COMMIT_HISTORY_CAP);
+        // All ahead: no shared row fits.
+        assert!(h.commits.iter().all(|c| !c.shared));
+    }
+
+    #[test]
+    fn commit_history_marks_commits_the_github_remote_reaches() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+        let one = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        // Simulate `origin/feature` having been pushed at `one`.
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &one]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.github_slug.as_deref(), Some("o/r"));
+        let by = |s: &str| h.commits.iter().find(|c| c.subject == s).unwrap();
+        assert!(!by("two").on_remote);
+        assert!(by("one").on_remote);
+        // Shared history below a pushed commit is pushed too.
+        assert!(by("base").on_remote);
+    }
+
+    #[test]
+    fn commit_history_shared_rows_on_an_unpushed_base_are_not_on_remote() {
+        // Local main carries a commit nobody pushed; being below the divider
+        // must not make it linkable.
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+        let base = run_git_test(cwd, &["rev-parse", "main"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/main", &base]);
+        run_git_test(cwd, &["checkout", "main"]);
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "local only"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        let by = |s: &str| h.commits.iter().find(|c| c.subject == s).unwrap();
+        assert!(by("local only").shared);
+        assert!(!by("local only").on_remote);
+        assert!(by("base").on_remote);
+    }
+
+    #[test]
+    fn commit_history_never_on_remote_without_a_github_remote() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://gitlab.com/o/r.git"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &head]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.github_slug, None);
+        assert!(h.commits.iter().all(|c| !c.on_remote));
+    }
+
+    #[test]
+    fn commit_history_judges_pushed_against_the_linked_remote_only() {
+        // A fork checkout: the link goes to origin, so a commit only upstream
+        // has is not "on remote" — its origin page would not exist.
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/me/r.git"]);
+        run_git_test(cwd, &["remote", "add", "upstream", "https://github.com/org/r.git"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/upstream/feature", &head]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(h.github_slug.as_deref(), Some("me/r"));
+        assert!(h.commits.iter().all(|c| !c.on_remote));
+    }
+
+    #[test]
+    fn commit_history_recomputes_when_head_base_or_remote_moves() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+        let get = || git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert_eq!(get().ahead, 2);
+        assert_eq!(get().ahead, 2); // served from the cache
+
+        run_git_test(cwd, &["commit", "--allow-empty", "-m", "three"]);
+        let h = get();
+        assert_eq!(h.ahead, 3);
+        assert_eq!(h.commits[0].subject, "three");
+        assert!(!h.commits[0].on_remote);
+
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/remotes/origin/feature", &head]);
+        assert!(get().commits.iter().all(|c| c.on_remote));
+
+        let one = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        run_git_test(cwd, &["update-ref", "refs/heads/main", &one]);
+        assert_eq!(get().ahead, 1);
+    }
+
+    #[test]
+    fn commit_history_merge_files_are_against_the_first_parent() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        run_git_test(cwd, &["checkout", "-b", "side", "main"]);
+        std::fs::write(dir.path().join("c.txt"), "side\n").unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "side"]);
+        run_git_test(cwd, &["checkout", "feature"]);
+        run_git_test(cwd, &["merge", "--no-ff", "-m", "merge side", "side"]);
+        let h = git_libgit2::compute_commit_history_sync(cwd, Some("main".into())).unwrap();
+        assert!(h.commits[0].is_merge);
+        let files = git_libgit2::commit_files_sync(cwd, &h.commits[0].oid).unwrap();
+        let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["c.txt"]);
+    }
+
+    #[test]
+    fn commit_files_flag_a_submodule_bump() {
+        // A gitlink written straight into the index: no nested repository or
+        // network needed, and it is exactly what `git submodule update` +
+        // commit records.
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let fake = "1234567890abcdef1234567890abcdef12345678";
+        run_git_test(
+            cwd,
+            &["update-index", "--add", "--cacheinfo", &format!("160000,{fake},vendor/lib")],
+        );
+        run_git_test(cwd, &["commit", "-m", "add submodule"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &head).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "vendor/lib");
+        assert!(files[0].is_submodule);
+        assert!(!files[0].is_binary);
+        // Ordinary files are not submodules.
+        let two = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &two).unwrap();
+        assert!(files.iter().all(|f| !f.is_submodule));
+    }
+
+    #[test]
+    fn commit_files_flag_binary_blobs() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("img.bin"), [0u8, 159, 146, 150, 0, 1]).unwrap();
+        run_git_test(cwd, &["add", "."]);
+        run_git_test(cwd, &["commit", "-m", "binary"]);
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &head).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].is_binary);
+        // And a text file is not.
+        let two = run_git_test(cwd, &["rev-parse", "HEAD~1"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &two).unwrap();
+        assert!(files.iter().all(|f| !f.is_binary));
+    }
+
+    #[test]
+    fn commit_files_and_diff_are_first_parent_to_commit() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let head = run_git_test(cwd, &["rev-parse", "HEAD"]).trim().to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &head).unwrap();
+        let summary: Vec<_> = files
+            .iter()
+            .map(|f| (f.path.as_str(), f.status.as_str(), f.additions, f.deletions))
+            .collect();
+        assert_eq!(summary, [("a.txt", "M", 1, 1), ("b.txt", "A", 1, 0)]);
+
+        let (orig, modi) = git_libgit2::commit_file_diff_sync(cwd, &head, "a.txt").unwrap();
+        assert_eq!((orig.as_str(), modi.as_str()), ("one\n", "two\n"));
+        let (orig, modi) = git_libgit2::commit_file_diff_sync(cwd, &head, "b.txt").unwrap();
+        assert_eq!((orig.as_str(), modi.as_str()), ("", "new\n"));
+    }
+
+    #[test]
+    fn commit_files_of_a_root_commit_diff_against_nothing() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let root = run_git_test(cwd, &["rev-list", "--max-parents=0", "HEAD"])
+            .trim()
+            .to_string();
+        let files = git_libgit2::commit_files_sync(cwd, &root).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].status, "A");
+    }
+
+    #[test]
+    fn commit_commands_reject_a_malformed_id() {
+        let dir = make_branch_repo();
+        let cwd = dir.path().to_str().unwrap();
+        assert!(git_libgit2::commit_files_sync(cwd, "not-a-sha").is_err());
+        assert!(git_libgit2::commit_file_diff_sync(cwd, "zz", "a.txt").is_err());
     }
 
     #[test]

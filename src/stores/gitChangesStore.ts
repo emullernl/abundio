@@ -6,7 +6,7 @@ import {
 	git,
 	workspaces as workspacesApi,
 } from "../lib/ipc";
-import type { GitChangedFile } from "../lib/types";
+import type { CommitHistory, GitChangedFile } from "../lib/types";
 import { conflictedPathsOf, useWorkspaceGitStore } from "./workspaceGitStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
@@ -28,6 +28,7 @@ interface GitChangesCacheEntry {
 	currentBranch: string | null;
 	availableBranches: string[];
 	operationInProgress: GitOperation | null;
+	commitHistory: CommitHistory | null;
 }
 
 const gitChangesCache = new Map<string, GitChangesCacheEntry>();
@@ -47,7 +48,30 @@ function emptyCacheEntry(): GitChangesCacheEntry {
 		currentBranch: null,
 		availableBranches: [],
 		operationInProgress: null,
+		commitHistory: null,
 	};
+}
+
+/** Same list, same order, same remote reachability. A bundle push on every
+ *  fs event must not re-render the section when nothing about it moved. */
+export function commitHistoryEqual(
+	a: CommitHistory | null,
+	b: CommitHistory | null,
+): boolean {
+	if (a === b) return true;
+	if (!a || !b) return false;
+	if (a.base !== b.base || a.ahead !== b.ahead) return false;
+	if (a.githubSlug !== b.githubSlug) return false;
+	if (a.commits.length !== b.commits.length) return false;
+	for (let i = 0; i < a.commits.length; i++) {
+		if (
+			a.commits[i].oid !== b.commits[i].oid ||
+			a.commits[i].shared !== b.commits[i].shared ||
+			a.commits[i].onRemote !== b.commits[i].onRemote
+		)
+			return false;
+	}
+	return true;
 }
 
 // Order-sensitive comparison — relies on the backend returning files in a
@@ -80,6 +104,10 @@ interface GitChangesState {
 	/** The suspended git operation, surfaced as a single read-only line in the
 	 *  Git changes tab. Abundio never continues or aborts one. */
 	operationInProgress: GitOperation | null;
+	/** The **Commits** section's data for the Active workspace. Null before
+	 *  the first bundle, or when the commit list itself could not be read (an
+	 *  unknown base is *not* that — it arrives with `base: null`). */
+	commitHistory: CommitHistory | null;
 	fetchChanges: (
 		cwd: string,
 		workspaceBaseBranch?: string | null,
@@ -119,6 +147,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 	collapsedSections: {},
 	branchSelectorOpen: false,
 	operationInProgress: null,
+	commitHistory: null,
 
 	fetchChanges: async (cwd, workspaceBaseBranch) => {
 		if (inFlightFetch) {
@@ -154,6 +183,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 					changedFiles: files,
 					baseBranch: newBaseBranch,
 					currentBranch: branchInfo.currentBranch,
+					commitHistory: bundle.commitHistory,
 				});
 			}
 			if (gen !== fetchGeneration) return; // stale singleton
@@ -175,6 +205,9 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			if (state.currentBranch !== branchInfo.currentBranch) {
 				updates.currentBranch = branchInfo.currentBranch;
 			}
+			if (!commitHistoryEqual(state.commitHistory, bundle.commitHistory)) {
+				updates.commitHistory = bundle.commitHistory;
+			}
 			set(updates);
 			// Keep sidebar chip and stats in sync without extra IPC calls
 			const activeId = useWorkspaceStore.getState().activeWorkspaceId;
@@ -192,12 +225,26 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 					.catch(() => {});
 			}
 		} catch (e) {
+			// Same rule as `applyError`: a failed refresh's commit list is stale,
+			// in the cache too, or a switch away and back would resurrect it.
+			// Before the generation check, as the success path writes the cache
+			// before it: the cache belongs to the workspace, not the singleton.
+			if (startedForWorkspaceId) {
+				const existing = gitChangesCache.get(startedForWorkspaceId);
+				if (existing) {
+					gitChangesCache.set(startedForWorkspaceId, {
+						...existing,
+						commitHistory: null,
+					});
+				}
+			}
 			if (gen !== fetchGeneration) return; // stale response
 			const errMsg = e instanceof Error ? e.message : String(e);
 			set({
 				loading: false,
 				error: errMsg,
 				changedFiles: [],
+				commitHistory: null,
 			});
 			// Sync non-git status so sidebar chip and panel stay consistent
 			if (/not a git repository/i.test(errMsg)) {
@@ -239,6 +286,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			baseBranch: newBaseBranch,
 			currentBranch: branchInfo.currentBranch,
 			operationInProgress: bundle.operationInProgress,
+			commitHistory: bundle.commitHistory,
 		});
 
 		// Always: sidebar chip — keeps WorkspaceItem accurate for background
@@ -301,6 +349,9 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 		if (state.operationInProgress !== bundle.operationInProgress) {
 			updates.operationInProgress = bundle.operationInProgress;
 		}
+		if (!commitHistoryEqual(state.commitHistory, bundle.commitHistory)) {
+			updates.commitHistory = bundle.commitHistory;
+		}
 		set(updates);
 	},
 
@@ -335,9 +386,20 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 				}
 			}
 		}
+		// The bundle failed, so its commit list is stale too; drop it from the
+		// cache as well, or a switch away and back would resurrect it.
+		const existing = gitChangesCache.get(workspaceId);
+		if (existing) {
+			gitChangesCache.set(workspaceId, { ...existing, commitHistory: null });
+		}
 		const activeId = useWorkspaceStore.getState().activeWorkspaceId;
 		if (workspaceId !== activeId) return;
-		set({ loading: false, error: message, changedFiles: [] });
+		set({
+			loading: false,
+			error: message,
+			changedFiles: [],
+			commitHistory: null,
+		});
 	},
 
 	toggleSection: (section) =>
@@ -390,6 +452,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			currentBranch: null,
 			availableBranches: [],
 			operationInProgress: null,
+			commitHistory: null,
 			loading: false,
 			error: null,
 			branchSelectorOpen: false,
@@ -404,6 +467,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			currentBranch: entry?.currentBranch ?? null,
 			availableBranches: entry?.availableBranches ?? [],
 			operationInProgress: entry?.operationInProgress ?? null,
+			commitHistory: entry?.commitHistory ?? null,
 			loading: false,
 			error: null,
 			branchSelectorOpen: false,

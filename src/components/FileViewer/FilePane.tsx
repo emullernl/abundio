@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveLayout } from "../../hooks/useActiveLayout";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import {
+	diffRealPath as diffRealPathOf,
+	parseCommitDiffKey,
+} from "../../lib/commitDiffKey";
+import {
 	parseConflicts,
 	type ResolveChoice,
 	resolveAll,
@@ -78,6 +82,7 @@ export function FilePane({
 	onFocus,
 }: FilePaneProps) {
 	const registerFilePane = useExplorerStore((s) => s.registerFilePane);
+	const loadCommitDiff = useExplorerStore((s) => s.loadCommitDiff);
 	const unregisterFilePane = useExplorerStore((s) => s.unregisterFilePane);
 	const paneState = useExplorerStore((s) => s.filePanes[paneId]);
 	const updateFileContent = useExplorerStore((s) => s.updateFileContent);
@@ -305,6 +310,17 @@ export function FilePane({
 		unregisterFilePane,
 	]);
 
+	// A Commit diff pane restored from a saved layout has no content (diffs
+	// live only in memory); fetch it once. Live `diff:` panes are refreshed by
+	// the file watcher instead, and a commit never changes.
+	const needsCommitDiff =
+		paneState?.fileType === "diff" &&
+		paneState.diffOriginal == null &&
+		parseCommitDiffKey(paneState.filePath) != null;
+	useEffect(() => {
+		if (needsCommitDiff) loadCommitDiff(paneId, cwd);
+	}, [needsCommitDiff, paneId, cwd, loadCommitDiff]);
+
 	const handleContextMenu = (e: React.MouseEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
@@ -351,11 +367,11 @@ export function FilePane({
 	const isMarkdown =
 		paneState.fileType === "text" && isMarkdownFile(paneState.fileName);
 
-	// For a diff pane, the underlying real (repo-relative) path, sans "diff:" prefix.
+	// For a diff pane, the underlying real (repo-relative) path, sans its key
+	// prefix (`diff:` or a Commit diff pane's `diff@<oid>:`).
 	const diffRealPath =
-		paneState.fileType === "diff"
-			? paneState.filePath.replace(/^diff:/, "")
-			: null;
+		paneState.fileType === "diff" ? diffRealPathOf(paneState.filePath) : null;
+	const isCommitDiff = parseCommitDiffKey(paneState.filePath) != null;
 	const isStandaloneDiff = paneState.diffSource === "file";
 	const isPatchFile =
 		paneState.fileType === "text" &&
@@ -565,6 +581,23 @@ export function FilePane({
 					/>
 				)}
 				{paneState.fileType === "diff" &&
+					paneState.diffOriginal == null &&
+					paneState.diffLoadFailed && (
+						<div
+							className="absolute inset-0 flex items-center justify-center text-center"
+							style={{
+								color: "var(--fg-secondary)",
+								fontSize: 13,
+								padding: "0 24px",
+								backgroundColor: "var(--bg-primary)",
+							}}
+						>
+							This commit is no longer in the repository — it may have been
+							rebased away. Close this pane, or open the file from the Commits
+							section again.
+						</div>
+					)}
+				{paneState.fileType === "diff" &&
 					paneState.diffOriginal != null &&
 					paneState.diffModified != null &&
 					diffRealPath != null && (
@@ -585,7 +618,7 @@ export function FilePane({
 								onOpenFile={
 									isStandaloneDiff
 										? () => openDiffAsText(paneId)
-										: paneState.diffSection
+										: paneState.diffSection || isCommitDiff
 											? openPlainFileFromDiff
 											: undefined
 								}

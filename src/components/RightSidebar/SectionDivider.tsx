@@ -5,9 +5,10 @@ interface Props {
 	onResizeEnd: () => void;
 }
 
-/** Horizontal drag handle between the active tab content and the PR section.
- *  Renders only when the PR section is expanded — when collapsed, the PR
- *  section pins itself at its header height and the divider has no role. */
+/** Horizontal drag handle above an expanded Anchored section (Commits
+ *  or Pull Requests). Reports the pointer's height fraction; the caller turns
+ *  it into a share. Renders only while that section is expanded — collapsed,
+ *  the section pins itself at its header height and the divider has no role. */
 export function SectionDivider({ onResize, onResizeEnd }: Props) {
 	const dividerRef = useRef<HTMLDivElement>(null);
 	const onResizeEndRef = useRef(onResizeEnd);
@@ -25,7 +26,7 @@ export function SectionDivider({ onResize, onResizeEnd }: Props) {
 
 			function onMouseMove(e: MouseEvent) {
 				let ratio = (e.clientY - parentRect.top) / parentRect.height;
-				ratio = Math.max(0.15, Math.min(0.85, ratio));
+				ratio = Math.max(0, Math.min(1, ratio));
 				onResize(ratio);
 			}
 

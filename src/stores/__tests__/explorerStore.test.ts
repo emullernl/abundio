@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { readFile, writeFile, fileDiff } = vi.hoisted(() => ({
+const { readFile, writeFile, fileDiff, commitFileDiff } = vi.hoisted(() => ({
 	readFile: vi.fn(),
 	writeFile: vi.fn(),
 	fileDiff: vi.fn(),
+	commitFileDiff: vi.fn(),
 }));
 
 vi.mock("../../lib/ipc", () => ({
 	fs: { readFile, writeFile },
-	git: { fileDiff },
+	git: { fileDiff, commitFileDiff },
 	workspaces: { update: vi.fn(() => Promise.resolve()) },
 }));
 
@@ -107,6 +108,7 @@ beforeEach(() => {
 	readFile.mockReset();
 	writeFile.mockReset();
 	fileDiff.mockReset();
+	commitFileDiff.mockReset();
 	useExplorerStore.setState({
 		filePanes: {},
 		expandedDirs: {},
@@ -455,5 +457,95 @@ describe("conflicted files open as ordinary text panes", () => {
 			expect(pane.diffOriginal).toBe("old");
 			expect(pane.diffModified).toBe("new");
 		});
+	});
+});
+
+describe("Commit diff panes", () => {
+	const OID = "9f3e1a7c0ffee00000000000000000000000beef";
+	const KEY = `diff@${OID}:src/main.ts`;
+
+	it("opens beside the live diff pane for the same file, not over it", async () => {
+		const { useWorkspaceStore } = await import("../workspaceStore");
+		const createTab = vi.fn(() => Promise.resolve());
+		vi.mocked(useWorkspaceStore.getState).mockReturnValue({
+			workspaces: [
+				{
+					id: "ws-1",
+					rootFolder: "/tmp/ws1",
+					baseBranch: "main",
+					tabs: [{ id: "tab-1", layoutJson: PANE_LAYOUT_DIFF }],
+				},
+			],
+			setActiveTab: vi.fn(),
+			setFocusedPane: vi.fn(),
+			createTab,
+		} as never);
+
+		useExplorerStore
+			.getState()
+			.openCommitDiff("ws-1", OID, "src/main.ts", "a", "b");
+
+		expect(createTab).toHaveBeenCalledTimes(1);
+		const seed = (createTab.mock.calls[0] as unknown[])[2] as {
+			filePath: string;
+			isDiff: boolean;
+		};
+		expect(seed.filePath).toBe(KEY);
+		expect(seed.isDiff).toBe(true);
+		const pane = Object.values(useExplorerStore.getState().filePanes)[0];
+		expect(pane.fileName).toBe("main.ts @ 9f3e1a7");
+		expect(pane.diffSection).toBeNull();
+		vi.mocked(useWorkspaceStore.getState).mockReset();
+	});
+
+	it("is never refreshed by the file watcher", async () => {
+		setPane("pane-diff", makeDiffPane({ filePath: KEY, diffSection: null }));
+		await useExplorerStore
+			.getState()
+			.handleFsChange(
+				"ws-1",
+				["/tmp/ws1/src/main.ts"],
+				["/tmp/ws1/src/main.ts"],
+			);
+		expect(fileDiff).not.toHaveBeenCalled();
+		const pane = useExplorerStore.getState().filePanes["pane-diff"];
+		expect(pane.diffOriginal).toBe("old");
+		expect(pane.deletedOnDisk).toBe(false);
+	});
+
+	it("loads a restored pane's content once, from the commit", async () => {
+		useExplorerStore
+			.getState()
+			.registerFilePane("p", KEY, true, "git", null, false, null, null);
+		commitFileDiff.mockResolvedValue({ original: "o", modified: "m" });
+
+		await useExplorerStore.getState().loadCommitDiff("p", "/tmp/ws1");
+		expect(commitFileDiff).toHaveBeenCalledWith("/tmp/ws1", OID, "src/main.ts");
+		const pane = useExplorerStore.getState().filePanes.p;
+		expect([pane.diffOriginal, pane.diffModified]).toEqual(["o", "m"]);
+
+		await useExplorerStore.getState().loadCommitDiff("p", "/tmp/ws1");
+		expect(commitFileDiff).toHaveBeenCalledTimes(1);
+	});
+
+	it("says so when the commit is gone, instead of staying blank", async () => {
+		const err = vi.spyOn(console, "error").mockImplementation(() => {});
+		useExplorerStore
+			.getState()
+			.registerFilePane("p", KEY, true, "git", null, false, null, null);
+		commitFileDiff.mockRejectedValue(new Error("find commit: not found"));
+		await useExplorerStore.getState().loadCommitDiff("p", "/tmp/ws1");
+		const pane = useExplorerStore.getState().filePanes.p;
+		expect(pane.diffLoadFailed).toBe(true);
+		expect(pane.diffOriginal).toBeNull();
+		err.mockRestore();
+	});
+
+	it("does not load for a live diff pane", async () => {
+		useExplorerStore
+			.getState()
+			.registerFilePane("p", "diff:src/main.ts", true, "git", "unstaged");
+		await useExplorerStore.getState().loadCommitDiff("p", "/tmp/ws1");
+		expect(commitFileDiff).not.toHaveBeenCalled();
 	});
 });

@@ -86,6 +86,27 @@ describe("gitRowMenuEntries", () => {
 		).toEqual(["open-diff"]);
 	});
 
+	it("disables Open Diff on a binary commit file, and only that", () => {
+		expect(
+			disabledIds(
+				gitRowMenuEntries({ status: "M", section: "commit", isBinary: true }),
+			),
+		).toEqual(["open-diff"]);
+	});
+
+	it("disables Open Diff and Open File on a submodule", () => {
+		// No text to diff, and on disk it is a folder, not a file.
+		expect(
+			disabledIds(
+				gitRowMenuEntries({
+					status: "M",
+					section: "commit",
+					isSubmodule: true,
+				}),
+			),
+		).toEqual(["open-diff", "open-file"]);
+	});
+
 	it("puts the relative path first — it is what a terminal in the repo wants", () => {
 		const order = ids(gitRowMenuEntries({ status: "M", section: "unstaged" }));
 		expect(order.indexOf("copy-relative-path")).toBeLessThan(

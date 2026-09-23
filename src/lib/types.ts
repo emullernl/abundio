@@ -233,6 +233,51 @@ export interface BranchInfo {
 	currentBranch: string;
 }
 
+/** One row of the **Commits** section (see CONTEXT.md). */
+export interface HistoryCommit {
+	oid: string;
+	subject: string;
+	/** Full message, subject included — shown in the row's tooltip. */
+	message: string;
+	authorName: string;
+	authorEmail: string;
+	/** Author time, seconds since the Unix epoch. */
+	time: number;
+	isMerge: boolean;
+	/** Below the divider: **Shared history** the base also has. False for an
+	 *  **Ahead commit**, and for every row when the base is unknown. */
+	shared: boolean;
+	/** On the GitHub remote named by `CommitHistory.githubSlug`. Gates
+	 *  "Open on GitHub". */
+	onRemote: boolean;
+}
+
+/** The Workspace's recent history: every Ahead commit, then the Shared
+ *  history, newest first, capped at 200 rows. */
+export interface CommitHistory {
+	/** The base the divider is named after; null when it cannot be resolved
+	 *  (the list is then plain HEAD history). */
+	base: string | null;
+	/** The true Ahead count, even past the row cap. */
+	ahead: number;
+	commits: HistoryCommit[];
+	/** `owner/repo` "Open on GitHub" links to — the same remote `onRemote` was
+	 *  judged against. Null when the repository has no GitHub remote. */
+	githubSlug: string | null;
+}
+
+/** A file one commit touched, against its first parent. */
+export interface CommitFile {
+	path: string;
+	status: string;
+	additions: number;
+	deletions: number;
+	/** Shown but not clickable: a text diff of it would be unreadable. */
+	isBinary: boolean;
+	/** A submodule pointer, not a file: nothing on either side to diff. */
+	isSubmodule: boolean;
+}
+
 // ── GitHub CLI ──
 
 export interface GhStatus {

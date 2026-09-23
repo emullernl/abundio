@@ -22,6 +22,8 @@ import type {
 import type {
 	AvailableShell,
 	BranchInfo,
+	CommitFile,
+	CommitHistory,
 	DetectedDevEnvironment,
 	DirEntry,
 	FileContent,
@@ -29,6 +31,7 @@ import type {
 	GhStatus,
 	GitChangedFile,
 	GitFileDiff,
+	HistoryCommit,
 	PaneNode,
 	Profile,
 	PullRequest,
@@ -754,10 +757,111 @@ const CLEAN_BRANCH: BranchInfo = {
 	currentBranch: "main",
 };
 
+const DEMO_AUTHORS = [
+	["Ada Lovelace", "ada@example.com"],
+	["Grace Hopper", "grace@example.com"],
+] as const;
+
+/** A stable fake 40-hex id, so a commit keeps its oid across bundle pushes. */
+function demoOid(seed: string): string {
+	let h = 2166136261;
+	let out = "";
+	for (let round = 0; out.length < 40; round++) {
+		for (const ch of `${seed}#${round}`) {
+			h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+		}
+		out += (h >>> 0).toString(16).padStart(8, "0");
+	}
+	return out.slice(0, 40);
+}
+
+/** oid → files, for `git_commit_files` / `git_commit_file_diff`. */
+export const commitFilesByOid: Record<string, CommitFile[]> = {};
+
+/** Shared history every demo repository sits on, newest first. */
+const DEMO_SHARED_SUBJECTS = [
+	"Merge pull request #212 from acme/fix-flaky-ci",
+	"Bump dependencies",
+	"Fix flaky integration test",
+	"Add health-check endpoint",
+	"Tidy lint config",
+	"Initial commit",
+];
+
+/** Ahead commits: one per `against_base` file (only the oldest is on a
+ *  remote, so the menu shows "Open on GitHub" both enabled and disabled).
+ *  Below them, a short shared history, all pushed. On the base branch there
+ *  are no Ahead commits and the list is just the shared history. Times are
+ *  relative to now so the rows read "2h", "1d" in any year. */
+function commitHistoryForCwd(cwd: string): CommitHistory | null {
+	const entry = gitByRoot[cwd];
+	if (!entry) return null;
+	const base = entry.branch.defaultBranch;
+	const onBase = entry.branch.currentBranch === base;
+	const touched = onBase
+		? []
+		: entry.files.filter((f) => f.section === "against_base");
+	const now = Math.floor(Date.now() / 1000);
+	const ahead: HistoryCommit[] = touched
+		.map((f, i) => {
+			const oid = demoOid(`${cwd}:${f.path}`);
+			commitFilesByOid[oid] = [
+				{
+					path: f.path,
+					status: f.status,
+					additions: f.additions,
+					deletions: f.deletions,
+					isBinary: false,
+					isSubmodule: false,
+				},
+			];
+			const name = f.path.split("/").pop() ?? f.path;
+			const [authorName, authorEmail] = DEMO_AUTHORS[i % DEMO_AUTHORS.length];
+			const subject = `${f.status === "A" ? "Add" : "Update"} ${name}`;
+			return {
+				oid,
+				subject,
+				message: `${subject}\n\nPart of ${entry.branch.currentBranch}.`,
+				authorName,
+				authorEmail,
+				time: now - (touched.length - i) * 5 * 3600,
+				isMerge: false,
+				shared: false,
+				onRemote: i === 0,
+			};
+		})
+		.reverse();
+	const shared: HistoryCommit[] = DEMO_SHARED_SUBJECTS.map((subject, i) => {
+		const oid = demoOid(`${cwd}:shared:${i}`);
+		commitFilesByOid[oid] = [];
+		const [authorName, authorEmail] =
+			DEMO_AUTHORS[(i + 1) % DEMO_AUTHORS.length];
+		return {
+			oid,
+			subject,
+			message: subject,
+			authorName,
+			authorEmail,
+			time: now - (2 + i) * 86400,
+			isMerge: subject.startsWith("Merge "),
+			shared: true,
+			onRemote: true,
+		};
+	});
+	const repoName = cwd.split("/").filter(Boolean).pop() ?? "repo";
+	return {
+		base,
+		ahead: ahead.length,
+		commits: [...ahead, ...shared],
+		githubSlug: `acme/${repoName}`,
+	};
+}
+
 /** Resolve a fetch bundle from a workspace cwd. */
 export function gitBundleForCwd(cwd: string): GitFetchBundle {
 	const entry = gitByRoot[cwd];
 	return {
+		commitHistory: commitHistoryForCwd(cwd),
 		changedFiles: entry?.files ?? [],
 		branchInfo: entry?.branch ?? CLEAN_BRANCH,
 		statusFingerprint: `demo-fp-${cwd}`,

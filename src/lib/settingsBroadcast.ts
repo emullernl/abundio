@@ -30,6 +30,7 @@ export const NOT_BROADCAST = new Set<PersistedSettingKey>([
 	"sidebarWidth",
 	"rightSidebarWidth",
 	"rightSidebarPrRatio",
+	"rightSidebarCommitsShare",
 	"activityByteThreshold",
 	"lastOpenedDevEnvId",
 ]);
