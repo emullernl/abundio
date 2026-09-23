@@ -39,6 +39,9 @@ export type GitRowMenuEntry = GitRowMenuAction | GitRowMenuSeparator;
 export interface GitRowMenuTarget {
 	status: string;
 	section: string;
+	/** A binary file has no readable text diff. Only a **Commits** file row
+	 *  knows this; Git changes rows leave it unset. */
+	isBinary?: boolean;
 }
 
 export function gitRowMenuEntries(
@@ -52,7 +55,11 @@ export function gitRowMenuEntries(
 	const isConflicted = file.section === "conflicted";
 
 	return [
-		{ id: "open-diff", label: "Open Diff", disabled: isConflicted },
+		{
+			id: "open-diff",
+			label: "Open Diff",
+			disabled: isConflicted || file.isBinary === true,
+		},
 		{ id: "open-file", label: "Open File", disabled: isDeleted },
 		{ separator: true },
 		{ id: "reveal", label: reveal, disabled: isDeleted },

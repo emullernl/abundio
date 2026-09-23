@@ -20,8 +20,12 @@ const { commitFiles, commitFileDiff, openUrl } = vi.hoisted(() => ({
 	openUrl: vi.fn(),
 }));
 
+const { revealInFolder } = vi.hoisted(() => ({
+	revealInFolder: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../../../lib/ipc", () => ({
 	git: { commitFiles, commitFileDiff },
+	fs: { revealInFolder },
 }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));
 vi.mock("../../../lib/clipboard", () => ({
@@ -300,10 +304,97 @@ describe("CommitsSection", () => {
 		const fileRow = [...container.querySelectorAll("button")].find((b) =>
 			b.textContent?.includes("logo.png"),
 		) as HTMLButtonElement;
-		expect(fileRow.disabled).toBe(true);
+		expect(fileRow.getAttribute("aria-disabled")).toBe("true");
 		expect(fileRow.textContent).toContain("binary");
 		await act(async () => fileRow.click());
 		expect(commitFileDiff).not.toHaveBeenCalled();
+		// Still right-clickable: the path actions apply to a binary file.
+		act(() => {
+			fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+		expect(menuButton("Open Diff")?.disabled).toBe(true);
+		expect(menuButton("Copy Relative Path")?.disabled).toBe(false);
+	});
+
+	// Each test uses its own oid: commit file lists are cached per oid at
+	// module level, for the life of the window — and of this test file.
+	async function openFileMenu(
+		oid: string,
+		file: Partial<import("../../../lib/types").CommitFile> = {},
+	) {
+		commitFiles.mockResolvedValue([
+			{
+				path: "src/x.ts",
+				status: "M",
+				additions: 1,
+				deletions: 0,
+				isBinary: false,
+				...file,
+			},
+		]);
+		render({ commitHistory: list(commit(oid)) });
+		const row = container.querySelector("[aria-expanded]") as HTMLElement;
+		await act(async () => row.click());
+		const fileRow = [...container.querySelectorAll("button")].find((b) =>
+			b.textContent?.includes("x.ts"),
+		) as HTMLElement;
+		act(() => {
+			fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+		return fileRow;
+	}
+
+	it("gives a commit's file row the Git changes Row menu", async () => {
+		await openFileMenu("f1");
+		const labels = [...document.querySelectorAll("body button")].map(
+			(b) => b.textContent,
+		);
+		for (const l of [
+			"Open Diff",
+			"Open File",
+			"Copy Relative Path",
+			"Copy Path",
+		])
+			expect(labels).toContain(l);
+		// Not the commit menu.
+		expect(menuButton("Copy Hash")).toBeUndefined();
+	});
+
+	it("Open Diff opens that commit's diff of the file", async () => {
+		commitFileDiff.mockResolvedValue({ original: "o", modified: "m" });
+		const openCommitDiff = vi.fn();
+		useExplorerStore.setState({ openCommitDiff });
+		await openFileMenu("f2");
+		await act(async () => menuButton("Open Diff")?.click());
+		expect(openCommitDiff).toHaveBeenCalledWith(
+			"a",
+			"f2",
+			"src/x.ts",
+			"o",
+			"m",
+			false,
+		);
+	});
+
+	it("copies the path as it is on disk now, and reveals it", async () => {
+		const { writeClipboardText } = await import("../../../lib/clipboard");
+		const fileRow = await openFileMenu("f3");
+		act(() => menuButton("Copy Relative Path")?.click());
+		expect(writeClipboardText).toHaveBeenCalledWith("src/x.ts");
+		act(() => {
+			fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+		const reveal = [...document.querySelectorAll("body button")].find((b) =>
+			/Reveal|Show|Open Containing/.test(b.textContent ?? ""),
+		) as HTMLButtonElement;
+		act(() => reveal.click());
+		expect(revealInFolder).toHaveBeenCalledWith("/repos/a/src/x.ts");
+	});
+
+	it("disables Open File and Reveal for a path the commit deleted", async () => {
+		await openFileMenu("f4", { status: "D" });
+		expect(menuButton("Open File")?.disabled).toBe(true);
+		expect(menuButton("Open Diff")?.disabled).toBe(false);
 	});
 
 	it("disables Open on GitHub for an unpushed commit", () => {

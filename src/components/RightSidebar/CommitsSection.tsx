@@ -10,7 +10,9 @@ import {
 	initials,
 	relativeTime,
 } from "../../lib/commitHistory";
-import { git } from "../../lib/ipc";
+import { gitRowMenuEntries } from "../../lib/gitRowMenu";
+import { fs as fsApi, git } from "../../lib/ipc";
+import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { CommitFile, HistoryCommit } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
@@ -187,10 +189,13 @@ function CommitsBody() {
 	>({});
 	// Captured by value, like the Git changes Row menu: a refresh that drops
 	// the commit (a rebase) leaves the menu open and its actions still right.
+	// A file row inside an expanded commit gets the Git changes **Row menu**;
+	// the commit row itself gets the commit menu.
 	const [menu, setMenu] = useState<{
 		x: number;
 		y: number;
 		commit: HistoryCommit;
+		file?: CommitFile;
 		fromKeyboard: boolean;
 	} | null>(null);
 
@@ -275,9 +280,66 @@ function CommitsBody() {
 		}
 	}
 
+	function openFileNow(file: CommitFile) {
+		if (!cwd || !activeWorkspaceId) return;
+		useExplorerStore
+			.getState()
+			.openFile(activeWorkspaceId, resolveWorkspacePath(cwd, file.path))
+			.catch(() => {
+				// The file is not on disk any more — nothing to open.
+			});
+	}
+
+	function buildFileMenuItems(
+		commit: HistoryCommit,
+		file: CommitFile,
+	): ContextMenuItem[] {
+		const root = cwd ?? "";
+		const close = () => setMenu(null);
+		// The same menu as a Git changes row, in the same shape. "Open Diff" is
+		// the commit's diff; "Open File" and the paths are the file as it is on
+		// disk now. A path the commit deleted is disabled like a deleted row.
+		const run: Record<string, () => void> = {
+			"open-diff": () => {
+				close();
+				openFileDiff(commit, file);
+			},
+			"open-file": () => {
+				close();
+				openFileNow(file);
+			},
+			reveal: () => {
+				close();
+				fsApi
+					.revealInFolder(resolveWorkspacePath(root, file.path))
+					.catch(console.error);
+			},
+			"copy-relative-path": () => {
+				close();
+				writeClipboardText(file.path).catch(console.error);
+			},
+			"copy-path": () => {
+				close();
+				writeClipboardText(resolveWorkspacePath(root, file.path)).catch(
+					console.error,
+				);
+			},
+		};
+		return gitRowMenuEntries({ ...file, section: "commit" }).map((entry) =>
+			"separator" in entry
+				? { separator: true as const }
+				: {
+						label: entry.label,
+						disabled: entry.disabled,
+						onClick: run[entry.id],
+					},
+		);
+	}
+
 	function buildMenuItems(): ContextMenuItem[] {
 		if (!menu) return [];
 		const { commit } = menu;
+		if (menu.file) return buildFileMenuItems(commit, menu.file);
 		const close = () => setMenu(null);
 		const run = {
 			"copy-hash": () => {
@@ -320,7 +382,7 @@ function CommitsBody() {
 								commit={commit}
 								isHead={i === 0}
 								isOpen={isOpen}
-								isMenuTarget={menu?.commit.oid === commit.oid}
+								isMenuTarget={menu?.commit.oid === commit.oid && !menu.file}
 								now={now}
 								onToggle={() => toggleCommit(commit.oid)}
 								onContextMenu={(x, y, fromKeyboard) =>
@@ -346,7 +408,14 @@ function CommitsBody() {
 											key={f.path}
 											file={f}
 											shared={commit.shared}
+											isMenuTarget={
+												menu?.commit.oid === commit.oid &&
+												menu.file?.path === f.path
+											}
 											onOpen={() => openFileDiff(commit, f)}
+											onContextMenu={(x, y, fromKeyboard) =>
+												setMenu({ x, y, commit, file: f, fromKeyboard })
+											}
 										/>
 									))
 								))}
@@ -558,11 +627,16 @@ function CommitRow({
 function CommitFileRow({
 	file,
 	shared,
+	isMenuTarget,
 	onOpen,
+	onContextMenu,
 }: {
 	file: CommitFile;
 	shared: boolean;
+	/** The row the Row menu is open on: a ring, like a Git changes row. */
+	isMenuTarget: boolean;
 	onOpen: () => void;
+	onContextMenu: (x: number, y: number, fromKeyboard: boolean) => void;
 }) {
 	const color = STATUS_COLORS[file.status] ?? "var(--fg-secondary)";
 	const name = file.path.split("/").pop() ?? file.path;
@@ -570,13 +644,28 @@ function CommitFileRow({
 		? file.path.slice(0, file.path.lastIndexOf("/"))
 		: "";
 	// A text diff of a binary blob is only replacement characters, so the row
-	// says what it is instead of opening a pane full of them.
+	// says what it is instead of opening a pane full of them. `aria-disabled`,
+	// not `disabled`: a disabled button receives no right-click, and the Row
+	// menu's path actions still apply to a binary file.
 	const binary = file.isBinary;
 	return (
 		<button
 			type="button"
 			onClick={binary ? undefined : onOpen}
-			disabled={binary}
+			aria-disabled={binary || undefined}
+			aria-haspopup="menu"
+			onContextMenu={(e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				onContextMenu(e.clientX, e.clientY, false);
+			}}
+			onKeyDown={(e) => {
+				if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+					e.preventDefault();
+					const rect = e.currentTarget.getBoundingClientRect();
+					onContextMenu(rect.left + 12, rect.bottom, true);
+				}
+			}}
 			title={
 				binary
 					? `${file.path} is a binary file`
@@ -589,6 +678,7 @@ function CommitFileRow({
 				paddingRight: 10,
 				background: "transparent",
 				border: "none",
+				boxShadow: isMenuTarget ? "inset 0 0 0 1px var(--accent)" : undefined,
 				cursor: binary ? "default" : "pointer",
 				opacity: binary ? 0.6 : 1,
 				transitionDuration: "var(--transition-fast)",
