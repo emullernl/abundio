@@ -290,6 +290,7 @@ export function App() {
 		closePane,
 		closePaneNow,
 		navigatePane,
+		cycleFocusedPane,
 	} = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
@@ -701,6 +702,8 @@ export function App() {
 		registerAction("navigate-down", () => navigatePane("down"));
 		registerAction("navigate-left", () => navigatePane("left"));
 		registerAction("navigate-right", () => navigatePane("right"));
+		registerAction("next-pane", () => cycleFocusedPane(1));
+		registerAction("prev-pane", () => cycleFocusedPane(-1));
 		registerAction("command-palette", () => {
 			setFileSearchOpen(false);
 			setPaletteOpen((v) => !v);
@@ -798,6 +801,7 @@ export function App() {
 		splitPaneWithPicker,
 		closePane,
 		navigatePane,
+		cycleFocusedPane,
 		requestNewTab,
 		requestNewWorkspace,
 		requestCloseTerminalTab,

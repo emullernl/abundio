@@ -344,3 +344,123 @@ export function findOrphanPreviews(
 export function pruneOrphanPreviews(tree: PaneNode): PaneNode | null {
 	return pruneOrphanDerived(tree);
 }
+
+/** A leaf Pane's position in its Tab, as fractions of the Tab's area (0–1). */
+export interface PaneRect {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+export type PaneDirection = "up" | "down" | "left" | "right";
+
+/**
+ * Every leaf Pane's rect, derived from the split ratios alone — no DOM, so it is
+ * pure and testable. The resizer's few pixels are ignored; they never change
+ * which Pane is adjacent to which. A `vertical` split lays its children side by
+ * side (see `SplitContainer`), a `horizontal` one stacks them.
+ */
+export function paneRects(
+	tree: PaneNode,
+	rect: PaneRect = { x: 0, y: 0, w: 1, h: 1 },
+): Map<string, PaneRect> {
+	const out = new Map<string, PaneRect>();
+	const walk = (node: PaneNode, r: PaneRect) => {
+		if (node.type !== "split") {
+			out.set(node.id, r);
+			return;
+		}
+		if (node.direction === "vertical") {
+			const w1 = r.w * node.ratio;
+			walk(node.first, { x: r.x, y: r.y, w: w1, h: r.h });
+			walk(node.second, { x: r.x + w1, y: r.y, w: r.w - w1, h: r.h });
+		} else {
+			const h1 = r.h * node.ratio;
+			walk(node.first, { x: r.x, y: r.y, w: r.w, h: h1 });
+			walk(node.second, { x: r.x, y: r.y + h1, w: r.w, h: r.h - h1 });
+		}
+	};
+	walk(tree, rect);
+	return out;
+}
+
+const EDGE_EPSILON = 1e-6;
+
+/**
+ * The **Directional move** target: the Pane bordering `fromId` on the given
+ * side, or `null` at the Tab's edge (it does not wrap). When several Panes
+ * border that side, the winner is the one lying across from `fromId`'s centre
+ * line — a rule the layout alone decides, never focus history.
+ */
+export function neighbourInDirection(
+	tree: PaneNode,
+	fromId: string,
+	direction: PaneDirection,
+): string | null {
+	const rects = paneRects(tree);
+	const from = rects.get(fromId);
+	if (!from) return null;
+
+	const horizontal = direction === "left" || direction === "right";
+	// The edge of `from` we are crossing, and the centre line along it.
+	const edge =
+		direction === "right"
+			? from.x + from.w
+			: direction === "left"
+				? from.x
+				: direction === "down"
+					? from.y + from.h
+					: from.y;
+	const centre = horizontal ? from.y + from.h / 2 : from.x + from.w / 2;
+
+	let best: string | null = null;
+	let bestOverlap = 0;
+	for (const [id, r] of rects) {
+		if (id === fromId) continue;
+		// The candidate's edge that would touch ours.
+		const touching =
+			direction === "right"
+				? r.x
+				: direction === "left"
+					? r.x + r.w
+					: direction === "down"
+						? r.y
+						: r.y + r.h;
+		if (Math.abs(touching - edge) > EDGE_EPSILON) continue;
+		const start = horizontal ? r.y : r.x;
+		const end = horizontal ? r.y + r.h : r.x + r.w;
+		// Across from the centre line: the rule's winner, decided outright.
+		if (start <= centre + EDGE_EPSILON && centre < end - EDGE_EPSILON) {
+			return id;
+		}
+		// Otherwise keep the one sharing the most edge, as a float-safety net.
+		const fromStart = horizontal ? from.y : from.x;
+		const fromEnd = horizontal ? from.y + from.h : from.x + from.w;
+		const overlap = Math.min(end, fromEnd) - Math.max(start, fromStart);
+		if (overlap > bestOverlap + EDGE_EPSILON) {
+			best = id;
+			bestOverlap = overlap;
+		}
+	}
+	return best;
+}
+
+/**
+ * The **Pane cycle** target: the Pane `step` places after `fromId` in
+ * depth-first tree order, wrapping at the ends. Visits every Pane type. A
+ * `fromId` not in the tree lands on the first Pane. `null` when there is no
+ * other Pane to go to.
+ */
+export function cyclePane(
+	tree: PaneNode,
+	fromId: string | null,
+	step: 1 | -1,
+): string | null {
+	const ids = collectPaneIds(tree);
+	if (ids.length === 0) return null;
+	const idx = fromId ? ids.indexOf(fromId) : -1;
+	if (idx === -1) return ids[0];
+	if (ids.length === 1) return null;
+	return ids[(idx + step + ids.length) % ids.length];
+}

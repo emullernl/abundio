@@ -3,8 +3,11 @@ import { agentHooks } from "../lib/ipc";
 import { suppressMarkdownPreview } from "../lib/markdownPreview";
 import {
 	collectTerminals,
+	cyclePane,
 	findNode,
 	findPreviewForSource,
+	neighbourInDirection,
+	type PaneDirection,
 	removeNode,
 	replaceNode,
 	wrapInSplit,
@@ -181,29 +184,35 @@ export function useSplitPane() {
 	}, [getActiveTab, persistLayout]);
 
 	/** Navigate focus to adjacent pane in the given direction. */
+	// Directional move: focus the Pane bordering the focused one on that side,
+	// by position in the layout. Does not wrap — at the Tab's edge it is a no-op.
 	const navigatePane = useCallback(
-		(direction: "up" | "down" | "left" | "right") => {
+		(direction: PaneDirection) => {
 			const layout = getActiveLayout();
 			if (!layout) return;
-
-			const terminals = collectTerminals(layout);
-			if (terminals.length <= 1) return;
-
 			const currentFocused = useWorkspaceStore.getState().focusedPaneId;
-			const currentIndex = terminals.findIndex((t) => t.id === currentFocused);
-			if (currentIndex === -1) {
-				setFocusedPane(terminals[0].id);
+			if (!currentFocused || !findNode(layout, currentFocused)) {
+				const first = cyclePane(layout, null, 1);
+				if (first) setFocusedPane(first);
 				return;
 			}
+			const target = neighbourInDirection(layout, currentFocused, direction);
+			if (target) setFocusedPane(target);
+		},
+		[getActiveLayout, setFocusedPane],
+	);
 
-			let nextIndex: number;
-			if (direction === "right" || direction === "down") {
-				nextIndex = (currentIndex + 1) % terminals.length;
-			} else {
-				nextIndex = (currentIndex - 1 + terminals.length) % terminals.length;
-			}
-
-			setFocusedPane(terminals[nextIndex].id);
+	// Pane cycle: next/previous Pane of any type in tree order, wrapping.
+	const cycleFocusedPane = useCallback(
+		(step: 1 | -1) => {
+			const layout = getActiveLayout();
+			if (!layout) return;
+			const target = cyclePane(
+				layout,
+				useWorkspaceStore.getState().focusedPaneId,
+				step,
+			);
+			if (target) setFocusedPane(target);
 		},
 		[getActiveLayout, setFocusedPane],
 	);
@@ -218,5 +227,6 @@ export function useSplitPane() {
 		updateRatioLocal,
 		persistCurrentLayout,
 		navigatePane,
+		cycleFocusedPane,
 	};
 }

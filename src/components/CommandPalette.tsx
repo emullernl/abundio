@@ -110,6 +110,18 @@ export function CommandPalette({
 					action: () => splitPane(focusedPaneId, "horizontal"),
 				},
 				{
+					id: "action-next-pane",
+					label: "Focus Next Pane",
+					category: "Actions",
+					action: () => triggerAction("next-pane"),
+				},
+				{
+					id: "action-prev-pane",
+					label: "Focus Previous Pane",
+					category: "Actions",
+					action: () => triggerAction("prev-pane"),
+				},
+				{
 					id: "action-close-pane",
 					label: "Close Pane",
 					category: "Actions",

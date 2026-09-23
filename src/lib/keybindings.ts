@@ -6,6 +6,8 @@ type KeyAction =
 	| "navigate-down"
 	| "navigate-left"
 	| "navigate-right"
+	| "next-pane"
+	| "prev-pane"
 	| "command-palette"
 	| "open-file-search"
 	| "search-in-terminal"
@@ -78,6 +80,8 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"navigate-down",
 	"navigate-left",
 	"navigate-right",
+	"next-pane",
+	"prev-pane",
 	"command-palette",
 	"open-file-search",
 	"search-in-workspace",
@@ -170,6 +174,48 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		ctrl: !isMac,
 		action: "navigate-right",
 	},
+	// Pane cycle. macOS: Cmd+Option+] / [ — one modifier away from the tab
+	// cycle, matched by `code` because Option turns `]` into `'`. Windows/Linux:
+	// Ctrl+Tab / Ctrl+Shift+Tab, since Ctrl+Alt is AltGr on European layouts
+	// (and AltGr+bracket is how some of them type one). Terminals cannot tell
+	// Ctrl+Tab from Tab, so taking it costs the PTY nothing.
+	...(isMac
+		? [
+				{
+					key: "]",
+					code: "BracketRight",
+					meta: true,
+					shift: false,
+					ctrl: false,
+					alt: true,
+					action: "next-pane" as const,
+				},
+				{
+					key: "[",
+					code: "BracketLeft",
+					meta: true,
+					shift: false,
+					ctrl: false,
+					alt: true,
+					action: "prev-pane" as const,
+				},
+			]
+		: [
+				{
+					key: "Tab",
+					meta: false,
+					shift: false,
+					ctrl: true,
+					action: "next-pane" as const,
+				},
+				{
+					key: "Tab",
+					meta: false,
+					shift: true,
+					ctrl: true,
+					action: "prev-pane" as const,
+				},
+			]),
 	{
 		key: "k",
 		meta: isMac,
