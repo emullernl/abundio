@@ -72,7 +72,7 @@ Anything not on this list can still be added as a **custom agent** in Settings (
 
 ## Keyboard Shortcuts
 
-Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
+Most shortcuts use `Cmd` on macOS where Windows/Linux use `Ctrl`. Some differ by more than that, to avoid keys the terminal, the code editor or the operating system already use — so check both columns.
 
 | Action                           | macOS              | Windows/Linux                    |
 | -------------------------------- | ------------------ | :------------------------------- |
