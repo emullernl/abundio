@@ -25,6 +25,52 @@ pub fn is_profile_window_label(label: &str) -> bool {
     label != SETTINGS_WINDOW_LABEL
 }
 
+/// Picks the one Window a single-Window event should go to: the focused
+/// Profile-bound Window, else the Profile-bound Window with the lowest label.
+/// Never an auxiliary Window — Settings has no listener for these events, so
+/// targeting it would silently drop them. Lowest label rather than `HashMap`
+/// order, so the fallback is stable (see `owner_of` in lib.rs).
+pub fn pick_one_profile_window<'a>(
+    windows: impl IntoIterator<Item = (&'a str, bool)>,
+) -> Option<String> {
+    let mut focused = None;
+    let mut lowest: Option<&str> = None;
+    for (label, is_focused) in windows {
+        if !is_profile_window_label(label) {
+            continue;
+        }
+        if is_focused {
+            focused = Some(label);
+        }
+        if lowest.map_or(true, |l| label < l) {
+            lowest = Some(label);
+        }
+    }
+    focused.or(lowest).map(str::to_string)
+}
+
+/// Emits `event` to exactly one Profile-bound Window (see
+/// `pick_one_profile_window`), never a broadcast. For one-per-app intents and
+/// notifications: native-menu Switch Profile, `pr-changes`, `update-available`,
+/// `whats-new`. The frontend must hear these through `listenToThisWindow`: a
+/// global JS `listen` receives targeted events too, which undoes the targeting.
+pub fn emit_to_one_profile_window<S: serde::Serialize + Clone>(
+    app: &AppHandle<Wry>,
+    event: &str,
+    payload: S,
+) -> tauri::Result<()> {
+    let windows = app.webview_windows();
+    let target = pick_one_profile_window(
+        windows
+            .iter()
+            .map(|(label, w)| (label.as_str(), w.is_focused().unwrap_or(false))),
+    );
+    match target {
+        Some(label) => app.emit_to(label.as_str(), event, payload),
+        None => Ok(()),
+    }
+}
+
 /// Generates a fresh window label for spawn-on-demand windows. We deliberately
 /// avoid recycling closed-window labels — the tauri-plugin-window-state file
 /// is keyed by label and we want each new window to get its own geometry.
@@ -328,6 +374,31 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn pick_prefers_the_focused_profile_window() {
+        let w = [("main", false), ("window-b", true)];
+        assert_eq!(pick_one_profile_window(w).as_deref(), Some("window-b"));
+    }
+
+    // Settings focused (the macOS menu bar is shared): it has no listener, so
+    // the event must go to a Profile window instead of being dropped.
+    #[test]
+    fn pick_skips_a_focused_settings_window() {
+        let w = [("window-b", false), (SETTINGS_WINDOW_LABEL, true), ("main", false)];
+        assert_eq!(pick_one_profile_window(w).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn pick_falls_back_to_the_lowest_label() {
+        let w = [("window-z", false), ("window-a", false)];
+        assert_eq!(pick_one_profile_window(w).as_deref(), Some("window-a"));
+    }
+
+    #[test]
+    fn pick_none_without_a_profile_window() {
+        assert_eq!(pick_one_profile_window([(SETTINGS_WINDOW_LABEL, true)]), None);
     }
 
     #[test]

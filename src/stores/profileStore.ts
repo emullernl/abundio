@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { appWindow } from "../lib/appWindow";
-import { profiles as profilesApi } from "../lib/ipc";
+import { profiles as profilesApi, windowSession } from "../lib/ipc";
 import type { Profile } from "../lib/types";
 import { DEFAULT_PROFILE_ID } from "../lib/types";
 // Static cycle with workspaceStore / ptyActivityStore: both import
@@ -73,8 +73,9 @@ interface ProfileState {
 	 *  is the responsibility of the caller (see switchProfile). */
 	setActiveProfileIdLocal: (id: string | null) => Promise<void>;
 
-	/** Unconditionally switches *this window* to the given profile: closes any
-	 *  opened workspaces, swaps activeProfileId, reloads workspaces. Callers
+	/** Switches *this window* to the given profile: claims it in Rust, closes
+	 *  any opened workspaces, swaps activeProfileId, reloads workspaces. A no-op
+	 *  when another Window already owns the profile (Rust refuses the claim). Callers
 	 *  should show a confirm dialog first when Opened workspaces exist — see
 	 *  requestSwitchProfile. */
 	switchProfile: (id: string) => Promise<void>;
@@ -191,6 +192,27 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 		const { activeProfileId } = get();
 		if (id === activeProfileId) return;
 
+		// Claim the profile in Rust *before* closing anything. Rust refuses it
+		// when another Window already owns it (e.g. that Window switched first
+		// while this one's confirm dialog was up); stop here with this Window's
+		// workspaces untouched rather than show a Profile twice, and bring the
+		// owning Window forward so the click visibly did something. Any other
+		// failure is not a conflict: log and rethrow rather than leave the click
+		// silently dead.
+		try {
+			await profilesApi.setActiveProfileId(id);
+		} catch (err) {
+			await get().refreshOwnershipMap();
+			const owner = get().ownershipMap[id];
+			const ownLabel = appWindow()?.label ?? null;
+			if (owner && owner !== ownLabel) {
+				await windowSession.focus(owner).catch(() => {});
+				return;
+			}
+			console.error("[abundio] profile claim failed", err);
+			throw err;
+		}
+
 		const openedIds = Array.from(
 			usePtyActivityStore.getState().openedWorkspaceIds,
 		);
@@ -199,7 +221,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 			await wsStore.closeWorkspace(wid).catch(() => {});
 		}
 
-		await get().setActiveProfileIdLocal(id);
+		set({ activeProfileId: id });
 		await useWorkspaceStore.getState().loadWorkspaces();
 
 		// Re-sync the window title to the new active profile.

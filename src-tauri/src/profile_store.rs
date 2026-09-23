@@ -162,6 +162,28 @@ impl ActiveProfileState {
         None
     }
 
+    /// Records the Window's new active profile (`None` releases it). Refuses,
+    /// rather than record a second owner, when another Window already shows
+    /// the profile: a Profile is shown in at most one Window.
+    pub fn claim_for_window(
+        &self,
+        window_label: &str,
+        profile_id: Option<&str>,
+    ) -> Result<(), AbundioError> {
+        match profile_id {
+            Some(id) => match self.try_claim(window_label, id) {
+                Some(owner) => Err(AbundioError::InvalidOperation(format!(
+                    "profile {id} is already open in window {owner}"
+                ))),
+                None => Ok(()),
+            },
+            None => {
+                self.remove_for_window(window_label);
+                Ok(())
+            }
+        }
+    }
+
     /// Returns the window label currently showing `profile_id`, if any.
     /// Used by the strict-delete check and the "open elsewhere" menu dimming.
     pub fn owner_of_profile(&self, profile_id: &str) -> Option<String> {
@@ -396,6 +418,29 @@ mod tests {
         assert_eq!(state.try_claim("window-1", "p1"), None);
         // A distinct profile claims fine.
         assert_eq!(state.try_claim("window-2", "p2"), None);
+    }
+
+    #[test]
+    fn claim_for_window_refuses_a_profile_owned_elsewhere() {
+        let state = ActiveProfileState::default();
+        state.set_for_window("main", "p1");
+        state.set_for_window("window-2", "p2");
+        let err = state.claim_for_window("window-2", Some("p1")).unwrap_err();
+        assert!(matches!(err, AbundioError::InvalidOperation(_)));
+        // The refusal leaves window-2 on its old profile.
+        assert_eq!(state.get_for_window("window-2").as_deref(), Some("p2"));
+        assert_eq!(state.owner_of_profile("p1").as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn claim_for_window_switches_and_releases() {
+        let state = ActiveProfileState::default();
+        state.claim_for_window("main", Some("p1")).unwrap();
+        state.claim_for_window("main", Some("p2")).unwrap();
+        assert_eq!(state.owner_of_profile("p1"), None);
+        assert_eq!(state.get_for_window("main").as_deref(), Some("p2"));
+        state.claim_for_window("main", None).unwrap();
+        assert_eq!(state.get_for_window("main"), None);
     }
 
     #[test]

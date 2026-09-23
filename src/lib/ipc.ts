@@ -1,5 +1,6 @@
 import { invoke as realInvoke } from "@tauri-apps/api/core";
 import { listen as realListen, type UnlistenFn } from "@tauri-apps/api/event";
+import { appWebview } from "./appWindow";
 import { decodeBase64 } from "./base64";
 import { isDemoMode } from "./demo";
 import { mockInvoke } from "./demo/mockInvoke";
@@ -54,6 +55,26 @@ export function listen<T>(
 ): Promise<UnlistenFn> {
 	return isDemoMode()
 		? mockListen<T>(event, cb)
+		: (realListen<T>(event, cb) as Promise<UnlistenFn>);
+}
+
+/** Subscribe to an event Rust aims at *this* Window with `emit_to(label, …)`.
+ *
+ *  The global `listen` above has target `Any`, and Tauri delivers every event
+ *  to an `Any` listener whatever the emit's target — so `emit_to("main", …)`
+ *  reaches a global listener in *every* Window. Anything Rust sends to one
+ *  Window must be heard through this instead: it listens on the current
+ *  webview, which receives only events aimed at its label plus true
+ *  broadcasts (`app.emit`). Falls back to the global listener outside Tauri
+ *  (the browser demo, jsdom), where there is only one "window" anyway. */
+export function listenToThisWindow<T>(
+	event: string,
+	cb: (e: { payload: T }) => void,
+): Promise<UnlistenFn> {
+	if (isDemoMode()) return mockListen<T>(event, cb);
+	const webview = appWebview();
+	return webview
+		? webview.listen<T>(event, cb)
 		: (realListen<T>(event, cb) as Promise<UnlistenFn>);
 }
 
@@ -230,6 +251,10 @@ export const windowSession = {
 		waiting: number;
 		commands: number;
 	}) => invoke<void>("report_busy_counts", { counts }),
+
+	/** Bring another Window to the front — used when the Profile asked for is
+	 *  already open there (ADR-0007). */
+	focus: (label: string) => invoke<void>("focus_window", { label }),
 };
 
 export const tabs = {
@@ -609,7 +634,9 @@ export const pr = {
 	/** Notification descriptors — emitted to ONE Window so N Windows don't
 	 *  each fire duplicate OS notifications. */
 	onPrChanges: (callback: (changes: PrChange[]) => void): Promise<UnlistenFn> =>
-		listen<PrChange[]>("pr-changes", (event) => callback(event.payload)),
+		listenToThisWindow<PrChange[]>("pr-changes", (event) =>
+			callback(event.payload),
+		),
 };
 
 export const fs = {
@@ -851,13 +878,17 @@ export const updates = {
 	/** Fires (focused Window only) when the app has started on a version newer
 	 *  than the last one whose notes the user saw. See ADR-0036. */
 	onWhatsNew: (callback: (note: ReleaseNote) => void): Promise<UnlistenFn> =>
-		listen<ReleaseNote>("whats-new", (event) => callback(event.payload)),
+		listenToThisWindow<ReleaseNote>("whats-new", (event) =>
+			callback(event.payload),
+		),
 
 	/** Fires (focused Window only) when the Rust background loop finds an update. */
 	onUpdateAvailable: (
 		callback: (info: UpdateInfo) => void,
 	): Promise<UnlistenFn> =>
-		listen<UpdateInfo>("update-available", (event) => callback(event.payload)),
+		listenToThisWindow<UpdateInfo>("update-available", (event) =>
+			callback(event.payload),
+		),
 
 	/** Streams download progress while `download()` runs. */
 	onDownloadProgress: (

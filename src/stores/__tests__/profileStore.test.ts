@@ -43,10 +43,15 @@ vi.mock("../../lib/ipc", () => ({
 		getActiveProfileForWindow: vi.fn(() => Promise.resolve(null)),
 		getOwnershipMap: vi.fn(() => Promise.resolve({})),
 	},
+	windowSession: {
+		focus: vi.fn(() => Promise.resolve()),
+	},
 }));
 
-import { profiles as profilesApi } from "../../lib/ipc";
+import { profiles as profilesApi, windowSession } from "../../lib/ipc";
 import { useProfileStore } from "../profileStore";
+import { usePtyActivityStore } from "../ptyActivityStore";
+import { useWorkspaceStore } from "../workspaceStore";
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -236,5 +241,73 @@ describe("deleteProfile", () => {
 		const list = useProfileStore.getState().profiles;
 		expect(list).toHaveLength(1);
 		expect(list[0].id).toBe("p-default");
+	});
+});
+
+describe("switchProfile", () => {
+	const closeWorkspace = vi.fn(() => Promise.resolve());
+	const loadWorkspaces = vi.fn(() => Promise.resolve());
+
+	beforeEach(() => {
+		closeWorkspace.mockClear();
+		loadWorkspaces.mockClear();
+		useWorkspaceStore.setState({ closeWorkspace, loadWorkspaces });
+		usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["ws-1"]) });
+		useProfileStore.setState({ activeProfileId: "p-default" });
+	});
+
+	it("claims the profile in Rust, closes opened workspaces and swaps", async () => {
+		// Claim must come first: closing workspaces before a refused claim
+		// would lose them for nothing.
+		const order: string[] = [];
+		vi.mocked(profilesApi.setActiveProfileId).mockImplementationOnce(
+			async () => {
+				order.push("claim");
+			},
+		);
+		closeWorkspace.mockImplementationOnce(async () => {
+			order.push("close");
+		});
+		await useProfileStore.getState().switchProfile("p-work");
+		expect(order).toEqual(["claim", "close"]);
+		expect(profilesApi.setActiveProfileId).toHaveBeenCalledWith("p-work");
+		expect(closeWorkspace).toHaveBeenCalledWith("ws-1");
+		expect(loadWorkspaces).toHaveBeenCalled();
+		expect(useProfileStore.getState().activeProfileId).toBe("p-work");
+	});
+
+	// Another Window got there first (e.g. while this one's confirm dialog was
+	// up): Rust refuses, and this Window must keep its workspaces and profile.
+	it("changes nothing when Rust refuses the claim", async () => {
+		vi.mocked(profilesApi.setActiveProfileId).mockRejectedValueOnce(
+			new Error("already open in window main"),
+		);
+		vi.mocked(profilesApi.getOwnershipMap).mockResolvedValueOnce({
+			"p-work": "main",
+		});
+		await useProfileStore.getState().switchProfile("p-work");
+		expect(closeWorkspace).not.toHaveBeenCalled();
+		expect(loadWorkspaces).not.toHaveBeenCalled();
+		expect(useProfileStore.getState().activeProfileId).toBe("p-default");
+		expect(useProfileStore.getState().ownershipMap).toEqual({
+			"p-work": "main",
+		});
+		expect(windowSession.focus).toHaveBeenCalledWith("main");
+	});
+
+	// A failure that is not an ownership conflict must not end as a silent
+	// no-op after the confirm dialog has already closed.
+	it("rethrows a claim failure that is not an ownership conflict", async () => {
+		const failure = new Error("ipc down");
+		vi.mocked(profilesApi.setActiveProfileId).mockRejectedValueOnce(failure);
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+		await expect(
+			useProfileStore.getState().switchProfile("p-work"),
+		).rejects.toBe(failure);
+		expect(logged).toHaveBeenCalled();
+		expect(windowSession.focus).not.toHaveBeenCalled();
+		expect(closeWorkspace).not.toHaveBeenCalled();
+		expect(useProfileStore.getState().activeProfileId).toBe("p-default");
+		logged.mockRestore();
 	});
 });

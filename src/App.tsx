@@ -41,7 +41,13 @@ import {
 } from "./lib/busyPty";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
-import { agentRegistry, listen, updates, windowSession } from "./lib/ipc";
+import {
+	agentRegistry,
+	listen,
+	listenToThisWindow,
+	updates,
+	windowSession,
+} from "./lib/ipc";
 import { initKeybindings, registerAction } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
@@ -608,9 +614,12 @@ export function App() {
 
 	// Listen for native menu "Switch Profile" submenu clicks.
 	useEffect(() => {
-		const unlisten = listen<string>("switch-profile-request", (event) => {
-			requestSwitchProfile(event.payload).catch(() => {});
-		});
+		const unlisten = listenToThisWindow<string>(
+			"switch-profile-request",
+			(event) => {
+				requestSwitchProfile(event.payload).catch(() => {});
+			},
+		);
 		return () => {
 			unlisten.then((fn) => fn());
 		};

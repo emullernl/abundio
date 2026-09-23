@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { appWindow } from "../lib/appWindow";
+import { windowSession } from "../lib/ipc";
 import { useProfileStore } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 
@@ -43,7 +43,7 @@ export async function requestSwitchProfile(targetId: string): Promise<void> {
 	// `null` outside Tauri — skip the focus path.
 	const thisWindowLabel = appWindow()?.label ?? null;
 	if (ownerLabel && thisWindowLabel && ownerLabel !== thisWindowLabel) {
-		await invoke("focus_window", { label: ownerLabel }).catch(() => {});
+		await windowSession.focus(ownerLabel).catch(() => {});
 		return;
 	}
 

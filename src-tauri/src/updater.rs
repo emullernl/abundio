@@ -423,39 +423,13 @@ async fn check_and_emit(app: &AppHandle) -> Result<(), String> {
         if let Some(state) = app.try_state::<UpdaterState>() {
             state.inner.lock().unwrap().pending = Some(update);
         }
-        emit_to_focused_profile_window(app, "update-available", info);
+        let _ = crate::window_management::emit_to_one_profile_window(
+            app,
+            "update-available",
+            info,
+        );
     }
     Ok(())
-}
-
-/// Emits to the focused Window, but only when it is a Profile-bound Window —
-/// the Settings auxiliary window has no listener, so targeting it would silently
-/// drop the event. Falls back to any Profile-bound Window otherwise. Preserves
-/// ADR-0014's "focused Window only" intent for the multi-Profile-window case
-/// while never stranding the event on Settings.
-///
-/// Shared by `update-available` and `whats-new` (ADR-0036): both are one-card-per-app
-/// notifications, and both would otherwise appear once per open Window.
-fn emit_to_focused_profile_window<P: Serialize + Clone>(
-    app: &AppHandle,
-    event: &str,
-    payload: P,
-) {
-    let windows = app.webview_windows();
-    let focused_profile = windows.iter().find_map(|(label, w)| {
-        (w.is_focused().unwrap_or(false)
-            && crate::window_management::is_profile_window_label(label))
-        .then(|| label.clone())
-    });
-    let target = focused_profile.or_else(|| {
-        windows
-            .keys()
-            .find(|label| crate::window_management::is_profile_window_label(label))
-            .cloned()
-    });
-    if let Some(label) = target {
-        let _ = app.emit_to(label.as_str(), event, payload);
-    }
 }
 
 /// Spawns the background auto-check loop: one check shortly after launch, then
@@ -566,7 +540,11 @@ pub fn start_whats_new_check(app: AppHandle) {
         };
         match releases.releases.iter().find(|r| r.version == running) {
             Some(note) if !note.body.is_empty() => {
-                emit_to_focused_profile_window(&app, "whats-new", note.clone());
+                let _ = crate::window_management::emit_to_one_profile_window(
+                    &app,
+                    "whats-new",
+                    note.clone(),
+                );
             }
             // Fetched successfully, but this version has no published notes.
             // Settled, not pending — mark it seen so we stop asking.

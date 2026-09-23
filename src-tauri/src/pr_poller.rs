@@ -331,7 +331,13 @@ fn emit_payload(app: &AppHandle, shared: &PollerShared, payload: PrStatePayload)
 		if let Some(prev) = shared.last_success.lock().unwrap().clone() {
 			let changes = diff_changes(&prev, &payload);
 			if !changes.is_empty() {
-				emit_changes_to_one_window(app, &changes);
+				// Exactly one Window, so N Windows don't each fire duplicate
+				// OS notifications.
+				let _ = crate::window_management::emit_to_one_profile_window(
+					app,
+					"pr-changes",
+					&changes,
+				);
 			}
 		}
 	}
@@ -341,26 +347,6 @@ fn emit_payload(app: &AppHandle, shared: &PollerShared, payload: PrStatePayload)
 	*shared.last.lock().unwrap() = Some(payload.clone());
 	if is_success {
 		*shared.last_success.lock().unwrap() = Some(payload);
-	}
-}
-
-/// Send `pr-changes` to the focused profile Window, else any profile Window.
-/// Mirrors `updater::emit_update_available` so notifications fire exactly once.
-fn emit_changes_to_one_window(app: &AppHandle, changes: &[PrChange]) {
-	let windows = app.webview_windows();
-	let focused = windows.iter().find_map(|(label, w)| {
-		(w.is_focused().unwrap_or(false)
-			&& crate::window_management::is_profile_window_label(label))
-		.then(|| label.clone())
-	});
-	let target = focused.or_else(|| {
-		windows
-			.keys()
-			.find(|label| crate::window_management::is_profile_window_label(label))
-			.cloned()
-	});
-	if let Some(label) = target {
-		let _ = app.emit_to(label.as_str(), "pr-changes", changes);
 	}
 }
 

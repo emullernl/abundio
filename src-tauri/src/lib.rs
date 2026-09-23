@@ -494,24 +494,6 @@ fn perform_quit(app: &AppHandle<Wry>) {
     app.exit(0);
 }
 
-/// Emits an event to the currently-focused webview only. Used for "open
-/// settings" / "switch profile" intents from the native menu — those are
-/// always per-window and shouldn't fan out to other Windows.
-pub fn emit_to_focused<S: serde::Serialize + Clone>(
-    app: &AppHandle<Wry>,
-    event: &str,
-    payload: &S,
-) -> tauri::Result<()> {
-    for (label, w) in app.webview_windows() {
-        if w.is_focused().unwrap_or(false) {
-            return app.emit_to(label.as_str(), event, payload.clone());
-        }
-    }
-    // Fallback: no window reported focused (rare, e.g. during a focus
-    // transition) — broadcast so the action isn't lost.
-    app.emit(event, payload.clone())
-}
-
 /// Rebuilds the application menu, sourcing the focused-window label from the
 /// app's currently-focused webview. Called after any change that could affect
 /// menu rendering: profile CRUD, in-window profile switch, window focus
@@ -1138,10 +1120,10 @@ pub fn run() {
                     }
                     (None, _) => {
                         // Case 3: profile is unowned; do the in-window switch.
-                        let _ = emit_to_focused(
+                        let _ = window_management::emit_to_one_profile_window(
                             app,
                             "switch-profile-request",
-                            &profile_id.to_string(),
+                            profile_id.to_string(),
                         );
                     }
                 }
