@@ -138,16 +138,30 @@ impl PrPoller {
 		self.shared.notify.notify_one();
 	}
 
-	/// Clear `thread_id`'s unread marker from both cached payloads and return
-	/// the updated snapshot to broadcast, or `None` if no cached PR carried it.
-	/// Touching `last_success` too keeps the notification baseline in step.
-	pub fn clear_unread(&self, thread_id: &str) -> Option<PrStatePayload> {
-		if let Some(p) = self.shared.last_success.lock().unwrap().as_mut() {
-			clear_unread_in(p, thread_id);
-		}
-		let mut last = self.shared.last.lock().unwrap();
-		let p = last.as_mut()?;
-		clear_unread_in(p, thread_id).then(|| p.clone())
+	/// Clear `thread_id`'s unread marker from both cached payloads. Returns
+	/// whether any cached PR carried it — in either cache, so the caller's
+	/// broadcast can never be skipped after a cache was mutated.
+	///
+	/// `last` is what new Windows' snapshots serve, so it must be cleared.
+	/// Clearing `last_success` too is only so the notification baseline can't
+	/// disagree with `last` if `diff_changes` ever grows to look at this field;
+	/// today nothing observes it there.
+	pub fn clear_unread(&self, thread_id: &str) -> bool {
+		let in_baseline = self
+			.shared
+			.last_success
+			.lock()
+			.unwrap()
+			.as_mut()
+			.is_some_and(|p| clear_unread_in(p, thread_id));
+		let in_last = self
+			.shared
+			.last
+			.lock()
+			.unwrap()
+			.as_mut()
+			.is_some_and(|p| clear_unread_in(p, thread_id));
+		in_baseline || in_last
 	}
 
 	/// Last emitted payload, for new Windows to hydrate from without a gh call.
@@ -201,12 +215,10 @@ fn build_payload_blocking() -> PrStatePayload {
 	match gh_commands::fetch_prs() {
 		Ok((mut review_requested, mut mine)) => {
 			// A failure here costs only the markers, never the lists. With no
-			// PRs there is nothing to mark, so the call is skipped outright.
+			// PRs to mark, `unread_since` is None and the call is skipped.
 			let unread = match gh_commands::unread_since(review_requested.iter().chain(&mine)) {
 				Some(since) => gh_commands::fetch_unread_pr_threads(&since),
-				None if review_requested.is_empty() && mine.is_empty() => Ok(Default::default()),
-				// A PR without a createdAt: fall back to the unbounded walk.
-				None => gh_commands::fetch_unread_pr_threads("1970-01-01T00:00:00Z"),
+				None => Ok(Default::default()),
 			};
 			let unread_error = match unread {
 				Ok(threads) => {
@@ -438,12 +450,12 @@ pub async fn pr_mark_read(
 	poller: State<'_, PrPoller>,
 	thread_id: String,
 ) -> Result<(), AbundioError> {
-	if poller.clear_unread(&thread_id).is_some() {
+	if poller.clear_unread(&thread_id) {
 		let _ = app.emit("pr-unread-cleared", &thread_id);
 	}
 	tokio::task::spawn_blocking(move || gh_commands::mark_thread_read(&thread_id))
 		.await
-		.map_err(|e| AbundioError::Git(format!("mark-read task failed: {}", e)))?
+		.map_err(|e| AbundioError::InvalidOperation(format!("mark-read task failed: {}", e)))?
 }
 
 #[tauri::command]
@@ -549,7 +561,8 @@ mod tests {
 		*poller.shared.last.lock().unwrap() = Some(p.clone());
 		*poller.shared.last_success.lock().unwrap() = Some(p);
 
-		let out = poller.clear_unread("55").expect("thread 55 was cached");
+		assert!(poller.clear_unread("55"), "thread 55 was cached");
+		let out = poller.snapshot().unwrap();
 		assert_eq!(out.review_requested[0].unread_thread_id, None);
 		assert_eq!(out.mine[0].unread_thread_id.as_deref(), Some("66"));
 		let baseline = poller.shared.last_success.lock().unwrap().clone().unwrap();
@@ -557,10 +570,21 @@ mod tests {
 	}
 
 	#[test]
-	fn clear_unread_unknown_thread_is_none() {
+	fn clear_unread_unknown_thread_is_false() {
 		let poller = PrPoller::new();
-		assert!(poller.clear_unread("1").is_none(), "nothing cached");
+		assert!(!poller.clear_unread("1"), "nothing cached");
 		*poller.shared.last.lock().unwrap() = Some(payload(vec![], vec![]));
-		assert!(poller.clear_unread("1").is_none(), "no PR carries it");
+		assert!(!poller.clear_unread("1"), "no PR carries it");
+	}
+
+	#[test]
+	fn clear_unread_reports_a_hit_in_the_baseline_alone() {
+		// Symmetric by construction: if only `last_success` held the thread,
+		// the caller must still broadcast.
+		let poller = PrPoller::new();
+		let mut a = pr("org/repo", 1, "", "");
+		a.unread_thread_id = Some("55".into());
+		*poller.shared.last_success.lock().unwrap() = Some(payload(vec![a], vec![]));
+		assert!(poller.clear_unread("55"));
 	}
 }

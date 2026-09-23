@@ -351,59 +351,116 @@ pub fn parse_combined_prs(json: &str) -> Result<(Vec<PullRequest>, Vec<PullReque
 // PR on github.com, read it in their inbox, or on another device. GraphQL has
 // no notifications API, so this is a second (REST) call per poll.
 
-/// One JSON object per line per unread PR thread (`tojson` keeps it on one
-/// line whatever gh does to pretty-print). `--jq` runs per page under
-/// `--paginate`, so line-per-thread output sidesteps the back-to-back arrays
-/// raw `--paginate` would print.
-const UNREAD_JQ: &str = r#".[] | select(.subject.type == "PullRequest") | {id, url: .subject.url} | tojson"#;
+/// Notifications per page — GitHub's maximum for this endpoint.
+const UNREAD_PER_PAGE: usize = 50;
+/// Hard cap on pages per poll. `since` alone doesn't bound the walk much: one
+/// long-lived PR (a parked draft, a stale review request) pushes it months
+/// back, and the endpoint returns unread threads of *every* type. GitHub sorts
+/// newest-first, so the cap drops the oldest tail — a PR whose only unread
+/// activity is older than the 200 newest unread threads goes unmarked.
+const UNREAD_MAX_PAGES: usize = 4;
 
 /// `(lowercased owner/repo, number)` → thread id, for every unread PR thread.
 pub type UnreadThreads = HashMap<(String, i32), String>;
 
-/// Fetch the user's unread PR notification threads. The endpoint returns only
-/// unread threads by default (`all=false`), but of *every* type, so an
-/// unbounded call walks the user's whole inbox on every poll. `since` bounds
-/// it; see `unread_since`.
+/// Fetch the user's unread PR notification threads, newest first, at most
+/// `UNREAD_MAX_PAGES` pages. The endpoint returns only unread threads by
+/// default (`all=false`). Pages are walked by hand rather than `--paginate`
+/// so the walk can be capped. Any page failing fails the set: a partial set
+/// would pass for "the rest are read".
 pub fn fetch_unread_pr_threads(since: &str) -> Result<UnreadThreads, AbundioError> {
-	let endpoint = format!("notifications?per_page=50&since={}", since);
-	let output = run_gh("", &["api", &endpoint, "--paginate", "--jq", UNREAD_JQ])?;
-	Ok(parse_unread_threads(&output))
+	let mut threads = UnreadThreads::new();
+	for page in 1..=UNREAD_MAX_PAGES {
+		let endpoint = format!(
+			"notifications?per_page={}&page={}&since={}",
+			UNREAD_PER_PAGE, page, since
+		);
+		let output = run_gh("", &["api", &endpoint]).map_err(unread_fetch_error)?;
+		let (entries, items) = parse_unread_page(&output)?;
+		threads.extend(entries);
+		if items < UNREAD_PER_PAGE {
+			break;
+		}
+	}
+	Ok(threads)
+}
+
+/// Rewrite a `run_gh` failure for the "Unread markers unavailable" tooltip.
+/// `run_gh` prefixes the whole command line, which reads as noise there. The
+/// likeliest cause — a fine-grained token, which can never read
+/// notifications — gets a sentence naming it, the way `offline_message` does.
+fn unread_fetch_error(e: AbundioError) -> AbundioError {
+	match e {
+		AbundioError::Git(msg) => AbundioError::Git(unread_error_text(&msg)),
+		other => other,
+	}
+}
+
+fn unread_error_text(msg: &str) -> String {
+	if msg.contains("HTTP 403") || msg.contains("HTTP 404") || msg.contains("Resource not accessible") {
+		return "Your GitHub token can't read notifications. Fine-grained tokens never can; \
+		        `gh auth login` gives one that can."
+			.to_string();
+	}
+	match msg.find(" failed: ") {
+		Some(i) => msg[i + " failed: ".len()..].trim().to_string(),
+		None => msg.to_string(),
+	}
 }
 
 /// Lower bound for the notifications fetch: the oldest `createdAt` across the
 /// listed PRs. A PR's thread can have no activity from before the PR existed,
 /// so nothing we could mark is lost. (`updatedAt` would not be safe: it moves
 /// on events that notify no one, such as a label change, and can pass the
-/// thread's own last update.) `None` when there are no PRs, or one lacks a
-/// timestamp — then there is nothing to bound by, or bounding is unsafe.
-/// GitHub's ISO-8601 UTC timestamps order correctly as strings.
+/// thread's own last update.) GitHub's ISO-8601 UTC timestamps order correctly
+/// as strings.
+///
+/// `None` means "skip the fetch": there are no PRs to mark. A PR with an empty
+/// `createdAt` (`PR_FIELDS` always requests it, so this shouldn't happen) is
+/// left out of the bound rather than widening it to the whole inbox; at worst
+/// that one PR misses its marker.
 pub fn unread_since<'a>(prs: impl IntoIterator<Item = &'a PullRequest>) -> Option<String> {
-	let mut oldest: Option<&str> = None;
-	for pr in prs {
-		if pr.created_at.is_empty() {
-			return None;
+	prs.into_iter()
+		.map(|pr| pr.created_at.as_str())
+		.filter(|c| !c.is_empty())
+		.min()
+		.map(str::to_string)
+}
+
+/// Parse one page of `GET /notifications`. Returns the unread PR threads on it
+/// and how many items (of any type) it held, which drives pagination.
+///
+/// One odd item is skipped — a missing marker beats failing the set. But a page
+/// that isn't a JSON array, or whose items *all* lack the expected shape, is an
+/// error: GitHub has reshaped the payload, and returning an empty set would
+/// silently show every PR as read, the exact confusion `unread_error` prevents.
+fn parse_unread_page(
+	json: &str,
+) -> Result<(Vec<((String, i32), String)>, usize), AbundioError> {
+	let reshaped = || AbundioError::Git("Couldn't read GitHub's notifications.".to_string());
+	let items: Vec<serde_json::Value> = serde_json::from_str(json).map_err(|e| {
+		eprintln!("gh notifications parse error: {} — body: {:.500}", e, json);
+		reshaped()
+	})?;
+	let mut entries = Vec::new();
+	let mut recognised = 0;
+	for item in &items {
+		let (Some(id), Some(kind)) = (item["id"].as_str(), item["subject"]["type"].as_str()) else {
+			continue;
+		};
+		recognised += 1;
+		if kind != "PullRequest" {
+			continue;
 		}
-		if oldest.map_or(true, |o| pr.created_at.as_str() < o) {
-			oldest = Some(&pr.created_at);
+		if let Some(key) = item["subject"]["url"].as_str().and_then(pr_key_from_api_url) {
+			entries.push((key, id.to_string()));
 		}
 	}
-	oldest.map(str::to_string)
-}
-
-#[derive(Debug, Deserialize)]
-struct UnreadLine {
-	id: String,
-	url: Option<String>,
-}
-
-/// Parse `UNREAD_JQ` output. Lines that don't parse, or whose subject URL isn't
-/// a PR, are skipped — a missing marker is better than failing the whole set.
-pub fn parse_unread_threads(output: &str) -> UnreadThreads {
-	output
-		.lines()
-		.filter_map(|line| serde_json::from_str::<UnreadLine>(line.trim()).ok())
-		.filter_map(|l| Some((pr_key_from_api_url(l.url.as_deref()?)?, l.id)))
-		.collect()
+	if !items.is_empty() && recognised == 0 {
+		eprintln!("gh notifications: no item has the expected shape — body: {:.500}", json);
+		return Err(reshaped());
+	}
+	Ok((entries, items.len()))
 }
 
 /// `https://api.github.com/repos/Owner/Repo/pulls/12` → `("owner/repo", 12)`.
@@ -614,36 +671,77 @@ mod tests {
 		assert!(offline_message("API rate limit exceeded").is_none());
 	}
 
+	fn notif(id: &str, kind: &str, url: &str) -> String {
+		format!(r#"{{"id":"{id}","subject":{{"type":"{kind}","url":"{url}"}}}}"#)
+	}
+
 	#[test]
-	fn parse_unread_threads_keys_by_lowercased_repo_and_number() {
-		let out = concat!(
-			r#"{"id":"111","url":"https://api.github.com/repos/Org/Repo/pulls/42"}"#,
-			"\n",
-			r#"{"id":"222","url":"https://api.github.com/repos/org/other/pulls/7"}"#,
-			"\n",
+	fn parse_unread_page_keys_by_lowercased_repo_and_number() {
+		let page = format!(
+			"[{},{},{}]",
+			notif("111", "PullRequest", "https://api.github.com/repos/Org/Repo/pulls/42"),
+			notif("222", "PullRequest", "https://api.github.com/repos/org/other/pulls/7"),
+			notif("333", "Issue", "https://api.github.com/repos/org/repo/issues/9"),
 		);
-		let t = parse_unread_threads(out);
+		let (entries, items) = parse_unread_page(&page).unwrap();
+		assert_eq!(items, 3, "every item counts toward pagination, PR or not");
+		let t: UnreadThreads = entries.into_iter().collect();
 		assert_eq!(t.len(), 2);
 		assert_eq!(t.get(&("org/repo".to_string(), 42)), Some(&"111".to_string()));
 		assert_eq!(t.get(&("org/other".to_string(), 7)), Some(&"222".to_string()));
 	}
 
 	#[test]
-	fn parse_unread_threads_skips_junk_and_non_pr_urls() {
-		let out = concat!(
-			"not json\n",
-			"\n",
-			r#"{"id":"1","url":null}"#,
-			"\n",
-			r#"{"id":"2","url":"https://api.github.com/repos/o/r/issues/3"}"#,
-			"\n",
-			r#"{"id":"3","url":"https://api.github.com/repos/o/r/pulls/x"}"#,
-			"\n",
-			r#"{"id":"4","url":"https://api.github.com/repos/o/r/pulls/5"}"#,
+	fn parse_unread_page_skips_odd_items() {
+		let page = format!(
+			r#"[{{"id":"1","subject":{{"type":"PullRequest","url":null}}}},{},{},{{"no":"shape"}},{}]"#,
+			notif("2", "PullRequest", "https://api.github.com/repos/o/r/issues/3"),
+			notif("3", "PullRequest", "https://api.github.com/repos/o/r/pulls/x"),
+			notif("4", "PullRequest", "https://api.github.com/repos/o/r/pulls/5"),
 		);
-		let t = parse_unread_threads(out);
-		assert_eq!(t.len(), 1);
-		assert_eq!(t.get(&("o/r".to_string(), 5)), Some(&"4".to_string()));
+		let (entries, items) = parse_unread_page(&page).unwrap();
+		assert_eq!(items, 5);
+		assert_eq!(entries, vec![(("o/r".to_string(), 5), "4".to_string())]);
+	}
+
+	#[test]
+	fn parse_unread_page_empty_inbox_is_ok() {
+		let (entries, items) = parse_unread_page("[]").unwrap();
+		assert!(entries.is_empty());
+		assert_eq!(items, 0);
+	}
+
+	#[test]
+	fn parse_unread_page_reshaped_payload_is_an_error() {
+		// An empty set here would show every PR as read with no note.
+		for bad in [
+			"<html>Login</html>",
+			"",
+			r#"{"message":"moved"}"#,
+			r#"[{"thread_id":1,"topic":{}},{"thread_id":2,"topic":{}}]"#,
+		] {
+			assert!(parse_unread_page(bad).is_err(), "input: {bad}");
+		}
+	}
+
+	#[test]
+	fn unread_error_text_names_a_token_that_cannot_read_notifications() {
+		let msg = "gh api notifications?per_page=50&page=1&since=2026-03-02T08:00:00Z failed: \
+		           gh: Resource not accessible by personal access token (HTTP 403)";
+		let text = unread_error_text(msg);
+		assert!(text.contains("can't read notifications"), "{text}");
+		assert!(!text.contains("per_page"), "no command line in the tooltip: {text}");
+	}
+
+	#[test]
+	fn unread_error_text_keeps_only_stderr_otherwise() {
+		assert_eq!(
+			unread_error_text("gh api notifications?page=1 failed: gh: Bad gateway (HTTP 502)"),
+			"gh: Bad gateway (HTTP 502)"
+		);
+		// Already-friendly messages (e.g. offline) pass through untouched.
+		let offline = "Can't reach GitHub — check your internet connection.";
+		assert_eq!(unread_error_text(offline), offline);
 	}
 
 	#[test]
@@ -669,9 +767,19 @@ mod tests {
 		let pr = |created: &str| PullRequest { created_at: created.into(), ..Default::default() };
 		let a = [pr("2026-09-01T10:00:00Z"), pr("2026-03-02T08:00:00Z"), pr("2026-05-01T00:00:00Z")];
 		assert_eq!(unread_since(&a).as_deref(), Some("2026-03-02T08:00:00Z"));
-		assert_eq!(unread_since(&[] as &[PullRequest]), None, "no PRs, nothing to fetch");
+	}
+
+	#[test]
+	fn unread_since_is_none_with_no_prs_so_the_fetch_is_skipped() {
+		assert_eq!(unread_since(&[] as &[PullRequest]), None);
+	}
+
+	#[test]
+	fn unread_since_ignores_a_missing_timestamp_rather_than_widening() {
+		let pr = |created: &str| PullRequest { created_at: created.into(), ..Default::default() };
 		let b = [pr("2026-09-01T10:00:00Z"), pr("")];
-		assert_eq!(unread_since(&b), None, "a missing timestamp can't bound safely");
+		assert_eq!(unread_since(&b).as_deref(), Some("2026-09-01T10:00:00Z"));
+		assert_eq!(unread_since(&[pr("")]), None, "no usable bound: skip, don't walk the inbox");
 	}
 
 	#[test]

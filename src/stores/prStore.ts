@@ -156,6 +156,10 @@ export const usePrStore = create<PrState>()(
 			markRead: (threadId) => {
 				usePrStore.getState().clearUnread(threadId);
 				// A failed PATCH needs no rollback: the next poll restores the marker.
+				// It is left silent on purpose. The likeliest cause, a token that
+				// can't touch notifications, already failed the *read* — that PR has
+				// no `unreadThreadId` to click, and `unreadError` shows the note. A
+				// transient failure costs one dot that comes back on the next poll.
 				prIpc.markRead(threadId).catch(() => {});
 			},
 

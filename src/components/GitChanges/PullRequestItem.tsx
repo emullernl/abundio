@@ -84,7 +84,9 @@ function CiDot({ status }: { status: string }) {
 export function PullRequestItem({ pr, showStatus }: Props) {
 	const hasStatus =
 		showStatus && (pr.reviewDecision || pr.statusCheckRollup || pr.isDraft);
-	const unread = pr.unreadThreadId !== null;
+	// Same truthiness as `handleOpen`'s guard, so a marker is never drawn that
+	// opening could not clear.
+	const unread = Boolean(pr.unreadThreadId);
 
 	const handleOpen = () => {
 		open(pr.url);

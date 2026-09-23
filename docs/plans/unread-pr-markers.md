@@ -13,10 +13,11 @@ Show which PRs in the **Pull Requests** section have activity the user hasn't re
 
 ## Implementation
 
-- `gh_commands.rs` — `fetch_unread_pr_threads(since)` runs `gh api notifications --paginate`, bounded by `since` = the oldest `createdAt` among the listed PRs (a PR's thread has no activity from before the PR existed; `updatedAt` would not be safe). With no PRs the call is skipped. It prints, via a `--jq` filter, one JSON object per unread PR thread. `apply_unread()` stamps `unread_thread_id` onto PRs, matched on lowercased `owner/repo` + number. `mark_thread_read()` sends the PATCH and refuses non-numeric ids (the id goes into a URL path).
+- `gh_commands.rs` — `fetch_unread_pr_threads(since)` walks `GET /notifications` page by page (50 per page, newest first), bounded twice: by `since` = the oldest `createdAt` among the listed PRs (a PR's thread has no activity from before the PR existed; `updatedAt` would not be safe), and by a hard cap of 4 pages. With no PRs the call is skipped. Unread PR threads are matched to PRs by lowercased `owner/repo` + number. One odd item is skipped, but a page that isn't a JSON array, or whose items all lack the expected shape, is an error — an empty set would silently show every PR as read. A failure on any page fails the whole set for the same reason. A 403/404 is reworded as "your token can't read notifications". `mark_thread_read()` sends the PATCH and refuses non-numeric ids (the id goes into a URL path).
 - `pr_poller.rs` — after the GraphQL fetch, the poll also fetches unread threads; a failure fills `unread_error` and never fails the lists. `pr_mark_read` clears the id in both cached payloads, emits a narrow `pr-unread-cleared` event (so every Window clears), then PATCHes. It must not rebroadcast `pr-state`: receivers treat that as "a poll finished" and would stop a Refresh spinner mid-fetch.
 - Frontend — `PullRequest.unreadThreadId`, `PrStatePayload.unreadError`, `prStore.markRead` (optimistic clear) and `unreadCount`. `PullRequestItem` draws the dot and bold title and calls `markRead` from its open button. `PullRequestsSection` shows the header count and the note.
 
-## Known limitation
+## Known limitations
 
-A poll that is already in flight when the user opens a PR can bring the marker back until the next poll. This is rare and fixes itself, so it is not guarded against.
+- **The page cap drops the oldest tail.** `since` alone does not bound much: one long-lived PR pushes it months back, and the endpoint returns unread threads of every type. At most the 200 newest unread threads are read per poll, so a PR whose only unread activity is older than that goes unmarked.
+- A poll that is already in flight when the user opens a PR can bring the marker back until the next poll. This is rare and fixes itself, so it is not guarded against.
