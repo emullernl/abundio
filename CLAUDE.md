@@ -249,7 +249,10 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Close pane | `Cmd+Shift+W` | `Ctrl+Shift+W` |
 | Copy (terminal) | `Cmd+C` (native) | `Ctrl+Shift+C` |
 | Paste (terminal) | `Cmd+V` (native) | `Ctrl+Shift+V` |
-| Navigate panes | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
+| Focus pane on that side (Directional move) | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
+| Next / previous pane (Pane cycle) | `Cmd+Option+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
+| Next / previous Opened workspace | `Cmd+Option+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
+| Add worktree | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 | Command palette | `Cmd+K` | `Ctrl+K` |
 | File quickopen | `Cmd+P` | `Ctrl+P` |
 | Find in terminal | `Cmd+F` | `Ctrl+F` |

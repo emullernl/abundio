@@ -61,7 +61,11 @@ import {
 } from "./lib/terminalClipboard";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import { cycleOpenedWorkspace } from "./lib/workspaceCycle";
-import { buildWorkspaceRows, flattenRowsToIds } from "./lib/worktreeGrouping";
+import {
+	addWorktreeTargetId,
+	buildWorkspaceRows,
+	flattenRowsToIds,
+} from "./lib/worktreeGrouping";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
@@ -726,6 +730,15 @@ export function App() {
 			);
 			if (target) ws.beginWorkspaceSwitch(target);
 		};
+		registerAction("add-worktree", () => {
+			const ws = useWorkspaceStore.getState();
+			const target = addWorktreeTargetId(
+				ws.workspaces,
+				useWorkspaceGitStore.getState().worktreeFacts,
+				ws.activeWorkspaceId,
+			);
+			if (target) useWindowUiStore.getState().requestAddWorktree(target);
+		});
 		registerAction("next-workspace", () => cycleWorkspace(1));
 		registerAction("prev-workspace", () => cycleWorkspace(-1));
 		registerAction("next-pane", () => cycleFocusedPane(1));

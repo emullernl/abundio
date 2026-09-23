@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceWithTabs } from "../types";
 import {
+	addWorktreeTargetId,
 	buildWorkspaceRows,
 	distinctGroupKeys,
 	flattenRowsToIds,
@@ -217,5 +218,51 @@ describe("inheritSourceWorkspaceId", () => {
 
 	it("returns null when the workspace has no facts yet", () => {
 		expect(inheritSourceWorkspaceId([ws("x", 0)], {}, "x")).toBeNull();
+	});
+});
+
+describe("addWorktreeTargetId", () => {
+	const f = (
+		entries: [string, string | null, boolean][],
+	): Record<string, WorktreeGroupFacts> =>
+		Object.fromEntries(
+			entries.map(([id, key, isMain]) => [
+				id,
+				{ worktreeGroupKey: key, isMainWorktree: isMain },
+			]),
+		);
+	const list = [ws("main", 0), ws("feat", 1), ws("plain", 2)];
+	const facts = f([
+		["main", KEY, true],
+		["feat", KEY, false],
+	]);
+
+	it("targets a main worktree itself", () => {
+		expect(addWorktreeTargetId(list, facts, "main")).toBe("main");
+	});
+
+	it("targets a standalone main worktree (one that has no set yet)", () => {
+		expect(
+			addWorktreeTargetId([ws("solo", 0)], f([["solo", KEY, true]]), "solo"),
+		).toBe("solo");
+	});
+
+	it("resolves a Linked worktree to its set's main worktree", () => {
+		expect(addWorktreeTargetId(list, facts, "feat")).toBe("main");
+	});
+
+	it("does nothing for a non-git Workspace or unloaded git facts", () => {
+		expect(addWorktreeTargetId(list, facts, "plain")).toBeNull();
+		expect(addWorktreeTargetId(list, {}, "main")).toBeNull();
+	});
+
+	it("does nothing for a Linked worktree whose main worktree is not listed", () => {
+		expect(
+			addWorktreeTargetId([ws("feat", 0)], f([["feat", KEY, false]]), "feat"),
+		).toBeNull();
+	});
+
+	it("does nothing with no Active workspace", () => {
+		expect(addWorktreeTargetId(list, facts, null)).toBeNull();
 	});
 });

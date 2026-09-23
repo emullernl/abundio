@@ -10,6 +10,7 @@ type KeyAction =
 	| "prev-pane"
 	| "next-workspace"
 	| "prev-workspace"
+	| "add-worktree"
 	| "command-palette"
 	| "open-file-search"
 	| "search-in-terminal"
@@ -86,6 +87,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"prev-pane",
 	"next-workspace",
 	"prev-workspace",
+	"add-worktree",
 	"command-palette",
 	"open-file-search",
 	"search-in-workspace",
@@ -269,6 +271,9 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		action: "search-in-terminal",
 	},
 	{ key: "n", meta: isMac, shift: true, ctrl: !isMac, action: "new-workspace" },
+	// B for branch. Not Cmd+Option+N beside New workspace: its Windows/Linux
+	// twin would be Ctrl+Alt+N, which is AltGr+N (ń on Polish layouts).
+	{ key: "b", meta: isMac, shift: true, ctrl: !isMac, action: "add-worktree" },
 	{ key: "t", meta: isMac, shift: false, ctrl: !isMac, action: "new-tab" },
 	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
 	// Brackets match by position (`code`): with Shift held, `key` reports `}` /

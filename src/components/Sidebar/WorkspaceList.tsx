@@ -457,6 +457,17 @@ export function WorkspaceList({
 		}
 	}, [lastCreatePayload, dismissWorktreeProgress]);
 
+	// The Add worktree keyboard shortcut: App resolves the target Workspace;
+	// the dialog lives here, so open it and consume the request.
+	const addWorktreeRequest = useWindowUiStore((s) => s.addWorktreeRequest);
+	useEffect(() => {
+		if (!addWorktreeRequest) return;
+		useWindowUiStore.getState().clearAddWorktreeRequest();
+		const ws = workspaces.find((w) => w.id === addWorktreeRequest);
+		if (ws)
+			setAddWorktreeTarget({ primaryCwd: ws.rootFolder, primaryName: ws.name });
+	}, [addWorktreeRequest, workspaces]);
+
 	// Per-item callbacks shared by standalone + set rendering.
 	const itemHandlers = (workspace: WorkspaceWithTabs, blockRowId: string) => ({
 		isActive: workspace.id === (switchingWorkspaceId ?? activeWorkspaceId),

@@ -9,11 +9,13 @@ import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
+import { addWorktreeTargetId } from "../lib/worktreeGrouping";
 import { useProfileStore } from "../stores/profileStore";
 import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePromptActionStore } from "../stores/promptActionStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 interface PaletteItem {
@@ -49,6 +51,12 @@ export function CommandPalette({
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
+	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	const addWorktreeTarget = useMemo(
+		() => addWorktreeTargetId(workspaces, worktreeFacts, activeWorkspaceId),
+		[workspaces, worktreeFacts, activeWorkspaceId],
+	);
 	const focusSweep = useSettingsStore((s) => s.focusSweep);
 	const setFocusSweep = useSettingsStore((s) => s.setFocusSweep);
 	const promptActionList = usePromptActionStore((s) => s.actions);
@@ -96,6 +104,17 @@ export function CommandPalette({
 			category: "Actions",
 			action: () => onRequestNewWorkspace(),
 		});
+
+		// Offered only when the shortcut would do something — the palette is
+		// where the "which Workspace can add a worktree" rule is discoverable.
+		if (addWorktreeTarget) {
+			result.push({
+				id: "action-add-worktree",
+				label: "Add Worktree…",
+				category: "Actions",
+				action: () => triggerAction("add-worktree"),
+			});
+		}
 
 		result.push(
 			{
@@ -285,6 +304,7 @@ export function CommandPalette({
 		promptActionList,
 		focusSweep,
 		setFocusSweep,
+		addWorktreeTarget,
 	]);
 
 	const filtered = useMemo(() => {
