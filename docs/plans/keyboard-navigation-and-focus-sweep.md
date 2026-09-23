@@ -17,12 +17,13 @@ New terms are in `CONTEXT.md`: **Focused pane**, **Pane cycle**, **Directional m
 
 | Action | macOS | Windows/Linux |
 |---|---|---|
-| Workspace cycle next / prev | `Cmd+Option+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
+| Workspace cycle next / prev | `Ctrl+Cmd+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
 | Tab cycle next / prev (existing, now by `code`) | `Cmd+Shift+]` / `[` | `Ctrl+Shift+]` / `[` |
-| Pane cycle next / prev | `Cmd+Option+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
+| Pane cycle next / prev | `Ctrl+Cmd+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Directional move (rewritten) | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
 | Add worktree | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 
+- macOS uses `Ctrl+Cmd`, not `Cmd+Option`: Monaco binds `Cmd+Option+↑/↓` (add cursor) and `Cmd+Option+[`/`]` (fold), and these shortcuts are workspace-global (revised after trying it).
 - No `Ctrl+Alt` on Windows/Linux: it is AltGr on European layouts. Bracket and arrow bindings match `KeyboardEvent.code`.
 - **Workspace cycle** visits only **Opened workspaces**, in Left sidebar order (`flattenRowsToIds(buildWorkspaceRows(...))`), wrapping. It never opens a Workspace. Landing on a hidden Linked worktree unfolds its set (the existing invariant in `WorkspaceList`). It scrolls the sidebar row into view.
 - **Pane cycle** visits every Pane type in depth-first tree order, wrapping.

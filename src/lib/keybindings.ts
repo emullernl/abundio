@@ -180,28 +180,30 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		ctrl: !isMac,
 		action: "navigate-right",
 	},
-	// Workspace cycle. macOS: Cmd+Option+Down / Up — vertical, like the Left
-	// sidebar it walks. Windows/Linux: Ctrl+Shift+PageDown / PageUp — not
+	// Workspace cycle. macOS: Ctrl+Cmd+Down / Up — vertical, like the Left
+	// sidebar it walks. Not Cmd+Option: Monaco uses Cmd+Option+Up/Down to add a
+	// cursor, and these are workspace-global, so they would take it over.
+	// Monaco binds nothing to Ctrl+Cmd, and a Cmd chord never reaches the PTY.
+	// Windows/Linux: Ctrl+Shift+PageDown / PageUp — not
 	// Ctrl+Alt+arrows, which GNOME takes for switching desktops (and Ctrl+Alt
 	// is AltGr on European layouts).
 	{
 		key: isMac ? "ArrowDown" : "PageDown",
 		meta: isMac,
 		shift: !isMac,
-		ctrl: !isMac,
-		alt: isMac,
+		ctrl: true,
 		action: "next-workspace",
 	},
 	{
 		key: isMac ? "ArrowUp" : "PageUp",
 		meta: isMac,
 		shift: !isMac,
-		ctrl: !isMac,
-		alt: isMac,
+		ctrl: true,
 		action: "prev-workspace",
 	},
-	// Pane cycle. macOS: Cmd+Option+] / [ — one modifier away from the tab
-	// cycle, matched by `code` because Option turns `]` into `'`. Windows/Linux:
+	// Pane cycle. macOS: Ctrl+Cmd+] / [ — not Cmd+Option, which is Monaco's
+	// fold / unfold (see the workspace cycle above). Matched by `code`, like
+	// every bracket binding. Windows/Linux:
 	// Ctrl+Tab / Ctrl+Shift+Tab, since Ctrl+Alt is AltGr on European layouts
 	// (and AltGr+bracket is how some of them type one). Terminals cannot tell
 	// Ctrl+Tab from Tab, so taking it costs the PTY nothing.
@@ -212,8 +214,7 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 					code: "BracketRight",
 					meta: true,
 					shift: false,
-					ctrl: false,
-					alt: true,
+					ctrl: true,
 					action: "next-pane" as const,
 				},
 				{
@@ -221,8 +222,7 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 					code: "BracketLeft",
 					meta: true,
 					shift: false,
-					ctrl: false,
-					alt: true,
+					ctrl: true,
 					action: "prev-pane" as const,
 				},
 			]
