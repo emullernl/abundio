@@ -462,10 +462,12 @@ export function WorkspaceList({
 	const addWorktreeRequest = useWindowUiStore((s) => s.addWorktreeRequest);
 	useEffect(() => {
 		if (!addWorktreeRequest) return;
-		useWindowUiStore.getState().clearAddWorktreeRequest();
 		const ws = workspaces.find((w) => w.id === addWorktreeRequest);
-		if (ws)
-			setAddWorktreeTarget({ primaryCwd: ws.rootFolder, primaryName: ws.name });
+		// Consume the request only once it can be served, so one that arrives
+		// ahead of its Workspace in `workspaces` waits instead of vanishing.
+		if (!ws) return;
+		useWindowUiStore.getState().clearAddWorktreeRequest();
+		setAddWorktreeTarget({ primaryCwd: ws.rootFolder, primaryName: ws.name });
 	}, [addWorktreeRequest, workspaces]);
 
 	// Per-item callbacks shared by standalone + set rendering.

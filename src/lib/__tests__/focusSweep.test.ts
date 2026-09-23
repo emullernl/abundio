@@ -80,11 +80,24 @@ describe("installFocusSweep", () => {
 		expect(sweeping()).toBeNull();
 	});
 
-	it("stops once closing panes leaves one behind", () => {
+	it("stops once closing panes leaves one behind — and drops the old sweep", () => {
 		focus("a");
 		layout = t("b");
 		focus("b");
+		expect(sweeping()).toBeNull();
+	});
+
+	it("drops a sweep when focus moves to a single-pane Tab, so it cannot replay", () => {
+		focus("a");
 		expect(sweeping()).toBe("a");
+		// Switch to a single-pane Tab: pane a's Tab is hidden mid-sweep.
+		layout = t("solo");
+		focus("solo");
+		expect(sweeping()).toBeNull();
+		// Back to the first Tab: nothing should be left to replay on pane a.
+		layout = split(t("a"), split(t("b"), t("c")));
+		useWorkspaceStore.setState({ activeWorkspaceId: "unchanged" });
+		expect(sweeping()).toBeNull();
 	});
 
 	it("sweeps after focus passes through nothing (a closed workspace)", () => {

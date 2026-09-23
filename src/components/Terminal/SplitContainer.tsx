@@ -81,6 +81,7 @@ const PreviewLeaf = memo(function PreviewLeaf({
 }: {
 	node: PaneNode & { type: "preview" };
 }) {
+	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === node.id);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
 
 	return (
@@ -88,6 +89,7 @@ const PreviewLeaf = memo(function PreviewLeaf({
 			<LazyPreviewPane
 				paneId={node.id}
 				sourcePaneId={node.sourcePaneId}
+				isFocused={isFocused}
 				onFocus={() => setFocusedPane(node.id)}
 			/>
 		</Suspense>
@@ -102,6 +104,7 @@ const MergeSideLeaf = memo(function MergeSideLeaf({
 	node: PaneNode & { type: "mergeSide" };
 	cwd: string;
 }) {
+	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === node.id);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
 
 	return (
@@ -110,6 +113,7 @@ const MergeSideLeaf = memo(function MergeSideLeaf({
 			sourcePaneId={node.sourcePaneId}
 			side={node.side}
 			cwd={cwd}
+			isFocused={isFocused}
 			onFocus={() => setFocusedPane(node.id)}
 		/>
 	);

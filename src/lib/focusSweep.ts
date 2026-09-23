@@ -56,6 +56,12 @@ export function installFocusSweep(): () => void {
 				paneId: next,
 				nonce: s.nonce + 1,
 			}));
+		} else if (useFocusSweepStore.getState().paneId !== null) {
+			// Focus moved without a new sweep — to a single-pane Tab, say, or to
+			// nothing. Drop the old one: its pane may now be hidden (a Tab behind
+			// `display: none` never fires `animationend`), and a sweep left in
+			// the store would replay the moment that pane is shown again.
+			useFocusSweepStore.setState({ paneId: null });
 		}
 	});
 }

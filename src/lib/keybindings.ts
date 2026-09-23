@@ -276,6 +276,16 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	{ key: "b", meta: isMac, shift: true, ctrl: !isMac, action: "add-worktree" },
 	{ key: "t", meta: isMac, shift: false, ctrl: !isMac, action: "new-tab" },
 	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
+	// A note on the Windows/Linux chords below (tab, pane and workspace
+	// cycles): unlike the macOS Cmd chords — and unlike the Prompt action
+	// digits, which are chosen to be *invisible to the terminal* — these take
+	// keys the PTY can see. xterm.js sends Ctrl+PageDown / PageUp as
+	// `CSI 6;5~` / `CSI 5;5~` and Ctrl+Tab as a plain Tab, and programs such
+	// as Midnight Commander, micro and Vim bind them. Being workspace-global and
+	// captured first, they are withheld from every terminal. A deliberate
+	// trade: every chord that stays invisible to the PTY on these platforms is
+	// either taken by Monaco or is Ctrl+Alt, which is AltGr on European layouts.
+	// (Shift+PageUp, xterm's scrollback paging, is unaffected.)
 	// Tab cycle. macOS: Cmd+Shift+] / [, matched by position (`code`): with
 	// Shift held, `key` reports `}` / `{` on US layouts and something else again
 	// on others, so a `key: "]"` binding silently never fires.

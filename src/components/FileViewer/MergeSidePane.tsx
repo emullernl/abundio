@@ -36,6 +36,10 @@ interface Props {
 	sourcePaneId: string;
 	side: MergeSide;
 	cwd: string;
+	/** Whether this is the Focused pane. Moves real (DOM) focus into the
+	 *  read-only editor, so a Pane cycle or Directional move landing here takes
+	 *  keystrokes away from the terminal it left. */
+	isFocused: boolean;
 	onFocus: () => void;
 }
 
@@ -73,6 +77,7 @@ export function MergeSidePane({
 	sourcePaneId,
 	side,
 	cwd,
+	isFocused,
 	onFocus,
 }: Props) {
 	const sourcePath = useExplorerStore(
@@ -274,7 +279,7 @@ export function MergeSidePane({
 				) : (
 					<CodeEditor
 						tabId={paneId}
-						isActive={false}
+						isActive={isFocused}
 						content={content}
 						language={sourcePath ? (detectLanguage(sourcePath) ?? null) : null}
 						initialEditorState={null}

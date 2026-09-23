@@ -49,12 +49,17 @@ const REHYPE_PLUGINS = [
 interface PreviewPaneProps {
 	paneId: string;
 	sourcePaneId: string;
+	/** Whether this is the Focused pane. Moves real (DOM) focus onto the
+	 *  scroll area, so arrow keys scroll the preview and keystrokes stop going
+	 *  to the terminal a Pane cycle or Directional move just left. */
+	isFocused: boolean;
 	onFocus: () => void;
 }
 
 export function PreviewPane({
 	paneId,
 	sourcePaneId,
+	isFocused,
 	onFocus,
 }: PreviewPaneProps) {
 	const sourceState = useExplorerStore((s) => s.filePanes[sourcePaneId]);
@@ -153,6 +158,10 @@ export function PreviewPane({
 		return () => unregisterSyncPreview(sourcePaneId);
 	}, [sourcePaneId]);
 
+	useEffect(() => {
+		if (isFocused) contentRef.current?.focus({ preventScroll: true });
+	}, [isFocused]);
+
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-focus on pane container
 		// biome-ignore lint/a11y/noStaticElementInteractions: click-to-focus on pane container
@@ -184,7 +193,9 @@ export function PreviewPane({
 			    PreviewPane.css. */}
 			<div
 				ref={contentRef}
-				className="flex-1 min-h-0 overflow-auto abundio-md-preview"
+				// Focusable by script only, so it can hold focus and scroll by key.
+				tabIndex={-1}
+				className="flex-1 min-h-0 overflow-auto abundio-md-preview outline-none"
 				data-color-mode={resolvedMode}
 				data-themed={followTheme ? "true" : undefined}
 				style={{
