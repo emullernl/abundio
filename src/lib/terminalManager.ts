@@ -21,6 +21,7 @@ import {
 	mapHookEvent,
 	mapSubagentHookEvent,
 } from "./agentHookMap";
+import { applyAgentExit, applySessionEnd } from "./agentModeEvents";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
@@ -38,7 +39,6 @@ import { parseOsc52 } from "./osc52";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
-import { applySessionEnd } from "./sessionEnd";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
@@ -1334,17 +1334,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						actState.setRunningCommand(currentPtyId, null);
 						managed.startupShellReady = true;
 						tryFlushStartup(managed);
-						// Exit agent mode when the command finishes — re-fetch
-						// state since setAgentPty above may have mutated it
+						// Exit agent mode when the command finishes (reads fresh state,
+						// since setAgentPty above may have mutated it).
+						const wasAgentMode = applyAgentExit(currentPtyId, paneId);
 						const freshState = usePtyActivityStore.getState();
-						const currentEntry = freshState.activities[currentPtyId];
-						if (currentEntry?.detectionMode === "agent") {
-							freshState.clearAgentPty(currentPtyId);
-							// Agent exited while the shell survives (manual /exit, Ctrl+C,
-							// or a crash): forget it so it does NOT auto-relaunch next time.
-							useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
-						}
-						const wasAgentMode = currentEntry?.detectionMode === "agent";
 						if (!managed.suppressActivity && !wasAgentMode) {
 							freshState.setShellCommandRunning(currentPtyId, false);
 							const outcome = classifyShellExit(cmd.exitCode);
@@ -1401,6 +1394,15 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onActivity(currentPtyId, (activity) => {
+				// The child-process poll (shells without integration) proving the
+				// Agent process exited — this shell's stand-in for command_end, and
+				// like it, not gated on suppressActivity.
+				if (
+					activity.type === "commandFinished" &&
+					applyAgentExit(currentPtyId, paneId)
+				) {
+					return;
+				}
 				if (managed.suppressActivity) return;
 
 				const actStore = usePtyActivityStore.getState();

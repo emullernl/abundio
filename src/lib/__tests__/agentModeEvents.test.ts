@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { applyAgentExit, applySessionEnd } from "../agentModeEvents";
 import { onSessionEnd } from "../agentTurnTracker";
-import { applySessionEnd } from "../sessionEnd";
 
 vi.mock("../agentTurnTracker", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../agentTurnTracker")>()),
@@ -13,6 +14,7 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 }));
 
 const PTY = "pty-1";
+const PANE = "pane-1";
 
 function entry() {
 	return usePtyActivityStore.getState().activities[PTY];
@@ -53,13 +55,13 @@ describe("applySessionEnd", () => {
 		applySessionEnd(PTY); // /exit fires the Session end first…
 		expect(entry().detectionMode).toBe("agent");
 
-		usePtyActivityStore.getState().clearAgentPty(PTY); // …then command_end
+		expect(applyAgentExit(PTY, PANE)).toBe(true); // …then command_end
 		expect(entry().detectionMode).toBe("shell");
 	});
 
 	it("does not resurrect agent mode when it lands after command_end", () => {
 		startAgent();
-		usePtyActivityStore.getState().clearAgentPty(PTY);
+		applyAgentExit(PTY, PANE);
 
 		applySessionEnd(PTY);
 
@@ -68,5 +70,38 @@ describe("applySessionEnd", () => {
 		// The Turn is still finalized: command_end drops agent mode without
 		// closing it, so this hook is what ends the session in telemetry.
 		expect(onSessionEnd).toHaveBeenCalledWith(PTY);
+	});
+});
+
+describe("applyAgentExit", () => {
+	const stampAgentOnPane = vi.fn();
+
+	beforeEach(() => {
+		stampAgentOnPane.mockClear();
+		useWorkspaceStore.setState({ stampAgentOnPane });
+		usePtyActivityStore.setState({
+			activities: {},
+			agentPtyIds: new Set(),
+			detectedAgentIds: {},
+		});
+	});
+
+	it("drops agent mode and forgets the Agent so it does not relaunch", () => {
+		startAgent();
+
+		expect(applyAgentExit(PTY, PANE)).toBe(true);
+
+		expect(entry().detectionMode).toBe("shell");
+		expect(usePtyActivityStore.getState().agentPtyIds.has(PTY)).toBe(false);
+		expect(stampAgentOnPane).toHaveBeenCalledWith(PANE, undefined);
+	});
+
+	it("is a no-op for a shell-mode PTY, leaving shell bookkeeping to the caller", () => {
+		usePtyActivityStore.getState().initPty(PTY);
+
+		expect(applyAgentExit(PTY, PANE)).toBe(false);
+
+		expect(entry().detectionMode).toBe("shell");
+		expect(stampAgentOnPane).not.toHaveBeenCalled();
 	});
 });
