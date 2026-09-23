@@ -244,15 +244,22 @@ export interface HistoryCommit {
 	/** Author time, seconds since the Unix epoch. */
 	time: number;
 	isMerge: boolean;
+	/** Below the divider: **Shared history** the base also has. False for an
+	 *  **Ahead commit**, and for every row when the base is unknown. */
+	shared: boolean;
 	/** On the GitHub remote named by `CommitHistory.githubSlug`. Gates
 	 *  "Open on GitHub". */
 	onRemote: boolean;
 }
 
-/** `base..HEAD`, newest first. `commits` is capped (200); `total` is not. */
+/** The Workspace's recent history: every Ahead commit, then the Shared
+ *  history, newest first, capped at 200 rows. */
 export interface CommitHistory {
-	base: string;
-	total: number;
+	/** The base the divider is named after; null when it cannot be resolved
+	 *  (the list is then plain HEAD history). */
+	base: string | null;
+	/** The true Ahead count, even past the row cap. */
+	ahead: number;
 	commits: HistoryCommit[];
 	/** `owner/repo` "Open on GitHub" links to — the same remote `onRemote` was
 	 *  judged against. Null when the repository has no GitHub remote. */

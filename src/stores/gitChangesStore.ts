@@ -60,12 +60,13 @@ export function commitHistoryEqual(
 ): boolean {
 	if (a === b) return true;
 	if (!a || !b) return false;
-	if (a.base !== b.base || a.total !== b.total) return false;
+	if (a.base !== b.base || a.ahead !== b.ahead) return false;
 	if (a.githubSlug !== b.githubSlug) return false;
 	if (a.commits.length !== b.commits.length) return false;
 	for (let i = 0; i < a.commits.length; i++) {
 		if (
 			a.commits[i].oid !== b.commits[i].oid ||
+			a.commits[i].shared !== b.commits[i].shared ||
 			a.commits[i].onRemote !== b.commits[i].onRemote
 		)
 			return false;
@@ -103,8 +104,9 @@ interface GitChangesState {
 	/** The suspended git operation, surfaced as a single read-only line in the
 	 *  Git changes tab. Abundio never continues or aborts one. */
 	operationInProgress: GitOperation | null;
-	/** The **Commits** section's data for the Active workspace. Null
-	 *  before the first bundle, or when the base branch cannot be resolved. */
+	/** The **Commits** section's data for the Active workspace. Null before
+	 *  the first bundle, or when the commit list itself could not be read (an
+	 *  unknown base is *not* that — it arrives with `base: null`). */
 	commitHistory: CommitHistory | null;
 	fetchChanges: (
 		cwd: string,

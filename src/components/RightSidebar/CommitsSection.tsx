@@ -2,9 +2,11 @@ import { open } from "@tauri-apps/plugin-shell";
 import { useEffect, useRef, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import {
+	COMMIT_HISTORY_CAP,
 	commitMenuEntries,
 	commitTooltip,
 	githubCommitUrl,
+	historySummary,
 	initials,
 	relativeTime,
 } from "../../lib/commitHistory";
@@ -56,18 +58,16 @@ function useNowSecs(): number {
 	return now;
 }
 
-/** The **Commits** Anchored section: the commits on the Active
- *  workspace's branch that its base does not have yet. See CONTEXT.md.
+/** The **Commits** Anchored section: the Active workspace's recent history —
+ *  its **Ahead commits**, a divider named after the base, then the **Shared
+ *  history**. See CONTEXT.md.
  *  Like `PrSection`, it always renders its header; the body is hidden when
  *  collapsed and the parent sizes it. */
 export function CommitsSection() {
 	const collapsed = useWindowUiStore((s) => s.commitsSectionCollapsed);
 	const toggle = useWindowUiStore((s) => s.toggleCommitsSectionCollapsed);
 	const commitHistory = useGitChangesStore((s) => s.commitHistory);
-	const baseBranch = useGitChangesStore((s) => s.baseBranch);
-
-	const base = commitHistory?.base ?? baseBranch;
-	const count = commitHistory?.total;
+	const summary = commitHistory ? historySummary(commitHistory) : null;
 
 	return (
 		<div
@@ -113,30 +113,24 @@ export function CommitsSection() {
 				>
 					Commits
 				</span>
-				{count != null && (
-					<span
-						style={{
-							fontSize: 11,
-							color: "var(--fg-secondary)",
-							fontVariantNumeric: "tabular-nums",
-						}}
-					>
-						({count.toLocaleString()})
-					</span>
-				)}
 				<span className="flex-1" />
-				{base && (
+				{summary && (
 					<span
 						className="truncate"
+						title={
+							commitHistory?.base
+								? undefined
+								: "The base branch could not be resolved, so nothing is marked as ahead"
+						}
 						style={{
 							fontSize: 10.5,
 							color: "var(--fg-secondary)",
-							fontFamily: "var(--font-mono)",
+							fontVariantNumeric: "tabular-nums",
 							opacity: 0.8,
 							minWidth: 0,
 						}}
 					>
-						vs {base}
+						{summary}
 					</span>
 				)}
 			</button>
@@ -212,19 +206,20 @@ function CommitsBody() {
 	if (!activeWorkspaceId || !cwd) return null;
 	if (isGitRepo === false) return <Message>Not a git repository</Message>;
 	if (!commitHistory) {
-		// A failed refresh says why; it is not evidence about the base branch.
+		// A failed refresh says why.
 		if (error) return <Message>Could not read commits: {error}</Message>;
-		// A bundle arrived (it names the branch) yet carried no commit list:
-		// only then is the base branch the thing that failed to resolve.
-		if (currentBranch) return <Message>Base branch not found</Message>;
+		// A bundle arrived (it names the branch) without a commit list. An
+		// unknown base no longer causes this — the list is sent without one —
+		// so it is a read failure of its own.
+		if (currentBranch) return <Message>Could not read commits</Message>;
 		return (
 			<Message>
 				<span className="animate-pulse">Loading commits…</span>
 			</Message>
 		);
 	}
-	if (commitHistory.total === 0) {
-		return <Message>No commits ahead of {commitHistory.base}</Message>;
+	if (commitHistory.commits.length === 0) {
+		return <Message>No commits yet</Message>;
 	}
 
 	async function toggleCommit(oid: string) {
@@ -301,7 +296,8 @@ function CommitsBody() {
 		}));
 	}
 
-	const hidden = commitHistory.total - commitHistory.commits.length;
+	const atCap = commitHistory.commits.length >= COMMIT_HISTORY_CAP;
+	const { base } = commitHistory;
 
 	return (
 		<>
@@ -309,8 +305,17 @@ function CommitsBody() {
 				{commitHistory.commits.map((commit, i) => {
 					const isOpen = expanded.has(commit.oid);
 					const fileList = files[commit.oid];
+					// The divider sits on the boundary only: never above the first
+					// row (on the base branch everything is shared) and never when
+					// the base is unknown (then nothing is).
+					const divider =
+						base != null &&
+						commit.shared &&
+						i > 0 &&
+						!commitHistory.commits[i - 1].shared;
 					return (
 						<li key={commit.oid}>
+							{divider && <BaseDivider base={base} />}
 							<CommitRow
 								commit={commit}
 								isHead={i === 0}
@@ -324,18 +329,23 @@ function CommitsBody() {
 							/>
 							{isOpen &&
 								(fileList === "loading" || fileList === undefined ? (
-									<RailLine muted>
+									<RailLine muted shared={commit.shared}>
 										<span className="animate-pulse">Loading files…</span>
 									</RailLine>
 								) : fileList === "error" ? (
-									<RailLine muted>Could not read this commit's files</RailLine>
+									<RailLine muted shared={commit.shared}>
+										Could not read this commit's files
+									</RailLine>
 								) : fileList.length === 0 ? (
-									<RailLine muted>No file changes</RailLine>
+									<RailLine muted shared={commit.shared}>
+										No file changes
+									</RailLine>
 								) : (
 									fileList.map((f) => (
 										<CommitFileRow
 											key={f.path}
 											file={f}
+											shared={commit.shared}
 											onOpen={() => openFileDiff(commit, f)}
 										/>
 									))
@@ -343,14 +353,18 @@ function CommitsBody() {
 						</li>
 					);
 				})}
-				{hidden > 0 && (
+				{atCap && (
 					<li>
-						<RailLine muted>{hidden.toLocaleString()} more not shown</RailLine>
+						<RailLine
+							muted
+							shared={
+								commitHistory.commits[commitHistory.commits.length - 1].shared
+							}
+						>
+							Showing the latest {COMMIT_HISTORY_CAP} commits
+						</RailLine>
 					</li>
 				)}
-				<li>
-					<BaseTerminus base={commitHistory.base} />
-				</li>
 			</ul>
 			{menu && (
 				<PaneContextMenu
@@ -365,9 +379,24 @@ function CommitsBody() {
 	);
 }
 
+const AHEAD_RAIL = "color-mix(in srgb, var(--accent) 35%, var(--border))";
+const SHARED_RAIL = "var(--border)";
+const SHARED_NODE = "color-mix(in srgb, var(--fg-secondary) 55%, transparent)";
+/** `--border` alone vanishes against the sidebar's glow at 1px. */
+const DIVIDER_LINE = "color-mix(in srgb, var(--fg-secondary) 45%, transparent)";
+
 /** The vertical line every row draws through its gutter, so the list reads
- *  as one branch running down to where it left its base. */
-function Rail({ top = 0, bottom = 0 }: { top?: number; bottom?: number }) {
+ *  as one line of history. Accent through the **Ahead commits**, grey
+ *  through the **Shared history**. */
+function Rail({
+	top = 0,
+	bottom = 0,
+	shared = false,
+}: {
+	top?: number;
+	bottom?: number;
+	shared?: boolean;
+}) {
 	return (
 		<span
 			aria-hidden
@@ -377,7 +406,7 @@ function Rail({ top = 0, bottom = 0 }: { top?: number; bottom?: number }) {
 				top,
 				bottom,
 				width: 1,
-				backgroundColor: "color-mix(in srgb, var(--accent) 35%, var(--border))",
+				backgroundColor: shared ? SHARED_RAIL : AHEAD_RAIL,
 			}}
 		/>
 	);
@@ -388,11 +417,14 @@ function Rail({ top = 0, bottom = 0 }: { top?: number; bottom?: number }) {
 function CommitNode({
 	isHead,
 	isMerge,
+	shared,
 }: {
 	isHead: boolean;
 	isMerge: boolean;
+	shared: boolean;
 }) {
 	const size = isMerge ? 7 : 8;
+	const color = shared ? SHARED_NODE : "var(--accent)";
 	return (
 		<span
 			aria-hidden
@@ -404,8 +436,8 @@ function CommitNode({
 				height: size,
 				borderRadius: isMerge ? 1 : "50%",
 				transform: isMerge ? "rotate(45deg)" : undefined,
-				border: "1.5px solid var(--accent)",
-				backgroundColor: isHead ? "var(--accent)" : "var(--bg-secondary)",
+				border: `1.5px solid ${color}`,
+				backgroundColor: isHead ? color : "var(--bg-secondary)",
 				boxSizing: "border-box",
 			}}
 		/>
@@ -467,8 +499,12 @@ function CommitRow({
 				e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<Rail top={isHead ? ROW_HEIGHT / 2 : 0} />
-			<CommitNode isHead={isHead} isMerge={commit.isMerge} />
+			<Rail top={isHead ? ROW_HEIGHT / 2 : 0} shared={commit.shared} />
+			<CommitNode
+				isHead={isHead}
+				isMerge={commit.isMerge}
+				shared={commit.shared}
+			/>
 			<span
 				className="flex-shrink-0 transition-opacity opacity-40 group-hover:opacity-80"
 				style={{ display: "inline-flex", color: "var(--fg-secondary)" }}
@@ -521,9 +557,11 @@ function CommitRow({
 
 function CommitFileRow({
 	file,
+	shared,
 	onOpen,
 }: {
 	file: CommitFile;
+	shared: boolean;
 	onOpen: () => void;
 }) {
 	const color = STATUS_COLORS[file.status] ?? "var(--fg-secondary)";
@@ -563,7 +601,7 @@ function CommitFileRow({
 				e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<Rail />
+			<Rail shared={shared} />
 			<span
 				className="flex-shrink-0 inline-flex items-center justify-center rounded font-bold"
 				style={{
@@ -607,9 +645,11 @@ function CommitFileRow({
 function RailLine({
 	children,
 	muted,
+	shared = false,
 }: {
 	children: React.ReactNode;
 	muted?: boolean;
+	shared?: boolean;
 }) {
 	return (
 		<div
@@ -622,43 +662,41 @@ function RailLine({
 				fontStyle: muted ? "italic" : undefined,
 			}}
 		>
-			<Rail />
+			<Rail shared={shared} />
 			{children}
 		</div>
 	);
 }
 
-/** Where the rail ends: the merge-base with the base branch. */
-function BaseTerminus({ base }: { base: string }) {
+/** The boundary between the **Ahead commits** and the **Shared history**,
+ *  named after the base. The rail changes colour across it. */
+function BaseDivider({ base }: { base: string }) {
 	return (
 		<div
-			className="relative flex items-center gap-1.5"
-			style={{ height: ROW_HEIGHT, paddingLeft: GUTTER, paddingBottom: 2 }}
-			title={`Where this branch left ${base} (the merge-base)`}
+			className="relative flex items-center gap-2"
+			style={{ height: 22, paddingLeft: GUTTER, paddingRight: 10 }}
+			title={`Below: history ${base} also has, as this branch last saw it`}
 		>
-			<Rail bottom={ROW_HEIGHT / 2} />
+			<Rail bottom={11} />
+			<Rail top={11} shared />
 			<span
 				aria-hidden
-				style={{
-					position: "absolute",
-					left: RAIL_X + 0.5 - 4,
-					top: ROW_HEIGHT / 2 - 1,
-					width: 8,
-					height: 1,
-					backgroundColor: "var(--fg-secondary)",
-					opacity: 0.6,
-				}}
+				className="flex-1"
+				style={{ height: 1, backgroundColor: DIVIDER_LINE }}
 			/>
 			<span
 				style={{
 					fontSize: 10.5,
 					color: "var(--fg-secondary)",
 					fontFamily: "var(--font-mono)",
-					opacity: 0.8,
 				}}
 			>
 				{base}
 			</span>
+			<span
+				aria-hidden
+				style={{ width: 16, height: 1, backgroundColor: DIVIDER_LINE }}
+			/>
 		</div>
 	);
 }

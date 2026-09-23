@@ -7,7 +7,22 @@
  * disabled, never dropped, so the menu keeps one shape on every row.
  */
 
-import type { HistoryCommit } from "./types";
+import type { CommitHistory, HistoryCommit } from "./types";
+
+/** Rows the Rust side sends; mirrors `COMMIT_HISTORY_CAP`. A list this long
+ *  was cut, so the section says so. */
+export const COMMIT_HISTORY_CAP = 200;
+
+/** The header's right-hand note: "3 ahead of main" when the branch has Ahead
+ *  commits, nothing on the base branch itself (or a branch level with it),
+ *  and "base unknown" when there is no divider to count against. */
+export function historySummary(
+	h: Pick<CommitHistory, "base" | "ahead">,
+): string | null {
+	if (h.base == null) return "base unknown";
+	if (h.ahead === 0) return null;
+	return `${h.ahead.toLocaleString()} ahead of ${h.base}`;
+}
 
 /** "Emil Müller" → "EM", "cher" → "C", "" → "?". First and last word, so a
  *  middle name does not push the surname out. */

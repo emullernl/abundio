@@ -3,6 +3,7 @@ import {
 	commitMenuEntries,
 	commitTooltip,
 	githubCommitUrl,
+	historySummary,
 	initials,
 	relativeTime,
 } from "../commitHistory";
@@ -69,8 +70,22 @@ it("tooltip leads with the short hash and ends with the full message", () => {
 		authorEmail: "a@b",
 		time: 0,
 		isMerge: false,
+		shared: false,
 		onRemote: false,
 	});
 	expect(t.startsWith("9f3e1a7 · A B <a@b> · ")).toBe(true);
 	expect(t.endsWith("\n\ns\n\nbody")).toBe(true);
+});
+
+describe("historySummary", () => {
+	it("counts ahead commits against the base", () => {
+		expect(historySummary({ base: "main", ahead: 3 })).toBe("3 ahead of main");
+		expect(historySummary({ base: "main", ahead: 1285 })).toBe(
+			"1,285 ahead of main",
+		);
+	});
+	it("says nothing on the base branch and 'base unknown' without one", () => {
+		expect(historySummary({ base: "main", ahead: 0 })).toBeNull();
+		expect(historySummary({ base: null, ahead: 0 })).toBe("base unknown");
+	});
 });

@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import { COMMIT_HISTORY_CAP } from "../../../lib/commitHistory";
 import type {
 	CommitHistory,
 	HistoryCommit,
@@ -57,16 +57,20 @@ const commit = (
 	authorEmail: "e@example.com",
 	time: Math.floor(Date.now() / 1000) - 7200,
 	isMerge: false,
+	shared: false,
 	onRemote: false,
 	...over,
 });
 
+/** Ahead rows as given; `ahead` counts the ones not marked shared. */
 const list = (...cs: HistoryCommit[]): CommitHistory => ({
 	base: "main",
-	total: cs.length,
+	ahead: cs.filter((c) => !c.shared).length,
 	commits: cs,
 	githubSlug: "o/r",
 });
+const shared = (oid: string, over: Partial<HistoryCommit> = {}) =>
+	commit(oid, { shared: true, ...over });
 
 describe("CommitsSection", () => {
 	let container: HTMLDivElement;
@@ -112,19 +116,43 @@ describe("CommitsSection", () => {
 
 	const text = () => container.textContent ?? "";
 
-	it("lists the branch's commits with initials, age and the count", () => {
-		render({ commitHistory: list(commit("a1"), commit("b2")) });
+	it("lists ahead commits, the base divider, then shared history", () => {
+		render({
+			commitHistory: list(commit("a1"), commit("b2"), shared("c3")),
+		});
 		expect(text()).toContain("Commits");
-		expect(text()).toContain("(2)");
-		expect(text()).toContain("vs main");
+		expect(text()).toContain("2 ahead of main");
 		expect(text()).toContain("subject a1");
+		expect(text()).toContain("subject c3");
 		expect(text()).toContain("EM");
 		expect(text()).toContain("2h");
+		// The divider sits between b2 and c3 and names the base.
+		const t = text();
+		const divider = t.indexOf("main", t.indexOf("subject b2"));
+		expect(divider).toBeGreaterThan(t.indexOf("subject b2"));
+		expect(divider).toBeLessThan(t.indexOf("subject c3"));
 	});
 
-	it("says so when nothing is ahead of the base", () => {
+	it("on the base branch: latest commits, no divider, no count", () => {
+		render({ commitHistory: list(shared("c1"), shared("c2")) });
+		expect(text()).toContain("subject c1");
+		expect(text()).not.toContain("ahead of");
+		expect(container.querySelector("[title^='Below: history']")).toBeNull();
+	});
+
+	it("with an unknown base: plain history, no divider, says so", () => {
+		render({
+			commitHistory: { ...list(commit("a1"), commit("b2")), base: null },
+		});
+		expect(text()).toContain("base unknown");
+		expect(text()).toContain("subject b2");
+		expect(container.querySelector("[title^='Below: history']")).toBeNull();
+		expect(text()).not.toContain("Base branch not found");
+	});
+
+	it("says so for a repository with no commits yet", () => {
 		render({ commitHistory: list() });
-		expect(text()).toContain("No commits ahead of main");
+		expect(text()).toContain("No commits yet");
 	});
 
 	it("says so for a non-git workspace", () => {
@@ -136,25 +164,24 @@ describe("CommitsSection", () => {
 		expect(text()).toContain("Not a git repository");
 	});
 
-	it("reports an unresolvable base once a bundle has arrived", () => {
-		render({ commitHistory: null, currentBranch: "feature" });
-		expect(text()).toContain("Base branch not found");
-	});
-
-	it("shows a failed refresh's own error, not a missing base", () => {
+	it("shows a failed refresh's own error", () => {
 		render({
 			commitHistory: null,
 			currentBranch: "feature",
 			error: "index is locked",
 		});
 		expect(text()).toContain("index is locked");
-		expect(text()).not.toContain("Base branch not found");
 	});
 
-	it("shows how many were left out past the cap", () => {
-		render({ commitHistory: { ...list(commit("a1")), total: 1285 } });
-		expect(text()).toContain("(1,285)");
-		expect(text()).toContain("1,284 more not shown");
+	it("says when the list was cut at the cap, and keeps the true ahead count", () => {
+		const rows = Array.from({ length: COMMIT_HISTORY_CAP }, (_, i) =>
+			commit(`c${i}`),
+		);
+		render({ commitHistory: { ...list(...rows), ahead: 1285 } });
+		expect(text()).toContain("1,285 ahead of main");
+		expect(text()).toContain(
+			`Showing the latest ${COMMIT_HISTORY_CAP} commits`,
+		);
 	});
 
 	it("hides the body but keeps the header when collapsed", () => {

@@ -339,11 +339,12 @@ describe("Commits from bundles", () => {
 		authorEmail: "t@example.com",
 		time: 0,
 		isMerge: false,
+		shared: false,
 		onRemote,
 	});
 	const commits = (...cs: ReturnType<typeof commit>[]) => ({
-		base: "main",
-		total: cs.length,
+		base: "main" as string | null,
+		ahead: cs.length,
 		commits: cs,
 		githubSlug: "o/r" as string | null,
 	});
@@ -377,6 +378,16 @@ describe("Commits from bundles", () => {
 			commitHistory: commits(commit("a")),
 		});
 		expect(useGitChangesStore.getState().commitHistory).toBe(first);
+		// A commit crossing the divider (base caught up) is a change too.
+		store.applyBundle("ws-1", {
+			...bundle(),
+			commitHistory: commits({ ...commit("a"), shared: true }),
+		});
+		expect(useGitChangesStore.getState().commitHistory?.commits[0].shared).toBe(
+			true,
+		);
+		const second = useGitChangesStore.getState().commitHistory;
+		expect(second).not.toBe(first);
 		// A push is a change, even with the same oids.
 		store.applyBundle("ws-1", {
 			...bundle(),
@@ -431,16 +442,22 @@ describe("commitHistoryEqual", () => {
 		expect(
 			commitHistoryEqual(null, {
 				base: "m",
-				total: 0,
+				ahead: 0,
 				commits: [],
 				githubSlug: null,
 			}),
 		).toBe(false);
 	});
-	it("notices a base or total change", () => {
-		const a = { base: "main", total: 0, commits: [], githubSlug: null };
+	it("notices a base or ahead-count change", () => {
+		const a = {
+			base: "main" as string | null,
+			ahead: 0,
+			commits: [],
+			githubSlug: null,
+		};
 		expect(commitHistoryEqual(a, { ...a, base: "dev" })).toBe(false);
-		expect(commitHistoryEqual(a, { ...a, total: 300 })).toBe(false);
+		expect(commitHistoryEqual(a, { ...a, base: null })).toBe(false);
+		expect(commitHistoryEqual(a, { ...a, ahead: 300 })).toBe(false);
 		// A remote added or renamed changes where "Open on GitHub" goes.
 		expect(commitHistoryEqual(a, { ...a, githubSlug: "o/r" })).toBe(false);
 	});

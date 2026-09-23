@@ -778,16 +778,31 @@ function demoOid(seed: string): string {
 /** oid → files, for `git_commit_files` / `git_commit_file_diff`. */
 export const commitFilesByOid: Record<string, CommitFile[]> = {};
 
-/** One demo commit per `against_base` file, newest first; only the oldest is
- *  on a remote, so the menu shows "Open on GitHub" both enabled and disabled.
- *  Times are relative to now so the rows read "2h", "1d" in any year. */
+/** Shared history every demo repository sits on, newest first. */
+const DEMO_SHARED_SUBJECTS = [
+	"Merge pull request #212 from acme/fix-flaky-ci",
+	"Bump dependencies",
+	"Fix flaky integration test",
+	"Add health-check endpoint",
+	"Tidy lint config",
+	"Initial commit",
+];
+
+/** Ahead commits: one per `against_base` file (only the oldest is on a
+ *  remote, so the menu shows "Open on GitHub" both enabled and disabled).
+ *  Below them, a short shared history, all pushed. On the base branch there
+ *  are no Ahead commits and the list is just the shared history. Times are
+ *  relative to now so the rows read "2h", "1d" in any year. */
 function commitHistoryForCwd(cwd: string): CommitHistory | null {
 	const entry = gitByRoot[cwd];
 	if (!entry) return null;
 	const base = entry.branch.defaultBranch;
-	const touched = entry.files.filter((f) => f.section === "against_base");
+	const onBase = entry.branch.currentBranch === base;
+	const touched = onBase
+		? []
+		: entry.files.filter((f) => f.section === "against_base");
 	const now = Math.floor(Date.now() / 1000);
-	const commits: HistoryCommit[] = touched
+	const ahead: HistoryCommit[] = touched
 		.map((f, i) => {
 			const oid = demoOid(`${cwd}:${f.path}`);
 			commitFilesByOid[oid] = [
@@ -810,15 +825,33 @@ function commitHistoryForCwd(cwd: string): CommitHistory | null {
 				authorEmail,
 				time: now - (touched.length - i) * 5 * 3600,
 				isMerge: false,
+				shared: false,
 				onRemote: i === 0,
 			};
 		})
 		.reverse();
+	const shared: HistoryCommit[] = DEMO_SHARED_SUBJECTS.map((subject, i) => {
+		const oid = demoOid(`${cwd}:shared:${i}`);
+		commitFilesByOid[oid] = [];
+		const [authorName, authorEmail] =
+			DEMO_AUTHORS[(i + 1) % DEMO_AUTHORS.length];
+		return {
+			oid,
+			subject,
+			message: subject,
+			authorName,
+			authorEmail,
+			time: now - (2 + i) * 86400,
+			isMerge: subject.startsWith("Merge "),
+			shared: true,
+			onRemote: true,
+		};
+	});
 	const repoName = cwd.split("/").filter(Boolean).pop() ?? "repo";
 	return {
 		base,
-		total: commits.length,
-		commits,
+		ahead: ahead.length,
+		commits: [...ahead, ...shared],
 		githubSlug: `acme/${repoName}`,
 	};
 }
