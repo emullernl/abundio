@@ -193,6 +193,24 @@ describe("terminal copy/paste (Linux/Windows)", () => {
 		expect(paste).toHaveBeenCalledOnce();
 	});
 
+	it.skipIf(isMac)(
+		"paste does not reach the terminal behind an open dialog",
+		() => {
+			// Focus on a dialog's button (not a text input) used to send the
+			// clipboard into the PTY behind the dialog.
+			const paste = vi.fn();
+			registerAction("paste", paste);
+			focus("button");
+			const release = pushOverlay();
+			const e = makeKeyEvent({ key: "v", ctrlKey: true, shiftKey: true });
+			const preventSpy = vi.spyOn(e, "preventDefault");
+			handleKeyDown(e);
+			release();
+			expect(paste).not.toHaveBeenCalled();
+			expect(preventSpy).not.toHaveBeenCalled();
+		},
+	);
+
 	it.skipIf(isMac)("Ctrl+Shift+C triggers copy", () => {
 		const handler = vi.fn();
 		registerAction("copy", handler);

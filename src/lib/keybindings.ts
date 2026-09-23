@@ -336,9 +336,14 @@ function matchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
  *  Firing a Prompt action submits to the Agent, so a digit pressed while a
  *  dialog has the user's attention would send a prompt they never confirmed —
  *  from behind the thing they are looking at. For a parameterised action the
- *  open dialog merely swaps; for a parameterless one it goes straight out. */
+ *  open dialog merely swaps; for a parameterless one it goes straight out.
+ *
+ *  Terminal paste (Ctrl+Shift+V, Linux/Windows) is the same shape: with focus
+ *  on a dialog's button rather than a text input, it would write the clipboard
+ *  into the terminal behind the dialog. A text input inside the dialog is
+ *  unaffected — the key falls through to its native paste either way. */
 function isSuppressedByOverlay(action: KeyAction): boolean {
-	return action.startsWith("prompt-action-");
+	return action === "paste" || action.startsWith("prompt-action-");
 }
 
 export function handleKeyDown(e: KeyboardEvent) {
