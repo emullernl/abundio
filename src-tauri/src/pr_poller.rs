@@ -42,6 +42,10 @@ pub struct PrStatePayload {
 	pub review_requested: Vec<PullRequest>,
 	pub mine: Vec<PullRequest>,
 	pub error: Option<String>,
+	/// Why the unread markers couldn't be fetched (e.g. a fine-grained token
+	/// with no notifications access). The PR lists are still good; the panel
+	/// shows a quiet note instead of letting "no markers" pass as "all read".
+	pub unread_error: Option<String>,
 }
 
 /// A single notification-worthy change, with a preformatted `body`. The
@@ -134,6 +138,32 @@ impl PrPoller {
 		self.shared.notify.notify_one();
 	}
 
+	/// Clear `thread_id`'s unread marker from both cached payloads. Returns
+	/// whether any cached PR carried it — in either cache, so the caller's
+	/// broadcast can never be skipped after a cache was mutated.
+	///
+	/// `last` is what new Windows' snapshots serve, so it must be cleared.
+	/// Clearing `last_success` too is only so the notification baseline can't
+	/// disagree with `last` if `diff_changes` ever grows to look at this field;
+	/// today nothing observes it there.
+	pub fn clear_unread(&self, thread_id: &str) -> bool {
+		let in_baseline = self
+			.shared
+			.last_success
+			.lock()
+			.unwrap()
+			.as_mut()
+			.is_some_and(|p| clear_unread_in(p, thread_id));
+		let in_last = self
+			.shared
+			.last
+			.lock()
+			.unwrap()
+			.as_mut()
+			.is_some_and(|p| clear_unread_in(p, thread_id));
+		in_baseline || in_last
+	}
+
 	/// Last emitted payload, for new Windows to hydrate from without a gh call.
 	pub fn snapshot(&self) -> Option<PrStatePayload> {
 		self.shared.last.lock().unwrap().clone()
@@ -142,6 +172,18 @@ impl PrPoller {
 	fn shared(&self) -> PollerShared {
 		self.shared.clone()
 	}
+}
+
+/// Returns whether any PR in `payload` carried `thread_id`.
+fn clear_unread_in(payload: &mut PrStatePayload, thread_id: &str) -> bool {
+	let mut hit = false;
+	for pr in payload.review_requested.iter_mut().chain(payload.mine.iter_mut()) {
+		if pr.unread_thread_id.as_deref() == Some(thread_id) {
+			pr.unread_thread_id = None;
+			hit = true;
+		}
+	}
+	hit
 }
 
 /// True if any Abundio Window is frontmost (Settings included).
@@ -171,13 +213,30 @@ fn build_payload_blocking() -> PrStatePayload {
 		};
 	}
 	match gh_commands::fetch_prs() {
-		Ok((review_requested, mine)) => PrStatePayload {
-			available: true,
-			authenticated: true,
-			review_requested,
-			mine,
-			error: None,
-		},
+		Ok((mut review_requested, mut mine)) => {
+			// A failure here costs only the markers, never the lists. With no
+			// PRs to mark, `unread_since` is None and the call is skipped.
+			let unread = match gh_commands::unread_since(review_requested.iter().chain(&mine)) {
+				Some(since) => gh_commands::fetch_unread_pr_threads(&since),
+				None => Ok(Default::default()),
+			};
+			let unread_error = match unread {
+				Ok(threads) => {
+					gh_commands::apply_unread(&mut review_requested, &threads);
+					gh_commands::apply_unread(&mut mine, &threads);
+					None
+				}
+				Err(e) => Some(pr_error_message(e)),
+			};
+			PrStatePayload {
+				available: true,
+				authenticated: true,
+				review_requested,
+				mine,
+				error: None,
+				unread_error,
+			}
+		}
 		Err(e) => PrStatePayload {
 			available: true,
 			authenticated: true,
@@ -378,6 +437,27 @@ pub async fn pr_poller_refresh(poller: State<'_, PrPoller>) -> Result<(), Abundi
 	Ok(())
 }
 
+/// Mark a PR's notification thread read: clear the marker in the cache (so
+/// new Windows' snapshots agree) and in every Window at once, then tell
+/// GitHub. A failed PATCH is returned, and the next poll brings it back.
+///
+/// Windows hear a narrow `pr-unread-cleared`, not a `pr-state` rebroadcast:
+/// `pr-state` means "a poll finished" to its receivers, which stop the
+/// Refresh spinner on it — so a rebroadcast would stop it mid-fetch.
+#[tauri::command]
+pub async fn pr_mark_read(
+	app: AppHandle,
+	poller: State<'_, PrPoller>,
+	thread_id: String,
+) -> Result<(), AbundioError> {
+	if poller.clear_unread(&thread_id) {
+		let _ = app.emit("pr-unread-cleared", &thread_id);
+	}
+	tokio::task::spawn_blocking(move || gh_commands::mark_thread_read(&thread_id))
+		.await
+		.map_err(|e| AbundioError::InvalidOperation(format!("mark-read task failed: {}", e)))?
+}
+
 #[tauri::command]
 pub async fn pr_poller_snapshot(
 	poller: State<'_, PrPoller>,
@@ -407,6 +487,7 @@ mod tests {
 			review_requested: review,
 			mine,
 			error: None,
+			unread_error: None,
 		}
 	}
 
@@ -467,5 +548,43 @@ mod tests {
 		let poller = PrPoller::new();
 		*poller.shared.last_fetch.lock().unwrap() = Some(Instant::now());
 		assert!(!gap_elapsed(&poller.shared, 5));
+	}
+
+	#[test]
+	fn clear_unread_updates_both_caches_and_both_lists() {
+		let poller = PrPoller::new();
+		let mut a = pr("org/repo", 1, "", "");
+		a.unread_thread_id = Some("55".into());
+		let mut b = pr("org/repo", 2, "", "");
+		b.unread_thread_id = Some("66".into());
+		let p = payload(vec![a], vec![b]);
+		*poller.shared.last.lock().unwrap() = Some(p.clone());
+		*poller.shared.last_success.lock().unwrap() = Some(p);
+
+		assert!(poller.clear_unread("55"), "thread 55 was cached");
+		let out = poller.snapshot().unwrap();
+		assert_eq!(out.review_requested[0].unread_thread_id, None);
+		assert_eq!(out.mine[0].unread_thread_id.as_deref(), Some("66"));
+		let baseline = poller.shared.last_success.lock().unwrap().clone().unwrap();
+		assert_eq!(baseline.review_requested[0].unread_thread_id, None);
+	}
+
+	#[test]
+	fn clear_unread_unknown_thread_is_false() {
+		let poller = PrPoller::new();
+		assert!(!poller.clear_unread("1"), "nothing cached");
+		*poller.shared.last.lock().unwrap() = Some(payload(vec![], vec![]));
+		assert!(!poller.clear_unread("1"), "no PR carries it");
+	}
+
+	#[test]
+	fn clear_unread_reports_a_hit_in_the_baseline_alone() {
+		// Symmetric by construction: if only `last_success` held the thread,
+		// the caller must still broadcast.
+		let poller = PrPoller::new();
+		let mut a = pr("org/repo", 1, "", "");
+		a.unread_thread_id = Some("55".into());
+		*poller.shared.last_success.lock().unwrap() = Some(payload(vec![a], vec![]));
+		assert!(poller.clear_unread("55"));
 	}
 }

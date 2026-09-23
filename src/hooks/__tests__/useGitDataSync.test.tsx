@@ -16,6 +16,7 @@ vi.mock("../../lib/ipc", () => ({
 	pr: {
 		snapshot: vi.fn().mockResolvedValue(null),
 		onPrState: vi.fn().mockResolvedValue(() => {}),
+		onUnreadCleared: vi.fn().mockResolvedValue(() => {}),
 		onPrChanges: vi.fn().mockResolvedValue(() => {}),
 	},
 	workspaces: { update: vi.fn().mockResolvedValue(undefined) },

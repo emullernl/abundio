@@ -12,6 +12,7 @@ import {
 	REVIEW_VIEWS,
 	type ReviewView,
 	scopeOf,
+	unreadCount,
 	usePrStore,
 	visiblePrs,
 } from "../../stores/prStore";
@@ -34,6 +35,7 @@ export function PullRequestsSection() {
 	const mine = usePrStore((s) => s.mine);
 	const loading = usePrStore((s) => s.loading);
 	const error = usePrStore((s) => s.error);
+	const unreadError = usePrStore((s) => s.unreadError);
 	const activeRepoSlug = usePrStore((s) => s.activeRepoSlug);
 	const profileRepoSlugs = usePrStore((s) => s.profileRepoSlugs);
 	const repoSlugsResolved = usePrStore((s) => s.repoSlugsResolved);
@@ -201,6 +203,22 @@ export function PullRequestsSection() {
 				showRefresh={false}
 				showPrStatus
 			/>
+			{unreadError && ghStatus?.authenticated && (
+				// Without this, a missing marker would read as "all read".
+				<div
+					className="flex-shrink-0"
+					title={unreadError}
+					style={{
+						padding: "4px 12px",
+						fontSize: 10,
+						color: "var(--fg-secondary)",
+						opacity: 0.7,
+						borderTop: "1px solid var(--border)",
+					}}
+				>
+					Unread markers unavailable
+				</div>
+			)}
 		</div>
 	);
 }
@@ -250,6 +268,7 @@ function PrSubPanel<V extends PrView>({
 	showPrStatus,
 }: PrSubPanelProps<V>) {
 	const [dropdownOpen, setDropdownOpen] = useState(false);
+	const unread = unreadCount(section.prs);
 	const dropdownRef = useRef<HTMLDivElement>(null);
 
 	// Close dropdown on click outside
@@ -377,6 +396,12 @@ function PrSubPanel<V extends PrView>({
 						}}
 					>
 						{section.prs.length}
+						{unread > 0 && (
+							<span style={{ color: "var(--accent)" }}>
+								{" · "}
+								{unread} unread
+							</span>
+						)}
 					</span>
 				)}
 

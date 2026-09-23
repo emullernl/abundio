@@ -976,6 +976,9 @@ export function repoForCwd(cwd: string): string {
 	return `acme/${cwd.split("/").pop() ?? "repo"}`;
 }
 
+/** PRs the demo shows as **Unread PRs**. */
+const DEMO_UNREAD = new Set([482, 491]);
+
 function pr(
 	number: number,
 	title: string,
@@ -1006,6 +1009,7 @@ function pr(
 		isDraft,
 		labels,
 		repository,
+		unreadThreadId: DEMO_UNREAD.has(number) ? `demo-${number}` : null,
 	};
 }
 

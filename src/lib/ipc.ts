@@ -585,6 +585,10 @@ export const pr = {
 	 *  flag and the min-gap, and re-checks gh auth. */
 	refresh: () => invoke<void>("pr_poller_refresh"),
 
+	/** Mark a PR's notification thread read on GitHub. Rust clears the marker
+	 *  in every Window's cache first, then sends the PATCH. */
+	markRead: (threadId: string) => invoke<void>("pr_mark_read", { threadId }),
+
 	/** Push the persisted polling config: enabled + focused interval (minutes). */
 	setConfig: (enabled: boolean, minutes: number) =>
 		invoke<void>("pr_poller_set_config", { enabled, minutes }),
@@ -594,6 +598,13 @@ export const pr = {
 		callback: (payload: PrStatePayload) => void,
 	): Promise<UnlistenFn> =>
 		listen<PrStatePayload>("pr-state", (event) => callback(event.payload)),
+
+	/** A thread was marked read (from any Window): clear its marker locally.
+	 *  Deliberately not a `pr-state` — that one ends a Refresh spin. */
+	onUnreadCleared: (
+		callback: (threadId: string) => void,
+	): Promise<UnlistenFn> =>
+		listen<string>("pr-unread-cleared", (event) => callback(event.payload)),
 
 	/** Notification descriptors — emitted to ONE Window so N Windows don't
 	 *  each fire duplicate OS notifications. */

@@ -9,11 +9,15 @@ vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 // `workspacesApi` — both must be stubbed or the Refresh test fails on the mock
 // rather than on the behaviour.
 vi.mock("../../../lib/ipc", () => ({
-	pr: { refresh: vi.fn().mockResolvedValue(undefined) },
+	pr: {
+		refresh: vi.fn().mockResolvedValue(undefined),
+		markRead: vi.fn().mockResolvedValue(undefined),
+	},
 	git: { workspacesSummary: vi.fn().mockResolvedValue([]) },
 	workspaces: { update: vi.fn().mockResolvedValue(undefined) },
 }));
 
+import { open } from "@tauri-apps/plugin-shell";
 import { git, pr as prIpc } from "../../../lib/ipc";
 import type { PullRequest } from "../../../lib/types";
 import { usePrStore } from "../../../stores/prStore";
@@ -39,6 +43,7 @@ const makePr = (number: number, repository: string): PullRequest => ({
 	isDraft: false,
 	labels: [],
 	repository,
+	unreadThreadId: null,
 });
 
 /** The account-wide dataset the poller pushes: two profiles' worth of repos. */
@@ -140,6 +145,63 @@ describe("PullRequestsSection", () => {
 		expect(git.workspacesSummary).toHaveBeenCalledWith([
 			{ workspaceId: "ws-1", cwd: "/web", baseBranch: null },
 		]);
+	});
+
+	describe("Unread PRs", () => {
+		const unreadReview = [
+			{ ...makePr(1, "acme/web"), unreadThreadId: "901" },
+			makePr(5, "acme/web"),
+		];
+
+		it("counts unread PRs in the header and marks the row", () => {
+			seed({ reviewRequested: unreadReview });
+			render();
+			expect(text()).toContain("2 · 1 unread");
+			expect(container.querySelectorAll('[aria-label="Unread"]').length).toBe(
+				1,
+			);
+		});
+
+		it("shows no unread count when everything is read", () => {
+			render();
+			expect(text()).not.toContain("unread");
+		});
+
+		it("opening an unread PR clears its marker and marks it read", () => {
+			seed({ reviewRequested: unreadReview });
+			render();
+			const openBtn = container.querySelector(
+				'button[title="Open in browser"]',
+			) as HTMLButtonElement;
+			act(() => openBtn.click());
+			expect(open).toHaveBeenCalledWith("https://github.com/acme/web/pull/1");
+			expect(prIpc.markRead).toHaveBeenCalledWith("901");
+			expect(container.querySelector('[aria-label="Unread"]')).toBeNull();
+			expect(text()).not.toContain("unread");
+		});
+
+		it("opening a read PR does not call markRead", () => {
+			render();
+			const openBtn = container.querySelector(
+				'button[title="Open in browser"]',
+			) as HTMLButtonElement;
+			act(() => openBtn.click());
+			expect(prIpc.markRead).not.toHaveBeenCalled();
+		});
+
+		it("shows a quiet note when the markers could not be fetched", () => {
+			seed({ unreadError: "HTTP 403" });
+			render();
+			expect(text()).toContain("Unread markers unavailable");
+			// The lists themselves are unaffected.
+			expect(text()).toContain("PR 1");
+		});
+
+		it("shows no note when the markers loaded", () => {
+			seed({ unreadError: null });
+			render();
+			expect(text()).not.toContain("Unread markers unavailable");
+		});
 	});
 
 	it("offers all three scopes when a workspace is opened", () => {

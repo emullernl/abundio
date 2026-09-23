@@ -215,7 +215,9 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				reviewRequested: fixtures.allReviewPrs,
 				mine: fixtures.allMyPrs,
 				error: null,
+				unreadError: null,
 			};
+		case "pr_mark_read":
 		case "pr_poller_refresh":
 		case "pr_poller_set_config":
 			return undefined;

@@ -1,6 +1,7 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { pr as prIpc } from "../lib/ipc";
 import type {
 	GhStatus,
 	PrChange,
@@ -63,6 +64,10 @@ interface PrState {
 	reviewRequested: PullRequest[];
 	mine: PullRequest[];
 	error: string | null;
+	/** Why the **Unread PR** markers couldn't be fetched, or null. The lists
+	 *  are still shown; the panel adds a quiet note so "no markers" doesn't
+	 *  pass for "everything read". */
+	unreadError: string | null;
 	/** True until the first payload (snapshot or pushed event) lands. */
 	loading: boolean;
 	/** True from a manual Refresh request until the next poller payload lands.
@@ -88,6 +93,13 @@ interface PrState {
 	myPrsView: MyPrsView;
 
 	applyPrState: (payload: PrStatePayload) => void;
+	/** The user opened this PR: clear its marker now and mark the thread read
+	 *  on GitHub. Rust also rebroadcasts, so other Windows clear too. */
+	markRead: (threadId: string) => void;
+	/** Clear one thread's marker locally, without telling GitHub. What
+	 *  `markRead` does first, and what other Windows do on `pr-unread-cleared`.
+	 *  Leaves `refreshing` alone: no poll has finished. */
+	clearUnread: (threadId: string) => void;
 	/** Mark a manual Refresh as in-flight (spins the refresh icon). Cleared by
 	 *  the next `applyPrState`. */
 	beginRefresh: () => void;
@@ -115,6 +127,7 @@ export const usePrStore = create<PrState>()(
 			reviewRequested: [],
 			mine: [],
 			error: null,
+			unreadError: null,
 			loading: true,
 			refreshing: false,
 			activeRepoSlug: null,
@@ -134,9 +147,35 @@ export const usePrStore = create<PrState>()(
 					reviewRequested,
 					mine,
 					error: payload.error ?? null,
+					unreadError: payload.unreadError ?? null,
 					loading: false,
 					refreshing: false,
 				});
+			},
+
+			markRead: (threadId) => {
+				usePrStore.getState().clearUnread(threadId);
+				// A failed PATCH needs no rollback: the next poll restores the marker.
+				// It is left silent on purpose. The likeliest cause, a token that
+				// can't touch notifications, already failed the *read* — that PR has
+				// no `unreadThreadId` to click, and `unreadError` shows the note. A
+				// transient failure costs one dot that comes back on the next poll.
+				prIpc.markRead(threadId).catch(() => {});
+			},
+
+			clearUnread: (threadId) => {
+				const clear = (prs: PullRequest[]) =>
+					prs.some((p) => p.unreadThreadId === threadId)
+						? prs.map((p) =>
+								p.unreadThreadId === threadId
+									? { ...p, unreadThreadId: null }
+									: p,
+							)
+						: prs;
+				set((s) => ({
+					reviewRequested: clear(s.reviewRequested),
+					mine: clear(s.mine),
+				}));
 			},
 
 			beginRefresh: () => set({ refreshing: true }),
@@ -249,6 +288,11 @@ export function visiblePrs(
 		);
 	}
 	return prs;
+}
+
+/** How many of `prs` are **Unread PRs**. */
+export function unreadCount(prs: PullRequest[]): number {
+	return prs.reduce((n, p) => (p.unreadThreadId ? n + 1 : n), 0);
 }
 
 /** Profile-scoped counts for the Overview bar chips. Derived on every read
