@@ -194,20 +194,7 @@ pub async fn set_active_profile_id(
     if !crate::window_management::is_profile_window_label(&label) {
         return Ok(());
     }
-    match profile_id {
-        Some(ref id) => {
-            // A Profile is shown in at most one Window. Refuse, rather than
-            // record a second owner, when another Window already has it.
-            if let Some(owner) = state.try_claim(&label, id) {
-                return Err(AbundioError::InvalidOperation(format!(
-                    "profile {id} is already open in window {owner}"
-                )));
-            }
-        }
-        None => {
-            state.remove_for_window(&label);
-        }
-    }
+    state.claim_for_window(&label, profile_id.as_deref())?;
     crate::rebuild_menu_for_focused_window(&app);
     let _ = app.emit("profile-ownership-changed", ());
     Ok(())

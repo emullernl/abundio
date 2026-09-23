@@ -251,6 +251,10 @@ export const windowSession = {
 		waiting: number;
 		commands: number;
 	}) => invoke<void>("report_busy_counts", { counts }),
+
+	/** Bring another Window to the front — used when the Profile asked for is
+	 *  already open there (ADR-0007). */
+	focus: (label: string) => invoke<void>("focus_window", { label }),
 };
 
 export const tabs = {

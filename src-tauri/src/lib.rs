@@ -494,37 +494,6 @@ fn perform_quit(app: &AppHandle<Wry>) {
     app.exit(0);
 }
 
-/// Emits an event to the currently-focused webview only. Used for "open
-/// settings" / "switch profile" intents from the native menu — those are
-/// always per-window and shouldn't fan out to other Windows. The frontend must
-/// hear these through `listenToThisWindow`: a global JS `listen` receives
-/// targeted events too, which would undo the targeting.
-pub fn emit_to_focused<S: serde::Serialize + Clone>(
-    app: &AppHandle<Wry>,
-    event: &str,
-    payload: &S,
-) -> tauri::Result<()> {
-    for (label, w) in app.webview_windows() {
-        if w.is_focused().unwrap_or(false) {
-            return app.emit_to(label.as_str(), event, payload.clone());
-        }
-    }
-    // No window reported focused (a focus transition, or on macOS every Window
-    // minimised while the menu bar still works). Pick exactly one Profile-bound
-    // Window — never broadcast, which would run a one-window action such as a
-    // Profile switch in every Window at once. Lowest label, so the pick is
-    // stable rather than `HashMap` order.
-    let fallback = app
-        .webview_windows()
-        .into_keys()
-        .filter(|label| window_management::is_profile_window_label(label))
-        .min();
-    match fallback {
-        Some(label) => app.emit_to(label.as_str(), event, payload.clone()),
-        None => Ok(()),
-    }
-}
-
 /// Rebuilds the application menu, sourcing the focused-window label from the
 /// app's currently-focused webview. Called after any change that could affect
 /// menu rendering: profile CRUD, in-window profile switch, window focus
@@ -1151,10 +1120,10 @@ pub fn run() {
                     }
                     (None, _) => {
                         // Case 3: profile is unowned; do the in-window switch.
-                        let _ = emit_to_focused(
+                        let _ = window_management::emit_to_one_profile_window(
                             app,
                             "switch-profile-request",
-                            &profile_id.to_string(),
+                            profile_id.to_string(),
                         );
                     }
                 }

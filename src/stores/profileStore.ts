@@ -1,7 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { appWindow } from "../lib/appWindow";
-import { profiles as profilesApi } from "../lib/ipc";
+import { profiles as profilesApi, windowSession } from "../lib/ipc";
 import type { Profile } from "../lib/types";
 import { DEFAULT_PROFILE_ID } from "../lib/types";
 // Static cycle with workspaceStore / ptyActivityStore: both import
@@ -197,14 +196,21 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 		// when another Window already owns it (e.g. that Window switched first
 		// while this one's confirm dialog was up); stop here with this Window's
 		// workspaces untouched rather than show a Profile twice, and bring the
-		// owning Window forward so the click visibly did something.
+		// owning Window forward so the click visibly did something. Any other
+		// failure is not a conflict: log and rethrow rather than leave the click
+		// silently dead.
 		try {
 			await profilesApi.setActiveProfileId(id);
-		} catch {
+		} catch (err) {
 			await get().refreshOwnershipMap();
 			const owner = get().ownershipMap[id];
-			if (owner) await invoke("focus_window", { label: owner }).catch(() => {});
-			return;
+			const ownLabel = appWindow()?.label ?? null;
+			if (owner && owner !== ownLabel) {
+				await windowSession.focus(owner).catch(() => {});
+				return;
+			}
+			console.error("[abundio] profile claim failed", err);
+			throw err;
 		}
 
 		const openedIds = Array.from(
