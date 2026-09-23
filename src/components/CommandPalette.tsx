@@ -95,6 +95,21 @@ export function CommandPalette({
 			action: () => onRequestNewWorkspace(),
 		});
 
+		result.push(
+			{
+				id: "action-next-workspace",
+				label: "Next Opened Workspace",
+				category: "Actions",
+				action: () => triggerAction("next-workspace"),
+			},
+			{
+				id: "action-prev-workspace",
+				label: "Previous Opened Workspace",
+				category: "Actions",
+				action: () => triggerAction("prev-workspace"),
+			},
+		);
+
 		if (focusedPaneId) {
 			result.push(
 				{

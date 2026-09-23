@@ -447,3 +447,50 @@ describe("tab cycle bindings", () => {
 		expect(prev).toHaveBeenCalledOnce();
 	});
 });
+
+describe("pane and workspace cycle bindings (Windows/Linux)", () => {
+	afterEach(() => {
+		for (const a of [
+			"next-pane",
+			"prev-pane",
+			"next-workspace",
+			"prev-workspace",
+		] as const)
+			unregisterAction(a);
+	});
+
+	it.skipIf(isMac)("Ctrl+Tab / Ctrl+Shift+Tab cycle panes", () => {
+		const next = vi.fn();
+		const prev = vi.fn();
+		registerAction("next-pane", next);
+		registerAction("prev-pane", prev);
+		handleKeyDown(makeKeyEvent({ key: "Tab", ctrlKey: true }));
+		handleKeyDown(makeKeyEvent({ key: "Tab", ctrlKey: true, shiftKey: true }));
+		expect(next).toHaveBeenCalledOnce();
+		expect(prev).toHaveBeenCalledOnce();
+	});
+
+	it.skipIf(isMac)("Ctrl+Shift+PageDown / PageUp cycle workspaces", () => {
+		const next = vi.fn();
+		const prev = vi.fn();
+		registerAction("next-workspace", next);
+		registerAction("prev-workspace", prev);
+		handleKeyDown(
+			makeKeyEvent({ key: "PageDown", ctrlKey: true, shiftKey: true }),
+		);
+		handleKeyDown(
+			makeKeyEvent({ key: "PageUp", ctrlKey: true, shiftKey: true }),
+		);
+		expect(next).toHaveBeenCalledOnce();
+		expect(prev).toHaveBeenCalledOnce();
+	});
+
+	it.skipIf(isMac)("Ctrl+Alt+PageDown (AltGr territory) does not fire", () => {
+		const next = vi.fn();
+		registerAction("next-workspace", next);
+		handleKeyDown(
+			makeKeyEvent({ key: "PageDown", ctrlKey: true, altKey: true }),
+		);
+		expect(next).not.toHaveBeenCalled();
+	});
+});

@@ -8,6 +8,8 @@ type KeyAction =
 	| "navigate-right"
 	| "next-pane"
 	| "prev-pane"
+	| "next-workspace"
+	| "prev-workspace"
 	| "command-palette"
 	| "open-file-search"
 	| "search-in-terminal"
@@ -82,6 +84,8 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"navigate-right",
 	"next-pane",
 	"prev-pane",
+	"next-workspace",
+	"prev-workspace",
 	"command-palette",
 	"open-file-search",
 	"search-in-workspace",
@@ -173,6 +177,26 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		shift: true,
 		ctrl: !isMac,
 		action: "navigate-right",
+	},
+	// Workspace cycle. macOS: Cmd+Option+Down / Up — vertical, like the Left
+	// sidebar it walks. Windows/Linux: Ctrl+Shift+PageDown / PageUp — not
+	// Ctrl+Alt+arrows, which GNOME takes for switching desktops (and Ctrl+Alt
+	// is AltGr on European layouts).
+	{
+		key: isMac ? "ArrowDown" : "PageDown",
+		meta: isMac,
+		shift: !isMac,
+		ctrl: !isMac,
+		alt: isMac,
+		action: "next-workspace",
+	},
+	{
+		key: isMac ? "ArrowUp" : "PageUp",
+		meta: isMac,
+		shift: !isMac,
+		ctrl: !isMac,
+		alt: isMac,
+		action: "prev-workspace",
 	},
 	// Pane cycle. macOS: Cmd+Option+] / [ — one modifier away from the tab
 	// cycle, matched by `code` because Option turns `]` into `'`. Windows/Linux:

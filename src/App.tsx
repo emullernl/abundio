@@ -59,6 +59,8 @@ import {
 	pasteIntoTerminal,
 } from "./lib/terminalClipboard";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
+import { cycleOpenedWorkspace } from "./lib/workspaceCycle";
+import { buildWorkspaceRows, flattenRowsToIds } from "./lib/worktreeGrouping";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
@@ -97,6 +99,7 @@ import {
 } from "./stores/tabCloseConfirmStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { useWindowUiStore } from "./stores/windowUiStore";
+import { useWorkspaceGitStore } from "./stores/workspaceGitStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 
 // Matches the native macOS title bar height. The React Titlebar component
@@ -702,6 +705,26 @@ export function App() {
 		registerAction("navigate-down", () => navigatePane("down"));
 		registerAction("navigate-left", () => navigatePane("left"));
 		registerAction("navigate-right", () => navigatePane("right"));
+		// Workspace cycle: Opened workspaces only, in Left sidebar order.
+		const cycleWorkspace = (step: 1 | -1) => {
+			const ws = useWorkspaceStore.getState();
+			const order = flattenRowsToIds(
+				buildWorkspaceRows(
+					ws.workspaces,
+					useWorkspaceGitStore.getState().worktreeFacts,
+				),
+			);
+			// Step from a switch still in flight, so a held key keeps advancing.
+			const target = cycleOpenedWorkspace(
+				order,
+				usePtyActivityStore.getState().openedWorkspaceIds,
+				ws.switchingWorkspaceId ?? ws.activeWorkspaceId,
+				step,
+			);
+			if (target) ws.beginWorkspaceSwitch(target);
+		};
+		registerAction("next-workspace", () => cycleWorkspace(1));
+		registerAction("prev-workspace", () => cycleWorkspace(-1));
 		registerAction("next-pane", () => cycleFocusedPane(1));
 		registerAction("prev-pane", () => cycleFocusedPane(-1));
 		registerAction("command-palette", () => {
