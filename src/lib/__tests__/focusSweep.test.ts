@@ -7,77 +7,107 @@ import {
 	useFocusSweepStore,
 	waitForSmoothFrames,
 } from "../focusSweep";
+import type { PaneNode } from "../types";
 
 describe("shouldSweep", () => {
 	it("sweeps a change to a different pane", () => {
-		expect(shouldSweep("a", "b", true, true)).toBe(true);
+		expect(shouldSweep("a", "b", 2, true)).toBe(true);
 	});
 
-	it("sweeps focus arriving from nothing, once focus has been seen", () => {
-		expect(shouldSweep(null, "b", true, true)).toBe(true);
+	it("sweeps focus arriving from nothing — including the first after launch", () => {
+		expect(shouldSweep(null, "a", 3, true)).toBe(true);
 	});
 
-	it("skips the first focus after the Window opens", () => {
-		expect(shouldSweep(null, "a", false, true)).toBe(false);
+	it("never sweeps in a Tab with a single Pane", () => {
+		expect(shouldSweep("a", "b", 1, true)).toBe(false);
+		expect(shouldSweep(null, "a", 1, true)).toBe(false);
 	});
 
 	it("never sweeps re-focusing the same pane, or focus going away", () => {
-		expect(shouldSweep("a", "a", true, true)).toBe(false);
-		expect(shouldSweep("a", null, true, true)).toBe(false);
+		expect(shouldSweep("a", "a", 2, true)).toBe(false);
+		expect(shouldSweep("a", null, 2, true)).toBe(false);
 	});
 
 	it("is off when the setting is off", () => {
-		expect(shouldSweep("a", "b", true, false)).toBe(false);
+		expect(shouldSweep("a", "b", 2, false)).toBe(false);
 	});
 });
 
 describe("installFocusSweep", () => {
+	const t = (id: string): PaneNode => ({ type: "terminal", id, ptyId: "" });
+	const split = (first: PaneNode, second: PaneNode): PaneNode => ({
+		type: "split",
+		id: `s-${first.id}-${second.id}`,
+		direction: "vertical",
+		ratio: 0.5,
+		first,
+		second,
+	});
+	const original = useWorkspaceStore.getState().getActiveLayout;
+	let layout: PaneNode | null = null;
 	let uninstall: () => void;
 
 	beforeEach(() => {
-		useWorkspaceStore.setState({ focusedPaneId: null });
+		layout = split(t("a"), split(t("b"), t("c")));
+		useWorkspaceStore.setState({
+			focusedPaneId: null,
+			getActiveLayout: () => layout,
+		});
 		useFocusSweepStore.setState({ paneId: null, nonce: 0 });
 		useSettingsStore.setState({ focusSweep: true });
 		uninstall = installFocusSweep();
 	});
 
-	afterEach(() => uninstall());
+	afterEach(() => {
+		uninstall();
+		useWorkspaceStore.setState({ getActiveLayout: original });
+	});
 
 	const focus = (id: string | null) =>
 		useWorkspaceStore.setState({ focusedPaneId: id });
+	const sweeping = () => useFocusSweepStore.getState().paneId;
 
-	it("skips launch, then sweeps each new Focused pane", () => {
+	it("sweeps the first focus after launch, then each new Focused pane", () => {
 		focus("a");
-		expect(useFocusSweepStore.getState().paneId).toBeNull();
+		expect(sweeping()).toBe("a");
 		focus("b");
-		expect(useFocusSweepStore.getState().paneId).toBe("b");
+		expect(sweeping()).toBe("b");
+	});
+
+	it("does not sweep a Tab with a single Pane", () => {
+		layout = t("solo");
+		focus("solo");
+		expect(sweeping()).toBeNull();
+	});
+
+	it("stops once closing panes leaves one behind", () => {
 		focus("a");
-		expect(useFocusSweepStore.getState().paneId).toBe("a");
+		layout = t("b");
+		focus("b");
+		expect(sweeping()).toBe("a");
 	});
 
 	it("sweeps after focus passes through nothing (a closed workspace)", () => {
 		focus("a");
 		focus(null);
 		focus("b");
-		expect(useFocusSweepStore.getState().paneId).toBe("b");
+		expect(sweeping()).toBe("b");
 	});
 
 	it("lets only the newest sweep finish itself", () => {
-		focus("a");
 		focus("b");
 		const first = useFocusSweepStore.getState().nonce;
 		focus("c");
 		useFocusSweepStore.getState().finish(first);
-		expect(useFocusSweepStore.getState().paneId).toBe("c");
+		expect(sweeping()).toBe("c");
 		useFocusSweepStore.getState().finish(useFocusSweepStore.getState().nonce);
-		expect(useFocusSweepStore.getState().paneId).toBeNull();
+		expect(sweeping()).toBeNull();
 	});
 
 	it("respects the setting at the moment focus moves", () => {
-		focus("a");
 		useSettingsStore.setState({ focusSweep: false });
 		focus("b");
-		expect(useFocusSweepStore.getState().paneId).toBeNull();
+		expect(sweeping()).toBeNull();
 	});
 });
 

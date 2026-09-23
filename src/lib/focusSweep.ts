@@ -1,21 +1,23 @@
 import { create } from "zustand";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { collectPaneIds, containsPane } from "./paneTree";
 
 /**
  * The **Focus sweep** trigger rule. A sweep plays whenever the Focused pane
- * changes to a *different* Pane, whatever caused it — except the first focus
- * after the Window opens, when every Pane is appearing at once and a sweep is
- * noise. Re-focusing the already-focused Pane changes nothing, so it never
- * sweeps; neither does the Window regaining OS focus, for the same reason.
+ * changes to a *different* Pane, whatever caused it — including the first
+ * focus after the Window opens — but only when the Tab holding it has more
+ * than one Pane: with a single Pane there is nothing to find. Re-focusing the
+ * already-focused Pane changes nothing, so it never sweeps; neither does the
+ * Window regaining OS focus, for the same reason.
  */
 export function shouldSweep(
 	prev: string | null,
 	next: string | null,
-	hasFocusedBefore: boolean,
+	paneCountInTab: number,
 	enabled: boolean,
 ): boolean {
-	return enabled && hasFocusedBefore && next !== null && next !== prev;
+	return enabled && paneCountInTab > 1 && next !== null && next !== prev;
 }
 
 interface FocusSweepState {
@@ -36,25 +38,25 @@ export const useFocusSweepStore = create<FocusSweepState>((set) => ({
 
 /** Feed Focused-pane changes into the sweep store. Returns the unsubscribe. */
 export function installFocusSweep(): () => void {
-	let hasFocusedBefore = useWorkspaceStore.getState().focusedPaneId !== null;
 	return useWorkspaceStore.subscribe((state, prevState) => {
 		const next = state.focusedPaneId;
 		const prev = prevState.focusedPaneId;
 		if (next === prev) return;
+		// The Focused pane is always in the active Tab — tab and workspace
+		// switches move both in one update.
+		const layout = state.getActiveLayout();
+		const paneCount =
+			layout && next && containsPane(layout, next)
+				? collectPaneIds(layout).length
+				: 0;
 		if (
-			shouldSweep(
-				prev,
-				next,
-				hasFocusedBefore,
-				useSettingsStore.getState().focusSweep,
-			)
+			shouldSweep(prev, next, paneCount, useSettingsStore.getState().focusSweep)
 		) {
 			useFocusSweepStore.setState((s) => ({
 				paneId: next,
 				nonce: s.nonce + 1,
 			}));
 		}
-		if (next !== null) hasFocusedBefore = true;
 	});
 }
 

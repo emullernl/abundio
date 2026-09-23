@@ -59,7 +59,7 @@ export function ThemeSection() {
 					checked={focusSweep}
 					onChange={setFocusSweep}
 					label="Sweep the border of a pane when it gains focus"
-					description="A short accent-coloured arc runs once around the pane, so you can see where focus landed. With reduced motion turned on in your system settings, the border lights up and fades instead."
+					description="In a tab with more than one pane, a short accent-coloured arc runs once around the pane that gains focus, so you can see where focus landed. With reduced motion turned on in your system settings, the border lights up and fades instead."
 				/>
 			</div>
 		</div>
