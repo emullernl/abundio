@@ -23,6 +23,7 @@ import { ClipboardPaste, ImagePlus, Paperclip, X } from "lucide-react";
 import { useState } from "react";
 import { promptAttachments } from "../../lib/ipc";
 import type { ParamValue } from "../../lib/promptActions";
+import { secondaryButtonClass } from "../PromptActions/fieldStyles";
 
 interface AttachmentFieldProps {
 	multiple: boolean;
@@ -36,14 +37,7 @@ const buttonStyle: React.CSSProperties = {
 	fontSize: 12,
 };
 
-/** Colour and border live in classes, not `buttonStyle`: an inline style
- *  beats any `hover:` utility, so the hover state would never show. */
-const buttonClass =
-	"inline-flex items-center gap-2 rounded-md transition-colors cursor-pointer " +
-	"border border-[var(--border)] text-[var(--fg-secondary)] " +
-	"enabled:hover:bg-[var(--bg-tertiary)] enabled:hover:text-[var(--fg-primary)] " +
-	"enabled:hover:border-[var(--fg-secondary)] " +
-	"disabled:opacity-60 disabled:cursor-default";
+const buttonClass = `${secondaryButtonClass} rounded-md`;
 
 function basename(p: string): string {
 	const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
