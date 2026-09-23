@@ -1,13 +1,16 @@
 // Maps an Agent's lifecycle hook event to a status-indicator transition.
 //
 // Hooks are authoritative ground truth for Agent status — see
-// docs/plans/agent-hooks-status-integration.md. "clear" means the Agent
-// session ended AND the process is gone (drop agent mode). "sessionReset"
-// means the *session* ended but the Agent is still running and ready for the
-// next prompt — Claude Code's `/clear`. It finalizes the open Turn and starts a
-// new session id, but must NOT drop agent mode: doing so takes the Agent icon
-// out of the title bar, flips the status icon to shell, and unmounts the
-// pane's Action bar, all while the Agent is sitting there waiting for input.
+// docs/plans/agent-hooks-status-integration.md. "sessionReset" is every
+// Agent's **Session end** hook (CONTEXT.md): the *session* ended, which is NOT
+// the process exiting. Claude Code and Copilot both fire it on `/clear`, which
+// starts a new session in the same process, and Copilot reports
+// `reason: "user_exit"` for `/clear` and `/exit` alike, so the payload cannot
+// tell them apart. It finalizes the open Turn and must never drop agent mode:
+// doing so took the Agent icon out of the title bar, flipped the status icon to
+// shell, and unmounted the pane's Action bar, all while the Agent sat there
+// waiting for input. Leaving agent mode belongs to the shell's `command_end`
+// alone — the launching command finished, so the Agent process is gone.
 // "idle" means the user cancelled the turn
 // (Kimi's Interrupt) — the pane goes straight to Idle, NOT Ready: the user
 // just acted in the pane, so there is nothing unacknowledged, and an
@@ -36,8 +39,7 @@ export type HookTransition =
 	| "errorMidTurn"
 	| "resume"
 	| "attach"
-	| "sessionReset"
-	| "clear";
+	| "sessionReset";
 
 // Per-agent (event name → transition). Event names match each Agent's own
 // hook system; see the per-agent mapping table in the plan.
@@ -47,7 +49,7 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		PermissionRequest: "waiting",
 		Stop: "ready",
 		StopFailure: "error",
-		SessionEnd: "clear",
+		SessionEnd: "sessionReset",
 	},
 	copilot: {
 		userPromptSubmitted: "active",
@@ -74,13 +76,13 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		// acknowledged the red icon — hook-driven PTYs have no output-driven way
 		// back to Working. See ADR-0026.
 		errorOccurred: "errorMidTurn",
-		sessionEnd: "clear",
+		sessionEnd: "sessionReset",
 	},
 	gemini: {
 		BeforeAgent: "active",
 		AfterAgent: "ready",
 		Notification: "waiting",
-		SessionEnd: "clear",
+		SessionEnd: "sessionReset",
 	},
 	codex: {
 		UserPromptSubmit: "active",
@@ -102,7 +104,7 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		"question.asked": "waiting",
 		"session.idle": "ready",
 		"session.error": "error",
-		"session.deleted": "clear",
+		"session.deleted": "sessionReset",
 	},
 };
 
@@ -123,7 +125,7 @@ HOOK_EVENT_MAP.kimi = {
 	Stop: "ready",
 	StopFailure: "error",
 	Interrupt: "idle",
-	SessionEnd: "clear",
+	SessionEnd: "sessionReset",
 };
 
 HOOK_EVENT_MAP.grok = {
@@ -167,7 +169,7 @@ HOOK_EVENT_MAP.grok = {
 	PermissionDenied: "active",
 	Stop: "ready",
 	StopFailure: "error",
-	SessionEnd: "clear",
+	SessionEnd: "sessionReset",
 };
 
 // Qwen Code forked from Gemini CLI but has since adopted Claude-style hooks
@@ -265,20 +267,6 @@ export function mapHookEvent(
 		if (permissionMode === "plan" && message === "Tool permission requested") {
 			return "resume";
 		}
-	}
-	// Claude Code fires SessionEnd for `/clear` as well as for a real exit,
-	// discriminated by `reason`. `/clear` ends the session and immediately
-	// begins a new one in the *same process*, so treating it as a process exit
-	// is wrong in a visible way — the pane leaves agent mode while the Agent is
-	// still running.
-	//
-	// Only "clear" is special-cased. "logout", "prompt_input_exit" and "other"
-	// keep the conservative mapping, and they do not need to be precise: when
-	// the process really exits, the shell's own `command_end` marker drops agent
-	// mode anyway (see terminalManager's command_end branch). That backstop is
-	// what makes narrowing this safe.
-	if (agentId === "claude" && eventName === "SessionEnd") {
-		return stopReason === "clear" ? "sessionReset" : "clear";
 	}
 	if (agentId === "grok" && eventName === "Stop") {
 		if (stopReason === "cancelled") return "idle";

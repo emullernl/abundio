@@ -22,7 +22,6 @@ import {
 	mapSubagentHookEvent,
 } from "./agentHookMap";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
-import { onSessionEnd as trackSessionEnd } from "./agentTurnTracker";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
 import { agentHooks, pty } from "./ipc";
@@ -39,6 +38,7 @@ import { parseOsc52 } from "./osc52";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
+import { applySessionEnd } from "./sessionEnd";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
@@ -1533,28 +1533,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					return;
 				}
 				const actStore = usePtyActivityStore.getState();
+				if (transition === "sessionReset") {
+					// A Session end (`/clear`, or a real exit — Copilot's payload
+					// cannot tell them apart). Handled before the adoption below:
+					// it must never put an exited Agent's PTY back into agent mode.
+					applySessionEnd(currentPtyId);
+					return;
+				}
 				// A hook event proves an agent runs in this PTY — adopt agent mode
 				// even if title-based detection missed it.
 				actStore.setAgentPty(currentPtyId, hookEvent.agent);
-				if (transition === "sessionReset") {
-					// Claude Code's `/clear`: the session ended, the Agent did not.
-					// Finalize the open Turn so telemetry closes cleanly and the next
-					// prompt opens a fresh session — but stay in agent mode, keep the
-					// stamped agent, and land on Idle rather than Ready (the user just
-					// acted in the pane, so there is nothing unacknowledged).
-					void trackSessionEnd(currentPtyId);
-					actStore.applyHookEvent(currentPtyId, "idle");
-					return;
-				}
-				if (transition === "clear") {
-					// SessionEnd: finalize any open Turn before agent mode is dropped.
-					void trackSessionEnd(currentPtyId);
-					actStore.clearAgentPty(currentPtyId);
-					// Agent ended while the shell survives: forget it so it does NOT
-					// auto-relaunch next time.
-					useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
-					return;
-				}
 				// Persist the agent identity so a hook-detected agent re-runs after a
 				// restart. Idempotent: stampAgentOnPane no-ops when already stamped.
 				useWorkspaceStore.getState().stampAgentOnPane(paneId, hookEvent.agent);

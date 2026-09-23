@@ -255,7 +255,7 @@ export function noteState(
 	transitionTimers(open, state, now);
 }
 
-/** SessionEnd ("clear") — finalize an open Turn and end the session so the next
+/** A Session end hook ("sessionReset") — finalize an open Turn and end the session so the next
  *  Agent launch in this PTY starts a fresh session. */
 export function onSessionEnd(ptyId: string): Promise<void> | void {
 	const p = finalize(ptyId, "session_end", nowMs());
@@ -407,9 +407,9 @@ export function initAgentTurnTracker(): void {
 			// also fire on a shell `command_end`/`commandFinished`; there the PTY is in
 			// shell mode, so the detectionMode gate routes it to noteState below —
 			// keeping a lingering Turn open (as on `main`) rather than finalizing it as a
-			// pty_exit. Session-end stays an explicit trackSessionEnd in terminalManager's
-			// hook-clear path (the same clearAgentPty also fires on a shell command_end
-			// that merely drops agent mode, which must NOT finalize a Turn).
+			// pty_exit. Session end stays an explicit trackSessionEnd in terminalManager's
+			// sessionReset path; clearAgentPty, fired by a shell command_end that drops
+			// agent mode, must NOT finalize a Turn.
 			if (
 				next.detectionMode === "agent" &&
 				(cause.kind === "recordExitSuccess" || cause.kind === "recordError")
@@ -417,7 +417,7 @@ export function initAgentTurnTracker(): void {
 				void onPtyExit(ptyId);
 				return;
 			}
-			// Mode-only changes (agentDetected / sessionEnded flip detectionMode while
+			// Mode-only changes (agentDetected / agentExited flip detectionMode while
 			// leaving `state` untouched) emit a StatusChange but are NOT state
 			// transitions; skip unchanged-state entries — otherwise detecting an agent
 			// mid-activity would start a Turn at detection time, and a session-end

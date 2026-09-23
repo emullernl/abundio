@@ -559,7 +559,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			if (s.activities[ptyId]) {
 				applyStatusEvent(
 					ptyId,
-					{ kind: "sessionEnded" },
+					{ kind: "agentExited" },
 					{ agentPtyIds: newSet, detectedAgentIds: restDetected },
 				);
 			} else {
@@ -710,7 +710,7 @@ setInterval(() => {
 // docs/plans/status-machine.md.
 
 subscribeStatusChange(({ ptyId, prev, next, cause }) => {
-	if (prev.state === next.state) return; // a mode-only change (e.g. sessionEnded)
+	if (prev.state === next.state) return; // a mode-only change (e.g. agentExited)
 	// A **Mid-turn failure** is not worth pulling the user back to the machine:
 	// the Agent is still generating and an agentStop will follow, so this would
 	// be the first of two pings for one Turn — and the alarming one is the one
