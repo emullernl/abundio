@@ -152,7 +152,7 @@ export const FleetTile = memo(function FleetTile({
 					/>
 				</div>
 				{/* Above the terminal canvas, inside the tile's rounded frame. */}
-				<FocusSweep paneId={paneId} />
+				<FocusSweep paneId={paneId} inFleetTile />
 			</div>
 		</div>
 	);

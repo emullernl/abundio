@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sweepSlotDraws } from "../../components/Terminal/FocusSweep";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -206,5 +207,18 @@ describe("installFocusSweep — Fleet Console", () => {
 		useWindowUiStore.setState({ fleetConsoleOpen: false });
 		useWindowUiStore.setState({ focusedTileId: "t2" });
 		expect(sweeping()).toBeNull();
+	});
+});
+
+// The Workspace-view slot stays mounted behind the Fleet Console and its
+// overlay's z-index escapes the workspace layer, so only the tile may sweep
+// while the Console is on screen.
+describe("sweepSlotDraws", () => {
+	it("draws in the view on screen only", () => {
+		expect(sweepSlotDraws(1, false, false)).toBe(true);
+		expect(sweepSlotDraws(1, false, true)).toBe(false);
+		expect(sweepSlotDraws(1, true, true)).toBe(true);
+		expect(sweepSlotDraws(1, true, false)).toBe(false);
+		expect(sweepSlotDraws(0, true, true)).toBe(false);
 	});
 });

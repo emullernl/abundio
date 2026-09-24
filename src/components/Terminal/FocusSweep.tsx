@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useFocusSweepStore, waitForSmoothFrames } from "../../lib/focusSweep";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 
 /**
  * The **Focus sweep** overlay for one Pane: a comet — bright head, fading tail
@@ -13,13 +14,34 @@ import { useFocusSweepStore, waitForSmoothFrames } from "../../lib/focusSweep";
  */
 export const FocusSweep = memo(function FocusSweep({
 	paneId,
+	inFleetTile = false,
 }: {
 	paneId: string;
+	/** Drawn by a Fleet tile rather than the pane's Workspace-view slot. */
+	inFleetTile?: boolean;
 }) {
 	const nonce = useFocusSweepStore((s) => (s.paneId === paneId ? s.nonce : 0));
-	if (!nonce) return null;
+	// While the Fleet Console is on screen only the tile may sweep. The pane's
+	// Workspace-view slot is still mounted behind the Console, and its overlay's
+	// z-index is not contained by the workspace layer, so it would draw over the
+	// Console across the whole width of the hidden pane.
+	const fleetShowing = useWindowUiStore(
+		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
+	);
+	if (!sweepSlotDraws(nonce, fleetShowing, inFleetTile)) return null;
 	return <SweepRun key={nonce} nonce={nonce} />;
 });
+
+/** Whether a sweep overlay draws: there is a sweep for this pane, and the
+ *  overlay belongs to the view on screen — the tile while the Fleet Console
+ *  shows, the Workspace-view slot otherwise. */
+export function sweepSlotDraws(
+	nonce: number,
+	fleetShowing: boolean,
+	inFleetTile: boolean,
+): boolean {
+	return nonce !== 0 && fleetShowing === inFleetTile;
+}
 
 function SweepRun({ nonce }: { nonce: number }) {
 	const ref = useRef<SVGSVGElement>(null);
