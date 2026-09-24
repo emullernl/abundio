@@ -1812,6 +1812,21 @@ export function applyDerivedThemeOptions(
 	Object.assign(options, derived);
 }
 
+/**
+ * Redraw a terminal from its own buffer: drop WebGL's cached glyphs and
+ * repaint every row. Invisible to the program in the pane — no PTY resize, no
+ * SIGWINCH. Fixes parts of the screen that are in xterm's buffer but were not
+ * drawn (a canvas that was hidden, zero-sized or moved between containers when
+ * the output arrived) — the same repair that dragging a pane divider used to
+ * perform as a side effect. Run whenever a terminal gains focus.
+ */
+export function repaintTerminal(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed?.ready) return;
+	managed.webglAddon?.clearTextureAtlas();
+	managed.term.refresh(0, managed.term.rows - 1);
+}
+
 /** Update theme on all terminal instances */
 export function setAllTerminalsTheme(theme: ITheme): void {
 	const derived = terminalThemeFor(theme);

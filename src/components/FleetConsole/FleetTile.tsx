@@ -9,6 +9,7 @@ import {
 } from "../../stores/ptyActivityStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { DOT_STATUS_COLOR } from "../AgentStatusIcon";
+import { FocusSweep } from "../Terminal/FocusSweep";
 import { TerminalSlot } from "../Terminal/TerminalSlot";
 
 /** Statuses that want the user: the tile's edge lights up for these, so a
@@ -150,6 +151,8 @@ export const FleetTile = memo(function FleetTile({
 						onClose={onClose}
 					/>
 				</div>
+				{/* Above the terminal canvas, inside the tile's rounded frame. */}
+				<FocusSweep paneId={paneId} />
 			</div>
 		</div>
 	);

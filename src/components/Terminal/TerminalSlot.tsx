@@ -34,6 +34,7 @@ import {
 import {
 	getPaneRevision,
 	getTerminal,
+	repaintTerminal,
 	resetTerminal,
 	subscribePaneRevision,
 } from "../../lib/terminalManager";
@@ -285,6 +286,9 @@ export function TerminalSlot({
 			const managed = getTerminal(paneId);
 			if (managed?.ready) {
 				managed.term.focus();
+				// Repaint on gaining focus: output that arrived while the terminal
+				// was hidden or being moved can sit in the buffer undrawn.
+				repaintTerminal(paneId);
 				return true;
 			}
 			return false;

@@ -54,6 +54,11 @@ export function publishFleetGrid(paneIds: string[], columns: number): void {
 	drawn = { paneIds, columns };
 }
 
+/** How many tiles the console is drawing. */
+export function fleetTileCount(): number {
+	return drawn.paneIds.length;
+}
+
 /** Whether `paneId` is a Fleet tile on screen right now. */
 export function isShownAsFleetTile(paneId: string): boolean {
 	return fleetConsoleShowing() && drawn.paneIds.includes(paneId);
