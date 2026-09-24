@@ -50,6 +50,11 @@ export function publishFleetGrid(paneIds: string[], columns: number): void {
 	drawn = { paneIds, columns };
 }
 
+/** Whether `paneId` is a Fleet tile on screen right now. */
+export function isShownAsFleetTile(paneId: string): boolean {
+	return fleetConsoleShowing() && drawn.paneIds.includes(paneId);
+}
+
 /** **Directional move** in the grid. No wrap. */
 export function navigateFleet(dir: GridDirection): void {
 	const store = useWindowUiStore.getState();
