@@ -106,11 +106,18 @@ interface WindowUiState {
 	 *  rearranges the view behind it. Not persisted. */
 	focusedTileId: string | null;
 	setFocusedTile: (paneId: string | null) => void;
-	/** A pane the console has just started an Agent in. It becomes the Focused
-	 *  tile now, and the console keeps it focused while its PTY is still on its
-	 *  way into agent mode rather than reassigning focus to a neighbour. */
-	pendingTile: { paneId: string; at: number } | null;
+	/** Panes the console is waiting on to become Agents — one it just started
+	 *  an Agent in, or a just-opened Workspace's remembered Agents — keyed by
+	 *  pane id, valued by when. They are shown as tiles *before* agent mode,
+	 *  because a pending launch is typed only once its terminal has been drawn,
+	 *  and a Tab that is not on screen is drawn nowhere else. */
+	pendingTiles: Record<string, number>;
+	/** Start an Agent's tile ahead of agent mode, and focus it. */
 	expectFleetTile: (paneId: string) => void;
+	/** The same for several panes, without moving focus. */
+	expectFleetTiles: (paneIds: string[]) => void;
+	/** Stop showing these panes unless they are Agents by now. */
+	settleFleetTiles: (paneIds: string[]) => void;
 	/** Remembered per Window: two monitors want different grids. */
 	fleetGrid: FleetGrid;
 	/** Choosing a preset resets the dividers to equal sizes. */
@@ -210,11 +217,31 @@ export const useWindowUiStore = create<WindowUiState>()(
 			},
 			focusedTileId: null,
 			setFocusedTile: (paneId) => set({ focusedTileId: paneId }),
-			pendingTile: null,
+			pendingTiles: {},
 			expectFleetTile: (paneId) =>
-				set({
+				set((s) => ({
 					focusedTileId: paneId,
-					pendingTile: { paneId, at: Date.now() },
+					pendingTiles: { ...s.pendingTiles, [paneId]: Date.now() },
+				})),
+			expectFleetTiles: (paneIds) =>
+				set((s) => {
+					if (paneIds.length === 0) return s;
+					const at = Date.now();
+					const next = { ...s.pendingTiles };
+					for (const id of paneIds) next[id] = at;
+					return { pendingTiles: next };
+				}),
+			settleFleetTiles: (paneIds) =>
+				set((s) => {
+					const next = { ...s.pendingTiles };
+					let changed = false;
+					for (const id of paneIds) {
+						if (id in next) {
+							delete next[id];
+							changed = true;
+						}
+					}
+					return changed ? { pendingTiles: next } : s;
 				}),
 			fleetGrid: DEFAULT_FLEET_GRID,
 			// Choosing a grid size is a request for the grid: it ends Spotlight.

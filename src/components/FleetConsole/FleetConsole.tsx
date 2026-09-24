@@ -37,6 +37,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FleetTile } from "./FleetTile";
 import { GridPicker } from "./GridPicker";
 import { NewAgentDialog } from "./NewAgentDialog";
+import { WorkspacePicker } from "./WorkspacePicker";
 
 const TOOLBAR_HEIGHT = 36;
 /** How long a just-started Agent may take to reach agent mode before the
@@ -88,11 +89,11 @@ export function useFleetTiles(): FleetTileData[] {
 			.sort()
 			.join("|"),
 	);
-	const pendingPaneId = useWindowUiStore((s) => s.pendingTile?.paneId ?? null);
+	const pendingTiles = useWindowUiStore((s) => s.pendingTiles);
 	return useMemo(() => {
 		void agentKey;
 		return fleetTiles({
-			alsoShow: pendingPaneId ? new Set([pendingPaneId]) : undefined,
+			alsoShow: new Set(Object.keys(pendingTiles)),
 			workspaces,
 			sidebarOrder: flattenRowsToIds(
 				buildWorkspaceRows(workspaces, worktreeFacts),
@@ -107,7 +108,7 @@ export function useFleetTiles(): FleetTileData[] {
 		openedWorkspaceIds,
 		panePtyMap,
 		agentKey,
-		pendingPaneId,
+		pendingTiles,
 	]);
 }
 
@@ -321,30 +322,49 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 		store.setFocusedTile(next.paneId);
 	}, [tiles, focusedTileId]);
 
-	// A just-started Agent is shown before it reaches agent mode (see
-	// `alsoShow`). Stop forcing it once it gets there — from then on it is a
-	// tile on its own merits — or once it has had long enough to.
-	const pendingTile = useWindowUiStore((s) => s.pendingTile);
-	const pendingIsAgent = usePtyActivityStore((s) => {
-		if (!pendingTile) return false;
-		const ptyId = s.panePtyMap[pendingTile.paneId];
-		return !!ptyId && s.activities[ptyId]?.detectionMode === "agent";
-	});
+	// Pending panes are shown before they reach agent mode (see `alsoShow`).
+	// Each stops being forced once it gets there — from then on it is a tile
+	// on its own merits — or once it has had long enough to.
+	const pendingTiles = useWindowUiStore((s) => s.pendingTiles);
+	const pendingAgentKey = usePtyActivityStore((s) =>
+		Object.keys(pendingTiles)
+			.filter((paneId) => {
+				const ptyId = s.panePtyMap[paneId];
+				return !!ptyId && s.activities[ptyId]?.detectionMode === "agent";
+			})
+			.join("|"),
+	);
 	useEffect(() => {
-		if (!pendingTile) return;
-		const clear = () => {
-			if (useWindowUiStore.getState().pendingTile === pendingTile) {
-				useWindowUiStore.setState({ pendingTile: null });
-			}
-		};
-		if (pendingIsAgent) {
-			clear();
-			return;
-		}
-		const left = PENDING_TILE_MS - (Date.now() - pendingTile.at);
-		const timer = setTimeout(clear, Math.max(0, left));
+		const ids = Object.keys(pendingTiles);
+		if (ids.length === 0) return;
+		const store = useWindowUiStore.getState();
+		const arrived = pendingAgentKey ? pendingAgentKey.split("|") : [];
+		if (arrived.length > 0) store.settleFleetTiles(arrived);
+		const now = Date.now();
+		const expired = ids.filter(
+			(id) => now - pendingTiles[id] >= PENDING_TILE_MS,
+		);
+		if (expired.length > 0) store.settleFleetTiles(expired);
+		const waiting = ids.filter(
+			(id) => !arrived.includes(id) && !expired.includes(id),
+		);
+		if (waiting.length === 0) return;
+		const soonest = Math.min(
+			...waiting.map((id) => PENDING_TILE_MS - (now - pendingTiles[id])),
+		);
+		const timer = setTimeout(
+			() =>
+				useWindowUiStore
+					.getState()
+					.settleFleetTiles(
+						waiting.filter(
+							(id) => Date.now() - pendingTiles[id] >= PENDING_TILE_MS,
+						),
+					),
+			Math.max(0, soonest),
+		);
 		return () => clearTimeout(timer);
-	}, [pendingTile, pendingIsAgent]);
+	}, [pendingTiles, pendingAgentKey]);
 
 	// The spotlighted agent left the fleet: back to the grid.
 	useEffect(() => {
@@ -393,6 +413,12 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 		[workspaces],
 	);
 	const workspaceCount = new Set(tiles.map((t) => t.workspaceId)).size;
+	const agentCountByWorkspace = useMemo(() => {
+		const m = new Map<string, number>();
+		for (const t of tiles)
+			m.set(t.workspaceId, (m.get(t.workspaceId) ?? 0) + 1);
+		return m;
+	}, [tiles]);
 
 	// ── Divider dragging ──
 	const gridRef = useRef<HTMLDivElement>(null);
@@ -522,6 +548,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					className="flex items-center"
 					style={{ marginLeft: "auto", gap: 8 }}
 				>
+					<WorkspacePicker agentCountByWorkspace={agentCountByWorkspace} />
 					<ZoomSlider zoom={grid.zoom} onChange={setTileZoom} />
 					<GridPicker
 						preset={grid.preset}
