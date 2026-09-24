@@ -64,7 +64,7 @@ export function ParameterDialog({
 	const [values, setValues] = useState<Record<string, ParamValue>>(() =>
 		initialValues(action.body, action.params),
 	);
-	const firstRef = useRef<HTMLInputElement>(null);
+	const firstRef = useRef<HTMLElement>(null);
 
 	useEscapeKey(onCancel);
 
@@ -74,7 +74,8 @@ export function ParameterDialog({
 		// Select the authored default so typing replaces it rather than appending
 		// to it. Guarded because the first field may be a toggle or an
 		// attachment, neither of which is a text input.
-		if (el instanceof HTMLInputElement) el.select();
+		if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
+			el.select();
 	}, []);
 
 	const ready = allFilled(action.body, action.params, values);
@@ -343,8 +344,7 @@ const fieldStyle: React.CSSProperties = {
 };
 
 /**
- * One line by default; **Shift+Enter grows it** into a textarea and inserts a
- * newline. Enter submits the dialog. Mirrors what a chat input does, and what
+ * One line by default; **Shift+Enter grows it** by inserting a newline. Enter submits the dialog. Mirrors what a chat input does, and what
  * the Agents on the other end do.
  */
 function GrowingTextField({
@@ -368,32 +368,23 @@ function GrowingTextField({
 		e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
 	) {
 		if (e.key !== "Enter") return;
+		// Shift+Enter falls through to the textarea's own newline. A number
+		// field cannot hold one, so there it is simply swallowed.
 		if (e.shiftKey) {
-			// Grow rather than submit. On a single-line input the newline has to be
-			// inserted by hand, since the element cannot hold one on its own.
-			if (!multiline) {
-				e.preventDefault();
-				// A number field cannot hold a newline, and `selectionStart` raises
-				// InvalidStateError on input[type=number] — the `?? value.length`
-				// below was written for a null return, which is not what happens.
-				if (numeric) return;
-				const el = e.currentTarget as HTMLInputElement;
-				const at = el.selectionStart ?? value.length;
-				onChange(`${value.slice(0, at)}\n${value.slice(at)}`);
-			}
+			if (numeric) e.preventDefault();
 			return;
 		}
 		e.preventDefault();
 		onSubmit();
 	}
 
-	if (multiline) {
+	if (numeric) {
 		return (
-			<textarea
+			<input
 				ref={inputRef}
+				type="number"
 				className="rounded-lg"
 				style={fieldStyle}
-				rows={rows}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
 				onKeyDown={handleKeyDown}
@@ -401,12 +392,20 @@ function GrowingTextField({
 		);
 	}
 
+	// Always a textarea, even at one row. Swapping an <input> for a <textarea>
+	// on the first newline remounts the element, and the new one never had
+	// focus — the caret vanished mid-sentence. `wrap="off"` keeps the one-row
+	// state reading like an input: a long line scrolls sideways, not down.
+	// `overflowX: hidden` hides the scrollbar that would otherwise appear:
+	// on Windows and Linux it is ~16px of real space and would cover the one
+	// row. The caret still scrolls the text.
 	return (
-		<input
+		<textarea
 			ref={inputRef}
-			type={numeric ? "number" : "text"}
 			className="rounded-lg"
-			style={fieldStyle}
+			style={multiline ? fieldStyle : { ...fieldStyle, overflowX: "hidden" }}
+			rows={rows}
+			wrap={multiline ? "soft" : "off"}
 			value={value}
 			onChange={(e) => onChange(e.target.value)}
 			onKeyDown={handleKeyDown}
