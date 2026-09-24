@@ -51,9 +51,11 @@ export function useFleetTiles(): FleetTileData[] {
 			.sort()
 			.join("|"),
 	);
+	const pendingPaneId = useWindowUiStore((s) => s.pendingTile?.paneId ?? null);
 	return useMemo(() => {
 		void agentKey;
 		return fleetTiles({
+			alsoShow: pendingPaneId ? new Set([pendingPaneId]) : undefined,
 			workspaces,
 			sidebarOrder: flattenRowsToIds(
 				buildWorkspaceRows(workspaces, worktreeFacts),
@@ -62,7 +64,14 @@ export function useFleetTiles(): FleetTileData[] {
 			activities: usePtyActivityStore.getState().activities,
 			panePtyMap,
 		});
-	}, [workspaces, worktreeFacts, openedWorkspaceIds, panePtyMap, agentKey]);
+	}, [
+		workspaces,
+		worktreeFacts,
+		openedWorkspaceIds,
+		panePtyMap,
+		agentKey,
+		pendingPaneId,
+	]);
 }
 
 /**
@@ -129,18 +138,6 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 		const idx = tiles.findIndex((t) => t.paneId === focusedTileId);
 		if (idx >= 0) {
 			lastIndexRef.current = idx;
-			if (store.pendingTile?.paneId === focusedTileId) {
-				useWindowUiStore.setState({ pendingTile: null });
-			}
-			return;
-		}
-		// A just-started Agent whose tile has not appeared yet keeps the focus.
-		const pending = store.pendingTile;
-		if (
-			pending &&
-			pending.paneId === focusedTileId &&
-			Date.now() - pending.at < PENDING_TILE_MS
-		) {
 			return;
 		}
 		if (tiles.length === 0) {
@@ -158,6 +155,31 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 		const next = tiles[Math.min(lastIndexRef.current, tiles.length - 1)];
 		store.setFocusedTile(next.paneId);
 	}, [tiles, focusedTileId]);
+
+	// A just-started Agent is shown before it reaches agent mode (see
+	// `alsoShow`). Stop forcing it once it gets there — from then on it is a
+	// tile on its own merits — or once it has had long enough to.
+	const pendingTile = useWindowUiStore((s) => s.pendingTile);
+	const pendingIsAgent = usePtyActivityStore((s) => {
+		if (!pendingTile) return false;
+		const ptyId = s.panePtyMap[pendingTile.paneId];
+		return !!ptyId && s.activities[ptyId]?.detectionMode === "agent";
+	});
+	useEffect(() => {
+		if (!pendingTile) return;
+		const clear = () => {
+			if (useWindowUiStore.getState().pendingTile === pendingTile) {
+				useWindowUiStore.setState({ pendingTile: null });
+			}
+		};
+		if (pendingIsAgent) {
+			clear();
+			return;
+		}
+		const left = PENDING_TILE_MS - (Date.now() - pendingTile.at);
+		const timer = setTimeout(clear, Math.max(0, left));
+		return () => clearTimeout(timer);
+	}, [pendingTile, pendingIsAgent]);
 
 	// Keyboard moves walk the grid as drawn.
 	useEffect(() => {

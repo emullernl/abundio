@@ -23,6 +23,10 @@ export function useDemoBootstrap(): void {
 			const s = useWorkspaceStore.getState();
 			if (!s.workspacesInitialized || s.activeWorkspaceId)
 				return s.workspacesInitialized;
+			// A switch already in flight means this ran before: the slow-path
+			// switch sets `switchingWorkspaceId` synchronously, which re-enters
+			// this subscriber before `unsub` runs and would recurse forever.
+			if (s.switchingWorkspaceId) return true;
 			const ids = new Set(s.workspaces.map((w) => w.id));
 			const toOpen = OPEN_ON_LAUNCH.filter((id) => ids.has(id));
 			const [active, ...background] = toOpen;

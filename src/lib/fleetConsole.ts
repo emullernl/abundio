@@ -23,6 +23,11 @@ export interface FleetTilesInput {
 	openedWorkspaceIds: ReadonlySet<string>;
 	activities: Record<string, PtyActivityEntry | undefined>;
 	panePtyMap: Record<string, string>;
+	/** Panes shown whatever their mode: an Agent just started from the console.
+	 *  Its tile must exist *before* agent mode, because the launch command is
+	 *  typed only once the terminal has been drawn somewhere, and a new Tab
+	 *  that is not active is drawn nowhere else. */
+	alsoShow?: ReadonlySet<string>;
 }
 
 /**
@@ -56,8 +61,11 @@ export function fleetTiles(input: FleetTilesInput): FleetTile[] {
 				// The live ptyId, not the layout's: panePtyMap is written at spawn,
 				// ahead of the layout write-back (ADR-0020).
 				const ptyId = input.panePtyMap[t.id] ?? t.ptyId;
-				if (!ptyId) continue;
-				if (input.activities[ptyId]?.detectionMode !== "agent") continue;
+				const forced = input.alsoShow?.has(t.id) ?? false;
+				if (!forced) {
+					if (!ptyId) continue;
+					if (input.activities[ptyId]?.detectionMode !== "agent") continue;
+				}
 				tiles.push({
 					paneId: t.id,
 					ptyId,

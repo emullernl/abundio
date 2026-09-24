@@ -359,8 +359,9 @@ function FleetTitleBar({
 						fontSize: 11.5,
 						fontWeight: 600,
 						color: "var(--fg-primary)",
-						flexShrink: 1,
-						minWidth: 24,
+						// The Workspace is what the tile is for: it gives way last.
+						flexShrink: 0,
+						maxWidth: "60%",
 					}}
 				>
 					{fleet.workspaceName}
@@ -372,7 +373,7 @@ function FleetTitleBar({
 							fontSize: 11,
 							color: "var(--accent)",
 							opacity: 0.85,
-							flexShrink: 2,
+							flexShrink: 1,
 							minWidth: 0,
 						}}
 					>
@@ -385,7 +386,7 @@ function FleetTitleBar({
 						fontSize: 10.5,
 						color: "var(--fg-secondary)",
 						opacity: 0.6,
-						flexShrink: 3,
+						flexShrink: 100,
 						minWidth: 0,
 					}}
 				>

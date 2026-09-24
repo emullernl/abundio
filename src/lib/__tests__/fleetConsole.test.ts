@@ -113,6 +113,19 @@ describe("fleetTiles", () => {
 		expect(tiles).toEqual([]);
 	});
 
+	it("shows a just-started pane before it reaches agent mode", () => {
+		const fresh = ws("c", [["c1", term("pc1", "")]]);
+		const tiles = fleetTiles({
+			workspaces: [fresh],
+			sidebarOrder: ["c"],
+			openedWorkspaceIds: new Set(["c"]),
+			activities: {},
+			panePtyMap: {},
+			alsoShow: new Set(["pc1"]),
+		});
+		expect(tiles.map((t) => t.paneId)).toEqual(["pc1"]);
+	});
+
 	it("a Workspace missing from the sidebar order still appears, last", () => {
 		const tiles = fleetTiles({
 			workspaces: [a, b],
