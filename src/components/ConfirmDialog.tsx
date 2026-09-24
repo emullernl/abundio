@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 
 interface ConfirmDialogProps {
@@ -12,7 +13,7 @@ interface ConfirmDialogProps {
 	onCancel: () => void;
 }
 
-export function ConfirmDialog({
+function ConfirmDialogBody({
 	title,
 	message,
 	confirmLabel,
@@ -147,4 +148,15 @@ export function ConfirmDialog({
 			</motion.div>
 		</AnimatePresence>
 	);
+}
+
+/**
+ * Rendered into `document.body`, not where it is used: a pane may sit inside
+ * an element that captures `position: fixed` children (a transformed or
+ * animated ancestor, as a Fleet tile can be) or inside a lower stacking layer
+ * (the Fleet Console), and an overlay drawn there is positioned against the
+ * wrong box, clipped, and painted under its neighbours.
+ */
+export function ConfirmDialog(props: Parameters<typeof ConfirmDialogBody>[0]) {
+	return createPortal(<ConfirmDialogBody {...props} />, document.body);
 }

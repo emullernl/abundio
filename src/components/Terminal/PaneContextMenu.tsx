@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export interface ContextMenuAction {
 	label: string;
@@ -30,7 +31,7 @@ interface Props {
 	onClose: () => void;
 }
 
-export function PaneContextMenu({
+function PaneContextMenuBody({
 	x,
 	y,
 	items,
@@ -99,9 +100,13 @@ export function PaneContextMenu({
 	}, []);
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: only suppresses the browser's own context menu over this one
 		<div
 			ref={menuRef}
 			className="fixed z-[100] rounded-xl shadow-2xl"
+			// Portaled out of the pane, so the pane's capture-phase contextmenu
+			// handler no longer covers it: keep the browser's own menu away.
+			onContextMenu={(e) => e.preventDefault()}
 			style={{
 				left: x,
 				top: y,
@@ -253,4 +258,17 @@ function MenuItems({
 			})}
 		</>
 	);
+}
+
+/**
+ * Rendered into `document.body`, not where it is used: a pane may sit inside
+ * an element that captures `position: fixed` children (a transformed or
+ * animated ancestor, as a Fleet tile can be) or inside a lower stacking layer
+ * (the Fleet Console), and an overlay drawn there is positioned against the
+ * wrong box, clipped, and painted under its neighbours.
+ */
+export function PaneContextMenu(
+	props: Parameters<typeof PaneContextMenuBody>[0],
+) {
+	return createPortal(<PaneContextMenuBody {...props} />, document.body);
 }

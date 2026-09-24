@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 /**
  * The in-pane authoring popover: the `+` at the end of the **Action bar**, and
  * **Add prompt action…** in the pane context menu.
@@ -17,7 +18,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import {
 	type ActionScope,
@@ -45,7 +46,7 @@ interface PromptActionPopoverProps {
 }
 
 const WIDTH = 460;
-export function PromptActionPopover({
+function PromptActionPopoverBody({
 	anchor,
 	defaultAgentId,
 	editing,
@@ -153,6 +154,22 @@ export function PromptActionPopover({
 	);
 	const bottom = Math.max(8, window.innerHeight - anchor.y + 6);
 
+	// Grown upward from its anchor, the card fits a tall Workspace-view pane,
+	// but from a short Fleet tile near the top of the window it would run off
+	// the top edge. Pin it to the top instead, and let it scroll if the window
+	// is shorter than the card.
+	const cardRef = useRef<HTMLDivElement>(null);
+	useLayoutEffect(() => {
+		const el = cardRef.current;
+		if (!el) return;
+		if (el.getBoundingClientRect().top < 8) {
+			el.style.bottom = "auto";
+			el.style.top = "8px";
+			el.style.maxHeight = `${window.innerHeight - 16}px`;
+			el.style.overflowY = "auto";
+		}
+	}, []);
+
 	return (
 		<AnimatePresence>
 			<motion.div
@@ -167,6 +184,7 @@ export function PromptActionPopover({
 			>
 				<motion.div
 					role="dialog"
+					ref={cardRef}
 					aria-label="Add prompt action"
 					className="absolute rounded-xl overflow-hidden flex flex-col"
 					initial={{ opacity: 0, y: 6, scale: 0.98 }}
@@ -422,4 +440,17 @@ function ScopeChoice({
 			{children}
 		</button>
 	);
+}
+
+/**
+ * Rendered into `document.body`, not where it is used: a pane may sit inside
+ * an element that captures `position: fixed` children (a transformed or
+ * animated ancestor, as a Fleet tile can be) or inside a lower stacking layer
+ * (the Fleet Console), and an overlay drawn there is positioned against the
+ * wrong box, clipped, and painted under its neighbours.
+ */
+export function PromptActionPopover(
+	props: Parameters<typeof PromptActionPopoverBody>[0],
+) {
+	return createPortal(<PromptActionPopoverBody {...props} />, document.body);
 }
