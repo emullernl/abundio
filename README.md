@@ -51,6 +51,12 @@ See [all releases](https://github.com/emullernl/abundio/releases) for previous v
 * **Command palette** — Quick access to actions via `Cmd+K` / `Ctrl+K`
 * **Fleet Console** — Every running agent in the window as a grid of live, interactive terminals, labelled with its workspace, branch and status; spotlight one, zoom the rest, open or unload workspaces, start new agents, and jump back to an agent's workspace
 
+### Fleet Console
+
+![Fleet Console with 19 agents across 18 workspaces](.github/assets/fleet-console-screenshot.png)
+
+*The Fleet Console (`Cmd+Shift+A` / `Ctrl+Shift+A`): every agent in the window at a glance. Each tile is the agent's live terminal — type into it, answer a waiting prompt, or fire a prompt action — with a coloured edge for its status, so the ones that need you stand out.*
+
 ## Supported coding agents
 
 Abundio ships built-in support for these AI coding CLI agents. Any that are installed on your `$PATH` are auto-detected — no configuration needed — and can be launched straight into a pane.
