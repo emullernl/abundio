@@ -67,3 +67,12 @@ Unit tests will not catch these (see the runtime-verification memory):
 - Typing into a tile of a Background workspace reaches the right PTY, and acknowledges Ready.
 - An Agent exiting while its tile is focused: focus moves to the next tile, or to nothing.
 - A New agent in an unopened Workspace appears as a tile without toggling the console.
+
+## As built (deviations from the commits above)
+
+- The commits were merged into fewer: surface, tiles, Switch to, New agent and the worktree hand-off landed together.
+- **Commit 1** grew a priority: a stack alone was not enough, because a Workspace-view slot that remounts while the console is open would push itself above the tile. Tiles register at `FLEET_TILE_PRIORITY`. `promptActionRegistry` got the same stack, or a tile unmounting would unregister the slot's digit handlers.
+- **Commit 10** did not lift the Add worktree dialog. Both sidebars are clipped to zero width instead of unmounted, and the dialog is `position: fixed`, so it still shows. `addWorktreeRequest` became `{ workspaceId, agentId?, background? }`, and `createWorktreeWorkspace` takes `{ background }`.
+- `closePaneNow` now finds the pane's Tab by id rather than using the active Tab, since a tile can close a pane in any Workspace. It moves focus only when that Tab is the one on screen. `closeTab`'s last-tab path keeps focus when the Workspace is not Active.
+- `toggleSearch` takes an optional pane id.
+- `windowUiStore.pendingTile` holds focus on a just-started Agent's tile until its PTY reaches agent mode (up to 20 s).
