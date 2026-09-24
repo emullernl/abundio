@@ -431,6 +431,30 @@ export function App() {
 		});
 	}, [activeWorkspaceId, switchingWorkspaceId, activeTabByWorkspace]);
 
+	// A Workspace opened without being activated — from the Fleet Console, or
+	// by New agent there — still gets its active Tab mounted (hidden, in the
+	// layered stack), so it is opened *entirely*: its terminals are drawn and
+	// their PTYs start, its remembered Agents relaunch in place, and its status
+	// icons have statuses to show. Without this only the panes the Console
+	// itself drew ever started, and a Workspace with no Agents had no PTYs at
+	// all. Deferred a frame, like the other background mounts.
+	useEffect(() => {
+		const missing: string[] = [];
+		for (const id of openedWorkspaceIds) {
+			const tabId = activeTabByWorkspace[id];
+			if (tabId && !mountedTabIds.has(tabId)) missing.push(tabId);
+		}
+		if (missing.length === 0) return;
+		const rafId = requestAnimationFrame(() => {
+			setMountedTabIds((prev) => {
+				const next = new Set(prev);
+				for (const t of missing) next.add(t);
+				return next;
+			});
+		});
+		return () => cancelAnimationFrame(rafId);
+	}, [openedWorkspaceIds, activeTabByWorkspace, mountedTabIds]);
+
 	useEffect(() => {
 		if (switchingWorkspaceId !== null) return;
 		if (!activeWorkspaceId) return;
