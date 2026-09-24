@@ -245,9 +245,10 @@ export function TerminalSlot({
 	}, [paneId, detectedAgentId, showActionBar]);
 
 	useEffect(() => {
-		if (!innerRef.current) return;
-		registerTarget(paneId, innerRef.current);
-		return () => unregisterTarget(paneId);
+		const el = innerRef.current;
+		if (!el) return;
+		registerTarget(paneId, el);
+		return () => unregisterTarget(paneId, el);
 	}, [paneId]);
 
 	// Re-render only when THIS pane's ManagedTerminal is created / gets its ptyId
