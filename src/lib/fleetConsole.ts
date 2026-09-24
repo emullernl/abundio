@@ -79,8 +79,8 @@ export function fleetTiles(input: FleetTilesInput): FleetTile[] {
 	return tiles;
 }
 
-export const MAX_COLUMNS = 4;
-export const MAX_VISIBLE_ROWS = 3;
+export const MAX_COLUMNS = 8;
+export const MAX_VISIBLE_ROWS = 4;
 
 /** A terminal reads best somewhat wider than tall. */
 const PREFERRED_ASPECT = 1.6;

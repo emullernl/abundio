@@ -156,10 +156,16 @@ describe("grid shape", () => {
 		expect(autoColumns(3, 0, 0)).toBe(1);
 	});
 
-	it("auto visible rows cap at three", () => {
+	it("auto visible rows cap at four", () => {
 		expect(autoVisibleRows(0, 1)).toBe(1);
 		expect(autoVisibleRows(3, 2)).toBe(2);
-		expect(autoVisibleRows(20, 4)).toBe(3);
+		expect(autoVisibleRows(20, 4)).toBe(4);
+	});
+
+	// A wide screen should be able to use it: up to 8 columns.
+	it("auto uses more columns on a very wide screen", () => {
+		expect(autoColumns(11, 3440, 900)).toBeGreaterThan(4);
+		expect(autoColumns(40, 3440, 1300)).toBeLessThanOrEqual(8);
 	});
 });
 
