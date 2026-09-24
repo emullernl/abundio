@@ -21,6 +21,11 @@ interface Props {
 	cwd: string;
 }
 
+/** How long a pane's size must hold still before the terminal refits and its
+ *  PTY is resized. Long enough to ride out a divider drag, short enough that
+ *  the refit follows the release without a visible lag. */
+const RESIZE_SETTLE_MS = 150;
+
 export const TerminalInstance = memo(function TerminalInstance({
 	paneId,
 	ptyId,
@@ -110,20 +115,26 @@ export const TerminalInstance = memo(function TerminalInstance({
 						return;
 					}
 
-					// Subsequent callbacks — normal resize handling
-					const prevCols = managed.term.cols;
-					const prevRows = managed.term.rows;
-					managed.fitAddon.fit();
-					// Only send PTY resize when grid dimensions actually changed
-					if (
-						managed.ptyId &&
-						(managed.term.cols !== prevCols || managed.term.rows !== prevRows)
-					) {
-						clearTimeout(resizeTimerRef.current);
-						resizeTimerRef.current = setTimeout(() => {
+					// Subsequent callbacks — a divider drag or window resize. Both the
+					// xterm refit and the PTY resize wait until the size has been
+					// still for RESIZE_SETTLE_MS: refitting on every frame of a drag
+					// reflows the text continuously, and each settle point the PTY
+					// saw made the program redraw for a size the user was only
+					// passing through. The container clips meanwhile.
+					clearTimeout(resizeTimerRef.current);
+					resizeTimerRef.current = setTimeout(() => {
+						if (target.offsetWidth === 0 || target.offsetHeight === 0) return;
+						const prevCols = managed.term.cols;
+						const prevRows = managed.term.rows;
+						managed.fitAddon.fit();
+						// Only send PTY resize when grid dimensions actually changed
+						if (
+							managed.ptyId &&
+							(managed.term.cols !== prevCols || managed.term.rows !== prevRows)
+						) {
 							pty.resize(managed.ptyId, managed.term.cols, managed.term.rows);
-						}, 100);
-					}
+						}
+					}, RESIZE_SETTLE_MS);
 				});
 			});
 			resizeObserverRef.current.observe(target);
