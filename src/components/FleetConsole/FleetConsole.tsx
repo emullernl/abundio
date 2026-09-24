@@ -1,4 +1,4 @@
-import { Plus, ZoomIn } from "lucide-react";
+import { Plus, ZoomIn, ZoomOut } from "lucide-react";
 import {
 	useCallback,
 	useEffect,
@@ -16,7 +16,7 @@ import {
 	gridShape,
 	normalizeRatios,
 } from "../../lib/fleetConsole";
-import { publishFleetGrid } from "../../lib/fleetFocus";
+import { publishFleetGrid, stepTileZoom } from "../../lib/fleetFocus";
 import { getTerminal } from "../../lib/terminalManager";
 import {
 	buildWorkspaceRows,
@@ -613,7 +613,8 @@ function EmptyCell() {
 	);
 }
 
-/** The **Tile zoom** slider: 50–100% in 5% steps. Double-click resets. */
+/** The **Tile zoom** control: − button, slider, + button, 50–100% in 5%
+ *  steps. Double-click the slider or the percentage to reset to 75%. */
 function ZoomSlider({
 	zoom,
 	onChange,
@@ -621,35 +622,83 @@ function ZoomSlider({
 	zoom: number;
 	onChange: (zoom: number) => void;
 }) {
+	const reset = () => onChange(TILE_ZOOM_DEFAULT);
 	return (
-		<label
+		<div
 			className="flex items-center select-none"
-			title="Tile zoom — text size in the tiles (Cmd/Ctrl + / −, Cmd/Ctrl+0 resets). Double-click to reset."
-			style={{ gap: 7, color: "var(--fg-secondary)" }}
-			onDoubleClick={() => onChange(TILE_ZOOM_DEFAULT)}
+			style={{ gap: 4, color: "var(--fg-secondary)" }}
 		>
-			<ZoomIn size={12} />
+			<ZoomButton
+				icon={ZoomOut}
+				label="Zoom out tiles (Cmd/Ctrl + −)"
+				disabled={zoom <= TILE_ZOOM_MIN}
+				onClick={() => stepTileZoom(-1)}
+			/>
 			<input
 				type="range"
 				aria-label="Tile zoom"
+				title="Tile zoom — text size in the tiles. Double-click to reset to 75%."
 				min={TILE_ZOOM_MIN}
 				max={TILE_ZOOM_MAX}
 				step={TILE_ZOOM_STEP}
 				value={zoom}
 				onChange={(e) => onChange(Number(e.target.value))}
+				onDoubleClick={reset}
 				className="fleet-zoom"
 				style={{ width: 92 }}
 			/>
-			<span
+			<ZoomButton
+				icon={ZoomIn}
+				label="Zoom in tiles (Cmd/Ctrl + =)"
+				disabled={zoom >= TILE_ZOOM_MAX}
+				onClick={() => stepTileZoom(1)}
+			/>
+			<button
+				type="button"
+				onClick={reset}
+				title="Reset to 75% (Cmd/Ctrl+0)"
+				className="hover:text-[var(--fg-primary)]"
 				style={{
 					fontFamily: "var(--font-mono)",
 					fontSize: 11,
-					minWidth: 32,
+					minWidth: 34,
 					textAlign: "right",
+					cursor: "pointer",
 				}}
 			>
 				{Math.round(zoom * 100)}%
-			</span>
-		</label>
+			</button>
+		</div>
+	);
+}
+
+function ZoomButton({
+	icon: Icon,
+	label,
+	disabled,
+	onClick,
+}: {
+	icon: typeof ZoomIn;
+	label: string;
+	disabled: boolean;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			aria-label={label}
+			title={label}
+			disabled={disabled}
+			onClick={onClick}
+			className="flex items-center justify-center rounded enabled:hover:text-[var(--fg-primary)] enabled:hover:bg-[var(--bg-tertiary)] disabled:opacity-35"
+			style={{
+				width: 22,
+				height: 22,
+				cursor: disabled ? "default" : "pointer",
+				transition: "background 120ms ease, color 120ms ease",
+			}}
+		>
+			<Icon size={13} />
+		</button>
 	);
 }
