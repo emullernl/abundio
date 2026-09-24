@@ -7,7 +7,7 @@
  */
 
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
-import { useWorkspaceStore } from "../stores/workspaceStore";
+import { focusPaneForInput } from "./fleetFocus";
 import { pulse } from "./promptActionPulse";
 import {
 	canFire,
@@ -61,7 +61,7 @@ export function firePromptAction(
 	const state = usePtyActivityStore.getState().activities[managed.ptyId]?.state;
 	if (!canFire(state)) return { ok: false, reason: "waiting" };
 
-	useWorkspaceStore.getState().setFocusedPane(paneId);
+	focusPaneForInput(paneId);
 
 	const text = resolveBody(body, params, values);
 

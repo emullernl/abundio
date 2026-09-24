@@ -157,6 +157,13 @@ export function useSplitPane() {
 			if (newLayout && cascadePreviewId) {
 				newLayout = removeNode(newLayout, cascadePreviewId);
 			}
+			// Forget this pane as its Tab's remembered focus, so switching back
+			// to a Tab it was closed in from a Fleet tile does not restore it.
+			const remembered = useWorkspaceStore.getState().focusedPaneByTab;
+			if (remembered[tab.id] === paneId) {
+				const { [tab.id]: _gone, ...rest } = remembered;
+				useWorkspaceStore.setState({ focusedPaneByTab: rest });
+			}
 			if (newLayout) {
 				await updateLayout(tab.id, newLayout);
 				if (!inActiveTab) return;

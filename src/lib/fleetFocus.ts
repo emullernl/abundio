@@ -24,6 +24,41 @@ export function targetPaneId(): string | null {
 		: useWorkspaceStore.getState().focusedPaneId;
 }
 
+/**
+ * Focus a pane because the user acted on it (fired a prompt action at it,
+ * dropped a file on it). In the Fleet Console that moves the **Focused tile**;
+ * setting the Workspace view's Focused pane there would point the hidden view
+ * at a pane that is usually in another Workspace or Tab, and after the
+ * Console closes typing and pane shortcuts would land in a terminal nobody
+ * can see.
+ */
+export function focusPaneForInput(paneId: string): void {
+	if (fleetConsoleShowing()) {
+		useWindowUiStore.getState().setFocusedTile(paneId);
+	} else {
+		useWorkspaceStore.getState().setFocusedPane(paneId);
+	}
+}
+
+/** Whether a Fleet tile is actually within the Console's visible area, not
+ *  just in the grid: the grid and the Filmstrip both scroll, and a tile
+ *  scrolled out of view is as unseen as a pane in a hidden Tab. */
+export function isFleetTileOnScreen(paneId: string): boolean {
+	if (!isShownAsFleetTile(paneId)) return false;
+	if (typeof document === "undefined") return true;
+	const tile = [...document.querySelectorAll("[data-fleet-tile]")].find(
+		(el) => el.getAttribute("data-fleet-tile") === paneId,
+	);
+	const area = document.querySelector("[data-fleet-scroll]");
+	if (!tile || !area) return true; // not laid out (tests, first frame)
+	const t = tile.getBoundingClientRect();
+	const a = area.getBoundingClientRect();
+	if (a.height === 0 && a.width === 0) return true;
+	return (
+		t.bottom > a.top && t.top < a.bottom && t.right > a.left && t.left < a.right
+	);
+}
+
 /** React-side twin of `targetPaneId`. */
 export function useTargetPaneId(): string | null {
 	const inFleet = useWindowUiStore(

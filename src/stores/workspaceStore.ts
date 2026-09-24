@@ -247,6 +247,29 @@ function seedPendingAgentsForLayout(layout: PaneNode): void {
 	}
 }
 
+/**
+ * The pane to focus when a Tab comes on screen: the one it last had focused,
+ * if that pane is still in its layout, else its first pane. The remembered
+ * pane can be gone — closed from a Fleet tile while its Tab was not the
+ * active one — and restoring it would leave nothing focused while pane
+ * shortcuts acted on a pane that no longer exists. Exported for tests.
+ */
+export function restoreTabFocus(
+	workspaces: WorkspaceWithTabs[],
+	workspaceId: string,
+	tabId: string,
+	focusedPaneByTab: Record<string, string>,
+): string | null {
+	const tab = workspaces
+		.find((w) => w.id === workspaceId)
+		?.tabs.find((t) => t.id === tabId);
+	const layout = tab ? parseTabLayout(tab.layoutJson) : null;
+	if (!layout) return null;
+	const remembered = focusedPaneByTab[tabId];
+	if (remembered && containsPane(layout, remembered)) return remembered;
+	return collectPaneIds(layout)[0] ?? null;
+}
+
 /** Update a tab's layoutJson in the workspaces array (immutable). */
 function updateTabInWorkspaces(
 	workspaces: WorkspaceWithTabs[],
@@ -693,17 +716,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			}
 			// Restore focused pane for the new workspace's active tab
 			const newTabId = id ? state.activeTabByWorkspace[id] : undefined;
-			let restoredFocus: string | null = newTabId
-				? (focusedPaneByTab[newTabId] ?? null)
-				: null;
-			if (!restoredFocus && newTabId) {
-				const workspace = state.workspaces.find((s) => s.id === id);
-				const tab = workspace?.tabs.find((t) => t.id === newTabId);
-				if (tab) {
-					const layout = parseTabLayout(tab.layoutJson);
-					if (layout) restoredFocus = collectPaneIds(layout)[0] ?? null;
-				}
-			}
+			const restoredFocus =
+				id && newTabId
+					? restoreTabFocus(state.workspaces, id, newTabId, focusedPaneByTab)
+					: null;
 			return {
 				activeWorkspaceId: id,
 				focusedPaneId: restoredFocus,
@@ -936,15 +952,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				focusedPaneByTab[oldTabId] = state.focusedPaneId;
 			}
 			// Restore focused pane for the new tab, falling back to first leaf in layout
-			let restoredFocus: string | null = focusedPaneByTab[tabId] ?? null;
-			if (!restoredFocus) {
-				const workspace = state.workspaces.find((s) => s.id === workspaceId);
-				const tab = workspace?.tabs.find((t) => t.id === tabId);
-				if (tab) {
-					const layout = parseTabLayout(tab.layoutJson);
-					if (layout) restoredFocus = collectPaneIds(layout)[0] ?? null;
-				}
-			}
+			const restoredFocus = restoreTabFocus(
+				state.workspaces,
+				workspaceId,
+				tabId,
+				focusedPaneByTab,
+			);
 			return {
 				activeTabByWorkspace: {
 					...state.activeTabByWorkspace,

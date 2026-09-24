@@ -597,6 +597,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 				)}
 				<div
 					ref={scrollRef}
+					data-fleet-scroll
 					className="flex-1 min-h-0 relative"
 					style={{ overflowY: "auto", overflowX: "hidden", padding: 0 }}
 					onScroll={(e) => {

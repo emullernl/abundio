@@ -3,6 +3,8 @@ import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	cycleFleet,
+	focusPaneForInput,
+	isFleetTileOnScreen,
 	navigateFleet,
 	publishFleetGrid,
 	stepTileZoom,
@@ -147,5 +149,67 @@ describe("fleetFocus — Spotlight", () => {
 		const s = useWindowUiStore.getState();
 		expect(s.spotlightTileId).toBe("b");
 		expect(s.focusedTileId).toBe("b");
+	});
+});
+
+// Code-review fixes: focus and visibility follow the view on screen.
+describe("fleetFocus — input focus and on-screen tiles", () => {
+	beforeEach(() => {
+		useWindowUiStore.setState({
+			fleetConsoleOpen: false,
+			statisticsOverlayOpen: false,
+			focusedTileId: null,
+		});
+		useWorkspaceStore.setState({ focusedPaneId: "ws-pane" });
+		document.body.innerHTML = "";
+	});
+
+	it("acting on a pane in the console moves the Focused tile, not the Workspace view", () => {
+		useWindowUiStore.setState({ fleetConsoleOpen: true });
+		focusPaneForInput("tile-pane");
+		expect(useWindowUiStore.getState().focusedTileId).toBe("tile-pane");
+		expect(useWorkspaceStore.getState().focusedPaneId).toBe("ws-pane");
+	});
+
+	it("outside the console it moves the Focused pane", () => {
+		focusPaneForInput("other-pane");
+		expect(useWorkspaceStore.getState().focusedPaneId).toBe("other-pane");
+		expect(useWindowUiStore.getState().focusedTileId).toBeNull();
+	});
+
+	it("a tile scrolled out of the Console's area is not on screen", () => {
+		useWindowUiStore.setState({ fleetConsoleOpen: true });
+		publishFleetGrid(["near", "far"], 1);
+		const area = document.createElement("div");
+		area.setAttribute("data-fleet-scroll", "");
+		const tile = (id: string, top: number) => {
+			const el = document.createElement("div");
+			el.setAttribute("data-fleet-tile", id);
+			el.getBoundingClientRect = () =>
+				({
+					top,
+					bottom: top + 100,
+					left: 0,
+					right: 100,
+					width: 100,
+					height: 100,
+				}) as DOMRect;
+			area.appendChild(el);
+		};
+		area.getBoundingClientRect = () =>
+			({
+				top: 0,
+				bottom: 300,
+				left: 0,
+				right: 100,
+				width: 100,
+				height: 300,
+			}) as DOMRect;
+		tile("near", 50);
+		tile("far", 900);
+		document.body.appendChild(area);
+		expect(isFleetTileOnScreen("near")).toBe(true);
+		expect(isFleetTileOnScreen("far")).toBe(false);
+		expect(isFleetTileOnScreen("not-a-tile")).toBe(false);
 	});
 });

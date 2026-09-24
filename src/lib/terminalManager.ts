@@ -31,6 +31,7 @@ import {
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
+import { targetPaneId } from "./fleetFocus";
 import { agentHooks, pty } from "./ipc";
 import {
 	decrstOutcome,
@@ -762,7 +763,10 @@ addWindowFocusListener((focused) => {
 		active instanceof HTMLTextAreaElement ||
 		(active instanceof HTMLElement && active.isContentEditable);
 	if (isInteractiveInput) return;
-	const focusedPaneId = useWorkspaceStore.getState().focusedPaneId;
+	// The Focused tile while the Fleet Console is on screen: the Workspace
+	// view's Focused pane is behind it, and may be a shell that is not a tile
+	// at all — keystrokes would go to a terminal nobody can see.
+	const focusedPaneId = targetPaneId();
 	if (!focusedPaneId) return;
 	const managed = instances.get(focusedPaneId);
 	if (!managed) return;
@@ -783,25 +787,9 @@ setTimeout(() => {
 		// activated — and they need their activity entries (the Overview bar,
 		// status icons and the Console's agent-mode membership all read them)
 		// and a WebGL budget like any other.
-		const { focusedPaneId } = state;
-
+		void state;
 		webglBudget = computeWebglBudget();
-
-		const activityStore = usePtyActivityStore.getState();
-		for (const [paneId, managed] of instances) {
-			managed.focused = focusedPaneId === paneId;
-			managed.term.options.cursorBlink = managed.focused;
-			if (managed.focused) {
-				managed.suppressActivity = false;
-				if (managed.ptyId) {
-					activityStore.markIdle(managed.ptyId);
-				}
-			}
-			// Ensure all terminals in the active workspace have an activity entry (grey → green)
-			if (managed.ptyId) {
-				activityStore.initPty(managed.ptyId);
-			}
-		}
+		syncFocusFlags();
 
 		// Then WebGL, in its own pass. Panes that lost their place in the budget
 		// give their contexts up before the panes that gained one ask for them,
@@ -809,6 +797,17 @@ setTimeout(() => {
 		// covers orphans (a paneId still in `instances` but no longer in any
 		// opened workspace's layout; rare, a tear-down race).
 		reconcileWebgl();
+	});
+	// The focus flags follow the Focused tile while the Console is on screen,
+	// so they must also move when it does, or when the Console opens/closes.
+	useWindowUiStore.subscribe((state, prev) => {
+		if (
+			state.focusedTileId !== prev.focusedTileId ||
+			state.fleetConsoleOpen !== prev.fleetConsoleOpen ||
+			state.statisticsOverlayOpen !== prev.statisticsOverlayOpen
+		) {
+			syncFocusFlags();
+		}
 	});
 	// The Fleet Console decides the budget while it is on screen: opening or
 	// closing it, Statistics covering it, and moving the spotlight all change
@@ -839,6 +838,26 @@ setTimeout(() => {
 }, 0);
 
 let consoleReconcileFrame: number | null = null;
+
+/** Mark which terminal is the one receiving input — the Focused tile in the
+ *  Fleet Console, the Focused pane otherwise (`targetPaneId`) — for cursor
+ *  blink, activity suppression and restore handling; and make sure every live
+ *  PTY has an activity entry (grey → green). */
+function syncFocusFlags(): void {
+	const target = targetPaneId();
+	const activityStore = usePtyActivityStore.getState();
+	for (const [paneId, managed] of instances) {
+		managed.focused = target === paneId;
+		managed.term.options.cursorBlink = managed.focused;
+		// On every sync, not only when focus arrives: the pane being looked at
+		// stays acknowledged as updates come in (unchanged from before).
+		if (managed.focused) {
+			managed.suppressActivity = false;
+			if (managed.ptyId) activityStore.markIdle(managed.ptyId);
+		}
+		if (managed.ptyId) activityStore.initPty(managed.ptyId);
+	}
+}
 
 // The Tab on screen, and the one before it — kept warm so switching back is
 // instant (ADR-0041). Updated as the budget is computed.

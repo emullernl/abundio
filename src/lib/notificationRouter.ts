@@ -3,7 +3,11 @@ import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { appWindow } from "./appWindow";
 import { isDemoMode } from "./demo";
-import { fleetConsoleShowing, isShownAsFleetTile } from "./fleetFocus";
+import {
+	fleetConsoleShowing,
+	isFleetTileOnScreen,
+	isShownAsFleetTile,
+} from "./fleetFocus";
 import { findPaneLocation, revealPane } from "./paneLocation";
 
 interface PtyExtra {
@@ -31,7 +35,7 @@ export { findPaneLocation } from "./paneLocation";
  * needs a notification.
  */
 export function isPaneVisible(paneId: string): boolean {
-	if (fleetConsoleShowing()) return isShownAsFleetTile(paneId);
+	if (fleetConsoleShowing()) return isFleetTileOnScreen(paneId);
 	const loc = findPaneLocation(paneId);
 	if (!loc) return false;
 	const ws = useWorkspaceStore.getState();
