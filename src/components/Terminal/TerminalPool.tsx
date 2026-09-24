@@ -29,7 +29,13 @@ export function TerminalPool() {
 		const result: (TerminalInfo & { cwd: string })[] = [];
 		for (const workspace of workspaces) {
 			if (!openedWorkspaceIds.has(workspace.id)) continue;
-			if (!loadAll && workspace.id !== activeWorkspaceId) continue;
+			// The deferral puts the active workspace first. With no active
+			// workspace there is nothing to put first — e.g. a Workspace opened
+			// from the Fleet Console before any was activated — and waiting
+			// would mean waiting for good: `loadAll` only arms once one is.
+			if (!loadAll && activeWorkspaceId && workspace.id !== activeWorkspaceId) {
+				continue;
+			}
 			for (const tab of workspace.tabs) {
 				const layout = parseTabLayout(tab.layoutJson);
 				if (!layout) continue;

@@ -778,8 +778,12 @@ addWindowFocusListener((focused) => {
 setTimeout(() => {
 	if (!useWorkspaceStore?.subscribe) return;
 	useWorkspaceStore.subscribe((state) => {
-		const { activeWorkspaceId, focusedPaneId } = state;
-		if (!activeWorkspaceId) return;
+		// No early return when no workspace is active: terminals can still be
+		// live — a Workspace opened from the Fleet Console before any was
+		// activated — and they need their activity entries (the Overview bar,
+		// status icons and the Console's agent-mode membership all read them)
+		// and a WebGL budget like any other.
+		const { focusedPaneId } = state;
 
 		webglBudget = computeWebglBudget();
 
