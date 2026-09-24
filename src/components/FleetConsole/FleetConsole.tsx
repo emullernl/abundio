@@ -929,7 +929,12 @@ function ConsoleLoader({ agents }: { agents: number }) {
 								borderRadius: 1,
 								backgroundColor: "var(--accent)",
 								opacity: 0.15,
-								animation: `terminal-bar-wave 1.2s ease-in-out ${i * 0.12}s infinite`,
+								// Negative delays: every bar is mid-cycle from the first frame,
+								// each 0.12 s behind the one to its left. A positive delay
+								// leaves the bars waiting to start, and while the main thread
+								// is busy (mounting tiles) they start together — the wave
+								// collapses into all five bobbing in unison.
+								animation: `terminal-bar-wave 1.2s ease-in-out ${-(0.6 - i * 0.12).toFixed(2)}s infinite`,
 								// Own layer from the first frame, so the wave runs on the
 								// compositor while the main thread mounts tiles.
 								willChange: "transform, opacity",
