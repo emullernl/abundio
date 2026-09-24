@@ -818,10 +818,23 @@ setTimeout(() => {
 		) {
 			return;
 		}
-		webglBudget = computeWebglBudget();
-		reconcileWebgl();
+		// After the view change has painted, not inside it: disposing and
+		// creating contexts swaps renderers on every pane involved, and doing
+		// that in the click's own frame is what kept the Console from
+		// appearing at all until the swaps were done. Coalesced, so opening
+		// then spotlighting in quick succession reconciles once.
+		if (consoleReconcileFrame !== null) return;
+		consoleReconcileFrame = requestAnimationFrame(() => {
+			consoleReconcileFrame = requestAnimationFrame(() => {
+				consoleReconcileFrame = null;
+				webglBudget = computeWebglBudget();
+				reconcileWebgl();
+			});
+		});
 	});
 }, 0);
+
+let consoleReconcileFrame: number | null = null;
 
 // The Tab on screen, and the one before it — kept warm so switching back is
 // instant (ADR-0041). Updated as the budget is computed.

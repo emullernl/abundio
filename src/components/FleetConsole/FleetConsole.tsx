@@ -194,14 +194,12 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	);
 	const orderRef = useRef(tileOrder);
 	orderRef.current = tileOrder;
+	// Tiles come in STAGGER_BATCH at a time, one batch per smooth stretch of
+	// frames — the visible ones first. No batch is a long task, so the loader
+	// keeps animating between them. The loader drops once every visible tile
+	// is in ("ready"); the off-screen ones keep arriving behind it.
 	useEffect(() => {
-		if (phase !== "mounting") return;
-		liveRef.current = new Set(orderRef.current.first);
-		setLiveIds(liveRef.current);
-		return waitForSmoothFrames(() => setPhase("ready"));
-	}, [phase]);
-	useEffect(() => {
-		if (phase !== "ready" || staged) return;
+		if (phase === "shell" || staged) return;
 		let cancel = () => {};
 		const step = () => {
 			const { first, rest } = orderRef.current;
@@ -210,16 +208,30 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 				if (next.size - liveRef.current.size >= STAGGER_BATCH) break;
 				next.add(id);
 			}
-			if (next.size === liveRef.current.size) {
+			if (next.size !== liveRef.current.size) {
+				liveRef.current = next;
+				setLiveIds(next);
+			}
+			const visibleIn = first.every((id) => next.has(id));
+			if (phase === "mounting") {
+				if (visibleIn) {
+					// Let the last visible batch paint, then drop the loader. The
+					// effect re-runs for "ready" and carries on with the rest.
+					cancel = waitForSmoothFrames(() => setPhase("ready"));
+					return;
+				}
+			} else if (rest.every((id) => next.has(id))) {
 				setStaged(true);
 				return;
 			}
-			liveRef.current = next;
-			setLiveIds(next);
 			cancel = waitForSmoothFrames(step);
 		};
-		cancel = waitForSmoothFrames(step);
-		return () => cancel();
+		// The first batch goes in on the next frame, so the loader has painted.
+		const frame = requestAnimationFrame(step);
+		return () => {
+			cancelAnimationFrame(frame);
+			cancel();
+		};
 	}, [phase, staged]);
 	/** Whether a tile's pane is borrowed yet. Once staging is done every tile
 	 *  is; the focused and spotlighted tiles always are, so a keyboard move
@@ -842,6 +854,9 @@ function ConsoleLoader({ agents }: { agents: number }) {
 								backgroundColor: "var(--accent)",
 								opacity: 0.15,
 								animation: `terminal-bar-wave 1.2s ease-in-out ${i * 0.12}s infinite`,
+								// Own layer from the first frame, so the wave runs on the
+								// compositor while the main thread mounts tiles.
+								willChange: "transform, opacity",
 							}}
 						/>
 					))}
