@@ -1865,21 +1865,41 @@ export function applyDerivedThemeOptions(
 }
 
 /**
- * Redraw a terminal from its own buffer: drop WebGL's cached glyphs and
- * repaint every row. Invisible to the program in the pane — no PTY resize, no
- * SIGWINCH. Fixes parts of the screen that are in xterm's buffer but were not
- * drawn (a canvas that was hidden, zero-sized or moved between containers when
- * the output arrived) — the same repair that dragging a pane divider used to
- * perform as a side effect. Run whenever a terminal gains focus.
+ * Make xterm refit a terminal without changing its size: clear the renderer
+ * and run its resize path at the current rows and columns, so it re-measures
+ * its cells, resizes its canvas and redraws every row from the buffer. This is
+ * exactly what `FitAddon.fit()` does when the size *has* changed — the repair
+ * that dragging a pane divider used to perform as a side effect — minus the
+ * size change itself. Invisible to the program in the pane: the PTY is not
+ * resized and no SIGWINCH is sent (nothing resizes the PTY from xterm's own
+ * resize; only the container ResizeObserver does).
+ *
+ * Touches this terminal only. The renderer's clear resets its own model, not
+ * the glyph atlas it shares with other terminals (see `clearGlyphCaches`).
+ * Run whenever a terminal gains focus, and on the pane handed back when the
+ * Fleet Console closes.
  */
 export function repaintTerminal(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed?.ready) return;
-	if (managed.webglAddon) {
-		clearGlyphCaches();
+	const { term } = managed;
+	// The same private seam FitAddon uses (`_core._renderService`): xterm's
+	// public resize() returns early at an unchanged size.
+	const renderService = (
+		term as unknown as {
+			_core?: {
+				_renderService?: {
+					clear(): void;
+					handleResize(cols: number, rows: number): void;
+				};
+			};
+		}
+	)._core?._renderService;
+	if (renderService) {
+		renderService.clear();
+		renderService.handleResize(term.cols, term.rows);
 	} else {
-		// DOM renderer: nothing cached to drop, a full refresh redraws it.
-		managed.term.refresh(0, managed.term.rows - 1);
+		term.refresh(0, term.rows - 1);
 	}
 }
 
@@ -1895,7 +1915,7 @@ export function repaintTerminal(paneId: string): void {
  * rebuilds on its next frame. There is no public way to ask which terminals
  * share an atlas, so all of them are cleared.
  */
-function clearGlyphCaches(): void {
+export function clearGlyphCaches(): void {
 	for (const managed of instances.values()) {
 		managed.webglAddon?.clearTextureAtlas();
 	}

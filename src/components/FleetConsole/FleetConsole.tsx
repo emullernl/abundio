@@ -329,9 +329,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 			// And redraw it, as gaining focus would have: the pane was just
 			// handed back, refitted, re-zoomed and given its WebGL context again,
 			// and output that arrived meanwhile can sit in the buffer undrawn.
-			// Two frames, so the hand-back's own fit has landed first. On a WebGL
-			// pane this redraws every WebGL terminal (the glyph atlas is shared),
-			// which is exactly the visible Tab.
+			// Two frames, so the hand-back's own fit has landed first.
 			requestAnimationFrame(() =>
 				requestAnimationFrame(() => repaintTerminal(id)),
 			);
