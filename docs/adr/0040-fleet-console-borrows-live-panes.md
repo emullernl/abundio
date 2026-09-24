@@ -17,3 +17,7 @@ The Console has its own **Focused tile** instead of driving the Window's **Focus
 - `portalRegistry` holds one target per pane, and a later `registerTarget` overwrites an earlier one. The Console's tile unregistering on exit would leave the pane with no slot at all, so the original slot must be restored (a stack of targets, or re-registration on Console exit).
 - `isPaneVisible` (notification suppression) and notification-click routing must be view-aware; see the flagged ambiguity in `CONTEXT.md`.
 - The **Overview bar** now has two navigation buttons (Statistics, Fleet Console). ADR-0005's rule still holds: it never mutates state.
+
+## Update: Tile zoom and Spotlight
+
+Zoom follows the same rule as sizing: a tile gets a smaller **font**, never a picture scale, so the terminal reflows and stays readable. While borrowed, a pane's font size is therefore the global size times the **Tile zoom** (100% for the spotlighted tile), and handing it back restores the global size. Code that sets every terminal's font size (`setAllTerminalsFontSize`) must skip borrowed panes, or a font change would undo the zoom.
