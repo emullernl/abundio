@@ -34,6 +34,10 @@ interface Props {
 	placement: TilePlacement;
 	/** Font scale: the **Tile zoom**, or 1 in the Spotlight slot. */
 	fontScale: number;
+	/** False while the Console is still bringing tiles in: the cell holds its
+	 *  place and shows where the agent lives, but the pane is not borrowed yet
+	 *  — its terminal stays in the Workspace view, at its normal size. */
+	live: boolean;
 }
 
 /**
@@ -51,6 +55,7 @@ export const FleetTile = memo(function FleetTile({
 	index,
 	placement,
 	fontScale,
+	live,
 }: Props) {
 	const status = usePtyActivityStore((s) =>
 		computePtyDotStatus(getTerminal(paneId)?.ptyId || ptyId, s.activities),
@@ -61,9 +66,12 @@ export const FleetTile = memo(function FleetTile({
 	// Draw at the zoom while borrowed; hand the pane back at its normal size.
 	// Two effects, so a zoom change is one reflow rather than reset-then-set.
 	useEffect(() => {
-		setPaneFontScale(paneId, fontScale);
-	}, [paneId, fontScale]);
-	useEffect(() => () => setPaneFontScale(paneId, null), [paneId]);
+		if (live) setPaneFontScale(paneId, fontScale);
+	}, [paneId, fontScale, live]);
+	useEffect(() => {
+		if (!live) return;
+		return () => setPaneFontScale(paneId, null);
+	}, [paneId, live]);
 
 	const onFocus = useCallback(
 		() => useWindowUiStore.getState().setFocusedTile(paneId),
@@ -139,18 +147,22 @@ export const FleetTile = memo(function FleetTile({
 					transition: "border-color 160ms ease, box-shadow 220ms ease",
 				}}
 			>
-				<div className="flex-1 min-w-0 min-h-0" style={{ paddingLeft: 3 }}>
-					<TerminalSlot
-						paneId={paneId}
-						agentId={agentId}
-						fleet={fleet}
-						isFocused={isFocused}
-						onFocus={onFocus}
-						onSplitHorizontal={noop}
-						onSplitVertical={noop}
-						onClose={onClose}
-					/>
-				</div>
+				{!live ? (
+					<TilePlaceholder workspaceName={workspaceName} tabName={tabName} />
+				) : (
+					<div className="flex-1 min-w-0 min-h-0" style={{ paddingLeft: 3 }}>
+						<TerminalSlot
+							paneId={paneId}
+							agentId={agentId}
+							fleet={fleet}
+							isFocused={isFocused}
+							onFocus={onFocus}
+							onSplitHorizontal={noop}
+							onSplitVertical={noop}
+							onClose={onClose}
+						/>
+					</div>
+				)}
 				{/* Above the terminal canvas, inside the tile's rounded frame. */}
 				<FocusSweep paneId={paneId} inFleetTile />
 			</div>
@@ -159,3 +171,42 @@ export const FleetTile = memo(function FleetTile({
 });
 
 function noop() {}
+
+/** A tile not brought in yet: where the agent lives, dimmed, in the frame it
+ *  will fill. */
+function TilePlaceholder({
+	workspaceName,
+	tabName,
+}: {
+	workspaceName: string;
+	tabName: string;
+}) {
+	return (
+		<div
+			className="flex-1 flex flex-col select-none"
+			style={{ padding: "6px 12px", gap: 4 }}
+		>
+			<span
+				style={{
+					fontFamily: "var(--font-mono)",
+					fontSize: 11.5,
+					fontWeight: 600,
+					color: "var(--fg-secondary)",
+					opacity: 0.55,
+				}}
+			>
+				{workspaceName}
+			</span>
+			<span
+				style={{
+					fontFamily: "var(--font-mono)",
+					fontSize: 10.5,
+					color: "var(--fg-secondary)",
+					opacity: 0.35,
+				}}
+			>
+				{tabName}
+			</span>
+		</div>
+	);
+}

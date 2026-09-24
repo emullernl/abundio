@@ -43,6 +43,29 @@ const TOOLBAR_HEIGHT = 36;
  *  console stops holding focus for its tile. */
 const PENDING_TILE_MS = 20_000;
 const DIVIDER_HIT = 8;
+/** Tiles brought in per smooth-frame wait once the visible ones are in. */
+const STAGGER_BATCH = 2;
+
+/**
+ * The order the Console brings tiles in: the spotlighted and focused tiles,
+ * then the first `visibleCount` in grid order (what is on screen with the
+ * grid scrolled to the top), then the rest. Exported for tests.
+ */
+export function stagingOrder(
+	paneIds: string[],
+	focused: string | null,
+	spotlight: string | null,
+	visibleCount: number,
+): { first: string[]; rest: string[] } {
+	const first: string[] = [];
+	const add = (id: string | null) => {
+		if (id && paneIds.includes(id) && !first.includes(id)) first.push(id);
+	};
+	add(spotlight);
+	add(focused);
+	for (const id of paneIds.slice(0, Math.max(0, visibleCount))) add(id);
+	return { first, rest: paneIds.filter((id) => !first.includes(id)) };
+}
 
 /** The live tile list, in derived order. Shared by the console and by the
  *  keyboard routing, which must walk the same order the grid shows. */
@@ -124,10 +147,6 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 			cancelAnimationFrame(second);
 		};
 	}, []);
-	useEffect(() => {
-		if (phase !== "mounting") return;
-		return waitForSmoothFrames(() => setPhase("ready"));
-	}, [phase]);
 	// **Spotlight** is on only while its agent is still a tile.
 	const spotlight = tiles.some((t) => t.paneId === spotlightTileId)
 		? spotlightTileId
@@ -153,6 +172,63 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	}, [tiles.length, size.width, size.height]);
 	const { columns, rows } = grid.preset === "auto" ? autoShape : grid.preset;
 	const shape = gridShape(tiles.length, columns, rows);
+
+	// ── Staggered mount: visible tiles first. ──
+	// "mounting" brings in what is on screen (plus the focused and spotlighted
+	// tiles, wherever they are); the loader drops once those have settled. The
+	// rest follow a couple at a time, each batch waiting for smooth frames
+	// again, so the Console is usable while the off-screen tiles load.
+	const [liveIds, setLiveIds] = useState<ReadonlySet<string>>(() => new Set());
+	// Mirror of `liveIds` for the batch loop, which runs outside render.
+	const liveRef = useRef<ReadonlySet<string>>(liveIds);
+	const [staged, setStaged] = useState(false);
+	const tileOrder = useMemo(
+		() =>
+			stagingOrder(
+				tiles.map((t) => t.paneId),
+				focusedTileId,
+				spotlight,
+				spotlight ? 4 : columns * rows,
+			),
+		[tiles, focusedTileId, spotlight, columns, rows],
+	);
+	const orderRef = useRef(tileOrder);
+	orderRef.current = tileOrder;
+	useEffect(() => {
+		if (phase !== "mounting") return;
+		liveRef.current = new Set(orderRef.current.first);
+		setLiveIds(liveRef.current);
+		return waitForSmoothFrames(() => setPhase("ready"));
+	}, [phase]);
+	useEffect(() => {
+		if (phase !== "ready" || staged) return;
+		let cancel = () => {};
+		const step = () => {
+			const { first, rest } = orderRef.current;
+			const next = new Set(liveRef.current);
+			for (const id of [...first, ...rest]) {
+				if (next.size - liveRef.current.size >= STAGGER_BATCH) break;
+				next.add(id);
+			}
+			if (next.size === liveRef.current.size) {
+				setStaged(true);
+				return;
+			}
+			liveRef.current = next;
+			setLiveIds(next);
+			cancel = waitForSmoothFrames(step);
+		};
+		cancel = waitForSmoothFrames(step);
+		return () => cancel();
+	}, [phase, staged]);
+	/** Whether a tile's pane is borrowed yet. Once staging is done every tile
+	 *  is; the focused and spotlighted tiles always are, so a keyboard move
+	 *  or a notification click never lands on a placeholder. */
+	const isLive = (paneId: string) =>
+		staged ||
+		liveIds.has(paneId) ||
+		paneId === focusedTileId ||
+		paneId === spotlight;
 
 	// Divider drags live locally until mouseup, then persist once.
 	const [dragCols, setDragCols] = useState<number[] | null>(null);
@@ -477,6 +553,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 										}
 										// The spotlighted agent reads like the Workspace view.
 										fontScale={t.paneId === spotlight ? 1 : grid.zoom}
+										live={isLive(t.paneId)}
 									/>
 								);
 							})}
