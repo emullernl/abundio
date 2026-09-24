@@ -48,14 +48,17 @@ const STAGGER_BATCH = 2;
 
 /**
  * The order the Console brings tiles in: the spotlighted and focused tiles,
- * then the first `visibleCount` in grid order (what is on screen with the
- * grid scrolled to the top), then the rest. Exported for tests.
+ * then the `visibleCount` tiles on screen from `firstVisible`, then the rest.
+ * Exported for tests.
  */
 export function stagingOrder(
 	paneIds: string[],
 	focused: string | null,
 	spotlight: string | null,
 	visibleCount: number,
+	/** Index of the first tile on screen — non-zero when the grid reopens
+	 *  scrolled down. */
+	firstVisible = 0,
 ): { first: string[]; rest: string[] } {
 	const first: string[] = [];
 	const add = (id: string | null) => {
@@ -63,7 +66,10 @@ export function stagingOrder(
 	};
 	add(spotlight);
 	add(focused);
-	for (const id of paneIds.slice(0, Math.max(0, visibleCount))) add(id);
+	const from = Math.max(0, firstVisible);
+	for (const id of paneIds.slice(from, from + Math.max(0, visibleCount))) {
+		add(id);
+	}
 	return { first, rest: paneIds.filter((id) => !first.includes(id)) };
 }
 
@@ -182,6 +188,21 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	// Mirror of `liveIds` for the batch loop, which runs outside render.
 	const liveRef = useRef<ReadonlySet<string>>(liveIds);
 	const [staged, setStaged] = useState(false);
+	// ── Where the user left off: the grid's scroll position, restored on
+	// reopen (the Focused tile and Spotlight live in the store already). The
+	// tiles on screen at that position are the ones brought in first.
+	const restoreScrollRef = useRef(useWindowUiStore.getState().fleetScrollTop);
+	const scrollTopRef = useRef(restoreScrollRef.current);
+	const firstVisible = useMemo(() => {
+		const top = restoreScrollRef.current;
+		if (top <= 0 || size.height <= 0) return 0;
+		// Grid rows are a `rows`-th of the height (the first `rows` follow the
+		// dividers, but this only orders loading, so the average is enough);
+		// Filmstrip tiles are a third of it, in one column.
+		return spotlight
+			? Math.floor(top / (size.height / 3))
+			: Math.floor(top / (size.height / rows)) * columns;
+	}, [size.height, rows, columns, spotlight]);
 	const tileOrder = useMemo(
 		() =>
 			stagingOrder(
@@ -189,8 +210,26 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 				focusedTileId,
 				spotlight,
 				spotlight ? 4 : columns * rows,
+				firstVisible,
 			),
-		[tiles, focusedTileId, spotlight, columns, rows],
+		[tiles, focusedTileId, spotlight, columns, rows, firstVisible],
+	);
+	// Restore once the grid exists (it is not rendered in the "shell" phase).
+	const gridShown = size.height > 0 && phase !== "shell";
+	const restoredRef = useRef(false);
+	useLayoutEffect(() => {
+		if (!gridShown || restoredRef.current) return;
+		restoredRef.current = true;
+		if (scrollRef.current)
+			scrollRef.current.scrollTop = restoreScrollRef.current;
+	}, [gridShown]);
+	// Saved on close from a ref kept current by the scroll handler: by the
+	// time an unmount cleanup runs the element is detached and reads 0.
+	useEffect(
+		() => () => {
+			useWindowUiStore.setState({ fleetScrollTop: scrollTopRef.current });
+		},
+		[],
 	);
 	const orderRef = useRef(tileOrder);
 	orderRef.current = tileOrder;
@@ -526,6 +565,9 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					ref={scrollRef}
 					className="flex-1 min-h-0 relative"
 					style={{ overflowY: "auto", overflowX: "hidden", padding: 0 }}
+					onScroll={(e) => {
+						scrollTopRef.current = e.currentTarget.scrollTop;
+					}}
 				>
 					{size.height > 0 && phase !== "shell" && (
 						<div

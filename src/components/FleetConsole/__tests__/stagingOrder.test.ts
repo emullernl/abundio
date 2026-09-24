@@ -24,6 +24,13 @@ describe("stagingOrder", () => {
 		expect(stagingOrder(ids, "gone", null, 1).first).toEqual(["a"]);
 	});
 
+	it("starts from the first tile on screen when reopened scrolled down", () => {
+		expect(stagingOrder(ids, null, null, 2, 4)).toEqual({
+			first: ["e", "f"],
+			rest: ["a", "b", "c", "d", "g"],
+		});
+	});
+
 	it("handles more room than tiles", () => {
 		expect(stagingOrder(["a"], "a", null, 12)).toEqual({
 			first: ["a"],

@@ -133,11 +133,19 @@ describe("fleetFocus — Spotlight", () => {
 		expect(useWindowUiStore.getState().fleetGrid.zoom).toBe(0.75);
 	});
 
-	it("choosing a grid size ends Spotlight; closing the console forgets it", () => {
+	it("choosing a grid size ends Spotlight", () => {
 		useWindowUiStore.getState().setFleetPreset("auto");
 		expect(useWindowUiStore.getState().spotlightTileId).toBeNull();
-		useWindowUiStore.setState({ spotlightTileId: "b" });
-		useWindowUiStore.getState().toggleFleetConsole();
-		expect(useWindowUiStore.getState().spotlightTileId).toBeNull();
+	});
+
+	// Switch to an agent and back resumes where the user left off.
+	it("closing and reopening the console keeps Spotlight and focus", () => {
+		const ui = useWindowUiStore.getState();
+		ui.toggleFleetConsole();
+		expect(useWindowUiStore.getState().fleetConsoleOpen).toBe(false);
+		useWindowUiStore.getState().setFleetConsoleOpen(true);
+		const s = useWindowUiStore.getState();
+		expect(s.spotlightTileId).toBe("b");
+		expect(s.focusedTileId).toBe("b");
 	});
 });

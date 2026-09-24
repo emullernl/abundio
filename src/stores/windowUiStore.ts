@@ -121,9 +121,13 @@ interface WindowUiState {
 	) => void;
 	setTileZoom: (zoom: number) => void;
 	setFilmstripRatio: (ratio: number) => void;
-	/** The tile in **Spotlight**, or null for the grid. Not persisted, and
-	 *  cleared whenever the console closes: a moment's focus, not a layout. */
+	/** The tile in **Spotlight**, or null for the grid. Kept across closing
+	 *  and reopening the Console within a session, so Switch to and back
+	 *  resumes where the user was; not persisted across launches. */
 	spotlightTileId: string | null;
+	/** The grid's scroll position when the Console last closed, restored when
+	 *  it reopens. Session-only, like the spotlight. */
+	fleetScrollTop: number;
 	setSpotlight: (paneId: string | null) => void;
 	/** A pending request, from the keyboard shortcut or the Fleet Console's
 	 *  New agent, to open the Add worktree dialog for this main-worktree
@@ -199,7 +203,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				if (s.statisticsOverlayOpen) {
 					set({ statisticsOverlayOpen: false, fleetConsoleOpen: true });
 				} else if (s.fleetConsoleOpen) {
-					set({ fleetConsoleOpen: false, spotlightTileId: null });
+					set({ fleetConsoleOpen: false });
 				} else {
 					set({ fleetConsoleOpen: true });
 				}
@@ -236,6 +240,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 					},
 				})),
 			spotlightTileId: null,
+			fleetScrollTop: 0,
 			setSpotlight: (paneId) => set({ spotlightTileId: paneId }),
 			setFleetRatios: (colRatios, rowRatios) =>
 				set((s) => ({ fleetGrid: { ...s.fleetGrid, colRatios, rowRatios } })),
@@ -243,7 +248,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				set(
 					open
 						? { fleetConsoleOpen: true, statisticsOverlayOpen: false }
-						: { fleetConsoleOpen: false, spotlightTileId: null },
+						: { fleetConsoleOpen: false },
 				),
 			addWorktreeRequest: null,
 			requestAddWorktree: (workspaceId, opts) =>
