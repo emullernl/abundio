@@ -901,7 +901,11 @@ function effectiveFontSize(paneId: string, base: number): number {
 	return Math.max(6, Math.round(base * scale * 2) / 2);
 }
 
-function applyFontSize(managed: ManagedTerminal, size: number): void {
+function applyFontSize(
+	managed: ManagedTerminal,
+	size: number,
+	refit = true,
+): void {
 	publishPaneFontSize(managed.paneId, size);
 	if (managed.term.options.fontSize === size) return;
 	// No glyph-cache clear: a new size is a new atlas configuration, which
@@ -909,6 +913,7 @@ function applyFontSize(managed: ManagedTerminal, size: number): void {
 	// still *shares* with every other terminal at its old size (see
 	// `clearGlyphCaches`), leaving them drawing backgrounds with no text.
 	managed.term.options.fontSize = size;
+	if (!refit) return;
 	managed.fitAddon.fit();
 	if (managed.ptyId) {
 		pty
@@ -921,14 +926,24 @@ function applyFontSize(managed: ManagedTerminal, size: number): void {
  * Draw one pane at `scale` × the global font size, or back at the global size
  * with `null`. The terminal refits and its PTY is resized, so the program
  * reflows to the new rows and columns.
+ *
+ * `refit: false` changes the font only, for when the terminal is about to be
+ * moved into another container: the move's own first fit then sizes it once,
+ * at the new font and the new container together. Refitting here as well
+ * would resize the PTY twice — the first time to a size that is never shown
+ * (a Fleet tile's box at full font, say), so the program reflows for nothing.
  */
-export function setPaneFontScale(paneId: string, scale: number | null): void {
+export function setPaneFontScale(
+	paneId: string,
+	scale: number | null,
+	opts: { refit?: boolean } = {},
+): void {
 	if (scale === null || scale === 1) paneFontScale.delete(paneId);
 	else paneFontScale.set(paneId, scale);
 	const managed = instances.get(paneId);
 	if (!managed) return;
 	const base = baseFontSize ?? managed.term.options.fontSize ?? 14;
-	applyFontSize(managed, effectiveFontSize(paneId, base));
+	applyFontSize(managed, effectiveFontSize(paneId, base), opts.refit ?? true);
 }
 
 export async function createTerminal(

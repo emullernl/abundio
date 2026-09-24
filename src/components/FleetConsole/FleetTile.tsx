@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { switchToPane } from "../../lib/paneLocation";
 import { getTerminal, setPaneFontScale } from "../../lib/terminalManager";
 import { requestPaneClose } from "../../stores/paneCloseConfirmStore";
@@ -65,12 +65,24 @@ export const FleetTile = memo(function FleetTile({
 
 	// Draw at the zoom while borrowed; hand the pane back at its normal size.
 	// Two effects, so a zoom change is one reflow rather than reset-then-set.
+	//
+	// Borrowing and handing back each move the terminal between containers,
+	// and that move fits it and resizes its PTY once by itself. So at those two
+	// moments the font changes without a refit of its own (`refit: false`),
+	// or the program would reflow twice — once for a size nobody sees. Only a
+	// zoom change while the tile stays put refits here.
+	const appliedRef = useRef(false);
 	useEffect(() => {
-		if (live) setPaneFontScale(paneId, fontScale);
+		if (!live) return;
+		setPaneFontScale(paneId, fontScale, { refit: appliedRef.current });
+		appliedRef.current = true;
 	}, [paneId, fontScale, live]);
 	useEffect(() => {
 		if (!live) return;
-		return () => setPaneFontScale(paneId, null);
+		return () => {
+			appliedRef.current = false;
+			setPaneFontScale(paneId, null, { refit: false });
+		};
 	}, [paneId, live]);
 
 	const onFocus = useCallback(
