@@ -300,6 +300,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			if (echo) publish(`pty-output-${ptyId}`, { data: encodeBase64(echo) });
 			return undefined;
 		}
+		case "pty_redraw":
+			return true;
 		case "pty_resize":
 		case "pty_kill":
 		case "pty_write_snapshot":

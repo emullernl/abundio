@@ -86,6 +86,16 @@ pub async fn pty_resize(
     pty_mgr.resize(&pty_id, cols, rows)
 }
 
+/// Ask the program in a PTY to redraw at its current size (SIGWINCH to the
+/// foreground process group). `false` where unsupported (Windows).
+#[tauri::command]
+pub async fn pty_redraw(
+    pty_mgr: State<'_, PtyManager>,
+    pty_id: String,
+) -> Result<bool, AbundioError> {
+    pty_mgr.redraw(&pty_id)
+}
+
 #[tauri::command]
 pub async fn pty_kill(
     pty_mgr: State<'_, PtyManager>,

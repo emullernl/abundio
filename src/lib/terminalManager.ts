@@ -1936,6 +1936,44 @@ export function repaintTerminal(paneId: string): void {
 }
 
 /**
+ * Ask the Agent running in a pane to redraw its own screen, at the size it
+ * already has: SIGWINCH to the PTY's foreground process group (macOS/Linux).
+ * `repaintTerminal` fixes what xterm drew; this fixes what the program drew,
+ * which only it can repaint. Agent-mode panes only — a shell has nothing to
+ * redraw and would only reprint its prompt line.
+ *
+ * Windows has no SIGWINCH, so there the size is nudged down a row and back:
+ * two real size changes, two redraws, but the same end state.
+ */
+export function redrawProgram(paneId: string): void {
+	const managed = instances.get(paneId);
+	const ptyId = managed?.ptyId;
+	if (!managed?.ready || !ptyId) return;
+	const activity = usePtyActivityStore.getState().activities[ptyId];
+	if (activity?.detectionMode !== "agent") return;
+	void pty
+		.redraw(ptyId)
+		.then((signalled) => {
+			if (signalled) return;
+			const { cols, rows } = managed.term;
+			if (rows < 2) return;
+			return pty.resize(ptyId, cols, rows - 1).then(
+				() =>
+					new Promise<void>((resolve) =>
+						setTimeout(() => {
+							// Back to whatever the terminal is now, in case it was
+							// refitted meanwhile.
+							void pty
+								.resize(ptyId, managed.term.cols, managed.term.rows)
+								.finally(resolve);
+						}, 50),
+					),
+			);
+		})
+		.catch(() => {});
+}
+
+/**
  * Drop WebGL's cached glyphs and redraw **every** WebGL terminal.
  *
  * xterm's WebGL renderer shares one glyph atlas among all terminals whose font,

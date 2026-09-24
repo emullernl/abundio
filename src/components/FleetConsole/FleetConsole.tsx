@@ -19,7 +19,11 @@ import {
 } from "../../lib/fleetConsole";
 import { publishFleetGrid, stepTileZoom } from "../../lib/fleetFocus";
 import { waitForSmoothFrames } from "../../lib/focusSweep";
-import { getTerminal, repaintTerminal } from "../../lib/terminalManager";
+import {
+	getTerminal,
+	redrawProgram,
+	repaintTerminal,
+} from "../../lib/terminalManager";
 import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
@@ -402,7 +406,10 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 			// and output that arrived meanwhile can sit in the buffer undrawn.
 			// Two frames, so the hand-back's own fit has landed first.
 			requestAnimationFrame(() =>
-				requestAnimationFrame(() => repaintTerminal(id)),
+				requestAnimationFrame(() => {
+					repaintTerminal(id);
+					redrawProgram(id);
+				}),
 			);
 		},
 		[],

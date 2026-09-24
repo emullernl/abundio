@@ -18,6 +18,7 @@ dependencies = [
  "ignore",
  "image",
  "keyring",
+ "libc",
  "log",
  "notify",
  "portable-pty",

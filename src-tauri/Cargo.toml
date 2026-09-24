@@ -118,3 +118,9 @@ toml_edit = "0.25"
 keyring = { version = "4", default-features = false, features = ["v1"] }
 aes-gcm = "0.10"
 zeroize = { version = "1", features = ["zeroize_derive"] }
+
+# killpg(SIGWINCH) for the redraw nudge (pty_manager::redraw): tell the
+# program in a PTY to redraw at its current size. Already in the dependency
+# tree transitively (portable-pty, tauri).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

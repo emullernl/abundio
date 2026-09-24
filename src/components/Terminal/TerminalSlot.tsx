@@ -34,6 +34,7 @@ import {
 import {
 	getPaneRevision,
 	getTerminal,
+	redrawProgram,
 	repaintTerminal,
 	resetTerminal,
 	subscribePaneRevision,
@@ -287,8 +288,10 @@ export function TerminalSlot({
 			if (managed?.ready) {
 				managed.term.focus();
 				// Repaint on gaining focus: output that arrived while the terminal
-				// was hidden or being moved can sit in the buffer undrawn.
+				// was hidden or being moved can sit in the buffer undrawn — and ask
+				// the Agent to redraw its own screen, which only it can fix.
 				repaintTerminal(paneId);
+				redrawProgram(paneId);
 				return true;
 			}
 			return false;

@@ -24,6 +24,9 @@ const MAX_LOG_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
 enum PtyCommand {
     Write(Vec<u8>),
     Resize(u16, u16),
+    /// Send SIGWINCH to the PTY's foreground process group without changing
+    /// its size, so the program running there redraws its screen.
+    Redraw,
     Kill,
 }
 
@@ -351,6 +354,28 @@ impl PtyManager {
             .tx
             .send(PtyCommand::Resize(cols, rows))
             .map_err(|e| AbundioError::Channel(e.to_string()))
+    }
+
+    /// Ask the program in the foreground of this PTY to redraw, at its current
+    /// size. Returns `false` where there is no signal to send it (Windows:
+    /// ConPTY has no SIGWINCH), so the caller can fall back to a size nudge.
+    ///
+    /// A same-size `resize` cannot do this: the kernel raises SIGWINCH only
+    /// when the window size actually changes, on macOS and Linux alike.
+    pub fn redraw(&self, pty_id: &str) -> Result<bool, AbundioError> {
+        let entry = self
+            .entries
+            .get(pty_id)
+            .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        if cfg!(unix) {
+            entry
+                .tx
+                .send(PtyCommand::Redraw)
+                .map_err(|e| AbundioError::Channel(e.to_string()))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub fn kill(&self, pty_id: &str) -> Result<(), AbundioError> {
@@ -1349,6 +1374,20 @@ fn pty_thread(
                     pixel_height: 0,
                 });
             }
+            Ok(PtyCommand::Redraw) => {
+                // The foreground process group of the terminal (tcgetpgrp):
+                // the agent, not the shell that launched it.
+                #[cfg(unix)]
+                if let Some(pgid) = master.process_group_leader() {
+                    if pgid > 0 {
+                        // SAFETY: killpg only sends a signal; an invalid or
+                        // exited group yields ESRCH, which is ignored.
+                        unsafe {
+                            libc::killpg(pgid, libc::SIGWINCH);
+                        }
+                    }
+                }
+            }
             Ok(PtyCommand::Kill) => {
                 alive.store(false, Ordering::Relaxed);
                 let _ = child.kill();
@@ -1402,6 +1441,15 @@ fn truncate_log_file(path: &Path, keep_bytes: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redraw_unknown_pty_is_not_found() {
+        let mgr = PtyManager::new();
+        assert!(matches!(
+            mgr.redraw("no-such-pty"),
+            Err(AbundioError::NotFound(_))
+        ));
+    }
 
     #[test]
     fn msys_drive_paths_become_native() {
