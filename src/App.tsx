@@ -186,6 +186,10 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 	const prPollingEnabled = useSettingsStore((s) => s.prPollEnabled);
 	const statisticsOpen = useWindowUiStore((s) => s.statisticsOverlayOpen);
 	const toggleStatistics = useWindowUiStore((s) => s.toggleStatisticsOverlay);
+	const fleetOpen = useWindowUiStore(
+		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
+	);
+	const toggleFleet = useWindowUiStore((s) => s.toggleFleetConsole);
 	return (
 		<OverviewBar
 			openedWorkspaces={openedWorkspaces}
@@ -205,6 +209,8 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 			showAgentWaiting={showAgentWaiting}
 			statisticsOpen={statisticsOpen}
 			onToggleStatistics={toggleStatistics}
+			fleetConsoleOpen={fleetOpen}
+			onToggleFleetConsole={toggleFleet}
 		/>
 	);
 });
@@ -832,6 +838,9 @@ export function App() {
 		});
 		registerAction("search-in-workspace", () => {
 			useWindowUiStore.getState().toggleRightSidebarTab("search");
+		});
+		registerAction("toggle-fleet-console", () => {
+			useWindowUiStore.getState().toggleFleetConsole();
 		});
 		registerAction("toggle-statistics-overlay", () => {
 			useWindowUiStore.getState().toggleStatisticsOverlay();

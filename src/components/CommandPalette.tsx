@@ -118,6 +118,12 @@ export function CommandPalette({
 
 		result.push(
 			{
+				id: "action-toggle-fleet-console",
+				label: "Toggle Fleet Console",
+				category: "Actions",
+				action: () => triggerAction("toggle-fleet-console"),
+			},
+			{
 				id: "action-next-workspace",
 				label: "Next Opened Workspace",
 				category: "Actions",

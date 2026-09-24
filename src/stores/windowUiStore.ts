@@ -53,6 +53,15 @@ interface WindowUiState {
 	statisticsOverlayOpen: boolean;
 	toggleStatisticsOverlay: () => void;
 	setStatisticsOverlayOpen: (open: boolean) => void;
+	/** The **Fleet Console** replaces everything between the Overview bar and
+	 *  the Status bar with a grid of this Window's agent-mode panes. Not
+	 *  persisted: every launch opens in the Workspace view. It and the
+	 *  Statistics overlay are mutually exclusive on screen: opening Statistics
+	 *  covers the console, and closing Statistics reveals it again, while
+	 *  opening the console closes Statistics. See ADR-0040. */
+	fleetConsoleOpen: boolean;
+	toggleFleetConsole: () => void;
+	setFleetConsoleOpen: (open: boolean) => void;
 	/** A pending request, from the keyboard shortcut, to open the Add worktree
 	 *  dialog for this main-worktree Workspace. The Left sidebar owns the
 	 *  dialog, so it takes the request and clears it. Not persisted. */
@@ -114,6 +123,22 @@ export const useWindowUiStore = create<WindowUiState>()(
 			toggleStatisticsOverlay: () =>
 				set((s) => ({ statisticsOverlayOpen: !s.statisticsOverlayOpen })),
 			setStatisticsOverlayOpen: (open) => set({ statisticsOverlayOpen: open }),
+			fleetConsoleOpen: false,
+			toggleFleetConsole: () => {
+				const s = get();
+				// The button reads "show the console" while Statistics covers it.
+				if (s.statisticsOverlayOpen) {
+					set({ statisticsOverlayOpen: false, fleetConsoleOpen: true });
+				} else {
+					set({ fleetConsoleOpen: !s.fleetConsoleOpen });
+				}
+			},
+			setFleetConsoleOpen: (open) =>
+				set(
+					open
+						? { fleetConsoleOpen: true, statisticsOverlayOpen: false }
+						: { fleetConsoleOpen: false },
+				),
 			addWorktreeRequest: null,
 			requestAddWorktree: (workspaceId) =>
 				set({ addWorktreeRequest: workspaceId }),

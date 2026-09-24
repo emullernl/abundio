@@ -22,6 +22,8 @@ function baseProps(): OverviewBarProps {
 		showAgentWaiting: true,
 		statisticsOpen: false,
 		onToggleStatistics: () => {},
+		fleetConsoleOpen: false,
+		onToggleFleetConsole: () => {},
 	};
 }
 
@@ -272,5 +274,28 @@ describe("OverviewBar", () => {
 		);
 		expect(workingChip?.getAttribute("title")).toContain("(2)");
 		expect(reviewChip?.getAttribute("title")).toContain("(4)");
+	});
+
+	it("the Fleet Console button reports its state and toggles", () => {
+		let clicks = 0;
+		act(() => {
+			root.render(
+				<OverviewBar
+					{...baseProps()}
+					fleetConsoleOpen={true}
+					onToggleFleetConsole={() => {
+						clicks++;
+					}}
+				/>,
+			);
+		});
+		const button = Array.from(container.querySelectorAll("button")).find((b) =>
+			b.getAttribute("title")?.startsWith("Fleet Console"),
+		);
+		expect(button?.getAttribute("aria-pressed")).toBe("true");
+		act(() => {
+			button?.click();
+		});
+		expect(clicks).toBe(1);
 	});
 });
