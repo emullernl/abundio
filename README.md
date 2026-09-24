@@ -72,33 +72,36 @@ Anything not on this list can still be added as a **custom agent** in Settings (
 
 ## Keyboard Shortcuts
 
-Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
+Most shortcuts use `Cmd` on macOS where Windows/Linux use `Ctrl`. Some differ by more than that, to avoid keys the terminal, the code editor or the operating system already use — so check both columns.
 
-| Action                  | macOS             | Windows/Linux      |
-| ----------------------- | ----------------- | :----------------- |
-| Split horizontal        | `Cmd+Shift+H`     | `Ctrl+Alt+H`       |
-| Split vertical          | `Cmd+Shift+V`     | `Ctrl+Alt+V`       |
-| Close pane              | `Cmd+Shift+W`     | `Ctrl+Shift+W`     |
-| Copy (terminal)         | `Cmd+C` (native)  | `Ctrl+Shift+C`     |
-| Paste (terminal)        | `Cmd+V` (native)  | `Ctrl+Shift+V`     |
-| Navigate panes          | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
-| Command palette         | `Cmd+K`           | `Ctrl+K`           |
-| File quickopen          | `Cmd+P`           | `Ctrl+P`           |
-| Find in terminal        | `Cmd+F`           | `Ctrl+F`           |
-| Search workspace        | `Cmd+Shift+F`     | `Ctrl+Shift+F`     |
-| Toggle git panel        | `Cmd+Shift+G`     | `Ctrl+Shift+G`     |
-| Toggle explorer panel   | `Cmd+Shift+E`     | `Ctrl+Shift+E`     |
-| Toggle notes panel      | `Cmd+Shift+K`     | `Ctrl+Shift+K`     |
-| Toggle markdown preview | `Cmd+Shift+M`     | `Ctrl+Shift+M`     |
-| New workspace           | `Cmd+Shift+N`     | `Ctrl+Shift+N`     |
-| New tab                 | `Cmd+T`           | `Ctrl+T`           |
-| Close tab               | `Cmd+W`           | `Ctrl+W`           |
-| Next tab                | `Cmd+Shift+]`     | `Ctrl+Shift+]`     |
-| Previous tab            | `Cmd+Shift+[`     | `Ctrl+Shift+[`     |
-| Increase font size      | `Cmd+=`           | `Ctrl+=`           |
-| Decrease font size      | `Cmd+-`           | `Ctrl+-`           |
-| Save file               | `Cmd+S`           | `Ctrl+S`           |
-| Open settings           | `Cmd+,`           | `Ctrl+,`           |
+| Action                           | macOS              | Windows/Linux                    |
+| -------------------------------- | ------------------ | :------------------------------- |
+| Split horizontal                 | `Cmd+Shift+H`      | `Ctrl+Alt+H`                     |
+| Split vertical                   | `Cmd+Shift+V`      | `Ctrl+Alt+V`                     |
+| Close pane                       | `Cmd+Shift+W`      | `Ctrl+Shift+W`                   |
+| Copy (terminal)                  | `Cmd+C` (native)   | `Ctrl+Shift+C`                   |
+| Paste (terminal)                 | `Cmd+V` (native)   | `Ctrl+Shift+V`                   |
+| Focus pane on that side          | `Cmd+Shift+Arrow`  | `Ctrl+Shift+Arrow`               |
+| Next / previous pane             | `Ctrl+Cmd+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab`    |
+| Command palette                  | `Cmd+K`            | `Ctrl+K`                         |
+| File quickopen                   | `Cmd+P`            | `Ctrl+P`                         |
+| Find in terminal                 | `Cmd+F`            | `Ctrl+F`                         |
+| Search workspace                 | `Cmd+Shift+F`      | `Ctrl+Shift+F`                   |
+| Toggle git panel                 | `Cmd+Shift+G`      | `Ctrl+Shift+G`                   |
+| Toggle explorer panel            | `Cmd+Shift+E`      | `Ctrl+Shift+E`                   |
+| Toggle notes panel               | `Cmd+Shift+K`      | `Ctrl+Shift+K`                   |
+| Toggle markdown preview          | `Cmd+Shift+M`      | `Ctrl+Shift+M`                   |
+| New workspace                    | `Cmd+Shift+N`      | `Ctrl+Shift+N`                   |
+| Next / previous opened workspace | `Ctrl+Cmd+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
+| Add worktree                     | `Cmd+Shift+B`      | `Ctrl+Shift+B`                   |
+| New tab                          | `Cmd+T`            | `Ctrl+T`                         |
+| Close tab                        | `Cmd+W`            | `Ctrl+W`                         |
+| Next tab                         | `Cmd+Shift+]`      | `Ctrl+PageDown`                  |
+| Previous tab                     | `Cmd+Shift+[`      | `Ctrl+PageUp`                    |
+| Increase font size               | `Cmd+=`            | `Ctrl+=`                         |
+| Decrease font size               | `Cmd+-`            | `Ctrl+-`                         |
+| Save file                        | `Cmd+S`            | `Ctrl+S`                         |
+| Open settings                    | `Cmd+,`            | `Ctrl+,`                         |
 
 > **Note:** The `Ctrl+Alt` split shortcuts can clash on some setups — a few
 > Linux window managers reserve `Ctrl+Alt`+key, and on international keyboard

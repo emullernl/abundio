@@ -53,6 +53,12 @@ interface WindowUiState {
 	statisticsOverlayOpen: boolean;
 	toggleStatisticsOverlay: () => void;
 	setStatisticsOverlayOpen: (open: boolean) => void;
+	/** A pending request, from the keyboard shortcut, to open the Add worktree
+	 *  dialog for this main-worktree Workspace. The Left sidebar owns the
+	 *  dialog, so it takes the request and clears it. Not persisted. */
+	addWorktreeRequest: string | null;
+	requestAddWorktree: (workspaceId: string) => void;
+	clearAddWorktreeRequest: () => void;
 }
 
 const persistKey = `abundio-window-ui-${currentWindowLabel()}`;
@@ -108,6 +114,10 @@ export const useWindowUiStore = create<WindowUiState>()(
 			toggleStatisticsOverlay: () =>
 				set((s) => ({ statisticsOverlayOpen: !s.statisticsOverlayOpen })),
 			setStatisticsOverlayOpen: (open) => set({ statisticsOverlayOpen: open }),
+			addWorktreeRequest: null,
+			requestAddWorktree: (workspaceId) =>
+				set({ addWorktreeRequest: workspaceId }),
+			clearAddWorktreeRequest: () => set({ addWorktreeRequest: null }),
 		}),
 		{
 			name: persistKey,

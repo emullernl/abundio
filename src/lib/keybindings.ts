@@ -6,6 +6,11 @@ type KeyAction =
 	| "navigate-down"
 	| "navigate-left"
 	| "navigate-right"
+	| "next-pane"
+	| "prev-pane"
+	| "next-workspace"
+	| "prev-workspace"
+	| "add-worktree"
 	| "command-palette"
 	| "open-file-search"
 	| "search-in-terminal"
@@ -78,6 +83,11 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"navigate-down",
 	"navigate-left",
 	"navigate-right",
+	"next-pane",
+	"prev-pane",
+	"next-workspace",
+	"prev-workspace",
+	"add-worktree",
 	"command-palette",
 	"open-file-search",
 	"search-in-workspace",
@@ -170,6 +180,68 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		ctrl: !isMac,
 		action: "navigate-right",
 	},
+	// Workspace cycle. macOS: Ctrl+Cmd+Down / Up — vertical, like the Left
+	// sidebar it walks. Not Cmd+Option: Monaco uses Cmd+Option+Up/Down to add a
+	// cursor, and these are workspace-global, so they would take it over.
+	// Monaco binds nothing to Ctrl+Cmd, and a Cmd chord never reaches the PTY.
+	// Windows/Linux: Ctrl+Shift+PageDown / PageUp — the tab cycle plus Shift.
+	// Not Ctrl+Alt+arrows, which GNOME takes for switching desktops (and
+	// Ctrl+Alt is AltGr on European layouts).
+	{
+		key: isMac ? "ArrowDown" : "PageDown",
+		meta: isMac,
+		shift: !isMac,
+		ctrl: true,
+		action: "next-workspace",
+	},
+	{
+		key: isMac ? "ArrowUp" : "PageUp",
+		meta: isMac,
+		shift: !isMac,
+		ctrl: true,
+		action: "prev-workspace",
+	},
+	// Pane cycle. macOS: Ctrl+Cmd+] / [ — not Cmd+Option, which is Monaco's
+	// fold / unfold (see the workspace cycle above). Matched by `code`, like
+	// every bracket binding. Windows/Linux:
+	// Ctrl+Tab / Ctrl+Shift+Tab, since Ctrl+Alt is AltGr on European layouts
+	// (and AltGr+bracket is how some of them type one). Terminals cannot tell
+	// Ctrl+Tab from Tab, so taking it costs the PTY nothing.
+	...(isMac
+		? [
+				{
+					key: "]",
+					code: "BracketRight",
+					meta: true,
+					shift: false,
+					ctrl: true,
+					action: "next-pane" as const,
+				},
+				{
+					key: "[",
+					code: "BracketLeft",
+					meta: true,
+					shift: false,
+					ctrl: true,
+					action: "prev-pane" as const,
+				},
+			]
+		: [
+				{
+					key: "Tab",
+					meta: false,
+					shift: false,
+					ctrl: true,
+					action: "next-pane" as const,
+				},
+				{
+					key: "Tab",
+					meta: false,
+					shift: true,
+					ctrl: true,
+					action: "prev-pane" as const,
+				},
+			]),
 	{
 		key: "k",
 		meta: isMac,
@@ -199,10 +271,61 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		action: "search-in-terminal",
 	},
 	{ key: "n", meta: isMac, shift: true, ctrl: !isMac, action: "new-workspace" },
+	// B for branch. Not Cmd+Option+N beside New workspace: its Windows/Linux
+	// twin would be Ctrl+Alt+N, which is AltGr+N (ń on Polish layouts).
+	{ key: "b", meta: isMac, shift: true, ctrl: !isMac, action: "add-worktree" },
 	{ key: "t", meta: isMac, shift: false, ctrl: !isMac, action: "new-tab" },
 	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
-	{ key: "]", meta: isMac, shift: true, ctrl: !isMac, action: "next-tab" },
-	{ key: "[", meta: isMac, shift: true, ctrl: !isMac, action: "prev-tab" },
+	// A note on the Windows/Linux chords below (tab, pane and workspace
+	// cycles): unlike the macOS Cmd chords — and unlike the Prompt action
+	// digits, which are chosen to be *invisible to the terminal* — these take
+	// keys the PTY can see. xterm.js sends Ctrl+PageDown / PageUp as
+	// `CSI 6;5~` / `CSI 5;5~` and Ctrl+Tab as a plain Tab, and programs such
+	// as Midnight Commander, micro and Vim bind them. Being workspace-global and
+	// captured first, they are withheld from every terminal. A deliberate
+	// trade: every chord that stays invisible to the PTY on these platforms is
+	// either taken by Monaco or is Ctrl+Alt, which is AltGr on European layouts.
+	// (Shift+PageUp, xterm's scrollback paging, is unaffected.)
+	// Tab cycle. macOS: Cmd+Shift+] / [, matched by position (`code`): with
+	// Shift held, `key` reports `}` / `{` on US layouts and something else again
+	// on others, so a `key: "]"` binding silently never fires.
+	// Windows/Linux: Ctrl+PageDown / PageUp — the GNOME Terminal, Konsole,
+	// VS Code and browser convention. Not Ctrl+Shift+] / [, which is Monaco's
+	// fold / unfold there (these are workspace-global, so they would take it
+	// over); Monaco scrolls with Alt+PageUp/Down on these platforms, leaving
+	// Ctrl free.
+	isMac
+		? {
+				key: "]",
+				code: "BracketRight",
+				meta: true,
+				shift: true,
+				ctrl: false,
+				action: "next-tab",
+			}
+		: {
+				key: "PageDown",
+				meta: false,
+				shift: false,
+				ctrl: true,
+				action: "next-tab",
+			},
+	isMac
+		? {
+				key: "[",
+				code: "BracketLeft",
+				meta: true,
+				shift: true,
+				ctrl: false,
+				action: "prev-tab",
+			}
+		: {
+				key: "PageUp",
+				meta: false,
+				shift: false,
+				ctrl: true,
+				action: "prev-tab",
+			},
 	{
 		key: "=",
 		meta: isMac,

@@ -497,3 +497,78 @@ body,
 		transform: scaleY(1);
 	}
 }
+
+/* ── Focus sweep ────────────────────────────────────────────────────────────
+   A comet that circles a Pane's border once when it becomes the Focused pane
+   (see `FocusSweep.tsx`). The rects span the whole overlay with a 4px stroke
+   centred on the edge, so the outer half is clipped and 2px shows inside.
+   A rect's outline starts at its top-left corner and runs clockwise, so a
+   dash offset going negative carries the comet clockwise from there. */
+.focus-sweep {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	z-index: 30;
+	overflow: hidden;
+	animation: focus-sweep-fade 480ms linear forwards;
+}
+.focus-sweep rect {
+	fill: none;
+	stroke: var(--accent);
+	stroke-width: 4;
+}
+.focus-sweep-ring {
+	opacity: 0;
+}
+.focus-sweep-tail {
+	opacity: 0.35;
+	stroke-dasharray: calc(var(--sweep-perimeter) * 0.22) var(--sweep-perimeter);
+	animation: focus-sweep-travel-tail 480ms cubic-bezier(0.5, 0, 0.2, 1) forwards;
+}
+.focus-sweep-head {
+	stroke-dasharray: calc(var(--sweep-perimeter) * 0.07) var(--sweep-perimeter);
+	filter: drop-shadow(0 0 3px var(--accent));
+	animation: focus-sweep-travel-head 480ms cubic-bezier(0.5, 0, 0.2, 1) forwards;
+}
+/* The head leads the tail: both travel one lap, the head offset so it sits at
+   the tail's leading end. */
+@keyframes focus-sweep-travel-tail {
+	from {
+		stroke-dashoffset: 0;
+	}
+	to {
+		stroke-dashoffset: calc(var(--sweep-perimeter) * -1);
+	}
+}
+@keyframes focus-sweep-travel-head {
+	from {
+		stroke-dashoffset: calc(var(--sweep-perimeter) * -0.15);
+	}
+	to {
+		stroke-dashoffset: calc(var(--sweep-perimeter) * -1.15);
+	}
+}
+@keyframes focus-sweep-fade {
+	0%,
+	70% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+/* Reduced motion: no travel — the whole border lights once and fades. */
+@media (prefers-reduced-motion: reduce) {
+	.focus-sweep-tail,
+	.focus-sweep-head {
+		display: none;
+	}
+	.focus-sweep-ring {
+		opacity: 0.8;
+	}
+	.focus-sweep {
+		animation-duration: 360ms;
+	}
+}

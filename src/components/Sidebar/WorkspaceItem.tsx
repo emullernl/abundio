@@ -124,6 +124,13 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 		}
 	}, [isRenaming, workspace.name]);
 
+	// Keep the Active workspace's row on screen — a Workspace cycle from the
+	// keyboard can land on a row scrolled out of view. `nearest` is a no-op for
+	// a row that is already visible, so clicks never jolt the list.
+	useEffect(() => {
+		if (isActive) rootRef.current?.scrollIntoView?.({ block: "nearest" });
+	}, [isActive]);
+
 	// Publish the rendered height so CollapsedStrip can match it exactly.
 	// Single-owner pattern — see `heightObserverOwner` at module scope.
 	//

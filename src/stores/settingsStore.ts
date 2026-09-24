@@ -57,6 +57,9 @@ interface SettingsState {
 	 *  Command palette still reaches them. A preference, which is why it lives
 	 *  here and the actions themselves do not (ADR-0039). */
 	showActionBar: boolean;
+	/** Whether a Pane plays the **Focus sweep** when it becomes the Focused
+	 *  pane. A look-and-feel preference, set in Settings ▸ Theme. */
+	focusSweep: boolean;
 	/** Whether the app checks for updates on launch + periodically. */
 	autoCheckUpdatesEnabled: boolean;
 	/** Update version the user chose to skip; suppresses its prompt until a
@@ -111,6 +114,7 @@ interface SettingsState {
 	setGpuAcceleration: (enabled: boolean) => void;
 	setBlockMouseReporting: (enabled: boolean) => void;
 	setSmartImageDrop: (enabled: boolean) => void;
+	setFocusSweep: (enabled: boolean) => void;
 	setShowActionBar: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
@@ -154,6 +158,7 @@ export const PERSISTED_KEYS = [
 	"blockMouseReporting",
 	"smartImageDrop",
 	"showActionBar",
+	"focusSweep",
 	"autoCheckUpdatesEnabled",
 	"skippedUpdateVersion",
 	"updateSnoozedUntil",
@@ -196,6 +201,7 @@ const PERSISTED_DEFAULTS: {
 	blockMouseReporting: boolean;
 	smartImageDrop: boolean;
 	showActionBar: boolean;
+	focusSweep: boolean;
 	autoCheckUpdatesEnabled: boolean;
 	skippedUpdateVersion: string | null;
 	updateSnoozedUntil: number | null;
@@ -226,6 +232,7 @@ const PERSISTED_DEFAULTS: {
 		blockMouseReporting: true,
 		smartImageDrop: true,
 		showActionBar: true,
+		focusSweep: true,
 		autoCheckUpdatesEnabled: true,
 		skippedUpdateVersion: null as string | null,
 		updateSnoozedUntil: null as number | null,
@@ -337,6 +344,8 @@ const PERSISTED_DEFAULTS: {
 				typeof s.showActionBar === "boolean"
 					? s.showActionBar
 					: defaults.showActionBar,
+			focusSweep:
+				typeof s.focusSweep === "boolean" ? s.focusSweep : defaults.focusSweep,
 			autoCheckUpdatesEnabled:
 				typeof s.autoCheckUpdatesEnabled === "boolean"
 					? s.autoCheckUpdatesEnabled
@@ -483,6 +492,7 @@ export const useSettingsStore = create<SettingsState>()(
 			blockMouseReporting: PERSISTED_DEFAULTS.blockMouseReporting,
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			showActionBar: PERSISTED_DEFAULTS.showActionBar,
+			focusSweep: PERSISTED_DEFAULTS.focusSweep,
 			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
 			skippedUpdateVersion: PERSISTED_DEFAULTS.skippedUpdateVersion,
 			updateSnoozedUntil: PERSISTED_DEFAULTS.updateSnoozedUntil,
@@ -634,6 +644,7 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			setSmartImageDrop: (smartImageDrop) => set({ smartImageDrop }),
 			setShowActionBar: (showActionBar) => set({ showActionBar }),
+			setFocusSweep: (focusSweep) => set({ focusSweep }),
 			setAutoCheckUpdatesEnabled: (autoCheckUpdatesEnabled) => {
 				// Rust holds the app-wide auto-check flag (the background loop
 				// reads it). Push the change immediately so any Window's toggle
@@ -668,7 +679,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 10,
+			version: 11,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -732,6 +743,12 @@ export const useSettingsStore = create<SettingsState>()(
 				// guarantees the key exists during the rehydrate window.
 				if (version < 10) {
 					state = { showActionBar: true, ...state };
+				}
+				// v11: the Focus sweep (default on). Additive default-true key;
+				// PERSISTED_DEFAULTS + merge already supply it, so this only
+				// guarantees the key exists during the rehydrate window.
+				if (version < 11) {
+					state = { focusSweep: true, ...state };
 				}
 				// v7: app-global PR poller (ADR-0019). Additive default keys;
 				// PERSISTED_DEFAULTS + merge already supply them — this only

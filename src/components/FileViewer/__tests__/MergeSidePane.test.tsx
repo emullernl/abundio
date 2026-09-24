@@ -2,11 +2,15 @@ import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { conflictFile, liveEditor, mountedCallbacks } = vi.hoisted(() => ({
-	conflictFile: vi.fn(),
-	liveEditor: { current: null as unknown },
-	mountedCallbacks: [] as (() => void)[],
-}));
+const { conflictFile, liveEditor, mountedCallbacks, editorActive } = vi.hoisted(
+	() => ({
+		conflictFile: vi.fn(),
+		liveEditor: { current: null as unknown },
+		mountedCallbacks: [] as (() => void)[],
+		/** The `isActive` the stub editor last rendered with. */
+		editorActive: { current: null as boolean | null },
+	}),
+);
 
 vi.mock("../../../lib/ipc", () => ({
 	git: { conflictFile },
@@ -15,7 +19,14 @@ vi.mock("../../../lib/ipc", () => ({
 
 // A stub editor: mounting is deferred, exactly as Monaco's CDN load defers it.
 vi.mock("../CodeEditor", () => ({
-	CodeEditor: ({ onEditorMounted }: { onEditorMounted?: () => void }) => {
+	CodeEditor: ({
+		onEditorMounted,
+		isActive,
+	}: {
+		onEditorMounted?: () => void;
+		isActive: boolean;
+	}) => {
+		editorActive.current = isActive;
 		useEffect(() => {
 			if (onEditorMounted) mountedCallbacks.push(onEditorMounted);
 		}, [onEditorMounted]);
@@ -99,7 +110,7 @@ describe("MergeSidePane", () => {
 		container.remove();
 	});
 
-	async function render() {
+	async function render(isFocused = false) {
 		await act(async () => {
 			root.render(
 				<MergeSidePane
@@ -107,6 +118,7 @@ describe("MergeSidePane", () => {
 					sourcePaneId="src"
 					side="current"
 					cwd="/repo"
+					isFocused={isFocused}
 					onFocus={vi.fn()}
 				/>,
 			);
@@ -149,6 +161,15 @@ describe("MergeSidePane", () => {
 		expect(classes).toContain("abundio-side-dim");
 	});
 
+	it("moves real focus into its editor only as the Focused pane", async () => {
+		// A Pane cycle can land here; without this the terminal it left kept
+		// DOM focus and took every keystroke.
+		await render(false);
+		expect(editorActive.current).toBe(false);
+		await render(true);
+		expect(editorActive.current).toBe(true);
+	});
+
 	it("shows the side's name", async () => {
 		await render();
 		expect(container.textContent).toContain("Current");
@@ -171,6 +192,7 @@ describe("MergeSidePane", () => {
 					sourcePaneId="src"
 					side="incoming"
 					cwd="/repo"
+					isFocused={false}
 					onFocus={vi.fn()}
 				/>,
 			);
@@ -233,6 +255,7 @@ describe("MergeSidePane action links", () => {
 					sourcePaneId="src"
 					side="current"
 					cwd="/repo"
+					isFocused={false}
 					onFocus={vi.fn()}
 				/>,
 			);

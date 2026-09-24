@@ -138,6 +138,24 @@ export function inheritSourceWorkspaceId(
 	return primary?.id ?? null;
 }
 
+/**
+ * The Workspace the **Add worktree** shortcut opens its dialog for, given the
+ * Active workspace: a main worktree targets itself; a Linked worktree targets
+ * its set's main worktree (you are working in that repository, so "add a
+ * worktree" means one more of it). `null` — do nothing — for a non-git
+ * Workspace, one whose git facts have not loaded, or a Linked worktree whose
+ * main worktree is not in the list (the sidebar offers no Add there either).
+ */
+export function addWorktreeTargetId(
+	workspaces: WorkspaceWithTabs[],
+	facts: Record<string, WorktreeGroupFacts | undefined>,
+	activeId: string | null,
+): string | null {
+	if (!activeId) return null;
+	if (facts[activeId]?.isMainWorktree) return activeId;
+	return inheritSourceWorkspaceId(workspaces, facts, activeId);
+}
+
 /** Distinct non-null group keys among the given workspaces (for watch registration). */
 export function distinctGroupKeys(
 	workspaces: WorkspaceWithTabs[],

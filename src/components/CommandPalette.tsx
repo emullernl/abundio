@@ -9,11 +9,13 @@ import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
+import { addWorktreeTargetId } from "../lib/worktreeGrouping";
 import { useProfileStore } from "../stores/profileStore";
 import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePromptActionStore } from "../stores/promptActionStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 interface PaletteItem {
@@ -49,6 +51,14 @@ export function CommandPalette({
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
 		useSettingsStore();
+	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	const addWorktreeTarget = useMemo(
+		() => addWorktreeTargetId(workspaces, worktreeFacts, activeWorkspaceId),
+		[workspaces, worktreeFacts, activeWorkspaceId],
+	);
+	const focusSweep = useSettingsStore((s) => s.focusSweep);
+	const setFocusSweep = useSettingsStore((s) => s.setFocusSweep);
 	const promptActionList = usePromptActionStore((s) => s.actions);
 	const { splitPane, closePane } = useSplitPane();
 
@@ -95,6 +105,32 @@ export function CommandPalette({
 			action: () => onRequestNewWorkspace(),
 		});
 
+		// Offered only when the shortcut would do something — the palette is
+		// where the "which Workspace can add a worktree" rule is discoverable.
+		if (addWorktreeTarget) {
+			result.push({
+				id: "action-add-worktree",
+				label: "Add Worktree…",
+				category: "Actions",
+				action: () => triggerAction("add-worktree"),
+			});
+		}
+
+		result.push(
+			{
+				id: "action-next-workspace",
+				label: "Next Opened Workspace",
+				category: "Actions",
+				action: () => triggerAction("next-workspace"),
+			},
+			{
+				id: "action-prev-workspace",
+				label: "Previous Opened Workspace",
+				category: "Actions",
+				action: () => triggerAction("prev-workspace"),
+			},
+		);
+
 		if (focusedPaneId) {
 			result.push(
 				{
@@ -110,6 +146,18 @@ export function CommandPalette({
 					action: () => splitPane(focusedPaneId, "horizontal"),
 				},
 				{
+					id: "action-next-pane",
+					label: "Focus Next Pane",
+					category: "Actions",
+					action: () => triggerAction("next-pane"),
+				},
+				{
+					id: "action-prev-pane",
+					label: "Focus Previous Pane",
+					category: "Actions",
+					action: () => triggerAction("prev-pane"),
+				},
+				{
 					id: "action-close-pane",
 					label: "Close Pane",
 					category: "Actions",
@@ -123,6 +171,13 @@ export function CommandPalette({
 			label: "Open Settings",
 			category: "Actions",
 			action: () => triggerAction("open-settings"),
+		});
+
+		result.push({
+			id: "action-toggle-focus-sweep",
+			label: focusSweep ? "Turn Off Focus Sweep" : "Turn On Focus Sweep",
+			category: "Actions",
+			action: () => setFocusSweep(!focusSweep),
 		});
 
 		result.push({
@@ -247,6 +302,9 @@ export function CommandPalette({
 		profilesList,
 		activeProfileId,
 		promptActionList,
+		focusSweep,
+		setFocusSweep,
+		addWorktreeTarget,
 	]);
 
 	const filtered = useMemo(() => {

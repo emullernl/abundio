@@ -704,9 +704,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	beginWorkspaceSwitch: (id) => {
-		if (id === get().activeWorkspaceId) return;
+		// Any new switch supersedes a slow-path switch still waiting on its
+		// frames — clearing `switchingWorkspaceId` makes that pending callback
+		// bail. Without this a Workspace cycle pressed within ~2 frames of a
+		// click was reverted by the click's switch landing afterwards.
+		if (id === get().activeWorkspaceId) {
+			if (get().switchingWorkspaceId !== null)
+				set({ switchingWorkspaceId: null });
+			return;
+		}
 		// Fast path: already mounted — switch instantly with no overlay.
 		if (id && usePtyActivityStore.getState().openedWorkspaceIds.has(id)) {
+			set({ switchingWorkspaceId: null });
 			get().setActiveWorkspace(id);
 			return;
 		}

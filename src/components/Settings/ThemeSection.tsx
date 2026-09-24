@@ -1,12 +1,14 @@
 import { useMemo } from "react";
 import { themeList } from "../../lib/themes";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { SectionLabel } from "./primitives";
+import { SectionLabel, ToggleRow } from "./primitives";
 import { ThemeCard } from "./ThemeCard";
 
 export function ThemeSection() {
 	const currentTheme = useSettingsStore((s) => s.theme);
 	const setTheme = useSettingsStore((s) => s.setTheme);
+	const focusSweep = useSettingsStore((s) => s.focusSweep);
+	const setFocusSweep = useSettingsStore((s) => s.setFocusSweep);
 
 	const darkThemes = useMemo(
 		() => themeList().filter((t) => t.variant === "dark"),
@@ -50,6 +52,15 @@ export function ThemeSection() {
 						/>
 					))}
 				</div>
+			</div>
+			<div>
+				<SectionLabel>Focus Sweep</SectionLabel>
+				<ToggleRow
+					checked={focusSweep}
+					onChange={setFocusSweep}
+					label="Sweep the border of a pane when it gains focus"
+					description="In a tab with more than one pane, a short accent-coloured arc runs once around the pane that gains focus, so you can see where focus landed. With reduced motion turned on in your system settings, the border lights up and fades instead."
+				/>
 			</div>
 		</div>
 	);
