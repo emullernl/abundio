@@ -42,6 +42,13 @@ import {
 } from "./lib/busyPty";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
+import {
+	cycleFleet,
+	fleetConsoleShowing,
+	navigateFleet,
+	targetPaneId,
+	workspaceViewOnly,
+} from "./lib/fleetFocus";
 import { installFocusSweep } from "./lib/focusSweep";
 import {
 	agentRegistry,
@@ -694,24 +701,30 @@ export function App() {
 	}, []);
 
 	useEffect(() => {
-		registerAction("split-horizontal", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
-			if (paneId) splitPaneWithPicker(paneId, "horizontal");
-		});
-		registerAction("split-vertical", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
-			if (paneId) splitPaneWithPicker(paneId, "vertical");
-		});
+		registerAction(
+			"split-horizontal",
+			workspaceViewOnly(() => {
+				const paneId = useWorkspaceStore.getState().focusedPaneId;
+				if (paneId) splitPaneWithPicker(paneId, "horizontal");
+			}),
+		);
+		registerAction(
+			"split-vertical",
+			workspaceViewOnly(() => {
+				const paneId = useWorkspaceStore.getState().focusedPaneId;
+				if (paneId) splitPaneWithPicker(paneId, "vertical");
+			}),
+		);
 		registerAction("close-pane", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			const paneId = targetPaneId();
 			if (paneId) closePane(paneId);
 		});
 		registerAction("copy", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			const paneId = targetPaneId();
 			if (paneId) copyTerminalSelection(paneId);
 		});
 		registerAction("paste", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			const paneId = targetPaneId();
 			if (paneId) void pasteIntoTerminal(paneId);
 		});
 		// Action bar position numbers. Resolved against the focused pane, because
@@ -719,14 +732,16 @@ export function App() {
 		for (let n = 1; n <= 9; n++) {
 			registerAction(
 				`prompt-action-${n}` as Parameters<typeof registerAction>[0],
-				() =>
-					firePaneSlot(useWorkspaceStore.getState().focusedPaneId, n, false),
+				() => firePaneSlot(targetPaneId(), n, false),
 			);
 		}
-		registerAction("navigate-up", () => navigatePane("up"));
-		registerAction("navigate-down", () => navigatePane("down"));
-		registerAction("navigate-left", () => navigatePane("left"));
-		registerAction("navigate-right", () => navigatePane("right"));
+		// In the Fleet Console, Directional move and Pane cycle walk the grid.
+		const move = (dir: "up" | "down" | "left" | "right") => () =>
+			fleetConsoleShowing() ? navigateFleet(dir) : navigatePane(dir);
+		registerAction("navigate-up", move("up"));
+		registerAction("navigate-down", move("down"));
+		registerAction("navigate-left", move("left"));
+		registerAction("navigate-right", move("right"));
 		// Workspace cycle: Opened workspaces only, in Left sidebar order.
 		const cycleWorkspace = (step: 1 | -1) => {
 			const ws = useWorkspaceStore.getState();
@@ -745,27 +760,43 @@ export function App() {
 			);
 			if (target) ws.beginWorkspaceSwitch(target);
 		};
-		registerAction("add-worktree", () => {
-			const ws = useWorkspaceStore.getState();
-			const target = addWorktreeTargetId(
-				ws.workspaces,
-				useWorkspaceGitStore.getState().worktreeFacts,
-				ws.activeWorkspaceId,
-			);
-			if (target) useWindowUiStore.getState().requestAddWorktree(target);
-		});
-		registerAction("next-workspace", () => cycleWorkspace(1));
-		registerAction("prev-workspace", () => cycleWorkspace(-1));
-		registerAction("next-pane", () => cycleFocusedPane(1));
-		registerAction("prev-pane", () => cycleFocusedPane(-1));
+		registerAction(
+			"add-worktree",
+			workspaceViewOnly(() => {
+				const ws = useWorkspaceStore.getState();
+				const target = addWorktreeTargetId(
+					ws.workspaces,
+					useWorkspaceGitStore.getState().worktreeFacts,
+					ws.activeWorkspaceId,
+				);
+				if (target) useWindowUiStore.getState().requestAddWorktree(target);
+			}),
+		);
+		registerAction(
+			"next-workspace",
+			workspaceViewOnly(() => cycleWorkspace(1)),
+		);
+		registerAction(
+			"prev-workspace",
+			workspaceViewOnly(() => cycleWorkspace(-1)),
+		);
+		registerAction("next-pane", () =>
+			fleetConsoleShowing() ? cycleFleet(1) : cycleFocusedPane(1),
+		);
+		registerAction("prev-pane", () =>
+			fleetConsoleShowing() ? cycleFleet(-1) : cycleFocusedPane(-1),
+		);
 		registerAction("command-palette", () => {
 			setFileSearchOpen(false);
 			setPaletteOpen((v) => !v);
 		});
-		registerAction("open-file-search", () => {
-			setPaletteOpen(false);
-			setFileSearchOpen((v) => !v);
-		});
+		registerAction(
+			"open-file-search",
+			workspaceViewOnly(() => {
+				setPaletteOpen(false);
+				setFileSearchOpen((v) => !v);
+			}),
+		);
 		registerAction("open-settings", () => {
 			setPaletteOpen(false);
 			// Settings is now a singleton OS window (ADR-0007). The Rust
@@ -774,37 +805,50 @@ export function App() {
 			invoke("open_settings_window").catch(() => {});
 		});
 		registerAction("search-in-terminal", () =>
-			useWorkspaceStore.getState().toggleSearch(),
+			useWorkspaceStore.getState().toggleSearch(targetPaneId()),
 		);
-		registerAction("new-tab", () => {
-			const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-			if (workspaceId) requestNewTab(workspaceId);
-		});
+		registerAction(
+			"new-tab",
+			workspaceViewOnly(() => {
+				const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+				if (workspaceId) requestNewTab(workspaceId);
+			}),
+		);
 		registerAction("new-workspace", () => {
 			requestNewWorkspace();
 		});
-		registerAction("close-tab", () => {
-			const tab = useWorkspaceStore.getState().getActiveTab();
-			if (tab) requestCloseTerminalTab(tab.id);
-		});
-		registerAction("next-tab", () => {
-			const state = useWorkspaceStore.getState();
-			const workspace = state.getActiveWorkspace();
-			if (!workspace || workspace.tabs.length <= 1) return;
-			const currentTabId = state.activeTabByWorkspace[workspace.id];
-			const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
-			const nextIdx = (idx + 1) % workspace.tabs.length;
-			state.setActiveTab(workspace.id, workspace.tabs[nextIdx].id);
-		});
-		registerAction("prev-tab", () => {
-			const state = useWorkspaceStore.getState();
-			const workspace = state.getActiveWorkspace();
-			if (!workspace || workspace.tabs.length <= 1) return;
-			const currentTabId = state.activeTabByWorkspace[workspace.id];
-			const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
-			const prevIdx = (idx - 1 + workspace.tabs.length) % workspace.tabs.length;
-			state.setActiveTab(workspace.id, workspace.tabs[prevIdx].id);
-		});
+		registerAction(
+			"close-tab",
+			workspaceViewOnly(() => {
+				const tab = useWorkspaceStore.getState().getActiveTab();
+				if (tab) requestCloseTerminalTab(tab.id);
+			}),
+		);
+		registerAction(
+			"next-tab",
+			workspaceViewOnly(() => {
+				const state = useWorkspaceStore.getState();
+				const workspace = state.getActiveWorkspace();
+				if (!workspace || workspace.tabs.length <= 1) return;
+				const currentTabId = state.activeTabByWorkspace[workspace.id];
+				const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
+				const nextIdx = (idx + 1) % workspace.tabs.length;
+				state.setActiveTab(workspace.id, workspace.tabs[nextIdx].id);
+			}),
+		);
+		registerAction(
+			"prev-tab",
+			workspaceViewOnly(() => {
+				const state = useWorkspaceStore.getState();
+				const workspace = state.getActiveWorkspace();
+				if (!workspace || workspace.tabs.length <= 1) return;
+				const currentTabId = state.activeTabByWorkspace[workspace.id];
+				const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
+				const prevIdx =
+					(idx - 1 + workspace.tabs.length) % workspace.tabs.length;
+				state.setActiveTab(workspace.id, workspace.tabs[prevIdx].id);
+			}),
+		);
 		registerAction("font-size-increase", () => {
 			const { fontSize, setFontSize } = useSettingsStore.getState();
 			const newSize = Math.min(fontSize + 1, 32);
@@ -817,37 +861,55 @@ export function App() {
 			setFontSize(newSize);
 			setAllTerminalsFontSize(newSize);
 		});
-		registerAction("save-file", () => {
-			const explorer = useExplorerStore.getState();
-			const focusedId = useWorkspaceStore.getState().focusedPaneId;
-			if (focusedId && explorer.filePanes[focusedId]) {
-				explorer.saveFile(focusedId);
-				return;
-			}
-			// Focus is outside a file pane (e.g. a terminal) — save every dirty
-			// file pane in the active tab so Cmd+S still works.
-			const layout = useWorkspaceStore.getState().getActiveLayout();
-			if (!layout) return;
-			for (const pid of collectFilePaneIds(layout)) {
-				if (explorer.filePanes[pid]?.isDirty) explorer.saveFile(pid);
-			}
-		});
-		registerAction("toggle-right-sidebar-git", () => {
-			useWindowUiStore.getState().toggleRightSidebarTab("git");
-		});
-		registerAction("toggle-right-sidebar-explorer", () => {
-			useWindowUiStore.getState().toggleRightSidebarTab("explorer");
-		});
-		registerAction("toggle-right-sidebar-notes", () => {
-			useWindowUiStore.getState().toggleRightSidebarTab("notes");
-		});
-		registerAction("toggle-markdown-preview", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
-			if (paneId) toggleMarkdownPreviewForPane(paneId);
-		});
-		registerAction("search-in-workspace", () => {
-			useWindowUiStore.getState().toggleRightSidebarTab("search");
-		});
+		registerAction(
+			"save-file",
+			workspaceViewOnly(() => {
+				const explorer = useExplorerStore.getState();
+				const focusedId = useWorkspaceStore.getState().focusedPaneId;
+				if (focusedId && explorer.filePanes[focusedId]) {
+					explorer.saveFile(focusedId);
+					return;
+				}
+				// Focus is outside a file pane (e.g. a terminal) — save every dirty
+				// file pane in the active tab so Cmd+S still works.
+				const layout = useWorkspaceStore.getState().getActiveLayout();
+				if (!layout) return;
+				for (const pid of collectFilePaneIds(layout)) {
+					if (explorer.filePanes[pid]?.isDirty) explorer.saveFile(pid);
+				}
+			}),
+		);
+		registerAction(
+			"toggle-right-sidebar-git",
+			workspaceViewOnly(() => {
+				useWindowUiStore.getState().toggleRightSidebarTab("git");
+			}),
+		);
+		registerAction(
+			"toggle-right-sidebar-explorer",
+			workspaceViewOnly(() => {
+				useWindowUiStore.getState().toggleRightSidebarTab("explorer");
+			}),
+		);
+		registerAction(
+			"toggle-right-sidebar-notes",
+			workspaceViewOnly(() => {
+				useWindowUiStore.getState().toggleRightSidebarTab("notes");
+			}),
+		);
+		registerAction(
+			"toggle-markdown-preview",
+			workspaceViewOnly(() => {
+				const paneId = useWorkspaceStore.getState().focusedPaneId;
+				if (paneId) toggleMarkdownPreviewForPane(paneId);
+			}),
+		);
+		registerAction(
+			"search-in-workspace",
+			workspaceViewOnly(() => {
+				useWindowUiStore.getState().toggleRightSidebarTab("search");
+			}),
+		);
 		registerAction("toggle-fleet-console", () => {
 			useWindowUiStore.getState().toggleFleetConsole();
 		});

@@ -528,7 +528,11 @@ export function TerminalSlot({
 			onClick: handlePaste,
 		},
 		{ separator: true },
-		{ label: "Find", shortcut: sc("⌘F", "Ctrl+F"), onClick: toggleSearch },
+		{
+			label: "Find",
+			shortcut: sc("⌘F", "Ctrl+F"),
+			onClick: () => toggleSearch(paneId),
+		},
 		{ label: "Clear Terminal", onClick: handleClear },
 		{ label: "Reset Terminal", onClick: handleReset },
 		{ separator: true },
@@ -714,7 +718,10 @@ export function TerminalSlot({
 				/>
 			)}
 			{searchOpen && searchAddon && (
-				<SearchBar searchAddon={searchAddon} onClose={toggleSearch} />
+				<SearchBar
+					searchAddon={searchAddon}
+					onClose={() => toggleSearch(paneId)}
+				/>
 			)}
 			{contextMenu && (
 				<PaneContextMenu

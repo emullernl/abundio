@@ -119,7 +119,8 @@ interface WorkspaceState {
 	updateLayoutLocal: (tabId: string, layout: PaneNode) => void;
 	persistLayout: (tabId: string) => Promise<void>;
 	setPtyStatus: (ptyId: string, status: PtyStatusType) => void;
-	toggleSearch: () => void;
+	/** Toggle the terminal find bar on `paneId`, or on the Focused pane. */
+	toggleSearch: (paneId?: string | null) => void;
 	setWorkspaceBaseBranch: (
 		workspaceId: string,
 		baseBranch: string | null,
@@ -1040,11 +1041,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			ptyStatuses: { ...state.ptyStatuses, [ptyId]: status },
 		})),
 
-	toggleSearch: () =>
-		set((state) => ({
-			searchPaneId:
-				state.searchPaneId === state.focusedPaneId ? null : state.focusedPaneId,
-		})),
+	toggleSearch: (paneId) =>
+		set((state) => {
+			const target = paneId ?? state.focusedPaneId;
+			return { searchPaneId: state.searchPaneId === target ? null : target };
+		}),
 
 	setWorkspaceBaseBranch: (workspaceId, baseBranch) =>
 		set((state) => ({

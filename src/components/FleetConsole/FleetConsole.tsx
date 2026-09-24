@@ -16,6 +16,7 @@ import {
 	gridShape,
 	normalizeRatios,
 } from "../../lib/fleetConsole";
+import { publishFleetGrid } from "../../lib/fleetFocus";
 import { getTerminal } from "../../lib/terminalManager";
 import {
 	buildWorkspaceRows,
@@ -157,6 +158,14 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 		const next = tiles[Math.min(lastIndexRef.current, tiles.length - 1)];
 		store.setFocusedTile(next.paneId);
 	}, [tiles, focusedTileId]);
+
+	// Keyboard moves walk the grid as drawn.
+	useEffect(() => {
+		publishFleetGrid(
+			tiles.map((t) => t.paneId),
+			columns,
+		);
+	}, [tiles, columns]);
 
 	// Scroll the focused tile into view (keyboard moves, notification clicks).
 	useEffect(() => {
