@@ -260,8 +260,9 @@ function Field({
 	const filled = isFilled(meta, value);
 
 	return (
-		/* Not a <label>: every control below except the plain input is a custom
-		   element, so there is nothing for htmlFor to point at. */
+		/* Not a <label>: the toggle, choice and attachment controls are custom
+		   elements with nothing for htmlFor to point at. Each control names
+		   itself with aria-label instead. */
 		<div className="flex flex-col gap-2">
 			<span className="flex items-baseline gap-2.5">
 				{/* The parameter's own name, in mono because it IS the {{token}} the
@@ -313,6 +314,7 @@ function Field({
 				/>
 			) : (
 				<GrowingTextField
+					name={name}
 					inputRef={inputRef}
 					numeric={meta.type === "number"}
 					value={String(value ?? "")}
@@ -344,16 +346,19 @@ const fieldStyle: React.CSSProperties = {
 };
 
 /**
- * One line by default; **Shift+Enter grows it** by inserting a newline. Enter submits the dialog. Mirrors what a chat input does, and what
- * the Agents on the other end do.
+ * One line by default; **Shift+Enter grows it** by inserting a newline. Enter
+ * submits the dialog. Mirrors what a chat input does, and what the Agents on
+ * the other end do.
  */
 function GrowingTextField({
+	name,
 	inputRef,
 	numeric,
 	value,
 	onChange,
 	onSubmit,
 }: {
+	name: string;
 	// biome-ignore lint/suspicious/noExplicitAny: shared across input/textarea
 	inputRef?: React.RefObject<any>;
 	numeric: boolean;
@@ -361,13 +366,14 @@ function GrowingTextField({
 	onChange: (v: string) => void;
 	onSubmit: () => void;
 }) {
-	const multiline = value.includes("\n");
-	const rows = Math.min(8, Math.max(1, value.split("\n").length));
-
 	function handleKeyDown(
 		e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
 	) {
 		if (e.key !== "Enter") return;
+		// An IME commits its candidate with Enter. That keydown carries
+		// isComposing (keyCode 229 on WebKit) and must not submit — it is the
+		// user finishing a word, not firing the action.
+		if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 		// Shift+Enter falls through to the textarea's own newline. A number
 		// field cannot hold one, so there it is simply swallowed.
 		if (e.shiftKey) {
@@ -383,6 +389,7 @@ function GrowingTextField({
 			<input
 				ref={inputRef}
 				type="number"
+				aria-label={name}
 				className="rounded-lg"
 				style={fieldStyle}
 				value={value}
@@ -398,10 +405,14 @@ function GrowingTextField({
 	// state reading like an input: a long line scrolls sideways, not down.
 	// `overflowX: hidden` hides the scrollbar that would otherwise appear:
 	// on Windows and Linux it is ~16px of real space and would cover the one
-	// row. The caret still scrolls the text.
+	// row. The caret still scrolls the text. On blur the one-row state goes
+	// back to the start, as an <input> does; a textarea would keep the tail.
+	const multiline = value.includes("\n");
+	const rows = Math.min(8, Math.max(1, value.split("\n").length));
 	return (
 		<textarea
 			ref={inputRef}
+			aria-label={name}
 			className="rounded-lg"
 			style={multiline ? fieldStyle : { ...fieldStyle, overflowX: "hidden" }}
 			rows={rows}
@@ -409,6 +420,9 @@ function GrowingTextField({
 			value={value}
 			onChange={(e) => onChange(e.target.value)}
 			onKeyDown={handleKeyDown}
+			onBlur={(e) => {
+				if (!multiline) e.currentTarget.scrollLeft = 0;
+			}}
 		/>
 	);
 }
