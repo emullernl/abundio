@@ -19,7 +19,7 @@ import {
 } from "../../lib/fleetConsole";
 import { publishFleetGrid, stepTileZoom } from "../../lib/fleetFocus";
 import { waitForSmoothFrames } from "../../lib/focusSweep";
-import { getTerminal } from "../../lib/terminalManager";
+import { getTerminal, repaintTerminal } from "../../lib/terminalManager";
 import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
@@ -324,7 +324,17 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	useEffect(
 		() => () => {
 			const id = useWorkspaceStore.getState().focusedPaneId;
-			if (id) getTerminal(id)?.term.focus();
+			if (!id) return;
+			getTerminal(id)?.term.focus();
+			// And redraw it, as gaining focus would have: the pane was just
+			// handed back, refitted, re-zoomed and given its WebGL context again,
+			// and output that arrived meanwhile can sit in the buffer undrawn.
+			// Two frames, so the hand-back's own fit has landed first. On a WebGL
+			// pane this redraws every WebGL terminal (the glyph atlas is shared),
+			// which is exactly the visible Tab.
+			requestAnimationFrame(() =>
+				requestAnimationFrame(() => repaintTerminal(id)),
+			);
 		},
 		[],
 	);
