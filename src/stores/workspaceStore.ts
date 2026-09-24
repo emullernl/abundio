@@ -60,6 +60,7 @@ interface WorkspaceState {
 		entry: WorktreeEntry,
 		setupCommands: string,
 		agent?: CodingAgent,
+		opts?: { background?: boolean },
 	) => Promise<WorkspaceWithTabs>;
 	/** Create the worktree on disk (worktrees.add) then create + activate its
 	 *  Workspace — one awaitable op so the sidebar can show a single waiting
@@ -70,6 +71,9 @@ interface WorkspaceState {
 		absolutePath: string,
 		setupCommands: string,
 		agent?: CodingAgent,
+		/** `background`: open the new Workspace without making it Active — the
+		 *  Fleet Console starts Agents without rearranging the Workspace view. */
+		opts?: { background?: boolean },
 	) => Promise<WorkspaceWithTabs>;
 	/** Add a discovered worktree as an unopened Workspace (no PTY, no agent),
 	 *  deduped by folder. Used by sibling expansion and live reconcile. */
@@ -98,6 +102,10 @@ interface WorkspaceState {
 		workspaceId: string,
 		agent?: CodingAgent,
 		seedLayout?: PaneNode,
+		/** `activate: false` appends the Tab without making it the Workspace's
+		 *  active Tab or moving focus — the Fleet Console's New agent, which must
+		 *  not rearrange the Workspace view (ADR-0040). Defaults to true. */
+		opts?: { activate?: boolean },
 	) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
@@ -455,12 +463,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		absolutePath,
 		setupCommands,
 		agent,
+		opts,
 	) => {
 		// Disk-level git worktree add (slow on large repos), then the in-app
 		// Workspace.
 		const entry = await worktreesApi.add(primaryCwd, branch, absolutePath);
 		try {
-			return await get().addWorktreeWorkspace(entry, setupCommands, agent);
+			return await get().addWorktreeWorkspace(
+				entry,
+				setupCommands,
+				agent,
+				opts,
+			);
 		} catch (e) {
 			// The worktree exists on disk but registering its Workspace failed
 			// (rare — local DB insert). Best-effort rollback so the user isn't left
@@ -473,7 +487,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 	},
 
-	addWorktreeWorkspace: async (entry, setupCommands, agent) => {
+	addWorktreeWorkspace: async (entry, setupCommands, agent, opts) => {
+		const background = opts?.background ?? false;
 		// The watcher commonly races this in during the slow `git worktree add`:
 		// it fires `worktrees-changed`, and addDiscoveredWorktree creates a bare,
 		// unopened Workspace for the new folder before we get here. That entry has
@@ -491,7 +506,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			if (!alreadyOpen && (agent || setupCommands)) {
 				seedFocalPane(existing, { setupCommands, agent });
 			}
-			get().beginWorkspaceSwitch(existing.id);
+			if (background) {
+				usePtyActivityStore.getState().markWorkspaceOpened(existing.id);
+			} else {
+				get().beginWorkspaceSwitch(existing.id);
+			}
 			return existing;
 		}
 		const profileId = fallbackProfileId();
@@ -507,11 +526,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		});
 		set((state) => ({
 			workspaces: [...state.workspaces, ws],
-			activeWorkspaceId: ws.id,
+			activeWorkspaceId: background ? state.activeWorkspaceId : ws.id,
 			activeTabByWorkspace: firstTabId
 				? { ...state.activeTabByWorkspace, [ws.id]: firstTabId }
 				: state.activeTabByWorkspace,
-			focusedPaneId: firstPaneId ?? state.focusedPaneId,
+			focusedPaneId: background
+				? state.focusedPaneId
+				: (firstPaneId ?? state.focusedPaneId),
 		}));
 		useWorkspaceGitStore
 			.getState()
@@ -764,7 +785,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	// ── Tab actions ──
 
-	createTab: async (workspaceId, agent, seedLayout) => {
+	createTab: async (workspaceId, agent, seedLayout, opts) => {
+		const activate = opts?.activate ?? true;
 		const workspace = get().workspaces.find((s) => s.id === workspaceId);
 		const nextNum = (workspace?.tabs.length ?? 0) + 1;
 
@@ -806,6 +828,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				tabsApi.update(tab.id, { layoutJson: stampedJson }).catch(() => {});
 				initialFocus = terminalFocus;
 			}
+		}
+
+		if (!activate) {
+			set((state) => ({
+				workspaces: state.workspaces.map((s) =>
+					s.id === workspaceId ? { ...s, tabs: [...s.tabs, tab] } : s,
+				),
+				// A Workspace with no active Tab yet (never opened) still needs one,
+				// or it renders nothing when it is later switched to.
+				activeTabByWorkspace: state.activeTabByWorkspace[workspaceId]
+					? state.activeTabByWorkspace
+					: { ...state.activeTabByWorkspace, [workspaceId]: tab.id },
+			}));
+			return tab;
 		}
 
 		set((state) => ({
@@ -857,7 +893,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					...state.activeTabByWorkspace,
 					[workspace.id]: newTab.id,
 				},
-				focusedPaneId: null,
+				// Only the Workspace on screen owns focus: a Fleet tile can close a
+				// background Workspace's last pane (ADR-0040).
+				focusedPaneId:
+					state.activeWorkspaceId === workspace.id ? null : state.focusedPaneId,
 			}));
 			return;
 		}

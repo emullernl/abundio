@@ -6,6 +6,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DragPanePreview } from "./components/DragPanePreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
+import { FleetConsole } from "./components/FleetConsole/FleetConsole";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
@@ -111,6 +112,13 @@ import { useWorkspaceStore } from "./stores/workspaceStore";
 // renders a single-row strip of this exact height; all other layout (sidebar,
 // OverviewBar, content) butts up against it with no gap.
 const TITLEBAR_HEIGHT = isMac ? 28 : 0;
+
+/** A sidebar hidden by the Fleet Console: zero width and clipped, but still
+ *  mounted (see the note where it is used). */
+const HIDDEN_SIDEBAR_STYLE: React.CSSProperties = {
+	width: 0,
+	overflow: "hidden",
+};
 
 /** Workspace-switch overlay. */
 const SwitchingOverlay = memo(function SwitchingOverlay() {
@@ -389,6 +397,7 @@ export function App() {
 	);
 	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	const fleetConsoleOpen = useWindowUiStore((s) => s.fleetConsoleOpen);
 
 	// Lazy-mount tabs. Active tab mounts immediately; others mount after workspace
 	// switch has painted so the new workspace feels instant.
@@ -868,10 +877,18 @@ export function App() {
 			{!workspacesInitialized && <AppLoader />}
 			<Titlebar />
 			<div className="flex flex-1 min-h-0">
-				<Sidebar
-					titlebarHeight={TITLEBAR_HEIGHT}
-					onRequestNewWorkspace={requestNewWorkspace}
-				/>
+				{/* The Fleet Console hides both sidebars. They stay mounted — the
+				    Left sidebar owns the Add worktree dialog the console hands off
+				    to, and its fixed-position dialogs escape this clip. */}
+				<div
+					className="flex shrink-0"
+					style={fleetConsoleOpen ? HIDDEN_SIDEBAR_STYLE : undefined}
+				>
+					<Sidebar
+						titlebarHeight={TITLEBAR_HEIGHT}
+						onRequestNewWorkspace={requestNewWorkspace}
+					/>
+				</div>
 				<div
 					className="flex-1 min-w-0 flex flex-col relative"
 					style={{ paddingTop: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT }}
@@ -992,11 +1009,17 @@ export function App() {
 					    alive behind it via the portal registry) when open; renders null
 					    otherwise. Sits below the Overview bar's z-40 so its toggle stays
 					    clickable, above the workspace stack. See ADR-0018. */}
+					<FleetConsole topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT} />
 					<StatisticsOverlay
 						topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT}
 					/>
 				</div>
-				<RightSidebar titlebarHeight={TITLEBAR_HEIGHT} />
+				<div
+					className="flex shrink-0"
+					style={fleetConsoleOpen ? HIDDEN_SIDEBAR_STYLE : undefined}
+				>
+					<RightSidebar titlebarHeight={TITLEBAR_HEIGHT} />
+				</div>
 			</div>
 			<StatusBar />
 			<CommandPalette

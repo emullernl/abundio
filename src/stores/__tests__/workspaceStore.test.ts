@@ -418,6 +418,36 @@ describe("workspaceStore", () => {
 			await useWorkspaceStore.getState().createTab("workspace-1");
 			expect(useWorkspaceStore.getState().focusedPaneId).toBe("new-pane-1");
 		});
+
+		// The Fleet Console's New agent must not rearrange the Workspace view
+		// (ADR-0040).
+		it("with activate: false leaves the active Tab and focus alone", async () => {
+			const { tabs } = await import("../../lib/ipc");
+			const layout: PaneNode = {
+				type: "terminal",
+				id: "new-pane-2",
+				ptyId: "",
+			};
+			vi.mocked(tabs.create).mockResolvedValueOnce(
+				makeTab({ id: "tab-bg", layoutJson: JSON.stringify(layout) }),
+			);
+			useWorkspaceStore.setState({
+				workspaces: [makeWorkspace()],
+				activeWorkspaceId: "workspace-1",
+				activeTabByWorkspace: { "workspace-1": "tab-1" },
+				focusedPaneId: "pane-1",
+			});
+
+			const tab = await useWorkspaceStore
+				.getState()
+				.createTab("workspace-1", undefined, undefined, { activate: false });
+
+			const s = useWorkspaceStore.getState();
+			expect(tab.id).toBe("tab-bg");
+			expect(s.activeTabByWorkspace["workspace-1"]).toBe("tab-1");
+			expect(s.focusedPaneId).toBe("pane-1");
+			expect(s.workspaces[0].tabs.map((t) => t.id)).toContain("tab-bg");
+		});
 	});
 
 	describe("setFocusedPane", () => {

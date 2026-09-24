@@ -11,6 +11,27 @@ import { currentWindowLabel } from "../lib/appWindow";
  *  See ADR-0007 (per-Window state) and ADR-0010 (right sidebar as
  *  in-workspace toolbox). */
 
+/** The Fleet Console's grid: a preset of columns × *visible* rows (the row
+ *  count sets tile height; more agents add rows and the grid scrolls), plus
+ *  the divider positions. `null` ratios mean equal sizes. */
+export interface FleetGrid {
+	preset: "auto" | { columns: number; rows: number };
+	colRatios: number[] | null;
+	rowRatios: number[] | null;
+}
+
+const DEFAULT_FLEET_GRID: FleetGrid = {
+	preset: "auto",
+	colRatios: null,
+	rowRatios: null,
+};
+
+export interface AddWorktreeRequest {
+	workspaceId: string;
+	agentId?: string;
+	background?: boolean;
+}
+
 export type RightSidebarTab = "git" | "explorer" | "search" | "notes";
 
 interface WindowUiState {
@@ -62,11 +83,35 @@ interface WindowUiState {
 	fleetConsoleOpen: boolean;
 	toggleFleetConsole: () => void;
 	setFleetConsoleOpen: (open: boolean) => void;
-	/** A pending request, from the keyboard shortcut, to open the Add worktree
-	 *  dialog for this main-worktree Workspace. The Left sidebar owns the
-	 *  dialog, so it takes the request and clears it. Not persisted. */
-	addWorktreeRequest: string | null;
-	requestAddWorktree: (workspaceId: string) => void;
+	/** The **Focused tile**: the console's own focus, separate from the
+	 *  Workspace view's `focusedPaneId` so moving around the grid never
+	 *  rearranges the view behind it. Not persisted. */
+	focusedTileId: string | null;
+	setFocusedTile: (paneId: string | null) => void;
+	/** A pane the console has just started an Agent in. It becomes the Focused
+	 *  tile now, and the console keeps it focused while its PTY is still on its
+	 *  way into agent mode rather than reassigning focus to a neighbour. */
+	pendingTile: { paneId: string; at: number } | null;
+	expectFleetTile: (paneId: string) => void;
+	/** Remembered per Window: two monitors want different grids. */
+	fleetGrid: FleetGrid;
+	/** Choosing a preset resets the dividers to equal sizes. */
+	setFleetPreset: (preset: FleetGrid["preset"]) => void;
+	setFleetRatios: (
+		colRatios: number[] | null,
+		rowRatios: number[] | null,
+	) => void;
+	/** A pending request, from the keyboard shortcut or the Fleet Console's
+	 *  New agent, to open the Add worktree dialog for this main-worktree
+	 *  Workspace. The Left sidebar owns the dialog (it stays mounted while the
+	 *  console hides it), so it takes the request and clears it. `agentId`
+	 *  pre-selects the Agent; `background` opens the new Workspace without
+	 *  making it Active. Not persisted. */
+	addWorktreeRequest: AddWorktreeRequest | null;
+	requestAddWorktree: (
+		workspaceId: string,
+		opts?: { agentId?: string; background?: boolean },
+	) => void;
 	clearAddWorktreeRequest: () => void;
 }
 
@@ -133,6 +178,19 @@ export const useWindowUiStore = create<WindowUiState>()(
 					set({ fleetConsoleOpen: !s.fleetConsoleOpen });
 				}
 			},
+			focusedTileId: null,
+			setFocusedTile: (paneId) => set({ focusedTileId: paneId }),
+			pendingTile: null,
+			expectFleetTile: (paneId) =>
+				set({
+					focusedTileId: paneId,
+					pendingTile: { paneId, at: Date.now() },
+				}),
+			fleetGrid: DEFAULT_FLEET_GRID,
+			setFleetPreset: (preset) =>
+				set({ fleetGrid: { preset, colRatios: null, rowRatios: null } }),
+			setFleetRatios: (colRatios, rowRatios) =>
+				set((s) => ({ fleetGrid: { ...s.fleetGrid, colRatios, rowRatios } })),
 			setFleetConsoleOpen: (open) =>
 				set(
 					open
@@ -140,8 +198,8 @@ export const useWindowUiStore = create<WindowUiState>()(
 						: { fleetConsoleOpen: false },
 				),
 			addWorktreeRequest: null,
-			requestAddWorktree: (workspaceId) =>
-				set({ addWorktreeRequest: workspaceId }),
+			requestAddWorktree: (workspaceId, opts) =>
+				set({ addWorktreeRequest: { workspaceId, ...opts } }),
 			clearAddWorktreeRequest: () => set({ addWorktreeRequest: null }),
 		}),
 		{
@@ -169,6 +227,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				commitsSectionCollapsed: s.commitsSectionCollapsed,
 				statisticsOverlayOpen: s.statisticsOverlayOpen,
 				foldedSetKeys: s.foldedSetKeys,
+				fleetGrid: s.fleetGrid,
 			}),
 		},
 	),

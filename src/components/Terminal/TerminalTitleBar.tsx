@@ -1,4 +1,5 @@
 import {
+	ArrowUpRight,
 	MoreHorizontal,
 	Mouse,
 	MouseOff,
@@ -24,9 +25,22 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
 import { Terminal } from "../Icons";
 
+/** What a slot needs to know when it is a **Fleet tile** — the pane borrowed
+ *  into the Fleet Console (ADR-0040). */
+export interface FleetSlotInfo {
+	workspaceName: string;
+	branch: string | null;
+	tabName: string;
+	/** Leave the console for this pane's place in the Workspace view. */
+	onSwitchTo: () => void;
+}
+
 interface Props {
 	paneId: string;
 	agentId?: string;
+	/** Draw the Fleet tile's bar: where the pane lives instead of split
+	 *  controls, no pane drag, double-click to Switch to. */
+	fleet?: FleetSlotInfo;
 	onSplitDown: () => void;
 	onSplitRight: () => void;
 	onClose: () => void;
@@ -163,6 +177,7 @@ function basename(path: string): string {
 
 export function TerminalTitleBar({
 	paneId,
+	fleet,
 	onSplitDown,
 	onSplitRight,
 	onClose,
@@ -202,6 +217,22 @@ export function TerminalTitleBar({
 	const showAgentIcon = !!effectiveAgentId;
 
 	const { handleMouseDown } = usePaneDrag(paneId);
+
+	if (fleet) {
+		return (
+			<FleetTitleBar
+				paneId={paneId}
+				fleet={fleet}
+				title={title}
+				agentIcon={
+					AgentIcon ? <AgentIcon size={14} /> : <FallbackAgentIcon size={13} />
+				}
+				dotStatus={dotStatus}
+				onClose={onClose}
+				onOpenMenu={onOpenMenu}
+			/>
+		);
+	}
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: drag handle for pane repositioning
@@ -267,6 +298,114 @@ export function TerminalTitleBar({
 				icon={SquareSplitHorizontal}
 				onClick={onSplitRight}
 				label="Split Right"
+			/>
+			<TitleBarButton icon={X} onClick={onClose} label="Close Pane" />
+		</div>
+	);
+}
+
+/** The Fleet tile's bar. It answers "which agent, where, doing what" at a
+ *  glance: the status icon leads, then the Workspace in full weight with its
+ *  branch (which is what tells a Worktree set's members apart), then the Tab.
+ *  The running title moves to the tooltip — a tile is narrow. */
+function FleetTitleBar({
+	paneId,
+	fleet,
+	title,
+	agentIcon,
+	dotStatus,
+	onClose,
+	onOpenMenu,
+}: {
+	paneId: string;
+	fleet: FleetSlotInfo;
+	title: string;
+	agentIcon: React.ReactNode;
+	dotStatus: DotStatus;
+	onClose: () => void;
+	onOpenMenu: (anchor: { x: number; y: number }) => void;
+}) {
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: double-click is a shortcut for the Switch to button beside it
+		<div
+			className="flex items-center shrink-0 select-none"
+			title={title}
+			onDoubleClick={fleet.onSwitchTo}
+			style={{
+				height: 26,
+				padding: "0 4px 0 8px",
+				gap: 7,
+				background: "color-mix(in srgb, var(--bg-secondary) 55%, transparent)",
+				borderBottom:
+					"1px solid color-mix(in srgb, var(--border) 60%, transparent)",
+			}}
+		>
+			<span className="shrink-0 flex items-center">
+				<AgentStatusIcon status={dotStatus} size={12} />
+			</span>
+			<span
+				className="shrink-0 flex items-center"
+				style={{ color: "var(--fg-secondary)", opacity: 0.8 }}
+			>
+				{agentIcon}
+			</span>
+			<span
+				className="flex items-baseline min-w-0 flex-1"
+				style={{ gap: 6, fontFamily: "var(--font-mono)", lineHeight: "26px" }}
+			>
+				<span
+					className="truncate"
+					style={{
+						fontSize: 11.5,
+						fontWeight: 600,
+						color: "var(--fg-primary)",
+						flexShrink: 1,
+						minWidth: 24,
+					}}
+				>
+					{fleet.workspaceName}
+				</span>
+				{fleet.branch && (
+					<span
+						className="truncate"
+						style={{
+							fontSize: 11,
+							color: "var(--accent)",
+							opacity: 0.85,
+							flexShrink: 2,
+							minWidth: 0,
+						}}
+					>
+						{fleet.branch}
+					</span>
+				)}
+				<span
+					className="truncate"
+					style={{
+						fontSize: 10.5,
+						color: "var(--fg-secondary)",
+						opacity: 0.6,
+						flexShrink: 3,
+						minWidth: 0,
+					}}
+				>
+					{fleet.tabName}
+				</span>
+			</span>
+			<MouseBadge paneId={paneId} />
+			<TitleBarButton
+				icon={ArrowUpRight}
+				onClick={fleet.onSwitchTo}
+				label="Switch to this agent in its workspace"
+			/>
+			<TitleBarButton
+				icon={MoreHorizontal}
+				onClick={(e) => {
+					const r = e.currentTarget.getBoundingClientRect();
+					onOpenMenu({ x: r.left, y: r.bottom + 2 });
+				}}
+				label="Pane Menu"
+				menuAnchor
 			/>
 			<TitleBarButton icon={X} onClick={onClose} label="Close Pane" />
 		</div>

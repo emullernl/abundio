@@ -3,7 +3,7 @@ import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { appWindow } from "./appWindow";
 import { isDemoMode } from "./demo";
-import { containsPane, parseTabLayout } from "./paneTree";
+import { findPaneLocation, revealPane } from "./paneLocation";
 
 interface PtyExtra {
 	type: "pty";
@@ -19,24 +19,7 @@ interface PrExtra {
 
 type NotificationExtra = PtyExtra | PrExtra;
 
-/**
- * Search all workspaces/tabs to find which workspace and tab contain a given pane.
- */
-export function findPaneLocation(
-	paneId: string,
-): { workspaceId: string; tabId: string } | null {
-	const { workspaces } = useWorkspaceStore.getState();
-
-	for (const workspace of workspaces) {
-		for (const tab of workspace.tabs) {
-			const layout = parseTabLayout(tab.layoutJson);
-			if (layout && containsPane(layout, paneId)) {
-				return { workspaceId: workspace.id, tabId: tab.id };
-			}
-		}
-	}
-	return null;
-}
+export { findPaneLocation } from "./paneLocation";
 
 /**
  * True when a pane is on screen — i.e. it lives in the active tab of the
@@ -75,11 +58,7 @@ export function handleNotificationClick(
 		);
 		if (!workspace) return;
 
-		wsStore.beginWorkspaceSwitch(workspaceId);
-		wsStore.setActiveTab(workspaceId, tabId);
-		if (paneId) {
-			wsStore.setFocusedPane(paneId);
-		}
+		revealPane(paneId ?? null, workspaceId, tabId);
 	} else if (extra.type === "pr") {
 		const { workspaceId } = extra;
 		if (!workspaceId) return;
