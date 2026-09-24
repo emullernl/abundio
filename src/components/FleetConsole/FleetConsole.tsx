@@ -1,3 +1,4 @@
+import { AnimatePresence, motion } from "framer-motion";
 import { Plus, ZoomIn, ZoomOut } from "lucide-react";
 import {
 	useCallback,
@@ -17,6 +18,7 @@ import {
 	normalizeRatios,
 } from "../../lib/fleetConsole";
 import { publishFleetGrid, stepTileZoom } from "../../lib/fleetFocus";
+import { waitForSmoothFrames } from "../../lib/focusSweep";
 import { getTerminal } from "../../lib/terminalManager";
 import {
 	buildWorkspaceRows,
@@ -103,6 +105,29 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	const setFilmstripRatio = useWindowUiStore((s) => s.setFilmstripRatio);
 	const spotlightTileId = useWindowUiStore((s) => s.spotlightTileId);
 	const [newAgentOpen, setNewAgentOpen] = useState(false);
+
+	// ── Opening: paint first, then mount. ──
+	// Mounting every tile moves each terminal in, refits it, resizes its PTY,
+	// applies the zoom and swaps its renderer — enough work that, done in the
+	// click's own frame, nothing appears until all of it is finished. So the
+	// Console paints its toolbar and a loader first ("shell"), mounts the tiles
+	// two frames later ("mounting"), and drops the loader once frames are
+	// flowing smoothly again ("ready") — the same wait the Focus sweep uses.
+	const [phase, setPhase] = useState<"shell" | "mounting" | "ready">("shell");
+	useEffect(() => {
+		let second = 0;
+		const first = requestAnimationFrame(() => {
+			second = requestAnimationFrame(() => setPhase("mounting"));
+		});
+		return () => {
+			cancelAnimationFrame(first);
+			cancelAnimationFrame(second);
+		};
+	}, []);
+	useEffect(() => {
+		if (phase !== "mounting") return;
+		return waitForSmoothFrames(() => setPhase("ready"));
+	}, [phase]);
 	// **Spotlight** is on only while its agent is still a tile.
 	const spotlight = tiles.some((t) => t.paneId === spotlightTileId)
 		? spotlightTileId
@@ -406,7 +431,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					className="flex-1 min-h-0 relative"
 					style={{ overflowY: "auto", overflowX: "hidden", padding: 0 }}
 				>
-					{size.height > 0 && (
+					{size.height > 0 && phase !== "shell" && (
 						<div
 							ref={gridRef}
 							className="relative"
@@ -498,6 +523,11 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 						</div>
 					)}
 				</div>
+				<AnimatePresence>
+					{phase !== "ready" && (
+						<ConsoleLoader key="loader" agents={tiles.length} />
+					)}
+				</AnimatePresence>
 			</div>
 			{newAgentOpen && (
 				<NewAgentDialog onClose={() => setNewAgentOpen(false)} />
@@ -700,5 +730,52 @@ function ZoomButton({
 		>
 			<Icon size={13} />
 		</button>
+	);
+}
+
+/** Covers the grid while the Console mounts its tiles, so opening it answers
+ *  the click at once. The same bar wave a terminal shows while it starts. */
+function ConsoleLoader({ agents }: { agents: number }) {
+	return (
+		<motion.div
+			className="absolute inset-0 z-20 flex items-center justify-center select-none"
+			initial={{ opacity: 1 }}
+			exit={{ opacity: 0 }}
+			transition={{ duration: 0.18, ease: "easeOut" }}
+			style={{ background: "var(--ambient-glow-top), var(--bg-primary)" }}
+			aria-live="polite"
+		>
+			<div className="flex flex-col items-center" style={{ gap: 12 }}>
+				<div className="flex" style={{ gap: 3 }}>
+					{[0, 1, 2, 3, 4].map((i) => (
+						<div
+							key={i}
+							style={{
+								width: 3,
+								height: 16,
+								borderRadius: 1,
+								backgroundColor: "var(--accent)",
+								opacity: 0.15,
+								animation: `terminal-bar-wave 1.2s ease-in-out ${i * 0.12}s infinite`,
+							}}
+						/>
+					))}
+				</div>
+				<span
+					style={{
+						fontFamily: "var(--font-mono)",
+						fontSize: 10.5,
+						letterSpacing: "0.12em",
+						textTransform: "uppercase",
+						color: "var(--fg-secondary)",
+						opacity: 0.6,
+					}}
+				>
+					{agents === 0
+						? "Gathering the fleet"
+						: `Gathering ${agents} agent${agents === 1 ? "" : "s"}`}
+				</span>
+			</div>
+		</motion.div>
 	);
 }
