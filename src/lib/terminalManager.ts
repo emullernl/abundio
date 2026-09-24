@@ -842,8 +842,11 @@ function effectiveFontSize(paneId: string, base: number): number {
 function applyFontSize(managed: ManagedTerminal, size: number): void {
 	publishPaneFontSize(managed.paneId, size);
 	if (managed.term.options.fontSize === size) return;
+	// No glyph-cache clear: a new size is a new atlas configuration, which
+	// xterm acquires by itself. Clearing here would empty the atlas this pane
+	// still *shares* with every other terminal at its old size (see
+	// `clearGlyphCaches`), leaving them drawing backgrounds with no text.
 	managed.term.options.fontSize = size;
-	managed.webglAddon?.clearTextureAtlas();
 	managed.fitAddon.fit();
 	if (managed.ptyId) {
 		pty
@@ -1823,8 +1826,30 @@ export function applyDerivedThemeOptions(
 export function repaintTerminal(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed?.ready) return;
-	managed.webglAddon?.clearTextureAtlas();
-	managed.term.refresh(0, managed.term.rows - 1);
+	if (managed.webglAddon) {
+		clearGlyphCaches();
+	} else {
+		// DOM renderer: nothing cached to drop, a full refresh redraws it.
+		managed.term.refresh(0, managed.term.rows - 1);
+	}
+}
+
+/**
+ * Drop WebGL's cached glyphs and redraw **every** WebGL terminal.
+ *
+ * xterm's WebGL renderer shares one glyph atlas among all terminals whose font,
+ * size, colours and pixel ratio match (`acquireTextureAtlas`). Clearing it
+ * through one terminal empties it for all of them, but only that one knows to
+ * redraw — the rest keep a model saying their glyphs are already on the GPU
+ * and draw cell backgrounds with no text. `clearTextureAtlas` on each terminal
+ * both clears the atlas and resets that terminal's model, so every one
+ * rebuilds on its next frame. There is no public way to ask which terminals
+ * share an atlas, so all of them are cleared.
+ */
+function clearGlyphCaches(): void {
+	for (const managed of instances.values()) {
+		managed.webglAddon?.clearTextureAtlas();
+	}
 }
 
 /** Update theme on all terminal instances */
