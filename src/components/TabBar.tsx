@@ -203,10 +203,6 @@ function TabItem({
 				/>
 			)}
 
-			{/* Status first, then the tab's icon: the status is what the eye
-			    scans a row of tabs for, so it leads, as in the pane title bars. */}
-			{statusDot}
-
 			{icon && (
 				<span
 					style={{
@@ -247,6 +243,9 @@ function TabItem({
 			) : (
 				<span className="truncate select-none">{tab.name}</span>
 			)}
+
+			{/* Status at the end of the tab, just before its close button. */}
+			{statusDot}
 
 			{/* Close button / dirty indicator */}
 			{dirty && !hovered ? (
