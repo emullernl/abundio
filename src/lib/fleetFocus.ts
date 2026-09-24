@@ -1,4 +1,8 @@
-import { useWindowUiStore } from "../stores/windowUiStore";
+import {
+	TILE_ZOOM_DEFAULT,
+	TILE_ZOOM_STEP,
+	useWindowUiStore,
+} from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { cycleTile, type GridDirection, gridNeighbour } from "./fleetConsole";
 
@@ -55,9 +59,27 @@ export function isShownAsFleetTile(paneId: string): boolean {
 	return fleetConsoleShowing() && drawn.paneIds.includes(paneId);
 }
 
-/** **Directional move** in the grid. No wrap. */
+/** **Directional move** in the grid. No wrap. In **Spotlight** it walks the
+ *  Filmstrip: up and down along it, left to the spotlighted tile, right from
+ *  the spotlighted tile back into the Filmstrip. */
 export function navigateFleet(dir: GridDirection): void {
 	const store = useWindowUiStore.getState();
+	const spot = store.spotlightTileId;
+	if (spot && drawn.paneIds.includes(spot)) {
+		const film = drawn.paneIds.filter((id) => id !== spot);
+		const at = film.indexOf(store.focusedTileId ?? "");
+		if (at < 0) {
+			// On the spotlight (or nowhere): only "right" leaves it.
+			if (dir === "right" && film[0]) store.setFocusedTile(film[0]);
+			return;
+		}
+		if (dir === "left") store.setFocusedTile(spot);
+		else if (dir === "up" && at > 0) store.setFocusedTile(film[at - 1]);
+		else if (dir === "down" && at < film.length - 1) {
+			store.setFocusedTile(film[at + 1]);
+		}
+		return;
+	}
 	const i = drawn.paneIds.indexOf(store.focusedTileId ?? "");
 	if (i < 0) {
 		if (drawn.paneIds[0]) store.setFocusedTile(drawn.paneIds[0]);
@@ -67,13 +89,46 @@ export function navigateFleet(dir: GridDirection): void {
 	if (next !== null) store.setFocusedTile(drawn.paneIds[next]);
 }
 
-/** **Pane cycle** in the grid: reading order, wrapping. */
+/** **Pane cycle** in the grid: reading order, wrapping. In **Spotlight** it
+ *  moves the spotlight itself to the next or previous agent. */
 export function cycleFleet(step: 1 | -1): void {
 	const store = useWindowUiStore.getState();
+	const spot = store.spotlightTileId;
+	if (spot && drawn.paneIds.includes(spot)) {
+		const next = cycleTile(
+			drawn.paneIds.map((paneId) => ({ paneId })),
+			spot,
+			step,
+		);
+		if (next) {
+			store.setSpotlight(next);
+			store.setFocusedTile(next);
+		}
+		return;
+	}
 	const next = cycleTile(
 		drawn.paneIds.map((paneId) => ({ paneId })),
 		store.focusedTileId,
 		step,
 	);
 	if (next) store.setFocusedTile(next);
+}
+
+/** Spotlight the **Focused tile**, or end Spotlight if it is the spotlighted
+ *  one. Cmd+Shift+Enter / Ctrl+Shift+Enter. */
+export function toggleFleetSpotlight(): void {
+	const store = useWindowUiStore.getState();
+	const focused = store.focusedTileId;
+	if (!focused) return;
+	store.setSpotlight(store.spotlightTileId === focused ? null : focused);
+}
+
+/** Step the **Tile zoom** by one slider step, or reset it with `0`. */
+export function stepTileZoom(direction: 1 | -1 | 0): void {
+	const store = useWindowUiStore.getState();
+	store.setTileZoom(
+		direction === 0
+			? TILE_ZOOM_DEFAULT
+			: store.fleetGrid.zoom + direction * TILE_ZOOM_STEP,
+	);
 }

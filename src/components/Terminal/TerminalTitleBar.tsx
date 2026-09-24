@@ -1,5 +1,7 @@
 import {
 	ArrowUpRight,
+	Maximize2,
+	Minimize2,
 	MoreHorizontal,
 	Mouse,
 	MouseOff,
@@ -33,6 +35,10 @@ export interface FleetSlotInfo {
 	tabName: string;
 	/** Leave the console for this pane's place in the Workspace view. */
 	onSwitchTo: () => void;
+	/** Whether this tile is the one in **Spotlight**. */
+	spotlighted: boolean;
+	/** Spotlight this tile, or end Spotlight if it already is. */
+	onToggleSpotlight: () => void;
 }
 
 interface Props {
@@ -307,7 +313,8 @@ export function TerminalTitleBar({
 /** The Fleet tile's bar. It answers "which agent, where, doing what" at a
  *  glance: the status icon leads, then the Workspace in full weight with its
  *  branch (which is what tells a Worktree set's members apart), then the Tab.
- *  The running title moves to the tooltip — a tile is narrow. */
+ *  The running title moves to the tooltip — a tile is narrow. Double-click
+ *  toggles **Spotlight**; **Switch to** keeps its own button. */
 function FleetTitleBar({
 	paneId,
 	fleet,
@@ -330,7 +337,7 @@ function FleetTitleBar({
 		<div
 			className="flex items-center shrink-0 select-none"
 			title={title}
-			onDoubleClick={fleet.onSwitchTo}
+			onDoubleClick={fleet.onToggleSpotlight}
 			style={{
 				height: 26,
 				padding: "0 4px 0 8px",
@@ -394,6 +401,15 @@ function FleetTitleBar({
 				</span>
 			</span>
 			<MouseBadge paneId={paneId} />
+			<TitleBarButton
+				icon={fleet.spotlighted ? Minimize2 : Maximize2}
+				onClick={fleet.onToggleSpotlight}
+				label={
+					fleet.spotlighted
+						? "Back to the grid (Cmd/Ctrl+Shift+Enter)"
+						: "Spotlight this agent (Cmd/Ctrl+Shift+Enter)"
+				}
+			/>
 			<TitleBarButton
 				icon={ArrowUpRight}
 				onClick={fleet.onSwitchTo}

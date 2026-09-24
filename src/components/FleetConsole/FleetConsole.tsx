@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Plus, ZoomIn } from "lucide-react";
 import {
 	useCallback,
 	useEffect,
@@ -23,7 +23,13 @@ import {
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useWindowUiStore } from "../../stores/windowUiStore";
+import {
+	TILE_ZOOM_DEFAULT,
+	TILE_ZOOM_MAX,
+	TILE_ZOOM_MIN,
+	TILE_ZOOM_STEP,
+	useWindowUiStore,
+} from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FleetTile } from "./FleetTile";
@@ -93,7 +99,14 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	const grid = useWindowUiStore((s) => s.fleetGrid);
 	const setFleetPreset = useWindowUiStore((s) => s.setFleetPreset);
 	const setFleetRatios = useWindowUiStore((s) => s.setFleetRatios);
+	const setTileZoom = useWindowUiStore((s) => s.setTileZoom);
+	const setFilmstripRatio = useWindowUiStore((s) => s.setFilmstripRatio);
+	const spotlightTileId = useWindowUiStore((s) => s.spotlightTileId);
 	const [newAgentOpen, setNewAgentOpen] = useState(false);
+	// **Spotlight** is on only while its agent is still a tile.
+	const spotlight = tiles.some((t) => t.paneId === spotlightTileId)
+		? spotlightTileId
+		: null;
 
 	// ── Measure the scroll area: Auto and the row heights depend on it. ──
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -181,6 +194,13 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 		return () => clearTimeout(timer);
 	}, [pendingTile, pendingIsAgent]);
 
+	// The spotlighted agent left the fleet: back to the grid.
+	useEffect(() => {
+		if (spotlightTileId && !spotlight) {
+			useWindowUiStore.getState().setSpotlight(null);
+		}
+	}, [spotlightTileId, spotlight]);
+
 	// Keyboard moves walk the grid as drawn.
 	useEffect(() => {
 		publishFleetGrid(
@@ -247,6 +267,40 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 		[size.width, size.height, colRatios, rowRatios, setFleetRatios],
 	);
 
+	// ── Spotlight layout: the spotlighted tile on the left, spanning the
+	// visible height, and the Filmstrip in one scrolling column beside it. The
+	// same grid element as the grid layout, so no terminal remounts on a switch.
+	const [dragFilm, setDragFilm] = useState<number | null>(null);
+	const filmRatio = dragFilm ?? grid.filmstripRatio;
+	const filmRows = Math.max(3, tiles.length); // others + the New agent tile
+	const startFilmDrag = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			const start = e.clientX;
+			const base = grid.filmstripRatio;
+			if (size.width <= 0) return;
+			let latest = base;
+			const onMove = (ev: MouseEvent) => {
+				latest = Math.min(
+					0.5,
+					Math.max(0.12, base - (ev.clientX - start) / size.width),
+				);
+				setDragFilm(latest);
+			};
+			const onUp = () => {
+				document.removeEventListener("mousemove", onMove);
+				document.removeEventListener("mouseup", onUp);
+				document.body.style.cursor = "";
+				setFilmstripRatio(latest);
+				setDragFilm(null);
+			};
+			document.body.style.cursor = "col-resize";
+			document.addEventListener("mousemove", onMove);
+			document.addEventListener("mouseup", onUp);
+		},
+		[grid.filmstripRatio, size.width, setFilmstripRatio],
+	);
+
 	// Positional cells and dividers: their identity *is* their position.
 	const colEdges = cumulative(colRatios)
 		.slice(0, -1)
@@ -308,6 +362,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					className="flex items-center"
 					style={{ marginLeft: "auto", gap: 8 }}
 				>
+					<ZoomSlider zoom={grid.zoom} onChange={setTileZoom} />
 					<GridPicker
 						preset={grid.preset}
 						autoShape={autoShape}
@@ -334,71 +389,115 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					</button>
 				</div>
 			</div>
-			<div
-				ref={scrollRef}
-				className="flex-1 min-h-0 relative"
-				style={{ overflowY: "auto", overflowX: "hidden", padding: 0 }}
-			>
-				{size.height > 0 && (
-					<div
-						ref={gridRef}
-						className="relative"
+			<div className="flex-1 min-h-0 relative flex flex-col">
+				{/* The Filmstrip divider sits outside the scrolling grid, so it stays
+			    beside the pinned spotlight while the Filmstrip scrolls. */}
+				{spotlight && (
+					<Divider
+						axis="col"
 						style={{
-							display: "grid",
-							gridTemplateColumns: colRatios.map((r) => `${r}fr`).join(" "),
-							gridTemplateRows: rowHeights.map((h) => `${h}px`).join(" "),
+							left: `calc(${(1 - filmRatio) * 100}% - ${DIVIDER_HIT / 2}px)`,
 						}}
-					>
-						{tiles.map((t, i) => {
-							const ws = wsById.get(t.workspaceId);
-							return (
-								<FleetTile
-									key={t.paneId}
-									paneId={t.paneId}
-									ptyId={t.ptyId}
-									workspaceName={ws?.name ?? ""}
-									branch={
-										gitById[t.workspaceId]?.currentBranch ??
-										ws?.lastBranch ??
-										null
-									}
-									tabName={t.tabName}
-									isFocused={t.paneId === focusedTileId}
-									index={i}
-								/>
-							);
-						})}
-						{freeCellIds.map((id) =>
-							id === "new-agent" ? (
+						onMouseDown={startFilmDrag}
+					/>
+				)}
+				<div
+					ref={scrollRef}
+					className="flex-1 min-h-0 relative"
+					style={{ overflowY: "auto", overflowX: "hidden", padding: 0 }}
+				>
+					{size.height > 0 && (
+						<div
+							ref={gridRef}
+							className="relative"
+							style={{
+								display: "grid",
+								...(spotlight
+									? {
+											gridTemplateColumns: `${1 - filmRatio}fr ${filmRatio}fr`,
+											gridTemplateRows: `repeat(${filmRows}, ${size.height / 3}px)`,
+										}
+									: {
+											gridTemplateColumns: colRatios
+												.map((r) => `${r}fr`)
+												.join(" "),
+											gridTemplateRows: rowHeights
+												.map((h) => `${h}px`)
+												.join(" "),
+										}),
+							}}
+						>
+							{tiles.map((t, i) => {
+								const ws = wsById.get(t.workspaceId);
+								return (
+									<FleetTile
+										key={t.paneId}
+										paneId={t.paneId}
+										ptyId={t.ptyId}
+										workspaceName={ws?.name ?? ""}
+										branch={
+											gitById[t.workspaceId]?.currentBranch ??
+											ws?.lastBranch ??
+											null
+										}
+										tabName={t.tabName}
+										isFocused={t.paneId === focusedTileId}
+										index={i}
+										placement={
+											!spotlight
+												? "grid"
+												: t.paneId === spotlight
+													? "spotlight"
+													: "filmstrip"
+										}
+										// The spotlighted agent reads like the Workspace view.
+										fontScale={t.paneId === spotlight ? 1 : grid.zoom}
+									/>
+								);
+							})}
+							{spotlight ? (
 								<NewAgentCell
-									key={id}
-									empty={tiles.length === 0}
+									key="new-agent"
+									empty={false}
+									inFilmstrip
 									onClick={() => setNewAgentOpen(true)}
 								/>
 							) : (
-								<EmptyCell key={id} />
-							),
-						)}
-						{colEdges.map((edge) => (
-							<Divider
-								key={edge.id}
-								axis="col"
-								style={{
-									left: `calc(${edge.at * 100}% - ${DIVIDER_HIT / 2}px)`,
-								}}
-								onMouseDown={(e) => startDrag("col", edge.index, e)}
-							/>
-						))}
-						{rowEdges.map((edge) => (
-							<Divider
-								key={edge.id}
-								axis="row"
-								style={{ top: edge.at - DIVIDER_HIT / 2 }}
-								onMouseDown={(e) => startDrag("row", edge.index, e)}
-							/>
-						))}
-					</div>
-				)}
+								freeCellIds.map((id) =>
+									id === "new-agent" ? (
+										<NewAgentCell
+											key={id}
+											empty={tiles.length === 0}
+											onClick={() => setNewAgentOpen(true)}
+										/>
+									) : (
+										<EmptyCell key={id} />
+									),
+								)
+							)}
+							{!spotlight &&
+								colEdges.map((edge) => (
+									<Divider
+										key={edge.id}
+										axis="col"
+										style={{
+											left: `calc(${edge.at * 100}% - ${DIVIDER_HIT / 2}px)`,
+										}}
+										onMouseDown={(e) => startDrag("col", edge.index, e)}
+									/>
+								))}
+							{!spotlight &&
+								rowEdges.map((edge) => (
+									<Divider
+										key={edge.id}
+										axis="row"
+										style={{ top: edge.at - DIVIDER_HIT / 2 }}
+										onMouseDown={(e) => startDrag("row", edge.index, e)}
+									/>
+								))}
+						</div>
+					)}
+				</div>
 			</div>
 			{newAgentOpen && (
 				<NewAgentDialog onClose={() => setNewAgentOpen(false)} />
@@ -442,13 +541,23 @@ function Divider({
 
 function NewAgentCell({
 	empty,
+	inFilmstrip,
 	onClick,
 }: {
 	empty: boolean;
+	/** At the end of the Filmstrip rather than in a grid cell. */
+	inFilmstrip?: boolean;
 	onClick: () => void;
 }) {
 	return (
-		<div style={{ padding: 3, minWidth: 0, minHeight: 0 }}>
+		<div
+			style={{
+				padding: 3,
+				minWidth: 0,
+				minHeight: 0,
+				...(inFilmstrip ? { gridColumn: 2 } : {}),
+			}}
+		>
 			<button
 				type="button"
 				onClick={onClick}
@@ -501,5 +610,46 @@ function EmptyCell() {
 				}}
 			/>
 		</div>
+	);
+}
+
+/** The **Tile zoom** slider: 50–100% in 5% steps. Double-click resets. */
+function ZoomSlider({
+	zoom,
+	onChange,
+}: {
+	zoom: number;
+	onChange: (zoom: number) => void;
+}) {
+	return (
+		<label
+			className="flex items-center select-none"
+			title="Tile zoom — text size in the tiles (Cmd/Ctrl + / −, Cmd/Ctrl+0 resets). Double-click to reset."
+			style={{ gap: 7, color: "var(--fg-secondary)" }}
+			onDoubleClick={() => onChange(TILE_ZOOM_DEFAULT)}
+		>
+			<ZoomIn size={12} />
+			<input
+				type="range"
+				aria-label="Tile zoom"
+				min={TILE_ZOOM_MIN}
+				max={TILE_ZOOM_MAX}
+				step={TILE_ZOOM_STEP}
+				value={zoom}
+				onChange={(e) => onChange(Number(e.target.value))}
+				className="fleet-zoom"
+				style={{ width: 92 }}
+			/>
+			<span
+				style={{
+					fontFamily: "var(--font-mono)",
+					fontSize: 11,
+					minWidth: 32,
+					textAlign: "right",
+				}}
+			>
+				{Math.round(zoom * 100)}%
+			</span>
+		</label>
 	);
 }

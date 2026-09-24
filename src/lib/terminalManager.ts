@@ -822,6 +822,48 @@ export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
 }
 
+// ── Per-pane font scale (Fleet Console Tile zoom, ADR-0040) ──
+//
+// A pane borrowed into the Fleet Console draws at the global font size times
+// its tile's zoom; everything else draws at the global size. The global size is
+// remembered here so a scale can be applied and removed without asking the
+// settings store (which must never be imported from this module's side of the
+// bridge — see terminalSettingsBridge).
+const paneFontScale = new Map<string, number>();
+let baseFontSize: number | null = null;
+
+function effectiveFontSize(paneId: string, base: number): number {
+	const scale = paneFontScale.get(paneId) ?? 1;
+	// Whole and half pixels only: fractional sizes blur the glyph atlas.
+	return Math.max(6, Math.round(base * scale * 2) / 2);
+}
+
+function applyFontSize(managed: ManagedTerminal, size: number): void {
+	if (managed.term.options.fontSize === size) return;
+	managed.term.options.fontSize = size;
+	managed.webglAddon?.clearTextureAtlas();
+	managed.fitAddon.fit();
+	if (managed.ptyId) {
+		pty
+			.resize(managed.ptyId, managed.term.cols, managed.term.rows)
+			.catch(() => {});
+	}
+}
+
+/**
+ * Draw one pane at `scale` × the global font size, or back at the global size
+ * with `null`. The terminal refits and its PTY is resized, so the program
+ * reflows to the new rows and columns.
+ */
+export function setPaneFontScale(paneId: string, scale: number | null): void {
+	if (scale === null || scale === 1) paneFontScale.delete(paneId);
+	else paneFontScale.set(paneId, scale);
+	const managed = instances.get(paneId);
+	if (!managed) return;
+	const base = baseFontSize ?? managed.term.options.fontSize ?? 14;
+	applyFontSize(managed, effectiveFontSize(paneId, base));
+}
+
 export async function createTerminal(
 	paneId: string,
 	initialPtyId: string,
@@ -855,8 +897,9 @@ export async function createTerminal(
 		}
 	}
 
+	baseFontSize = options.fontSize;
 	const term = new Terminal({
-		fontSize: options.fontSize,
+		fontSize: effectiveFontSize(paneId, options.fontSize),
 		fontFamily: options.fontFamily,
 		scrollback: options.scrollback,
 		cursorBlink: false,
@@ -1780,15 +1823,10 @@ export function setAllTerminalsTheme(theme: ITheme): void {
 
 /** Update font size on all terminal instances and refit */
 export function setAllTerminalsFontSize(fontSize: number): void {
+	baseFontSize = fontSize;
 	for (const managed of instances.values()) {
-		managed.term.options.fontSize = fontSize;
-		managed.webglAddon?.clearTextureAtlas();
-		managed.fitAddon.fit();
-		if (managed.ptyId) {
-			pty
-				.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-				.catch(() => {});
-		}
+		// A borrowed Fleet tile keeps its zoom: it scales the new size.
+		applyFontSize(managed, effectiveFontSize(managed.paneId, fontSize));
 	}
 }
 

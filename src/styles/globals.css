@@ -635,6 +635,42 @@ body,
 	background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
+/* Tile zoom slider: a hairline track and a small accent thumb. */
+.fleet-zoom {
+	appearance: none;
+	-webkit-appearance: none;
+	height: 16px;
+	background: transparent;
+	cursor: pointer;
+}
+.fleet-zoom::-webkit-slider-runnable-track {
+	height: 2px;
+	border-radius: 1px;
+	background: color-mix(in srgb, var(--fg-secondary) 35%, transparent);
+}
+.fleet-zoom::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	width: 11px;
+	height: 11px;
+	margin-top: -4.5px;
+	border-radius: 999px;
+	background: var(--accent);
+	border: 2px solid var(--bg-primary);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.fleet-zoom::-moz-range-track {
+	height: 2px;
+	border-radius: 1px;
+	background: color-mix(in srgb, var(--fg-secondary) 35%, transparent);
+}
+.fleet-zoom::-moz-range-thumb {
+	width: 9px;
+	height: 9px;
+	border-radius: 999px;
+	background: var(--accent);
+	border: 2px solid var(--bg-primary);
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.fleet-tile-enter {
 		animation: none;

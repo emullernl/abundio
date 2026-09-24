@@ -1,6 +1,6 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import { switchToPane } from "../../lib/paneLocation";
-import { getTerminal } from "../../lib/terminalManager";
+import { getTerminal, setPaneFontScale } from "../../lib/terminalManager";
 import { requestPaneClose } from "../../stores/paneCloseConfirmStore";
 import {
 	computePtyDotStatus,
@@ -16,6 +16,10 @@ import { TerminalSlot } from "../Terminal/TerminalSlot";
  *  earns an OS notification. */
 const ATTENTION: ReadonlySet<DotStatus> = new Set(["red", "skyblue", "purple"]);
 
+/** Where the tile sits: in the grid, in the Spotlight slot, or in the
+ *  Filmstrip beside it. */
+export type TilePlacement = "grid" | "spotlight" | "filmstrip";
+
 interface Props {
 	paneId: string;
 	ptyId: string;
@@ -26,6 +30,9 @@ interface Props {
 	isFocused: boolean;
 	/** Position in the grid, for the staggered entrance. */
 	index: number;
+	placement: TilePlacement;
+	/** Font scale: the **Tile zoom**, or 1 in the Spotlight slot. */
+	fontScale: number;
 }
 
 /**
@@ -41,12 +48,21 @@ export const FleetTile = memo(function FleetTile({
 	tabName,
 	isFocused,
 	index,
+	placement,
+	fontScale,
 }: Props) {
 	const status = usePtyActivityStore((s) =>
 		computePtyDotStatus(getTerminal(paneId)?.ptyId || ptyId, s.activities),
 	);
 	const color = DOT_STATUS_COLOR[status];
 	const attention = ATTENTION.has(status);
+
+	// Draw at the zoom while borrowed; hand the pane back at its normal size.
+	// Two effects, so a zoom change is one reflow rather than reset-then-set.
+	useEffect(() => {
+		setPaneFontScale(paneId, fontScale);
+	}, [paneId, fontScale]);
+	useEffect(() => () => setPaneFontScale(paneId, null), [paneId]);
 
 	const onFocus = useCallback(
 		() => useWindowUiStore.getState().setFocusedTile(paneId),
@@ -56,25 +72,45 @@ export const FleetTile = memo(function FleetTile({
 		() => requestPaneClose(paneId, `${workspaceName} · ${tabName}`),
 		[paneId, workspaceName, tabName],
 	);
+	const spotlighted = placement === "spotlight";
 	const fleet = useMemo(
 		() => ({
 			workspaceName,
 			branch,
 			tabName,
 			onSwitchTo: () => switchToPane(paneId),
+			spotlighted,
+			onToggleSpotlight: () => {
+				const ui = useWindowUiStore.getState();
+				ui.setSpotlight(spotlighted ? null : paneId);
+				ui.setFocusedTile(paneId);
+			},
 		}),
-		[workspaceName, branch, tabName, paneId],
+		[workspaceName, branch, tabName, paneId, spotlighted],
 	);
 
 	return (
 		<div
 			data-fleet-tile={paneId}
+			data-placement={placement}
 			className="fleet-tile-enter"
 			style={{
 				padding: 3,
 				minWidth: 0,
 				minHeight: 0,
 				animationDelay: `${Math.min(index, 12) * 28}ms`,
+				...(spotlighted
+					? {
+							gridColumn: 1,
+							gridRow: "1 / span 3",
+							// Stays put while the Filmstrip beside it scrolls.
+							position: "sticky",
+							top: 0,
+							height: "100%",
+						}
+					: placement === "filmstrip"
+						? { gridColumn: 2 }
+						: {}),
 			}}
 		>
 			<div

@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSplitPane } from "../hooks/useSplitPane";
 import { isAgentPane } from "../lib/firePromptAction";
-import { useTargetPaneId } from "../lib/fleetFocus";
+import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { triggerAction } from "../lib/keybindings";
@@ -53,6 +53,7 @@ export function CommandPalette({
 	const inFleet = useWindowUiStore(
 		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
 	);
+	const spotlightTileId = useWindowUiStore((s) => s.spotlightTileId);
 	const profilesList = useProfileStore((s) => s.profiles);
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
@@ -206,6 +207,15 @@ export function CommandPalette({
 					category: "Actions",
 					action: () => closePane(focusedPaneId),
 				},
+				{
+					id: "action-fleet-spotlight",
+					label:
+						spotlightTileId === focusedPaneId
+							? "Back to the Grid"
+							: "Spotlight This Agent",
+					category: "Actions",
+					action: () => toggleFleetSpotlight(),
+				},
 			);
 		}
 
@@ -335,6 +345,7 @@ export function CommandPalette({
 		workspaces,
 		focusedPaneId,
 		inFleet,
+		spotlightTileId,
 		beginWorkspaceSwitch,
 		onRequestNewWorkspace,
 		splitPane,

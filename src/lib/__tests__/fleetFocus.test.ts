@@ -5,7 +5,9 @@ import {
 	cycleFleet,
 	navigateFleet,
 	publishFleetGrid,
+	stepTileZoom,
 	targetPaneId,
+	toggleFleetSpotlight,
 	workspaceViewOnly,
 } from "../fleetFocus";
 
@@ -16,6 +18,7 @@ describe("fleetFocus", () => {
 			fleetConsoleOpen: false,
 			statisticsOverlayOpen: false,
 			focusedTileId: null,
+			spotlightTileId: null,
 		});
 		useWorkspaceStore.setState({ focusedPaneId: "ws-pane" });
 	});
@@ -72,5 +75,69 @@ describe("fleetFocus", () => {
 		useWindowUiStore.setState({ fleetConsoleOpen: true, focusedTileId: null });
 		navigateFleet("left");
 		expect(useWindowUiStore.getState().focusedTileId).toBe("a");
+	});
+});
+
+// Spotlight and Tile zoom — see the Spotlight and Tile zoom entries in CONTEXT.md.
+describe("fleetFocus — Spotlight", () => {
+	beforeEach(() => {
+		// a b c d, spotlight on b
+		publishFleetGrid(["a", "b", "c", "d"], 2);
+		useWindowUiStore.setState({
+			fleetConsoleOpen: true,
+			statisticsOverlayOpen: false,
+			spotlightTileId: "b",
+			focusedTileId: "b",
+		});
+	});
+
+	it("Pane cycle moves the spotlight and the focus with it", () => {
+		cycleFleet(1);
+		expect(useWindowUiStore.getState().spotlightTileId).toBe("c");
+		expect(useWindowUiStore.getState().focusedTileId).toBe("c");
+		cycleFleet(-1);
+		cycleFleet(-1);
+		expect(useWindowUiStore.getState().spotlightTileId).toBe("a");
+	});
+
+	it("Directional move walks the Filmstrip and back", () => {
+		navigateFleet("right");
+		expect(useWindowUiStore.getState().focusedTileId).toBe("a");
+		navigateFleet("down");
+		expect(useWindowUiStore.getState().focusedTileId).toBe("c");
+		navigateFleet("down");
+		navigateFleet("down");
+		expect(useWindowUiStore.getState().focusedTileId).toBe("d");
+		navigateFleet("left");
+		expect(useWindowUiStore.getState().focusedTileId).toBe("b");
+		expect(useWindowUiStore.getState().spotlightTileId).toBe("b");
+	});
+
+	it("the toggle spotlights the Focused tile, and ends Spotlight on it", () => {
+		toggleFleetSpotlight();
+		expect(useWindowUiStore.getState().spotlightTileId).toBeNull();
+		useWindowUiStore.setState({ focusedTileId: "d" });
+		toggleFleetSpotlight();
+		expect(useWindowUiStore.getState().spotlightTileId).toBe("d");
+	});
+
+	it("zoom steps by 5% within 50–100% and resets to 75%", () => {
+		useWindowUiStore.getState().setTileZoom(0.75);
+		stepTileZoom(1);
+		expect(useWindowUiStore.getState().fleetGrid.zoom).toBe(0.8);
+		for (let i = 0; i < 10; i++) stepTileZoom(1);
+		expect(useWindowUiStore.getState().fleetGrid.zoom).toBe(1);
+		for (let i = 0; i < 20; i++) stepTileZoom(-1);
+		expect(useWindowUiStore.getState().fleetGrid.zoom).toBe(0.5);
+		stepTileZoom(0);
+		expect(useWindowUiStore.getState().fleetGrid.zoom).toBe(0.75);
+	});
+
+	it("choosing a grid size ends Spotlight; closing the console forgets it", () => {
+		useWindowUiStore.getState().setFleetPreset("auto");
+		expect(useWindowUiStore.getState().spotlightTileId).toBeNull();
+		useWindowUiStore.setState({ spotlightTileId: "b" });
+		useWindowUiStore.getState().toggleFleetConsole();
+		expect(useWindowUiStore.getState().spotlightTileId).toBeNull();
 	});
 });

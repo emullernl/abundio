@@ -267,6 +267,8 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Toggle notes panel | `Cmd+Shift+K` | `Ctrl+Shift+K` |
 | Toggle markdown preview | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | Toggle Fleet Console | `Cmd+Shift+A` | `Ctrl+Shift+A` |
+| Spotlight focused tile / back to grid (Fleet Console only) | `Cmd+Shift+Enter` | `Ctrl+Shift+Enter` |
+| Tile zoom in / out / reset (Fleet Console only) | `Cmd+=` / `Cmd+-` / `Cmd+0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | New workspace | `Cmd+Shift+N` | `Ctrl+Shift+N` |
 | New tab | `Cmd+T` | `Ctrl+T` |
 | Close tab | `Cmd+W` | `Ctrl+W` |

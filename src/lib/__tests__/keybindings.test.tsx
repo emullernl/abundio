@@ -6,6 +6,7 @@ import {
 	handleKeyDown,
 	initKeybindings,
 	registerAction,
+	registerActionGate,
 	unregisterAction,
 } from "../keybindings";
 
@@ -523,5 +524,27 @@ describe("pane and workspace cycle bindings (Windows/Linux)", () => {
 			makeKeyEvent({ key: "PageDown", ctrlKey: true, altKey: true }),
 		);
 		expect(next).not.toHaveBeenCalled();
+	});
+});
+
+// Fleet Console keys are gated: outside the console the key is not claimed at
+// all, so Ctrl+0 / Ctrl+Shift+Enter still reach the terminal.
+describe("registerActionGate", () => {
+	it("leaves the key unclaimed while the gate is closed", () => {
+		let open = false;
+		const handler = vi.fn();
+		registerAction("fleet-zoom-reset", handler);
+		registerActionGate("fleet-zoom-reset", () => open);
+
+		const closed = makeKeyEvent({ key: "0", code: "Digit0", [modKey]: true });
+		const prevent = vi.spyOn(closed, "preventDefault");
+		handleKeyDown(closed);
+		expect(handler).not.toHaveBeenCalled();
+		expect(prevent).not.toHaveBeenCalled();
+
+		open = true;
+		handleKeyDown(makeKeyEvent({ key: "0", code: "Digit0", [modKey]: true }));
+		expect(handler).toHaveBeenCalledTimes(1);
+		unregisterAction("fleet-zoom-reset");
 	});
 });

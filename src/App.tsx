@@ -46,7 +46,9 @@ import {
 	cycleFleet,
 	fleetConsoleShowing,
 	navigateFleet,
+	stepTileZoom,
 	targetPaneId,
+	toggleFleetSpotlight,
 	workspaceViewOnly,
 } from "./lib/fleetFocus";
 import { installFocusSweep } from "./lib/focusSweep";
@@ -57,7 +59,11 @@ import {
 	updates,
 	windowSession,
 } from "./lib/ipc";
-import { initKeybindings, registerAction } from "./lib/keybindings";
+import {
+	initKeybindings,
+	registerAction,
+	registerActionGate,
+} from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
@@ -850,12 +856,15 @@ export function App() {
 			}),
 		);
 		registerAction("font-size-increase", () => {
+			// In the Fleet Console the font keys step the Tile zoom instead.
+			if (fleetConsoleShowing()) return stepTileZoom(1);
 			const { fontSize, setFontSize } = useSettingsStore.getState();
 			const newSize = Math.min(fontSize + 1, 32);
 			setFontSize(newSize);
 			setAllTerminalsFontSize(newSize);
 		});
 		registerAction("font-size-decrease", () => {
+			if (fleetConsoleShowing()) return stepTileZoom(-1);
 			const { fontSize, setFontSize } = useSettingsStore.getState();
 			const newSize = Math.max(fontSize - 1, 8);
 			setFontSize(newSize);
@@ -910,6 +919,11 @@ export function App() {
 				useWindowUiStore.getState().toggleRightSidebarTab("search");
 			}),
 		);
+		// Fleet Console only: the gate leaves these keys to the terminal elsewhere.
+		registerAction("fleet-spotlight", toggleFleetSpotlight);
+		registerActionGate("fleet-spotlight", fleetConsoleShowing);
+		registerAction("fleet-zoom-reset", () => stepTileZoom(0));
+		registerActionGate("fleet-zoom-reset", fleetConsoleShowing);
 		registerAction("toggle-fleet-console", () => {
 			useWindowUiStore.getState().toggleFleetConsole();
 		});
