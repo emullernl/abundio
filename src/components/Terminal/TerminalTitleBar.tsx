@@ -256,6 +256,11 @@ export function TerminalTitleBar({
 			}}
 			onMouseDown={handleMouseDown}
 		>
+			{/* Status icon first, as in a Fleet tile's bar: it is what the eye
+			    looks for when scanning panes. */}
+			<div className="shrink-0 flex items-center" style={{ marginRight: 6 }}>
+				<AgentStatusIcon status={dotStatus} size={12} />
+			</div>
 			{/* Left icon */}
 			<span
 				className="shrink-0 flex items-center"
@@ -283,9 +288,7 @@ export function TerminalTitleBar({
 				{title}
 			</span>
 			<MouseBadge paneId={paneId} />
-			<div className="shrink-0" style={{ marginLeft: 8, marginRight: 12 }}>
-				<AgentStatusIcon status={dotStatus} size={12} />
-			</div>
+			<div className="shrink-0" style={{ width: 8 }} />
 			<TitleBarButton
 				icon={MoreHorizontal}
 				onClick={(e) => {

@@ -203,6 +203,10 @@ function TabItem({
 				/>
 			)}
 
+			{/* Status first, then the tab's icon: the status is what the eye
+			    scans a row of tabs for, so it leads, as in the pane title bars. */}
+			{statusDot}
+
 			{icon && (
 				<span
 					style={{
@@ -215,8 +219,6 @@ function TabItem({
 					{icon}
 				</span>
 			)}
-
-			{statusDot}
 
 			{isEditing ? (
 				<input
