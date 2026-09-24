@@ -1,23 +1,21 @@
 /**
- * How many terminal panes may hold a WebGL context at once, and which ones win
- * when there are more panes than contexts to go around.
+ * Which terminal panes hold a WebGL context. See ADR-0041.
  *
- * A browser allows only so many live WebGL contexts per page — Chromium's limit
- * is 16 — and creating one past that silently evicts the oldest, leaving that
- * pane's canvas blank. Abundio keeps a context on every pane of every *opened*
- * workspace rather than only the visible tab, so that switching workspaces need
- * not dispose and rebuild them. Measured, that rebuild costs ~85ms for a single
- * pane and ~260ms for eight (Chromium, including two frames); an earlier ~3s
- * attribution for the same work appears to have conflated it with the git/gh
- * refetch fixed in the same commit, so treat the switch cost as tens to low
- * hundreds of milliseconds, not seconds. Holding contexts assumed "well under 16
- * panes total" and silently breaks once a Profile has enough workspaces open —
- * demo mode opens 24 panes and every pane fights for a context, evicting each
- * other in a loop.
- *
- * So the budget is capped and spent by priority instead. Panes that miss out
- * fall back to xterm's DOM renderer, which renders correctly — it just doesn't
+ * Only what is on screen, plus one Tab kept warm for switching back: in the
+ * **Workspace view**, the visible Tab and the Tab just left; in the **Fleet
+ * Console**, the spotlighted tile alone (grid and Filmstrip tiles, and the
+ * Workspace view hidden behind the Console, use xterm's DOM renderer). Panes
+ * outside the budget render correctly on the DOM renderer — they just do not
  * use the GPU.
+ *
+ * This replaced holding a context on every pane of every opened Workspace
+ * (ADR-0002), which spent contexts on panes nobody could see and, with the
+ * Fleet Console showing a dozen agents at once, pushed the page past the
+ * browser's limit: Chromium allows 16 live contexts per page and silently
+ * evicts the oldest past that, leaving its pane a blank canvas. The price is a
+ * rebuild when switching to a Tab that is neither visible nor the one just
+ * left — measured ~85 ms for one pane and ~260 ms for eight (Chromium,
+ * including two frames) — which the warm Tab spares the common back-and-forth.
  */
 
 /**
@@ -46,12 +44,17 @@ export interface WebglBudgetInput {
 	workspaces: WorkspaceLike[];
 	/** Workspaces whose PTYs are alive — the only ones eligible at all. */
 	openedWorkspaceIds: ReadonlySet<string>;
-	/** The workspace on screen. Its panes are spent on first. */
+	/** The workspace on screen. */
 	activeWorkspaceId: string | null;
-	/** workspaceId → the tab on screen in it. That tab's panes come first
-	 *  within its workspace, so a workspace with more panes than the whole
-	 *  budget still renders what the user is looking at on the GPU. */
+	/** workspaceId → the tab on screen in it. */
 	activeTabByWorkspace: Record<string, string>;
+	/** The Tab that was on screen before the current one, kept warm so
+	 *  switching back is instant. Ignored if it is the visible Tab, or no
+	 *  longer exists in an opened Workspace. */
+	previousTab?: { workspaceId: string; tabId: string } | null;
+	/** Set while the Fleet Console is on screen: then only the spotlighted
+	 *  tile qualifies, and nothing at all in the grid. */
+	fleetConsole?: { spotlightPaneId: string | null } | null;
 	/** Defaults to MAX_WEBGL_CONTEXTS; injectable for tests. */
 	cap?: number;
 }
@@ -59,9 +62,10 @@ export interface WebglBudgetInput {
 /**
  * The pane ids that should hold a WebGL context, best-first and capped.
  *
- * Priority: the active workspace's active tab, then the rest of the active
- * workspace, then every other opened workspace (active tab first within each).
- * Closed workspaces never qualify. Order within a tab is layout order.
+ * Fleet Console: the spotlighted tile, or none. Workspace view: the visible
+ * Tab (the active workspace's active Tab, or its first Tab if that id is
+ * stale), then the previously visible Tab. Closed workspaces never qualify.
+ * Order within a Tab is layout order.
  *
  * Deterministic and pure, so the reconciler's policy can be tested without a
  * browser — a WebGL context is exactly the thing jsdom cannot give us.
@@ -72,27 +76,44 @@ export function pickWebglPanes(input: WebglBudgetInput): Set<string> {
 		openedWorkspaceIds,
 		activeWorkspaceId,
 		activeTabByWorkspace,
+		previousTab,
+		fleetConsole,
 		cap = MAX_WEBGL_CONTEXTS,
 	} = input;
 
-	const opened = workspaces.filter((w) => openedWorkspaceIds.has(w.id));
-	const ordered = [
-		...opened.filter((w) => w.id === activeWorkspaceId),
-		...opened.filter((w) => w.id !== activeWorkspaceId),
-	];
+	if (fleetConsole) {
+		const spot = fleetConsole.spotlightPaneId;
+		return new Set(spot && cap > 0 ? [spot] : []);
+	}
+
+	const findTab = (workspaceId: string, tabId?: string): TabLike | null => {
+		if (!openedWorkspaceIds.has(workspaceId)) return null;
+		const ws = workspaces.find((w) => w.id === workspaceId);
+		if (!ws) return null;
+		return ws.tabs.find((t) => t.id === tabId) ?? null;
+	};
+
+	const tabs: TabLike[] = [];
+	if (activeWorkspaceId && openedWorkspaceIds.has(activeWorkspaceId)) {
+		const ws = workspaces.find((w) => w.id === activeWorkspaceId);
+		// activeTabByWorkspace is persisted and can name a closed tab: fall back
+		// to the first, which is what the Workspace view shows then.
+		const visible =
+			findTab(activeWorkspaceId, activeTabByWorkspace[activeWorkspaceId]) ??
+			ws?.tabs[0] ??
+			null;
+		if (visible) tabs.push(visible);
+	}
+	if (previousTab) {
+		const prev = findTab(previousTab.workspaceId, previousTab.tabId);
+		if (prev && !tabs.includes(prev)) tabs.push(prev);
+	}
 
 	const picked = new Set<string>();
-	for (const workspace of ordered) {
-		const activeTabId = activeTabByWorkspace[workspace.id];
-		const tabs = [
-			...workspace.tabs.filter((t) => t.id === activeTabId),
-			...workspace.tabs.filter((t) => t.id !== activeTabId),
-		];
-		for (const tab of tabs) {
-			for (const paneId of tab.paneIds) {
-				if (picked.size >= cap) return picked;
-				picked.add(paneId);
-			}
+	for (const tab of tabs) {
+		for (const paneId of tab.paneIds) {
+			if (picked.size >= cap) return picked;
+			picked.add(paneId);
 		}
 	}
 	return picked;

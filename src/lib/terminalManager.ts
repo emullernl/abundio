@@ -13,6 +13,7 @@ import {
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
@@ -202,7 +203,11 @@ function reconcileWebgl(): void {
 	const budget: ReadonlySet<string> = webglEnabled ? webglBudget : new Set();
 	const { toUnload, toLoad } = webglReconcilePlan(loaded, budget);
 	for (const paneId of toUnload) unloadWebgl(paneId);
-	for (const paneId of toLoad) ensureWebglLoaded(paneId);
+	// Straight to the loader: the budget was just computed by the caller.
+	for (const paneId of toLoad) {
+		const managed = instances.get(paneId);
+		if (managed && !managed.webglAddon) tryLoadWebgl(managed);
+	}
 }
 
 /** Flip GPU rendering on/off and reconcile every live terminal: enabling loads
@@ -231,6 +236,12 @@ export function ensureWebglLoaded(paneId: string): void {
 	if (!webglEnabled) return;
 	const managed = instances.get(paneId);
 	if (!managed || managed.webglAddon) return;
+	// Projection asks for a context on its own, often after the reconcile that
+	// followed the change it belongs to (a Fleet tile mounts after the store
+	// update that opened the Console). Ask the policy fresh, or a pane outside
+	// the budget would keep a context until the next reconcile.
+	webglBudget = computeWebglBudget();
+	if (!webglBudget.has(paneId)) return;
 	tryLoadWebgl(managed);
 }
 
@@ -770,29 +781,7 @@ setTimeout(() => {
 		const { activeWorkspaceId, focusedPaneId } = state;
 		if (!activeWorkspaceId) return;
 
-		// Compute the set of paneIds that should keep a WebGL context — panes of
-		// any opened workspace, best-first, up to MAX_WEBGL_CONTEXTS. Policy and
-		// its reasoning (why contexts are held across switches rather than
-		// rebuilt per visible tab, and why they are capped) live in
-		// `webglBudget.ts`. Panes outside the budget render on xterm's DOM
-		// renderer.
-		const openedIds = usePtyActivityStore.getState().openedWorkspaceIds;
-		const liveWebglPaneIds = pickWebglPanes({
-			workspaces: state.workspaces.map((workspace) => ({
-				id: workspace.id,
-				tabs: workspace.tabs.map((tab) => {
-					const layout = parseTabLayout(tab.layoutJson);
-					return {
-						id: tab.id,
-						paneIds: layout ? collectPaneIds(layout) : [],
-					};
-				}),
-			})),
-			openedWorkspaceIds: openedIds,
-			activeWorkspaceId,
-			activeTabByWorkspace: state.activeTabByWorkspace,
-		});
-		webglBudget = liveWebglPaneIds;
+		webglBudget = computeWebglBudget();
 
 		const activityStore = usePtyActivityStore.getState();
 		for (const [paneId, managed] of instances) {
@@ -817,7 +806,67 @@ setTimeout(() => {
 		// opened workspace's layout; rare, a tear-down race).
 		reconcileWebgl();
 	});
+	// The Fleet Console decides the budget while it is on screen: opening or
+	// closing it, Statistics covering it, and moving the spotlight all change
+	// which terminals may hold a context.
+	if (!useWindowUiStore?.subscribe) return;
+	useWindowUiStore.subscribe((state, prev) => {
+		if (
+			state.fleetConsoleOpen === prev.fleetConsoleOpen &&
+			state.statisticsOverlayOpen === prev.statisticsOverlayOpen &&
+			state.spotlightTileId === prev.spotlightTileId
+		) {
+			return;
+		}
+		webglBudget = computeWebglBudget();
+		reconcileWebgl();
+	});
 }, 0);
+
+// The Tab on screen, and the one before it — kept warm so switching back is
+// instant (ADR-0041). Updated as the budget is computed.
+let visibleTab: { workspaceId: string; tabId: string } | null = null;
+let previousTab: { workspaceId: string; tabId: string } | null = null;
+
+/** Which panes should hold a WebGL context right now. Policy and its reasons
+ *  live in `webglBudget.ts` / ADR-0041; panes outside it render on xterm's DOM
+ *  renderer. */
+function computeWebglBudget(): Set<string> {
+	const state = useWorkspaceStore.getState();
+	const { activeWorkspaceId, activeTabByWorkspace } = state;
+	const tabId = activeWorkspaceId
+		? activeTabByWorkspace[activeWorkspaceId]
+		: undefined;
+	const now =
+		activeWorkspaceId && tabId
+			? { workspaceId: activeWorkspaceId, tabId }
+			: null;
+	if (
+		now &&
+		(visibleTab?.workspaceId !== now.workspaceId ||
+			visibleTab?.tabId !== now.tabId)
+	) {
+		if (visibleTab) previousTab = visibleTab;
+		visibleTab = now;
+	}
+
+	const ui = useWindowUiStore.getState();
+	const fleetShowing = ui.fleetConsoleOpen && !ui.statisticsOverlayOpen;
+	return pickWebglPanes({
+		workspaces: state.workspaces.map((workspace) => ({
+			id: workspace.id,
+			tabs: workspace.tabs.map((tab) => {
+				const layout = parseTabLayout(tab.layoutJson);
+				return { id: tab.id, paneIds: layout ? collectPaneIds(layout) : [] };
+			}),
+		})),
+		openedWorkspaceIds: usePtyActivityStore.getState().openedWorkspaceIds,
+		activeWorkspaceId,
+		activeTabByWorkspace,
+		previousTab,
+		fleetConsole: fleetShowing ? { spotlightPaneId: ui.spotlightTileId } : null,
+	});
+}
 
 export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
