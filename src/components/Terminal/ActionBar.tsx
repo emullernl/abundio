@@ -3,7 +3,7 @@
  * buttons along the bottom of a terminal pane.
  *
  * Designed to read as *terminal chrome*, not as a web toolbar. It mirrors
- * `TerminalTitleBar` exactly — same 11px mono, same `--fg-secondary`, same
+ * `TerminalTitleBar` — same mono, same `--fg-secondary`, same
  * transparent background so the workspace's ambient gradient shows through,
  * same hairline border but on the opposite edge. The pane ends up bracketed by
  * two matching rails.
@@ -11,6 +11,11 @@
  * The **position number** is drawn as a dim monospace prefix, like a gutter
  * line number rather than a badge, and brightens to the accent on hover so the
  * digit reads as a key you can press.
+ *
+ * **Sized from the pane's terminal font**, not fixed: every dimension is
+ * designed at the default 14px and scales with the size the terminal is
+ * actually drawn at — the global font size, and the **Tile zoom** in the Fleet
+ * Console — so the buttons stay in proportion to the text they sit under.
  *
  * Present in every agent-mode pane, **including when it holds nothing** — an
  * empty bar shows an *Add a prompt action* invitation instead of buttons.
@@ -23,6 +28,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { firePromptAction } from "../../lib/firePromptAction";
+import { usePaneFontSize } from "../../lib/paneFontSize";
 import { isMac } from "../../lib/platform";
 import { type PulseEvent, subscribePulse } from "../../lib/promptActionPulse";
 import {
@@ -58,8 +64,41 @@ interface ActionBarProps {
  */
 export const PROMPT_ACTION_ATTR = "data-prompt-action-id";
 
-/** Matches the title bar's 22px, one notch taller for the touch target. */
+/** Matches the title bar's 22px, one notch taller for the touch target, at
+ *  the reference font size. */
 const BAR_HEIGHT = 24;
+
+/** The terminal font size every dimension below was designed at. */
+const REFERENCE_FONT_SIZE = 14;
+
+interface BarMetrics {
+	height: number;
+	/** Label and digit text. */
+	text: number;
+	/** Horizontal padding of a label. */
+	pad: number;
+	/** Horizontal padding of the powerline digit block. */
+	digitPad: number;
+	icon: number;
+	maxButtonWidth: number;
+}
+
+/**
+ * The bar's dimensions for a terminal drawn at `fontSize`. Proportional to
+ * the reference design, with floors so a small zoom never makes a button too
+ * small to hit or read. Exported for tests.
+ */
+export function barMetrics(fontSize: number): BarMetrics {
+	const s = fontSize / REFERENCE_FONT_SIZE;
+	return {
+		height: Math.max(16, Math.round(BAR_HEIGHT * s)),
+		text: Math.max(8, Math.round(11 * s * 2) / 2),
+		pad: Math.max(5, Math.round(10 * s)),
+		digitPad: Math.max(4, Math.round(7 * s)),
+		icon: Math.max(9, Math.round(11 * s)),
+		maxButtonWidth: Math.round(220 * s),
+	};
+}
 
 export function ActionBar({
 	paneId,
@@ -80,6 +119,10 @@ export function ActionBar({
 	);
 
 	const showActionBar = useSettingsStore((s) => s.showActionBar);
+	// The size this pane's terminal is drawn at; before its terminal exists,
+	// the global size it will be drawn at.
+	const globalFontSize = useSettingsStore((s) => s.fontSize);
+	const m = barMetrics(usePaneFontSize(paneId) ?? globalFontSize);
 	const actions = usePromptActionStore((s) => s.actions);
 	const loaded = usePromptActionStore((s) => s.loaded);
 
@@ -130,7 +173,7 @@ export function ActionBar({
 		<div
 			className="flex items-stretch shrink-0 relative"
 			style={{
-				height: BAR_HEIGHT,
+				height: m.height,
 				// Transparent for the same reason the title bar is: the workspace's
 				// ambient gradient is painted behind the pane tree and should show
 				// through every part of the pane.
@@ -168,10 +211,10 @@ export function ActionBar({
 						type="button"
 						className="shrink-0 flex items-center gap-1.5 transition-colors select-none"
 						style={{
-							padding: "0 10px",
+							padding: `0 ${m.pad}px`,
 							fontFamily: "var(--font-mono)",
-							fontSize: 11,
-							lineHeight: `${BAR_HEIGHT}px`,
+							fontSize: m.text,
+							lineHeight: `${m.height}px`,
 							whiteSpace: "nowrap",
 							color: "var(--fg-secondary)",
 							opacity: 0.55,
@@ -187,7 +230,7 @@ export function ActionBar({
 							onAddAction({ x: r.right, y: r.top });
 						}}
 					>
-						<Plus size={11} />
+						<Plus size={m.icon} />
 						Add a prompt action
 					</button>
 				)}
@@ -196,6 +239,7 @@ export function ActionBar({
 						key={action.id}
 						action={action}
 						number={positionNumber(index)}
+						metrics={m}
 						disabled={!fireable}
 						pulseNonce={fired?.actionId === action.id ? fired.nonce : undefined}
 						onFire={(altKey) => fire(action, altKey)}
@@ -212,7 +256,7 @@ export function ActionBar({
 					type="button"
 					className="shrink-0 flex items-center justify-center transition-colors"
 					style={{
-						width: 24,
+						width: m.height,
 						color: "var(--fg-secondary)",
 						opacity: 0.55,
 						borderLeft:
@@ -233,7 +277,7 @@ export function ActionBar({
 						onAddAction({ x: r.right, y: r.top });
 					}}
 				>
-					<Plus size={12} />
+					<Plus size={m.icon + 1} />
 				</button>
 			)}
 		</div>
@@ -243,6 +287,7 @@ export function ActionBar({
 interface ActionButtonProps {
 	action: PromptAction;
 	number: number | null;
+	metrics: BarMetrics;
 	disabled: boolean;
 	/** Bumped each time this action sends. See `promptActionPulse`. */
 	pulseNonce: number | undefined;
@@ -252,6 +297,7 @@ interface ActionButtonProps {
 function ActionButton({
 	action,
 	number,
+	metrics: m,
 	disabled,
 	pulseNonce,
 	onFire,
@@ -280,15 +326,15 @@ function ActionButton({
 			style={{
 				// No left padding: the powerline segment is flush to the button's
 				// edge, the way a status-line segment is flush to its separator.
-				padding: number !== null ? "0 10px 0 0" : "0 10px",
+				padding: number !== null ? `0 ${m.pad}px 0 0` : `0 ${m.pad}px`,
 				fontFamily: "var(--font-mono)",
-				fontSize: 11,
-				lineHeight: `${BAR_HEIGHT}px`,
+				fontSize: m.text,
+				lineHeight: `${m.height}px`,
 				whiteSpace: "nowrap",
 				color: "var(--fg-secondary)",
 				opacity: disabled ? 0.35 : 0.8,
 				cursor: disabled ? "not-allowed" : "pointer",
-				maxWidth: 220,
+				maxWidth: m.maxButtonWidth,
 			}}
 			title={title}
 			onMouseEnter={(e) => {
@@ -306,6 +352,7 @@ function ActionButton({
 			{number !== null && (
 				<PowerlineDigit
 					number={number}
+					metrics={m}
 					muted={disabled}
 					pulseNonce={pulseNonce}
 				/>
@@ -329,16 +376,18 @@ function ActionButton({
  * `--font-mono` defaults to one. There is no fallback to guard against.
  *
  * The separator is sized to the bar's full height rather than the label's
- * 11px, because powerline glyphs are drawn to fill their whole cell — at the
+ * text size, because powerline glyphs are drawn to fill their whole cell — at the
  * text size it renders as a small arrowhead floating mid-line instead of a
  * tapering edge.
  */
 function PowerlineDigit({
 	number,
+	metrics: m,
 	muted,
 	pulseNonce,
 }: {
 	number: number;
+	metrics: BarMetrics;
 	muted: boolean;
 	pulseNonce: number | undefined;
 }) {
@@ -371,10 +420,10 @@ function PowerlineDigit({
 					// Wide enough that the block dominates its own taper. At the
 					// digit's natural width the two are the same size and the segment
 					// reads as an arrowhead rather than as an edge.
-					padding: "0 7px",
+					padding: `0 ${m.digitPad}px`,
 					backgroundColor: fill,
 					color: "var(--bg-primary)",
-					fontSize: 11,
+					fontSize: m.text,
 					fontWeight: 600,
 				}}
 			>
@@ -384,8 +433,8 @@ function PowerlineDigit({
 				style={{
 					color: fill,
 					// Sized to the cell, not to the label — see above.
-					fontSize: BAR_HEIGHT,
-					lineHeight: `${BAR_HEIGHT}px`,
+					fontSize: m.height,
+					lineHeight: `${m.height}px`,
 					// The glyph carries side bearings that would open a gap between
 					// the block and its own taper.
 					marginLeft: -1,
@@ -450,6 +499,6 @@ function shortcutLabel(n: number): string {
 /** U+E0B0, the solid right-pointing powerline separator. */
 const POWERLINE_RIGHT = "\ue0b0";
 
-/** Height reserved when the bar is present. Exported so a caller sizing the
- *  terminal body can account for it without re-deriving the constant. */
+/** Height of the bar at the reference font size. The drawn height follows the
+ *  pane's font: see `barMetrics`. */
 export const ACTION_BAR_HEIGHT = BAR_HEIGHT;

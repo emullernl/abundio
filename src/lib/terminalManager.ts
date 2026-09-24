@@ -41,6 +41,7 @@ import {
 	nextMouseBlockFor,
 } from "./mouseReporting";
 import { parseOsc52 } from "./osc52";
+import { publishPaneFontSize } from "./paneFontSize";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
@@ -839,6 +840,7 @@ function effectiveFontSize(paneId: string, base: number): number {
 }
 
 function applyFontSize(managed: ManagedTerminal, size: number): void {
+	publishPaneFontSize(managed.paneId, size);
 	if (managed.term.options.fontSize === size) return;
 	managed.term.options.fontSize = size;
 	managed.webglAddon?.clearTextureAtlas();
@@ -898,6 +900,7 @@ export async function createTerminal(
 	}
 
 	baseFontSize = options.fontSize;
+	publishPaneFontSize(paneId, effectiveFontSize(paneId, options.fontSize));
 	const term = new Terminal({
 		fontSize: effectiveFontSize(paneId, options.fontSize),
 		fontFamily: options.fontFamily,

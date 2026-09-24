@@ -34,7 +34,7 @@ import type { PromptAction } from "../../../lib/promptActions";
 import { usePromptActionStore } from "../../../stores/promptActionStore";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../../stores/settingsStore";
-import { ActionBar } from "../ActionBar";
+import { ActionBar, barMetrics } from "../ActionBar";
 
 const PANE = "pane-1";
 const PTY = "pty-1";
@@ -282,5 +282,28 @@ describe("ActionBar", () => {
 			btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 		});
 		expect(onRequestParams).toHaveBeenCalledWith(a);
+	});
+});
+
+// The bar follows the pane's terminal font — including the Fleet Console's
+// Tile zoom — rather than a fixed 11px.
+describe("barMetrics", () => {
+	it("matches the reference design at 14px", () => {
+		expect(barMetrics(14)).toMatchObject({ height: 24, text: 11, pad: 10 });
+	});
+
+	it("scales with the font", () => {
+		const big = barMetrics(21);
+		expect(big.height).toBe(36);
+		expect(big.text).toBe(16.5);
+		const zoomed = barMetrics(10.5);
+		expect(zoomed.height).toBe(18);
+		expect(zoomed.text).toBe(8.5);
+	});
+
+	it("never shrinks below a usable size", () => {
+		const tiny = barMetrics(6);
+		expect(tiny.height).toBe(16);
+		expect(tiny.text).toBe(8);
 	});
 });
