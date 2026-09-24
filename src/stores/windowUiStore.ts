@@ -28,7 +28,7 @@ export const TILE_ZOOM_DEFAULT = 0.75;
 export const TILE_ZOOM_MIN = 0.5;
 export const TILE_ZOOM_MAX = 1;
 export const TILE_ZOOM_STEP = 0.05;
-export const FILMSTRIP_DEFAULT = 0.25;
+export const FILMSTRIP_DEFAULT = 1 / 3;
 
 /** Clamp to the slider's range and snap to its steps. */
 export function clampTileZoom(z: number): number {
@@ -252,7 +252,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 		}),
 		{
 			name: persistKey,
-			version: 1,
+			version: 2,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -264,6 +264,19 @@ export const useWindowUiStore = create<WindowUiState>()(
 					}
 					const { gitPanelOpen: _drop, ...rest } = state;
 					state = rest;
+				}
+				// v2: the Filmstrip default widened from 25% to a third. A stored
+				// 0.25 is the old default, never dragged, so it follows the new one.
+				if (version < 2) {
+					const grid = state.fleetGrid as
+						| { filmstripRatio?: number }
+						| undefined;
+					if (grid?.filmstripRatio === 0.25) {
+						state = {
+							...state,
+							fleetGrid: { ...grid, filmstripRatio: FILMSTRIP_DEFAULT },
+						};
+					}
 				}
 				return state;
 			},
