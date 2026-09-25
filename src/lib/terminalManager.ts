@@ -780,7 +780,7 @@ addWindowFocusListener((focused) => {
 // Guard against the case where the module context is torn down before the
 // timer fires (e.g. in the Vitest jsdom environment after a test finishes).
 setTimeout(() => {
-	if (!useWorkspaceStore?.subscribe) return;
+	if (!useWorkspaceStore?.subscribe || !useWindowUiStore?.subscribe) return;
 	useWorkspaceStore.subscribe((state) => {
 		// No early return when no workspace is active: terminals can still be
 		// live — a Workspace opened from the Fleet Console before any was
@@ -812,7 +812,6 @@ setTimeout(() => {
 	// The Fleet Console decides the budget while it is on screen: opening or
 	// closing it, Statistics covering it, and moving the spotlight all change
 	// which terminals may hold a context.
-	if (!useWindowUiStore?.subscribe) return;
 	useWindowUiStore.subscribe((state, prev) => {
 		if (
 			state.fleetConsoleOpen === prev.fleetConsoleOpen &&
@@ -1965,11 +1964,21 @@ export function repaintTerminal(paneId: string): void {
  * two real size changes, two redraws, but the same end state.
  */
 export function redrawProgram(paneId: string): void {
+	// Only after the terminal was moved, resized or unhidden — the moments a
+	// program's screen can go stale. A plain click between two visible panes
+	// asks nothing of the program; on Windows the fallback below is two real
+	// resizes, which every click would otherwise cost.
+	if (!programRedrawNeeded.has(paneId)) return;
+	// One at a time per pane, so fast focus changes never interleave two
+	// fallback nudges.
+	if (programRedrawInFlight.has(paneId)) return;
 	const managed = instances.get(paneId);
 	const ptyId = managed?.ptyId;
 	if (!managed?.ready || !ptyId) return;
 	const activity = usePtyActivityStore.getState().activities[ptyId];
 	if (activity?.detectionMode !== "agent") return;
+	programRedrawNeeded.delete(paneId);
+	programRedrawInFlight.add(paneId);
 	void pty
 		.redraw(ptyId)
 		.then((signalled) => {
@@ -1989,7 +1998,19 @@ export function redrawProgram(paneId: string): void {
 					),
 			);
 		})
-		.catch(() => {});
+		.catch(() => {})
+		.finally(() => programRedrawInFlight.delete(paneId));
+}
+
+/** Panes whose terminal was moved, resized or unhidden since their program
+ *  last redrew — see `redrawProgram`. */
+const programRedrawNeeded = new Set<string>();
+const programRedrawInFlight = new Set<string>();
+
+/** Note that a pane's terminal was moved into another container, resized, or
+ *  shown again, so the next focus asks its program to redraw. */
+export function markProgramRedrawNeeded(paneId: string): void {
+	programRedrawNeeded.add(paneId);
 }
 
 /**

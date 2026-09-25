@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { collectTerminalIds, parseTabLayout } from "../../lib/paneTree";
+import type { Tab } from "../../lib/types";
 import {
 	addWorktreeTargetId,
 	buildWorkspaceRows,
@@ -61,6 +62,8 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
 	const [wsIndex, setWsIndex] = useState(0);
 	const [agentIndex, setAgentIndex] = useState(0);
 	const [worktree, setWorktree] = useState(false);
+	const [starting, setStarting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
 	const selectedWs = filtered[Math.min(wsIndex, filtered.length - 1)];
@@ -70,7 +73,7 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
 		: null;
 	const canWorktree = worktreeTarget !== null;
 	const useWorktree = worktree && canWorktree;
-	const canSubmit = !!selectedWs && !!agent;
+	const canSubmit = !!selectedWs && !!agent && !starting;
 
 	useEscapeKey(onClose);
 
@@ -100,17 +103,33 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
 			onClose();
 			return;
 		}
-		onClose();
+		// Create the Tab first and only then open the Workspace and close the
+		// dialog: a failed create must not leave the Workspace opened with no
+		// Agent in it, nor vanish without a word.
+		setStarting(true);
+		setError(null);
+		let tab: Tab;
+		try {
+			tab = await useWorkspaceStore
+				.getState()
+				.createTab(selectedWs.id, agent, undefined, { activate: false });
+		} catch (e) {
+			setStarting(false);
+			setError(
+				`Could not start ${agent.name} in ${selectedWs.name}: ${
+					e instanceof Error ? e.message : String(e)
+				}`,
+			);
+			return;
+		}
 		const activity = usePtyActivityStore.getState();
 		if (!activity.openedWorkspaceIds.has(selectedWs.id)) {
 			activity.markWorkspaceOpened(selectedWs.id);
 		}
-		const tab = await useWorkspaceStore
-			.getState()
-			.createTab(selectedWs.id, agent, undefined, { activate: false });
 		const layout = parseTabLayout(tab.layoutJson);
 		const paneId = layout ? collectTerminalIds(layout)[0] : undefined;
 		if (paneId) useWindowUiStore.getState().expectFleetTile(paneId);
+		onClose();
 	};
 
 	const onKeyDown = (e: React.KeyboardEvent) => {
@@ -395,15 +414,28 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
 						className="flex items-center justify-between"
 						style={{ padding: "16px 28px 20px" }}
 					>
-						<span
-							style={{
-								fontSize: 11,
-								color: "var(--fg-secondary)",
-								opacity: 0.7,
-							}}
-						>
-							↑↓ workspace · ⌥←→ agent
-						</span>
+						{error ? (
+							<span
+								role="alert"
+								style={{
+									fontSize: 11.5,
+									color: "var(--error)",
+									maxWidth: 300,
+								}}
+							>
+								{error}
+							</span>
+						) : (
+							<span
+								style={{
+									fontSize: 11,
+									color: "var(--fg-secondary)",
+									opacity: 0.7,
+								}}
+							>
+								↑↓ workspace · ⌥←→ agent
+							</span>
+						)}
 						<div className="flex" style={{ gap: 8 }}>
 							<button
 								type="button"

@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef } from "react";
+import { fleetConsoleShowing } from "../../lib/fleetFocus";
 import { pty } from "../../lib/ipc";
 import { getTarget, onTargetChange } from "../../lib/portalRegistry";
 import {
@@ -9,6 +10,7 @@ import {
 	ensureWebglLoaded,
 	getTerminal,
 	isPtySpawned,
+	markProgramRedrawNeeded,
 	markSettled,
 } from "../../lib/terminalManager";
 import { getTheme } from "../../lib/themes";
@@ -69,6 +71,8 @@ export const TerminalInstance = memo(function TerminalInstance({
 
 			if (termEl && termEl.parentElement !== target) {
 				target.appendChild(termEl);
+				// Moved into another container: its program may need to redraw.
+				markProgramRedrawNeeded(id);
 			}
 
 			// Set up ResizeObserver BEFORE fitting so the first callback (fired
@@ -121,9 +125,23 @@ export const TerminalInstance = memo(function TerminalInstance({
 					// reflows the text continuously, and each settle point the PTY
 					// saw made the program redraw for a size the user was only
 					// passing through. The container clips meanwhile.
+					// Resized or shown again: its program may need to redraw.
+					markProgramRedrawNeeded(id);
 					clearTimeout(resizeTimerRef.current);
 					resizeTimerRef.current = setTimeout(() => {
 						if (target.offsetWidth === 0 || target.offsetHeight === 0) return;
+						// Hidden behind the Fleet Console: its size changed only
+						// because the sidebars collapsed for the Console, and it
+						// changes back when the Console closes. Refitting here
+						// would reflow the program twice for nothing; skipped, the
+						// refit on close finds the size unchanged and leaves the
+						// PTY alone. A real window resize meanwhile is caught then.
+						if (
+							fleetConsoleShowing() &&
+							!target.closest("[data-fleet-console]")
+						) {
+							return;
+						}
 						const prevCols = managed.term.cols;
 						const prevRows = managed.term.rows;
 						managed.fitAddon.fit();

@@ -513,8 +513,10 @@ export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of DEFAULT_BINDINGS) {
 		if (matchesBinding(e, binding)) {
 			if (isSuppressedByOverlay(binding.action) && hasOverlay()) return;
+			// A closed gate means this binding does not claim the key right now:
+			// move on, so it never shadows a later binding on the same chord.
 			const gate = gates.get(binding.action);
-			if (gate && !gate()) return;
+			if (gate && !gate()) continue;
 			// When Monaco is focused, let it handle any key that isn't a
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.

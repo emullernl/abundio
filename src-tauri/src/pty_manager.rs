@@ -357,8 +357,11 @@ impl PtyManager {
     }
 
     /// Ask the program in the foreground of this PTY to redraw, at its current
-    /// size. Returns `false` where there is no signal to send it (Windows:
-    /// ConPTY has no SIGWINCH), so the caller can fall back to a size nudge.
+    /// size: SIGWINCH to its foreground process group, or — when there is no
+    /// group to signal — a one-row size nudge done by the PTY thread itself.
+    /// `true` means the redraw was queued. Returns `false` on Windows (ConPTY
+    /// has no SIGWINCH), where the caller nudges the size with a pause between
+    /// the two resizes instead.
     ///
     /// A same-size `resize` cannot do this: the kernel raises SIGWINCH only
     /// when the window size actually changes, on macOS and Linux alike.
@@ -1375,17 +1378,40 @@ fn pty_thread(
                 });
             }
             Ok(PtyCommand::Redraw) => {
+                // Nothing to redraw once the child is gone — and checking
+                // first means a pgid recycled after exit is never signalled.
+                if !alive.load(Ordering::Relaxed) {
+                    continue;
+                }
                 // The foreground process group of the terminal (tcgetpgrp):
-                // the agent, not the shell that launched it.
+                // the agent, not the shell that launched it. Positive only:
+                // 0 would mean the caller's own group. An exited group yields
+                // ESRCH, which is ignored.
                 #[cfg(unix)]
-                if let Some(pgid) = master.process_group_leader() {
-                    // Positive only: 0 would mean the caller's own group.
-                    // An exited group yields ESRCH, which is ignored.
-                    if pgid > 0 {
-                        let _ = nix::sys::signal::killpg(
-                            nix::unistd::Pid::from_raw(pgid),
-                            nix::sys::signal::Signal::SIGWINCH,
-                        );
+                let signalled = match master.process_group_leader() {
+                    Some(pgid) if pgid > 0 => nix::sys::signal::killpg(
+                        nix::unistd::Pid::from_raw(pgid),
+                        nix::sys::signal::Signal::SIGWINCH,
+                    )
+                    .is_ok(),
+                    _ => false,
+                };
+                #[cfg(not(unix))]
+                let signalled = false;
+                // No group to signal: nudge the size down a row and back.
+                // Each real change raises SIGWINCH, and the program reads the
+                // final size, so it redraws at the size it already had. This
+                // keeps `redraw()`'s `true` honest: the redraw was asked for
+                // either way.
+                if !signalled {
+                    if let Ok(size) = master.get_size() {
+                        if size.rows > 1 {
+                            let _ = master.resize(PtySize {
+                                rows: size.rows - 1,
+                                ..size
+                            });
+                            let _ = master.resize(size);
+                        }
                     }
                 }
             }

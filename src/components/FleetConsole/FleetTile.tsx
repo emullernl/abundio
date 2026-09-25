@@ -34,6 +34,8 @@ interface Props {
 	placement: TilePlacement;
 	/** Font scale: the **Tile zoom**, or 1 in the Spotlight slot. */
 	fontScale: number;
+	/** The Console's visible height: the spotlighted tile's own height. */
+	viewportHeight: number;
 	/** False while the Console is still bringing tiles in: the cell holds its
 	 *  place and shows where the agent lives, but the pane is not borrowed yet
 	 *  — its terminal stays in the Workspace view, at its normal size. */
@@ -55,6 +57,7 @@ export const FleetTile = memo(function FleetTile({
 	index,
 	placement,
 	fontScale,
+	viewportHeight,
 	live,
 }: Props) {
 	const status = usePtyActivityStore((s) =>
@@ -123,11 +126,16 @@ export const FleetTile = memo(function FleetTile({
 				...(spotlighted
 					? {
 							gridColumn: 1,
-							gridRow: "1 / span 3",
-							// Stays put while the Filmstrip beside it scrolls.
+							// Stays put while the Filmstrip beside it scrolls. A grid
+							// item's sticky range is its grid area, so the area spans
+							// every row and the tile is one viewport tall inside it —
+							// an area only as tall as the tile leaves sticky nowhere
+							// to travel (Chromium is lenient here; the spec, and so
+							// possibly WebKit, is not).
+							gridRow: "1 / -1",
 							position: "sticky",
 							top: 0,
-							height: "100%",
+							height: viewportHeight,
 						}
 					: placement === "filmstrip"
 						? { gridColumn: 2 }

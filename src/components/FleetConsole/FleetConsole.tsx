@@ -429,6 +429,32 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 
 	// ── Divider dragging ──
 	const gridRef = useRef<HTMLDivElement>(null);
+	// A drag lives on `document` listeners and the body cursor. If the Console
+	// unmounts mid-drag (a notification click leaving it, Switch to), the
+	// mouseup that would undo them never reaches this code, so the teardown is
+	// also kept here and run on unmount — without committing the drag.
+	const dragTeardownRef = useRef<(() => void) | null>(null);
+	useEffect(() => () => dragTeardownRef.current?.(), []);
+	const beginDrag = useCallback(
+		(cursor: string, onMove: (ev: MouseEvent) => void, onEnd: () => void) => {
+			dragTeardownRef.current?.();
+			const teardown = () => {
+				document.removeEventListener("mousemove", onMove);
+				document.removeEventListener("mouseup", onUp);
+				document.body.style.cursor = "";
+				dragTeardownRef.current = null;
+			};
+			const onUp = () => {
+				teardown();
+				onEnd();
+			};
+			dragTeardownRef.current = teardown;
+			document.body.style.cursor = cursor;
+			document.addEventListener("mousemove", onMove);
+			document.addEventListener("mouseup", onUp);
+		},
+		[],
+	);
 	const startDrag = useCallback(
 		(axis: "col" | "row", index: number, e: React.MouseEvent) => {
 			e.preventDefault();
@@ -443,21 +469,15 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 				if (axis === "col") setDragCols(latest);
 				else setDragRows(latest);
 			};
-			const onUp = () => {
-				document.removeEventListener("mousemove", onMove);
-				document.removeEventListener("mouseup", onUp);
-				document.body.style.cursor = "";
+			beginDrag(axis === "col" ? "col-resize" : "row-resize", onMove, () => {
 				const s = useWindowUiStore.getState().fleetGrid;
 				if (axis === "col") setFleetRatios(latest, s.rowRatios);
 				else setFleetRatios(s.colRatios, latest);
 				setDragCols(null);
 				setDragRows(null);
-			};
-			document.body.style.cursor = axis === "col" ? "col-resize" : "row-resize";
-			document.addEventListener("mousemove", onMove);
-			document.addEventListener("mouseup", onUp);
+			});
 		},
-		[size.width, size.height, colRatios, rowRatios, setFleetRatios],
+		[size.width, size.height, colRatios, rowRatios, setFleetRatios, beginDrag],
 	);
 
 	// ── Spotlight layout: the spotlighted tile on the left, spanning the
@@ -480,18 +500,12 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 				);
 				setDragFilm(latest);
 			};
-			const onUp = () => {
-				document.removeEventListener("mousemove", onMove);
-				document.removeEventListener("mouseup", onUp);
-				document.body.style.cursor = "";
+			beginDrag("col-resize", onMove, () => {
 				setFilmstripRatio(latest);
 				setDragFilm(null);
-			};
-			document.body.style.cursor = "col-resize";
-			document.addEventListener("mousemove", onMove);
-			document.addEventListener("mouseup", onUp);
+			});
 		},
-		[grid.filmstripRatio, size.width, setFilmstripRatio],
+		[grid.filmstripRatio, size.width, setFilmstripRatio, beginDrag],
 	);
 
 	// Positional cells and dividers: their identity *is* their position.
@@ -651,6 +665,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 										// The spotlighted agent reads like the Workspace view.
 										fontScale={t.paneId === spotlight ? 1 : grid.zoom}
 										live={isLive(t.paneId)}
+										viewportHeight={size.height}
 									/>
 								);
 							})}
