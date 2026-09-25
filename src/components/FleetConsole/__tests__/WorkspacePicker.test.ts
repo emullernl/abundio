@@ -3,7 +3,7 @@ import type { WorkspaceWithTabs } from "../../../lib/types";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 import { useWindowUiStore } from "../../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
-import { openInBackground, rememberedAgentPanes } from "../WorkspacePicker";
+import { openInBackground } from "../WorkspacePicker";
 
 function ws(id: string): WorkspaceWithTabs {
 	const layout = {
@@ -47,10 +47,6 @@ describe("WorkspacePicker helpers", () => {
 		});
 		usePtyActivityStore.setState({ openedWorkspaceIds: new Set() });
 		useWindowUiStore.setState({ pendingTiles: {}, focusedTileId: null });
-	});
-
-	it("lists only the panes that remember an Agent", () => {
-		expect(rememberedAgentPanes(ws("a"))).toEqual(["a-agent"]);
 	});
 
 	it("opens in the background and shows the remembered Agents as tiles", () => {

@@ -9,17 +9,40 @@ import {
 	type WorktreeGroupFacts,
 } from "./worktreeGrouping";
 
+type RememberedAgent = { paneId: string; agentId: string };
+
+// The parse is a pure function of the layout string, and `workspaces` gets a
+// new identity on ordinary events (ptyId write-back, tab edits), so cache it.
+// Bounded crudely: cleared whole when it grows past the cap.
+const LAYOUT_CACHE_CAP = 500;
+const layoutAgentsCache = new Map<string, readonly RememberedAgent[]>();
+
+function layoutAgents(layoutJson: string): readonly RememberedAgent[] {
+	const hit = layoutAgentsCache.get(layoutJson);
+	if (hit) return hit;
+	const layout = parseTabLayout(layoutJson);
+	const agents = layout ? collectAgentPanes(layout) : [];
+	if (layoutAgentsCache.size >= LAYOUT_CACHE_CAP) layoutAgentsCache.clear();
+	layoutAgentsCache.set(layoutJson, agents);
+	return agents;
+}
+
 /** Every terminal in the Workspace whose layout remembers an Agent, in Tab
  *  then pane order. */
-export function rememberedAgents(
+export function rememberedAgents(ws: WorkspaceWithTabs): RememberedAgent[] {
+	return ws.tabs.flatMap((tab) => layoutAgents(tab.layoutJson));
+}
+
+/** The panes a Relaunch will turn back into Agents — those whose remembered
+ *  Agent Abundio still knows. The rest come back as plain shells, so they get
+ *  no tile. */
+export function relaunchablePanes(
 	ws: WorkspaceWithTabs,
-): { paneId: string; agentId: string }[] {
-	const out: { paneId: string; agentId: string }[] = [];
-	for (const tab of ws.tabs) {
-		const layout = parseTabLayout(tab.layoutJson);
-		if (layout) out.push(...collectAgentPanes(layout));
-	}
-	return out;
+	knownAgentIds: ReadonlySet<string>,
+): string[] {
+	return rememberedAgents(ws)
+		.filter((a) => knownAgentIds.has(a.agentId))
+		.map((a) => a.paneId);
 }
 
 /** The Agent ids a Relaunch would actually bring back: an id Abundio no longer
@@ -85,8 +108,9 @@ export type RelaunchRow =
 			/** A Linked worktree, drawn under its Primary. */
 			indent: boolean;
 	  }
-	/** An Opened Primary whose Linked worktrees are Dormant: a plain label. */
-	| { kind: "heading"; workspace: WorkspaceWithTabs };
+	/** A Primary that is not Dormant — Opened, or closed with no Agents — whose
+	 *  Linked worktrees are: a plain label. */
+	| { kind: "heading"; workspace: WorkspaceWithTabs; opened: boolean };
 
 /**
  * The Relaunch list, grouped like the Console's workspace picker: Left-sidebar
@@ -122,7 +146,11 @@ export function buildRelaunchRows(
 		const primary = row(r.primary, false);
 		if (primary) out.push(primary);
 		else if (linked.length > 0)
-			out.push({ kind: "heading", workspace: r.primary });
+			out.push({
+				kind: "heading",
+				workspace: r.primary,
+				opened: openedIds.has(r.primary.id),
+			});
 		out.push(...linked);
 	}
 	return out;

@@ -2,7 +2,7 @@ import { FolderOpen, Layers } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
-import { hasFleetAgents, rememberedAgents } from "../../lib/dormantWorkspaces";
+import { hasFleetAgents, relaunchablePanes } from "../../lib/dormantWorkspaces";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
 	buildWorkspaceRows,
@@ -38,14 +38,18 @@ export function WorkspacePicker({
 	const rootRef = useRef<HTMLDivElement>(null);
 	const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
 	const agents = useSettingsStore((s) => s.agents);
-	// Only Workspaces with Agents to show: one without adds nothing here.
+	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	// Every Opened Workspace, so it can always be unloaded here (the Console
+	// hides both sidebars), even after its last Agent exited. A closed one only
+	// if opening it would add Agents.
 	const workspaces = useMemo(() => {
 		const known = new Set(agents.map((a) => a.id));
-		return allWorkspaces.filter((w) =>
-			hasFleetAgents(w, known, agentCountByWorkspace.get(w.id) ?? 0),
+		return allWorkspaces.filter(
+			(w) =>
+				openedIds.has(w.id) ||
+				hasFleetAgents(w, known, agentCountByWorkspace.get(w.id) ?? 0),
 		);
-	}, [allWorkspaces, agents, agentCountByWorkspace]);
-	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	}, [allWorkspaces, agents, openedIds, agentCountByWorkspace]);
 	const { requestUnload, dialogProps } = useConfirmUnloadWorkspace();
 
 	useEffect(() => {
@@ -112,7 +116,9 @@ export function WorkspacePicker({
 }
 
 /** Open a Workspace without making it Active, and show its remembered Agents
- *  as tiles so they get drawn — and therefore relaunched. Exported for tests. */
+ *  as tiles so they get drawn — and therefore relaunched. Only Agents Abundio
+ *  still knows get a tile; the rest come back as plain shells. Exported for
+ *  tests. */
 export function openInBackground(workspaceId: string): void {
 	const ws = useWorkspaceStore
 		.getState()
@@ -121,12 +127,8 @@ export function openInBackground(workspaceId: string): void {
 	const activity = usePtyActivityStore.getState();
 	if (activity.openedWorkspaceIds.has(workspaceId)) return;
 	activity.markWorkspaceOpened(workspaceId);
-	useWindowUiStore.getState().expectFleetTiles(rememberedAgentPanes(ws));
-}
-
-/** Pane ids of every terminal in the Workspace that remembers an Agent. */
-export function rememberedAgentPanes(ws: WorkspaceWithTabs): string[] {
-	return rememberedAgents(ws).map((a) => a.paneId);
+	const known = new Set(useSettingsStore.getState().agents.map((a) => a.id));
+	useWindowUiStore.getState().expectFleetTiles(relaunchablePanes(ws, known));
 }
 
 function WorkspaceList({

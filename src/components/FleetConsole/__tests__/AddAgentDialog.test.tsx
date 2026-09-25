@@ -9,7 +9,15 @@ import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import { useWindowUiStore } from "../../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
-import { AddAgentDialog } from "../AddAgentDialog";
+import { AddAgentDialog, useRelaunchRows } from "../AddAgentDialog";
+
+/** The dialog as the Console mounts it, with the rows it computes. */
+function Harness(props: {
+	initialStep?: "choose" | "relaunch";
+	onClose: () => void;
+}) {
+	return <AddAgentDialog rows={useRelaunchRows()} {...props} />;
+}
 
 (
 	globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -51,9 +59,7 @@ describe("AddAgentDialog", () => {
 		document.querySelector('[role="dialog"]')?.getAttribute("aria-label");
 	const render = (initialStep?: "choose" | "relaunch") =>
 		act(() =>
-			root.render(
-				<AddAgentDialog initialStep={initialStep} onClose={onClose} />,
-			),
+			root.render(<Harness initialStep={initialStep} onClose={onClose} />),
 		);
 
 	beforeEach(() => {

@@ -41,7 +41,8 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	AddAgentDialog,
 	type AddAgentStep,
-	useDormantCount,
+	relaunchTargets,
+	useRelaunchRows,
 } from "./AddAgentDialog";
 import { FleetTile } from "./FleetTile";
 import { GridPicker } from "./GridPicker";
@@ -147,7 +148,8 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 		null,
 	);
 	const openAddAgent = useCallback(() => setAddAgent("choose"), []);
-	const dormantCount = useDormantCount();
+	const relaunchRows = useRelaunchRows();
+	const dormantCount = relaunchTargets(relaunchRows).length;
 
 	// ── Opening: paint first, then mount. ──
 	// Mounting every tile moves each terminal in, refits it, resizes its PTY,
@@ -753,6 +755,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 			</div>
 			{addAgent && (
 				<AddAgentDialog
+					rows={relaunchRows}
 					initialStep={addAgent}
 					onClose={() => setAddAgent(null)}
 				/>
@@ -840,8 +843,17 @@ function AddAgentCell({
 					<Plus size={16} />
 				</span>
 				<span style={{ fontSize: 12 }}>Add agent</span>
-				{dormant > 0 && (
-					<span style={{ fontSize: 11, opacity: 0.65 }}>
+				{/* Not in the narrow Filmstrip cell, where it would wrap. */}
+				{dormant > 0 && !inFilmstrip && (
+					<span
+						className="truncate"
+						style={{
+							maxWidth: "100%",
+							padding: "0 10px",
+							fontSize: 11,
+							opacity: 0.65,
+						}}
+					>
 						or relaunch {dormant} dormant workspace{dormant === 1 ? "" : "s"}
 					</span>
 				)}

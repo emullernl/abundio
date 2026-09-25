@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import {
@@ -18,7 +18,8 @@ import { openInBackground } from "./WorkspacePicker";
 
 export type AddAgentStep = "choose" | "new" | "relaunch";
 
-/** The Relaunch rows for this Window, kept live as Workspaces open. */
+/** The Relaunch rows for this Window, kept live as Workspaces open. Computed
+ *  once by the Console and handed to the dialog, since it parses every Tab. */
 export function useRelaunchRows(): RelaunchRow[] {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
@@ -36,10 +37,10 @@ export function useRelaunchRows(): RelaunchRow[] {
 	);
 }
 
-/** How many Dormant workspaces this Window has. */
-export function useDormantCount(): number {
-	const rows = useRelaunchRows();
-	return rows.filter((r) => r.kind === "workspace").length;
+type WorkspaceRow = Extract<RelaunchRow, { kind: "workspace" }>;
+
+export function relaunchTargets(rows: RelaunchRow[]): WorkspaceRow[] {
+	return rows.filter((r): r is WorkspaceRow => r.kind === "workspace");
 }
 
 /**
@@ -48,17 +49,16 @@ export function useDormantCount(): number {
  * skipped and New agent opens straight away. See CONTEXT.md.
  */
 export function AddAgentDialog({
+	rows,
 	initialStep = "choose",
 	onClose,
 }: {
+	/** From `useRelaunchRows`. */
+	rows: RelaunchRow[];
 	initialStep?: Exclude<AddAgentStep, "new">;
 	onClose: () => void;
 }) {
-	const rows = useRelaunchRows();
-	const dormant = rows.filter(
-		(r): r is Extract<RelaunchRow, { kind: "workspace" }> =>
-			r.kind === "workspace",
-	);
+	const dormant = relaunchTargets(rows);
 	const [step, setStep] = useState<AddAgentStep>(initialStep);
 	// Only the first step animates in; later swaps keep the backdrop still.
 	const [swapped, setSwapped] = useState(false);
@@ -67,14 +67,17 @@ export function AddAgentDialog({
 		setStep(next);
 	};
 
-	// Nothing Dormant: there is no choice to make.
-	const shown: AddAgentStep = dormant.length === 0 ? "new" : step;
+	// Nothing Dormant: there is no choice to make. Decided once, on opening —
+	// a Workspace opening elsewhere must not turn this into another dialog
+	// under the user's hands.
+	const [skip] = useState(() => dormant.length === 0);
+	const shown: AddAgentStep = skip ? "new" : step;
 
 	if (shown === "new") {
 		return (
 			<NewAgentDialog
 				onClose={onClose}
-				onBack={dormant.length > 0 ? () => go("choose") : undefined}
+				onBack={skip ? undefined : () => go("choose")}
 				animateIn={!swapped}
 			/>
 		);
@@ -173,6 +176,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 /** Arrow keys move the selection, Enter acts on it. Focuses its root on mount
  *  so the keys work without a click. */
 function useListKeys(count: number, onEnter: (i: number) => void) {
+	const idPrefix = useId();
 	const [index, setIndex] = useState(0);
 	const rootRef = useRef<HTMLDivElement>(null);
 	useEffect(() => rootRef.current?.focus(), []);
@@ -187,7 +191,17 @@ function useListKeys(count: number, onEnter: (i: number) => void) {
 			onEnter(clamped);
 		}
 	};
-	return { index: clamped, setIndex, rootRef, onKeyDown };
+	const optionId = (i: number) => `${idPrefix}-opt-${i}`;
+	return {
+		index: clamped,
+		setIndex,
+		rootRef,
+		onKeyDown,
+		optionId,
+		// Focus stays on the listbox; this tells a screen reader which option
+		// the arrows are on.
+		activeId: count > 0 ? optionId(clamped) : undefined,
+	};
 }
 
 function Chooser({
@@ -195,7 +209,7 @@ function Chooser({
 	onNew,
 	onRelaunch,
 }: {
-	dormant: Extract<RelaunchRow, { kind: "workspace" }>[];
+	dormant: WorkspaceRow[];
 	onNew: () => void;
 	onRelaunch: () => void;
 }) {
@@ -206,63 +220,71 @@ function Chooser({
 
 	return (
 		<div
-			ref={keys.rootRef}
-			role="listbox"
-			aria-label="Add agent"
-			tabIndex={-1}
-			onKeyDown={keys.onKeyDown}
-			className="flex flex-col outline-none"
+			className="flex flex-col"
 			style={{ padding: "24px 20px 20px", gap: 6 }}
 		>
 			<div style={{ padding: "0 8px 8px" }}>
 				<Eyebrow>Add agent</Eyebrow>
 			</div>
-			<Option
-				selected={keys.index === 0}
-				onHover={() => keys.setIndex(0)}
-				onClick={onNew}
-				icon={<Plus size={16} />}
-				title="New agent"
-				subtitle="Start a fresh agent in any workspace."
-			/>
-			<Option
-				selected={keys.index === 1}
-				onHover={() => keys.setIndex(1)}
-				onClick={onRelaunch}
-				icon={<RotateCcw size={15} />}
-				title="Relaunch from a dormant workspace"
-				badge={dormant.length}
-				subtitle="Opens it and starts again the agents it had. Each starts a fresh session."
+			<div
+				ref={keys.rootRef}
+				role="listbox"
+				aria-label="Add agent"
+				aria-activedescendant={keys.activeId}
+				tabIndex={-1}
+				onKeyDown={keys.onKeyDown}
+				className="flex flex-col outline-none"
+				style={{ gap: 6 }}
 			>
-				<div className="flex flex-col" style={{ gap: 3, marginTop: 8 }}>
-					{preview.map((r) => (
-						<div
-							key={r.workspace.id}
-							className="flex items-center min-w-0"
-							style={{ gap: 8, fontSize: 12 }}
-						>
-							<span
-								className="truncate"
-								style={{ color: "var(--fg-primary)", maxWidth: 200 }}
+				<Option
+					id={keys.optionId(0)}
+					selected={keys.index === 0}
+					onHover={() => keys.setIndex(0)}
+					onClick={onNew}
+					icon={<Plus size={16} />}
+					title="New agent"
+					subtitle="Start a fresh agent in any workspace."
+				/>
+				<Option
+					id={keys.optionId(1)}
+					selected={keys.index === 1}
+					onHover={() => keys.setIndex(1)}
+					onClick={onRelaunch}
+					icon={<RotateCcw size={15} />}
+					title="Relaunch from a dormant workspace"
+					badge={dormant.length}
+					subtitle="Opens it and starts again the agents it had. Each starts a fresh session."
+				>
+					<div className="flex flex-col" style={{ gap: 3, marginTop: 8 }}>
+						{preview.map((r) => (
+							<div
+								key={r.workspace.id}
+								className="flex items-center min-w-0"
+								style={{ gap: 8, fontSize: 12 }}
 							>
-								{r.workspace.name}
+								<span
+									className="truncate"
+									style={{ color: "var(--fg-primary)", maxWidth: 200 }}
+								>
+									{r.workspace.name}
+								</span>
+								<AgentChips counts={r.agents} agents={agents} />
+							</div>
+						))}
+						{dormant.length > preview.length && (
+							<span
+								style={{
+									fontSize: 11.5,
+									color: "var(--fg-secondary)",
+									opacity: 0.8,
+								}}
+							>
+								and {dormant.length - preview.length} more
 							</span>
-							<AgentChips counts={r.agents} agents={agents} />
-						</div>
-					))}
-					{dormant.length > preview.length && (
-						<span
-							style={{
-								fontSize: 11.5,
-								color: "var(--fg-secondary)",
-								opacity: 0.8,
-							}}
-						>
-							and {dormant.length - preview.length} more
-						</span>
-					)}
-				</div>
-			</Option>
+						)}
+					</div>
+				</Option>
+			</div>
 			<span
 				style={{
 					padding: "8px 8px 0",
@@ -278,6 +300,7 @@ function Chooser({
 }
 
 function Option({
+	id,
 	selected,
 	onHover,
 	onClick,
@@ -287,6 +310,7 @@ function Option({
 	badge,
 	children,
 }: {
+	id: string;
 	selected: boolean;
 	onHover: () => void;
 	onClick: () => void;
@@ -298,6 +322,7 @@ function Option({
 }) {
 	return (
 		<button
+			id={id}
 			type="button"
 			role="option"
 			aria-selected={selected}
@@ -411,29 +436,19 @@ function RelaunchList({
 }) {
 	const agents = useSettingsStore((s) => s.agents);
 	const gitById = useWorkspaceGitStore((s) => s.byWorkspaceId);
-	const targets = rows.filter(
-		(r): r is Extract<RelaunchRow, { kind: "workspace" }> =>
-			r.kind === "workspace",
-	);
+	const targets = relaunchTargets(rows);
+	const indexOf = new Map(targets.map((r, i) => [r, i]));
 	const keys = useListKeys(targets.length, (i) =>
 		onRelaunch(targets[i].workspace.id),
 	);
-	const listRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
-		listRef.current
+		keys.rootRef.current
 			?.querySelector(`[data-index="${keys.index}"]`)
 			?.scrollIntoView({ block: "nearest" });
-	}, [keys.index]);
+	}, [keys.index, keys.rootRef]);
 
 	return (
-		<div
-			ref={keys.rootRef}
-			role="listbox"
-			aria-label="Dormant workspaces"
-			tabIndex={-1}
-			onKeyDown={keys.onKeyDown}
-			className="flex flex-col min-h-0 outline-none"
-		>
+		<div className="flex flex-col min-h-0">
 			<div className="flex flex-col" style={{ padding: "24px 28px 12px" }}>
 				<div className="flex items-center" style={{ gap: 8 }}>
 					<BackButton onClick={onBack} />
@@ -451,8 +466,13 @@ function RelaunchList({
 				</span>
 			</div>
 			<div
-				ref={listRef}
-				className="flex-1 min-h-0 overflow-y-auto"
+				ref={keys.rootRef}
+				role="listbox"
+				aria-label="Dormant workspaces"
+				aria-activedescendant={keys.activeId}
+				tabIndex={-1}
+				onKeyDown={keys.onKeyDown}
+				className="flex-1 min-h-0 overflow-y-auto outline-none"
 				style={{ padding: "0 20px 8px" }}
 			>
 				{rows.map((r) => {
@@ -460,6 +480,7 @@ function RelaunchList({
 						return (
 							<div
 								key={`h-${r.workspace.id}`}
+								role="presentation"
 								className="truncate"
 								style={{
 									padding: "10px 10px 4px",
@@ -468,17 +489,18 @@ function RelaunchList({
 								}}
 							>
 								{r.workspace.name}
-								<span style={{ opacity: 0.6 }}> · open</span>
+								{r.opened && <span style={{ opacity: 0.6 }}> · open</span>}
 							</div>
 						);
 					}
-					const i = targets.indexOf(r);
+					const i = indexOf.get(r) ?? -1;
 					const selected = i === keys.index;
 					const w = r.workspace;
 					const branch = gitById[w.id]?.currentBranch ?? w.lastBranch;
 					return (
 						<button
 							key={w.id}
+							id={keys.optionId(i)}
 							type="button"
 							role="option"
 							aria-selected={selected}

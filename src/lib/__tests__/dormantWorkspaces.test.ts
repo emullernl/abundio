@@ -5,6 +5,7 @@ import {
 	dormantWorkspaces,
 	hasFleetAgents,
 	isDormant,
+	relaunchablePanes,
 	rememberedAgents,
 } from "../dormantWorkspaces";
 import type { WorkspaceWithTabs } from "../types";
@@ -82,6 +83,11 @@ describe("dormant workspaces", () => {
 		expect(hasFleetAgents(ws("a", [term("p")]), known, 1)).toBe(true);
 	});
 
+	it("gives a tile only to panes whose Agent is still known", () => {
+		const w = ws("a", [term("p1", "claude"), term("p2", "gone"), term("p3")]);
+		expect(relaunchablePanes(w, known)).toEqual(["p1"]);
+	});
+
 	it("counts Agents in first-seen order", () => {
 		expect(agentCounts(["claude", "codex", "claude"])).toEqual([
 			{ agentId: "claude", count: 2 },
@@ -120,6 +126,16 @@ describe("buildRelaunchRows", () => {
 		expect(
 			shape(buildRelaunchRows(all, facts, new Set(["repo"]), known)),
 		).toEqual(["# repo", "  repo-a", "solo"]);
+		expect(
+			buildRelaunchRows(all, facts, new Set(["repo"]), known)[0],
+		).toMatchObject({ kind: "heading", opened: true });
+	});
+
+	it("marks a closed Primary with no Agents as a heading, not as open", () => {
+		const idle = ws("repo", [term("p")], 0);
+		const rows = buildRelaunchRows([idle, linkedA, solo], facts, none, known);
+		expect(shape(rows)).toEqual(["# repo", "  repo-a", "solo"]);
+		expect(rows[0]).toMatchObject({ kind: "heading", opened: false });
 	});
 
 	it("leaves out a set with nothing Dormant", () => {
