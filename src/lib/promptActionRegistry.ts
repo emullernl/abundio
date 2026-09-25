@@ -22,14 +22,53 @@ export interface PaneFireHandlers {
 	byAction: (action: PromptAction, stageOnly: boolean) => void;
 }
 
-const handlers = new Map<string, PaneFireHandlers>();
-
-export function registerPaneFire(paneId: string, fns: PaneFireHandlers): void {
-	handlers.set(paneId, fns);
+interface Entry {
+	fns: PaneFireHandlers;
+	priority: number;
+	seq: number;
 }
 
-export function unregisterPaneFire(paneId: string): void {
-	handlers.delete(paneId);
+// Several entries per pane: a Fleet tile borrowing a pane registers above its
+// Workspace-view slot, so digits open the parameter dialog in the tile the
+// user is looking at, and the slot takes over again when the tile goes. Same
+// rule as `portalRegistry` (ADR-0040).
+const handlers = new Map<string, Entry[]>();
+let nextSeq = 0;
+
+function live(paneId: string): PaneFireHandlers | undefined {
+	let best: Entry | undefined;
+	for (const e of handlers.get(paneId) ?? []) {
+		if (
+			!best ||
+			e.priority > best.priority ||
+			(e.priority === best.priority && e.seq > best.seq)
+		) {
+			best = e;
+		}
+	}
+	return best?.fns;
+}
+
+export function registerPaneFire(
+	paneId: string,
+	fns: PaneFireHandlers,
+	priority = 0,
+): void {
+	const rest = (handlers.get(paneId) ?? []).filter((e) => e.fns !== fns);
+	rest.push({ fns, priority, seq: nextSeq++ });
+	handlers.set(paneId, rest);
+}
+
+/** Remove one registration, or all of the pane's when `fns` is omitted. */
+export function unregisterPaneFire(
+	paneId: string,
+	fns?: PaneFireHandlers,
+): void {
+	const rest = fns
+		? (handlers.get(paneId) ?? []).filter((e) => e.fns !== fns)
+		: [];
+	if (rest.length === 0) handlers.delete(paneId);
+	else handlers.set(paneId, rest);
 }
 
 /**
@@ -45,7 +84,7 @@ export function firePaneSlot(
 	stageOnly: boolean,
 ): void {
 	if (!paneId) return;
-	handlers.get(paneId)?.bySlot(slot, stageOnly);
+	live(paneId)?.bySlot(slot, stageOnly);
 }
 
 /** Fire a specific action in a pane, from the Command palette. */
@@ -55,5 +94,5 @@ export function firePaneAction(
 	stageOnly = false,
 ): void {
 	if (!paneId) return;
-	handlers.get(paneId)?.byAction(action, stageOnly);
+	live(paneId)?.byAction(action, stageOnly);
 }

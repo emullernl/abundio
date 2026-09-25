@@ -13,6 +13,7 @@ import {
 	usePtyActivityStore,
 } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
@@ -30,6 +31,7 @@ import {
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
+import { targetPaneId } from "./fleetFocus";
 import { agentHooks, pty } from "./ipc";
 import {
 	decrstOutcome,
@@ -41,6 +43,7 @@ import {
 	nextMouseBlockFor,
 } from "./mouseReporting";
 import { parseOsc52 } from "./osc52";
+import { publishPaneFontSize } from "./paneFontSize";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
@@ -201,7 +204,11 @@ function reconcileWebgl(): void {
 	const budget: ReadonlySet<string> = webglEnabled ? webglBudget : new Set();
 	const { toUnload, toLoad } = webglReconcilePlan(loaded, budget);
 	for (const paneId of toUnload) unloadWebgl(paneId);
-	for (const paneId of toLoad) ensureWebglLoaded(paneId);
+	// Straight to the loader: the budget was just computed by the caller.
+	for (const paneId of toLoad) {
+		const managed = instances.get(paneId);
+		if (managed && !managed.webglAddon) tryLoadWebgl(managed);
+	}
 }
 
 /** Flip GPU rendering on/off and reconcile every live terminal: enabling loads
@@ -230,6 +237,12 @@ export function ensureWebglLoaded(paneId: string): void {
 	if (!webglEnabled) return;
 	const managed = instances.get(paneId);
 	if (!managed || managed.webglAddon) return;
+	// Projection asks for a context on its own, often after the reconcile that
+	// followed the change it belongs to (a Fleet tile mounts after the store
+	// update that opened the Console). Ask the policy fresh, or a pane outside
+	// the budget would keep a context until the next reconcile.
+	webglBudget = computeWebglBudget();
+	if (!webglBudget.has(paneId)) return;
 	tryLoadWebgl(managed);
 }
 
@@ -750,7 +763,10 @@ addWindowFocusListener((focused) => {
 		active instanceof HTMLTextAreaElement ||
 		(active instanceof HTMLElement && active.isContentEditable);
 	if (isInteractiveInput) return;
-	const focusedPaneId = useWorkspaceStore.getState().focusedPaneId;
+	// The Focused tile while the Fleet Console is on screen: the Workspace
+	// view's Focused pane is behind it, and may be a shell that is not a tile
+	// at all — keystrokes would go to a terminal nobody can see.
+	const focusedPaneId = targetPaneId();
 	if (!focusedPaneId) return;
 	const managed = instances.get(focusedPaneId);
 	if (!managed) return;
@@ -764,50 +780,16 @@ addWindowFocusListener((focused) => {
 // Guard against the case where the module context is torn down before the
 // timer fires (e.g. in the Vitest jsdom environment after a test finishes).
 setTimeout(() => {
-	if (!useWorkspaceStore?.subscribe) return;
+	if (!useWorkspaceStore?.subscribe || !useWindowUiStore?.subscribe) return;
 	useWorkspaceStore.subscribe((state) => {
-		const { activeWorkspaceId, focusedPaneId } = state;
-		if (!activeWorkspaceId) return;
-
-		// Compute the set of paneIds that should keep a WebGL context — panes of
-		// any opened workspace, best-first, up to MAX_WEBGL_CONTEXTS. Policy and
-		// its reasoning (why contexts are held across switches rather than
-		// rebuilt per visible tab, and why they are capped) live in
-		// `webglBudget.ts`. Panes outside the budget render on xterm's DOM
-		// renderer.
-		const openedIds = usePtyActivityStore.getState().openedWorkspaceIds;
-		const liveWebglPaneIds = pickWebglPanes({
-			workspaces: state.workspaces.map((workspace) => ({
-				id: workspace.id,
-				tabs: workspace.tabs.map((tab) => {
-					const layout = parseTabLayout(tab.layoutJson);
-					return {
-						id: tab.id,
-						paneIds: layout ? collectPaneIds(layout) : [],
-					};
-				}),
-			})),
-			openedWorkspaceIds: openedIds,
-			activeWorkspaceId,
-			activeTabByWorkspace: state.activeTabByWorkspace,
-		});
-		webglBudget = liveWebglPaneIds;
-
-		const activityStore = usePtyActivityStore.getState();
-		for (const [paneId, managed] of instances) {
-			managed.focused = focusedPaneId === paneId;
-			managed.term.options.cursorBlink = managed.focused;
-			if (managed.focused) {
-				managed.suppressActivity = false;
-				if (managed.ptyId) {
-					activityStore.markIdle(managed.ptyId);
-				}
-			}
-			// Ensure all terminals in the active workspace have an activity entry (grey → green)
-			if (managed.ptyId) {
-				activityStore.initPty(managed.ptyId);
-			}
-		}
+		// No early return when no workspace is active: terminals can still be
+		// live — a Workspace opened from the Fleet Console before any was
+		// activated — and they need their activity entries (the Overview bar,
+		// status icons and the Console's agent-mode membership all read them)
+		// and a WebGL budget like any other.
+		void state;
+		webglBudget = computeWebglBudget();
+		syncFocusFlags();
 
 		// Then WebGL, in its own pass. Panes that lost their place in the budget
 		// give their contexts up before the panes that gained one ask for them,
@@ -816,10 +798,174 @@ setTimeout(() => {
 		// opened workspace's layout; rare, a tear-down race).
 		reconcileWebgl();
 	});
+	// The focus flags follow the Focused tile while the Console is on screen,
+	// so they must also move when it does, or when the Console opens/closes.
+	useWindowUiStore.subscribe((state, prev) => {
+		if (
+			state.focusedTileId !== prev.focusedTileId ||
+			state.fleetConsoleOpen !== prev.fleetConsoleOpen ||
+			state.statisticsOverlayOpen !== prev.statisticsOverlayOpen
+		) {
+			syncFocusFlags();
+		}
+	});
+	// The Fleet Console decides the budget while it is on screen: opening or
+	// closing it, Statistics covering it, and moving the spotlight all change
+	// which terminals may hold a context.
+	useWindowUiStore.subscribe((state, prev) => {
+		if (
+			state.fleetConsoleOpen === prev.fleetConsoleOpen &&
+			state.statisticsOverlayOpen === prev.statisticsOverlayOpen &&
+			state.spotlightTileId === prev.spotlightTileId
+		) {
+			return;
+		}
+		// After the view change has painted, not inside it: disposing and
+		// creating contexts swaps renderers on every pane involved, and doing
+		// that in the click's own frame is what kept the Console from
+		// appearing at all until the swaps were done. Coalesced, so opening
+		// then spotlighting in quick succession reconciles once.
+		if (consoleReconcileFrame !== null) return;
+		consoleReconcileFrame = requestAnimationFrame(() => {
+			consoleReconcileFrame = requestAnimationFrame(() => {
+				consoleReconcileFrame = null;
+				webglBudget = computeWebglBudget();
+				reconcileWebgl();
+			});
+		});
+	});
 }, 0);
+
+let consoleReconcileFrame: number | null = null;
+
+/** Mark which terminal is the one receiving input — the Focused tile in the
+ *  Fleet Console, the Focused pane otherwise (`targetPaneId`) — for cursor
+ *  blink, activity suppression and restore handling; and make sure every live
+ *  PTY has an activity entry (grey → green). */
+function syncFocusFlags(): void {
+	const target = targetPaneId();
+	const activityStore = usePtyActivityStore.getState();
+	for (const [paneId, managed] of instances) {
+		managed.focused = target === paneId;
+		managed.term.options.cursorBlink = managed.focused;
+		// On every sync, not only when focus arrives: the pane being looked at
+		// stays acknowledged as updates come in (unchanged from before).
+		if (managed.focused) {
+			managed.suppressActivity = false;
+			if (managed.ptyId) activityStore.markIdle(managed.ptyId);
+		}
+		if (managed.ptyId) activityStore.initPty(managed.ptyId);
+	}
+}
+
+// The Tab on screen, and the one before it — kept warm so switching back is
+// instant (ADR-0041). Updated as the budget is computed.
+let visibleTab: { workspaceId: string; tabId: string } | null = null;
+let previousTab: { workspaceId: string; tabId: string } | null = null;
+
+/** Which panes should hold a WebGL context right now. Policy and its reasons
+ *  live in `webglBudget.ts` / ADR-0041; panes outside it render on xterm's DOM
+ *  renderer. */
+function computeWebglBudget(): Set<string> {
+	const state = useWorkspaceStore.getState();
+	const { activeWorkspaceId, activeTabByWorkspace } = state;
+	const tabId = activeWorkspaceId
+		? activeTabByWorkspace[activeWorkspaceId]
+		: undefined;
+	const now =
+		activeWorkspaceId && tabId
+			? { workspaceId: activeWorkspaceId, tabId }
+			: null;
+	if (
+		now &&
+		(visibleTab?.workspaceId !== now.workspaceId ||
+			visibleTab?.tabId !== now.tabId)
+	) {
+		if (visibleTab) previousTab = visibleTab;
+		visibleTab = now;
+	}
+
+	const ui = useWindowUiStore.getState();
+	const fleetShowing = ui.fleetConsoleOpen && !ui.statisticsOverlayOpen;
+	return pickWebglPanes({
+		workspaces: state.workspaces.map((workspace) => ({
+			id: workspace.id,
+			tabs: workspace.tabs.map((tab) => {
+				const layout = parseTabLayout(tab.layoutJson);
+				return { id: tab.id, paneIds: layout ? collectPaneIds(layout) : [] };
+			}),
+		})),
+		openedWorkspaceIds: usePtyActivityStore.getState().openedWorkspaceIds,
+		activeWorkspaceId,
+		activeTabByWorkspace,
+		previousTab,
+		fleetConsole: fleetShowing ? { spotlightPaneId: ui.spotlightTileId } : null,
+	});
+}
 
 export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
+}
+
+// ── Per-pane font scale (Fleet Console Tile zoom, ADR-0040) ──
+//
+// A pane borrowed into the Fleet Console draws at the global font size times
+// its tile's zoom; everything else draws at the global size. The global size is
+// remembered here so a scale can be applied and removed without asking the
+// settings store (which must never be imported from this module's side of the
+// bridge — see terminalSettingsBridge).
+const paneFontScale = new Map<string, number>();
+let baseFontSize: number | null = null;
+
+function effectiveFontSize(paneId: string, base: number): number {
+	const scale = paneFontScale.get(paneId) ?? 1;
+	// Whole and half pixels only: fractional sizes blur the glyph atlas.
+	return Math.max(6, Math.round(base * scale * 2) / 2);
+}
+
+function applyFontSize(
+	managed: ManagedTerminal,
+	size: number,
+	refit = true,
+): void {
+	publishPaneFontSize(managed.paneId, size);
+	if (managed.term.options.fontSize === size) return;
+	// No glyph-cache clear: a new size is a new atlas configuration, which
+	// xterm acquires by itself. Clearing here would empty the atlas this pane
+	// still *shares* with every other terminal at its old size (see
+	// `clearGlyphCaches`), leaving them drawing backgrounds with no text.
+	managed.term.options.fontSize = size;
+	if (!refit) return;
+	managed.fitAddon.fit();
+	if (managed.ptyId) {
+		pty
+			.resize(managed.ptyId, managed.term.cols, managed.term.rows)
+			.catch(() => {});
+	}
+}
+
+/**
+ * Draw one pane at `scale` × the global font size, or back at the global size
+ * with `null`. The terminal refits and its PTY is resized, so the program
+ * reflows to the new rows and columns.
+ *
+ * `refit: false` changes the font only, for when the terminal is about to be
+ * moved into another container: the move's own first fit then sizes it once,
+ * at the new font and the new container together. Refitting here as well
+ * would resize the PTY twice — the first time to a size that is never shown
+ * (a Fleet tile's box at full font, say), so the program reflows for nothing.
+ */
+export function setPaneFontScale(
+	paneId: string,
+	scale: number | null,
+	opts: { refit?: boolean } = {},
+): void {
+	if (scale === null || scale === 1) paneFontScale.delete(paneId);
+	else paneFontScale.set(paneId, scale);
+	const managed = instances.get(paneId);
+	if (!managed) return;
+	const base = baseFontSize ?? managed.term.options.fontSize ?? 14;
+	applyFontSize(managed, effectiveFontSize(paneId, base), opts.refit ?? true);
 }
 
 export async function createTerminal(
@@ -855,8 +1001,10 @@ export async function createTerminal(
 		}
 	}
 
+	baseFontSize = options.fontSize;
+	publishPaneFontSize(paneId, effectiveFontSize(paneId, options.fontSize));
 	const term = new Terminal({
-		fontSize: options.fontSize,
+		fontSize: effectiveFontSize(paneId, options.fontSize),
 		fontFamily: options.fontFamily,
 		scrollback: options.scrollback,
 		cursorBlink: false,
@@ -1766,6 +1914,123 @@ export function applyDerivedThemeOptions(
 	Object.assign(options, derived);
 }
 
+/**
+ * Make xterm refit a terminal without changing its size: clear the renderer
+ * and run its resize path at the current rows and columns, so it re-measures
+ * its cells, resizes its canvas and redraws every row from the buffer. This is
+ * exactly what `FitAddon.fit()` does when the size *has* changed — the repair
+ * that dragging a pane divider used to perform as a side effect — minus the
+ * size change itself. Invisible to the program in the pane: the PTY is not
+ * resized and no SIGWINCH is sent (nothing resizes the PTY from xterm's own
+ * resize; only the container ResizeObserver does).
+ *
+ * Touches this terminal only. The renderer's clear resets its own model, not
+ * the glyph atlas it shares with other terminals (see `clearGlyphCaches`).
+ * Run whenever a terminal gains focus, and on the pane handed back when the
+ * Fleet Console closes.
+ */
+export function repaintTerminal(paneId: string): void {
+	const managed = instances.get(paneId);
+	if (!managed?.ready) return;
+	const { term } = managed;
+	// The same private seam FitAddon uses (`_core._renderService`): xterm's
+	// public resize() returns early at an unchanged size.
+	const renderService = (
+		term as unknown as {
+			_core?: {
+				_renderService?: {
+					clear(): void;
+					handleResize(cols: number, rows: number): void;
+				};
+			};
+		}
+	)._core?._renderService;
+	if (renderService) {
+		renderService.clear();
+		renderService.handleResize(term.cols, term.rows);
+	} else {
+		term.refresh(0, term.rows - 1);
+	}
+}
+
+/**
+ * Ask the Agent running in a pane to redraw its own screen, at the size it
+ * already has: SIGWINCH to the PTY's foreground process group (macOS/Linux).
+ * `repaintTerminal` fixes what xterm drew; this fixes what the program drew,
+ * which only it can repaint. Agent-mode panes only — a shell has nothing to
+ * redraw and would only reprint its prompt line.
+ *
+ * Windows has no SIGWINCH, so there the size is nudged down a row and back:
+ * two real size changes, two redraws, but the same end state.
+ */
+export function redrawProgram(paneId: string): void {
+	// Only after the terminal was moved, resized or unhidden — the moments a
+	// program's screen can go stale. A plain click between two visible panes
+	// asks nothing of the program; on Windows the fallback below is two real
+	// resizes, which every click would otherwise cost.
+	if (!programRedrawNeeded.has(paneId)) return;
+	// One at a time per pane, so fast focus changes never interleave two
+	// fallback nudges.
+	if (programRedrawInFlight.has(paneId)) return;
+	const managed = instances.get(paneId);
+	const ptyId = managed?.ptyId;
+	if (!managed?.ready || !ptyId) return;
+	const activity = usePtyActivityStore.getState().activities[ptyId];
+	if (activity?.detectionMode !== "agent") return;
+	programRedrawNeeded.delete(paneId);
+	programRedrawInFlight.add(paneId);
+	void pty
+		.redraw(ptyId)
+		.then((signalled) => {
+			if (signalled) return;
+			const { cols, rows } = managed.term;
+			if (rows < 2) return;
+			return pty.resize(ptyId, cols, rows - 1).then(
+				() =>
+					new Promise<void>((resolve) =>
+						setTimeout(() => {
+							// Back to whatever the terminal is now, in case it was
+							// refitted meanwhile.
+							void pty
+								.resize(ptyId, managed.term.cols, managed.term.rows)
+								.finally(resolve);
+						}, 50),
+					),
+			);
+		})
+		.catch(() => {})
+		.finally(() => programRedrawInFlight.delete(paneId));
+}
+
+/** Panes whose terminal was moved, resized or unhidden since their program
+ *  last redrew — see `redrawProgram`. */
+const programRedrawNeeded = new Set<string>();
+const programRedrawInFlight = new Set<string>();
+
+/** Note that a pane's terminal was moved into another container, resized, or
+ *  shown again, so the next focus asks its program to redraw. */
+export function markProgramRedrawNeeded(paneId: string): void {
+	programRedrawNeeded.add(paneId);
+}
+
+/**
+ * Drop WebGL's cached glyphs and redraw **every** WebGL terminal.
+ *
+ * xterm's WebGL renderer shares one glyph atlas among all terminals whose font,
+ * size, colours and pixel ratio match (`acquireTextureAtlas`). Clearing it
+ * through one terminal empties it for all of them, but only that one knows to
+ * redraw — the rest keep a model saying their glyphs are already on the GPU
+ * and draw cell backgrounds with no text. `clearTextureAtlas` on each terminal
+ * both clears the atlas and resets that terminal's model, so every one
+ * rebuilds on its next frame. There is no public way to ask which terminals
+ * share an atlas, so all of them are cleared.
+ */
+export function clearGlyphCaches(): void {
+	for (const managed of instances.values()) {
+		managed.webglAddon?.clearTextureAtlas();
+	}
+}
+
 /** Update theme on all terminal instances */
 export function setAllTerminalsTheme(theme: ITheme): void {
 	const derived = terminalThemeFor(theme);
@@ -1780,15 +2045,10 @@ export function setAllTerminalsTheme(theme: ITheme): void {
 
 /** Update font size on all terminal instances and refit */
 export function setAllTerminalsFontSize(fontSize: number): void {
+	baseFontSize = fontSize;
 	for (const managed of instances.values()) {
-		managed.term.options.fontSize = fontSize;
-		managed.webglAddon?.clearTextureAtlas();
-		managed.fitAddon.fit();
-		if (managed.ptyId) {
-			pty
-				.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-				.catch(() => {});
-		}
+		// A borrowed Fleet tile keeps its zoom: it scales the new size.
+		applyFontSize(managed, effectiveFontSize(managed.paneId, fontSize));
 	}
 }
 

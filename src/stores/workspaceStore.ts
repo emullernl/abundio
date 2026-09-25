@@ -60,6 +60,7 @@ interface WorkspaceState {
 		entry: WorktreeEntry,
 		setupCommands: string,
 		agent?: CodingAgent,
+		opts?: { background?: boolean },
 	) => Promise<WorkspaceWithTabs>;
 	/** Create the worktree on disk (worktrees.add) then create + activate its
 	 *  Workspace — one awaitable op so the sidebar can show a single waiting
@@ -70,6 +71,9 @@ interface WorkspaceState {
 		absolutePath: string,
 		setupCommands: string,
 		agent?: CodingAgent,
+		/** `background`: open the new Workspace without making it Active — the
+		 *  Fleet Console starts Agents without rearranging the Workspace view. */
+		opts?: { background?: boolean },
 	) => Promise<WorkspaceWithTabs>;
 	/** Add a discovered worktree as an unopened Workspace (no PTY, no agent),
 	 *  deduped by folder. Used by sibling expansion and live reconcile. */
@@ -98,6 +102,10 @@ interface WorkspaceState {
 		workspaceId: string,
 		agent?: CodingAgent,
 		seedLayout?: PaneNode,
+		/** `activate: false` appends the Tab without making it the Workspace's
+		 *  active Tab or moving focus — the Fleet Console's New agent, which must
+		 *  not rearrange the Workspace view (ADR-0040). Defaults to true. */
+		opts?: { activate?: boolean },
 	) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
@@ -111,7 +119,8 @@ interface WorkspaceState {
 	updateLayoutLocal: (tabId: string, layout: PaneNode) => void;
 	persistLayout: (tabId: string) => Promise<void>;
 	setPtyStatus: (ptyId: string, status: PtyStatusType) => void;
-	toggleSearch: () => void;
+	/** Toggle the terminal find bar on `paneId`, or on the Focused pane. */
+	toggleSearch: (paneId?: string | null) => void;
 	setWorkspaceBaseBranch: (
 		workspaceId: string,
 		baseBranch: string | null,
@@ -236,6 +245,29 @@ function seedPendingAgentsForLayout(layout: PaneNode): void {
 		if (!command) continue;
 		setPendingAgent(paneId, { command });
 	}
+}
+
+/**
+ * The pane to focus when a Tab comes on screen: the one it last had focused,
+ * if that pane is still in its layout, else its first pane. The remembered
+ * pane can be gone — closed from a Fleet tile while its Tab was not the
+ * active one — and restoring it would leave nothing focused while pane
+ * shortcuts acted on a pane that no longer exists. Exported for tests.
+ */
+export function restoreTabFocus(
+	workspaces: WorkspaceWithTabs[],
+	workspaceId: string,
+	tabId: string,
+	focusedPaneByTab: Record<string, string>,
+): string | null {
+	const tab = workspaces
+		.find((w) => w.id === workspaceId)
+		?.tabs.find((t) => t.id === tabId);
+	const layout = tab ? parseTabLayout(tab.layoutJson) : null;
+	if (!layout) return null;
+	const remembered = focusedPaneByTab[tabId];
+	if (remembered && containsPane(layout, remembered)) return remembered;
+	return collectPaneIds(layout)[0] ?? null;
 }
 
 /** Update a tab's layoutJson in the workspaces array (immutable). */
@@ -455,12 +487,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		absolutePath,
 		setupCommands,
 		agent,
+		opts,
 	) => {
 		// Disk-level git worktree add (slow on large repos), then the in-app
 		// Workspace.
 		const entry = await worktreesApi.add(primaryCwd, branch, absolutePath);
 		try {
-			return await get().addWorktreeWorkspace(entry, setupCommands, agent);
+			return await get().addWorktreeWorkspace(
+				entry,
+				setupCommands,
+				agent,
+				opts,
+			);
 		} catch (e) {
 			// The worktree exists on disk but registering its Workspace failed
 			// (rare — local DB insert). Best-effort rollback so the user isn't left
@@ -473,7 +511,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 	},
 
-	addWorktreeWorkspace: async (entry, setupCommands, agent) => {
+	addWorktreeWorkspace: async (entry, setupCommands, agent, opts) => {
+		const background = opts?.background ?? false;
 		// The watcher commonly races this in during the slow `git worktree add`:
 		// it fires `worktrees-changed`, and addDiscoveredWorktree creates a bare,
 		// unopened Workspace for the new folder before we get here. That entry has
@@ -491,7 +530,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			if (!alreadyOpen && (agent || setupCommands)) {
 				seedFocalPane(existing, { setupCommands, agent });
 			}
-			get().beginWorkspaceSwitch(existing.id);
+			if (background) {
+				usePtyActivityStore.getState().markWorkspaceOpened(existing.id);
+			} else {
+				get().beginWorkspaceSwitch(existing.id);
+			}
 			return existing;
 		}
 		const profileId = fallbackProfileId();
@@ -507,11 +550,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		});
 		set((state) => ({
 			workspaces: [...state.workspaces, ws],
-			activeWorkspaceId: ws.id,
+			activeWorkspaceId: background ? state.activeWorkspaceId : ws.id,
 			activeTabByWorkspace: firstTabId
 				? { ...state.activeTabByWorkspace, [ws.id]: firstTabId }
 				: state.activeTabByWorkspace,
-			focusedPaneId: firstPaneId ?? state.focusedPaneId,
+			focusedPaneId: background
+				? state.focusedPaneId
+				: (firstPaneId ?? state.focusedPaneId),
 		}));
 		useWorkspaceGitStore
 			.getState()
@@ -671,17 +716,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			}
 			// Restore focused pane for the new workspace's active tab
 			const newTabId = id ? state.activeTabByWorkspace[id] : undefined;
-			let restoredFocus: string | null = newTabId
-				? (focusedPaneByTab[newTabId] ?? null)
-				: null;
-			if (!restoredFocus && newTabId) {
-				const workspace = state.workspaces.find((s) => s.id === id);
-				const tab = workspace?.tabs.find((t) => t.id === newTabId);
-				if (tab) {
-					const layout = parseTabLayout(tab.layoutJson);
-					if (layout) restoredFocus = collectPaneIds(layout)[0] ?? null;
-				}
-			}
+			const restoredFocus =
+				id && newTabId
+					? restoreTabFocus(state.workspaces, id, newTabId, focusedPaneByTab)
+					: null;
 			return {
 				activeWorkspaceId: id,
 				focusedPaneId: restoredFocus,
@@ -764,7 +802,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	// ── Tab actions ──
 
-	createTab: async (workspaceId, agent, seedLayout) => {
+	createTab: async (workspaceId, agent, seedLayout, opts) => {
+		const activate = opts?.activate ?? true;
 		const workspace = get().workspaces.find((s) => s.id === workspaceId);
 		const nextNum = (workspace?.tabs.length ?? 0) + 1;
 
@@ -806,6 +845,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				tabsApi.update(tab.id, { layoutJson: stampedJson }).catch(() => {});
 				initialFocus = terminalFocus;
 			}
+		}
+
+		if (!activate) {
+			set((state) => ({
+				workspaces: state.workspaces.map((s) =>
+					s.id === workspaceId ? { ...s, tabs: [...s.tabs, tab] } : s,
+				),
+				// A Workspace with no active Tab yet (never opened) still needs one,
+				// or it renders nothing when it is later switched to.
+				activeTabByWorkspace: state.activeTabByWorkspace[workspaceId]
+					? state.activeTabByWorkspace
+					: { ...state.activeTabByWorkspace, [workspaceId]: tab.id },
+			}));
+			return tab;
 		}
 
 		set((state) => ({
@@ -857,7 +910,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					...state.activeTabByWorkspace,
 					[workspace.id]: newTab.id,
 				},
-				focusedPaneId: null,
+				// Only the Workspace on screen owns focus: a Fleet tile can close a
+				// background Workspace's last pane (ADR-0040).
+				focusedPaneId:
+					state.activeWorkspaceId === workspace.id ? null : state.focusedPaneId,
 			}));
 			return;
 		}
@@ -896,15 +952,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				focusedPaneByTab[oldTabId] = state.focusedPaneId;
 			}
 			// Restore focused pane for the new tab, falling back to first leaf in layout
-			let restoredFocus: string | null = focusedPaneByTab[tabId] ?? null;
-			if (!restoredFocus) {
-				const workspace = state.workspaces.find((s) => s.id === workspaceId);
-				const tab = workspace?.tabs.find((t) => t.id === tabId);
-				if (tab) {
-					const layout = parseTabLayout(tab.layoutJson);
-					if (layout) restoredFocus = collectPaneIds(layout)[0] ?? null;
-				}
-			}
+			const restoredFocus = restoreTabFocus(
+				state.workspaces,
+				workspaceId,
+				tabId,
+				focusedPaneByTab,
+			);
 			return {
 				activeTabByWorkspace: {
 					...state.activeTabByWorkspace,
@@ -1001,11 +1054,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			ptyStatuses: { ...state.ptyStatuses, [ptyId]: status },
 		})),
 
-	toggleSearch: () =>
-		set((state) => ({
-			searchPaneId:
-				state.searchPaneId === state.focusedPaneId ? null : state.focusedPaneId,
-		})),
+	toggleSearch: (paneId) =>
+		set((state) => {
+			const target = paneId ?? state.focusedPaneId;
+			return { searchPaneId: state.searchPaneId === target ? null : target };
+		}),
 
 	setWorkspaceBaseBranch: (workspaceId, baseBranch) =>
 		set((state) => ({

@@ -118,3 +118,10 @@ toml_edit = "0.25"
 keyring = { version = "4", default-features = false, features = ["v1"] }
 aes-gcm = "0.10"
 zeroize = { version = "1", features = ["zeroize_derive"] }
+
+# killpg(SIGWINCH) for the redraw nudge (pty_manager::redraw): tell the
+# program in a PTY to redraw at its current size. nix's safe wrapper rather
+# than a raw libc call, so the PTY code carries no `unsafe`. Already in the
+# dependency tree transitively.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"] }

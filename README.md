@@ -49,6 +49,13 @@ See [all releases](https://github.com/emullernl/abundio/releases) for previous v
 * **Native macOS integration** — Overlay titlebar with traffic light controls
 * **Cross-platform** — macOS, Windows, and Linux support
 * **Command palette** — Quick access to actions via `Cmd+K` / `Ctrl+K`
+* **Fleet Console** — Every running agent in the window as a grid of live, interactive terminals, labelled with its workspace, branch and status; spotlight one, zoom the rest, open or unload workspaces, start new agents, and jump back to an agent's workspace
+
+### Fleet Console
+
+![Fleet Console with 19 agents across 18 workspaces](.github/assets/fleet-console-screenshot.png)
+
+*The Fleet Console (`Cmd+Shift+A` / `Ctrl+Shift+A`): every agent in the window at a glance. Each tile is the agent's live terminal — type into it, answer a waiting prompt, or fire a prompt action — with a coloured edge for its status, so the ones that need you stand out.*
 
 ## Supported coding agents
 
@@ -102,11 +109,26 @@ Most shortcuts use `Cmd` on macOS where Windows/Linux use `Ctrl`. Some differ by
 | Decrease font size               | `Cmd+-`            | `Ctrl+-`                         |
 | Save file                        | `Cmd+S`            | `Ctrl+S`                         |
 | Open settings                    | `Cmd+,`            | `Ctrl+,`                         |
+| Toggle Fleet Console             | `Cmd+Shift+A`      | `Ctrl+Shift+A`                   |
 
 > **Note:** The `Ctrl+Alt` split shortcuts can clash on some setups — a few
 > Linux window managers reserve `Ctrl+Alt`+key, and on international keyboard
 > layouts (e.g. Brazilian, Czech) `Ctrl+Alt` acts as `AltGr` and may type a
 > character instead. If a split shortcut doesn't fire, that's usually why.
+
+### In the Fleet Console
+
+These apply only while the Fleet Console is on screen. Outside it, `Cmd+=` / `Cmd+-` change the font size as usual, and the spotlight and zoom-reset keys are left to the terminal.
+
+| Action                                                   | macOS              | Windows/Linux                 |
+| -------------------------------------------------------- | ------------------ | :---------------------------- |
+| Spotlight the focused agent / back to grid               | `Cmd+Shift+Enter`  | `Ctrl+Shift+Enter`            |
+| Zoom tiles in / out                                      | `Cmd+=` / `Cmd+-`  | `Ctrl+=` / `Ctrl+-`           |
+| Reset tile zoom (75%)                                    | `Cmd+0`            | `Ctrl+0`                      |
+| Focus the agent on that side                             | `Cmd+Shift+Arrow`  | `Ctrl+Shift+Arrow`            |
+| Next / previous agent (moves the spotlight in Spotlight) | `Ctrl+Cmd+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
+
+Layout shortcuts (split, new or close tab, panel toggles, switching workspaces) do nothing while the console is open; pane shortcuts such as close pane, copy, paste, find and the prompt-action digits act on the focused agent.
 
 ## Runtime requirements
 

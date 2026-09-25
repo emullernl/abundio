@@ -1141,6 +1141,7 @@ pub fn run() {
             commands::pty_spawn,
             commands::pty_write,
             commands::pty_resize,
+            commands::pty_redraw,
             commands::pty_kill,
             commands::profile_list,
             commands::profile_create,

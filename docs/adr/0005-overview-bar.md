@@ -16,3 +16,5 @@ The PR counts piggyback on the existing per-workspace PR fetch lifecycle instead
 > for the chip alone" wrinkle described above (there is one dataset and the chips derive their counts
 > from it on read, never storing a total). The bar stays global chrome in every other respect; this is
 > the same per-Profile pull that made the **Statistics overlay** Profile-scoped in ADR-0018.
+
+> **Update (2026-09-24):** the bar gained a second navigation button, the **Fleet Console** toggle (ADR-0040). The rule is unchanged: navigation only, never a state change.

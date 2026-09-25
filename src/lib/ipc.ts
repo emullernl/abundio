@@ -108,6 +108,11 @@ export const pty = {
 	resize: (ptyId: string, cols: number, rows: number) =>
 		invoke<void>("pty_resize", { ptyId, cols, rows }),
 
+	/** Ask the program in the PTY to redraw at its current size (SIGWINCH to
+	 *  the foreground process group). Resolves `false` where unsupported
+	 *  (Windows), so the caller can fall back to a size nudge. */
+	redraw: (ptyId: string) => invoke<boolean>("pty_redraw", { ptyId }),
+
 	kill: (ptyId: string) => invoke<void>("pty_kill", { ptyId }),
 
 	onOutput: (

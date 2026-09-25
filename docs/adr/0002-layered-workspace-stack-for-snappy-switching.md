@@ -28,3 +28,5 @@ revisible` rather than a relayout.
   Its `top` is set to `TITLEBAR_HEIGHT` because absolute positioning ignores its
   containing block's `padding-top`. If the titlebar height ever becomes dynamic,
   the offset and the parent's `paddingTop` must change in lockstep.
+
+> **Update:** holding a WebGL context on every opened Workspace's panes was narrowed by ADR-0041: contexts now go to the visible Tab plus the Tab just left, and in the Fleet Console to the spotlighted tile alone. The layered, `visibility: hidden` stack described here is unchanged.

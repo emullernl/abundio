@@ -11,6 +11,45 @@ import { currentWindowLabel } from "../lib/appWindow";
  *  See ADR-0007 (per-Window state) and ADR-0010 (right sidebar as
  *  in-workspace toolbox). */
 
+/** The Fleet Console's grid: a preset of columns × *visible* rows (the row
+ *  count sets tile height; more agents add rows and the grid scrolls), plus
+ *  the divider positions. `null` ratios mean equal sizes. */
+export interface FleetGrid {
+	preset: "auto" | { columns: number; rows: number };
+	colRatios: number[] | null;
+	rowRatios: number[] | null;
+	/** **Tile zoom**: tiles draw at the terminal font size times this. */
+	zoom: number;
+	/** The **Filmstrip**'s share of the width in **Spotlight**. */
+	filmstripRatio: number;
+}
+
+export const TILE_ZOOM_DEFAULT = 0.75;
+export const TILE_ZOOM_MIN = 0.5;
+export const TILE_ZOOM_MAX = 1;
+export const TILE_ZOOM_STEP = 0.05;
+export const FILMSTRIP_DEFAULT = 1 / 3;
+
+/** Clamp to the slider's range and snap to its steps. */
+export function clampTileZoom(z: number): number {
+	const snapped = Math.round(z / TILE_ZOOM_STEP) * TILE_ZOOM_STEP;
+	return Math.min(TILE_ZOOM_MAX, Math.max(TILE_ZOOM_MIN, +snapped.toFixed(2)));
+}
+
+const DEFAULT_FLEET_GRID: FleetGrid = {
+	preset: "auto",
+	colRatios: null,
+	rowRatios: null,
+	zoom: TILE_ZOOM_DEFAULT,
+	filmstripRatio: FILMSTRIP_DEFAULT,
+};
+
+export interface AddWorktreeRequest {
+	workspaceId: string;
+	agentId?: string;
+	background?: boolean;
+}
+
 export type RightSidebarTab = "git" | "explorer" | "search" | "notes";
 
 interface WindowUiState {
@@ -53,11 +92,61 @@ interface WindowUiState {
 	statisticsOverlayOpen: boolean;
 	toggleStatisticsOverlay: () => void;
 	setStatisticsOverlayOpen: (open: boolean) => void;
-	/** A pending request, from the keyboard shortcut, to open the Add worktree
-	 *  dialog for this main-worktree Workspace. The Left sidebar owns the
-	 *  dialog, so it takes the request and clears it. Not persisted. */
-	addWorktreeRequest: string | null;
-	requestAddWorktree: (workspaceId: string) => void;
+	/** The **Fleet Console** replaces everything between the Overview bar and
+	 *  the Status bar with a grid of this Window's agent-mode panes. Not
+	 *  persisted: every launch opens in the Workspace view. It and the
+	 *  Statistics overlay are mutually exclusive on screen: opening Statistics
+	 *  covers the console, and closing Statistics reveals it again, while
+	 *  opening the console closes Statistics. See ADR-0040. */
+	fleetConsoleOpen: boolean;
+	toggleFleetConsole: () => void;
+	setFleetConsoleOpen: (open: boolean) => void;
+	/** The **Focused tile**: the console's own focus, separate from the
+	 *  Workspace view's `focusedPaneId` so moving around the grid never
+	 *  rearranges the view behind it. Not persisted. */
+	focusedTileId: string | null;
+	setFocusedTile: (paneId: string | null) => void;
+	/** Panes the console is waiting on to become Agents — one it just started
+	 *  an Agent in, or a just-opened Workspace's remembered Agents — keyed by
+	 *  pane id, valued by when. They are shown as tiles *before* agent mode,
+	 *  because a pending launch is typed only once its terminal has been drawn,
+	 *  and a Tab that is not on screen is drawn nowhere else. */
+	pendingTiles: Record<string, number>;
+	/** Start an Agent's tile ahead of agent mode, and focus it. */
+	expectFleetTile: (paneId: string) => void;
+	/** The same for several panes, without moving focus. */
+	expectFleetTiles: (paneIds: string[]) => void;
+	/** Stop showing these panes unless they are Agents by now. */
+	settleFleetTiles: (paneIds: string[]) => void;
+	/** Remembered per Window: two monitors want different grids. */
+	fleetGrid: FleetGrid;
+	/** Choosing a preset resets the dividers to equal sizes. */
+	setFleetPreset: (preset: FleetGrid["preset"]) => void;
+	setFleetRatios: (
+		colRatios: number[] | null,
+		rowRatios: number[] | null,
+	) => void;
+	setTileZoom: (zoom: number) => void;
+	setFilmstripRatio: (ratio: number) => void;
+	/** The tile in **Spotlight**, or null for the grid. Kept across closing
+	 *  and reopening the Console within a session, so Switch to and back
+	 *  resumes where the user was; not persisted across launches. */
+	spotlightTileId: string | null;
+	/** The grid's scroll position when the Console last closed, restored when
+	 *  it reopens. Session-only, like the spotlight. */
+	fleetScrollTop: number;
+	setSpotlight: (paneId: string | null) => void;
+	/** A pending request, from the keyboard shortcut or the Fleet Console's
+	 *  New agent, to open the Add worktree dialog for this main-worktree
+	 *  Workspace. The Left sidebar owns the dialog (it stays mounted while the
+	 *  console hides it), so it takes the request and clears it. `agentId`
+	 *  pre-selects the Agent; `background` opens the new Workspace without
+	 *  making it Active. Not persisted. */
+	addWorktreeRequest: AddWorktreeRequest | null;
+	requestAddWorktree: (
+		workspaceId: string,
+		opts?: { agentId?: string; background?: boolean },
+	) => void;
 	clearAddWorktreeRequest: () => void;
 }
 
@@ -114,14 +203,88 @@ export const useWindowUiStore = create<WindowUiState>()(
 			toggleStatisticsOverlay: () =>
 				set((s) => ({ statisticsOverlayOpen: !s.statisticsOverlayOpen })),
 			setStatisticsOverlayOpen: (open) => set({ statisticsOverlayOpen: open }),
+			fleetConsoleOpen: false,
+			toggleFleetConsole: () => {
+				const s = get();
+				// The button reads "show the console" while Statistics covers it.
+				if (s.statisticsOverlayOpen) {
+					set({ statisticsOverlayOpen: false, fleetConsoleOpen: true });
+				} else if (s.fleetConsoleOpen) {
+					set({ fleetConsoleOpen: false });
+				} else {
+					set({ fleetConsoleOpen: true });
+				}
+			},
+			focusedTileId: null,
+			setFocusedTile: (paneId) => set({ focusedTileId: paneId }),
+			pendingTiles: {},
+			expectFleetTile: (paneId) =>
+				set((s) => ({
+					focusedTileId: paneId,
+					pendingTiles: { ...s.pendingTiles, [paneId]: Date.now() },
+				})),
+			expectFleetTiles: (paneIds) =>
+				set((s) => {
+					if (paneIds.length === 0) return s;
+					const at = Date.now();
+					const next = { ...s.pendingTiles };
+					for (const id of paneIds) next[id] = at;
+					return { pendingTiles: next };
+				}),
+			settleFleetTiles: (paneIds) =>
+				set((s) => {
+					const next = { ...s.pendingTiles };
+					let changed = false;
+					for (const id of paneIds) {
+						if (id in next) {
+							delete next[id];
+							changed = true;
+						}
+					}
+					return changed ? { pendingTiles: next } : s;
+				}),
+			fleetGrid: DEFAULT_FLEET_GRID,
+			// Choosing a grid size is a request for the grid: it ends Spotlight.
+			setFleetPreset: (preset) =>
+				set((s) => ({
+					fleetGrid: {
+						...s.fleetGrid,
+						preset,
+						colRatios: null,
+						rowRatios: null,
+					},
+					spotlightTileId: null,
+				})),
+			setTileZoom: (zoom) =>
+				set((s) => ({
+					fleetGrid: { ...s.fleetGrid, zoom: clampTileZoom(zoom) },
+				})),
+			setFilmstripRatio: (ratio) =>
+				set((s) => ({
+					fleetGrid: {
+						...s.fleetGrid,
+						filmstripRatio: Math.min(0.5, Math.max(0.12, ratio)),
+					},
+				})),
+			spotlightTileId: null,
+			fleetScrollTop: 0,
+			setSpotlight: (paneId) => set({ spotlightTileId: paneId }),
+			setFleetRatios: (colRatios, rowRatios) =>
+				set((s) => ({ fleetGrid: { ...s.fleetGrid, colRatios, rowRatios } })),
+			setFleetConsoleOpen: (open) =>
+				set(
+					open
+						? { fleetConsoleOpen: true, statisticsOverlayOpen: false }
+						: { fleetConsoleOpen: false },
+				),
 			addWorktreeRequest: null,
-			requestAddWorktree: (workspaceId) =>
-				set({ addWorktreeRequest: workspaceId }),
+			requestAddWorktree: (workspaceId, opts) =>
+				set({ addWorktreeRequest: { workspaceId, ...opts } }),
 			clearAddWorktreeRequest: () => set({ addWorktreeRequest: null }),
 		}),
 		{
 			name: persistKey,
-			version: 1,
+			version: 2,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -134,7 +297,30 @@ export const useWindowUiStore = create<WindowUiState>()(
 					const { gitPanelOpen: _drop, ...rest } = state;
 					state = rest;
 				}
+				// v2: the Filmstrip default widened from 25% to a third. A stored
+				// 0.25 is the old default, never dragged, so it follows the new one.
+				if (version < 2) {
+					const grid = state.fleetGrid as
+						| { filmstripRatio?: number }
+						| undefined;
+					if (grid?.filmstripRatio === 0.25) {
+						state = {
+							...state,
+							fleetGrid: { ...grid, filmstripRatio: FILMSTRIP_DEFAULT },
+						};
+					}
+				}
 				return state;
+			},
+			// Fill fields a stored grid predates (zoom, filmstrip), rather than
+			// letting the shallow default merge drop them.
+			merge: (persisted, current) => {
+				const p = (persisted ?? {}) as Partial<WindowUiState>;
+				return {
+					...current,
+					...p,
+					fleetGrid: { ...DEFAULT_FLEET_GRID, ...(p.fleetGrid ?? {}) },
+				};
 			},
 			partialize: (s) => ({
 				sidebarCollapsed: s.sidebarCollapsed,
@@ -144,6 +330,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				commitsSectionCollapsed: s.commitsSectionCollapsed,
 				statisticsOverlayOpen: s.statisticsOverlayOpen,
 				foldedSetKeys: s.foldedSetKeys,
+				fleetGrid: s.fleetGrid,
 			}),
 		},
 	),

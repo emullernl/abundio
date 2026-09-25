@@ -6,6 +6,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DragPanePreview } from "./components/DragPanePreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
+import { FleetConsole } from "./components/FleetConsole/FleetConsole";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
@@ -41,6 +42,15 @@ import {
 } from "./lib/busyPty";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
+import {
+	cycleFleet,
+	fleetConsoleShowing,
+	navigateFleet,
+	stepTileZoom,
+	targetPaneId,
+	toggleFleetSpotlight,
+	workspaceViewOnly,
+} from "./lib/fleetFocus";
 import { installFocusSweep } from "./lib/focusSweep";
 import {
 	agentRegistry,
@@ -49,7 +59,11 @@ import {
 	updates,
 	windowSession,
 } from "./lib/ipc";
-import { initKeybindings, registerAction } from "./lib/keybindings";
+import {
+	initKeybindings,
+	registerAction,
+	registerActionGate,
+} from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
@@ -111,6 +125,13 @@ import { useWorkspaceStore } from "./stores/workspaceStore";
 // renders a single-row strip of this exact height; all other layout (sidebar,
 // OverviewBar, content) butts up against it with no gap.
 const TITLEBAR_HEIGHT = isMac ? 28 : 0;
+
+/** A sidebar hidden by the Fleet Console: zero width and clipped, but still
+ *  mounted (see the note where it is used). */
+const HIDDEN_SIDEBAR_STYLE: React.CSSProperties = {
+	width: 0,
+	overflow: "hidden",
+};
 
 /** Workspace-switch overlay. */
 const SwitchingOverlay = memo(function SwitchingOverlay() {
@@ -186,6 +207,10 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 	const prPollingEnabled = useSettingsStore((s) => s.prPollEnabled);
 	const statisticsOpen = useWindowUiStore((s) => s.statisticsOverlayOpen);
 	const toggleStatistics = useWindowUiStore((s) => s.toggleStatisticsOverlay);
+	const fleetOpen = useWindowUiStore(
+		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
+	);
+	const toggleFleet = useWindowUiStore((s) => s.toggleFleetConsole);
 	return (
 		<OverviewBar
 			openedWorkspaces={openedWorkspaces}
@@ -205,6 +230,8 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 			showAgentWaiting={showAgentWaiting}
 			statisticsOpen={statisticsOpen}
 			onToggleStatistics={toggleStatistics}
+			fleetConsoleOpen={fleetOpen}
+			onToggleFleetConsole={toggleFleet}
 		/>
 	);
 });
@@ -383,6 +410,7 @@ export function App() {
 	);
 	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	const fleetConsoleOpen = useWindowUiStore((s) => s.fleetConsoleOpen);
 
 	// Lazy-mount tabs. Active tab mounts immediately; others mount after workspace
 	// switch has painted so the new workspace feels instant.
@@ -402,6 +430,30 @@ export function App() {
 			return next;
 		});
 	}, [activeWorkspaceId, switchingWorkspaceId, activeTabByWorkspace]);
+
+	// A Workspace opened without being activated — from the Fleet Console, or
+	// by New agent there — still gets its active Tab mounted (hidden, in the
+	// layered stack), so it is opened *entirely*: its terminals are drawn and
+	// their PTYs start, its remembered Agents relaunch in place, and its status
+	// icons have statuses to show. Without this only the panes the Console
+	// itself drew ever started, and a Workspace with no Agents had no PTYs at
+	// all. Deferred a frame, like the other background mounts.
+	useEffect(() => {
+		const missing: string[] = [];
+		for (const id of openedWorkspaceIds) {
+			const tabId = activeTabByWorkspace[id];
+			if (tabId && !mountedTabIds.has(tabId)) missing.push(tabId);
+		}
+		if (missing.length === 0) return;
+		const rafId = requestAnimationFrame(() => {
+			setMountedTabIds((prev) => {
+				const next = new Set(prev);
+				for (const t of missing) next.add(t);
+				return next;
+			});
+		});
+		return () => cancelAnimationFrame(rafId);
+	}, [openedWorkspaceIds, activeTabByWorkspace, mountedTabIds]);
 
 	useEffect(() => {
 		if (switchingWorkspaceId !== null) return;
@@ -679,24 +731,30 @@ export function App() {
 	}, []);
 
 	useEffect(() => {
-		registerAction("split-horizontal", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
-			if (paneId) splitPaneWithPicker(paneId, "horizontal");
-		});
-		registerAction("split-vertical", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
-			if (paneId) splitPaneWithPicker(paneId, "vertical");
-		});
+		registerAction(
+			"split-horizontal",
+			workspaceViewOnly(() => {
+				const paneId = useWorkspaceStore.getState().focusedPaneId;
+				if (paneId) splitPaneWithPicker(paneId, "horizontal");
+			}),
+		);
+		registerAction(
+			"split-vertical",
+			workspaceViewOnly(() => {
+				const paneId = useWorkspaceStore.getState().focusedPaneId;
+				if (paneId) splitPaneWithPicker(paneId, "vertical");
+			}),
+		);
 		registerAction("close-pane", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			const paneId = targetPaneId();
 			if (paneId) closePane(paneId);
 		});
 		registerAction("copy", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			const paneId = targetPaneId();
 			if (paneId) copyTerminalSelection(paneId);
 		});
 		registerAction("paste", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			const paneId = targetPaneId();
 			if (paneId) void pasteIntoTerminal(paneId);
 		});
 		// Action bar position numbers. Resolved against the focused pane, because
@@ -704,14 +762,16 @@ export function App() {
 		for (let n = 1; n <= 9; n++) {
 			registerAction(
 				`prompt-action-${n}` as Parameters<typeof registerAction>[0],
-				() =>
-					firePaneSlot(useWorkspaceStore.getState().focusedPaneId, n, false),
+				() => firePaneSlot(targetPaneId(), n, false),
 			);
 		}
-		registerAction("navigate-up", () => navigatePane("up"));
-		registerAction("navigate-down", () => navigatePane("down"));
-		registerAction("navigate-left", () => navigatePane("left"));
-		registerAction("navigate-right", () => navigatePane("right"));
+		// In the Fleet Console, Directional move and Pane cycle walk the grid.
+		const move = (dir: "up" | "down" | "left" | "right") => () =>
+			fleetConsoleShowing() ? navigateFleet(dir) : navigatePane(dir);
+		registerAction("navigate-up", move("up"));
+		registerAction("navigate-down", move("down"));
+		registerAction("navigate-left", move("left"));
+		registerAction("navigate-right", move("right"));
 		// Workspace cycle: Opened workspaces only, in Left sidebar order.
 		const cycleWorkspace = (step: 1 | -1) => {
 			const ws = useWorkspaceStore.getState();
@@ -730,27 +790,43 @@ export function App() {
 			);
 			if (target) ws.beginWorkspaceSwitch(target);
 		};
-		registerAction("add-worktree", () => {
-			const ws = useWorkspaceStore.getState();
-			const target = addWorktreeTargetId(
-				ws.workspaces,
-				useWorkspaceGitStore.getState().worktreeFacts,
-				ws.activeWorkspaceId,
-			);
-			if (target) useWindowUiStore.getState().requestAddWorktree(target);
-		});
-		registerAction("next-workspace", () => cycleWorkspace(1));
-		registerAction("prev-workspace", () => cycleWorkspace(-1));
-		registerAction("next-pane", () => cycleFocusedPane(1));
-		registerAction("prev-pane", () => cycleFocusedPane(-1));
+		registerAction(
+			"add-worktree",
+			workspaceViewOnly(() => {
+				const ws = useWorkspaceStore.getState();
+				const target = addWorktreeTargetId(
+					ws.workspaces,
+					useWorkspaceGitStore.getState().worktreeFacts,
+					ws.activeWorkspaceId,
+				);
+				if (target) useWindowUiStore.getState().requestAddWorktree(target);
+			}),
+		);
+		registerAction(
+			"next-workspace",
+			workspaceViewOnly(() => cycleWorkspace(1)),
+		);
+		registerAction(
+			"prev-workspace",
+			workspaceViewOnly(() => cycleWorkspace(-1)),
+		);
+		registerAction("next-pane", () =>
+			fleetConsoleShowing() ? cycleFleet(1) : cycleFocusedPane(1),
+		);
+		registerAction("prev-pane", () =>
+			fleetConsoleShowing() ? cycleFleet(-1) : cycleFocusedPane(-1),
+		);
 		registerAction("command-palette", () => {
 			setFileSearchOpen(false);
 			setPaletteOpen((v) => !v);
 		});
-		registerAction("open-file-search", () => {
-			setPaletteOpen(false);
-			setFileSearchOpen((v) => !v);
-		});
+		registerAction(
+			"open-file-search",
+			workspaceViewOnly(() => {
+				setPaletteOpen(false);
+				setFileSearchOpen((v) => !v);
+			}),
+		);
 		registerAction("open-settings", () => {
 			setPaletteOpen(false);
 			// Settings is now a singleton OS window (ADR-0007). The Rust
@@ -759,79 +835,121 @@ export function App() {
 			invoke("open_settings_window").catch(() => {});
 		});
 		registerAction("search-in-terminal", () =>
-			useWorkspaceStore.getState().toggleSearch(),
+			useWorkspaceStore.getState().toggleSearch(targetPaneId()),
 		);
-		registerAction("new-tab", () => {
-			const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-			if (workspaceId) requestNewTab(workspaceId);
-		});
+		registerAction(
+			"new-tab",
+			workspaceViewOnly(() => {
+				const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+				if (workspaceId) requestNewTab(workspaceId);
+			}),
+		);
 		registerAction("new-workspace", () => {
 			requestNewWorkspace();
 		});
-		registerAction("close-tab", () => {
-			const tab = useWorkspaceStore.getState().getActiveTab();
-			if (tab) requestCloseTerminalTab(tab.id);
-		});
-		registerAction("next-tab", () => {
-			const state = useWorkspaceStore.getState();
-			const workspace = state.getActiveWorkspace();
-			if (!workspace || workspace.tabs.length <= 1) return;
-			const currentTabId = state.activeTabByWorkspace[workspace.id];
-			const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
-			const nextIdx = (idx + 1) % workspace.tabs.length;
-			state.setActiveTab(workspace.id, workspace.tabs[nextIdx].id);
-		});
-		registerAction("prev-tab", () => {
-			const state = useWorkspaceStore.getState();
-			const workspace = state.getActiveWorkspace();
-			if (!workspace || workspace.tabs.length <= 1) return;
-			const currentTabId = state.activeTabByWorkspace[workspace.id];
-			const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
-			const prevIdx = (idx - 1 + workspace.tabs.length) % workspace.tabs.length;
-			state.setActiveTab(workspace.id, workspace.tabs[prevIdx].id);
-		});
+		registerAction(
+			"close-tab",
+			workspaceViewOnly(() => {
+				const tab = useWorkspaceStore.getState().getActiveTab();
+				if (tab) requestCloseTerminalTab(tab.id);
+			}),
+		);
+		registerAction(
+			"next-tab",
+			workspaceViewOnly(() => {
+				const state = useWorkspaceStore.getState();
+				const workspace = state.getActiveWorkspace();
+				if (!workspace || workspace.tabs.length <= 1) return;
+				const currentTabId = state.activeTabByWorkspace[workspace.id];
+				const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
+				const nextIdx = (idx + 1) % workspace.tabs.length;
+				state.setActiveTab(workspace.id, workspace.tabs[nextIdx].id);
+			}),
+		);
+		registerAction(
+			"prev-tab",
+			workspaceViewOnly(() => {
+				const state = useWorkspaceStore.getState();
+				const workspace = state.getActiveWorkspace();
+				if (!workspace || workspace.tabs.length <= 1) return;
+				const currentTabId = state.activeTabByWorkspace[workspace.id];
+				const idx = workspace.tabs.findIndex((t) => t.id === currentTabId);
+				const prevIdx =
+					(idx - 1 + workspace.tabs.length) % workspace.tabs.length;
+				state.setActiveTab(workspace.id, workspace.tabs[prevIdx].id);
+			}),
+		);
 		registerAction("font-size-increase", () => {
+			// In the Fleet Console the font keys step the Tile zoom instead.
+			if (fleetConsoleShowing()) return stepTileZoom(1);
 			const { fontSize, setFontSize } = useSettingsStore.getState();
 			const newSize = Math.min(fontSize + 1, 32);
 			setFontSize(newSize);
 			setAllTerminalsFontSize(newSize);
 		});
 		registerAction("font-size-decrease", () => {
+			if (fleetConsoleShowing()) return stepTileZoom(-1);
 			const { fontSize, setFontSize } = useSettingsStore.getState();
 			const newSize = Math.max(fontSize - 1, 8);
 			setFontSize(newSize);
 			setAllTerminalsFontSize(newSize);
 		});
-		registerAction("save-file", () => {
-			const explorer = useExplorerStore.getState();
-			const focusedId = useWorkspaceStore.getState().focusedPaneId;
-			if (focusedId && explorer.filePanes[focusedId]) {
-				explorer.saveFile(focusedId);
-				return;
-			}
-			// Focus is outside a file pane (e.g. a terminal) — save every dirty
-			// file pane in the active tab so Cmd+S still works.
-			const layout = useWorkspaceStore.getState().getActiveLayout();
-			if (!layout) return;
-			for (const pid of collectFilePaneIds(layout)) {
-				if (explorer.filePanes[pid]?.isDirty) explorer.saveFile(pid);
-			}
-		});
-		registerAction("toggle-right-sidebar-git", () => {
-			useWindowUiStore.getState().toggleRightSidebarTab("git");
-		});
-		registerAction("toggle-right-sidebar-explorer", () => {
-			useWindowUiStore.getState().toggleRightSidebarTab("explorer");
-		});
-		registerAction("toggle-right-sidebar-notes", () => {
-			useWindowUiStore.getState().toggleRightSidebarTab("notes");
-		});
-		registerAction("toggle-markdown-preview", () => {
-			const paneId = useWorkspaceStore.getState().focusedPaneId;
-			if (paneId) toggleMarkdownPreviewForPane(paneId);
-		});
-		registerAction("search-in-workspace", () => {
-			useWindowUiStore.getState().toggleRightSidebarTab("search");
+		registerAction(
+			"save-file",
+			workspaceViewOnly(() => {
+				const explorer = useExplorerStore.getState();
+				const focusedId = useWorkspaceStore.getState().focusedPaneId;
+				if (focusedId && explorer.filePanes[focusedId]) {
+					explorer.saveFile(focusedId);
+					return;
+				}
+				// Focus is outside a file pane (e.g. a terminal) — save every dirty
+				// file pane in the active tab so Cmd+S still works.
+				const layout = useWorkspaceStore.getState().getActiveLayout();
+				if (!layout) return;
+				for (const pid of collectFilePaneIds(layout)) {
+					if (explorer.filePanes[pid]?.isDirty) explorer.saveFile(pid);
+				}
+			}),
+		);
+		registerAction(
+			"toggle-right-sidebar-git",
+			workspaceViewOnly(() => {
+				useWindowUiStore.getState().toggleRightSidebarTab("git");
+			}),
+		);
+		registerAction(
+			"toggle-right-sidebar-explorer",
+			workspaceViewOnly(() => {
+				useWindowUiStore.getState().toggleRightSidebarTab("explorer");
+			}),
+		);
+		registerAction(
+			"toggle-right-sidebar-notes",
+			workspaceViewOnly(() => {
+				useWindowUiStore.getState().toggleRightSidebarTab("notes");
+			}),
+		);
+		registerAction(
+			"toggle-markdown-preview",
+			workspaceViewOnly(() => {
+				const paneId = useWorkspaceStore.getState().focusedPaneId;
+				if (paneId) toggleMarkdownPreviewForPane(paneId);
+			}),
+		);
+		registerAction(
+			"search-in-workspace",
+			workspaceViewOnly(() => {
+				useWindowUiStore.getState().toggleRightSidebarTab("search");
+			}),
+		);
+		// Fleet Console only: the gate leaves these keys to the terminal elsewhere.
+		registerAction("fleet-spotlight", toggleFleetSpotlight);
+		registerActionGate("fleet-spotlight", fleetConsoleShowing);
+		registerAction("fleet-zoom-reset", () => stepTileZoom(0));
+		registerActionGate("fleet-zoom-reset", fleetConsoleShowing);
+		registerAction("toggle-fleet-console", () => {
+			useWindowUiStore.getState().toggleFleetConsole();
 		});
 		registerAction("toggle-statistics-overlay", () => {
 			useWindowUiStore.getState().toggleStatisticsOverlay();
@@ -859,10 +977,18 @@ export function App() {
 			{!workspacesInitialized && <AppLoader />}
 			<Titlebar />
 			<div className="flex flex-1 min-h-0">
-				<Sidebar
-					titlebarHeight={TITLEBAR_HEIGHT}
-					onRequestNewWorkspace={requestNewWorkspace}
-				/>
+				{/* The Fleet Console hides both sidebars. They stay mounted — the
+				    Left sidebar owns the Add worktree dialog the console hands off
+				    to, and its fixed-position dialogs escape this clip. */}
+				<div
+					className="flex shrink-0"
+					style={fleetConsoleOpen ? HIDDEN_SIDEBAR_STYLE : undefined}
+				>
+					<Sidebar
+						titlebarHeight={TITLEBAR_HEIGHT}
+						onRequestNewWorkspace={requestNewWorkspace}
+					/>
+				</div>
 				<div
 					className="flex-1 min-w-0 flex flex-col relative"
 					style={{ paddingTop: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT }}
@@ -983,11 +1109,17 @@ export function App() {
 					    alive behind it via the portal registry) when open; renders null
 					    otherwise. Sits below the Overview bar's z-40 so its toggle stays
 					    clickable, above the workspace stack. See ADR-0018. */}
+					<FleetConsole topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT} />
 					<StatisticsOverlay
 						topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT}
 					/>
 				</div>
-				<RightSidebar titlebarHeight={TITLEBAR_HEIGHT} />
+				<div
+					className="flex shrink-0"
+					style={fleetConsoleOpen ? HIDDEN_SIDEBAR_STYLE : undefined}
+				>
+					<RightSidebar titlebarHeight={TITLEBAR_HEIGHT} />
+				</div>
 			</div>
 			<StatusBar />
 			<CommandPalette

@@ -216,8 +216,6 @@ function TabItem({
 				</span>
 			)}
 
-			{statusDot}
-
 			{isEditing ? (
 				<input
 					ref={inputRef}
@@ -245,6 +243,9 @@ function TabItem({
 			) : (
 				<span className="truncate select-none">{tab.name}</span>
 			)}
+
+			{/* Status at the end of the tab, just before its close button. */}
+			{statusDot}
 
 			{/* Close button / dirty indicator */}
 			{dirty && !hovered ? (

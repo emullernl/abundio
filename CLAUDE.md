@@ -58,6 +58,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `components/GitChanges/` — `GitChangesPanel`, `GitChangesFileList`, `GitChangesFileItem`, `DiffViewer`, `BranchSelector`, `PullRequestsSection`, `PullRequestItem`, `GitChangesResizer`, `GitPanelDivider`.
 - `components/Search/` — `SearchPanel`, `SearchResultFile`, `SearchResultMatch`.
 - `components/Notes/` — Per-workspace notes editor: `NotesPanel`, `NotesEditor`, `NotesToolbar`.
+- `components/FleetConsole/` — The **Fleet Console** (ADR-0040): `FleetConsole` (grid of every agent-mode pane in the Window), `FleetTile` (a borrowed `TerminalSlot` with `fleet` set), `GridPicker`, `NewAgentDialog`.
 - Top-level: `CommandPalette`, `FileSearchPalette`, `SettingsPanel`, `TabBar`, `StatusBar`, `Titlebar`, `OverviewBar`, `AppLoader`, `AgentStatusIcon`, `ConfirmDialog`, `SaveConfirmDialog`, `ErrorBoundary`, `LaunchPicker`, `NewWorkspaceDialog`, `OpenInDevEnvButton`, `DragPanePreview`, `PaneDropIndicator`.
 
 #### Hooks
@@ -91,6 +92,9 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/ipc.ts` — Typed wrappers around Tauri `invoke()` and `listen()`.
 - `lib/themes.ts` — Built-in themes. `applyTheme()` sets CSS variables on `:root`.
 - `lib/terminalManager.ts` — `ManagedTerminal` wraps xterm.js with FitAddon, SearchAddon, SerializeAddon, WebGL (canvas fallback). Handles PTY connection, scrollback restore, font updates, and `restartPanePty` (the third lifecycle path — ADR-0023).
+- `lib/fleetConsole.ts` — Pure Fleet Console helpers: which panes are tiles and in what order, grid shape, Auto columns, divider drags, grid navigation.
+- `lib/fleetFocus.ts` — `targetPaneId()`: the Focused tile in the Fleet Console, the Focused pane otherwise. Every pane-scoped shortcut resolves its target here; `workspaceViewOnly` mutes layout shortcuts in the console.
+- `lib/paneLocation.ts` — `findPaneLocation`, `revealPane`, and `switchToPane` (the Fleet Console's **Switch to**).
 - `lib/paneRestart.ts` — `pickLivePanes` (pure) + `restartWorkspacePtys`: kill and respawn a Workspace's PTYs so they pick up a changed Injected bundle.
 - `lib/osc52.ts` — Parses OSC 52 clipboard payloads (write-only; reads are refused). See the clipboard convention below.
 - `lib/mouseReporting.ts` — The DEC private modes that turn mouse reporting on, and the pure decisions around refusing them (swallow or not, badge state, sweep or replay). See ADR-0031.
@@ -194,6 +198,8 @@ git push --follow-tags         # triggers CI build for all platforms
 - **An inline `style` silently defeats `hover:` / `active:` / `focus:` utilities.** Inline declarations beat any class, so a button whose `color`, `backgroundColor` or `border` is set inline can never show a state change. Put the properties that change on hover or press in classes, and keep only sizing and padding inline (padding *must* stay inline, see above). Gate the states on `enabled:` so a disabled button stays still. `components/PromptActions/fieldStyles.ts` has `secondaryButtonClass` / `primaryButtonClass` to reuse.
 - **Do not use a native `<select>`.** It is the one widget that ignores the theme: without `appearance: none` the platform draws it, and on Linux that is the GTK theme, which discards `background-color` and imposes its own text colour — pale-on-pale and barely readable. `appearance: none` fixes only the *closed* control; the open popup is an OS menu that CSS cannot reach at all. Use `components/PromptActions/Select.tsx`, which rebuilds both halves and portals the list so an ancestor's `overflow` cannot clip it.
 - **A modal's Escape handler belongs on the card or on `document`, never on the backdrop.** The backdrop pattern (`onKeyDown={(e) => e.key === "Escape" && onCancel()}` on the overlay `div`) is dead code: the card inside calls `stopPropagation` so keystrokes cannot reach the terminal, and focus is placed inside the card on mount, so the event never reaches the backdrop. Use `hooks/useEscapeKey.ts`, which keeps a shared stack and dispatches only to the **topmost** overlay — a per-dialog `document` listener gets nesting backwards, because listeners on one node fire in registration order and mount order is outermost-first.
+- **A pane can have several render targets.** `portalRegistry` and `promptActionRegistry` keep a stack per pane; the live entry is the highest priority, most recent. A Fleet tile registers at `FLEET_TILE_PRIORITY` over the pane's Workspace-view slot and hands the terminal back by unregistering its own element. Always unregister with the element/handlers you registered, never the bare pane id, or you remove the other slot's entry too (ADR-0040).
+- **WebGL glyph atlases are shared between terminals.** xterm's WebGL addon keeps one texture atlas per font/size/colour/DPR configuration and hands it to every terminal that matches (`acquireTextureAtlas`). `webglAddon.clearTextureAtlas()` on one terminal empties it for all of them, and only that one redraws — the others show cell backgrounds with no text. Never clear it for a single pane: use `clearGlyphCaches()` in `terminalManager` (clears on every WebGL terminal), or change an option that alters the configuration (font size), which acquires a fresh atlas by itself.
 - Keybindings use capture phase (`addEventListener(..., true)`) to intercept before xterm.js.
 - **Prompt action digit bindings are chosen to be invisible to the terminal**, not merely unused by Abundio. macOS `Cmd` is not a terminal modifier, so xterm never forwards a Cmd-chord to the PTY. On Windows/Linux `Ctrl+<digit>` is unusable (`Ctrl+2` is NUL, `Ctrl+3` is ESC, and so on across the row) and `Ctrl+Alt+<digit>` is unusable too, despite matching the split-pane precedent, because `Ctrl+Alt` **is AltGr** on European layouts. Hence `Ctrl+Shift+<digit>`.
 - **Prompt actions live in SQLite, not `settingsStore`** (ADR-0039) — one row per action, because the in-pane popover makes writes frequent and multi-window and a whole-list broadcast loses appends. The change event is payload-free; receivers re-read. The `showActionBar` *preference* does live in `settingsStore`: the split is content vs. preference.
@@ -261,6 +267,9 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Toggle explorer panel | `Cmd+Shift+E` | `Ctrl+Shift+E` |
 | Toggle notes panel | `Cmd+Shift+K` | `Ctrl+Shift+K` |
 | Toggle markdown preview | `Cmd+Shift+M` | `Ctrl+Shift+M` |
+| Toggle Fleet Console | `Cmd+Shift+A` | `Ctrl+Shift+A` |
+| Spotlight focused tile / back to grid (Fleet Console only) | `Cmd+Shift+Enter` | `Ctrl+Shift+Enter` |
+| Tile zoom in / out / reset (Fleet Console only) | `Cmd+=` / `Cmd+-` / `Cmd+0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | New workspace | `Cmd+Shift+N` | `Ctrl+Shift+N` |
 | New tab | `Cmd+T` | `Ctrl+T` |
 | Close tab | `Cmd+W` | `Ctrl+W` |

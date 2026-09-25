@@ -50,3 +50,48 @@ describe("windowUiStore — folded sets", () => {
 		]);
 	});
 });
+
+/** Fleet Console vs Statistics overlay — see ADR-0040. */
+describe("windowUiStore — Fleet Console", () => {
+	beforeEach(() => {
+		useWindowUiStore.setState({
+			fleetConsoleOpen: false,
+			statisticsOverlayOpen: false,
+		});
+	});
+
+	it("toggles on and off", () => {
+		const { toggleFleetConsole } = useWindowUiStore.getState();
+		toggleFleetConsole();
+		expect(useWindowUiStore.getState().fleetConsoleOpen).toBe(true);
+		toggleFleetConsole();
+		expect(useWindowUiStore.getState().fleetConsoleOpen).toBe(false);
+	});
+
+	it("opening the console closes Statistics", () => {
+		useWindowUiStore.setState({ statisticsOverlayOpen: true });
+		useWindowUiStore.getState().toggleFleetConsole();
+		const s = useWindowUiStore.getState();
+		expect(s.fleetConsoleOpen).toBe(true);
+		expect(s.statisticsOverlayOpen).toBe(false);
+	});
+
+	it("Statistics covers the console and closing it reveals the console", () => {
+		useWindowUiStore.getState().toggleFleetConsole();
+		useWindowUiStore.getState().toggleStatisticsOverlay();
+		expect(useWindowUiStore.getState().fleetConsoleOpen).toBe(true);
+		useWindowUiStore.getState().toggleStatisticsOverlay();
+		const s = useWindowUiStore.getState();
+		expect(s.statisticsOverlayOpen).toBe(false);
+		expect(s.fleetConsoleOpen).toBe(true);
+	});
+
+	it("the toggle pressed under Statistics shows the console, not hides it", () => {
+		useWindowUiStore.getState().toggleFleetConsole();
+		useWindowUiStore.getState().toggleStatisticsOverlay();
+		useWindowUiStore.getState().toggleFleetConsole();
+		const s = useWindowUiStore.getState();
+		expect(s.statisticsOverlayOpen).toBe(false);
+		expect(s.fleetConsoleOpen).toBe(true);
+	});
+});

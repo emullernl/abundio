@@ -38,6 +38,8 @@ vi.mock("../../../lib/terminalManager", () => ({
 				}
 			: null,
 	resetTerminal: vi.fn(),
+	repaintTerminal: vi.fn(),
+	redrawProgram: vi.fn(),
 	getPaneRevision: () => 0,
 	subscribePaneRevision: () => () => {},
 }));

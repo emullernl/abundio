@@ -3,22 +3,35 @@ import { agentHooks } from "../lib/ipc";
 import { suppressMarkdownPreview } from "../lib/markdownPreview";
 import {
 	collectTerminals,
+	containsPane,
 	cyclePane,
 	findNode,
 	findPreviewForSource,
 	neighbourInDirection,
 	type PaneDirection,
+	parseTabLayout,
 	removeNode,
 	replaceNode,
 	wrapInSplit,
 } from "../lib/paneTree";
 import { setPendingAgent } from "../lib/pendingAgentRegistry";
 import { teardownTerminal } from "../lib/terminalManager";
-import type { CodingAgent, PaneNode } from "../lib/types";
+import type { CodingAgent, PaneNode, Tab } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
 import { requestPaneClose } from "../stores/paneCloseConfirmStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+
+/** The Tab holding `paneId`, in any Workspace, with its parsed layout. */
+function locatePane(paneId: string): { tab: Tab; layout: PaneNode } | null {
+	for (const ws of useWorkspaceStore.getState().workspaces) {
+		for (const tab of ws.tabs) {
+			const layout = parseTabLayout(tab.layoutJson);
+			if (layout && containsPane(layout, paneId)) return { tab, layout };
+		}
+	}
+	return null;
+}
 
 function generateId(): string {
 	return crypto.randomUUID();
@@ -111,9 +124,14 @@ export function useSplitPane() {
 
 	const closePaneNow = useCallback(
 		async (paneId: string) => {
-			const tab = getActiveTab();
-			const layout = getActiveLayout();
-			if (!tab || !layout) return;
+			// Found by id rather than taken from the active Tab: a Fleet tile can
+			// close a pane in any Opened workspace (ADR-0040).
+			const loc = locatePane(paneId);
+			if (!loc) return;
+			const { tab, layout } = loc;
+			// Focus moves only when the pane was in the Tab on screen in the
+			// Workspace view; closing elsewhere must not rearrange that view.
+			const inActiveTab = getActiveTab()?.id === tab.id;
 
 			// Destroy terminal instance, kill PTY, and clean up log file
 			const node = findNode(layout, paneId);
@@ -139,8 +157,16 @@ export function useSplitPane() {
 			if (newLayout && cascadePreviewId) {
 				newLayout = removeNode(newLayout, cascadePreviewId);
 			}
+			// Forget this pane as its Tab's remembered focus, so switching back
+			// to a Tab it was closed in from a Fleet tile does not restore it.
+			const remembered = useWorkspaceStore.getState().focusedPaneByTab;
+			if (remembered[tab.id] === paneId) {
+				const { [tab.id]: _gone, ...rest } = remembered;
+				useWorkspaceStore.setState({ focusedPaneByTab: rest });
+			}
 			if (newLayout) {
 				await updateLayout(tab.id, newLayout);
+				if (!inActiveTab) return;
 				// Focus the first terminal or file leaf in the remaining tree
 				const terminals = collectTerminals(newLayout);
 				if (terminals.length > 0) {
@@ -153,7 +179,7 @@ export function useSplitPane() {
 				await closeTab(tab.id);
 			}
 		},
-		[getActiveTab, getActiveLayout, updateLayout, setFocusedPane, closeTab],
+		[getActiveTab, updateLayout, setFocusedPane, closeTab],
 	);
 
 	const closePane = useCallback((paneId: string, label?: string) => {

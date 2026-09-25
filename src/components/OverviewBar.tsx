@@ -5,6 +5,7 @@ import {
 	Circle,
 	Eye,
 	GitPullRequest,
+	Grid2x2,
 	HelpCircle,
 	LayoutGrid,
 	type LucideIcon,
@@ -66,6 +67,11 @@ export interface OverviewBarProps {
 	/** Open/close the Statistics overlay. The bar's one navigation affordance —
 	 *  it reveals a view, it does not mutate workspace state. See ADR-0018. */
 	onToggleStatistics: () => void;
+	/** Whether the Fleet Console is on screen (drives the toggle's styling). */
+	fleetConsoleOpen: boolean;
+	/** Show/hide the Fleet Console. Navigation only, like Statistics: it
+	 *  switches view and never mutates workspace state. See ADR-0040. */
+	onToggleFleetConsole: () => void;
 }
 
 const TILE_WIDTH = 44;
@@ -161,6 +167,8 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 		showAgentWaiting,
 		statisticsOpen,
 		onToggleStatistics,
+		fleetConsoleOpen,
+		onToggleFleetConsole,
 	} = props;
 
 	return (
@@ -212,27 +220,47 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 				/>
 			</Section>
 
-			{/* Right-aligned: the bar's one interactive affordance — opens the
-			    Statistics overlay. Pushed to the far edge with margin-left:auto. */}
-			<div style={{ marginLeft: "auto", paddingLeft: SECTION_GAP }}>
-				<StatisticsToggle open={statisticsOpen} onClick={onToggleStatistics} />
+			{/* Right-aligned: the bar's navigation affordances — the Fleet Console
+			    and the Statistics overlay. Pushed to the far edge with
+			    margin-left:auto. */}
+			<div
+				className="flex items-center"
+				style={{ marginLeft: "auto", paddingLeft: SECTION_GAP, gap: 6 }}
+			>
+				<ViewToggle
+					open={fleetConsoleOpen}
+					onClick={onToggleFleetConsole}
+					title="Fleet Console — every agent in this window (Cmd/Ctrl+Shift+A)"
+					icon={Grid2x2}
+				/>
+				<ViewToggle
+					open={statisticsOpen}
+					onClick={onToggleStatistics}
+					title="Statistics — agent activity for this profile (Cmd/Ctrl+Shift+S)"
+					icon={BarChart3}
+				/>
 			</div>
 		</div>
 	);
 });
 
-function StatisticsToggle({
+function ViewToggle({
 	open,
 	onClick,
+	title,
+	icon: Icon,
 }: {
 	open: boolean;
 	onClick: () => void;
+	title: string;
+	icon: LucideIcon;
 }) {
 	return (
 		<button
 			type="button"
 			onClick={onClick}
-			title="Statistics — agent activity for this profile (Cmd/Ctrl+Shift+S)"
+			title={title}
+			aria-label={title}
 			aria-pressed={open}
 			className="flex items-center justify-center flex-shrink-0"
 			style={{
@@ -246,7 +274,7 @@ function StatisticsToggle({
 				transition: "color 160ms ease-out, border-color 160ms ease-out",
 			}}
 		>
-			<BarChart3 size={14} strokeWidth={2.25} style={{ flexShrink: 0 }} />
+			<Icon size={14} strokeWidth={2.25} style={{ flexShrink: 0 }} />
 		</button>
 	);
 }

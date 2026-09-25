@@ -30,105 +30,128 @@ function pick(overrides: Partial<WebglBudgetInput> = {}) {
 	});
 }
 
+// Only what is on screen, plus the Tab just left — see ADR-0041.
 describe("pickWebglPanes", () => {
-	it("gives every pane a context while the window stays under the cap", () => {
+	const two = [workspace("ws1", 3, 2), workspace("ws2", 2, 2)];
+	const opened = new Set(["ws1", "ws2"]);
+
+	it("gives contexts to the visible Tab only", () => {
 		const picked = pick({
-			workspaces: [workspace("ws1", 2, 2), workspace("ws2", 1, 2)],
-			openedWorkspaceIds: new Set(["ws1", "ws2"]),
+			workspaces: two,
+			openedWorkspaceIds: opened,
 			activeWorkspaceId: "ws1",
+			activeTabByWorkspace: { ws1: "ws1-t1" },
 		});
-		expect(picked.size).toBe(6);
-		expect(picked.has("ws2-t0-p1")).toBe(true);
+		expect([...picked]).toEqual(["ws1-t1-p0", "ws1-t1-p1"]);
 	});
 
-	it("ignores workspaces that are not opened", () => {
+	it("keeps the Tab just left warm, after the visible one", () => {
 		const picked = pick({
-			workspaces: [workspace("ws1", 1, 2), workspace("ws2", 1, 2)],
-			openedWorkspaceIds: new Set(["ws1"]),
+			workspaces: two,
+			openedWorkspaceIds: opened,
+			activeWorkspaceId: "ws2",
+			activeTabByWorkspace: { ws1: "ws1-t1", ws2: "ws2-t0" },
+			previousTab: { workspaceId: "ws1", tabId: "ws1-t1" },
+		});
+		expect([...picked]).toEqual([
+			"ws2-t0-p0",
+			"ws2-t0-p1",
+			"ws1-t1-p0",
+			"ws1-t1-p1",
+		]);
+	});
+
+	it("drops every other Tab and Workspace", () => {
+		const picked = pick({
+			workspaces: two,
+			openedWorkspaceIds: opened,
 			activeWorkspaceId: "ws1",
+			activeTabByWorkspace: { ws1: "ws1-t0" },
+			previousTab: { workspaceId: "ws1", tabId: "ws1-t2" },
 		});
-		expect([...picked]).toEqual(["ws1-t0-p0", "ws1-t0-p1"]);
+		expect(picked.has("ws1-t1-p0")).toBe(false);
+		expect([...picked].some((id) => id.startsWith("ws2"))).toBe(false);
 	});
 
-	// The demo bootstrap opens far more panes than the browser has contexts;
-	// before the cap they evicted each other in a loop and rendered blank.
-	it("never hands out more contexts than the cap", () => {
-		const workspaces = Array.from({ length: 12 }, (_, i) =>
-			workspace(`ws${i}`, 1, 2),
-		);
-		const picked = pick({
-			workspaces,
-			openedWorkspaceIds: new Set(workspaces.map((w) => w.id)),
-			activeWorkspaceId: "ws0",
-		});
-		expect(picked.size).toBe(MAX_WEBGL_CONTEXTS);
-	});
-
-	it("spends the budget on the active workspace first", () => {
-		const workspaces = [workspace("cold", 1, 8), workspace("hot", 1, 8)];
-		const picked = pick({
-			workspaces,
-			openedWorkspaceIds: new Set(["cold", "hot"]),
-			activeWorkspaceId: "hot",
-			cap: 8,
-		});
-		expect([...picked].every((id) => id.startsWith("hot-"))).toBe(true);
-	});
-
-	// A single workspace can hold more panes than the whole budget. What the
-	// user is looking at still has to be the part that gets the GPU.
-	it("prefers the active tab within a workspace", () => {
-		const picked = pick({
-			workspaces: [workspace("ws1", 3, 2)],
-			openedWorkspaceIds: new Set(["ws1"]),
+	it("ignores a previous Tab that is the visible one, closed, or gone", () => {
+		const base = {
+			workspaces: two,
 			activeWorkspaceId: "ws1",
-			activeTabByWorkspace: { ws1: "ws1-t2" },
-			cap: 2,
-		});
-		expect([...picked]).toEqual(["ws1-t2-p0", "ws1-t2-p1"]);
+			activeTabByWorkspace: { ws1: "ws1-t0" },
+		};
+		expect(
+			pick({
+				...base,
+				openedWorkspaceIds: opened,
+				previousTab: { workspaceId: "ws1", tabId: "ws1-t0" },
+			}).size,
+		).toBe(2);
+		expect(
+			pick({
+				...base,
+				openedWorkspaceIds: new Set(["ws1"]),
+				previousTab: { workspaceId: "ws2", tabId: "ws2-t0" },
+			}).size,
+		).toBe(2);
+		expect(
+			pick({
+				...base,
+				openedWorkspaceIds: opened,
+				previousTab: { workspaceId: "ws1", tabId: "ws1-t9-gone" },
+			}).size,
+		).toBe(2);
 	});
 
-	it("falls back to tab order when no tab is marked active", () => {
-		const picked = pick({
-			workspaces: [workspace("ws1", 3, 2)],
-			openedWorkspaceIds: new Set(["ws1"]),
-			activeWorkspaceId: "ws1",
-			cap: 2,
-		});
-		expect([...picked]).toEqual(["ws1-t0-p0", "ws1-t0-p1"]);
-	});
-
-	it("still fills the budget when no workspace is active", () => {
-		const picked = pick({
-			workspaces: [workspace("ws1", 1, 4)],
-			openedWorkspaceIds: new Set(["ws1"]),
-			activeWorkspaceId: null,
-			cap: 3,
-		});
-		expect(picked.size).toBe(3);
-	});
-
-	// activeTabByWorkspace is persisted state and can name a tab that has since
-	// been closed. Falling back to tab order keeps every pane eligible; dropping
-	// the workspace would strand it on the DOM renderer.
-	it("falls back to tab order when the active tab id is stale", () => {
+	it("falls back to the first Tab when the active tab id is stale", () => {
 		const picked = pick({
 			workspaces: [workspace("ws1", 2, 2)],
 			openedWorkspaceIds: new Set(["ws1"]),
 			activeWorkspaceId: "ws1",
 			activeTabByWorkspace: { ws1: "ws1-t9-gone" },
-			cap: 2,
 		});
 		expect([...picked]).toEqual(["ws1-t0-p0", "ws1-t0-p1"]);
 	});
 
-	it("ignores an active workspace that is not opened", () => {
+	it("gives nothing when no opened Workspace is on screen", () => {
+		expect(
+			pick({
+				workspaces: two,
+				openedWorkspaceIds: opened,
+				activeWorkspaceId: null,
+			}).size,
+		).toBe(0);
+		expect(
+			pick({
+				workspaces: two,
+				openedWorkspaceIds: new Set(["ws2"]),
+				activeWorkspaceId: "ws1",
+			}).size,
+		).toBe(0);
+	});
+
+	it("still caps a Tab with more panes than the budget", () => {
 		const picked = pick({
-			workspaces: [workspace("ws1", 1, 2), workspace("ws2", 1, 2)],
-			openedWorkspaceIds: new Set(["ws2"]),
+			workspaces: [workspace("ws1", 1, 20)],
+			openedWorkspaceIds: new Set(["ws1"]),
 			activeWorkspaceId: "ws1",
 		});
-		expect([...picked]).toEqual(["ws2-t0-p0", "ws2-t0-p1"]);
+		expect(picked.size).toBe(MAX_WEBGL_CONTEXTS);
+	});
+
+	it("in the Fleet Console, only the spotlighted tile", () => {
+		const base = {
+			workspaces: two,
+			openedWorkspaceIds: opened,
+			activeWorkspaceId: "ws1",
+			activeTabByWorkspace: { ws1: "ws1-t0" },
+			previousTab: { workspaceId: "ws2", tabId: "ws2-t0" },
+		};
+		expect([
+			...pick({ ...base, fleetConsole: { spotlightPaneId: "ws2-t1-p1" } }),
+		]).toEqual(["ws2-t1-p1"]);
+		expect(
+			pick({ ...base, fleetConsole: { spotlightPaneId: null } }).size,
+		).toBe(0);
 	});
 
 	it("tolerates a tab with no panes", () => {

@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { fleetTileCount } from "./fleetFocus";
 import { collectPaneIds, containsPane } from "./paneTree";
 
 /**
@@ -36,8 +38,41 @@ export const useFocusSweepStore = create<FocusSweepState>((set) => ({
 	finish: (nonce) => set((s) => (s.nonce === nonce ? { paneId: null } : s)),
 }));
 
-/** Feed Focused-pane changes into the sweep store. Returns the unsubscribe. */
+function startSweep(paneId: string): void {
+	useFocusSweepStore.setState((s) => ({ paneId, nonce: s.nonce + 1 }));
+}
+
+/** Feed Focused-pane changes — and, in the Fleet Console, Focused-tile
+ *  changes — into the sweep store. Returns the unsubscribe. */
 export function installFocusSweep(): () => void {
+	const unsubPanes = installPaneSweep();
+	// The Fleet Console has its own focus, the **Focused tile**. Same rule as
+	// panes, with the console's tile count standing in for the Tab's pane
+	// count: with one tile there is nothing to find.
+	const unsubTiles = useWindowUiStore.subscribe((state, prevState) => {
+		const next = state.focusedTileId;
+		const prev = prevState.focusedTileId;
+		const showing = state.fleetConsoleOpen && !state.statisticsOverlayOpen;
+		if (next === prev || !showing) return;
+		if (
+			shouldSweep(
+				prev,
+				next,
+				fleetTileCount(),
+				useSettingsStore.getState().focusSweep,
+			) &&
+			next
+		) {
+			startSweep(next);
+		}
+	});
+	return () => {
+		unsubPanes();
+		unsubTiles();
+	};
+}
+
+function installPaneSweep(): () => void {
 	return useWorkspaceStore.subscribe((state, prevState) => {
 		const next = state.focusedPaneId;
 		const prev = prevState.focusedPaneId;
@@ -50,12 +85,10 @@ export function installFocusSweep(): () => void {
 				? collectPaneIds(layout).length
 				: 0;
 		if (
+			next &&
 			shouldSweep(prev, next, paneCount, useSettingsStore.getState().focusSweep)
 		) {
-			useFocusSweepStore.setState((s) => ({
-				paneId: next,
-				nonce: s.nonce + 1,
-			}));
+			startSweep(next);
 		} else if (useFocusSweepStore.getState().paneId !== null) {
 			// Focus moved without a new sweep — to a single-pane Tab, say, or to
 			// nothing. Drop the old one: its pane may now be hidden (a Tab behind

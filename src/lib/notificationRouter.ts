@@ -3,7 +3,12 @@ import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { appWindow } from "./appWindow";
 import { isDemoMode } from "./demo";
-import { containsPane, parseTabLayout } from "./paneTree";
+import {
+	fleetConsoleShowing,
+	isFleetTileOnScreen,
+	isShownAsFleetTile,
+} from "./fleetFocus";
+import { findPaneLocation, revealPane } from "./paneLocation";
 
 interface PtyExtra {
 	type: "pty";
@@ -19,31 +24,18 @@ interface PrExtra {
 
 type NotificationExtra = PtyExtra | PrExtra;
 
-/**
- * Search all workspaces/tabs to find which workspace and tab contain a given pane.
- */
-export function findPaneLocation(
-	paneId: string,
-): { workspaceId: string; tabId: string } | null {
-	const { workspaces } = useWorkspaceStore.getState();
-
-	for (const workspace of workspaces) {
-		for (const tab of workspace.tabs) {
-			const layout = parseTabLayout(tab.layoutJson);
-			if (layout && containsPane(layout, paneId)) {
-				return { workspaceId: workspace.id, tabId: tab.id };
-			}
-		}
-	}
-	return null;
-}
+export { findPaneLocation } from "./paneLocation";
 
 /**
- * True when a pane is on screen — i.e. it lives in the active tab of the
- * active workspace. Does not consider window focus (callers gate on that
- * separately). Used to decide whether a "waiting" agent needs a notification.
+ * True when a pane is on screen. In the Workspace view that means it lives in
+ * the active tab of the active workspace; while the Fleet Console is on
+ * screen it means the pane is one of its tiles, and the Workspace view behind
+ * the console counts as hidden (ADR-0040). Does not consider window focus
+ * (callers gate on that separately). Used to decide whether a "waiting" agent
+ * needs a notification.
  */
 export function isPaneVisible(paneId: string): boolean {
+	if (fleetConsoleShowing()) return isFleetTileOnScreen(paneId);
 	const loc = findPaneLocation(paneId);
 	if (!loc) return false;
 	const ws = useWorkspaceStore.getState();
@@ -75,11 +67,15 @@ export function handleNotificationClick(
 		);
 		if (!workspace) return;
 
-		wsStore.beginWorkspaceSwitch(workspaceId);
-		wsStore.setActiveTab(workspaceId, tabId);
-		if (paneId) {
-			wsStore.setFocusedPane(paneId);
+		// In the console, an agent's notification lands on its tile, so the
+		// answer can be typed right there. Anything that is not a tile (a
+		// shell's Error) leaves the console for the Workspace view.
+		if (paneId && isShownAsFleetTile(paneId)) {
+			useWindowUiStore.getState().setFocusedTile(paneId);
+			return;
 		}
+		useWindowUiStore.getState().setFleetConsoleOpen(false);
+		revealPane(paneId ?? null, workspaceId, tabId);
 	} else if (extra.type === "pr") {
 		const { workspaceId } = extra;
 		if (!workspaceId) return;
@@ -89,6 +85,7 @@ export function handleNotificationClick(
 		);
 		if (!workspace) return;
 
+		useWindowUiStore.getState().setFleetConsoleOpen(false);
 		wsStore.beginWorkspaceSwitch(workspaceId);
 		// PR notification was clicked — open the right sidebar and route to the
 		// Git tab so the PR section becomes visible. The PR section's own

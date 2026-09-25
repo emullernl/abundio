@@ -24,6 +24,9 @@ const MAX_LOG_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
 enum PtyCommand {
     Write(Vec<u8>),
     Resize(u16, u16),
+    /// Send SIGWINCH to the PTY's foreground process group without changing
+    /// its size, so the program running there redraws its screen.
+    Redraw,
     Kill,
 }
 
@@ -351,6 +354,31 @@ impl PtyManager {
             .tx
             .send(PtyCommand::Resize(cols, rows))
             .map_err(|e| AbundioError::Channel(e.to_string()))
+    }
+
+    /// Ask the program in the foreground of this PTY to redraw, at its current
+    /// size: SIGWINCH to its foreground process group, or — when there is no
+    /// group to signal — a one-row size nudge done by the PTY thread itself.
+    /// `true` means the redraw was queued. Returns `false` on Windows (ConPTY
+    /// has no SIGWINCH), where the caller nudges the size with a pause between
+    /// the two resizes instead.
+    ///
+    /// A same-size `resize` cannot do this: the kernel raises SIGWINCH only
+    /// when the window size actually changes, on macOS and Linux alike.
+    pub fn redraw(&self, pty_id: &str) -> Result<bool, AbundioError> {
+        let entry = self
+            .entries
+            .get(pty_id)
+            .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        if cfg!(unix) {
+            entry
+                .tx
+                .send(PtyCommand::Redraw)
+                .map_err(|e| AbundioError::Channel(e.to_string()))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub fn kill(&self, pty_id: &str) -> Result<(), AbundioError> {
@@ -1349,6 +1377,44 @@ fn pty_thread(
                     pixel_height: 0,
                 });
             }
+            Ok(PtyCommand::Redraw) => {
+                // Nothing to redraw once the child is gone — and checking
+                // first means a pgid recycled after exit is never signalled.
+                if !alive.load(Ordering::Relaxed) {
+                    continue;
+                }
+                // The foreground process group of the terminal (tcgetpgrp):
+                // the agent, not the shell that launched it. Positive only:
+                // 0 would mean the caller's own group. An exited group yields
+                // ESRCH, which is ignored.
+                #[cfg(unix)]
+                let signalled = match master.process_group_leader() {
+                    Some(pgid) if pgid > 0 => nix::sys::signal::killpg(
+                        nix::unistd::Pid::from_raw(pgid),
+                        nix::sys::signal::Signal::SIGWINCH,
+                    )
+                    .is_ok(),
+                    _ => false,
+                };
+                #[cfg(not(unix))]
+                let signalled = false;
+                // No group to signal: nudge the size down a row and back.
+                // Each real change raises SIGWINCH, and the program reads the
+                // final size, so it redraws at the size it already had. This
+                // keeps `redraw()`'s `true` honest: the redraw was asked for
+                // either way.
+                if !signalled {
+                    if let Ok(size) = master.get_size() {
+                        if size.rows > 1 {
+                            let _ = master.resize(PtySize {
+                                rows: size.rows - 1,
+                                ..size
+                            });
+                            let _ = master.resize(size);
+                        }
+                    }
+                }
+            }
             Ok(PtyCommand::Kill) => {
                 alive.store(false, Ordering::Relaxed);
                 let _ = child.kill();
@@ -1402,6 +1468,15 @@ fn truncate_log_file(path: &Path, keep_bytes: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redraw_unknown_pty_is_not_found() {
+        let mgr = PtyManager::new();
+        assert!(matches!(
+            mgr.redraw("no-such-pty"),
+            Err(AbundioError::NotFound(_))
+        ));
+    }
 
     #[test]
     fn msys_drive_paths_become_native() {

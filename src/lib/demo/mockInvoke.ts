@@ -134,8 +134,24 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			const ws = fixtures.workspaces.find((w) => w.id === args.workspaceId);
 			return ws?.tabs ?? [];
 		}
-		case "tab_create":
-			return fixtures.workspaces[0].tabs[0];
+		case "tab_create": {
+			// A fresh Tab with one fresh terminal pane. Returning an existing Tab
+			// here would duplicate its pane ids across two layouts.
+			const id = crypto.randomUUID();
+			return {
+				id,
+				workspaceId: String(args.workspaceId ?? ""),
+				name: String(args.name ?? "Terminal"),
+				layoutJson: JSON.stringify({
+					type: "terminal",
+					id: crypto.randomUUID(),
+					ptyId: "",
+				}),
+				position: 0,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+		}
 		case "tab_update":
 		case "tab_delete":
 			return undefined;
@@ -284,6 +300,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			if (echo) publish(`pty-output-${ptyId}`, { data: encodeBase64(echo) });
 			return undefined;
 		}
+		case "pty_redraw":
+			return true;
 		case "pty_resize":
 		case "pty_kill":
 		case "pty_write_snapshot":

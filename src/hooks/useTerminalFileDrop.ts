@@ -8,12 +8,12 @@ import {
 	isMsysBashShell,
 } from "../lib/fileDrop";
 import { useFileDropStore } from "../lib/fileDropStore";
+import { focusPaneForInput } from "../lib/fleetFocus";
 import { clipboardImage, pty, shells } from "../lib/ipc";
 import { isWindows } from "../lib/platform";
 import { getTerminal } from "../lib/terminalManager";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
-import { useWorkspaceStore } from "../stores/workspaceStore";
 
 // Ctrl+V control byte. Agents that support clipboard-image paste (Claude Code,
 // Gemini CLI) read the OS clipboard when they receive this on stdin.
@@ -110,8 +110,9 @@ async function handleDrop(
 	const ptyId = managed?.ptyId;
 	if (!managed || !ptyId) return;
 
-	// Focus the target pane so subsequent typing lands where the file did.
-	useWorkspaceStore.getState().setFocusedPane(paneId);
+	// Focus the target pane so subsequent typing lands where the file did —
+	// the Focused tile when it was dropped on a Fleet tile.
+	focusPaneForInput(paneId);
 
 	// Gate on `detectionMode` — the same canonical agent/shell signal TerminalSlot
 	// and the status indicators read — so this never diverges from the rest of

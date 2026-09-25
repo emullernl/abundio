@@ -17,7 +17,8 @@ vi.mock("../ipc", () => ({
 
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { handleNotificationClick } from "../notificationRouter";
+import { publishFleetGrid } from "../fleetFocus";
+import { handleNotificationClick, isPaneVisible } from "../notificationRouter";
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -58,6 +59,51 @@ beforeEach(() => {
 	useWindowUiStore.setState({
 		rightSidebarOpen: false,
 		rightSidebarActiveTab: "explorer",
+		fleetConsoleOpen: false,
+		statisticsOverlayOpen: false,
+		focusedTileId: null,
+	});
+	useWorkspaceStore.setState({ activeTabByWorkspace: { "ws-1": "tab-1" } });
+	publishFleetGrid([], 1);
+});
+
+// While the Fleet Console is on screen its tiles are what is visible, and the
+// Workspace view behind it is not (ADR-0040).
+describe("Fleet Console visibility and clicks", () => {
+	it("a pane in the active Tab is visible in the Workspace view", () => {
+		expect(isPaneVisible("pane-1")).toBe(true);
+	});
+
+	it("in the console, only tiles count as visible", () => {
+		useWindowUiStore.setState({ fleetConsoleOpen: true });
+		expect(isPaneVisible("pane-1")).toBe(false);
+		publishFleetGrid(["pane-1"], 1);
+		expect(isPaneVisible("pane-1")).toBe(true);
+	});
+
+	it("a click on a tile's notification focuses the tile and stays in the console", () => {
+		useWindowUiStore.setState({ fleetConsoleOpen: true });
+		publishFleetGrid(["pane-1"], 1);
+		handleNotificationClick({
+			type: "pty",
+			workspaceId: "ws-1",
+			tabId: "tab-1",
+			paneId: "pane-1",
+		});
+		const ui = useWindowUiStore.getState();
+		expect(ui.fleetConsoleOpen).toBe(true);
+		expect(ui.focusedTileId).toBe("pane-1");
+	});
+
+	it("a click for a pane that is not a tile leaves the console", () => {
+		useWindowUiStore.setState({ fleetConsoleOpen: true });
+		handleNotificationClick({
+			type: "pty",
+			workspaceId: "ws-1",
+			tabId: "tab-1",
+			paneId: "pane-1",
+		});
+		expect(useWindowUiStore.getState().fleetConsoleOpen).toBe(false);
 	});
 });
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	FLEET_TILE_PRIORITY,
 	getTarget,
 	onTargetChange,
 	registerTarget,
@@ -125,5 +126,75 @@ describe("onTargetChange", () => {
 		expect(cb).not.toHaveBeenCalled();
 
 		cleanup();
+	});
+});
+
+describe("target stack (Fleet tiles borrow panes)", () => {
+	it("hands the terminal back to the earlier target when the top unregisters", () => {
+		const id = trackPaneId("pane-stack-1");
+		const slot = document.createElement("div");
+		const tile = document.createElement("div");
+		registerTarget(id, slot);
+		registerTarget(id, tile);
+		expect(getTarget(id)).toBe(tile);
+
+		const cb = vi.fn();
+		const cleanup = onTargetChange(id, cb);
+		unregisterTarget(id, tile);
+		expect(getTarget(id)).toBe(slot);
+		expect(cb).toHaveBeenCalledWith(slot);
+		cleanup();
+	});
+
+	it("removing a target that is not live does not notify", () => {
+		const id = trackPaneId("pane-stack-2");
+		const slot = document.createElement("div");
+		const tile = document.createElement("div");
+		registerTarget(id, slot);
+		registerTarget(id, tile);
+
+		const cb = vi.fn();
+		const cleanup = onTargetChange(id, cb);
+		unregisterTarget(id, slot);
+		expect(cb).not.toHaveBeenCalled();
+		expect(getTarget(id)).toBe(tile);
+		cleanup();
+	});
+
+	it("notifies null when the last target goes", () => {
+		const id = trackPaneId("pane-stack-3");
+		const el = document.createElement("div");
+		registerTarget(id, el);
+		const cb = vi.fn();
+		const cleanup = onTargetChange(id, cb);
+		unregisterTarget(id, el);
+		expect(cb).toHaveBeenCalledWith(null);
+		cleanup();
+	});
+
+	it("a higher-priority target wins over a later lower-priority one", () => {
+		const id = trackPaneId("pane-stack-4");
+		const tile = document.createElement("div");
+		const remountedSlot = document.createElement("div");
+		registerTarget(id, tile, FLEET_TILE_PRIORITY);
+
+		const cb = vi.fn();
+		const cleanup = onTargetChange(id, cb);
+		registerTarget(id, remountedSlot);
+		expect(getTarget(id)).toBe(tile);
+		expect(cb).not.toHaveBeenCalled();
+
+		unregisterTarget(id, tile);
+		expect(getTarget(id)).toBe(remountedSlot);
+		cleanup();
+	});
+
+	it("re-registering the same element does not duplicate it", () => {
+		const id = trackPaneId("pane-stack-5");
+		const el = document.createElement("div");
+		registerTarget(id, el);
+		registerTarget(id, el);
+		unregisterTarget(id, el);
+		expect(getTarget(id)).toBeNull();
 	});
 });

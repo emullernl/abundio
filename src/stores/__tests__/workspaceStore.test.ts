@@ -67,7 +67,11 @@ import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
-import { findMutatedTabLayout, useWorkspaceStore } from "../workspaceStore";
+import {
+	findMutatedTabLayout,
+	restoreTabFocus,
+	useWorkspaceStore,
+} from "../workspaceStore";
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
 	const layout: PaneNode = { type: "terminal", id: "pane-1", ptyId: "" };
@@ -417,6 +421,36 @@ describe("workspaceStore", () => {
 
 			await useWorkspaceStore.getState().createTab("workspace-1");
 			expect(useWorkspaceStore.getState().focusedPaneId).toBe("new-pane-1");
+		});
+
+		// The Fleet Console's New agent must not rearrange the Workspace view
+		// (ADR-0040).
+		it("with activate: false leaves the active Tab and focus alone", async () => {
+			const { tabs } = await import("../../lib/ipc");
+			const layout: PaneNode = {
+				type: "terminal",
+				id: "new-pane-2",
+				ptyId: "",
+			};
+			vi.mocked(tabs.create).mockResolvedValueOnce(
+				makeTab({ id: "tab-bg", layoutJson: JSON.stringify(layout) }),
+			);
+			useWorkspaceStore.setState({
+				workspaces: [makeWorkspace()],
+				activeWorkspaceId: "workspace-1",
+				activeTabByWorkspace: { "workspace-1": "tab-1" },
+				focusedPaneId: "pane-1",
+			});
+
+			const tab = await useWorkspaceStore
+				.getState()
+				.createTab("workspace-1", undefined, undefined, { activate: false });
+
+			const s = useWorkspaceStore.getState();
+			expect(tab.id).toBe("tab-bg");
+			expect(s.activeTabByWorkspace["workspace-1"]).toBe("tab-1");
+			expect(s.focusedPaneId).toBe("pane-1");
+			expect(s.workspaces[0].tabs.map((t) => t.id)).toContain("tab-bg");
 		});
 	});
 
@@ -978,5 +1012,37 @@ describe("workspaceStore", () => {
 			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("wt-2");
 			expect(takePendingAgent("new-pane-1")).toEqual({ command: "claude" });
 		});
+	});
+});
+
+// A Tab's remembered focus can name a pane closed from a Fleet tile while the
+// Tab was not active; restoring it would focus nothing.
+describe("restoreTabFocus", () => {
+	const layout: PaneNode = {
+		type: "split",
+		id: "s",
+		direction: "vertical",
+		ratio: 0.5,
+		first: { type: "terminal", id: "p1", ptyId: "" },
+		second: { type: "terminal", id: "p2", ptyId: "" },
+	} as PaneNode;
+	const list = [
+		{
+			id: "w",
+			tabs: [{ id: "t", layoutJson: JSON.stringify(layout) }],
+		},
+	] as unknown as Parameters<typeof restoreTabFocus>[0];
+
+	it("restores the remembered pane while it still exists", () => {
+		expect(restoreTabFocus(list, "w", "t", { t: "p2" })).toBe("p2");
+	});
+
+	it("falls back to the first pane when the remembered one is gone", () => {
+		expect(restoreTabFocus(list, "w", "t", { t: "closed" })).toBe("p1");
+		expect(restoreTabFocus(list, "w", "t", {})).toBe("p1");
+	});
+
+	it("gives nothing for an unknown Tab", () => {
+		expect(restoreTabFocus(list, "w", "nope", {})).toBeNull();
 	});
 });

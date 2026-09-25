@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSplitPane } from "../hooks/useSplitPane";
 import { isAgentPane } from "../lib/firePromptAction";
+import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { triggerAction } from "../lib/keybindings";
@@ -15,6 +16,7 @@ import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePromptActionStore } from "../stores/promptActionStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
@@ -46,7 +48,12 @@ export function CommandPalette({
 
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const beginWorkspaceSwitch = useWorkspaceStore((s) => s.beginWorkspaceSwitch);
-	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+	// In the Fleet Console, pane commands target the Focused tile (ADR-0040).
+	const focusedPaneId = useTargetPaneId();
+	const inFleet = useWindowUiStore(
+		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
+	);
+	const spotlightTileId = useWindowUiStore((s) => s.spotlightTileId);
 	const profilesList = useProfileStore((s) => s.profiles);
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
 	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
@@ -71,7 +78,11 @@ export function CommandPalette({
 				id: `workspace-${s.id}`,
 				label: s.name,
 				category: "Workspaces",
-				action: () => beginWorkspaceSwitch(s.id),
+				action: () => {
+					// Picking a Workspace is a request to see it.
+					useWindowUiStore.getState().setFleetConsoleOpen(false);
+					beginWorkspaceSwitch(s.id);
+				},
 			});
 		}
 
@@ -107,7 +118,9 @@ export function CommandPalette({
 
 		// Offered only when the shortcut would do something — the palette is
 		// where the "which Workspace can add a worktree" rule is discoverable.
-		if (addWorktreeTarget) {
+		// Workspace-view actions are muted in the Fleet Console, so they are not
+		// offered there either.
+		if (addWorktreeTarget && !inFleet) {
 			result.push({
 				id: "action-add-worktree",
 				label: "Add Worktree…",
@@ -116,22 +129,30 @@ export function CommandPalette({
 			});
 		}
 
-		result.push(
-			{
-				id: "action-next-workspace",
-				label: "Next Opened Workspace",
-				category: "Actions",
-				action: () => triggerAction("next-workspace"),
-			},
-			{
-				id: "action-prev-workspace",
-				label: "Previous Opened Workspace",
-				category: "Actions",
-				action: () => triggerAction("prev-workspace"),
-			},
-		);
+		result.push({
+			id: "action-toggle-fleet-console",
+			label: "Toggle Fleet Console",
+			category: "Actions",
+			action: () => triggerAction("toggle-fleet-console"),
+		});
+		if (!inFleet) {
+			result.push(
+				{
+					id: "action-next-workspace",
+					label: "Next Opened Workspace",
+					category: "Actions",
+					action: () => triggerAction("next-workspace"),
+				},
+				{
+					id: "action-prev-workspace",
+					label: "Previous Opened Workspace",
+					category: "Actions",
+					action: () => triggerAction("prev-workspace"),
+				},
+			);
+		}
 
-		if (focusedPaneId) {
+		if (focusedPaneId && !inFleet) {
 			result.push(
 				{
 					id: "action-split-right",
@@ -162,6 +183,38 @@ export function CommandPalette({
 					label: "Close Pane",
 					category: "Actions",
 					action: () => closePane(focusedPaneId),
+				},
+			);
+		}
+
+		if (focusedPaneId && inFleet) {
+			result.push(
+				{
+					id: "action-next-pane",
+					label: "Focus Next Agent",
+					category: "Actions",
+					action: () => triggerAction("next-pane"),
+				},
+				{
+					id: "action-prev-pane",
+					label: "Focus Previous Agent",
+					category: "Actions",
+					action: () => triggerAction("prev-pane"),
+				},
+				{
+					id: "action-close-pane",
+					label: "Close Pane",
+					category: "Actions",
+					action: () => closePane(focusedPaneId),
+				},
+				{
+					id: "action-fleet-spotlight",
+					label:
+						spotlightTileId === focusedPaneId
+							? "Back to the Grid"
+							: "Spotlight This Agent",
+					category: "Actions",
+					action: () => toggleFleetSpotlight(),
 				},
 			);
 		}
@@ -291,6 +344,8 @@ export function CommandPalette({
 	}, [
 		workspaces,
 		focusedPaneId,
+		inFleet,
+		spotlightTileId,
 		beginWorkspaceSwitch,
 		onRequestNewWorkspace,
 		splitPane,

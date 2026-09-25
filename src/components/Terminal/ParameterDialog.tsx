@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 /**
  * Collects a **Prompt action**'s **Parameters** before it fires.
  *
@@ -52,7 +53,7 @@ interface ParameterDialogProps {
 	onCancel: () => void;
 }
 
-export function ParameterDialog({
+function ParameterDialogBody({
 	action,
 	onSubmit,
 	onCancel,
@@ -517,4 +518,17 @@ function BodyPreview({
 			</pre>
 		</div>
 	);
+}
+
+/**
+ * Rendered into `document.body`, not where it is used: a pane may sit inside
+ * an element that captures `position: fixed` children (a transformed or
+ * animated ancestor, as a Fleet tile can be) or inside a lower stacking layer
+ * (the Fleet Console), and an overlay drawn there is positioned against the
+ * wrong box, clipped, and painted under its neighbours.
+ */
+export function ParameterDialog(
+	props: Parameters<typeof ParameterDialogBody>[0],
+) {
+	return createPortal(<ParameterDialogBody {...props} />, document.body);
 }

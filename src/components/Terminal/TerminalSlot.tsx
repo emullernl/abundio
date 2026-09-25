@@ -11,8 +11,13 @@ import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { firePromptAction } from "../../lib/firePromptAction";
 import { pty } from "../../lib/ipc";
 import { isMac, sc } from "../../lib/platform";
-import { registerTarget, unregisterTarget } from "../../lib/portalRegistry";
 import {
+	FLEET_TILE_PRIORITY,
+	registerTarget,
+	unregisterTarget,
+} from "../../lib/portalRegistry";
+import {
+	type PaneFireHandlers,
 	registerPaneFire,
 	unregisterPaneFire,
 } from "../../lib/promptActionRegistry";
@@ -29,6 +34,8 @@ import {
 import {
 	getPaneRevision,
 	getTerminal,
+	redrawProgram,
+	repaintTerminal,
 	resetTerminal,
 	subscribePaneRevision,
 } from "../../lib/terminalManager";
@@ -45,7 +52,7 @@ import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { ParameterDialog } from "./ParameterDialog";
 import { PromptActionPopover } from "./PromptActionPopover";
 import { SearchBar } from "./SearchBar";
-import { TerminalTitleBar } from "./TerminalTitleBar";
+import { type FleetSlotInfo, TerminalTitleBar } from "./TerminalTitleBar";
 
 /** What to tell the user when a send was refused. `waiting` should not reach
  *  the dialog — the bar disables its buttons — but a palette entry can still
@@ -119,7 +126,12 @@ function TerminalLoader({ paneId }: { paneId: string }) {
 								borderRadius: 1,
 								backgroundColor: "var(--accent)",
 								opacity: 0.15,
-								animation: `terminal-bar-wave 1.2s ease-in-out ${i * 0.12}s infinite`,
+								// Negative delays: every bar is mid-cycle from the first frame,
+								// each 0.12 s behind the one to its left. A positive delay
+								// leaves the bars waiting to start, and while the main thread
+								// is busy (mounting tiles) they start together — the wave
+								// collapses into all five bobbing in unison.
+								animation: `terminal-bar-wave 1.2s ease-in-out ${-(0.6 - i * 0.12).toFixed(2)}s infinite`,
 							}}
 						/>
 					))}
@@ -144,6 +156,10 @@ function TerminalLoader({ paneId }: { paneId: string }) {
 interface Props {
 	paneId: string;
 	agentId?: string;
+	/** Set when this slot is a Fleet tile: it registers above the pane's
+	 *  Workspace-view slot, drops the split controls and shows where the pane
+	 *  lives. */
+	fleet?: FleetSlotInfo;
 	isFocused: boolean;
 	onFocus: () => void;
 	onSplitHorizontal: () => void;
@@ -154,6 +170,7 @@ interface Props {
 export function TerminalSlot({
 	paneId,
 	agentId,
+	fleet,
 	isFocused,
 	onFocus,
 	onSplitHorizontal,
@@ -205,6 +222,7 @@ export function TerminalSlot({
 	// names a place in this pane's bar, not a particular Prompt action — so it
 	// has to be resolved here, against the same ordered list the bar drew.
 	const showActionBar = useSettingsStore((s) => s.showActionBar);
+	const priority = fleet ? FLEET_TILE_PRIORITY : 0;
 
 	useEffect(() => {
 		const run = (action: PromptAction, stageOnly: boolean) => {
@@ -221,7 +239,7 @@ export function TerminalSlot({
 				{ stageOnly, actionId: action.id },
 			);
 		};
-		registerPaneFire(paneId, {
+		const fns: PaneFireHandlers = {
 			bySlot: (slot, stageOnly) => {
 				// The bar's *keyboard slots* belong to the bar: with the setting off
 				// there is no strip, no position numbers and no feedback, so a live
@@ -240,15 +258,17 @@ export function TerminalSlot({
 				run(action, stageOnly);
 			},
 			byAction: run,
-		});
-		return () => unregisterPaneFire(paneId);
-	}, [paneId, detectedAgentId, showActionBar]);
+		};
+		registerPaneFire(paneId, fns, priority);
+		return () => unregisterPaneFire(paneId, fns);
+	}, [paneId, detectedAgentId, showActionBar, priority]);
 
 	useEffect(() => {
-		if (!innerRef.current) return;
-		registerTarget(paneId, innerRef.current);
-		return () => unregisterTarget(paneId);
-	}, [paneId]);
+		const el = innerRef.current;
+		if (!el) return;
+		registerTarget(paneId, el, priority);
+		return () => unregisterTarget(paneId, el);
+	}, [paneId, priority]);
 
 	// Re-render only when THIS pane's ManagedTerminal is created / gets its ptyId
 	// / becomes ready, so derived values (searchAddon, ptyIdForPane) update without
@@ -272,6 +292,11 @@ export function TerminalSlot({
 			const managed = getTerminal(paneId);
 			if (managed?.ready) {
 				managed.term.focus();
+				// Repaint on gaining focus: output that arrived while the terminal
+				// was hidden or being moved can sit in the buffer undrawn — and ask
+				// the Agent to redraw its own screen, which only it can fix.
+				repaintTerminal(paneId);
+				redrawProgram(paneId);
 				return true;
 			}
 			return false;
@@ -515,7 +540,11 @@ export function TerminalSlot({
 			onClick: handlePaste,
 		},
 		{ separator: true },
-		{ label: "Find", shortcut: sc("⌘F", "Ctrl+F"), onClick: toggleSearch },
+		{
+			label: "Find",
+			shortcut: sc("⌘F", "Ctrl+F"),
+			onClick: () => toggleSearch(paneId),
+		},
 		{ label: "Clear Terminal", onClick: handleClear },
 		{ label: "Reset Terminal", onClick: handleReset },
 		{ separator: true },
@@ -541,17 +570,23 @@ export function TerminalSlot({
 			},
 		},
 		{ separator: true },
-		{
-			label: "Split Right",
-			shortcut: sc("⇧⌘V", "Ctrl+Alt+V"),
-			onClick: onSplitVertical,
-		},
-		{
-			label: "Split Down",
-			shortcut: sc("⇧⌘H", "Ctrl+Alt+H"),
-			onClick: onSplitHorizontal,
-		},
-		{ separator: true },
+		// A Fleet tile has no split: the console is a grid, not a layout, and a
+		// split would reshape a Tab the user cannot see.
+		...(fleet
+			? []
+			: ([
+					{
+						label: "Split Right",
+						shortcut: sc("⇧⌘V", "Ctrl+Alt+V"),
+						onClick: onSplitVertical,
+					},
+					{
+						label: "Split Down",
+						shortcut: sc("⇧⌘H", "Ctrl+Alt+H"),
+						onClick: onSplitHorizontal,
+					},
+					{ separator: true },
+				] satisfies ContextMenuItem[])),
 		{
 			label: "Close Pane",
 			shortcut: sc("⇧⌘W", "Ctrl+Shift+W"),
@@ -583,6 +618,7 @@ export function TerminalSlot({
 			<TerminalTitleBar
 				paneId={paneId}
 				agentId={agentId}
+				fleet={fleet}
 				onSplitDown={onSplitHorizontal}
 				onSplitRight={onSplitVertical}
 				onClose={onClose}
@@ -694,7 +730,10 @@ export function TerminalSlot({
 				/>
 			)}
 			{searchOpen && searchAddon && (
-				<SearchBar searchAddon={searchAddon} onClose={toggleSearch} />
+				<SearchBar
+					searchAddon={searchAddon}
+					onClose={() => toggleSearch(paneId)}
+				/>
 			)}
 			{contextMenu && (
 				<PaneContextMenu

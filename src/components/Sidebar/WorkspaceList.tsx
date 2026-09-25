@@ -15,6 +15,7 @@ import {
 	type SetRow,
 	type WorkspaceRow,
 } from "../../lib/worktreeGrouping";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -195,7 +196,11 @@ export function WorkspaceList({
 		primaryCwd: string;
 		primaryName: string;
 		initial?: { branch: string; folder: string; selectedIndex: number };
+		/** Open the new Workspace without activating it (Fleet Console). */
+		background?: boolean;
 	} | null>(null);
+	// Carried beside the payload so "Edit & retry" after a failure keeps it.
+	const lastCreateBackgroundRef = useRef(false);
 
 	// Remove worktree confirmation target.
 	const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<{
@@ -425,6 +430,8 @@ export function WorkspaceList({
 	// Close the form and run the create behind the waiting modal.
 	const handleAddWorktreeSubmit = useCallback(
 		(payload: AddWorktreePayload) => {
+			const background = addWorktreeTarget?.background ?? false;
+			lastCreateBackgroundRef.current = background;
 			setAddWorktreeTarget(null);
 			setLastCreatePayload(payload);
 			runWorktreeProgress({ verb: "Creating", target: payload.branch }, () =>
@@ -434,10 +441,11 @@ export function WorkspaceList({
 					payload.absolutePath,
 					payload.setupCommands,
 					payload.agent,
+					{ background },
 				),
 			);
 		},
-		[runWorktreeProgress, createWorktreeWorkspace],
+		[runWorktreeProgress, createWorktreeWorkspace, addWorktreeTarget],
 	);
 
 	// From a create error: dismiss the modal and reopen the form pre-filled.
@@ -453,6 +461,7 @@ export function WorkspaceList({
 					folder: p.folder,
 					selectedIndex: p.selectedIndex,
 				},
+				background: lastCreateBackgroundRef.current,
 			});
 		}
 	}, [lastCreatePayload, dismissWorktreeProgress]);
@@ -462,12 +471,25 @@ export function WorkspaceList({
 	const addWorktreeRequest = useWindowUiStore((s) => s.addWorktreeRequest);
 	useEffect(() => {
 		if (!addWorktreeRequest) return;
-		const ws = workspaces.find((w) => w.id === addWorktreeRequest);
+		const ws = workspaces.find((w) => w.id === addWorktreeRequest.workspaceId);
 		// Consume the request only once it can be served, so one that arrives
 		// ahead of its Workspace in `workspaces` waits instead of vanishing.
 		if (!ws) return;
 		useWindowUiStore.getState().clearAddWorktreeRequest();
-		setAddWorktreeTarget({ primaryCwd: ws.rootFolder, primaryName: ws.name });
+		// The dialog's launch list is "New Terminal" then the enabled Agents.
+		const enabled = useSettingsStore.getState().agents.filter((a) => a.enabled);
+		const agentIndex = addWorktreeRequest.agentId
+			? enabled.findIndex((a) => a.id === addWorktreeRequest.agentId)
+			: -1;
+		setAddWorktreeTarget({
+			primaryCwd: ws.rootFolder,
+			primaryName: ws.name,
+			initial:
+				agentIndex >= 0
+					? { branch: "", folder: "", selectedIndex: agentIndex + 1 }
+					: undefined,
+			background: addWorktreeRequest.background,
+		});
 	}, [addWorktreeRequest, workspaces]);
 
 	// Per-item callbacks shared by standalone + set rendering.

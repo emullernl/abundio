@@ -28,6 +28,9 @@ type KeyAction =
 	| "toggle-right-sidebar-notes"
 	| "toggle-markdown-preview"
 	| "toggle-statistics-overlay"
+	| "toggle-fleet-console"
+	| "fleet-spotlight"
+	| "fleet-zoom-reset"
 	| "open-settings"
 	| "copy"
 	| "paste"
@@ -101,6 +104,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"toggle-right-sidebar-notes",
 	"toggle-markdown-preview",
 	"toggle-statistics-overlay",
+	"toggle-fleet-console",
 	"open-settings",
 	"save-file",
 ]);
@@ -377,6 +381,30 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		action: "toggle-statistics-overlay",
 	},
 	{
+		key: "a",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "toggle-fleet-console",
+	},
+	// Fleet Console only (gated in App): outside the console these keys reach
+	// the terminal untouched.
+	{
+		key: "Enter",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "fleet-spotlight",
+	},
+	{
+		key: "0",
+		code: "Digit0",
+		meta: isMac,
+		shift: false,
+		ctrl: !isMac,
+		action: "fleet-zoom-reset",
+	},
+	{
 		key: ",",
 		meta: isMac,
 		shift: false,
@@ -429,6 +457,18 @@ type ActionHandler = () => void;
 
 const handlers = new Map<KeyAction, ActionHandler>();
 
+// An action whose binding applies only in some state. While its gate says no,
+// the key is not claimed at all: no preventDefault, so it reaches the
+// terminal as if Abundio had no binding for it.
+const gates = new Map<KeyAction, () => boolean>();
+
+export function registerActionGate(
+	action: KeyAction,
+	isActive: () => boolean,
+): void {
+	gates.set(action, isActive);
+}
+
 export function registerAction(action: KeyAction, handler: ActionHandler) {
 	handlers.set(action, handler);
 }
@@ -473,6 +513,10 @@ export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of DEFAULT_BINDINGS) {
 		if (matchesBinding(e, binding)) {
 			if (isSuppressedByOverlay(binding.action) && hasOverlay()) return;
+			// A closed gate means this binding does not claim the key right now:
+			// move on, so it never shadows a later binding on the same chord.
+			const gate = gates.get(binding.action);
+			if (gate && !gate()) continue;
 			// When Monaco is focused, let it handle any key that isn't a
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.

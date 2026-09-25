@@ -1,5 +1,5 @@
 import { Cpu, MemoryStick, User } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { useAppMetrics } from "../hooks/useAppMetrics";
 import {
 	type BranchLabel,
@@ -13,8 +13,10 @@ import {
 	memoryPercent,
 	memoryTooltip,
 } from "../lib/metricsFormat";
+import { containsPane, parseTabLayout } from "../lib/paneTree";
 import { shortenPath } from "../lib/shortenPath";
 import { useProfileStore } from "../stores/profileStore";
+import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Folder, GitBranch, Grid, Terminal } from "./Icons";
@@ -98,12 +100,12 @@ function BranchSegment({ label }: { label: BranchLabel }) {
 }
 
 export function StatusBar() {
-	const workspace = useWorkspaceStore((s) =>
+	const activeWorkspace = useWorkspaceStore((s) =>
 		s.activeWorkspaceId
 			? (s.workspaces.find((w) => w.id === s.activeWorkspaceId) ?? null)
 			: null,
 	);
-	const tab = useWorkspaceStore((s) => {
+	const activeTab = useWorkspaceStore((s) => {
 		if (!s.activeWorkspaceId) return null;
 		const tabId = s.activeTabByWorkspace[s.activeWorkspaceId];
 		return (
@@ -112,6 +114,28 @@ export function StatusBar() {
 				?.tabs.find((t) => t.id === tabId) ?? null
 		);
 	});
+
+	// In the Fleet Console the bar describes the Focused tile's Workspace and
+	// Tab, not the Workspace view hidden behind it (ADR-0040).
+	const inFleet = useWindowUiStore(
+		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
+	);
+	const focusedTileId = useWindowUiStore((s) => s.focusedTileId);
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const tileHome = useMemo(() => {
+		if (!inFleet || !focusedTileId) return null;
+		for (const w of workspaces) {
+			for (const t of w.tabs) {
+				const layout = parseTabLayout(t.layoutJson);
+				if (layout && containsPane(layout, focusedTileId)) {
+					return { workspace: w, tab: t };
+				}
+			}
+		}
+		return null;
+	}, [inFleet, focusedTileId, workspaces]);
+	const workspace = inFleet ? (tileHome?.workspace ?? null) : activeWorkspace;
+	const tab = inFleet ? (tileHome?.tab ?? null) : activeTab;
 	const activeProfile = useProfileStore((s) =>
 		s.activeProfileId
 			? (s.profiles.find((p) => p.id === s.activeProfileId) ?? null)
@@ -232,7 +256,7 @@ export function StatusBar() {
 				</>
 			) : (
 				<div className="flex items-center justify-between w-full">
-					<span>No active workspace</span>
+					<span>{inFleet ? "Fleet Console" : "No active workspace"}</span>
 					{rightCluster}
 				</div>
 			)}
