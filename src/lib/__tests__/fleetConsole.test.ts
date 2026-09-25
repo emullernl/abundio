@@ -139,7 +139,7 @@ describe("fleetTiles", () => {
 });
 
 describe("grid shape", () => {
-	it("always leaves a free cell for the New agent tile", () => {
+	it("always leaves a free cell for Add agent", () => {
 		expect(gridShape(6, 3, 2)).toEqual({ totalRows: 3, freeCells: 3 });
 		expect(gridShape(5, 3, 2)).toEqual({ totalRows: 2, freeCells: 1 });
 		expect(gridShape(0, 2, 2)).toEqual({ totalRows: 2, freeCells: 4 });

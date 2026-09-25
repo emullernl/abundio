@@ -626,7 +626,7 @@ body,
 	opacity: 0.7;
 }
 
-.fleet-new-agent {
+.fleet-add-agent {
 	border: 1px dashed color-mix(in srgb, var(--border) 90%, transparent);
 	background: transparent;
 	transition:
@@ -634,7 +634,7 @@ body,
 		border-color 140ms ease,
 		background 140ms ease;
 }
-.fleet-new-agent:hover {
+.fleet-add-agent:hover {
 	border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 	background: color-mix(in srgb, var(--accent) 5%, transparent);
 }

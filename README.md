@@ -49,7 +49,7 @@ See [all releases](https://github.com/emullernl/abundio/releases) for previous v
 * **Native macOS integration** — Overlay titlebar with traffic light controls
 * **Cross-platform** — macOS, Windows, and Linux support
 * **Command palette** — Quick access to actions via `Cmd+K` / `Ctrl+K`
-* **Fleet Console** — Every running agent in the window as a grid of live, interactive terminals, labelled with its workspace, branch and status; spotlight one, zoom the rest, open or unload workspaces, start new agents, and jump back to an agent's workspace
+* **Fleet Console** — Every running agent in the window as a grid of live, interactive terminals, labelled with its workspace, branch and status; spotlight one, zoom the rest, open or unload workspaces, start new agents or relaunch the ones a closed workspace had, and jump back to an agent's workspace
 
 ### Fleet Console
 

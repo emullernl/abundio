@@ -86,7 +86,7 @@ export const MAX_VISIBLE_ROWS = 4;
 const PREFERRED_ASPECT = 1.6;
 
 /**
- * The column count **Auto** picks for `count` tiles (plus the New agent tile)
+ * The column count **Auto** picks for `count` tiles (plus the Add agent cell)
  * in a `width` × `height` area: the one whose cells come closest to a
  * comfortable terminal shape.
  */
@@ -126,13 +126,13 @@ export function autoVisibleRows(count: number, columns: number): number {
 export interface GridShape {
 	/** Rows that exist; beyond `visibleRows` the grid scrolls. */
 	totalRows: number;
-	/** Cells after the tiles: the first is the New agent tile, the rest blank. */
+	/** Cells after the tiles, each holding an **Add agent** button. */
 	freeCells: number;
 }
 
 /**
- * The grid for `count` tiles. There is always at least one free cell, so the
- * New agent tile is always reachable, and the grid is never smaller than the
+ * The grid for `count` tiles. There is always at least one free cell, so
+ * **Add agent** is always reachable, and the grid is never smaller than the
  * chosen `columns × visibleRows`.
  */
 export function gridShape(
