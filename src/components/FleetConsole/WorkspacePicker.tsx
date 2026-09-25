@@ -2,7 +2,7 @@ import { FolderOpen, Layers } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
-import { collectAgentPanes, parseTabLayout } from "../../lib/paneTree";
+import { rememberedAgents } from "../../lib/dormantWorkspaces";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
 	buildWorkspaceRows,
@@ -108,13 +108,7 @@ export function openInBackground(workspaceId: string): void {
 
 /** Pane ids of every terminal in the Workspace that remembers an Agent. */
 export function rememberedAgentPanes(ws: WorkspaceWithTabs): string[] {
-	const ids: string[] = [];
-	for (const tab of ws.tabs) {
-		const layout = parseTabLayout(tab.layoutJson);
-		if (!layout) continue;
-		for (const { paneId } of collectAgentPanes(layout)) ids.push(paneId);
-	}
-	return ids;
+	return rememberedAgents(ws).map((a) => a.paneId);
 }
 
 function WorkspaceList({
