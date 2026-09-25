@@ -126,7 +126,7 @@ export function autoVisibleRows(count: number, columns: number): number {
 export interface GridShape {
 	/** Rows that exist; beyond `visibleRows` the grid scrolls. */
 	totalRows: number;
-	/** Cells after the tiles, each holding an **Add agent** button. */
+	/** Cells after the tiles: the first holds **Add agent**, the rest blank. */
 	freeCells: number;
 }
 

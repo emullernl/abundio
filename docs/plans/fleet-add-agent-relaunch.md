@@ -14,8 +14,9 @@ has no hint that opening those Workspaces would bring their Agents back.
 1. **Dormant workspace** = in the Active profile, not Opened in this Window,
    and its saved layout remembers at least one Agent that Abundio still knows
    (an unknown `agentId` would come up as a plain shell, so it does not count).
-2. Every free grid cell, the Filmstrip's end cell and the toolbar carry the
-   same **Add agent** button. The dashed empty outlines go.
+2. The first free grid cell, the Filmstrip's end cell and the toolbar carry
+   the same **Add agent** button. At most one Add agent cell in the grid; the
+   other free cells stay empty outlines.
 3. Add agent opens a chooser with two clearly separate options: **New agent**
    (the existing dialog) and **Relaunch from a dormant workspace**. With no
    Dormant workspace it skips the chooser and opens New agent directly.
@@ -41,7 +42,7 @@ has no hint that opening those Workspaces would bring their Agents back.
    hands off to `NewAgentDialog` (which gains `onBack` and `animateIn`, so the
    swap does not flash the backdrop). `useEscapeKey` for Esc; ↑↓/Enter in both
    steps.
-3. **Console wiring**: free cells and the Filmstrip end cell become
+3. **Console wiring**: the first free cell and the Filmstrip end cell become
    `AddAgentCell` (with an "or relaunch N dormant" line when there are any);
    toolbar button renamed to Add agent; the dormant count button. `gridShape`
    doc comments updated.

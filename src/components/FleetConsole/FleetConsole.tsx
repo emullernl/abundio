@@ -709,14 +709,18 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 									onClick={openAddAgent}
 								/>
 							) : (
-								freeCellIds.map((id, n) => (
-									<AddAgentCell
-										key={id}
-										empty={n === 0 && tiles.length === 0}
-										dormant={dormantCount}
-										onClick={openAddAgent}
-									/>
-								))
+								freeCellIds.map((id, n) =>
+									n === 0 ? (
+										<AddAgentCell
+											key={id}
+											empty={tiles.length === 0}
+											dormant={dormantCount}
+											onClick={openAddAgent}
+										/>
+									) : (
+										<EmptyCell key={id} />
+									),
+								)
 							)}
 							{!spotlight &&
 								colEdges.map((edge) => (
@@ -790,8 +794,7 @@ function Divider({
 	);
 }
 
-/** **Add agent** in a free cell — every free cell holds one, and so does the
- *  end of the Filmstrip. */
+/** **Add agent** in the first free cell, and at the end of the Filmstrip. */
 function AddAgentCell({
 	empty,
 	dormant,
@@ -855,6 +858,21 @@ function AddAgentCell({
 					</span>
 				)}
 			</button>
+		</div>
+	);
+}
+
+function EmptyCell() {
+	return (
+		<div style={{ padding: 3, minWidth: 0, minHeight: 0 }}>
+			<div
+				className="w-full h-full"
+				style={{
+					borderRadius: 7,
+					border:
+						"1px dashed color-mix(in srgb, var(--border) 45%, transparent)",
+				}}
+			/>
 		</div>
 	);
 }
