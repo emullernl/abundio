@@ -67,15 +67,6 @@ export function AddAgentDialog({
 		setStep(next);
 	};
 
-	// The list closes by itself once the last Dormant workspace is relaunched.
-	const hadDormant = useRef(dormant.length > 0);
-	const exhausted =
-		step === "relaunch" && hadDormant.current && dormant.length === 0;
-	useEffect(() => {
-		if (exhausted) onClose();
-	}, [exhausted, onClose]);
-	if (exhausted) return null;
-
 	// Nothing Dormant: there is no choice to make.
 	const shown: AddAgentStep = dormant.length === 0 ? "new" : step;
 
@@ -97,7 +88,14 @@ export function AddAgentDialog({
 					onRelaunch={() => go("relaunch")}
 				/>
 			) : (
-				<RelaunchList rows={rows} onBack={() => go("choose")} />
+				<RelaunchList
+					rows={rows}
+					onBack={() => go("choose")}
+					onRelaunch={(id) => {
+						openInBackground(id);
+						onClose();
+					}}
+				/>
 			)}
 		</Shell>
 	);
@@ -404,9 +402,12 @@ function AgentChips({
 function RelaunchList({
 	rows,
 	onBack,
+	onRelaunch,
 }: {
 	rows: RelaunchRow[];
 	onBack: () => void;
+	/** Relaunch one Workspace; the dialog closes. */
+	onRelaunch: (workspaceId: string) => void;
 }) {
 	const agents = useSettingsStore((s) => s.agents);
 	const gitById = useWorkspaceGitStore((s) => s.byWorkspaceId);
@@ -415,7 +416,7 @@ function RelaunchList({
 			r.kind === "workspace",
 	);
 	const keys = useListKeys(targets.length, (i) =>
-		openInBackground(targets[i].workspace.id),
+		onRelaunch(targets[i].workspace.id),
 	);
 	const listRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -482,7 +483,7 @@ function RelaunchList({
 							role="option"
 							aria-selected={selected}
 							data-index={i}
-							onClick={() => openInBackground(w.id)}
+							onClick={() => onRelaunch(w.id)}
 							onMouseEnter={() => keys.setIndex(i)}
 							className="w-full flex items-center text-left"
 							style={{

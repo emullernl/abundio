@@ -28,8 +28,8 @@ has no hint that opening those Workspaces would bring their Agents back.
 6. The Relaunch list groups Worktree sets like the workspace picker
    (`buildWorkspaceRows`): Linked worktrees indented under the Primary, branch
    on every row, only Dormant members listed, an Opened Primary shown as a
-   plain heading. The list stays open after a click and closes by itself when
-   nothing Dormant is left.
+   plain heading. Relaunching one closes the dialog, as opening one from the
+   workspace picker closes the picker.
 
 ## Commits
 

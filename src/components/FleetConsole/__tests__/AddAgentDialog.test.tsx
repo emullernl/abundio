@@ -94,7 +94,7 @@ describe("AddAgentDialog", () => {
 		expect(dialogLabel()).toBe("New agent");
 	});
 
-	it("relaunches the whole Workspace in the background, then closes", () => {
+	it("relaunches the whole Workspace in the background and closes", () => {
 		render("relaunch");
 		const row = [...document.querySelectorAll('[role="option"]')].find((b) =>
 			b.textContent?.includes("api"),
@@ -107,7 +107,6 @@ describe("AddAgentDialog", () => {
 		expect(Object.keys(useWindowUiStore.getState().pendingTiles)).toEqual([
 			"api-p",
 		]);
-		// That was the last Dormant workspace: the list closes itself.
 		expect(onClose).toHaveBeenCalled();
 	});
 });

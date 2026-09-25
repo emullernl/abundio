@@ -93,8 +93,16 @@ export function WorkspacePicker({
 					allWorkspaces={allWorkspaces}
 					openedIds={openedIds}
 					agentCountByWorkspace={agentCountByWorkspace}
-					onOpen={openInBackground}
-					onUnload={requestUnload}
+					onOpen={(id) => {
+						openInBackground(id);
+						setOpen(false);
+					}}
+					onUnload={(id) => {
+						// The unload confirmation lives outside the list, so it
+						// survives the list closing.
+						requestUnload(id);
+						setOpen(false);
+					}}
 					onClose={() => setOpen(false)}
 				/>
 			)}
