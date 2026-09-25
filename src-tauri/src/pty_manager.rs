@@ -1379,12 +1379,13 @@ fn pty_thread(
                 // the agent, not the shell that launched it.
                 #[cfg(unix)]
                 if let Some(pgid) = master.process_group_leader() {
+                    // Positive only: 0 would mean the caller's own group.
+                    // An exited group yields ESRCH, which is ignored.
                     if pgid > 0 {
-                        // SAFETY: killpg only sends a signal; an invalid or
-                        // exited group yields ESRCH, which is ignored.
-                        unsafe {
-                            libc::killpg(pgid, libc::SIGWINCH);
-                        }
+                        let _ = nix::sys::signal::killpg(
+                            nix::unistd::Pid::from_raw(pgid),
+                            nix::sys::signal::Signal::SIGWINCH,
+                        );
                     }
                 }
             }
