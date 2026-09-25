@@ -52,6 +52,19 @@ export function dormantWorkspaces(
 	return workspaces.filter((w) => isDormant(w, openedIds, knownAgentIds));
 }
 
+/**
+ * Whether the Console's workspace picker lists `ws`: it has Agents on the grid
+ * now, or would bring some back when opened. A Workspace with neither adds
+ * nothing to the Console, so it is left out.
+ */
+export function hasFleetAgents(
+	ws: WorkspaceWithTabs,
+	knownAgentIds: ReadonlySet<string>,
+	liveTiles: number,
+): boolean {
+	return liveTiles > 0 || relaunchableAgentIds(ws, knownAgentIds).length > 0;
+}
+
 export interface AgentCount {
 	agentId: string;
 	count: number;

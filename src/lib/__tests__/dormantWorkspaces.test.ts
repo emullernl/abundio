@@ -3,6 +3,7 @@ import {
 	agentCounts,
 	buildRelaunchRows,
 	dormantWorkspaces,
+	hasFleetAgents,
 	isDormant,
 	rememberedAgents,
 } from "../dormantWorkspaces";
@@ -71,6 +72,14 @@ describe("dormant workspaces", () => {
 		expect(
 			dormantWorkspaces(list, new Set(["c"]), known).map((w) => w.id),
 		).toEqual(["a"]);
+	});
+
+	it("lists in the workspace picker only Workspaces with Agents", () => {
+		expect(hasFleetAgents(ws("a"), known, 0)).toBe(true);
+		expect(hasFleetAgents(ws("a", [term("p")]), known, 0)).toBe(false);
+		expect(hasFleetAgents(ws("a", [term("p", "gone")]), known, 0)).toBe(false);
+		// Agents on the grid count even if the layout has not remembered them.
+		expect(hasFleetAgents(ws("a", [term("p")]), known, 1)).toBe(true);
 	});
 
 	it("counts Agents in first-seen order", () => {

@@ -2,13 +2,14 @@ import { FolderOpen, Layers } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
-import { rememberedAgents } from "../../lib/dormantWorkspaces";
+import { hasFleetAgents, rememberedAgents } from "../../lib/dormantWorkspaces";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -35,7 +36,15 @@ export function WorkspacePicker({
 }) {
 	const [open, setOpen] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
+	const agents = useSettingsStore((s) => s.agents);
+	// Only Workspaces with Agents to show: one without adds nothing here.
+	const workspaces = useMemo(() => {
+		const known = new Set(agents.map((a) => a.id));
+		return allWorkspaces.filter((w) =>
+			hasFleetAgents(w, known, agentCountByWorkspace.get(w.id) ?? 0),
+		);
+	}, [allWorkspaces, agents, agentCountByWorkspace]);
 	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const { requestUnload, dialogProps } = useConfirmUnloadWorkspace();
 
@@ -81,6 +90,7 @@ export function WorkspacePicker({
 			{open && (
 				<WorkspaceList
 					workspaces={workspaces}
+					allWorkspaces={allWorkspaces}
 					openedIds={openedIds}
 					agentCountByWorkspace={agentCountByWorkspace}
 					onOpen={openInBackground}
@@ -113,6 +123,7 @@ export function rememberedAgentPanes(ws: WorkspaceWithTabs): string[] {
 
 function WorkspaceList({
 	workspaces,
+	allWorkspaces,
 	openedIds,
 	agentCountByWorkspace,
 	onOpen,
@@ -120,6 +131,9 @@ function WorkspaceList({
 	onClose,
 }: {
 	workspaces: WorkspaceWithTabs[];
+	/** Every Workspace, so Worktree sets group as in the Left sidebar even when
+	 *  some members are not listed. */
+	allWorkspaces: WorkspaceWithTabs[];
 	openedIds: ReadonlySet<string>;
 	agentCountByWorkspace: ReadonlyMap<string, number>;
 	onOpen: (id: string) => void;
@@ -133,7 +147,7 @@ function WorkspaceList({
 
 	const ordered = useMemo(() => {
 		const byId = new Map(workspaces.map((w) => [w.id, w]));
-		const list = flattenRowsToIds(buildWorkspaceRows(workspaces, facts))
+		const list = flattenRowsToIds(buildWorkspaceRows(allWorkspaces, facts))
 			.map((id) => byId.get(id))
 			.filter((w): w is WorkspaceWithTabs => !!w);
 		const q = query.trim().toLowerCase();
@@ -144,7 +158,7 @@ function WorkspaceList({
 						w.rootFolder.toLowerCase().includes(q),
 				)
 			: list;
-	}, [workspaces, facts, query]);
+	}, [workspaces, allWorkspaces, facts, query]);
 
 	return (
 		<div
@@ -190,7 +204,9 @@ function WorkspaceList({
 							color: "var(--fg-secondary)",
 						}}
 					>
-						No workspace matches.
+						{query.trim()
+							? "No workspace matches."
+							: "No workspace has agents to show."}
 					</div>
 				)}
 				{ordered.map((w) => {
