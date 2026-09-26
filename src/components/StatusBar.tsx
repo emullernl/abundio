@@ -108,7 +108,10 @@ function BranchSegment({ label }: { label: BranchLabel }) {
  * Colour sits in classes, not inline, so the hover state can win.
  */
 function VersionButton({ version }: { version: string }) {
-	const open = useUpdateStore((s) => s.whatsNew != null);
+	// Pressed only for a card this button opened, not the upgrade card.
+	const open = useUpdateStore(
+		(s) => s.whatsNew != null && s.whatsNewOrigin === "manual",
+	);
 	return (
 		<button
 			type="button"
@@ -132,17 +135,23 @@ function VersionButton({ version }: { version: string }) {
 	);
 }
 
+/** The version cannot change while the app runs, so ask Rust once. */
+let versionPromise: Promise<string> | null = null;
+
 function useAppVersion(): string | null {
 	const [version, setVersion] = useState<string | null>(null);
 	useEffect(() => {
 		let live = true;
-		updates
-			.appVersion()
+		versionPromise ??= updates.appVersion();
+		versionPromise
 			.then((v) => {
 				if (live && v) setVersion(v);
 			})
-			// No version, no button: nothing is worth surfacing here.
-			.catch(() => {});
+			.catch(() => {
+				// No version, no button: nothing is worth surfacing here. Forget
+				// the failure so the next mount asks again.
+				versionPromise = null;
+			});
 		return () => {
 			live = false;
 		};

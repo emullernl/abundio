@@ -17,6 +17,11 @@ import type { ReleaseNote, ReleaseNotesPage } from "./ipc";
  *    in the heading and an "older releases" escape hatch is offered.
  */
 
+/** Canonical GitHub release page for a version. */
+export function releaseNotesUrl(version: string): string {
+	return `https://github.com/emullernl/abundio/releases/tag/v${version}`;
+}
+
 export interface ReleaseNotesEntry {
 	release: ReleaseNote;
 	/** The release matching the version the user is running right now. */
@@ -186,7 +191,7 @@ export function releaseNoteForVersion(
 			version,
 			body: "",
 			publishedAt: null,
-			url: `https://github.com/emullernl/abundio/releases/tag/v${version}`,
+			url: releaseNotesUrl(version),
 		}
 	);
 }
@@ -211,5 +216,13 @@ export function missingNotesReason(
 ): MissingNotesReason | null {
 	if (page?.releases.some((r) => r.version === version)) return null;
 	if (fetchFailed) return "failed";
-	return page?.hasMore ? "older" : "unpublished";
+	// `hasMore` only says a second page exists, not that the running version
+	// is on it. Only a version older than everything fetched can be there; a
+	// dev build ahead of every release (the "ahead" case in the module header)
+	// or one between two releases was simply never published.
+	const releases = page?.releases ?? [];
+	const behindAll =
+		releases.length > 0 &&
+		releases.every((r) => compareVersions(r.version, version) > 0);
+	return page?.hasMore && behindAll ? "older" : "unpublished";
 }

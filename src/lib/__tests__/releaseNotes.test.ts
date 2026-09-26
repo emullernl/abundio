@@ -290,6 +290,18 @@ describe("missingNotesReason", () => {
 		).toBe("older");
 	});
 
+	it("reports a dev build ahead of every release as unpublished, not older", () => {
+		expect(
+			missingNotesReason("9.9.9", { releases: RELEASES, hasMore: true }, false),
+		).toBe("unpublished");
+	});
+
+	it("reports a version between two releases as unpublished", () => {
+		expect(
+			missingNotesReason("0.4.5", { releases: RELEASES, hasMore: true }, false),
+		).toBe("unpublished");
+	});
+
 	it("reports an unpublished version when the page is everything", () => {
 		expect(missingNotesReason("0.7.0", page, false)).toBe("unpublished");
 	});

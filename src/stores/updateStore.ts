@@ -9,6 +9,7 @@ import {
 	type MissingNotesReason,
 	missingNotesReason,
 	releaseNoteForVersion,
+	releaseNotesUrl,
 } from "../lib/releaseNotes";
 import { useSettingsStore } from "./settingsStore";
 
@@ -107,14 +108,14 @@ function isSnoozed(): boolean {
 /** How long "Later" keeps the prompt hidden — a rolling 24h. */
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
 
-/** Canonical GitHub release page for a version — the source of truth for "what
- *  changed" (we link out rather than render the raw Markdown release notes). */
-export function releaseNotesUrl(version: string): string {
-	return `https://github.com/emullernl/abundio/releases/tag/v${version}`;
-}
+/** Re-exported for existing importers; defined beside the other release-notes
+ *  helpers so the URL lives in one place. */
+export { releaseNotesUrl };
 
-/** True while `toggleWhatsNew` is fetching notes to open the card. */
-let whatsNewOpening = false;
+/** The plain (non-refresh) release-notes fetch in flight, if any. A second
+ *  caller awaits it rather than returning early, so nobody reads the store
+ *  mid-fetch and mistakes "still loading" for "nothing published". */
+let notesInFlight: Promise<void> | null = null;
 
 export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	status: "idle",
@@ -223,24 +224,32 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	notes: null,
 	notesStatus: "idle",
 
-	fetchNotes: async ({ refresh = false } = {}) => {
+	fetchNotes: ({ refresh = false } = {}) => {
 		// The in-flight guard exists for the duplicate-mount case, but it must
 		// not swallow a refresh: the Settings window opens straight onto this
 		// section, so "Check for updates" is routinely clicked while the mount
 		// fetch is still resolving. Dropping it there would quietly serve the
 		// hourly cache to a user who explicitly asked for current truth.
-		if (get().notesStatus === "loading" && !refresh) return;
+		if (notesInFlight && !refresh) return notesInFlight;
 		set({ notesStatus: "loading" });
-		try {
-			const notes = await updates.releaseNotes(refresh);
-			set({ notes, notesStatus: "loaded" });
-		} catch {
-			// Offline, rate-limited, or GitHub is down. The error text is not
-			// worth surfacing — there is nothing the user can do differently with
-			// it — and `notes` is left alone so an already-rendered list survives
-			// a failed refresh rather than being replaced by an error.
-			set({ notesStatus: "error" });
-		}
+		const request: Promise<void> = updates
+			.releaseNotes(refresh)
+			.then((notes) => {
+				set({ notes, notesStatus: "loaded" });
+			})
+			.catch(() => {
+				// Offline, rate-limited, or GitHub is down. The error text is not
+				// worth surfacing — there is nothing the user can do differently
+				// with it — and `notes` is left alone so an already-rendered list
+				// survives a failed refresh rather than being replaced by an error.
+				set({ notesStatus: "error" });
+			})
+			.finally(() => {
+				// A refresh may have replaced this one as the fetch to join.
+				if (notesInFlight === request) notesInFlight = null;
+			});
+		notesInFlight = request;
+		return request;
 	},
 
 	whatsNew: null,
@@ -254,18 +263,10 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 			get().dismissWhatsNew();
 			return;
 		}
-		// A click while the fetch below is in flight must not open the card
-		// early: `fetchNotes` returns at once while loading, so a second call
-		// would find no notes yet and show the "no published notes" fallback.
-		if (whatsNewOpening) return;
-		whatsNewOpening = true;
-		try {
-			// Served from the hourly Rust-side cache after the first fetch. A
-			// failed fetch still opens the card, saying the fetch failed.
-			await get().fetchNotes();
-		} finally {
-			whatsNewOpening = false;
-		}
+		// Served from the hourly Rust-side cache after the first fetch. A failed
+		// fetch still opens the card, saying the fetch failed. A fetch already
+		// in flight is joined, not skipped (see `notesInFlight`).
+		await get().fetchNotes();
 		// A second click, or the upgrade card, may have landed while the fetch
 		// was in flight; either way there is already an answer on screen.
 		if (get().whatsNew) return;
@@ -282,7 +283,13 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	},
 
 	dismissWhatsNew: () => {
+		const { whatsNew, whatsNewOrigin } = get();
 		set({ whatsNew: null });
+		// Rust's `last_seen_version` is the only gate on the post-upgrade card.
+		// The version button can open and close the card at any time — even
+		// before that card is emitted, and even with no notes in it — so only a
+		// card that showed notes counts as having seen them.
+		if (whatsNewOrigin !== "upgrade" && !whatsNew?.body) return;
 		// Rust owns the flag: localStorage is per-webview on macOS, so a
 		// per-Window copy would show the card again in the next Window.
 		updates.markVersionSeen().catch(() => {});
