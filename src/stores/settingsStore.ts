@@ -6,6 +6,10 @@ import { agentHooks, pr, updates } from "../lib/ipc";
 import { SYSTEM_UI_FONT } from "../lib/nerdFonts";
 import type { PreviewColorMode } from "../lib/previewColorMode";
 import { nextPreviewColorMode } from "../lib/previewColorMode";
+import {
+	DEFAULT_ISSUE_TEMPLATE,
+	DEFAULT_TASK_TEMPLATE,
+} from "../lib/taskPrompt";
 import { withTerminalSettings } from "../lib/terminalSettingsBridge";
 import { applyTheme, getTheme } from "../lib/themes";
 import type { CodingAgent } from "../lib/types";
@@ -72,6 +76,13 @@ interface SettingsState {
 	prPollEnabled: boolean;
 	/** Focused-cadence PR poll interval in minutes (1–30). */
 	prPollIntervalMinutes: number;
+	/** The **Task template**: wraps a free-text Task (`{{input}}`). */
+	taskTemplate: string;
+	/** The **Issue template**: wraps an Issue task (`{{number}}` etc.). */
+	issueTemplate: string;
+	/** The remembered **Task destination** for the current Workspace. Changes
+	 *  only on an explicit pick, never when Restart agent is unavailable. */
+	taskDestination: TaskDestinationPreference;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -128,7 +139,14 @@ interface SettingsState {
 	setUpdateSnoozedUntil: (until: number | null) => void;
 	setPrPollEnabled: (enabled: boolean) => void;
 	setPrPollIntervalMinutes: (minutes: number) => void;
+	setTaskTemplate: (template: string) => void;
+	setIssueTemplate: (template: string) => void;
+	setTaskDestination: (destination: TaskDestinationPreference) => void;
 }
+
+/** The two in-Workspace **Task destinations**; New worktree is chosen per
+ *  Task and never remembered. */
+export type TaskDestinationPreference = "restart" | "newTab";
 
 /**
  * Every key `persist` writes to localStorage — the single source of truth for
@@ -171,6 +189,9 @@ export const PERSISTED_KEYS = [
 	"updateSnoozedUntil",
 	"prPollEnabled",
 	"prPollIntervalMinutes",
+	"taskTemplate",
+	"issueTemplate",
+	"taskDestination",
 ] as const satisfies readonly (keyof SettingsState)[];
 
 export type PersistedSettingKey = (typeof PERSISTED_KEYS)[number];
@@ -214,6 +235,9 @@ const PERSISTED_DEFAULTS: {
 	updateSnoozedUntil: number | null;
 	prPollEnabled: boolean;
 	prPollIntervalMinutes: number;
+	taskTemplate: string;
+	issueTemplate: string;
+	taskDestination: TaskDestinationPreference;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -245,6 +269,9 @@ const PERSISTED_DEFAULTS: {
 		updateSnoozedUntil: null as number | null,
 		prPollEnabled: true,
 		prPollIntervalMinutes: 5,
+		taskTemplate: DEFAULT_TASK_TEMPLATE,
+		issueTemplate: DEFAULT_ISSUE_TEMPLATE,
+		taskDestination: "newTab" as TaskDestinationPreference,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -373,6 +400,18 @@ const PERSISTED_DEFAULTS: {
 				typeof s.prPollIntervalMinutes === "number"
 					? s.prPollIntervalMinutes
 					: defaults.prPollIntervalMinutes,
+			taskTemplate:
+				typeof s.taskTemplate === "string"
+					? s.taskTemplate
+					: defaults.taskTemplate,
+			issueTemplate:
+				typeof s.issueTemplate === "string"
+					? s.issueTemplate
+					: defaults.issueTemplate,
+			taskDestination:
+				s.taskDestination === "restart" || s.taskDestination === "newTab"
+					? s.taskDestination
+					: defaults.taskDestination,
 		};
 	} catch {
 		return defaults;
@@ -505,6 +544,9 @@ export const useSettingsStore = create<SettingsState>()(
 			updateSnoozedUntil: PERSISTED_DEFAULTS.updateSnoozedUntil,
 			prPollEnabled: PERSISTED_DEFAULTS.prPollEnabled,
 			prPollIntervalMinutes: PERSISTED_DEFAULTS.prPollIntervalMinutes,
+			taskTemplate: PERSISTED_DEFAULTS.taskTemplate,
+			issueTemplate: PERSISTED_DEFAULTS.issueTemplate,
+			taskDestination: PERSISTED_DEFAULTS.taskDestination,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -691,10 +733,13 @@ export const useSettingsStore = create<SettingsState>()(
 				);
 				set({ prPollIntervalMinutes });
 			},
+			setTaskTemplate: (taskTemplate) => set({ taskTemplate }),
+			setIssueTemplate: (issueTemplate) => set({ issueTemplate }),
+			setTaskDestination: (taskDestination) => set({ taskDestination }),
 		}),
 		{
 			name: "abundio-settings",
-			version: 11,
+			version: 12,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -764,6 +809,17 @@ export const useSettingsStore = create<SettingsState>()(
 				// guarantees the key exists during the rehydrate window.
 				if (version < 11) {
 					state = { focusSweep: true, ...state };
+				}
+				// v12: New task templates and the remembered Task destination.
+				// Additive keys; PERSISTED_DEFAULTS + merge already supply them,
+				// so this only guarantees they exist during the rehydrate window.
+				if (version < 12) {
+					state = {
+						taskTemplate: DEFAULT_TASK_TEMPLATE,
+						issueTemplate: DEFAULT_ISSUE_TEMPLATE,
+						taskDestination: "newTab",
+						...state,
+					};
 				}
 				// v7: app-global PR poller (ADR-0019). Additive default keys;
 				// PERSISTED_DEFAULTS + merge already supply them — this only
