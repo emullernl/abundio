@@ -565,15 +565,18 @@ export function App() {
 		registry
 			.load(settings.agents.map((a) => a.command))
 			.then(async () => {
-				const installed = useAgentRegistryStore.getState().installedCommands;
+				const { installedCommands: installed, scannedCommands: scanned } =
+					useAgentRegistryStore.getState();
 				if (installed.size === 0) return;
 				// Before the claim's early return: a converted retired built-in
 				// is settled on every launch until it is, not only on the first.
-				// Only on the real login-shell `$PATH`: pruning deletes the
-				// Agent, and a timed-out shell's fallback scan can find Homebrew
-				// agents yet miss one in `~/.local/bin`.
+				// Only on the real login-shell `$PATH`: a timed-out shell's
+				// fallback scan can find Homebrew agents yet miss one in
+				// `~/.local/bin`, and would un-Watch it.
 				if (await agentRegistry.pathIsResolved()) {
-					await useSettingsStore.getState().pruneRetiredAgents(installed);
+					await useSettingsStore
+						.getState()
+						.pruneRetiredAgents(installed, scanned);
 				}
 				if (!(await agentRegistry.claimSeeding())) return;
 				await useSettingsStore.getState().matchAgentsToInstalled(installed);

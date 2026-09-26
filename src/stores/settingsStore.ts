@@ -121,9 +121,12 @@ interface SettingsState {
 		installed: Set<string>,
 	) => Promise<"changed" | "already-matching" | "empty-scan">;
 	/** Settle Agents converted from a **retired built-in** against a real
-	 *  `$PATH` scan (see `pruneRetiredBuiltins`). Resolves `true` when the
-	 *  list changed; an empty scan changes nothing. */
-	pruneRetiredAgents: (installed: Set<string>) => Promise<boolean>;
+	 *  `$PATH` scan of `scanned` (see `pruneRetiredBuiltins`). Resolves `true`
+	 *  when the list changed; an empty scan changes nothing. */
+	pruneRetiredAgents: (
+		installed: Set<string>,
+		scanned: Set<string>,
+	) => Promise<boolean>;
 	updateAgent: (
 		id: string,
 		updates: Partial<
@@ -666,9 +669,9 @@ export const useSettingsStore = create<SettingsState>()(
 				}
 				return "changed";
 			},
-			pruneRetiredAgents: async (installed) => {
+			pruneRetiredAgents: async (installed, scanned) => {
 				const before = get().agents;
-				const after = pruneRetiredBuiltins(before, installed);
+				const after = pruneRetiredBuiltins(before, installed, scanned);
 				// Identity check, as in matchAgentsToInstalled: no write, no
 				// re-provision and no cross-Window broadcast when nothing moved.
 				if (after === before) return false;
@@ -684,7 +687,13 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			updateAgent: (id, updates) => {
 				set((s) => ({
-					agents: s.agents.map((a) => (a.id === id ? { ...a, ...updates } : a)),
+					agents: s.agents.map((a) => {
+						if (a.id !== id) return a;
+						// An edit by hand settles a converted retired built-in: the
+						// user now owns it, so `pruneRetiredBuiltins` must leave it be.
+						const { retiredBuiltin: _marker, ...rest } = a;
+						return { ...rest, ...updates };
+					}),
 				}));
 			},
 			setLastOpenedDevEnvId: (id) => set({ lastOpenedDevEnvId: id }),

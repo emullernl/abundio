@@ -88,19 +88,26 @@ describe("pruneRetiredBuiltins", () => {
 		...custom(id, id, true),
 		retiredBuiltin: true,
 	});
+	const scanned = new Set(["claude", "codex", "aider"]);
 
-	it("removes a converted agent whose command is not installed", () => {
+	it("un-Watches a converted agent whose command is not installed", () => {
 		const result = pruneRetiredBuiltins(
 			[builtin("claude", true), retired("aider")],
 			new Set(["claude"]),
+			scanned,
 		);
-		expect(result.map((a) => a.id)).toEqual(["claude"]);
+		expect(result).toEqual([
+			builtin("claude", true),
+			custom("aider", "aider", false),
+		]);
+		expect("retiredBuiltin" in result[1]).toBe(false);
 	});
 
-	it("keeps an installed one and clears its marker", () => {
+	it("keeps an installed one Watched and clears its marker", () => {
 		const result = pruneRetiredBuiltins(
 			[builtin("claude", true), retired("aider")],
 			new Set(["claude", "aider"]),
+			scanned,
 		);
 		expect(result[1]).toEqual(custom("aider", "aider", true));
 		expect("retiredBuiltin" in result[1]).toBe(false);
@@ -108,12 +115,23 @@ describe("pruneRetiredBuiltins", () => {
 
 	it("returns the same reference on an empty scan", () => {
 		const agents = [builtin("claude", true), retired("aider")];
-		expect(pruneRetiredBuiltins(agents, new Set())).toBe(agents);
+		expect(pruneRetiredBuiltins(agents, new Set(), scanned)).toBe(agents);
 	});
 
 	it("returns the same reference when nothing carries the marker", () => {
 		const agents = [builtin("claude", true), custom("aider", "aider", true)];
-		expect(pruneRetiredBuiltins(agents, new Set(["claude"]))).toBe(agents);
+		expect(pruneRetiredBuiltins(agents, new Set(["claude"]), scanned)).toBe(
+			agents,
+		);
+	});
+
+	// A scan that never looked up `aider` says nothing about whether it is
+	// installed, so its absence from `installed` must not un-Watch it.
+	it("leaves a marked agent alone when the scan did not look up its command", () => {
+		const agents = [builtin("claude", true), retired("aider")];
+		expect(
+			pruneRetiredBuiltins(agents, new Set(["claude"]), new Set(["claude"])),
+		).toBe(agents);
 	});
 
 	it("never touches unmarked agents, even with the same command", () => {
@@ -122,9 +140,10 @@ describe("pruneRetiredBuiltins", () => {
 		const result = pruneRetiredBuiltins(
 			[off, mine, retired("aider")],
 			new Set(["claude"]),
+			scanned,
 		);
-		expect(result).toEqual([off, mine]);
 		expect(result[0]).toBe(off);
 		expect(result[1]).toBe(mine);
+		expect(result[2].enabled).toBe(false);
 	});
 });

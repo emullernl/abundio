@@ -226,6 +226,19 @@ describe("mergeAgentsWithBuiltins", () => {
 			]);
 		});
 
+		it("keeps other persisted fields under the authoritative name and command", () => {
+			const merged = mergeAgentsWithBuiltins([
+				...BUILTIN_AGENTS,
+				{ ...oldAider(true), name: "Old", command: "old", args: ["--x"] },
+			]);
+			expect(merged.find((a) => a.id === "aider")).toMatchObject({
+				name: "Aider",
+				command: "aider",
+				args: ["--x"],
+				builtin: false,
+			});
+		});
+
 		it("drops one that was not Watched", () => {
 			const merged = mergeAgentsWithBuiltins([
 				...BUILTIN_AGENTS,

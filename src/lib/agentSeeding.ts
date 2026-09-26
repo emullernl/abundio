@@ -53,9 +53,15 @@ export function seedWatchedFromInstalled(
 
 /**
  * Settle every Agent converted from a **retired built-in** (see
- * `RETIRED_BUILTINS` in `agents.ts`) against a real `$PATH` scan: remove it
- * when its command is not Installed, keep it and clear the `retiredBuiltin`
- * marker when it is.
+ * `RETIRED_BUILTINS` in `agents.ts`) against a real `$PATH` scan: un-Watch it
+ * when its command is not Installed, keep it as it is when it is, and clear
+ * the `retiredBuiltin` marker either way.
+ *
+ * It un-Watches rather than deletes. "Not a file on the login-shell `$PATH`"
+ * is narrower than "not used": a venv or conda install, a directory hook's
+ * `~/bin` or a shell-function wrapper all read as not Installed. An un-Watched
+ * Agent is already out of every launch menu and hook provisioning, and the
+ * user can switch it back on in Settings ▸ Agents; a deleted one is gone.
  *
  * Needed because ADR-0037 left long-time users with every built-in Watched, so
  * a Watched retired built-in does not mean the user actually has it. The merge
@@ -64,27 +70,29 @@ export function seedWatchedFromInstalled(
  *
  * Runs on every launch until nothing carries the marker, independent of the
  * one-time seeding claim. **An empty `installed` set is a failed scan**, as in
- * `seedWatchedFromInstalled`, and changes nothing. Unlike seeding, this
- * deletes, so the caller must also skip it when the scan ran on the fallback
- * `$PATH` (`agentRegistry.pathIsResolved()`). Agents without the marker
- * are never touched. Returns the **same array reference** when nothing changes.
+ * `seedWatchedFromInstalled`, and changes nothing. The caller also skips it
+ * when the scan ran on the fallback `$PATH` (`agentRegistry.pathIsResolved()`).
+ *
+ * `scanned` is the list of commands that scan looked up. A marked Agent whose
+ * command is not in it is left alone: its absence from `installed` answers a
+ * question nobody asked. Agents without the marker are never touched. Returns
+ * the **same array reference** when nothing changes.
  */
 export function pruneRetiredBuiltins(
 	agents: CodingAgent[],
 	installed: Set<string>,
+	scanned: Set<string>,
 ): CodingAgent[] {
 	if (installed.size === 0) return agents;
-	if (!agents.some((a) => a.retiredBuiltin)) return agents;
 
-	const next: CodingAgent[] = [];
-	for (const agent of agents) {
-		if (!agent.retiredBuiltin) {
-			next.push(agent);
-			continue;
-		}
-		if (!installed.has(agent.command)) continue;
-		const { retiredBuiltin: _marker, ...kept } = agent;
-		next.push(kept);
-	}
-	return next;
+	let changed = false;
+	const next = agents.map((agent) => {
+		if (!agent.retiredBuiltin || !scanned.has(agent.command)) return agent;
+		changed = true;
+		const { retiredBuiltin: _marker, ...settled } = agent;
+		return installed.has(agent.command)
+			? settled
+			: { ...settled, enabled: false };
+	});
+	return changed ? next : agents;
 }

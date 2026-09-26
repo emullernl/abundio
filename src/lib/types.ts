@@ -212,10 +212,9 @@ export interface CodingAgent {
 	taskArgs?: string[];
 	builtin: boolean;
 	enabled: boolean;
-	/** Set on a custom Agent converted from a **retired built-in** until the
-	 *  first non-empty `$PATH` scan decides its fate: removed when its command
-	 *  is not Installed, kept (and the marker cleared) when it is. See
-	 *  `pruneRetiredBuiltins`. */
+	/** Set on a custom Agent converted from a **retired built-in** until a
+	 *  real `$PATH` scan settles it (un-Watched when its command is not
+	 *  Installed) or the user edits it. See `pruneRetiredBuiltins`. */
 	retiredBuiltin?: boolean;
 }
 

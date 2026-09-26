@@ -195,8 +195,11 @@ export function mergeAgentsWithBuiltins(
 		if (builtinIds.has(agent.id) || !agent.enabled) continue;
 		const retired = RETIRED_BUILTINS[agent.id];
 		if (!retired) continue;
+		// Spread the persisted row so any field a built-in could carry
+		// (none today: Settings only lets the user toggle one) survives.
+		// `retiredBuiltin` marks it for `pruneRetiredBuiltins`.
 		result.push({
-			id: agent.id,
+			...agent,
 			name: retired.name,
 			command: retired.command,
 			builtin: false,

@@ -3,6 +3,11 @@ import { agentRegistry as agentRegistryApi } from "../lib/ipc";
 
 interface AgentRegistryState {
 	installedCommands: Set<string>;
+	/** The commands the scan behind `installedCommands` looked up. A command
+	 *  missing from `installedCommands` is only known *not* Installed when it
+	 *  is in here; `load` returns early once anything has loaded, so a later
+	 *  caller may be reading a scan that never asked about its command. */
+	scannedCommands: Set<string>;
 	loaded: boolean;
 	loading: boolean;
 	load: (commands: string[]) => Promise<void>;
@@ -35,12 +40,18 @@ function scan(
 		.then((installed) => {
 			set({
 				installedCommands: new Set(installed),
+				scannedCommands: new Set(commands),
 				loaded: true,
 				loading: false,
 			});
 		})
 		.catch(() => {
-			set({ installedCommands: new Set(), loaded: true, loading: false });
+			set({
+				installedCommands: new Set(),
+				scannedCommands: new Set(),
+				loaded: true,
+				loading: false,
+			});
 		})
 		.finally(() => {
 			if (inFlight?.promise === promise) inFlight = null;
@@ -60,6 +71,7 @@ function joinable(commands: string[]): Promise<void> | null {
 
 export const useAgentRegistryStore = create<AgentRegistryState>((set, get) => ({
 	installedCommands: new Set(),
+	scannedCommands: new Set(),
 	loaded: false,
 	loading: false,
 

@@ -19,9 +19,11 @@ pub fn list_installed_agent_commands(commands: Vec<String>) -> Vec<String> {
 
 /// True when agent scans use the user's real login-shell `$PATH`, false when
 /// resolving it failed or timed out and scans run on the minimal fallback.
-/// Resolves the path first if nothing has yet, so call it after a scan.
+/// Resolves the path first if nothing has yet, which can block for up to the
+/// shell timeout, so it is a sync command: Tauri runs those off the async
+/// runtime, where a blocking wait cannot park a Tokio worker.
 #[tauri::command]
-pub async fn agents_path_is_resolved() -> bool {
+pub fn agents_path_is_resolved() -> bool {
     crate::shell_env::shell_path_is_resolved()
 }
 

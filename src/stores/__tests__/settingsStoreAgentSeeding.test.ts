@@ -136,6 +136,9 @@ describe("settingsStore.pruneRetiredAgents", () => {
 		...custom("aider", true),
 		retiredBuiltin: true,
 	};
+	const scanned = new Set(["claude", "aider"]);
+	const aider = () =>
+		useSettingsStore.getState().agents.find((a) => a.id === "aider");
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -145,27 +148,22 @@ describe("settingsStore.pruneRetiredAgents", () => {
 		});
 	});
 
-	it("removes a converted agent that is not installed and re-syncs hooks", async () => {
+	it("un-Watches a converted agent that is not installed and re-syncs hooks", async () => {
 		const changed = await useSettingsStore
 			.getState()
-			.pruneRetiredAgents(new Set(["claude"]));
+			.pruneRetiredAgents(new Set(["claude"]), scanned);
 
 		expect(changed).toBe(true);
-		expect(useSettingsStore.getState().agents.map((a) => a.id)).toEqual([
-			"claude",
-		]);
+		expect(aider()).toEqual(custom("aider", false));
 		expect(mockProvision).toHaveBeenCalledWith(true, ["claude"]);
 	});
 
-	it("keeps an installed one and clears its marker", async () => {
+	it("keeps an installed one Watched and clears its marker", async () => {
 		await useSettingsStore
 			.getState()
-			.pruneRetiredAgents(new Set(["claude", "aider"]));
+			.pruneRetiredAgents(new Set(["claude", "aider"]), scanned);
 
-		const aider = useSettingsStore
-			.getState()
-			.agents.find((a) => a.id === "aider");
-		expect(aider?.retiredBuiltin).toBeUndefined();
+		expect(aider()).toEqual(custom("aider", true));
 	});
 
 	it("skips the write and the provision on an empty scan", async () => {
@@ -173,7 +171,7 @@ describe("settingsStore.pruneRetiredAgents", () => {
 
 		const changed = await useSettingsStore
 			.getState()
-			.pruneRetiredAgents(new Set());
+			.pruneRetiredAgents(new Set(), scanned);
 
 		expect(changed).toBe(false);
 		expect(useSettingsStore.getState().agents).toBe(before);
@@ -185,9 +183,26 @@ describe("settingsStore.pruneRetiredAgents", () => {
 
 		const changed = await useSettingsStore
 			.getState()
-			.pruneRetiredAgents(new Set(["claude"]));
+			.pruneRetiredAgents(new Set(["claude"]), scanned);
 
 		expect(changed).toBe(false);
 		expect(mockProvision).not.toHaveBeenCalled();
+	});
+
+	// A hand edit is a statement of intent: the prune must not later un-Watch
+	// an Agent the user just made Task-capable.
+	it("an explicit edit clears the marker, so the prune leaves it be", async () => {
+		useSettingsStore
+			.getState()
+			.updateAgent("aider", { taskArgs: ["{prompt}"] });
+		expect(aider()?.retiredBuiltin).toBeUndefined();
+
+		const changed = await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(["claude"]), scanned);
+
+		expect(changed).toBe(false);
+		expect(aider()?.enabled).toBe(true);
+		expect(aider()?.taskArgs).toEqual(["{prompt}"]);
 	});
 });
