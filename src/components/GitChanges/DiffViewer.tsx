@@ -1,6 +1,7 @@
 import { DiffEditor, type Monaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { registerMonacoForKeymap } from "../../lib/monacoKeymap";
 import { defineAbundioTheme, detectLanguage } from "../../lib/monacoShared";
 import { setMonacoInstance } from "../../lib/themes";
 import type { GitFileDiff } from "../../lib/types";
@@ -40,6 +41,7 @@ export function DiffViewer({
 			defineAbundioTheme(m);
 			m.editor.setTheme("abundio");
 			setMonacoInstance(m);
+			registerMonacoForKeymap(m);
 			const action = {
 				id: "abundio.toggleWordWrap",
 				label: "Toggle Word Wrap",

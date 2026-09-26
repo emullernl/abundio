@@ -3,6 +3,7 @@ import type { ReleaseNote } from "../ipc";
 import {
 	compareVersions,
 	missingNotesReason,
+	notesMissingVersion,
 	releaseNoteForVersion,
 	selectReleaseNotes,
 } from "../releaseNotes";
@@ -304,5 +305,27 @@ describe("missingNotesReason", () => {
 
 	it("reports an unpublished version when the page is everything", () => {
 		expect(missingNotesReason("0.7.0", page, false)).toBe("unpublished");
+	});
+});
+
+describe("notesMissingVersion", () => {
+	const note = (version: string) => ({
+		version,
+		body: "",
+		publishedAt: null,
+		url: "",
+	});
+	const page = { releases: [note("1.2.0"), note("1.1.0")], hasMore: false };
+
+	it("is false when the version is in the list", () => {
+		expect(notesMissingVersion(page, "1.2.0")).toBe(false);
+	});
+
+	it("is true when the version is absent", () => {
+		expect(notesMissingVersion(page, "1.3.0")).toBe(true);
+	});
+
+	it("is false while nothing is loaded", () => {
+		expect(notesMissingVersion(null, "1.3.0")).toBe(false);
 	});
 });

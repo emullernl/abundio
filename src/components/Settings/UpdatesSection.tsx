@@ -2,7 +2,10 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useState } from "react";
 import { updates as updatesIpc } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { useUpdateStore } from "../../stores/updateStore";
+import {
+	isDownloadingElsewhere,
+	useUpdateStore,
+} from "../../stores/updateStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SectionLabel, ToggleRow } from "./primitives";
 import { ReleaseNotesSection } from "./ReleaseNotesSection";
@@ -16,8 +19,11 @@ export function UpdatesSection() {
 	const check = useUpdateStore((s) => s.check);
 	const download = useUpdateStore((s) => s.download);
 	const installNow = useUpdateStore((s) => s.installNow);
-	const hydrate = useUpdateStore((s) => s.hydrate);
+	const checkOnOpen = useUpdateStore((s) => s.checkOnOpen);
 	const fetchNotes = useUpdateStore((s) => s.fetchNotes);
+	const refreshNotesIfStale = useUpdateStore((s) => s.refreshNotesIfStale);
+	const notes = useUpdateStore((s) => s.notes);
+	const notesStatus = useUpdateStore((s) => s.notesStatus);
 	const [confirmRestart, setConfirmRestart] = useState(false);
 	const autoCheck = useSettingsStore((s) => s.autoCheckUpdatesEnabled);
 	const setAutoCheck = useSettingsStore((s) => s.setAutoCheckUpdatesEnabled);
@@ -37,9 +43,24 @@ export function UpdatesSection() {
 	// "Check for updates" would re-download a bundle we already have staged.
 	// Unlike the prompt, this hydrate ignores skip/snooze: this is a status
 	// display, and it already renders its own "Snoozed until…" row.
+	//
+	// When Rust holds nothing, it also checks, as if "Check for updates" had
+	// been clicked. Rust only learns of a release from the background loop (every
+	// 6h, and only with auto-check on), while the notes below are fetched on
+	// every visit — so without this the page could list a release in its notes
+	// yet never offer it (issue #200).
 	useEffect(() => {
-		hydrate({ respectSuppression: false });
-	}, [hydrate]);
+		checkOnOpen();
+	}, [checkOnOpen]);
+
+	// A check can find a release newer than the hourly-cached notes list. The
+	// deps only say *when* to look again; the store decides from live state,
+	// which matters because ReleaseNotesSection's mount fetch (a child effect,
+	// so it runs first) has already moved `notesStatus` past this render's value.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run triggers
+	useEffect(() => {
+		refreshNotesIfStale();
+	}, [status, info, notes, notesStatus, refreshNotesIfStale]);
 
 	// The Settings window is its own JS context, so it needs its own progress
 	// listener for downloads kicked off from here (the Rust emit is global).
@@ -57,6 +78,11 @@ export function UpdatesSection() {
 			? Math.min(100, Math.round((downloaded / total) * 100))
 			: null;
 
+	// Rust refuses a check while another Window downloads and never reports
+	// that download, so say so plainly rather than as a red failure.
+	const downloadingElsewhere =
+		status === "error" && isDownloadingElsewhere(error);
+
 	const statusText = (() => {
 		switch (status) {
 			case "checking":
@@ -72,6 +98,9 @@ export function UpdatesSection() {
 			case "ready":
 				return "Update downloaded. It installs the next time you quit Abundio — or restart now.";
 			case "error":
+				if (downloadingElsewhere) {
+					return "A download is already in progress in another window.";
+				}
 				return error ? `Update check failed: ${error}` : "Update check failed.";
 			default:
 				return "";
@@ -183,7 +212,9 @@ export function UpdatesSection() {
 							style={{
 								fontSize: 12,
 								color:
-									status === "error" ? "var(--error)" : "var(--fg-secondary)",
+									status === "error" && !downloadingElsewhere
+										? "var(--error)"
+										: "var(--fg-secondary)",
 								marginTop: 8,
 								lineHeight: 1.5,
 							}}

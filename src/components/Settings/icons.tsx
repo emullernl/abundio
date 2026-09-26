@@ -201,3 +201,23 @@ export function TaskIcon() {
 		</svg>
 	);
 }
+
+/** Keyboard page — a keyboard outline with a key row and space bar. */
+export function KeyboardIcon() {
+	return (
+		<svg
+			aria-hidden="true"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<rect x="2" y="5" width="20" height="14" rx="2" />
+			<path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 15.5h8" />
+		</svg>
+	);
+}

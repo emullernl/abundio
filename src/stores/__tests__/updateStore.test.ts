@@ -1,14 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { check, download, installNow, status, setAutoCheck, provision } =
-	vi.hoisted(() => ({
-		check: vi.fn(),
-		download: vi.fn(),
-		installNow: vi.fn(),
-		status: vi.fn(),
-		setAutoCheck: vi.fn(() => Promise.resolve()),
-		provision: vi.fn(() => Promise.resolve()),
-	}));
+const {
+	check,
+	download,
+	installNow,
+	status,
+	setAutoCheck,
+	provision,
+	releaseNotes,
+} = vi.hoisted(() => ({
+	releaseNotes: vi.fn(),
+	check: vi.fn(),
+	download: vi.fn(),
+	installNow: vi.fn(),
+	status: vi.fn(),
+	setAutoCheck: vi.fn(() => Promise.resolve()),
+	provision: vi.fn(() => Promise.resolve()),
+}));
 
 vi.mock("../../lib/ipc", () => ({
 	// updateStore + settingsStore both import from ipc; provide both surfaces.
@@ -18,6 +26,7 @@ vi.mock("../../lib/ipc", () => ({
 		installNow,
 		status,
 		setAutoCheck,
+		releaseNotes,
 		onUpdateAvailable: vi.fn(),
 		onDownloadProgress: vi.fn(),
 	},
@@ -25,7 +34,16 @@ vi.mock("../../lib/ipc", () => ({
 }));
 
 import { useSettingsStore } from "../settingsStore";
-import { useUpdateStore } from "../updateStore";
+import {
+	isDownloadingElsewhere,
+	OPEN_CHECK_THROTTLE_MS,
+	useUpdateStore,
+} from "../updateStore";
+
+/** The exact string the frontend receives: `AbundioError` serializes through
+ *  `Display`. Pinned on the Rust side by `update_downloading_display_carries_its_code`. */
+const DOWNLOADING_REFUSAL =
+	"E_UPDATE_DOWNLOADING: an update is already downloading";
 
 const info = (version: string) => ({
 	version,
@@ -42,6 +60,10 @@ function reset() {
 		total: null,
 		error: null,
 		dismissed: false,
+		lastCheckedAt: null,
+		notes: null,
+		notesStatus: "idle",
+		notesRefreshedFor: null,
 	});
 	useSettingsStore.setState({
 		skippedUpdateVersion: null,
@@ -246,5 +268,159 @@ describe("updateStore.hydrate", () => {
 		await useUpdateStore.getState().hydrate();
 		expect(useUpdateStore.getState().status).toBe("idle");
 		expect(useUpdateStore.getState().error).toBeNull();
+	});
+});
+
+describe("updateStore.checkOnOpen (issue #200)", () => {
+	beforeEach(() => {
+		reset();
+		vi.useRealTimers();
+	});
+
+	it("checks when Rust holds nothing, and reports up to date", async () => {
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockResolvedValue(null);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).toHaveBeenCalledTimes(1);
+		expect(useUpdateStore.getState().status).toBe("uptodate");
+	});
+
+	it.each([
+		"available",
+		"ready",
+	] as const)("does not check when Rust already has the update %s", async (state) => {
+		status.mockResolvedValue({ state, info: info("1.4.0") });
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).not.toHaveBeenCalled();
+		expect(useUpdateStore.getState().status).toBe(state);
+	});
+
+	it("checks and shows a skipped or snoozed version", async () => {
+		useSettingsStore.setState({
+			skippedUpdateVersion: "1.4.0",
+			updateSnoozedUntil: Date.now() + HOUR_MS,
+		});
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockResolvedValue(info("1.4.0"));
+		await useUpdateStore.getState().checkOnOpen();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("available");
+		expect(s.info?.version).toBe("1.4.0");
+	});
+
+	it("skips a repeat check within the throttle, checks after it", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockResolvedValue(null);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).toHaveBeenCalledTimes(1);
+
+		vi.setSystemTime(Date.now() + OPEN_CHECK_THROTTLE_MS - 1);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).toHaveBeenCalledTimes(1);
+
+		vi.setSystemTime(Date.now() + 1);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).toHaveBeenCalledTimes(2);
+		vi.useRealTimers();
+	});
+
+	it("records the download refusal without throttling the next visit", async () => {
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockRejectedValue(DOWNLOADING_REFUSAL);
+		await useUpdateStore.getState().checkOnOpen();
+		const s = useUpdateStore.getState();
+		expect(isDownloadingElsewhere(s.error)).toBe(true);
+		// Not throttled: the next visit must pick up the staged update.
+		expect(s.lastCheckedAt).toBeNull();
+	});
+
+	it("surfaces any other check failure", async () => {
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockRejectedValue("offline");
+		await useUpdateStore.getState().checkOnOpen();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("error");
+		expect(s.error).toBe("offline");
+	});
+
+	it("isDownloadingElsewhere matches only the refusal", () => {
+		expect(isDownloadingElsewhere(DOWNLOADING_REFUSAL)).toBe(true);
+		expect(isDownloadingElsewhere("offline")).toBe(false);
+		expect(isDownloadingElsewhere(null)).toBe(false);
+	});
+});
+
+describe("updateStore.check sets lastCheckedAt", () => {
+	beforeEach(reset);
+
+	it.each([
+		["up to date", () => check.mockResolvedValue(null)],
+		["available", () => check.mockResolvedValue(info("1.4.0"))],
+		["error", () => check.mockRejectedValue("offline")],
+	])("on %s", async (_label, arrange) => {
+		arrange();
+		const before = Date.now();
+		await useUpdateStore.getState().check({ manual: true });
+		expect(useUpdateStore.getState().lastCheckedAt).toBeGreaterThanOrEqual(
+			before,
+		);
+	});
+});
+
+describe("updateStore.refreshNotesIfStale", () => {
+	const note = (version: string) => ({
+		version,
+		body: "",
+		publishedAt: null,
+		url: "",
+	});
+
+	beforeEach(() => {
+		reset();
+		releaseNotes.mockResolvedValue({ releases: [], hasMore: false });
+	});
+
+	function offer(state: "available" | "ready", versions: string[]) {
+		useUpdateStore.setState({
+			status: state,
+			info: info("1.4.0"),
+			notes: { releases: versions.map(note), hasMore: false },
+			notesStatus: "loaded",
+		});
+	}
+
+	it.each([
+		"available",
+		"ready",
+	] as const)("refreshes once when a %s version is missing, and not again", (state) => {
+		offer(state, ["1.3.0"]);
+		useUpdateStore.getState().refreshNotesIfStale();
+		expect(releaseNotes).toHaveBeenCalledWith(true);
+		// A remount (or a list GitHub still lacks it in) does not refresh again.
+		useUpdateStore.setState({ notesStatus: "loaded" });
+		useUpdateStore.getState().refreshNotesIfStale();
+		expect(releaseNotes).toHaveBeenCalledTimes(1);
+	});
+
+	it("does nothing when the notes include the version", () => {
+		offer("available", ["1.4.0", "1.3.0"]);
+		useUpdateStore.getState().refreshNotesIfStale();
+		expect(releaseNotes).not.toHaveBeenCalled();
+	});
+
+	it("waits while a fetch is in flight", () => {
+		offer("available", ["1.3.0"]);
+		useUpdateStore.setState({ notesStatus: "loading" });
+		useUpdateStore.getState().refreshNotesIfStale();
+		expect(releaseNotes).not.toHaveBeenCalled();
+	});
+
+	it("does nothing without an offer", () => {
+		offer("available", ["1.3.0"]);
+		useUpdateStore.setState({ status: "uptodate" });
+		useUpdateStore.getState().refreshNotesIfStale();
+		expect(releaseNotes).not.toHaveBeenCalled();
 	});
 });

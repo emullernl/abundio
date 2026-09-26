@@ -6,11 +6,15 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
+import {
+	shortcutLabelFor,
+	useKeybindingOverrides,
+} from "../../hooks/useShortcutLabel";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { firePromptAction } from "../../lib/firePromptAction";
 import { pty } from "../../lib/ipc";
-import { isMac, sc } from "../../lib/platform";
+import { isMac } from "../../lib/platform";
 import {
 	FLEET_TILE_PRIORITY,
 	registerTarget,
@@ -532,17 +536,23 @@ export function TerminalSlot({
 		[enabledAgents, handleLaunchAgent],
 	);
 
+	const keyOverrides = useKeybindingOverrides();
 	const contextMenuItems: ContextMenuItem[] = [
-		{ label: "Copy", shortcut: sc("⌘C", "Ctrl+Shift+C"), onClick: handleCopy },
+		{
+			label: "Copy",
+			// macOS copies with the native Cmd+C, which is not a Shortcut.
+			shortcut: isMac ? "⌘C" : shortcutLabelFor("copy", keyOverrides),
+			onClick: handleCopy,
+		},
 		{
 			label: "Paste",
-			shortcut: sc("⌘V", "Ctrl+Shift+V"),
+			shortcut: isMac ? "⌘V" : shortcutLabelFor("paste", keyOverrides),
 			onClick: handlePaste,
 		},
 		{ separator: true },
 		{
 			label: "Find",
-			shortcut: sc("⌘F", "Ctrl+F"),
+			shortcut: shortcutLabelFor("search-in-terminal", keyOverrides),
 			onClick: () => toggleSearch(paneId),
 		},
 		{ label: "Clear Terminal", onClick: handleClear },
@@ -577,19 +587,19 @@ export function TerminalSlot({
 			: ([
 					{
 						label: "Split Right",
-						shortcut: sc("⇧⌘V", "Ctrl+Alt+V"),
+						shortcut: shortcutLabelFor("split-vertical", keyOverrides),
 						onClick: onSplitVertical,
 					},
 					{
 						label: "Split Down",
-						shortcut: sc("⇧⌘H", "Ctrl+Alt+H"),
+						shortcut: shortcutLabelFor("split-horizontal", keyOverrides),
 						onClick: onSplitHorizontal,
 					},
 					{ separator: true },
 				] satisfies ContextMenuItem[])),
 		{
 			label: "Close Pane",
-			shortcut: sc("⇧⌘W", "Ctrl+Shift+W"),
+			shortcut: shortcutLabelFor("close-pane", keyOverrides),
 			onClick: onClose,
 		},
 	];

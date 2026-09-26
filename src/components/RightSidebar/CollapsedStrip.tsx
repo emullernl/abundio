@@ -1,4 +1,9 @@
-import { sc } from "../../lib/platform";
+import {
+	shortcutLabelFor,
+	useKeybindingOverrides,
+	withShortcut,
+} from "../../hooks/useShortcutLabel";
+import type { KeyAction } from "../../lib/keybindings";
 import {
 	type RightSidebarTab,
 	useWindowUiStore,
@@ -8,7 +13,7 @@ import { Folder, GitCompare, Search, StickyNote } from "../Icons";
 interface IconButtonProps {
 	tab: RightSidebarTab;
 	label: string;
-	shortcut: string;
+	shortcut: KeyAction;
 	icon: React.ComponentType<{ size?: number }>;
 }
 
@@ -16,25 +21,25 @@ const ICONS: IconButtonProps[] = [
 	{
 		tab: "git",
 		label: "Git changes",
-		shortcut: sc("⇧⌘G", "Ctrl+Shift+G"),
+		shortcut: "toggle-right-sidebar-git",
 		icon: GitCompare,
 	},
 	{
 		tab: "explorer",
 		label: "Explorer",
-		shortcut: sc("⇧⌘E", "Ctrl+Shift+E"),
+		shortcut: "toggle-right-sidebar-explorer",
 		icon: Folder,
 	},
 	{
 		tab: "search",
 		label: "Search",
-		shortcut: sc("⇧⌘F", "Ctrl+Shift+F"),
+		shortcut: "search-in-workspace",
 		icon: Search,
 	},
 	{
 		tab: "notes",
 		label: "Notes",
-		shortcut: sc("⇧⌘K", "Ctrl+Shift+K"),
+		shortcut: "toggle-right-sidebar-notes",
 		icon: StickyNote,
 	},
 ];
@@ -50,6 +55,7 @@ export function RightSidebarCollapsedStrip({ titlebarHeight }: Props) {
 	const activeTab = useWindowUiStore((s) => s.rightSidebarActiveTab);
 	const setActiveTab = useWindowUiStore((s) => s.setRightSidebarActiveTab);
 	const setOpen = useWindowUiStore((s) => s.setRightSidebarOpen);
+	const overrides = useKeybindingOverrides();
 
 	return (
 		<div
@@ -74,7 +80,7 @@ export function RightSidebarCollapsedStrip({ titlebarHeight }: Props) {
 							setActiveTab(tab);
 							setOpen(true);
 						}}
-						title={`${label} (${shortcut})`}
+						title={withShortcut(label, shortcutLabelFor(shortcut, overrides))}
 						className="flex items-center justify-center rounded-md transition-colors"
 						style={{
 							width: 32,

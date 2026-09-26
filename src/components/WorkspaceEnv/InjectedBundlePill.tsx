@@ -1,5 +1,6 @@
 import { Zap } from "lucide-react";
 import { useEffect } from "react";
+import { NAME_CAP } from "../../lib/statusBarLayout";
 import { inheritSourceWorkspaceId } from "../../lib/worktreeGrouping";
 import { useWorkspaceEnvStore } from "../../stores/workspaceEnvStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
@@ -72,6 +73,16 @@ export function InjectedBundlePill({ workspaceId }: Props) {
 			style={{
 				gap: 5,
 				padding: "1px 8px",
+				// A weight below the status bar's SHRINK_RANK.name makes the pill
+				// the last thing to give way, but it still ellipsises its name
+				// rather than being clipped mid-border by the cluster's overflow.
+				// The floor keeps the icon, `…` and the count; it is needed
+				// because a flex item's automatic minimum would otherwise hold
+				// the pill at its full width and flexShrink would do nothing.
+				flexShrink: 0.5,
+				minWidth: 56,
+				justifyContent: "center",
+				whiteSpace: "nowrap",
 				borderRadius: 999,
 				fontSize: 11,
 				fontWeight: 500,
@@ -83,8 +94,18 @@ export function InjectedBundlePill({ workspaceId }: Props) {
 			}}
 		>
 			<Zap size={10} style={{ flexShrink: 0 }} />
-			<span>{summary.bundle}</span>
-			<span style={{ opacity: 0.7, fontVariantNumeric: "tabular-nums" }}>
+			{/* Capped so a long Bundle name cannot push every other segment of
+			    the bar down to its floor. */}
+			<span className="truncate" style={{ maxWidth: NAME_CAP }}>
+				{summary.bundle}
+			</span>
+			<span
+				style={{
+					opacity: 0.7,
+					fontVariantNumeric: "tabular-nums",
+					flexShrink: 0,
+				}}
+			>
 				{summary.varCount}
 			</span>
 		</span>

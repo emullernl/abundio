@@ -8,6 +8,7 @@ import {
 import {
 	type MissingNotesReason,
 	missingNotesReason,
+	notesMissingVersion,
 	releaseNoteForVersion,
 	releaseNotesUrl,
 } from "../lib/releaseNotes";
@@ -55,6 +56,14 @@ interface UpdateStoreState {
 	hydrate: (opts?: { respectSuppression?: boolean }) => Promise<void>;
 	/** Run a check. `manual` surfaces an "up to date" result and ignores skip. */
 	check: (opts?: { manual?: boolean }) => Promise<void>;
+	/** When a `check` in this Window last settled (success or error), or null.
+	 *  Per-Window by design — the Settings window has its own store. */
+	lastCheckedAt: number | null;
+	/** Opening the Settings Updates section: adopt the Rust state, and if it
+	 *  holds nothing, check exactly as the button would. Ignores the
+	 *  "Automatically check for updates" toggle, which governs *background*
+	 *  checks only. Throttled by `OPEN_CHECK_THROTTLE_MS`. Issue #200. */
+	checkOnOpen: () => Promise<void>;
 	/** Download + stage the available update (applied on quit). */
 	download: () => Promise<void>;
 	/** Install the staged update now and restart (caller must confirm first). */
@@ -75,6 +84,14 @@ interface UpdateStoreState {
 	/** Fetch the release list. `refresh` spends a request to bypass the hourly
 	 *  Rust-side cache — used by the manual "Check for updates" button. */
 	fetchNotes: (opts?: { refresh?: boolean }) => Promise<void>;
+	/** The version whose notes were last force-refreshed because the list
+	 *  lacked it. Per-Window, like `lastCheckedAt`, so leaving and returning to
+	 *  the page does not spend another uncached request on it. */
+	notesRefreshedFor: string | null;
+	/** Refresh the notes once when they lack the version on offer (found or
+	 *  downloaded) — the hourly cache can predate that release. Reads live
+	 *  state, so a fetch already in flight is waited for. */
+	refreshNotesIfStale: () => void;
 
 	/** The notes for a version the user has just upgraded onto, when Rust
 	 *  decided they are worth a card. Null the rest of the time — which is
@@ -116,6 +133,21 @@ export { releaseNotesUrl };
  *  caller awaits it rather than returning early, so nobody reads the store
  *  mid-fetch and mistakes "still loading" for "nothing published". */
 let notesInFlight: Promise<void> | null = null;
+
+/** A repeat visit to the Updates section within this long of the last check
+ *  does not check again, so clicking between Settings pages does not flash
+ *  "Checking…" every time. The button always checks. */
+export const OPEN_CHECK_THROTTLE_MS = 5 * 60 * 1000;
+
+/** Stable code on Rust's refusal of a check while a download is in flight
+ *  (`AbundioError::UpdateDownloading`, whose own test pins the code). */
+export const UPDATE_DOWNLOADING_CODE = "E_UPDATE_DOWNLOADING";
+
+/** Whether a check error is that refusal — a download running in another
+ *  Window, which Rust deliberately does not report. Not a failure. */
+export function isDownloadingElsewhere(error: string | null): boolean {
+	return error?.includes(UPDATE_DOWNLOADING_CODE) ?? false;
+}
 
 export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	status: "idle",
@@ -167,17 +199,58 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		try {
 			const info = await updates.check();
 			if (!info) {
-				set({ status: manual ? "uptodate" : "idle" });
+				set({
+					status: manual ? "uptodate" : "idle",
+					lastCheckedAt: Date.now(),
+				});
 				return;
 			}
 			if (!manual && (isSkipped(info.version) || isSnoozed())) {
-				set({ status: "idle" });
+				set({ status: "idle", lastCheckedAt: Date.now() });
 				return;
 			}
-			set({ status: "available", info, dismissed: false });
+			set({
+				status: "available",
+				info,
+				dismissed: false,
+				lastCheckedAt: Date.now(),
+			});
 		} catch (err) {
-			set({ status: "error", error: String(err) });
+			const error = String(err);
+			// The download refusal is not a check: leave the throttle clear so
+			// the next visit sees the staged result.
+			set({
+				status: "error",
+				error,
+				...(isDownloadingElsewhere(error) ? {} : { lastCheckedAt: Date.now() }),
+			});
 		}
+	},
+
+	lastCheckedAt: null,
+
+	checkOnOpen: async () => {
+		// Hydrate first: an update Rust already holds (found, or downloaded) is
+		// the answer, and checking again would only replace it with itself.
+		await get().hydrate({ respectSuppression: false });
+		const { status, lastCheckedAt } = get();
+		if (
+			status === "available" ||
+			status === "ready" ||
+			status === "checking" ||
+			status === "downloading"
+		) {
+			return;
+		}
+		if (
+			lastCheckedAt != null &&
+			Date.now() - lastCheckedAt < OPEN_CHECK_THROTTLE_MS
+		) {
+			return;
+		}
+		// Manual semantics: a status display reports skipped and snoozed
+		// versions too, and says so when there is nothing new.
+		await get().check({ manual: true });
 	},
 
 	download: async () => {
@@ -250,6 +323,22 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 			});
 		notesInFlight = request;
 		return request;
+	},
+
+	notesRefreshedFor: null,
+
+	refreshNotesIfStale: () => {
+		const { status, info, notes, notesStatus, notesRefreshedFor } = get();
+		if (status !== "available" && status !== "ready") return;
+		const version = info?.version;
+		// Wait for any fetch in flight: a refresh on top of it could be
+		// overwritten by the older, cached reply landing second.
+		if (!version || notesStatus !== "loaded") return;
+		// Once per version, so a list GitHub still lacks it in cannot loop.
+		if (notesRefreshedFor === version) return;
+		if (!notesMissingVersion(notes, version)) return;
+		set({ notesRefreshedFor: version });
+		get().fetchNotes({ refresh: true });
 	},
 
 	whatsNew: null,

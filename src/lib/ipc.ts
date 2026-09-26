@@ -623,6 +623,15 @@ export const issues = {
 	list: (cwd: string) => invoke<GithubIssue[]>("gh_list_issues", { cwd }),
 };
 
+// The native application menu.
+export const appMenu = {
+	/** The accelerator shown on (and fired by) the menu's Settings… item —
+	 *  the **Open settings** Shortcut spelled for Tauri. Null removes it, for
+	 *  an Unbound Shortcut. Rust rebuilds the menu only when it changes. */
+	setSettingsAccelerator: (accelerator: string | null) =>
+		invoke<void>("set_settings_accelerator", { accelerator }),
+};
+
 // GitHub PR data is fetched by the app-global Rust poller (ADR-0019). The
 // frontend only hydrates from the cached snapshot, listens for pushes, and
 // forwards the user's manual Refresh / settings changes.

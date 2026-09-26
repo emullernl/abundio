@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveLayout } from "../../hooks/useActiveLayout";
+import {
+	editorShortcutLabelFor,
+	shortcutLabelFor,
+	useKeybindingOverrides,
+} from "../../hooks/useShortcutLabel";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import {
 	diffRealPath as diffRealPathOf,
@@ -82,6 +87,7 @@ export function FilePane({
 	onFocus,
 }: FilePaneProps) {
 	const registerFilePane = useExplorerStore((s) => s.registerFilePane);
+	const keyOverrides = useKeybindingOverrides();
 	const loadCommitDiff = useExplorerStore((s) => s.loadCommitDiff);
 	const unregisterFilePane = useExplorerStore((s) => s.unregisterFilePane);
 	const paneState = useExplorerStore((s) => s.filePanes[paneId]);
@@ -415,7 +421,7 @@ export function FilePane({
 		? [
 				{
 					label: "Toggle Preview",
-					shortcut: sc("⇧⌘M", "Ctrl+Shift+M"),
+					shortcut: shortcutLabelFor("toggle-markdown-preview", keyOverrides),
 					onClick: () => {
 						toggleMarkdownPreviewForPane(paneId);
 					},
@@ -435,22 +441,38 @@ export function FilePane({
 			? [
 					{
 						label: "Copy",
-						shortcut: sc("⌘C", "Ctrl+C"),
+						shortcut: editorShortcutLabelFor(
+							"editor.action.clipboardCopyAction",
+							sc("⌘C", "Ctrl+C"),
+							keyOverrides,
+						),
 						onClick: action("editor.action.clipboardCopyAction"),
 					},
 					{
 						label: "Cut",
-						shortcut: sc("⌘X", "Ctrl+X"),
+						shortcut: editorShortcutLabelFor(
+							"editor.action.clipboardCutAction",
+							sc("⌘X", "Ctrl+X"),
+							keyOverrides,
+						),
 						onClick: action("editor.action.clipboardCutAction"),
 					},
 					{
 						label: "Paste",
-						shortcut: sc("⌘V", "Ctrl+V"),
+						shortcut: editorShortcutLabelFor(
+							"editor.action.clipboardPasteAction",
+							sc("⌘V", "Ctrl+V"),
+							keyOverrides,
+						),
 						onClick: action("editor.action.clipboardPasteAction"),
 					},
 					{
 						label: "Select All",
-						shortcut: sc("⌘A", "Ctrl+A"),
+						shortcut: editorShortcutLabelFor(
+							"editor.action.selectAll",
+							sc("⌘A", "Ctrl+A"),
+							keyOverrides,
+						),
 						onClick: action("editor.action.selectAll"),
 					},
 					{ separator: true },
@@ -464,12 +486,20 @@ export function FilePane({
 					},
 					{
 						label: "Find",
-						shortcut: sc("⌘F", "Ctrl+F"),
+						shortcut: editorShortcutLabelFor(
+							"actions.find",
+							sc("⌘F", "Ctrl+F"),
+							keyOverrides,
+						),
 						onClick: action("actions.find"),
 					},
 					{
 						label: "Command Palette",
-						shortcut: "F1",
+						shortcut: editorShortcutLabelFor(
+							"editor.action.quickCommand",
+							"F1",
+							keyOverrides,
+						),
 						onClick: action("editor.action.quickCommand"),
 					},
 					{ separator: true },
@@ -479,18 +509,18 @@ export function FilePane({
 	const paneItems: ContextMenuItem[] = [
 		{
 			label: "Split Right",
-			shortcut: sc("⇧⌘V", "Ctrl+Alt+V"),
+			shortcut: shortcutLabelFor("split-vertical", keyOverrides),
 			onClick: () => splitPaneWithPicker(paneId, "vertical"),
 		},
 		{
 			label: "Split Down",
-			shortcut: sc("⇧⌘H", "Ctrl+Alt+H"),
+			shortcut: shortcutLabelFor("split-horizontal", keyOverrides),
 			onClick: () => splitPaneWithPicker(paneId, "horizontal"),
 		},
 		{ separator: true },
 		{
 			label: "Close Pane",
-			shortcut: sc("⇧⌘W", "Ctrl+Shift+W"),
+			shortcut: shortcutLabelFor("close-pane", keyOverrides),
 			onClick: () => closePane(paneId),
 		},
 	];

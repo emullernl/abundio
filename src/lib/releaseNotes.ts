@@ -226,3 +226,16 @@ export function missingNotesReason(
 		releases.every((r) => compareVersions(r.version, version) > 0);
 	return page?.hasMore && behindAll ? "older" : "unpublished";
 }
+
+/**
+ * Whether a loaded release list lacks `version` — the sign that the hourly
+ * cache predates a release a check has just found. False while nothing is
+ * loaded yet: that is "wait for the fetch", not "the list is stale".
+ */
+export function notesMissingVersion(
+	notes: ReleaseNotesPage | null,
+	version: string,
+): boolean {
+	if (!notes) return false;
+	return !notes.releases.some((r) => r.version === version);
+}
