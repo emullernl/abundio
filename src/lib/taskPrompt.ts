@@ -101,11 +101,27 @@ export function taskTabName(task: Task): string {
 const BRANCH_SLUG_MAX = 40;
 
 /**
- * A branch name suggested for an Issue task: `issue-123-fix-login-redirect`.
- * Only lowercase ASCII letters, digits and single dashes, so it always passes
+ * The branch prefix an issue's labels call for: `fix/` for a `bug`, `feat/`
+ * for an `enhancement` (matched case-insensitively), none otherwise. A bug
+ * wins when an issue carries both.
+ */
+export function branchPrefixForLabels(labels: readonly string[]): string {
+	const names = new Set(labels.map((l) => l.trim().toLowerCase()));
+	if (names.has("bug")) return "fix/";
+	if (names.has("enhancement")) return "feat/";
+	return "";
+}
+
+/**
+ * A branch name suggested for an Issue task: `issue-123-fix-login-redirect`,
+ * prefixed by `branchPrefixForLabels` (`fix/issue-123-…`). Otherwise only
+ * lowercase ASCII letters, digits and single dashes, so it always passes
  * `git check-ref-format`.
  */
-export function suggestBranchForIssue(issue: IssueRef): string {
+export function suggestBranchForIssue(
+	issue: IssueRef & { labels?: readonly string[] },
+): string {
+	const prefix = branchPrefixForLabels(issue.labels ?? []);
 	const slug = issue.title
 		.normalize("NFKD")
 		.replace(/[̀-ͯ]/g, "")
@@ -114,7 +130,8 @@ export function suggestBranchForIssue(issue: IssueRef): string {
 		.replace(/^-+|-+$/g, "")
 		.slice(0, BRANCH_SLUG_MAX)
 		.replace(/-+$/g, "");
-	return slug ? `issue-${issue.number}-${slug}` : `issue-${issue.number}`;
+	const name = slug ? `issue-${issue.number}-${slug}` : `issue-${issue.number}`;
+	return `${prefix}${name}`;
 }
 
 /** The placeholders each template offers, for the Settings legend. */

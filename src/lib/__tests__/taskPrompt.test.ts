@@ -3,6 +3,7 @@ import {
 	DEFAULT_ISSUE_TEMPLATE,
 	DEFAULT_TASK_TEMPLATE,
 	resolveTaskPrompt,
+	branchPrefixForLabels,
 	suggestBranchForIssue,
 	taskTabName,
 } from "../taskPrompt";
@@ -132,9 +133,33 @@ describe("suggestBranchForIssue", () => {
 		expect(long.endsWith("-")).toBe(false);
 	});
 
+	it("prefixes by label: bug is fix/, enhancement is feat/", () => {
+		expect(suggestBranchForIssue({ ...issue, labels: ["bug"] })).toBe(
+			"fix/issue-42-fix-login-redirect",
+		);
+		expect(suggestBranchForIssue({ ...issue, labels: ["Enhancement"] })).toBe(
+			"feat/issue-42-fix-login-redirect",
+		);
+	});
+
+	it("does not prefix without a matching label", () => {
+		expect(suggestBranchForIssue({ ...issue, labels: [] })).toBe(
+			"issue-42-fix-login-redirect",
+		);
+		expect(suggestBranchForIssue({ ...issue, labels: ["docs"] })).toBe(
+			"issue-42-fix-login-redirect",
+		);
+	});
+
 	it("uses the number alone when the title has no usable characters", () => {
 		expect(suggestBranchForIssue({ ...issue, title: "日本語" })).toBe(
 			"issue-42",
 		);
+	});
+});
+
+describe("branchPrefixForLabels", () => {
+	it("lets bug win over enhancement", () => {
+		expect(branchPrefixForLabels(["enhancement", "bug"])).toBe("fix/");
 	});
 });
