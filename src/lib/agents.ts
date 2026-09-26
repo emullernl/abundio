@@ -140,7 +140,7 @@ export function getEnabledAgentCommands(agents: CodingAgent[]): string[] {
 /**
  * **Retired built-ins**: Agents an earlier release shipped as built-in and this
  * one no longer does, keyed by id. See the *Retired built-in* entry in
- * CONTEXT.md and ADR-0043.
+ * CONTEXT.md and ADR-0044.
  *
  * `mergeAgentsWithBuiltins` converts a persisted, Watched one into a custom
  * Agent with the **same id**, so saved Panes (`agentId` on the layout),
