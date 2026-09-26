@@ -1,14 +1,19 @@
+// These tests guard the markup contract only: the classes and inline styles
+// that make each segment ellipsise and the right cluster stay put. jsdom does
+// no layout, so none of them can show that the bar stays on one line — that
+// rests on the manual `demo:web` check at several window widths.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../hooks/useAppMetrics", () => ({ useAppMetrics: () => null }));
-// The pill loads its summary over IPC; it has its own no-shrink style and is
-// not what these tests are about.
+// The pill loads its summary over IPC; it has its own shrink style and is not
+// what these tests are about.
 vi.mock("../WorkspaceEnv/InjectedBundlePill", () => ({
 	InjectedBundlePill: () => null,
 }));
 
+import { NAME_CAP } from "../../lib/statusBarLayout";
 import { useProfileStore } from "../../stores/profileStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
@@ -128,7 +133,7 @@ describe("StatusBar", () => {
 
 		const profile = segment(el, "A very long profile name");
 		expect(profile.className).toContain("truncate");
-		expect(profile.style.maxWidth).toBe("140px");
+		expect(profile.style.maxWidth).toBe(NAME_CAP);
 		const cluster = profile.closest(".flex-shrink-0.whitespace-nowrap");
 		expect(cluster).not.toBeNull();
 	});
@@ -142,13 +147,27 @@ describe("StatusBar", () => {
 		expect(label?.className).toContain("min-w-0");
 	});
 
-	it("does not pad a label that already fits within the floor", () => {
+	it("exempts only one-character labels from the floor", () => {
 		expect(segmentFloor("A")).toBe("auto");
 		expect(segmentFloor("~")).toBe("auto");
+		// Three wide glyphs are wider than the floor and must still shrink.
+		expect(segmentFloor("WWW")).toBe(32);
+		expect(segmentFloor("編集中")).toBe(32);
 		expect(segmentFloor("A long tab name")).toBe(32);
 	});
 
-	it("keeps a one-character tab at its natural width", () => {
+	it("keeps the detached marker whole", () => {
+		seedWorkspace();
+		useWorkspaceGitStore.setState({
+			byWorkspaceId: { w1: { isGitRepo: true, currentBranch: "HEAD" } },
+		} as never);
+		const el = render();
+		const seg = segment(el, "Detached HEAD");
+		expect(seg.style.flexShrink).toBe("0");
+		expect(seg.style.minWidth).toBe("auto");
+	});
+
+	it("exempts a one-character tab from the floor", () => {
 		seedWorkspace();
 		useWorkspaceStore.setState((s) => ({
 			workspaces: s.workspaces.map((w) => ({

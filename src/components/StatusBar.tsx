@@ -15,6 +15,7 @@ import {
 } from "../lib/metricsFormat";
 import { containsPane, parseTabLayout } from "../lib/paneTree";
 import { shortenPath } from "../lib/shortenPath";
+import { NAME_CAP } from "../lib/statusBarLayout";
 import { useProfileStore } from "../stores/profileStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
@@ -39,18 +40,24 @@ function Separator() {
 
 /**
  * Smallest width a truncating left-cluster segment may shrink to: the 12px
- * icon, its gap, and roughly two characters plus `…`. Below this the segment
- * stops giving way and the cluster's `overflow: hidden` clips from the right.
+ * icon and its 6px gap leave 14px for the label, which is room for `…` and at
+ * best one narrow character. Below this the segment stops giving way and the
+ * cluster's `overflow: hidden` clips from the right.
  */
 const SEGMENT_FLOOR = 32;
 
 /**
- * The `min-width` for a segment showing `label`. A label this short already
- * fits within the floor, so forcing the floor on it would only pad it with
- * blank space; `auto` keeps it at its natural width and it never shrinks.
+ * The `min-width` for a segment showing `label`.
+ *
+ * A one-character label is exempt: it is at most ~25px wide, so the floor
+ * would only pad it with blank space. The exemption returns `auto`, which
+ * restores the flex automatic minimum size — the segment then cannot shrink
+ * at all, not merely stays unpadded. That is why it stops at one character:
+ * character count is a poor stand-in for width, and three wide glyphs (`WWW`,
+ * `編集中`) would hold more than the floor while never giving way.
  */
 export function segmentFloor(label: string): number | "auto" {
-	return label.length <= 3 ? "auto" : SEGMENT_FLOOR;
+	return label.length <= 1 ? "auto" : SEGMENT_FLOOR;
 }
 
 /**
@@ -147,12 +154,16 @@ function BranchSegment({ label }: { label: BranchLabel }) {
 	return (
 		<span
 			className="flex items-center gap-1.5 whitespace-nowrap"
-			style={{
-				minWidth: segmentFloor(
-					label.kind === "detached" ? "detached" : label.full,
-				),
-				flexShrink: SHRINK_RANK.branch,
-			}}
+			style={
+				// The detached marker is a fixed literal: ellipsising it to `d…`
+				// destroys its whole signal, so it keeps its natural width.
+				label.kind === "detached"
+					? { minWidth: "auto", flexShrink: 0 }
+					: {
+							minWidth: segmentFloor(label.full),
+							flexShrink: SHRINK_RANK.branch,
+						}
+			}
 			title={label.kind === "detached" ? "Detached HEAD" : label.full}
 		>
 			<GitBranch size={12} className="flex-shrink-0" />
@@ -272,7 +283,7 @@ export function StatusBar() {
 						<User size={12} className="flex-shrink-0" />
 						<span
 							className="truncate"
-							style={{ maxWidth: 140 }}
+							style={{ maxWidth: NAME_CAP }}
 							title={activeProfile.name}
 						>
 							{activeProfile.name}
