@@ -352,6 +352,11 @@ export interface ManagedTerminal {
 	filterResetsTimer: ReturnType<typeof setTimeout> | null;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
 	startupShellReady: boolean;
+	/** A **New task** spawn whose Agent has not started yet. Such a pane has no
+	 *  startup buffer (its `-c` shell never prints a prompt, so the buffer would
+	 *  only drain at the safety timeout), and the task script's `command_start`
+	 *  ends any reset filtering, so the Agent's first frame arrives intact. */
+	awaitingTaskStart: boolean;
 	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
 	pendingWrites: Uint8Array[];
 	/** rAF handle for the pending write flush, or null if none scheduled */
@@ -1113,6 +1118,7 @@ export async function createTerminal(
 		startupBuffer: [],
 		startupFlushScheduled: false,
 		startupShellReady: false,
+		awaitingTaskStart: false,
 		pendingWrites: [],
 		writeRafId: null,
 		wantedMouseModes: new Set(),
@@ -1303,6 +1309,15 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	// A New task rides the spawn itself rather than being typed (ADR-0042).
 	const pendingTask = isNewPty ? takePendingTask(paneId) : undefined;
+	if (pendingTask) {
+		// No startup buffer: the ready signal it waits for (the first prompt's
+		// command_end) never comes from a `-c` shell, and a task pane has no
+		// restored scrollback for it to protect — a restart into a task does
+		// not preserve it.
+		managed.startupBuffer = null;
+		managed.startupShellReady = true;
+		managed.awaitingTaskStart = true;
+	}
 
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
 	// spawning so no shell output is lost in the gap between spawn and listen.
@@ -1423,6 +1438,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				const actState = usePtyActivityStore.getState();
 				const entry = actState.activities[currentPtyId];
 				const isAgentMode = entry?.detectionMode === "agent";
+
+				// The task script's command_start: the Agent starts now, so stop
+				// stripping clears and cursor-home moves — they are its first frame.
+				if (
+					managed.awaitingTaskStart &&
+					commands.some((c) => c.type === "command_start")
+				) {
+					managed.awaitingTaskStart = false;
+					disarmFilterResets(managed);
+				}
 
 				if (managed.startupBuffer) {
 					managed.startupBuffer.push(cleaned);
@@ -1739,7 +1764,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 								windowLabel: currentWindowLabel(),
 							},
 							pendingTask,
-							term,
+							managed,
 						),
 					]
 				: []),
@@ -1884,7 +1909,7 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 async function spawnNewPty(
 	options: Parameters<typeof pty.spawn>[0],
 	task: PendingTask | undefined,
-	term: Terminal,
+	managed: ManagedTerminal,
 ): Promise<string> {
 	if (!task) return pty.spawn(options);
 	try {
@@ -1896,7 +1921,8 @@ async function spawnNewPty(
 		return id;
 	} catch (err) {
 		const reason = String(err).replace(/^PTY error: /, "");
-		term.write(
+		managed.awaitingTaskStart = false;
+		managed.term.write(
 			`\x1b[33mNew task could not start: ${stripControlChars(reason)}\x1b[0m\r\n`,
 		);
 		return pty.spawn(options);
@@ -1923,6 +1949,15 @@ function armFilterResets(managed: ManagedTerminal, durationMs: number): void {
 		managed.filterResets = false;
 		managed.filterResetsTimer = null;
 	}, durationMs);
+}
+
+/** Stop filtering reset sequences now, cancelling any pending timer. */
+function disarmFilterResets(managed: ManagedTerminal): void {
+	managed.filterResets = false;
+	if (managed.filterResetsTimer !== null) {
+		clearTimeout(managed.filterResetsTimer);
+		managed.filterResetsTimer = null;
+	}
 }
 
 /** Temporarily filter terminal reset sequences from PTY output.
@@ -2218,6 +2253,7 @@ export async function restartPanePty(
 	managed.startupBuffer = [];
 	managed.startupFlushScheduled = false;
 	managed.startupShellReady = false;
+	managed.awaitingTaskStart = false;
 	// `settled` deliberately stays true: the pane is already projected and
 	// painted, and clearing it would make the flush wait for the safety timeout.
 
