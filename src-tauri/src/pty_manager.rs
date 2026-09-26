@@ -37,6 +37,18 @@ struct PtyEntry {
     alive: Arc<AtomicBool>,
 }
 
+/// A **New task** launch: the Agent's argv (the resolved Task prompt is one
+/// element of it) and optional **Worktree setup commands** to run first.
+/// Spawned through `shell -c` with the argv as positional parameters, so the
+/// prompt never passes through a shell parser. See ADR-0042.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLaunch {
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub setup: Option<String>,
+}
+
 /// Which Workspace a live PTY belongs to.
 ///
 /// Recorded at spawn so the `abundio-env` helper can resolve a Bundle from
@@ -96,7 +108,13 @@ impl PtyManager {
         window_label: Option<&str>,
         workspace_id: Option<&str>,
         inherit_from_workspace_id: Option<&str>,
+        task: Option<&TaskLaunch>,
     ) -> Result<String, AbundioError> {
+        if let Some(t) = task {
+            if t.argv.is_empty() {
+                return Err(AbundioError::Pty("New task: empty agent command".into()));
+            }
+        }
         let pty_id = pty_id
             .map(|s| s.to_string())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -130,6 +148,12 @@ impl PtyManager {
         };
         let shell_type = detect_shell_type(&shell);
         let integration_dir = shell_integration_dir();
+        if task.is_some() && !matches!(shell_type, ShellType::Zsh | ShellType::Bash) {
+            return Err(AbundioError::Pty(format!(
+                "New task needs zsh or bash as the terminal shell (this one is {shell}). \
+                 Change it in Settings \u{25B8} Terminal, or start the agent with New agent."
+            )));
+        }
 
         let mut cmd = if let Some(command) = command {
             let parts: Vec<&str> = command.split_whitespace().collect();
@@ -151,6 +175,9 @@ impl PtyManager {
                     #[cfg(target_os = "windows")]
                     let zdotdir_str = zdotdir_str.replace('\\', "/");
                     cmd.env("ZDOTDIR", &zdotdir_str);
+                    if let Some(t) = task {
+                        cmd.args(task_c_args(&shell, "-l -i", t));
+                    }
                 }
                 ShellType::Bash => {
                     // Use --rcfile to load our wrapper (not -l; --rcfile is ignored for login shells)
@@ -160,6 +187,10 @@ impl PtyManager {
                     #[cfg(target_os = "windows")]
                     let rcfile_str = rcfile_str.replace('\\', "/");
                     cmd.args(["--rcfile", &rcfile_str, "-i"]);
+                    if let Some(t) = task {
+                        let reexec = format!("--rcfile {} -i", sh_single_quote(&rcfile_str));
+                        cmd.args(task_c_args(&shell, &reexec, t));
+                    }
                     // Our wrapper rcfile sources /etc/profile for login-shell
                     // parity. On Git Bash (MSYS2), /etc/profile does `cd "$HOME"`
                     // unless CHERE_INVOKING is set — which would clobber the spawn
@@ -249,6 +280,7 @@ impl PtyManager {
         };
 
         // Only the three wrapper scripts consume (and unset) the shadow copies.
+        // A task spawn is still the wrapper-loaded shell (`-i -c`), so it counts.
         let has_wrapper = command.is_none()
             && matches!(
                 shell_type,
@@ -465,6 +497,49 @@ impl PtyManager {
         }
         Ok(())
     }
+}
+
+/// The script a **New task** PTY runs as `shell -i -c <script> <shell> <setup> <argv…>`.
+///
+/// `$0` is the shell's own path (so it can `exec` itself afterwards), `$1` the
+/// setup commands, and the rest the Agent's argv, prompt included, which is
+/// run as `"$@"` and therefore never re-parsed. The script reports the Agent
+/// as a command on the shell-integration channel (`7770`), since shell
+/// integration only sees commands typed at a prompt: `command_start` puts the
+/// Pane into agent mode, `command_end` takes it out when the Agent exits, so
+/// a finished Task Agent is forgotten rather than relaunched. Then it becomes
+/// an ordinary interactive shell with the same flags. See ADR-0042.
+///
+/// The setup is `eval`ed: it is **Worktree setup commands**, author-written
+/// shell that is typed at a prompt on every other path. The "no eval" rule
+/// is about *values*, which never reach it.
+fn task_script(reexec_flags: &str) -> String {
+    format!(
+        r#"__abundio_setup=$1; shift
+if [ -n "$__abundio_setup" ]; then eval "$__abundio_setup"; fi
+unset __abundio_setup
+printf '\033]7770;command_start;%s\007' "$1"
+"$@"
+printf '\033]7770;command_end;%s\007' "$?"
+exec "$0" {reexec_flags}"#
+    )
+}
+
+/// The arguments after the shell's own interactive flags for a task spawn.
+fn task_c_args(shell: &str, reexec_flags: &str, task: &TaskLaunch) -> Vec<String> {
+    let mut args = vec![
+        "-c".to_string(),
+        task_script(reexec_flags),
+        shell.to_string(),
+        task.setup.clone().unwrap_or_default(),
+    ];
+    args.extend(task.argv.iter().cloned());
+    args
+}
+
+/// Quote `s` for a POSIX shell as one word.
+fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Shell type detected from the binary name.
@@ -1508,6 +1583,74 @@ mod tests {
         assert_eq!(msys_to_windows_path("/Users/emil/dev"), "/Users/emil/dev");
         assert_eq!(msys_to_windows_path("relative/path"), "relative/path");
         assert_eq!(msys_to_windows_path(""), "");
+    }
+}
+
+#[cfg(test)]
+mod task_launch_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn task(argv: &[&str], setup: Option<&str>) -> TaskLaunch {
+        TaskLaunch {
+            argv: argv.iter().map(|s| s.to_string()).collect(),
+            setup: setup.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn prompt_is_its_own_argument_never_joined() {
+        let prompt = "it's \"$(rm -rf ~)\"\nline two; `x`";
+        let args = task_c_args("/bin/zsh", "-l -i", &task(&["claude", prompt], None));
+        assert_eq!(args[0], "-c");
+        assert_eq!(args[2], "/bin/zsh");
+        assert_eq!(args[3], "");
+        assert_eq!(&args[4..], &["claude".to_string(), prompt.to_string()]);
+        assert!(!args[1].contains(prompt));
+    }
+
+    #[test]
+    fn single_quote_escapes_quotes() {
+        assert_eq!(sh_single_quote("/a b/it's"), "'/a b/it'\\''s'");
+    }
+
+    /// Run the real script under a non-interactive shell, with `exec` swapped
+    /// for `echo` so it returns. Proves the argv survives byte-for-byte, the
+    /// setup runs first, and the 7770 markers bracket the command.
+    fn run_script(shell: &str, t: &TaskLaunch) -> Option<String> {
+        if !Path::new(shell).exists() {
+            return None;
+        }
+        let script = task_script("-i").replace("exec \"$0\"", "echo REEXEC \"$0\"");
+        let mut args = vec!["-c".to_string(), script, shell.to_string()];
+        args.push(t.setup.clone().unwrap_or_default());
+        args.extend(t.argv.iter().cloned());
+        let out = Command::new(shell).args(&args).output().ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[test]
+    fn script_runs_setup_then_argv_verbatim_in_zsh_and_bash() {
+        let prompt = "it's \"$(echo PWNED)\"\nline two; `echo PWNED`";
+        let t = task(&["printf", "[%s]", prompt], Some("echo SETUP"));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(!out.contains("PWNED\n") && !out.contains("[PWNED"), "{shell}: {out}");
+            assert!(out.contains(&format!("[{prompt}]")), "{shell}: {out}");
+            let setup = out.find("SETUP").expect("setup ran");
+            let start = out.find("\x1b]7770;command_start;printf\x07").expect("start");
+            let end = out.find("\x1b]7770;command_end;0\x07").expect("end");
+            assert!(setup < start && start < end, "{shell}: {out}");
+            assert!(out.contains(&format!("REEXEC {shell} -i")), "{shell}: {out}");
+        }
+    }
+
+    #[test]
+    fn script_reports_the_agent_exit_code() {
+        let t = task(&["sh", "-c", "exit 3"], None);
+        if let Some(out) = run_script("/bin/bash", &t) {
+            assert!(out.contains("\x1b]7770;command_end;3\x07"), "{out}");
+        }
     }
 }
 

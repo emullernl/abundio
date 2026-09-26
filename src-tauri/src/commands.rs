@@ -35,6 +35,9 @@ pub async fn pty_spawn(
     // worktree grouping is not recomputed in Rust.
     workspace_id: Option<String>,
     inherit_from_workspace_id: Option<String>,
+    // A **New task** launch (ADR-0042): the shell runs the Agent with the
+    // Task prompt as a positional argument instead of a typed command.
+    task: Option<crate::pty_manager::TaskLaunch>,
 ) -> Result<String, AbundioError> {
     pty_mgr.spawn(
         app,
@@ -49,6 +52,7 @@ pub async fn pty_spawn(
         window_label.as_deref(),
         workspace_id.as_deref(),
         inherit_from_workspace_id.as_deref(),
+        task.as_ref(),
     )
 }
 

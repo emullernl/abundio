@@ -55,7 +55,10 @@ vi.mock("../../lib/terminalManager", () => ({
 
 import { tabs, workspaces } from "../../lib/ipc";
 import { collectAgentPanes } from "../../lib/paneTree";
-import { takePendingAgent } from "../../lib/pendingAgentRegistry";
+import {
+	takePendingAgent,
+	takePendingTask,
+} from "../../lib/pendingAgentRegistry";
 import type {
 	CodingAgent,
 	PaneNode,
@@ -451,6 +454,53 @@ describe("workspaceStore", () => {
 			expect(s.activeTabByWorkspace["workspace-1"]).toBe("tab-1");
 			expect(s.focusedPaneId).toBe("pane-1");
 			expect(s.workspaces[0].tabs.map((t) => t.id)).toContain("tab-bg");
+		});
+
+		// New task: the prompt rides the spawn (ADR-0042), never the typed path.
+		it("with a task seeds a pending task, not a typed command, and names the Tab", async () => {
+			const { tabs } = await import("../../lib/ipc");
+			vi.mocked(tabs.create).mockResolvedValueOnce(
+				makeTab({
+					id: "tab-task",
+					layoutJson: JSON.stringify({
+						type: "terminal",
+						id: "task-pane",
+						ptyId: "",
+					}),
+				}),
+			);
+			useWorkspaceStore.setState({
+				workspaces: [makeWorkspace()],
+				activeWorkspaceId: "workspace-1",
+				activeTabByWorkspace: { "workspace-1": "tab-1" },
+			});
+			const claude = {
+				id: "claude",
+				name: "Claude Code",
+				command: "claude",
+				builtin: true,
+				enabled: true,
+			};
+
+			await useWorkspaceStore
+				.getState()
+				.createTab("workspace-1", claude, undefined, {
+					task: {
+						argv: ["claude", "fix it"],
+						agentId: "claude",
+						tabName: "#1 Fix it",
+					},
+				});
+
+			expect(vi.mocked(tabs.create)).toHaveBeenLastCalledWith(
+				"workspace-1",
+				"#1 Fix it",
+			);
+			expect(takePendingAgent("task-pane")).toBeUndefined();
+			expect(takePendingTask("task-pane")).toEqual({
+				argv: ["claude", "fix it"],
+				agentId: "claude",
+			});
 		});
 	});
 
@@ -1011,6 +1061,46 @@ describe("workspaceStore", () => {
 			expect(result).toBe(created);
 			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("wt-2");
 			expect(takePendingAgent("new-pane-1")).toEqual({ command: "claude" });
+		});
+
+		it("with a task runs setup commands inside the task, not typed", async () => {
+			const { workspaces, tabs } = await import("../../lib/ipc");
+			const created = makeWorkspace({
+				id: "wt-3",
+				rootFolder: "/repo/feature",
+				tabs: [
+					makeTab({
+						id: "wt-tab-3",
+						workspaceId: "wt-3",
+						layoutJson: JSON.stringify({
+							type: "terminal",
+							id: "task-wt-pane",
+							ptyId: "",
+						}),
+					}),
+				],
+			});
+			vi.mocked(workspaces.create).mockResolvedValueOnce(created);
+
+			await useWorkspaceStore
+				.getState()
+				.addWorktreeWorkspace(entry, "npm install\n\n  npm run dev ", agent, {
+					task: {
+						argv: ["claude", "do it"],
+						agentId: "claude",
+						tabName: "do it",
+					},
+				});
+
+			expect(takePendingAgent("task-wt-pane")).toBeUndefined();
+			expect(takePendingTask("task-wt-pane")).toEqual({
+				argv: ["claude", "do it"],
+				agentId: "claude",
+				setup: "npm install\nnpm run dev",
+			});
+			expect(vi.mocked(tabs.update)).toHaveBeenCalledWith("wt-tab-3", {
+				name: "do it",
+			});
 		});
 	});
 });

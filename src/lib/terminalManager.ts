@@ -45,8 +45,15 @@ import {
 import { parseOsc52 } from "./osc52";
 import { publishPaneFontSize } from "./paneFontSize";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
-import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
+import {
+	type PendingTask,
+	setPendingAgent,
+	setPendingTask,
+	takePendingAgent,
+	takePendingTask,
+} from "./pendingAgentRegistry";
 import { isMac } from "./platform";
+import { stripControlChars } from "./promptActions";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
@@ -1294,6 +1301,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		managed.startupShellReady = true;
 	}
 
+	// A New task rides the spawn itself rather than being typed (ADR-0042).
+	const pendingTask = isNewPty ? takePendingTask(paneId) : undefined;
+
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
 	// spawning so no shell output is lost in the gap between spawn and listen.
 	if (isNewPty) {
@@ -1712,21 +1722,25 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			// if spawn completes first (Tauri buffers events until listen resolves).
 			...(isNewPty
 				? [
-						pty.spawn({
-							cwd,
-							cols: term.cols,
-							rows: term.rows,
-							shell: useSettingsStore.getState().shellPath ?? undefined,
-							logId: paneId,
-							ptyId: currentPtyId,
-							// Resolved from the pane's OWN workspace, not the active
-							// one: TerminalPool mounts panes for every opened
-							// workspace, so a background pane would otherwise be
-							// labelled — and given the environment of — whichever
-							// workspace happens to be in front.
-							...ownerSpawnContext(paneId),
-							windowLabel: currentWindowLabel(),
-						}),
+						spawnNewPty(
+							{
+								cwd,
+								cols: term.cols,
+								rows: term.rows,
+								shell: useSettingsStore.getState().shellPath ?? undefined,
+								logId: paneId,
+								ptyId: currentPtyId,
+								// Resolved from the pane's OWN workspace, not the active
+								// one: TerminalPool mounts panes for every opened
+								// workspace, so a background pane would otherwise be
+								// labelled — and given the environment of — whichever
+								// workspace happens to be in front.
+								...ownerSpawnContext(paneId),
+								windowLabel: currentWindowLabel(),
+							},
+							pendingTask,
+							term,
+						),
 					]
 				: []),
 		]);
@@ -1855,6 +1869,37 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 	if (pendingAgent && managed.ptyId) {
 		pty.write(managed.ptyId, `${pendingAgent.command}\n`).catch(() => {});
 		usePtyActivityStore.getState().setAgentPty(managed.ptyId);
+	}
+}
+
+/**
+ * Spawn a pane's new PTY, carrying a **New task** launch when there is one.
+ *
+ * A task spawn can be refused (a shell other than zsh or bash — ADR-0042).
+ * The pane must still open, so the refusal is printed into the terminal and a
+ * plain shell is spawned under the same PTY id: the user loses the Task, never
+ * the pane. On success the pane enters agent mode straight away, as a typed
+ * launch does; the script's own `command_start` confirms it moments later.
+ */
+async function spawnNewPty(
+	options: Parameters<typeof pty.spawn>[0],
+	task: PendingTask | undefined,
+	term: Terminal,
+): Promise<string> {
+	if (!task) return pty.spawn(options);
+	try {
+		const id = await pty.spawn({
+			...options,
+			task: { argv: task.argv, setup: task.setup },
+		});
+		usePtyActivityStore.getState().setAgentPty(id, task.agentId);
+		return id;
+	} catch (err) {
+		const reason = String(err).replace(/^PTY error: /, "");
+		term.write(
+			`\x1b[33mNew task could not start: ${stripControlChars(reason)}\x1b[0m\r\n`,
+		);
+		return pty.spawn(options);
 	}
 }
 
@@ -2103,6 +2148,9 @@ export async function restartPanePty(
 	opts: {
 		cwd: string;
 		agentCommand?: string;
+		/** Restart into a **New task** instead (Restart agent). Wins over
+		 *  `agentCommand`. */
+		task?: PendingTask;
 		preserveScrollback: boolean;
 	},
 ): Promise<void> {
@@ -2130,8 +2178,11 @@ export async function restartPanePty(
 		usePtyActivityStore.getState().removePane(paneId);
 	}
 
-	// Seed before initPty — flushStartupBuffer drains the pending agent.
-	if (opts.agentCommand) {
+	// Seed before initPty — flushStartupBuffer drains the pending agent, and
+	// the spawn takes a pending task.
+	if (opts.task) {
+		setPendingTask(paneId, opts.task);
+	} else if (opts.agentCommand) {
 		setPendingAgent(paneId, { command: opts.agentCommand });
 	}
 

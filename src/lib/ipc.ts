@@ -94,6 +94,9 @@ export interface PtySpawnOptions {
 	workspaceId?: string;
 	/** Main worktree to inherit Bundles from, from `inheritSourceWorkspaceId`. */
 	inheritFromWorkspaceId?: string;
+	/** A **New task** launch: the shell runs this argv (prompt included, as one
+	 *  element) after optional setup commands. zsh and bash only. ADR-0042. */
+	task?: { argv: string[]; setup?: string };
 }
 
 export const pty = {
