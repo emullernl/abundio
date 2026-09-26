@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ReleaseNote } from "../ipc";
-import { compareVersions, selectReleaseNotes } from "../releaseNotes";
+import {
+	compareVersions,
+	notesMissingVersion,
+	selectReleaseNotes,
+} from "../releaseNotes";
 
 function release(version: string, body = `notes for ${version}`): ReleaseNote {
 	return {
@@ -242,5 +246,27 @@ describe("selectReleaseNotes — ordering", () => {
 		const snapshot = input.map((r) => r.version);
 		selectReleaseNotes("0.4.0", input);
 		expect(input.map((r) => r.version)).toEqual(snapshot);
+	});
+});
+
+describe("notesMissingVersion", () => {
+	const note = (version: string) => ({
+		version,
+		body: "",
+		publishedAt: null,
+		url: "",
+	});
+	const page = { releases: [note("1.2.0"), note("1.1.0")], hasMore: false };
+
+	it("is false when the version is in the list", () => {
+		expect(notesMissingVersion(page, "1.2.0")).toBe(false);
+	});
+
+	it("is true when the version is absent", () => {
+		expect(notesMissingVersion(page, "1.3.0")).toBe(true);
+	});
+
+	it("is false while nothing is loaded", () => {
+		expect(notesMissingVersion(null, "1.3.0")).toBe(false);
 	});
 });

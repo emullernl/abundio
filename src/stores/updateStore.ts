@@ -49,6 +49,14 @@ interface UpdateStoreState {
 	hydrate: (opts?: { respectSuppression?: boolean }) => Promise<void>;
 	/** Run a check. `manual` surfaces an "up to date" result and ignores skip. */
 	check: (opts?: { manual?: boolean }) => Promise<void>;
+	/** When a `check` in this Window last settled (success or error), or null.
+	 *  Per-Window by design — the Settings window has its own store. */
+	lastCheckedAt: number | null;
+	/** Opening the Settings Updates section: adopt the Rust state, and if it
+	 *  holds nothing, check exactly as the button would. Ignores the
+	 *  "Automatically check for updates" toggle, which governs *background*
+	 *  checks only. Throttled by `OPEN_CHECK_THROTTLE_MS`. Issue #200. */
+	checkOnOpen: () => Promise<void>;
 	/** Download + stage the available update (applied on quit). */
 	download: () => Promise<void>;
 	/** Install the staged update now and restart (caller must confirm first). */
@@ -92,6 +100,15 @@ function isSnoozed(): boolean {
 
 /** How long "Later" keeps the prompt hidden — a rolling 24h. */
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
+
+/** A repeat visit to the Updates section within this long of the last check
+ *  does not check again, so clicking between Settings pages does not flash
+ *  "Checking…" every time. The button always checks. */
+export const OPEN_CHECK_THROTTLE_MS = 5 * 60 * 1000;
+
+/** Rust's refusal text for a check during a download. Must match
+ *  `CHECK_BLOCKED_DOWNLOADING` in updater.rs. */
+const CHECK_BLOCKED_DOWNLOADING = "an update is already downloading";
 
 /** Canonical GitHub release page for a version — the source of truth for "what
  *  changed" (we link out rather than render the raw Markdown release notes). */
@@ -149,16 +166,61 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		try {
 			const info = await updates.check();
 			if (!info) {
-				set({ status: manual ? "uptodate" : "idle" });
+				set({
+					status: manual ? "uptodate" : "idle",
+					lastCheckedAt: Date.now(),
+				});
 				return;
 			}
 			if (!manual && (isSkipped(info.version) || isSnoozed())) {
-				set({ status: "idle" });
+				set({ status: "idle", lastCheckedAt: Date.now() });
 				return;
 			}
-			set({ status: "available", info, dismissed: false });
+			set({
+				status: "available",
+				info,
+				dismissed: false,
+				lastCheckedAt: Date.now(),
+			});
 		} catch (err) {
-			set({ status: "error", error: String(err) });
+			set({ status: "error", error: String(err), lastCheckedAt: Date.now() });
+		}
+	},
+
+	lastCheckedAt: null,
+
+	checkOnOpen: async () => {
+		// Hydrate first: an update Rust already holds (found, or downloaded) is
+		// the answer, and checking again would only replace it with itself.
+		await get().hydrate({ respectSuppression: false });
+		const { status, lastCheckedAt } = get();
+		if (
+			status === "available" ||
+			status === "ready" ||
+			status === "checking" ||
+			status === "downloading"
+		) {
+			return;
+		}
+		if (
+			lastCheckedAt != null &&
+			Date.now() - lastCheckedAt < OPEN_CHECK_THROTTLE_MS
+		) {
+			return;
+		}
+		// Manual semantics: a status display reports skipped and snoozed
+		// versions too, and says so when there is nothing new.
+		await get().check({ manual: true });
+		// Rust refuses a check while another Window's download runs, and never
+		// reports that download (see `UpdaterInner::downloading`). The user only
+		// opened the page, so stay quiet rather than show a red failure, and
+		// leave the throttle clear so the next visit sees the staged result.
+		const after = get();
+		if (
+			after.status === "error" &&
+			after.error?.includes(CHECK_BLOCKED_DOWNLOADING)
+		) {
+			set({ status: "idle", error: null, lastCheckedAt: null });
 		}
 	},
 

@@ -1,6 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { updates as updatesIpc } from "../../lib/ipc";
+import { notesMissingVersion } from "../../lib/releaseNotes";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -16,8 +17,10 @@ export function UpdatesSection() {
 	const check = useUpdateStore((s) => s.check);
 	const download = useUpdateStore((s) => s.download);
 	const installNow = useUpdateStore((s) => s.installNow);
-	const hydrate = useUpdateStore((s) => s.hydrate);
+	const checkOnOpen = useUpdateStore((s) => s.checkOnOpen);
 	const fetchNotes = useUpdateStore((s) => s.fetchNotes);
+	const notes = useUpdateStore((s) => s.notes);
+	const notesStatus = useUpdateStore((s) => s.notesStatus);
 	const [confirmRestart, setConfirmRestart] = useState(false);
 	const autoCheck = useSettingsStore((s) => s.autoCheckUpdatesEnabled);
 	const setAutoCheck = useSettingsStore((s) => s.setAutoCheckUpdatesEnabled);
@@ -37,9 +40,28 @@ export function UpdatesSection() {
 	// "Check for updates" would re-download a bundle we already have staged.
 	// Unlike the prompt, this hydrate ignores skip/snooze: this is a status
 	// display, and it already renders its own "Snoozed until…" row.
+	//
+	// When Rust holds nothing, it also checks, as if "Check for updates" had
+	// been clicked. Rust only learns of a release from the background loop (every
+	// 6h, and only with auto-check on), while the notes below are fetched on
+	// every visit — so without this the page could list a release in its notes
+	// yet never offer it (issue #200).
 	useEffect(() => {
-		hydrate({ respectSuppression: false });
-	}, [hydrate]);
+		checkOnOpen();
+	}, [checkOnOpen]);
+
+	// A check can find a release newer than the hourly-cached notes list. Refresh
+	// once per version, only then: the ref stops a loop if GitHub still lacks it,
+	// and waiting for "loaded" lets the mount fetch settle first.
+	const refreshedFor = useRef<string | null>(null);
+	const foundVersion = status === "available" ? info?.version : undefined;
+	useEffect(() => {
+		if (!foundVersion || notesStatus !== "loaded") return;
+		if (refreshedFor.current === foundVersion) return;
+		if (!notesMissingVersion(notes, foundVersion)) return;
+		refreshedFor.current = foundVersion;
+		fetchNotes({ refresh: true });
+	}, [foundVersion, notesStatus, notes, fetchNotes]);
 
 	// The Settings window is its own JS context, so it needs its own progress
 	// listener for downloads kicked off from here (the Rust emit is global).

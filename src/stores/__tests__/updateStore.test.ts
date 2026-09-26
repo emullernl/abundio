@@ -25,7 +25,7 @@ vi.mock("../../lib/ipc", () => ({
 }));
 
 import { useSettingsStore } from "../settingsStore";
-import { useUpdateStore } from "../updateStore";
+import { OPEN_CHECK_THROTTLE_MS, useUpdateStore } from "../updateStore";
 
 const info = (version: string) => ({
 	version,
@@ -42,6 +42,7 @@ function reset() {
 		total: null,
 		error: null,
 		dismissed: false,
+		lastCheckedAt: null,
 	});
 	useSettingsStore.setState({
 		skippedUpdateVersion: null,
@@ -246,5 +247,104 @@ describe("updateStore.hydrate", () => {
 		await useUpdateStore.getState().hydrate();
 		expect(useUpdateStore.getState().status).toBe("idle");
 		expect(useUpdateStore.getState().error).toBeNull();
+	});
+});
+
+describe("updateStore.checkOnOpen (issue #200)", () => {
+	beforeEach(() => {
+		reset();
+		vi.useRealTimers();
+	});
+
+	it("checks when Rust holds nothing, and reports up to date", async () => {
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockResolvedValue(null);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).toHaveBeenCalledTimes(1);
+		expect(useUpdateStore.getState().status).toBe("uptodate");
+	});
+
+	it.each([
+		"available",
+		"ready",
+	] as const)("does not check when Rust already has the update %s", async (state) => {
+		status.mockResolvedValue({ state, info: info("1.4.0") });
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).not.toHaveBeenCalled();
+		expect(useUpdateStore.getState().status).toBe(state);
+	});
+
+	it("checks and shows a skipped or snoozed version", async () => {
+		useSettingsStore.setState({
+			skippedUpdateVersion: "1.4.0",
+			updateSnoozedUntil: Date.now() + HOUR_MS,
+		});
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockResolvedValue(info("1.4.0"));
+		await useUpdateStore.getState().checkOnOpen();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("available");
+		expect(s.info?.version).toBe("1.4.0");
+	});
+
+	it("skips a repeat check within the throttle, checks after it", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockResolvedValue(null);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).toHaveBeenCalledTimes(1);
+
+		vi.setSystemTime(Date.now() + OPEN_CHECK_THROTTLE_MS - 1);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).toHaveBeenCalledTimes(1);
+
+		vi.setSystemTime(Date.now() + 1);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(check).toHaveBeenCalledTimes(2);
+		vi.useRealTimers();
+	});
+
+	it("stays quiet on the Rust refusal while another Window downloads", async () => {
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockRejectedValue("an update is already downloading");
+		await useUpdateStore.getState().checkOnOpen();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("idle");
+		expect(s.error).toBeNull();
+		// Not throttled: the next visit must pick up the staged update.
+		expect(s.lastCheckedAt).toBeNull();
+	});
+
+	it("surfaces any other check failure", async () => {
+		status.mockResolvedValue({ state: "none", info: null });
+		check.mockRejectedValue("offline");
+		await useUpdateStore.getState().checkOnOpen();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("error");
+		expect(s.error).toBe("offline");
+	});
+
+	it("the button still reports the refusal", async () => {
+		check.mockRejectedValue("an update is already downloading");
+		await useUpdateStore.getState().check({ manual: true });
+		expect(useUpdateStore.getState().status).toBe("error");
+	});
+});
+
+describe("updateStore.check sets lastCheckedAt", () => {
+	beforeEach(reset);
+
+	it.each([
+		["up to date", () => check.mockResolvedValue(null)],
+		["available", () => check.mockResolvedValue(info("1.4.0"))],
+		["error", () => check.mockRejectedValue("offline")],
+	])("on %s", async (_label, arrange) => {
+		arrange();
+		const before = Date.now();
+		await useUpdateStore.getState().check({ manual: true });
+		expect(useUpdateStore.getState().lastCheckedAt).toBeGreaterThanOrEqual(
+			before,
+		);
 	});
 });
