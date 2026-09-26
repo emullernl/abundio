@@ -61,6 +61,10 @@ export const profiles: Profile[] = [
 
 export const ACTIVE_PROFILE_ID = profiles[0].id;
 
+/** What the status-bar version button shows in the demo. Fictional, like
+ *  everything else here — the demo never reads `tauri.conf.json`. */
+export const appVersion = "1.0.0";
+
 // ── Declarative workspace model ──
 
 type AgentState = "active" | "ready" | "waiting" | "error" | "idle";

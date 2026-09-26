@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles, X } from "lucide-react";
+import type { MissingNotesReason } from "../lib/releaseNotes";
 import { useUpdateStore } from "../stores/updateStore";
 import { ReleaseNotesMarkdown } from "./Settings/ReleaseNotesMarkdown";
 
@@ -26,8 +27,20 @@ import { ReleaseNotesMarkdown } from "./Settings/ReleaseNotesMarkdown";
  * that corner with the update prompt and takes precedence while it is up — this
  * is a one-time moment, whereas the prompt will keep re-offering itself.
  */
+const MISSING_NOTES_TEXT: Record<MissingNotesReason, string> = {
+	unpublished: "No release notes have been published for this version.",
+	older:
+		"This version is older than the recent releases listed here. Open Settings to find older releases.",
+	failed:
+		"Couldn't load the release notes. Check your connection and try again.",
+};
+
 export function WhatsNewCard() {
 	const note = useUpdateStore((s) => s.whatsNew);
+	// "manual" is the status-bar version button (#203): the user asked for the
+	// notes of the version they are on, so "You're now on…" would be wrong.
+	const manual = useUpdateStore((s) => s.whatsNewOrigin === "manual");
+	const missing = useUpdateStore((s) => s.whatsNewMissing);
 	const dismiss = useUpdateStore((s) => s.dismissWhatsNew);
 
 	return (
@@ -43,7 +56,9 @@ export function WhatsNewCard() {
 					transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
 					style={{
 						right: 16,
-						bottom: 16,
+						// Above the status bar, not over it: the version button that
+						// toggles this card lives in the bar's right-hand corner.
+						bottom: "calc(var(--statusbar-height) + 8px)",
 						width: 420,
 						// The body is whatever the release notes happen to be, so the
 						// card is capped and scrolls rather than growing off-screen.
@@ -75,7 +90,9 @@ export function WhatsNewCard() {
 								className="font-semibold"
 								style={{ fontSize: 13, color: "var(--fg-primary)" }}
 							>
-								You're now on Abundio {note.version}
+								{manual
+									? `What's new in Abundio ${note.version}`
+									: `You're now on Abundio ${note.version}`}
 							</div>
 							<div
 								style={{
@@ -84,7 +101,9 @@ export function WhatsNewCard() {
 									marginTop: 2,
 								}}
 							>
-								Here's what changed.
+								{manual
+									? "Release notes for this version."
+									: "Here's what changed."}
 							</div>
 						</div>
 						<button
@@ -108,7 +127,23 @@ export function WhatsNewCard() {
 						className="flex-1 min-h-0 overflow-y-auto"
 						style={{ padding: "0 16px" }}
 					>
-						<ReleaseNotesMarkdown body={note.body} />
+						{note.body ? (
+							<ReleaseNotesMarkdown body={note.body} />
+						) : (
+							// Only reachable from the version button: Rust never emits an
+							// upgrade card without notes.
+							<div
+								style={{
+									fontSize: 12,
+									color: "var(--fg-secondary)",
+									paddingBottom: 4,
+								}}
+							>
+								{missing
+									? MISSING_NOTES_TEXT[missing]
+									: "This release has no notes."}
+							</div>
+						)}
 					</div>
 
 					<div

@@ -1,11 +1,12 @@
 import { Cpu, MemoryStick, User } from "lucide-react";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useAppMetrics } from "../hooks/useAppMetrics";
 import {
 	type BranchLabel,
 	branchLabel,
 	pickBranchSource,
 } from "../lib/currentBranchLabel";
+import { updates } from "../lib/ipc";
 import {
 	cpuColor,
 	cpuTooltip,
@@ -16,6 +17,7 @@ import {
 import { containsPane, parseTabLayout } from "../lib/paneTree";
 import { shortenPath } from "../lib/shortenPath";
 import { useProfileStore } from "../stores/profileStore";
+import { useUpdateStore } from "../stores/updateStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -99,6 +101,55 @@ function BranchSegment({ label }: { label: BranchLabel }) {
 	);
 }
 
+/**
+ * The running Abundio version. Clicking it toggles the What's new card on this
+ * version's release notes (#203).
+ *
+ * Colour sits in classes, not inline, so the hover state can win.
+ */
+function VersionButton({ version }: { version: string }) {
+	const open = useUpdateStore((s) => s.whatsNew != null);
+	return (
+		<button
+			type="button"
+			onClick={() => {
+				useUpdateStore.getState().toggleWhatsNew(version);
+			}}
+			aria-pressed={open}
+			title={`Abundio ${version} — show release notes`}
+			className={`rounded transition-colors hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)] ${
+				open ? "text-[var(--fg-primary)]" : "text-[var(--fg-secondary)]"
+			}`}
+			style={{
+				fontFamily: "var(--font-mono)",
+				fontSize: 11,
+				padding: "1px 5px",
+				cursor: "pointer",
+			}}
+		>
+			v{version}
+		</button>
+	);
+}
+
+function useAppVersion(): string | null {
+	const [version, setVersion] = useState<string | null>(null);
+	useEffect(() => {
+		let live = true;
+		updates
+			.appVersion()
+			.then((v) => {
+				if (live && v) setVersion(v);
+			})
+			// No version, no button: nothing is worth surfacing here.
+			.catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, []);
+	return version;
+}
+
 export function StatusBar() {
 	const activeWorkspace = useWorkspaceStore((s) =>
 		s.activeWorkspaceId
@@ -150,6 +201,7 @@ export function StatusBar() {
 	const branch = branchLabel(pickBranchSource(gitInfo));
 
 	const appMetrics = useAppMetrics();
+	const appVersion = useAppVersion();
 
 	// Right cluster: live system-wide load + active profile. Shared by both the
 	// workspace and no-workspace states, since the metrics are machine-wide
@@ -198,6 +250,12 @@ export function StatusBar() {
 						<User size={12} />
 						{activeProfile.name}
 					</span>
+				</>
+			)}
+			{appVersion && (
+				<>
+					<Separator />
+					<VersionButton version={appVersion} />
 				</>
 			)}
 		</div>

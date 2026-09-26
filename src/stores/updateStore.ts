@@ -5,6 +5,11 @@ import {
 	type UpdateInfo,
 	updates,
 } from "../lib/ipc";
+import {
+	type MissingNotesReason,
+	missingNotesReason,
+	releaseNoteForVersion,
+} from "../lib/releaseNotes";
 import { useSettingsStore } from "./settingsStore";
 
 /**
@@ -74,7 +79,16 @@ interface UpdateStoreState {
 	 *  decided they are worth a card. Null the rest of the time — which is
 	 *  almost always. */
 	whatsNew: ReleaseNote | null;
+	/** Why the card is up: Rust saw an upgrade, or the user clicked the
+	 *  version in the status bar. Only changes the card's wording. */
+	whatsNewOrigin: "upgrade" | "manual";
+	/** Set when the version button opened the card without notes, saying
+	 *  why — so a failed fetch is not reported as "never published". */
+	whatsNewMissing: MissingNotesReason | null;
 	setWhatsNew: (note: ReleaseNote) => void;
+	/** The status-bar version button (#203): open the card on the notes for
+	 *  `version`, or close it when it is already up. */
+	toggleWhatsNew: (version: string) => Promise<void>;
 	/** Dismiss the card and record the version as seen, app-globally. */
 	dismissWhatsNew: () => void;
 }
@@ -98,6 +112,9 @@ const SNOOZE_MS = 24 * 60 * 60 * 1000;
 export function releaseNotesUrl(version: string): string {
 	return `https://github.com/emullernl/abundio/releases/tag/v${version}`;
 }
+
+/** True while `toggleWhatsNew` is fetching notes to open the card. */
+let whatsNewOpening = false;
 
 export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	status: "idle",
@@ -227,7 +244,42 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	},
 
 	whatsNew: null,
-	setWhatsNew: (note) => set({ whatsNew: note }),
+	whatsNewOrigin: "upgrade",
+	whatsNewMissing: null,
+	setWhatsNew: (note) =>
+		set({ whatsNew: note, whatsNewOrigin: "upgrade", whatsNewMissing: null }),
+
+	toggleWhatsNew: async (version) => {
+		if (get().whatsNew) {
+			get().dismissWhatsNew();
+			return;
+		}
+		// A click while the fetch below is in flight must not open the card
+		// early: `fetchNotes` returns at once while loading, so a second call
+		// would find no notes yet and show the "no published notes" fallback.
+		if (whatsNewOpening) return;
+		whatsNewOpening = true;
+		try {
+			// Served from the hourly Rust-side cache after the first fetch. A
+			// failed fetch still opens the card, saying the fetch failed.
+			await get().fetchNotes();
+		} finally {
+			whatsNewOpening = false;
+		}
+		// A second click, or the upgrade card, may have landed while the fetch
+		// was in flight; either way there is already an answer on screen.
+		if (get().whatsNew) return;
+		const { notes, notesStatus } = get();
+		set({
+			whatsNew: releaseNoteForVersion(version, notes?.releases ?? []),
+			whatsNewOrigin: "manual",
+			whatsNewMissing: missingNotesReason(
+				version,
+				notes,
+				notesStatus === "error",
+			),
+		});
+	},
 
 	dismissWhatsNew: () => {
 		set({ whatsNew: null });

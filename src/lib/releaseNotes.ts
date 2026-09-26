@@ -1,4 +1,4 @@
-import type { ReleaseNote } from "./ipc";
+import type { ReleaseNote, ReleaseNotesPage } from "./ipc";
 
 /**
  * Deciding *which* release notes to show, and under which heading. See ADR-0036.
@@ -167,4 +167,49 @@ export function selectReleaseNotes(
 		missingCurrentVersion: currentVersion,
 		showOlderLink: false,
 	};
+}
+
+/**
+ * The note to show when the user asks for the notes of the version they are
+ * running — the status-bar version button (#203).
+ *
+ * Always returns a note, so the card always opens: a development build or an
+ * unpublished version gets one with an empty `body`, which the card renders
+ * as "no published notes" rather than silently doing nothing on click.
+ */
+export function releaseNoteForVersion(
+	version: string,
+	releases: ReleaseNote[],
+): ReleaseNote {
+	return (
+		releases.find((r) => r.version === version) ?? {
+			version,
+			body: "",
+			publishedAt: null,
+			url: `https://github.com/emullernl/abundio/releases/tag/v${version}`,
+		}
+	);
+}
+
+/** Why the version button's card has no notes to show. */
+export type MissingNotesReason =
+	/** A development build, or a version tagged but never released. */
+	| "unpublished"
+	/** Published, but older than the one page of releases Rust fetches. */
+	| "older"
+	/** The fetch failed — offline, rate-limited, or GitHub is down. */
+	| "failed";
+
+/**
+ * Null when `version` has notes on the fetched page. Otherwise the reason, so
+ * the card never claims "no notes were published" for notes that exist.
+ */
+export function missingNotesReason(
+	version: string,
+	page: ReleaseNotesPage | null,
+	fetchFailed: boolean,
+): MissingNotesReason | null {
+	if (page?.releases.some((r) => r.version === version)) return null;
+	if (fetchFailed) return "failed";
+	return page?.hasMore ? "older" : "unpublished";
 }
