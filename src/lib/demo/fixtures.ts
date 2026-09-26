@@ -188,13 +188,13 @@ const WS_DEFS: WsDef[] = [
 		],
 		branches: ["experiment/mixed-precision"],
 	},
-	// 4 — design-system: single Aider agent (waiting), clean tree
+	// 4 — design-system: single Kimi Code agent (waiting), clean tree
 	{
 		id: "ws-design",
 		name: "design-system",
 		base: "main",
 		branch: "main",
-		tabs: one("Aider", a("aider", "waiting", "aiderSession")),
+		tabs: one("Kimi", a("kimi", "waiting", "kimiSession")),
 		branches: ["feature/dark-mode"],
 	},
 	// 5 — infra-terraform: Codex errored | plan output
@@ -395,7 +395,7 @@ const WS_DEFS: WsDef[] = [
 		name: "search-indexer",
 		base: "main",
 		branch: "fix/reindex-deadlock",
-		tabs: one("Agent", a("aider", "error", "aiderSession")),
+		tabs: one("Agent", a("grok", "error", "grokSession")),
 		git: [["src/index/worker.rs", "M", 22, 14, "against_base"]],
 	},
 	// 16 — image-cdn (clean)
@@ -496,7 +496,7 @@ const WS_DEFS: WsDef[] = [
 		name: "blog-engine",
 		base: "main",
 		branch: "feature/mdx-shortcodes",
-		tabs: one("Agent", a("aider", "active", "aiderSession")),
+		tabs: one("Agent", a("grok", "active", "grokSession")),
 		git: [
 			["lib/mdx/shortcodes.ts", "A", 57, 0, "against_base"],
 			["content/posts/launch.mdx", "M", 14, 6, "unstaged"],
@@ -570,7 +570,7 @@ const WS_DEFS: WsDef[] = [
 		name: "admin-portal",
 		base: "main",
 		branch: "main",
-		tabs: one("Agent", a("aider", "idle", "aiderSession")),
+		tabs: one("Agent", a("kimi", "idle", "kimiSession")),
 	},
 	// 30 — iot-bridge (no agent, running dev server)
 	{
@@ -1458,7 +1458,6 @@ export const installedAgentCommands = new Set([
 	"claude",
 	"copilot",
 	"gemini",
-	"aider",
 	"codex",
 	"opencode",
 	"qwen",
