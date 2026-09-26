@@ -16,6 +16,7 @@ import {
 	memo,
 	type ReactNode,
 } from "react";
+import { useShortcutLabel, withShortcut } from "../hooks/useShortcutLabel";
 import type { DotStatus } from "../stores/ptyActivityStore";
 import { AgentStatusIcon, ShellChevronGlyph } from "./AgentStatusIcon";
 
@@ -149,6 +150,8 @@ type GlyphComponent = ComponentType<{
 }>;
 
 export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
+	const fleetKey = useShortcutLabel("toggle-fleet-console");
+	const statsKey = useShortcutLabel("toggle-statistics-overlay");
 	const {
 		openedWorkspaces,
 		totalWorkspaces,
@@ -230,13 +233,19 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 				<ViewToggle
 					open={fleetConsoleOpen}
 					onClick={onToggleFleetConsole}
-					title="Fleet Console — every agent in this window (Cmd/Ctrl+Shift+A)"
+					title={withShortcut(
+						"Fleet Console — every agent in this window",
+						fleetKey,
+					)}
 					icon={Grid2x2}
 				/>
 				<ViewToggle
 					open={statisticsOpen}
 					onClick={onToggleStatistics}
-					title="Statistics — agent activity for this profile (Cmd/Ctrl+Shift+S)"
+					title={withShortcut(
+						"Statistics — agent activity for this profile",
+						statsKey,
+					)}
 					icon={BarChart3}
 				/>
 			</div>
