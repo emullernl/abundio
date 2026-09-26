@@ -12,6 +12,7 @@ import { GithubSection } from "./Settings/GithubSection";
 import {
 	AgentIcon,
 	EditorIcon,
+	KeyboardIcon,
 	PaletteIcon,
 	PrIcon,
 	ProfileIcon,
@@ -21,6 +22,7 @@ import {
 	TypeIcon,
 	UpdateIcon,
 } from "./Settings/icons";
+import { KeyboardSection } from "./Settings/KeyboardSection";
 import { ProfilesSection } from "./Settings/ProfilesSection";
 import { PromptActionsSection } from "./Settings/PromptActionsSection";
 import { NavGroupLabel, NavItem } from "./Settings/primitives";
@@ -44,6 +46,7 @@ const SECTION_ICON: Record<SettingsSection, React.ReactNode> = {
 	agents: <AgentIcon />,
 	"prompt-actions": <PromptActionIcon />,
 	tasks: <TaskIcon />,
+	keyboard: <KeyboardIcon />,
 	profiles: <ProfileIcon />,
 	github: <PrIcon />,
 	updates: <UpdateIcon />,
@@ -57,6 +60,7 @@ const SECTION_BODY: Record<SettingsSection, React.ReactNode> = {
 	agents: <AgentsSection />,
 	"prompt-actions": <PromptActionsSection />,
 	tasks: <TasksSection />,
+	keyboard: <KeyboardSection />,
 	profiles: <ProfilesSection />,
 	github: <GithubSection />,
 	updates: <UpdatesSection />,
