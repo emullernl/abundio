@@ -72,10 +72,23 @@ pub fn default_shell() -> String {
 /// PATH is wrapped in sentinels and extracted rather than parsing the whole
 /// stream.
 pub fn shell_path() -> &'static str {
-    static PATH: OnceLock<String> = OnceLock::new();
+    &resolved_shell_path().0
+}
+
+/// True when [`shell_path`] is the user's real login-shell `PATH`, false when
+/// the shell failed or timed out and it is the minimal fallback. A scan on the
+/// fallback can find *some* agents (Homebrew ones) while missing others
+/// (`~/.local/bin`), so a caller that would do something irreversible with a
+/// "not installed" answer must check this first.
+pub fn shell_path_is_resolved() -> bool {
+    resolved_shell_path().1
+}
+
+fn resolved_shell_path() -> &'static (String, bool) {
+    static PATH: OnceLock<(String, bool)> = OnceLock::new();
     PATH.get_or_init(|| {
         if cfg!(target_os = "windows") {
-            return env::var("PATH").unwrap_or_default();
+            return (env::var("PATH").unwrap_or_default(), true);
         }
 
         let shell = default_shell();
@@ -84,14 +97,14 @@ pub fn shell_path() -> &'static str {
                 extract_between(&stdout, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__")
             {
                 if !path.is_empty() {
-                    return path.to_string();
+                    return (path.to_string(), true);
                 }
             }
         }
 
         // Fallback: current PATH + common Homebrew locations
         let current = env::var("PATH").unwrap_or_default();
-        format!("{current}:/opt/homebrew/bin:/usr/local/bin")
+        (format!("{current}:/opt/homebrew/bin:/usr/local/bin"), false)
     })
 }
 

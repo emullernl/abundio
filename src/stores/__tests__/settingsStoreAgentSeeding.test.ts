@@ -56,7 +56,7 @@ describe("settingsStore.matchAgentsToInstalled", () => {
 		vi.clearAllMocks();
 		useSettingsStore.setState({
 			agentHooksEnabled: true,
-			agents: [builtin("claude", true), builtin("aider", true)],
+			agents: [builtin("claude", true), builtin("codex", true)],
 		});
 	});
 
@@ -99,7 +99,7 @@ describe("settingsStore.matchAgentsToInstalled", () => {
 			.matchAgentsToInstalled(new Set());
 
 		expect(outcome).toBe("empty-scan");
-		expect(watched()).toEqual(["claude", "aider"]);
+		expect(watched()).toEqual(["claude", "codex"]);
 		expect(mockProvision).not.toHaveBeenCalled();
 	});
 
@@ -107,7 +107,7 @@ describe("settingsStore.matchAgentsToInstalled", () => {
 	// and the cross-Window broadcast that rides on it.
 	it("skips the write and the provision when nothing would move", async () => {
 		useSettingsStore.setState({
-			agents: [builtin("claude", true), builtin("aider", false)],
+			agents: [builtin("claude", true), builtin("codex", false)],
 		});
 		const before = useSettingsStore.getState().agents;
 
@@ -128,5 +128,66 @@ describe("settingsStore.matchAgentsToInstalled", () => {
 		await useSettingsStore.getState().matchAgentsToInstalled(new Set(["mine"]));
 
 		expect(watched()).toEqual(["mine"]);
+	});
+});
+
+describe("settingsStore.pruneRetiredAgents", () => {
+	const retired: CodingAgent = {
+		...custom("aider", true),
+		retiredBuiltin: true,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSettingsStore.setState({
+			agentHooksEnabled: true,
+			agents: [builtin("claude", true), retired],
+		});
+	});
+
+	it("removes a converted agent that is not installed and re-syncs hooks", async () => {
+		const changed = await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(["claude"]));
+
+		expect(changed).toBe(true);
+		expect(useSettingsStore.getState().agents.map((a) => a.id)).toEqual([
+			"claude",
+		]);
+		expect(mockProvision).toHaveBeenCalledWith(true, ["claude"]);
+	});
+
+	it("keeps an installed one and clears its marker", async () => {
+		await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(["claude", "aider"]));
+
+		const aider = useSettingsStore
+			.getState()
+			.agents.find((a) => a.id === "aider");
+		expect(aider?.retiredBuiltin).toBeUndefined();
+	});
+
+	it("skips the write and the provision on an empty scan", async () => {
+		const before = useSettingsStore.getState().agents;
+
+		const changed = await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set());
+
+		expect(changed).toBe(false);
+		expect(useSettingsStore.getState().agents).toBe(before);
+		expect(mockProvision).not.toHaveBeenCalled();
+	});
+
+	it("skips the provision once nothing is marked", async () => {
+		useSettingsStore.setState({ agents: [builtin("claude", true)] });
+
+		const changed = await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(["claude"]));
+
+		expect(changed).toBe(false);
+		expect(mockProvision).not.toHaveBeenCalled();
 	});
 });

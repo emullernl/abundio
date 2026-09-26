@@ -775,6 +775,10 @@ export const agentRegistry = {
 	claimSeeding: () => invoke<boolean>("agents_claim_seeding"),
 	/** Spend the claim, once the seed has actually been applied. */
 	commitSeeding: () => invoke<void>("agents_commit_seeding"),
+	/** Whether scans use the real login-shell `$PATH` rather than the minimal
+	 *  fallback taken when the shell timed out. A fallback scan can be
+	 *  non-empty yet miss agents outside Homebrew (`~/.local/bin`). */
+	pathIsResolved: () => invoke<boolean>("agents_path_is_resolved"),
 };
 
 /** On-disk registration state of one Agent's hooks (mirrors Rust `HookConfigState`). */

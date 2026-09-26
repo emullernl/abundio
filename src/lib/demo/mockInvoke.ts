@@ -339,6 +339,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return false;
 		case "agents_commit_seeding":
 			return undefined;
+		case "agents_path_is_resolved":
+			return true;
 		case "agent_hooks_provision":
 		case "agent_hooks_provision_startup":
 			return undefined;

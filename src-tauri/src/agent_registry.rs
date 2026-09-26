@@ -17,6 +17,14 @@ pub fn list_installed_agent_commands(commands: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// True when agent scans use the user's real login-shell `$PATH`, false when
+/// resolving it failed or timed out and scans run on the minimal fallback.
+/// Resolves the path first if nothing has yet, so call it after a scan.
+#[tauri::command]
+pub async fn agents_path_is_resolved() -> bool {
+    crate::shell_env::shell_path_is_resolved()
+}
+
 /// Set once a Window has taken the claim in this process, so a second Window
 /// cannot seed concurrently. Process-local on purpose: a Tauri app is one
 /// process, so this covers every Window, and unlike a database write it leaves

@@ -4,7 +4,7 @@ import type { CodingAgent } from "./types";
  * Agent seeding — the one-time act of setting each built-in Agent's **Watched**
  * toggle from whether it is **Installed** on `$PATH`, so a new user's launch
  * menus and hook provisioning describe their machine rather than listing all
- * nine built-ins. See ADR-0037 and the CONTEXT.md entries for *Installed*,
+ * eight built-ins. See ADR-0037 and the CONTEXT.md entries for *Installed*,
  * *Watched* and *Agent seeding*.
  *
  * Pure, and deliberately the *only* place the rule lives: the first run and the
@@ -49,4 +49,42 @@ export function seedWatchedFromInstalled(
 	});
 
 	return changed ? next : agents;
+}
+
+/**
+ * Settle every Agent converted from a **retired built-in** (see
+ * `RETIRED_BUILTINS` in `agents.ts`) against a real `$PATH` scan: remove it
+ * when its command is not Installed, keep it and clear the `retiredBuiltin`
+ * marker when it is.
+ *
+ * Needed because ADR-0037 left long-time users with every built-in Watched, so
+ * a Watched retired built-in does not mean the user actually has it. The merge
+ * cannot wait for the scan (it is async, and saved Panes would open as plain
+ * shells meanwhile), so it converts first and this settles it afterwards.
+ *
+ * Runs on every launch until nothing carries the marker, independent of the
+ * one-time seeding claim. **An empty `installed` set is a failed scan**, as in
+ * `seedWatchedFromInstalled`, and changes nothing. Unlike seeding, this
+ * deletes, so the caller must also skip it when the scan ran on the fallback
+ * `$PATH` (`agentRegistry.pathIsResolved()`). Agents without the marker
+ * are never touched. Returns the **same array reference** when nothing changes.
+ */
+export function pruneRetiredBuiltins(
+	agents: CodingAgent[],
+	installed: Set<string>,
+): CodingAgent[] {
+	if (installed.size === 0) return agents;
+	if (!agents.some((a) => a.retiredBuiltin)) return agents;
+
+	const next: CodingAgent[] = [];
+	for (const agent of agents) {
+		if (!agent.retiredBuiltin) {
+			next.push(agent);
+			continue;
+		}
+		if (!installed.has(agent.command)) continue;
+		const { retiredBuiltin: _marker, ...kept } = agent;
+		next.push(kept);
+	}
+	return next;
 }
