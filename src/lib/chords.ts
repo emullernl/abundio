@@ -216,7 +216,12 @@ export function formatChord(c: Chord, mac: boolean): string {
 
 /** Chords the native menu owns outright. Recording one is refused: stealing
  *  Quit, Hide or the Edit menu's copy/paste would break the app itself.
- *  Open settings is not here — its menu accelerator follows its Shortcut. */
+ *  The Edit and Window menus are built on every platform (`build_menu`), and
+ *  muda gives their items Ctrl accelerators on Windows/Linux too, so those
+ *  are reserved everywhere — with Redo as Ctrl+Y there, Shift+⌘Z on macOS.
+ *  Open settings is not here: its menu accelerator follows its Shortcut.
+ *  Close Window (⌘W / Ctrl+W) is not here either, deliberately: it is Close
+ *  tab's default, and the app's binding takes it before the menu does. */
 export function reservedMenuChords(mac: boolean): Chord[] {
 	const cmd = (key: string, extra: Partial<Chord> = {}): Chord => ({
 		key,
@@ -226,18 +231,24 @@ export function reservedMenuChords(mac: boolean): Chord[] {
 		alt: false,
 		...extra,
 	});
-	if (!mac) return [cmd("q")];
-	return [
+	// Edit: undo, cut, copy, paste, select all. Window: minimize.
+	const shared = [
 		cmd("q"),
-		cmd("h"),
-		cmd("h", { alt: true }),
-		cmd("m"),
 		cmd("z"),
-		cmd("z", { shift: true }),
 		cmd("x"),
 		cmd("c"),
 		cmd("v"),
 		cmd("a"),
+		cmd("m"),
+	];
+	if (!mac) return [...shared, cmd("y")];
+	return [
+		...shared,
+		cmd("z", { shift: true }),
+		cmd("h"),
+		cmd("h", { alt: true }),
+		// View ▸ Enter Full Screen.
+		cmd("f", { ctrl: true }),
 	];
 }
 
@@ -288,12 +299,9 @@ export function chordVerdict(c: Chord, mac: boolean): ChordVerdict {
 		!alt &&
 		/^(code:Key[A-Z]|code:Digit\d)$/.test(keyIdentity(c))
 	) {
-		const interrupt = keyIdentity(c) === "code:KeyC";
 		return {
 			kind: "warn",
-			reason: interrupt
-				? "Ctrl+C interrupts the program in a terminal. With this, terminals never receive it."
-				: `${formatChord(c, mac)} is a terminal control code. With this, terminals never receive it.`,
+			reason: `${formatChord(c, mac)} is a terminal control code. With this, terminals never receive it.`,
 		};
 	}
 	if (mac && alt && !c.meta && !c.ctrl) {

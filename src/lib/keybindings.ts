@@ -341,6 +341,9 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 			},
 	{
 		key: "=",
+		// By position, like every punctuation binding: on German and French
+		// layouts "=" needs Shift, so matching the character would miss.
+		code: "Equal",
 		meta: isMac,
 		shift: false,
 		ctrl: !isMac,
@@ -348,6 +351,9 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	},
 	{
 		key: "-",
+		// By position, like every punctuation binding: on German and French
+		// layouts "=" needs Shift, so matching the character would miss.
+		code: "Minus",
 		meta: isMac,
 		shift: false,
 		ctrl: !isMac,

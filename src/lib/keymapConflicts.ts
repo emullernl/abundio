@@ -52,7 +52,12 @@ export type RecordingOutcome =
 	/** Safe to write; `notice` is a warning to show beside the row. */
 	| { kind: "commit"; notice: string | null };
 
-/** What Settings ▸ Keyboard does with a freshly recorded Chord. */
+/** What Settings ▸ Keyboard does with a freshly recorded Chord.
+ *
+ *  `entries` holds editor rows only once the Editor group's catalogue has
+ *  loaded (it is fetched when that group is first opened). Until then an app
+ *  rebind gets no cross-scope notice. That only drops a warning — the app
+ *  still wins while the editor has focus either way — so it is left as is. */
 export function planRecording(
 	target: KeymapEntry,
 	chord: Chord,

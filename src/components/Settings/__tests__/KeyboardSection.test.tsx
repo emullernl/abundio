@@ -113,6 +113,44 @@ describe("KeyboardSection", () => {
 		expect(overrides()).toEqual({});
 	});
 
+	it("a Reassign back to the row's default is one store write", () => {
+		// Unbound New tab; Command palette moved onto New tab's default.
+		act(() =>
+			useSettingsStore.setState({
+				keybindingOverrides: {
+					"app:new-tab": null,
+					"app:command-palette": {
+						key: "t",
+						meta: isMac,
+						ctrl: !isMac,
+						shift: false,
+						alt: false,
+					},
+				},
+			}),
+		);
+		const writes: unknown[] = [];
+		const unsub = useSettingsStore.subscribe((s) =>
+			writes.push(s.keybindingOverrides),
+		);
+		act(() => pill("New tab").click());
+		press("t", "KeyT", mod);
+		const reassign = Array.from(container.querySelectorAll("button")).find(
+			(b) => b.textContent === "Reassign",
+		);
+		act(() => reassign?.click());
+		unsub();
+		expect(writes).toEqual([{ "app:command-palette": null }]);
+	});
+
+	it("explains a key that cannot be bound, and keeps recording", () => {
+		act(() => pill("New tab").click());
+		press("1", "Numpad1", mod);
+		expect(overrides()).toEqual({});
+		expect(container.textContent).toMatch(/can't be used as a shortcut/);
+		expect(pill("New tab").getAttribute("aria-pressed")).toBe("true");
+	});
+
 	it("per-row reset and Reset all", () => {
 		act(() =>
 			useSettingsStore.setState({

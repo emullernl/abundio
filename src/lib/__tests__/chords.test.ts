@@ -156,12 +156,29 @@ describe("chordVerdict", () => {
 			"refuse",
 		);
 		expect(chordVerdict(chord("q", { ctrl: true }), false).kind).toBe("refuse");
+		expect(
+			chordVerdict(chord("f", { meta: true, ctrl: true }), true).kind,
+		).toBe("refuse");
+	});
+
+	it("reserves the Edit and Window menus on Windows/Linux too", () => {
+		for (const key of ["c", "v", "x", "z", "y", "a", "m"]) {
+			expect(chordVerdict(chord(key, { ctrl: true }), false).kind).toBe(
+				"refuse",
+			);
+		}
+		// Redo is Ctrl+Y there, so Ctrl+Shift+Z stays free.
+		expect(
+			chordVerdict(chord("z", { ctrl: true, shift: true }), false).kind,
+		).toBe("ok");
+		// Close Window's chord is Close tab's default, not reserved.
+		expect(chordVerdict(chord("w", { meta: true }), true).kind).toBe("ok");
 	});
 
 	it("warns about terminal control codes on Windows/Linux", () => {
-		const v = chordVerdict(chord("c", { ctrl: true }), false);
+		const v = chordVerdict(chord("d", { ctrl: true }), false);
 		expect(v.kind).toBe("warn");
-		expect(v.kind === "warn" && v.reason).toMatch(/interrupt/);
+		expect(v.kind === "warn" && v.reason).toMatch(/control code/);
 		expect(
 			chordVerdict(chord("1", { code: "Digit1", ctrl: true }), false).kind,
 		).toBe("warn");

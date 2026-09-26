@@ -59,7 +59,6 @@ export function buildMonacoRules(
 let monaco: Monaco | null = null;
 let overrides: KeybindingOverrides = {};
 let applied: IDisposable | null = null;
-const listeners = new Set<() => void>();
 
 function reapply(): void {
 	applied?.dispose();
@@ -86,14 +85,6 @@ export function registerMonacoForKeymap(m: Monaco): void {
 export function applyMonacoOverrides(next: KeybindingOverrides): void {
 	overrides = next;
 	reapply();
-	for (const fn of listeners) fn();
-}
-
-/** Notified after each `applyMonacoOverrides`, so editor-local commands (the
- *  font-size forwards in `CodeEditor`) can follow the keymap. */
-export function onMonacoOverridesChanged(fn: () => void): () => void {
-	listeners.add(fn);
-	return () => listeners.delete(fn);
 }
 
 /** Test hook: forget the Monaco instance and any applied rules. */
@@ -102,7 +93,6 @@ export function resetMonacoKeymapForTests(): void {
 	applied = null;
 	monaco = null;
 	overrides = {};
-	listeners.clear();
 }
 
 // ── The catalogue (Settings window) ─────────────────────────────────────────

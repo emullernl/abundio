@@ -196,18 +196,18 @@ export function KeyboardSection() {
 
 	/** Write a Chord (or Unbound) for one row, plus any Reassign. A Chord equal
 	 *  to the default deletes the Override instead, so the row reads "default"
-	 *  again and follows later releases. */
+	 *  again and follows later releases. One store write either way, so no
+	 *  Window ever samples a state with the Chord on two actions. */
 	const commit = useCallback(
 		(row: Row, chord: Chord | null, unbind?: string) => {
 			const backToDefault =
-				chord && row.fallback && chordsEqual(chord, row.fallback);
-			if (backToDefault) resetKeybinding(row.entry.id);
+				!!chord && !!row.fallback && chordsEqual(chord, row.fallback);
 			const changes: KeybindingOverrides = {};
 			if (!backToDefault) changes[row.entry.id] = chord;
 			if (unbind) changes[unbind] = null;
-			if (Object.keys(changes).length > 0) setOverrides(changes);
+			setOverrides(changes, backToDefault ? [row.entry.id] : []);
 		},
-		[resetKeybinding, setOverrides],
+		[setOverrides],
 	);
 
 	const onRecord = (row: Row, chord: Chord) => {
@@ -282,6 +282,13 @@ export function KeyboardSection() {
 							commit(row, null);
 						}}
 						onRecord={(chord) => onRecord(row, chord)}
+						onUnsupported={() =>
+							setMessage({
+								id,
+								tone: "error",
+								text: "That key can't be used as a shortcut. Try another.",
+							})
+						}
 					/>
 					<button
 						type="button"
@@ -527,6 +534,7 @@ export function KeyboardSection() {
 				)}
 
 				{visible.length === 0 &&
+					query &&
 					(group === "app" || catalogue.status === "ready") && (
 						<p style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
 							No shortcut matches “{query}”.

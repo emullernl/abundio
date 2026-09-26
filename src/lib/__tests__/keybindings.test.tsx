@@ -634,3 +634,16 @@ describe("Overrides", () => {
 		document.body.innerHTML = "";
 	});
 });
+
+describe("font size", () => {
+	afterEach(() => unregisterAction("font-size-increase"));
+
+	it("matches the physical = key, even where it needs Shift", () => {
+		const handler = vi.fn();
+		registerAction("font-size-increase", handler);
+		handleKeyDown(makeKeyEvent({ key: "=", code: "Equal", [modKey]: true }));
+		// A layout where the Equal key's character is something else.
+		handleKeyDown(makeKeyEvent({ key: "´", code: "Equal", [modKey]: true }));
+		expect(handler).toHaveBeenCalledTimes(2);
+	});
+});

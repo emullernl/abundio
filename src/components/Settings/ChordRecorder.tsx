@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { type Chord, chordFromEvent } from "../../lib/chords";
+import { type Chord, chordFromEvent, isModifierKey } from "../../lib/chords";
 
 interface Props {
 	/** The spelled Chord, or null for Unbound. */
@@ -9,6 +9,9 @@ interface Props {
 	onCancel: () => void;
 	onUnbind: () => void;
 	onRecord: (chord: Chord) => void;
+	/** A key Abundio cannot bind (keypad, media keys, dead keys). Recording
+	 *  stays on, so the user can simply press something else. */
+	onUnsupported: () => void;
 	/** For the accessible name: "Shortcut for Split right". */
 	actionLabel: string;
 }
@@ -29,11 +32,12 @@ export function ChordRecorder({
 	onCancel,
 	onUnbind,
 	onRecord,
+	onUnsupported,
 	actionLabel,
 }: Props) {
 	const ref = useRef<HTMLButtonElement>(null);
-	const handlers = useRef({ onCancel, onUnbind, onRecord });
-	handlers.current = { onCancel, onUnbind, onRecord };
+	const handlers = useRef({ onCancel, onUnbind, onRecord, onUnsupported });
+	handlers.current = { onCancel, onUnbind, onRecord, onUnsupported };
 
 	useEffect(() => {
 		if (!recording) return;
@@ -43,8 +47,11 @@ export function ChordRecorder({
 			const bare = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
 			if (e.key === "Escape") return handlers.current.onCancel();
 			if (e.key === "Backspace" && bare) return handlers.current.onUnbind();
+			// A bare modifier is the start of a chord, not a mistake.
+			if (isModifierKey(e.key)) return;
 			const chord = chordFromEvent(e);
 			if (chord) handlers.current.onRecord(chord);
+			else handlers.current.onUnsupported();
 		};
 		// Clicking anywhere else abandons the recording.
 		const onDown = (e: MouseEvent) => {

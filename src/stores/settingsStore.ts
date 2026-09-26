@@ -155,9 +155,13 @@ interface SettingsState {
 	setTaskDestination: (destination: TaskDestinationPreference) => void;
 	/** Rebind (a Chord) or unbind (null) one Shortcut. */
 	setKeybindingOverride: (id: string, chord: Chord | null) => void;
-	/** Apply several Overrides at once — a Reassign moves a Chord and unbinds
-	 *  its old owner in one write, so no Window ever sees both on one Chord. */
-	setKeybindingOverrides: (changes: KeybindingOverrides) => void;
+	/** Apply several Overrides at once, and delete the ids in `remove` (back
+	 *  to their defaults) — all in one write. A Reassign moves a Chord and
+	 *  unbinds its old owner this way, so no Window ever sees both on one Chord. */
+	setKeybindingOverrides: (
+		changes: KeybindingOverrides,
+		remove?: readonly string[],
+	) => void;
 	/** Back to the default: deletes the entry, never writes the default. */
 	resetKeybinding: (id: string) => void;
 	resetAllKeybindings: () => void;
@@ -766,10 +770,12 @@ export const useSettingsStore = create<SettingsState>()(
 				set((s) => ({
 					keybindingOverrides: { ...s.keybindingOverrides, [id]: chord },
 				})),
-			setKeybindingOverrides: (changes) =>
-				set((s) => ({
-					keybindingOverrides: { ...s.keybindingOverrides, ...changes },
-				})),
+			setKeybindingOverrides: (changes, remove = []) =>
+				set((s) => {
+					const next = { ...s.keybindingOverrides, ...changes };
+					for (const id of remove) delete next[id];
+					return { keybindingOverrides: next };
+				}),
 			resetKeybinding: (id) =>
 				set((s) => {
 					if (!hasOverride(s.keybindingOverrides, id)) return s;

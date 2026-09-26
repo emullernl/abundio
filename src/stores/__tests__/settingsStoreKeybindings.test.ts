@@ -56,6 +56,19 @@ describe("keybinding Overrides", () => {
 		]);
 	});
 
+	it("sets and removes in the same write", () => {
+		useSettingsStore.setState({ keybindingOverrides: { "app:new-tab": null } });
+		const seen: unknown[] = [];
+		const unsub = useSettingsStore.subscribe((s) =>
+			seen.push(s.keybindingOverrides),
+		);
+		useSettingsStore
+			.getState()
+			.setKeybindingOverrides({ "app:command-palette": null }, ["app:new-tab"]);
+		unsub();
+		expect(seen).toEqual([{ "app:command-palette": null }]);
+	});
+
 	it("migrates a v13 snapshot to an empty Override map", () => {
 		const migrate = useSettingsStore.persist.getOptions().migrate;
 		if (!migrate) throw new Error("expected a migrate function");
