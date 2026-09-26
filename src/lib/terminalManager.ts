@@ -1580,6 +1580,15 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							actState.recordOutput(currentPtyId);
 						}
 					} else if (cmd.type === "command_end") {
+						// A task pane's command_end before its command_start is the
+						// task script's setup failing: the Agent never ran. Forget
+						// the Agent the seed stamped, or it would auto-launch on the
+						// next start, and hand the pane over as a plain shell.
+						if (managed.awaitingTaskStart) {
+							managed.awaitingTaskStart = false;
+							disarmFilterResets(managed);
+							useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
+						}
 						actState.setRunningCommand(currentPtyId, null);
 						managed.startupShellReady = true;
 						tryFlushStartup(managed);

@@ -520,16 +520,33 @@ impl PtyManager {
 ///
 /// The setup is `eval`ed: it is **Worktree setup commands**, author-written
 /// shell that is typed at a prompt on every other path. The "no eval" rule
-/// is about *values*, which never reach it.
+/// is about *values*, which never reach it. It runs one line at a time in
+/// this shell (so a `cd` or `export` carries over to the Agent) and stops at
+/// the first line that fails. Then the Agent is **not** started: the script
+/// says so and reports only a `command_end` with that exit code, which the
+/// frontend reads as "the Task never started" (see `awaitingTaskStart`).
+/// The lines are read from fd 3, so a setup command that reads stdin gets the
+/// terminal, not the rest of the setup.
 fn task_script(reexec: &str) -> String {
     format!(
         r#"__abundio_keys=$ABUNDIO_TASK_ENV_KEYS; unset ABUNDIO_TASK_ENV_KEYS
 __abundio_setup=$1; shift
-if [ -n "$__abundio_setup" ]; then eval "$__abundio_setup"; fi
-unset __abundio_setup
-printf '\033]7770;command_start;%s\007' "${{1//$'\a'/ }}"
-"$@"
-printf '\033]7770;command_end;%s\007' "$?"
+__abundio_rc=0
+if [ -n "$__abundio_setup" ]; then
+  while IFS= read -r __abundio_line <&3; do
+    eval "$__abundio_line" 3<&- || {{ __abundio_rc=$?; break; }}
+  done 3<<<"$__abundio_setup"
+fi
+unset __abundio_setup __abundio_line
+if [ "$__abundio_rc" -ne 0 ]; then
+  printf '\n\033[31mSetup failed (exit %s), so the agent was not started.\033[0m\n' "$__abundio_rc"
+  printf '\033]7770;command_end;%s\007' "$__abundio_rc"
+else
+  printf '\033]7770;command_start;%s\007' "${{1//$'\a'/ }}"
+  "$@"
+  printf '\033]7770;command_end;%s\007' "$?"
+fi
+unset __abundio_rc
 {reexec}"#
     )
 }
@@ -1745,6 +1762,32 @@ mod task_launch_tests {
         for shell in ["/bin/zsh", "/bin/bash"] {
             let Some(out) = run_script(shell, &t) else { continue };
             assert!(out.contains("\x1b]7770;command_start;ec ho\x07"), "{shell}: {out:?}");
+        }
+    }
+
+    /// A failing setup line stops the setup and the Agent never starts: no
+    /// `command_start`, one `command_end` with the setup's exit code, and the
+    /// shell is still handed over. Lines run in this shell, so a `cd` carries.
+    #[test]
+    fn script_stops_when_setup_fails() {
+        let t = task(&["echo", "AGENT"], Some("cd /\necho ONE\nsh -c 'exit 4'\necho TWO"));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("ONE") && !out.contains("TWO"), "{shell}: {out}");
+            assert!(!out.contains("AGENT"), "{shell}: {out}");
+            assert!(!out.contains("command_start"), "{shell}: {out:?}");
+            assert!(out.contains("Setup failed (exit 4)"), "{shell}: {out}");
+            assert!(out.contains("\x1b]7770;command_end;4\x07"), "{shell}: {out:?}");
+            assert!(out.contains(&format!("REEXEC {shell} -i")), "{shell}: {out}");
+        }
+    }
+
+    #[test]
+    fn script_carries_setup_state_to_the_agent() {
+        let t = task(&["sh", "-c", "echo AT=$(pwd) V=$ABUNDIO_T"], Some("cd /\nexport ABUNDIO_T=set"));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("AT=/ V=set"), "{shell}: {out}");
         }
     }
 
