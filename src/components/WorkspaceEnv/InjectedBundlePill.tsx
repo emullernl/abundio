@@ -72,6 +72,10 @@ export function InjectedBundlePill({ workspaceId }: Props) {
 			style={{
 				gap: 5,
 				padding: "1px 8px",
+				// The status bar's left cluster shrinks its text segments first;
+				// the pill stays whole.
+				flexShrink: 0,
+				whiteSpace: "nowrap",
 				borderRadius: 999,
 				fontSize: 11,
 				fontWeight: 500,
@@ -83,7 +87,11 @@ export function InjectedBundlePill({ workspaceId }: Props) {
 			}}
 		>
 			<Zap size={10} style={{ flexShrink: 0 }} />
-			<span>{summary.bundle}</span>
+			{/* Capped so a long Bundle name cannot push every other segment of
+			    the bar down to its floor while the pill stays whole. */}
+			<span className="truncate" style={{ maxWidth: 140 }}>
+				{summary.bundle}
+			</span>
 			<span style={{ opacity: 0.7, fontVariantNumeric: "tabular-nums" }}>
 				{summary.varCount}
 			</span>

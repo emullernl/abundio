@@ -24,8 +24,75 @@ import { InjectedBundlePill } from "./WorkspaceEnv/InjectedBundlePill";
 
 function Separator() {
 	return (
-		<span style={{ color: "var(--border)", fontSize: 10, userSelect: "none" }}>
+		<span
+			style={{
+				color: "var(--border)",
+				fontSize: 10,
+				userSelect: "none",
+				flexShrink: 0,
+			}}
+		>
 			|
+		</span>
+	);
+}
+
+/**
+ * Smallest width a truncating left-cluster segment may shrink to: the 12px
+ * icon, its gap, and roughly two characters plus `…`. Below this the segment
+ * stops giving way and the cluster's `overflow: hidden` clips from the right.
+ */
+const SEGMENT_FLOOR = 32;
+
+/**
+ * The `min-width` for a segment showing `label`. A label this short already
+ * fits within the floor, so forcing the floor on it would only pad it with
+ * blank space; `auto` keeps it at its natural width and it never shrinks.
+ */
+export function segmentFloor(label: string): number | "auto" {
+	return label.length <= 3 ? "auto" : SEGMENT_FLOOR;
+}
+
+/**
+ * `flex-shrink` weights for the left cluster. Shrink is weighted by basis
+ * size, so these only approximate a strict order; spreading them by factors
+ * of ten gets close enough that the folder ellipsises first, then the tab,
+ * then the branch, and the Workspace name last.
+ */
+export const SHRINK_RANK = {
+	folder: 1000,
+	tab: 100,
+	branch: 10,
+	name: 1,
+} as const;
+
+/**
+ * One text segment of the left cluster: an icon that never shrinks and a
+ * label that ellipsises instead of wrapping onto a second line.
+ */
+function TextSegment({
+	icon,
+	title,
+	shrink,
+	className,
+	color,
+	label,
+}: {
+	icon: ReactNode;
+	title: string;
+	shrink: number;
+	className?: string;
+	color?: string;
+	label: string;
+}) {
+	return (
+		<span
+			className={`flex items-center gap-1.5 whitespace-nowrap${className ? ` ${className}` : ""}`}
+			style={{ minWidth: segmentFloor(label), flexShrink: shrink, color }}
+			title={title}
+		>
+			{icon}
+			<span className="truncate">{label}</span>
 		</span>
 	);
 }
@@ -79,7 +146,13 @@ function StatusMetric({
 function BranchSegment({ label }: { label: BranchLabel }) {
 	return (
 		<span
-			className="flex items-center gap-1.5 min-w-0"
+			className="flex items-center gap-1.5 whitespace-nowrap"
+			style={{
+				minWidth: segmentFloor(
+					label.kind === "detached" ? "detached" : label.full,
+				),
+				flexShrink: SHRINK_RANK.branch,
+			}}
 			title={label.kind === "detached" ? "Detached HEAD" : label.full}
 		>
 			<GitBranch size={12} className="flex-shrink-0" />
@@ -156,7 +229,8 @@ export function StatusBar() {
 	// (not per-workspace) — see ADR-0011. CPU is threshold-coloured; memory is
 	// always neutral (macOS rests near 75%, so a threshold would never rest).
 	const rightCluster = (
-		<div className="flex items-center gap-3">
+		// Pinned: it never shrinks, so the left cluster always gives way first.
+		<div className="flex items-center gap-3 flex-shrink-0 whitespace-nowrap">
 			<StatusMetric
 				icon={<Cpu size={12} />}
 				value={appMetrics ? formatPercent(appMetrics.cpuPercent) : "—"}
@@ -195,8 +269,14 @@ export function StatusBar() {
 				<>
 					<Separator />
 					<span className="flex items-center gap-1.5">
-						<User size={12} />
-						{activeProfile.name}
+						<User size={12} className="flex-shrink-0" />
+						<span
+							className="truncate"
+							style={{ maxWidth: 140 }}
+							title={activeProfile.name}
+						>
+							{activeProfile.name}
+						</span>
 					</span>
 				</>
 			)}
@@ -218,23 +298,28 @@ export function StatusBar() {
 		>
 			{workspace ? (
 				<>
-					{/* `min-w-0` lets the branch segment's `truncate` actually engage: a
-					    flex item won't shrink below its content's min-content width
-					    without it, so the cluster would overrun the right one instead of
-					    ellipsising in a narrow window. */}
+					{/* `min-w-0` lets this cluster shrink below its content width, so it
+					    gives way instead of overrunning the pinned right cluster. Its
+					    segments then shrink in `SHRINK_RANK` order, each ellipsising down
+					    to `SEGMENT_FLOOR`; once all are at their floor, `overflow: hidden`
+					    clips from the right edge, so the tab and pill go before the
+					    Workspace name. */}
 					<div className="flex items-center gap-3 min-w-0 overflow-hidden">
-						<span
-							className="flex items-center gap-1.5 font-medium"
-							style={{ color: "var(--accent)" }}
-						>
-							<Grid size={12} />
-							{workspace.name}
-						</span>
+						<TextSegment
+							icon={<Grid size={12} className="flex-shrink-0" />}
+							title={workspace.name}
+							shrink={SHRINK_RANK.name}
+							className="font-medium"
+							color="var(--accent)"
+							label={workspace.name}
+						/>
 						<Separator />
-						<span className="flex items-center gap-1.5">
-							<Folder size={12} />
-							{shortenPath(workspace.rootFolder)}
-						</span>
+						<TextSegment
+							icon={<Folder size={12} className="flex-shrink-0" />}
+							title={workspace.rootFolder}
+							shrink={SHRINK_RANK.folder}
+							label={shortenPath(workspace.rootFolder)}
+						/>
 						{branch && (
 							<>
 								<Separator />
@@ -244,10 +329,12 @@ export function StatusBar() {
 						{tab && (
 							<>
 								<Separator />
-								<span className="flex items-center gap-1.5">
-									<Terminal size={12} />
-									{tab.name}
-								</span>
+								<TextSegment
+									icon={<Terminal size={12} className="flex-shrink-0" />}
+									title={tab.name}
+									shrink={SHRINK_RANK.tab}
+									label={tab.name}
+								/>
 							</>
 						)}
 						<InjectedBundlePill workspaceId={workspace.id} />
@@ -255,8 +342,10 @@ export function StatusBar() {
 					{rightCluster}
 				</>
 			) : (
-				<div className="flex items-center justify-between w-full">
-					<span>{inFleet ? "Fleet Console" : "No active workspace"}</span>
+				<div className="flex items-center justify-between w-full gap-3">
+					<span className="truncate min-w-0">
+						{inFleet ? "Fleet Console" : "No active workspace"}
+					</span>
 					{rightCluster}
 				</div>
 			)}
