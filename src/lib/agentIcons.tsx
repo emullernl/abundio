@@ -85,6 +85,8 @@ export function getAgentIconComponent(
 			return GeminiIcon;
 		case "codex":
 			return CodexIcon;
+		// Aider is a retired built-in; the icon stays for the custom Agent
+		// it is converted into (same id). See RETIRED_BUILTINS.
 		case "aider":
 			return AiderIcon;
 		case "opencode":

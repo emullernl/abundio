@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v2. It manages workspaces (each bound to a folder), supports split panes with tabs, and has first-class support for AI coding CLI agents (Claude Code, GitHub Copilot CLI, Gemini CLI, Aider, Codex, OpenCode, Qwen Code, Kimi Code, Grok Build). It includes a built-in file explorer, code editor (Monaco), git integration, GitHub PR panel, and full-text workspace search.
+Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v2. It manages workspaces (each bound to a folder), supports split panes with tabs, and has first-class support for AI coding CLI agents (Claude Code, GitHub Copilot CLI, Gemini CLI, Codex, OpenCode, Qwen Code, Kimi Code, Grok Build). It includes a built-in file explorer, code editor (Monaco), git integration, GitHub PR panel, and full-text workspace search.
 
 > **Domain language**: see `CONTEXT.md` for canonical term definitions (Workspace, Pane, PTY, Tab, Agent, etc.) and flagged ambiguities to avoid.
 
@@ -106,7 +106,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/snapshotRegistry.ts` — Registry of per-pane snapshot functions. `saveAllSnapshots()` persists all terminal scrollback.
 - `lib/portalRegistry.ts` — Maps pane IDs to DOM elements for terminal rendering. Pub/sub pattern for target changes.
 - `lib/keybindings.ts` — Keyboard shortcut registry with capture-phase interception.
-- `lib/agents.ts` — Built-in agent definitions (Claude Code, Copilot, Gemini, Aider, Codex, OpenCode, Qwen, Kimi, Grok). `agentCommandFor()` is the single source of truth for an agent's launch string.
+- `lib/agents.ts` — Built-in agent definitions (Claude Code, Copilot, Gemini, Codex, OpenCode, Qwen, Kimi, Grok). `agentCommandFor()` is the single source of truth for an agent's launch string. `RETIRED_BUILTINS` lists built-ins a later release dropped (Aider); `mergeAgentsWithBuiltins` converts a Watched one into a custom Agent with the same id (ADR-0043).
 - `lib/paneTree.ts` — Pure helper functions for pane tree traversal and manipulation.
 - `lib/appWindow.ts` — `appWindow()` / `appWebview()` / `currentWindowLabel()`: the guarded way to reach Tauri's window APIs. `getCurrentWindow()` **throws** where there is no Tauri webview (the browser demo, jsdom), so never import it directly.
 - `lib/platform.ts` — Platform detection (`isMac`).

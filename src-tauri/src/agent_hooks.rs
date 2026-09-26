@@ -566,8 +566,8 @@ fn curl_available() -> bool {
         .unwrap_or(false)
 }
 
-/// The agents Abundio can provision hooks for, in display order. Aider and
-/// custom user agents are intentionally absent — Abundio has no hook
+/// The agents Abundio can provision hooks for, in display order. Custom user
+/// agents (including a converted Aider) are intentionally absent — Abundio has no hook
 /// integration for them.
 const SUPPORTED_AGENTS: &[&str] = &[
     "claude", "gemini", "qwen", "codex", "copilot", "opencode", "kimi", "grok",
@@ -673,7 +673,7 @@ struct AgentDescriptor {
 }
 
 /// Resolve an agent id to its provisioning descriptor, or `None` when Abundio
-/// has no hook integration for it (Aider, custom user agents).
+/// has no hook integration for it (custom user agents).
 fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
     let merge_events = |a: &str| {
         merge_agent_events(a)
@@ -974,7 +974,7 @@ pub struct AgentHookStatus {
 }
 
 /// Inspect every supported agent's config and report its footprint. Pure read —
-/// never writes relay scripts or config files. Aider / custom agents are absent
+/// never writes relay scripts or config files. Custom agents are absent
 /// from the result; the frontend renders those as "not supported".
 pub fn agent_hook_status() -> Result<Vec<AgentHookStatus>, AbundioError> {
     let home = dirs::home_dir().ok_or_else(|| io_err("no home directory".into()))?;

@@ -190,6 +190,7 @@ const AGENT_COLORS: Record<string, string> = {
 	gemini: "rgb(96 165 250)", // blue
 	qwen: "rgb(167 139 250)", // violet
 	codex: "rgb(45 212 191)", // teal
+	// Aider is a retired built-in; kept for converted agents and old Turns.
 	aider: "rgb(251 191 36)", // amber
 	opencode: "rgb(244 114 182)", // pink
 };
@@ -213,7 +214,7 @@ export function agentLabel(agentId: string): string {
 		gemini: "Gemini CLI",
 		qwen: "Qwen Code",
 		codex: "Codex",
-		aider: "Aider",
+		aider: "Aider", // retired built-in: converted agents and old Turns
 		opencode: "OpenCode",
 	};
 	return names[agentId] ?? agentId;
