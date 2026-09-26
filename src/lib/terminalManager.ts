@@ -42,6 +42,7 @@ import {
 	needsMouseSync,
 	nextMouseBlockFor,
 } from "./mouseReporting";
+import { taskSetupFailed } from "./newTask";
 import { parseOsc52 } from "./osc52";
 import { publishPaneFontSize } from "./paneFontSize";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
@@ -1471,6 +1472,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				const entry = actState.activities[currentPtyId];
 				const isAgentMode = entry?.detectionMode === "agent";
 
+				// The task script's command_end before its command_start: setup
+				// failed and the Agent never ran. Forget the Agent the seed
+				// stamped, or it would auto-launch on the next start, and hand
+				// the pane over as a plain shell. Checked before the
+				// command_start test below, which would otherwise clear the flag.
+				if (taskSetupFailed(managed.awaitingTaskStart, commands)) {
+					managed.awaitingTaskStart = false;
+					disarmFilterResets(managed);
+					useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
+				}
 				// The task script's command_start: the Agent starts now, so stop
 				// stripping clears and cursor-home moves — they are its first frame.
 				if (
@@ -1580,15 +1591,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							actState.recordOutput(currentPtyId);
 						}
 					} else if (cmd.type === "command_end") {
-						// A task pane's command_end before its command_start is the
-						// task script's setup failing: the Agent never ran. Forget
-						// the Agent the seed stamped, or it would auto-launch on the
-						// next start, and hand the pane over as a plain shell.
-						if (managed.awaitingTaskStart) {
-							managed.awaitingTaskStart = false;
-							disarmFilterResets(managed);
-							useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
-						}
 						actState.setRunningCommand(currentPtyId, null);
 						managed.startupShellReady = true;
 						tryFlushStartup(managed);

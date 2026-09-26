@@ -536,8 +536,9 @@ struct GhLabel {
 const ISSUE_LIMIT: &str = "100";
 
 /// Open issues of the repository `cwd` belongs to, highest issue number
-/// first; the user's assigned ones are marked. The two lists are unioned, so an assigned issue is listed even on a repository with
-/// more open issues than one page holds.
+/// first; the user's assigned ones are marked. The two lists are unioned,
+/// so an assigned issue is listed even on a repository with more open
+/// issues than one page holds.
 pub fn list_issues(cwd: &str) -> Result<Vec<GithubIssue>, AbundioError> {
 	let (available, authenticated) = gh_available_and_authenticated();
 	if !available {

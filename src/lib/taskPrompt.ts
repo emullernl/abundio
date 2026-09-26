@@ -119,9 +119,9 @@ export function branchPrefixForLabels(labels: readonly string[]): string {
  * `git check-ref-format`.
  */
 export function suggestBranchForIssue(
-	issue: IssueRef & { labels?: readonly string[] },
+	issue: IssueRef & { labels: readonly string[] },
 ): string {
-	const prefix = branchPrefixForLabels(issue.labels ?? []);
+	const prefix = branchPrefixForLabels(issue.labels);
 	const slug = issue.title
 		.normalize("NFKD")
 		.replace(/[̀-ͯ]/g, "")

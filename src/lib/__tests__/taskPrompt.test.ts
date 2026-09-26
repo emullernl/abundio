@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+	branchPrefixForLabels,
 	DEFAULT_ISSUE_TEMPLATE,
 	DEFAULT_TASK_TEMPLATE,
 	resolveTaskPrompt,
-	branchPrefixForLabels,
 	suggestBranchForIssue,
 	taskTabName,
 } from "../taskPrompt";
@@ -17,6 +17,7 @@ const issue = {
 	number: 42,
 	title: "Fix login redirect",
 	url: "https://github.com/acme/app/issues/42",
+	labels: [] as string[],
 };
 
 describe("resolveTaskPrompt", () => {

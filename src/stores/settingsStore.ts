@@ -824,9 +824,10 @@ export const useSettingsStore = create<SettingsState>()(
 					};
 				}
 				// v13: New worktree became the default Task destination and is
-				// now remembered too. Before v13 "newTab" was also the silent
-				// default, so it is moved over once; "restart" was always an
-				// explicit pick and is kept.
+				// now remembered too. Before v13 "newTab" was both the silent
+				// default and a savable pick, and the two are indistinguishable,
+				// so an explicit New tab choice is moved over too. "restart" was
+				// always an explicit pick and is kept.
 				if (version < 13 && state.taskDestination === "newTab") {
 					state = { ...state, taskDestination: "worktree" };
 				}

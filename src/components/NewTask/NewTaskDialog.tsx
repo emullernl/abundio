@@ -146,15 +146,14 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 			: null;
 
 	// ── Destination ──
-	const [destination, setDestination] = useState<TaskDestination>(() =>
-		initialDestination(rememberedDestination, canRestart),
+	const [destination, setDestination] = useState<TaskDestination>(
+		rememberedDestination,
 	);
-	const effectiveDestination: TaskDestination =
-		destination === "restart" && !canRestart
-			? "newTab"
-			: destination === "worktree" && !canWorktree
-				? "newTab"
-				: destination;
+	const effectiveDestination = initialDestination(
+		destination,
+		canRestart,
+		canWorktree,
+	);
 	const autoRestart = defaultRestartPane(agentPanes, focused);
 	const [restartPaneId, setRestartPaneId] = useState<string | null>(null);
 	const restartPane: AgentPane | null =

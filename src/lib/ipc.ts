@@ -617,8 +617,8 @@ export interface GithubIssue {
 }
 
 export const issues = {
-	/** Open issues of the repository `cwd` belongs to, assigned-to-me first,
-	 *  then newest. Rejects with a one-line reason (no gh, not signed in, no
+	/** Open issues of the repository `cwd` belongs to, highest number first,
+	 *  assigned-to-me ones marked. Rejects with a one-line reason (no gh, not signed in, no
 	 *  GitHub remote) that the dialog shows as-is. */
 	list: (cwd: string) => invoke<GithubIssue[]>("gh_list_issues", { cwd }),
 };
