@@ -57,7 +57,13 @@ import { stripControlChars } from "./promptActions";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
-import { stripResetSequences } from "./terminalResetFilter";
+import {
+	alternateScreenBefore,
+	isAlternateScreenOutput,
+	scanAlternateScreen,
+	shouldStripResets,
+	stripResetSequences,
+} from "./terminalResetFilter";
 import { registerTerminalSettings } from "./terminalSettingsBridge";
 import { modifiedNavKeySequence } from "./terminalWordJump";
 import { terminalThemeFor } from "./themeUtils";
@@ -344,7 +350,8 @@ export interface ManagedTerminal {
 	startupBuffer: Uint8Array[] | null;
 	/** Set to true once tryFlushStartup has scheduled its flush so re-entrant calls are ignored */
 	startupFlushScheduled: boolean;
-	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods) */
+	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods).
+	 *  Agents and alternate-screen programs are exempt — see `shouldStripResets`. */
 	filterResets: boolean;
 	/** Handle for the pending filterResets=false timer so consecutive calls to
 	 *  beginResizeFilter can cancel the previous timer and properly extend the
@@ -357,8 +364,18 @@ export interface ManagedTerminal {
 	 *  only drain at the safety timeout), and the task script's `command_start`
 	 *  ends any reset filtering, so the Agent's first frame arrives intact. */
 	awaitingTaskStart: boolean;
+	/** A typed agent launch (after the startup flush) whose Agent has not
+	 *  started yet. The pane is already in agent mode, but until the Agent's
+	 *  `command_start` the output is still the shell's, so the reset filter keeps
+	 *  cleaning it. Cleared on that `command_start`, or when the filter window
+	 *  ends, so it can never exempt the Agent's own redraws later. */
+	awaitingTypedAgentStart: boolean;
 	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
 	pendingWrites: Uint8Array[];
+	/** Alternate-screen state after the bytes in `pendingWrites`, kept up to
+	 *  date in `scheduleWrite` so each chunk is scanned once. Only meaningful
+	 *  while the queue is non-empty — see `altScreenBeforeChunk`. */
+	queuedAltScreen: boolean;
 	/** rAF handle for the pending write flush, or null if none scheduled */
 	writeRafId: number | null;
 	/** Mouse modes this pane's program has asked for and not withdrawn — whether
@@ -721,12 +738,25 @@ function stopBackgroundTracking(ptyId: string) {
  *  one animation frame are concatenated and written in a single term.write()
  *  call, which xterm processes more efficiently than many small writes. */
 function scheduleWrite(managed: ManagedTerminal, chunk: Uint8Array): void {
+	managed.queuedAltScreen = scanAlternateScreen(
+		chunk,
+		altScreenBeforeChunk(managed),
+	).after;
 	managed.pendingWrites.push(chunk);
 	if (managed.writeRafId === null) {
 		managed.writeRafId = requestAnimationFrame(() => {
 			flushWrites(managed);
 		});
 	}
+}
+
+/** Whether the screen is alternate in front of the next chunk to be queued. */
+function altScreenBeforeChunk(managed: ManagedTerminal): boolean {
+	return alternateScreenBefore({
+		queueEmpty: managed.pendingWrites.length === 0,
+		bufferIsAlternate: managed.term.buffer.active.type === "alternate",
+		queued: managed.queuedAltScreen,
+	});
 }
 
 function flushWrites(managed: ManagedTerminal): void {
@@ -1119,7 +1149,9 @@ export async function createTerminal(
 		startupFlushScheduled: false,
 		startupShellReady: false,
 		awaitingTaskStart: false,
+		awaitingTypedAgentStart: false,
 		pendingWrites: [],
+		queuedAltScreen: false,
 		writeRafId: null,
 		wantedMouseModes: new Set(),
 		sweepingMouseModes: 0,
@@ -1448,13 +1480,42 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					managed.awaitingTaskStart = false;
 					disarmFilterResets(managed);
 				}
+				// A typed launch's command_start: from here on the output is the
+				// Agent's, so its clears and cursor-home moves pass through.
+				if (
+					managed.awaitingTypedAgentStart &&
+					commands.some((c) => c.type === "command_start")
+				) {
+					managed.awaitingTypedAgentStart = false;
+				}
 
 				if (managed.startupBuffer) {
 					managed.startupBuffer.push(cleaned);
 				} else {
-					const output = managed.filterResets
-						? stripResetSequences(cleaned)
-						: cleaned;
+					// `isAgentMode` is read before this chunk's command_start is
+					// processed below, so a *manually typed* agent is only seen as
+					// one from its next chunk: if a filter window is open, the chunk
+					// carrying its command_start still loses its clears. Accepted:
+					// it takes a non-alternate-screen agent (Claude Code) typed within
+					// a filter window (at most 1.5 s after a projection or tab
+					// switch), and only that one chunk. Likewise the launch-into-a-live-shell
+					// paths (CommandPalette, TerminalSlot) set agent mode without
+					// `awaitingTypedAgentStart`, so the shell's pre-agent output is
+					// exempt there — the safe direction for #207, unlike
+					// `flushStartupBuffer`.
+					const output =
+						managed.filterResets &&
+						shouldStripResets({
+							agentMode: isAgentMode,
+							alternateScreen: isAlternateScreenOutput(
+								altScreenBeforeChunk(managed),
+								cleaned,
+							),
+							awaitingAgentStart:
+								managed.awaitingTaskStart || managed.awaitingTypedAgentStart,
+						})
+							? stripResetSequences(cleaned)
+							: cleaned;
 					scheduleWrite(managed, output);
 				}
 
@@ -1894,6 +1955,7 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 	if (pendingAgent && managed.ptyId) {
 		pty.write(managed.ptyId, `${pendingAgent.command}\n`).catch(() => {});
 		usePtyActivityStore.getState().setAgentPty(managed.ptyId);
+		managed.awaitingTypedAgentStart = true;
 	}
 }
 
@@ -1948,12 +2010,15 @@ function armFilterResets(managed: ManagedTerminal, durationMs: number): void {
 	managed.filterResetsTimer = setTimeout(() => {
 		managed.filterResets = false;
 		managed.filterResetsTimer = null;
+		managed.awaitingTypedAgentStart = false;
 	}, durationMs);
 }
 
 /** Stop filtering reset sequences now, cancelling any pending timer. */
 function disarmFilterResets(managed: ManagedTerminal): void {
 	managed.filterResets = false;
+	// No filter window ⇒ no awaiting flag, as the armed timer's expiry ensures.
+	managed.awaitingTypedAgentStart = false;
 	if (managed.filterResetsTimer !== null) {
 		clearTimeout(managed.filterResetsTimer);
 		managed.filterResetsTimer = null;
@@ -1963,7 +2028,9 @@ function disarmFilterResets(managed: ManagedTerminal): void {
 /** Temporarily filter terminal reset sequences from PTY output.
  *  Used around PTY resize during workspace switches and tab projections to
  *  prevent the shell's resize-triggered redraw from wiping existing terminal
- *  content. Safe to call repeatedly — each call resets the timer. */
+ *  content. Safe to call repeatedly — each call resets the timer. Output from
+ *  an Agent or an alternate-screen program is never filtered: its redraw
+ *  needs the very clears and cursor-home moves this strips (#207). */
 export function beginResizeFilter(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed) return;
@@ -2254,6 +2321,7 @@ export async function restartPanePty(
 	managed.startupFlushScheduled = false;
 	managed.startupShellReady = false;
 	managed.awaitingTaskStart = false;
+	managed.awaitingTypedAgentStart = false;
 	// `settled` deliberately stays true: the pane is already projected and
 	// painted, and clearing it would make the flush wait for the safety timeout.
 

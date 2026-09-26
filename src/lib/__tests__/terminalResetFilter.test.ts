@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { stripResetSequences } from "../terminalResetFilter";
+import {
+	alternateScreenBefore,
+	isAlternateScreenOutput,
+	scanAlternateScreen,
+	shouldStripResets,
+	stripResetSequences,
+} from "../terminalResetFilter";
 
 const encode = (s: string): Uint8Array => new TextEncoder().encode(s);
 
@@ -170,5 +176,156 @@ describe("stripResetSequences", () => {
 		expect(new TextDecoder().decode(result)).toBe(
 			"\x1b[?25l\x1b[m\x1b]0;title\x07\x1b[?25h",
 		);
+	});
+});
+
+describe("shouldStripResets", () => {
+	const cases: [boolean, boolean, boolean, boolean][] = [
+		// agentMode, alternateScreen, awaitingAgentStart, expected
+		[false, false, false, true],
+		[true, false, false, false],
+		[false, true, false, false],
+		[true, true, false, false],
+		[true, false, true, true],
+		[true, true, true, false],
+		[false, false, true, true],
+	];
+
+	it.each(
+		cases,
+	)("agentMode=%s alternateScreen=%s awaitingAgentStart=%s -> %s", (agentMode, alternateScreen, awaitingAgentStart, expected) => {
+		expect(
+			shouldStripResets({ agentMode, alternateScreen, awaitingAgentStart }),
+		).toBe(expected);
+	});
+});
+
+describe("scanAlternateScreen", () => {
+	it("leaves the state alone when there is no switch", () => {
+		expect(scanAlternateScreen(encode("\x1b[H\x1b[2Jhi"), false)).toEqual({
+			after: false,
+			entered: false,
+		});
+		expect(scanAlternateScreen(encode("hi"), true)).toEqual({
+			after: true,
+			entered: false,
+		});
+	});
+
+	it.each(["47", "1047", "1049"])("detects ?%sh and ?%sl", (mode) => {
+		expect(scanAlternateScreen(encode(`\x1b[?${mode}h`), false)).toEqual({
+			after: true,
+			entered: true,
+		});
+		expect(scanAlternateScreen(encode(`\x1b[?${mode}l`), true)).toEqual({
+			after: false,
+			entered: false,
+		});
+	});
+
+	it("detects the mode among other params", () => {
+		expect(scanAlternateScreen(encode("\x1b[?1002;1049h"), false).after).toBe(
+			true,
+		);
+		expect(scanAlternateScreen(encode("\x1b[?1049;1002h"), false).after).toBe(
+			true,
+		);
+	});
+
+	it("ignores other private modes and non-private CSIs", () => {
+		expect(
+			scanAlternateScreen(encode("\x1b[?25h\x1b[?10490h"), false).after,
+		).toBe(false);
+		expect(scanAlternateScreen(encode("\x1b[1049h"), false).after).toBe(false);
+	});
+
+	it("uses the last switch for the final state, but reports any entry", () => {
+		expect(
+			scanAlternateScreen(encode("\x1b[?1049hframe\x1b[?1049l"), false),
+		).toEqual({ after: false, entered: true });
+	});
+
+	it("still sees a switch right after a truncated sequence", () => {
+		expect(scanAlternateScreen(encode("\x1b[?1049\x1b[?1049h"), false)).toEqual(
+			{ after: true, entered: true },
+		);
+	});
+
+	it("ignores a sequence cut off at the end of the chunk", () => {
+		expect(scanAlternateScreen(encode("\x1b[?1049"), false).after).toBe(false);
+	});
+});
+
+describe("alternateScreenBefore", () => {
+	it("uses xterm's buffer type when nothing is queued", () => {
+		expect(
+			alternateScreenBefore({
+				queueEmpty: true,
+				bufferIsAlternate: true,
+				queued: false,
+			}),
+		).toBe(true);
+		expect(
+			alternateScreenBefore({
+				queueEmpty: true,
+				bufferIsAlternate: false,
+				queued: true,
+			}),
+		).toBe(false);
+	});
+
+	it("uses the queued state when bytes are waiting for the next frame", () => {
+		expect(
+			alternateScreenBefore({
+				queueEmpty: false,
+				bufferIsAlternate: false,
+				queued: true,
+			}),
+		).toBe(true);
+		expect(
+			alternateScreenBefore({
+				queueEmpty: false,
+				bufferIsAlternate: true,
+				queued: false,
+			}),
+		).toBe(false);
+	});
+
+	it("tracks a queue incrementally, one scan per chunk", () => {
+		// Mirrors scheduleWrite: each queued chunk folds into the state once.
+		const chunks = ["out", "\x1b[?1049h", "frame", "\x1b[?1049l", "\x1b[?47h"];
+		let queued = false;
+		let queueEmpty = true;
+		const seen: boolean[] = [];
+		for (const c of chunks) {
+			const before = alternateScreenBefore({
+				queueEmpty,
+				bufferIsAlternate: false,
+				queued,
+			});
+			seen.push(before);
+			queued = scanAlternateScreen(encode(c), before).after;
+			queueEmpty = false;
+		}
+		expect(seen).toEqual([false, false, true, true, false]);
+		expect(queued).toBe(true);
+	});
+});
+
+describe("isAlternateScreenOutput", () => {
+	const frame = encode("\x1b[H\x1b[2Jframe");
+
+	it("is true when the screen is already alternate", () => {
+		expect(isAlternateScreenOutput(true, frame)).toBe(true);
+	});
+
+	it("is false on the normal screen", () => {
+		expect(isAlternateScreenOutput(false, frame)).toBe(false);
+	});
+
+	it("sees a switch inside the chunk itself", () => {
+		expect(
+			isAlternateScreenOutput(false, encode("\x1b[?1049h\x1b[H\x1b[2J")),
+		).toBe(true);
 	});
 });
