@@ -29,6 +29,9 @@ interface AttachmentFieldProps {
 	multiple: boolean;
 	paths: string[];
 	onChange: (v: ParamValue) => void;
+	/** The "Choose file…" button, which the dialog focuses when Enter is pressed
+	 *  while this field is still empty. */
+	chooseRef?: React.Ref<HTMLButtonElement>;
 }
 
 const buttonStyle: React.CSSProperties = {
@@ -48,9 +51,14 @@ export function AttachmentField({
 	multiple,
 	paths,
 	onChange,
+	chooseRef,
 }: AttachmentFieldProps) {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// Once a file is attached, Enter on either button submits the dialog rather
+	// than reopening the picker or pasting again; Space still activates them.
+	// Empty, the buttons are how the field gets filled, so Enter keeps them.
+	const enterSubmits = paths.length > 0 || undefined;
 
 	function add(next: string[]) {
 		const merged = multiple ? [...paths, ...next] : next.slice(0, 1);
@@ -132,7 +140,9 @@ export function AttachmentField({
 
 				<div className="flex flex-wrap gap-2">
 					<button
+						ref={chooseRef}
 						type="button"
+						data-enter-submits={enterSubmits}
 						className={buttonClass}
 						style={buttonStyle}
 						onClick={pick}
@@ -147,6 +157,7 @@ export function AttachmentField({
 						style={buttonStyle}
 						onClick={pasteImage}
 						disabled={busy}
+						data-enter-submits={enterSubmits}
 					>
 						<ClipboardPaste size={11} />
 						{busy ? "Pasting…" : "Paste from clipboard"}

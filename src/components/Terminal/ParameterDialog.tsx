@@ -8,8 +8,8 @@ import { createPortal } from "react-dom";
  * horizontally-scrolling rail, a field there could not grow on Shift+Enter, and
  * an `attachment` could not render in it at all.
  *
- * Every field is **required** and Send stays disabled until all are filled.
- * Fields are pre-filled from authored defaults only — never from the last value
+ * Send stays disabled until every **required** field is filled (a toggle never
+ * is; an author can mark any other Parameter optional). Fields are pre-filled from authored defaults only — never from the last value
  * used, because Enter submits this dialog and firing submits to the Agent, so a
  * reflex Enter would send a three-day-old value nobody read.
  *
@@ -65,16 +65,27 @@ function ParameterDialogBody({
 	const [values, setValues] = useState<Record<string, ParamValue>>(() =>
 		initialValues(action.body, action.params),
 	);
-	const firstRef = useRef<HTMLElement>(null);
+	// One element per parameter: the control that takes focus for it. For an
+	// attachment that is its "Choose file…" button.
+	const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
+	const cardRef = useRef<HTMLDivElement>(null);
 
 	useEscapeKey(onCancel);
 
+	// Focus always moves into the dialog, whatever the fields are. Left in the
+	// terminal behind it, Enter and every keystroke went to the Agent.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: on mount only
 	useEffect(() => {
-		const el = firstRef.current;
+		// The first field that is not an attachment, so the caret lands somewhere
+		// useful. An attachment's button never takes focus on open: Enter must
+		// submit (or point at the empty field), never open a file picker by
+		// surprise. With only attachments, the card takes it.
+		const first = params.find((p) => p.meta.type !== "attachment");
+		const el = first ? fieldRefs.current[first.name] : cardRef.current;
 		el?.focus();
 		// Select the authored default so typing replaces it rather than appending
-		// to it. Guarded because the first field may be a toggle or an
-		// attachment, neither of which is a text input.
+		// to it. Guarded because the first field may be a toggle or a choice,
+		// neither of which is a text input.
 		if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
 			el.select();
 	}, []);
@@ -88,8 +99,47 @@ function ParameterDialogBody({
 	const [refusal, setRefusal] = useState<string | null>(null);
 
 	function submit(stageOnly: boolean) {
-		if (!ready) return;
+		if (!ready) {
+			// Point at what is missing rather than doing nothing.
+			const empty = params.find(
+				(p) => isRequired(p.meta) && !isFilled(p.meta, values[p.name] ?? ""),
+			);
+			const el = empty ? fieldRefs.current[empty.name] : null;
+			el?.focus();
+			// A disabled control refuses focus (an attachment's buttons, while a
+			// paste runs). Keep focus in the dialog rather than nowhere visible.
+			if (el && document.activeElement !== el) cardRef.current?.focus();
+			return;
+		}
 		setRefusal(onSubmit(values, stageOnly));
+	}
+
+	/**
+	 * Enter submits from any field, and Alt/Option+Enter stages, as Alt-clicking
+	 * Send does. Shift+Enter is left to the field (a newline in a text field).
+	 * An open choice list has already used its Enter to pick an option and
+	 * called `preventDefault` — its portal is outside the card in the DOM but
+	 * not in the React tree, so the event still bubbles here. Real buttons
+	 * (Cancel, Send, an empty attachment's buttons) keep their own Enter; the
+	 * ones that act as fields opt in with `data-enter-submits` — the toggle, the
+	 * choice trigger, and an attachment's buttons once it holds a file.
+	 */
+	function onCardKeyDown(e: React.KeyboardEvent) {
+		// Keys never reach the terminal behind the dialog.
+		e.stopPropagation();
+		if (e.key !== "Enter" || e.shiftKey || e.defaultPrevented) return;
+		// An IME commits its candidate with Enter. That keydown carries
+		// isComposing (keyCode 229 on WebKit) and must not submit — it is the
+		// user finishing a word, not firing the action.
+		if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+		const target = e.target;
+		if (
+			target instanceof HTMLButtonElement &&
+			!target.hasAttribute("data-enter-submits")
+		)
+			return;
+		e.preventDefault();
+		submit(e.altKey);
 	}
 
 	return (
@@ -103,11 +153,12 @@ function ParameterDialogBody({
 				transition={{ duration: 0.15 }}
 				style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
 				onClick={onCancel}
-				onKeyDown={(e) => e.key === "Escape" && onCancel()}
 			>
 				<motion.div
+					ref={cardRef}
 					role="dialog"
 					aria-label={`Parameters for ${action.name}`}
+					tabIndex={-1}
 					className="rounded-2xl overflow-hidden flex flex-col"
 					initial={{ opacity: 0, scale: 0.97, y: 8 }}
 					animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -116,13 +167,14 @@ function ParameterDialogBody({
 					style={{
 						width: 520,
 						maxHeight: "82vh",
+						outline: "none",
 						backgroundColor: "var(--bg-secondary)",
 						border: "1px solid var(--border)",
 						boxShadow:
 							"0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03) inset",
 					}}
 					onClick={(e) => e.stopPropagation()}
-					onKeyDown={(e) => e.stopPropagation()}
+					onKeyDown={onCardKeyDown}
 				>
 					{/* The accent stripe names which button is about to speak. */}
 					<header
@@ -152,15 +204,16 @@ function ParameterDialogBody({
 						className="flex flex-col gap-5 overflow-y-auto"
 						style={{ padding: "20px 24px" }}
 					>
-						{params.map((p, i) => (
+						{params.map((p) => (
 							<Field
 								key={p.name}
 								name={p.name}
 								meta={p.meta}
 								value={values[p.name]}
-								inputRef={i === 0 ? firstRef : undefined}
+								inputRef={(el) => {
+									fieldRefs.current[p.name] = el;
+								}}
 								onChange={(v) => setValue(p.name, v)}
-								onSubmit={() => submit(false)}
 							/>
 						))}
 
@@ -243,20 +296,11 @@ interface FieldProps {
 	name: string;
 	meta: ParamMeta;
 	value: ParamValue;
-	// biome-ignore lint/suspicious/noExplicitAny: one ref shared across input kinds
-	inputRef?: React.RefObject<any>;
+	inputRef: (el: HTMLElement | null) => void;
 	onChange: (v: ParamValue) => void;
-	onSubmit: () => void;
 }
 
-function Field({
-	name,
-	meta,
-	value,
-	inputRef,
-	onChange,
-	onSubmit,
-}: FieldProps) {
+function Field({ name, meta, value, inputRef, onChange }: FieldProps) {
 	const required = isRequired(meta);
 	const filled = isFilled(meta, value);
 
@@ -296,9 +340,16 @@ function Field({
 			</span>
 
 			{meta.type === "toggle" ? (
-				<ToggleField meta={meta} value={value === true} onChange={onChange} />
+				<ToggleField
+					buttonRef={inputRef}
+					meta={meta}
+					value={value === true}
+					onChange={onChange}
+				/>
 			) : meta.type === "choice" ? (
 				<Select
+					ref={inputRef}
+					enterSubmits
 					className="rounded-lg"
 					style={fieldStyle}
 					width="100%"
@@ -312,6 +363,7 @@ function Field({
 					multiple={meta.multiple ?? false}
 					paths={Array.isArray(value) ? value : []}
 					onChange={onChange}
+					chooseRef={inputRef}
 				/>
 			) : (
 				<GrowingTextField
@@ -320,7 +372,6 @@ function Field({
 					numeric={meta.type === "number"}
 					value={String(value ?? "")}
 					onChange={onChange}
-					onSubmit={onSubmit}
 				/>
 			)}
 		</div>
@@ -348,8 +399,8 @@ const fieldStyle: React.CSSProperties = {
 
 /**
  * One line by default; **Shift+Enter grows it** by inserting a newline. Enter
- * submits the dialog. Mirrors what a chat input does, and what the Agents on
- * the other end do.
+ * submits the dialog — handled on the dialog card, not here. Mirrors what a
+ * chat input does, and what the Agents on the other end do.
  */
 function GrowingTextField({
 	name,
@@ -357,32 +408,20 @@ function GrowingTextField({
 	numeric,
 	value,
 	onChange,
-	onSubmit,
 }: {
 	name: string;
-	// biome-ignore lint/suspicious/noExplicitAny: shared across input/textarea
-	inputRef?: React.RefObject<any>;
+	inputRef: (el: HTMLElement | null) => void;
 	numeric: boolean;
 	value: string;
 	onChange: (v: string) => void;
-	onSubmit: () => void;
 }) {
+	// Shift+Enter falls through to the textarea's own newline. A number field
+	// cannot hold one, so there it is simply swallowed. Plain Enter bubbles to
+	// the dialog card, which submits.
 	function handleKeyDown(
 		e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
 	) {
-		if (e.key !== "Enter") return;
-		// An IME commits its candidate with Enter. That keydown carries
-		// isComposing (keyCode 229 on WebKit) and must not submit — it is the
-		// user finishing a word, not firing the action.
-		if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-		// Shift+Enter falls through to the textarea's own newline. A number
-		// field cannot hold one, so there it is simply swallowed.
-		if (e.shiftKey) {
-			if (numeric) e.preventDefault();
-			return;
-		}
-		e.preventDefault();
-		onSubmit();
+		if (e.key === "Enter" && e.shiftKey && numeric) e.preventDefault();
 	}
 
 	if (numeric) {
@@ -434,10 +473,12 @@ function GrowingTextField({
  * actually add to the prompt.
  */
 function ToggleField({
+	buttonRef,
 	meta,
 	value,
 	onChange,
 }: {
+	buttonRef: (el: HTMLElement | null) => void;
 	meta: ParamMeta;
 	value: boolean;
 	onChange: (v: boolean) => void;
@@ -445,7 +486,10 @@ function ToggleField({
 	const contributes = value ? meta.onText : meta.offText;
 	return (
 		<button
+			ref={buttonRef}
 			type="button"
+			// Enter submits the dialog; Space flips the switch.
+			data-enter-submits
 			className="flex items-center gap-3 rounded-lg text-left"
 			style={{ ...fieldStyle, cursor: "pointer" }}
 			onClick={() => onChange(!value)}
