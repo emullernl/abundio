@@ -258,6 +258,18 @@ describe("Task-capable agents", () => {
 		]);
 	});
 
+	it("keeps a prompt starting with - from being read as an option", () => {
+		expect(agentTaskArgvFor(BUILTIN_AGENTS, "qwen", "- fix it")).toEqual([
+			"qwen",
+			"-i",
+			" - fix it",
+		]);
+		expect(agentTaskArgvFor(BUILTIN_AGENTS, "claude", "fix - it")).toEqual([
+			"claude",
+			"fix - it",
+		]);
+	});
+
 	it("returns undefined for a non-capable or missing agent", () => {
 		expect(agentTaskArgvFor(BUILTIN_AGENTS, "kimi", "x")).toBeUndefined();
 		expect(agentTaskArgvFor(BUILTIN_AGENTS, "nope", "x")).toBeUndefined();

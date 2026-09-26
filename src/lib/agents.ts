@@ -223,9 +223,22 @@ export function agentTaskArgvFor(
 		...agent.command.trim().split(/\s+/).filter(Boolean),
 		...(agent.args ?? []),
 		...(agent.taskArgs ?? []).map((a) =>
-			a === TASK_PROMPT_PLACEHOLDER ? prompt : a,
+			a === TASK_PROMPT_PLACEHOLDER ? optionSafePrompt(prompt) : a,
 		),
 	];
+}
+
+/**
+ * A prompt that starts with `-` (a bullet list, `--dry-run please`) is read as
+ * an option by every Task-capable CLI's argument parser, which then exits:
+ * Claude `unknown option`, Codex and Grok `unexpected argument`, Gemini and
+ * Qwen a missing `-i` value, Copilot `Invalid command format`. `--` is no
+ * general cure — it cannot follow an option that takes the prompt as its
+ * value (`-i`, `--prompt`). One leading space is: every parser checked then
+ * takes it as a value, and the Agent sees the same prompt.
+ */
+export function optionSafePrompt(prompt: string): string {
+	return prompt.startsWith("-") ? ` ${prompt}` : prompt;
 }
 
 /**
