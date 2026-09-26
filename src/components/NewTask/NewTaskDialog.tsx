@@ -22,8 +22,10 @@ import {
 	defaultWorktreeFolder,
 	initialDestination,
 	shellSupportsTasks,
+	stepIssueIndex,
 	type TaskDestination,
 	taskAgents,
+	visibleIssue,
 	workspaceAgentPanes,
 } from "../../lib/newTask";
 import { revealPane } from "../../lib/paneLocation";
@@ -131,7 +133,6 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	const [issueQuery, setIssueQuery] = useState("");
 	const [issueState, setIssueState] = useState<IssueState>({ status: "idle" });
 	const [issue, setIssue] = useState<GithubIssue | null>(null);
-	const [issueIndex, setIssueIndex] = useState(0);
 	const issueListRef = useRef<HTMLDivElement>(null);
 	// A Workspace whose remotes were checked and point at no GitHub repository
 	// has no issues to offer. Unknown (not checked yet) still offers them; the
@@ -240,13 +241,15 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	}, [issueState, issueQuery]);
 
 	// ── The Task ──
+	// The pick counts only while the search still shows it.
+	const shownIssue = visibleIssue(issue, filteredIssues);
 	const task: Task | null =
 		source === "text"
 			? input.trim()
 				? { kind: "text", input, note }
 				: null
-			: issue
-				? { kind: "issue", issue, note }
+			: shownIssue
+				? { kind: "issue", issue: shownIssue, note }
 				: null;
 	const prompt = task
 		? resolveTaskPrompt(task, { taskTemplate, issueTemplate })
@@ -400,13 +403,12 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 		.map((id) => workspaces.find((w) => w.id === id))
 		.filter((w) => !!w);
 
-	const moveIssue = (step: number) => {
-		if (filteredIssues.length === 0) return;
-		const next = Math.max(
-			0,
-			Math.min(filteredIssues.length - 1, issueIndex + step),
-		);
-		setIssueIndex(next);
+	const moveIssue = (step: 1 | -1) => {
+		const current = shownIssue
+			? filteredIssues.findIndex((i) => i.number === shownIssue.number)
+			: -1;
+		const next = stepIssueIndex(current, step, filteredIssues.length);
+		if (next === null) return;
 		setIssue(filteredIssues[next]);
 		issueListRef.current
 			?.querySelector(`[data-index="${next}"]`)
@@ -587,14 +589,11 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 											// biome-ignore lint/a11y/noAutofocus: picking an issue is the next step
 											autoFocus
 											value={issueQuery}
-											onChange={(e) => {
-												setIssueQuery(e.target.value);
-												setIssueIndex(0);
-											}}
+											onChange={(e) => setIssueQuery(e.target.value)}
 											onKeyDown={(e) => {
 												if (e.key === "ArrowDown") {
 													e.preventDefault();
-													moveIssue(issue ? 1 : 0);
+													moveIssue(1);
 												} else if (e.key === "ArrowUp") {
 													e.preventDefault();
 													moveIssue(-1);
@@ -620,11 +619,8 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 										<IssueList
 											state={issueState}
 											items={filteredIssues}
-											selected={issue}
-											onSelect={(i, index) => {
-												setIssue(i);
-												setIssueIndex(index);
-											}}
+											selected={shownIssue}
+											onSelect={(i) => setIssue(i)}
 										/>
 									</div>
 								</div>
@@ -1140,7 +1136,7 @@ function IssueList({
 	state: IssueState;
 	items: GithubIssue[];
 	selected: GithubIssue | null;
-	onSelect: (issue: GithubIssue, index: number) => void;
+	onSelect: (issue: GithubIssue) => void;
 }) {
 	const message = (text: string, tone = "var(--fg-secondary)") => (
 		<div style={{ padding: "14px 12px", fontSize: 12, color: tone }}>
@@ -1161,7 +1157,7 @@ function IssueList({
 						key={i.number}
 						type="button"
 						data-index={index}
-						onClick={() => onSelect(i, index)}
+						onClick={() => onSelect(i)}
 						className={`w-full flex items-center text-left ${
 							isSel ? "" : "hover:bg-[var(--bg-tertiary)]"
 						}`}

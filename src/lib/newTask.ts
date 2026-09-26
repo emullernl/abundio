@@ -126,3 +126,32 @@ export function shellSupportsTasks(shellPath: string): boolean {
 	const base = (shellPath.split(/[\\/]/).pop() ?? "").toLowerCase();
 	return base.includes("zsh") || base.includes("bash");
 }
+
+/**
+ * The picked issue as far as the dialog is concerned: only while the search
+ * still shows it. A pick hidden by the filter must not be what Start uses —
+ * the user would launch an issue they can no longer see.
+ */
+export function visibleIssue<T extends { number: number }>(
+	picked: T | null,
+	shown: T[],
+): T | null {
+	return picked && shown.some((i) => i.number === picked.number)
+		? picked
+		: null;
+}
+
+/**
+ * The row an arrow key moves to. `current` is the highlighted row, or -1 when
+ * nothing is: the first Down then lands on the first row rather than skipping
+ * it. Clamped at both ends; `null` when the list is empty.
+ */
+export function stepIssueIndex(
+	current: number,
+	step: 1 | -1,
+	count: number,
+): number | null {
+	if (count === 0) return null;
+	if (current < 0) return step === 1 ? 0 : count - 1;
+	return Math.max(0, Math.min(count - 1, current + step));
+}

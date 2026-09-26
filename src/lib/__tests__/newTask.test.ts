@@ -9,7 +9,9 @@ import {
 	initialDestination,
 	type LiveAgentState,
 	shellSupportsTasks,
+	stepIssueIndex,
 	taskAgents,
+	visibleIssue,
 	workspaceAgentPanes,
 } from "../newTask";
 import type { PaneNode, Tab, WorkspaceWithTabs } from "../types";
@@ -172,5 +174,26 @@ describe("shellSupportsTasks", () => {
 		expect(shellSupportsTasks("/usr/local/bin/fish")).toBe(false);
 		expect(shellSupportsTasks("C:\\Windows\\System32\\cmd.exe")).toBe(false);
 		expect(shellSupportsTasks("pwsh")).toBe(false);
+	});
+});
+
+describe("issue picking", () => {
+	const a = { number: 214 };
+	const b = { number: 209 };
+
+	// Select #214, then filter to "209": Start must not launch the hidden #214.
+	it("drops a pick the search no longer shows", () => {
+		expect(visibleIssue(a, [a, b])).toBe(a);
+		expect(visibleIssue(a, [b])).toBeNull();
+		expect(visibleIssue(null, [a])).toBeNull();
+	});
+
+	it("lands the first Down on the first row, not the second", () => {
+		expect(stepIssueIndex(-1, 1, 3)).toBe(0);
+		expect(stepIssueIndex(-1, -1, 3)).toBe(2);
+		expect(stepIssueIndex(0, 1, 3)).toBe(1);
+		expect(stepIssueIndex(2, 1, 3)).toBe(2);
+		expect(stepIssueIndex(0, -1, 3)).toBe(0);
+		expect(stepIssueIndex(-1, 1, 0)).toBeNull();
 	});
 });
