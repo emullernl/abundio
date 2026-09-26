@@ -57,7 +57,11 @@ import { stripControlChars } from "./promptActions";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
-import { stripResetSequences } from "./terminalResetFilter";
+import {
+	isAlternateScreenOutput,
+	shouldStripResets,
+	stripResetSequences,
+} from "./terminalResetFilter";
 import { registerTerminalSettings } from "./terminalSettingsBridge";
 import { modifiedNavKeySequence } from "./terminalWordJump";
 import { terminalThemeFor } from "./themeUtils";
@@ -344,7 +348,8 @@ export interface ManagedTerminal {
 	startupBuffer: Uint8Array[] | null;
 	/** Set to true once tryFlushStartup has scheduled its flush so re-entrant calls are ignored */
 	startupFlushScheduled: boolean;
-	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods) */
+	/** When true, strip terminal reset sequences from PTY output inline (used during resize grace periods).
+	 *  Agents and alternate-screen programs are exempt — see `shouldStripResets`. */
 	filterResets: boolean;
 	/** Handle for the pending filterResets=false timer so consecutive calls to
 	 *  beginResizeFilter can cancel the previous timer and properly extend the
@@ -357,6 +362,12 @@ export interface ManagedTerminal {
 	 *  only drain at the safety timeout), and the task script's `command_start`
 	 *  ends any reset filtering, so the Agent's first frame arrives intact. */
 	awaitingTaskStart: boolean;
+	/** A typed agent launch (after the startup flush) whose Agent has not
+	 *  started yet. The pane is already in agent mode, but until the Agent's
+	 *  `command_start` the output is still the shell's, so the reset filter keeps
+	 *  cleaning it. Cleared on that `command_start`, or when the filter window
+	 *  ends, so it can never exempt the Agent's own redraws later. */
+	awaitingTypedAgentStart: boolean;
 	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
 	pendingWrites: Uint8Array[];
 	/** rAF handle for the pending write flush, or null if none scheduled */
@@ -1119,6 +1130,7 @@ export async function createTerminal(
 		startupFlushScheduled: false,
 		startupShellReady: false,
 		awaitingTaskStart: false,
+		awaitingTypedAgentStart: false,
 		pendingWrites: [],
 		writeRafId: null,
 		wantedMouseModes: new Set(),
@@ -1448,13 +1460,33 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					managed.awaitingTaskStart = false;
 					disarmFilterResets(managed);
 				}
+				// A typed launch's command_start: from here on the output is the
+				// Agent's, so its clears and cursor-home moves pass through.
+				if (
+					managed.awaitingTypedAgentStart &&
+					commands.some((c) => c.type === "command_start")
+				) {
+					managed.awaitingTypedAgentStart = false;
+				}
 
 				if (managed.startupBuffer) {
 					managed.startupBuffer.push(cleaned);
 				} else {
-					const output = managed.filterResets
-						? stripResetSequences(cleaned)
-						: cleaned;
+					const output =
+						managed.filterResets &&
+						shouldStripResets({
+							filterResets: managed.filterResets,
+							agentMode: isAgentMode,
+							alternateScreen: isAlternateScreenOutput(
+								managed.term.buffer.active.type === "alternate",
+								managed.pendingWrites,
+								cleaned,
+							),
+							awaitingAgentStart:
+								managed.awaitingTaskStart || managed.awaitingTypedAgentStart,
+						})
+							? stripResetSequences(cleaned)
+							: cleaned;
 					scheduleWrite(managed, output);
 				}
 
@@ -1894,6 +1926,7 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 	if (pendingAgent && managed.ptyId) {
 		pty.write(managed.ptyId, `${pendingAgent.command}\n`).catch(() => {});
 		usePtyActivityStore.getState().setAgentPty(managed.ptyId);
+		managed.awaitingTypedAgentStart = true;
 	}
 }
 
@@ -1948,6 +1981,7 @@ function armFilterResets(managed: ManagedTerminal, durationMs: number): void {
 	managed.filterResetsTimer = setTimeout(() => {
 		managed.filterResets = false;
 		managed.filterResetsTimer = null;
+		managed.awaitingTypedAgentStart = false;
 	}, durationMs);
 }
 
@@ -1963,7 +1997,9 @@ function disarmFilterResets(managed: ManagedTerminal): void {
 /** Temporarily filter terminal reset sequences from PTY output.
  *  Used around PTY resize during workspace switches and tab projections to
  *  prevent the shell's resize-triggered redraw from wiping existing terminal
- *  content. Safe to call repeatedly — each call resets the timer. */
+ *  content. Safe to call repeatedly — each call resets the timer. Output from
+ *  an Agent or an alternate-screen program is never filtered: its redraw
+ *  needs the very clears and cursor-home moves this strips (#207). */
 export function beginResizeFilter(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed) return;
@@ -2254,6 +2290,7 @@ export async function restartPanePty(
 	managed.startupFlushScheduled = false;
 	managed.startupShellReady = false;
 	managed.awaitingTaskStart = false;
+	managed.awaitingTypedAgentStart = false;
 	// `settled` deliberately stays true: the pane is already projected and
 	// painted, and clearing it would make the flush wait for the safety timeout.
 

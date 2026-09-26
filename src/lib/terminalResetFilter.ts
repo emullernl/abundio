@@ -195,3 +195,99 @@ export function stripResetSequences(data: Uint8Array): Uint8Array {
 
 	return result;
 }
+
+/**
+ * Whether a live PTY output chunk should go through `stripResetSequences`.
+ *
+ * The filter exists for a *shell*: its startup and its resize-triggered
+ * repaint (Windows ConPTY) would otherwise wipe restored scrollback or pin the
+ * prompt to the bottom row. An Agent or a full-screen program (alternate
+ * screen) answers the same resize by redrawing its whole frame with exactly
+ * the sequences the filter removes — home the cursor, clear the screen. With
+ * them gone, the new frame is painted wherever the cursor happens to be, over
+ * the old one, and the TUI looks scrambled (#207). So both are exempt.
+ *
+ * `awaitingAgentStart` narrows the agent exemption: a pane is marked agent
+ * mode as soon as its Agent is launched (a New task at spawn, a typed launch
+ * right after the startup flush), but until the Agent's `command_start` the
+ * output is still the shell's — its setup, or its late ConPTY repaint — which
+ * the filter must still clean. The alternate screen is never the shell's, so
+ * it wins over that.
+ */
+export function shouldStripResets(state: {
+	filterResets: boolean;
+	agentMode: boolean;
+	alternateScreen: boolean;
+	awaitingAgentStart: boolean;
+}): boolean {
+	if (!state.filterResets || state.alternateScreen) return false;
+	return state.awaitingAgentStart || !state.agentMode;
+}
+
+/** DEC private modes that switch to (h) or from (l) the alternate screen. */
+const ALT_SCREEN_MODES = new Set([47, 1047, 1049]);
+
+/**
+ * Scans `data` for alternate-screen switches (`CSI ? <params> h|l` naming mode
+ * 47, 1047 or 1049, alone or among other params such as `ESC[?1049;1002h`).
+ * Returns the state after the chunk, starting from `before`, and whether any
+ * switch *to* the alternate screen occurred inside it. Stateless across
+ * chunks: a sequence split between two chunks is missed.
+ */
+export function scanAlternateScreen(
+	data: Uint8Array,
+	before: boolean,
+): { after: boolean; entered: boolean } {
+	let after = before;
+	let entered = false;
+	const len = data.length;
+	for (let i = 0; i + 2 < len; i++) {
+		if (data[i] !== 0x1b || data[i + 1] !== 0x5b || data[i + 2] !== 0x3f) {
+			continue;
+		}
+		let j = i + 3;
+		let current = 0;
+		let sawDigit = false;
+		let namesAltScreen = false;
+		for (; j < len; j++) {
+			const b = data[j];
+			if (b >= 0x30 && b <= 0x39) {
+				current = current * 10 + (b - 0x30);
+				sawDigit = true;
+			} else if (b === 0x3b /* ; */) {
+				if (sawDigit && ALT_SCREEN_MODES.has(current)) namesAltScreen = true;
+				current = 0;
+				sawDigit = false;
+			} else {
+				break;
+			}
+		}
+		if (j >= len) break;
+		if (sawDigit && ALT_SCREEN_MODES.has(current)) namesAltScreen = true;
+		if (namesAltScreen && data[j] === 0x68 /* h */) {
+			after = true;
+			entered = true;
+		} else if (namesAltScreen && data[j] === 0x6c /* l */) {
+			after = false;
+		}
+		i = j;
+	}
+	return { after, entered };
+}
+
+/**
+ * Whether `chunk` should be treated as alternate-screen output. xterm's own
+ * buffer type lags behind the bytes queued for the next frame and behind the
+ * chunk itself, so fold both in: the chunk counts if the screen is alternate
+ * before it, or if it switches to the alternate screen anywhere inside (a
+ * program's first frame is `ESC[?1049h ESC[H ESC[2J …`).
+ */
+export function isAlternateScreenOutput(
+	bufferIsAlternate: boolean,
+	queued: readonly Uint8Array[],
+	chunk: Uint8Array,
+): boolean {
+	let state = bufferIsAlternate;
+	for (const q of queued) state = scanAlternateScreen(q, state).after;
+	return state || scanAlternateScreen(chunk, false).entered;
+}

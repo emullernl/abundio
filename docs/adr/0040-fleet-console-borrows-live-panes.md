@@ -17,6 +17,7 @@ The Console has its own **Focused tile** instead of driving the Window's **Focus
 - `portalRegistry` holds one target per pane, and a later `registerTarget` overwrites an earlier one. The Console's tile unregistering on exit would leave the pane with no slot at all, so the original slot must be restored (a stack of targets, or re-registration on Console exit).
 - `isPaneVisible` (notification suppression) and notification-click routing must be view-aware; see the flagged ambiguity in `CONTEXT.md`.
 - The Console takes the full window width by collapsing both sidebars, which changes the size of every Workspace-view pane hidden behind it. Those panes do not refit while the Console is on screen: the size returns when it closes, so refitting would only reflow their programs twice for nothing.
+- Moving a pane between the Workspace view and a tile arms the resize reset filter (`beginResizeFilter`), which strips clear-screen and cursor-home sequences for 1.5 s. That filter is for shells only. An Agent or an alternate-screen program answers the resize by redrawing with exactly those sequences, so it must be exempt, or the new frame is painted over the old one and the TUI looks scrambled (#207). See `shouldStripResets`.
 - The **Overview bar** now has two navigation buttons (Statistics, Fleet Console). ADR-0005's rule still holds: it never mutates state.
 
 ## Update: Tile zoom and Spotlight

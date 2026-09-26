@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { stripResetSequences } from "../terminalResetFilter";
+import {
+	isAlternateScreenOutput,
+	scanAlternateScreen,
+	shouldStripResets,
+	stripResetSequences,
+} from "../terminalResetFilter";
 
 const encode = (s: string): Uint8Array => new TextEncoder().encode(s);
 
@@ -170,5 +175,112 @@ describe("stripResetSequences", () => {
 		expect(new TextDecoder().decode(result)).toBe(
 			"\x1b[?25l\x1b[m\x1b]0;title\x07\x1b[?25h",
 		);
+	});
+});
+
+describe("shouldStripResets", () => {
+	const cases: [boolean, boolean, boolean, boolean, boolean][] = [
+		// filterResets, agentMode, alternateScreen, awaitingAgentStart, expected
+		[false, false, false, false, false],
+		[false, true, false, false, false],
+		[false, false, true, false, false],
+		[false, true, false, true, false],
+		[true, false, false, false, true],
+		[true, true, false, false, false],
+		[true, false, true, false, false],
+		[true, true, true, false, false],
+		[true, true, false, true, true],
+		[true, true, true, true, false],
+		[true, false, false, true, true],
+	];
+
+	it.each(
+		cases,
+	)("filterResets=%s agentMode=%s alternateScreen=%s awaitingAgentStart=%s -> %s", (filterResets, agentMode, alternateScreen, awaitingAgentStart, expected) => {
+		expect(
+			shouldStripResets({
+				filterResets,
+				agentMode,
+				alternateScreen,
+				awaitingAgentStart,
+			}),
+		).toBe(expected);
+	});
+});
+
+describe("scanAlternateScreen", () => {
+	it("leaves the state alone when there is no switch", () => {
+		expect(scanAlternateScreen(encode("\x1b[H\x1b[2Jhi"), false)).toEqual({
+			after: false,
+			entered: false,
+		});
+		expect(scanAlternateScreen(encode("hi"), true)).toEqual({
+			after: true,
+			entered: false,
+		});
+	});
+
+	it.each(["47", "1047", "1049"])("detects ?%sh and ?%sl", (mode) => {
+		expect(scanAlternateScreen(encode(`\x1b[?${mode}h`), false)).toEqual({
+			after: true,
+			entered: true,
+		});
+		expect(scanAlternateScreen(encode(`\x1b[?${mode}l`), true)).toEqual({
+			after: false,
+			entered: false,
+		});
+	});
+
+	it("detects the mode among other params", () => {
+		expect(scanAlternateScreen(encode("\x1b[?1002;1049h"), false).after).toBe(
+			true,
+		);
+		expect(scanAlternateScreen(encode("\x1b[?1049;1002h"), false).after).toBe(
+			true,
+		);
+	});
+
+	it("ignores other private modes and non-private CSIs", () => {
+		expect(
+			scanAlternateScreen(encode("\x1b[?25h\x1b[?10490h"), false).after,
+		).toBe(false);
+		expect(scanAlternateScreen(encode("\x1b[1049h"), false).after).toBe(false);
+	});
+
+	it("uses the last switch for the final state, but reports any entry", () => {
+		expect(
+			scanAlternateScreen(encode("\x1b[?1049hframe\x1b[?1049l"), false),
+		).toEqual({ after: false, entered: true });
+	});
+
+	it("ignores a sequence cut off at the end of the chunk", () => {
+		expect(scanAlternateScreen(encode("\x1b[?1049"), false).after).toBe(false);
+	});
+});
+
+describe("isAlternateScreenOutput", () => {
+	const frame = encode("\x1b[H\x1b[2Jframe");
+
+	it("is true when xterm is already on the alternate screen", () => {
+		expect(isAlternateScreenOutput(true, [], frame)).toBe(true);
+	});
+
+	it("is false on the normal screen with nothing queued", () => {
+		expect(isAlternateScreenOutput(false, [], frame)).toBe(false);
+	});
+
+	it("sees a switch still queued for the next frame", () => {
+		expect(isAlternateScreenOutput(false, [encode("\x1b[?1049h")], frame)).toBe(
+			true,
+		);
+		expect(isAlternateScreenOutput(true, [encode("\x1b[?1049l")], frame)).toBe(
+			false,
+		);
+	});
+
+	it("sees a switch inside the chunk itself", () => {
+		expect(
+			isAlternateScreenOutput(false, [], encode("\x1b[?1049h\x1b[H\x1b[2J")),
+		).toBe(true);
 	});
 });
