@@ -148,6 +148,20 @@ interface WindowUiState {
 		opts?: { agentId?: string; background?: boolean },
 	) => void;
 	clearAddWorktreeRequest: () => void;
+	/** The open **New task** dialog, or null. `workspaceId` is the Workspace
+	 *  it targets (the Active one, the Focused tile's, or a sidebar row's);
+	 *  `fromFleet` makes the dialog keep the Workspace view as it is and
+	 *  lets the user pick another Workspace. Not persisted. */
+	newTaskRequest: NewTaskRequest | null;
+	requestNewTask: (request: NewTaskRequest) => void;
+	closeNewTask: () => void;
+}
+
+export interface NewTaskRequest {
+	workspaceId: string | null;
+	fromFleet: boolean;
+	/** Set when opened from **Add agent**'s chooser, which it returns to. */
+	onBack?: () => void;
 }
 
 const persistKey = `abundio-window-ui-${currentWindowLabel()}`;
@@ -281,6 +295,9 @@ export const useWindowUiStore = create<WindowUiState>()(
 			requestAddWorktree: (workspaceId, opts) =>
 				set({ addWorktreeRequest: { workspaceId, ...opts } }),
 			clearAddWorktreeRequest: () => set({ addWorktreeRequest: null }),
+			newTaskRequest: null,
+			requestNewTask: (newTaskRequest) => set({ newTaskRequest }),
+			closeNewTask: () => set({ newTaskRequest: null }),
 		}),
 		{
 			name: persistKey,

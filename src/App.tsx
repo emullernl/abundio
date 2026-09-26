@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
 import { FleetConsole } from "./components/FleetConsole/FleetConsole";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
+import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
@@ -411,6 +412,7 @@ export function App() {
 	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const fleetConsoleOpen = useWindowUiStore((s) => s.fleetConsoleOpen);
+	const newTaskRequest = useWindowUiStore((s) => s.newTaskRequest);
 
 	// Lazy-mount tabs. Active tab mounts immediately; others mount after workspace
 	// switch has painted so the new workspace feels instant.
@@ -1131,6 +1133,7 @@ export function App() {
 				open={fileSearchOpen}
 				onClose={() => setFileSearchOpen(false)}
 			/>
+			{newTaskRequest && <NewTaskDialog request={newTaskRequest} />}
 			<LaunchPicker
 				isOpen={!!launchPicker}
 				title={
