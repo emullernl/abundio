@@ -5,6 +5,7 @@ import {
 	type UpdateInfo,
 	updates,
 } from "../lib/ipc";
+import { notesMissingVersion } from "../lib/releaseNotes";
 import { useSettingsStore } from "./settingsStore";
 
 /**
@@ -77,6 +78,14 @@ interface UpdateStoreState {
 	/** Fetch the release list. `refresh` spends a request to bypass the hourly
 	 *  Rust-side cache — used by the manual "Check for updates" button. */
 	fetchNotes: (opts?: { refresh?: boolean }) => Promise<void>;
+	/** The version whose notes were last force-refreshed because the list
+	 *  lacked it. Per-Window, like `lastCheckedAt`, so leaving and returning to
+	 *  the page does not spend another uncached request on it. */
+	notesRefreshedFor: string | null;
+	/** Refresh the notes once when they lack the version on offer (found or
+	 *  downloaded) — the hourly cache can predate that release. Reads live
+	 *  state, so a fetch already in flight is waited for. */
+	refreshNotesIfStale: () => void;
 
 	/** The notes for a version the user has just upgraded onto, when Rust
 	 *  decided they are worth a card. Null the rest of the time — which is
@@ -106,9 +115,15 @@ const SNOOZE_MS = 24 * 60 * 60 * 1000;
  *  "Checking…" every time. The button always checks. */
 export const OPEN_CHECK_THROTTLE_MS = 5 * 60 * 1000;
 
-/** Rust's refusal text for a check during a download. Must match
- *  `CHECK_BLOCKED_DOWNLOADING` in updater.rs. */
-const CHECK_BLOCKED_DOWNLOADING = "an update is already downloading";
+/** Stable code on Rust's refusal of a check while a download is in flight
+ *  (`AbundioError::UpdateDownloading`, whose own test pins the code). */
+export const UPDATE_DOWNLOADING_CODE = "E_UPDATE_DOWNLOADING";
+
+/** Whether a check error is that refusal — a download running in another
+ *  Window, which Rust deliberately does not report. Not a failure. */
+export function isDownloadingElsewhere(error: string | null): boolean {
+	return error?.includes(UPDATE_DOWNLOADING_CODE) ?? false;
+}
 
 /** Canonical GitHub release page for a version — the source of truth for "what
  *  changed" (we link out rather than render the raw Markdown release notes). */
@@ -183,7 +198,14 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 				lastCheckedAt: Date.now(),
 			});
 		} catch (err) {
-			set({ status: "error", error: String(err), lastCheckedAt: Date.now() });
+			const error = String(err);
+			// The download refusal is not a check: leave the throttle clear so
+			// the next visit sees the staged result.
+			set({
+				status: "error",
+				error,
+				...(isDownloadingElsewhere(error) ? {} : { lastCheckedAt: Date.now() }),
+			});
 		}
 	},
 
@@ -211,17 +233,6 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		// Manual semantics: a status display reports skipped and snoozed
 		// versions too, and says so when there is nothing new.
 		await get().check({ manual: true });
-		// Rust refuses a check while another Window's download runs, and never
-		// reports that download (see `UpdaterInner::downloading`). The user only
-		// opened the page, so stay quiet rather than show a red failure, and
-		// leave the throttle clear so the next visit sees the staged result.
-		const after = get();
-		if (
-			after.status === "error" &&
-			after.error?.includes(CHECK_BLOCKED_DOWNLOADING)
-		) {
-			set({ status: "idle", error: null, lastCheckedAt: null });
-		}
 	},
 
 	download: async () => {
@@ -286,6 +297,22 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 			// a failed refresh rather than being replaced by an error.
 			set({ notesStatus: "error" });
 		}
+	},
+
+	notesRefreshedFor: null,
+
+	refreshNotesIfStale: () => {
+		const { status, info, notes, notesStatus, notesRefreshedFor } = get();
+		if (status !== "available" && status !== "ready") return;
+		const version = info?.version;
+		// Wait for any fetch in flight: a refresh on top of it could be
+		// overwritten by the older, cached reply landing second.
+		if (!version || notesStatus !== "loaded") return;
+		// Once per version, so a list GitHub still lacks it in cannot loop.
+		if (notesRefreshedFor === version) return;
+		if (!notesMissingVersion(notes, version)) return;
+		set({ notesRefreshedFor: version });
+		get().fetchNotes({ refresh: true });
 	},
 
 	whatsNew: null,

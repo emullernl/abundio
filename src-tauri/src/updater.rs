@@ -420,9 +420,13 @@ async fn check_and_emit(app: &AppHandle) -> Result<(), String> {
     // Same rule as `updater_check`: a download in flight owns the update, and
     // refilling `pending` under it would offer an "Install update" that fails.
     // Checked again after the await, since a download can start mid-check.
+    // Either way this returns `Ok`, so the loop sleeps its full interval: a
+    // download that overlapped a check skips that round. Harmless — the
+    // download itself ends in a staged update, and opening Settings → Updates
+    // checks on its own.
     if app
         .try_state::<UpdaterState>()
-        .is_some_and(|s| check_blocked(&s.inner.lock().unwrap()).is_some())
+        .is_some_and(|s| check_blocked(&s.inner.lock().unwrap()))
     {
         return Ok(());
     }
@@ -431,7 +435,7 @@ async fn check_and_emit(app: &AppHandle) -> Result<(), String> {
         let info = to_info(&update);
         if let Some(state) = app.try_state::<UpdaterState>() {
             let mut inner = state.inner.lock().unwrap();
-            if check_blocked(&inner).is_some() {
+            if check_blocked(&inner) {
                 return Ok(());
             }
             inner.pending = Some(update);
@@ -571,19 +575,13 @@ pub fn start_whats_new_check(app: AppHandle) {
 // ── Commands ──
 
 
-/// Matched by `updateStore.checkOnOpen` (`CHECK_BLOCKED_DOWNLOADING`), which
-/// stays quiet on it rather than showing an error for a page merely opened.
-const CHECK_BLOCKED_DOWNLOADING: &str = "an update is already downloading";
-
-/// Why a check must not run right now, if it must not. While a download is in
-/// flight `pending` is empty, so a check would refill it and the Settings page
-/// would offer "Install update" — which then fails with "a download is already
-/// in progress". Refusing here keeps `downloading` out of `updater_status`
-/// (see the note on `UpdaterInner::downloading`). Issue #200.
-fn check_blocked(inner: &UpdaterInner) -> Option<AbundioError> {
-    inner
-        .downloading
-        .then(|| AbundioError::InvalidOperation(CHECK_BLOCKED_DOWNLOADING.into()))
+/// Whether a check must not run right now. While a download is in flight
+/// `pending` is empty, so a check would refill it and the Settings page would
+/// offer "Install update" — which then fails with "a download is already in
+/// progress". Refusing here keeps `downloading` out of `updater_status` (see
+/// the note on `UpdaterInner::downloading`). Issue #200.
+fn check_blocked(inner: &UpdaterInner) -> bool {
+    inner.downloading
 }
 
 /// Manual check (the Settings "Check for updates" button, and opening the
@@ -595,8 +593,11 @@ pub async fn updater_check(
     state: State<'_, UpdaterState>,
 ) -> Result<Option<UpdateInfo>, AbundioError> {
     // Scoped so the lock is released before the network await.
-    if let Some(err) = check_blocked(&state.inner.lock().unwrap()) {
-        return Err(err);
+    {
+        let inner = state.inner.lock().unwrap();
+        if check_blocked(&inner) {
+            return Err(AbundioError::UpdateDownloading);
+        }
     }
     let updater = app
         .updater()
@@ -605,8 +606,8 @@ pub async fn updater_check(
         Ok(Some(update)) => {
             // A download may have started while we were on the network.
             let mut inner = state.inner.lock().unwrap();
-            if let Some(err) = check_blocked(&inner) {
-                return Err(err);
+            if check_blocked(&inner) {
+                return Err(AbundioError::UpdateDownloading);
             }
             let info = to_info(&update);
             inner.pending = Some(update);
@@ -826,15 +827,14 @@ mod tests {
         let state = UpdaterState::new();
         let mut inner = state.inner.lock().unwrap();
         inner.downloading = true;
-        let err = check_blocked(&inner).expect("check must be refused");
-        assert!(err.to_string().contains("already downloading"));
+        assert!(check_blocked(&inner));
     }
 
     #[test]
     fn check_is_not_blocked_on_fresh_state() {
         let state = UpdaterState::new();
         let inner = state.inner.lock().unwrap();
-        assert!(check_blocked(&inner).is_none());
+        assert!(!check_blocked(&inner));
     }
 
     /// The in-flight flag is what lets `updater_download` tell "already

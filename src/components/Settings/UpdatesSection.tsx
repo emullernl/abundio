@@ -1,9 +1,11 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { updates as updatesIpc } from "../../lib/ipc";
-import { notesMissingVersion } from "../../lib/releaseNotes";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { useUpdateStore } from "../../stores/updateStore";
+import {
+	isDownloadingElsewhere,
+	useUpdateStore,
+} from "../../stores/updateStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SectionLabel, ToggleRow } from "./primitives";
 import { ReleaseNotesSection } from "./ReleaseNotesSection";
@@ -19,6 +21,7 @@ export function UpdatesSection() {
 	const installNow = useUpdateStore((s) => s.installNow);
 	const checkOnOpen = useUpdateStore((s) => s.checkOnOpen);
 	const fetchNotes = useUpdateStore((s) => s.fetchNotes);
+	const refreshNotesIfStale = useUpdateStore((s) => s.refreshNotesIfStale);
 	const notes = useUpdateStore((s) => s.notes);
 	const notesStatus = useUpdateStore((s) => s.notesStatus);
 	const [confirmRestart, setConfirmRestart] = useState(false);
@@ -50,18 +53,14 @@ export function UpdatesSection() {
 		checkOnOpen();
 	}, [checkOnOpen]);
 
-	// A check can find a release newer than the hourly-cached notes list. Refresh
-	// once per version, only then: the ref stops a loop if GitHub still lacks it,
-	// and waiting for "loaded" lets the mount fetch settle first.
-	const refreshedFor = useRef<string | null>(null);
-	const foundVersion = status === "available" ? info?.version : undefined;
+	// A check can find a release newer than the hourly-cached notes list. The
+	// deps only say *when* to look again; the store decides from live state,
+	// which matters because ReleaseNotesSection's mount fetch (a child effect,
+	// so it runs first) has already moved `notesStatus` past this render's value.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run triggers
 	useEffect(() => {
-		if (!foundVersion || notesStatus !== "loaded") return;
-		if (refreshedFor.current === foundVersion) return;
-		if (!notesMissingVersion(notes, foundVersion)) return;
-		refreshedFor.current = foundVersion;
-		fetchNotes({ refresh: true });
-	}, [foundVersion, notesStatus, notes, fetchNotes]);
+		refreshNotesIfStale();
+	}, [status, info, notes, notesStatus, refreshNotesIfStale]);
 
 	// The Settings window is its own JS context, so it needs its own progress
 	// listener for downloads kicked off from here (the Rust emit is global).
@@ -79,6 +78,11 @@ export function UpdatesSection() {
 			? Math.min(100, Math.round((downloaded / total) * 100))
 			: null;
 
+	// Rust refuses a check while another Window downloads and never reports
+	// that download, so say so plainly rather than as a red failure.
+	const downloadingElsewhere =
+		status === "error" && isDownloadingElsewhere(error);
+
 	const statusText = (() => {
 		switch (status) {
 			case "checking":
@@ -94,6 +98,9 @@ export function UpdatesSection() {
 			case "ready":
 				return "Update downloaded. It installs the next time you quit Abundio — or restart now.";
 			case "error":
+				if (downloadingElsewhere) {
+					return "A download is already in progress in another window.";
+				}
 				return error ? `Update check failed: ${error}` : "Update check failed.";
 			default:
 				return "";
@@ -205,7 +212,9 @@ export function UpdatesSection() {
 							style={{
 								fontSize: 12,
 								color:
-									status === "error" ? "var(--error)" : "var(--fg-secondary)",
+									status === "error" && !downloadingElsewhere
+										? "var(--error)"
+										: "var(--fg-secondary)",
 								marginTop: 8,
 								lineHeight: 1.5,
 							}}

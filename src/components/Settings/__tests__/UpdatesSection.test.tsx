@@ -73,6 +73,7 @@ beforeEach(() => {
 		lastCheckedAt: null,
 		notes: null,
 		notesStatus: "idle",
+		notesRefreshedFor: null,
 	});
 	status.mockResolvedValue({ state: "none", info: null });
 	releaseNotes.mockResolvedValue({ releases: [note("1.0.0")], hasMore: false });
@@ -123,5 +124,48 @@ describe("UpdatesSection (issue #200)", () => {
 		await mount();
 		expect(releaseNotes).toHaveBeenCalledTimes(1);
 		expect(releaseNotes).toHaveBeenCalledWith(false);
+	});
+
+	it("does not refresh the notes again on a remount", async () => {
+		check.mockResolvedValue({
+			version: "1.1.0",
+			currentVersion: "1.0.0",
+			body: null,
+			date: null,
+		});
+		await mount();
+		expect(releaseNotes).toHaveBeenCalledWith(true);
+		await unmount();
+		releaseNotes.mockClear();
+		await mount();
+		// Only the child's own (cached) mount fetch.
+		expect(releaseNotes).toHaveBeenCalledTimes(1);
+		expect(releaseNotes).toHaveBeenCalledWith(false);
+	});
+
+	it("refreshes the notes for a downloaded update too", async () => {
+		status.mockResolvedValue({
+			state: "ready",
+			info: {
+				version: "1.1.0",
+				currentVersion: "1.0.0",
+				body: null,
+				date: null,
+			},
+		});
+		await mount();
+		expect(check).not.toHaveBeenCalled();
+		expect(releaseNotes).toHaveBeenCalledWith(true);
+	});
+
+	it("shows a download in another window as a neutral line", async () => {
+		check.mockRejectedValue(
+			"E_UPDATE_DOWNLOADING: an update is already downloading",
+		);
+		await mount();
+		expect(container.textContent).toContain(
+			"A download is already in progress in another window.",
+		);
+		expect(container.textContent).not.toContain("Update check failed");
 	});
 });
