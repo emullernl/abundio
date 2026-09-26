@@ -7,7 +7,7 @@ The user wants to start an Agent *on something*: type a problem or feature descr
 ## Decisions (resolved with the user)
 
 - **Delivery:** a launch flag on the Agent's command line. Only **Task-capable** Agents are offered. Kimi Code and Aider are excluded.
-- **Launch:** the PTY is spawned as `shell -l -i -c '<task script>' abundio-task <agent argv…> <prompt>` (ADR-0042). The prompt is passed as a separate argument, so nothing needs quoting and nothing reaches history or the environment. Supported shells: zsh, bash, fish. PowerShell and cmd.exe get a clear "not supported yet" message.
+- **Launch:** the PTY is spawned as `shell -l -i -c '<task script>' abundio-task <agent argv…> <prompt>` (ADR-0042). The prompt is passed as a separate argument, so nothing needs quoting and nothing reaches history or the environment. Supported shells: zsh and bash. Any other shell (fish, PowerShell, cmd.exe) gets a clear "not supported yet" message.
 - **Task-capable forms (built-in, fixed):** `claude {prompt}`, `copilot -i {prompt}`, `gemini -i {prompt}`, `codex {prompt}`, `opencode --prompt {prompt}`, `qwen -i {prompt}`, `grok {prompt}`. Custom Agents get an optional *task argument form* field. Filled in means Task-capable.
 - **Badge:** a *Task-capable* badge in Settings ▸ Agents, next to *Detected*.
 - **Destinations:** Restart agent · New tab · New worktree (git Workspaces only). No plain terminal.
@@ -47,7 +47,7 @@ Defaults I chose without asking (flag any you disagree with):
 - `commands::pty_spawn` passes it through. `lib/ipc.ts` gets the typed wrapper.
 - `pendingAgentRegistry`: a pending entry may carry `task` instead of a typed command. `terminalManager` passes it to the spawn instead of typing, and still calls `setAgentPty`.
 - `restartPanePty` gains an optional `task` option (it respawns anyway).
-- Rust tests: the argv shape for zsh/bash/fish (the prompt is a separate element, never joined), refusal for PowerShell/cmd, and a prompt with `'`, `"`, `$(…)` and a newline survives byte-for-byte. Manual check in each shell that the wrapper rc (Injected bundle re-export) runs under `-i -c`.
+- Rust tests: the argv shape for zsh/bash (the prompt is a separate element, never joined), refusal for PowerShell/cmd, and a prompt with `'`, `"`, `$(…)` and a newline survives byte-for-byte. Manual check in each shell that the wrapper rc (Injected bundle re-export) runs under `-i -c`.
 
 ### 4. GitHub issues
 - `gh_commands.rs`: `gh_list_issues(cwd)` → `gh issue list --state open --limit 100 --json number,title,url,assignees,updatedAt,labels`. Sort assigned-to-me first, then newest. Reuse `run_gh` and its offline/auth messages.
