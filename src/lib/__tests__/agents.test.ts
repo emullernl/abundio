@@ -9,6 +9,7 @@ import {
 	matchTitleToAgent,
 	mergeAgentsWithBuiltins,
 	parseTaskArgsForm,
+	RETIRED_BUILTINS,
 } from "../agents";
 import type { CodingAgent } from "../types";
 
@@ -18,12 +19,15 @@ describe("BUILTIN_AGENTS", () => {
 		expect(commands).toContain("claude");
 		expect(commands).toContain("copilot");
 		expect(commands).toContain("gemini");
-		expect(commands).toContain("aider");
 		expect(commands).toContain("codex");
 		expect(commands).toContain("opencode");
 		expect(commands).toContain("qwen");
 		expect(commands).toContain("kimi");
 		expect(commands).toContain("grok");
+	});
+
+	it("no longer ships Aider (a retired built-in)", () => {
+		expect(BUILTIN_AGENTS.map((a) => a.id)).not.toContain("aider");
 	});
 
 	it("all builtins are enabled by default", () => {
@@ -43,7 +47,6 @@ describe("escPressesToCancelAgent", () => {
 
 	it("returns 2 for agents that require double-ESC", () => {
 		expect(escPressesToCancelAgent("copilot")).toBe(2);
-		expect(escPressesToCancelAgent("aider")).toBe(2);
 		expect(escPressesToCancelAgent("codex")).toBe(2);
 		expect(escPressesToCancelAgent("opencode")).toBe(2);
 		// Kimi deliberately keeps the double-ESC default: its Interrupt hook is
@@ -74,8 +77,8 @@ describe("matchTitleToAgent", () => {
 	});
 
 	it("matches command with trailing space/args", () => {
-		const result = matchTitleToAgent("aider --model gpt-4", agents);
-		expect(result?.command).toBe("aider");
+		const result = matchTitleToAgent("codex --model gpt-5", agents);
+		expect(result?.command).toBe("codex");
 	});
 
 	it("returns null for empty title", () => {
@@ -188,10 +191,83 @@ describe("mergeAgentsWithBuiltins", () => {
 		const claudeCount = merged.filter((a) => a.id === "claude").length;
 		expect(claudeCount).toBe(1);
 	});
+
+	describe("retired built-ins", () => {
+		// What an older release persisted for its built-in Aider.
+		const oldAider = (enabled: boolean): CodingAgent => ({
+			id: "aider",
+			name: "Aider",
+			command: "aider",
+			builtin: true,
+			enabled,
+		});
+
+		it("lists Aider as retired", () => {
+			expect(RETIRED_BUILTINS.aider).toEqual({
+				name: "Aider",
+				command: "aider",
+			});
+		});
+
+		it("converts a Watched one into a marked custom agent with the same id", () => {
+			const merged = mergeAgentsWithBuiltins([
+				...BUILTIN_AGENTS,
+				oldAider(true),
+			]);
+			expect(merged.filter((a) => a.id === "aider")).toEqual([
+				{
+					id: "aider",
+					name: "Aider",
+					command: "aider",
+					builtin: false,
+					enabled: true,
+					retiredBuiltin: true,
+				},
+			]);
+		});
+
+		it("drops one that was not Watched", () => {
+			const merged = mergeAgentsWithBuiltins([
+				...BUILTIN_AGENTS,
+				oldAider(false),
+			]);
+			expect(merged.find((a) => a.id === "aider")).toBeUndefined();
+		});
+
+		it("is idempotent: merging its own output changes nothing", () => {
+			const once = mergeAgentsWithBuiltins([...BUILTIN_AGENTS, oldAider(true)]);
+			const twice = mergeAgentsWithBuiltins(once);
+			expect(twice).toEqual(once);
+			expect(twice.find((a) => a.id === "aider")?.retiredBuiltin).toBe(true);
+		});
+
+		it("leaves an already-custom agent with that id untouched", () => {
+			const mine: CodingAgent = {
+				id: "aider",
+				name: "My Aider",
+				command: "aider",
+				args: ["--model", "x"],
+				builtin: false,
+				enabled: false,
+			};
+			const merged = mergeAgentsWithBuiltins([...BUILTIN_AGENTS, mine]);
+			expect(merged.filter((a) => a.id === "aider")).toEqual([mine]);
+		});
+
+		it("drops an unknown persisted built-in", () => {
+			const gone: CodingAgent = {
+				...oldAider(true),
+				id: "gone",
+				command: "gone",
+			};
+			const merged = mergeAgentsWithBuiltins([...BUILTIN_AGENTS, gone]);
+			expect(merged.find((a) => a.id === "gone")).toBeUndefined();
+		});
+	});
 });
 
 describe("Task-capable agents", () => {
-	it("marks every built-in except Kimi and Aider", () => {
+	it("marks every built-in except Kimi", () => {
 		const capable = BUILTIN_AGENTS.filter(isTaskCapable).map((a) => a.id);
 		expect(capable.sort()).toEqual(
 			[
