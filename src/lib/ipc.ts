@@ -905,6 +905,11 @@ export const updates = {
 	releaseNotes: (refresh = false) =>
 		invoke<ReleaseNotesPage>("updater_release_notes", { refresh }),
 
+	/** The running app's version (`tauri.conf.json`). Same command as
+	 *  `getVersion()` from `@tauri-apps/api/app`, routed through `invoke` so
+	 *  the demo build can answer it. */
+	appVersion: () => invoke<string>("plugin:app|version"),
+
 	/** Marks the running version's notes as seen, so the What's new card does
 	 *  not return on the next launch. App-global, not per-Window. */
 	markVersionSeen: () => invoke<void>("updater_mark_version_seen"),

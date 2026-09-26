@@ -12,6 +12,15 @@ vi.mock("../../hooks/useAppMetrics", () => ({ useAppMetrics: () => null }));
 vi.mock("../WorkspaceEnv/InjectedBundlePill", () => ({
 	InjectedBundlePill: () => null,
 }));
+// Same for the version button: it asks Rust for the version once. Leaving the
+// promise pending keeps the button out of the bar.
+vi.mock("../../lib/ipc", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../lib/ipc")>();
+	return {
+		...actual,
+		updates: { ...actual.updates, appVersion: () => new Promise(() => {}) },
+	};
+});
 
 import { NAME_CAP } from "../../lib/statusBarLayout";
 import { useProfileStore } from "../../stores/profileStore";

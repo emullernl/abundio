@@ -377,6 +377,12 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return null;
 		case "updater_status":
 			return { state: "none", info: null };
+		case "updater_release_notes":
+			return { releases: [fixtures.appReleaseNote], hasMore: false };
+		case "updater_mark_version_seen":
+			return undefined;
+		case "plugin:app|version":
+			return fixtures.appVersion;
 		case "updater_download":
 		case "updater_install_now":
 		case "updater_set_auto_check":

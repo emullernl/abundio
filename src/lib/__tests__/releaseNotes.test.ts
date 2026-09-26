@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { ReleaseNote } from "../ipc";
 import {
 	compareVersions,
+	missingNotesReason,
 	notesMissingVersion,
+	releaseNoteForVersion,
 	selectReleaseNotes,
 } from "../releaseNotes";
 
@@ -246,6 +248,63 @@ describe("selectReleaseNotes — ordering", () => {
 		const snapshot = input.map((r) => r.version);
 		selectReleaseNotes("0.4.0", input);
 		expect(input.map((r) => r.version)).toEqual(snapshot);
+	});
+});
+
+describe("releaseNoteForVersion", () => {
+	it("returns the published note for the running version", () => {
+		expect(releaseNoteForVersion("0.5.0", RELEASES)).toEqual(release("0.5.0"));
+	});
+
+	it("falls back to an empty note for an unpublished version", () => {
+		const note = releaseNoteForVersion("0.7.0", RELEASES);
+		expect(note.version).toBe("0.7.0");
+		expect(note.body).toBe("");
+		expect(note.url).toBe(
+			"https://github.com/emullernl/abundio/releases/tag/v0.7.0",
+		);
+	});
+
+	it("falls back when nothing was fetched", () => {
+		expect(releaseNoteForVersion("0.5.0", []).body).toBe("");
+	});
+});
+
+describe("missingNotesReason", () => {
+	const page = { releases: RELEASES, hasMore: false };
+
+	it("is null when the version is on the page", () => {
+		expect(missingNotesReason("0.5.0", page, false)).toBeNull();
+	});
+
+	it("is null when an earlier page has the version despite a failed refresh", () => {
+		expect(missingNotesReason("0.5.0", page, true)).toBeNull();
+	});
+
+	it("reports a failed fetch rather than claiming nothing was published", () => {
+		expect(missingNotesReason("0.5.0", null, true)).toBe("failed");
+	});
+
+	it("reports an older version when more releases exist beyond the page", () => {
+		expect(
+			missingNotesReason("0.1.0", { releases: RELEASES, hasMore: true }, false),
+		).toBe("older");
+	});
+
+	it("reports a dev build ahead of every release as unpublished, not older", () => {
+		expect(
+			missingNotesReason("9.9.9", { releases: RELEASES, hasMore: true }, false),
+		).toBe("unpublished");
+	});
+
+	it("reports a version between two releases as unpublished", () => {
+		expect(
+			missingNotesReason("0.4.5", { releases: RELEASES, hasMore: true }, false),
+		).toBe("unpublished");
+	});
+
+	it("reports an unpublished version when the page is everything", () => {
+		expect(missingNotesReason("0.7.0", page, false)).toBe("unpublished");
 	});
 });
 

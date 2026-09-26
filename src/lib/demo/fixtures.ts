@@ -61,6 +61,18 @@ export const profiles: Profile[] = [
 
 export const ACTIVE_PROFILE_ID = profiles[0].id;
 
+/** What the status-bar version button shows in the demo. Fictional, like
+ *  everything else here — the demo never reads `tauri.conf.json`. */
+export const appVersion = "1.0.0";
+
+/** Release notes for `appVersion`, so the version button shows a real card. */
+export const appReleaseNote = {
+	version: appVersion,
+	body: "## ✨ New\n- **Fleet Console** — every agent in the Window on one grid.\n- **New task** — start an agent on a described task or a GitHub issue.\n\n## 🐛 Fixed\n- Full-screen TUIs keep their layout when a pane is moved.",
+	publishedAt: "2026-01-01T00:00:00Z",
+	url: `https://github.com/emullernl/abundio/releases/tag/v${appVersion}`,
+};
+
 // ── Declarative workspace model ──
 
 type AgentState = "active" | "ready" | "waiting" | "error" | "idle";
