@@ -2,6 +2,12 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { seedWatchedFromInstalled } from "../lib/agentSeeding";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
+import {
+	type Chord,
+	hasOverride,
+	type KeybindingOverrides,
+	sanitizeOverrides,
+} from "../lib/chords";
 import { agentHooks, pr, updates } from "../lib/ipc";
 import { SYSTEM_UI_FONT } from "../lib/nerdFonts";
 import type { PreviewColorMode } from "../lib/previewColorMode";
@@ -83,6 +89,11 @@ interface SettingsState {
 	/** The remembered **Task destination** for the current Workspace. Changes
 	 *  only on an explicit pick, never when Restart agent is unavailable. */
 	taskDestination: TaskDestinationPreference;
+	/** The user's **Overrides** of Shortcut defaults, keyed `app:<action>` or
+	 *  `editor:<monaco action id>`; null means Unbound. Only changes are
+	 *  stored, so a default fixed in a later release still reaches everyone
+	 *  who never touched that Shortcut. App-wide, not per Profile. */
+	keybindingOverrides: KeybindingOverrides;
 
 	setShellPath: (path: string | null) => void;
 	setTerminalFontFamily: (font: string) => void;
@@ -142,6 +153,18 @@ interface SettingsState {
 	setTaskTemplate: (template: string) => void;
 	setIssueTemplate: (template: string) => void;
 	setTaskDestination: (destination: TaskDestinationPreference) => void;
+	/** Rebind (a Chord) or unbind (null) one Shortcut. */
+	setKeybindingOverride: (id: string, chord: Chord | null) => void;
+	/** Apply several Overrides at once, and delete the ids in `remove` (back
+	 *  to their defaults) — all in one write. A Reassign moves a Chord and
+	 *  unbinds its old owner this way, so no Window ever sees both on one Chord. */
+	setKeybindingOverrides: (
+		changes: KeybindingOverrides,
+		remove?: readonly string[],
+	) => void;
+	/** Back to the default: deletes the entry, never writes the default. */
+	resetKeybinding: (id: string) => void;
+	resetAllKeybindings: () => void;
 }
 
 /** The **Task destination** New task opens on; the last one explicitly
@@ -192,6 +215,7 @@ export const PERSISTED_KEYS = [
 	"taskTemplate",
 	"issueTemplate",
 	"taskDestination",
+	"keybindingOverrides",
 ] as const satisfies readonly (keyof SettingsState)[];
 
 export type PersistedSettingKey = (typeof PERSISTED_KEYS)[number];
@@ -238,6 +262,7 @@ const PERSISTED_DEFAULTS: {
 	taskTemplate: string;
 	issueTemplate: string;
 	taskDestination: TaskDestinationPreference;
+	keybindingOverrides: KeybindingOverrides;
 } = (() => {
 	const defaults = {
 		terminalFontFamily: "'JetBrainsMonoNL Nerd Font Mono', monospace",
@@ -272,6 +297,7 @@ const PERSISTED_DEFAULTS: {
 		taskTemplate: DEFAULT_TASK_TEMPLATE,
 		issueTemplate: DEFAULT_ISSUE_TEMPLATE,
 		taskDestination: "worktree" as TaskDestinationPreference,
+		keybindingOverrides: {} as KeybindingOverrides,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -414,6 +440,7 @@ const PERSISTED_DEFAULTS: {
 				s.taskDestination === "worktree"
 					? s.taskDestination
 					: defaults.taskDestination,
+			keybindingOverrides: sanitizeOverrides(s.keybindingOverrides),
 		};
 	} catch {
 		return defaults;
@@ -549,6 +576,7 @@ export const useSettingsStore = create<SettingsState>()(
 			taskTemplate: PERSISTED_DEFAULTS.taskTemplate,
 			issueTemplate: PERSISTED_DEFAULTS.issueTemplate,
 			taskDestination: PERSISTED_DEFAULTS.taskDestination,
+			keybindingOverrides: PERSISTED_DEFAULTS.keybindingOverrides,
 
 			setShellPath: (shellPath) => set({ shellPath }),
 			setTerminalFontFamily: (terminalFontFamily) => {
@@ -738,10 +766,27 @@ export const useSettingsStore = create<SettingsState>()(
 			setTaskTemplate: (taskTemplate) => set({ taskTemplate }),
 			setIssueTemplate: (issueTemplate) => set({ issueTemplate }),
 			setTaskDestination: (taskDestination) => set({ taskDestination }),
+			setKeybindingOverride: (id, chord) =>
+				set((s) => ({
+					keybindingOverrides: { ...s.keybindingOverrides, [id]: chord },
+				})),
+			setKeybindingOverrides: (changes, remove = []) =>
+				set((s) => {
+					const next = { ...s.keybindingOverrides, ...changes };
+					for (const id of remove) delete next[id];
+					return { keybindingOverrides: next };
+				}),
+			resetKeybinding: (id) =>
+				set((s) => {
+					if (!hasOverride(s.keybindingOverrides, id)) return s;
+					const { [id]: _drop, ...rest } = s.keybindingOverrides;
+					return { keybindingOverrides: rest };
+				}),
+			resetAllKeybindings: () => set({ keybindingOverrides: {} }),
 		}),
 		{
 			name: "abundio-settings",
-			version: 13,
+			version: 14,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -831,6 +876,11 @@ export const useSettingsStore = create<SettingsState>()(
 				if (version < 13 && state.taskDestination === "newTab") {
 					state = { ...state, taskDestination: "worktree" };
 				}
+				// v14: configurable Shortcuts. Additive key holding only the user's
+				// Overrides, so an empty object means "every default".
+				if (version < 14) {
+					state = { keybindingOverrides: {}, ...state };
+				}
 				// v7: app-global PR poller (ADR-0019). Additive default keys;
 				// PERSISTED_DEFAULTS + merge already supply them — this only
 				// guarantees they exist during the rehydrate window.
@@ -869,6 +919,13 @@ export const useSettingsStore = create<SettingsState>()(
 				agents: Array.isArray(persistedState?.agents)
 					? mergeAgentsWithBuiltins(persistedState.agents)
 					: currentState.agents,
+				// Overrides arrive from localStorage and from other Windows over
+				// the settings broadcast; drop anything malformed rather than let
+				// it reach the keymap or the native menu.
+				keybindingOverrides: sanitizeOverrides(
+					persistedState?.keybindingOverrides ??
+						currentState.keybindingOverrides,
+				),
 			}),
 			onRehydrateStorage: () => (state, error) => {
 				if (error) {

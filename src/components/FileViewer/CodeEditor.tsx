@@ -11,12 +11,24 @@ import {
 } from "../../lib/conflictLenses";
 import { parseConflicts, type ResolveChoice } from "../../lib/conflictMarkers";
 import "./ConflictDecorations.css";
+import { eventMatchesChord } from "../../lib/chords";
+import { getEffectiveChord } from "../../lib/keybindings";
+import { registerMonacoForKeymap } from "../../lib/monacoKeymap";
 import { defineAbundioTheme } from "../../lib/monacoShared";
 import { registerSyncEditor, unregisterSyncEditor } from "../../lib/scrollSync";
 import { setAllTerminalsFontSize } from "../../lib/terminalManager";
 import { setMonacoInstance } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+
+/** +1 / -1 when a key press is the font-size Shortcut, else 0. */
+function fontSizeStepFor(e: KeyboardEvent): number {
+	const up = getEffectiveChord("font-size-increase");
+	if (up && eventMatchesChord(e, up)) return 1;
+	const down = getEffectiveChord("font-size-decrease");
+	if (down && eventMatchesChord(e, down)) return -1;
+	return 0;
+}
 
 interface CodeEditorProps {
 	tabId: string;
@@ -246,6 +258,7 @@ export const CodeEditor = memo(function CodeEditor({
 			defineAbundioTheme(m);
 			m.editor.setTheme("abundio");
 			setMonacoInstance(m);
+			registerMonacoForKeymap(m);
 
 			// Restore view state from initialEditorState or cache
 			if (initialEditorState) {
@@ -263,24 +276,17 @@ export const CodeEditor = memo(function CodeEditor({
 				}
 			}
 
-			// Register keybindings
-			// biome-ignore lint/style/noNonNullAssertion: Monaco KeyMod/KeyCode exist at runtime
-			const KeyMod = m.KeyMod!;
-			// biome-ignore lint/style/noNonNullAssertion: Monaco KeyMod/KeyCode exist at runtime
-			const KeyCode = m.KeyCode!;
-
-			// Cmd+= → zoom in
-			ed.addCommand(KeyMod.CtrlCmd | KeyCode.Equal, () => {
+			// The font-size Shortcuts fire from inside the editor too: they are not
+			// workspace-global, so the app keymap hands them to Monaco, and this
+			// forwards them back. Read from the keymap on every key press, so a
+			// rebind (or an Unbound Shortcut) takes effect in open editors at once.
+			ed.onKeyDown((e) => {
+				const step = fontSizeStepFor(e.browserEvent);
+				if (step === 0) return;
+				e.preventDefault();
+				e.stopPropagation();
 				const { fontSize: fs, setFontSize } = useSettingsStore.getState();
-				const newSize = Math.min(fs + 1, 32);
-				setFontSize(newSize);
-				setAllTerminalsFontSize(newSize);
-			});
-
-			// Cmd+- → zoom out
-			ed.addCommand(KeyMod.CtrlCmd | KeyCode.Minus, () => {
-				const { fontSize: fs, setFontSize } = useSettingsStore.getState();
-				const newSize = Math.max(fs - 1, 8);
+				const newSize = Math.min(Math.max(fs + step, 8), 32);
 				setFontSize(newSize);
 				setAllTerminalsFontSize(newSize);
 			});

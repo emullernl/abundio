@@ -1,5 +1,6 @@
 import { BarChart3, Info, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useShortcutLabel } from "../../hooks/useShortcutLabel";
 import { useProfileStore } from "../../stores/profileStore";
 import { useTelemetryStore } from "../../stores/telemetryStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -29,6 +30,7 @@ const OVERLAY_STYLES = `
 `;
 
 export function StatisticsOverlay({ topOffset }: { topOffset: number }) {
+	const toggleKey = useShortcutLabel("toggle-statistics-overlay");
 	const open = useWindowUiStore((s) => s.statisticsOverlayOpen);
 	const setOpen = useWindowUiStore((s) => s.setStatisticsOverlayOpen);
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
@@ -177,7 +179,7 @@ export function StatisticsOverlay({ topOffset }: { topOffset: number }) {
 					type="button"
 					onClick={() => setOpen(false)}
 					aria-label="Close statistics"
-					title="Close (Esc · Cmd/Ctrl+Shift+S)"
+					title={toggleKey ? `Close (Esc · ${toggleKey})` : "Close (Esc)"}
 					style={{
 						display: "flex",
 						alignItems: "center",

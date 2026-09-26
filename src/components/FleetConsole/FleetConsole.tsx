@@ -8,6 +8,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useShortcutLabel, withShortcut } from "../../hooks/useShortcutLabel";
 import {
 	autoColumns,
 	autoVisibleRows,
@@ -20,7 +21,6 @@ import {
 import { publishFleetGrid, stepTileZoom } from "../../lib/fleetFocus";
 import { waitForSmoothFrames } from "../../lib/focusSweep";
 import { openNewTask } from "../../lib/openNewTask";
-import { isMac } from "../../lib/platform";
 import {
 	getTerminal,
 	redrawProgram,
@@ -135,6 +135,7 @@ export function FleetConsole({ topOffset }: { topOffset: number }) {
 }
 
 function FleetConsoleBody({ topOffset }: { topOffset: number }) {
+	const newTaskKey = useShortcutLabel("new-task");
 	const tiles = useFleetTiles();
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const gitById = useWorkspaceGitStore((s) => s.byWorkspaceId);
@@ -614,7 +615,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					<button
 						type="button"
 						onClick={() => openNewTask()}
-						title={`New task (${isMac ? "⌘⇧T" : "Ctrl+Shift+T"})`}
+						title={withShortcut("New task", newTaskKey)}
 						className="flex items-center text-[var(--fg-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
 						style={{
 							height: 24,
@@ -923,6 +924,10 @@ function ZoomSlider({
 	onChange: (zoom: number) => void;
 }) {
 	const reset = () => onChange(TILE_ZOOM_DEFAULT);
+	// The font-size Shortcuts step the Tile zoom in the console (App.tsx).
+	const zoomInKey = useShortcutLabel("font-size-increase");
+	const zoomOutKey = useShortcutLabel("font-size-decrease");
+	const resetKey = useShortcutLabel("fleet-zoom-reset");
 	return (
 		<div
 			className="flex items-center select-none"
@@ -930,7 +935,7 @@ function ZoomSlider({
 		>
 			<ZoomButton
 				icon={ZoomOut}
-				label="Zoom out tiles (Cmd/Ctrl + −)"
+				label={withShortcut("Zoom out tiles", zoomOutKey)}
 				disabled={zoom <= TILE_ZOOM_MIN}
 				onClick={() => stepTileZoom(-1)}
 			/>
@@ -949,14 +954,14 @@ function ZoomSlider({
 			/>
 			<ZoomButton
 				icon={ZoomIn}
-				label="Zoom in tiles (Cmd/Ctrl + =)"
+				label={withShortcut("Zoom in tiles", zoomInKey)}
 				disabled={zoom >= TILE_ZOOM_MAX}
 				onClick={() => stepTileZoom(1)}
 			/>
 			<button
 				type="button"
 				onClick={reset}
-				title="Reset to 75% (Cmd/Ctrl+0)"
+				title={withShortcut("Reset to 75%", resetKey)}
 				className="hover:text-[var(--fg-primary)]"
 				style={{
 					fontFamily: "var(--font-mono)",

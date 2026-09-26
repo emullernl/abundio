@@ -1,11 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	shortcutLabelFor,
+	useKeybindingOverrides,
+} from "../hooks/useShortcutLabel";
 import { useSplitPane } from "../hooks/useSplitPane";
 import { isAgentPane } from "../lib/firePromptAction";
 import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
-import { triggerAction } from "../lib/keybindings";
+import { type KeyAction, triggerAction } from "../lib/keybindings";
 import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
@@ -25,6 +29,8 @@ interface PaletteItem {
 	label: string;
 	category: string;
 	action: () => void;
+	/** The Shortcut that does the same thing, spelled beside the label. */
+	shortcut?: KeyAction;
 	/** Listed but not selectable. Used where an entry exists but cannot run
 	 *  right now, so the reason is visible rather than a silent no-op. */
 	disabled?: boolean;
@@ -44,6 +50,7 @@ export function CommandPalette({
 	const [query, setQuery] = useState("");
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const keyOverrides = useKeybindingOverrides();
 	const listRef = useRef<HTMLDivElement>(null);
 
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -113,6 +120,7 @@ export function CommandPalette({
 			id: "action-new-workspace",
 			label: "New Workspace",
 			category: "Actions",
+			shortcut: "new-workspace",
 			action: () => onRequestNewWorkspace(),
 		});
 
@@ -125,6 +133,7 @@ export function CommandPalette({
 				id: "action-add-worktree",
 				label: "Add Worktree…",
 				category: "Actions",
+				shortcut: "add-worktree",
 				action: () => triggerAction("add-worktree"),
 			});
 		}
@@ -133,6 +142,7 @@ export function CommandPalette({
 			id: "action-new-task",
 			label: "New Task…",
 			category: "Actions",
+			shortcut: "new-task",
 			action: () => triggerAction("new-task"),
 		});
 
@@ -140,6 +150,7 @@ export function CommandPalette({
 			id: "action-toggle-fleet-console",
 			label: "Toggle Fleet Console",
 			category: "Actions",
+			shortcut: "toggle-fleet-console",
 			action: () => triggerAction("toggle-fleet-console"),
 		});
 		if (!inFleet) {
@@ -148,12 +159,14 @@ export function CommandPalette({
 					id: "action-next-workspace",
 					label: "Next Opened Workspace",
 					category: "Actions",
+					shortcut: "next-workspace",
 					action: () => triggerAction("next-workspace"),
 				},
 				{
 					id: "action-prev-workspace",
 					label: "Previous Opened Workspace",
 					category: "Actions",
+					shortcut: "prev-workspace",
 					action: () => triggerAction("prev-workspace"),
 				},
 			);
@@ -165,30 +178,35 @@ export function CommandPalette({
 					id: "action-split-right",
 					label: "Split Right",
 					category: "Actions",
+					shortcut: "split-vertical",
 					action: () => splitPane(focusedPaneId, "vertical"),
 				},
 				{
 					id: "action-split-down",
 					label: "Split Down",
 					category: "Actions",
+					shortcut: "split-horizontal",
 					action: () => splitPane(focusedPaneId, "horizontal"),
 				},
 				{
 					id: "action-next-pane",
 					label: "Focus Next Pane",
 					category: "Actions",
+					shortcut: "next-pane",
 					action: () => triggerAction("next-pane"),
 				},
 				{
 					id: "action-prev-pane",
 					label: "Focus Previous Pane",
 					category: "Actions",
+					shortcut: "prev-pane",
 					action: () => triggerAction("prev-pane"),
 				},
 				{
 					id: "action-close-pane",
 					label: "Close Pane",
 					category: "Actions",
+					shortcut: "close-pane",
 					action: () => closePane(focusedPaneId),
 				},
 			);
@@ -200,18 +218,21 @@ export function CommandPalette({
 					id: "action-next-pane",
 					label: "Focus Next Agent",
 					category: "Actions",
+					shortcut: "next-pane",
 					action: () => triggerAction("next-pane"),
 				},
 				{
 					id: "action-prev-pane",
 					label: "Focus Previous Agent",
 					category: "Actions",
+					shortcut: "prev-pane",
 					action: () => triggerAction("prev-pane"),
 				},
 				{
 					id: "action-close-pane",
 					label: "Close Pane",
 					category: "Actions",
+					shortcut: "close-pane",
 					action: () => closePane(focusedPaneId),
 				},
 				{
@@ -221,6 +242,7 @@ export function CommandPalette({
 							? "Back to the Grid"
 							: "Spotlight This Agent",
 					category: "Actions",
+					shortcut: "fleet-spotlight",
 					action: () => toggleFleetSpotlight(),
 				},
 			);
@@ -230,6 +252,7 @@ export function CommandPalette({
 			id: "action-open-settings",
 			label: "Open Settings",
 			category: "Actions",
+			shortcut: "open-settings",
 			action: () => triggerAction("open-settings"),
 		});
 
@@ -244,6 +267,7 @@ export function CommandPalette({
 			id: "action-toggle-markdown-preview",
 			label: "Toggle Markdown Preview",
 			category: "Actions",
+			shortcut: "toggle-markdown-preview",
 			action: () => triggerAction("toggle-markdown-preview"),
 		});
 
@@ -517,7 +541,13 @@ export function CommandPalette({
 											i === selectedIndex ? "var(--accent)" : "transparent",
 									}}
 								>
-									{item.label}
+									<span className="flex-1 min-w-0 truncate">{item.label}</span>
+									{item.shortcut && (
+										<ShortcutHint
+											label={shortcutLabelFor(item.shortcut, keyOverrides)}
+											selected={i === selectedIndex}
+										/>
+									)}
 								</button>
 							</div>
 						);
@@ -525,5 +555,29 @@ export function CommandPalette({
 				</div>
 			</div>
 		</div>
+	);
+}
+
+/** The Shortcut beside a palette row. Nothing when Unbound. */
+function ShortcutHint({
+	label,
+	selected,
+}: {
+	label: string;
+	selected: boolean;
+}) {
+	if (!label) return null;
+	return (
+		<span
+			className="flex-shrink-0"
+			style={{
+				fontFamily: "var(--font-mono)",
+				fontSize: 11,
+				marginLeft: 12,
+				opacity: selected ? 0.85 : 0.55,
+			}}
+		>
+			{label}
+		</span>
 	);
 }

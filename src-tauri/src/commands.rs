@@ -108,6 +108,32 @@ pub async fn pty_kill(
     pty_mgr.kill(&pty_id)
 }
 
+// ── Menu ──
+
+/// Sets the accelerator on the menu's Settings… item to the frontend's
+/// **Open settings** Shortcut (`None` when Unbound), then rebuilds the menu.
+/// Every Profile window pushes on start and on change; the menu signature
+/// makes a repeat of the same value free.
+#[tauri::command]
+pub fn set_settings_accelerator(
+    app: AppHandle,
+    accelerator: Option<String>,
+) -> Result<(), AbundioError> {
+    if let Some(a) = &accelerator {
+        if !crate::is_valid_accelerator(a) {
+            return Err(AbundioError::InvalidOperation(format!(
+                "invalid accelerator: {a:?}"
+            )));
+        }
+    }
+    if let Some(state) = app.try_state::<crate::SettingsAccelerator>() {
+        if state.set(accelerator) {
+            crate::rebuild_menu_for_focused_window(&app);
+        }
+    }
+    Ok(())
+}
+
 // ── Profile commands ──
 
 fn rebuild_menu_after_profile_change(app: &AppHandle) {

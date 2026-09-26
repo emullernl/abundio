@@ -23,7 +23,8 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { isMac } from "../../lib/platform";
+import { useShortcutLabel } from "../../hooks/useShortcutLabel";
+import type { KeyAction } from "../../lib/keybindings";
 import {
 	type ActionScope,
 	deriveParams,
@@ -194,7 +195,8 @@ export function PromptActionsSection() {
 }
 
 function Shortcut({ n }: { n: number }) {
-	const label = isMac ? `⌘${n}` : `Ctrl+Shift+${n}`;
+	const label = useShortcutLabel(`prompt-action-${n}` as KeyAction);
+	if (!label) return null;
 	return (
 		<kbd
 			style={{
