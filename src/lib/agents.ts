@@ -217,7 +217,10 @@ export function agentTaskArgvFor(
 	const agent = agents.find((a) => a.id === agentId);
 	if (!agent || !isTaskCapable(agent)) return undefined;
 	return [
-		agent.command,
+		// A custom Agent's command may be several words (`npx my-agent`,
+		// `gh copilot`). The typed launch lets the shell split it; argv must
+		// do the same or the whole string becomes one program name.
+		...agent.command.trim().split(/\s+/).filter(Boolean),
 		...(agent.args ?? []),
 		...(agent.taskArgs ?? []).map((a) =>
 			a === TASK_PROMPT_PLACEHOLDER ? prompt : a,

@@ -239,6 +239,25 @@ describe("Task-capable agents", () => {
 		]);
 	});
 
+	it("splits a multi-word command into separate argv elements", () => {
+		const agents: CodingAgent[] = [
+			{
+				id: "c",
+				name: "C",
+				command: " npx  my-agent ",
+				taskArgs: ["-i", "{prompt}"],
+				builtin: false,
+				enabled: true,
+			},
+		];
+		expect(agentTaskArgvFor(agents, "c", "a b")).toEqual([
+			"npx",
+			"my-agent",
+			"-i",
+			"a b",
+		]);
+	});
+
 	it("returns undefined for a non-capable or missing agent", () => {
 		expect(agentTaskArgvFor(BUILTIN_AGENTS, "kimi", "x")).toBeUndefined();
 		expect(agentTaskArgvFor(BUILTIN_AGENTS, "nope", "x")).toBeUndefined();
