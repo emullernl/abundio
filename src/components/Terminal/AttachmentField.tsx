@@ -55,6 +55,10 @@ export function AttachmentField({
 }: AttachmentFieldProps) {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// Once a file is attached, Enter on either button submits the dialog rather
+	// than reopening the picker or pasting again; Space still activates them.
+	// Empty, the buttons are how the field gets filled, so Enter keeps them.
+	const enterSubmits = paths.length > 0 || undefined;
 
 	function add(next: string[]) {
 		const merged = multiple ? [...paths, ...next] : next.slice(0, 1);
@@ -138,6 +142,7 @@ export function AttachmentField({
 					<button
 						ref={chooseRef}
 						type="button"
+						data-enter-submits={enterSubmits}
 						className={buttonClass}
 						style={buttonStyle}
 						onClick={pick}
@@ -152,6 +157,7 @@ export function AttachmentField({
 						style={buttonStyle}
 						onClick={pasteImage}
 						disabled={busy}
+						data-enter-submits={enterSubmits}
 					>
 						<ClipboardPaste size={11} />
 						{busy ? "Pasting…" : "Paste from clipboard"}

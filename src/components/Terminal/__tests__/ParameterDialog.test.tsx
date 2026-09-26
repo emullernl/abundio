@@ -6,6 +6,8 @@ vi.mock("../../../lib/ipc", () => ({
 	promptAttachments: { fromClipboard: vi.fn() },
 }));
 
+import { promptAttachments } from "../../../lib/ipc";
+
 import type { ParamMetaMap, PromptAction } from "../../../lib/promptActions";
 import { ParameterDialog } from "../ParameterDialog";
 
@@ -247,6 +249,37 @@ describe("ParameterDialog Enter from every field (#201)", () => {
 		pressEnter(card());
 		expect(onSubmit).not.toHaveBeenCalled();
 		expect(document.activeElement?.textContent).toContain("Choose file");
+	});
+
+	it("submits an attachment-only dialog on Enter once a file is attached", async () => {
+		vi.mocked(promptAttachments.fromClipboard).mockResolvedValue([
+			"/tmp/a.png",
+		]);
+		const onSubmit = render(
+			makeAction("Look at {{shot}}", { shot: { type: "attachment" } }),
+		);
+		const paste = [...document.querySelectorAll("button")].find((b) =>
+			b.textContent?.includes("Paste from clipboard"),
+		) as HTMLButtonElement;
+		// Empty: Enter on the button is the button's own.
+		expect(pressEnter(paste).defaultPrevented).toBe(false);
+		await act(async () => {
+			paste.click();
+		});
+		paste.focus();
+		const event = pressEnter(paste);
+		expect(event.defaultPrevented).toBe(true);
+		expect(onSubmit).toHaveBeenCalledWith({ shot: ["/tmp/a.png"] }, false);
+	});
+
+	it("focuses the first non-attachment field on open", () => {
+		render(
+			makeAction("Look at {{shot}} about {{topic}}", {
+				shot: { type: "attachment" },
+				topic: { type: "text" },
+			}),
+		);
+		expect(document.activeElement).toBe(field("topic"));
 	});
 
 	it("stages on Alt+Enter", () => {

@@ -42,7 +42,14 @@
  * last and wins, and while closed it does not compete at all.
  */
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { Check, ChevronDown } from "../Icons";
@@ -134,6 +141,27 @@ export function Select({
 	const listId = `${uid}-listbox`;
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
+	// The caller's ref, merged with ours through a stable callback: an inline
+	// one is detached and re-attached on every render, and would drop the
+	// cleanup a React 19 callback ref may return.
+	const callerRef = useRef(ref);
+	callerRef.current = ref;
+	const setTrigger = useCallback((el: HTMLButtonElement | null) => {
+		triggerRef.current = el;
+		const r = callerRef.current;
+		if (typeof r === "function") {
+			const cleanup = r(el);
+			// A returned cleanup replaces React's call with null, so clear ours
+			// there too.
+			if (typeof cleanup === "function")
+				return () => {
+					triggerRef.current = null;
+					cleanup();
+				};
+			return;
+		}
+		if (r) r.current = el;
+	}, []);
 	const [open, setOpen] = useState(false);
 	const [rect, setRect] = useState<DOMRect | null>(null);
 	const selectedIndex = options.findIndex((o) => o.value === value);
@@ -272,11 +300,7 @@ export function Select({
 			style={{ width, color: "var(--fg-secondary)" }}
 		>
 			<button
-				ref={(el) => {
-					triggerRef.current = el;
-					if (typeof ref === "function") ref(el);
-					else if (ref) ref.current = el;
-				}}
+				ref={setTrigger}
 				type="button"
 				className={className}
 				data-enter-submits={enterSubmits || undefined}

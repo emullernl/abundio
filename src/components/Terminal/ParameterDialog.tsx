@@ -8,8 +8,8 @@ import { createPortal } from "react-dom";
  * horizontally-scrolling rail, a field there could not grow on Shift+Enter, and
  * an `attachment` could not render in it at all.
  *
- * Every field is **required** and Send stays disabled until all are filled.
- * Fields are pre-filled from authored defaults only — never from the last value
+ * Send stays disabled until every **required** field is filled (a toggle never
+ * is; an author can mark any other Parameter optional). Fields are pre-filled from authored defaults only — never from the last value
  * used, because Enter submits this dialog and firing submits to the Agent, so a
  * reflex Enter would send a three-day-old value nobody read.
  *
@@ -72,17 +72,16 @@ function ParameterDialogBody({
 
 	useEscapeKey(onCancel);
 
-	// Focus always moves into the dialog, whatever the first field is. Left in
-	// the terminal behind it, Enter and every keystroke went to the Agent.
+	// Focus always moves into the dialog, whatever the fields are. Left in the
+	// terminal behind it, Enter and every keystroke went to the Agent.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: on mount only
 	useEffect(() => {
-		const first = params[0];
-		// An attachment focuses the card, not its button: Enter must submit (or
-		// point at the empty field), never open a file picker by surprise.
-		const el =
-			!first || first.meta.type === "attachment"
-				? cardRef.current
-				: fieldRefs.current[first.name];
+		// The first field that is not an attachment, so the caret lands somewhere
+		// useful. An attachment's button never takes focus on open: Enter must
+		// submit (or point at the empty field), never open a file picker by
+		// surprise. With only attachments, the card takes it.
+		const first = params.find((p) => p.meta.type !== "attachment");
+		const el = first ? fieldRefs.current[first.name] : cardRef.current;
 		el?.focus();
 		// Select the authored default so typing replaces it rather than appending
 		// to it. Guarded because the first field may be a toggle or a choice,
@@ -105,7 +104,11 @@ function ParameterDialogBody({
 			const empty = params.find(
 				(p) => isRequired(p.meta) && !isFilled(p.meta, values[p.name] ?? ""),
 			);
-			if (empty) fieldRefs.current[empty.name]?.focus();
+			const el = empty ? fieldRefs.current[empty.name] : null;
+			el?.focus();
+			// A disabled control refuses focus (an attachment's buttons, while a
+			// paste runs). Keep focus in the dialog rather than nowhere visible.
+			if (el && document.activeElement !== el) cardRef.current?.focus();
 			return;
 		}
 		setRefusal(onSubmit(values, stageOnly));
@@ -117,8 +120,9 @@ function ParameterDialogBody({
 	 * An open choice list has already used its Enter to pick an option and
 	 * called `preventDefault` — its portal is outside the card in the DOM but
 	 * not in the React tree, so the event still bubbles here. Real buttons
-	 * (Cancel, Send, the attachment buttons) keep their own Enter; the ones that
-	 * are fields (toggle, choice) opt in with `data-enter-submits`.
+	 * (Cancel, Send, an empty attachment's buttons) keep their own Enter; the
+	 * ones that act as fields opt in with `data-enter-submits` — the toggle, the
+	 * choice trigger, and an attachment's buttons once it holds a file.
 	 */
 	function onCardKeyDown(e: React.KeyboardEvent) {
 		// Keys never reach the terminal behind the dialog.
@@ -149,7 +153,6 @@ function ParameterDialogBody({
 				transition={{ duration: 0.15 }}
 				style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
 				onClick={onCancel}
-				onKeyDown={(e) => e.key === "Escape" && onCancel()}
 			>
 				<motion.div
 					ref={cardRef}
@@ -396,8 +399,8 @@ const fieldStyle: React.CSSProperties = {
 
 /**
  * One line by default; **Shift+Enter grows it** by inserting a newline. Enter
- * submits the dialog (handled on the dialog card). Mirrors what a chat input does, and what the Agents on
- * the other end do.
+ * submits the dialog — handled on the dialog card, not here. Mirrors what a
+ * chat input does, and what the Agents on the other end do.
  */
 function GrowingTextField({
 	name,
