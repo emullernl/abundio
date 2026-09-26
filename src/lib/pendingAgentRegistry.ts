@@ -8,8 +8,13 @@ interface PendingAgent {
 }
 
 const pending = new Map<string, PendingAgent>();
+const pendingTasks = new Map<string, PendingTask>();
 
 export function setPendingAgent(paneId: string, payload: PendingAgent): void {
+	// The mirror of `setPendingTask`: the last seed wins, never both, or the
+	// spawn would run the task's Agent and the flush would type a second one
+	// into its TUI.
+	pendingTasks.delete(paneId);
 	pending.set(paneId, payload);
 }
 
@@ -34,8 +39,6 @@ export interface PendingTask {
 	/** The Agent's id, so the pane enters agent mode as it spawns. */
 	agentId: string;
 }
-
-const pendingTasks = new Map<string, PendingTask>();
 
 export function setPendingTask(paneId: string, task: PendingTask): void {
 	pending.delete(paneId);

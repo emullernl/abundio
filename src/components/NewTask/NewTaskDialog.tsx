@@ -206,10 +206,15 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 
 	// ── Issues ──
 	// Keyed on the folder, not the Workspace object: that is replaced on every
-	// layout change, which would refetch and drop the picked issue.
+	// layout change, which would refetch and drop the picked issue. Not keyed
+	// on the source tab either, for the same reason: `issuesWanted` turns on
+	// the first time the Issue tab opens and stays on, so switching to Describe
+	// and back keeps the list and the pick without another `gh` round trip.
+	// Only a different folder (another Workspace) refetches and clears the pick.
 	const wsFolder = ws?.rootFolder;
+	const [issuesWanted, setIssuesWanted] = useState(false);
 	useEffect(() => {
-		if (source !== "issue" || !wsFolder || issuesUnavailable) return;
+		if (!issuesWanted || !wsFolder || issuesUnavailable) return;
 		let cancelled = false;
 		setIssueState({ status: "loading" });
 		setIssue(null);
@@ -228,7 +233,7 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 		return () => {
 			cancelled = true;
 		};
-	}, [source, wsFolder, issuesUnavailable]);
+	}, [issuesWanted, wsFolder, issuesUnavailable]);
 
 	const filteredIssues = useMemo(() => {
 		if (issueState.status !== "ready") return [];
@@ -354,7 +359,7 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 			const result = await progress.run(
 				{ verb: "Creating", target: branch },
 				async () => {
-					const created = await useWorkspaceStore
+					await useWorkspaceStore
 						.getState()
 						.createWorktreeWorkspace(
 							primaryCwd,
@@ -364,14 +369,19 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 							agent,
 							{
 								background: fromFleet,
-								task: { argv, agentId: agent.id, tabName },
+								task: {
+									argv,
+									agentId: agent.id,
+									tabName,
+									// Wherever the store seeds it — the new Workspace's
+									// focal pane, or a new Tab if it was already open.
+									onSeeded: fromFleet
+										? (paneId) =>
+												useWindowUiStore.getState().expectFleetTile(paneId)
+										: undefined,
+								},
 							},
 						);
-					if (fromFleet) {
-						const layout = parseTabLayout(created.tabs[0]?.layoutJson ?? "");
-						const paneId = layout ? collectTerminalIds(layout)[0] : undefined;
-						if (paneId) useWindowUiStore.getState().expectFleetTile(paneId);
-					}
 				},
 			);
 			setStarting(false);
@@ -545,7 +555,10 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 									selected={source === "issue"}
 									disabled={!!issuesUnavailable}
 									title={issuesUnavailable ?? undefined}
-									onClick={() => setSource("issue")}
+									onClick={() => {
+										setSource("issue");
+										setIssuesWanted(true);
+									}}
 								>
 									<CircleDot size={12} />
 									GitHub issue

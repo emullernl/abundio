@@ -533,15 +533,12 @@ struct GhLabel {
 	name: String,
 }
 
-#[derive(Deserialize)]
-struct GhNumber {
-	number: i32,
-}
-
 const ISSUE_LIMIT: &str = "100";
 
 /// Open issues of the repository `cwd` belongs to: the user's assigned ones
-/// first, then the rest, each group most recently updated first.
+/// first, then the rest, each group most recently updated first. The two
+/// lists are unioned, so an assigned issue is listed even on a repository with
+/// more open issues than one page holds.
 pub fn list_issues(cwd: &str) -> Result<Vec<GithubIssue>, AbundioError> {
 	let (available, authenticated) = gh_available_and_authenticated();
 	if !available {
@@ -562,11 +559,13 @@ pub fn list_issues(cwd: &str) -> Result<Vec<GithubIssue>, AbundioError> {
 		],
 	)
 	.map_err(issue_list_error)?;
+	// Full rows, not just numbers: an assigned issue outside the first
+	// ISSUE_LIMIT of the general list must still reach the dialog.
 	let mine = run_gh(
 		cwd,
 		&[
 			"issue", "list", "--state", "open", "--assignee", "@me", "--limit",
-			ISSUE_LIMIT, "--json", "number",
+			ISSUE_LIMIT, "--json", "number,title,url,updatedAt,labels",
 		],
 	)
 	.map_err(issue_list_error)?;
@@ -592,11 +591,14 @@ fn issue_list_error(e: AbundioError) -> AbundioError {
 pub fn parse_issues(all_json: &str, mine_json: &str) -> Result<Vec<GithubIssue>, AbundioError> {
 	let rows: Vec<GhIssueRow> = serde_json::from_str(all_json)
 		.map_err(|e| AbundioError::Git(format!("Unexpected gh issue list output: {e}")))?;
-	let mine: Vec<GhNumber> = serde_json::from_str(mine_json)
+	let mine_rows: Vec<GhIssueRow> = serde_json::from_str(mine_json)
 		.map_err(|e| AbundioError::Git(format!("Unexpected gh issue list output: {e}")))?;
-	let mine: std::collections::HashSet<i32> = mine.into_iter().map(|n| n.number).collect();
-	let mut issues: Vec<GithubIssue> = rows
+	let mine: std::collections::HashSet<i32> = mine_rows.iter().map(|r| r.number).collect();
+	let mut seen = std::collections::HashSet::new();
+	let mut issues: Vec<GithubIssue> = mine_rows
 		.into_iter()
+		.chain(rows)
+		.filter(|r| seen.insert(r.number))
 		.map(|r| GithubIssue {
 			assigned_to_me: mine.contains(&r.number),
 			number: r.number,
@@ -921,11 +923,26 @@ mod tests {
 			{"number": 2, "title": "new", "url": "u2", "updatedAt": "2026-03-01T00:00:00Z", "labels": [{"name": "bug"}]},
 			{"number": 3, "title": "mine old", "url": "u3", "updatedAt": "2025-01-01T00:00:00Z", "labels": []}
 		]"#;
-		let issues = parse_issues(all, r#"[{"number": 3}]"#).unwrap();
+		let mine = r#"[{"number": 3, "title": "mine old", "url": "u3", "updatedAt": "2025-01-01T00:00:00Z", "labels": []}]"#;
+		let issues = parse_issues(all, mine).unwrap();
 		let order: Vec<i32> = issues.iter().map(|i| i.number).collect();
 		assert_eq!(order, vec![3, 2, 1]);
 		assert!(issues[0].assigned_to_me);
 		assert_eq!(issues[1].labels, vec!["bug".to_string()]);
+	}
+
+	/// An assigned issue beyond the general list's page must still be listed,
+	/// once, and marked as the user's.
+	#[test]
+	fn parse_issues_includes_assigned_issues_the_general_page_missed() {
+		let all = r#"[{"number": 1, "title": "a", "url": "u1", "updatedAt": "2026-01-01T00:00:00Z"}]"#;
+		let mine = r#"[
+			{"number": 900, "title": "far", "url": "u9", "updatedAt": "2024-01-01T00:00:00Z"},
+			{"number": 1, "title": "a", "url": "u1", "updatedAt": "2026-01-01T00:00:00Z"}
+		]"#;
+		let issues = parse_issues(all, mine).unwrap();
+		let order: Vec<(i32, bool)> = issues.iter().map(|i| (i.number, i.assigned_to_me)).collect();
+		assert_eq!(order, vec![(1, true), (900, true)]);
 	}
 
 	#[test]

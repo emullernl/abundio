@@ -527,7 +527,7 @@ fn task_script(reexec: &str) -> String {
 __abundio_setup=$1; shift
 if [ -n "$__abundio_setup" ]; then eval "$__abundio_setup"; fi
 unset __abundio_setup
-printf '\033]7770;command_start;%s\007' "$1"
+printf '\033]7770;command_start;%s\007' "${{1//$'\a'/ }}"
 "$@"
 printf '\033]7770;command_end;%s\007' "$?"
 {reexec}"#
@@ -597,10 +597,13 @@ enum ShellType {
 }
 
 fn detect_shell_type(shell: &str) -> ShellType {
+    // Case-insensitive, as the frontend's `shellSupportsTasks` is: Windows
+    // paths often spell Git Bash `BASH.EXE`.
     let base = std::path::Path::new(shell)
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or(shell);
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
     if base.contains("zsh") {
         ShellType::Zsh
     } else if base.contains("bash") {
@@ -1725,6 +1728,23 @@ mod task_launch_tests {
             assert!(out.contains("\nABUNDIO_ENV__BAR=\n"), "{shell}: {out}");
             assert!(out.contains("\nABUNDIO_ENV_KEYS=FOO BAR\n"), "{shell}: {out}");
             assert!(!out.contains("ABUNDIO_TASK_ENV_KEYS"), "{shell}: {out}");
+        }
+    }
+
+    #[test]
+    fn detects_shells_case_insensitively() {
+        assert!(matches!(detect_shell_type("C:\\Program Files\\Git\\bin\\BASH.EXE"), ShellType::Bash));
+        assert!(matches!(detect_shell_type("/usr/local/bin/Zsh"), ShellType::Zsh));
+    }
+
+    /// A BEL in the reported command would end the OSC early and leak the
+    /// rest into the terminal, so it is replaced, as the wrapper's preexec does.
+    #[test]
+    fn script_strips_bel_from_the_reported_command() {
+        let t = task(&["ec\u{7}ho", "x"], None);
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("\x1b]7770;command_start;ec ho\x07"), "{shell}: {out:?}");
         }
     }
 

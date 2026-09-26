@@ -74,9 +74,7 @@ export function AddAgentDialog({
 	// Nothing Dormant: there is no choice to make. Decided once, on opening —
 	// a Workspace opening elsewhere must not turn this into another dialog
 	// under the user's hands.
-	const shown: AddAgentStep = step;
-
-	if (shown === "new") {
+	if (step === "new") {
 		return (
 			<NewAgentDialog
 				onClose={onClose}
@@ -87,7 +85,7 @@ export function AddAgentDialog({
 	}
 	return (
 		<Shell animateIn={!swapped} onClose={onClose}>
-			{shown === "choose" ? (
+			{step === "choose" ? (
 				<Chooser
 					dormant={dormant}
 					onNew={() => go("new")}

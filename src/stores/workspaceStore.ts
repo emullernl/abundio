@@ -42,6 +42,21 @@ export interface TaskSeed {
 	argv: string[];
 	agentId: string;
 	tabName: string;
+	/** Told which pane the task was seeded into, so the caller can follow it
+	 *  (the Fleet Console expects its tile). */
+	onSeeded?: (paneId: string) => void;
+}
+
+/** `ws` with one Tab renamed, without touching the original objects. */
+function withTabName(
+	ws: WorkspaceWithTabs,
+	tabId: string,
+	name: string,
+): WorkspaceWithTabs {
+	return {
+		...ws,
+		tabs: ws.tabs.map((t) => (t.id === tabId ? { ...t, name } : t)),
+	};
 }
 
 interface WorkspaceState {
@@ -194,10 +209,17 @@ function findFocalWorktree(
 function seedFocalPane(
 	ws: WorkspaceWithTabs,
 	opts: { setupCommands?: string; agent?: CodingAgent; task?: TaskSeed },
-): { firstTabId: string | undefined; firstPaneId: string | null } {
+): {
+	firstTabId: string | undefined;
+	firstPaneId: string | null;
+	/** The name the focal Tab must take (a task's), for the caller to apply
+	 *  through `set` — never by mutating a Tab the store may already hold. */
+	tabName?: string;
+} {
 	const firstTab = ws.tabs[0];
 	const firstTabId = firstTab?.id;
 	let firstPaneId: string | null = null;
+	let tabName: string | undefined;
 	if (!firstTab) return { firstTabId, firstPaneId };
 	try {
 		const layout = parseTabLayout(firstTab.layoutJson);
@@ -219,8 +241,11 @@ function seedFocalPane(
 				agentId: opts.task.agentId,
 				setup: setupLines.length ? setupLines.join("\n") : undefined,
 			});
-			firstTab.name = opts.task.tabName;
-			tabsApi.update(firstTab.id, { name: opts.task.tabName }).catch(() => {});
+			tabsApi
+				.update(firstTab.id, { name: opts.task.tabName })
+				.catch((err) => console.error("[newTask] tab rename failed:", err));
+			opts.task.onSeeded?.(firstPaneId);
+			tabName = opts.task.tabName;
 		} else if (firstPaneId && combined) {
 			setPendingAgent(firstPaneId, { command: combined });
 		}
@@ -233,7 +258,7 @@ function seedFocalPane(
 	} catch {
 		/* malformed layout — skip seeding */
 	}
-	return { firstTabId, firstPaneId };
+	return { firstTabId, firstPaneId, tabName };
 }
 
 /** Clear all ptyIds in a layout tree so fresh PTYs get spawned on render. */
@@ -546,8 +571,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			const alreadyOpen = usePtyActivityStore
 				.getState()
 				.openedWorkspaceIds.has(existing.id);
-			if (!alreadyOpen && (agent || setupCommands)) {
-				seedFocalPane(existing, { setupCommands, agent, task: opts?.task });
+			if (alreadyOpen && opts?.task && agent) {
+				// Its focal pane already has a PTY, so a seed would never be
+				// consumed and the task would vanish without a word. Start the
+				// task in a new Tab of that Workspace instead.
+				await get().createTab(existing.id, agent, undefined, {
+					activate: !background,
+					task: opts.task,
+				});
+			} else if (!alreadyOpen && (agent || setupCommands)) {
+				const { firstTabId, tabName } = seedFocalPane(existing, {
+					setupCommands,
+					agent,
+					task: opts?.task,
+				});
+				if (firstTabId && tabName) {
+					set((state) => ({
+						workspaces: state.workspaces.map((w) =>
+							w.id === existing.id ? withTabName(w, firstTabId, tabName) : w,
+						),
+					}));
+				}
 			}
 			if (background) {
 				usePtyActivityStore.getState().markWorkspaceOpened(existing.id);
@@ -557,17 +601,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			return existing;
 		}
 		const profileId = fallbackProfileId();
-		const ws = await workspacesApi.create(
+		const created = await workspacesApi.create(
 			basename(entry.path),
 			entry.path,
 			profileId,
 		);
-		usePtyActivityStore.getState().markWorkspaceOpened(ws.id);
-		const { firstTabId, firstPaneId } = seedFocalPane(ws, {
+		usePtyActivityStore.getState().markWorkspaceOpened(created.id);
+		const { firstTabId, firstPaneId, tabName } = seedFocalPane(created, {
 			setupCommands,
 			agent,
 			task: opts?.task,
 		});
+		const ws =
+			firstTabId && tabName
+				? withTabName(created, firstTabId, tabName)
+				: created;
 		set((state) => ({
 			workspaces: [...state.workspaces, ws],
 			activeWorkspaceId: background ? state.activeWorkspaceId : ws.id,
@@ -862,6 +910,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 						argv: opts.task.argv,
 						agentId: opts.task.agentId,
 					});
+					opts.task.onSeeded?.(terminalFocus);
 				} else {
 					setPendingAgent(terminalFocus, {
 						command: [agent.command, ...(agent.args ?? [])].join(" "),

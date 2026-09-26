@@ -23,4 +23,11 @@ describe("pending tasks", () => {
 		expect(takePendingAgent("p2")).toBeUndefined();
 		expect(takePendingTask("p2")).toBeDefined();
 	});
+
+	it("are cleared by a later typed seed for the same pane", () => {
+		setPendingTask("p3", { argv: ["claude", "x"], agentId: "claude" });
+		setPendingAgent("p3", { command: "claude" });
+		expect(takePendingTask("p3")).toBeUndefined();
+		expect(takePendingAgent("p3")).toEqual({ command: "claude" });
+	});
 });

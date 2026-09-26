@@ -1063,6 +1063,74 @@ describe("workspaceStore", () => {
 			expect(takePendingAgent("new-pane-1")).toEqual({ command: "claude" });
 		});
 
+		// Its focal pane already runs, so a seed would never be consumed and the
+		// task would vanish; it starts in a new Tab of that Workspace instead.
+		it("with a task on an already-open raced-in worktree starts it in a new Tab", async () => {
+			mockOpenedWorkspaceIds = new Set(["wt-1"]);
+			const { tabs } = await import("../../lib/ipc");
+			const open = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [makeTab({ id: "wt-tab-1", workspaceId: "wt-1" })],
+			});
+			useWorkspaceStore.setState({ workspaces: [open] });
+			vi.mocked(tabs.create).mockResolvedValueOnce(
+				makeTab({
+					id: "wt-tab-2",
+					workspaceId: "wt-1",
+					name: "do it",
+					layoutJson: JSON.stringify({
+						type: "terminal",
+						id: "wt-task-pane",
+						ptyId: "",
+					}),
+				}),
+			);
+			const seeded: string[] = [];
+
+			await useWorkspaceStore
+				.getState()
+				.addWorktreeWorkspace(entry, "", agent, {
+					background: true,
+					task: {
+						argv: ["claude", "do it"],
+						agentId: "claude",
+						tabName: "do it",
+						onSeeded: (id) => seeded.push(id),
+					},
+				});
+
+			expect(vi.mocked(tabs.create)).toHaveBeenLastCalledWith("wt-1", "do it");
+			expect(takePendingTask("wt-task-pane")).toEqual({
+				argv: ["claude", "do it"],
+				agentId: "claude",
+			});
+			expect(seeded).toEqual(["wt-task-pane"]);
+			expect(takePendingTask("pane-1")).toBeUndefined();
+		});
+
+		it("with a task renames a raced-in Tab through the store, not in place", async () => {
+			const tab = makeTab({ id: "wt-tab-1", workspaceId: "wt-1" });
+			const raced = makeWorkspace({
+				id: "wt-1",
+				rootFolder: "/repo/feature",
+				tabs: [tab],
+			});
+			useWorkspaceStore.setState({ workspaces: [raced] });
+
+			await useWorkspaceStore
+				.getState()
+				.addWorktreeWorkspace(entry, "", agent, {
+					task: { argv: ["claude", "x"], agentId: "claude", tabName: "x task" },
+				});
+
+			expect(tab.name).toBe("Terminal 1");
+			const after = useWorkspaceStore.getState().workspaces[0];
+			expect(after).not.toBe(raced);
+			expect(after.tabs[0].name).toBe("x task");
+			takePendingTask("pane-1");
+		});
+
 		it("with a task runs setup commands inside the task, not typed", async () => {
 			const { workspaces, tabs } = await import("../../lib/ipc");
 			const created = makeWorkspace({
