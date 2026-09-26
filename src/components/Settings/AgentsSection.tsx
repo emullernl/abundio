@@ -1,4 +1,9 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
+import {
+	isTaskCapable,
+	parseTaskArgsForm,
+	TASK_PROMPT_PLACEHOLDER,
+} from "../../lib/agents";
 import { type AgentHookStatus, agentHooks, fs as fsApi } from "../../lib/ipc";
 import type { CodingAgent } from "../../lib/types";
 import { useAgentRegistryStore } from "../../stores/agentRegistryStore";
@@ -38,6 +43,86 @@ function hookBadge(
 		default:
 			return { label: "Hooks not registered", tone: "warning" };
 	}
+}
+
+/** The *Task-capable* badge: this Agent can be started by **New task**. */
+function TaskBadge() {
+	return (
+		<span
+			className="flex-shrink-0 rounded"
+			title="Can start with a task prompt and stay interactive — offered by New task"
+			style={{
+				fontSize: 9,
+				fontWeight: 600,
+				color: "var(--accent)",
+				letterSpacing: "0.05em",
+				textTransform: "uppercase",
+				padding: "2px 5px",
+				border: "1px solid color-mix(in srgb, var(--accent) 40%, transparent)",
+			}}
+		>
+			Task-capable
+		</span>
+	);
+}
+
+/**
+ * A custom Agent's task argument form (`-i {prompt}`). Commits on blur or
+ * Enter; an invalid form stays in the field with its error and is not saved.
+ * Built-in Agents never show this: their form is fixed in code.
+ */
+function TaskArgsField({
+	agent,
+	onChange,
+}: {
+	agent: CodingAgent;
+	onChange: (taskArgs: string[] | undefined) => void;
+}) {
+	const saved = agent.taskArgs?.join(" ") ?? "";
+	const [value, setValue] = useState(saved);
+	const [error, setError] = useState<string | null>(null);
+	useEffect(() => setValue(saved), [saved]);
+
+	const commit = () => {
+		const parsed = parseTaskArgsForm(value);
+		if ("error" in parsed) {
+			setError(parsed.error);
+			return;
+		}
+		setError(null);
+		onChange(parsed.taskArgs);
+	};
+
+	return (
+		<div style={{ padding: "0 10px 9px 52px" }}>
+			<input
+				type="text"
+				value={value}
+				placeholder={`Task arguments (optional), e.g. -i ${TASK_PROMPT_PLACEHOLDER}`}
+				aria-label="Task arguments"
+				onChange={(e) => {
+					setValue(e.target.value);
+					setError(null);
+				}}
+				onBlur={commit}
+				onKeyDown={(e) => e.key === "Enter" && commit()}
+				className="w-full bg-transparent outline-none rounded-md"
+				style={{
+					color: "var(--fg-primary)",
+					fontSize: 11,
+					fontFamily: "var(--font-mono)",
+					padding: "4px 8px",
+					border: `1px solid ${error ? "var(--error)" : "var(--border)"}`,
+					backgroundColor: "var(--bg-secondary)",
+				}}
+			/>
+			{error && (
+				<div style={{ fontSize: 11, color: "var(--error)", marginTop: 4 }}>
+					{error}
+				</div>
+			)}
+		</div>
+	);
 }
 
 function HookBadge({ label, tone }: { label: string; tone: HookTone }) {
@@ -201,6 +286,7 @@ function AgentRow({
 	hookStatus,
 	onToggle,
 	onRemove,
+	onTaskArgsChange,
 }: {
 	agent: CodingAgent;
 	installed: boolean;
@@ -208,6 +294,8 @@ function AgentRow({
 	hookStatus?: AgentHookStatus;
 	onToggle: () => void;
 	onRemove?: () => void;
+	/** Only for custom Agents; built-ins have a fixed form. */
+	onTaskArgsChange?: (taskArgs: string[] | undefined) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const supported = hookStatus !== undefined;
@@ -292,6 +380,7 @@ function AgentRow({
 						Detected
 					</span>
 				)}
+				{isTaskCapable(agent) && <TaskBadge />}
 				<HookBadge label={badge.label} tone={badge.tone} />
 				{/* Single trailing slot so the badge columns and this control line
 				    up across every row: chevron for supported agents, the remove
@@ -331,6 +420,9 @@ function AgentRow({
 					<span style={{ width: 22, flexShrink: 0 }} aria-hidden />
 				)}
 			</div>
+			{onTaskArgsChange && (
+				<TaskArgsField agent={agent} onChange={onTaskArgsChange} />
+			)}
 			{expanded && hookStatus && (
 				<HookFootprint status={hookStatus} hooksEnabled={hooksEnabled} />
 			)}
@@ -342,18 +434,23 @@ function AgentRow({
 function AddAgentForm({
 	onAdd,
 }: {
-	onAdd: (name: string, command: string) => void;
+	onAdd: (name: string, command: string, taskArgs?: string[]) => void;
 }) {
 	const [name, setName] = useState("");
 	const [command, setCommand] = useState("");
+	const [taskForm, setTaskForm] = useState("");
 
-	const canSubmit = name.trim().length > 0 && command.trim().length > 0;
+	const parsedTask = parseTaskArgsForm(taskForm);
+	const taskError = "error" in parsedTask ? parsedTask.error : null;
+	const canSubmit =
+		name.trim().length > 0 && command.trim().length > 0 && !taskError;
 
 	const handleSubmit = () => {
-		if (!canSubmit) return;
-		onAdd(name.trim(), command.trim());
+		if (!canSubmit || "error" in parsedTask) return;
+		onAdd(name.trim(), command.trim(), parsedTask.taskArgs);
 		setName("");
 		setCommand("");
+		setTaskForm("");
 	};
 
 	return (
@@ -428,6 +525,35 @@ function AddAgentForm({
 					<Plus size={12} />
 					Add
 				</button>
+			</div>
+			<input
+				type="text"
+				placeholder={`Task arguments (optional), e.g. -i ${TASK_PROMPT_PLACEHOLDER}`}
+				aria-label="Task arguments"
+				value={taskForm}
+				onChange={(e) => setTaskForm(e.target.value)}
+				onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+				className="w-full bg-transparent outline-none rounded-md"
+				style={{
+					marginTop: 8,
+					color: "var(--fg-primary)",
+					fontSize: 12,
+					padding: "6px 8px",
+					border: `1px solid ${taskError && taskForm.trim() ? "var(--error)" : "var(--border)"}`,
+					backgroundColor: "var(--bg-secondary)",
+					fontFamily: "var(--font-mono)",
+				}}
+			/>
+			<div
+				style={{
+					fontSize: 11,
+					color: taskError ? "var(--error)" : "var(--fg-secondary)",
+					marginTop: 4,
+					lineHeight: 1.4,
+				}}
+			>
+				{taskError ??
+					`Fill this in if the agent can start with a prompt and stay interactive — it then appears in New task.`}
 			</div>
 		</div>
 	);
@@ -564,6 +690,7 @@ export function AgentsSection() {
 	const addAgent = useSettingsStore((s) => s.addAgent);
 	const removeAgent = useSettingsStore((s) => s.removeAgent);
 	const toggleAgent = useSettingsStore((s) => s.toggleAgent);
+	const updateAgent = useSettingsStore((s) => s.updateAgent);
 	const installedCommands = useAgentRegistryStore((s) => s.installedCommands);
 	const reloadRegistry = useAgentRegistryStore((s) => s.reload);
 	const agentHooksEnabled = useSettingsStore((s) => s.agentHooksEnabled);
@@ -627,7 +754,10 @@ export function AgentsSection() {
 					the launch menus, recognised when you run it in a terminal, and given
 					status hooks. <strong style={{ fontWeight: 600 }}>Detected</strong>{" "}
 					means the command was found on your PATH — separate from whether you
-					want it watched.
+					want it watched.{" "}
+					<strong style={{ fontWeight: 600 }}>Task-capable</strong> means the
+					agent can start with a prompt and stay interactive, so New task can
+					offer it.
 				</p>
 				<div className="flex flex-col gap-0.5">
 					{agents.map((agent) => (
@@ -641,6 +771,11 @@ export function AgentsSection() {
 								toggleAgent(agent.id).then(refreshHookStatuses);
 							}}
 							onRemove={agent.builtin ? undefined : () => removeAgent(agent.id)}
+							onTaskArgsChange={
+								agent.builtin
+									? undefined
+									: (taskArgs) => updateAgent(agent.id, { taskArgs })
+							}
 						/>
 					))}
 				</div>

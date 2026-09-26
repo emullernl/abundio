@@ -86,7 +86,12 @@ interface SettingsState {
 	toggleDebugActivityMeter: () => void;
 	setActivityByteThreshold: (n: number) => void;
 	setTerminalScrollback: (n: number) => void;
-	addAgent: (name: string, command: string, args?: string[]) => void;
+	addAgent: (
+		name: string,
+		command: string,
+		args?: string[],
+		taskArgs?: string[],
+	) => void;
 	removeAgent: (id: string) => void;
 	/** Resolves once hook provisioning for the new state has settled, so callers
 	 *  (e.g. Settings) can refresh the per-agent footprint afterwards. */
@@ -103,7 +108,9 @@ interface SettingsState {
 	) => Promise<"changed" | "already-matching" | "empty-scan">;
 	updateAgent: (
 		id: string,
-		updates: Partial<Pick<CodingAgent, "name" | "command" | "args">>,
+		updates: Partial<
+			Pick<CodingAgent, "name" | "command" | "args" | "taskArgs">
+		>,
 	) => void;
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
@@ -544,12 +551,20 @@ export const useSettingsStore = create<SettingsState>()(
 				withTerminalSettings((t) => t.setAllTerminalsScrollback(n));
 				set({ terminalScrollback: n });
 			},
-			addAgent: (name, command, args) => {
+			addAgent: (name, command, args, taskArgs) => {
 				const id = `custom-${crypto.randomUUID()}`;
 				set((s) => ({
 					agents: [
 						...s.agents,
-						{ id, name, command, args, builtin: false, enabled: true },
+						{
+							id,
+							name,
+							command,
+							args,
+							taskArgs,
+							builtin: false,
+							enabled: true,
+						},
 					],
 				}));
 			},
