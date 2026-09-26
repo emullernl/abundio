@@ -17,6 +17,7 @@ type KeyAction =
 	| "search-in-workspace"
 	| "new-workspace"
 	| "new-tab"
+	| "new-task"
 	| "close-tab"
 	| "next-tab"
 	| "prev-tab"
@@ -96,6 +97,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"search-in-workspace",
 	"new-workspace",
 	"new-tab",
+	"new-task",
 	"close-tab",
 	"next-tab",
 	"prev-tab",
@@ -279,6 +281,9 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	// twin would be Ctrl+Alt+N, which is AltGr+N (ń on Polish layouts).
 	{ key: "b", meta: isMac, shift: true, ctrl: !isMac, action: "add-worktree" },
 	{ key: "t", meta: isMac, shift: false, ctrl: !isMac, action: "new-tab" },
+	// T for task, beside New tab. Not muted in the Fleet Console: New task is
+	// one of its own actions there.
+	{ key: "t", meta: isMac, shift: true, ctrl: !isMac, action: "new-task" },
 	{ key: "w", meta: isMac, shift: false, ctrl: !isMac, action: "close-tab" },
 	// A note on the Windows/Linux chords below (tab, pane and workspace
 	// cycles): unlike the macOS Cmd chords — and unlike the Prompt action

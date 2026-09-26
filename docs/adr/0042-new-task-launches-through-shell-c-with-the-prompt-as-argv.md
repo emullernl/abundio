@@ -19,6 +19,6 @@ Shell integration never sees a command that did not come from the prompt, so the
 
 ## Consequences
 
-- Supported shells: zsh, bash, fish (whose `-c` receives the trailing arguments in `$argv`). PowerShell and cmd.exe are refused with an explanation for now. PowerShell could later use `-File <script> <agent> <prompt>` in the same shape.
+- Supported shells: zsh and bash, both verified to load their startup file under `-i -c` and to pass the arguments through byte-for-byte. Every other shell (fish, PowerShell, cmd.exe) is refused: the dialog says so up front, and a refused spawn prints the reason and opens a plain shell. Fish could follow (`$argv` in `-c`) once it is verified; PowerShell could use `-File <script> <agent> <prompt>` in the same shape.
 - The prompt is part of the spawn, not of the Pane's remembered state. Auto-relaunch and **Relaunch** run the Agent's plain command and never re-send a Task.
 - The `-c` shell keeps the same `-i` and wrapper redirection (`ZDOTDIR`, `--rcfile`) as a normal spawn, so the wrapper rc still runs before the Agent. That includes the Injected bundle's shadow-variable re-export. This must be verified for each supported shell, because "interactive plus `-c`" is the least-used corner of each shell's startup rules.

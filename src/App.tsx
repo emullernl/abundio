@@ -66,6 +66,7 @@ import {
 	registerActionGate,
 } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
+import { openNewTask } from "./lib/openNewTask";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { firePaneSlot } from "./lib/promptActionRegistry";
@@ -950,6 +951,11 @@ export function App() {
 		registerActionGate("fleet-spotlight", fleetConsoleShowing);
 		registerAction("fleet-zoom-reset", () => stepTileZoom(0));
 		registerActionGate("fleet-zoom-reset", fleetConsoleShowing);
+		registerAction("new-task", () => {
+			setPaletteOpen(false);
+			setFileSearchOpen(false);
+			openNewTask();
+		});
 		registerAction("toggle-fleet-console", () => {
 			useWindowUiStore.getState().toggleFleetConsole();
 		});

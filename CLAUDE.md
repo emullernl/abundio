@@ -58,6 +58,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `components/GitChanges/` — `GitChangesPanel`, `GitChangesFileList`, `GitChangesFileItem`, `DiffViewer`, `BranchSelector`, `PullRequestsSection`, `PullRequestItem`, `GitChangesResizer`, `GitPanelDivider`.
 - `components/Search/` — `SearchPanel`, `SearchResultFile`, `SearchResultMatch`.
 - `components/Notes/` — Per-workspace notes editor: `NotesPanel`, `NotesEditor`, `NotesToolbar`.
+- `components/NewTask/` — `NewTaskDialog`: **New task** (describe a task or pick a GitHub issue; Restart agent / New tab / New worktree). Opened only through `lib/openNewTask.ts`.
 - `components/FleetConsole/` — The **Fleet Console** (ADR-0040): `FleetConsole` (grid of every agent-mode pane in the Window), `FleetTile` (a borrowed `TerminalSlot` with `fleet` set), `GridPicker`, `NewAgentDialog`.
 - Top-level: `CommandPalette`, `FileSearchPalette`, `SettingsPanel`, `TabBar`, `StatusBar`, `Titlebar`, `OverviewBar`, `AppLoader`, `AgentStatusIcon`, `ConfirmDialog`, `SaveConfirmDialog`, `ErrorBoundary`, `LaunchPicker`, `NewWorkspaceDialog`, `OpenInDevEnvButton`, `DragPanePreview`, `PaneDropIndicator`.
 
@@ -95,6 +96,9 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/fleetConsole.ts` — Pure Fleet Console helpers: which panes are tiles and in what order, grid shape, Auto columns, divider drags, grid navigation.
 - `lib/fleetFocus.ts` — `targetPaneId()`: the Focused tile in the Fleet Console, the Focused pane otherwise. Every pane-scoped shortcut resolves its target here; `workspaceViewOnly` mutes layout shortcuts in the console.
 - `lib/paneLocation.ts` — `findPaneLocation`, `revealPane`, and `switchToPane` (the Fleet Console's **Switch to**).
+- `lib/taskPrompt.ts` — Pure **New task** text: resolve a Task through the Task/Issue template, name its Tab, suggest a branch for an issue.
+- `lib/newTask.ts` — Pure **New task** decisions: agent panes of a Workspace, the Restart agent target, default agent and destination, whether the shell supports a task launch.
+- `lib/worktreePath.ts` — Branch validation and path resolution shared by the Add worktree and New task dialogs.
 - `lib/paneRestart.ts` — `pickLivePanes` (pure) + `restartWorkspacePtys`: kill and respawn a Workspace's PTYs so they pick up a changed Injected bundle.
 - `lib/osc52.ts` — Parses OSC 52 clipboard payloads (write-only; reads are refused). See the clipboard convention below.
 - `lib/mouseReporting.ts` — The DEC private modes that turn mouse reporting on, and the pure decisions around refusing them (swallow or not, badge state, sweep or replay). See ADR-0031.
@@ -200,6 +204,7 @@ git push --follow-tags         # triggers CI build for all platforms
 - **A modal's Escape handler belongs on the card or on `document`, never on the backdrop.** The backdrop pattern (`onKeyDown={(e) => e.key === "Escape" && onCancel()}` on the overlay `div`) is dead code: the card inside calls `stopPropagation` so keystrokes cannot reach the terminal, and focus is placed inside the card on mount, so the event never reaches the backdrop. Use `hooks/useEscapeKey.ts`, which keeps a shared stack and dispatches only to the **topmost** overlay — a per-dialog `document` listener gets nesting backwards, because listeners on one node fire in registration order and mount order is outermost-first.
 - **A pane can have several render targets.** `portalRegistry` and `promptActionRegistry` keep a stack per pane; the live entry is the highest priority, most recent. A Fleet tile registers at `FLEET_TILE_PRIORITY` over the pane's Workspace-view slot and hands the terminal back by unregistering its own element. Always unregister with the element/handlers you registered, never the bare pane id, or you remove the other slot's entry too (ADR-0040).
 - **WebGL glyph atlases are shared between terminals.** xterm's WebGL addon keeps one texture atlas per font/size/colour/DPR configuration and hands it to every terminal that matches (`acquireTextureAtlas`). `webglAddon.clearTextureAtlas()` on one terminal empties it for all of them, and only that one redraws — the others show cell backgrounds with no text. Never clear it for a single pane: use `clearGlyphCaches()` in `terminalManager` (clears on every WebGL terminal), or change an option that alters the configuration (font size), which acquires a fresh atlas by itself.
+- **A New task never types its prompt** (ADR-0042). The PTY is spawned as `shell -i -c <script> <shell> <setup> <agent argv…>` with the prompt as one argv element, via `pendingAgentRegistry`'s `setPendingTask` → `pty_spawn`'s `task`. zsh and bash only; any other shell is refused and the pane falls back to a plain shell with the reason printed. The script reports the Agent on the `7770` channel itself, because shell integration never sees a `-c` command — without that, an exited Task Agent would stay in agent mode and relaunch on the next start. The prompt is not stored on the pane, so a relaunch never re-sends it.
 - Keybindings use capture phase (`addEventListener(..., true)`) to intercept before xterm.js.
 - **Prompt action digit bindings are chosen to be invisible to the terminal**, not merely unused by Abundio. macOS `Cmd` is not a terminal modifier, so xterm never forwards a Cmd-chord to the PTY. On Windows/Linux `Ctrl+<digit>` is unusable (`Ctrl+2` is NUL, `Ctrl+3` is ESC, and so on across the row) and `Ctrl+Alt+<digit>` is unusable too, despite matching the split-pane precedent, because `Ctrl+Alt` **is AltGr** on European layouts. Hence `Ctrl+Shift+<digit>`.
 - **Prompt actions live in SQLite, not `settingsStore`** (ADR-0039) — one row per action, because the in-pane popover makes writes frequent and multi-window and a whole-list broadcast loses appends. The change event is payload-free; receivers re-read. The `showActionBar` *preference* does live in `settingsStore`: the split is content vs. preference.
@@ -272,6 +277,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
 | Tile zoom in / out / reset (Fleet Console only) | `Cmd+=` / `Cmd+-` / `Cmd+0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | New workspace | `Cmd+Shift+N` | `Ctrl+Shift+N` |
 | New tab | `Cmd+T` | `Ctrl+T` |
+| New task | `Cmd+Shift+T` | `Ctrl+Shift+T` |
 | Close tab | `Cmd+W` | `Ctrl+W` |
 | Next tab | `Cmd+Shift+]` | `Ctrl+PageDown` |
 | Previous tab | `Cmd+Shift+[` | `Ctrl+PageUp` |

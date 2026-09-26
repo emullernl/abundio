@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, RotateCcw } from "lucide-react";
+import { ListPlus, Plus, RotateCcw } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
@@ -8,6 +8,7 @@ import {
 	buildRelaunchRows,
 	type RelaunchRow,
 } from "../../lib/dormantWorkspaces";
+import { openNewTask } from "../../lib/openNewTask";
 import type { CodingAgent } from "../../lib/types";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -44,19 +45,22 @@ export function relaunchTargets(rows: RelaunchRow[]): WorkspaceRow[] {
 }
 
 /**
- * **Add agent** in the Fleet Console: choose between **New agent** and
- * **Relaunch** of a Dormant workspace. With nothing Dormant the choice is
- * skipped and New agent opens straight away. See CONTEXT.md.
+ * **Add agent** in the Fleet Console: choose between **New agent**, **New
+ * task** and **Relaunch** of a Dormant workspace. Relaunch is offered only
+ * when something is Dormant. See CONTEXT.md.
  */
 export function AddAgentDialog({
 	rows,
 	initialStep = "choose",
 	onClose,
+	onReopen,
 }: {
 	/** From `useRelaunchRows`. */
 	rows: RelaunchRow[];
 	initialStep?: Exclude<AddAgentStep, "new">;
 	onClose: () => void;
+	/** Reopen this dialog on its chooser — New task's Back. */
+	onReopen: () => void;
 }) {
 	const dormant = relaunchTargets(rows);
 	const [step, setStep] = useState<AddAgentStep>(initialStep);
@@ -70,14 +74,13 @@ export function AddAgentDialog({
 	// Nothing Dormant: there is no choice to make. Decided once, on opening —
 	// a Workspace opening elsewhere must not turn this into another dialog
 	// under the user's hands.
-	const [skip] = useState(() => dormant.length === 0);
-	const shown: AddAgentStep = skip ? "new" : step;
+	const shown: AddAgentStep = step;
 
 	if (shown === "new") {
 		return (
 			<NewAgentDialog
 				onClose={onClose}
-				onBack={skip ? undefined : () => go("choose")}
+				onBack={() => go("choose")}
 				animateIn={!swapped}
 			/>
 		);
@@ -88,6 +91,11 @@ export function AddAgentDialog({
 				<Chooser
 					dormant={dormant}
 					onNew={() => go("new")}
+					onTask={() => {
+						// The New task dialog is app-level; Back reopens this chooser.
+						onClose();
+						openNewTask({ onBack: onReopen });
+					}}
 					onRelaunch={() => go("relaunch")}
 				/>
 			) : (
@@ -207,15 +215,18 @@ function useListKeys(count: number, onEnter: (i: number) => void) {
 function Chooser({
 	dormant,
 	onNew,
+	onTask,
 	onRelaunch,
 }: {
 	dormant: WorkspaceRow[];
 	onNew: () => void;
+	onTask: () => void;
 	onRelaunch: () => void;
 }) {
 	const agents = useSettingsStore((s) => s.agents);
-	const actions = [onNew, onRelaunch];
-	const keys = useListKeys(2, (i) => actions[i]());
+	const hasDormant = dormant.length > 0;
+	const actions = hasDormant ? [onNew, onTask, onRelaunch] : [onNew, onTask];
+	const keys = useListKeys(actions.length, (i) => actions[i]());
 	const preview = dormant.slice(0, 3);
 
 	return (
@@ -249,41 +260,52 @@ function Chooser({
 					id={keys.optionId(1)}
 					selected={keys.index === 1}
 					onHover={() => keys.setIndex(1)}
-					onClick={onRelaunch}
-					icon={<RotateCcw size={15} />}
-					title="Relaunch from a dormant workspace"
-					badge={dormant.length}
-					subtitle="Opens it and starts again the agents it had. Each starts a fresh session."
-				>
-					<div className="flex flex-col" style={{ gap: 3, marginTop: 8 }}>
-						{preview.map((r) => (
-							<div
-								key={r.workspace.id}
-								className="flex items-center min-w-0"
-								style={{ gap: 8, fontSize: 12 }}
-							>
-								<span
-									className="truncate"
-									style={{ color: "var(--fg-primary)", maxWidth: 200 }}
+					onClick={onTask}
+					icon={<ListPlus size={16} />}
+					title="New task"
+					subtitle="Start an agent on a task you describe or a GitHub issue."
+				/>
+				{hasDormant && (
+					<Option
+						id={keys.optionId(2)}
+						selected={keys.index === 2}
+						onHover={() => keys.setIndex(2)}
+						onClick={onRelaunch}
+						icon={<RotateCcw size={15} />}
+						title="Relaunch from a dormant workspace"
+						badge={dormant.length}
+						subtitle="Opens it and starts again the agents it had. Each starts a fresh session."
+					>
+						<div className="flex flex-col" style={{ gap: 3, marginTop: 8 }}>
+							{preview.map((r) => (
+								<div
+									key={r.workspace.id}
+									className="flex items-center min-w-0"
+									style={{ gap: 8, fontSize: 12 }}
 								>
-									{r.workspace.name}
+									<span
+										className="truncate"
+										style={{ color: "var(--fg-primary)", maxWidth: 200 }}
+									>
+										{r.workspace.name}
+									</span>
+									<AgentChips counts={r.agents} agents={agents} />
+								</div>
+							))}
+							{dormant.length > preview.length && (
+								<span
+									style={{
+										fontSize: 11.5,
+										color: "var(--fg-secondary)",
+										opacity: 0.8,
+									}}
+								>
+									and {dormant.length - preview.length} more
 								</span>
-								<AgentChips counts={r.agents} agents={agents} />
-							</div>
-						))}
-						{dormant.length > preview.length && (
-							<span
-								style={{
-									fontSize: 11.5,
-									color: "var(--fg-secondary)",
-									opacity: 0.8,
-								}}
-							>
-								and {dormant.length - preview.length} more
-							</span>
-						)}
-					</div>
-				</Option>
+							)}
+						</div>
+					</Option>
+				)}
 			</div>
 			<span
 				style={{
