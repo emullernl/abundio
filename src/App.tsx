@@ -583,7 +583,7 @@ export function App() {
 
 	// Scan `$PATH` for installed agent CLIs once at startup and, on a genuinely
 	// new install, seed the per-Agent Watched toggles from the result so the
-	// launch menus describe this machine instead of listing all nine built-ins.
+	// launch menus describe this machine instead of listing all eight built-ins.
 	//
 	// The order is load-bearing: **scan → claim → seed → commit**. Claiming
 	// before the scan has found something would burn the one-time claim on a
@@ -597,8 +597,19 @@ export function App() {
 		registry
 			.load(settings.agents.map((a) => a.command))
 			.then(async () => {
-				const installed = useAgentRegistryStore.getState().installedCommands;
+				const { installedCommands: installed, scannedCommands: scanned } =
+					useAgentRegistryStore.getState();
 				if (installed.size === 0) return;
+				// Before the claim's early return: a converted retired built-in
+				// is settled on every launch until it is, not only on the first.
+				// Only on the real login-shell `$PATH`: a timed-out shell's
+				// fallback scan can find Homebrew agents yet miss one in
+				// `~/.local/bin`, and would un-Watch it.
+				if (await agentRegistry.pathIsResolved()) {
+					await useSettingsStore
+						.getState()
+						.pruneRetiredAgents(installed, scanned);
+				}
 				if (!(await agentRegistry.claimSeeding())) return;
 				await useSettingsStore.getState().matchAgentsToInstalled(installed);
 				await agentRegistry.commitSeeding();

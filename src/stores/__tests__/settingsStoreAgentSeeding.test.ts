@@ -56,7 +56,7 @@ describe("settingsStore.matchAgentsToInstalled", () => {
 		vi.clearAllMocks();
 		useSettingsStore.setState({
 			agentHooksEnabled: true,
-			agents: [builtin("claude", true), builtin("aider", true)],
+			agents: [builtin("claude", true), builtin("codex", true)],
 		});
 	});
 
@@ -99,7 +99,7 @@ describe("settingsStore.matchAgentsToInstalled", () => {
 			.matchAgentsToInstalled(new Set());
 
 		expect(outcome).toBe("empty-scan");
-		expect(watched()).toEqual(["claude", "aider"]);
+		expect(watched()).toEqual(["claude", "codex"]);
 		expect(mockProvision).not.toHaveBeenCalled();
 	});
 
@@ -107,7 +107,7 @@ describe("settingsStore.matchAgentsToInstalled", () => {
 	// and the cross-Window broadcast that rides on it.
 	it("skips the write and the provision when nothing would move", async () => {
 		useSettingsStore.setState({
-			agents: [builtin("claude", true), builtin("aider", false)],
+			agents: [builtin("claude", true), builtin("codex", false)],
 		});
 		const before = useSettingsStore.getState().agents;
 
@@ -128,5 +128,81 @@ describe("settingsStore.matchAgentsToInstalled", () => {
 		await useSettingsStore.getState().matchAgentsToInstalled(new Set(["mine"]));
 
 		expect(watched()).toEqual(["mine"]);
+	});
+});
+
+describe("settingsStore.pruneRetiredAgents", () => {
+	const retired: CodingAgent = {
+		...custom("aider", true),
+		retiredBuiltin: true,
+	};
+	const scanned = new Set(["claude", "aider"]);
+	const aider = () =>
+		useSettingsStore.getState().agents.find((a) => a.id === "aider");
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSettingsStore.setState({
+			agentHooksEnabled: true,
+			agents: [builtin("claude", true), retired],
+		});
+	});
+
+	it("un-Watches a converted agent that is not installed and re-syncs hooks", async () => {
+		const changed = await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(["claude"]), scanned);
+
+		expect(changed).toBe(true);
+		expect(aider()).toEqual(custom("aider", false));
+		expect(mockProvision).toHaveBeenCalledWith(true, ["claude"]);
+	});
+
+	it("keeps an installed one Watched and clears its marker", async () => {
+		await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(["claude", "aider"]), scanned);
+
+		expect(aider()).toEqual(custom("aider", true));
+	});
+
+	it("skips the write and the provision on an empty scan", async () => {
+		const before = useSettingsStore.getState().agents;
+
+		const changed = await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(), scanned);
+
+		expect(changed).toBe(false);
+		expect(useSettingsStore.getState().agents).toBe(before);
+		expect(mockProvision).not.toHaveBeenCalled();
+	});
+
+	it("skips the provision once nothing is marked", async () => {
+		useSettingsStore.setState({ agents: [builtin("claude", true)] });
+
+		const changed = await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(["claude"]), scanned);
+
+		expect(changed).toBe(false);
+		expect(mockProvision).not.toHaveBeenCalled();
+	});
+
+	// A hand edit is a statement of intent: the prune must not later un-Watch
+	// an Agent the user just made Task-capable.
+	it("an explicit edit clears the marker, so the prune leaves it be", async () => {
+		useSettingsStore
+			.getState()
+			.updateAgent("aider", { taskArgs: ["{prompt}"] });
+		expect(aider()?.retiredBuiltin).toBeUndefined();
+
+		const changed = await useSettingsStore
+			.getState()
+			.pruneRetiredAgents(new Set(["claude"]), scanned);
+
+		expect(changed).toBe(false);
+		expect(aider()?.enabled).toBe(true);
+		expect(aider()?.taskArgs).toEqual(["{prompt}"]);
 	});
 });

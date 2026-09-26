@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { seedWatchedFromInstalled } from "../lib/agentSeeding";
+import {
+	pruneRetiredBuiltins,
+	seedWatchedFromInstalled,
+} from "../lib/agentSeeding";
 import { BUILTIN_AGENTS, mergeAgentsWithBuiltins } from "../lib/agents";
 import {
 	type Chord,
@@ -128,6 +131,13 @@ interface SettingsState {
 	matchAgentsToInstalled: (
 		installed: Set<string>,
 	) => Promise<"changed" | "already-matching" | "empty-scan">;
+	/** Settle Agents converted from a **retired built-in** against a real
+	 *  `$PATH` scan of `scanned` (see `pruneRetiredBuiltins`). Resolves `true`
+	 *  when the list changed; an empty scan changes nothing. */
+	pruneRetiredAgents: (
+		installed: Set<string>,
+		scanned: Set<string>,
+	) => Promise<boolean>;
 	updateAgent: (
 		id: string,
 		updates: Partial<
@@ -675,7 +685,7 @@ export const useSettingsStore = create<SettingsState>()(
 				if (after === before) return "already-matching";
 				set({ agents: after });
 				// Same re-sync toggleAgent does. It matters at first run too:
-				// `provisionStartup` has already run for all nine built-ins by the
+				// `provisionStartup` has already run for all eight built-ins by the
 				// time the scan lands, so an Agent seeded off that happens to have
 				// a stale config dir must lose its entries here.
 				if (get().agentHooksEnabled) {
@@ -687,9 +697,31 @@ export const useSettingsStore = create<SettingsState>()(
 				}
 				return "changed";
 			},
+			pruneRetiredAgents: async (installed, scanned) => {
+				const before = get().agents;
+				const after = pruneRetiredBuiltins(before, installed, scanned);
+				// Identity check, as in matchAgentsToInstalled: no write, no
+				// re-provision and no cross-Window broadcast when nothing moved.
+				if (after === before) return false;
+				set({ agents: after });
+				if (get().agentHooksEnabled) {
+					await agentHooks
+						.provision(true, provisionableAgentIds(after))
+						.catch((err) => {
+							console.error("[agentHooks] provision failed:", err);
+						});
+				}
+				return true;
+			},
 			updateAgent: (id, updates) => {
 				set((s) => ({
-					agents: s.agents.map((a) => (a.id === id ? { ...a, ...updates } : a)),
+					agents: s.agents.map((a) => {
+						if (a.id !== id) return a;
+						// An edit by hand settles a converted retired built-in: the
+						// user now owns it, so `pruneRetiredBuiltins` must leave it be.
+						const { retiredBuiltin: _marker, ...rest } = a;
+						return { ...rest, ...updates };
+					}),
 				}));
 			},
 			setLastOpenedDevEnvId: (id) => set({ lastOpenedDevEnvId: id }),

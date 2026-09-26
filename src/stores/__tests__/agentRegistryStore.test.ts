@@ -15,6 +15,7 @@ describe("agentRegistryStore", () => {
 	beforeEach(() => {
 		useAgentRegistryStore.setState({
 			installedCommands: new Set(),
+			scannedCommands: new Set(),
 			loaded: false,
 			loading: false,
 		});
@@ -31,6 +32,20 @@ describe("agentRegistryStore", () => {
 		expect([...useAgentRegistryStore.getState().installedCommands]).toEqual([
 			"claude",
 			"codex",
+		]);
+	});
+
+	// Callers use it to tell "not installed" from "never asked about".
+	it("records which commands the scan looked up", async () => {
+		mockApi.listInstalled.mockResolvedValue(["claude"]);
+
+		await useAgentRegistryStore.getState().load(["claude", "aider"]);
+		// The once-guard returns early, so this caller reads the first scan.
+		await useAgentRegistryStore.getState().load(["codex"]);
+
+		expect([...useAgentRegistryStore.getState().scannedCommands]).toEqual([
+			"claude",
+			"aider",
 		]);
 	});
 

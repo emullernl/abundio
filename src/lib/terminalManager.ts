@@ -634,7 +634,7 @@ const backgroundTrackers = new Map<
 >();
 
 /** Window in which two ESC presses count as a double-ESC cancel for agents
- *  that don't interrupt on a single press (copilot, aider, codex, opencode).
+ *  that don't interrupt on a single press (copilot, codex, opencode, kimi, grok, custom agents).
  *  Sized to mirror the rhythm of a deliberate ESC-ESC tap — long enough not
  *  to demand a sprint, short enough that it can't be triggered by accident
  *  during a normal editing session. */
@@ -1430,7 +1430,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		} else if (entry?.state === "active" && entry.detectionMode === "agent") {
 			// ESC is the user's cancel keystroke for an in-flight agent task.
 			// Claude/Gemini/Qwen interrupt on a single press; the others
-			// (Copilot, Aider, Codex, OpenCode) require a deliberate double-ESC
+			// (Copilot, Codex, OpenCode, custom agents) require a deliberate double-ESC
 			// within ESC_DOUBLE_PRESS_WINDOW_MS. Any other key resets the
 			// double-ESC tracker so "ESC, x, ESC" can't fire it by accident.
 			// Multi-byte ESC-prefixed sequences (arrows, focus reports) are

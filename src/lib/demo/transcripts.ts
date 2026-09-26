@@ -132,19 +132,37 @@ const geminiSession = [
 	"",
 ].join("\r\n");
 
-/** Aider — finished an edit, asking a follow-up (waiting, skyblue). */
-const aiderSession = [
-	`${DIM}~/code/design-system${RESET} ${GREEN}❯${RESET} aider`,
+/** Kimi Code — finished an edit, asking a follow-up (waiting, skyblue). */
+const kimiSession = [
+	`${DIM}~/code/design-system${RESET} ${GREEN}❯${RESET} kimi`,
 	"",
-	`${BOLD}Aider${RESET} ${DIM}v0.64.1 · gpt-4o${RESET}`,
+	`${CYAN}●${RESET} ${BOLD}Kimi Code${RESET}`,
+	`${DIM}  /Users/demo/code/design-system · main${RESET}`,
 	"",
 	`${GREY}> Add dark-mode color tokens to the design system.${RESET}`,
 	"",
-	`${GREEN}Applied edit to tokens/color.css${RESET}`,
+	`${CYAN}●${RESET} Added dark-mode tokens.`,
+	`${GREEN}    tokens/color.css (+18 −0)${RESET}`,
 	`${DIM}  + --bg-dark, --fg-dark, --accent-dark${RESET}`,
-	`${DIM}  Commit 3f9a2c1  feat: dark-mode color tokens${RESET}`,
 	"",
 	`${MAGENTA}?${RESET} Apply the same palette to tokens/elevation.css? ${DIM}(y/n)${RESET}`,
+	"",
+].join("\r\n");
+
+/** Grok Build — working through a change (active, amber). */
+const grokSession = [
+	`${DIM}~/code/blog-engine${RESET} ${GREEN}❯${RESET} grok`,
+	"",
+	`${BOLD}Grok Build${RESET}`,
+	`${DIM}  /Users/demo/code/blog-engine · feature/mdx-shortcodes${RESET}`,
+	"",
+	`${GREY}> Add a <Callout> shortcode to the MDX pipeline.${RESET}`,
+	"",
+	`${DIM}●${RESET} Reading lib/mdx/shortcodes.ts …`,
+	`${GREEN}    lib/mdx/shortcodes.ts (+57 −0)${RESET}`,
+	`${DIM}  Running pnpm test mdx${RESET}`,
+	"",
+	`${DIM}●${RESET} Updating content/posts/launch.mdx to use it…  ${DIM}(ctrl+c to cancel)${RESET}`,
 	"",
 ].join("\r\n");
 
@@ -257,7 +275,8 @@ export const TRANSCRIPTS: Record<string, string> = {
 	idleShell,
 	scratchShell,
 	geminiSession,
-	aiderSession,
+	kimiSession,
+	grokSession,
 	codexSession,
 	opencodeSession,
 	qwenSession,

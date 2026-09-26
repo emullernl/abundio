@@ -4,7 +4,7 @@ import type { CodingAgent } from "./types";
  * Agent seeding — the one-time act of setting each built-in Agent's **Watched**
  * toggle from whether it is **Installed** on `$PATH`, so a new user's launch
  * menus and hook provisioning describe their machine rather than listing all
- * nine built-ins. See ADR-0037 and the CONTEXT.md entries for *Installed*,
+ * eight built-ins. See ADR-0037 and the CONTEXT.md entries for *Installed*,
  * *Watched* and *Agent seeding*.
  *
  * Pure, and deliberately the *only* place the rule lives: the first run and the
@@ -48,5 +48,51 @@ export function seedWatchedFromInstalled(
 		return { ...agent, enabled };
 	});
 
+	return changed ? next : agents;
+}
+
+/**
+ * Settle every Agent converted from a **retired built-in** (see
+ * `RETIRED_BUILTINS` in `agents.ts`) against a real `$PATH` scan: un-Watch it
+ * when its command is not Installed, keep it as it is when it is, and clear
+ * the `retiredBuiltin` marker either way.
+ *
+ * It un-Watches rather than deletes. "Not a file on the login-shell `$PATH`"
+ * is narrower than "not used": a venv or conda install, a directory hook's
+ * `~/bin` or a shell-function wrapper all read as not Installed. An un-Watched
+ * Agent is already out of every launch menu and hook provisioning, and the
+ * user can switch it back on in Settings ▸ Agents; a deleted one is gone.
+ *
+ * Needed because ADR-0037 left long-time users with every built-in Watched, so
+ * a Watched retired built-in does not mean the user actually has it. The merge
+ * cannot wait for the scan (it is async, and saved Panes would open as plain
+ * shells meanwhile), so it converts first and this settles it afterwards.
+ *
+ * Runs on every launch until nothing carries the marker, independent of the
+ * one-time seeding claim. **An empty `installed` set is a failed scan**, as in
+ * `seedWatchedFromInstalled`, and changes nothing. The caller also skips it
+ * when the scan ran on the fallback `$PATH` (`agentRegistry.pathIsResolved()`).
+ *
+ * `scanned` is the list of commands that scan looked up. A marked Agent whose
+ * command is not in it is left alone: its absence from `installed` answers a
+ * question nobody asked. Agents without the marker are never touched. Returns
+ * the **same array reference** when nothing changes.
+ */
+export function pruneRetiredBuiltins(
+	agents: CodingAgent[],
+	installed: Set<string>,
+	scanned: Set<string>,
+): CodingAgent[] {
+	if (installed.size === 0) return agents;
+
+	let changed = false;
+	const next = agents.map((agent) => {
+		if (!agent.retiredBuiltin || !scanned.has(agent.command)) return agent;
+		changed = true;
+		const { retiredBuiltin: _marker, ...settled } = agent;
+		return installed.has(agent.command)
+			? settled
+			: { ...settled, enabled: false };
+	});
 	return changed ? next : agents;
 }

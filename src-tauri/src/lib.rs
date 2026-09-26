@@ -1326,6 +1326,7 @@ pub fn run() {
             env_vars::env_retry_key,
             agent_registry::list_installed_agent_commands,
             agent_registry::agents_claim_seeding,
+            agent_registry::agents_path_is_resolved,
             agent_registry::agents_commit_seeding,
             commands::agent_hooks_provision,
             commands::agent_hooks_provision_startup,

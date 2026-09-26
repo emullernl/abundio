@@ -5,8 +5,8 @@ export const TASK_PROMPT_PLACEHOLDER = "{prompt}";
 
 // Task-capable forms (see **Task-capable** in CONTEXT.md). Each keeps the
 // Agent interactive; the one-shot flags (`-p`, `exec`, `run`, `--single`)
-// would print an answer and exit. Kimi Code and Aider have no such form, so
-// they carry no `taskArgs`. Note Qwen: a bare positional prompt there is
+// would print an answer and exit. Kimi Code has no such form, so it carries
+// no `taskArgs`. Note Qwen: a bare positional prompt there is
 // one-shot, so it needs `-i` even though Claude/Codex/Grok take it bare.
 
 export const BUILTIN_AGENTS: CodingAgent[] = [
@@ -31,13 +31,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Gemini CLI",
 		command: "gemini",
 		taskArgs: ["-i", "{prompt}"],
-		builtin: true,
-		enabled: true,
-	},
-	{
-		id: "aider",
-		name: "Aider",
-		command: "aider",
 		builtin: true,
 		enabled: true,
 	},
@@ -145,14 +138,41 @@ export function getEnabledAgentCommands(agents: CodingAgent[]): string[] {
 }
 
 /**
+ * **Retired built-ins**: Agents an earlier release shipped as built-in and this
+ * one no longer does, keyed by id. See the *Retired built-in* entry in
+ * CONTEXT.md and ADR-0044.
+ *
+ * `mergeAgentsWithBuiltins` converts a persisted, Watched one into a custom
+ * Agent with the **same id**, so saved Panes (`agentId` on the layout),
+ * prompt-action scopes and Statistics history keep pointing at it. The id is
+ * kept on purpose even though it lacks the `custom-` prefix `addAgent` gives
+ * new custom Agents; nothing depends on that prefix.
+ */
+export const RETIRED_BUILTINS: Readonly<
+	Record<string, Pick<CodingAgent, "name" | "command">>
+> = {
+	aider: { name: "Aider", command: "aider" },
+};
+
+/**
  * Merge persisted agents with current builtins. Keeps user customizations
  * (enabled state, custom agents) while adding any new builtins from app updates.
+ *
+ * A persisted **retired built-in** (still `builtin: true`, its id in
+ * `RETIRED_BUILTINS`) becomes a custom Agent marked `retiredBuiltin` when it
+ * was Watched, and is dropped when it was not. The rule lives here, not in a
+ * persist `migrate` step, because every settings load path (the synchronous
+ * first-render read, `migrate` and `merge`) runs this function; a later
+ * migrate step would run after the others had already dropped it. Pure and
+ * idempotent: the converted Agent is `builtin: false`, so a second pass keeps
+ * it as any other custom Agent.
  */
 export function mergeAgentsWithBuiltins(
 	persisted: CodingAgent[],
 ): CodingAgent[] {
 	const result: CodingAgent[] = [];
 	const persistedById = new Map(persisted.map((a) => [a.id, a]));
+	const builtinIds = new Set(BUILTIN_AGENTS.map((a) => a.id));
 
 	// Add all builtins, preserving enabled state from persisted
 	for (const builtin of BUILTIN_AGENTS) {
@@ -166,11 +186,26 @@ export function mergeAgentsWithBuiltins(
 		});
 	}
 
-	// Add user-created agents
+	// Add user-created agents, and convert Watched retired built-ins into them
 	for (const agent of persisted) {
 		if (!agent.builtin) {
 			result.push(agent);
+			continue;
 		}
+		if (builtinIds.has(agent.id) || !agent.enabled) continue;
+		const retired = RETIRED_BUILTINS[agent.id];
+		if (!retired) continue;
+		// Spread the persisted row so any field a built-in could carry
+		// (none today: Settings only lets the user toggle one) survives.
+		// `retiredBuiltin` marks it for `pruneRetiredBuiltins`.
+		result.push({
+			...agent,
+			name: retired.name,
+			command: retired.command,
+			builtin: false,
+			enabled: true,
+			retiredBuiltin: true,
+		});
 	}
 
 	return result;

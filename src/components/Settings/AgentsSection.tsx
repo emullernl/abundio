@@ -22,7 +22,7 @@ const HOOK_TONE_COLOR: Record<HookTone, string> = {
 };
 
 /**
- * The per-agent hook badge. `supported` is false for Aider and custom agents
+ * The per-agent hook badge. `supported` is false for custom agents
  * (no hook integration); `installed` reflects the `$PATH` scan; `state` is the
  * live on-disk registration for a supported, installed agent.
  */
