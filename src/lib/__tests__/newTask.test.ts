@@ -149,6 +149,7 @@ describe("initialDestination", () => {
 	it("shows the remembered choice", () => {
 		expect(initialDestination("restart", true)).toBe("restart");
 		expect(initialDestination("newTab", true)).toBe("newTab");
+		expect(initialDestination("worktree", false)).toBe("worktree");
 	});
 	it("falls back to New tab when there is nothing to restart", () => {
 		expect(initialDestination("restart", false)).toBe("newTab");

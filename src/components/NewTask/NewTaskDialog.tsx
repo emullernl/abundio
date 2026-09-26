@@ -286,9 +286,8 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	const pickDestination = (d: TaskDestination) => {
 		setDestination(d);
 		setConfirmBusy(false);
-		// Remembered only on an explicit pick, and only the two in-Workspace
-		// destinations: a worktree is a per-Task decision.
-		if (d !== "worktree") useSettingsStore.getState().setTaskDestination(d);
+		// Remembered only on an explicit pick, never on a fallback.
+		useSettingsStore.getState().setTaskDestination(d);
 	};
 
 	const submit = async () => {

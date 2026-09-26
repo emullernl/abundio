@@ -12,7 +12,7 @@ import {
 } from "./paneTree";
 import type { CodingAgent, WorkspaceWithTabs } from "./types";
 
-export type TaskDestination = TaskDestinationPreference | "worktree";
+export type TaskDestination = TaskDestinationPreference;
 
 /** A pane of the Workspace whose PTY is in agent mode right now. */
 export interface AgentPane {

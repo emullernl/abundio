@@ -129,3 +129,29 @@ describe("settingsStore", () => {
 		expect(mockSetWebglEnabled).toHaveBeenCalledWith(true);
 	});
 });
+
+describe("Task destination", () => {
+	const migrate = () => {
+		const m = useSettingsStore.persist.getOptions().migrate;
+		if (!m) throw new Error("expected a migrate function");
+		return m;
+	};
+
+	it("remembers every destination, New worktree included", () => {
+		useSettingsStore.getState().setTaskDestination("worktree");
+		expect(useSettingsStore.getState().taskDestination).toBe("worktree");
+		useSettingsStore.getState().setTaskDestination("newTab");
+		expect(useSettingsStore.getState().taskDestination).toBe("newTab");
+	});
+
+	it("v13 moves the old New tab default to New worktree, keeps Restart agent", () => {
+		const from12 = (taskDestination: string) =>
+			(migrate()({ taskDestination }, 12) as { taskDestination: string })
+				.taskDestination;
+		expect(from12("newTab")).toBe("worktree");
+		expect(from12("restart")).toBe("restart");
+		expect(
+			(migrate()({}, 11) as { taskDestination: string }).taskDestination,
+		).toBe("worktree");
+	});
+});
