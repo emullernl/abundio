@@ -11,6 +11,7 @@ import {
 	shellSupportsTasks,
 	stepIssueIndex,
 	taskAgents,
+	taskSetupFailed,
 	visibleIssue,
 	workspaceAgentPanes,
 } from "../newTask";
@@ -147,11 +148,30 @@ describe("agent defaults", () => {
 
 describe("initialDestination", () => {
 	it("shows the remembered choice", () => {
-		expect(initialDestination("restart", true)).toBe("restart");
-		expect(initialDestination("newTab", true)).toBe("newTab");
+		expect(initialDestination("restart", true, true)).toBe("restart");
+		expect(initialDestination("newTab", false, false)).toBe("newTab");
+		expect(initialDestination("worktree", false, true)).toBe("worktree");
 	});
 	it("falls back to New tab when there is nothing to restart", () => {
-		expect(initialDestination("restart", false)).toBe("newTab");
+		expect(initialDestination("restart", false, true)).toBe("newTab");
+	});
+	it("falls back to New tab when there is no git repository", () => {
+		expect(initialDestination("worktree", true, false)).toBe("newTab");
+	});
+});
+
+describe("taskSetupFailed", () => {
+	const start = { type: "command_start" };
+	const end = { type: "command_end" };
+	const cwd = { type: "cwd_change" };
+	it("is a command_end before any command_start while awaiting the Task", () => {
+		expect(taskSetupFailed(true, [cwd, end])).toBe(true);
+		expect(taskSetupFailed(true, [end, start])).toBe(true);
+	});
+	it("is not the Agent's own exit", () => {
+		expect(taskSetupFailed(true, [start, end])).toBe(false);
+		expect(taskSetupFailed(false, [end])).toBe(false);
+		expect(taskSetupFailed(true, [cwd])).toBe(false);
 	});
 });
 

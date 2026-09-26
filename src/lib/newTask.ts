@@ -12,7 +12,7 @@ import {
 } from "./paneTree";
 import type { CodingAgent, WorkspaceWithTabs } from "./types";
 
-export type TaskDestination = TaskDestinationPreference | "worktree";
+export type TaskDestination = TaskDestinationPreference;
 
 /** A pane of the Workspace whose PTY is in agent mode right now. */
 export interface AgentPane {
@@ -100,16 +100,39 @@ export function taskAgents(agents: CodingAgent[]): CodingAgent[] {
 }
 
 /**
- * The destination shown when the dialog opens: the remembered one, except
- * that Restart agent falls back to New tab when the Workspace runs no Agent.
- * The fallback is shown, never saved — the preference changes only on an
+ * The destination the dialog shows for a chosen one: that one, except that
+ * it falls back to New tab when it is unavailable — Restart agent when the
+ * Workspace runs no Agent, New worktree when it is not a git Workspace. The
+ * fallback is shown, never saved — the preference changes only on an
  * explicit pick.
  */
 export function initialDestination(
-	remembered: TaskDestinationPreference,
+	chosen: TaskDestinationPreference,
 	canRestart: boolean,
+	canWorktree: boolean,
 ): TaskDestination {
-	return remembered === "restart" && !canRestart ? "newTab" : remembered;
+	if (chosen === "restart" && !canRestart) return "newTab";
+	if (chosen === "worktree" && !canWorktree) return "newTab";
+	return chosen;
+}
+
+/**
+ * Whether a chunk of a **New task** pane's output shows its setup failing:
+ * the task script's `command_end` arrives before any `command_start`, so the
+ * Agent never ran. Order within the chunk matters — a `command_start` first
+ * means the Agent started and that `command_end` is its exit. See
+ * `task_script` in `pty_manager.rs`.
+ */
+export function taskSetupFailed(
+	awaitingTaskStart: boolean,
+	commands: readonly { type: string }[],
+): boolean {
+	if (!awaitingTaskStart) return false;
+	for (const c of commands) {
+		if (c.type === "command_start") return false;
+		if (c.type === "command_end") return true;
+	}
+	return false;
 }
 
 /** `../<repo>.worktrees/<branch with / as ->`, as Add worktree derives it. */

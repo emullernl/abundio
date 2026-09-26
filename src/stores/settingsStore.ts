@@ -144,9 +144,9 @@ interface SettingsState {
 	setTaskDestination: (destination: TaskDestinationPreference) => void;
 }
 
-/** The two in-Workspace **Task destinations**; New worktree is chosen per
- *  Task and never remembered. */
-export type TaskDestinationPreference = "restart" | "newTab";
+/** The **Task destination** New task opens on; the last one explicitly
+ *  picked. Defaults to New worktree. */
+export type TaskDestinationPreference = "restart" | "newTab" | "worktree";
 
 /**
  * Every key `persist` writes to localStorage — the single source of truth for
@@ -271,7 +271,7 @@ const PERSISTED_DEFAULTS: {
 		prPollIntervalMinutes: 5,
 		taskTemplate: DEFAULT_TASK_TEMPLATE,
 		issueTemplate: DEFAULT_ISSUE_TEMPLATE,
-		taskDestination: "newTab" as TaskDestinationPreference,
+		taskDestination: "worktree" as TaskDestinationPreference,
 	};
 	try {
 		const raw = localStorage.getItem("abundio-settings");
@@ -409,7 +409,9 @@ const PERSISTED_DEFAULTS: {
 					? s.issueTemplate
 					: defaults.issueTemplate,
 			taskDestination:
-				s.taskDestination === "restart" || s.taskDestination === "newTab"
+				s.taskDestination === "restart" ||
+				s.taskDestination === "newTab" ||
+				s.taskDestination === "worktree"
 					? s.taskDestination
 					: defaults.taskDestination,
 		};
@@ -739,7 +741,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 12,
+			version: 13,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -817,9 +819,17 @@ export const useSettingsStore = create<SettingsState>()(
 					state = {
 						taskTemplate: DEFAULT_TASK_TEMPLATE,
 						issueTemplate: DEFAULT_ISSUE_TEMPLATE,
-						taskDestination: "newTab",
+						taskDestination: "worktree",
 						...state,
 					};
+				}
+				// v13: New worktree became the default Task destination and is
+				// now remembered too. Before v13 "newTab" was both the silent
+				// default and a savable pick, and the two are indistinguishable,
+				// so an explicit New tab choice is moved over too. "restart" was
+				// always an explicit pick and is kept.
+				if (version < 13 && state.taskDestination === "newTab") {
+					state = { ...state, taskDestination: "worktree" };
 				}
 				// v7: app-global PR poller (ADR-0019). Additive default keys;
 				// PERSISTED_DEFAULTS + merge already supply them — this only

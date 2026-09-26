@@ -146,15 +146,14 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 			: null;
 
 	// ── Destination ──
-	const [destination, setDestination] = useState<TaskDestination>(() =>
-		initialDestination(rememberedDestination, canRestart),
+	const [destination, setDestination] = useState<TaskDestination>(
+		rememberedDestination,
 	);
-	const effectiveDestination: TaskDestination =
-		destination === "restart" && !canRestart
-			? "newTab"
-			: destination === "worktree" && !canWorktree
-				? "newTab"
-				: destination;
+	const effectiveDestination = initialDestination(
+		destination,
+		canRestart,
+		canWorktree,
+	);
 	const autoRestart = defaultRestartPane(agentPanes, focused);
 	const [restartPaneId, setRestartPaneId] = useState<string | null>(null);
 	const restartPane: AgentPane | null =
@@ -286,9 +285,8 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	const pickDestination = (d: TaskDestination) => {
 		setDestination(d);
 		setConfirmBusy(false);
-		// Remembered only on an explicit pick, and only the two in-Workspace
-		// destinations: a worktree is a per-Task decision.
-		if (d !== "worktree") useSettingsStore.getState().setTaskDestination(d);
+		// Remembered only on an explicit pick, never on a fallback.
+		useSettingsStore.getState().setTaskDestination(d);
 	};
 
 	const submit = async () => {
