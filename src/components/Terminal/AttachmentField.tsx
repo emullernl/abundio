@@ -29,6 +29,9 @@ interface AttachmentFieldProps {
 	multiple: boolean;
 	paths: string[];
 	onChange: (v: ParamValue) => void;
+	/** The "Choose file…" button, which the dialog focuses when Enter is pressed
+	 *  while this field is still empty. */
+	chooseRef?: React.Ref<HTMLButtonElement>;
 }
 
 const buttonStyle: React.CSSProperties = {
@@ -48,6 +51,7 @@ export function AttachmentField({
 	multiple,
 	paths,
 	onChange,
+	chooseRef,
 }: AttachmentFieldProps) {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -132,6 +136,7 @@ export function AttachmentField({
 
 				<div className="flex flex-wrap gap-2">
 					<button
+						ref={chooseRef}
 						type="button"
 						className={buttonClass}
 						style={buttonStyle}

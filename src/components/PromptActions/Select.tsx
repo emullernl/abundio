@@ -100,6 +100,13 @@ interface SelectProps {
 	width?: number | string;
 	placeholder?: string;
 	"aria-label"?: string;
+	/** The closed control's button, for a caller that needs to focus it. */
+	ref?: React.Ref<HTMLButtonElement>;
+	/** Leave Enter on the closed control to the surrounding form instead of
+	 *  opening the list. The parameter dialog submits on Enter from every field;
+	 *  Space and the arrow keys still open the list. The trigger carries
+	 *  `data-enter-submits` so that form can tell it apart from other buttons. */
+	enterSubmits?: boolean;
 }
 
 /** Room for the chevron. */
@@ -117,6 +124,8 @@ export function Select({
 	width = "auto",
 	placeholder = "Choose…",
 	"aria-label": ariaLabel,
+	ref,
+	enterSubmits = false,
 }: SelectProps) {
 	// Instance-scoped, because `aria-activedescendant` resolves against the whole
 	// document and `ParameterEditor` renders one Select per parameter. Nothing in
@@ -208,7 +217,11 @@ export function Select({
 	}, [open, active]);
 
 	function onTriggerKeyDown(e: React.KeyboardEvent) {
-		if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter") {
+		if (
+			e.key === "ArrowDown" ||
+			e.key === "ArrowUp" ||
+			(e.key === "Enter" && !enterSubmits)
+		) {
 			e.preventDefault();
 			openList();
 		}
@@ -259,9 +272,14 @@ export function Select({
 			style={{ width, color: "var(--fg-secondary)" }}
 		>
 			<button
-				ref={triggerRef}
+				ref={(el) => {
+					triggerRef.current = el;
+					if (typeof ref === "function") ref(el);
+					else if (ref) ref.current = el;
+				}}
 				type="button"
 				className={className}
+				data-enter-submits={enterSubmits || undefined}
 				role="combobox"
 				aria-haspopup="listbox"
 				aria-expanded={open}
