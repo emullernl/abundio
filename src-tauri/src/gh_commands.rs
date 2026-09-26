@@ -535,9 +535,8 @@ struct GhLabel {
 
 const ISSUE_LIMIT: &str = "100";
 
-/// Open issues of the repository `cwd` belongs to: the user's assigned ones
-/// first, then the rest, each group most recently updated first. The two
-/// lists are unioned, so an assigned issue is listed even on a repository with
+/// Open issues of the repository `cwd` belongs to, highest issue number
+/// first; the user's assigned ones are marked. The two lists are unioned, so an assigned issue is listed even on a repository with
 /// more open issues than one page holds.
 pub fn list_issues(cwd: &str) -> Result<Vec<GithubIssue>, AbundioError> {
 	let (available, authenticated) = gh_available_and_authenticated();
@@ -608,12 +607,7 @@ pub fn parse_issues(all_json: &str, mine_json: &str) -> Result<Vec<GithubIssue>,
 			labels: r.labels.into_iter().map(|l| l.name).collect(),
 		})
 		.collect();
-	// ISO-8601 timestamps sort correctly as strings.
-	issues.sort_by(|a, b| {
-		b.assigned_to_me
-			.cmp(&a.assigned_to_me)
-			.then_with(|| b.updated_at.cmp(&a.updated_at))
-	});
+	issues.sort_by(|a, b| b.number.cmp(&a.number));
 	Ok(issues)
 }
 
@@ -917,17 +911,19 @@ mod tests {
 	}
 
 	#[test]
-	fn parse_issues_puts_mine_first_then_newest() {
+	fn parse_issues_sorts_by_number_descending() {
 		let all = r#"[
 			{"number": 1, "title": "old", "url": "u1", "updatedAt": "2026-01-01T00:00:00Z", "labels": []},
 			{"number": 2, "title": "new", "url": "u2", "updatedAt": "2026-03-01T00:00:00Z", "labels": [{"name": "bug"}]},
 			{"number": 3, "title": "mine old", "url": "u3", "updatedAt": "2025-01-01T00:00:00Z", "labels": []}
 		]"#;
-		let mine = r#"[{"number": 3, "title": "mine old", "url": "u3", "updatedAt": "2025-01-01T00:00:00Z", "labels": []}]"#;
+		let mine = r#"[{"number": 1, "title": "old", "url": "u1", "updatedAt": "2026-01-01T00:00:00Z", "labels": []}]"#;
 		let issues = parse_issues(all, mine).unwrap();
 		let order: Vec<i32> = issues.iter().map(|i| i.number).collect();
+		// Assigned #1 is marked, not pinned; #2 updated latest is not first.
 		assert_eq!(order, vec![3, 2, 1]);
-		assert!(issues[0].assigned_to_me);
+		assert!(issues[2].assigned_to_me);
+		assert!(!issues[0].assigned_to_me);
 		assert_eq!(issues[1].labels, vec!["bug".to_string()]);
 	}
 
@@ -942,7 +938,7 @@ mod tests {
 		]"#;
 		let issues = parse_issues(all, mine).unwrap();
 		let order: Vec<(i32, bool)> = issues.iter().map(|i| (i.number, i.assigned_to_me)).collect();
-		assert_eq!(order, vec![(1, true), (900, true)]);
+		assert_eq!(order, vec![(900, true), (1, true)]);
 	}
 
 	#[test]

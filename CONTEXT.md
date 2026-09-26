@@ -269,7 +269,7 @@ _Avoid_: new job, new prompt, start agent with prompt
 **Task**: What the user wants done, given either as free text or as a picked GitHub issue (an **Issue task**), plus an optional note that is appended after the resolved template. Resolved through the **Task template** or the **Issue template** into the Agent's first prompt. Sent exactly once, at launch: the Pane remembers only its Agent, so a later auto-relaunch or **Relaunch** starts that Agent *without* the Task.
 _Avoid_: job, ticket (an issue is one *source* of a Task)
 
-**Issue task**: A **Task** picked from the Workspace repository's open GitHub issues, listed newest first with the user's assigned issues pinned at the top. Only the issue's reference (number, title, URL) is sent, never its body: the Agent reads the issue itself. Offered only in a git Workspace with a GitHub remote and a signed-in `gh`.
+**Issue task**: A **Task** picked from the Workspace repository's open GitHub issues, listed by issue number, highest first, with the user's assigned issues marked. Only the issue's reference (number, title, URL) is sent, never its body: the Agent reads the issue itself. Offered only in a git Workspace with a GitHub remote and a signed-in `gh`.
 
 **Task template** / **Issue template**: The two global prompt templates in Settings that wrap a **Task** before it is sent. The Task template takes `{{input}}`, the Issue template `{{number}}`, `{{title}}` and `{{url}}`, in the **Prompt action** placeholder syntax. Each has a Reset to default.
 _Avoid_: prompt action (a Prompt action is fired at a *running* Agent; a template wraps a Task at *launch*)
