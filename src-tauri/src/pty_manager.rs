@@ -176,7 +176,11 @@ impl PtyManager {
                     let zdotdir_str = zdotdir_str.replace('\\', "/");
                     cmd.env("ZDOTDIR", &zdotdir_str);
                     if let Some(t) = task {
-                        cmd.args(task_c_args(&shell, "-l -i", t));
+                        // The wrapper .zshrc points ZDOTDIR back at the user's
+                        // folder (and it stays exported), so the re-exec must
+                        // aim it at the wrapper again or the shell left after
+                        // the Agent has no shell integration.
+                        cmd.args(task_c_args(&shell, &zsh_reexec(&zdotdir_str), t));
                     }
                 }
                 ShellType::Bash => {
@@ -188,8 +192,7 @@ impl PtyManager {
                     let rcfile_str = rcfile_str.replace('\\', "/");
                     cmd.args(["--rcfile", &rcfile_str, "-i"]);
                     if let Some(t) = task {
-                        let reexec = format!("--rcfile {} -i", sh_single_quote(&rcfile_str));
-                        cmd.args(task_c_args(&shell, &reexec, t));
+                        cmd.args(task_c_args(&shell, &bash_reexec(&rcfile_str), t));
                     }
                     // Our wrapper rcfile sources /etc/profile for login-shell
                     // parity. On Git Bash (MSYS2), /etc/profile does `cd "$HOME"`
@@ -507,13 +510,14 @@ impl PtyManager {
 /// as a command on the shell-integration channel (`7770`), since shell
 /// integration only sees commands typed at a prompt: `command_start` puts the
 /// Pane into agent mode, `command_end` takes it out when the Agent exits, so
-/// a finished Task Agent is forgotten rather than relaunched. Then it becomes
-/// an ordinary interactive shell with the same flags. See ADR-0042.
+/// a finished Task Agent is forgotten rather than relaunched. Then `reexec`
+/// turns it into an ordinary interactive shell with the same flags (and, for
+/// zsh, the wrapper's ZDOTDIR restored). See ADR-0042.
 ///
 /// The setup is `eval`ed: it is **Worktree setup commands**, author-written
 /// shell that is typed at a prompt on every other path. The "no eval" rule
 /// is about *values*, which never reach it.
-fn task_script(reexec_flags: &str) -> String {
+fn task_script(reexec: &str) -> String {
     format!(
         r#"__abundio_setup=$1; shift
 if [ -n "$__abundio_setup" ]; then eval "$__abundio_setup"; fi
@@ -521,20 +525,32 @@ unset __abundio_setup
 printf '\033]7770;command_start;%s\007' "$1"
 "$@"
 printf '\033]7770;command_end;%s\007' "$?"
-exec "$0" {reexec_flags}"#
+{reexec}"#
     )
 }
 
 /// The arguments after the shell's own interactive flags for a task spawn.
-fn task_c_args(shell: &str, reexec_flags: &str, task: &TaskLaunch) -> Vec<String> {
+fn task_c_args(shell: &str, reexec: &str, task: &TaskLaunch) -> Vec<String> {
     let mut args = vec![
         "-c".to_string(),
-        task_script(reexec_flags),
+        task_script(reexec),
         shell.to_string(),
         task.setup.clone().unwrap_or_default(),
     ];
     args.extend(task.argv.iter().cloned());
     args
+}
+
+/// The task script's last step for zsh: become the wrapper-loaded login
+/// shell again. `ZDOTDIR` must be re-pointed first, because the wrapper .zshrc
+/// sets it back to the user's own folder and it stays exported.
+fn zsh_reexec(zdotdir: &str) -> String {
+    format!("export ZDOTDIR={}\nexec \"$0\" -l -i", sh_single_quote(zdotdir))
+}
+
+/// The task script's last step for bash: the same `--rcfile` spawn.
+fn bash_reexec(rcfile: &str) -> String {
+    format!("exec \"$0\" --rcfile {} -i", sh_single_quote(rcfile))
 }
 
 /// Quote `s` for a POSIX shell as one word.
@@ -1601,12 +1617,24 @@ mod task_launch_tests {
     #[test]
     fn prompt_is_its_own_argument_never_joined() {
         let prompt = "it's \"$(rm -rf ~)\"\nline two; `x`";
-        let args = task_c_args("/bin/zsh", "-l -i", &task(&["claude", prompt], None));
+        let args = task_c_args("/bin/zsh", "exec \"$0\" -l -i", &task(&["claude", prompt], None));
         assert_eq!(args[0], "-c");
         assert_eq!(args[2], "/bin/zsh");
         assert_eq!(args[3], "");
         assert_eq!(&args[4..], &["claude".to_string(), prompt.to_string()]);
         assert!(!args[1].contains(prompt));
+    }
+
+    #[test]
+    fn reexec_restores_the_wrapper() {
+        assert_eq!(
+            zsh_reexec("/data/it's"),
+            "export ZDOTDIR='/data/it'\\''s'\nexec \"$0\" -l -i"
+        );
+        assert_eq!(
+            bash_reexec("/data/.bashrc"),
+            "exec \"$0\" --rcfile '/data/.bashrc' -i"
+        );
     }
 
     #[test]
@@ -1621,7 +1649,7 @@ mod task_launch_tests {
         if !Path::new(shell).exists() {
             return None;
         }
-        let script = task_script("-i").replace("exec \"$0\"", "echo REEXEC \"$0\"");
+        let script = task_script("echo REEXEC \"$0\" -i");
         let mut args = vec!["-c".to_string(), script, shell.to_string()];
         args.push(t.setup.clone().unwrap_or_default());
         args.extend(t.argv.iter().cloned());
