@@ -205,6 +205,11 @@ export interface CodingAgent {
 	name: string;
 	command: string;
 	args?: string[];
+	/** How to start this Agent with a first prompt and stay interactive: the
+	 *  arguments after `command`/`args`, with exactly one element equal to
+	 *  `TASK_PROMPT_PLACEHOLDER`. Present means **Task-capable**. Built-ins
+	 *  always take theirs from code (see `mergeAgentsWithBuiltins`). */
+	taskArgs?: string[];
 	builtin: boolean;
 	enabled: boolean;
 }

@@ -233,6 +233,25 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				error: null,
 				unreadError: null,
 			};
+		case "gh_list_issues":
+			return [
+				{
+					number: 214,
+					title: "Split view loses scroll position on resize",
+					url: "https://github.com/acme/app/issues/214",
+					updatedAt: "2026-09-20T10:00:00Z",
+					labels: ["bug"],
+					assignedToMe: true,
+				},
+				{
+					number: 209,
+					title: "Add CSV export to the reports page",
+					url: "https://github.com/acme/app/issues/209",
+					updatedAt: "2026-09-18T10:00:00Z",
+					labels: ["enhancement"],
+					assignedToMe: false,
+				},
+			];
 		case "pr_mark_read":
 		case "pr_poller_refresh":
 		case "pr_poller_set_config":

@@ -16,7 +16,9 @@ function Harness(props: {
 	initialStep?: "choose" | "relaunch";
 	onClose: () => void;
 }) {
-	return <AddAgentDialog rows={useRelaunchRows()} {...props} />;
+	return (
+		<AddAgentDialog rows={useRelaunchRows()} onReopen={() => {}} {...props} />
+	);
 }
 
 (
@@ -94,10 +96,27 @@ describe("AddAgentDialog", () => {
 		);
 	});
 
-	it("skips the choice when nothing is Dormant", () => {
+	it("still offers New agent and New task when nothing is Dormant", () => {
 		usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["api"]) });
 		render();
-		expect(dialogLabel()).toBe("New agent");
+		expect(dialogLabel()).toBe("Add agent");
+		expect(document.body.textContent).toContain("New task");
+		expect(document.body.textContent).not.toContain(
+			"Relaunch from a dormant workspace",
+		);
+	});
+
+	it("New task closes the chooser and opens New task with a way back", () => {
+		useWindowUiStore.setState({ newTaskRequest: null });
+		render();
+		const option = [...document.querySelectorAll('[role="option"]')].find((b) =>
+			b.textContent?.includes("New task"),
+		) as HTMLButtonElement;
+		act(() => option.click());
+		expect(onClose).toHaveBeenCalled();
+		const req = useWindowUiStore.getState().newTaskRequest;
+		expect(req).not.toBeNull();
+		expect(req?.onBack).toBeTypeOf("function");
 	});
 
 	it("relaunches the whole Workspace in the background and closes", () => {

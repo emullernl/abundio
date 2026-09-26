@@ -37,6 +37,18 @@ struct PtyEntry {
     alive: Arc<AtomicBool>,
 }
 
+/// A **New task** launch: the Agent's argv (the resolved Task prompt is one
+/// element of it) and optional **Worktree setup commands** to run first.
+/// Spawned through `shell -c` with the argv as positional parameters, so the
+/// prompt never passes through a shell parser. See ADR-0042.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLaunch {
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub setup: Option<String>,
+}
+
 /// Which Workspace a live PTY belongs to.
 ///
 /// Recorded at spawn so the `abundio-env` helper can resolve a Bundle from
@@ -96,7 +108,13 @@ impl PtyManager {
         window_label: Option<&str>,
         workspace_id: Option<&str>,
         inherit_from_workspace_id: Option<&str>,
+        task: Option<&TaskLaunch>,
     ) -> Result<String, AbundioError> {
+        if let Some(t) = task {
+            if t.argv.is_empty() {
+                return Err(AbundioError::Pty("New task: empty agent command".into()));
+            }
+        }
         let pty_id = pty_id
             .map(|s| s.to_string())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -130,6 +148,12 @@ impl PtyManager {
         };
         let shell_type = detect_shell_type(&shell);
         let integration_dir = shell_integration_dir();
+        if task.is_some() && !matches!(shell_type, ShellType::Zsh | ShellType::Bash) {
+            return Err(AbundioError::Pty(format!(
+                "New task needs zsh or bash as the terminal shell (this one is {shell}). \
+                 Change it in Settings \u{25B8} Terminal, or start the agent with New agent."
+            )));
+        }
 
         let mut cmd = if let Some(command) = command {
             let parts: Vec<&str> = command.split_whitespace().collect();
@@ -151,6 +175,13 @@ impl PtyManager {
                     #[cfg(target_os = "windows")]
                     let zdotdir_str = zdotdir_str.replace('\\', "/");
                     cmd.env("ZDOTDIR", &zdotdir_str);
+                    if let Some(t) = task {
+                        // The wrapper .zshrc points ZDOTDIR back at the user's
+                        // folder (and it stays exported), so the re-exec must
+                        // aim it at the wrapper again or the shell left after
+                        // the Agent has no shell integration.
+                        cmd.args(task_c_args(&shell, &zsh_reexec(&zdotdir_str), t));
+                    }
                 }
                 ShellType::Bash => {
                     // Use --rcfile to load our wrapper (not -l; --rcfile is ignored for login shells)
@@ -160,6 +191,9 @@ impl PtyManager {
                     #[cfg(target_os = "windows")]
                     let rcfile_str = rcfile_str.replace('\\', "/");
                     cmd.args(["--rcfile", &rcfile_str, "-i"]);
+                    if let Some(t) = task {
+                        cmd.args(task_c_args(&shell, &bash_reexec(&rcfile_str), t));
+                    }
                     // Our wrapper rcfile sources /etc/profile for login-shell
                     // parity. On Git Bash (MSYS2), /etc/profile does `cd "$HOME"`
                     // unless CHERE_INVOKING is set — which would clobber the spawn
@@ -249,6 +283,7 @@ impl PtyManager {
         };
 
         // Only the three wrapper scripts consume (and unset) the shadow copies.
+        // A task spawn is still the wrapper-loaded shell (`-i -c`), so it counts.
         let has_wrapper = command.is_none()
             && matches!(
                 shell_type,
@@ -264,6 +299,10 @@ impl PtyManager {
         }
         if !keys_manifest.is_empty() {
             cmd.env("ABUNDIO_ENV_KEYS", &keys_manifest);
+            if task.is_some() {
+                // For the task script's re-exec; see ZSH_ENV_RESTORE.
+                cmd.env("ABUNDIO_TASK_ENV_KEYS", &keys_manifest);
+            }
         }
         if !skipped.is_empty() {
             log::warn!(
@@ -467,6 +506,87 @@ impl PtyManager {
     }
 }
 
+/// The script a **New task** PTY runs as `shell -i -c <script> <shell> <setup> <argv…>`.
+///
+/// `$0` is the shell's own path (so it can `exec` itself afterwards), `$1` the
+/// setup commands, and the rest the Agent's argv, prompt included, which is
+/// run as `"$@"` and therefore never re-parsed. The script reports the Agent
+/// as a command on the shell-integration channel (`7770`), since shell
+/// integration only sees commands typed at a prompt: `command_start` puts the
+/// Pane into agent mode, `command_end` takes it out when the Agent exits, so
+/// a finished Task Agent is forgotten rather than relaunched. Then `reexec`
+/// turns it into an ordinary interactive shell with the same flags (and, for
+/// zsh, the wrapper's ZDOTDIR restored). See ADR-0042.
+///
+/// The setup is `eval`ed: it is **Worktree setup commands**, author-written
+/// shell that is typed at a prompt on every other path. The "no eval" rule
+/// is about *values*, which never reach it.
+fn task_script(reexec: &str) -> String {
+    format!(
+        r#"__abundio_keys=$ABUNDIO_TASK_ENV_KEYS; unset ABUNDIO_TASK_ENV_KEYS
+__abundio_setup=$1; shift
+if [ -n "$__abundio_setup" ]; then eval "$__abundio_setup"; fi
+unset __abundio_setup
+printf '\033]7770;command_start;%s\007' "${{1//$'\a'/ }}"
+"$@"
+printf '\033]7770;command_end;%s\007' "$?"
+{reexec}"#
+    )
+}
+
+/// The arguments after the shell's own interactive flags for a task spawn.
+fn task_c_args(shell: &str, reexec: &str, task: &TaskLaunch) -> Vec<String> {
+    let mut args = vec![
+        "-c".to_string(),
+        task_script(reexec),
+        shell.to_string(),
+        task.setup.clone().unwrap_or_default(),
+    ];
+    args.extend(task.argv.iter().cloned());
+    args
+}
+
+/// The task script's last step for zsh: become the wrapper-loaded login
+/// shell again. `ZDOTDIR` must be re-pointed first, because the wrapper .zshrc
+/// sets it back to the user's own folder and it stays exported.
+fn zsh_reexec(zdotdir: &str) -> String {
+    format!(
+        "{ZSH_ENV_RESTORE}\nexport ZDOTDIR={}\nexec \"$0\" -l -i",
+        sh_single_quote(zdotdir)
+    )
+}
+
+/// The task script's last step for bash: the same `--rcfile` spawn.
+fn bash_reexec(rcfile: &str) -> String {
+    format!(
+        "{BASH_ENV_RESTORE}\nexec \"$0\" --rcfile {} -i",
+        sh_single_quote(rcfile)
+    )
+}
+
+// Re-arm the Injected bundle for the re-exec'd shell (ADR-0024 precedence).
+// The first shell's wrapper consumed the `ABUNDIO_ENV__*` shadow copies and
+// the `ABUNDIO_ENV_KEYS` manifest, so without this the re-exec'd shell would
+// re-source the user's rc with nothing to re-apply after it, and an `export`
+// in .zshrc would silently beat the Workspace value. The names arrive as
+// `ABUNDIO_TASK_ENV_KEYS`, which the script takes into a shell variable and
+// unsets before the Agent runs, so the Agent never sees the list. Values are
+// read by name indirection (`${(P)k}` / `${!k}`), never `eval` — names are
+// validated in Rust (`env_crypto::validate_name`), values are user data.
+const ZSH_ENV_RESTORE: &str = r#"if [ -n "$__abundio_keys" ]; then
+  for __abundio_k in ${=__abundio_keys}; do export "ABUNDIO_ENV__${__abundio_k}=${(P)__abundio_k}"; done
+  export ABUNDIO_ENV_KEYS="$__abundio_keys"
+fi"#;
+const BASH_ENV_RESTORE: &str = r#"if [ -n "$__abundio_keys" ]; then
+  for __abundio_k in $__abundio_keys; do export "ABUNDIO_ENV__${__abundio_k}=${!__abundio_k}"; done
+  export ABUNDIO_ENV_KEYS="$__abundio_keys"
+fi"#;
+
+/// Quote `s` for a POSIX shell as one word.
+fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Shell type detected from the binary name.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ShellType {
@@ -477,10 +597,13 @@ enum ShellType {
 }
 
 fn detect_shell_type(shell: &str) -> ShellType {
+    // Case-insensitive, as the frontend's `shellSupportsTasks` is: Windows
+    // paths often spell Git Bash `BASH.EXE`.
     let base = std::path::Path::new(shell)
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or(shell);
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
     if base.contains("zsh") {
         ShellType::Zsh
     } else if base.contains("bash") {
@@ -1508,6 +1631,129 @@ mod tests {
         assert_eq!(msys_to_windows_path("/Users/emil/dev"), "/Users/emil/dev");
         assert_eq!(msys_to_windows_path("relative/path"), "relative/path");
         assert_eq!(msys_to_windows_path(""), "");
+    }
+}
+
+#[cfg(test)]
+mod task_launch_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn task(argv: &[&str], setup: Option<&str>) -> TaskLaunch {
+        TaskLaunch {
+            argv: argv.iter().map(|s| s.to_string()).collect(),
+            setup: setup.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn prompt_is_its_own_argument_never_joined() {
+        let prompt = "it's \"$(rm -rf ~)\"\nline two; `x`";
+        let args = task_c_args("/bin/zsh", "exec \"$0\" -l -i", &task(&["claude", prompt], None));
+        assert_eq!(args[0], "-c");
+        assert_eq!(args[2], "/bin/zsh");
+        assert_eq!(args[3], "");
+        assert_eq!(&args[4..], &["claude".to_string(), prompt.to_string()]);
+        assert!(!args[1].contains(prompt));
+    }
+
+    #[test]
+    fn reexec_restores_the_wrapper() {
+        assert!(zsh_reexec("/data/it's")
+            .ends_with("export ZDOTDIR='/data/it'\\''s'\nexec \"$0\" -l -i"));
+        assert!(bash_reexec("/data/.bashrc")
+            .ends_with("exec \"$0\" --rcfile '/data/.bashrc' -i"));
+        assert!(zsh_reexec("/d").starts_with(ZSH_ENV_RESTORE));
+        assert!(bash_reexec("/d").starts_with(BASH_ENV_RESTORE));
+    }
+
+    #[test]
+    fn single_quote_escapes_quotes() {
+        assert_eq!(sh_single_quote("/a b/it's"), "'/a b/it'\\''s'");
+    }
+
+    /// Run the real script under a non-interactive shell, with `exec` swapped
+    /// for `echo` so it returns. Proves the argv survives byte-for-byte, the
+    /// setup runs first, and the 7770 markers bracket the command.
+    fn run_script(shell: &str, t: &TaskLaunch) -> Option<String> {
+        if !Path::new(shell).exists() {
+            return None;
+        }
+        let script = task_script("echo REEXEC \"$0\" -i");
+        let mut args = vec!["-c".to_string(), script, shell.to_string()];
+        args.push(t.setup.clone().unwrap_or_default());
+        args.extend(t.argv.iter().cloned());
+        let out = Command::new(shell).args(&args).output().ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[test]
+    fn script_runs_setup_then_argv_verbatim_in_zsh_and_bash() {
+        let prompt = "it's \"$(echo PWNED)\"\nline two; `echo PWNED`";
+        let t = task(&["printf", "[%s]", prompt], Some("echo SETUP"));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(!out.contains("PWNED\n") && !out.contains("[PWNED"), "{shell}: {out}");
+            assert!(out.contains(&format!("[{prompt}]")), "{shell}: {out}");
+            let setup = out.find("SETUP").expect("setup ran");
+            let start = out.find("\x1b]7770;command_start;printf\x07").expect("start");
+            let end = out.find("\x1b]7770;command_end;0\x07").expect("end");
+            assert!(setup < start && start < end, "{shell}: {out}");
+            assert!(out.contains(&format!("REEXEC {shell} -i")), "{shell}: {out}");
+        }
+    }
+
+    /// After the Agent exits, the script must hand the re-exec'd shell a fresh
+    /// shadow copy + manifest of the Injected bundle — and the Agent itself
+    /// must never see the key list.
+    #[test]
+    fn script_rearms_the_injected_bundle_for_the_reexec() {
+        for (shell, restore) in [("/bin/zsh", ZSH_ENV_RESTORE), ("/bin/bash", BASH_ENV_RESTORE)] {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+            let script = task_script(&format!("{restore}\nexec env"));
+            let out = Command::new(shell)
+                .args(["-c", &script, shell, "", "sh", "-c", "echo AGENT_SAW=${ABUNDIO_TASK_ENV_KEYS:-none}"])
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("ABUNDIO_TASK_ENV_KEYS", "FOO BAR")
+                .env("FOO", "a b $(x) 'q'")
+                .env("BAR", "")
+                .output()
+                .unwrap();
+            let out = String::from_utf8_lossy(&out.stdout);
+            assert!(out.contains("AGENT_SAW=none"), "{shell}: {out}");
+            assert!(out.contains("\nABUNDIO_ENV__FOO=a b $(x) 'q'\n"), "{shell}: {out}");
+            assert!(out.contains("\nABUNDIO_ENV__BAR=\n"), "{shell}: {out}");
+            assert!(out.contains("\nABUNDIO_ENV_KEYS=FOO BAR\n"), "{shell}: {out}");
+            assert!(!out.contains("ABUNDIO_TASK_ENV_KEYS"), "{shell}: {out}");
+        }
+    }
+
+    #[test]
+    fn detects_shells_case_insensitively() {
+        assert!(matches!(detect_shell_type("C:\\Program Files\\Git\\bin\\BASH.EXE"), ShellType::Bash));
+        assert!(matches!(detect_shell_type("/usr/local/bin/Zsh"), ShellType::Zsh));
+    }
+
+    /// A BEL in the reported command would end the OSC early and leak the
+    /// rest into the terminal, so it is replaced, as the wrapper's preexec does.
+    #[test]
+    fn script_strips_bel_from_the_reported_command() {
+        let t = task(&["ec\u{7}ho", "x"], None);
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("\x1b]7770;command_start;ec ho\x07"), "{shell}: {out:?}");
+        }
+    }
+
+    #[test]
+    fn script_reports_the_agent_exit_code() {
+        let t = task(&["sh", "-c", "exit 3"], None);
+        if let Some(out) = run_script("/bin/bash", &t) {
+            assert!(out.contains("\x1b]7770;command_end;3\x07"), "{out}");
+        }
     }
 }
 

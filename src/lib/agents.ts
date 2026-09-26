@@ -1,10 +1,20 @@
 import type { CodingAgent } from "./types";
 
+/** The one element of `CodingAgent.taskArgs` that the Task prompt replaces. */
+export const TASK_PROMPT_PLACEHOLDER = "{prompt}";
+
+// Task-capable forms (see **Task-capable** in CONTEXT.md). Each keeps the
+// Agent interactive; the one-shot flags (`-p`, `exec`, `run`, `--single`)
+// would print an answer and exit. Kimi Code and Aider have no such form, so
+// they carry no `taskArgs`. Note Qwen: a bare positional prompt there is
+// one-shot, so it needs `-i` even though Claude/Codex/Grok take it bare.
+
 export const BUILTIN_AGENTS: CodingAgent[] = [
 	{
 		id: "claude",
 		name: "Claude Code",
 		command: "claude",
+		taskArgs: ["{prompt}"],
 		builtin: true,
 		enabled: true,
 	},
@@ -12,6 +22,7 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		id: "copilot",
 		name: "GitHub Copilot CLI",
 		command: "copilot",
+		taskArgs: ["-i", "{prompt}"],
 		builtin: true,
 		enabled: true,
 	},
@@ -19,6 +30,7 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		id: "gemini",
 		name: "Gemini CLI",
 		command: "gemini",
+		taskArgs: ["-i", "{prompt}"],
 		builtin: true,
 		enabled: true,
 	},
@@ -33,6 +45,7 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		id: "codex",
 		name: "Codex",
 		command: "codex",
+		taskArgs: ["{prompt}"],
 		builtin: true,
 		enabled: true,
 	},
@@ -40,6 +53,7 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		id: "opencode",
 		name: "OpenCode",
 		command: "opencode",
+		taskArgs: ["--prompt", "{prompt}"],
 		builtin: true,
 		enabled: true,
 	},
@@ -47,6 +61,7 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		id: "qwen",
 		name: "Qwen Code",
 		command: "qwen",
+		taskArgs: ["-i", "{prompt}"],
 		builtin: true,
 		enabled: true,
 	},
@@ -61,6 +76,7 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		id: "grok",
 		name: "Grok Build",
 		command: "grok",
+		taskArgs: ["{prompt}"],
 		builtin: true,
 		enabled: true,
 	},
@@ -142,6 +158,9 @@ export function mergeAgentsWithBuiltins(
 	for (const builtin of BUILTIN_AGENTS) {
 		const saved = persistedById.get(builtin.id);
 		result.push({
+			// `taskArgs` comes from `builtin` (code), never from `saved`: it is
+			// not a user setting for built-ins, and a CLI changing its flags
+			// must reach users with the app update.
 			...builtin,
 			enabled: saved ? saved.enabled : builtin.enabled,
 		});
@@ -173,6 +192,72 @@ export function agentCommandFor(
 	const agent = agents.find((a) => a.id === agentId);
 	if (!agent) return undefined;
 	return [agent.command, ...(agent.args ?? [])].join(" ");
+}
+
+/** True of an Agent that can start with a Task prompt and stay interactive. */
+export function isTaskCapable(agent: CodingAgent): boolean {
+	return (
+		agent.taskArgs !== undefined &&
+		agent.taskArgs.filter((a) => a === TASK_PROMPT_PLACEHOLDER).length === 1
+	);
+}
+
+/**
+ * The argv that starts an Agent with `prompt` as its first prompt, or
+ * undefined when the Agent is gone or not Task-capable. The prompt is one
+ * argv element, never joined into a command string: it reaches the Agent
+ * without passing through a shell parser (ADR-0042). Single source of truth
+ * for a Task launch, as `agentCommandFor` is for a plain one.
+ */
+export function agentTaskArgvFor(
+	agents: CodingAgent[],
+	agentId: string | undefined,
+	prompt: string,
+): string[] | undefined {
+	const agent = agents.find((a) => a.id === agentId);
+	if (!agent || !isTaskCapable(agent)) return undefined;
+	return [
+		// A custom Agent's command may be several words (`npx my-agent`,
+		// `gh copilot`). The typed launch lets the shell split it; argv must
+		// do the same or the whole string becomes one program name.
+		...agent.command.trim().split(/\s+/).filter(Boolean),
+		...(agent.args ?? []),
+		...(agent.taskArgs ?? []).map((a) =>
+			a === TASK_PROMPT_PLACEHOLDER ? optionSafePrompt(prompt) : a,
+		),
+	];
+}
+
+/**
+ * A prompt that starts with `-` (a bullet list, `--dry-run please`) is read as
+ * an option by every Task-capable CLI's argument parser, which then exits:
+ * Claude `unknown option`, Codex and Grok `unexpected argument`, Gemini and
+ * Qwen a missing `-i` value, Copilot `Invalid command format`. `--` is no
+ * general cure — it cannot follow an option that takes the prompt as its
+ * value (`-i`, `--prompt`). One leading space is: every parser checked then
+ * takes it as a value, and the Agent sees the same prompt.
+ */
+export function optionSafePrompt(prompt: string): string {
+	return prompt.startsWith("-") ? ` ${prompt}` : prompt;
+}
+
+/**
+ * Parse the task argument form a user types for a custom Agent (for example
+ * `-i {prompt}`). Empty input means "not Task-capable" (`taskArgs: undefined`); anything
+ * without exactly one standalone `{prompt}` is an error message.
+ */
+export function parseTaskArgsForm(
+	form: string,
+): { taskArgs: string[] | undefined } | { error: string } {
+	const parts = form.trim().split(/\s+/).filter(Boolean);
+	if (parts.length === 0) return { taskArgs: undefined };
+	const count = parts.filter((p) => p === TASK_PROMPT_PLACEHOLDER).length;
+	if (count !== 1) {
+		return {
+			error: `Include ${TASK_PROMPT_PLACEHOLDER} exactly once, on its own (for example: -i ${TASK_PROMPT_PLACEHOLDER})`,
+		};
+	}
+	return { taskArgs: parts };
 }
 
 function escapeRegExp(s: string): string {

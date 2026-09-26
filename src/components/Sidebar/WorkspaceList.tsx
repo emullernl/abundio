@@ -6,6 +6,7 @@ import {
 } from "../../hooks/useWorkspaceRollups";
 import { useWorktreeProgress } from "../../hooks/useWorktreeProgress";
 import { worktrees } from "../../lib/ipc";
+import { openNewTask } from "../../lib/openNewTask";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
 	buildWorkspaceRows,
@@ -370,6 +371,13 @@ export function WorkspaceList({
 							: "Fold worktrees",
 					disabled: blocked,
 					onClick: () => toggleSetFolded(setRow.groupKey),
+				});
+			}
+			if (ws) {
+				items.push({ separator: true });
+				items.push({
+					label: "New task…",
+					onClick: () => openNewTask({ workspaceId: ws.id }),
 				});
 			}
 			if (role?.isMainWorktree && ws) {

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { ListPlus, Plus, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import {
 	useCallback,
 	useEffect,
@@ -19,6 +19,8 @@ import {
 } from "../../lib/fleetConsole";
 import { publishFleetGrid, stepTileZoom } from "../../lib/fleetFocus";
 import { waitForSmoothFrames } from "../../lib/focusSweep";
+import { openNewTask } from "../../lib/openNewTask";
+import { isMac } from "../../lib/platform";
 import {
 	getTerminal,
 	redrawProgram,
@@ -611,6 +613,24 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					/>
 					<button
 						type="button"
+						onClick={() => openNewTask()}
+						title={`New task (${isMac ? "⌘⇧T" : "Ctrl+Shift+T"})`}
+						className="flex items-center text-[var(--fg-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
+						style={{
+							height: 24,
+							padding: "0 8px 0 6px",
+							gap: 5,
+							borderRadius: 5,
+							fontSize: 11.5,
+							cursor: "pointer",
+							transition: "background 120ms ease, color 120ms ease",
+						}}
+					>
+						<ListPlus size={13} />
+						New task
+					</button>
+					<button
+						type="button"
 						onClick={openAddAgent}
 						className="flex items-center text-[var(--fg-primary)] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_28%,transparent)]"
 						style={{
@@ -758,6 +778,10 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					rows={relaunchRows}
 					initialStep={addAgent}
 					onClose={() => setAddAgent(null)}
+					onReopen={() => {
+						useWindowUiStore.getState().closeNewTask();
+						setAddAgent("choose");
+					}}
 				/>
 			)}
 		</div>

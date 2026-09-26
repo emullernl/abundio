@@ -10,8 +10,12 @@ import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { agentCommandFor } from "./agents";
-import { parseTabLayout } from "./paneTree";
-import { setPendingAgent } from "./pendingAgentRegistry";
+import { containsPane, parseTabLayout } from "./paneTree";
+import {
+	type PendingTask,
+	setPendingAgent,
+	setPendingTask,
+} from "./pendingAgentRegistry";
 import {
 	killUnmountedPanePty,
 	livePtyIdByPane,
@@ -146,13 +150,47 @@ export async function restartWorkspacePtys(
 }
 
 /**
+ * **Restart agent** for a **New task**: respawn one pane's PTY with the Task's
+ * Agent. A fresh shell (not a resumed session), in the pane's live folder when
+ * known, else the Workspace's. An unmounted pane takes the cold-start path, as
+ * `restartWorkspacePtys` does.
+ */
+export async function restartPaneWithTask(
+	paneId: string,
+	task: PendingTask,
+): Promise<void> {
+	const act = usePtyActivityStore.getState();
+	const ptyId = act.panePtyMap[paneId];
+	const store = useWorkspaceStore.getState();
+	const workspace = store.findWorkspaceForPane(paneId);
+	const cwd = (ptyId && act.cwds[ptyId]) || workspace?.rootFolder || ".";
+	store.stampAgentOnPane(paneId, task.agentId);
+	if (livePtyIdByPane()[paneId] !== undefined) {
+		await restartPanePty(paneId, { cwd, task, preserveScrollback: false });
+		return;
+	}
+	const tab = workspace?.tabs.find((t) => {
+		const layout = parseTabLayout(t.layoutJson);
+		return layout ? containsPane(layout, paneId) : false;
+	});
+	restartUnmountedPane(
+		{ paneId, ptyId: ptyId ?? "", tabId: tab?.id ?? "" },
+		undefined,
+	);
+	setPendingTask(paneId, task);
+}
+
+/**
  * An unmounted pane has a PTY but no xterm instance. Kill the process and clear
  * the layout's ptyId so the next mount takes the ordinary cold-start path.
  *
  * Deliberately spawns nothing now: reusing cold start is what stops this
  * becoming a second, divergent spawn implementation.
  */
-function restartUnmountedPane(pane: LivePane, agentCommand?: string): void {
+function restartUnmountedPane(
+	pane: Pick<LivePane, "paneId" | "ptyId" | "tabId">,
+	agentCommand?: string,
+): void {
 	killUnmountedPanePty(pane.paneId, pane.ptyId);
 
 	const store = useWorkspaceStore.getState();

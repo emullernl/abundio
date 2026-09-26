@@ -501,6 +501,130 @@ pub fn mark_thread_read(thread_id: &str) -> Result<(), AbundioError> {
 	Ok(())
 }
 
+// ── Issues (New task) ──
+
+/// An open GitHub issue offered by **New task** as an **Issue task**. Only its
+/// reference reaches the Agent; the body is never fetched.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubIssue {
+	pub number: i32,
+	pub title: String,
+	pub url: String,
+	pub updated_at: String,
+	pub labels: Vec<String>,
+	pub assigned_to_me: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhIssueRow {
+	number: i32,
+	title: String,
+	url: String,
+	#[serde(default)]
+	updated_at: String,
+	#[serde(default)]
+	labels: Vec<GhLabel>,
+}
+
+#[derive(Deserialize)]
+struct GhLabel {
+	name: String,
+}
+
+const ISSUE_LIMIT: &str = "100";
+
+/// Open issues of the repository `cwd` belongs to: the user's assigned ones
+/// first, then the rest, each group most recently updated first. The two
+/// lists are unioned, so an assigned issue is listed even on a repository with
+/// more open issues than one page holds.
+pub fn list_issues(cwd: &str) -> Result<Vec<GithubIssue>, AbundioError> {
+	let (available, authenticated) = gh_available_and_authenticated();
+	if !available {
+		return Err(AbundioError::Git(
+			"The GitHub CLI (gh) is not installed.".into(),
+		));
+	}
+	if !authenticated {
+		return Err(AbundioError::Git(
+			"The GitHub CLI is not signed in — run `gh auth login`.".into(),
+		));
+	}
+	let all = run_gh(
+		cwd,
+		&[
+			"issue", "list", "--state", "open", "--limit", ISSUE_LIMIT, "--json",
+			"number,title,url,updatedAt,labels",
+		],
+	)
+	.map_err(issue_list_error)?;
+	// Full rows, not just numbers: an assigned issue outside the first
+	// ISSUE_LIMIT of the general list must still reach the dialog.
+	let mine = run_gh(
+		cwd,
+		&[
+			"issue", "list", "--state", "open", "--assignee", "@me", "--limit",
+			ISSUE_LIMIT, "--json", "number,title,url,updatedAt,labels",
+		],
+	)
+	.map_err(issue_list_error)?;
+	parse_issues(&all, &mine)
+}
+
+/// Map gh's "no GitHub remote" failure to one short line; keep others.
+fn issue_list_error(e: AbundioError) -> AbundioError {
+	let msg = e.to_string();
+	let lower = msg.to_lowercase();
+	if lower.contains("known github host") || lower.contains("no git remotes") {
+		return AbundioError::Git("This folder has no GitHub remote.".into());
+	}
+	if lower.contains("not a git repository") {
+		return AbundioError::Git("This folder is not a git repository.".into());
+	}
+	if lower.contains("has disabled issues") {
+		return AbundioError::Git("Issues are turned off for this repository.".into());
+	}
+	e
+}
+
+pub fn parse_issues(all_json: &str, mine_json: &str) -> Result<Vec<GithubIssue>, AbundioError> {
+	let rows: Vec<GhIssueRow> = serde_json::from_str(all_json)
+		.map_err(|e| AbundioError::Git(format!("Unexpected gh issue list output: {e}")))?;
+	let mine_rows: Vec<GhIssueRow> = serde_json::from_str(mine_json)
+		.map_err(|e| AbundioError::Git(format!("Unexpected gh issue list output: {e}")))?;
+	let mine: std::collections::HashSet<i32> = mine_rows.iter().map(|r| r.number).collect();
+	let mut seen = std::collections::HashSet::new();
+	let mut issues: Vec<GithubIssue> = mine_rows
+		.into_iter()
+		.chain(rows)
+		.filter(|r| seen.insert(r.number))
+		.map(|r| GithubIssue {
+			assigned_to_me: mine.contains(&r.number),
+			number: r.number,
+			title: r.title,
+			url: r.url,
+			updated_at: r.updated_at,
+			labels: r.labels.into_iter().map(|l| l.name).collect(),
+		})
+		.collect();
+	// ISO-8601 timestamps sort correctly as strings.
+	issues.sort_by(|a, b| {
+		b.assigned_to_me
+			.cmp(&a.assigned_to_me)
+			.then_with(|| b.updated_at.cmp(&a.updated_at))
+	});
+	Ok(issues)
+}
+
+#[tauri::command]
+pub async fn gh_list_issues(cwd: String) -> Result<Vec<GithubIssue>, AbundioError> {
+	tokio::task::spawn_blocking(move || list_issues(&cwd))
+		.await
+		.map_err(|e| AbundioError::InvalidOperation(format!("issue list task failed: {e}")))?
+}
+
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -790,5 +914,47 @@ mod tests {
 				Err(AbundioError::InvalidOperation(_))
 			));
 		}
+	}
+
+	#[test]
+	fn parse_issues_puts_mine_first_then_newest() {
+		let all = r#"[
+			{"number": 1, "title": "old", "url": "u1", "updatedAt": "2026-01-01T00:00:00Z", "labels": []},
+			{"number": 2, "title": "new", "url": "u2", "updatedAt": "2026-03-01T00:00:00Z", "labels": [{"name": "bug"}]},
+			{"number": 3, "title": "mine old", "url": "u3", "updatedAt": "2025-01-01T00:00:00Z", "labels": []}
+		]"#;
+		let mine = r#"[{"number": 3, "title": "mine old", "url": "u3", "updatedAt": "2025-01-01T00:00:00Z", "labels": []}]"#;
+		let issues = parse_issues(all, mine).unwrap();
+		let order: Vec<i32> = issues.iter().map(|i| i.number).collect();
+		assert_eq!(order, vec![3, 2, 1]);
+		assert!(issues[0].assigned_to_me);
+		assert_eq!(issues[1].labels, vec!["bug".to_string()]);
+	}
+
+	/// An assigned issue beyond the general list's page must still be listed,
+	/// once, and marked as the user's.
+	#[test]
+	fn parse_issues_includes_assigned_issues_the_general_page_missed() {
+		let all = r#"[{"number": 1, "title": "a", "url": "u1", "updatedAt": "2026-01-01T00:00:00Z"}]"#;
+		let mine = r#"[
+			{"number": 900, "title": "far", "url": "u9", "updatedAt": "2024-01-01T00:00:00Z"},
+			{"number": 1, "title": "a", "url": "u1", "updatedAt": "2026-01-01T00:00:00Z"}
+		]"#;
+		let issues = parse_issues(all, mine).unwrap();
+		let order: Vec<(i32, bool)> = issues.iter().map(|i| (i.number, i.assigned_to_me)).collect();
+		assert_eq!(order, vec![(1, true), (900, true)]);
+	}
+
+	#[test]
+	fn parse_issues_rejects_garbage() {
+		assert!(parse_issues("nope", "[]").is_err());
+	}
+
+	#[test]
+	fn issue_list_error_names_a_missing_remote() {
+		let e = issue_list_error(AbundioError::Git(
+			"gh issue list failed: none of the git remotes configured for this repository point to a known GitHub host".into(),
+		));
+		assert_eq!(e.to_string(), "Git error: This folder has no GitHub remote.");
 	}
 }

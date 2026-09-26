@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+	agentTaskArgvFor,
 	BUILTIN_AGENTS,
 	escPressesToCancelAgent,
 	getEnabledAgentCommands,
+	isTaskCapable,
 	matchProcessToAgent,
 	matchTitleToAgent,
 	mergeAgentsWithBuiltins,
+	parseTaskArgsForm,
 } from "../agents";
 import type { CodingAgent } from "../types";
 
@@ -184,5 +187,112 @@ describe("mergeAgentsWithBuiltins", () => {
 		const merged = mergeAgentsWithBuiltins(BUILTIN_AGENTS);
 		const claudeCount = merged.filter((a) => a.id === "claude").length;
 		expect(claudeCount).toBe(1);
+	});
+});
+
+describe("Task-capable agents", () => {
+	it("marks every built-in except Kimi and Aider", () => {
+		const capable = BUILTIN_AGENTS.filter(isTaskCapable).map((a) => a.id);
+		expect(capable.sort()).toEqual(
+			[
+				"claude",
+				"codex",
+				"copilot",
+				"gemini",
+				"grok",
+				"opencode",
+				"qwen",
+			].sort(),
+		);
+	});
+
+	it("keeps the prompt as one argv element, whatever it contains", () => {
+		const prompt = `fix it'; rm -rf / #\n$(whoami) "quoted"`;
+		expect(agentTaskArgvFor(BUILTIN_AGENTS, "qwen", prompt)).toEqual([
+			"qwen",
+			"-i",
+			prompt,
+		]);
+		expect(agentTaskArgvFor(BUILTIN_AGENTS, "claude", prompt)).toEqual([
+			"claude",
+			prompt,
+		]);
+	});
+
+	it("puts the agent's own args before the task args", () => {
+		const agents: CodingAgent[] = [
+			{
+				id: "c",
+				name: "C",
+				command: "wrap",
+				args: ["--fast"],
+				taskArgs: ["-i", "{prompt}"],
+				builtin: false,
+				enabled: true,
+			},
+		];
+		expect(agentTaskArgvFor(agents, "c", "go")).toEqual([
+			"wrap",
+			"--fast",
+			"-i",
+			"go",
+		]);
+	});
+
+	it("splits a multi-word command into separate argv elements", () => {
+		const agents: CodingAgent[] = [
+			{
+				id: "c",
+				name: "C",
+				command: " npx  my-agent ",
+				taskArgs: ["-i", "{prompt}"],
+				builtin: false,
+				enabled: true,
+			},
+		];
+		expect(agentTaskArgvFor(agents, "c", "a b")).toEqual([
+			"npx",
+			"my-agent",
+			"-i",
+			"a b",
+		]);
+	});
+
+	it("keeps a prompt starting with - from being read as an option", () => {
+		expect(agentTaskArgvFor(BUILTIN_AGENTS, "qwen", "- fix it")).toEqual([
+			"qwen",
+			"-i",
+			" - fix it",
+		]);
+		expect(agentTaskArgvFor(BUILTIN_AGENTS, "claude", "fix - it")).toEqual([
+			"claude",
+			"fix - it",
+		]);
+	});
+
+	it("returns undefined for a non-capable or missing agent", () => {
+		expect(agentTaskArgvFor(BUILTIN_AGENTS, "kimi", "x")).toBeUndefined();
+		expect(agentTaskArgvFor(BUILTIN_AGENTS, "nope", "x")).toBeUndefined();
+	});
+
+	it("takes a built-in's taskArgs from code, not from persisted state", () => {
+		const persisted = BUILTIN_AGENTS.map((a) =>
+			a.id === "qwen" ? { ...a, taskArgs: ["{prompt}"] } : a,
+		);
+		const merged = mergeAgentsWithBuiltins(persisted);
+		expect(merged.find((a) => a.id === "qwen")?.taskArgs).toEqual([
+			"-i",
+			"{prompt}",
+		]);
+	});
+
+	it("parses a custom agent's task argument form", () => {
+		expect(parseTaskArgsForm("  ")).toEqual({ taskArgs: undefined });
+		expect(parseTaskArgsForm("-i {prompt}")).toEqual({
+			taskArgs: ["-i", "{prompt}"],
+		});
+		expect(parseTaskArgsForm("-i")).toHaveProperty("error");
+		expect(parseTaskArgsForm("{prompt} {prompt}")).toHaveProperty("error");
+		expect(parseTaskArgsForm("--p={prompt}")).toHaveProperty("error");
 	});
 });

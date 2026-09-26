@@ -130,6 +130,13 @@ export function CommandPalette({
 		}
 
 		result.push({
+			id: "action-new-task",
+			label: "New Task…",
+			category: "Actions",
+			action: () => triggerAction("new-task"),
+		});
+
+		result.push({
 			id: "action-toggle-fleet-console",
 			label: "Toggle Fleet Console",
 			category: "Actions",

@@ -1,7 +1,10 @@
+import { ListPlus } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTabRollups } from "../hooks/useWorkspaceRollups";
 import { useDragPaneStore } from "../lib/dragPaneStore";
+import { openNewTask } from "../lib/openNewTask";
 import { collectFilePaneIds, parseTabLayout } from "../lib/paneTree";
+import { isMac } from "../lib/platform";
 import type { Tab } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
 import { Terminal } from "./Icons";
@@ -445,6 +448,7 @@ export function TabBar({
 
 			{/* New tab button */}
 			<NewTabButton onClick={onNew} isDropTarget={isNewTabDropTarget} />
+			<NewTaskButton />
 
 			{/* Context menu */}
 			{contextMenu && (
@@ -524,6 +528,31 @@ function NewTabButton({
 			onMouseLeave={() => setHovered(false)}
 		>
 			<PlusIcon size={14} />
+		</button>
+	);
+}
+
+/** Opens **New task** for this Workspace. Sits beside `+`, since both add
+ *  work to the Workspace; the hover state lives in classes (see CLAUDE.md). */
+function NewTaskButton() {
+	return (
+		<button
+			type="button"
+			onClick={() => openNewTask()}
+			title={`New task (${isMac ? "⌘⇧T" : "Ctrl+Shift+T"})`}
+			aria-label="New task"
+			className="flex items-center flex-shrink-0 rounded-md self-center text-[var(--fg-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)] transition-colors"
+			style={{
+				height: 26,
+				padding: "0 8px 0 6px",
+				gap: 5,
+				fontSize: 12,
+				marginLeft: 2,
+				marginBottom: 4,
+			}}
+		>
+			<ListPlus size={14} />
+			Task
 		</button>
 	);
 }

@@ -45,8 +45,15 @@ import {
 import { parseOsc52 } from "./osc52";
 import { publishPaneFontSize } from "./paneFontSize";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
-import { setPendingAgent, takePendingAgent } from "./pendingAgentRegistry";
+import {
+	type PendingTask,
+	setPendingAgent,
+	setPendingTask,
+	takePendingAgent,
+	takePendingTask,
+} from "./pendingAgentRegistry";
 import { isMac } from "./platform";
+import { stripControlChars } from "./promptActions";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
@@ -345,6 +352,11 @@ export interface ManagedTerminal {
 	filterResetsTimer: ReturnType<typeof setTimeout> | null;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
 	startupShellReady: boolean;
+	/** A **New task** spawn whose Agent has not started yet. Such a pane has no
+	 *  startup buffer (its `-c` shell never prints a prompt, so the buffer would
+	 *  only drain at the safety timeout), and the task script's `command_start`
+	 *  ends any reset filtering, so the Agent's first frame arrives intact. */
+	awaitingTaskStart: boolean;
 	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
 	pendingWrites: Uint8Array[];
 	/** rAF handle for the pending write flush, or null if none scheduled */
@@ -1106,6 +1118,7 @@ export async function createTerminal(
 		startupBuffer: [],
 		startupFlushScheduled: false,
 		startupShellReady: false,
+		awaitingTaskStart: false,
 		pendingWrites: [],
 		writeRafId: null,
 		wantedMouseModes: new Set(),
@@ -1294,6 +1307,18 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		managed.startupShellReady = true;
 	}
 
+	// A New task rides the spawn itself rather than being typed (ADR-0042).
+	const pendingTask = isNewPty ? takePendingTask(paneId) : undefined;
+	if (pendingTask) {
+		// No startup buffer: the ready signal it waits for (the first prompt's
+		// command_end) never comes from a `-c` shell, and a task pane has no
+		// restored scrollback for it to protect — a restart into a task does
+		// not preserve it.
+		managed.startupBuffer = null;
+		managed.startupShellReady = true;
+		managed.awaitingTaskStart = true;
+	}
+
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
 	// spawning so no shell output is lost in the gap between spawn and listen.
 	if (isNewPty) {
@@ -1413,6 +1438,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				const actState = usePtyActivityStore.getState();
 				const entry = actState.activities[currentPtyId];
 				const isAgentMode = entry?.detectionMode === "agent";
+
+				// The task script's command_start: the Agent starts now, so stop
+				// stripping clears and cursor-home moves — they are its first frame.
+				if (
+					managed.awaitingTaskStart &&
+					commands.some((c) => c.type === "command_start")
+				) {
+					managed.awaitingTaskStart = false;
+					disarmFilterResets(managed);
+				}
 
 				if (managed.startupBuffer) {
 					managed.startupBuffer.push(cleaned);
@@ -1712,21 +1747,25 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			// if spawn completes first (Tauri buffers events until listen resolves).
 			...(isNewPty
 				? [
-						pty.spawn({
-							cwd,
-							cols: term.cols,
-							rows: term.rows,
-							shell: useSettingsStore.getState().shellPath ?? undefined,
-							logId: paneId,
-							ptyId: currentPtyId,
-							// Resolved from the pane's OWN workspace, not the active
-							// one: TerminalPool mounts panes for every opened
-							// workspace, so a background pane would otherwise be
-							// labelled — and given the environment of — whichever
-							// workspace happens to be in front.
-							...ownerSpawnContext(paneId),
-							windowLabel: currentWindowLabel(),
-						}),
+						spawnNewPty(
+							{
+								cwd,
+								cols: term.cols,
+								rows: term.rows,
+								shell: useSettingsStore.getState().shellPath ?? undefined,
+								logId: paneId,
+								ptyId: currentPtyId,
+								// Resolved from the pane's OWN workspace, not the active
+								// one: TerminalPool mounts panes for every opened
+								// workspace, so a background pane would otherwise be
+								// labelled — and given the environment of — whichever
+								// workspace happens to be in front.
+								...ownerSpawnContext(paneId),
+								windowLabel: currentWindowLabel(),
+							},
+							pendingTask,
+							managed,
+						),
 					]
 				: []),
 		]);
@@ -1858,6 +1897,38 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 	}
 }
 
+/**
+ * Spawn a pane's new PTY, carrying a **New task** launch when there is one.
+ *
+ * A task spawn can be refused (a shell other than zsh or bash — ADR-0042).
+ * The pane must still open, so the refusal is printed into the terminal and a
+ * plain shell is spawned under the same PTY id: the user loses the Task, never
+ * the pane. On success the pane enters agent mode straight away, as a typed
+ * launch does; the script's own `command_start` confirms it moments later.
+ */
+async function spawnNewPty(
+	options: Parameters<typeof pty.spawn>[0],
+	task: PendingTask | undefined,
+	managed: ManagedTerminal,
+): Promise<string> {
+	if (!task) return pty.spawn(options);
+	try {
+		const id = await pty.spawn({
+			...options,
+			task: { argv: task.argv, setup: task.setup },
+		});
+		usePtyActivityStore.getState().setAgentPty(id, task.agentId);
+		return id;
+	} catch (err) {
+		const reason = String(err).replace(/^PTY error: /, "");
+		managed.awaitingTaskStart = false;
+		managed.term.write(
+			`\x1b[33mNew task could not start: ${stripControlChars(reason)}\x1b[0m\r\n`,
+		);
+		return pty.spawn(options);
+	}
+}
+
 /** Mark terminal as visually settled — loader can now hide */
 export function markSettled(paneId: string): void {
 	const managed = instances.get(paneId);
@@ -1878,6 +1949,15 @@ function armFilterResets(managed: ManagedTerminal, durationMs: number): void {
 		managed.filterResets = false;
 		managed.filterResetsTimer = null;
 	}, durationMs);
+}
+
+/** Stop filtering reset sequences now, cancelling any pending timer. */
+function disarmFilterResets(managed: ManagedTerminal): void {
+	managed.filterResets = false;
+	if (managed.filterResetsTimer !== null) {
+		clearTimeout(managed.filterResetsTimer);
+		managed.filterResetsTimer = null;
+	}
 }
 
 /** Temporarily filter terminal reset sequences from PTY output.
@@ -2103,6 +2183,9 @@ export async function restartPanePty(
 	opts: {
 		cwd: string;
 		agentCommand?: string;
+		/** Restart into a **New task** instead (Restart agent). Wins over
+		 *  `agentCommand`. */
+		task?: PendingTask;
 		preserveScrollback: boolean;
 	},
 ): Promise<void> {
@@ -2130,8 +2213,11 @@ export async function restartPanePty(
 		usePtyActivityStore.getState().removePane(paneId);
 	}
 
-	// Seed before initPty — flushStartupBuffer drains the pending agent.
-	if (opts.agentCommand) {
+	// Seed before initPty — flushStartupBuffer drains the pending agent, and
+	// the spawn takes a pending task.
+	if (opts.task) {
+		setPendingTask(paneId, opts.task);
+	} else if (opts.agentCommand) {
 		setPendingAgent(paneId, { command: opts.agentCommand });
 	}
 
@@ -2167,6 +2253,7 @@ export async function restartPanePty(
 	managed.startupBuffer = [];
 	managed.startupFlushScheduled = false;
 	managed.startupShellReady = false;
+	managed.awaitingTaskStart = false;
 	// `settled` deliberately stays true: the pane is already projected and
 	// painted, and clearing it would make the flush wait for the safety timeout.
 

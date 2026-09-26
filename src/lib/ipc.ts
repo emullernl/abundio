@@ -94,6 +94,9 @@ export interface PtySpawnOptions {
 	workspaceId?: string;
 	/** Main worktree to inherit Bundles from, from `inheritSourceWorkspaceId`. */
 	inheritFromWorkspaceId?: string;
+	/** A **New task** launch: the shell runs this argv (prompt included, as one
+	 *  element) after optional setup commands. zsh and bash only. ADR-0042. */
+	task?: { argv: string[]; setup?: string };
 }
 
 export const pty = {
@@ -601,6 +604,23 @@ export const worktrees = {
 		listen<{ commonDir: string }>("worktrees-changed", (event) =>
 			callback(event.payload.commonDir),
 		),
+};
+
+/** An open GitHub issue, as **New task** lists it. See `gh_commands.rs`. */
+export interface GithubIssue {
+	number: number;
+	title: string;
+	url: string;
+	updatedAt: string;
+	labels: string[];
+	assignedToMe: boolean;
+}
+
+export const issues = {
+	/** Open issues of the repository `cwd` belongs to, assigned-to-me first,
+	 *  then newest. Rejects with a one-line reason (no gh, not signed in, no
+	 *  GitHub remote) that the dialog shows as-is. */
+	list: (cwd: string) => invoke<GithubIssue[]>("gh_list_issues", { cwd }),
 };
 
 // GitHub PR data is fetched by the app-global Rust poller (ADR-0019). The
