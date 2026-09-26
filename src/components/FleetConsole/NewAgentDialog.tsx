@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { CornerDownLeft, GitBranch } from "lucide-react";
+import { ArrowLeft, CornerDownLeft, GitBranch } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
@@ -26,8 +26,20 @@ import {
  * not become active, so the Workspace view is left as it was. For a git
  * Workspace, *Create a new worktree* hands off to the Add worktree dialog with
  * the Agent pre-selected, and the new Workspace opens in the background.
+ *
+ * Reached through **Add agent** (`AddAgentDialog`), which passes `onBack` when
+ * it showed its chooser first, and `animateIn={false}` so swapping from the
+ * chooser does not flash the backdrop.
  */
-export function NewAgentDialog({ onClose }: { onClose: () => void }) {
+export function NewAgentDialog({
+	onClose,
+	onBack,
+	animateIn = true,
+}: {
+	onClose: () => void;
+	onBack?: () => void;
+	animateIn?: boolean;
+}) {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const opened = usePtyActivityStore((s) => s.openedWorkspaceIds);
@@ -158,7 +170,7 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
 			<motion.div
 				role="presentation"
 				className="fixed inset-0 z-[200] flex items-center justify-center"
-				initial={{ opacity: 0 }}
+				initial={animateIn ? { opacity: 0 } : false}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: 0 }}
 				transition={{ duration: 0.15 }}
@@ -173,7 +185,7 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
 					role="dialog"
 					aria-label="New agent"
 					className="rounded-2xl overflow-hidden flex flex-col outline-none"
-					initial={{ opacity: 0, scale: 0.96, y: 12 }}
+					initial={animateIn ? { opacity: 0, scale: 0.96, y: 12 } : false}
 					animate={{ opacity: 1, scale: 1, y: 0 }}
 					exit={{ opacity: 0, scale: 0.96, y: 12 }}
 					transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
@@ -193,18 +205,23 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
 					}}
 				>
 					<div className="flex flex-col" style={{ padding: "24px 28px 14px" }}>
-						<span
-							style={{
-								color: "var(--accent)",
-								fontSize: 10,
-								fontWeight: 600,
-								letterSpacing: "0.14em",
-								textTransform: "uppercase",
-								marginBottom: 8,
-							}}
+						<div
+							className="flex items-center"
+							style={{ gap: 8, marginBottom: 8 }}
 						>
-							New agent
-						</span>
+							{onBack && <BackButton onClick={onBack} />}
+							<span
+								style={{
+									color: "var(--accent)",
+									fontSize: 10,
+									fontWeight: 600,
+									letterSpacing: "0.14em",
+									textTransform: "uppercase",
+								}}
+							>
+								New agent
+							</span>
+						</div>
 						<input
 							// biome-ignore lint/a11y/noAutofocus: the dialog's first job is picking a workspace
 							autoFocus
@@ -465,5 +482,21 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
 				</motion.div>
 			</motion.div>
 		</AnimatePresence>
+	);
+}
+
+/** Back to the **Add agent** chooser. Shared with `AddAgentDialog`. */
+export function BackButton({ onClick }: { onClick: () => void }) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			aria-label="Back"
+			title="Back"
+			className="flex items-center justify-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
+			style={{ width: 20, height: 20, borderRadius: 5, cursor: "pointer" }}
+		>
+			<ArrowLeft size={13} />
+		</button>
 	);
 }

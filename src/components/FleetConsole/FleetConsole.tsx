@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, ZoomIn, ZoomOut } from "lucide-react";
+import { Plus, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import {
 	useCallback,
 	useEffect,
@@ -38,9 +38,14 @@ import {
 } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import {
+	AddAgentDialog,
+	type AddAgentStep,
+	relaunchTargets,
+	useRelaunchRows,
+} from "./AddAgentDialog";
 import { FleetTile } from "./FleetTile";
 import { GridPicker } from "./GridPicker";
-import { NewAgentDialog } from "./NewAgentDialog";
 import { WorkspacePicker } from "./WorkspacePicker";
 
 const TOOLBAR_HEIGHT = 36;
@@ -138,7 +143,13 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	const setTileZoom = useWindowUiStore((s) => s.setTileZoom);
 	const setFilmstripRatio = useWindowUiStore((s) => s.setFilmstripRatio);
 	const spotlightTileId = useWindowUiStore((s) => s.spotlightTileId);
-	const [newAgentOpen, setNewAgentOpen] = useState(false);
+	// The **Add agent** dialog, and the step it opens on.
+	const [addAgent, setAddAgent] = useState<Exclude<AddAgentStep, "new"> | null>(
+		null,
+	);
+	const openAddAgent = useCallback(() => setAddAgent("choose"), []);
+	const relaunchRows = useRelaunchRows();
+	const dormantCount = relaunchTargets(relaunchRows).length;
 
 	// ── Opening: paint first, then mount. ──
 	// Mounting every tile moves each terminal in, refits it, resizes its PTY,
@@ -485,7 +496,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	// same grid element as the grid layout, so no terminal remounts on a switch.
 	const [dragFilm, setDragFilm] = useState<number | null>(null);
 	const filmRatio = dragFilm ?? grid.filmstripRatio;
-	const filmRows = Math.max(3, tiles.length); // others + the New agent tile
+	const filmRows = Math.max(3, tiles.length); // others + the Add agent cell
 	const startFilmDrag = useCallback(
 		(e: React.MouseEvent) => {
 			e.preventDefault();
@@ -515,8 +526,9 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 	const rowEdges = cumulative(rowRatios)
 		.slice(0, -1)
 		.map((f, index) => ({ id: `row-${index}`, at: f * size.height, index }));
-	const freeCellIds = Array.from({ length: shape.freeCells }, (_, n) =>
-		n === 0 ? "new-agent" : `free-${n}`,
+	const freeCellIds = Array.from(
+		{ length: shape.freeCells },
+		(_, n) => `free-${n}`,
 	);
 
 	return (
@@ -570,6 +582,27 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					style={{ marginLeft: "auto", gap: 8 }}
 				>
 					<WorkspacePicker agentCountByWorkspace={agentCountByWorkspace} />
+					{dormantCount > 0 && (
+						<button
+							type="button"
+							onClick={() => setAddAgent("relaunch")}
+							title="Workspaces whose agents can be relaunched"
+							className="flex items-center text-[var(--fg-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
+							style={{
+								height: 24,
+								padding: "0 8px",
+								gap: 5,
+								borderRadius: 5,
+								fontFamily: "var(--font-mono)",
+								fontSize: 11,
+								cursor: "pointer",
+								transition: "background 120ms ease, color 120ms ease",
+							}}
+						>
+							<RotateCcw size={11} />
+							{dormantCount} dormant
+						</button>
+					)}
 					<ZoomSlider zoom={grid.zoom} onChange={setTileZoom} />
 					<GridPicker
 						preset={grid.preset}
@@ -578,7 +611,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					/>
 					<button
 						type="button"
-						onClick={() => setNewAgentOpen(true)}
+						onClick={openAddAgent}
 						className="flex items-center text-[var(--fg-primary)] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_28%,transparent)]"
 						style={{
 							height: 24,
@@ -593,7 +626,7 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 						}}
 					>
 						<Plus size={13} />
-						New agent
+						Add agent
 					</button>
 				</div>
 			</div>
@@ -670,19 +703,21 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 								);
 							})}
 							{spotlight ? (
-								<NewAgentCell
-									key="new-agent"
+								<AddAgentCell
+									key="add-agent"
 									empty={false}
+									dormant={dormantCount}
 									inFilmstrip
-									onClick={() => setNewAgentOpen(true)}
+									onClick={openAddAgent}
 								/>
 							) : (
-								freeCellIds.map((id) =>
-									id === "new-agent" ? (
-										<NewAgentCell
+								freeCellIds.map((id, n) =>
+									n === 0 ? (
+										<AddAgentCell
 											key={id}
 											empty={tiles.length === 0}
-											onClick={() => setNewAgentOpen(true)}
+											dormant={dormantCount}
+											onClick={openAddAgent}
 										/>
 									) : (
 										<EmptyCell key={id} />
@@ -718,8 +753,12 @@ function FleetConsoleBody({ topOffset }: { topOffset: number }) {
 					)}
 				</AnimatePresence>
 			</div>
-			{newAgentOpen && (
-				<NewAgentDialog onClose={() => setNewAgentOpen(false)} />
+			{addAgent && (
+				<AddAgentDialog
+					rows={relaunchRows}
+					initialStep={addAgent}
+					onClose={() => setAddAgent(null)}
+				/>
 			)}
 		</div>
 	);
@@ -758,12 +797,16 @@ function Divider({
 	);
 }
 
-function NewAgentCell({
+/** **Add agent** in the first free cell, and at the end of the Filmstrip. */
+function AddAgentCell({
 	empty,
+	dormant,
 	inFilmstrip,
 	onClick,
 }: {
 	empty: boolean;
+	/** Dormant workspaces in this Window, mentioned so Relaunch is noticed. */
+	dormant: number;
 	/** At the end of the Filmstrip rather than in a grid cell. */
 	inFilmstrip?: boolean;
 	onClick: () => void;
@@ -780,7 +823,7 @@ function NewAgentCell({
 			<button
 				type="button"
 				onClick={onClick}
-				className="fleet-new-agent group w-full h-full flex flex-col items-center justify-center text-[var(--fg-secondary)] hover:text-[var(--accent)]"
+				className="fleet-add-agent group w-full h-full flex flex-col items-center justify-center text-[var(--fg-secondary)] hover:text-[var(--accent)]"
 				style={{
 					gap: 8,
 					borderRadius: 7,
@@ -799,7 +842,21 @@ function NewAgentCell({
 				>
 					<Plus size={16} />
 				</span>
-				<span style={{ fontSize: 12 }}>New agent</span>
+				<span style={{ fontSize: 12 }}>Add agent</span>
+				{/* Not in the narrow Filmstrip cell, where it would wrap. */}
+				{dormant > 0 && !inFilmstrip && (
+					<span
+						className="truncate"
+						style={{
+							maxWidth: "100%",
+							padding: "0 10px",
+							fontSize: 11,
+							opacity: 0.65,
+						}}
+					>
+						or relaunch {dormant} dormant workspace{dormant === 1 ? "" : "s"}
+					</span>
+				)}
 				{empty && (
 					<span
 						style={{

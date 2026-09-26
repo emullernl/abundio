@@ -2,13 +2,14 @@ import { FolderOpen, Layers } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
-import { collectAgentPanes, parseTabLayout } from "../../lib/paneTree";
+import { hasFleetAgents, relaunchablePanes } from "../../lib/dormantWorkspaces";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -35,8 +36,20 @@ export function WorkspacePicker({
 }) {
 	const [open, setOpen] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
+	const agents = useSettingsStore((s) => s.agents);
 	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	// Every Opened Workspace, so it can always be unloaded here (the Console
+	// hides both sidebars), even after its last Agent exited. A closed one only
+	// if opening it would add Agents.
+	const workspaces = useMemo(() => {
+		const known = new Set(agents.map((a) => a.id));
+		return allWorkspaces.filter(
+			(w) =>
+				openedIds.has(w.id) ||
+				hasFleetAgents(w, known, agentCountByWorkspace.get(w.id) ?? 0),
+		);
+	}, [allWorkspaces, agents, openedIds, agentCountByWorkspace]);
 	const { requestUnload, dialogProps } = useConfirmUnloadWorkspace();
 
 	useEffect(() => {
@@ -81,10 +94,19 @@ export function WorkspacePicker({
 			{open && (
 				<WorkspaceList
 					workspaces={workspaces}
+					allWorkspaces={allWorkspaces}
 					openedIds={openedIds}
 					agentCountByWorkspace={agentCountByWorkspace}
-					onOpen={openInBackground}
-					onUnload={requestUnload}
+					onOpen={(id) => {
+						openInBackground(id);
+						setOpen(false);
+					}}
+					onUnload={(id) => {
+						// The unload confirmation lives outside the list, so it
+						// survives the list closing.
+						requestUnload(id);
+						setOpen(false);
+					}}
 					onClose={() => setOpen(false)}
 				/>
 			)}
@@ -94,7 +116,9 @@ export function WorkspacePicker({
 }
 
 /** Open a Workspace without making it Active, and show its remembered Agents
- *  as tiles so they get drawn — and therefore relaunched. Exported for tests. */
+ *  as tiles so they get drawn — and therefore relaunched. Only Agents Abundio
+ *  still knows get a tile; the rest come back as plain shells. Exported for
+ *  tests. */
 export function openInBackground(workspaceId: string): void {
 	const ws = useWorkspaceStore
 		.getState()
@@ -103,22 +127,13 @@ export function openInBackground(workspaceId: string): void {
 	const activity = usePtyActivityStore.getState();
 	if (activity.openedWorkspaceIds.has(workspaceId)) return;
 	activity.markWorkspaceOpened(workspaceId);
-	useWindowUiStore.getState().expectFleetTiles(rememberedAgentPanes(ws));
-}
-
-/** Pane ids of every terminal in the Workspace that remembers an Agent. */
-export function rememberedAgentPanes(ws: WorkspaceWithTabs): string[] {
-	const ids: string[] = [];
-	for (const tab of ws.tabs) {
-		const layout = parseTabLayout(tab.layoutJson);
-		if (!layout) continue;
-		for (const { paneId } of collectAgentPanes(layout)) ids.push(paneId);
-	}
-	return ids;
+	const known = new Set(useSettingsStore.getState().agents.map((a) => a.id));
+	useWindowUiStore.getState().expectFleetTiles(relaunchablePanes(ws, known));
 }
 
 function WorkspaceList({
 	workspaces,
+	allWorkspaces,
 	openedIds,
 	agentCountByWorkspace,
 	onOpen,
@@ -126,6 +141,9 @@ function WorkspaceList({
 	onClose,
 }: {
 	workspaces: WorkspaceWithTabs[];
+	/** Every Workspace, so Worktree sets group as in the Left sidebar even when
+	 *  some members are not listed. */
+	allWorkspaces: WorkspaceWithTabs[];
 	openedIds: ReadonlySet<string>;
 	agentCountByWorkspace: ReadonlyMap<string, number>;
 	onOpen: (id: string) => void;
@@ -139,7 +157,7 @@ function WorkspaceList({
 
 	const ordered = useMemo(() => {
 		const byId = new Map(workspaces.map((w) => [w.id, w]));
-		const list = flattenRowsToIds(buildWorkspaceRows(workspaces, facts))
+		const list = flattenRowsToIds(buildWorkspaceRows(allWorkspaces, facts))
 			.map((id) => byId.get(id))
 			.filter((w): w is WorkspaceWithTabs => !!w);
 		const q = query.trim().toLowerCase();
@@ -150,7 +168,7 @@ function WorkspaceList({
 						w.rootFolder.toLowerCase().includes(q),
 				)
 			: list;
-	}, [workspaces, facts, query]);
+	}, [workspaces, allWorkspaces, facts, query]);
 
 	return (
 		<div
@@ -196,7 +214,9 @@ function WorkspaceList({
 							color: "var(--fg-secondary)",
 						}}
 					>
-						No workspace matches.
+						{query.trim()
+							? "No workspace matches."
+							: "No workspace has agents to show."}
 					</div>
 				)}
 				{ordered.map((w) => {
