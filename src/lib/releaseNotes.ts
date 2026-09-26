@@ -1,4 +1,4 @@
-import type { ReleaseNote } from "./ipc";
+import type { ReleaseNote, ReleaseNotesPage } from "./ipc";
 
 /**
  * Deciding *which* release notes to show, and under which heading. See ADR-0036.
@@ -167,4 +167,17 @@ export function selectReleaseNotes(
 		missingCurrentVersion: currentVersion,
 		showOlderLink: false,
 	};
+}
+
+/**
+ * Whether a loaded release list lacks `version` — the sign that the hourly
+ * cache predates a release a check has just found. False while nothing is
+ * loaded yet: that is "wait for the fetch", not "the list is stale".
+ */
+export function notesMissingVersion(
+	notes: ReleaseNotesPage | null,
+	version: string,
+): boolean {
+	if (!notes) return false;
+	return !notes.releases.some((r) => r.version === version);
 }
