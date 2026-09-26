@@ -199,6 +199,24 @@ function keyLabel(c: Chord, mac: boolean): string {
 	return c.key.length === 1 ? c.key.toUpperCase() : c.key;
 }
 
+/** Spell the modifiers held so far, for the recorder's live readout:
+ *  `⌃⇧` on macOS, `Ctrl+Shift+` elsewhere (the trailing `+` says a key is
+ *  still to come). Empty when none are held. Same order as `formatChord`. */
+export function formatHeldModifiers(
+	m: { meta: boolean; shift: boolean; ctrl: boolean; alt: boolean },
+	mac: boolean,
+): string {
+	if (mac) {
+		return `${m.ctrl ? "⌃" : ""}${m.alt ? "⌥" : ""}${m.shift ? "⇧" : ""}${m.meta ? "⌘" : ""}`;
+	}
+	const parts: string[] = [];
+	if (m.ctrl) parts.push("Ctrl");
+	if (m.alt) parts.push("Alt");
+	if (m.shift) parts.push("Shift");
+	if (m.meta) parts.push("Win");
+	return parts.map((p) => `${p}+`).join("");
+}
+
 /** Spell a chord: `⌃⌥⇧⌘G` on macOS, `Ctrl+Alt+Shift+G` elsewhere. */
 export function formatChord(c: Chord, mac: boolean): string {
 	const key = keyLabel(c, mac);

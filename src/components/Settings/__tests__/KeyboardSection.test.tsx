@@ -62,6 +62,30 @@ describe("KeyboardSection", () => {
 		});
 	});
 
+	it("shows the modifiers held while recording, and drops them on release", () => {
+		act(() => pill("Toggle git panel").click());
+		const button = pill("Toggle git panel");
+		expect(button.textContent).toBe("Press keys…");
+		press("Shift", "ShiftLeft", { shiftKey: true });
+		press(isMac ? "Meta" : "Control", isMac ? "MetaLeft" : "ControlLeft", {
+			...mod,
+			shiftKey: true,
+		});
+		expect(button.textContent).toBe(isMac ? "⇧⌘" : "Ctrl+Shift+");
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent("keyup", {
+					key: "Shift",
+					code: "ShiftLeft",
+					bubbles: true,
+					...mod,
+				}),
+			);
+		});
+		expect(button.textContent).toBe(isMac ? "⌘" : "Ctrl+");
+		expect(overrides()["app:toggle-right-sidebar-git"]).toBeUndefined();
+	});
+
 	it("Esc cancels without writing, and does not reach the document", () => {
 		const docListener = vi.fn();
 		document.addEventListener("keydown", docListener, true);

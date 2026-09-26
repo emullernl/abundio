@@ -5,6 +5,7 @@ import {
 	chordsEqual,
 	chordVerdict,
 	formatChord,
+	formatHeldModifiers,
 	fromMonacoChord,
 	type MonacoKeys,
 	sanitizeOverrides,
@@ -345,5 +346,26 @@ describe("the default Open settings accelerator", () => {
 				true,
 			),
 		).toBe("F5");
+	});
+});
+
+describe("formatHeldModifiers", () => {
+	const none = { meta: false, shift: false, ctrl: false, alt: false };
+	it("is empty when nothing is held", () => {
+		expect(formatHeldModifiers(none, true)).toBe("");
+		expect(formatHeldModifiers(none, false)).toBe("");
+	});
+	it("spells macOS symbols in formatChord's order", () => {
+		expect(
+			formatHeldModifiers(
+				{ meta: true, shift: true, ctrl: true, alt: true },
+				true,
+			),
+		).toBe("⌃⌥⇧⌘");
+	});
+	it("spells names with a trailing + elsewhere", () => {
+		expect(
+			formatHeldModifiers({ ...none, ctrl: true, shift: true }, false),
+		).toBe("Ctrl+Shift+");
 	});
 });
