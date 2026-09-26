@@ -197,7 +197,9 @@ export function stripResetSequences(data: Uint8Array): Uint8Array {
 }
 
 /**
- * Whether a live PTY output chunk should go through `stripResetSequences`.
+ * Whether a live PTY output chunk should go through `stripResetSequences`,
+ * given that a filter window is open (the caller checks `filterResets` first,
+ * which also keeps the alternate-screen scan off the hot path).
  *
  * The filter exists for a *shell*: its startup and its resize-triggered
  * repaint (Windows ConPTY) would otherwise wipe restored scrollback or pin the
@@ -215,12 +217,11 @@ export function stripResetSequences(data: Uint8Array): Uint8Array {
  * it wins over that.
  */
 export function shouldStripResets(state: {
-	filterResets: boolean;
 	agentMode: boolean;
 	alternateScreen: boolean;
 	awaitingAgentStart: boolean;
 }): boolean {
-	if (!state.filterResets || state.alternateScreen) return false;
+	if (state.alternateScreen) return false;
 	return state.awaitingAgentStart || !state.agentMode;
 }
 
@@ -270,24 +271,37 @@ export function scanAlternateScreen(
 		} else if (namesAltScreen && data[j] === 0x6c /* l */) {
 			after = false;
 		}
-		i = j;
+		// Stop *on* an ESC that cut the params short: it may start the next
+		// sequence (a truncated `ESC[?1049` followed by `ESC[?1049h`).
+		i = data[j] === 0x1b ? j - 1 : j;
 	}
 	return { after, entered };
 }
 
 /**
- * Whether `chunk` should be treated as alternate-screen output. xterm's own
- * buffer type lags behind the bytes queued for the next frame and behind the
- * chunk itself, so fold both in: the chunk counts if the screen is alternate
- * before it, or if it switches to the alternate screen anywhere inside (a
- * program's first frame is `ESC[?1049h ESC[H ESC[2J …`).
+ * The alternate-screen state in front of the next queued chunk. With nothing
+ * queued it is xterm's own buffer type; otherwise it is the state the queued
+ * bytes leave behind, which xterm has not parsed yet. The caller keeps that
+ * `queued` state up to date as each chunk is queued, so every chunk is scanned
+ * once rather than the whole queue on every chunk.
+ */
+export function alternateScreenBefore(state: {
+	queueEmpty: boolean;
+	bufferIsAlternate: boolean;
+	queued: boolean;
+}): boolean {
+	return state.queueEmpty ? state.bufferIsAlternate : state.queued;
+}
+
+/**
+ * Whether `chunk` should be treated as alternate-screen output: the screen is
+ * alternate before it (see `alternateScreenBefore`), or it switches to the
+ * alternate screen anywhere inside (a program's first frame is
+ * `ESC[?1049h ESC[H ESC[2J …`).
  */
 export function isAlternateScreenOutput(
-	bufferIsAlternate: boolean,
-	queued: readonly Uint8Array[],
+	before: boolean,
 	chunk: Uint8Array,
 ): boolean {
-	let state = bufferIsAlternate;
-	for (const q of queued) state = scanAlternateScreen(q, state).after;
-	return state || scanAlternateScreen(chunk, false).entered;
+	return before || scanAlternateScreen(chunk, false).entered;
 }
