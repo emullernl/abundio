@@ -3,10 +3,14 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import {
+	defaultChord,
+	effectiveChord,
+	getEffectiveChord,
 	handleKeyDown,
 	initKeybindings,
 	registerAction,
 	registerActionGate,
+	setKeybindingOverrides,
 	unregisterAction,
 } from "../keybindings";
 
@@ -546,5 +550,100 @@ describe("registerActionGate", () => {
 		handleKeyDown(makeKeyEvent({ key: "0", code: "Digit0", [modKey]: true }));
 		expect(handler).toHaveBeenCalledTimes(1);
 		unregisterAction("fleet-zoom-reset");
+	});
+});
+
+describe("Overrides", () => {
+	afterEach(() => {
+		setKeybindingOverrides({});
+		unregisterAction("toggle-right-sidebar-git");
+		unregisterAction("close-tab");
+	});
+
+	const gitChord = { key: "g", [modKey]: true, shiftKey: true };
+
+	it("moves an action to its new chord and frees the old one", () => {
+		const handler = vi.fn();
+		registerAction("toggle-right-sidebar-git", handler);
+		setKeybindingOverrides({
+			"app:toggle-right-sidebar-git": {
+				key: "y",
+				meta: isMac,
+				ctrl: !isMac,
+				shift: true,
+				alt: false,
+			},
+		});
+
+		const old = makeKeyEvent(gitChord);
+		const prevent = vi.spyOn(old, "preventDefault");
+		handleKeyDown(old);
+		expect(handler).not.toHaveBeenCalled();
+		expect(prevent).not.toHaveBeenCalled();
+
+		handleKeyDown(makeKeyEvent({ key: "y", [modKey]: true, shiftKey: true }));
+		expect(handler).toHaveBeenCalledOnce();
+	});
+
+	it("an Unbound action lets its old chord through to the terminal", () => {
+		const handler = vi.fn();
+		registerAction("close-tab", handler);
+		setKeybindingOverrides({ "app:close-tab": null });
+		const e = makeKeyEvent({ key: "w", [modKey]: true });
+		const prevent = vi.spyOn(e, "preventDefault");
+		handleKeyDown(e);
+		expect(handler).not.toHaveBeenCalled();
+		expect(prevent).not.toHaveBeenCalled();
+		expect(getEffectiveChord("close-tab")).toBeNull();
+	});
+
+	it("ignores Overrides for actions that do not exist", () => {
+		setKeybindingOverrides({ "app:no-such-action": null, "editor:x": null });
+		const handler = vi.fn();
+		registerAction("close-tab", handler);
+		handleKeyDown(makeKeyEvent({ key: "w", [modKey]: true }));
+		expect(handler).toHaveBeenCalledOnce();
+	});
+
+	it("reports defaults and overrides through effectiveChord", () => {
+		expect(effectiveChord("new-tab", {})).toEqual(defaultChord("new-tab"));
+		expect(effectiveChord("new-tab", { "app:new-tab": null })).toBeNull();
+	});
+
+	it("keeps the save-file terminal pass-through after a rebind", () => {
+		const handler = vi.fn();
+		registerAction("save-file", handler);
+		setKeybindingOverrides({
+			"app:save-file": {
+				key: "u",
+				meta: isMac,
+				ctrl: !isMac,
+				shift: false,
+				alt: false,
+			},
+		});
+		const term = document.createElement("div");
+		term.className = "xterm";
+		const ta = document.createElement("textarea");
+		term.appendChild(ta);
+		document.body.appendChild(term);
+		ta.focus();
+		handleKeyDown(makeKeyEvent({ key: "u", [modKey]: true }));
+		expect(handler).not.toHaveBeenCalled();
+		unregisterAction("save-file");
+		document.body.innerHTML = "";
+	});
+});
+
+describe("font size", () => {
+	afterEach(() => unregisterAction("font-size-increase"));
+
+	it("matches the physical = key, even where it needs Shift", () => {
+		const handler = vi.fn();
+		registerAction("font-size-increase", handler);
+		handleKeyDown(makeKeyEvent({ key: "=", code: "Equal", [modKey]: true }));
+		// A layout where the Equal key's character is something else.
+		handleKeyDown(makeKeyEvent({ key: "´", code: "Equal", [modKey]: true }));
+		expect(handler).toHaveBeenCalledTimes(2);
 	});
 });

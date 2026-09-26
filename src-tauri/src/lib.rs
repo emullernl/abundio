@@ -83,6 +83,75 @@ impl MenuSignature {
 pub struct MenuInputs {
     profiles: Vec<profile_store::Profile>,
     ownership: std::collections::HashMap<String, String>,
+    /// The Settings… item's accelerator; `None` when the user Unbound it.
+    settings_accelerator: Option<String>,
+}
+
+/// The accelerator on the menu's Settings… item. It follows the frontend's
+/// **Open settings** Shortcut (see `set_settings_accelerator`), so a rebind
+/// frees Cmd+, and the menu shows the chord that actually works.
+pub struct SettingsAccelerator(pub std::sync::Mutex<Option<String>>);
+
+/// Spelled exactly as the frontend spells the default Open settings chord
+/// (`toTauriAccelerator`), so its first push on launch matches and does not
+/// rebuild the menu — `set_menu` visibly resizes every window on
+/// Windows/Linux.
+#[cfg(target_os = "macos")]
+pub const DEFAULT_SETTINGS_ACCELERATOR: &str = "Cmd+Comma";
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_SETTINGS_ACCELERATOR: &str = "Ctrl+Comma";
+
+impl Default for SettingsAccelerator {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(Some(DEFAULT_SETTINGS_ACCELERATOR.to_string())))
+    }
+}
+
+impl SettingsAccelerator {
+    pub fn get(&self) -> Option<String> {
+        self.0.lock().map(|g| g.clone()).unwrap_or_else(|e| e.into_inner().clone())
+    }
+
+    /// Stores the value; true when it changed.
+    pub fn set(&self, value: Option<String>) -> bool {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if *guard == value {
+            return false;
+        }
+        *guard = value;
+        true
+    }
+}
+
+/// Whether a string from the frontend is a well-formed accelerator we are
+/// willing to hand to the menu: modifiers from a fixed list, then one key
+/// spelled as a name (`Comma`, `ArrowUp`, `F5`, `K`), never punctuation. An
+/// invalid accelerator would make `build_menu` fail and leave the menu stale,
+/// so it is refused at the IPC boundary instead.
+pub fn is_valid_accelerator(accel: &str) -> bool {
+    if accel.is_empty() || accel.len() > 64 {
+        return false;
+    }
+    let parts: Vec<&str> = accel.split('+').collect();
+    let (key, modifiers) = match parts.split_last() {
+        Some(split) => split,
+        None => return false,
+    };
+    // A function key may stand alone (the recorder allows bare F1–F24); any
+    // other key needs a modifier.
+    let is_function_key = key.len() >= 2
+        && key.starts_with('F')
+        && key[1..].parse::<u8>().map(|n| (1..=24).contains(&n)).unwrap_or(false);
+    if modifiers.is_empty() && !is_function_key {
+        return false;
+    }
+    let mut seen = std::collections::HashSet::new();
+    for m in modifiers {
+        if !matches!(*m, "Cmd" | "Ctrl" | "Alt" | "Shift" | "Super" | "CmdOrCtrl") || !seen.insert(*m) {
+            return false;
+        }
+    }
+    !key.is_empty() && key.len() <= 16 && key.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 pub fn menu_inputs(app: &AppHandle<Wry>) -> MenuInputs {
@@ -95,6 +164,10 @@ pub fn menu_inputs(app: &AppHandle<Wry>) -> MenuInputs {
             .try_state::<profile_store::ActiveProfileState>()
             .map(|s| s.snapshot())
             .unwrap_or_default(),
+        settings_accelerator: app
+            .try_state::<SettingsAccelerator>()
+            .map(|s| s.get())
+            .unwrap_or_else(|| Some(DEFAULT_SETTINGS_ACCELERATOR.to_string())),
     }
 }
 
@@ -144,6 +217,9 @@ pub fn format_menu_signature(focused_window_label: Option<&str>, inputs: &MenuIn
             .map(String::as_str)
             .unwrap_or(""),
     );
+    // `-` for no accelerator can never collide with a real one, which always
+    // ends in an alphanumeric key.
+    push_field(&mut out, inputs.settings_accelerator.as_deref().unwrap_or("-"));
     for profile in &inputs.profiles {
         push_field(&mut out, &profile.id);
         push_field(&mut out, &profile.name);
@@ -192,8 +268,13 @@ pub fn build_menu(
         ..Default::default()
     };
 
-    let settings_item =
-        MenuItem::with_id(handle, "settings", "Settings...", true, Some("CmdOrCtrl+,"))?;
+    let settings_item = MenuItem::with_id(
+        handle,
+        "settings",
+        "Settings...",
+        true,
+        inputs.settings_accelerator.as_deref(),
+    )?;
 
     // Custom Quit item (replaces PredefinedMenuItem::quit) so we can intercept
     // Cmd+Q BEFORE Tauri's destroy storm starts. The predefined quit goes
@@ -732,6 +813,7 @@ pub fn run() {
             // building against the first window once one exists; the focus
             // listener below triggers a rebuild as soon as one comes online.
             app.manage(MenuSignature::default());
+            app.manage(SettingsAccelerator::default());
             let startup_inputs = menu_inputs(&app.handle());
             let menu = build_menu(&app.handle(), None, &startup_inputs)?;
             app.set_menu(menu)?;
@@ -1149,6 +1231,7 @@ pub fn run() {
             commands::profile_delete,
             commands::profile_reorder,
             commands::set_active_profile_id,
+            commands::set_settings_accelerator,
             commands::report_busy_counts,
             commands::get_active_profile_for_window,
             commands::get_profile_ownership_map,
@@ -1279,7 +1362,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod menu_signature_tests {
-    use super::{format_menu_signature, owner_of, MenuInputs};
+    use super::{format_menu_signature, is_valid_accelerator, owner_of, MenuInputs};
     use crate::profile_store::Profile;
     use std::collections::HashMap;
 
@@ -1300,6 +1383,50 @@ mod menu_signature_tests {
                 .iter()
                 .map(|(label, pid)| (label.to_string(), pid.to_string()))
                 .collect(),
+            settings_accelerator: Some(super::DEFAULT_SETTINGS_ACCELERATOR.to_string()),
+        }
+    }
+
+    /// Rebinding Open settings must rebuild the menu, or the old chord stays
+    /// on the Settings… item (and keeps firing it).
+    #[test]
+    fn settings_accelerator_changes_the_signature() {
+        let a = inputs(&[("a", "Work")], &[]);
+        let mut b = inputs(&[("a", "Work")], &[]);
+        b.settings_accelerator = Some("Cmd+Shift+Comma".to_string());
+        let mut none = inputs(&[("a", "Work")], &[]);
+        none.settings_accelerator = None;
+        let sa = format_menu_signature(Some("main"), &a);
+        let sb = format_menu_signature(Some("main"), &b);
+        let sn = format_menu_signature(Some("main"), &none);
+        assert_ne!(sa, sb);
+        assert_ne!(sa, sn);
+        assert_ne!(sb, sn);
+    }
+
+    #[test]
+    fn accepts_the_accelerators_the_frontend_produces() {
+        for ok in ["Cmd+Comma", "Ctrl+Shift+Comma", "Ctrl+Alt+Up", "Cmd+F5", "Super+K", "F5", "F24"] {
+            assert!(is_valid_accelerator(ok), "{ok}");
+        }
+    }
+
+    #[test]
+    fn refuses_malformed_accelerators() {
+        for bad in [
+            "",
+            "K",
+            "F25",
+            "F0",
+            "Cmd+",
+            "Cmd+Cmd+K",
+            "Hyper+K",
+            "Cmd+,",
+            "Cmd+K\n",
+            "Cmd+ThisKeyNameIsFarTooLong",
+            &"Cmd+".repeat(20),
+        ] {
+            assert!(!is_valid_accelerator(bad), "{bad:?}");
         }
     }
 

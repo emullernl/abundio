@@ -41,6 +41,7 @@ import {
 	busyCounts,
 	hasBusyWork,
 } from "./lib/busyPty";
+import { type KeybindingOverrides, toTauriAccelerator } from "./lib/chords";
 import { decideWindowClose } from "./lib/closeDecision";
 import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
 import {
@@ -55,17 +56,21 @@ import {
 import { installFocusSweep } from "./lib/focusSweep";
 import {
 	agentRegistry,
+	appMenu,
 	listen,
 	listenToThisWindow,
 	updates,
 	windowSession,
 } from "./lib/ipc";
 import {
+	effectiveChord,
 	initKeybindings,
 	registerAction,
 	registerActionGate,
+	setKeybindingOverrides,
 } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
+import { applyMonacoOverrides } from "./lib/monacoKeymap";
 import { openNewTask } from "./lib/openNewTask";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
@@ -478,6 +483,33 @@ export function App() {
 	useEffect(() => {
 		const cleanup = initKeybindings();
 		return cleanup;
+	}, []);
+
+	// Push the Shortcut Overrides into the keymap, every open Monaco and the
+	// native menu — now, and again whenever they change (including a change
+	// made in another Window, which arrives through the settings broadcast).
+	// Pushed from here because `keybindings.ts` must not import the store.
+	useEffect(() => {
+		let lastAccelerator: string | null | undefined;
+		const apply = (overrides: KeybindingOverrides) => {
+			setKeybindingOverrides(overrides);
+			applyMonacoOverrides(overrides);
+			const chord = effectiveChord("open-settings", overrides);
+			const accelerator = chord ? toTauriAccelerator(chord, isMac) : null;
+			if (accelerator === lastAccelerator) return;
+			lastAccelerator = accelerator;
+			appMenu.setSettingsAccelerator(accelerator).catch((err) => {
+				// Forget it, so the next change retries rather than matching.
+				lastAccelerator = undefined;
+				console.error("[keymap] setting the menu accelerator failed:", err);
+			});
+		};
+		apply(useSettingsStore.getState().keybindingOverrides);
+		return useSettingsStore.subscribe((state, prev) => {
+			if (state.keybindingOverrides !== prev.keybindingOverrides) {
+				apply(state.keybindingOverrides);
+			}
+		});
 	}, []);
 
 	useEffect(() => installFocusSweep(), []);

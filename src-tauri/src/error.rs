@@ -26,6 +26,11 @@ pub enum AbundioError {
     InvalidOperation(String),
     #[error("Clipboard error: {0}")]
     Clipboard(String),
+    /// An update check was refused because a download is in flight. The
+    /// `E_UPDATE_DOWNLOADING` prefix is a stable code the frontend matches on
+    /// (`UPDATE_DOWNLOADING_CODE` in updateStore.ts) — keep it when rewording.
+    #[error("E_UPDATE_DOWNLOADING: an update is already downloading")]
+    UpdateDownloading,
     /// An upstream asked us to back off. `wait` is how long the caller should
     /// refuse to retry for; it never reaches the frontend (only `message` does),
     /// but the release-notes cache reads it to size its negative entry.
@@ -50,6 +55,15 @@ impl Serialize for AbundioError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The frontend recognises this refusal by its code, so the code is a
+    /// contract. See `UPDATE_DOWNLOADING_CODE` in src/stores/updateStore.ts.
+    #[test]
+    fn update_downloading_display_carries_its_code() {
+        assert!(AbundioError::UpdateDownloading
+            .to_string()
+            .starts_with("E_UPDATE_DOWNLOADING:"));
+    }
 
     #[test]
     fn pty_error_display() {

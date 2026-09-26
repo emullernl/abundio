@@ -623,6 +623,15 @@ export const issues = {
 	list: (cwd: string) => invoke<GithubIssue[]>("gh_list_issues", { cwd }),
 };
 
+// The native application menu.
+export const appMenu = {
+	/** The accelerator shown on (and fired by) the menu's Settings… item —
+	 *  the **Open settings** Shortcut spelled for Tauri. Null removes it, for
+	 *  an Unbound Shortcut. Rust rebuilds the menu only when it changes. */
+	setSettingsAccelerator: (accelerator: string | null) =>
+		invoke<void>("set_settings_accelerator", { accelerator }),
+};
+
 // GitHub PR data is fetched by the app-global Rust poller (ADR-0019). The
 // frontend only hydrates from the cached snapshot, listens for pushes, and
 // forwards the user's manual Refresh / settings changes.
@@ -899,6 +908,11 @@ export const updates = {
 	 *  Which entries are shown is decided by `selectReleaseNotes`. */
 	releaseNotes: (refresh = false) =>
 		invoke<ReleaseNotesPage>("updater_release_notes", { refresh }),
+
+	/** The running app's version (`tauri.conf.json`). Same command as
+	 *  `getVersion()` from `@tauri-apps/api/app`, routed through `invoke` so
+	 *  the demo build can answer it. */
+	appVersion: () => invoke<string>("plugin:app|version"),
 
 	/** Marks the running version's notes as seen, so the What's new card does
 	 *  not return on the next launch. App-global, not per-Window. */

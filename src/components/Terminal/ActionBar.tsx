@@ -27,9 +27,13 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+	shortcutLabelFor,
+	useKeybindingOverrides,
+} from "../../hooks/useShortcutLabel";
 import { firePromptAction } from "../../lib/firePromptAction";
+import type { KeyAction } from "../../lib/keybindings";
 import { usePaneFontSize } from "../../lib/paneFontSize";
-import { isMac } from "../../lib/platform";
 import { type PulseEvent, subscribePulse } from "../../lib/promptActionPulse";
 import {
 	actionsForPane,
@@ -303,6 +307,12 @@ function ActionButton({
 	onFire,
 }: ActionButtonProps) {
 	const label = buttonLabel(action);
+	// The chord that fires this slot: the `prompt-action-N` Shortcut, which the
+	// user may have rebound or Unbound.
+	const overrides = useKeybindingOverrides();
+	const shortcut = number
+		? shortcutLabelFor(`prompt-action-${number}` as KeyAction, overrides)
+		: "";
 
 	// The tooltip is the only place the user can read what this button will
 	// actually say to their Agent before it is sent.
@@ -311,7 +321,7 @@ function ActionButton({
 	const title = disabled
 		? `${action.name} — the agent is waiting for a permission answer`
 		: `${action.name}\n\n${preview}${
-				number ? `\n\n${shortcutLabel(number)}` : ""
+				number && shortcut ? `\n\n${shortcut}` : ""
 			}`;
 
 	return (
@@ -487,13 +497,6 @@ function prefersReducedMotion(): boolean {
 		typeof window !== "undefined" &&
 		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
 	);
-}
-
-/** The chord that fires a given slot, spelled for this platform. `⌘n` is
- *  macOS-only; elsewhere it is Ctrl+Shift+n (see `keybindings.ts` for why the
- *  digit row cannot take a bare Ctrl). */
-function shortcutLabel(n: number): string {
-	return isMac ? `⌘${n}` : `Ctrl+Shift+${n}`;
 }
 
 /** U+E0B0, the solid right-pointing powerline separator. */

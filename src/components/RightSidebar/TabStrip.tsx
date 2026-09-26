@@ -1,4 +1,9 @@
-import { sc } from "../../lib/platform";
+import {
+	shortcutLabelFor,
+	useKeybindingOverrides,
+	withShortcut,
+} from "../../hooks/useShortcutLabel";
+import type { KeyAction } from "../../lib/keybindings";
 import {
 	type RightSidebarTab,
 	useWindowUiStore,
@@ -9,7 +14,7 @@ interface TabDef {
 	id: RightSidebarTab;
 	label: string;
 	icon: React.ComponentType<{ size?: number }>;
-	shortcut: string;
+	shortcut: KeyAction;
 }
 
 const TABS: TabDef[] = [
@@ -17,25 +22,25 @@ const TABS: TabDef[] = [
 		id: "git",
 		label: "Git changes",
 		icon: GitCompare,
-		shortcut: sc("⇧⌘G", "Ctrl+Shift+G"),
+		shortcut: "toggle-right-sidebar-git",
 	},
 	{
 		id: "explorer",
 		label: "Explorer",
 		icon: Folder,
-		shortcut: sc("⇧⌘E", "Ctrl+Shift+E"),
+		shortcut: "toggle-right-sidebar-explorer",
 	},
 	{
 		id: "search",
 		label: "Search",
 		icon: Search,
-		shortcut: sc("⇧⌘F", "Ctrl+Shift+F"),
+		shortcut: "search-in-workspace",
 	},
 	{
 		id: "notes",
 		label: "Notes",
 		icon: StickyNote,
-		shortcut: sc("⇧⌘K", "Ctrl+Shift+K"),
+		shortcut: "toggle-right-sidebar-notes",
 	},
 ];
 
@@ -47,6 +52,7 @@ export function RightSidebarTabStrip() {
 	const activeTab = useWindowUiStore((s) => s.rightSidebarActiveTab);
 	const setActiveTab = useWindowUiStore((s) => s.setRightSidebarActiveTab);
 	const toggle = useWindowUiStore((s) => s.toggleRightSidebar);
+	const overrides = useKeybindingOverrides();
 
 	return (
 		<div
@@ -69,7 +75,10 @@ export function RightSidebarTabStrip() {
 							key={tab.id}
 							type="button"
 							onClick={() => setActiveTab(tab.id)}
-							title={`${tab.label} (${tab.shortcut})`}
+							title={withShortcut(
+								tab.label,
+								shortcutLabelFor(tab.shortcut, overrides),
+							)}
 							className="flex items-center justify-center rounded-md transition-colors"
 							style={{
 								width: 30,

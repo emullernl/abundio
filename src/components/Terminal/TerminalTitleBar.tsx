@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useCallback, useSyncExternalStore } from "react";
 import { usePaneDrag } from "../../hooks/usePaneDrag";
+import { useShortcutLabel, withShortcut } from "../../hooks/useShortcutLabel";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import {
 	getTerminal,
@@ -335,6 +336,7 @@ function FleetTitleBar({
 	onClose: () => void;
 	onOpenMenu: (anchor: { x: number; y: number }) => void;
 }) {
+	const spotlightKey = useShortcutLabel("fleet-spotlight");
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: double-click is a shortcut for the Switch to button beside it
 		<div
@@ -407,11 +409,10 @@ function FleetTitleBar({
 			<TitleBarButton
 				icon={fleet.spotlighted ? Minimize2 : Maximize2}
 				onClick={fleet.onToggleSpotlight}
-				label={
-					fleet.spotlighted
-						? "Back to the grid (Cmd/Ctrl+Shift+Enter)"
-						: "Spotlight this agent (Cmd/Ctrl+Shift+Enter)"
-				}
+				label={withShortcut(
+					fleet.spotlighted ? "Back to the grid" : "Spotlight this agent",
+					spotlightKey,
+				)}
 			/>
 			<TitleBarButton
 				icon={ArrowUpRight}

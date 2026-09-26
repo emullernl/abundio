@@ -1,4 +1,4 @@
-import type { ReleaseNote } from "./ipc";
+import type { ReleaseNote, ReleaseNotesPage } from "./ipc";
 
 /**
  * Deciding *which* release notes to show, and under which heading. See ADR-0036.
@@ -16,6 +16,11 @@ import type { ReleaseNote } from "./ipc";
  *    fetch. The list still means "what you have missed", so the anchor is kept
  *    in the heading and an "older releases" escape hatch is offered.
  */
+
+/** Canonical GitHub release page for a version. */
+export function releaseNotesUrl(version: string): string {
+	return `https://github.com/emullernl/abundio/releases/tag/v${version}`;
+}
 
 export interface ReleaseNotesEntry {
 	release: ReleaseNote;
@@ -167,4 +172,70 @@ export function selectReleaseNotes(
 		missingCurrentVersion: currentVersion,
 		showOlderLink: false,
 	};
+}
+
+/**
+ * The note to show when the user asks for the notes of the version they are
+ * running — the status-bar version button (#203).
+ *
+ * Always returns a note, so the card always opens: a development build or an
+ * unpublished version gets one with an empty `body`, which the card renders
+ * as "no published notes" rather than silently doing nothing on click.
+ */
+export function releaseNoteForVersion(
+	version: string,
+	releases: ReleaseNote[],
+): ReleaseNote {
+	return (
+		releases.find((r) => r.version === version) ?? {
+			version,
+			body: "",
+			publishedAt: null,
+			url: releaseNotesUrl(version),
+		}
+	);
+}
+
+/** Why the version button's card has no notes to show. */
+export type MissingNotesReason =
+	/** A development build, or a version tagged but never released. */
+	| "unpublished"
+	/** Published, but older than the one page of releases Rust fetches. */
+	| "older"
+	/** The fetch failed — offline, rate-limited, or GitHub is down. */
+	| "failed";
+
+/**
+ * Null when `version` has notes on the fetched page. Otherwise the reason, so
+ * the card never claims "no notes were published" for notes that exist.
+ */
+export function missingNotesReason(
+	version: string,
+	page: ReleaseNotesPage | null,
+	fetchFailed: boolean,
+): MissingNotesReason | null {
+	if (page?.releases.some((r) => r.version === version)) return null;
+	if (fetchFailed) return "failed";
+	// `hasMore` only says a second page exists, not that the running version
+	// is on it. Only a version older than everything fetched can be there; a
+	// dev build ahead of every release (the "ahead" case in the module header)
+	// or one between two releases was simply never published.
+	const releases = page?.releases ?? [];
+	const behindAll =
+		releases.length > 0 &&
+		releases.every((r) => compareVersions(r.version, version) > 0);
+	return page?.hasMore && behindAll ? "older" : "unpublished";
+}
+
+/**
+ * Whether a loaded release list lacks `version` — the sign that the hourly
+ * cache predates a release a check has just found. False while nothing is
+ * loaded yet: that is "wait for the fetch", not "the list is stale".
+ */
+export function notesMissingVersion(
+	notes: ReleaseNotesPage | null,
+	version: string,
+): boolean {
+	if (!notes) return false;
+	return !notes.releases.some((r) => r.version === version);
 }

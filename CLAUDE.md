@@ -105,7 +105,10 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/dotenvParse.ts` — Tolerant `.env` parser for the Bundle import dialog.
 - `lib/snapshotRegistry.ts` — Registry of per-pane snapshot functions. `saveAllSnapshots()` persists all terminal scrollback.
 - `lib/portalRegistry.ts` — Maps pane IDs to DOM elements for terminal rendering. Pub/sub pattern for target changes.
-- `lib/keybindings.ts` — Keyboard shortcut registry with capture-phase interception.
+- `lib/keybindings.ts` — Keyboard shortcut registry with capture-phase interception. Defaults, action labels/categories, and the effective Keymap built from the user's Overrides.
+- `lib/chords.ts` — Pure **Chord** helpers: record from a key event, spell, compare, vet (refuse/warn), and convert to Monaco keybindings and Tauri accelerators.
+- `lib/keymapConflicts.ts` — Pure conflict check and recording plan for Settings ▸ Keyboard.
+- `lib/monacoKeymap.ts` — Applies editor Overrides as Monaco keybinding rules (once per Window) and reads Monaco's action catalogue for Settings.
 - `lib/agents.ts` — Built-in agent definitions (Claude Code, Copilot, Gemini, Codex, OpenCode, Qwen, Kimi, Grok). `agentCommandFor()` is the single source of truth for an agent's launch string. `RETIRED_BUILTINS` lists built-ins a later release dropped (Aider); `mergeAgentsWithBuiltins` converts a Watched one into a custom Agent with the same id (ADR-0044).
 - `lib/paneTree.ts` — Pure helper functions for pane tree traversal and manipulation.
 - `lib/appWindow.ts` — `appWindow()` / `appWebview()` / `currentWindowLabel()`: the guarded way to reach Tauri's window APIs. `getCurrentWindow()` **throws** where there is no Tauri webview (the browser demo, jsdom), so never import it directly.
@@ -206,6 +209,7 @@ git push --follow-tags         # triggers CI build for all platforms
 - **WebGL glyph atlases are shared between terminals.** xterm's WebGL addon keeps one texture atlas per font/size/colour/DPR configuration and hands it to every terminal that matches (`acquireTextureAtlas`). `webglAddon.clearTextureAtlas()` on one terminal empties it for all of them, and only that one redraws — the others show cell backgrounds with no text. Never clear it for a single pane: use `clearGlyphCaches()` in `terminalManager` (clears on every WebGL terminal), or change an option that alters the configuration (font size), which acquires a fresh atlas by itself.
 - **A New task never types its prompt** (ADR-0042). The PTY is spawned as `shell -i -c <script> <shell> <setup> <agent argv…>` with the prompt as one argv element, via `pendingAgentRegistry`'s `setPendingTask` → `pty_spawn`'s `task`. zsh and bash only; any other shell is refused and the pane falls back to a plain shell with the reason printed. The script reports the Agent on the `7770` channel itself, because shell integration never sees a `-c` command — without that, an exited Task Agent would stay in agent mode and relaunch on the next start. The prompt is not stored on the pane, so a relaunch never re-sends it.
 - Keybindings use capture phase (`addEventListener(..., true)`) to intercept before xterm.js.
+- **The Keymap is defaults in code plus Overrides in `settingsStore`** (ADR-0043). `keybindings.ts` must not import the store: `App.tsx` pushes `keybindingOverrides` into `setKeybindingOverrides`, `applyMonacoOverrides` and the native menu's Settings… accelerator (`set_settings_accelerator`). Behaviour that is special-cased (save-file passing through to terminals, copy/paste deferring to text fields, gates) is keyed by **action id**, never by chord, so it follows a rebind.
 - **Prompt action digit bindings are chosen to be invisible to the terminal**, not merely unused by Abundio. macOS `Cmd` is not a terminal modifier, so xterm never forwards a Cmd-chord to the PTY. On Windows/Linux `Ctrl+<digit>` is unusable (`Ctrl+2` is NUL, `Ctrl+3` is ESC, and so on across the row) and `Ctrl+Alt+<digit>` is unusable too, despite matching the split-pane precedent, because `Ctrl+Alt` **is AltGr** on European layouts. Hence `Ctrl+Shift+<digit>`.
 - **Prompt actions live in SQLite, not `settingsStore`** (ADR-0039) — one row per action, because the in-pane popover makes writes frequent and multi-window and a whole-list broadcast loses appends. The change event is payload-free; receivers re-read. The `showActionBar` *preference* does live in `settingsStore`: the split is content vs. preference.
 - **A Prompt action's interpolated parameter values are sanitised; its body is not.** The asymmetry is load-bearing and has named tests — a pasted value can carry `ESC[201~` (the `fileDrop.ts` injection through a new door), while the body is author-written and its newlines are the prompt.
@@ -251,7 +255,7 @@ Unit tests are required when adding new functionality. Run tests before consider
 
 ## Keyboard Shortcuts
 
-Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux.
+Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux. These are the **defaults**; every one is rebindable in **Settings ▸ Keyboard** (ADR-0043). Never hardcode a shortcut in UI text — spell it with `useShortcutLabel(action)` / `shortcutLabelFor`, which follow the user's Overrides and return `""` when Unbound.
 
 | Action | macOS | Windows/Linux |
 |--------|-------|---------------|

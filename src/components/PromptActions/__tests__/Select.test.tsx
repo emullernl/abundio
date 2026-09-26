@@ -224,4 +224,73 @@ describe("Select", () => {
 		});
 		expect(onChange).toHaveBeenCalledWith("text");
 	});
+
+	describe("enterSubmits", () => {
+		function renderSubmitting() {
+			act(() => {
+				root.render(
+					<Select
+						value="text"
+						options={OPTIONS}
+						onChange={onChange}
+						aria-label="Type"
+						enterSubmits
+					/>,
+				);
+			});
+			return container.querySelector("button") as HTMLButtonElement;
+		}
+
+		function keydown(el: Element, key: string) {
+			const event = new KeyboardEvent("keydown", {
+				key,
+				bubbles: true,
+				cancelable: true,
+			});
+			act(() => {
+				el.dispatchEvent(event);
+			});
+			return event;
+		}
+
+		it("leaves Enter on the closed control alone", () => {
+			const trigger = renderSubmitting();
+			expect(trigger.hasAttribute("data-enter-submits")).toBe(true);
+			const event = keydown(trigger, "Enter");
+			expect(event.defaultPrevented).toBe(false);
+			expect(listbox()).toBeNull();
+		});
+
+		it("still opens on ArrowDown and commits with Enter in the list", () => {
+			const trigger = renderSubmitting();
+			keydown(trigger, "ArrowDown");
+			expect(listbox()).not.toBeNull();
+			keydown(listbox() as Element, "ArrowDown");
+			const event = keydown(listbox() as Element, "Enter");
+			expect(event.defaultPrevented).toBe(true);
+			expect(onChange).toHaveBeenCalledWith("number");
+		});
+
+		it("is off by default: Enter opens the list", () => {
+			const trigger = render();
+			expect(trigger.hasAttribute("data-enter-submits")).toBe(false);
+			keydown(trigger, "Enter");
+			expect(listbox()).not.toBeNull();
+		});
+
+		it("forwards a ref to the trigger", () => {
+			const ref = { current: null as HTMLButtonElement | null };
+			act(() => {
+				root.render(
+					<Select
+						value="text"
+						options={OPTIONS}
+						onChange={onChange}
+						ref={ref}
+					/>,
+				);
+			});
+			expect(ref.current).toBe(container.querySelector("button"));
+		});
+	});
 });
