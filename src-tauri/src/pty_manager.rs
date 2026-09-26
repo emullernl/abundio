@@ -299,6 +299,10 @@ impl PtyManager {
         }
         if !keys_manifest.is_empty() {
             cmd.env("ABUNDIO_ENV_KEYS", &keys_manifest);
+            if task.is_some() {
+                // For the task script's re-exec; see ZSH_ENV_RESTORE.
+                cmd.env("ABUNDIO_TASK_ENV_KEYS", &keys_manifest);
+            }
         }
         if !skipped.is_empty() {
             log::warn!(
@@ -519,7 +523,8 @@ impl PtyManager {
 /// is about *values*, which never reach it.
 fn task_script(reexec: &str) -> String {
     format!(
-        r#"__abundio_setup=$1; shift
+        r#"__abundio_keys=$ABUNDIO_TASK_ENV_KEYS; unset ABUNDIO_TASK_ENV_KEYS
+__abundio_setup=$1; shift
 if [ -n "$__abundio_setup" ]; then eval "$__abundio_setup"; fi
 unset __abundio_setup
 printf '\033]7770;command_start;%s\007' "$1"
@@ -545,13 +550,37 @@ fn task_c_args(shell: &str, reexec: &str, task: &TaskLaunch) -> Vec<String> {
 /// shell again. `ZDOTDIR` must be re-pointed first, because the wrapper .zshrc
 /// sets it back to the user's own folder and it stays exported.
 fn zsh_reexec(zdotdir: &str) -> String {
-    format!("export ZDOTDIR={}\nexec \"$0\" -l -i", sh_single_quote(zdotdir))
+    format!(
+        "{ZSH_ENV_RESTORE}\nexport ZDOTDIR={}\nexec \"$0\" -l -i",
+        sh_single_quote(zdotdir)
+    )
 }
 
 /// The task script's last step for bash: the same `--rcfile` spawn.
 fn bash_reexec(rcfile: &str) -> String {
-    format!("exec \"$0\" --rcfile {} -i", sh_single_quote(rcfile))
+    format!(
+        "{BASH_ENV_RESTORE}\nexec \"$0\" --rcfile {} -i",
+        sh_single_quote(rcfile)
+    )
 }
+
+// Re-arm the Injected bundle for the re-exec'd shell (ADR-0024 precedence).
+// The first shell's wrapper consumed the `ABUNDIO_ENV__*` shadow copies and
+// the `ABUNDIO_ENV_KEYS` manifest, so without this the re-exec'd shell would
+// re-source the user's rc with nothing to re-apply after it, and an `export`
+// in .zshrc would silently beat the Workspace value. The names arrive as
+// `ABUNDIO_TASK_ENV_KEYS`, which the script takes into a shell variable and
+// unsets before the Agent runs, so the Agent never sees the list. Values are
+// read by name indirection (`${(P)k}` / `${!k}`), never `eval` — names are
+// validated in Rust (`env_crypto::validate_name`), values are user data.
+const ZSH_ENV_RESTORE: &str = r#"if [ -n "$__abundio_keys" ]; then
+  for __abundio_k in ${=__abundio_keys}; do export "ABUNDIO_ENV__${__abundio_k}=${(P)__abundio_k}"; done
+  export ABUNDIO_ENV_KEYS="$__abundio_keys"
+fi"#;
+const BASH_ENV_RESTORE: &str = r#"if [ -n "$__abundio_keys" ]; then
+  for __abundio_k in $__abundio_keys; do export "ABUNDIO_ENV__${__abundio_k}=${!__abundio_k}"; done
+  export ABUNDIO_ENV_KEYS="$__abundio_keys"
+fi"#;
 
 /// Quote `s` for a POSIX shell as one word.
 fn sh_single_quote(s: &str) -> String {
@@ -1627,14 +1656,12 @@ mod task_launch_tests {
 
     #[test]
     fn reexec_restores_the_wrapper() {
-        assert_eq!(
-            zsh_reexec("/data/it's"),
-            "export ZDOTDIR='/data/it'\\''s'\nexec \"$0\" -l -i"
-        );
-        assert_eq!(
-            bash_reexec("/data/.bashrc"),
-            "exec \"$0\" --rcfile '/data/.bashrc' -i"
-        );
+        assert!(zsh_reexec("/data/it's")
+            .ends_with("export ZDOTDIR='/data/it'\\''s'\nexec \"$0\" -l -i"));
+        assert!(bash_reexec("/data/.bashrc")
+            .ends_with("exec \"$0\" --rcfile '/data/.bashrc' -i"));
+        assert!(zsh_reexec("/d").starts_with(ZSH_ENV_RESTORE));
+        assert!(bash_reexec("/d").starts_with(BASH_ENV_RESTORE));
     }
 
     #[test]
@@ -1670,6 +1697,34 @@ mod task_launch_tests {
             let end = out.find("\x1b]7770;command_end;0\x07").expect("end");
             assert!(setup < start && start < end, "{shell}: {out}");
             assert!(out.contains(&format!("REEXEC {shell} -i")), "{shell}: {out}");
+        }
+    }
+
+    /// After the Agent exits, the script must hand the re-exec'd shell a fresh
+    /// shadow copy + manifest of the Injected bundle — and the Agent itself
+    /// must never see the key list.
+    #[test]
+    fn script_rearms_the_injected_bundle_for_the_reexec() {
+        for (shell, restore) in [("/bin/zsh", ZSH_ENV_RESTORE), ("/bin/bash", BASH_ENV_RESTORE)] {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+            let script = task_script(&format!("{restore}\nexec env"));
+            let out = Command::new(shell)
+                .args(["-c", &script, shell, "", "sh", "-c", "echo AGENT_SAW=${ABUNDIO_TASK_ENV_KEYS:-none}"])
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("ABUNDIO_TASK_ENV_KEYS", "FOO BAR")
+                .env("FOO", "a b $(x) 'q'")
+                .env("BAR", "")
+                .output()
+                .unwrap();
+            let out = String::from_utf8_lossy(&out.stdout);
+            assert!(out.contains("AGENT_SAW=none"), "{shell}: {out}");
+            assert!(out.contains("\nABUNDIO_ENV__FOO=a b $(x) 'q'\n"), "{shell}: {out}");
+            assert!(out.contains("\nABUNDIO_ENV__BAR=\n"), "{shell}: {out}");
+            assert!(out.contains("\nABUNDIO_ENV_KEYS=FOO BAR\n"), "{shell}: {out}");
+            assert!(!out.contains("ABUNDIO_TASK_ENV_KEYS"), "{shell}: {out}");
         }
     }
 
