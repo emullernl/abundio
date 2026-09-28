@@ -58,6 +58,16 @@ function entry(
 	};
 }
 
+// The hover popover renders a `WorkspaceItem`, which measures itself through a
+// ResizeObserver; jsdom has none.
+class NoopResizeObserver {
+	observe() {}
+	unobserve() {}
+	disconnect() {}
+}
+globalThis.ResizeObserver ??=
+	NoopResizeObserver as unknown as typeof ResizeObserver;
+
 describe("CollapsedStrip", () => {
 	let container: HTMLDivElement;
 	let root: ReturnType<typeof createRoot>;
@@ -194,6 +204,19 @@ describe("CollapsedStrip", () => {
 	it("has no hidden count when nothing is hidden", () => {
 		render(workspace([]));
 		expect(hiddenCount()).toBeNull();
+	});
+
+	it("draws its hover popover below the context menu layer", () => {
+		render(workspace([]));
+		const strip = container.querySelector<HTMLElement>('[role="button"]');
+		act(() => strip?.focus());
+		const popover = [
+			...document.body.querySelectorAll<HTMLElement>("body > div"),
+		].find((el) => el.style.position === "fixed");
+		expect(popover).toBeTruthy();
+		// The workspace context menu (`PaneContextMenu`, z-[100]) opens from
+		// this popover, so the popover must sit under it (#206 follow-up).
+		expect(Number(popover?.style.zIndex)).toBeLessThan(100);
 	});
 
 	describe("Dirty marker", () => {

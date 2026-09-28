@@ -272,7 +272,10 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 							borderTopRightRadius: 6,
 							borderBottomRightRadius: 6,
 							boxShadow: "8px 4px 24px -6px rgba(0, 0, 0, 0.45)",
-							zIndex: 1000,
+							// Above the page (whose layers stop at 50) but below every
+							// menu and dialog (100+): the workspace context menu opens
+							// from this popover and must be drawn on top of it.
+							zIndex: 90,
 						}}
 					>
 						{indent > 0 ? (
