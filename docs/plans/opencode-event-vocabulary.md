@@ -27,6 +27,8 @@ working path to Working or Waiting**. `question.*` entered at #92 (24 May 2026);
 `message.part.delta` was last touched at #163 (11 Aug 2026). The breakage was invisible
 because a pane that silently never reaches Working reads as a slow agent, not a bug.
 
+> **Superseded in part (2026-09-28):** the paragraph below was wrong about 2.x — it *has* a full lifecycle stream (`ctx.event.subscribe()`, `session.idle`, `session.execution.*`). 2.x support is now planned in `docs/plans/opencode-v2-status.md` on the same branch; this plan remains the 1.x half.
+
 **OpenCode 2.0 is explicitly out of scope.** Its plugin API is a different shape
 (`Plugin.define({ id, setup(ctx) })`, hooks registered on `ctx.session` / `ctx.tool` /
 `ctx.permission`), the docs state plainly that "V1 plugins will not work in V2", and the
