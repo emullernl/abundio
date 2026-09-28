@@ -703,18 +703,34 @@ fn parse_opencode_major(output: &str) -> Option<OpenCodeMajor> {
 /// cache, so the launch path (`ensure_agent_hooks`, capped at 2 s by the
 /// frontend) normally hits it.
 ///
-/// Defaults to 2.x when OpenCode is not found or the version is unreadable:
-/// 1.x ignores the 2.x plugin folder, while 2.x rejects the 1.x file with a
-/// user-visible error.
+/// Defaults to 2.x when OpenCode is not found: 1.x ignores the 2.x plugin
+/// folder, while 2.x rejects the 1.x file with a user-visible error.
+///
+/// A failed probe (timeout, spawn error, unreadable output) is never cached as
+/// an answer — a slow first run on 1.x must not delete a working 1.x plugin
+/// for the rest of the session. It falls back to `opencode_major_on_disk`, and
+/// the probe is retried after `RETRY_AFTER` rather than on every call (one
+/// provisioning pass asks several times).
 #[cfg(not(test))]
 fn opencode_major() -> OpenCodeMajor {
     use std::sync::Mutex;
     use std::time::{Duration, Instant, SystemTime};
 
     type Key = (PathBuf, Option<SystemTime>);
-    static CACHE: Mutex<Option<(Key, OpenCodeMajor)>> = Mutex::new(None);
+    enum Cached {
+        Read(OpenCodeMajor),
+        Failed(Instant),
+    }
+    static CACHE: Mutex<Option<(Key, Cached)>> = Mutex::new(None);
+    const RETRY_AFTER: Duration = Duration::from_secs(60);
 
-    let Some(bin) = crate::dev_environments::find_in_path("opencode") else {
+    let home = dirs::home_dir();
+    let fallback = || match &home {
+        Some(h) => opencode_major_on_disk(h),
+        None => OpenCodeMajor::V2,
+    };
+
+    let Some(bin) = find_opencode_binary() else {
         return OpenCodeMajor::V2;
     };
     let key: Key = (
@@ -723,9 +739,13 @@ fn opencode_major() -> OpenCodeMajor {
     );
     // Held across the probe so concurrent callers wait for one run.
     let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((cached_key, major)) = cache.as_ref() {
+    if let Some((cached_key, cached)) = cache.as_ref() {
         if *cached_key == key {
-            return *major;
+            match cached {
+                Cached::Read(major) => return *major,
+                Cached::Failed(at) if at.elapsed() < RETRY_AFTER => return fallback(),
+                Cached::Failed(_) => {}
+            }
         }
     }
 
@@ -756,10 +776,50 @@ fn opencode_major() -> OpenCodeMajor {
         std::io::Read::read_to_string(child.stdout.as_mut()?, &mut out).ok()?;
         parse_opencode_major(&out)
     };
-    let major = probe().unwrap_or(OpenCodeMajor::V2);
-    eprintln!("[abundio] opencode at {} is {major:?}", bin.display());
-    *cache = Some((key, major));
-    major
+    match probe() {
+        Some(major) => {
+            eprintln!("[abundio] opencode at {} is {major:?}", bin.display());
+            *cache = Some((key, Cached::Read(major)));
+            major
+        }
+        None => {
+            let major = fallback();
+            eprintln!(
+                "[abundio] could not read the version of opencode at {}; assuming {major:?} from its plugin folder",
+                bin.display()
+            );
+            *cache = Some((key, Cached::Failed(Instant::now())));
+            major
+        }
+    }
+}
+
+/// The `opencode` binary to probe. On Windows, npm installs an extensionless
+/// shell script next to `opencode.cmd`; Windows cannot run the script, so the
+/// runnable forms are tried first.
+#[cfg(not(test))]
+fn find_opencode_binary() -> Option<PathBuf> {
+    #[cfg(windows)]
+    for name in ["opencode.exe", "opencode.cmd", "opencode.bat"] {
+        if let Some(path) = crate::dev_environments::find_in_path(name) {
+            return Some(path);
+        }
+    }
+    crate::dev_environments::find_in_path("opencode")
+}
+
+/// What the plugin folder says when `--version` could not be read: 1.x if
+/// Abundio's 1.x plugin is in place and its 2.x plugin is not, 2.x otherwise.
+/// Keeps whatever layout is already working instead of guessing a change.
+fn opencode_major_on_disk(home: &Path) -> OpenCodeMajor {
+    let v1 = fs::read_to_string(home.join(opencode_v1_rel()))
+        .is_ok_and(|t| t.starts_with(OPENCODE_V1_HEADER));
+    let v2 = home.join(opencode_v2_dir_rel()).join("tui.ts").exists();
+    if v1 && !v2 {
+        OpenCodeMajor::V1
+    } else {
+        OpenCodeMajor::V2
+    }
 }
 
 #[cfg(test)]
@@ -1644,6 +1704,25 @@ mod tests {
         assert_eq!(parse_opencode_major("v3.1.0"), Some(OpenCodeMajor::V2));
         assert_eq!(parse_opencode_major("PlatformError: Unknown"), None);
         assert_eq!(parse_opencode_major(""), None);
+    }
+
+    #[test]
+    fn opencode_major_on_disk_keeps_a_working_v1_plugin() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        // Nothing on disk: 2.x, the safe default.
+        assert_eq!(opencode_major_on_disk(home.path()), OpenCodeMajor::V2);
+        // Abundio's 1.x plugin alone: stay on 1.x.
+        provision_agent(home.path(), &relay, "opencode", true, true).unwrap();
+        assert_eq!(opencode_major_on_disk(home.path()), OpenCodeMajor::V1);
+        // A user's own file of that name is not evidence.
+        fs::write(home.path().join(opencode_v1_rel()), "// mine\n").unwrap();
+        assert_eq!(opencode_major_on_disk(home.path()), OpenCodeMajor::V2);
+        // The 2.x plugin present: 2.x.
+        with_opencode_major(OpenCodeMajor::V2, || {
+            provision_agent(home.path(), &relay, "opencode", true, false).unwrap();
+        });
+        assert_eq!(opencode_major_on_disk(home.path()), OpenCodeMajor::V2);
     }
 
     #[test]

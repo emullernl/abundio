@@ -1768,20 +1768,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						.getState()
 						.stampAgentOnPane(paneId, hookEvent.agent);
 				};
-				// Subagent lifecycle events drive the pane's Subagent set — which
-				// holds the Ready flip while delegated work still runs (ADR-0022,
-				// docs/plans/subagent-aware-status.md).
-				const applySubagent = (subagent: SubagentSignal) => {
-					if (subagent.action === "ignored") return;
-					// A subagent hook proves an agent runs here as much as any hook.
-					adoptAgent();
-					const actStore = usePtyActivityStore.getState();
-					if (subagent.action === "started") {
-						actStore.subagentStarted(currentPtyId, subagent.id);
-					} else {
-						actStore.subagentStopped(currentPtyId, subagent.id);
-					}
-				};
 				const applyTransition = (
 					transition: HookTransition,
 					turnStart: boolean,
@@ -1797,6 +1783,24 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					usePtyActivityStore
 						.getState()
 						.applyHookEvent(currentPtyId, transition, turnStart);
+				};
+				// Subagent lifecycle events drive the pane's Subagent set — which
+				// holds the Ready flip while delegated work still runs (ADR-0022,
+				// docs/plans/subagent-aware-status.md).
+				const applySubagent = (subagent: SubagentSignal) => {
+					if (subagent.action === "ignored") return;
+					if (subagent.action === "resume") {
+						applyTransition("resume", false);
+						return;
+					}
+					// A subagent hook proves an agent runs here as much as any hook.
+					adoptAgent();
+					const actStore = usePtyActivityStore.getState();
+					if (subagent.action === "started") {
+						actStore.subagentStarted(currentPtyId, subagent.id);
+					} else {
+						actStore.subagentStopped(currentPtyId, subagent.id);
+					}
 				};
 
 				// OpenCode 2.x: its TUI plugin has already sorted the event into the

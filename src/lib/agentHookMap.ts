@@ -366,11 +366,11 @@ export function isTurnStartEvent(agentId: string, eventName: string): boolean {
 // not a status transition, and are dispatched as subagentStarted/subagentStopped
 // reducer events by the translator (terminalManager) before mapHookEvent runs.
 
-/** "ignored" is an OpenCode 1.x event from a live Subagent's session that is
- *  neither its start nor its stop: it must not drive the pane, so the
- *  translator drops it. */
+/** OpenCode 1.x only: "ignored" is an event from a live Subagent's session
+ *  that must not drive the pane, so the translator drops it; "resume" is that
+ *  Subagent's permission reply, which lifts Waiting and does nothing else. */
 export interface SubagentSignal {
-	action: "started" | "stopped" | "ignored";
+	action: "started" | "stopped" | "ignored" | "resume";
 	id: string;
 }
 
@@ -452,6 +452,11 @@ export function mapSubagentHookEvent(
 		) {
 			return { action: "stopped", id };
 		}
+		// A child's permission request blocks on the user like the pane's own:
+		// fall through to the "waiting" mapping (same rule as 2.x). Its reply
+		// only resumes — "active" would restart the Working window.
+		if (eventName === "permission.updated") return null;
+		if (eventName === "permission.replied") return { action: "resume", id };
 		return { action: "ignored", id };
 	}
 	return null;

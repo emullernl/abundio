@@ -569,13 +569,30 @@ describe("mapSubagentHookEvent (ADR-0022)", () => {
 		}
 	});
 
+	it("OpenCode 1.x: a Subagent's permission request reaches Waiting, its reply only resumes", () => {
+		// The user must answer a child's prompt too (same rule as 2.x).
+		const asked = { sessionID: "ses_child", id: "per_1" };
+		expect(
+			mapSubagentHookEvent("opencode", "permission.updated", asked, always),
+		).toBeNull();
+		expect(mapHookEvent("opencode", "permission.updated")).toBe("waiting");
+		expect(
+			mapSubagentHookEvent(
+				"opencode",
+				"permission.replied",
+				{ sessionID: "ses_child" },
+				always,
+			),
+		).toEqual({ action: "resume", id: "ses_child" });
+	});
+
 	it("OpenCode 1.x: any other event of a live Subagent's session is ignored", () => {
-		// The session-ownership gate: a child's status or permission reply must
-		// not drive the pane.
+		// The session-ownership gate: a child's status must not drive the pane
+		// (a child going idle would flash it Ready mid-turn).
 		for (const [event, payload] of [
 			["session.status", { sessionID: "ses_child", status: { type: "idle" } }],
-			["permission.replied", { sessionID: "ses_child" }],
-			["permission.updated", { sessionID: "ses_child", id: "per_1" }],
+			["session.status", { sessionID: "ses_child", status: { type: "busy" } }],
+			["message.updated", { sessionID: "ses_child" }],
 		] as const) {
 			expect(mapSubagentHookEvent("opencode", event, payload, always)).toEqual({
 				action: "ignored",
