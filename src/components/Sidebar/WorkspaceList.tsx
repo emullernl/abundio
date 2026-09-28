@@ -17,6 +17,7 @@ import {
 	type SetRow,
 	type WorkspaceRow,
 } from "../../lib/worktreeGrouping";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
@@ -71,6 +72,7 @@ export function WorkspaceList({
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
 	const beginWorkspaceSwitch = useWorkspaceStore((s) => s.beginWorkspaceSwitch);
+	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
 	const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
 	const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
@@ -351,11 +353,18 @@ export function WorkspaceList({
 		(workspaceId: string): ContextMenuItem[] => {
 			const role = roleById.get(workspaceId);
 			const ws = workspaces.find((w) => w.id === workspaceId);
+			// Only an Opened workspace has terminals to close; a dormant one
+			// offers to open instead (the same switch as clicking its row).
 			const items: ContextMenuItem[] = [
-				{
-					label: "Close Workspace",
-					onClick: () => requestClose(workspaceId),
-				},
+				openedIds.has(workspaceId)
+					? {
+							label: "Close Workspace",
+							onClick: () => requestClose(workspaceId),
+						}
+					: {
+							label: "Open Workspace",
+							onClick: () => beginWorkspaceSwitch(workspaceId),
+						},
 			];
 			const setRow = rows.find(
 				(r): r is SetRow => r.kind === "set" && r.primary.id === workspaceId,
@@ -427,7 +436,9 @@ export function WorkspaceList({
 			foldedKeys,
 			holdsActiveLinked,
 			toggleSetFolded,
+			openedIds,
 			requestClose,
+			beginWorkspaceSwitch,
 			requestRemoveWorktree,
 		],
 	);
@@ -511,7 +522,7 @@ export function WorkspaceList({
 		},
 		onDelete: () => {
 			// On a linked worktree the X removes the worktree (deletes the folder),
-			// matching the context menu; everywhere else it closes the workspace.
+			// matching the context menu; everywhere else it removes the workspace.
 			const role = roleById.get(workspace.id);
 			if (role?.linkedPrimaryCwd) {
 				requestRemoveWorktree(workspace, role.linkedPrimaryCwd);
