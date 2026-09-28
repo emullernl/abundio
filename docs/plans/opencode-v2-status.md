@@ -163,10 +163,13 @@ Consequences for the design:
 
 ## Implementation notes
 
-- **Detection** (`agent_hooks::opencode_major`) falls back to 2.x when OpenCode is
-  not found or its version can't be read: 1.x ignores the 2.x folder, while 2.x
-  rejects the 1.x file with a user-visible error. It gives up on `--version` after
-  10 s.
+- **Detection** (`agent_hooks::opencode_major`) assumes 2.x when OpenCode is not
+  found: 1.x ignores the 2.x folder, while 2.x rejects the 1.x file with a
+  user-visible error. When `--version` fails (10 s timeout, spawn error,
+  unreadable output), the failure is **not** cached as an answer. Detection keeps
+  the plugin already on disk (Abundio's 1.x file alone means 1.x) and retries after
+  60 s. On Windows, `opencode.exe` / `.cmd` / `.bat` are tried before npm's
+  extensionless shell script.
 - **A leftover plugin for the other version** reads as not-registered, so
   `ensure_agent_hooks` also cleans up after an upgrade or downgrade even when the
   current plugin is already in place.
