@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
+import { useConfirmCloseWorkspace } from "../../hooks/useConfirmCloseWorkspace";
 import {
 	type HiddenRollup,
 	useHiddenRollup as useRollupOf,
@@ -7,6 +7,7 @@ import {
 import { useWorktreeProgress } from "../../hooks/useWorktreeProgress";
 import { worktrees } from "../../lib/ipc";
 import { openNewTask } from "../../lib/openNewTask";
+import { buildRemoveWorkspaceMessage } from "../../lib/removeWorkspaceMessage";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
 	buildWorkspaceRows,
@@ -85,10 +86,10 @@ export function WorkspaceList({
 	const setSetFolded = useWindowUiStore((s) => s.setSetFolded);
 	const foldedKeys = useMemo(() => new Set(foldedSetKeys), [foldedSetKeys]);
 
-	// "Unload Workspace" tears down the workspace's PTYs; confirm first when an
+	// "Close Workspace" tears down the workspace's PTYs; confirm first when an
 	// agent is Working or a command is in progress.
-	const { requestUnload, dialogProps: unloadDialogProps } =
-		useConfirmUnloadWorkspace();
+	const { requestClose, dialogProps: closeDialogProps } =
+		useConfirmCloseWorkspace();
 
 	// Waiting modal for the (potentially slow) create/remove worktree ops.
 	const {
@@ -178,12 +179,12 @@ export function WorkspaceList({
 	const pendingWorkspace = pendingDeleteId
 		? workspaces.find((w) => w.id === pendingDeleteId)
 		: null;
-	// If the pending-close workspace is a primary with a set, closing it cascades
-	// to its linked worktree workspaces (closed too — folders on disk are kept).
-	// Scope is taken from `rows` (the rendered grouping), so it always matches
-	// what the user sees: if git facts haven't loaded yet the set isn't rendered
-	// as a set either, so there's no cascade *and* the dialog shows the plain
-	// single-workspace message — no false "will also close N" promise.
+	// If the pending-remove workspace is a primary with a set, removing it
+	// cascades to its linked worktree workspaces (removed too — folders on disk
+	// are kept). Scope is taken from `rows` (the rendered grouping), so it always
+	// matches what the user sees: if git facts haven't loaded yet the set isn't
+	// rendered as a set either, so there's no cascade *and* the dialog shows the
+	// plain single-workspace message — no false "and its N worktrees" promise.
 	const pendingLinked: WorkspaceWithTabs[] = pendingDeleteId
 		? (rows.find(
 				(r): r is SetRow =>
@@ -352,8 +353,8 @@ export function WorkspaceList({
 			const ws = workspaces.find((w) => w.id === workspaceId);
 			const items: ContextMenuItem[] = [
 				{
-					label: "Unload Workspace",
-					onClick: () => requestUnload(workspaceId),
+					label: "Close Workspace",
+					onClick: () => requestClose(workspaceId),
 				},
 			];
 			const setRow = rows.find(
@@ -401,11 +402,11 @@ export function WorkspaceList({
 				onClick: () => setRenamingId(workspaceId),
 			});
 			// A linked worktree is removed via "Remove worktree…" (deletes the
-			// folder), not "Close Workspace" (which would just drop the list entry
+			// folder), not "Remove Workspace" (which would just drop the list entry
 			// and leave the worktree on disk to be re-discovered) — so hide it here.
 			if (!role?.linkedPrimaryCwd) {
 				items.push({
-					label: "Close Workspace",
+					label: "Remove Workspace…",
 					onClick: () => setPendingDeleteId(workspaceId),
 				});
 			}
@@ -426,7 +427,7 @@ export function WorkspaceList({
 			foldedKeys,
 			holdsActiveLinked,
 			toggleSetFolded,
-			requestUnload,
+			requestClose,
 			requestRemoveWorktree,
 		],
 	);
@@ -629,21 +630,18 @@ export function WorkspaceList({
 
 			{pendingWorkspace && (
 				<ConfirmDialog
-					title="Close Workspace"
-					message={
-						pendingLinked.length > 0
-							? `Closing "${pendingWorkspace.name}" will also close its ${pendingLinked.length} linked worktree workspace${
-									pendingLinked.length === 1 ? "" : "s"
-								}. They're removed from your workspace list; the worktree folders on disk are kept. This cannot be undone.`
-							: `"${pendingWorkspace.name}" will be permanently removed from your workspace list. This cannot be undone.`
-					}
+					title="Remove Workspace"
+					message={buildRemoveWorkspaceMessage(
+						pendingWorkspace.name,
+						pendingLinked.length,
+					)}
 					confirmLabel={
-						pendingLinked.length > 0 ? "Close workspaces" : "Close Workspace"
+						pendingLinked.length > 0 ? "Remove workspaces" : "Remove Workspace"
 					}
 					confirmVariant="danger"
 					onConfirm={() => {
 						if (pendingDeleteId) {
-							// Close the primary and any linked worktrees together. Run
+							// Remove the primary and any linked worktrees together. Run
 							// them through allSettled so one failed delete doesn't abort
 							// the rest and, crucially, isn't swallowed as an unhandled
 							// rejection — surface it instead.
@@ -652,7 +650,7 @@ export function WorkspaceList({
 								(results) => {
 									for (const r of results) {
 										if (r.status === "rejected") {
-											console.error("Failed to close workspace:", r.reason);
+											console.error("Failed to remove workspace:", r.reason);
 										}
 									}
 								},
@@ -664,7 +662,7 @@ export function WorkspaceList({
 				/>
 			)}
 
-			{unloadDialogProps && <ConfirmDialog {...unloadDialogProps} />}
+			{closeDialogProps && <ConfirmDialog {...closeDialogProps} />}
 
 			{addWorktreeTarget && (
 				<AddWorktreeDialog

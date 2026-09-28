@@ -1,6 +1,6 @@
 import { FolderOpen, Layers } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useConfirmUnloadWorkspace } from "../../hooks/useConfirmUnloadWorkspace";
+import { useConfirmCloseWorkspace } from "../../hooks/useConfirmCloseWorkspace";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { hasFleetAgents, relaunchablePanes } from "../../lib/dormantWorkspaces";
 import type { WorkspaceWithTabs } from "../../lib/types";
@@ -16,8 +16,8 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 
 /**
- * Open and unload Workspaces from the **Fleet Console**. Opening one adds its
- * Agents to the Console; unloading one removes them. See CONTEXT.md.
+ * Open and close Workspaces from the **Fleet Console**. Opening one adds its
+ * Agents to the Console; closing one removes them. See CONTEXT.md.
  *
  * Opening happens in the background — the Workspace is Opened, not made
  * Active — so the Workspace view behind the Console is left alone. Its
@@ -25,7 +25,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
  * a remembered Agent relaunches only once its terminal is drawn, and a
  * Workspace nobody has looked at has no Tab on screen to draw it in.
  *
- * Unloading is the Left sidebar's **Unload Workspace**, with the same
+ * Closing is the Left sidebar's **Close Workspace**, with the same
  * confirmation when an Agent is Working or a command is running.
  */
 export function WorkspacePicker({
@@ -39,7 +39,7 @@ export function WorkspacePicker({
 	const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
 	const agents = useSettingsStore((s) => s.agents);
 	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
-	// Every Opened Workspace, so it can always be unloaded here (the Console
+	// Every Opened Workspace, so it can always be closed here (the Console
 	// hides both sidebars), even after its last Agent exited. A closed one only
 	// if opening it would add Agents.
 	const workspaces = useMemo(() => {
@@ -50,14 +50,14 @@ export function WorkspacePicker({
 				hasFleetAgents(w, known, agentCountByWorkspace.get(w.id) ?? 0),
 		);
 	}, [allWorkspaces, agents, openedIds, agentCountByWorkspace]);
-	const { requestUnload, dialogProps } = useConfirmUnloadWorkspace();
+	const { requestClose, dialogProps } = useConfirmCloseWorkspace();
 
 	useEffect(() => {
 		if (!open) return;
 		const onDown = (e: MouseEvent) => {
 			const t = e.target as Node;
 			if (rootRef.current?.contains(t)) return;
-			// The unload confirmation is portaled to <body>; clicking it must
+			// The Close Workspace confirmation is portaled to <body>; clicking it must
 			// not also close this list underneath.
 			if ((t as Element).closest?.('[role="dialog"]')) return;
 			setOpen(false);
@@ -74,7 +74,7 @@ export function WorkspacePicker({
 				type="button"
 				onClick={() => setOpen((o) => !o)}
 				aria-expanded={open}
-				title="Open or unload workspaces — their agents join or leave the console"
+				title="Open or close workspaces — their agents join or leave the console"
 				className="flex items-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
 				style={{
 					height: 24,
@@ -101,10 +101,10 @@ export function WorkspacePicker({
 						openInBackground(id);
 						setOpen(false);
 					}}
-					onUnload={(id) => {
-						// The unload confirmation lives outside the list, so it
+					onCloseWorkspace={(id) => {
+						// The Close Workspace confirmation lives outside the list, so it
 						// survives the list closing.
-						requestUnload(id);
+						requestClose(id);
 						setOpen(false);
 					}}
 					onClose={() => setOpen(false)}
@@ -137,7 +137,7 @@ function WorkspaceList({
 	openedIds,
 	agentCountByWorkspace,
 	onOpen,
-	onUnload,
+	onCloseWorkspace,
 	onClose,
 }: {
 	workspaces: WorkspaceWithTabs[];
@@ -147,7 +147,7 @@ function WorkspaceList({
 	openedIds: ReadonlySet<string>;
 	agentCountByWorkspace: ReadonlyMap<string, number>;
 	onOpen: (id: string) => void;
-	onUnload: (id: string) => void;
+	onCloseWorkspace: (id: string) => void;
 	onClose: () => void;
 }) {
 	useEscapeKey(onClose);
@@ -256,8 +256,8 @@ function WorkspaceList({
 							</div>
 							<button
 								type="button"
-								onClick={() => (isOpen ? onUnload(w.id) : onOpen(w.id))}
-								aria-label={isOpen ? `Unload ${w.name}` : `Open ${w.name}`}
+								onClick={() => (isOpen ? onCloseWorkspace(w.id) : onOpen(w.id))}
+								aria-label={isOpen ? `Close ${w.name}` : `Open ${w.name}`}
 								className={`flex items-center shrink-0 ${
 									isOpen
 										? "text-[var(--fg-secondary)] hover:text-[var(--error)]"
@@ -278,7 +278,7 @@ function WorkspaceList({
 								}}
 							>
 								{isOpen ? (
-									"Unload"
+									"Close"
 								) : (
 									<>
 										<FolderOpen size={12} />

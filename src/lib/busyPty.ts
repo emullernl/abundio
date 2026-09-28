@@ -53,8 +53,8 @@ export function busyCounts(
 	return { working, waiting, commands };
 }
 
-/** Is anything **Busy**? The test for the Unload workspace and Close window
- *  confirmations. A Waiting agent does not count: unload and window close act
+/** Is anything **Busy**? The test for the Close workspace and Close window
+ *  confirmations. A Waiting agent does not count: both closes act
  *  on Workspaces the user is looking at and chose to close. */
 export function hasBusyWork(c: BusyCounts): boolean {
 	return c.working > 0 || c.commands > 0;
