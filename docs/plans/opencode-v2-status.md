@@ -43,7 +43,7 @@ plugin in `plugins/abundio.ts`) only *loads*. Findings from the 2.0.18 binary an
 | Cleanup | On 2.x, **delete `plugin/abundio.ts` only if it is Abundio's**, i.e. it carries the "auto-generated, do not edit" header. Leave hand-made files and `.bak` files alone. On 1.x, remove the 2.x folder. | The leftover 1.x file is what raises the user-visible error. Abundio deletes only what it wrote. |
 | Plugin id | `abundio.status-tui`. Must not clash with the id `abundio.status` from the report's hand port. | Two plugins with the same id could shadow each other. |
 | Split of work | **The plugin classifies, the frontend maps.** The plugin drops events from other TUIs' sessions, tags the rest `self` or `child`, and forwards the raw 2.x event name. | Only the TUI knows which session is on screen. The name→status table stays in `agentHookMap.ts`, where Vitest can test it. Putting translation into a JS string in Rust is how four made-up 1.x event names got through. |
-| Agent id | **Same `opencode`**, with `&v=2` in the hook URL. The translator picks the 2.x table. | One Agent in Settings, stats and turn tracking, continuous across an upgrade. |
+| Agent id | **Same `opencode`**, with `v: 2` in the hook payload (the hook server passes only agent, event and payload through). The translator takes the 2.x path when it sees it. | One Agent in Settings, stats and turn tracking, continuous across an upgrade. |
 | Session followed | **The session on screen**: `root(router.current().sessionID)`. On change: send a session reset, then seed the starting state from `data.session.status(id)`. **Home screen: drop events.** Never adopt a session that starts running elsewhere, because on the shared server it may belong to another pane. | The status icon describes what the user is looking at. |
 | Child asks | A Subagent's `permission.asked` / `form.created` → the **pane goes Waiting**. The replies → Working. Other child events are Subagent start/stop signals only. | The user must act either way. This deliberately relaxes, for 2.x, the rule that a child event is a Subagent signal or nothing. |
 
@@ -52,7 +52,7 @@ plugin in `plugins/abundio.ts`) only *loads*. Findings from the 2.0.18 binary an
 Events tagged `self`:
 
 ```ts
-// agentHookMap.ts — OpenCode 2.x table, selected when the hook carries v=2
+// agentHookMap.ts — OpenCode 2.x table, used when the hook payload carries v: 2
 "session.execution.started":     "active",        // also the Turn start
 "permission.asked":              "waiting",
 "form.created":                  "waiting",
@@ -160,6 +160,25 @@ Consequences for the design:
   the new route), so "drop events on the home screen" loses nothing.
 - `shell.created` carries a shell id, not a session id. The foreign filter drops it, which
   is correct.
+
+## Implementation notes
+
+- **Detection** (`agent_hooks::opencode_major`) falls back to 2.x when OpenCode is
+  not found or its version can't be read: 1.x ignores the 2.x folder, while 2.x
+  rejects the 1.x file with a user-visible error. It gives up on `--version` after
+  10 s.
+- **A leftover plugin for the other version** reads as not-registered, so
+  `ensure_agent_hooks` also cleans up after an upgrade or downgrade even when the
+  current plugin is already in place.
+- **Session switches** are reported by the plugin as `abundio.session.shown`
+  (`{ running }`). The translator ends the old session (`applySessionEnd`), then goes
+  to Working when the new session is already running. The route is polled every
+  300 ms, and also checked before each forwarded event, so a new session's reset
+  always comes before its first `execution.started`.
+- **The guard's event lists are copied** into
+  `src/lib/__tests__/fixtures/opencodeEvents.ts` from both SDKs' type files, not
+  imported. Adding `@opencode/client` 2.x as a devDependency would pull in the
+  `effect` release candidate and the rest of its tree for a list of strings.
 
 ## Regression guard
 
