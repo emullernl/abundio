@@ -10,4 +10,4 @@ OpenCode 2.x runs every `opencode` TUI against one shared background server (`op
 ## Consequences
 
 - OpenCode 1.x and 2.x need different plugins, so Hook provisioning detects the major version (`opencode --version`, cached per binary path and modification time). On 2.x it deletes Abundio's own 1.x file, because 2.x refuses to load it and shows a "Server plugin error" to the user.
-- The TUI plugin API is beta. Abundio depends on as little of it as possible: `data.on`, `app.router.current`, `data.session.root` and `data.session.status`. The plugin must import nothing, because bare package imports do not resolve for plugins OpenCode finds by itself on disk.
+- The TUI plugin API is beta. Abundio depends on as little of it as possible: `data.on`, `ui.router.current`, `data.session.root` and `data.session.status`. The plugin must import nothing, because bare package imports do not resolve for plugins OpenCode finds by itself on disk.

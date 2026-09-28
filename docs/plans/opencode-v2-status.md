@@ -22,7 +22,7 @@ plugin in `plugins/abundio.ts`) only *loads*. Findings from the 2.0.18 binary an
   `~/.local/state/opencode/service.json`). Server plugins run inside it, so
   `process.env.ABUNDIO_*` there belongs to the server, not the pane. See ADR-0045.
 - **TUI plugins run in the pane's own process.** The context (`dist/tui/context.d.ts`)
-  offers `data.on(type, fn)` / `data.listen(fn)`, `app.router.current()` →
+  offers `data.on(type, fn)` / `data.listen(fn)`, `ui.router.current()` →
   `{type:"session", sessionID}`, `data.session.root(id)` / `family(id)`, and
   `data.session.status(id)` → `"idle" | "running"`.
 - **A 2.x plugin can be a folder** with `server` / `index`, `tui` and `rpc` entries. The
@@ -98,6 +98,68 @@ its content, to an ndjson file. Then drive a real Abundio pane. In this order:
    other TUIs' sessions reach this TUI at all?
 
 Record the captured log in this document before writing the 2.x table.
+
+## Probe results (2026-09-28, OpenCode 2.0.18, macOS)
+
+All four gates pass. The log (session ids shortened to their last 6 characters):
+
+```
+setup      pty=94551ca7…  route=home   (ABUNDIO_* present, TERM_PROGRAM=Abundio)
+session.created              sid=J7XIFQ root=J7XIFQ  route=session:J7XIFQ
+session.execution.started    sid=J7XIFQ                                  ← turn 1
+session.execution.succeeded  sid=J7XIFQ
+session.execution.started    sid=J7XIFQ                                  ← permission turn
+permission.asked             sid=J7XIFQ action=shell
+permission.replied           sid=J7XIFQ reply=once        (+11 s)
+session.execution.succeeded  sid=J7XIFQ
+session.execution.started    sid=J7XIFQ                                  ← question turn
+form.created                 sid=J7XIFQ
+form.replied                 sid=J7XIFQ                   (+10 s)
+session.execution.succeeded  sid=J7XIFQ
+session.execution.started    sid=J7XIFQ                                  ← subagent turn
+session.created              sid=ApYGCQ root=ApYGCQ parentID=J7XIFQ      ← root() not yet resolved
+session.execution.started    sid=ApYGCQ root=J7XIFQ                      ← resolved by now
+session.execution.succeeded  sid=ApYGCQ root=J7XIFQ
+session.execution.succeeded  sid=J7XIFQ
+session.execution.started    sid=J7XIFQ                                  ← Esc
+session.execution.interrupted sid=J7XIFQ reason=user
+session.created              sid=nCY6q9  route=session:nCY6q9            ← new session: route already moved
+…route → session:J7XIFQ, with no event                                   ← switch back
+(other pane) session.created / execution.started|succeeded  sid=0746m2
+   — delivered to BOTH TUIs; in this pane route=session:J7XIFQ, so root ≠ on-screen root
+cleanup                                                                  ← setup's cleanup runs on quit
+```
+
+1. **The TUI sees the pane's environment and events: pass.** `ABUNDIO_*` present; every
+   event the 2.x table maps arrived.
+2. **Local folder plugins are found automatically: pass.** No `cli.json` entry. Plugin edits
+   also hot-reload into running TUIs.
+3. **Children are tagged correctly: pass, with a caveat.** `root(child)` equals the parent
+   from the child's `execution.started` onwards, but **not** in its own `session.created`,
+   where it still returns the child itself. So classify children with `data.parentID` on
+   `session.created` (remember the id), and with `root()` for everything after. Not
+   observed: a child's `permission.asked` (the subagent needed none). The "child asks →
+   Waiting" decision stays, but that path is unverified.
+4. **`--version`: pass, but slow.** `opencode v2.0.18`, 1.8 s wall time (0.4 s CPU), and
+   `service.json` was already there before and after. That is close to the 2 s
+   `ENSURE_HOOKS_TIMEOUT_MS` on the launch path, so the result **must** be cached (per
+   binary path + mtime) and filled at startup. A launch never waits on an uncached
+   `--version`.
+5. `interrupted` carries `reason: "user"` on Esc. **Other panes' sessions do reach this
+   TUI**, so the foreign-session filter is required, not merely defensive.
+
+Consequences for the design:
+
+- **`session.idle` and `session.status` never fired** in this session. Leaving them
+  unmapped was right. Nothing depends on them.
+- **A session switch produces no event.** The route changes silently. The plugin must
+  watch `ui.router.current()` itself (a short poll, since the plugin cannot import Solid
+  to subscribe) to send the session reset and seed from `data.session.status(id)` when
+  the route changes.
+- **A new session sets the route before its first event** (`session.created` already sees
+  the new route), so "drop events on the home screen" loses nothing.
+- `shell.created` carries a shell id, not a session id. The foreign filter drops it, which
+  is correct.
 
 ## Regression guard
 
