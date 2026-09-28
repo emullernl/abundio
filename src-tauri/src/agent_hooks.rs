@@ -545,6 +545,276 @@ export const AbundioStatus = async () => {
     .to_string()
 }
 
+/// First line of every OpenCode 1.x plugin body Abundio has ever written. On
+/// 2.x the 1.x file is removed only when it starts with this, so a user's own
+/// `plugin/abundio.ts` is never touched.
+const OPENCODE_V1_HEADER: &str = "// Abundio agent status hook plugin — auto-generated";
+
+/// OpenCode 2.x TUI plugin source (Abundio-owned). See ADR-0045.
+///
+/// 2.x runs every TUI against one shared background server, so a *server*
+/// plugin sees the server's environment, not the pane's. A TUI plugin runs in
+/// the pane's own process: its `ABUNDIO_*` env is the pane's, and only it knows
+/// which session is on screen. It classifies each event as the on-screen
+/// session (`self`), a Subagent of it (`child`), or foreign (dropped — every
+/// TUI on the server receives every session's events), and forwards the raw
+/// event name with `{ v: 2, scope, sessionID }`. The name→status table lives in
+/// the frontend (`agentHookMap.ts`). A session switch fires no event, so the
+/// route is also polled; `abundio.session.shown` reports the switch.
+///
+/// Import-free on purpose: bare imports do not resolve for plugins OpenCode
+/// discovers on disk. No message content is ever forwarded.
+fn opencode_tui_plugin() -> String {
+    r#"// Abundio agent status hook plugin (OpenCode 2.x TUI) — auto-generated, do not edit.
+// Forwards the on-screen session's lifecycle events to Abundio's loopback
+// status server. See Abundio's ADR-0045.
+const FORWARDED = new Set([
+  "session.created",
+  "session.execution.started",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+  "session.retry.scheduled",
+  "session.deleted",
+  "permission.asked",
+  "permission.replied",
+  "form.created",
+  "form.replied",
+  "form.cancelled",
+]);
+
+export default {
+  id: "abundio.status-tui",
+  setup(ctx) {
+    const pty = process.env.ABUNDIO_PTY_ID;
+    const port = process.env.ABUNDIO_HOOK_PORT;
+    const token = process.env.ABUNDIO_HOOK_TOKEN;
+    if (!pty || !port) return;
+
+    const post = (type, body) => {
+      fetch(
+        `http://127.0.0.1:${port}/hook?event=${encodeURIComponent(type)}` +
+          `&agent=opencode&pty=${encodeURIComponent(pty)}`,
+        {
+          method: "POST",
+          headers: { "X-Abundio-Token": token ?? "" },
+          body: JSON.stringify({ v: 2, ...body }),
+        },
+      ).catch(() => {});
+    };
+    const rootOf = (id) => {
+      try {
+        return ctx.data.session.root(id) || id;
+      } catch {
+        return id;
+      }
+    };
+    const onScreen = () => {
+      try {
+        const route = ctx.ui.router.current();
+        if (route && route.type === "session") return rootOf(route.sessionID);
+      } catch {}
+      return null;
+    };
+
+    // The root session on screen (null on the home screen) and the Subagent
+    // sessions known to belong to it.
+    let shown = null;
+    const children = new Set();
+    const sync = () => {
+      const now = onScreen();
+      if (now === shown) return;
+      shown = now;
+      children.clear();
+      let running = false;
+      try {
+        running = !!now && ctx.data.session.status(now) === "running";
+      } catch {}
+      post("abundio.session.shown", { scope: "self", sessionID: now, running });
+    };
+    sync();
+    const timer = setInterval(sync, 300);
+
+    const off = ctx.data.listen(({ details: event }) => {
+      const type = event && event.type;
+      if (!type || !FORWARDED.has(type)) return;
+      // A new session moves the route before its first event arrives; syncing
+      // here reports that before the event itself.
+      sync();
+      if (!shown) return;
+      const data = event.data || {};
+      const sid = data.sessionID || (data.form && data.form.sessionID);
+      if (!sid) return;
+      if (type === "session.created") {
+        // root() does not resolve yet inside a child's own session.created.
+        const parent = data.parentID;
+        if (parent && (parent === shown || children.has(parent) || rootOf(parent) === shown)) {
+          children.add(sid);
+        }
+        return;
+      }
+      let scope;
+      if (sid === shown) scope = "self";
+      else if (children.has(sid) || rootOf(sid) === shown) {
+        children.add(sid);
+        scope = "child";
+      } else return;
+      post(type, { scope, sessionID: sid });
+    });
+
+    return () => {
+      clearInterval(timer);
+      if (off) off();
+    };
+  },
+};
+"#
+    .to_string()
+}
+
+/// OpenCode's plugin API changed incompatibly between 1.x and 2.x, so Hook
+/// provisioning writes a different plugin for each. See ADR-0045.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum OpenCodeMajor {
+    V1,
+    V2,
+}
+
+/// Parse `opencode --version` output: `opencode v2.0.18` (2.x) or `1.18.21`
+/// (1.x). `None` when no version number is found.
+fn parse_opencode_major(output: &str) -> Option<OpenCodeMajor> {
+    let token = output
+        .split_whitespace()
+        .map(|t| t.trim_start_matches('v'))
+        .find(|t| t.chars().next().is_some_and(|c| c.is_ascii_digit()))?;
+    let major: u32 = token.split('.').next()?.parse().ok()?;
+    Some(if major >= 2 {
+        OpenCodeMajor::V2
+    } else {
+        OpenCodeMajor::V1
+    })
+}
+
+/// The installed OpenCode's major version.
+///
+/// Runs `opencode --version`, which takes ~1.8 s on 2.x, so the answer is
+/// cached per resolved binary path and modification time: an upgrade replaces
+/// the binary and is picked up on the next call. Startup provisioning fills the
+/// cache, so the launch path (`ensure_agent_hooks`, capped at 2 s by the
+/// frontend) normally hits it.
+///
+/// Defaults to 2.x when OpenCode is not found or the version is unreadable:
+/// 1.x ignores the 2.x plugin folder, while 2.x rejects the 1.x file with a
+/// user-visible error.
+#[cfg(not(test))]
+fn opencode_major() -> OpenCodeMajor {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant, SystemTime};
+
+    type Key = (PathBuf, Option<SystemTime>);
+    static CACHE: Mutex<Option<(Key, OpenCodeMajor)>> = Mutex::new(None);
+
+    let Some(bin) = crate::dev_environments::find_in_path("opencode") else {
+        return OpenCodeMajor::V2;
+    };
+    let key: Key = (
+        bin.clone(),
+        fs::metadata(&bin).and_then(|m| m.modified()).ok(),
+    );
+    // Held across the probe so concurrent callers wait for one run.
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((cached_key, major)) = cache.as_ref() {
+        if *cached_key == key {
+            return *major;
+        }
+    }
+
+    let probe = || -> Option<OpenCodeMajor> {
+        let mut child = std::process::Command::new(&bin)
+            .arg("--version")
+            .env("PATH", crate::shell_env::shell_path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(50))
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+            }
+        }
+        let mut out = String::new();
+        std::io::Read::read_to_string(child.stdout.as_mut()?, &mut out).ok()?;
+        parse_opencode_major(&out)
+    };
+    let major = probe().unwrap_or(OpenCodeMajor::V2);
+    eprintln!("[abundio] opencode at {} is {major:?}", bin.display());
+    *cache = Some((key, major));
+    major
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_OPENCODE_MAJOR: std::cell::Cell<OpenCodeMajor> =
+        const { std::cell::Cell::new(OpenCodeMajor::V1) };
+}
+
+/// Tests never spawn `opencode`; they pick the version per thread.
+#[cfg(test)]
+fn opencode_major() -> OpenCodeMajor {
+    TEST_OPENCODE_MAJOR.with(|m| m.get())
+}
+
+/// The 1.x plugin file and the 2.x plugin folder, relative to `$HOME`.
+fn opencode_v1_rel() -> PathBuf {
+    [".config", "opencode", "plugin", "abundio.ts"].iter().collect()
+}
+fn opencode_v2_dir_rel() -> PathBuf {
+    [".config", "opencode", "plugins", "abundio"].iter().collect()
+}
+
+/// Remove the plugin layout that does not belong to `keep` (or both when
+/// `keep` is `None`, on disable). Deletes only what Abundio wrote: the 1.x file
+/// only when it carries Abundio's header, the 2.x folder only its `tui.ts`
+/// (and the folder itself once empty).
+fn opencode_remove_other(home: &Path, keep: Option<OpenCodeMajor>) -> Result<(), AbundioError> {
+    if keep != Some(OpenCodeMajor::V1) {
+        let v1 = home.join(opencode_v1_rel());
+        if fs::read_to_string(&v1).is_ok_and(|t| t.starts_with(OPENCODE_V1_HEADER)) {
+            fs::remove_file(&v1)?;
+        }
+    }
+    if keep != Some(OpenCodeMajor::V2) {
+        let dir = home.join(opencode_v2_dir_rel());
+        let file = dir.join("tui.ts");
+        if file.exists() {
+            fs::remove_file(&file)?;
+        }
+        // Fails harmlessly when the folder is absent or holds other files.
+        let _ = fs::remove_dir(&dir);
+    }
+    Ok(())
+}
+
+/// True when Abundio's plugin for the *other* OpenCode major version is on
+/// disk — the state `opencode_remove_other` cleans up.
+fn opencode_other_present(home: &Path) -> bool {
+    match opencode_major() {
+        OpenCodeMajor::V2 => fs::read_to_string(home.join(opencode_v1_rel()))
+            .is_ok_and(|t| t.starts_with(OPENCODE_V1_HEADER)),
+        OpenCodeMajor::V1 => home.join(opencode_v2_dir_rel()).join("tui.ts").exists(),
+    }
+}
+
 /// Warning surfaced when `curl` is missing on Unix. Shared by `provision` and
 /// `ensure_agent_hooks` so both paths give the same diagnostic instead of
 /// scaffolding hooks that can never fire.
@@ -733,11 +1003,14 @@ fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
                 "sessionEnd",
             ]),
         }),
+        // The plugin location depends on the installed major version: a 1.x
+        // server plugin file, or a 2.x TUI plugin folder. See ADR-0045.
         "opencode" => Some(AgentDescriptor {
             dir_rel: [".config", "opencode"].iter().collect(),
-            config_rel: [".config", "opencode", "plugin", "abundio.ts"]
-                .iter()
-                .collect(),
+            config_rel: match opencode_major() {
+                OpenCodeMajor::V1 => opencode_v1_rel(),
+                OpenCodeMajor::V2 => opencode_v2_dir_rel().join("tui.ts"),
+            },
             ownership: Ownership::Owned,
             format: ConfigFormat::Json,
             events: vec!["all lifecycle events".to_string()],
@@ -773,7 +1046,10 @@ fn owned_content(agent_id: &str, relay: &RelayPaths) -> Result<String, AbundioEr
     match agent_id {
         "codex" => codex_config(relay.primary()),
         "copilot" => copilot_config(relay),
-        "opencode" => Ok(opencode_plugin()),
+        "opencode" => Ok(match opencode_major() {
+            OpenCodeMajor::V1 => opencode_plugin(),
+            OpenCodeMajor::V2 => opencode_tui_plugin(),
+        }),
         "grok" => grok_config(relay.primary()),
         _ => Ok(String::new()),
     }
@@ -805,6 +1081,11 @@ fn provision_agent(
         }
     }
     let path = home.join(&desc.config_rel);
+    // OpenCode: first clear the other version's plugin — on 2.x a leftover 1.x
+    // file is rejected with a "Server plugin error" the user sees.
+    if agent_id == "opencode" {
+        opencode_remove_other(home, enabled.then(opencode_major))?;
+    }
     match desc.ownership {
         Ownership::Merged => match desc.format {
             ConfigFormat::Json => {
@@ -947,6 +1228,11 @@ fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigSt
         // path after a data-dir change, an older event set, an outdated
         // opencode plugin body — reads as not-registered and gets refreshed by
         // the next ensure/provision pass.
+        // OpenCode also reads as not-registered while the other version's
+        // Abundio plugin is still on disk, so the next pass removes it.
+        Ownership::Owned if agent_id == "opencode" && opencode_other_present(home) => {
+            HookConfigState::NotRegistered
+        }
         Ownership::Owned => match fs::read_to_string(&path) {
             Err(_) => HookConfigState::NotRegistered, // file absent
             Ok(text) => match owned_content(agent_id, relay) {
@@ -1342,6 +1628,94 @@ mod tests {
         provision_agent(home.path(), &relay, "grok", false, false).unwrap();
         assert!(!path.exists());
         assert!(home.path().join(".grok").exists());
+    }
+
+    fn with_opencode_major<T>(major: OpenCodeMajor, f: impl FnOnce() -> T) -> T {
+        TEST_OPENCODE_MAJOR.with(|m| m.set(major));
+        let out = f();
+        TEST_OPENCODE_MAJOR.with(|m| m.set(OpenCodeMajor::V1));
+        out
+    }
+
+    #[test]
+    fn parses_opencode_version_output() {
+        assert_eq!(parse_opencode_major("opencode v2.0.18\n"), Some(OpenCodeMajor::V2));
+        assert_eq!(parse_opencode_major("1.18.21\n"), Some(OpenCodeMajor::V1));
+        assert_eq!(parse_opencode_major("v3.1.0"), Some(OpenCodeMajor::V2));
+        assert_eq!(parse_opencode_major("PlatformError: Unknown"), None);
+        assert_eq!(parse_opencode_major(""), None);
+    }
+
+    #[test]
+    fn opencode_v1_header_matches_the_v1_body_only() {
+        assert!(opencode_plugin().starts_with(OPENCODE_V1_HEADER));
+        assert!(!opencode_tui_plugin().starts_with(OPENCODE_V1_HEADER));
+    }
+
+    #[test]
+    fn opencode_tui_plugin_is_import_free_v2_shape() {
+        let src = opencode_tui_plugin();
+        // Bare imports do not resolve for plugins OpenCode discovers on disk.
+        assert!(!src.lines().any(|l| l.trim_start().starts_with("import ")));
+        assert!(src.contains("export default {"));
+        assert!(src.contains(r#"id: "abundio.status-tui""#));
+        assert!(src.contains("setup(ctx)"));
+        assert!(src.contains("ctx.ui.router.current()"));
+        assert!(src.contains("v: 2"));
+        assert!(src.contains("&agent=opencode"));
+    }
+
+    #[test]
+    fn opencode_v2_writes_tui_folder_and_removes_abundio_v1_file() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        // A 1.x install left Abundio's plugin behind.
+        provision_agent(home.path(), &relay, "opencode", true, true).unwrap();
+        let v1 = home.path().join(opencode_v1_rel());
+        assert!(v1.exists());
+
+        with_opencode_major(OpenCodeMajor::V2, || {
+            // The leftover must read as not-registered so ensure refreshes it.
+            assert!(!is_provisioned(home.path(), &relay, "opencode"));
+            provision_agent(home.path(), &relay, "opencode", true, false).unwrap();
+            assert!(!v1.exists(), "Abundio's 1.x file must be removed on 2.x");
+            let tui = home.path().join(opencode_v2_dir_rel()).join("tui.ts");
+            assert_eq!(fs::read_to_string(&tui).unwrap(), opencode_tui_plugin());
+            assert!(is_provisioned(home.path(), &relay, "opencode"));
+
+            // Disable removes the folder.
+            provision_agent(home.path(), &relay, "opencode", false, false).unwrap();
+            assert!(!home.path().join(opencode_v2_dir_rel()).exists());
+        });
+    }
+
+    #[test]
+    fn opencode_v2_keeps_a_users_own_v1_named_file() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        let v1 = home.path().join(opencode_v1_rel());
+        fs::create_dir_all(v1.parent().unwrap()).unwrap();
+        fs::write(&v1, "// my own plugin\n").unwrap();
+        with_opencode_major(OpenCodeMajor::V2, || {
+            provision_agent(home.path(), &relay, "opencode", true, false).unwrap();
+            provision_agent(home.path(), &relay, "opencode", false, false).unwrap();
+        });
+        assert_eq!(fs::read_to_string(&v1).unwrap(), "// my own plugin\n");
+    }
+
+    #[test]
+    fn opencode_v1_removes_the_v2_folder_but_not_other_files() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+        let dir = home.path().join(opencode_v2_dir_rel());
+        with_opencode_major(OpenCodeMajor::V2, || {
+            provision_agent(home.path(), &relay, "opencode", true, true).unwrap();
+        });
+        fs::write(dir.join("notes.md"), "mine").unwrap();
+        provision_agent(home.path(), &relay, "opencode", true, false).unwrap();
+        assert!(!dir.join("tui.ts").exists());
+        assert!(dir.join("notes.md").exists(), "only Abundio's file is removed");
+        assert!(home.path().join(opencode_v1_rel()).exists());
     }
 
     #[test]
