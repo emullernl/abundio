@@ -22,10 +22,11 @@ import type { PaneNode } from "../../lib/types";
 import type { PtyActivityEntry } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
-	buildUnloadWorkspaceMessage,
+	buildCloseWorkspaceMessage,
+	CLOSE_WORKSPACE_KEEPS,
 	detectWorkForWorkspace,
 	detectWorkInLayout,
-} from "../useConfirmUnloadWorkspace";
+} from "../useConfirmCloseWorkspace";
 
 function layoutJson(node: PaneNode): string {
 	return JSON.stringify(node);
@@ -225,33 +226,42 @@ describe("detectWorkForWorkspace", () => {
 	});
 });
 
-describe("buildUnloadWorkspaceMessage", () => {
+describe("buildCloseWorkspaceMessage", () => {
 	it("mentions only the agent when only an agent is working", () => {
 		expect(
-			buildUnloadWorkspaceMessage({
+			buildCloseWorkspaceMessage({
 				hasWorkingAgent: true,
 				hasRunningCommand: false,
 			}),
-		).toBe("An agent is still working in this workspace.");
+		).toBe(
+			`An agent is still working in this workspace. ${CLOSE_WORKSPACE_KEEPS}`,
+		);
 	});
 
 	it("mentions only the command when only a command is in progress", () => {
 		expect(
-			buildUnloadWorkspaceMessage({
+			buildCloseWorkspaceMessage({
 				hasWorkingAgent: false,
 				hasRunningCommand: true,
 			}),
-		).toBe("A command is still in progress in this workspace.");
+		).toBe(
+			`A command is still in progress in this workspace. ${CLOSE_WORKSPACE_KEEPS}`,
+		);
 	});
 
 	it("mentions both when both are present", () => {
 		expect(
-			buildUnloadWorkspaceMessage({
+			buildCloseWorkspaceMessage({
 				hasWorkingAgent: true,
 				hasRunningCommand: true,
 			}),
 		).toBe(
-			"An agent is still working and a command is in progress in this workspace.",
+			`An agent is still working and a command is in progress in this workspace. ${CLOSE_WORKSPACE_KEEPS}`,
 		);
+	});
+
+	it("says that closing deletes nothing", () => {
+		expect(CLOSE_WORKSPACE_KEEPS).toContain("stays in your list");
+		expect(CLOSE_WORKSPACE_KEEPS).toContain("no files or folders are deleted");
 	});
 });

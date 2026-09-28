@@ -32,22 +32,28 @@ export function detectWorkInLayout(
 	return { hasWorkingAgent, hasRunningCommand };
 }
 
-export function buildUnloadWorkspaceMessage({
+/** Said after every Close workspace warning: closing is easy to mistake for
+ *  deleting, and it deletes nothing (#206). */
+export const CLOSE_WORKSPACE_KEEPS =
+	"Closing stops its terminals. The workspace stays in your list, and no files or folders are deleted.";
+
+export function buildCloseWorkspaceMessage({
 	hasWorkingAgent,
 	hasRunningCommand,
 }: WorkSignals): string {
-	if (hasWorkingAgent && hasRunningCommand) {
-		return "An agent is still working and a command is in progress in this workspace.";
-	}
-	if (hasWorkingAgent) {
-		return "An agent is still working in this workspace.";
-	}
-	return "A command is still in progress in this workspace.";
+	const busy =
+		hasWorkingAgent && hasRunningCommand
+			? "An agent is still working and a command is in progress in this workspace."
+			: hasWorkingAgent
+				? "An agent is still working in this workspace."
+				: "A command is still in progress in this workspace.";
+	return `${busy} ${CLOSE_WORKSPACE_KEEPS}`;
 }
 
 /** glossary Working for an Agent: an agent-mode PTY mid-turn (`active`). A
  *  Waiting agent (blocked on a prompt) is `waiting`, not `active`, so it is
- *  deliberately excluded — see the unload-confirm plan. */
+ *  deliberately excluded — see the unload-confirm plan (the action was then
+ *  labelled "Unload Workspace"). */
 function makeIsAgentWorking(
 	activities: Record<string, PtyActivityEntry>,
 ): (ptyId: string) => boolean {
@@ -95,16 +101,17 @@ export function detectWorkForWorkspace(workspaceId: string): WorkSignals {
 	return { hasWorkingAgent, hasRunningCommand };
 }
 
-/** Unloading a Workspace (`closeWorkspace`) tears down every PTY in it, so a
+/** Closing a Workspace (`closeWorkspace`) tears down every PTY in it, so a
  *  Working agent or in-progress command is lost. Confirm first when there's
- *  live work; otherwise unload straight away. */
-export function useConfirmUnloadWorkspace() {
+ *  live work; otherwise close straight away. Its folder, files, Tabs and
+ *  layout are kept: it stays in the Left sidebar, ready to reopen. */
+export function useConfirmCloseWorkspace() {
 	const [pending, setPending] = useState<{
 		workspaceId: string;
 		signals: WorkSignals;
 	} | null>(null);
 
-	const requestUnload = useCallback((workspaceId: string) => {
+	const requestClose = useCallback((workspaceId: string) => {
 		const signals = detectWorkForWorkspace(workspaceId);
 		if (!signals.hasWorkingAgent && !signals.hasRunningCommand) {
 			void useWorkspaceStore.getState().closeWorkspace(workspaceId);
@@ -115,9 +122,9 @@ export function useConfirmUnloadWorkspace() {
 
 	const dialogProps = pending
 		? {
-				title: "Unload workspace?",
-				message: buildUnloadWorkspaceMessage(pending.signals),
-				confirmLabel: "Unload",
+				title: "Close workspace?",
+				message: buildCloseWorkspaceMessage(pending.signals),
+				confirmLabel: "Close",
 				confirmVariant: "danger" as const,
 				onConfirm: () => {
 					const id = pending.workspaceId;
@@ -130,5 +137,5 @@ export function useConfirmUnloadWorkspace() {
 			}
 		: null;
 
-	return { requestUnload, dialogProps };
+	return { requestClose, dialogProps };
 }

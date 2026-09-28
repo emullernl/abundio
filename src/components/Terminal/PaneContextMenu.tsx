@@ -1,6 +1,7 @@
 import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Z_CONTEXT_MENU } from "../../lib/zLayers";
 
 export interface ContextMenuAction {
 	label: string;
@@ -103,11 +104,12 @@ function PaneContextMenuBody({
 		// biome-ignore lint/a11y/noStaticElementInteractions: only suppresses the browser's own context menu over this one
 		<div
 			ref={menuRef}
-			className="fixed z-[100] rounded-xl shadow-2xl"
+			className="fixed rounded-xl shadow-2xl"
 			// Portaled out of the pane, so the pane's capture-phase contextmenu
 			// handler no longer covers it: keep the browser's own menu away.
 			onContextMenu={(e) => e.preventDefault()}
 			style={{
+				zIndex: Z_CONTEXT_MENU,
 				left: x,
 				top: y,
 				minWidth: 240,

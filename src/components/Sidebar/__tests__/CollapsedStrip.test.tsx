@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import type { HiddenRollup } from "../../../hooks/useWorkspaceRollups";
 import type { WorkspaceWithTabs } from "../../../lib/types";
+import { Z_CONTEXT_MENU, Z_SIDEBAR_POPOVER } from "../../../lib/zLayers";
 import {
 	type PtyActivityEntry,
 	usePtyActivityStore,
@@ -57,6 +58,16 @@ function entry(
 		shellCommandRunning: false,
 	};
 }
+
+// The hover popover renders a `WorkspaceItem`, which measures itself through a
+// ResizeObserver; jsdom has none.
+class NoopResizeObserver {
+	observe() {}
+	unobserve() {}
+	disconnect() {}
+}
+globalThis.ResizeObserver ??=
+	NoopResizeObserver as unknown as typeof ResizeObserver;
 
 describe("CollapsedStrip", () => {
 	let container: HTMLDivElement;
@@ -194,6 +205,20 @@ describe("CollapsedStrip", () => {
 	it("has no hidden count when nothing is hidden", () => {
 		render(workspace([]));
 		expect(hiddenCount()).toBeNull();
+	});
+
+	it("draws its hover popover below the context menu layer", () => {
+		render(workspace([]));
+		const strip = container.querySelector<HTMLElement>('[role="button"]');
+		act(() => strip?.focus());
+		const popover = [
+			...document.body.querySelectorAll<HTMLElement>("body > div"),
+		].find((el) => el.style.position === "fixed");
+		expect(popover).toBeTruthy();
+		// The workspace context menu opens from this popover, so the popover
+		// must sit under it (#206 follow-up).
+		expect(Number(popover?.style.zIndex)).toBe(Z_SIDEBAR_POPOVER);
+		expect(Z_SIDEBAR_POPOVER).toBeLessThan(Z_CONTEXT_MENU);
 	});
 
 	describe("Dirty marker", () => {

@@ -27,7 +27,7 @@ Two things, one branch.
 
 2. **`isBusyPty` + rewire the guards** (ADR-0034).
    - New pure predicate over one `PtyActivityEntry`: Working agent, or shell with a command running.
-   - `useConfirmUnloadWorkspace` and `useConfirmCloseTerminalTab` read it instead of the deleted map. The tab guard keeps its own looser "any agent PTY present" rule.
+   - `useConfirmCloseWorkspace` and `useConfirmCloseTerminalTab` read it instead of the deleted map. The tab guard keeps its own looser "any agent PTY present" rule.
    - `decideWindowClose` takes busy counts instead of `openedWorkspaceCount`; returns "proceed" when nothing is busy.
    - `reportOpenedWorkspaceCount` becomes a `{ working, waiting, commands }` tuple, sent only when the tuple changes. Rust `OpenedCountState` becomes the busy-tuple state; `quit_confirm_message` names what is busy and the quit menu handler skips the dialog at zero.
    *Tests*: `isBusyPty` table over every `(state, detectionMode, shellCommandRunning)`; the Waiting split (excluded for unload/window, included for quit); Rust `quit_confirm_message` cases including the zero case that shows no dialog.

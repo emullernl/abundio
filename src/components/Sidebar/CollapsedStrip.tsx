@@ -8,6 +8,7 @@ import { uncommittedTooltip } from "../../lib/dirtyWorkspace";
 import { shortenPath } from "../../lib/shortenPath";
 import { isAttentionStatus, PRIMARY_SIZE } from "../../lib/statusComposite";
 import type { WorkspaceWithTabs } from "../../lib/types";
+import { Z_SIDEBAR_POPOVER } from "../../lib/zLayers";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { DOT_STATUS_COLOR } from "../AgentStatusIcon";
@@ -21,6 +22,7 @@ interface Props {
 	isRenaming: boolean;
 	onClick: () => void;
 	onDelete: () => void;
+	deleteLabel?: string;
 	onContextMenu: (e: React.MouseEvent) => void;
 	onRename: (name: string) => void;
 	onRenameCancel: () => void;
@@ -51,6 +53,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	isRenaming,
 	onClick,
 	onDelete,
+	deleteLabel,
 	onContextMenu,
 	onRename,
 	onRenameCancel,
@@ -272,7 +275,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 							borderTopRightRadius: 6,
 							borderBottomRightRadius: 6,
 							boxShadow: "8px 4px 24px -6px rgba(0, 0, 0, 0.45)",
-							zIndex: 1000,
+							zIndex: Z_SIDEBAR_POPOVER,
 						}}
 					>
 						{indent > 0 ? (
@@ -299,6 +302,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 									isRenaming={isRenaming}
 									onClick={onClick}
 									onDelete={onDelete}
+									deleteLabel={deleteLabel}
 									onContextMenu={onContextMenu}
 									onRename={onRename}
 									onRenameCancel={onRenameCancel}
@@ -313,6 +317,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 								isRenaming={isRenaming}
 								onClick={onClick}
 								onDelete={onDelete}
+								deleteLabel={deleteLabel}
 								onContextMenu={onContextMenu}
 								onRename={onRename}
 								onRenameCancel={onRenameCancel}

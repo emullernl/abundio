@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { Z_CONTEXT_MENU } from "../../../lib/zLayers";
 import { type ContextMenuItem, PaneContextMenu } from "../PaneContextMenu";
 
 const ITEMS: ContextMenuItem[] = [
@@ -43,6 +44,15 @@ describe("PaneContextMenu — keyboard focus", () => {
 			);
 		});
 	}
+
+	it("draws on the shared context menu layer", () => {
+		render(false);
+		const menu = document.body.querySelector<HTMLElement>(
+			"body > div.fixed.rounded-xl",
+		);
+		expect(Number(menu?.style.zIndex)).toBe(Z_CONTEXT_MENU);
+		act(() => root.unmount());
+	});
 
 	it("leaves focus alone when opened with a pointer", () => {
 		render(false);
