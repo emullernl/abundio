@@ -308,6 +308,31 @@ export function mappedHookEventNames(agentId: string): string[] {
 }
 
 /**
+ * OpenCode 1.x: keep a cancelled turn on Idle. After an abort, 1.x's prompt
+ * loop resets the session in its cleanup, so `session.idle` (→ Ready) can
+ * arrive right after `session.error:MessageAbortedError` (→ Idle) and
+ * overwrite it. `cancelled` is whether the PTY's last turn was cancelled;
+ * the result says whether to drop this event, and the new flag. The flag
+ * covers only the one `session.idle` that follows, and is cleared by the next
+ * turn start.
+ */
+export function openCodeCancelGate(
+	cancelled: boolean,
+	eventKey: string,
+): { skip: boolean; cancelled: boolean } {
+	if (eventKey === "session.error:MessageAbortedError") {
+		return { skip: false, cancelled: true };
+	}
+	if (eventKey === "session.idle" && cancelled) {
+		return { skip: true, cancelled: false };
+	}
+	if (eventKey === "session.status:busy") {
+		return { skip: false, cancelled: false };
+	}
+	return { skip: false, cancelled };
+}
+
+/**
  * OpenCode 1.x: fold the payload discriminator into the event name, so the
  * table stays a plain string map. `session.status` becomes
  * `session.status:<status.type>`, and `session.error` becomes
@@ -502,8 +527,9 @@ export type OpenCodeV2Action =
 	| { kind: "transition"; transition: HookTransition; turnStart: boolean }
 	| { kind: "subagent"; signal: SubagentSignal }
 	/** The session on screen changed: end the old one, then Working if the new
-	 *  one is already running. */
-	| { kind: "shown"; running: boolean };
+	 *  one is already running, and Waiting if it (or one of its Subagents) is
+	 *  already on a permission or question prompt. */
+	| { kind: "shown"; running: boolean; waiting: boolean };
 
 /**
  * Resolve an OpenCode 2.x hook to what the pane should do, or `null`.
@@ -519,7 +545,8 @@ export function mapOpenCodeV2Event(
 ): OpenCodeV2Action | null {
 	const p = payload as Record<string, unknown> | undefined;
 	if (eventName === OPENCODE_V2_SHOWN) {
-		return { kind: "shown", running: p?.running === true };
+		const running = p?.running === true;
+		return { kind: "shown", running, waiting: running && p?.waiting === true };
 	}
 	if (p?.scope === "self") {
 		const transition = OPENCODE_V2_SELF[eventName];

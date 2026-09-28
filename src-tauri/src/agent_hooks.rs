@@ -630,7 +630,26 @@ export default {
       try {
         running = !!now && ctx.data.session.status(now) === "running";
       } catch {}
-      post("abundio.session.shown", { scope: "self", sessionID: now, running });
+      // A session can already be on a permission or question prompt when it
+      // comes on screen: that ask fired while it was off screen and was dropped.
+      let waiting = false;
+      if (running) {
+        let family = [now];
+        try {
+          family = ctx.data.session.family(now) || family;
+        } catch {}
+        waiting = family.some((id) => {
+          try {
+            return (
+              (ctx.data.session.permission.list(id) || []).length > 0 ||
+              (ctx.data.session.form.list(id) || []).length > 0
+            );
+          } catch {
+            return false;
+          }
+        });
+      }
+      post("abundio.session.shown", { scope: "self", sessionID: now, running, waiting });
     };
     sync();
     const timer = setInterval(sync, 300);
@@ -703,8 +722,11 @@ fn parse_opencode_major(output: &str) -> Option<OpenCodeMajor> {
 /// cache, so the launch path (`ensure_agent_hooks`, capped at 2 s by the
 /// frontend) normally hits it.
 ///
-/// Defaults to 2.x when OpenCode is not found: 1.x ignores the 2.x plugin
-/// folder, while 2.x rejects the 1.x file with a user-visible error.
+/// Without a readable version it keeps the plugin layout already on disk
+/// (`opencode_major_on_disk`), whose own default is 2.x: 1.x ignores the 2.x
+/// plugin folder, while 2.x rejects the 1.x file with a user-visible error.
+/// That includes a binary `shell_path()` cannot find — it may sit on a PATH
+/// entry only an interactive shell sets up.
 ///
 /// A failed probe (timeout, spawn error, unreadable output) is never cached as
 /// an answer — a slow first run on 1.x must not delete a working 1.x plugin
@@ -731,7 +753,7 @@ fn opencode_major() -> OpenCodeMajor {
     };
 
     let Some(bin) = find_opencode_binary() else {
-        return OpenCodeMajor::V2;
+        return fallback();
     };
     let key: Key = (
         bin.clone(),
@@ -750,14 +772,19 @@ fn opencode_major() -> OpenCodeMajor {
     }
 
     let probe = || -> Option<OpenCodeMajor> {
-        let mut child = std::process::Command::new(&bin)
-            .arg("--version")
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.arg("--version")
             .env("PATH", crate::shell_env::shell_path())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()?;
+            .stderr(std::process::Stdio::null());
+        // A GUI process spawning a console program flashes a console window.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().ok()?;
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match child.try_wait() {

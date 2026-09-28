@@ -24,6 +24,7 @@ import {
 	mapHookEvent,
 	mapOpenCodeV2Event,
 	mapSubagentHookEvent,
+	openCodeCancelGate,
 	openCodeEventKey,
 	type SubagentSignal,
 } from "./agentHookMap";
@@ -89,6 +90,9 @@ import { inheritSourceWorkspaceId } from "./worktreeGrouping";
  * a process restart, which is fine — startup provisioning re-covers everything.
  */
 const ensuredAgentsThisSession = new Set<string>();
+
+/** OpenCode 1.x PTYs whose last turn was cancelled — see `openCodeCancelGate`. */
+const openCodeCancelledPtys = new Set<string>();
 
 /**
  * True when xterm `onData` carries a terminal-reported focus or mouse event
@@ -1812,10 +1816,13 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					else if (action.kind === "transition") {
 						applyTransition(action.transition, action.turnStart);
 					} else {
-						// A different session on screen: close out the old one, then
-						// pick up the new one where it is.
+						// A different session on screen: close out the old one (the
+						// Turn tracker records this as a Session end, deliberately —
+						// the Turn on screen did end for this pane), then pick up the
+						// new one where it is, including a prompt it is already on.
 						applySessionEnd(currentPtyId);
 						if (action.running) applyTransition("active", false);
+						if (action.waiting) applyTransition("waiting", false);
 					}
 					return;
 				}
@@ -1855,6 +1862,15 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						eventKey,
 					);
 					return;
+				}
+				if (hookEvent.agent === "opencode") {
+					const gate = openCodeCancelGate(
+						openCodeCancelledPtys.has(currentPtyId),
+						eventKey,
+					);
+					if (gate.cancelled) openCodeCancelledPtys.add(currentPtyId);
+					else openCodeCancelledPtys.delete(currentPtyId);
+					if (gate.skip) return;
 				}
 				applyTransition(
 					transition,

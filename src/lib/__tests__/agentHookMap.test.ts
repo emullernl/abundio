@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+// The Rust source that embeds the OpenCode 2.x TUI plugin.
+import agentHooksRs from "../../../src-tauri/src/agent_hooks.rs?raw";
 import {
 	isOpenCodeV2Payload,
 	isTurnStartEvent,
@@ -8,6 +10,7 @@ import {
 	mapSubagentHookEvent,
 	OPENCODE_V2_EVENT_NAMES,
 	OPENCODE_V2_SHOWN,
+	openCodeCancelGate,
 	openCodeEventKey,
 } from "../agentHookMap";
 import {
@@ -712,22 +715,36 @@ describe("mapOpenCodeV2Event (ADR-0045)", () => {
 		expect(mapOpenCodeV2Event("session.retry.scheduled", child())).toBeNull();
 	});
 
-	it("reports a session switch with the new session's running state", () => {
-		expect(
+	it("reports a session switch with the new session's state", () => {
+		const shown = (extra: Record<string, unknown>) =>
 			mapOpenCodeV2Event(OPENCODE_V2_SHOWN, {
 				v: 2,
 				scope: "self",
 				sessionID: "ses_other",
-				running: true,
-			}),
-		).toEqual({ kind: "shown", running: true });
-		expect(
-			mapOpenCodeV2Event(OPENCODE_V2_SHOWN, {
-				v: 2,
-				scope: "self",
-				sessionID: null,
-			}),
-		).toEqual({ kind: "shown", running: false });
+				...extra,
+			});
+		expect(shown({ running: true })).toEqual({
+			kind: "shown",
+			running: true,
+			waiting: false,
+		});
+		// Switched to a session already on a permission or question prompt.
+		expect(shown({ running: true, waiting: true })).toEqual({
+			kind: "shown",
+			running: true,
+			waiting: true,
+		});
+		// A session that isn't running can't be waiting on the user.
+		expect(shown({ running: false, waiting: true })).toEqual({
+			kind: "shown",
+			running: false,
+			waiting: false,
+		});
+		expect(shown({ sessionID: null })).toEqual({
+			kind: "shown",
+			running: false,
+			waiting: false,
+		});
 	});
 
 	it("drops events without a known scope", () => {
@@ -747,6 +764,60 @@ describe("mapOpenCodeV2Event (ADR-0045)", () => {
 		for (const name of OPENCODE_V2_EVENT_NAMES) {
 			expect(events.has(name), name).toBe(true);
 		}
+	});
+
+	it("only maps names the 2.x TUI plugin actually forwards", () => {
+		// The plugin's FORWARDED set lives in the JS embedded in agent_hooks.rs;
+		// a name mapped here but missing there would silently never fire.
+		const rust = agentHooksRs;
+		const block = rust.match(/const FORWARDED = new Set\(\[([\s\S]*?)\]\);/);
+		expect(block, "FORWARDED set not found in agent_hooks.rs").not.toBeNull();
+		const forwarded = new Set(
+			[...(block?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]),
+		);
+		for (const name of OPENCODE_V2_EVENT_NAMES) {
+			expect(forwarded.has(name), name).toBe(true);
+		}
+	});
+});
+
+describe("openCodeCancelGate", () => {
+	it("keeps a cancelled 1.x turn on Idle over the session.idle that follows", () => {
+		let cancelled = false;
+		const step = (key: string) => {
+			const gate = openCodeCancelGate(cancelled, key);
+			cancelled = gate.cancelled;
+			return gate.skip;
+		};
+		expect(step("session.status:busy")).toBe(false);
+		expect(step("session.error:MessageAbortedError")).toBe(false);
+		expect(mapHookEvent("opencode", "session.error:MessageAbortedError")).toBe(
+			"idle",
+		);
+		// The prompt loop's cleanup reports idle right after the abort: dropped.
+		expect(step("session.idle")).toBe(true);
+		// Only that one: the next finished turn reaches Ready again.
+		expect(step("session.status:busy")).toBe(false);
+		expect(step("session.idle")).toBe(false);
+	});
+
+	it("forgets a cancel once the next turn starts", () => {
+		const after = openCodeCancelGate(true, "session.status:busy");
+		expect(after).toEqual({ skip: false, cancelled: false });
+		expect(openCodeCancelGate(after.cancelled, "session.idle").skip).toBe(
+			false,
+		);
+	});
+
+	it("never drops session.idle without a preceding cancel", () => {
+		expect(openCodeCancelGate(false, "session.idle")).toEqual({
+			skip: false,
+			cancelled: false,
+		});
+		// A plain error is not a cancel.
+		expect(openCodeCancelGate(false, "session.error:APIError").cancelled).toBe(
+			false,
+		);
 	});
 });
 
