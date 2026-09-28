@@ -35,20 +35,13 @@ own vocabulary defines as *a prompt was submitted* — `isTurnStartEvent` / `TUR
 
 The narrower test matters: `transition === "working"` would **not** have been "a turn-start
 hook". Permission replies resolve to Working too (`PermissionResult` on kimi, `PermissionDenied`
-on grok, `permission.replied` / `question.replied` on opencode) because the pane really is
+on grok, `permission.replied` on opencode) because the pane really is
 working again — and on a pane whose Turn a presumed end already closed, treating those as
 boundaries opens a brand-new Turn timed from the user's *answer*. That is the same
 "attributed to the wrong event" fabrication the rule exists to prevent, with a hook standing in
 for the mouse.
 
-**OpenCode is the documented exception.** It provisions no prompt-submitted hook at all — its
-only Working signal is `message.part.delta`, token streaming — so its turn start is *inferred
-from generation* rather than observed, and that event has to be listed as a turn start or
-OpenCode Turns stop recording entirely. Consequences: an OpenCode Turn silently reopens at the
-next token delta after a presumed end, and the `startsTurn` check is true per token there
-(inert — opening is idempotent while a Turn is open — but not free). The "silence over fiction"
-consequence below therefore holds fully for Claude/Copilot-style Agents and only partly for
-OpenCode.
+**OpenCode was the documented exception** (amended 2026-09-28). It has no prompt-submitted hook, so its turn start was once *inferred from generation* via `message.part.delta` — an event that, it turned out, OpenCode 1.x never emits. It is now observed from state: `session.status` turning `busy` on 1.x (once per turn), and `session.execution.started` on 2.x. A Turn still opens without a prompt being witnessed, but no longer per token. See docs/plans/opencode-event-vocabulary.md and ADR-0045.
 
 The blast radius is small by construction:
 such a pane cannot reach Working via the byte heuristic (`reduceOutput` short-circuits on

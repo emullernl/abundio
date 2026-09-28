@@ -62,3 +62,20 @@ delegated work is the truthful number.
   Copilot identifies subagents by `agentName` only, so concurrent same-named
   subagents may release the hold early. Gemini's subagents are synchronous tool
   calls — no tail exists, nothing to hold.
+
+## Amendment (2026-09-28): OpenCode child sessions
+
+- **OpenCode 1.x: exclusion over all events, not a three-event allow-list.** Once a
+  child session is in the live set, *every* event from it is either its stop
+  (`session.idle` / `session.error` / `session.deleted`) or ignored. It is never a
+  Pane transition. The allow-list only covered idle/error/deleted, so a child's
+  `permission.replied` (and, with the 1.x vocabulary fix, its `session.status`)
+  drove the pane. The check excludes known children rather than recognising the
+  pane's own session, because a resumed session may never emit the
+  `session.created` that would reveal the pane's own id.
+- **OpenCode 2.x: the plugin classifies, and child asks count.** The 2.x TUI plugin
+  knows which session is on screen and tags each event `self` or `child`
+  (ADR-0045). A child's `session.execution.*` opens and closes its hold. As an
+  exception to "a Subagent signal or nothing", a child's `permission.asked` or
+  `form.created` puts the pane in **Waiting**, because the user must answer it
+  either way. The replies resume the pane.

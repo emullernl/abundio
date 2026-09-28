@@ -93,19 +93,22 @@ const HOOK_EVENT_MAP: Record<string, Record<string, HookTransition>> = {
 		Stop: "ready",
 	},
 	opencode: {
-		// "active" must come from a generation-only event. message.updated
-		// also fires AFTER session.idle (finalising the message), which would
-		// resurrect "active" on a finished turn. message.part.delta is token
-		// streaming — it cannot fire once the session is idle.
-		"message.part.delta": "active",
+		// OpenCode 1.x. Every name here must exist in the 1.x SDK's Event union
+		// — agentHookMap.test.ts guards it, after four made-up names
+		// (message.part.delta, permission.asked, question.*) went unnoticed for
+		// months. Keys with a ":" are compound keys built by openCodeEventKey
+		// from a payload discriminator; see docs/plans/opencode-event-vocabulary.md.
+		// A turn start is session status turning busy, once per turn rather than
+		// once per streamed token.
+		"session.status:busy": "active",
+		// A retry between attempts: never blocked on the user.
+		"session.status:retry": "resume",
+		// `Permission` has no status field: the event IS "a permission was asked".
+		"permission.updated": "waiting",
 		"permission.replied": "active",
-		"permission.asked": "waiting",
-		// OpenCode raises a separate `question.*` event when the agent asks the
-		// user a free-form question (distinct from a tool-permission gate).
-		// Both block on the user, so they mirror the `permission.*` transitions.
-		"question.replied": "active",
-		"question.asked": "waiting",
 		"session.idle": "ready",
+		// A user cancel is not a failure (same rationale as Kimi's Interrupt).
+		"session.error:MessageAbortedError": "idle",
 		"session.error": "error",
 		"session.deleted": "sessionReset",
 	},
@@ -288,7 +291,66 @@ export function mapHookEvent(
 	) {
 		return "waiting";
 	}
-	return HOOK_EVENT_MAP[agentId]?.[eventName] ?? null;
+	const table = HOOK_EVENT_MAP[agentId];
+	// A compound key (`session.error:APIError`) with no entry of its own falls
+	// back to its base event.
+	const colon = eventName.indexOf(":");
+	return (
+		table?.[eventName] ??
+		(colon > 0 ? table?.[eventName.slice(0, colon)] : undefined) ??
+		null
+	);
+}
+
+/** The event names `mapHookEvent` has an entry for, for one Agent. */
+export function mappedHookEventNames(agentId: string): string[] {
+	return Object.keys(HOOK_EVENT_MAP[agentId] ?? {});
+}
+
+/**
+ * OpenCode 1.x: keep a cancelled turn on Idle. After an abort, 1.x's prompt
+ * loop resets the session in its cleanup, so `session.idle` (→ Ready) can
+ * arrive right after `session.error:MessageAbortedError` (→ Idle) and
+ * overwrite it. `cancelled` is whether the PTY's last turn was cancelled;
+ * the result says whether to drop this event, and the new flag. The flag
+ * covers only the one `session.idle` that follows, and is cleared by the next
+ * turn start.
+ */
+export function openCodeCancelGate(
+	cancelled: boolean,
+	eventKey: string,
+): { skip: boolean; cancelled: boolean } {
+	if (eventKey === "session.error:MessageAbortedError") {
+		return { skip: false, cancelled: true };
+	}
+	if (eventKey === "session.idle" && cancelled) {
+		return { skip: true, cancelled: false };
+	}
+	if (eventKey === "session.status:busy") {
+		return { skip: false, cancelled: false };
+	}
+	return { skip: false, cancelled };
+}
+
+/**
+ * OpenCode 1.x: fold the payload discriminator into the event name, so the
+ * table stays a plain string map. `session.status` becomes
+ * `session.status:<status.type>`, and `session.error` becomes
+ * `session.error:<error.name>` (note `APIError`'s literal name is
+ * `"APIError"`, not the TypeScript type name). Other events pass through.
+ * Must run AFTER `mapSubagentHookEvent`, which keys on the raw names.
+ */
+export function openCodeEventKey(eventName: string, payload: unknown): string {
+	const p = payload as Record<string, unknown> | undefined;
+	if (eventName === "session.status") {
+		const type = str((p?.status as Record<string, unknown> | undefined)?.type);
+		return type ? `${eventName}:${type}` : eventName;
+	}
+	if (eventName === "session.error") {
+		const name = str((p?.error as Record<string, unknown> | undefined)?.name);
+		return name ? `${eventName}:${name}` : eventName;
+	}
+	return eventName;
 }
 
 /** The hook events that mean **a new Turn may begin**, per Agent.
@@ -296,18 +358,17 @@ export function mapHookEvent(
  *  Deliberately NOT "every event that maps to Working". Several mid-Turn events
  *  resolve to Working because the pane really is working again — the permission
  *  replies (`PermissionResult` on kimi, `PermissionDenied` on grok,
- *  `permission.replied` / `question.replied` on opencode). None of them starts a
+ *  `permission.replied` on opencode). None of them starts a
  *  Turn, and counting them as turn boundaries lets the tracker open a Turn timed
  *  from a permission answer whenever the previous one is already closed — the
  *  same "attributed to the wrong event" fabrication Rule A exists to prevent,
  *  with a hook standing in for the mouse (ADR-0027).
  *
- *  **OpenCode is the asymmetric one.** It provisions no prompt-submitted hook at
- *  all: `message.part.delta` (token streaming) is its ONLY Working signal, so the
- *  first delta of a generation *is* its turn start and has to be listed here.
- *  That makes the check true on a per-token hook for OpenCode panes. It stays
- *  correct — opening a Turn is idempotent once one is open — but it is the one
- *  Agent where "turn start" is inferred from generation rather than observed. */
+ *  **OpenCode 1.x has no prompt-submitted hook.** Its turn start is session
+ *  status turning busy (`session.status:busy`, a compound key — see
+ *  `openCodeEventKey`), so a Turn start is observed from status rather than
+ *  from the prompt. OpenCode 2.x reports its own turn start
+ *  (`session.execution.started`) and is handled by `mapOpenCodeV2Event`. */
 const TURN_START_EVENTS: Record<string, ReadonlySet<string>> = {
 	claude: new Set(["UserPromptSubmit"]),
 	qwen: new Set(["UserPromptSubmit"]),
@@ -316,7 +377,7 @@ const TURN_START_EVENTS: Record<string, ReadonlySet<string>> = {
 	grok: new Set(["UserPromptSubmit"]),
 	copilot: new Set(["userPromptSubmitted"]),
 	gemini: new Set(["BeforeAgent"]),
-	opencode: new Set(["message.part.delta"]),
+	opencode: new Set(["session.status:busy"]),
 };
 
 /** Whether this hook event may open a **Turn**. See `TURN_START_EVENTS`. */
@@ -330,8 +391,11 @@ export function isTurnStartEvent(agentId: string, eventName: string): boolean {
 // not a status transition, and are dispatched as subagentStarted/subagentStopped
 // reducer events by the translator (terminalManager) before mapHookEvent runs.
 
+/** OpenCode 1.x only: "ignored" is an event from a live Subagent's session
+ *  that must not drive the pane, so the translator drops it; "resume" is that
+ *  Subagent's permission reply, which lifts Waiting and does nothing else. */
 export interface SubagentSignal {
-	action: "started" | "stopped";
+	action: "started" | "stopped" | "ignored" | "resume";
 	id: string;
 }
 
@@ -352,10 +416,15 @@ function str(v: unknown): string | undefined {
  * - copilot: `subagentStart` / `subagentStop`, id = `agentName` (no instance id
  *   exists; concurrent same-named subagents may release the hold early, and the
  *   built-in `general-purpose` agent emits neither event — accepted gaps).
- * - opencode: child sessions. `session.created`/`session.updated` with a truthy
- *   `parentID` → started; `session.idle`/`session.error`/`session.deleted` of a
- *   session in the live set → stopped (a child's idle/error must NOT drive the
- *   pane's own ready/error — that was the pre-existing mid-turn ready flash).
+ * - opencode (1.x): child sessions. `session.created`/`session.updated` with a
+ *   truthy `parentID` → started; `session.idle`/`session.error`/`session.deleted`
+ *   of a session in the live set → stopped; ANY other event from a live
+ *   Subagent's session → ignored. That last rule is the session-ownership gate:
+ *   a child's `session.status` or `permission.replied` must not drive the pane
+ *   (a child going idle would flash the pane Ready mid-turn). It excludes known
+ *   children rather than recognising the pane's own session, because a resumed
+ *   session may never announce its own id. OpenCode 2.x events are classified
+ *   by the plugin itself — see `mapOpenCodeV2Event`.
  */
 export function mapSubagentHookEvent(
 	agentId: string,
@@ -399,15 +468,114 @@ export function mapSubagentHookEvent(
 			if (id && str(info?.parentID)) return { action: "started", id };
 			return null;
 		}
+		const id = str(p?.sessionID) ?? str(info?.id);
+		if (!id || !hasSubagent(id)) return null;
 		if (
 			eventName === "session.idle" ||
 			eventName === "session.error" ||
 			eventName === "session.deleted"
 		) {
-			const id = str(p?.sessionID) ?? str(info?.id);
-			if (id && hasSubagent(id)) return { action: "stopped", id };
-			return null;
+			return { action: "stopped", id };
 		}
+		// A child's permission request blocks on the user like the pane's own:
+		// fall through to the "waiting" mapping (same rule as 2.x). Its reply
+		// only resumes — "active" would restart the Working window.
+		if (eventName === "permission.updated") return null;
+		if (eventName === "permission.replied") return { action: "resume", id };
+		return { action: "ignored", id };
 	}
 	return null;
+}
+
+// ── OpenCode 2.x (ADR-0045, docs/plans/opencode-v2-status.md) ──
+//
+// 2.x hooks come from a TUI plugin that runs in the pane's own process. It has
+// already dropped other panes' sessions and tags each event it forwards with
+// `{ v: 2, scope: "self" | "child", sessionID }`. Event data is not forwarded.
+
+/** Whether a hook payload came from the OpenCode 2.x TUI plugin. */
+export function isOpenCodeV2Payload(payload: unknown): boolean {
+	return (payload as { v?: unknown } | undefined)?.v === 2;
+}
+
+/** OpenCode 2.x events of the on-screen session. `session.idle` and
+ *  `session.status` are deliberately absent: `session.execution.*` already
+ *  reports how a turn ended, and neither fired in the live probe. */
+const OPENCODE_V2_SELF: Record<string, HookTransition> = {
+	"session.execution.started": "active",
+	"permission.asked": "waiting",
+	"form.created": "waiting",
+	"permission.replied": "active",
+	"form.replied": "active",
+	"form.cancelled": "active",
+	"session.execution.succeeded": "ready",
+	"session.execution.failed": "error",
+	"session.execution.interrupted": "idle",
+	"session.retry.scheduled": "resume",
+	"session.deleted": "sessionReset",
+};
+
+/** Every 2.x event name the table and the Subagent rules act on — the
+ *  guard in agentHookMap.test.ts checks them against the 2.x SDK. */
+export const OPENCODE_V2_EVENT_NAMES: readonly string[] =
+	Object.keys(OPENCODE_V2_SELF);
+
+/** The plugin's own event when the session on screen changes. */
+export const OPENCODE_V2_SHOWN = "abundio.session.shown";
+
+export type OpenCodeV2Action =
+	| { kind: "transition"; transition: HookTransition; turnStart: boolean }
+	| { kind: "subagent"; signal: SubagentSignal }
+	/** The session on screen changed: end the old one, then Working if the new
+	 *  one is already running, and Waiting if it (or one of its Subagents) is
+	 *  already on a permission or question prompt. */
+	| { kind: "shown"; running: boolean; waiting: boolean };
+
+/**
+ * Resolve an OpenCode 2.x hook to what the pane should do, or `null`.
+ *
+ * A Subagent (`child`) opens and closes its hold on the Turn with its own
+ * execution events. Its permission and question requests DO drive the pane to
+ * Waiting, because the user must answer them either way; its answers only
+ * resume. Everything else from a child is dropped.
+ */
+export function mapOpenCodeV2Event(
+	eventName: string,
+	payload: unknown,
+): OpenCodeV2Action | null {
+	const p = payload as Record<string, unknown> | undefined;
+	if (eventName === OPENCODE_V2_SHOWN) {
+		const running = p?.running === true;
+		return { kind: "shown", running, waiting: running && p?.waiting === true };
+	}
+	if (p?.scope === "self") {
+		const transition = OPENCODE_V2_SELF[eventName];
+		if (!transition) return null;
+		return {
+			kind: "transition",
+			transition,
+			turnStart: eventName === "session.execution.started",
+		};
+	}
+	if (p?.scope !== "child") return null;
+	const id = str(p.sessionID);
+	if (!id) return null;
+	switch (eventName) {
+		case "session.execution.started":
+			return { kind: "subagent", signal: { action: "started", id } };
+		case "session.execution.succeeded":
+		case "session.execution.failed":
+		case "session.execution.interrupted":
+		case "session.deleted":
+			return { kind: "subagent", signal: { action: "stopped", id } };
+		case "permission.asked":
+		case "form.created":
+			return { kind: "transition", transition: "waiting", turnStart: false };
+		case "permission.replied":
+		case "form.replied":
+		case "form.cancelled":
+			return { kind: "transition", transition: "resume", turnStart: false };
+		default:
+			return null;
+	}
 }

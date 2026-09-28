@@ -18,9 +18,15 @@ import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
 import {
+	type HookTransition,
+	isOpenCodeV2Payload,
 	isTurnStartEvent,
 	mapHookEvent,
+	mapOpenCodeV2Event,
 	mapSubagentHookEvent,
+	openCodeCancelGate,
+	openCodeEventKey,
+	type SubagentSignal,
 } from "./agentHookMap";
 import {
 	activityAction,
@@ -84,6 +90,9 @@ import { inheritSourceWorkspaceId } from "./worktreeGrouping";
  * a process restart, which is fine — startup provisioning re-covers everything.
  */
 const ensuredAgentsThisSession = new Set<string>();
+
+/** OpenCode 1.x PTYs whose last turn was cancelled — see `openCodeCancelGate`. */
+const openCodeCancelledPtys = new Set<string>();
 
 /**
  * True when xterm `onData` carries a terminal-reported focus or mouse event
@@ -1751,10 +1760,75 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						? (payload as { message: string }).message
 						: undefined;
 
-				// Subagent lifecycle events bypass mapHookEvent: they carry an id, not
-				// a transition, and drive the pane's Subagent set — which holds the
-				// Ready flip while delegated work still runs (ADR-0022,
+				// A hook event proves an agent runs in this PTY — adopt agent mode
+				// even if title-based detection missed it, and persist the agent
+				// identity so a hook-detected agent re-runs after a restart.
+				// Idempotent: stampAgentOnPane no-ops when already stamped.
+				const adoptAgent = () => {
+					usePtyActivityStore
+						.getState()
+						.setAgentPty(currentPtyId, hookEvent.agent);
+					useWorkspaceStore
+						.getState()
+						.stampAgentOnPane(paneId, hookEvent.agent);
+				};
+				const applyTransition = (
+					transition: HookTransition,
+					turnStart: boolean,
+				) => {
+					if (isSessionEnd(transition)) {
+						// A Session end (`/clear`, or a real exit — Copilot's payload
+						// cannot tell them apart). Handled before adoption: it must
+						// never put an exited Agent's PTY back into agent mode.
+						applySessionEnd(currentPtyId);
+						return;
+					}
+					adoptAgent();
+					usePtyActivityStore
+						.getState()
+						.applyHookEvent(currentPtyId, transition, turnStart);
+				};
+				// Subagent lifecycle events drive the pane's Subagent set — which
+				// holds the Ready flip while delegated work still runs (ADR-0022,
 				// docs/plans/subagent-aware-status.md).
+				const applySubagent = (subagent: SubagentSignal) => {
+					if (subagent.action === "ignored") return;
+					if (subagent.action === "resume") {
+						applyTransition("resume", false);
+						return;
+					}
+					// A subagent hook proves an agent runs here as much as any hook.
+					adoptAgent();
+					const actStore = usePtyActivityStore.getState();
+					if (subagent.action === "started") {
+						actStore.subagentStarted(currentPtyId, subagent.id);
+					} else {
+						actStore.subagentStopped(currentPtyId, subagent.id);
+					}
+				};
+
+				// OpenCode 2.x: its TUI plugin has already sorted the event into the
+				// on-screen session, a Subagent, or a session switch (ADR-0045).
+				if (hookEvent.agent === "opencode" && isOpenCodeV2Payload(payload)) {
+					const action = mapOpenCodeV2Event(hookEvent.event, payload);
+					if (!action) return;
+					if (action.kind === "subagent") applySubagent(action.signal);
+					else if (action.kind === "transition") {
+						applyTransition(action.transition, action.turnStart);
+					} else {
+						// A different session on screen: close out the old one (the
+						// Turn tracker records this as a Session end, deliberately —
+						// the Turn on screen did end for this pane), then pick up the
+						// new one where it is, including a prompt it is already on.
+						applySessionEnd(currentPtyId);
+						if (action.running) applyTransition("active", false);
+						if (action.waiting) applyTransition("waiting", false);
+					}
+					return;
+				}
+
+				// Subagent lifecycle events bypass mapHookEvent: they carry an id,
+				// not a transition.
 				const subagent = mapSubagentHookEvent(
 					hookEvent.agent,
 					hookEvent.event,
@@ -1762,23 +1836,19 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					(id) => hasActiveSubagent(currentPtyId, id),
 				);
 				if (subagent) {
-					const actStore = usePtyActivityStore.getState();
-					// A subagent hook proves an agent runs here as much as any hook.
-					actStore.setAgentPty(currentPtyId, hookEvent.agent);
-					useWorkspaceStore
-						.getState()
-						.stampAgentOnPane(paneId, hookEvent.agent);
-					if (subagent.action === "started") {
-						actStore.subagentStarted(currentPtyId, subagent.id);
-					} else {
-						actStore.subagentStopped(currentPtyId, subagent.id);
-					}
+					applySubagent(subagent);
 					return;
 				}
 
+				// OpenCode 1.x folds its payload discriminators into the event name
+				// — after the Subagent check above, which keys on raw names.
+				const eventKey =
+					hookEvent.agent === "opencode"
+						? openCodeEventKey(hookEvent.event, payload)
+						: hookEvent.event;
 				const transition = mapHookEvent(
 					hookEvent.agent,
-					hookEvent.event,
+					eventKey,
 					toolName,
 					stopReason,
 					permissionMode,
@@ -1789,28 +1859,22 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					console.debug(
 						"[abundio:hook] no status mapping for",
 						hookEvent.agent,
-						hookEvent.event,
+						eventKey,
 					);
 					return;
 				}
-				const actStore = usePtyActivityStore.getState();
-				if (isSessionEnd(transition)) {
-					// A Session end (`/clear`, or a real exit — Copilot's payload
-					// cannot tell them apart). Handled before the adoption below:
-					// it must never put an exited Agent's PTY back into agent mode.
-					applySessionEnd(currentPtyId);
-					return;
+				if (hookEvent.agent === "opencode") {
+					const gate = openCodeCancelGate(
+						openCodeCancelledPtys.has(currentPtyId),
+						eventKey,
+					);
+					if (gate.cancelled) openCodeCancelledPtys.add(currentPtyId);
+					else openCodeCancelledPtys.delete(currentPtyId);
+					if (gate.skip) return;
 				}
-				// A hook event proves an agent runs in this PTY — adopt agent mode
-				// even if title-based detection missed it.
-				actStore.setAgentPty(currentPtyId, hookEvent.agent);
-				// Persist the agent identity so a hook-detected agent re-runs after a
-				// restart. Idempotent: stampAgentOnPane no-ops when already stamped.
-				useWorkspaceStore.getState().stampAgentOnPane(paneId, hookEvent.agent);
-				actStore.applyHookEvent(
-					currentPtyId,
+				applyTransition(
 					transition,
-					isTurnStartEvent(hookEvent.agent, hookEvent.event),
+					isTurnStartEvent(hookEvent.agent, eventKey),
 				);
 			}),
 

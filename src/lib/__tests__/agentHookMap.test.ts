@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vitest";
+// The Rust source that embeds the OpenCode 2.x TUI plugin.
+import agentHooksRs from "../../../src-tauri/src/agent_hooks.rs?raw";
 import {
+	isOpenCodeV2Payload,
 	isTurnStartEvent,
 	mapHookEvent,
+	mapOpenCodeV2Event,
+	mappedHookEventNames,
 	mapSubagentHookEvent,
+	OPENCODE_V2_EVENT_NAMES,
+	OPENCODE_V2_SHOWN,
+	openCodeCancelGate,
+	openCodeEventKey,
 } from "../agentHookMap";
+import {
+	OPENCODE_V1_COMPOUND_SUFFIXES,
+	OPENCODE_V1_EVENTS,
+	OPENCODE_V2_EVENTS,
+} from "./fixtures/opencodeEvents";
 
 describe("mapHookEvent", () => {
 	it("maps Claude Code lifecycle events", () => {
@@ -369,18 +383,44 @@ describe("mapHookEvent", () => {
 		expect(mapHookEvent("codex", "Stop")).toBe("ready");
 	});
 
-	it("maps OpenCode plugin events", () => {
-		expect(mapHookEvent("opencode", "message.part.delta")).toBe("active");
-		expect(mapHookEvent("opencode", "permission.asked")).toBe("waiting");
+	it("maps OpenCode 1.x plugin events", () => {
+		expect(mapHookEvent("opencode", "session.status:busy")).toBe("active");
+		expect(mapHookEvent("opencode", "session.status:retry")).toBe("resume");
+		// session.idle alone owns Ready.
+		expect(mapHookEvent("opencode", "session.status:idle")).toBeNull();
+		expect(mapHookEvent("opencode", "permission.updated")).toBe("waiting");
 		expect(mapHookEvent("opencode", "permission.replied")).toBe("active");
-		expect(mapHookEvent("opencode", "question.asked")).toBe("waiting");
-		expect(mapHookEvent("opencode", "question.replied")).toBe("active");
 		expect(mapHookEvent("opencode", "session.idle")).toBe("ready");
-		expect(mapHookEvent("opencode", "session.error")).toBe("error");
 		expect(mapHookEvent("opencode", "session.deleted")).toBe("sessionReset");
 		// message.updated is intentionally unmapped — it fires post-idle and
 		// would resurrect "active" on a finished turn.
 		expect(mapHookEvent("opencode", "message.updated")).toBeNull();
+	});
+
+	it("OpenCode 1.x: a cancelled turn is Idle, any other error is Error", () => {
+		expect(mapHookEvent("opencode", "session.error:MessageAbortedError")).toBe(
+			"idle",
+		);
+		// No entry of its own: falls back to the base event.
+		expect(mapHookEvent("opencode", "session.error:APIError")).toBe("error");
+		expect(mapHookEvent("opencode", "session.error")).toBe("error");
+	});
+
+	it("OpenCode 1.x: only names from the SDK's Event union are mapped", () => {
+		// The guard that would have caught message.part.delta,
+		// permission.asked and question.*.
+		const events = new Set<string>(OPENCODE_V1_EVENTS);
+		const suffixes = OPENCODE_V1_COMPOUND_SUFFIXES as Record<
+			string,
+			readonly string[]
+		>;
+		for (const key of mappedHookEventNames("opencode")) {
+			const [base, suffix] = key.split(":");
+			expect(events.has(base), key).toBe(true);
+			if (suffix !== undefined) {
+				expect(suffixes[base]?.includes(suffix), key).toBe(true);
+			}
+		}
 	});
 
 	it("returns null for unknown agents and unmapped events", () => {
@@ -531,6 +571,254 @@ describe("mapSubagentHookEvent (ADR-0022)", () => {
 			).toBeNull();
 		}
 	});
+
+	it("OpenCode 1.x: a Subagent's permission request reaches Waiting, its reply only resumes", () => {
+		// The user must answer a child's prompt too (same rule as 2.x).
+		const asked = { sessionID: "ses_child", id: "per_1" };
+		expect(
+			mapSubagentHookEvent("opencode", "permission.updated", asked, always),
+		).toBeNull();
+		expect(mapHookEvent("opencode", "permission.updated")).toBe("waiting");
+		expect(
+			mapSubagentHookEvent(
+				"opencode",
+				"permission.replied",
+				{ sessionID: "ses_child" },
+				always,
+			),
+		).toEqual({ action: "resume", id: "ses_child" });
+	});
+
+	it("OpenCode 1.x: any other event of a live Subagent's session is ignored", () => {
+		// The session-ownership gate: a child's status must not drive the pane
+		// (a child going idle would flash it Ready mid-turn).
+		for (const [event, payload] of [
+			["session.status", { sessionID: "ses_child", status: { type: "idle" } }],
+			["session.status", { sessionID: "ses_child", status: { type: "busy" } }],
+			["message.updated", { sessionID: "ses_child" }],
+		] as const) {
+			expect(mapSubagentHookEvent("opencode", event, payload, always)).toEqual({
+				action: "ignored",
+				id: "ses_child",
+			});
+			expect(
+				mapSubagentHookEvent("opencode", event, payload, never),
+			).toBeNull();
+		}
+	});
+});
+
+describe("openCodeEventKey", () => {
+	it("folds session.status and session.error discriminators into the name", () => {
+		expect(
+			openCodeEventKey("session.status", { status: { type: "busy" } }),
+		).toBe("session.status:busy");
+		expect(
+			openCodeEventKey("session.error", {
+				error: { name: "MessageAbortedError" },
+			}),
+		).toBe("session.error:MessageAbortedError");
+	});
+
+	it("leaves other events, and payloads without the field, alone", () => {
+		expect(openCodeEventKey("session.idle", { sessionID: "s" })).toBe(
+			"session.idle",
+		);
+		expect(openCodeEventKey("session.error", {})).toBe("session.error");
+		expect(openCodeEventKey("session.status", undefined)).toBe(
+			"session.status",
+		);
+	});
+});
+
+describe("mapOpenCodeV2Event (ADR-0045)", () => {
+	const self = (sessionID = "ses_main") => ({ v: 2, scope: "self", sessionID });
+	const child = (sessionID = "ses_child") => ({
+		v: 2,
+		scope: "child",
+		sessionID,
+	});
+
+	it("recognises the 2.x plugin's payload", () => {
+		expect(isOpenCodeV2Payload(self())).toBe(true);
+		expect(isOpenCodeV2Payload({ sessionID: "s" })).toBe(false);
+		expect(isOpenCodeV2Payload(undefined)).toBe(false);
+	});
+
+	it("maps the on-screen session's lifecycle", () => {
+		const t = (event: string) => mapOpenCodeV2Event(event, self());
+		expect(t("session.execution.started")).toEqual({
+			kind: "transition",
+			transition: "active",
+			turnStart: true,
+		});
+		for (const [event, transition] of [
+			["permission.asked", "waiting"],
+			["form.created", "waiting"],
+			["permission.replied", "active"],
+			["form.replied", "active"],
+			["form.cancelled", "active"],
+			["session.execution.succeeded", "ready"],
+			["session.execution.failed", "error"],
+			["session.execution.interrupted", "idle"],
+			["session.retry.scheduled", "resume"],
+			["session.deleted", "sessionReset"],
+		] as const) {
+			expect(t(event), event).toEqual({
+				kind: "transition",
+				transition,
+				turnStart: false,
+			});
+		}
+		// Neither fired in the live probe; execution.* reports the outcome.
+		expect(t("session.idle")).toBeNull();
+		expect(t("session.status")).toBeNull();
+	});
+
+	it("turns a Subagent's execution into its hold on the Turn", () => {
+		expect(mapOpenCodeV2Event("session.execution.started", child())).toEqual({
+			kind: "subagent",
+			signal: { action: "started", id: "ses_child" },
+		});
+		for (const event of [
+			"session.execution.succeeded",
+			"session.execution.failed",
+			"session.execution.interrupted",
+			"session.deleted",
+		]) {
+			expect(mapOpenCodeV2Event(event, child()), event).toEqual({
+				kind: "subagent",
+				signal: { action: "stopped", id: "ses_child" },
+			});
+		}
+	});
+
+	it("lets a Subagent's permission or question put the pane in Waiting", () => {
+		for (const event of ["permission.asked", "form.created"]) {
+			expect(mapOpenCodeV2Event(event, child())).toEqual({
+				kind: "transition",
+				transition: "waiting",
+				turnStart: false,
+			});
+		}
+		for (const event of [
+			"permission.replied",
+			"form.replied",
+			"form.cancelled",
+		]) {
+			expect(mapOpenCodeV2Event(event, child())).toEqual({
+				kind: "transition",
+				transition: "resume",
+				turnStart: false,
+			});
+		}
+		expect(mapOpenCodeV2Event("session.retry.scheduled", child())).toBeNull();
+	});
+
+	it("reports a session switch with the new session's state", () => {
+		const shown = (extra: Record<string, unknown>) =>
+			mapOpenCodeV2Event(OPENCODE_V2_SHOWN, {
+				v: 2,
+				scope: "self",
+				sessionID: "ses_other",
+				...extra,
+			});
+		expect(shown({ running: true })).toEqual({
+			kind: "shown",
+			running: true,
+			waiting: false,
+		});
+		// Switched to a session already on a permission or question prompt.
+		expect(shown({ running: true, waiting: true })).toEqual({
+			kind: "shown",
+			running: true,
+			waiting: true,
+		});
+		// A session that isn't running can't be waiting on the user.
+		expect(shown({ running: false, waiting: true })).toEqual({
+			kind: "shown",
+			running: false,
+			waiting: false,
+		});
+		expect(shown({ sessionID: null })).toEqual({
+			kind: "shown",
+			running: false,
+			waiting: false,
+		});
+	});
+
+	it("drops events without a known scope", () => {
+		expect(
+			mapOpenCodeV2Event("session.execution.started", { v: 2 }),
+		).toBeNull();
+		expect(
+			mapOpenCodeV2Event("session.execution.started", {
+				v: 2,
+				scope: "child",
+			}),
+		).toBeNull();
+	});
+
+	it("only maps names from the 2.x SDK's V2Event union", () => {
+		const events = new Set<string>(OPENCODE_V2_EVENTS);
+		for (const name of OPENCODE_V2_EVENT_NAMES) {
+			expect(events.has(name), name).toBe(true);
+		}
+	});
+
+	it("only maps names the 2.x TUI plugin actually forwards", () => {
+		// The plugin's FORWARDED set lives in the JS embedded in agent_hooks.rs;
+		// a name mapped here but missing there would silently never fire.
+		const rust = agentHooksRs;
+		const block = rust.match(/const FORWARDED = new Set\(\[([\s\S]*?)\]\);/);
+		expect(block, "FORWARDED set not found in agent_hooks.rs").not.toBeNull();
+		const forwarded = new Set(
+			[...(block?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]),
+		);
+		for (const name of OPENCODE_V2_EVENT_NAMES) {
+			expect(forwarded.has(name), name).toBe(true);
+		}
+	});
+});
+
+describe("openCodeCancelGate", () => {
+	it("keeps a cancelled 1.x turn on Idle over the session.idle that follows", () => {
+		let cancelled = false;
+		const step = (key: string) => {
+			const gate = openCodeCancelGate(cancelled, key);
+			cancelled = gate.cancelled;
+			return gate.skip;
+		};
+		expect(step("session.status:busy")).toBe(false);
+		expect(step("session.error:MessageAbortedError")).toBe(false);
+		expect(mapHookEvent("opencode", "session.error:MessageAbortedError")).toBe(
+			"idle",
+		);
+		// The prompt loop's cleanup reports idle right after the abort: dropped.
+		expect(step("session.idle")).toBe(true);
+		// Only that one: the next finished turn reaches Ready again.
+		expect(step("session.status:busy")).toBe(false);
+		expect(step("session.idle")).toBe(false);
+	});
+
+	it("forgets a cancel once the next turn starts", () => {
+		const after = openCodeCancelGate(true, "session.status:busy");
+		expect(after).toEqual({ skip: false, cancelled: false });
+		expect(openCodeCancelGate(after.cancelled, "session.idle").skip).toBe(
+			false,
+		);
+	});
+
+	it("never drops session.idle without a preceding cancel", () => {
+		expect(openCodeCancelGate(false, "session.idle")).toEqual({
+			skip: false,
+			cancelled: false,
+		});
+		// A plain error is not a cancel.
+		expect(openCodeCancelGate(false, "session.error:APIError").cancelled).toBe(
+			false,
+		);
+	});
 });
 
 describe("isTurnStartEvent (ADR-0027)", () => {
@@ -551,19 +839,17 @@ describe("isTurnStartEvent (ADR-0027)", () => {
 			["kimi", "PermissionResult"],
 			["grok", "PermissionDenied"],
 			["opencode", "permission.replied"],
-			["opencode", "question.replied"],
 		] as const) {
 			expect(mapHookEvent(agent, event)).toBe("active");
 			expect(isTurnStartEvent(agent, event)).toBe(false);
 		}
 	});
 
-	it("treats OpenCode's token stream as its turn start — it has no other", () => {
-		// OpenCode provisions no prompt-submitted hook at all, so the first
-		// message.part.delta of a generation is the only turn-start signal there
-		// is. Listing it keeps OpenCode Turns recording; the cost is that the
-		// check is true per token on that Agent.
-		expect(isTurnStartEvent("opencode", "message.part.delta")).toBe(true);
+	it("treats OpenCode 1.x's busy session status as its turn start", () => {
+		// OpenCode 1.x has no prompt-submitted hook; session status turning
+		// busy fires once per turn.
+		expect(isTurnStartEvent("opencode", "session.status:busy")).toBe(true);
+		expect(isTurnStartEvent("opencode", "session.status:retry")).toBe(false);
 	});
 
 	it("is false for unknown agents and unrelated events", () => {
