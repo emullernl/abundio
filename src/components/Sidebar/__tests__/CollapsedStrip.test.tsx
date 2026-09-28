@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import type { HiddenRollup } from "../../../hooks/useWorkspaceRollups";
 import type { WorkspaceWithTabs } from "../../../lib/types";
+import { Z_CONTEXT_MENU, Z_SIDEBAR_POPOVER } from "../../../lib/zLayers";
 import {
 	type PtyActivityEntry,
 	usePtyActivityStore,
@@ -214,9 +215,10 @@ describe("CollapsedStrip", () => {
 			...document.body.querySelectorAll<HTMLElement>("body > div"),
 		].find((el) => el.style.position === "fixed");
 		expect(popover).toBeTruthy();
-		// The workspace context menu (`PaneContextMenu`, z-[100]) opens from
-		// this popover, so the popover must sit under it (#206 follow-up).
-		expect(Number(popover?.style.zIndex)).toBeLessThan(100);
+		// The workspace context menu opens from this popover, so the popover
+		// must sit under it (#206 follow-up).
+		expect(Number(popover?.style.zIndex)).toBe(Z_SIDEBAR_POPOVER);
+		expect(Z_SIDEBAR_POPOVER).toBeLessThan(Z_CONTEXT_MENU);
 	});
 
 	describe("Dirty marker", () => {

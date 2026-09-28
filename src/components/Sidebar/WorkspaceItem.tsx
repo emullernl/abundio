@@ -76,6 +76,9 @@ interface Props {
 	isRenaming: boolean;
 	onClick: () => void;
 	onDelete: () => void;
+	/** What the hover X does, as its tooltip: "Remove Workspace…", or
+	 *  "Remove worktree…" on a Linked worktree (which deletes the folder). */
+	deleteLabel?: string;
 	onContextMenu: (e: React.MouseEvent) => void;
 	onRename: (name: string) => void;
 	onRenameCancel: () => void;
@@ -93,6 +96,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 	isRenaming,
 	onClick,
 	onDelete,
+	deleteLabel = "Remove Workspace…",
 	onContextMenu,
 	onRename,
 	onRenameCancel,
@@ -393,8 +397,9 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 					e.stopPropagation();
 					onDelete();
 				}}
-				className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-md flex items-center justify-center hover:bg-[var(--error)] hover:text-white transition-all"
-				style={{ color: "var(--fg-secondary)" }}
+				title={deleteLabel}
+				aria-label={`${deleteLabel.replace(/…$/, "")}: ${workspace.name}`}
+				className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-md flex items-center justify-center text-[var(--fg-secondary)] hover:bg-[var(--error)] hover:text-white transition-all"
 			>
 				<X size={12} />
 			</button>

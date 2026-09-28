@@ -137,4 +137,12 @@ describe("WorkspaceList — context menu Open / Close", () => {
 		expect(closeWorkspace).toHaveBeenCalledWith(OPENED.id);
 		expect(beginWorkspaceSwitch).not.toHaveBeenCalled();
 	});
+
+	it("labels the row's X with what it does", () => {
+		const x = container.querySelector<HTMLButtonElement>(
+			'button[aria-label="Remove Workspace: other-repo"]',
+		);
+		expect(x).toBeTruthy();
+		expect(x?.title).toBe("Remove Workspace…");
+	});
 });

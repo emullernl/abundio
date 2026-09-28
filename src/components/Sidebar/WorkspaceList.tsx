@@ -520,6 +520,9 @@ export function WorkspaceList({
 			if (draggedRowId) return;
 			beginWorkspaceSwitch(workspace.id);
 		},
+		deleteLabel: roleById.get(workspace.id)?.linkedPrimaryCwd
+			? "Remove worktree…"
+			: "Remove Workspace…",
 		onDelete: () => {
 			// On a linked worktree the X removes the worktree (deletes the folder),
 			// matching the context menu; everywhere else it removes the workspace.
@@ -558,6 +561,7 @@ export function WorkspaceList({
 				isRenaming={h.isRenaming}
 				onClick={h.onClick}
 				onDelete={h.onDelete}
+				deleteLabel={h.deleteLabel}
 				onContextMenu={h.onContextMenu}
 				onRename={h.onRename}
 				onRenameCancel={h.onRenameCancel}
