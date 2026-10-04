@@ -150,8 +150,12 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => {
+			// A loss on an addon this pane no longer holds was already counted
+			// out by whoever dropped it.
+			if (managed.webglAddon !== webgl) return;
 			webgl.dispose();
 			managed.webglAddon = null;
+			liveWebglContexts--;
 			// Only retry for a pane that is still supposed to hold a context.
 			// A loss usually means the browser evicted us to satisfy someone
 			// else's request, and retrying then just evicts them back — the two
@@ -1352,7 +1356,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	actStore.registerPane(paneId, currentPtyId);
 	actStore.setCwd(currentPtyId, cwd);
 
-	term.onData((data) => {
+	// Disposed in `managed.cleanup`: `restartPanePty` runs initPty again on the
+	// same xterm, and a handler left behind would keep sending every keystroke
+	// to the killed PTY.
+	const onDataSub = term.onData((data) => {
 		if (managed.restoring) return;
 		// Drop focus-in/out reports before they touch any of the activity
 		// bookkeeping below — they're not user input. See isFocusReport's
@@ -1915,7 +1922,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 	}
 
-	term.onTitleChange((title) => {
+	const onTitleSub = term.onTitleChange((title) => {
 		const actStore = usePtyActivityStore.getState();
 		actStore.setTitle(paneId, title);
 	});
@@ -1937,6 +1944,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenActivity();
 		unlistenStatus();
 		unlistenHook();
+		onDataSub.dispose();
+		onTitleSub.dispose();
 		escPressTimestamps.delete(currentPtyId);
 		managed.writes.flush();
 	};
@@ -2408,6 +2417,9 @@ function disposeInstance(paneId: string, snapshot: boolean): string | null {
 	}
 	const ptyId = managed.ptyId;
 	managed.cleanup?.();
+	// Through unloadWebgl, not term.dispose() alone, so the context leaves the
+	// live count — otherwise every closed pane holds a slot of the cap forever.
+	unloadWebgl(paneId);
 	managed.term.dispose();
 	instances.delete(paneId);
 	bumpPaneRevision(paneId);
