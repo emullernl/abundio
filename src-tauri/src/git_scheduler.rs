@@ -51,6 +51,8 @@ enum GitStateEvent {
 
 struct SchedulerEntry {
     stop_tx: Sender<()>,
+    /// The worker's base branch, so a `start` with a different one replaces it.
+    base_branch: Option<String>,
 }
 
 impl Drop for SchedulerEntry {
@@ -76,9 +78,11 @@ impl GitScheduler {
     }
 
     /// Spawn a per-workspace worker on behalf of Window `owner`. Idempotent —
-    /// calling `start` twice for the same `workspace_id` is a no-op (matches
-    /// `FileWatcher::start_watching`). To change `base_branch`, call `stop`
-    /// then `start` again.
+    /// calling `start` twice for the same `workspace_id` and `base_branch` is
+    /// a no-op (matches `FileWatcher::start_watching`). A `start` with a
+    /// different `base_branch` replaces the running worker, whoever else holds
+    /// it: the frontend's stop-then-start would otherwise leave the old branch
+    /// in place while another Window still held the workspace.
     pub fn start(
         &self,
         app: AppHandle,
@@ -89,10 +93,13 @@ impl GitScheduler {
     ) {
         use dashmap::mapref::entry::Entry;
         self.owners.claim(&workspace_id, owner);
-        let vacant = match self.entries.entry(workspace_id.clone()) {
-            Entry::Occupied(_) => return,
-            Entry::Vacant(v) => v,
-        };
+        let entry = self.entries.entry(workspace_id.clone());
+        if let Entry::Occupied(existing) = &entry {
+            if existing.get().base_branch == base_branch {
+                return;
+            }
+        }
+        let entry_base_branch = base_branch.clone();
 
         // Capacity-1 channel = automatic coalescing. If the worker is busy
         // when many triggers arrive, only one is enqueued; the rest fall on
@@ -145,7 +152,11 @@ impl GitScheduler {
             app_for_worker.unlisten(git_listen_id);
         });
 
-        vacant.insert(SchedulerEntry { stop_tx });
+        // Replacing an occupied entry drops the old one, which stops its worker.
+        entry.insert(SchedulerEntry {
+            stop_tx,
+            base_branch: entry_base_branch,
+        });
     }
 
     /// Drop Window `owner`'s hold on the worker, stopping it once no Window

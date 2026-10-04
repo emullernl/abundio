@@ -512,7 +512,14 @@ pub async fn fs_watch_start(
     watcher: State<'_, FileWatcher>,
     root_path: String,
 ) -> Result<(), AbundioError> {
-    watcher.start_watching(app, window.label(), &root_path)
+    watcher.start_watching(app.clone(), window.label(), &root_path)?;
+    // A start the Window sent just before it closed can land after its
+    // `Destroyed` handler released its holds, and would claim under a label
+    // nothing releases again. Let go if the Window is already gone.
+    if app.get_webview_window(window.label()).is_none() {
+        watcher.stop_watching(window.label(), &root_path);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -560,7 +567,17 @@ pub async fn git_scheduler_start(
     root_path: String,
     base_branch: Option<String>,
 ) -> Result<(), AbundioError> {
-    scheduler.start(app, window.label(), workspace_id, root_path, base_branch);
+    scheduler.start(
+        app.clone(),
+        window.label(),
+        workspace_id.clone(),
+        root_path,
+        base_branch,
+    );
+    // See `fs_watch_start`: undo a claim that landed after the Window closed.
+    if app.get_webview_window(window.label()).is_none() {
+        scheduler.stop(window.label(), &workspace_id);
+    }
     Ok(())
 }
 

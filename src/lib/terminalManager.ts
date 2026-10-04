@@ -279,10 +279,14 @@ export function ensureWebglLoaded(paneId: string): void {
  *  A later ensureWebglLoaded() call will recreate it. */
 export function unloadWebgl(paneId: string): void {
 	const managed = instances.get(paneId);
-	if (!managed?.webglAddon) return;
-	managed.webglAddon.dispose();
+	const addon = managed?.webglAddon;
+	if (!managed || !addon) return;
+	// Clear the field before disposing, so a context loss that disposal might
+	// raise synchronously finds the addon already gone and does not count it
+	// out a second time.
 	managed.webglAddon = null;
 	liveWebglContexts--;
+	addon.dispose();
 }
 
 /** Strip the comma-separated fallback list and any quotes from a CSS font-family
