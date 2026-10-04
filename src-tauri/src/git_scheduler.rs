@@ -16,6 +16,8 @@
 /// internal mutex/setter complexity.
 use crossbeam_channel::{bounded, Receiver, Sender};
 use dashmap::DashMap;
+
+use crate::owner_map::OwnerMap;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Listener};
 
@@ -61,26 +63,32 @@ impl Drop for SchedulerEntry {
 
 pub struct GitScheduler {
     entries: DashMap<String, SchedulerEntry>,
+    /// Window labels holding each worker, so a closed Window's workers stop.
+    owners: OwnerMap,
 }
 
 impl GitScheduler {
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
+            owners: OwnerMap::new(),
         }
     }
 
-    /// Spawn a per-workspace worker. Idempotent — calling `start` twice for
-    /// the same `workspace_id` is a no-op (matches `FileWatcher::start_watching`).
-    /// To change `base_branch`, call `stop` then `start` again.
+    /// Spawn a per-workspace worker on behalf of Window `owner`. Idempotent —
+    /// calling `start` twice for the same `workspace_id` is a no-op (matches
+    /// `FileWatcher::start_watching`). To change `base_branch`, call `stop`
+    /// then `start` again.
     pub fn start(
         &self,
         app: AppHandle,
+        owner: &str,
         workspace_id: String,
         root_path: String,
         base_branch: Option<String>,
     ) {
         use dashmap::mapref::entry::Entry;
+        self.owners.claim(&workspace_id, owner);
         let vacant = match self.entries.entry(workspace_id.clone()) {
             Entry::Occupied(_) => return,
             Entry::Vacant(v) => v,
@@ -140,10 +148,21 @@ impl GitScheduler {
         vacant.insert(SchedulerEntry { stop_tx });
     }
 
-    /// Stop the per-workspace worker. Idempotent.
-    pub fn stop(&self, workspace_id: &str) {
-        // Removing drops `SchedulerEntry`, which sends the stop signal.
-        self.entries.remove(workspace_id);
+    /// Drop Window `owner`'s hold on the worker, stopping it once no Window
+    /// holds it. Idempotent.
+    pub fn stop(&self, owner: &str, workspace_id: &str) {
+        if self.owners.release(workspace_id, owner) {
+            // Removing drops `SchedulerEntry`, which sends the stop signal.
+            self.entries.remove(workspace_id);
+        }
+    }
+
+    /// Stop every worker that only Window `owner` held. Called when the Window
+    /// is destroyed, since its React cleanup never gets to call `stop`.
+    pub fn release_window(&self, owner: &str) {
+        for workspace_id in self.owners.release_owner(owner) {
+            self.entries.remove(&workspace_id);
+        }
     }
 }
 

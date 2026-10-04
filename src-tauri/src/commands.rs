@@ -508,18 +508,20 @@ pub async fn pty_cleanup_stale_logs(pane_ids: Vec<String>) -> Result<(), Abundio
 #[tauri::command]
 pub async fn fs_watch_start(
     app: AppHandle,
+    window: Window,
     watcher: State<'_, FileWatcher>,
     root_path: String,
 ) -> Result<(), AbundioError> {
-    watcher.start_watching(app, &root_path)
+    watcher.start_watching(app, window.label(), &root_path)
 }
 
 #[tauri::command]
 pub async fn fs_watch_stop(
+    window: Window,
     watcher: State<'_, FileWatcher>,
     root_path: String,
 ) -> Result<(), AbundioError> {
-    watcher.stop_watching(&root_path);
+    watcher.stop_watching(window.label(), &root_path);
     Ok(())
 }
 
@@ -552,21 +554,23 @@ pub async fn worktree_watch_set(
 #[tauri::command]
 pub async fn git_scheduler_start(
     app: AppHandle,
+    window: Window,
     scheduler: State<'_, GitScheduler>,
     workspace_id: String,
     root_path: String,
     base_branch: Option<String>,
 ) -> Result<(), AbundioError> {
-    scheduler.start(app, workspace_id, root_path, base_branch);
+    scheduler.start(app, window.label(), workspace_id, root_path, base_branch);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn git_scheduler_stop(
+    window: Window,
     scheduler: State<'_, GitScheduler>,
     workspace_id: String,
 ) -> Result<(), AbundioError> {
-    scheduler.stop(&workspace_id);
+    scheduler.stop(window.label(), &workspace_id);
     Ok(())
 }
 
