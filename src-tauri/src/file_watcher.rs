@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use crossbeam_channel::{bounded, unbounded, Sender};
 use dashmap::DashMap;
+
+use crate::owner_map::OwnerMap;
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
@@ -92,16 +94,34 @@ impl Drop for WatcherEntry {
 
 pub struct FileWatcher {
     watchers: DashMap<String, WatcherEntry>,
+    /// Window labels holding each watch, so a closed Window's watches stop.
+    owners: OwnerMap,
 }
 
 impl FileWatcher {
     pub fn new() -> Self {
         Self {
             watchers: DashMap::new(),
+            owners: OwnerMap::new(),
         }
     }
 
-    pub fn start_watching(&self, app: AppHandle, root_path: &str) -> Result<(), AbundioError> {
+    /// Watch `root_path` on behalf of Window `owner`.
+    pub fn start_watching(
+        &self,
+        app: AppHandle,
+        owner: &str,
+        root_path: &str,
+    ) -> Result<(), AbundioError> {
+        self.owners.claim(root_path, owner);
+        let result = self.start_watcher(app, root_path);
+        if result.is_err() {
+            self.owners.release(root_path, owner);
+        }
+        result
+    }
+
+    fn start_watcher(&self, app: AppHandle, root_path: &str) -> Result<(), AbundioError> {
         // Atomic check-and-insert to avoid TOCTOU race condition
         use dashmap::mapref::entry::Entry;
         let entry = self.watchers.entry(root_path.to_string());
@@ -154,9 +174,21 @@ impl FileWatcher {
         Ok(())
     }
 
-    pub fn stop_watching(&self, root_path: &str) {
-        // Removing drops the WatcherEntry, which sends the stop signal and drops the watcher
-        self.watchers.remove(root_path);
+    /// Drop Window `owner`'s hold on the watch, stopping it once no Window
+    /// holds it.
+    pub fn stop_watching(&self, owner: &str, root_path: &str) {
+        if self.owners.release(root_path, owner) {
+            // Removing drops the WatcherEntry, which sends the stop signal and drops the watcher
+            self.watchers.remove(root_path);
+        }
+    }
+
+    /// Stop every watch that only Window `owner` held. Called when the Window
+    /// is destroyed, since its React cleanup never gets to call `stop_watching`.
+    pub fn release_window(&self, owner: &str) {
+        for root_path in self.owners.release_owner(owner) {
+            self.watchers.remove(&root_path);
+        }
     }
 }
 

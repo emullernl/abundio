@@ -40,6 +40,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `migrations.rs` — Auto-runs SQL migrations on startup, tracks applied in `_migrations` table.
 - `file_explorer.rs` — File system operations: list directory, read/write files, check existence.
 - `file_watcher.rs` — File system watcher (notify crate) initialized on app setup.
+- `owner_map.rs` — `OwnerMap`: which Windows hold each git scheduler worker and file watch. A Window's `Destroyed` releases its holds, because React cleanup never runs when a webview is destroyed.
 - `search.rs` — Full-text workspace search with cancellation support (`fs_search`, `fs_search_cancel`).
 - `git_commands.rs` — Git operations: changed files, file diffs, branch info, list branches, status fingerprint.
 - `gh_commands.rs` — GitHub CLI integration: PR status, review requests, user's PRs.

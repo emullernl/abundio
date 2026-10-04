@@ -92,6 +92,33 @@ export function DiffViewer({
 		}),
 		[diff.modified, diff.original],
 	);
+	// Memoised: a fresh object makes @monaco-editor/react call
+	// `updateOptions()` on every render, and git pushes re-render this pane on
+	// every file change.
+	const options = useMemo<editor.IDiffEditorConstructionOptions>(
+		() => ({
+			fontFamily,
+			fontSize: monacoFontSize,
+			wordWrap: editorWordWrap ? "on" : "off",
+			contextmenu: true,
+			readOnly: true,
+			minimap: { enabled: false },
+			scrollBeyondLastLine: false,
+			renderSideBySide: sideBySide,
+			automaticLayout: true,
+			lineNumbers: "on",
+			overviewRulerLanes: 0,
+			padding: { top: 8 },
+			hideUnchangedRegions: {
+				enabled: hideUnchanged,
+			},
+			scrollbar: {
+				verticalScrollbarSize: 10,
+				horizontalScrollbarSize: 10,
+			},
+		}),
+		[fontFamily, monacoFontSize, editorWordWrap, sideBySide, hideUnchanged],
+	);
 
 	return (
 		<div
@@ -288,27 +315,7 @@ export function DiffViewer({
 					modified={diff.modified}
 					theme="abundio"
 					onMount={handleMount}
-					options={{
-						fontFamily,
-						fontSize: monacoFontSize,
-						wordWrap: editorWordWrap ? "on" : "off",
-						contextmenu: true,
-						readOnly: true,
-						minimap: { enabled: false },
-						scrollBeyondLastLine: false,
-						renderSideBySide: sideBySide,
-						automaticLayout: true,
-						lineNumbers: "on",
-						overviewRulerLanes: 0,
-						padding: { top: 8 },
-						hideUnchangedRegions: {
-							enabled: hideUnchanged,
-						},
-						scrollbar: {
-							verticalScrollbarSize: 10,
-							horizontalScrollbarSize: 10,
-						},
-					}}
+					options={options}
 				/>
 			</div>
 		</div>

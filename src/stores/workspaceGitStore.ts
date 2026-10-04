@@ -41,6 +41,28 @@ export type WorkspaceGitInfo = {
 	conflictedPaths: string[] | null;
 };
 
+/** Whether two infos say the same thing. `conflictedPaths` is compared by
+ *  content — callers build a fresh array on every scheduler push. */
+export function workspaceGitInfoEqual(
+	a: WorkspaceGitInfo,
+	b: WorkspaceGitInfo,
+): boolean {
+	if (
+		a.isGitRepo !== b.isGitRepo ||
+		a.currentBranch !== b.currentBranch ||
+		a.changedFileCount !== b.changedFileCount ||
+		a.additions !== b.additions ||
+		a.deletions !== b.deletions
+	) {
+		return false;
+	}
+	const pa = a.conflictedPaths;
+	const pb = b.conflictedPaths;
+	if (pa === pb) return true;
+	if (pa === null || pb === null || pa.length !== pb.length) return false;
+	return pa.every((p, i) => p === pb[i]);
+}
+
 interface WorkspaceGitState {
 	byWorkspaceId: Record<string, WorkspaceGitInfo>;
 	/** Worktree grouping facts per workspace, kept separate from the branch-chip
@@ -250,9 +272,17 @@ export const useWorkspaceGitStore = create<WorkspaceGitState>((set, get) => ({
 	},
 
 	setInfo: (workspaceId, info) =>
-		set((s) => ({
-			byWorkspaceId: { ...s.byWorkspaceId, [workspaceId]: info },
-		})),
+		set((s) => {
+			// Keep the references when nothing changed. The scheduler pushes on
+			// every file change, and a fresh map here re-rendered every
+			// subscriber — sidebar rows, status bar, Fleet Console and each
+			// FilePane of the workspace, mounted or not.
+			const prev = s.byWorkspaceId[workspaceId];
+			if (prev && workspaceGitInfoEqual(prev, info)) return s;
+			return {
+				byWorkspaceId: { ...s.byWorkspaceId, [workspaceId]: info },
+			};
+		}),
 
 	remove: (workspaceId) => {
 		set((s) => {

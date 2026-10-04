@@ -82,6 +82,7 @@ import {
 } from "./webglBudget";
 import { addWindowFocusListener } from "./windowFocus";
 import { inheritSourceWorkspaceId } from "./worktreeGrouping";
+import { createWriteBatcher, type WriteBatcher } from "./writeBatcher";
 
 /**
  * Agent ids we've already asked Rust to ensure-provision this session. The
@@ -149,8 +150,12 @@ function tryLoadWebgl(managed: ManagedTerminal, retries = 3): void {
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => {
+			// A loss on an addon this pane no longer holds was already counted
+			// out by whoever dropped it.
+			if (managed.webglAddon !== webgl) return;
 			webgl.dispose();
 			managed.webglAddon = null;
+			liveWebglContexts--;
 			// Only retry for a pane that is still supposed to hold a context.
 			// A loss usually means the browser evicted us to satisfy someone
 			// else's request, and retrying then just evicts them back — the two
@@ -274,10 +279,14 @@ export function ensureWebglLoaded(paneId: string): void {
  *  A later ensureWebglLoaded() call will recreate it. */
 export function unloadWebgl(paneId: string): void {
 	const managed = instances.get(paneId);
-	if (!managed?.webglAddon) return;
-	managed.webglAddon.dispose();
+	const addon = managed?.webglAddon;
+	if (!managed || !addon) return;
+	// Clear the field before disposing, so a context loss that disposal might
+	// raise synchronously finds the addon already gone and does not count it
+	// out a second time.
 	managed.webglAddon = null;
 	liveWebglContexts--;
+	addon.dispose();
 }
 
 /** Strip the comma-separated fallback list and any quotes from a CSS font-family
@@ -380,14 +389,13 @@ export interface ManagedTerminal {
 	 *  cleaning it. Cleared on that `command_start`, or when the filter window
 	 *  ends, so it can never exempt the Agent's own redraws later. */
 	awaitingTypedAgentStart: boolean;
-	/** Buffered output chunks waiting to be flushed to xterm in a single rAF write */
-	pendingWrites: Uint8Array[];
-	/** Alternate-screen state after the bytes in `pendingWrites`, kept up to
+	/** Output chunks waiting to be written to xterm as one batch. See
+	 *  `writeBatcher.ts` for why a frame alone cannot be trusted to drain it. */
+	writes: WriteBatcher;
+	/** Alternate-screen state after the bytes queued in `writes`, kept up to
 	 *  date in `scheduleWrite` so each chunk is scanned once. Only meaningful
 	 *  while the queue is non-empty — see `altScreenBeforeChunk`. */
 	queuedAltScreen: boolean;
-	/** rAF handle for the pending write flush, or null if none scheduled */
-	writeRafId: number | null;
 	/** Mouse modes this pane's program has asked for and not withdrawn — whether
 	 *  or not we granted them. Populated from every DECSET we see, emptied by the
 	 *  matching DECRSTs. Two jobs: it is what a replay re-asserts when the pane
@@ -744,49 +752,24 @@ function stopBackgroundTracking(ptyId: string) {
 	}
 }
 
-/** Queue a chunk for batched writing to xterm.js.  All chunks queued within
- *  one animation frame are concatenated and written in a single term.write()
- *  call, which xterm processes more efficiently than many small writes. */
+/** Queue a chunk for batched writing to xterm.js. Chunks queued together are
+ *  concatenated and written in a single term.write() call, which xterm
+ *  processes more efficiently than many small writes. */
 function scheduleWrite(managed: ManagedTerminal, chunk: Uint8Array): void {
 	managed.queuedAltScreen = scanAlternateScreen(
 		chunk,
 		altScreenBeforeChunk(managed),
 	).after;
-	managed.pendingWrites.push(chunk);
-	if (managed.writeRafId === null) {
-		managed.writeRafId = requestAnimationFrame(() => {
-			flushWrites(managed);
-		});
-	}
+	managed.writes.push(chunk);
 }
 
 /** Whether the screen is alternate in front of the next chunk to be queued. */
 function altScreenBeforeChunk(managed: ManagedTerminal): boolean {
 	return alternateScreenBefore({
-		queueEmpty: managed.pendingWrites.length === 0,
+		queueEmpty: managed.writes.isEmpty(),
 		bufferIsAlternate: managed.term.buffer.active.type === "alternate",
 		queued: managed.queuedAltScreen,
 	});
-}
-
-function flushWrites(managed: ManagedTerminal): void {
-	managed.writeRafId = null;
-	const chunks = managed.pendingWrites;
-	if (chunks.length === 0) return;
-	if (chunks.length === 1) {
-		managed.term.write(chunks[0]);
-	} else {
-		let total = 0;
-		for (const c of chunks) total += c.length;
-		const merged = new Uint8Array(total);
-		let offset = 0;
-		for (const c of chunks) {
-			merged.set(c, offset);
-			offset += c.length;
-		}
-		managed.term.write(merged);
-	}
-	managed.pendingWrites = [];
 }
 
 // When the OS window regains focus, the browser doesn't automatically
@@ -1160,9 +1143,8 @@ export async function createTerminal(
 		startupShellReady: false,
 		awaitingTaskStart: false,
 		awaitingTypedAgentStart: false,
-		pendingWrites: [],
+		writes: createWriteBatcher((data) => term.write(data)),
 		queuedAltScreen: false,
-		writeRafId: null,
 		wantedMouseModes: new Set(),
 		sweepingMouseModes: 0,
 		deferredInit: null,
@@ -1378,7 +1360,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	actStore.registerPane(paneId, currentPtyId);
 	actStore.setCwd(currentPtyId, cwd);
 
-	term.onData((data) => {
+	// Disposed in `managed.cleanup`: `restartPanePty` runs initPty again on the
+	// same xterm, and a handler left behind would keep sending every keystroke
+	// to the killed PTY.
+	const onDataSub = term.onData((data) => {
 		if (managed.restoring) return;
 		// Drop focus-in/out reports before they touch any of the activity
 		// bookkeeping below — they're not user input. See isFocusReport's
@@ -1941,7 +1926,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 	}
 
-	term.onTitleChange((title) => {
+	const onTitleSub = term.onTitleChange((title) => {
 		const actStore = usePtyActivityStore.getState();
 		actStore.setTitle(paneId, title);
 	});
@@ -1963,11 +1948,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenActivity();
 		unlistenStatus();
 		unlistenHook();
+		onDataSub.dispose();
+		onTitleSub.dispose();
 		escPressTimestamps.delete(currentPtyId);
-		if (managed.writeRafId !== null) {
-			cancelAnimationFrame(managed.writeRafId);
-			flushWrites(managed);
-		}
+		managed.writes.flush();
 	};
 
 	managed.ready = true;
@@ -2437,6 +2421,9 @@ function disposeInstance(paneId: string, snapshot: boolean): string | null {
 	}
 	const ptyId = managed.ptyId;
 	managed.cleanup?.();
+	// Through unloadWebgl, not term.dispose() alone, so the context leaves the
+	// live count — otherwise every closed pane holds a slot of the cap forever.
+	unloadWebgl(paneId);
 	managed.term.dispose();
 	instances.delete(paneId);
 	bumpPaneRevision(paneId);

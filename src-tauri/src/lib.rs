@@ -18,6 +18,7 @@ pub mod git_libgit2;
 pub mod git_scheduler;
 pub mod hook_server;
 pub mod migrations;
+pub mod owner_map;
 pub mod pr_poller;
 pub mod process_monitor;
 pub mod profile_store;
@@ -1006,6 +1007,15 @@ pub fn run() {
                     app_handle.try_state::<worktree_watcher::WorktreeWatcher>()
                 {
                     ww.forget_window(&app_handle, &label);
+                }
+                // Same for this window's git schedulers and file watchers:
+                // React cleanup never runs when a webview is destroyed, so
+                // without this they recompute git status for nobody until quit.
+                if let Some(gs) = app_handle.try_state::<git_scheduler::GitScheduler>() {
+                    gs.release_window(&label);
+                }
+                if let Some(fw) = app_handle.try_state::<file_watcher::FileWatcher>() {
+                    fw.release_window(&label);
                 }
                 // Drop this window's busy tally so it can't inflate the
                 // quit-time total. See ADR-0034.

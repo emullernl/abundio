@@ -4,6 +4,8 @@ import {
 	repoSlugsResolvedFor,
 	uncommittedFromSummaries,
 	useWorkspaceGitStore,
+	type WorkspaceGitInfo,
+	workspaceGitInfoEqual,
 } from "../workspaceGitStore";
 
 vi.mock("../../lib/ipc", () => ({
@@ -390,6 +392,52 @@ describe("workspaceGitStore", () => {
 			additions: 20,
 			deletions: 5,
 		});
+	});
+
+	it("setInfo keeps the state when the info is unchanged", () => {
+		const info = (): WorkspaceGitInfo => ({
+			isGitRepo: true,
+			currentBranch: "main",
+			changedFileCount: 2,
+			conflictedPaths: ["a.ts"],
+			additions: 1,
+			deletions: 0,
+		});
+		const { setInfo } = useWorkspaceGitStore.getState();
+		setInfo("ws-same", info());
+		const before = useWorkspaceGitStore.getState().byWorkspaceId;
+		// A fresh but equal object — what every scheduler push builds.
+		setInfo("ws-same", info());
+		expect(useWorkspaceGitStore.getState().byWorkspaceId).toBe(before);
+		setInfo("ws-same", { ...info(), changedFileCount: 3 });
+		expect(useWorkspaceGitStore.getState().byWorkspaceId).not.toBe(before);
+	});
+
+	it("workspaceGitInfoEqual compares conflicted paths by content", () => {
+		const base: WorkspaceGitInfo = {
+			isGitRepo: true,
+			currentBranch: "main",
+			changedFileCount: 0,
+			conflictedPaths: ["a", "b"],
+			additions: 0,
+			deletions: 0,
+		};
+		expect(
+			workspaceGitInfoEqual(base, { ...base, conflictedPaths: ["a", "b"] }),
+		).toBe(true);
+		expect(
+			workspaceGitInfoEqual(base, { ...base, conflictedPaths: ["a"] }),
+		).toBe(false);
+		// null ("not answered yet") is not the same as [] ("no conflicts").
+		expect(
+			workspaceGitInfoEqual(
+				{ ...base, conflictedPaths: null },
+				{ ...base, conflictedPaths: [] },
+			),
+		).toBe(false);
+		expect(workspaceGitInfoEqual(base, { ...base, currentBranch: "dev" })).toBe(
+			false,
+		);
 	});
 
 	it("remove deletes entry", () => {
