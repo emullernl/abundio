@@ -1017,6 +1017,12 @@ pub fn run() {
                 if let Some(fw) = app_handle.try_state::<file_watcher::FileWatcher>() {
                     fw.release_window(&label);
                 }
+                // And its PTYs. Snapshots were saved before the window was
+                // destroyed, and the logs stay, so nothing is lost; a Profile
+                // opened again starts fresh PTYs and never reattaches.
+                if let Some(pm) = app_handle.try_state::<PtyManager>() {
+                    pm.kill_for_window(&label);
+                }
                 // Drop this window's busy tally so it can't inflate the
                 // quit-time total. See ADR-0034.
                 if let Some(counts) =

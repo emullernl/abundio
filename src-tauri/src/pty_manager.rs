@@ -65,6 +65,10 @@ pub struct SpawnContext {
 pub struct PtyManager {
     entries: DashMap<String, PtyEntry>,
     spawn_contexts: DashMap<String, SpawnContext>,
+    /// pty id → label of the Window that spawned it, so closing a Window can
+    /// kill its PTYs. React cleanup never runs when a webview is destroyed, so
+    /// without this every shell and Agent of a closed Window ran until quit.
+    owner_windows: DashMap<String, String>,
 }
 
 impl PtyManager {
@@ -72,6 +76,7 @@ impl PtyManager {
         Self {
             entries: DashMap::new(),
             spawn_contexts: DashMap::new(),
+            owner_windows: DashMap::new(),
         }
     }
 
@@ -97,6 +102,7 @@ impl PtyManager {
     pub fn spawn(
         &self,
         app: AppHandle,
+        owner_window: &str,
         cwd: &str,
         command: Option<&str>,
         shell: Option<&str>,
@@ -349,6 +355,8 @@ impl PtyManager {
                 alive: alive.clone(),
             },
         );
+        self.owner_windows
+            .insert(pty_id.clone(), owner_window.to_string());
 
         // Open log file for PTY output persistence
         let log_file = log_id.and_then(|id| {
@@ -426,7 +434,23 @@ impl PtyManager {
         }
         self.entries.remove(pty_id);
         self.spawn_contexts.remove(pty_id);
+        self.owner_windows.remove(pty_id);
         Ok(())
+    }
+
+    /// Kill every PTY spawned by Window `label`. Called when the Window is
+    /// destroyed. Logs are kept, so the panes restore their scrollback when the
+    /// Profile is opened again (a fresh load never reattaches to a live PTY).
+    pub fn kill_for_window(&self, label: &str) {
+        let owned: Vec<String> = self
+            .owner_windows
+            .iter()
+            .filter(|e| e.value() == label)
+            .map(|e| e.key().clone())
+            .collect();
+        for pty_id in owned {
+            let _ = self.kill(&pty_id);
+        }
     }
 
     fn log_dir() -> PathBuf {
@@ -1627,6 +1651,38 @@ fn truncate_log_file(path: &Path, keep_bytes: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Register a fake PTY owned by `window`; the receiver sees its commands.
+    fn fake_pty(mgr: &PtyManager, id: &str, window: &str) -> Receiver<PtyCommand> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        mgr.entries.insert(
+            id.to_string(),
+            PtyEntry {
+                tx,
+                alive: Arc::new(AtomicBool::new(true)),
+            },
+        );
+        mgr.owner_windows.insert(id.to_string(), window.to_string());
+        rx
+    }
+
+    #[test]
+    fn kill_for_window_kills_only_that_windows_ptys() {
+        let mgr = PtyManager::new();
+        let a1 = fake_pty(&mgr, "a1", "window-a");
+        let a2 = fake_pty(&mgr, "a2", "window-a");
+        let b1 = fake_pty(&mgr, "b1", "window-b");
+
+        mgr.kill_for_window("window-a");
+
+        assert!(matches!(a1.try_recv(), Ok(PtyCommand::Kill)));
+        assert!(matches!(a2.try_recv(), Ok(PtyCommand::Kill)));
+        assert!(b1.try_recv().is_err());
+        assert!(!mgr.entries.contains_key("a1"));
+        assert!(!mgr.owner_windows.contains_key("a2"));
+        assert!(mgr.entries.contains_key("b1"));
+        assert!(mgr.owner_windows.contains_key("b1"));
+    }
 
     #[test]
     fn redraw_unknown_pty_is_not_found() {

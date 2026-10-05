@@ -165,6 +165,53 @@ fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+/// Largest hook body read at all. A `PostToolUse` payload carries the tool's
+/// whole output, which can be many MB; past this the body is dropped and the
+/// event is forwarded with an empty payload (the event name still drives the
+/// status transition).
+const MAX_HOOK_BODY: u64 = 8 * 1024 * 1024;
+
+/// Longest string value forwarded to the webview. Every field the frontend
+/// reads (`toolName`, `reason`, `message`, Subagent ids, OpenCode's `v`) is
+/// short; the long strings are tool output and file contents, which nothing
+/// reads but which used to be copied several times and eval'd into the webview
+/// on every tool call.
+const MAX_FORWARDED_STRING: usize = 4 * 1024;
+
+/// Shorten every long string value in `value`, keeping the JSON structure so
+/// the frontend can still parse it and read its short fields.
+fn shorten_long_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(s) if s.len() > MAX_FORWARDED_STRING => {
+            let total = s.len();
+            let head = truncate_at_char_boundary(s, MAX_FORWARDED_STRING).to_string();
+            *s = format!("{head}… <truncated, {total} bytes total>");
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(shorten_long_strings),
+        serde_json::Value::Object(map) => map.values_mut().for_each(shorten_long_strings),
+        _ => {}
+    }
+}
+
+/// The payload to forward to the webview, plus its `toolName` if any. JSON is
+/// slimmed with `shorten_long_strings`; a body that is not JSON is forwarded
+/// only if it is short.
+fn slim_hook_payload(raw: &str) -> (String, String) {
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(mut value) => {
+            let tool = value
+                .get("toolName")
+                .and_then(|t| t.as_str())
+                .map(str::to_owned)
+                .unwrap_or_default();
+            shorten_long_strings(&mut value);
+            (value.to_string(), tool)
+        }
+        Err(_) if raw.len() <= MAX_FORWARDED_STRING => (raw.to_string(), String::new()),
+        Err(_) => (String::new(), String::new()),
+    }
+}
+
 fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request) {
     let token_bytes = token.as_bytes();
     let authorized = request.headers().iter().any(|h| {
@@ -203,8 +250,20 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
         .unwrap_or("?")
         .to_string();
 
-    let mut payload = String::new();
-    let _ = request.as_reader().read_to_string(&mut payload);
+    // Read bytes and decide afterwards: `read_to_string` on a body cut at the
+    // cap can fail mid-character and leave nothing, hiding that it was too big.
+    let mut body = Vec::new();
+    let _ = request
+        .as_reader()
+        .take(MAX_HOOK_BODY + 1)
+        .read_to_end(&mut body);
+    let oversized = body.len() as u64 > MAX_HOOK_BODY;
+    let payload = if oversized {
+        String::new()
+    } else {
+        String::from_utf8_lossy(&body).into_owned()
+    };
+    drop(body);
 
     // Always answer the relay so it can exit cleanly.
     let _ = request.respond(tiny_http::Response::from_string("{}"));
@@ -212,10 +271,11 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
     // `toolName` (when the payload carries it) disambiguates tool-scoped events
     // like Copilot's preToolUse — the frontend uses it to special-case tools
     // that block on the user (exit_plan_mode, multiple-choice questions).
-    let tool = serde_json::from_str::<serde_json::Value>(&payload)
-        .ok()
-        .and_then(|v| v.get("toolName")?.as_str().map(str::to_owned))
-        .unwrap_or_default();
+    let (forwarded, tool) = if oversized {
+        (String::new(), String::new())
+    } else {
+        slim_hook_payload(&payload)
+    };
 
     let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
     let payload_for_log = if payload.len() > MAX_LOGGED_PAYLOAD {
@@ -224,6 +284,8 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
             truncate_at_char_boundary(&payload, MAX_LOGGED_PAYLOAD),
             payload.len()
         )
+    } else if oversized {
+        format!("<dropped, over {MAX_HOOK_BODY} bytes>")
     } else if payload.is_empty() {
         "<empty>".to_string()
     } else {
@@ -242,7 +304,7 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
         AgentHookEvent {
             agent,
             event,
-            payload,
+            payload: forwarded,
         },
     );
 }
@@ -371,6 +433,45 @@ fn quote_dotenv_value(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slim_hook_payload_keeps_short_fields_and_shortens_tool_output() {
+        let big = "x".repeat(MAX_FORWARDED_STRING * 10);
+        let raw = serde_json::json!({
+            "toolName": "Read",
+            "reason": "end_turn",
+            "v": 2,
+            "tool_response": { "content": big, "lines": [big.clone(), "ok"] },
+        })
+        .to_string();
+
+        let (forwarded, tool) = slim_hook_payload(&raw);
+        assert_eq!(tool, "Read");
+        assert!(forwarded.len() < raw.len() / 3);
+
+        let v: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
+        assert_eq!(v["toolName"], "Read");
+        assert_eq!(v["reason"], "end_turn");
+        assert_eq!(v["v"], 2);
+        let content = v["tool_response"]["content"].as_str().unwrap();
+        assert!(content.ends_with(&format!("<truncated, {} bytes total>", big.len())));
+        assert_eq!(v["tool_response"]["lines"][1], "ok");
+    }
+
+    #[test]
+    fn slim_hook_payload_does_not_split_multibyte_chars() {
+        // `—` is 3 bytes, so a byte cut at MAX_FORWARDED_STRING lands inside one.
+        let raw = serde_json::json!({ "message": "—".repeat(MAX_FORWARDED_STRING) }).to_string();
+        let (forwarded, _) = slim_hook_payload(&raw);
+        assert!(serde_json::from_str::<serde_json::Value>(&forwarded).is_ok());
+    }
+
+    #[test]
+    fn slim_hook_payload_drops_long_non_json() {
+        assert_eq!(slim_hook_payload("not json").0, "not json");
+        let long = "y".repeat(MAX_FORWARDED_STRING + 1);
+        assert_eq!(slim_hook_payload(&long).0, "");
+    }
 
     /// The output of `abundio-env print` is consumed by a `--env-file` parser
     /// and by `parseDotenv` in the import dialog. These assertions are the

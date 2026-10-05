@@ -14,6 +14,20 @@ use crate::error::AbundioError;
 use crate::events::{FsChange, GitChange};
 
 const DEBOUNCE_MS: u64 = 200;
+/// Longest a batch may keep growing before it is emitted. Without it, a build
+/// or Agent writing more often than every `DEBOUNCE_MS` held every changed path
+/// in memory, and sent nothing, until it paused.
+const MAX_BATCH_MS: u64 = 1000;
+
+/// How long the drain loop may wait for the next event, given how long the
+/// current batch has been open. `None` means the batch is due now.
+fn drain_wait(batch_age: Duration) -> Option<Duration> {
+    let max = Duration::from_millis(MAX_BATCH_MS);
+    if batch_age >= max {
+        return None;
+    }
+    Some(Duration::from_millis(DEBOUNCE_MS).min(max - batch_age))
+}
 
 /// Directories whose changes we never forward to the frontend.
 fn is_ignored(path: &Path) -> bool {
@@ -202,7 +216,6 @@ fn debounce_loop(
     let mut changed_files: HashSet<String> = HashSet::new();
     let mut removed_files: HashSet<String> = HashSet::new();
     let mut git_changed = false;
-    let timeout = Duration::from_millis(DEBOUNCE_MS);
 
     loop {
         // Wait for an event or stop signal
@@ -221,8 +234,13 @@ fn debounce_loop(
             }
         }
 
-        // Drain any additional events within the debounce window
+        // Drain any additional events within the debounce window, but emit
+        // at least every MAX_BATCH_MS under a constant stream.
+        let batch_started = std::time::Instant::now();
         loop {
+            let Some(timeout) = drain_wait(batch_started.elapsed()) else {
+                break;
+            };
             crossbeam_channel::select! {
                 recv(stop_rx) -> _ => return,
                 recv(event_rx) -> msg => {
@@ -353,6 +371,18 @@ mod tests {
     use super::*;
     use notify::EventKind;
     use std::path::PathBuf;
+
+    #[test]
+    fn drain_wait_debounces_then_caps_the_batch() {
+        let ms = Duration::from_millis;
+        // A fresh batch waits the normal debounce for the next event.
+        assert_eq!(drain_wait(ms(0)), Some(ms(DEBOUNCE_MS)));
+        // Near the cap it waits only for what is left.
+        assert_eq!(drain_wait(ms(MAX_BATCH_MS - 50)), Some(ms(50)));
+        // At or past the cap the batch is emitted, however busy the stream.
+        assert_eq!(drain_wait(ms(MAX_BATCH_MS)), None);
+        assert_eq!(drain_wait(ms(MAX_BATCH_MS * 5)), None);
+    }
 
     #[test]
     fn git_internal_detected() {
