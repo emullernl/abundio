@@ -14,6 +14,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 export function UpdatePrompt() {
 	const status = useUpdateStore((s) => s.status);
 	const info = useUpdateStore((s) => s.info);
+	const staged = useUpdateStore((s) => s.staged);
 	const dismissed = useUpdateStore((s) => s.dismissed);
 	const downloaded = useUpdateStore((s) => s.downloaded);
 	const total = useUpdateStore((s) => s.total);
@@ -101,7 +102,11 @@ export function UpdatePrompt() {
 											? "Restart Abundio to get the new version."
 											: status === "downloading"
 												? `Downloading…${pct != null ? ` ${pct}%` : ""}`
-												: `You're on ${info.currentVersion}.`}
+												: staged && staged.version !== info.version
+													? // An older release is downloaded and still installs
+														// on quit until this one replaces it (ADR-0014 addendum).
+														`v${staged.version} will install on quit.`
+													: `You're on ${info.currentVersion}.`}
 									</div>
 									<button
 										type="button"

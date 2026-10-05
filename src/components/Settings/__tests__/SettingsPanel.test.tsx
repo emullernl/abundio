@@ -11,7 +11,7 @@ vi.mock("../../../lib/ipc", () => ({
 	fs: { revealInFolder: () => Promise.resolve() },
 	updates: {
 		onDownloadProgress: () => Promise.resolve(() => {}),
-		status: () => Promise.resolve({ state: "none", info: null }),
+		status: () => Promise.resolve({ staged: null, available: null }),
 		releaseNotes: () => Promise.resolve([]),
 		markVersionSeen: () => Promise.resolve(),
 	},

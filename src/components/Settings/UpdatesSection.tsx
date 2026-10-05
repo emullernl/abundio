@@ -7,6 +7,7 @@ import {
 	useUpdateStore,
 } from "../../stores/updateStore";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { secondaryButtonClass } from "../PromptActions/fieldStyles";
 import { SectionLabel, ToggleRow } from "./primitives";
 import { ReleaseNotesSection } from "./ReleaseNotesSection";
 
@@ -24,6 +25,7 @@ export function UpdatesSection() {
 	const refreshNotesIfStale = useUpdateStore((s) => s.refreshNotesIfStale);
 	const notes = useUpdateStore((s) => s.notes);
 	const notesStatus = useUpdateStore((s) => s.notesStatus);
+	const staged = useUpdateStore((s) => s.staged);
 	const [confirmRestart, setConfirmRestart] = useState(false);
 	const autoCheck = useSettingsStore((s) => s.autoCheckUpdatesEnabled);
 	const setAutoCheck = useSettingsStore((s) => s.setAutoCheckUpdatesEnabled);
@@ -108,6 +110,15 @@ export function UpdatesSection() {
 	})();
 
 	const busy = status === "checking" || status === "downloading";
+
+	// An older release can stay downloaded while a newer one is offered: it
+	// still installs on quit until the newer one finishes downloading
+	// (ADR-0014 addendum). In "ready" it is the release on offer, so the main
+	// row already covers it.
+	const olderStaged =
+		staged && status !== "ready" && staged.version !== info?.version
+			? staged
+			: null;
 
 	// Update-prompt suppression (ADR-0014) was set-only: "Skip this version" and
 	// "Later" had no undo anywhere in the UI. Evaluated at render — the page
@@ -220,6 +231,35 @@ export function UpdatesSection() {
 							}}
 						>
 							{statusText}
+						</div>
+					)}
+					{olderStaged && (
+						<div
+							className="flex items-center justify-between gap-3"
+							style={{ marginTop: 8 }}
+						>
+							<div
+								style={{
+									fontSize: 12,
+									color: "var(--fg-secondary)",
+									lineHeight: 1.5,
+								}}
+							>
+								v{olderStaged.version} is downloaded and will install when you
+								quit.
+							</div>
+							{/* Disabled while busy: restarting mid-download would install
+							    the older bundle and abandon the newer one. Rust refuses
+							    it too (`updater_install_now`). */}
+							<button
+								type="button"
+								onClick={() => setConfirmRestart(true)}
+								disabled={busy}
+								className={`${secondaryButtonClass} rounded-md flex-shrink-0`}
+								style={{ fontSize: 12, padding: "5px 10px" }}
+							>
+								Restart now
+							</button>
 						</div>
 					)}
 					{status === "downloading" && (

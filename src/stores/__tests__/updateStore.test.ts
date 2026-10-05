@@ -52,10 +52,21 @@ const info = (version: string) => ({
 	date: null,
 });
 
+const NOTHING = { staged: null, available: null };
+const stagedOnly = (version: string) => ({
+	staged: info(version),
+	available: null,
+});
+const availableOnly = (version: string) => ({
+	staged: null,
+	available: info(version),
+});
+
 function reset() {
 	useUpdateStore.setState({
 		status: "idle",
 		info: null,
+		staged: null,
 		downloaded: 0,
 		total: null,
 		error: null,
@@ -170,6 +181,66 @@ describe("updateStore", () => {
 		resolveDownload();
 		await p;
 		expect(useUpdateStore.getState().status).toBe("ready");
+		expect(useUpdateStore.getState().staged?.version).toBe("1.4.0");
+	});
+
+	it("setAvailable keeps an older downloaded release", () => {
+		useUpdateStore.setState({
+			status: "ready",
+			info: info("1.4.0"),
+			staged: info("1.4.0"),
+		});
+		useUpdateStore.getState().setAvailable(info("1.5.0"));
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("available");
+		expect(s.info?.version).toBe("1.5.0");
+		expect(s.staged?.version).toBe("1.4.0");
+	});
+
+	// The prompt's Window may not have seen a download that finished
+	// elsewhere, so it asks Rust which release is staged.
+	it("setAvailable adopts the staged release Rust holds", async () => {
+		useUpdateStore.setState({ staged: info("1.4.0") });
+		status.mockResolvedValueOnce({
+			staged: info("1.4.1"),
+			available: info("1.5.0"),
+		});
+		useUpdateStore.getState().setAvailable(info("1.5.0"));
+		await vi.waitFor(() =>
+			expect(useUpdateStore.getState().staged?.version).toBe("1.4.1"),
+		);
+	});
+
+	// A check swapped the offer for a newer release just before Install.
+	it("download records the release Rust downloaded, not the one shown", async () => {
+		useUpdateStore.setState({ status: "available", info: info("1.4.0") });
+		download.mockResolvedValueOnce(undefined);
+		status.mockResolvedValueOnce(stagedOnly("1.5.0"));
+		await useUpdateStore.getState().download();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("ready");
+		expect(s.staged?.version).toBe("1.5.0");
+		expect(s.info?.version).toBe("1.5.0");
+	});
+
+	// The download may have finished in another Window; Rust knows.
+	it("a check that finds nothing newer asks Rust what is downloaded", async () => {
+		check.mockResolvedValueOnce(null);
+		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
+		await useUpdateStore.getState().check({ manual: true });
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("ready");
+		expect(s.info?.version).toBe("1.4.0");
+	});
+
+	it("a check that finds nothing newer offers the downloaded release", async () => {
+		useUpdateStore.setState({ status: "error", staged: info("1.4.0") });
+		check.mockResolvedValueOnce(null);
+		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
+		await useUpdateStore.getState().check({ manual: true });
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("ready");
+		expect(s.info?.version).toBe("1.4.0");
 	});
 });
 
@@ -177,20 +248,43 @@ describe("updateStore.hydrate", () => {
 	beforeEach(reset);
 
 	it("adopts a staged update as ready", async () => {
-		status.mockResolvedValueOnce({ state: "ready", info: info("1.4.0") });
+		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
 		await useUpdateStore.getState().hydrate();
 		expect(useUpdateStore.getState().status).toBe("ready");
 		expect(useUpdateStore.getState().info?.version).toBe("1.4.0");
 	});
 
 	it("adopts a checked-but-undownloaded update as available", async () => {
-		status.mockResolvedValueOnce({ state: "available", info: info("1.4.0") });
+		status.mockResolvedValueOnce(availableOnly("1.4.0"));
 		await useUpdateStore.getState().hydrate();
 		expect(useUpdateStore.getState().status).toBe("available");
 	});
 
+	it("adopts both a downloaded and a newer available release", async () => {
+		status.mockResolvedValueOnce({
+			staged: info("1.4.0"),
+			available: info("1.5.0"),
+		});
+		await useUpdateStore.getState().hydrate();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("available");
+		expect(s.info?.version).toBe("1.5.0");
+		expect(s.staged?.version).toBe("1.4.0");
+	});
+
+	// A later check found nothing newer (the release was pulled), so Rust
+	// dropped it. The offer on screen must go too.
+	it("clears an offer Rust no longer holds", async () => {
+		useUpdateStore.setState({ status: "available", info: info("1.4.0") });
+		status.mockResolvedValueOnce(NOTHING);
+		await useUpdateStore.getState().hydrate();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("idle");
+		expect(s.info).toBeNull();
+	});
+
 	it("leaves the store alone when Rust holds nothing", async () => {
-		status.mockResolvedValueOnce({ state: "none", info: null });
+		status.mockResolvedValueOnce(NOTHING);
 		await useUpdateStore.getState().hydrate();
 		expect(useUpdateStore.getState().status).toBe("idle");
 	});
@@ -198,14 +292,35 @@ describe("updateStore.hydrate", () => {
 	// The prompt is a notification: "Skip this version" and "Later" must survive
 	// a hydrate, or opening a new Window would silently defeat them.
 	it("respects a skipped version when suppression is on", async () => {
-		status.mockResolvedValueOnce({ state: "ready", info: info("1.4.0") });
+		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
 		useSettingsStore.setState({ skippedUpdateVersion: "1.4.0" });
 		await useUpdateStore.getState().hydrate({ respectSuppression: true });
 		expect(useUpdateStore.getState().status).toBe("idle");
 	});
 
+	// A skipped newer release must not hide a downloaded one that still
+	// installs on quit.
+	it("falls back to the staged release when only the newer one is skipped", async () => {
+		status.mockResolvedValueOnce({
+			staged: info("1.4.0"),
+			available: info("1.5.0"),
+		});
+		useSettingsStore.setState({ skippedUpdateVersion: "1.5.0" });
+		await useUpdateStore.getState().hydrate({ respectSuppression: true });
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("ready");
+		expect(s.info?.version).toBe("1.4.0");
+	});
+
+	it("shows nothing when the newer release is skipped and nothing is staged", async () => {
+		status.mockResolvedValueOnce(availableOnly("1.5.0"));
+		useSettingsStore.setState({ skippedUpdateVersion: "1.5.0" });
+		await useUpdateStore.getState().hydrate({ respectSuppression: true });
+		expect(useUpdateStore.getState().status).toBe("idle");
+	});
+
 	it("respects an active snooze when suppression is on", async () => {
-		status.mockResolvedValueOnce({ state: "ready", info: info("1.4.0") });
+		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
 		useSettingsStore.setState({ updateSnoozedUntil: Date.now() + HOUR_MS });
 		await useUpdateStore.getState().hydrate({ respectSuppression: true });
 		expect(useUpdateStore.getState().status).toBe("idle");
@@ -214,7 +329,7 @@ describe("updateStore.hydrate", () => {
 	// The Settings section is a status display, not a notification — it must
 	// report the truth even while the prompt is silenced.
 	it("ignores suppression when asked to", async () => {
-		status.mockResolvedValueOnce({ state: "ready", info: info("1.4.0") });
+		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
 		useSettingsStore.setState({
 			skippedUpdateVersion: "1.4.0",
 			updateSnoozedUntil: Date.now() + HOUR_MS,
@@ -258,7 +373,7 @@ describe("updateStore.hydrate", () => {
 		useUpdateStore.getState().download();
 		expect(useUpdateStore.getState().status).toBe("downloading");
 
-		resolveStatus({ state: "available", info: info("1.4.0") });
+		resolveStatus(availableOnly("1.4.0"));
 		await hydrating;
 		expect(useUpdateStore.getState().status).toBe("downloading");
 	});
@@ -278,21 +393,73 @@ describe("updateStore.checkOnOpen (issue #200)", () => {
 	});
 
 	it("checks when Rust holds nothing, and reports up to date", async () => {
-		status.mockResolvedValue({ state: "none", info: null });
+		status.mockResolvedValue(NOTHING);
 		check.mockResolvedValue(null);
 		await useUpdateStore.getState().checkOnOpen();
 		expect(check).toHaveBeenCalledTimes(1);
 		expect(useUpdateStore.getState().status).toBe("uptodate");
 	});
 
+	// ADR-0014 addendum: the Update is the newest release, so a held one does
+	// not stop the check. It stays on screen while the check runs.
 	it.each([
-		"available",
-		"ready",
-	] as const)("does not check when Rust already has the update %s", async (state) => {
-		status.mockResolvedValue({ state, info: info("1.4.0") });
+		["available", availableOnly("1.4.0")],
+		["ready", stagedOnly("1.4.0")],
+	] as const)("still checks when Rust holds an update %s", async (state, held) => {
+		status.mockResolvedValue(held);
+		let resolveCheck: (v: unknown) => void = () => {};
+		check.mockImplementationOnce(
+			() =>
+				new Promise((r) => {
+					resolveCheck = r;
+				}),
+		);
+		const opening = useUpdateStore.getState().checkOnOpen();
+		await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(1));
+		expect(useUpdateStore.getState().status).toBe(state);
+		resolveCheck(null);
+		await opening;
+		expect(useUpdateStore.getState().status).toBe(state);
+		expect(useUpdateStore.getState().lastCheckedAt).not.toBeNull();
+	});
+
+	it("adopts a newer release found while one is downloaded", async () => {
+		status.mockResolvedValueOnce(stagedOnly("1.4.0")).mockResolvedValueOnce({
+			staged: info("1.4.0"),
+			available: info("1.5.0"),
+		});
+		check.mockResolvedValueOnce(info("1.5.0"));
+		await useUpdateStore.getState().checkOnOpen();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("available");
+		expect(s.info?.version).toBe("1.5.0");
+		expect(s.staged?.version).toBe("1.4.0");
+	});
+
+	it("reports up to date when the held release was pulled", async () => {
+		status
+			.mockResolvedValueOnce(availableOnly("1.4.0"))
+			.mockResolvedValueOnce(NOTHING);
+		check.mockResolvedValueOnce(null);
+		await useUpdateStore.getState().checkOnOpen();
+		expect(useUpdateStore.getState().status).toBe("uptodate");
+	});
+
+	it("keeps the held update when the check fails", async () => {
+		status.mockResolvedValue(availableOnly("1.4.0"));
+		check.mockRejectedValueOnce("offline");
+		await useUpdateStore.getState().checkOnOpen();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("available");
+		expect(s.error).toBeNull();
+		expect(s.lastCheckedAt).not.toBeNull();
+	});
+
+	it("respects the throttle while an update is held", async () => {
+		status.mockResolvedValue(availableOnly("1.4.0"));
+		useUpdateStore.setState({ lastCheckedAt: Date.now() });
 		await useUpdateStore.getState().checkOnOpen();
 		expect(check).not.toHaveBeenCalled();
-		expect(useUpdateStore.getState().status).toBe(state);
 	});
 
 	it("checks and shows a skipped or snoozed version", async () => {
@@ -300,7 +467,7 @@ describe("updateStore.checkOnOpen (issue #200)", () => {
 			skippedUpdateVersion: "1.4.0",
 			updateSnoozedUntil: Date.now() + HOUR_MS,
 		});
-		status.mockResolvedValue({ state: "none", info: null });
+		status.mockResolvedValue(NOTHING);
 		check.mockResolvedValue(info("1.4.0"));
 		await useUpdateStore.getState().checkOnOpen();
 		const s = useUpdateStore.getState();
@@ -311,7 +478,7 @@ describe("updateStore.checkOnOpen (issue #200)", () => {
 	it("skips a repeat check within the throttle, checks after it", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-		status.mockResolvedValue({ state: "none", info: null });
+		status.mockResolvedValue(NOTHING);
 		check.mockResolvedValue(null);
 		await useUpdateStore.getState().checkOnOpen();
 		expect(check).toHaveBeenCalledTimes(1);
@@ -327,7 +494,7 @@ describe("updateStore.checkOnOpen (issue #200)", () => {
 	});
 
 	it("records the download refusal without throttling the next visit", async () => {
-		status.mockResolvedValue({ state: "none", info: null });
+		status.mockResolvedValue(NOTHING);
 		check.mockRejectedValue(DOWNLOADING_REFUSAL);
 		await useUpdateStore.getState().checkOnOpen();
 		const s = useUpdateStore.getState();
@@ -337,7 +504,7 @@ describe("updateStore.checkOnOpen (issue #200)", () => {
 	});
 
 	it("surfaces any other check failure", async () => {
-		status.mockResolvedValue({ state: "none", info: null });
+		status.mockResolvedValue(NOTHING);
 		check.mockRejectedValue("offline");
 		await useUpdateStore.getState().checkOnOpen();
 		const s = useUpdateStore.getState();

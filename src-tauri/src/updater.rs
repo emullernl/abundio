@@ -69,13 +69,23 @@ pub struct UpdateInfo {
 /// `UpdaterState` is owned by Rust and shared by every Window, but each Window's
 /// Zustand store is its own JS context — without this, a Window that did not
 /// itself run the check/download has no idea an update is staged.
+///
+/// Both slots can be filled at once: an older release downloaded and waiting to
+/// install on quit, and a newer one found since. See the ADR-0014 addendum.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdaterStatus {
-    /// `"none"`, `"available"` (checked, not downloaded) or `"ready"` (staged).
-    pub state: &'static str,
-    pub info: Option<UpdateInfo>,
+    /// Downloaded and waiting to install on quit (or on "Restart now").
+    pub staged: Option<UpdateInfo>,
+    /// Found by a check, not downloaded. Always newer than `staged`.
+    pub available: Option<UpdateInfo>,
 }
+
+/// Payload-free event sent whenever `pending` or `staged` changes. Receivers
+/// re-read through `updater_status`. Only the Settings window listens: the
+/// prompt in Profile windows is driven by `update-available`, which goes to one
+/// Window only.
+const STATE_CHANGED_EVENT: &str = "updater-state-changed";
 
 /// One published GitHub Release, reduced to what the app renders. See ADR-0036.
 ///
@@ -404,6 +414,70 @@ async fn releases_cached(
     }
 }
 
+/// What a successful check did to the held `pending` slot.
+#[derive(Debug, PartialEq)]
+struct Settled {
+    /// The found release is now held as available.
+    stored: bool,
+    /// `pending` was filled, replaced or cleared.
+    changed: bool,
+}
+
+/// Applies a successful check result to `pending`. The Update is the newest
+/// release (see the ADR-0014 addendum), so:
+///
+/// - a release newer than the staged one (or with nothing staged) replaces
+///   whatever is held;
+/// - a release no newer than the staged one is not worth offering — it is
+///   already downloaded — and clears `pending`;
+/// - no release at all (up to date, or the release was pulled) clears
+///   `pending` too. `staged` is never touched here.
+///
+/// A *failed* check must not reach this function: it says nothing about which
+/// release is newest, so it changes nothing.
+///
+/// Generic over the held value because a real `Update` cannot be constructed
+/// outside the plugin, which would leave this untestable.
+fn settle_check<T>(
+    pending: &mut Option<T>,
+    held_version: Option<&str>,
+    found: Option<(T, &str)>,
+    staged_version: Option<&str>,
+) -> Settled {
+    match found {
+        Some((update, version))
+            if staged_version.is_none_or(|staged| is_newer(version, staged)) =>
+        {
+            *pending = Some(update);
+            Settled {
+                stored: true,
+                // Re-finding the release already held is not a change.
+                changed: held_version != Some(version),
+            }
+        }
+        _ => Settled {
+            stored: false,
+            changed: pending.take().is_some(),
+        },
+    }
+}
+
+/// `settle_check` on the real state. Returns the found release's info when it
+/// was stored.
+fn settle_found(inner: &mut UpdaterInner, found: Option<Update>) -> (Option<UpdateInfo>, bool) {
+    let info = found.as_ref().map(to_info);
+    let version = found.as_ref().map(|u| u.version.clone());
+    let staged_version = inner.staged.as_ref().map(|(u, _)| u.version.clone());
+    let held_version = inner.pending.as_ref().map(|u| u.version.clone());
+    let settled = settle_check(
+        &mut inner.pending,
+        held_version.as_deref(),
+        found.zip(version.as_deref()),
+        staged_version.as_deref(),
+    );
+    (info.filter(|_| settled.stored), settled.changed)
+}
+
 fn to_info(update: &Update) -> UpdateInfo {
     UpdateInfo {
         version: update.version.clone(),
@@ -413,9 +487,11 @@ fn to_info(update: &Update) -> UpdateInfo {
     }
 }
 
-/// Runs a check and, if an update is available, stashes it as `pending` and
-/// emits `update-available` to a Profile-bound Window. Shared by the background
-/// loop; the manual command path uses `updater_check` directly.
+/// Runs a check and settles the result into `pending` (see `settle_check`). A
+/// newly stored release is announced with `update-available` to one
+/// Profile-bound Window; any change to what is held is announced with
+/// `updater-state-changed`. Shared by the background loop; the manual command
+/// path uses `updater_check` directly.
 async fn check_and_emit(app: &AppHandle) -> Result<(), String> {
     // Same rule as `updater_check`: a download in flight owns the update, and
     // refilling `pending` under it would offer an "Install update" that fails.
@@ -431,15 +507,21 @@ async fn check_and_emit(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
     let updater = app.updater().map_err(|e| e.to_string())?;
-    if let Some(update) = updater.check().await.map_err(|e| e.to_string())? {
-        let info = to_info(&update);
-        if let Some(state) = app.try_state::<UpdaterState>() {
-            let mut inner = state.inner.lock().unwrap();
-            if check_blocked(&inner) {
-                return Ok(());
-            }
-            inner.pending = Some(update);
+    let found = updater.check().await.map_err(|e| e.to_string())?;
+    let Some(state) = app.try_state::<UpdaterState>() else {
+        return Ok(());
+    };
+    let (stored, changed) = {
+        let mut inner = state.inner.lock().unwrap();
+        if check_blocked(&inner) {
+            return Ok(());
         }
+        settle_found(&mut inner, found)
+    };
+    if changed {
+        let _ = app.emit(STATE_CHANGED_EVENT, ());
+    }
+    if let Some(info) = stored {
         let _ = crate::window_management::emit_to_one_profile_window(
             app,
             "update-available",
@@ -585,8 +667,9 @@ fn check_blocked(inner: &UpdaterInner) -> bool {
 }
 
 /// Manual check (the Settings "Check for updates" button, and opening the
-/// Updates section). Stashes any found update as `pending` and returns its
-/// info; `None` means up to date.
+/// Updates section). Settles the result into `pending` (see `settle_check`)
+/// and returns the stored release's info. `None` means nothing newer than what
+/// is installed or already downloaded.
 #[tauri::command]
 pub async fn updater_check(
     app: AppHandle,
@@ -602,22 +685,22 @@ pub async fn updater_check(
     let updater = app
         .updater()
         .map_err(|e| AbundioError::InvalidOperation(format!("updater unavailable: {e}")))?;
-    match updater.check().await {
-        Ok(Some(update)) => {
-            // A download may have started while we were on the network.
-            let mut inner = state.inner.lock().unwrap();
-            if check_blocked(&inner) {
-                return Err(AbundioError::UpdateDownloading);
-            }
-            let info = to_info(&update);
-            inner.pending = Some(update);
-            Ok(Some(info))
+    let found = updater
+        .check()
+        .await
+        .map_err(|e| AbundioError::InvalidOperation(format!("update check failed: {e}")))?;
+    let (stored, changed) = {
+        // A download may have started while we were on the network.
+        let mut inner = state.inner.lock().unwrap();
+        if check_blocked(&inner) {
+            return Err(AbundioError::UpdateDownloading);
         }
-        Ok(None) => Ok(None),
-        Err(e) => Err(AbundioError::InvalidOperation(format!(
-            "update check failed: {e}"
-        ))),
+        settle_found(&mut inner, found)
+    };
+    if changed {
+        let _ = app.emit(STATE_CHANGED_EVENT, ());
     }
+    Ok(stored)
 }
 
 /// Clears `UpdaterInner::downloading` however `updater_download` leaves — normal
@@ -685,19 +768,26 @@ pub async fn updater_download(
 
     // The flag is cleared by `_guard` on every exit path. Put the update back as
     // `pending` on failure so a retry doesn't need a fresh check.
-    let mut inner = state.inner.lock().unwrap();
-    match result {
-        Ok(bytes) => {
-            inner.staged = Some((update, bytes));
-            Ok(())
+    //
+    // On success the new bundle replaces any older staged one — which, until
+    // this point, was kept so a quit mid-download still installs something.
+    let outcome = {
+        let mut inner = state.inner.lock().unwrap();
+        match result {
+            Ok(bytes) => {
+                inner.staged = Some((update, bytes));
+                Ok(())
+            }
+            Err(e) => {
+                inner.pending = Some(update);
+                Err(AbundioError::InvalidOperation(format!(
+                    "update download failed: {e}"
+                )))
+            }
         }
-        Err(e) => {
-            inner.pending = Some(update);
-            Err(AbundioError::InvalidOperation(format!(
-                "update download failed: {e}"
-            )))
-        }
-    }
+    };
+    let _ = app.emit(STATE_CHANGED_EVENT, ());
+    outcome
 }
 
 /// Installs the staged update immediately and restarts the app. The frontend
@@ -708,7 +798,15 @@ pub async fn updater_install_now(
     app: AppHandle,
     state: State<'_, UpdaterState>,
 ) -> Result<(), AbundioError> {
-    let staged = state.inner.lock().unwrap().staged.take();
+    let staged = {
+        let mut inner = state.inner.lock().unwrap();
+        // Restarting mid-download would install the older staged bundle and
+        // abandon the newer one being fetched.
+        if inner.downloading {
+            return Err(AbundioError::UpdateDownloading);
+        }
+        inner.staged.take()
+    };
     let (update, bytes) =
         staged.ok_or_else(|| AbundioError::InvalidOperation("no staged update to install".into()))?;
     if let Err(e) = update.install(&bytes) {
@@ -717,6 +815,7 @@ pub async fn updater_install_now(
         // prompt is user-cancellable, and losing the download to a cancelled
         // dialog would force a full re-check and re-download.
         state.inner.lock().unwrap().staged = Some((update, bytes));
+        let _ = app.emit(STATE_CHANGED_EVENT, ());
         return Err(AbundioError::InvalidOperation(format!(
             "update install failed: {e}"
         )));
@@ -725,28 +824,16 @@ pub async fn updater_install_now(
 }
 
 /// Reports the app-global updater state so any Window can hydrate its own
-/// store. `staged` wins over `pending`: an update that is already downloaded is
-/// the more advanced — and more actionable — truth.
+/// store. Both slots are reported: an older release can be staged while a newer
+/// one is available, and the views show both.
 #[tauri::command]
 pub async fn updater_status(
     state: State<'_, UpdaterState>,
 ) -> Result<UpdaterStatus, AbundioError> {
     let inner = state.inner.lock().unwrap();
-    if let Some((update, _)) = inner.staged.as_ref() {
-        return Ok(UpdaterStatus {
-            state: "ready",
-            info: Some(to_info(update)),
-        });
-    }
-    if let Some(update) = inner.pending.as_ref() {
-        return Ok(UpdaterStatus {
-            state: "available",
-            info: Some(to_info(update)),
-        });
-    }
     Ok(UpdaterStatus {
-        state: "none",
-        info: None,
+        staged: inner.staged.as_ref().map(|(update, _)| to_info(update)),
+        available: inner.pending.as_ref().map(to_info),
     })
 }
 
@@ -811,15 +898,78 @@ mod tests {
         assert!(!inner.downloading);
     }
 
-    /// `updater_status` maps the three shapes of `UpdaterInner`. A real
-    /// `Update` can't be constructed outside the plugin, so this exercises the
-    /// branch selection on the empty state and documents the precedence the
-    /// other two branches encode.
+    /// A real `Update` can't be constructed outside the plugin, so this only
+    /// covers the empty state. `settle_check` carries the logic that decides
+    /// what is held, and is tested below with a stand-in value.
     #[test]
     fn status_of_fresh_state_is_none() {
         let state = UpdaterState::new();
         let inner = state.inner.lock().unwrap();
         assert!(inner.staged.is_none() && inner.pending.is_none());
+    }
+
+    #[test]
+    fn settle_stores_a_found_release_when_nothing_is_staged() {
+        let mut pending = None;
+        let settled = settle_check(&mut pending, None, Some(("u", "2.1.3")), None);
+        assert_eq!(settled, Settled { stored: true, changed: true });
+        assert_eq!(pending, Some("u"));
+    }
+
+    #[test]
+    fn settle_holds_a_newer_release_beside_an_older_staged_one() {
+        let mut pending = None;
+        let settled = settle_check(&mut pending, None, Some(("new", "2.1.4")), Some("2.1.3"));
+        assert_eq!(settled, Settled { stored: true, changed: true });
+        assert_eq!(pending, Some("new"));
+    }
+
+    #[test]
+    fn settle_replaces_an_older_available_release() {
+        let mut pending = Some("old");
+        let settled = settle_check(&mut pending, Some("2.1.3"), Some(("new", "2.1.4")), None);
+        assert!(settled.stored);
+        assert_eq!(pending, Some("new"));
+    }
+
+    /// Rule 9: a release that is already downloaded is never offered again.
+    #[test]
+    fn settle_drops_a_release_no_newer_than_the_staged_one() {
+        let mut pending = Some("held");
+        let settled = settle_check(&mut pending, Some("2.1.4"), Some(("same", "2.1.3")), Some("2.1.3"));
+        assert_eq!(settled, Settled { stored: false, changed: true });
+        assert_eq!(pending, None);
+
+        let mut pending: Option<&str> = None;
+        let settled = settle_check(&mut pending, None, Some(("older", "2.1.2")), Some("2.1.3"));
+        assert_eq!(settled, Settled { stored: false, changed: false });
+        assert_eq!(pending, None);
+    }
+
+    /// Rule 8: nothing newer (up to date, or the release was pulled) clears
+    /// what is available. `staged` is not an argument, so it cannot be touched.
+    #[test]
+    fn settle_clears_the_available_release_when_nothing_is_found() {
+        let mut pending = Some("pulled");
+        let settled = settle_check::<&str>(&mut pending, Some("2.1.4"), None, Some("2.1.3"));
+        assert_eq!(settled, Settled { stored: false, changed: true });
+        assert_eq!(pending, None);
+    }
+
+    /// Re-finding the held release (most background checks while one is on
+    /// offer) must not fire `updater-state-changed`.
+    #[test]
+    fn settle_reports_no_change_when_the_held_release_is_found_again() {
+        let mut pending = Some("first");
+        let settled = settle_check(&mut pending, Some("2.1.4"), Some(("again", "2.1.4")), None);
+        assert_eq!(settled, Settled { stored: true, changed: false });
+    }
+
+    #[test]
+    fn settle_reports_no_change_when_nothing_was_held_or_found() {
+        let mut pending: Option<&str> = None;
+        let settled = settle_check(&mut pending, None, None, None);
+        assert_eq!(settled, Settled { stored: false, changed: false });
     }
 
     #[test]

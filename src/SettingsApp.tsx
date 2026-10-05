@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Titlebar } from "./components/Titlebar";
 import { appWindow } from "./lib/appWindow";
-import { listen, profiles as profilesApi } from "./lib/ipc";
+import { listen, profiles as profilesApi, updates } from "./lib/ipc";
 import { broadcastSliceOf } from "./lib/settingsBroadcast";
 import { useProfileStore } from "./stores/profileStore";
 import {
@@ -11,6 +11,7 @@ import {
 	watchPromptActions,
 } from "./stores/promptActionStore";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useUpdateStore } from "./stores/updateStore";
 
 /**
  * Root component for the singleton Settings window (label="settings").
@@ -84,6 +85,22 @@ export function SettingsApp() {
 		return () => {
 			unlistenOwnership.then((fn) => fn()).catch(() => {});
 			unlistenProfiles.then((fn) => fn()).catch(() => {});
+		};
+	}, []);
+
+	// Keep the Updates section current while Settings stays open: Rust says
+	// when what it holds changes (a background check found a newer release, a
+	// download finished in another Window). Settings only — Profile windows'
+	// prompt follows `update-available`, which reaches one Window by design.
+	useEffect(() => {
+		const unlisten = updates.onStateChanged(() => {
+			useUpdateStore
+				.getState()
+				.hydrate({ respectSuppression: false })
+				.catch(() => {});
+		});
+		return () => {
+			unlisten.then((fn) => fn()).catch(() => {});
 		};
 	}, []);
 

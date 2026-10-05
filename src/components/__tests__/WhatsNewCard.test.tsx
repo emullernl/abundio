@@ -9,7 +9,7 @@ vi.mock("../../lib/ipc", () => ({
 	updates: {
 		releaseNotes: () => Promise.resolve({ releases: [], hasMore: false }),
 		markVersionSeen: () => Promise.resolve(),
-		status: () => Promise.resolve({ state: "none", info: null }),
+		status: () => Promise.resolve({ staged: null, available: null }),
 	},
 }));
 
