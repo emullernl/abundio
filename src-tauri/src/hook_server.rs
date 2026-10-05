@@ -250,12 +250,20 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
         .unwrap_or("?")
         .to_string();
 
-    let mut payload = String::new();
+    // Read bytes and decide afterwards: `read_to_string` on a body cut at the
+    // cap can fail mid-character and leave nothing, hiding that it was too big.
+    let mut body = Vec::new();
     let _ = request
         .as_reader()
         .take(MAX_HOOK_BODY + 1)
-        .read_to_string(&mut payload);
-    let oversized = payload.len() as u64 > MAX_HOOK_BODY;
+        .read_to_end(&mut body);
+    let oversized = body.len() as u64 > MAX_HOOK_BODY;
+    let payload = if oversized {
+        String::new()
+    } else {
+        String::from_utf8_lossy(&body).into_owned()
+    };
+    drop(body);
 
     // Always answer the relay so it can exit cleanly.
     let _ = request.respond(tiny_http::Response::from_string("{}"));
@@ -276,6 +284,8 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
             truncate_at_char_boundary(&payload, MAX_LOGGED_PAYLOAD),
             payload.len()
         )
+    } else if oversized {
+        format!("<dropped, over {MAX_HOOK_BODY} bytes>")
     } else if payload.is_empty() {
         "<empty>".to_string()
     } else {

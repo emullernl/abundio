@@ -58,6 +58,14 @@ pub async fn pty_spawn(
     )?;
     // A spawn the Window sent just before it closed can land after its
     // `Destroyed` handler killed its PTYs. Kill it too if the Window is gone.
+    //
+    // This closes the gap only because Tauri drops the Window from its list
+    // *before* running our `Destroyed` handler: tauri-runtime-wry 2.11.2 calls
+    // the run-loop callback (whose `on_event_loop_event` runs
+    // `manager.on_window_close`) and only then the per-window listeners that
+    // `Builder::on_window_event` registers. So a spawn either inserts its owner
+    // before `kill_for_window` sweeps, or sees the Window gone here. Re-check
+    // this ordering when upgrading Tauri.
     if app.get_webview_window(window.label()).is_none() {
         let _ = pty_mgr.kill(&pty_id);
     }

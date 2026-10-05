@@ -370,6 +370,7 @@ fn collect_parents(
 mod tests {
     use super::*;
     use notify::EventKind;
+    use std::path::PathBuf;
 
     #[test]
     fn drain_wait_debounces_then_caps_the_batch() {
@@ -382,7 +383,6 @@ mod tests {
         assert_eq!(drain_wait(ms(MAX_BATCH_MS)), None);
         assert_eq!(drain_wait(ms(MAX_BATCH_MS * 5)), None);
     }
-    use std::path::PathBuf;
 
     #[test]
     fn git_internal_detected() {
