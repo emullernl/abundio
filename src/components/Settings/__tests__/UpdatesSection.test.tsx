@@ -69,13 +69,14 @@ beforeEach(() => {
 	useUpdateStore.setState({
 		status: "idle",
 		info: null,
+		staged: null,
 		error: null,
 		lastCheckedAt: null,
 		notes: null,
 		notesStatus: "idle",
 		notesRefreshedFor: null,
 	});
-	status.mockResolvedValue({ state: "none", info: null });
+	status.mockResolvedValue({ staged: null, available: null });
 	releaseNotes.mockResolvedValue({ releases: [note("1.0.0")], hasMore: false });
 });
 
@@ -145,17 +146,58 @@ describe("UpdatesSection (issue #200)", () => {
 
 	it("refreshes the notes for a downloaded update too", async () => {
 		status.mockResolvedValue({
-			state: "ready",
-			info: {
+			staged: {
 				version: "1.1.0",
 				currentVersion: "1.0.0",
 				body: null,
 				date: null,
 			},
+			available: null,
 		});
+		check.mockResolvedValue(null);
 		await mount();
-		expect(check).not.toHaveBeenCalled();
 		expect(releaseNotes).toHaveBeenCalledWith(true);
+	});
+
+	// ADR-0014 addendum: a newer release may be out while one is downloaded.
+	it("checks on open even while an update is downloaded", async () => {
+		status.mockResolvedValue({
+			staged: {
+				version: "1.1.0",
+				currentVersion: "1.0.0",
+				body: null,
+				date: null,
+			},
+			available: null,
+		});
+		check.mockResolvedValue(null);
+		await mount();
+		expect(check).toHaveBeenCalledTimes(1);
+		expect(container.textContent).toContain("Update downloaded.");
+	});
+
+	it("offers the newer release and says the downloaded one installs on quit", async () => {
+		status.mockResolvedValue({
+			staged: {
+				version: "1.1.0",
+				currentVersion: "1.0.0",
+				body: null,
+				date: null,
+			},
+			available: {
+				version: "1.2.0",
+				currentVersion: "1.0.0",
+				body: null,
+				date: null,
+			},
+		});
+		check.mockResolvedValue(null);
+		await mount();
+		expect(container.textContent).toContain("Version 1.2.0 is available.");
+		expect(container.textContent).toContain(
+			"v1.1.0 is downloaded and will install when you quit.",
+		);
+		expect(container.textContent).toContain("Restart now");
 	});
 
 	it("shows a download in another window as a neutral line", async () => {

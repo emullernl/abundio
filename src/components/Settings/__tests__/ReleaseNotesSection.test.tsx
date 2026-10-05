@@ -8,7 +8,7 @@ vi.mock("../../../lib/ipc", () => ({
 	updates: {
 		releaseNotes: (refresh: boolean) => releaseNotes(refresh),
 		markVersionSeen: () => Promise.resolve(),
-		status: () => Promise.resolve({ state: "none", info: null }),
+		status: () => Promise.resolve({ staged: null, available: null }),
 	},
 }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: () => Promise.resolve() }));

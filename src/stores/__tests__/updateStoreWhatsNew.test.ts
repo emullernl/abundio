@@ -7,7 +7,7 @@ vi.mock("../../lib/ipc", () => ({
 	updates: {
 		releaseNotes: (refresh: boolean) => releaseNotes(refresh),
 		markVersionSeen: () => markVersionSeen(),
-		status: () => Promise.resolve({ state: "none", info: null }),
+		status: () => Promise.resolve({ staged: null, available: null }),
 	},
 }));
 vi.mock("../../lib/themes", () => ({

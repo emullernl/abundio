@@ -40,7 +40,13 @@ export type UpdateStatus =
 
 interface UpdateStoreState {
 	status: UpdateStatus;
+	/** The release on offer: the available one when there is one, else the
+	 *  staged one. */
 	info: UpdateInfo | null;
+	/** The release already downloaded and waiting to install on quit. Can sit
+	 *  beside a newer `info` (ADR-0014 addendum); the views then say it still
+	 *  installs on quit. */
+	staged: UpdateInfo | null;
 	downloaded: number;
 	total: number | null;
 	error: string | null;
@@ -59,8 +65,8 @@ interface UpdateStoreState {
 	/** When a `check` in this Window last settled (success or error), or null.
 	 *  Per-Window by design — the Settings window has its own store. */
 	lastCheckedAt: number | null;
-	/** Opening the Settings Updates section: adopt the Rust state, and if it
-	 *  holds nothing, check exactly as the button would. Ignores the
+	/** Opening the Settings Updates section: adopt the Rust state, then check
+	 *  — even when an update is held, since a newer release may be out. Ignores the
 	 *  "Automatically check for updates" toggle, which governs *background*
 	 *  checks only. Throttled by `OPEN_CHECK_THROTTLE_MS`. Issue #200. */
 	checkOnOpen: () => Promise<void>;
@@ -149,9 +155,15 @@ export function isDownloadingElsewhere(error: string | null): boolean {
 	return error?.includes(UPDATE_DOWNLOADING_CODE) ?? false;
 }
 
+/** A check started by `checkOnOpen` while an update is held. It leaves the
+ *  held update on screen rather than showing "Checking…", so it cannot use
+ *  `status` as its in-flight guard. */
+let quietCheckInFlight: Promise<void> | null = null;
+
 export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	status: "idle",
 	info: null,
+	staged: null,
 	downloaded: 0,
 	total: null,
 	error: null,
@@ -168,9 +180,18 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		const current = get().status;
 		if (current === "checking" || current === "downloading") return;
 		try {
-			const { state, info } = await updates.status();
-			if (state === "none" || !info) return;
-			if (respectSuppression && (isSkipped(info.version) || isSnoozed())) {
+			const { staged, available } = await updates.status();
+			const offered = available ?? staged;
+			if (!offered) {
+				// Rust holds nothing. An offer still on screen was dropped there —
+				// a later check found nothing newer, say because it was pulled.
+				const shown = get().status;
+				if (shown === "available" || shown === "ready") {
+					set({ status: "idle", info: null, staged: null });
+				}
+				return;
+			}
+			if (respectSuppression && (isSkipped(offered.version) || isSnoozed())) {
 				return;
 			}
 			// Re-read after the round-trip: a check or download may have started
@@ -180,8 +201,9 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 			const settled = get().status;
 			if (settled === "checking" || settled === "downloading") return;
 			set({
-				status: state === "ready" ? "ready" : "available",
-				info,
+				status: available ? "available" : "ready",
+				info: offered,
+				staged,
 				error: null,
 			});
 		} catch {
@@ -199,10 +221,17 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		try {
 			const info = await updates.check();
 			if (!info) {
-				set({
-					status: manual ? "uptodate" : "idle",
-					lastCheckedAt: Date.now(),
-				});
+				// Nothing newer than what is installed or already downloaded. A
+				// downloaded release is still the one to offer.
+				const { staged } = get();
+				set(
+					staged
+						? { status: "ready", info: staged, lastCheckedAt: Date.now() }
+						: {
+								status: manual ? "uptodate" : "idle",
+								lastCheckedAt: Date.now(),
+							},
+				);
 				return;
 			}
 			if (!manual && (isSkipped(info.version) || isSnoozed())) {
@@ -230,23 +259,41 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	lastCheckedAt: null,
 
 	checkOnOpen: async () => {
-		// Hydrate first: an update Rust already holds (found, or downloaded) is
-		// the answer, and checking again would only replace it with itself.
+		// Hydrate first, so an update Rust already holds is on screen at once.
 		await get().hydrate({ respectSuppression: false });
 		const { status, lastCheckedAt } = get();
-		if (
-			status === "available" ||
-			status === "ready" ||
-			status === "checking" ||
-			status === "downloading"
-		) {
-			return;
-		}
+		if (status === "checking" || status === "downloading") return;
+		if (quietCheckInFlight) return quietCheckInFlight;
 		if (
 			lastCheckedAt != null &&
 			Date.now() - lastCheckedAt < OPEN_CHECK_THROTTLE_MS
 		) {
 			return;
+		}
+		if (status === "available" || status === "ready") {
+			// Something is held, but a newer release may be out (the Update is
+			// the newest release — ADR-0014 addendum). Check without blanking
+			// the held update to "Checking…", then adopt whatever Rust now holds.
+			const run = async () => {
+				try {
+					await updates.check();
+					set({ lastCheckedAt: Date.now() });
+				} catch (err) {
+					// The held update is still the best answer. As in `check`, the
+					// download refusal is not a check and leaves the throttle clear.
+					if (!isDownloadingElsewhere(String(err))) {
+						set({ lastCheckedAt: Date.now() });
+					}
+					return;
+				}
+				await get().hydrate({ respectSuppression: false });
+				// Rust dropped what was held (the release was pulled): say so.
+				if (get().status === "idle") set({ status: "uptodate" });
+			};
+			quietCheckInFlight = run().finally(() => {
+				quietCheckInFlight = null;
+			});
+			return quietCheckInFlight;
 		}
 		// Manual semantics: a status display reports skipped and snoozed
 		// versions too, and says so when there is nothing new.
@@ -262,7 +309,8 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		set({ status: "downloading", downloaded: 0, total: null, error: null });
 		try {
 			await updates.download();
-			set({ status: "ready" });
+			// The new bundle replaces any older staged one, Rust-side too.
+			set({ status: "ready", staged: get().info });
 		} catch (err) {
 			set({ status: "error", error: String(err) });
 		}

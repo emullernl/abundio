@@ -378,7 +378,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "updater_check":
 			return null;
 		case "updater_status":
-			return { state: "none", info: null };
+			return { staged: null, available: null };
 		case "updater_release_notes":
 			return { releases: [fixtures.appReleaseNote], hasMore: false };
 		case "updater_mark_version_seen":

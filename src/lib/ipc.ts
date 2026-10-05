@@ -850,10 +850,13 @@ export interface UpdateInfo {
 /** A snapshot of the app-global updater state. Mirrors the Rust `UpdaterStatus`.
  *  Each Window has its own Zustand store but they all share one Rust
  *  `UpdaterState`, so a Window that didn't run the check/download itself needs
- *  this to learn an update is staged. */
+ *  this to learn an update is staged. Both can be set at once: an older
+ *  release downloaded and a newer one found since (ADR-0014 addendum). */
 export interface UpdaterStatus {
-	state: "none" | "available" | "ready";
-	info: UpdateInfo | null;
+	/** Downloaded, installs on quit. */
+	staged: UpdateInfo | null;
+	/** Found, not downloaded. Always newer than `staged`. */
+	available: UpdateInfo | null;
 }
 
 /** One published GitHub Release, reduced to what the app renders. Mirrors the
@@ -932,6 +935,12 @@ export const updates = {
 		listenToThisWindow<UpdateInfo>("update-available", (event) =>
 			callback(event.payload),
 		),
+
+	/** Fires (every Window) whenever what Rust holds — available or staged —
+	 *  changes. Payload-free: re-read with `status()`. Only the Settings window
+	 *  listens; the prompt is driven by `onUpdateAvailable`. */
+	onStateChanged: (callback: () => void): Promise<UnlistenFn> =>
+		listen("updater-state-changed", () => callback()),
 
 	/** Streams download progress while `download()` runs. */
 	onDownloadProgress: (

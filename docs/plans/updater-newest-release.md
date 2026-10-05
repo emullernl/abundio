@@ -60,8 +60,9 @@ Settled in a grilling session; recorded in `CONTEXT.md` (**Update**) and the ADR
   - `None` → `pending = None`; `staged` untouched (rule 8).
   - An error never reaches the helper, so it changes nothing.
   - Returns whether the held state changed.
-- Compare versions with `semver` (already pulled in by `tauri-plugin-updater`; add it as a
-  direct dependency) rather than as strings.
+- Compare versions with the module's existing `is_newer` (strict `major.minor.patch`, the only
+  form `scripts/release.sh` tags) rather than as strings. *Implemented this way instead of adding
+  `semver` as a dependency.*
 - `updater_check` returns `None` to the frontend when the result was dropped by rule 9, so a
   manual check says "up to date" rather than offering what is already downloaded.
 - `check_and_emit` emits `update-available` only when a newer release was stored, as today.
@@ -91,7 +92,7 @@ Settled in a grilling session; recorded in `CONTEXT.md` (**Update**) and the ADR
 ### 4. UI
 
 - `components/Settings/UpdatesSection.tsx`: when both are held, the main row offers `info` with
-  **Download**, and a smaller line below reads "v{staged} is downloaded and will install when
+  its existing **Install update** button (it downloads; install happens on quit), and a smaller line below reads "v{staged} is downloaded and will install when
   you quit." with **Restart now** (rule 3).
 - `components/UpdatePrompt.tsx`: in the `available` state, add the line "v{staged} will install
   on quit." when `staged` is set (rule 7). Snooze and skip are unchanged (rule 6).
