@@ -197,6 +197,32 @@ describe("updateStore", () => {
 		expect(s.staged?.version).toBe("1.4.0");
 	});
 
+	// The prompt's Window may not have seen a download that finished
+	// elsewhere, so it asks Rust which release is staged.
+	it("setAvailable adopts the staged release Rust holds", async () => {
+		useUpdateStore.setState({ staged: info("1.4.0") });
+		status.mockResolvedValueOnce({
+			staged: info("1.4.1"),
+			available: info("1.5.0"),
+		});
+		useUpdateStore.getState().setAvailable(info("1.5.0"));
+		await vi.waitFor(() =>
+			expect(useUpdateStore.getState().staged?.version).toBe("1.4.1"),
+		);
+	});
+
+	// A check swapped the offer for a newer release just before Install.
+	it("download records the release Rust downloaded, not the one shown", async () => {
+		useUpdateStore.setState({ status: "available", info: info("1.4.0") });
+		download.mockResolvedValueOnce(undefined);
+		status.mockResolvedValueOnce(stagedOnly("1.5.0"));
+		await useUpdateStore.getState().download();
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("ready");
+		expect(s.staged?.version).toBe("1.5.0");
+		expect(s.info?.version).toBe("1.5.0");
+	});
+
 	it("a check that finds nothing newer offers the downloaded release", async () => {
 		useUpdateStore.setState({ status: "error", staged: info("1.4.0") });
 		check.mockResolvedValueOnce(null);

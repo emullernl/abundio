@@ -172,6 +172,13 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 	setAvailable: (info) => {
 		if (isSkipped(info.version) || isSnoozed()) return;
 		set({ status: "available", info, dismissed: false, error: null });
+		// This Window's `staged` can be stale — a download may have finished in
+		// another Window, and only Settings hears `updater-state-changed`. Ask
+		// Rust, so the prompt names the release that really installs on quit.
+		Promise.resolve()
+			.then(() => updates.status())
+			.then(({ staged }) => set({ staged }))
+			.catch(() => {});
 	},
 
 	hydrate: async ({ respectSuppression = true } = {}) => {
@@ -309,8 +316,17 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		set({ status: "downloading", downloaded: 0, total: null, error: null });
 		try {
 			await updates.download();
-			// The new bundle replaces any older staged one, Rust-side too.
-			set({ status: "ready", staged: get().info });
+			// Record what Rust actually downloaded, not what was on screen: a
+			// check can replace the offered release just before Install is
+			// clicked (the quiet check in `checkOnOpen` leaves the button live).
+			// The new bundle replaces any older staged one.
+			let staged = get().info;
+			try {
+				staged = (await updates.status()).staged ?? staged;
+			} catch {
+				// Keep the on-screen release; better than no answer.
+			}
+			set({ status: "ready", info: staged, staged });
 		} catch (err) {
 			set({ status: "error", error: String(err) });
 		}
