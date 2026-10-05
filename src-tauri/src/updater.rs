@@ -440,6 +440,7 @@ struct Settled {
 /// outside the plugin, which would leave this untestable.
 fn settle_check<T>(
     pending: &mut Option<T>,
+    held_version: Option<&str>,
     found: Option<(T, &str)>,
     staged_version: Option<&str>,
 ) -> Settled {
@@ -450,7 +451,8 @@ fn settle_check<T>(
             *pending = Some(update);
             Settled {
                 stored: true,
-                changed: true,
+                // Re-finding the release already held is not a change.
+                changed: held_version != Some(version),
             }
         }
         _ => Settled {
@@ -466,8 +468,10 @@ fn settle_found(inner: &mut UpdaterInner, found: Option<Update>) -> (Option<Upda
     let info = found.as_ref().map(to_info);
     let version = found.as_ref().map(|u| u.version.clone());
     let staged_version = inner.staged.as_ref().map(|(u, _)| u.version.clone());
+    let held_version = inner.pending.as_ref().map(|u| u.version.clone());
     let settled = settle_check(
         &mut inner.pending,
+        held_version.as_deref(),
         found.zip(version.as_deref()),
         staged_version.as_deref(),
     );
@@ -794,7 +798,15 @@ pub async fn updater_install_now(
     app: AppHandle,
     state: State<'_, UpdaterState>,
 ) -> Result<(), AbundioError> {
-    let staged = state.inner.lock().unwrap().staged.take();
+    let staged = {
+        let mut inner = state.inner.lock().unwrap();
+        // Restarting mid-download would install the older staged bundle and
+        // abandon the newer one being fetched.
+        if inner.downloading {
+            return Err(AbundioError::UpdateDownloading);
+        }
+        inner.staged.take()
+    };
     let (update, bytes) =
         staged.ok_or_else(|| AbundioError::InvalidOperation("no staged update to install".into()))?;
     if let Err(e) = update.install(&bytes) {
@@ -899,7 +911,7 @@ mod tests {
     #[test]
     fn settle_stores_a_found_release_when_nothing_is_staged() {
         let mut pending = None;
-        let settled = settle_check(&mut pending, Some(("u", "2.1.3")), None);
+        let settled = settle_check(&mut pending, None, Some(("u", "2.1.3")), None);
         assert_eq!(settled, Settled { stored: true, changed: true });
         assert_eq!(pending, Some("u"));
     }
@@ -907,7 +919,7 @@ mod tests {
     #[test]
     fn settle_holds_a_newer_release_beside_an_older_staged_one() {
         let mut pending = None;
-        let settled = settle_check(&mut pending, Some(("new", "2.1.4")), Some("2.1.3"));
+        let settled = settle_check(&mut pending, None, Some(("new", "2.1.4")), Some("2.1.3"));
         assert_eq!(settled, Settled { stored: true, changed: true });
         assert_eq!(pending, Some("new"));
     }
@@ -915,7 +927,7 @@ mod tests {
     #[test]
     fn settle_replaces_an_older_available_release() {
         let mut pending = Some("old");
-        let settled = settle_check(&mut pending, Some(("new", "2.1.4")), None);
+        let settled = settle_check(&mut pending, Some("2.1.3"), Some(("new", "2.1.4")), None);
         assert!(settled.stored);
         assert_eq!(pending, Some("new"));
     }
@@ -924,12 +936,12 @@ mod tests {
     #[test]
     fn settle_drops_a_release_no_newer_than_the_staged_one() {
         let mut pending = Some("held");
-        let settled = settle_check(&mut pending, Some(("same", "2.1.3")), Some("2.1.3"));
+        let settled = settle_check(&mut pending, Some("2.1.4"), Some(("same", "2.1.3")), Some("2.1.3"));
         assert_eq!(settled, Settled { stored: false, changed: true });
         assert_eq!(pending, None);
 
         let mut pending: Option<&str> = None;
-        let settled = settle_check(&mut pending, Some(("older", "2.1.2")), Some("2.1.3"));
+        let settled = settle_check(&mut pending, None, Some(("older", "2.1.2")), Some("2.1.3"));
         assert_eq!(settled, Settled { stored: false, changed: false });
         assert_eq!(pending, None);
     }
@@ -939,15 +951,24 @@ mod tests {
     #[test]
     fn settle_clears_the_available_release_when_nothing_is_found() {
         let mut pending = Some("pulled");
-        let settled = settle_check::<&str>(&mut pending, None, Some("2.1.3"));
+        let settled = settle_check::<&str>(&mut pending, Some("2.1.4"), None, Some("2.1.3"));
         assert_eq!(settled, Settled { stored: false, changed: true });
         assert_eq!(pending, None);
+    }
+
+    /// Re-finding the held release (most background checks while one is on
+    /// offer) must not fire `updater-state-changed`.
+    #[test]
+    fn settle_reports_no_change_when_the_held_release_is_found_again() {
+        let mut pending = Some("first");
+        let settled = settle_check(&mut pending, Some("2.1.4"), Some(("again", "2.1.4")), None);
+        assert_eq!(settled, Settled { stored: true, changed: false });
     }
 
     #[test]
     fn settle_reports_no_change_when_nothing_was_held_or_found() {
         let mut pending: Option<&str> = None;
-        let settled = settle_check(&mut pending, None, None);
+        let settled = settle_check(&mut pending, None, None, None);
         assert_eq!(settled, Settled { stored: false, changed: false });
     }
 

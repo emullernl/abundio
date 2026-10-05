@@ -7,6 +7,7 @@ import {
 	useUpdateStore,
 } from "../../stores/updateStore";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { secondaryButtonClass } from "../PromptActions/fieldStyles";
 import { SectionLabel, ToggleRow } from "./primitives";
 import { ReleaseNotesSection } from "./ReleaseNotesSection";
 
@@ -247,17 +248,15 @@ export function UpdatesSection() {
 								v{olderStaged.version} is downloaded and will install when you
 								quit.
 							</div>
+							{/* Disabled while busy: restarting mid-download would install
+							    the older bundle and abandon the newer one. Rust refuses
+							    it too (`updater_install_now`). */}
 							<button
 								type="button"
 								onClick={() => setConfirmRestart(true)}
-								className="rounded-md transition-colors flex-shrink-0"
-								style={{
-									fontSize: 12,
-									padding: "5px 10px",
-									color: "var(--fg-primary)",
-									backgroundColor: "var(--bg-tertiary)",
-									border: "1px solid var(--border)",
-								}}
+								disabled={busy}
+								className={`${secondaryButtonClass} rounded-md flex-shrink-0`}
+								style={{ fontSize: 12, padding: "5px 10px" }}
 							>
 								Restart now
 							</button>

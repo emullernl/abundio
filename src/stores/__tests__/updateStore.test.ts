@@ -223,9 +223,20 @@ describe("updateStore", () => {
 		expect(s.info?.version).toBe("1.5.0");
 	});
 
+	// The download may have finished in another Window; Rust knows.
+	it("a check that finds nothing newer asks Rust what is downloaded", async () => {
+		check.mockResolvedValueOnce(null);
+		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
+		await useUpdateStore.getState().check({ manual: true });
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("ready");
+		expect(s.info?.version).toBe("1.4.0");
+	});
+
 	it("a check that finds nothing newer offers the downloaded release", async () => {
 		useUpdateStore.setState({ status: "error", staged: info("1.4.0") });
 		check.mockResolvedValueOnce(null);
+		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
 		await useUpdateStore.getState().check({ manual: true });
 		const s = useUpdateStore.getState();
 		expect(s.status).toBe("ready");
@@ -283,6 +294,27 @@ describe("updateStore.hydrate", () => {
 	it("respects a skipped version when suppression is on", async () => {
 		status.mockResolvedValueOnce(stagedOnly("1.4.0"));
 		useSettingsStore.setState({ skippedUpdateVersion: "1.4.0" });
+		await useUpdateStore.getState().hydrate({ respectSuppression: true });
+		expect(useUpdateStore.getState().status).toBe("idle");
+	});
+
+	// A skipped newer release must not hide a downloaded one that still
+	// installs on quit.
+	it("falls back to the staged release when only the newer one is skipped", async () => {
+		status.mockResolvedValueOnce({
+			staged: info("1.4.0"),
+			available: info("1.5.0"),
+		});
+		useSettingsStore.setState({ skippedUpdateVersion: "1.5.0" });
+		await useUpdateStore.getState().hydrate({ respectSuppression: true });
+		const s = useUpdateStore.getState();
+		expect(s.status).toBe("ready");
+		expect(s.info?.version).toBe("1.4.0");
+	});
+
+	it("shows nothing when the newer release is skipped and nothing is staged", async () => {
+		status.mockResolvedValueOnce(availableOnly("1.5.0"));
+		useSettingsStore.setState({ skippedUpdateVersion: "1.5.0" });
 		await useUpdateStore.getState().hydrate({ respectSuppression: true });
 		expect(useUpdateStore.getState().status).toBe("idle");
 	});

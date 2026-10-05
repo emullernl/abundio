@@ -187,9 +187,8 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 		const current = get().status;
 		if (current === "checking" || current === "downloading") return;
 		try {
-			const { staged, available } = await updates.status();
-			const offered = available ?? staged;
-			if (!offered) {
+			const { staged, available: found } = await updates.status();
+			if (!found && !staged) {
 				// Rust holds nothing. An offer still on screen was dropped there —
 				// a later check found nothing newer, say because it was pulled.
 				const shown = get().status;
@@ -198,9 +197,13 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 				}
 				return;
 			}
-			if (respectSuppression && (isSkipped(offered.version) || isSnoozed())) {
-				return;
-			}
+			const suppressed = (release: UpdateInfo) =>
+				respectSuppression && (isSkipped(release.version) || isSnoozed());
+			// A skipped newer release must not hide a downloaded one that is not:
+			// that one still installs on quit, so offer it as ready instead.
+			const available = found && !suppressed(found) ? found : null;
+			const offered = available ?? staged;
+			if (!offered || suppressed(offered)) return;
 			// Re-read after the round-trip: a check or download may have started
 			// while `status()` was in flight, and that is a more current truth
 			// than this snapshot. Guarding only before the await would let a
@@ -229,8 +232,14 @@ export const useUpdateStore = create<UpdateStoreState>((set, get) => ({
 			const info = await updates.check();
 			if (!info) {
 				// Nothing newer than what is installed or already downloaded. A
-				// downloaded release is still the one to offer.
-				const { staged } = get();
+				// downloaded release is still the one to offer — ask Rust which,
+				// since a download may have finished in another Window.
+				let { staged } = get();
+				try {
+					staged = (await updates.status()).staged;
+				} catch {
+					// Keep this Window's view.
+				}
 				set(
 					staged
 						? { status: "ready", info: staged, lastCheckedAt: Date.now() }

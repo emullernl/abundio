@@ -200,6 +200,34 @@ describe("UpdatesSection (issue #200)", () => {
 		expect(container.textContent).toContain("Restart now");
 	});
 
+	// Restarting mid-download would install the older bundle.
+	it("disables the older release's Restart now while the newer one downloads", async () => {
+		check.mockResolvedValue(null);
+		status.mockResolvedValue({ staged: null, available: null });
+		await mount();
+		await act(async () => {
+			useUpdateStore.setState({
+				status: "downloading",
+				info: {
+					version: "1.2.0",
+					currentVersion: "1.0.0",
+					body: null,
+					date: null,
+				},
+				staged: {
+					version: "1.1.0",
+					currentVersion: "1.0.0",
+					body: null,
+					date: null,
+				},
+			});
+		});
+		const restart = [...container.querySelectorAll("button")].find(
+			(b) => b.textContent === "Restart now",
+		);
+		expect(restart?.disabled).toBe(true);
+	});
+
 	it("shows a download in another window as a neutral line", async () => {
 		check.mockRejectedValue(
 			"E_UPDATE_DOWNLOADING: an update is already downloading",
