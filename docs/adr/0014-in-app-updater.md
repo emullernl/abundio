@@ -21,3 +21,20 @@ Releases stay **draft** in CI (`build.yml` keeps `releaseDraft: true`); clicking
 - The install at quit runs **on the main thread inside `applicationWillTerminate`** on the Dock-quit route, where AppKit is waiting on us. `install_inner` extracts the whole `.app` tarball, then `remove_dir_all`s the live bundle before renaming the new one in — a non-atomic window in which a watchdog kill would leave no app installed — and its `PermissionDenied` fallback blocks on an AppleScript admin prompt dispatched to a main thread that is already winding down. Both hazards pre-date this and also apply to the `quit-app` route; accepted deliberately rather than reimplementing the swap in a detached helper process, which remains the correct long-term shape.
 - `bundle.createUpdaterArtifacts` is enabled, so a local `pnpm tauri build` without `TAURI_SIGNING_PRIVATE_KEY` set will fail to sign — bundle builds are a CI/release concern.
 - "Honours the Automatically check for updates flag" is true of the **background loop only**. Opening the Settings **Updates section** runs a check whatever the flag says (issue #200): the page already contacts GitHub for release notes regardless, and without the check it could list a release in its notes while never offering it. That check is throttled to once per 5 minutes per Window, emits no `update-available`, and `updater_check` refuses it while a download is in flight. Not a bug.
+
+## Addendum: the Update is the newest release, and a downloaded one is kept until a newer one is downloaded
+
+The **Update** is the newest published release, not the first one found. A still-newer release that comes out while the app is running replaces the held *available* release. The one exception is a download in progress, which is left to finish.
+
+A **staged** (downloaded) release is not dropped when a newer one becomes *available*. It keeps its place, and still installs on quit, until the newer one finishes downloading and replaces it. So the updater can hold an older *staged* release and a newer *available* one at the same time, and `updater_status` reports both. Settings and the prompt card both show this: the newer release is offered for download, with a line saying the older one installs on quit.
+
+Rejected alternatives:
+
+- **Drop the staged release once a newer one is found.** A user who quits before downloading the newer one would get no update at all, although they had already accepted one.
+- **Download the newer release automatically.** The user agreed to install a particular version. Downloading another one without asking goes further than that.
+
+Other rules that follow from this:
+
+- A check that finds nothing newer than the running app (for example, a pulled release) drops a held *available* release. It never touches a *staged* one, and a failed check changes nothing.
+- A check result that is no newer than the staged release is never held as *available*.
+- Opening the Updates section checks even when an Update is held, still at most once every 5 minutes. An open Settings window re-reads the state whenever Rust's held state changes.
