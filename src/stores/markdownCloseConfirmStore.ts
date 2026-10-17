@@ -46,11 +46,17 @@ export async function confirmMarkdownWindowsClean(
 		return true;
 	}
 	if (dirty.length === 0) return true;
+	// A second request (the close button clicked again while the dialog is
+	// up) replaces the first; settle the first as cancelled, or its caller
+	// would wait forever.
+	useMarkdownCloseConfirmStore.getState().pending?.resolve(false);
 	return new Promise<boolean>((resolve) => {
 		useMarkdownCloseConfirmStore.setState({
 			pending: {
 				workspaceIds: [...workspaceIds],
-				fileNames: dirty.map((d) => d.filePath.split("/").pop() || d.filePath),
+				fileNames: dirty.map(
+					(d) => d.filePath.split(/[\\/]/).pop() || d.filePath,
+				),
 				labels: dirty.map((d) => d.label),
 				resolve,
 			},

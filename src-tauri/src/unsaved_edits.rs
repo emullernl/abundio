@@ -120,6 +120,10 @@ pub fn save_all_then_quit(app: &AppHandle<Wry>, quit: fn(&AppHandle<Wry>)) {
                 return;
             }
             if Instant::now() >= deadline {
+                // Staying open: let a later Cmd+Q ask again.
+                if let Some(flag) = app.try_state::<crate::profile_store::QuitConfirmInFlight>() {
+                    *flag.0.lock().unwrap() = false;
+                }
                 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
                 app.dialog()
                     .message(unsaved_quit_message(&unsaved_paths(&app), None)

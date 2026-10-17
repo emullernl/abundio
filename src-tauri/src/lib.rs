@@ -1163,20 +1163,23 @@ pub fn run() {
                             "Cancel".to_string(),
                         ))
                         .show_with_result(move |result| {
+                            // rfd may hand back Yes/No or the custom label,
+                            // depending on the platform.
+                            let save = matches!(result, MessageDialogResult::Yes)
+                                || matches!(&result, MessageDialogResult::Custom(s) if s == SAVE);
+                            if save {
+                                // The guard stays up while the saves land, so
+                                // a second Cmd+Q cannot stack another dialog;
+                                // `save_all_then_quit` lowers it if it gives up.
+                                unsaved_edits::save_all_then_quit(&app_handle, perform_quit);
+                                return;
+                            }
                             if let Some(flag) =
                                 app_handle.try_state::<profile_store::QuitConfirmInFlight>()
                             {
                                 *flag.0.lock().unwrap() = false;
                             }
-                            // rfd may hand back Yes/No or the custom label,
-                            // depending on the platform.
                             match result {
-                                MessageDialogResult::Yes => {
-                                    unsaved_edits::save_all_then_quit(&app_handle, perform_quit)
-                                }
-                                MessageDialogResult::Custom(ref s) if s == SAVE => {
-                                    unsaved_edits::save_all_then_quit(&app_handle, perform_quit)
-                                }
                                 MessageDialogResult::No => perform_quit(&app_handle),
                                 MessageDialogResult::Custom(ref s) if s == DISCARD => {
                                     perform_quit(&app_handle)

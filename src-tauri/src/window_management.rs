@@ -383,8 +383,6 @@ mod tests {
         assert_eq!(pick_one_profile_window(w).as_deref(), Some("window-b"));
     }
 
-    // Settings focused (the macOS menu bar is shared): it has no listener, so
-    // the event must go to a Profile window instead of being dropped.
     #[test]
     fn markdown_windows_are_not_profile_windows() {
         assert!(!is_profile_window_label(&crate::markdown_windows::new_label()));
@@ -393,6 +391,8 @@ mod tests {
         assert!(is_profile_window_label(&generate_window_label()));
     }
 
+    // Settings focused (the macOS menu bar is shared): it has no listener, so
+    // the event must go to a Profile window instead of being dropped.
     #[test]
     fn pick_skips_a_focused_settings_window() {
         let w = [("window-b", false), (SETTINGS_WINDOW_LABEL, true), ("main", false)];

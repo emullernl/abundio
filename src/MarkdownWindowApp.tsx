@@ -47,8 +47,9 @@ const BASE_FONT_SIZE = 14;
 // CodeEditor caches view state by this id. One editor per window.
 const EDITOR_ID = "markdown-window";
 
-const fileNameOf = (path: string) => path.split("/").pop() || path;
-const dirOf = (path: string) => path.replace(/\/[^/]*$/, "");
+// Either separator: Windows paths come back with backslashes.
+const fileNameOf = (path: string) => path.split(/[\\/]/).pop() || path;
+const dirOf = (path: string) => path.replace(/[\\/][^\\/]*$/, "");
 
 /**
  * Root of a **Markdown window** (label `md-<uuid>`): one markdown file of a

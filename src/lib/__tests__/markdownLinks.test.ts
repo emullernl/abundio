@@ -102,3 +102,17 @@ describe("scrollToFragment", () => {
 		expect(scrollToFragment(el, "missing")).toBe(false);
 	});
 });
+
+describe("classifyMarkdownLink on Windows paths", () => {
+	it("resolves a relative link against a backslash folder", () => {
+		expect(
+			classifyMarkdownLink("guide.md", "C:\\repo\\docs", "C:\\repo"),
+		).toEqual({ kind: "workspace-markdown", path: "C:/repo/docs/guide.md" });
+	});
+
+	it("still refuses a link that walks out of the Workspace", () => {
+		expect(
+			classifyMarkdownLink("../../secret.md", "C:\\repo\\docs", "C:\\repo"),
+		).toEqual({ kind: "ignore" });
+	});
+});

@@ -269,6 +269,16 @@ pub fn open_or_focus(
         let _ = existing.set_focus();
         return Ok(());
     }
+    build_window(app, row, meta, true)
+}
+
+/// Builds the row's window. `focus: false` opens it behind the current one.
+fn build_window(
+    app: &AppHandle<Wry>,
+    row: &MarkdownWindowRow,
+    meta: &WorkspaceMeta,
+    focus: bool,
+) -> Result<(), AbundioError> {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = WebviewWindowBuilder::new(
         app,
@@ -278,7 +288,8 @@ pub fn open_or_focus(
     .title(window_title(&row.file_path, &meta.name))
     .inner_size(880.0, 760.0)
     .min_inner_size(420.0, 320.0)
-    .resizable(true);
+    .resizable(true)
+    .focused(focus);
     #[cfg(target_os = "macos")]
     {
         builder = builder
@@ -495,7 +506,8 @@ pub async fn md_windows_restore(
     Ok(())
 }
 
-/// Restoring opens windows without stealing focus from an open one.
+/// Restoring opens windows without stealing focus: the user is working in the
+/// Profile window that just opened the Workspace.
 fn open_or_focus_unfocused(
     app: &AppHandle<Wry>,
     row: &MarkdownWindowRow,
@@ -504,7 +516,7 @@ fn open_or_focus_unfocused(
     if app.get_webview_window(&row.label).is_some() {
         return Ok(());
     }
-    open_or_focus(app, row, meta)
+    build_window(app, row, meta, false)
 }
 
 fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MarkdownWindowRow> {

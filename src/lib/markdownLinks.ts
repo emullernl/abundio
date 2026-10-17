@@ -51,10 +51,11 @@ export function classifyMarkdownLink(
 
 	const pathPart = safeDecode(raw.replace(/[?#].*$/, ""));
 	if (!pathPart) return { kind: "ignore" };
+	// Windows folders arrive with backslashes; compare in one spelling.
 	const path = normalizePosixPath(
-		pathPart.startsWith("/") ? pathPart : `${baseDir}/${pathPart}`,
+		pathPart.startsWith("/") ? pathPart : `${toPosix(baseDir)}/${pathPart}`,
 	);
-	if (!isMarkdownFile(path) || !isInside(path, workspaceRoot)) {
+	if (!isMarkdownFile(path) || !isInside(path, toPosix(workspaceRoot))) {
 		return { kind: "ignore" };
 	}
 	return { kind: "workspace-markdown", path };
@@ -64,6 +65,10 @@ function isInside(path: string, root: string): boolean {
 	const r = normalizePosixPath(root);
 	if (!r || r === "/") return path.startsWith("/");
 	return path.startsWith(`${r}/`);
+}
+
+function toPosix(p: string): string {
+	return p.replace(/\\/g, "/");
 }
 
 function safeDecode(s: string): string {
