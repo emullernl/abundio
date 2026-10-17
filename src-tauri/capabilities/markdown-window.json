@@ -1,0 +1,15 @@
+{
+  "identifier": "markdown-window",
+  "description": "Markdown windows (ADR-0046) render file content, so they get only the window, print and link-opening permissions they use: no shell execute, dialogs, notifications or clipboard plugin.",
+  "windows": ["md-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:webview:allow-print",
+    "shell:allow-open"
+  ]
+}

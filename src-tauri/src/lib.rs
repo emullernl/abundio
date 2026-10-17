@@ -38,7 +38,7 @@ pub mod unsaved_edits;
 
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Wry};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use profile_store::ProfileStore;
 use pty_manager::PtyManager;
@@ -1150,24 +1150,19 @@ pub fn run() {
                     let busy = window_management::describe_busy(&totals);
                     let busy = (totals.blocks_quit() && !busy.is_empty()).then_some(busy);
                     let message = unsaved_edits::unsaved_quit_message(&unsaved, busy.as_deref());
-                    const SAVE: &str = "Save and Quit";
-                    const DISCARD: &str = "Quit Without Saving";
                     let app_handle = app.clone();
                     app.dialog()
                         .message(message)
                         .title("Quit Abundio?")
                         .kind(MessageDialogKind::Warning)
                         .buttons(MessageDialogButtons::YesNoCancelCustom(
-                            SAVE.to_string(),
-                            DISCARD.to_string(),
+                            unsaved_edits::SAVE_AND_QUIT.to_string(),
+                            unsaved_edits::QUIT_WITHOUT_SAVING.to_string(),
                             "Cancel".to_string(),
                         ))
                         .show_with_result(move |result| {
-                            // rfd may hand back Yes/No or the custom label,
-                            // depending on the platform.
-                            let save = matches!(result, MessageDialogResult::Yes)
-                                || matches!(&result, MessageDialogResult::Custom(s) if s == SAVE);
-                            if save {
+                            let choice = unsaved_edits::quit_choice(&result);
+                            if choice == unsaved_edits::QuitChoice::Save {
                                 // The guard stays up while the saves land, so
                                 // a second Cmd+Q cannot stack another dialog;
                                 // `save_all_then_quit` lowers it if it gives up.
@@ -1179,12 +1174,8 @@ pub fn run() {
                             {
                                 *flag.0.lock().unwrap() = false;
                             }
-                            match result {
-                                MessageDialogResult::No => perform_quit(&app_handle),
-                                MessageDialogResult::Custom(ref s) if s == DISCARD => {
-                                    perform_quit(&app_handle)
-                                }
-                                _ => {}
+                            if choice == unsaved_edits::QuitChoice::Discard {
+                                perform_quit(&app_handle);
                             }
                         });
                     return;

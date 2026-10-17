@@ -99,6 +99,46 @@ pub fn validate_markdown_path(root_folder: &str, file_path: &str) -> Result<Path
     Ok(path)
 }
 
+/// What restoring should do with a remembered row.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RestoreCheck {
+    /// The file is there: reopen it. Carries the canonical path.
+    Reopen(String),
+    /// The file is gone, or is no longer a markdown file inside the folder:
+    /// forget the window, quietly.
+    Forget,
+    /// The Workspace folder cannot be reached, or the file cannot be read for
+    /// some other reason (an unmounted drive, permissions). Keep the row and
+    /// try again next time: the user never closed this window.
+    Keep,
+}
+
+/// Decides a remembered row's fate. Only a file that is *known* to be gone
+/// forgets the window; any doubt keeps it.
+pub fn check_restore(root_folder: &str, file_path: &str) -> RestoreCheck {
+    let Ok(root) = Path::new(root_folder).canonicalize() else {
+        return RestoreCheck::Keep;
+    };
+    match Path::new(file_path).canonicalize() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => RestoreCheck::Forget,
+        Err(_) => RestoreCheck::Keep,
+        Ok(path) if path.starts_with(&root) && path.is_file() && is_markdown_path(&path) => {
+            RestoreCheck::Reopen(path.to_string_lossy().into_owned())
+        }
+        Ok(_) => RestoreCheck::Forget,
+    }
+}
+
+/// A path in the platform's own separators, the spelling the file watcher
+/// reports. A link resolved in the frontend arrives with `/` even on Windows.
+pub fn native_spelling(path: &str) -> String {
+    Path::new(path)
+        .components()
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Same rule as `isMarkdownFile` in the frontend: `.md` or `.mdx`.
 fn is_markdown_path(path: &Path) -> bool {
     path.extension()
@@ -178,26 +218,43 @@ impl MarkdownWindowStore {
 
     /// The row for this file, created if missing. One window per file: a
     /// second open of the same file finds the first row and so the same label.
+    ///
+    /// Keyed by `canonical_path`, so every spelling of one file (separators,
+    /// symlinked folders, case on a case-insensitive disk) finds the same row.
+    /// `file_path` is kept as the first opener spelled it.
     pub fn upsert(
         &self,
         workspace_id: &str,
         file_path: &str,
+        canonical_path: &str,
     ) -> Result<MarkdownWindowRow, AbundioError> {
         let conn = self.conn.lock().unwrap();
         // `INSERT OR IGNORE` then read back, under one lock, so two opens of the
         // same file can never mint two labels.
         conn.execute(
-            "INSERT OR IGNORE INTO markdown_windows (workspace_id, file_path, label)
-             VALUES (?1, ?2, ?3)",
-            params![workspace_id, file_path, new_label()],
+            "INSERT OR IGNORE INTO markdown_windows
+               (workspace_id, file_path, canonical_path, label)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![workspace_id, file_path, canonical_path, new_label()],
         )?;
         let row = conn.query_row(
             "SELECT workspace_id, file_path, label, view FROM markdown_windows
-             WHERE workspace_id = ?1 AND file_path = ?2",
-            params![workspace_id, file_path],
+             WHERE workspace_id = ?1 AND canonical_path = ?2",
+            params![workspace_id, canonical_path],
             read_row,
         )?;
         Ok(row)
+    }
+
+    /// Records a row's canonical path. `false` when another row of the same
+    /// Workspace already has it: this row is a duplicate spelling of that file.
+    pub fn set_canonical(&self, label: &str, canonical_path: &str) -> Result<bool, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE OR IGNORE markdown_windows SET canonical_path = ?1 WHERE label = ?2",
+            params![canonical_path, label],
+        )?;
+        Ok(changed > 0)
     }
 
     pub fn find_by_label(&self, label: &str) -> Result<Option<MarkdownWindowRow>, AbundioError> {
@@ -384,10 +441,16 @@ pub async fn md_window_open(
     let meta = store
         .workspace_meta(&workspace_id)?
         .ok_or_else(|| AbundioError::NotFound(format!("workspace {workspace_id}")))?;
-    validate_markdown_path(&meta.root_folder, &file_path)?;
-    // The row keeps the path as the frontend spelled it, so it matches what
-    // the explorer and File panes call the same file.
-    let row = store.upsert(&workspace_id, &file_path)?;
+    let canonical = validate_markdown_path(&meta.root_folder, &file_path)?;
+    // Keyed by the canonical path, so a link and the explorer, which spell
+    // one file differently, share one window. The shown path keeps the
+    // caller's spelling in native separators, which is what the explorer,
+    // File panes and the file watcher use.
+    let row = store.upsert(
+        &workspace_id,
+        &native_spelling(&file_path),
+        &canonical.to_string_lossy(),
+    )?;
     open_or_focus(&app, &row, &meta)
 }
 
@@ -448,18 +511,32 @@ pub async fn md_windows_dirty(
     store: State<'_, MarkdownWindowStore>,
     workspace_ids: Vec<String>,
 ) -> Result<Vec<DirtyMarkdownWindow>, AbundioError> {
-    let mut out = Vec::new();
+    let mut rows = Vec::new();
     for id in &workspace_ids {
-        for row in store.list_for_workspace(id)? {
-            if store.is_dirty(&row.label) && app.get_webview_window(&row.label).is_some() {
-                out.push(DirtyMarkdownWindow {
-                    label: row.label,
-                    file_path: row.file_path,
-                });
-            }
-        }
+        rows.extend(store.list_for_workspace(id)?);
     }
-    Ok(out)
+    Ok(dirty_windows(
+        rows,
+        |l| store.is_dirty(l),
+        |l| app.get_webview_window(l).is_some(),
+    ))
+}
+
+/// The rows whose window is open and has unsaved edits. A dirty flag can
+/// outlive its window by a moment (it is cleared on `Destroyed`), so both are
+/// required.
+pub fn dirty_windows(
+    rows: Vec<MarkdownWindowRow>,
+    is_dirty: impl Fn(&str) -> bool,
+    is_open: impl Fn(&str) -> bool,
+) -> Vec<DirtyMarkdownWindow> {
+    rows.into_iter()
+        .filter(|r| is_dirty(&r.label) && is_open(&r.label))
+        .map(|r| DirtyMarkdownWindow {
+            label: r.label,
+            file_path: r.file_path,
+        })
+        .collect()
 }
 
 /// Asks these windows to save. Each answers by reporting itself clean.
@@ -495,9 +572,20 @@ pub async fn md_windows_restore(
         return Ok(());
     };
     for row in store.list_for_workspace(&workspace_id)? {
-        if validate_markdown_path(&meta.root_folder, &row.file_path).is_err() {
-            store.delete_by_label(&row.label)?;
-            continue;
+        match check_restore(&meta.root_folder, &row.file_path) {
+            RestoreCheck::Keep => continue,
+            RestoreCheck::Forget => {
+                store.delete_by_label(&row.label)?;
+                continue;
+            }
+            RestoreCheck::Reopen(canonical) => {
+                // A row from before the canonical key may duplicate another
+                // spelling of the same file; keep only the first.
+                if !store.set_canonical(&row.label, &canonical)? {
+                    store.delete_by_label(&row.label)?;
+                    continue;
+                }
+            }
         }
         if let Err(e) = open_or_focus_unfocused(&app, &row, &meta) {
             eprintln!("[abundio] reopen markdown window {}: {e}", row.label);
@@ -549,7 +637,7 @@ mod tests {
     #[test]
     fn upsert_creates_a_rendered_row_with_an_md_label() {
         let s = store_with(&["w1"]);
-        let row = s.upsert("w1", "/tmp/README.md").unwrap();
+        let row = s.upsert("w1", "/tmp/README.md", "/tmp/README.md").unwrap();
         assert!(row.label.starts_with(MARKDOWN_WINDOW_PREFIX));
         assert_eq!(row.view, MarkdownView::Rendered);
         assert_eq!(row.file_path, "/tmp/README.md");
@@ -558,8 +646,8 @@ mod tests {
     #[test]
     fn upsert_twice_returns_the_same_label() {
         let s = store_with(&["w1"]);
-        let a = s.upsert("w1", "/tmp/a.md").unwrap();
-        let b = s.upsert("w1", "/tmp/a.md").unwrap();
+        let a = s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
+        let b = s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
         assert_eq!(a.label, b.label);
         assert_eq!(s.list_for_workspace("w1").unwrap().len(), 1);
     }
@@ -567,17 +655,17 @@ mod tests {
     #[test]
     fn the_same_file_in_two_workspaces_is_two_windows() {
         let s = store_with(&["w1", "w2"]);
-        let a = s.upsert("w1", "/tmp/a.md").unwrap();
-        let b = s.upsert("w2", "/tmp/a.md").unwrap();
+        let a = s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
+        let b = s.upsert("w2", "/tmp/a.md", "/tmp/a.md").unwrap();
         assert_ne!(a.label, b.label);
     }
 
     #[test]
     fn set_view_is_kept() {
         let s = store_with(&["w1"]);
-        let row = s.upsert("w1", "/tmp/a.md").unwrap();
+        let row = s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
         s.set_view(&row.label, MarkdownView::Source).unwrap();
-        let again = s.upsert("w1", "/tmp/a.md").unwrap();
+        let again = s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
         assert_eq!(again.view, MarkdownView::Source);
         assert_eq!(
             s.find_by_label(&row.label).unwrap().unwrap().view,
@@ -588,7 +676,7 @@ mod tests {
     #[test]
     fn delete_by_label_forgets_and_is_idempotent() {
         let s = store_with(&["w1"]);
-        let row = s.upsert("w1", "/tmp/a.md").unwrap();
+        let row = s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
         s.delete_by_label(&row.label).unwrap();
         s.delete_by_label(&row.label).unwrap();
         assert!(s.find_by_label(&row.label).unwrap().is_none());
@@ -597,8 +685,8 @@ mod tests {
     #[test]
     fn deleting_the_workspace_deletes_its_rows() {
         let s = store_with(&["w1", "w2"]);
-        s.upsert("w1", "/tmp/a.md").unwrap();
-        s.upsert("w2", "/tmp/b.md").unwrap();
+        s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
+        s.upsert("w2", "/tmp/b.md", "/tmp/b.md").unwrap();
         s.conn
             .lock()
             .unwrap()
@@ -635,7 +723,7 @@ mod tests {
         let s = store_with(&["w1"]);
         let meta = s.workspace_meta("w1").unwrap().unwrap();
         assert_eq!(meta.root_folder, "/tmp");
-        let row = s.upsert("w1", "/tmp/a.md").unwrap();
+        let row = s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
         assert_eq!(s.labels_for_profile(&meta.profile_id).unwrap(), vec![row.label]);
         assert!(s.labels_for_profile("nobody").unwrap().is_empty());
         assert!(s.workspace_meta("missing").unwrap().is_none());
@@ -671,5 +759,95 @@ mod tests {
     #[test]
     fn title_names_the_file_and_workspace() {
         assert_eq!(window_title("/repo/docs/README.md", "Repo"), "README.md — Repo");
+    }
+    #[test]
+    fn two_spellings_of_one_file_share_a_row() {
+        let s = store_with(&["w1"]);
+        let a = s.upsert("w1", "C:\\repo\\a.md", "/canon/a.md").unwrap();
+        let b = s.upsert("w1", "C:/repo/a.md", "/canon/a.md").unwrap();
+        assert_eq!(a.label, b.label);
+        // The first opener's spelling is kept.
+        assert_eq!(b.file_path, "C:\\repo\\a.md");
+    }
+
+    #[test]
+    fn set_canonical_refuses_a_duplicate() {
+        let s = store_with(&["w1"]);
+        let a = s.upsert("w1", "/tmp/a.md", "/canon/a.md").unwrap();
+        let b = s.upsert("w1", "/tmp/link/a.md", "/tmp/link/a.md").unwrap();
+        assert!(s.set_canonical(&a.label, "/canon/a.md").unwrap());
+        assert!(!s.set_canonical(&b.label, "/canon/a.md").unwrap());
+    }
+
+    #[test]
+    fn restore_reopens_a_markdown_file_inside_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("README.md");
+        std::fs::write(&file, "# hi").unwrap();
+        let check = check_restore(dir.path().to_str().unwrap(), file.to_str().unwrap());
+        let canonical = file.canonicalize().unwrap();
+        assert_eq!(check, RestoreCheck::Reopen(canonical.to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn restore_forgets_a_deleted_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone.md");
+        assert_eq!(
+            check_restore(dir.path().to_str().unwrap(), gone.to_str().unwrap()),
+            RestoreCheck::Forget
+        );
+    }
+
+    #[test]
+    fn restore_keeps_the_row_when_the_folder_is_unreachable() {
+        // An unmounted drive or network share: the root itself is missing.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("unmounted");
+        let file = root.join("README.md");
+        assert_eq!(
+            check_restore(root.to_str().unwrap(), file.to_str().unwrap()),
+            RestoreCheck::Keep
+        );
+    }
+
+    #[test]
+    fn restore_forgets_a_file_that_is_no_longer_markdown_or_inside() {
+        let dir = tempfile::tempdir().unwrap();
+        let inner = dir.path().join("ws");
+        std::fs::create_dir(&inner).unwrap();
+        let outside = dir.path().join("x.md");
+        std::fs::write(&outside, "x").unwrap();
+        let folder = inner.join("notes.md");
+        std::fs::create_dir(&folder).unwrap();
+        let root = inner.to_str().unwrap();
+        assert_eq!(
+            check_restore(root, inner.join("../x.md").to_str().unwrap()),
+            RestoreCheck::Forget
+        );
+        assert_eq!(check_restore(root, folder.to_str().unwrap()), RestoreCheck::Forget);
+    }
+
+    #[test]
+    fn native_spelling_drops_doubled_separators() {
+        assert_eq!(native_spelling("/repo//docs/./a.md"), "/repo/docs/a.md");
+    }
+
+    #[test]
+    fn dirty_windows_needs_both_dirty_and_open() {
+        let row = |label: &str| MarkdownWindowRow {
+            workspace_id: "w1".into(),
+            file_path: format!("/r/{label}.md"),
+            label: label.into(),
+            view: MarkdownView::Rendered,
+        };
+        let out = dirty_windows(
+            vec![row("md-a"), row("md-b"), row("md-c")],
+            |l| l != "md-c",
+            |l| l != "md-b",
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].label, "md-a");
+        assert_eq!(out[0].file_path, "/r/md-a.md");
     }
 }

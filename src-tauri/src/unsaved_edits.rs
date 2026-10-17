@@ -26,6 +26,31 @@ pub const SAVE_ALL_BEFORE_QUIT: &str = "save-all-before-quit";
 const SAVE_TIMEOUT: Duration = Duration::from_secs(8);
 const SAVE_POLL: Duration = Duration::from_millis(100);
 
+/// The quit dialog's buttons when something is unsaved.
+pub const SAVE_AND_QUIT: &str = "Save and Quit";
+pub const QUIT_WITHOUT_SAVING: &str = "Quit Without Saving";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
+/// Reads the quit dialog's answer. Depending on the platform, rfd hands back
+/// either `Yes`/`No` or the custom button label; anything else (Escape, the
+/// window's close button) is Cancel, the safe direction.
+pub fn quit_choice(result: &tauri_plugin_dialog::MessageDialogResult) -> QuitChoice {
+    use tauri_plugin_dialog::MessageDialogResult as R;
+    match result {
+        R::Yes => QuitChoice::Save,
+        R::Custom(s) if s == SAVE_AND_QUIT => QuitChoice::Save,
+        R::No => QuitChoice::Discard,
+        R::Custom(s) if s == QUIT_WITHOUT_SAVING => QuitChoice::Discard,
+        _ => QuitChoice::Cancel,
+    }
+}
+
 /// Window label → paths of that Window's unsaved File panes.
 #[derive(Default)]
 pub struct UnsavedFilesState(pub Mutex<HashMap<String, Vec<String>>>);
@@ -199,5 +224,19 @@ mod tests {
         assert_eq!(s.all(), p(&["/b"]));
         s.remove_for_window("window-2");
         assert!(s.all().is_empty());
+    }
+    #[test]
+    fn quit_choice_reads_both_answer_shapes() {
+        use tauri_plugin_dialog::MessageDialogResult as R;
+        assert_eq!(quit_choice(&R::Yes), QuitChoice::Save);
+        assert_eq!(quit_choice(&R::Custom(SAVE_AND_QUIT.into())), QuitChoice::Save);
+        assert_eq!(quit_choice(&R::No), QuitChoice::Discard);
+        assert_eq!(
+            quit_choice(&R::Custom(QUIT_WITHOUT_SAVING.into())),
+            QuitChoice::Discard
+        );
+        assert_eq!(quit_choice(&R::Cancel), QuitChoice::Cancel);
+        assert_eq!(quit_choice(&R::Custom("Cancel".into())), QuitChoice::Cancel);
+        assert_eq!(quit_choice(&R::Ok), QuitChoice::Cancel);
     }
 }

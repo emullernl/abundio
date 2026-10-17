@@ -58,6 +58,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "016_add_markdown_windows",
         include_str!("../migrations/016_add_markdown_windows.sql"),
     ),
+    (
+        "017_markdown_windows_canonical_key",
+        include_str!("../migrations/017_markdown_windows_canonical_key.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
