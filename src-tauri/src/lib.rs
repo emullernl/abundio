@@ -12,6 +12,7 @@ pub mod error;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
+pub mod markdown_windows;
 pub mod gh_commands;
 pub mod git_commands;
 pub mod git_libgit2;

@@ -58,7 +58,7 @@ These were settled in a grilling session. The terms are in `GLOSSARY.md` (**Wind
 
 ```sql
 CREATE TABLE markdown_windows (
-    workspace_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     file_path    TEXT NOT NULL,
     label        TEXT NOT NULL UNIQUE,   -- md-<uuid>, stable across reopen
     view         TEXT NOT NULL DEFAULT 'rendered', -- 'rendered' | 'source'

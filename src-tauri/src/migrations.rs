@@ -54,6 +54,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "015_add_prompt_actions",
         include_str!("../migrations/015_add_prompt_actions.sql"),
     ),
+    (
+        "016_add_markdown_windows",
+        include_str!("../migrations/016_add_markdown_windows.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
