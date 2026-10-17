@@ -34,10 +34,11 @@ pub mod workspace_store;
 pub mod worktree_commands;
 pub mod worktree_watcher;
 pub mod shell_env;
+pub mod unsaved_edits;
 
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Wry};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 
 use profile_store::ProfileStore;
 use pty_manager::PtyManager;
@@ -811,6 +812,7 @@ pub fn run() {
             // Per-window Opened-workspace counts (pushed by the frontend),
             // summed at quit time to drive the quit confirmation. See ADR-0016.
             app.manage(profile_store::BusyCountsState::default());
+            app.manage(unsaved_edits::UnsavedFilesState::default());
             // Guards against stacking quit-confirmation dialogs on a repeated
             // Cmd+Q (the native dialog is non-blocking). See ADR-0016.
             app.manage(profile_store::QuitConfirmInFlight::default());
@@ -1046,6 +1048,13 @@ pub fn run() {
                 if let Some(pm) = app_handle.try_state::<PtyManager>() {
                     pm.kill_for_window(&label);
                 }
+                // Same for its unsaved File panes: a closed Window's edits
+                // were already asked about (or discarded) by its own close.
+                if let Some(unsaved) =
+                    app_handle.try_state::<unsaved_edits::UnsavedFilesState>()
+                {
+                    unsaved.remove_for_window(&label);
+                }
                 // Drop this window's busy tally so it can't inflate the
                 // quit-time total. See ADR-0034.
                 if let Some(counts) =
@@ -1122,6 +1131,62 @@ pub fn run() {
                     .try_state::<profile_store::BusyCountsState>()
                     .map(|s| s.total())
                     .unwrap_or_default();
+
+                // Unsaved edits come first, and get three answers: they can be
+                // saved, which busy work cannot. Busy work, if any, is named
+                // in the same dialog so there is only ever one. File panes
+                // and Markdown windows (ADR-0046) both count.
+                let unsaved = unsaved_edits::unsaved_paths(app);
+                if !unsaved.is_empty() {
+                    if let Some(flag) =
+                        app.try_state::<profile_store::QuitConfirmInFlight>()
+                    {
+                        let mut in_flight = flag.0.lock().unwrap();
+                        if *in_flight {
+                            return;
+                        }
+                        *in_flight = true;
+                    }
+                    let busy = window_management::describe_busy(&totals);
+                    let busy = (totals.blocks_quit() && !busy.is_empty()).then_some(busy);
+                    let message = unsaved_edits::unsaved_quit_message(&unsaved, busy.as_deref());
+                    const SAVE: &str = "Save and Quit";
+                    const DISCARD: &str = "Quit Without Saving";
+                    let app_handle = app.clone();
+                    app.dialog()
+                        .message(message)
+                        .title("Quit Abundio?")
+                        .kind(MessageDialogKind::Warning)
+                        .buttons(MessageDialogButtons::YesNoCancelCustom(
+                            SAVE.to_string(),
+                            DISCARD.to_string(),
+                            "Cancel".to_string(),
+                        ))
+                        .show_with_result(move |result| {
+                            if let Some(flag) =
+                                app_handle.try_state::<profile_store::QuitConfirmInFlight>()
+                            {
+                                *flag.0.lock().unwrap() = false;
+                            }
+                            // rfd may hand back Yes/No or the custom label,
+                            // depending on the platform.
+                            match result {
+                                MessageDialogResult::Yes => {
+                                    unsaved_edits::save_all_then_quit(&app_handle, perform_quit)
+                                }
+                                MessageDialogResult::Custom(ref s) if s == SAVE => {
+                                    unsaved_edits::save_all_then_quit(&app_handle, perform_quit)
+                                }
+                                MessageDialogResult::No => perform_quit(&app_handle),
+                                MessageDialogResult::Custom(ref s) if s == DISCARD => {
+                                    perform_quit(&app_handle)
+                                }
+                                _ => {}
+                            }
+                        });
+                    return;
+                }
+
                 if totals.blocks_quit() {
                     // The native dialog is non-blocking, so a second Cmd+Q while
                     // it's open would re-enter here and stack another dialog.
@@ -1272,6 +1337,7 @@ pub fn run() {
             commands::set_active_profile_id,
             commands::set_settings_accelerator,
             commands::report_busy_counts,
+            unsaved_edits::report_unsaved_files,
             commands::get_active_profile_for_window,
             commands::get_profile_ownership_map,
             commands::open_window_with_profile,

@@ -87,6 +87,7 @@ import {
 	pasteIntoTerminal,
 } from "./lib/terminalClipboard";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
+import { unsavedFilePaths } from "./lib/unsavedFiles";
 import { cycleOpenedWorkspace } from "./lib/workspaceCycle";
 import {
 	addWorktreeTargetId,
@@ -727,6 +728,36 @@ export function App() {
 		return usePtyActivityStore.subscribe((state) => {
 			report(busyCounts(state.activities));
 		});
+	}, []);
+
+	// Mirror this Window's unsaved File panes into Rust for the quit
+	// confirmation, and answer its Save and Quit by saving all of them.
+	useEffect(() => {
+		let last = "";
+		const report = (paths: string[]) => {
+			const key = paths.join("\n");
+			if (key === last) return;
+			last = key;
+			windowSession.reportUnsavedFiles(paths).catch(() => {});
+		};
+		report(unsavedFilePaths(useExplorerStore.getState().filePanes));
+		const unsubscribe = useExplorerStore.subscribe((state) => {
+			report(unsavedFilePaths(state.filePanes));
+		});
+		const unlisten = windowSession.onSaveAllBeforeQuit(() => {
+			const explorer = useExplorerStore.getState();
+			for (const [paneId, pane] of Object.entries(explorer.filePanes)) {
+				if (pane.isDirty) {
+					explorer.saveFile(paneId).catch((e) => {
+						console.error("[quit] save failed:", e);
+					});
+				}
+			}
+		});
+		return () => {
+			unsubscribe();
+			unlisten.then((fn) => fn()).catch(() => {});
+		};
 	}, []);
 
 	// Settings menu is now handled entirely in Rust — it opens the singleton

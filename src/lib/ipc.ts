@@ -260,6 +260,17 @@ export const windowSession = {
 		commands: number;
 	}) => invoke<void>("report_busy_counts", { counts }),
 
+	/** Report the paths of this Window's unsaved File panes, so the quit
+	 *  confirmation can offer Save and Quit across every Window. Sent only
+	 *  when the list changes. */
+	reportUnsavedFiles: (paths: string[]) =>
+		invoke<void>("report_unsaved_files", { paths }),
+
+	/** Save and Quit: Rust asks this Window to save every unsaved File pane.
+	 *  Aimed at one Window, so heard on this webview. */
+	onSaveAllBeforeQuit: (callback: () => void) =>
+		listenToThisWindow<void>("save-all-before-quit", () => callback()),
+
 	/** Bring another Window to the front — used when the Profile asked for is
 	 *  already open there (ADR-0007). */
 	focus: (label: string) => invoke<void>("focus_window", { label }),

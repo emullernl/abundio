@@ -199,11 +199,15 @@ Find over the rendered view goes in `lib/renderedFind.ts`: walk the text nodes a
 - **No new view-toggle action.** In a Markdown window the existing **Toggle markdown preview**
   chord switches between Rendered and Source; **Close tab** closes the window. Only
   `open-markdown-window` is new (no default chord).
-- **App quit does not ask about unsaved edits.** Checked first, as planned: the quit path
-  (`perform_quit` / Dock quit) destroys Windows without a close request, and today it does not
-  ask about unsaved **File panes** either. Markdown windows behave the same way. Closing a single
-  Window, closing a Workspace and switching Profile do ask. Asking on quit would need a native
-  dialog in Rust, like the busy-work quit confirm (ADR-0034), and would cover File panes too.
+- **App quit asks about unsaved edits, for File panes too.** Checked first, as planned: quit
+  destroys Windows without a close request, so before this branch it asked about nothing unsaved.
+  Now every Profile window mirrors its unsaved File pane paths into Rust
+  (`report_unsaved_files`), Markdown windows already report theirs, and Cmd+Q / Quit Abundio
+  shows a native **Save and Quit / Quit Without Saving / Cancel** dialog (`unsaved_edits.rs`).
+  Busy work, if any, is named in the same dialog. Save and Quit asks every Window to save and
+  quits once nothing is unsaved; if a save has not landed after 8 seconds, Abundio stays open
+  and says which files it could not save. Like the busy-work confirm (ADR-0034), this gates the
+  menu Quit only: Dock Quit and OS shutdown reach Rust after the Windows are gone.
 - **Preview pane links.** The shared renderer gave the Preview pane link handling too. A markdown
   link there opens the file in a Tab (the Preview pane lives in the Workspace view); in a
   Markdown window it opens that file's Markdown window.
