@@ -17,11 +17,20 @@ interface Pending {
 
 interface MarkdownCloseConfirmState {
 	pending: Pending | null;
+	/** File names a Save could not save. Shown as a notice; the close that
+	 *  asked for the save did not happen. */
+	saveFailed: string[] | null;
 }
 
 export const useMarkdownCloseConfirmStore = create<MarkdownCloseConfirmState>(
-	() => ({ pending: null }),
+	() => ({ pending: null, saveFailed: null }),
 );
+
+export function dismissMarkdownSaveFailed(): void {
+	useMarkdownCloseConfirmStore.setState({ saveFailed: null });
+}
+
+const nameOf = (path: string) => path.split(/[\\/]/).pop() || path;
 
 /** How long "Save" waits for every window to report itself saved. */
 const SAVE_TIMEOUT_MS = 5000;
@@ -54,9 +63,7 @@ export async function confirmMarkdownWindowsClean(
 		useMarkdownCloseConfirmStore.setState({
 			pending: {
 				workspaceIds: [...workspaceIds],
-				fileNames: dirty.map(
-					(d) => d.filePath.split(/[\\/]/).pop() || d.filePath,
-				),
+				fileNames: dirty.map((d) => nameOf(d.filePath)),
 				labels: dirty.map((d) => d.label),
 				resolve,
 			},
@@ -82,11 +89,35 @@ export async function resolveMarkdownClose(
 			SAVE_TIMEOUT_MS,
 			SAVE_POLL_MS,
 		);
+		if (!saved) await reportSaveFailed(pending);
 		pending.resolve(saved);
 	} catch (e) {
 		console.error("[markdownCloseConfirm] save failed:", e);
+		await reportSaveFailed(pending);
 		pending.resolve(false);
 	}
+}
+
+/** Names the windows that are still unsaved; falls back to every window the
+ *  save was asked of when Rust cannot be asked. */
+async function reportSaveFailed(pending: Pending): Promise<void> {
+	let names = pending.fileNames;
+	try {
+		const still = await markdownWindows.dirty(pending.workspaceIds);
+		const failed = still.filter((d) => pending.labels.includes(d.label));
+		if (failed.length > 0) names = failed.map((d) => nameOf(d.filePath));
+	} catch {
+		// Keep the full list.
+	}
+	useMarkdownCloseConfirmStore.setState({ saveFailed: names });
+}
+
+/** The notice shown when Save did not land: what failed, and that nothing
+ *  was closed. */
+export function saveFailedMessage(names: readonly string[]): string {
+	const where =
+		names.length === 1 ? "its Markdown window" : "their Markdown windows";
+	return `Abundio could not save ${describeFiles(names)}, so nothing was closed. Your edits are still in ${where}. Check that the file can be written, then try again.`;
 }
 
 /** Polls `check` until it is true or `timeoutMs` passes. */

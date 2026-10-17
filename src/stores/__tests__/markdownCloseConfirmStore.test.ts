@@ -13,6 +13,7 @@ import {
 	confirmMarkdownWindowsClean,
 	describeFiles,
 	resolveMarkdownClose,
+	saveFailedMessage,
 	useMarkdownCloseConfirmStore,
 	waitUntil,
 } from "../markdownCloseConfirmStore";
@@ -22,7 +23,7 @@ const one = [{ label: "md-1", filePath: "/r/README.md" }];
 beforeEach(() => {
 	dirty.mockReset();
 	save.mockReset();
-	useMarkdownCloseConfirmStore.setState({ pending: null });
+	useMarkdownCloseConfirmStore.setState({ pending: null, saveFailed: null });
 });
 
 describe("confirmMarkdownWindowsClean", () => {
@@ -85,5 +86,53 @@ describe("describeFiles", () => {
 		expect(describeFiles(["a.md"])).toBe("a.md");
 		expect(describeFiles(["a.md", "b.md"])).toBe("a.md and b.md");
 		expect(describeFiles(["a.md", "b.md", "c.md"])).toBe("a.md and 2 others");
+	});
+});
+
+describe("a Save that does not land", () => {
+	it("names the still-unsaved files and keeps the close from happening", async () => {
+		vi.useFakeTimers();
+		try {
+			dirty.mockResolvedValue(one);
+			save.mockResolvedValue(undefined);
+			const p = confirmMarkdownWindowsClean(["w1"]);
+			await vi.waitFor(() =>
+				expect(useMarkdownCloseConfirmStore.getState().pending).not.toBeNull(),
+			);
+			const done = resolveMarkdownClose("save");
+			await vi.advanceTimersByTimeAsync(6000);
+			await done;
+			await expect(p).resolves.toBe(false);
+			expect(useMarkdownCloseConfirmStore.getState().saveFailed).toEqual([
+				"README.md",
+			]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("reports every asked window when the save request itself fails", async () => {
+		dirty.mockResolvedValueOnce(one).mockRejectedValue(new Error("ipc"));
+		save.mockRejectedValue(new Error("ipc"));
+		const p = confirmMarkdownWindowsClean(["w1"]);
+		await vi.waitFor(() =>
+			expect(useMarkdownCloseConfirmStore.getState().pending).not.toBeNull(),
+		);
+		await resolveMarkdownClose("save");
+		await expect(p).resolves.toBe(false);
+		expect(useMarkdownCloseConfirmStore.getState().saveFailed).toEqual([
+			"README.md",
+		]);
+	});
+});
+
+describe("saveFailedMessage", () => {
+	it("says what failed and that nothing closed", () => {
+		expect(saveFailedMessage(["a.md"])).toBe(
+			"Abundio could not save a.md, so nothing was closed. Your edits are still in its Markdown window. Check that the file can be written, then try again.",
+		);
+		expect(saveFailedMessage(["a.md", "b.md"])).toContain(
+			"a.md and b.md, so nothing was closed. Your edits are still in their Markdown windows.",
+		);
 	});
 });

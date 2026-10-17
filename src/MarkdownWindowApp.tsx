@@ -72,6 +72,10 @@ export function MarkdownWindowApp() {
 	const [view, setView] = useState<MarkdownView>("rendered");
 	const [findOpen, setFindOpen] = useState(false);
 	const [confirmClose, setConfirmClose] = useState(false);
+	// Why the last save failed, shown until the next save works or the user
+	// dismisses it. Every save path lands here: Cmd+S, Save on close, and the
+	// owner's Save before it closes the Workspace.
+	const [saveError, setSaveError] = useState<string | null>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
 
 	const bufferRef = useRef(buffer);
@@ -121,7 +125,13 @@ export function MarkdownWindowApp() {
 		const b = bufferRef.current;
 		const i = infoRef.current;
 		if (!b || !i) return;
-		await fsApi.writeFile(i.filePath, b.content);
+		try {
+			await fsApi.writeFile(i.filePath, b.content);
+		} catch (e) {
+			setSaveError(String(e));
+			throw e;
+		}
+		setSaveError(null);
 		// Edits typed while the write was in flight stay dirty.
 		setBuffer((cur) =>
 			cur ? { ...savedBuffer(b), content: cur.content } : cur,
@@ -313,6 +323,41 @@ export function MarkdownWindowApp() {
 					toggleLabel ? `Switch view (${toggleLabel})` : "Switch view"
 				}
 			/>
+			{saveError && (
+				<div
+					role="alert"
+					className="flex items-center gap-3 shrink-0"
+					style={{
+						padding: "8px 12px 8px 16px",
+						fontSize: 12,
+						borderBottom: "1px solid var(--border)",
+						backgroundColor:
+							"color-mix(in srgb, var(--error) 14%, var(--bg-secondary))",
+						color: "var(--fg-primary)",
+					}}
+				>
+					<span className="flex-1 min-w-0">
+						Could not save {fileNameOf(info.filePath)}. Your edits are still
+						here. {saveError}
+					</span>
+					<button
+						type="button"
+						onClick={() => void save().catch(() => {})}
+						className="shrink-0 rounded-md cursor-pointer border border-[var(--border)] text-[var(--fg-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--fg-primary)]"
+						style={{ padding: "3px 10px", fontSize: 12 }}
+					>
+						Try again
+					</button>
+					<button
+						type="button"
+						onClick={() => setSaveError(null)}
+						className="shrink-0 rounded-md cursor-pointer border-0 bg-transparent text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+						style={{ padding: "3px 6px", fontSize: 12 }}
+					>
+						Dismiss
+					</button>
+				</div>
+			)}
 			<FileChangeBanner
 				paneId={EDITOR_ID}
 				paneState={bannerState}
