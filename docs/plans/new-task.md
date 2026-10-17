@@ -2,7 +2,7 @@
 
 ## Context
 
-The user wants to start an Agent *on something*: type a problem or feature description, or pick a GitHub issue, and have a **Task-capable** Agent start with that as its first prompt. It should run in the current Workspace (restarting an agent Pane or adding a Tab) or in a fresh worktree. Terms are defined in `CONTEXT.md` (**New task**, **Task**, **Issue task**, **Task template** / **Issue template**, **Task destination**, **Task-capable**). The launch mechanism is ADR-0042.
+The user wants to start an Agent *on something*: type a problem or feature description, or pick a GitHub issue, and have a **Task-capable** Agent start with that as its first prompt. It should run in the current Workspace (restarting an agent Pane or adding a Tab) or in a fresh worktree. Terms are defined in `GLOSSARY.md` (**New task**, **Task**, **Issue task**, **Task template** / **Issue template**, **Task destination**, **Task-capable**). The launch mechanism is ADR-0042.
 
 ## Decisions (resolved with the user)
 

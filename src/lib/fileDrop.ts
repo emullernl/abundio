@@ -88,7 +88,7 @@ export function isMsysBashShell(shellPath: string, windows: boolean): boolean {
 // wrong (cmd single quotes aren't metacharacters; PowerShell rejects the '\''
 // escape). Their *path style* is already correct (native C:\…) — only the
 // quoting is off. The fix is per-shell quoting branched on the resolved shell
-// kind. See CONTEXT.md (Flagged ambiguities → file-drop path quoting).
+// kind. See GLOSSARY.md (Flagged ambiguities → file-drop path quoting).
 const SHELL_SAFE = /^[A-Za-z0-9_./@%+:,=-]+$/;
 
 /**

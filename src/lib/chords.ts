@@ -2,7 +2,7 @@
  * The **Chord**: one key pressed with zero or more modifiers. Pure helpers for
  * recording, spelling, comparing and vetting one, and for converting it to the
  * formats Monaco and the native menu expect. See the `Shortcut`, `Chord` and
- * `Override` entries in CONTEXT.md.
+ * `Override` entries in GLOSSARY.md.
  *
  * How a key is stored follows the rule the built-in bindings already use:
  * letters and named keys (arrows, Enter, Tab, F1…) by `key`, the character

@@ -62,7 +62,7 @@ function useNowSecs(): number {
 
 /** The **Commits** Anchored section: the Active workspace's recent history —
  *  its **Ahead commits**, a divider named after the base, then the **Shared
- *  history**. See CONTEXT.md.
+ *  history**. See GLOSSARY.md.
  *  Like `PrSection`, it always renders its header; the body is hidden when
  *  collapsed and the parent sizes it. */
 export function CommitsSection() {

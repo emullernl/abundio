@@ -1366,7 +1366,7 @@ pub fn run() {
             // straight to tao's `applicationWillTerminate`, which emits only
             // `LoopDestroyed` → `RunEvent::Exit`. Handling both is what makes
             // "installs on the next natural quit" true for all three routes.
-            // See the `Quit route` entry in CONTEXT.md and ADR-0014.
+            // See the `Quit route` entry in GLOSSARY.md and ADR-0014.
             if matches!(
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit

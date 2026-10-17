@@ -23,7 +23,7 @@ Model commit: 94178bb (Kimi Code addition) — but simpler, since Grok reuses ex
 Grilled decisions (2026-07-17): all three probes below were explicitly chosen over the simpler always-on fallbacks; each has an agreed fallback if the probe is inconclusive.
 
 1. **Subagent id field**: register a debug hook (`cat > /tmp/grok-hook-$GROK_HOOK_EVENT.json`) for SubagentStart/SubagentStop, run a subagent-spawning prompt, inspect payload. If the id field isn't `agent_id`/`agentId`, extend the fallback chain in `mapSubagentHookEvent` (src/lib/agentHookMap.ts:189). (SubagentStart/SubagentStop confirmed to exist in the bundled docs, `~/.grok/docs/user-guide/10-hooks.md`; `SubagentEnd` is an accepted alias for SubagentStop.)
-2. **Stop payload on a cancelled turn** (DECIDED: probe + branch): Grok's `Stop` fires on completed, cancelled, AND errored turns — but CONTEXT.md defines Ready as a *clean* finish, and Kimi maps user-cancel to `idle`. Capture a cancelled-turn Stop payload; if it carries a reason/outcome discriminator, add a grok branch in `mapHookEvent` (copilot-preToolUse-style, terminalManager already parses the full payload — pass the field through like `toolName`): cancelled→`idle`, completed→`ready`. Fallback if indistinguishable: plain `Stop→ready` (brief Ready-on-cancel, cleared by the focused user's acknowledgement).
+2. **Stop payload on a cancelled turn** (DECIDED: probe + branch): Grok's `Stop` fires on completed, cancelled, AND errored turns — but GLOSSARY.md defines Ready as a *clean* finish, and Kimi maps user-cancel to `idle`. Capture a cancelled-turn Stop payload; if it carries a reason/outcome discriminator, add a grok branch in `mapHookEvent` (copilot-preToolUse-style, terminalManager already parses the full payload — pass the field through like `toolName`): cancelled→`idle`, completed→`ready`. Fallback if indistinguishable: plain `Stop→ready` (brief Ready-on-cancel, cleared by the focused user's acknowledgement).
 3. **Notification types** (DECIDED: probe + matcher-scope): Grok's `matcher` on Notification tests the *notification type* — the same discriminator Copilot uses (`matcher: "permission_prompt"`, ADR-0015). Capture Notification payloads on a permission prompt / grep github.com/xai-org/grok-build for the type strings. If a permission-prompt type exists, provision the Notification hook matcher-scoped so only genuine prompts map to `waiting`. Fallback: unmatched Notification→waiting (Gemini-style accepted limitation).
 4. **Single vs double ESC to cancel**: check live; default to double-ESC (no `escPressesToCancelAgent` change) unless single-ESC confirmed.
 
@@ -63,7 +63,7 @@ Nothing else changes: Owned-branch `config_state` (content equality → self-hea
        UserPromptSubmit: "active",
        Notification: "waiting",     // matcher-scoped to permission-prompt notification type if Phase 0.3 pins it down; else unmatched (Gemini-style)
        PermissionDenied: "active",  // fires AFTER the deny — user/policy just acted, turn continues; Stop/StopFailure corrects if the turn ends
-       Stop: "ready",               // + per Phase 0.2: if the payload distinguishes a cancelled turn, a mapHookEvent grok branch maps cancelled→"idle" (CONTEXT.md: Ready = clean finish; Kimi precedent)
+       Stop: "ready",               // + per Phase 0.2: if the payload distinguishes a cancelled turn, a mapHookEvent grok branch maps cancelled→"idle" (GLOSSARY.md: Ready = clean finish; Kimi precedent)
        StopFailure: "error",
        SessionEnd: "clear",
    };
@@ -85,7 +85,7 @@ Nothing else changes: Owned-branch `config_state` (content equality → self-hea
 ## Phase 4 — Docs / meta
 
 - `README.md` supported-agents table: Grok Build row.
-- `CONTEXT.md`: Agent list, Hook-provisioning terms (Owned/JSON, global hooks dir always trusted), Subagent claude-family branch.
+- `GLOSSARY.md`: Agent list, Hook-provisioning terms (Owned/JSON, global hooks dir always trusted), Subagent claude-family branch.
 - `CLAUDE.md`: agent roster mentions (project description + `agents.ts`/hook lines).
 - `docs/plans/grok-build-agent.md`: persist this plan (per repo convention), including the npm-grok-cli-is-unrelated warning and Phase-0 findings.
 

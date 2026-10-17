@@ -2,7 +2,7 @@
 //! **Agent** with one click, from the **Action bar** at the bottom of a Pane.
 //!
 //! See the `Prompt action`, `Action bar`, `Action scope`, `Firing` and
-//! `Prompt action store` entries in CONTEXT.md, ADR-0038 (attachments travel by
+//! `Prompt action store` entries in GLOSSARY.md, ADR-0038 (attachments travel by
 //! path) and ADR-0039 (this lives in SQLite, not `settingsStore`).
 //!
 //! ## Why this is a table and not a setting

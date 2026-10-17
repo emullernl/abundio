@@ -148,7 +148,7 @@ describe("mapHookEvent", () => {
 
 	it("maps Kimi's Interrupt to idle, never ready (user-cancel is acknowledged)", () => {
 		// An interrupt is not a clean finish and the user just acted in the
-		// pane — a Ready flash here would lie (see CONTEXT.md's Ready).
+		// pane — a Ready flash here would lie (see GLOSSARY.md's Ready).
 		expect(mapHookEvent("kimi", "Interrupt")).toBe("idle");
 		// Unprovisioned noise stays unmapped.
 		expect(mapHookEvent("kimi", "PreToolUse")).toBeNull();
@@ -360,7 +360,7 @@ describe("mapHookEvent", () => {
 	it("branches Grok's Stop on its reason payload (end_turn/cancelled/error)", () => {
 		// Grok fires a single Stop for every turn end, discriminated by reason.
 		expect(mapHookEvent("grok", "Stop", undefined, "end_turn")).toBe("ready");
-		// A user-cancel goes straight to Idle, never Ready (CONTEXT.md: Ready =
+		// A user-cancel goes straight to Idle, never Ready (GLOSSARY.md: Ready =
 		// clean finish; same rationale as Kimi's Interrupt).
 		expect(mapHookEvent("grok", "Stop", undefined, "cancelled")).toBe("idle");
 		// Stop fires AFTER StopFailure on errored turns — "ready" here would

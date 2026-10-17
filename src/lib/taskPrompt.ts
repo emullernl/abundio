@@ -1,6 +1,6 @@
 // Pure helpers for **New task**: turning a **Task** into the Agent's first
 // prompt, naming its Tab, and suggesting a branch for an **Issue task**.
-// See `CONTEXT.md` (Task, Issue task, Task template / Issue template).
+// See `GLOSSARY.md` (Task, Issue task, Task template / Issue template).
 
 import { stripControlChars } from "./promptActions";
 

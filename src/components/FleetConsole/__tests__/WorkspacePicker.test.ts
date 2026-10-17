@@ -38,7 +38,7 @@ function ws(id: string): WorkspaceWithTabs {
 }
 
 // Opening a Workspace from the Fleet Console adds its Agents — see the
-// Fleet Console entry in CONTEXT.md.
+// Fleet Console entry in GLOSSARY.md.
 describe("WorkspacePicker helpers", () => {
 	beforeEach(() => {
 		useWorkspaceStore.setState({

@@ -191,7 +191,7 @@ guard. A Vitest case asserts that every key in the 2.x table is a member of the
 
 ## Commits (one branch: `feat/opencode-v2-status`)
 
-1. `docs:` the 1.x vocabulary plan (cherry-picked) and this plan, ADR-0045, CONTEXT.md.
+1. `docs:` the 1.x vocabulary plan (cherry-picked) and this plan, ADR-0045, GLOSSARY.md.
 2–6. The 1.x vocabulary commits, as listed in `opencode-event-vocabulary.md`.
 7. `test:` `@opencode/client` devDependency and the 2.x event-name guard. Red.
 8. `feat:` detect the OpenCode major version in `agent_hooks` (cached `--version`).

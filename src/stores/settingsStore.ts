@@ -63,7 +63,7 @@ interface SettingsState {
 	blockMouseReporting: boolean;
 	/** When an image is dropped onto a running agent, paste it via the clipboard
 	 *  (so the agent recognises it) instead of inserting its file path. See the
-	 *  "Smart image drop" term in CONTEXT.md. */
+	 *  "Smart image drop" term in GLOSSARY.md. */
 	smartImageDrop: boolean;
 	/** Whether the Action bar renders at the bottom of agent panes. Off hides
 	 *  the strip everywhere without deleting anyone's Prompt actions — the

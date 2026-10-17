@@ -21,7 +21,7 @@
  * empty bar shows an *Add a prompt action* invitation instead of buttons.
  * Nothing is seeded on a fresh install, so a bar that hid itself when empty
  * would leave the feature with no visible entry point. See the in-body note
- * below and the `Action bar` entry in CONTEXT.md.
+ * below and the `Action bar` entry in GLOSSARY.md.
  */
 
 import { AnimatePresence, motion } from "framer-motion";

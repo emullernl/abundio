@@ -86,7 +86,7 @@ ADR captures the decision, the trade-off (background WebGL paint cost), and the 
 - **`beginWorkspaceSwitch`** (`workspaceStore.ts:450–468`) — the slow path's 2-rAF overlay handshake is correct for cold switches and is not what the user is feeling.
 - **`useGitDataSync` `clear()` pattern** (`useGitDataSync.ts:170–171`) — the user's test (collapsing the git panel) showed this is not the dominant cost. Left for the follow-up plan below if needed.
 - **`TerminalPool`'s 2-second background-spawn deferral** (`TerminalPool.tsx:29`) — different optimization with a different trade-off; orthogonal to switch latency.
-- **`CONTEXT.md`** — "Active workspace" / "Opened workspace" / "Background workspace" still mean exactly what they did before. The change is implementation-level, not domain-level.
+- **`GLOSSARY.md`** — "Active workspace" / "Opened workspace" / "Background workspace" still mean exactly what they did before. The change is implementation-level, not domain-level.
 
 ## Verification
 

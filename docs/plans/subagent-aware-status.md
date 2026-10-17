@@ -2,7 +2,7 @@
 
 ## Context
 
-When an **Agent** spawns background **Subagents** (CONTEXT.md) and its turn-finished
+When an **Agent** spawns background **Subagents** (GLOSSARY.md) and its turn-finished
 hook fires, Abundio flips the pane to **Ready** even though delegated work is still
 running. Claude Code's `Stop` payload carries no "pending background work" field — no
 agent's turn-finished payload does — so Abundio must track Subagent lifecycles itself
@@ -152,7 +152,7 @@ No changes to `computePtyDotStatus`, `AgentStatusIcon.tsx`, `LEGACY_STATE` maps,
 
 ## Docs
 
-- Done alongside this plan: CONTEXT.md (`Turn` extension + prompt-submit cutoff, new
+- Done alongside this plan: GLOSSARY.md (`Turn` extension + prompt-submit cutoff, new
   `Subagent` entry), `docs/adr/0022-turn-extends-over-subagent-tails.md`.
 - With the code: extend the per-agent mapping table in
   `docs/plans/agent-hooks-status-integration.md`.

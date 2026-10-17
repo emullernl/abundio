@@ -338,7 +338,7 @@ describe("collectPtyIds", () => {
 });
 
 // Tab and Workspace carry an Agent rollup and a Terminal rollup, never one
-// mixed icon — see ADR-0032 and the "Agent rollup" entry in CONTEXT.md.
+// mixed icon — see ADR-0032 and the "Agent rollup" entry in GLOSSARY.md.
 const rollupEntry = (
 	state: PtyActivityEntry["state"],
 	mode: "agent" | "shell",
@@ -1588,7 +1588,7 @@ describe("the click action", () => {
 });
 
 // Collapses statuses where there is room for one icon only — the narrow
-// sidebar's Hidden-rollup badge. See the "Hidden rollup" entry in CONTEXT.md.
+// sidebar's Hidden-rollup badge. See the "Hidden rollup" entry in GLOSSARY.md.
 describe("rollupDotStatus", () => {
 	it("returns grey for no members", () => {
 		expect(rollupDotStatus([])).toBe("grey");

@@ -5,7 +5,7 @@
 // It is pure: no clock (time arrives on the event), no IPC, no DOM, no store — so
 // every documented behaviour (ADR-0009 agent/shell asymmetry, ADR-0015 Waiting
 // guard, ESC cancel, the idle backstop) is a table test. See
-// docs/plans/status-machine.md and CONTEXT.md (Status machine / Status event).
+// docs/plans/status-machine.md and GLOSSARY.md (Status machine / Status event).
 //
 // This module is wired to nothing in Stage 1 — it is built and tested in
 // isolation against the behaviour the scattered code currently produces

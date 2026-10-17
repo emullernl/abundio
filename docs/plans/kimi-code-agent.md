@@ -4,7 +4,7 @@
 
 Moonshot AI's **Kimi Code CLI** (binary `kimi`, npm `@moonshot-ai/kimi-code`) is a
 Claude-Code-style TypeScript CLI with a Beta lifecycle-hooks system. It becomes a
-first-class built-in **Agent** (CONTEXT.md): PATH-detected, brand icon, and
+first-class built-in **Agent** (GLOSSARY.md): PATH-detected, brand icon, and
 hook-driven **Status indicator** via **Hook provisioning** (ADR-0003).
 
 Kimi facts (official docs, mid-2026):
@@ -35,11 +35,11 @@ while `Ownership::Merged` provisioning (`provision_merge_settings`) is JSON-only
 |----------|--------|-----------|
 | Icon | **White icon SVG** from Moonshot's official brand kit (moonshotai.github.io/Branding-Guide/; the brand is monochrome-only) | Matches the codex.svg precedent (`fill="#fff"`, dark-UI optimized); invisible-on-light is the accepted shared limitation. |
 | Event set | **Minimal 9**: UserPromptSubmit, PermissionRequest, PermissionResult, Stop, StopFailure, Interrupt, SubagentStart, SubagentStop, SessionEnd | Claude's set plus Kimi's extras that fix real gaps. PreToolUse/PostToolUse are per-tool-call noise; Notification is redundant (Gemini only uses it for want of PermissionRequest). |
-| Interrupt mapping | **New `"idle"` HookTransition**; `Interrupt → idle`, dropping the Subagent set | `Interrupt → ready` would flash a false purple Ready right after the user cancels — violating CONTEXT.md's **Ready** (clean finish, unacknowledged). Mirrors the reducer's ESC `clearActive` path. |
+| Interrupt mapping | **New `"idle"` HookTransition**; `Interrupt → idle`, dropping the Subagent set | `Interrupt → ready` would flash a false purple Ready right after the user cancels — violating GLOSSARY.md's **Ready** (clean finish, unacknowledged). Mirrors the reducer's ESC `clearActive` path. |
 | ESC presses | **No `escPressesToCancelAgent` change** (kimi keeps the default 2) | The Interrupt hook is the authoritative cancel signal; the keystroke heuristic is a mere fallback that can no longer strand or lie about status. |
 | TOML editing | `toml_edit` (already in Cargo.lock transitively) with format-preserving surgical edits; **no backup file** | The user's config.toml likely carries comments a serde rewrite would destroy. Guards: only-allowed-keys unit test, round-trip parse, `write_atomic`, strip-first idempotent merge. A `.bak` would violate ADR-0003's no-litter spirit. |
 | Demo mode | Settings **footprint only** (installedAgentCommands + agentHookStatuses); no scripted pane/transcript | Smallest surface that keeps LaunchPicker and Settings → Agents truthful in demo mode. |
-| Docs | CONTEXT.md term updates (Agent list, Hook provisioning file list, Subagent hooks); **no new ADR** | The TOML merge is a reversible extension of ADR-0003's existing decision. |
+| Docs | GLOSSARY.md term updates (Agent list, Hook provisioning file list, Subagent hooks); **no new ADR** | The TOML merge is a reversible extension of ADR-0003's existing decision. |
 
 ## Implementation
 
@@ -63,7 +63,7 @@ while `Ownership::Merged` provisioning (`provision_merge_settings`) is JSON-only
 ### Fixtures & docs
 
 - `src/lib/demo/fixtures.ts` — `"kimi"` in `installedAgentCommands`; `agentHookStatuses` entry (`~/.kimi-code/config.toml`, merged, the 9 events, registered).
-- `CONTEXT.md` — **Agent** list gains Kimi Code; **Hook provisioning** gains `~/.kimi-code/config.toml`; **Subagent** gains Kimi's `SubagentStart`/`SubagentStop`.
+- `GLOSSARY.md` — **Agent** list gains Kimi Code; **Hook provisioning** gains `~/.kimi-code/config.toml`; **Subagent** gains Kimi's `SubagentStart`/`SubagentStop`.
 
 ### Tests
 

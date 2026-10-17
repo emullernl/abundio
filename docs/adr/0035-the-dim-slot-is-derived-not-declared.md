@@ -6,7 +6,7 @@ status: accepted
 
 A theme's **Dim slot** — ANSI colour 8, xterm's `brightBlack` — is no longer taken at face value from `themes.ts`. Two settings are computed from the theme instead: xterm's contrast floor, which becomes per-theme rather than the flat WCAG 4.5, and the slot's colour itself, which is overridden on the themes whose declared value cannot satisfy the contract.
 
-See the **Dim slot** entry in CONTEXT.md.
+See the **Dim slot** entry in GLOSSARY.md.
 
 ## The bug this comes from
 

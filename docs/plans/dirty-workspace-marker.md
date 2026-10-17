@@ -13,7 +13,7 @@ already draws a change stat (`3F +12 -4`) under the branch chip, but it answers 
 
 ## Language
 
-See `CONTEXT.md`: **Dirty workspace**, **Dirty marker**, **Branch stat**, and the Dirty-marker
+See `GLOSSARY.md`: **Dirty workspace**, **Dirty marker**, **Branch stat**, and the Dirty-marker
 sentence in **Hidden rollup**.
 
 ## Decisions

@@ -16,7 +16,7 @@ That works because the values it carries are **scalars owned by one editor at a 
 
 A Prompt action list is not a scalar, and it does not have one editor.
 
-The **in-pane popover** (see the **Action bar** entry in CONTEXT.md) exists precisely so authoring happens *often*, *mid-session*, and *in whatever Window the user is already working in* — while the Settings window may be open on the same list. The broadcast ships the whole array, so:
+The **in-pane popover** (see the **Action bar** entry in GLOSSARY.md) exists precisely so authoring happens *often*, *mid-session*, and *in whatever Window the user is already working in* — while the Settings window may be open on the same list. The broadcast ships the whole array, so:
 
 1. Window A's popover appends action X and broadcasts `[…, X]`.
 2. The Settings window, holding `[…]` from before, saves an unrelated edit and broadcasts `[…']`.

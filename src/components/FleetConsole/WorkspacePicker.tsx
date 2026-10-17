@@ -17,7 +17,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 
 /**
  * Open and close Workspaces from the **Fleet Console**. Opening one adds its
- * Agents to the Console; closing one removes them. See CONTEXT.md.
+ * Agents to the Console; closing one removes them. See GLOSSARY.md.
  *
  * Opening happens in the background — the Workspace is Opened, not made
  * Active — so the Workspace view behind the Console is left alone. Its

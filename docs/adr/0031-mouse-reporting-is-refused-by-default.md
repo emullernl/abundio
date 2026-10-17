@@ -6,7 +6,7 @@ status: accepted
 
 A terminal pane refuses, by default, to hand the mouse to the program running in it. The refusal is a swallowed DECSET, taken before xterm ever sees it. Where the refusal is lifted, the program gets the **whole** mouse including the right button — which reverses the contract #170 shipped — and the pane context menu moves to a permanent button in the pane's title bar so it stays reachable regardless.
 
-See the **Mouse-reporting pane**, **Mouse-blocked pane** and **Mouse badge** entries in CONTEXT.md.
+See the **Mouse-reporting pane**, **Mouse-blocked pane** and **Mouse badge** entries in GLOSSARY.md.
 
 ## Why refuse at all
 

@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the **Commits** section (see CONTEXT.md).
+ * Pure helpers for the **Commits** section (see GLOSSARY.md).
  *
  * The section's right-click menu follows the Git changes **Row menu**: it is
  * read-only (no revert, reset or cherry-pick — `Resolve & stage` stays

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useWindowUiStore } from "../windowUiStore";
 
-/** Fold state for Worktree sets — see the "Folded set" entry in CONTEXT.md. */
+/** Fold state for Worktree sets — see the "Folded set" entry in GLOSSARY.md. */
 describe("windowUiStore — folded sets", () => {
 	beforeEach(() => {
 		useWindowUiStore.setState({ foldedSetKeys: [] });

@@ -4,7 +4,7 @@
  *  The right edge because the left one is the Active workspace's accent, and a
  *  background tint is out: the row background already carries active and hover,
  *  and on a real workspace list most rows are dirty at any moment — a colour
- *  that covers most of the list stops meaning "look here". See CONTEXT.md. */
+ *  that covers most of the list stops meaning "look here". See GLOSSARY.md. */
 export function DirtyEdge({ title }: { title: string }) {
 	return (
 		<span

@@ -9,7 +9,7 @@
  * live diff (which the watcher rewrites) — and because its key does not start
  * with `diff:`, every watcher and rename path that matches that prefix leaves
  * it alone without being told to. See the `Commit diff pane` entry in
- * CONTEXT.md.
+ * GLOSSARY.md.
  */
 
 const COMMIT_KEY = /^diff@([0-9a-f]{7,64}):(.+)$/;

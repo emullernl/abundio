@@ -58,7 +58,7 @@ rule the section runs, so the chip and the section it summarises cannot disagree
 `pr-changes` to exactly *one* Window (ADR-0019), so client-side profile filtering would not reroute
 a notification to the Window whose profile owns that repo — it would drop it. Until the poller
 learns which Window holds which Profile, a notification you did not want beats a notification you
-never get. Recorded as a flagged ambiguity in `CONTEXT.md` so the asymmetry reads as chosen.
+never get. Recorded as a flagged ambiguity in `GLOSSARY.md` so the asymmetry reads as chosen.
 
 **The empty-Opened-set rule changed shape.** Previously, with zero **Opened workspaces** both
 sections force-showed `-all` and the dropdown was locked, because there was no repo to filter to.

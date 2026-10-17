@@ -1,5 +1,5 @@
 // Dormant workspaces for the Fleet Console's **Relaunch** — see the Dormant
-// workspace, Add agent and Relaunch entries in CONTEXT.md. Pure: derived from
+// workspace, Add agent and Relaunch entries in GLOSSARY.md. Pure: derived from
 // the saved layouts, the Window's Opened set and the known Agents.
 
 import { collectAgentPanes, parseTabLayout } from "./paneTree";

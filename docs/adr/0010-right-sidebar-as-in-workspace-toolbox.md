@@ -20,7 +20,7 @@ Chrome flanking the workspace stack is split by purpose. The **left sidebar** li
 
 ## Consequences
 
-- `GitChangesPanel.tsx` renames to `RightSidebar.tsx`; `windowUiStore.gitPanelOpen` → `rightSidebarOpen`; `settingsStore.gitPanelWidth` → `rightSidebarWidth`; `settingsStore.gitPanelSplitRatio` → `rightSidebarPrRatio`. CONTEXT.md's "git panel" / "git changes panel" flagged ambiguity is retired; "Sidebar (Left | Right)" is now a domain term.
+- `GitChangesPanel.tsx` renames to `RightSidebar.tsx`; `windowUiStore.gitPanelOpen` → `rightSidebarOpen`; `settingsStore.gitPanelWidth` → `rightSidebarWidth`; `settingsStore.gitPanelSplitRatio` → `rightSidebarPrRatio`. GLOSSARY.md's "git panel" / "git changes panel" flagged ambiguity is retired; "Sidebar (Left | Right)" is now a domain term.
 - `Sidebar.tsx`'s bottom-half tab strip (`sidebarBottomPanel: "explorer" | "search"`) is removed entirely. The `sidebarBottomPanel` setting key is deleted from localStorage on first load after the change ships (one-shot cleanup, no migration shim — the key has no analogue in the new layout).
 - `windowUiStore` gains `rightSidebarActiveTab: "git" | "explorer" | "search"` (default `"git"`) and `prSectionCollapsed: boolean` (default `false`). These persist per-Window via the existing `windowUiStore` plumbing.
 - The `Explorer` component's intra-tab "EXPLORER" uppercase header with collapse chevron is removed; the tab strip is now the header.

@@ -11,7 +11,7 @@ What exists today:
 - **Workspaces:** no shortcut.
 - **Focus cue:** unfocused panes dim to 0.75 opacity (`TerminalSlot.tsx`). No transient cue.
 
-New terms are in `CONTEXT.md`: **Focused pane**, **Pane cycle**, **Directional move**, **Workspace cycle**, **Focus sweep**, plus the Add worktree shortcut rule.
+New terms are in `GLOSSARY.md`: **Focused pane**, **Pane cycle**, **Directional move**, **Workspace cycle**, **Focus sweep**, plus the Add worktree shortcut rule.
 
 ## Design decisions (resolved with the user)
 

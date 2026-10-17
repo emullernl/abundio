@@ -3,7 +3,7 @@
 ## Context
 
 Abundio's **Hook provisioning** (the edits Abundio writes into each Agent's own config so the
-Agent emits its **Agent hooks** back to Abundio — see `CONTEXT.md` and ADR-0003) currently runs
+Agent emits its **Agent hooks** back to Abundio — see `GLOSSARY.md` and ADR-0003) currently runs
 only when the **Status Hooks setting** is toggled. Two gaps follow from that:
 
 1. **Startup re-registration is implicit and per-Window.** It *does* happen — `settingsStore.ts`'s
@@ -61,7 +61,7 @@ machinery in `src-tauri/src/agent_hooks.rs` and the status pipeline from
 8. **Out of hook support:** Aider and custom (non-builtin) Agents have no known hook format →
    *Not supported*; `ensure` is a no-op for them.
 
-Canonical terms added to `CONTEXT.md`: **Hook provisioning**, **Status Hooks setting**,
+Canonical terms added to `GLOSSARY.md`: **Hook provisioning**, **Status Hooks setting**,
 **Provisioning footprint**. Lifecycle recorded in ADR-0003's "Revisited 2026-06-05" section.
 
 ## Backend (`src-tauri`)

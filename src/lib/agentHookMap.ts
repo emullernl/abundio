@@ -2,7 +2,7 @@
 //
 // Hooks are authoritative ground truth for Agent status — see
 // docs/plans/agent-hooks-status-integration.md. "sessionReset" is every
-// Agent's **Session end** hook (CONTEXT.md): the *session* ended, which is NOT
+// Agent's **Session end** hook (GLOSSARY.md): the *session* ended, which is NOT
 // the process exiting. Claude Code and Copilot both fire it on `/clear`, which
 // starts a new session in the same process, and Copilot reports
 // `reason: "user_exit"` for `/clear` and `/exit` alike, so the payload cannot
@@ -17,7 +17,7 @@
 // "idle" means the user cancelled the turn
 // (Kimi's Interrupt) — the pane goes straight to Idle, NOT Ready: the user
 // just acted in the pane, so there is nothing unacknowledged, and an
-// interrupt is not a clean finish (see CONTEXT.md's Ready definition).
+// interrupt is not a clean finish (see GLOSSARY.md's Ready definition).
 // "resume" means "the agent is provably not blocked" (a tool is executing):
 // it lifts Waiting → Working and is otherwise a strict no-op — unlike
 // "active" it never resets the working window or drops a Subagent-held Stop,
@@ -232,7 +232,7 @@ export function mapHookEvent(
 ): HookTransition | null {
 	// Grok's single Stop event covers completed, cancelled, and errored turns,
 	// discriminated by `reason`. A user-cancel goes straight to Idle, not Ready
-	// (CONTEXT.md: Ready = clean finish; same rationale as Kimi's Interrupt).
+	// (GLOSSARY.md: Ready = clean finish; same rationale as Kimi's Interrupt).
 	// An errored turn must NOT map to "ready": Grok fires Stop AFTER
 	// StopFailure on errors, and "ready" would overwrite the Error icon.
 	// Unknown/missing reasons fall through to the map's default ("ready").

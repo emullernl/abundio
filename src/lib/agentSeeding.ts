@@ -4,7 +4,7 @@ import type { CodingAgent } from "./types";
  * Agent seeding — the one-time act of setting each built-in Agent's **Watched**
  * toggle from whether it is **Installed** on `$PATH`, so a new user's launch
  * menus and hook provisioning describe their machine rather than listing all
- * eight built-ins. See ADR-0037 and the CONTEXT.md entries for *Installed*,
+ * eight built-ins. See ADR-0037 and the GLOSSARY.md entries for *Installed*,
  * *Watched* and *Agent seeding*.
  *
  * Pure, and deliberately the *only* place the rule lives: the first run and the

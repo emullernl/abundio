@@ -47,7 +47,7 @@ export function relaunchTargets(rows: RelaunchRow[]): WorkspaceRow[] {
 /**
  * **Add agent** in the Fleet Console: choose between **New agent**, **New
  * task** and **Relaunch** of a Dormant workspace. Relaunch is offered only
- * when something is Dormant. See CONTEXT.md.
+ * when something is Dormant. See GLOSSARY.md.
  */
 export function AddAgentDialog({
 	rows,

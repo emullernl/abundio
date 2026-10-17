@@ -4,15 +4,19 @@ GPU-accelerated terminal multiplexer. The user opens one or more application Win
 
 ## Language
 
-**Window**: A single OS-level application window (Tauri `WebviewWindow`). Windows come in two kinds:
+**Window**: A single OS-level application window (Tauri `WebviewWindow`). Windows come in three kinds:
 - **Profile-bound window**: owns exactly one **Profile** (one-to-one, exclusive — a Profile is open in at most one such Window at a time). Created via File → New Window with Profile. Appears in `windows.json` for restoration across launches and counts toward the "last-window-closing quits the app" rule. Labels follow the pattern `main` (the first window) or `window-<uuid>` (additional windows).
 - **Auxiliary window**: serves a global purpose unrelated to any single Profile. Currently only the **Settings window**. Does not own a Profile, is not persisted in `windows.json`, and does not count toward the quit rule. Uses a stable singleton label (`settings`).
+- **Workspace-bound window**: belongs to exactly one **Workspace**, and lives only while that Workspace is an **Opened workspace**. Currently only the **Markdown window**. Does not own a Profile, is not persisted in `windows.json`, and does not count toward the quit rule.
 
 The label is the stable identifier across launches — both Abundio's own `windows.json` and `tauri-plugin-window-state` key per-window data by it.
 _Avoid_: viewport, app instance, frame; do **not** use "window" to mean a **Pane** (see Pane).
 
 **Settings window**: The singleton auxiliary **Window** labelled `settings`. Opens (or focuses if already open) via File menu, Cmd+,, or the "Manage Profiles…" deep-link; with no section requested it lands on Theme. Edits the *global* profile registry — has no active Profile of its own. Every global setting changed here propagates live to all open Profile-bound windows via a Tauri event broadcast, except a small denied set — the drag-derived sidebar widths, the activity byte threshold, and the last-opened dev environment breadcrumb — which are global but too noisy to broadcast. The propagation is bidirectional: a command-palette toggle in a Profile window reaches Settings too. See ADR-0008.
 _Avoid_: preferences window, options dialog.
+
+**Markdown window**: A **Workspace-bound window** showing one markdown file of its Workspace, in one of two views at a time: **rendered** (read-only, like a **Preview pane**) or **source** (editable text). At most one per file. Closing its Workspace closes it and remembers it, so it reopens when the Workspace is opened again, in the view it was last in; closing it yourself forgets it. Its edits and a **File pane**'s edits on the same file are separate buffers — a save in one reaches the other as an external change.
+_Avoid_: pop-out, detached window, document window, markdown viewer.
 
 **Settings section**: One leaf page of the **Settings window**, and the unit its deep-link addresses. Eleven of them, presented under three non-clickable group captions: *Appearance* (**Theme**, **Fonts**), *Panes* (**Terminal**, **Editor**), *Application* (**Agents**, **Prompt actions**, **Tasks**, **Keyboard**, **Profiles**, **GitHub**, **Updates**). The section ids cross the Rust→JS boundary as `open_settings_window { section }` — encoded in the window URL on a cold open, emitted as a `settings-set-section` event when the window is already open — so they are vocabulary, not implementation detail. **Group captions are not addressable**: there is no `appearance` section. Ids from before the regroup (`terminal-font`, `ui-font`, `shell`) still resolve, in `lib/settingsSections.ts`.
 _Avoid_: settings tab, settings panel (see the **Workspace settings** entry).

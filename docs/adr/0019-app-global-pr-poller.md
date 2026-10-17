@@ -16,7 +16,7 @@ The cadence is **focus-adaptive**: the user-configured interval (default 5 min, 
 
 - `prStore` loses its per-workspace cache, the `-all` piggyback, the generation guards, and its entire notification-diff subscriber — it becomes a thin holder of two account-wide lists plus client-side filter selectors. `gh_commands.rs` loses all five commands and the enrichment machinery, keeping only the gh runner, auth cache, types, and `rollup_status`.
 - A newly-opened Window has no data until the next poll (up to an hour when backgrounded), so the poller caches its last payload and exposes `pr_poller_snapshot()` for Windows to hydrate from on mount **without** triggering a gh call. Forcing a refresh on every window-open was rejected as a milder reincarnation of per-Window traffic.
-- The empty-Opened-workspaces behaviour from ADR-0005's 2026-06-10 update (force `-all`, run from home dir) still holds, but its mechanism is now trivial: there is only ever one account-wide query (always from the home dir), and with no active repo there is simply nothing to filter to. CONTEXT.md's empty-state flagged-ambiguity entry is updated accordingly.
+- The empty-Opened-workspaces behaviour from ADR-0005's 2026-06-10 update (force `-all`, run from home dir) still holds, but its mechanism is now trivial: there is only ever one account-wide query (always from the home dir), and with no active repo there is simply nothing to filter to. GLOSSARY.md's empty-state flagged-ambiguity entry is updated accordingly.
 - One GraphQL `search` connection is capped at `first: 100` per list (parity with the old `--limit 100`); a list exceeding 100 is logged rather than silently truncated.
 
 > **Update (2026-08-13) — superseded in part by ADR-0028.** The client-side filter now has **three**

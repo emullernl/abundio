@@ -6,7 +6,7 @@ Abundio binds each **Workspace** to a folder. Git supports multiple **worktrees*
 
 This feature makes worktrees first-class. A repository with two or more worktrees renders its Workspaces as a **Worktree set** — a visually-distinct, primary-first cluster in the **Left sidebar**. Pointing the New Workspace dialog at any multi-worktree repo adds *all* its worktrees. Users can **Add worktree** (new or existing branch) from the primary, **Remove worktree** (delete files) from a linked one, and the sidebar **live-syncs** with `git worktree` commands run in any terminal. A main-worktree Workspace can also carry **Worktree setup commands** that run in a newly created worktree.
 
-Domain terms (now in `CONTEXT.md`): **Worktree set**, **Primary worktree**, **Linked worktree**, **Workspace settings**, **Worktree setup commands**. Architecture rationale: **ADR-0017** (worktree sets are git-derived and live-reconciled).
+Domain terms (now in `GLOSSARY.md`): **Worktree set**, **Primary worktree**, **Linked worktree**, **Workspace settings**, **Worktree setup commands**. Architecture rationale: **ADR-0017** (worktree sets are git-derived and live-reconciled).
 
 `git2 = "0.19"` (vendored libgit2) is already a dependency and covers list / add / prune. This is mostly additive; the one schema change is a single column for setup commands.
 

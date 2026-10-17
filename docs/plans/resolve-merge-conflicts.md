@@ -29,7 +29,7 @@ Eight decisions, each settled in review. The reasoning matters more than the con
 these look arbitrary without it.
 
 **1. `git add` is allowed; the never-write-the-index rule was only ever about snapshotting.**
-`CONTEXT.md:229`, ADR-0021 and the `Safety:` comment on `snapshot_worktree_tree`
+`GLOSSARY.md:229`, ADR-0021 and the `Safety:` comment on `snapshot_worktree_tree`
 (`git_libgit2.rs:197-204`) all promise the on-disk staging area is never touched. Read strictly,
 all three are scoped to the snapshot path — but the property is currently globally true by accident,
 and the next reader will treat it as a rule. The protection that actually matters is against
@@ -45,7 +45,7 @@ with `git restore --staged`, and exactly what git tells you to run when it stops
 
 **2. A conflicted row's click opens the text pane, and the row drops its "Open File" button.**
 Everywhere else in the Git changes tab, clicking a row opens a **diff pane** and a hover-revealed
-nested button opens the **text pane** — the pairing `CONTEXT.md:78` cites as its example of
+nested button opens the **text pane** — the pairing `GLOSSARY.md:78` cites as its example of
 `path` vs `diff:path` panes coexisting. Conflicted rows invert it. An `against_base` row is
 something you're *reviewing*, so a diff is the right primary; a conflicted row is **blocking you**,
 and there is exactly one thing you want to do with it. Making that the hover-only affordance gets
@@ -456,7 +456,7 @@ duplicate what our lenses already do.
   in the result pane; block↔side mapping is a monotonic text search, not a diff computation, which is
   what keeps the CDN-loader constraint intact; the view tears itself down when the path stops being
   unmerged, consistent with ADR-0029's index-derived rule.
-- **`CONTEXT.md` `## Language`** — add:
+- **`GLOSSARY.md` `## Language`** — add:
   - **Merge view**: a transient three- or four-pane arrangement for one conflicted file — read-only
     **Current** and **Incoming** side panes above the editable result pane, with an optional **Base**
     side pane. Toggled from the conflict toolbar; torn down automatically when the path stops being
@@ -480,10 +480,10 @@ duplicate what our lenses already do.
     where they are git's index vocabulary. _Avoid_: ours, theirs, local/remote, left/right.
   - **Resolve & stage**: the only write Abundio performs on a conflict — save the buffer, then
     `git add`. It does not finish the operation. _Avoid_: merge, finish merge, commit the merge.
-- **`CONTEXT.md` `## Relationships`** — the **Conflicted section** is the one Git changes tab section
+- **`GLOSSARY.md` `## Relationships`** — the **Conflicted section** is the one Git changes tab section
   whose rows open a text-mode **file pane**; and a conflicted file appears simultaneously in
   Conflicted and in Against-base, because they compare different things.
-- **`CONTEXT.md` `## Flagged ambiguities`** — two entries:
+- **`GLOSSARY.md` `## Flagged ambiguities`** — two entries:
   - The Git changes tab's sections *look* like one taxonomy but are two: four endpoint pairs plus one
     state. Resolved deliberately — Conflicted is listed as a section because that is where users look
     for it, and the double-listing of a conflicted file is correct, not a duplicate.
@@ -491,7 +491,7 @@ duplicate what our lenses already do.
     forbidden in the UI, which says Current/Incoming. The boundary is the IPC layer. User-visible
     text for marker-less conflicts names **neither** side, because a rebase inverts them and those
     files have no marker labels to read.
-- **`CONTEXT.md:229` and ADR-0021** — reword the index invariant per decision 1. Do not delete it.
+- **`GLOSSARY.md:229` and ADR-0021** — reword the index invariant per decision 1. Do not delete it.
 
 ## Commit sequence
 

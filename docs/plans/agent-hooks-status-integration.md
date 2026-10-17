@@ -12,7 +12,7 @@ JSON payload to a command on `stdin`. This plan registers Abundio's own hooks so
 indicator reflects **ground truth** instead of a heuristic, and adds a new `Waiting` state the
 heuristic can never detect: the Agent is blocked on the user (permission / input prompt).
 
-See `CONTEXT.md` for the canonical terms **Agent hook** and **Waiting**, and
+See `GLOSSARY.md` for the canonical terms **Agent hook** and **Waiting**, and
 `docs/adr/0003-agent-hooks-provisioned-globally.md` for the provisioning decision.
 
 ### Hook event support (researched)

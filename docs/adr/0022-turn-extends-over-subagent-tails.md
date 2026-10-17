@@ -4,7 +4,7 @@ status: accepted (extends the Turn boundary of ADR-0018)
 
 # A Turn extends over background Subagent tails
 
-Agents can spawn **Subagents** (CONTEXT.md) — Claude Code, Copilot, Codex and Qwen
+Agents can spawn **Subagents** (GLOSSARY.md) — Claude Code, Copilot, Codex and Qwen
 emit subagent start/stop hooks; OpenCode runs child sessions with a `parentID`.
 Background Subagents can **outlive the turn-finished hook**: Claude Code's `Stop`
 fires when the main agent's turn ends, while `SubagentStop` for a background
