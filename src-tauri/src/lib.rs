@@ -789,6 +789,11 @@ pub fn run() {
             let prompt_actions_conn = migrations::open_db().expect("Failed to open database");
             app.manage(prompt_actions::PromptActionStore::new(prompt_actions_conn));
 
+            // Own connection: Markdown windows read their row on every open and
+            // view toggle, independent of the WorkspaceStore mutex. ADR-0046.
+            let markdown_conn = migrations::open_db().expect("Failed to open database");
+            app.manage(markdown_windows::MarkdownWindowStore::new(markdown_conn));
+
             // Pasted Prompt action attachments are a cache, not user data
             // (ADR-0038). Nothing owns their lifetime, so they are swept by age
             // at startup. Best-effort: this must never stop the app opening.
@@ -979,6 +984,18 @@ pub fn run() {
                 let app_handle = window.app_handle().clone();
                 let label = window.label().to_string();
 
+                // A Markdown window is Workspace-bound: no Profile, not in
+                // windows.json, not counted by the quit rule. Its row stays
+                // (only its own close handler forgets it); release what it
+                // held. ADR-0046.
+                if markdown_windows::is_markdown_window_label(&label) {
+                    markdown_windows::on_destroyed(&app_handle, &label);
+                    if let Some(fw) = app_handle.try_state::<file_watcher::FileWatcher>() {
+                        fw.release_window(&label);
+                    }
+                    return;
+                }
+
                 // The settings window is auxiliary — never claims a profile,
                 // not persisted in windows.json, and doesn't count toward
                 // "last window closing quits the app". Treat its destroy as
@@ -1000,7 +1017,12 @@ pub fn run() {
                 if let Some(state) =
                     app_handle.try_state::<profile_store::ActiveProfileState>()
                 {
-                    state.remove_for_window(&label);
+                    // The Profile's Markdown windows close with its Window and
+                    // are remembered. React cleanup never runs on a destroyed
+                    // webview, so this is the backstop. ADR-0046.
+                    if let Some(profile_id) = state.remove_for_window(&label) {
+                        markdown_windows::destroy_for_profile(&app_handle, &profile_id);
+                    }
                 }
                 // Drop this window's worktree watch contribution so closed
                 // Windows don't keep repos watched forever. See ADR-0017.
@@ -1324,6 +1346,15 @@ pub fn run() {
             dev_environments::launch_dev_environment,
             prompt_attachments::prompt_attachment_from_clipboard,
             prompt_actions::prompt_actions_list,
+            markdown_windows::md_window_open,
+            markdown_windows::md_window_info,
+            markdown_windows::md_window_set_view,
+            markdown_windows::md_window_set_dirty,
+            markdown_windows::md_window_forget,
+            markdown_windows::md_windows_dirty,
+            markdown_windows::md_windows_save,
+            markdown_windows::md_windows_close,
+            markdown_windows::md_windows_restore,
             prompt_actions::prompt_action_create,
             prompt_actions::prompt_action_update,
             prompt_actions::prompt_action_delete,
