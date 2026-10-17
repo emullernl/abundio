@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { agentCommandFor } from "../lib/agents";
 import {
+	markdownWindows,
 	pty,
 	tabs as tabsApi,
 	workspaces as workspacesApi,
@@ -694,6 +695,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Drop any pending debounced note save — the note row is cascade-deleted
 		// with the workspace, so letting the timer fire would error on a missing FK.
 		useNotesStore.getState().cancelPendingSave(id);
+		// Close its Markdown windows while their rows still name them; the
+		// delete then cascades the rows away (ADR-0046).
+		await markdownWindows.close([id]).catch(() => {});
 		await workspacesApi.delete(id);
 		usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
 		useWorkspaceGitStore.getState().remove(id);
@@ -725,6 +729,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 		// Reset dot to grey
 		activityStore.unmarkWorkspaceOpened(id);
+
+		// Its Markdown windows close with it and are remembered, to reopen with
+		// it. Unsaved edits were asked about by the caller (ADR-0046).
+		markdownWindows.close([id]).catch(() => {});
 
 		// Clear ptyIds from layouts so fresh PTYs spawn on next open, and re-seed
 		// pendingAgentRegistry for any pane that remembers an agent.

@@ -7,6 +7,11 @@ vi.mock("@tauri-apps/api/window", () => ({
 	getCurrentWindow: () => ({ label: "main" }),
 }));
 vi.mock("../../../lib/ipc", () => ({
+	markdownWindows: {
+		close: vi.fn(() => Promise.resolve()),
+		dirty: vi.fn(() => Promise.resolve([])),
+		restore: vi.fn(() => Promise.resolve()),
+	},
 	listen: vi.fn(() => Promise.resolve(() => {})),
 	worktrees: {
 		dirty: vi.fn().mockResolvedValue(false),
@@ -129,12 +134,15 @@ describe("WorkspaceList — context menu Open / Close", () => {
 		expect(closeWorkspace).not.toHaveBeenCalled();
 	});
 
-	it("offers Close Workspace on an Opened workspace, and closes it", () => {
+	it("offers Close Workspace on an Opened workspace, and closes it", async () => {
 		openMenuOn("abundio");
 		expect(menuLabels()).toContain("Close Workspace");
 		expect(menuLabels()).not.toContain("Open Workspace");
 		clickMenu("Close Workspace");
-		expect(closeWorkspace).toHaveBeenCalledWith(OPENED.id);
+		// The close first asks Rust about unsaved Markdown windows (ADR-0046).
+		await vi.waitFor(() =>
+			expect(closeWorkspace).toHaveBeenCalledWith(OPENED.id),
+		);
 		expect(beginWorkspaceSwitch).not.toHaveBeenCalled();
 	});
 

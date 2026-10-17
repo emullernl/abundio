@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
 import { FleetConsole } from "./components/FleetConsole/FleetConsole";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
+import { MarkdownCloseConfirmDialog } from "./components/MarkdownWindow/MarkdownCloseConfirmDialog";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
@@ -26,6 +27,7 @@ import { WhatsNewCard } from "./components/WhatsNewCard";
 import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
+import { useMarkdownWindowRestore } from "./hooks/useMarkdownWindowRestore";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -94,6 +96,7 @@ import {
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
+import { confirmMarkdownWindowsClean } from "./stores/markdownCloseConfirmStore";
 import { useNotesStore } from "./stores/notesStore";
 import {
 	clearPaneClose,
@@ -320,6 +323,7 @@ export function App() {
 	useWorkspace();
 	useDemoBootstrap();
 	useFileReloadWatcher();
+	useMarkdownWindowRestore();
 	useGitDataSync();
 	useWorktreeSync();
 	useTerminalFileDrop();
@@ -671,6 +675,10 @@ export function App() {
 		appWindowRef.current = win;
 		const unlisten = win.onCloseRequested(async (event) => {
 			event.preventDefault();
+			// Markdown windows close with this Window; their unsaved edits live
+			// in other webviews, so ask about them first (ADR-0046).
+			const opened = [...usePtyActivityStore.getState().openedWorkspaceIds];
+			if (!(await confirmMarkdownWindowsClean(opened))) return;
 			const dirtyPaneCount = Object.values(
 				useExplorerStore.getState().filePanes,
 			).filter((p) => p.isDirty).length;
@@ -1343,6 +1351,7 @@ export function App() {
 					onCancel={() => setWorkspaceCloseRequested(null)}
 				/>
 			)}
+			<MarkdownCloseConfirmDialog />
 			<DragPanePreview />
 			<UpdatePrompt />
 			<WhatsNewCard />
