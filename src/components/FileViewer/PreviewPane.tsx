@@ -1,19 +1,19 @@
-import MarkdownPreview from "@uiw/react-markdown-preview";
-import "@uiw/react-markdown-preview/markdown.css";
 import "./PreviewPane.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import rehypeSanitize from "rehype-sanitize";
+import { open } from "@tauri-apps/plugin-shell";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
+import {
+	classifyMarkdownLink,
+	scrollToFragment,
+} from "../../lib/markdownLinks";
 import {
 	consumePendingPrint,
 	registerPreviewPrinter,
 	unregisterPreviewPrinter,
 } from "../../lib/markdownPreviewPrint";
 import { printMarkdownPreview } from "../../lib/markdownPrint";
-import { markdownSanitizeSchema } from "../../lib/markdownSanitizeSchema";
 import { resolvePreviewColorMode } from "../../lib/previewColorMode";
-import { rehypeSourceLines } from "../../lib/rehypeSourceLines";
 import {
 	registerSyncPreview,
 	unregisterSyncPreview,
@@ -21,30 +21,17 @@ import {
 import { getTheme } from "../../lib/themes";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { makeMarkdownImageComponent } from "./MarkdownImage";
-import { makeMarkdownCodeComponent } from "./MermaidCode";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { MarkdownRendered } from "./MarkdownRendered";
 import { PreviewPaneTitleBar } from "./PreviewPaneTitleBar";
 
 // Base editor font size — the preview zoom is computed relative to this so
 // Cmd+= / Cmd+- scales the preview alongside the Monaco editor.
 const BASE_FONT_SIZE = 14;
 
-// Re-rendering the markdown (parse + Mermaid) on every keystroke lags the
-// editor, so the preview only re-renders after a typing pause.
-const RENDER_DEBOUNCE_MS = 250;
-
-// `rehypeSourceLines` stamps `data-source-line` anchors for editor↔preview
-// sync. `rehypeSanitize` strips dangerous raw HTML (@uiw bakes in `rehype-raw`
-// with no sanitizer) — it must run after both `rehype-raw` and
-// `rehypeSourceLines`, which it does: @uiw appends `props.rehypePlugins` after
-// its own `rehype-raw`, and the array order is preserved within that.
-const REHYPE_PLUGINS = [
-	rehypeSourceLines,
-	[rehypeSanitize, markdownSanitizeSchema] as [
-		typeof rehypeSanitize,
-		typeof markdownSanitizeSchema,
-	],
-];
+// A print requested before this pane mounted waits for the debounced render
+// (250ms in MarkdownRendered) plus a beat for Mermaid to settle.
+const PENDING_PRINT_DELAY_MS = 450;
 
 interface PreviewPaneProps {
 	paneId: string;
@@ -93,42 +80,50 @@ export function PreviewPane({
 	// against it so local images can be read off disk and inlined.
 	const baseDir = (sourceState?.filePath ?? "").replace(/\/[^/]*$/, "");
 
-	// Debounced copy of the source buffer — what actually feeds the renderer.
-	const [renderedContent, setRenderedContent] = useState(content);
-	useEffect(() => {
-		const t = setTimeout(() => setRenderedContent(content), RENDER_DEBOUNCE_MS);
-		return () => clearTimeout(t);
-	}, [content]);
-
-	const components = useMemo(
-		() => ({
-			code: makeMarkdownCodeComponent(resolvedMode === "dark"),
-			img: makeMarkdownImageComponent(baseDir),
-		}),
-		[baseDir, resolvedMode],
+	const activeWorkspace = useWorkspaceStore((s) =>
+		s.workspaces.find((w) => w.id === s.activeWorkspaceId),
+	);
+	const onLinkClick = useCallback(
+		(href: string | undefined) => {
+			const action = classifyMarkdownLink(
+				href,
+				baseDir,
+				activeWorkspace?.rootFolder ?? "",
+			);
+			switch (action.kind) {
+				case "fragment":
+					if (contentRef.current)
+						scrollToFragment(contentRef.current, action.id);
+					return;
+				case "external":
+					open(action.url).catch(() => {});
+					return;
+				case "workspace-markdown":
+					if (activeWorkspace) {
+						useExplorerStore
+							.getState()
+							.openFile(activeWorkspace.id, action.path);
+					}
+					return;
+				default:
+					return;
+			}
+		},
+		[baseDir, activeWorkspace],
 	);
 
-	// react-markdown does NO internal memoization — every render re-parses the
-	// whole document and re-runs every rehype plugin. PreviewPane re-renders on
-	// each keystroke (the source pane's store entry changes), so the rendered
-	// element is memoized here: between debounce flushes React reuses it and
-	// skips the parse entirely.
 	const preview = useMemo(
 		() =>
 			sourceIsMarkdown ? (
-				<MarkdownPreview
-					source={renderedContent}
-					components={components}
-					rehypePlugins={REHYPE_PLUGINS}
-					// @uiw's dark CSS keys off `.wmde-markdown[data-color-mode*='dark']`
-					// — the attribute must sit on the rendered root element, which
-					// `wrapperElement` controls. (The outer container's matching
-					// attribute only drives our own CSS, e.g. the Mermaid card.)
-					wrapperElement={{ "data-color-mode": resolvedMode }}
-					style={{ zoom }}
+				<MarkdownRendered
+					content={content}
+					baseDir={baseDir}
+					resolvedMode={resolvedMode}
+					zoom={zoom}
+					onLinkClick={onLinkClick}
 				/>
 			) : null,
-		[sourceIsMarkdown, renderedContent, components, zoom, resolvedMode],
+		[sourceIsMarkdown, content, baseDir, resolvedMode, zoom, onLinkClick],
 	);
 
 	const doPrint = useCallback(() => {
@@ -145,10 +140,10 @@ export function PreviewPane({
 	// If a print was requested before this pane mounted, run it once the
 	// (debounced) content is on screen — give Mermaid a beat to settle first.
 	useEffect(() => {
-		if (!renderedContent || !consumePendingPrint(sourcePaneId)) return;
-		const t = setTimeout(doPrint, 200);
+		if (!content || !consumePendingPrint(sourcePaneId)) return;
+		const t = setTimeout(doPrint, PENDING_PRINT_DELAY_MS);
 		return () => clearTimeout(t);
-	}, [renderedContent, sourcePaneId, doPrint]);
+	}, [content, sourcePaneId, doPrint]);
 
 	// Link this preview's scroll container to its source editor for scroll sync.
 	useEffect(() => {

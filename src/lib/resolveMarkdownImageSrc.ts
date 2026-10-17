@@ -44,7 +44,7 @@ export function resolveMarkdownImageSrc(
 }
 
 /** Collapse `.` / `..` segments in a POSIX-style path. */
-function normalizePosixPath(p: string): string {
+export function normalizePosixPath(p: string): string {
 	const isAbsolute = p.startsWith("/");
 	const out: string[] = [];
 	for (const seg of p.split("/")) {
