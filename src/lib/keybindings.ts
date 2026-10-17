@@ -28,6 +28,7 @@ export type KeyAction =
 	| "toggle-right-sidebar-explorer"
 	| "toggle-right-sidebar-notes"
 	| "toggle-markdown-preview"
+	| "open-markdown-window"
 	| "toggle-statistics-overlay"
 	| "toggle-fleet-console"
 	| "fleet-spotlight"
@@ -547,6 +548,10 @@ export const ACTION_META: Record<KeyAction, ActionMeta> = {
 		label: "Toggle markdown preview",
 		category: "Files",
 	},
+	"open-markdown-window": {
+		label: "Open in Markdown window",
+		category: "Files",
+	},
 	"command-palette": { label: "Command palette", category: "App" },
 	"open-settings": { label: "Open settings", category: "App" },
 	"prompt-action-1": {
@@ -587,11 +592,16 @@ export const ACTION_META: Record<KeyAction, ActionMeta> = {
 	},
 };
 
+/** Actions with no built-in Chord. They are listed in Settings ▸ Keyboard
+ *  and the command palette, and fire on a key only once the user binds one. */
+const UNBOUND_BY_DEFAULT: readonly KeyAction[] = ["open-markdown-window"];
+
 /** The actions that exist on this platform, in `DEFAULT_BINDINGS` order.
  *  Copy/paste are absent on macOS, which uses the native Cmd+C / Cmd+V. */
-export const APP_ACTIONS: readonly KeyAction[] = DEFAULT_BINDINGS.map(
-	(b) => b.action,
-);
+export const APP_ACTIONS: readonly KeyAction[] = [
+	...DEFAULT_BINDINGS.map((b) => b.action),
+	...UNBOUND_BY_DEFAULT,
+];
 
 export function isWorkspaceGlobal(action: KeyAction): boolean {
 	return WORKSPACE_GLOBAL_ACTIONS.has(action);
@@ -633,6 +643,10 @@ export function effectiveBindings(
 	for (const b of DEFAULT_BINDINGS) {
 		const chord = effectiveChord(b.action, overrides);
 		if (chord) out.push({ ...chord, action: b.action });
+	}
+	for (const action of UNBOUND_BY_DEFAULT) {
+		const chord = effectiveChord(action, overrides);
+		if (chord) out.push({ ...chord, action });
 	}
 	return out;
 }

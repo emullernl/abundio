@@ -1,4 +1,5 @@
 import {
+	AppWindow,
 	Monitor,
 	Printer,
 	SquareSplitHorizontal,
@@ -15,6 +16,7 @@ interface Props {
 	colorMode: PreviewColorMode;
 	onToggleColorMode: () => void;
 	onPrint: () => void;
+	onOpenInWindow: () => void;
 	onSplitDown: () => void;
 	onSplitRight: () => void;
 	onClose: () => void;
@@ -71,6 +73,7 @@ export function PreviewPaneTitleBar({
 	colorMode,
 	onToggleColorMode,
 	onPrint,
+	onOpenInWindow,
 	onSplitDown,
 	onSplitRight,
 	onClose,
@@ -120,6 +123,11 @@ export function PreviewPaneTitleBar({
 				}
 			/>
 			<TitleBarButton icon={Printer} onClick={onPrint} label="Print" />
+			<TitleBarButton
+				icon={AppWindow}
+				onClick={onOpenInWindow}
+				label="Open in Markdown Window"
+			/>
 			<TitleBarButton
 				icon={SquareSplitVertical}
 				onClick={onSplitDown}

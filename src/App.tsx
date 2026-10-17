@@ -71,6 +71,10 @@ import {
 } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { applyMonacoOverrides } from "./lib/monacoKeymap";
+import {
+	markdownFileForPane,
+	openMarkdownWindow,
+} from "./lib/openMarkdownWindow";
 import { openNewTask } from "./lib/openNewTask";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
@@ -981,6 +985,21 @@ export function App() {
 			workspaceViewOnly(() => {
 				const paneId = useWorkspaceStore.getState().focusedPaneId;
 				if (paneId) toggleMarkdownPreviewForPane(paneId);
+			}),
+		);
+		registerAction(
+			"open-markdown-window",
+			workspaceViewOnly(() => {
+				const ws = useWorkspaceStore.getState();
+				const paneId = ws.focusedPaneId;
+				const workspaceId = ws.activeWorkspaceId;
+				if (!paneId || !workspaceId) return;
+				const filePath = markdownFileForPane(
+					paneId,
+					ws.getActiveLayout(),
+					useExplorerStore.getState().filePanes,
+				);
+				if (filePath) void openMarkdownWindow(workspaceId, filePath);
 			}),
 		);
 		registerAction(
