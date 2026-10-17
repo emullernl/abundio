@@ -190,3 +190,25 @@ Find over the rendered view goes in `lib/renderedFind.ts`: walk the text nodes a
 - A side-by-side source + rendered view.
 - Markdown windows for non-markdown files.
 - Back/forward history when following links.
+
+## As built (differences from the plan above)
+
+- **No `ClosingForOwner` set.** Every owner-driven close uses `destroy()`, which skips the Markdown
+  window's `onCloseRequested`, and that handler is the only place a row is forgotten. So Rust
+  needs no record of why a window closed. `md_window_close_cause` was not added.
+- **No new view-toggle action.** In a Markdown window the existing **Toggle markdown preview**
+  chord switches between Rendered and Source; **Close tab** closes the window. Only
+  `open-markdown-window` is new (no default chord).
+- **App quit does not ask about unsaved edits.** Checked first, as planned: the quit path
+  (`perform_quit` / Dock quit) destroys Windows without a close request, and today it does not
+  ask about unsaved **File panes** either. Markdown windows behave the same way. Closing a single
+  Window, closing a Workspace and switching Profile do ask. Asking on quit would need a native
+  dialog in Rust, like the busy-work quit confirm (ADR-0034), and would cover File panes too.
+- **Preview pane links.** The shared renderer gave the Preview pane link handling too. A markdown
+  link there opens the file in a Tab (the Preview pane lives in the Workspace view); in a
+  Markdown window it opens that file's Markdown window.
+- **Settings in a new window.** A Markdown window's webview may start with empty or stale
+  `localStorage`, so it asks the other Windows for their settings slice on mount
+  (`requestSettingsSnapshot`).
+- **Watching.** A Markdown window watches its Workspace's root folder, the same root the owning
+  Window already watches, rather than the file's own folder.
