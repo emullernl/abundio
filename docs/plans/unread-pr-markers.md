@@ -1,6 +1,6 @@
 # Unread PR markers
 
-Show which PRs in the **Pull Requests** section have activity the user hasn't read yet. See **Unread PR** in `CONTEXT.md`.
+Show which PRs in the **Pull Requests** section have activity the user hasn't read yet. See **Unread PR** in `GLOSSARY.md`.
 
 ## Decisions
 

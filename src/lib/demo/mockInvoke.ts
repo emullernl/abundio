@@ -509,6 +509,17 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "env_vars_reorder":
 			return undefined;
 
+		// Markdown windows are real OS windows (ADR-0046); the browser demo has
+		// none, so opening one does nothing and nothing is ever unsaved.
+		case "md_windows_dirty":
+			return [];
+		case "report_unsaved_files":
+		case "md_window_open":
+		case "md_windows_save":
+		case "md_windows_close":
+		case "md_windows_restore":
+			return undefined;
+
 		default:
 			console.warn(`[demo] unmocked command: ${cmd}`);
 			return undefined;

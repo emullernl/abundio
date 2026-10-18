@@ -12,7 +12,7 @@ This is the opposite of what **Smart image drop** does for what looks like the s
 
 Dropping a single image file on an agent-mode pane writes the PNG to the OS clipboard and sends the Agent a `Ctrl+V` byte (`0x16`), so the Agent ingests it through the same path it uses for a real paste. That is the right call *there*: the user's gesture was "put this picture in", there is nothing else in flight, and an agent's clipboard-image path is the best-trodden one it has.
 
-It also has two costs that CONTEXT.md already flags: it clobbers the user's clipboard and never restores it, and it fires for every agent-mode pane whether or not that Agent can read a clipboard image at all.
+It also has two costs that GLOSSARY.md already flags: it clobbers the user's clipboard and never restores it, and it fires for every agent-mode pane whether or not that Agent can read a clipboard image at all.
 
 ## Why a Prompt action cannot afford those costs
 
@@ -24,7 +24,7 @@ There is nothing to wait *on*. The Agent never tells us it finished ingesting, s
 
 ## What the path route buys
 
-Making the attachment a path collapses the whole action back into the shape every other Prompt action already has: **one bracketed paste, one `\r`** (see the **Prompt action** entry in CONTEXT.md). From that follows:
+Making the attachment a path collapses the whole action back into the shape every other Prompt action already has: **one bracketed paste, one `\r`** (see the **Prompt action** entry in GLOSSARY.md). From that follows:
 
 - **No clipboard clobber.** The user's clipboard is not ours to spend.
 - **No timing race.** The path is inert text; it arrives in order with everything around it.

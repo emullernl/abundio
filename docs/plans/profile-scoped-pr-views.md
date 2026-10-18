@@ -13,7 +13,7 @@ repository is one that the **Active profile**'s Workspaces resolve to. The Overv
 become Profile-scoped too. OS notifications stay account-wide.
 
 Terminology note — the request was phrased as "projects in the current profile". In canonical
-terms (`CONTEXT.md`): *"current profile"* is an `_Avoid_` term for **Active profile**, and the
+terms (`GLOSSARY.md`): *"current profile"* is an `_Avoid_` term for **Active profile**, and the
 things being matched are **repositories**, not Workspaces — a **Worktree set** means several
 Workspaces can resolve to one repository, and (see below) one Workspace can contribute several.
 
@@ -116,7 +116,7 @@ Workspace.
   default, the chip reversal, why notifications stay account-wide, and why counts are derived.
 - ADR-0005 and ADR-0019 — one-line dated "superseded in part by ADR-0028" pointers.
 - ADR-0017 — one line noting `WorkspaceGitSummary` now also carries GitHub identity.
-- `CONTEXT.md`:
+- `GLOSSARY.md`:
   - New term **Profile scope** near the Right sidebar / PR entries.
   - Line 160 (**Overview bar**) — PR counts are Profile-scoped, not account-wide.
   - Line 163 (**Status bar**) — fix the "Overview bar carries *global* … PR counts" contrast.

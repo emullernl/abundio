@@ -9,7 +9,10 @@ interface FileTreeItemProps {
 	depth: number;
 	isExpanded: boolean;
 	onToggleDir: (path: string) => void;
-	onOpenFile: (filePath: string) => void;
+	onOpenFile: (
+		filePath: string,
+		modifiers: { metaKey: boolean; ctrlKey: boolean },
+	) => void;
 	onContextMenu: (x: number, y: number, entry: DirEntry) => void;
 	pendingRename: boolean;
 	children?: React.ReactNode;
@@ -82,11 +85,11 @@ export function FileTreeItem({
 			entry.extension,
 		);
 
-	const handleClick = () => {
+	const handleClick = (e: React.MouseEvent) => {
 		if (entry.isDir) {
 			onToggleDir(entry.path);
 		} else {
-			onOpenFile(entry.path);
+			onOpenFile(entry.path, e);
 		}
 	};
 

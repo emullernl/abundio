@@ -5,7 +5,7 @@ import { SectionLabel, ToggleRow } from "./primitives";
  * Sibling of the Terminal page: configures the file pane and the preview pane.
  *
  * "Editor" is a UI label, not a domain term — the page covers both pane types.
- * See CONTEXT.md.
+ * See GLOSSARY.md.
  */
 export function EditorSection() {
 	const editorWordWrap = useSettingsStore((s) => s.editorWordWrap);

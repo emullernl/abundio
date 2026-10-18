@@ -1,5 +1,5 @@
 // The two events that bracket the end of an Agent in a PTY — see
-// **Agent-mode PTY** and **Session end** in CONTEXT.md.
+// **Agent-mode PTY** and **Session end** in GLOSSARY.md.
 //
 // applyAgentExit — the Agent PROCESS is gone. The only way out of agent mode.
 // applySessionEnd — the Agent's *session* ended. Never leaves agent mode.

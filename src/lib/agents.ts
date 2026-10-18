@@ -3,7 +3,7 @@ import type { CodingAgent } from "./types";
 /** The one element of `CodingAgent.taskArgs` that the Task prompt replaces. */
 export const TASK_PROMPT_PLACEHOLDER = "{prompt}";
 
-// Task-capable forms (see **Task-capable** in CONTEXT.md). Each keeps the
+// Task-capable forms (see **Task-capable** in GLOSSARY.md). Each keeps the
 // Agent interactive; the one-shot flags (`-p`, `exec`, `run`, `--single`)
 // would print an answer and exit. Kimi Code has no such form, so it carries
 // no `taskArgs`. Note Qwen: a bare positional prompt there is
@@ -140,7 +140,7 @@ export function getEnabledAgentCommands(agents: CodingAgent[]): string[] {
 /**
  * **Retired built-ins**: Agents an earlier release shipped as built-in and this
  * one no longer does, keyed by id. See the *Retired built-in* entry in
- * CONTEXT.md and ADR-0044.
+ * GLOSSARY.md and ADR-0044.
  *
  * `mergeAgentsWithBuiltins` converts a persisted, Watched one into a custom
  * Agent with the **same id**, so saved Panes (`agentId` on the layout),

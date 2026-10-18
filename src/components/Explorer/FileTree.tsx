@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import { copyPathEntries } from "../../lib/copyPathEntries";
 import { fs as fsApi } from "../../lib/ipc";
+import { isMarkdownFile } from "../../lib/isMarkdownFile";
+import {
+	clickOpensMarkdownWindow,
+	openMarkdownWindow,
+} from "../../lib/openMarkdownWindow";
 import { revealLabel } from "../../lib/platform";
 import type { DirEntry } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -68,7 +73,11 @@ function TreeLevel({
 						depth={depth}
 						isExpanded={!!expandedDirs[entry.path]}
 						onToggleDir={toggleDir}
-						onOpenFile={(filePath) => openFile(workspaceId, filePath)}
+						onOpenFile={(filePath, modifiers) =>
+							clickOpensMarkdownWindow(modifiers, filePath)
+								? openMarkdownWindow(workspaceId, filePath)
+								: openFile(workspaceId, filePath)
+						}
 						onContextMenu={onContextMenu}
 						pendingRename={isPendingRename}
 					>
@@ -238,6 +247,17 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 					openFileInSplit(workspaceId, entry.path, "horizontal");
 				},
 			},
+			...(isMarkdownFile(entry.name)
+				? [
+						{
+							label: "Open in Markdown Window",
+							onClick: () => {
+								setMenu(null);
+								void openMarkdownWindow(workspaceId, entry.path);
+							},
+						},
+					]
+				: []),
 			...(isDiffFile
 				? [
 						{

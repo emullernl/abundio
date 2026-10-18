@@ -1,7 +1,7 @@
 # Branch commits — an Anchored section in the Right sidebar
 
 Decided in a grilling session on 2026-09-21. Terms (**Anchored section**,
-**Branch commits**, **Commit diff pane**) are defined in `CONTEXT.md`.
+**Branch commits**, **Commit diff pane**) are defined in `GLOSSARY.md`.
 
 ## What it is
 
@@ -47,7 +47,7 @@ Section).
 
 ## Revision (2026-09-23): Commits — ahead + shared history
 
-The section becomes **Commits** (see `CONTEXT.md`: **Commits**, **Ahead
+The section becomes **Commits** (see `GLOSSARY.md`: **Commits**, **Ahead
 commits**, **Shared history**). Decided in a second grilling session.
 
 - One list, newest first, 200 rows, hard stop ("Showing the latest 200

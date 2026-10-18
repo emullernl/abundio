@@ -4,7 +4,7 @@
 
 The user wants one view that shows every running Agent across the Window's Opened workspaces as a grid of live terminals, with each tile clearly naming its Workspace and status. From a tile you can jump to the Agent's place in the normal view, and from the grid you can start a new Agent, optionally in a new worktree. The Overview bar stays visible.
 
-Terms are in `CONTEXT.md`: **Workspace view**, **Fleet Console**, **Fleet tile**, **Focused tile**, **Switch to**, **New agent** (Fleet Console). The architectural decision is ADR-0040.
+Terms are in `GLOSSARY.md`: **Workspace view**, **Fleet Console**, **Fleet tile**, **Focused tile**, **Switch to**, **New agent** (Fleet Console). The architectural decision is ADR-0040.
 
 What exists today:
 

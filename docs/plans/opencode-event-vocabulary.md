@@ -140,12 +140,12 @@ did this survive three months".
 4. `fix:` `MessageAbortedError` → Idle, so cancelling a turn stops painting red.
 5. `fix:` generalise OpenCode subagent filtering to a session-ownership gate; closes the
    `permission.replied` leak.
-6. `docs:` CONTEXT.md ambiguity entry, ADR-0022 amendment, this plan updated with the
+6. `docs:` GLOSSARY.md ambiguity entry, ADR-0022 amendment, this plan updated with the
    captured probe log.
 
 ## Documentation
 
-- **CONTEXT.md** — Flagged ambiguities entry recording that OpenCode is the only Agent
+- **GLOSSARY.md** — Flagged ambiguities entry recording that OpenCode is the only Agent
   whose hooks are session-scoped rather than PTY-scoped, and the only one with no
   prompt-submitted hook. *(Written.)*
 - **ADR-0022** — amend: the child-session discrimination becomes an ownership gate over

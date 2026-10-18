@@ -46,7 +46,7 @@ those ADRs specify into one testable place.
 | State home | The **dispatcher** owns **all** per-PTY status state (hot + cold); React re-renders are gated by a diff of the dot-relevant slice. | Resolves the three-location split instead of inheriting it. |
 | Shell signal | One `ShellCommandEnded{exit}` input event; the translator emits it from whichever source fired. | OSC markers (integrated shells) and process-monitor `CommandFinished` (`process_monitor.rs:5`, `pty_manager.rs:589` — `ShellType::Other` only) are **mutually exclusive by shell type**, not redundant. |
 | Permission count | **Accuracy upgrade, same meaning.** `permissionRequestsCount` stays "every blocked-on-you pause" but counted **exactly** from `cause`, replacing today's approximate waiting-entry tally (`agentTurnTracker.ts:173–177`). | User choice. The *only* intended behaviour change in the whole refactor; isolated to Stage 4. |
-| Names | `active`→**Working**, etc. The reducer's state type adopts the canonical glossary names. | Resolves the deferred `active`→`working` code rename (CONTEXT.md flagged ambiguity). |
+| Names | `active`→**Working**, etc. The reducer's state type adopts the canonical glossary names. | Resolves the deferred `active`→`working` code rename (GLOSSARY.md flagged ambiguity). |
 
 ---
 
@@ -209,7 +209,7 @@ legacy `"active"` string. **In-app verification remains worthwhile** for the par
 test covers: the dot colours under live agent/shell activity, OS notifications while
 blurred, and Turn rows in the Statistics overlay.
 
-## Vocabulary (added to CONTEXT.md)
+## Vocabulary (added to GLOSSARY.md)
 
 **Status event** (input), **Status transition** (output), **Status machine** (the
 module). Distinct from the existing **Status indicator** (the dot — the *view*). The

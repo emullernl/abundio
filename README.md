@@ -229,7 +229,7 @@ abundio/
 ├── scripts/            # Release helper (`pnpm run release`)
 ├── .github/workflows/  # CI: build, test, PR review, security scan
 ├── CLAUDE.md           # Reference for AI coding agents working in the repo
-├── CONTEXT.md          # Canonical domain-language definitions
+├── GLOSSARY.md          # Canonical domain-language definitions
 ├── package.json
 └── biome.json
 ```
@@ -308,7 +308,7 @@ The first build will take a few minutes while Cargo compiles all Rust dependenci
 
 ### 3. Where to Start Reading
 
-1. **`CONTEXT.md`** — Canonical domain language (Workspace, Pane, PTY, Tab, Agent, …). Read this first so terms aren't ambiguous later.
+1. **`GLOSSARY.md`** — Canonical domain language (Workspace, Pane, PTY, Tab, Agent, …). Read this first so terms aren't ambiguous later.
 2. **`CLAUDE.md`** — Full architecture reference and module map.
 3. **`src-tauri/src/lib.rs`** — App bootstrap: DB init, PTY manager, agent registry, file watcher.
 4. **`src-tauri/src/commands.rs`** — All IPC commands the frontend can call.

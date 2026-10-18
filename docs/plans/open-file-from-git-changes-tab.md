@@ -4,7 +4,7 @@
 
 Clicking a file row in the **Git changes tab** (`GitChangesTab.tsx` → `GitChangesFileList.tsx` → `GitChangesFileItem.tsx`) always opens a read-only diff view (`explorerStore.openDiff`). There is currently no way to jump straight to the plain file in the Monaco code editor from that tab — you'd have to separately locate the file in the Explorer tab and click it there (which calls `explorerStore.openFile`).
 
-(Note: per `CONTEXT.md`, "git panel" is a retired term — the right sidebar hosts Git changes, Explorer, Search and PRs together, so this surface is the **Git changes tab**.)
+(Note: per `GLOSSARY.md`, "git panel" is a retired term — the right sidebar hosts Git changes, Explorer, Search and PRs together, so this surface is the **Git changes tab**.)
 
 The user wants an easy, low-friction way to open the original (non-diff) file directly from the Git changes tab, without disturbing the existing click-to-diff behavior. This is surfaced in **two places**:
 
@@ -13,7 +13,7 @@ The user wants an easy, low-friction way to open the original (non-diff) file di
 
 Both paths reuse the existing `explorerStore.openFile(workspaceId, filePath)` action — the same one the Explorer's file tree already uses for "Open in New Tab" (`FileTree.tsx:207`). It already handles focusing an existing tab for that file if one is open, so no new store logic is needed for the open itself.
 
-`CONTEXT.md`'s `File pane` entry has already been updated to document that a diff-mode pane and a text-mode pane for the same path are tracked independently (`path` vs `diff:path`) and can coexist — this feature is the first to deliberately invite that.
+`GLOSSARY.md`'s `File pane` entry has already been updated to document that a diff-mode pane and a text-mode pane for the same path are tracked independently (`path` vs `diff:path`) and can coexist — this feature is the first to deliberately invite that.
 
 ## Design decisions from review
 

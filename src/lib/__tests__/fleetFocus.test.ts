@@ -80,7 +80,7 @@ describe("fleetFocus", () => {
 	});
 });
 
-// Spotlight and Tile zoom — see the Spotlight and Tile zoom entries in CONTEXT.md.
+// Spotlight and Tile zoom — see the Spotlight and Tile zoom entries in GLOSSARY.md.
 describe("fleetFocus — Spotlight", () => {
 	beforeEach(() => {
 		// a b c d, spotlight on b

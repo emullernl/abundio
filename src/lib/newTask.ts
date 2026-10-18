@@ -1,6 +1,6 @@
 // Pure decisions behind the **New task** dialog: which panes in a Workspace
 // run an Agent, which one **Restart agent** targets, which Agent is picked by
-// default, and which **Task destination** is shown. See CONTEXT.md.
+// default, and which **Task destination** is shown. See GLOSSARY.md.
 
 import type { PtyActivityEntry } from "../stores/ptyActivityStore";
 import type { TaskDestinationPreference } from "../stores/settingsStore";

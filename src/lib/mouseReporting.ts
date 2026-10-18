@@ -1,7 +1,7 @@
 /**
  * Refusing mouse reporting: the DEC private modes a program uses to ask for the
  * mouse, and the pure helpers around intercepting them. See ADR-0031 and the
- * `Mouse-reporting pane` / `Mouse-blocked pane` entries in CONTEXT.md.
+ * `Mouse-reporting pane` / `Mouse-blocked pane` entries in GLOSSARY.md.
  *
  * A foreground program asks for the mouse by printing `CSI ? <mode> h` (DECSET).
  * xterm parses it, flips `Terminal.modes.mouseTrackingMode`, and from then on

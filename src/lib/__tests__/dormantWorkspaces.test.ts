@@ -40,7 +40,7 @@ function ws(
 const known = new Set(["claude", "codex"]);
 const none = new Set<string>();
 
-// See the Dormant workspace and Relaunch entries in CONTEXT.md.
+// See the Dormant workspace and Relaunch entries in GLOSSARY.md.
 describe("dormant workspaces", () => {
 	it("collects remembered Agents across Tabs and splits", () => {
 		const w = ws("a", [

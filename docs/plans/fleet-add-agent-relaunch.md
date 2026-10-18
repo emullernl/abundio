@@ -1,7 +1,7 @@
 # Fleet Console: Add agent + Relaunch dormant workspaces
 
 Branch: `feat/fleet-relaunch-dormant` (off `feat/fleet-console`).
-Terms: **Dormant workspace**, **Add agent**, **Relaunch** in `CONTEXT.md`.
+Terms: **Dormant workspace**, **Add agent**, **Relaunch** in `GLOSSARY.md`.
 
 ## Problem
 

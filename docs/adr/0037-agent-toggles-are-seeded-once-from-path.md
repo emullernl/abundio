@@ -6,7 +6,7 @@ status: accepted
 
 On a genuinely new install, each built-in **Agent**'s **Watched** toggle starts on only if that Agent is **Installed** — its command resolves on the user's login-shell `$PATH`. After that one moment nothing but the user ever moves the toggle again. Installing an Agent later does not switch it on; uninstalling one does not switch it off.
 
-See the **Agent**, **Installed**, **Watched** and **Agent seeding** entries in CONTEXT.md.
+See the **Agent**, **Installed**, **Watched** and **Agent seeding** entries in GLOSSARY.md.
 
 ## Why not just derive the toggle from what is installed
 

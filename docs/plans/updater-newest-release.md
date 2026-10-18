@@ -26,7 +26,7 @@ Profile window only, and `checkOnOpen` runs only when the section opens.
 
 ## Decisions
 
-Settled in a grilling session; recorded in `CONTEXT.md` (**Update**) and the ADR-0014 addendum.
+Settled in a grilling session; recorded in `GLOSSARY.md` (**Update**) and the ADR-0014 addendum.
 
 1. The **Update** is the newest published release. A newer one replaces a held *available*
    release. A download in progress is left to finish.
@@ -102,7 +102,7 @@ Settled in a grilling session; recorded in `CONTEXT.md` (**Update**) and the ADR
 ### 5. Docs
 
 - Mention the change in the GitHub Release notes when shipping (✨/🐛 style).
-- `CONTEXT.md` and the ADR-0014 addendum are already written.
+- `GLOSSARY.md` and the ADR-0014 addendum are already written.
 
 ## Tests
 

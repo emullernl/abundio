@@ -144,7 +144,7 @@ No migration: `end_reason` is a bare `TEXT` column with no CHECK
 nothing renders it.
 
 **Docs — new `docs/adr/0027-the-idle-backstop-is-a-presumed-turn-boundary.md`.** Covers Rules A
-and B, why `rule` belongs on `cause` (`CONTEXT.md:151` already concedes the hole, defining
+and B, why `rule` belongs on `cause` (`GLOSSARY.md:151` already concedes the hole, defining
 `cause` as *"the Status event that drove it (or the idle backstop)"* — this names which
 backstop rather than adding a new exception), and the rejected alternatives:
 
@@ -164,7 +164,7 @@ Consequences to record: an `errorMidTurn` with no open Turn still drops its erro
 information to tell a backstop boundary from a real one was never stored, so `presumed_end`
 starts at the deploy date and any analysis spanning it sees a discontinuity.
 
-**Docs — `CONTEXT.md`.** Add near **Turn failure** / **Mid-turn failure**:
+**Docs — `GLOSSARY.md`.** Add near **Turn failure** / **Mid-turn failure**:
 
 > **Presumed end**: A **Turn** boundary Abundio *inferred* from silence rather than observed
 > from an **Agent hook** — the pane went quiet past the idle backstop window and the Agent never

@@ -1,6 +1,6 @@
 /**
  * The **Row menu** of the Git changes tab — the right-click menu on one file
- * row. See the `Row menu` entry in CONTEXT.md.
+ * row. See the `Row menu` entry in GLOSSARY.md.
  *
  * Deliberately **read-only**: no Stage, no Unstage, no Discard, and no item
  * that types a git command into a Pane. `Resolve & stage` stays Abundio's one

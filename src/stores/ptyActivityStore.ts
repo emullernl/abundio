@@ -157,7 +157,7 @@ interface PtyActivityState_Store {
 
 const LEGACY_STATE: Record<StatusState["state"], PtyActivityState> = {
 	idle: "idle",
-	working: "active", // canonical → legacy string (rename deferred, CONTEXT.md)
+	working: "active", // canonical → legacy string (rename deferred, GLOSSARY.md)
 	waiting: "waiting",
 	ready: "ready",
 	error: "error",
@@ -848,7 +848,7 @@ export function dotStatusLabel(status: DotStatus): string {
 // A Tab or Workspace carries two rollups, never one mixed icon: the **Agent
 // rollup** over its agent-mode PTYs and the **Terminal rollup** over its
 // shell-mode PTYs. A rollup with no PTYs of its kind is `null` — drawn as no
-// icon, not as Idle. See ADR-0032 and CONTEXT.md.
+// icon, not as Idle. See ADR-0032 and GLOSSARY.md.
 
 export type RollupKind = "agent" | "terminal";
 
@@ -1076,7 +1076,7 @@ export function computePtyDotStatus(
 // One per Agent state, returning a primitive so Zustand's default Object.is
 // equality bails re-render unless the count actually changed. Used by the
 // Overview bar. The internal state string `"active"` maps to the glossary
-// term Working (see CONTEXT.md).
+// term Working (see GLOSSARY.md).
 
 type AgentCountSelectorState = {
 	agentPtyIds: Set<string>;

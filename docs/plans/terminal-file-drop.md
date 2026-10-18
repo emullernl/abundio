@@ -21,7 +21,7 @@ This is greenfield — no existing OS-drop code to migrate. The existing **Pane*
 
 1. **Strategy:** layered — path insert is the base for every drop; the clipboard-image trick is an override.
 2. **Clipboard-trick gate:** **agent-mode panes only** (shells always get the path).
-3. **Per-agent gating:** **none** — the trick fires for *every* agent in agent-mode, with **no path fallback** when the agent can't read clipboard images. Deliberate simplicity-over-correctness trade-off (recorded in `CONTEXT.md` Flagged ambiguities).
+3. **Per-agent gating:** **none** — the trick fires for *every* agent in agent-mode, with **no path fallback** when the agent can't read clipboard images. Deliberate simplicity-over-correctness trade-off (recorded in `GLOSSARY.md` Flagged ambiguities).
 4. **Drop target:** the terminal pane **under the cursor**, with a **highlight** during drag-over; the pane is **focused** on drop.
 5. **Path format is mode-aware:** shell-mode → POSIX single-quote when the path contains spaces/special chars; agent-mode → **raw** literal path. Multiple files space-separated, with a trailing space. Inserted via **bracketed paste** → never executed.
 6. **Image scope:** broad raster set (png, jpg/jpeg, gif, webp, bmp, tiff, heic/heif, avif — anything the Rust `image` crate decodes), re-encoded to **PNG** for the clipboard. SVG excluded.
@@ -106,11 +106,11 @@ if (mode === "agent" && smartImageDrop && single && isImagePath(paths[0])) {
 
 ## Docs to land
 
-### CONTEXT.md — already updated
+### GLOSSARY.md — already updated
 **File drop** and **Smart image drop** terms added to Language; the “fires for every agent, no fallback, no clipboard restore” trade-off captured under Flagged ambiguities.
 
 ### ADR — intentionally none
-Clears two of the three ADR bars (surprising; a real trade-off) but **fails “hard to reverse”** — it's a setting + a gate, cheap to change. Per the all-three-or-skip rule, the `CONTEXT.md` flagged note is the right weight. Revisit if we later add per-agent capability gating or change the clipboard mechanism.
+Clears two of the three ADR bars (surprising; a real trade-off) but **fails “hard to reverse”** — it's a setting + a gate, cheap to change. Per the all-three-or-skip rule, the `GLOSSARY.md` flagged note is the right weight. Revisit if we later add per-agent capability gating or change the clipboard mechanism.
 
 ## Verification
 

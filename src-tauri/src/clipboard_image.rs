@@ -2,7 +2,7 @@
 //! (Claude Code, Gemini CLI) ingests it via its `Ctrl+V` clipboard-image path.
 //!
 //! This backs the "Smart image drop" behaviour — see `docs/plans/terminal-file-drop.md`
-//! and the `Smart image drop` term in `CONTEXT.md`. The frontend decides *when*
+//! and the `Smart image drop` term in `GLOSSARY.md`. The frontend decides *when*
 //! to call this (single image dropped onto an agent-mode pane, setting on); this
 //! module only does the decode → PNG → clipboard write.
 //!

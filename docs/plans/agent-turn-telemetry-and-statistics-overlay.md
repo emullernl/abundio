@@ -10,7 +10,7 @@ Two things make this cheap to build:
 
 This plan adds an `agent_turn` table, a frontend **Turn tracker** that records one row per Turn, Profile-scoped SQL aggregation commands, and a content-area **Statistics overlay** launched from the Overview bar.
 
-### Decisions (locked with the user — earlier session + grilling against CONTEXT.md)
+### Decisions (locked with the user — earlier session + grilling against GLOSSARY.md)
 
 | # | Decision | Rationale |
 |---|----------|-----------|
@@ -169,9 +169,9 @@ StatisticsOverlay        // header (title + range controls + close); owns range+
 
 ## 5. Documentation updates
 
-- **CONTEXT.md — new canonical terms:** **Turn** (one unit of agent work, prompt-submit → turn-finished/failed; the atomic telemetry record), **Session** (the span of one Agent process in a Pane, launch→`SessionEnd`/exit, comprising one or more Turns; derived `session_id`), **Statistics overlay** (a per-Window, full-area surface over the **workspace stack**, scoped to the **Active profile**, launched from the **Overview bar**; terminals stay alive behind it).
-- **CONTEXT.md — amend Overview bar entry:** "read-only" = *never mutates app/workspace state*; it carries one **navigation affordance** — the entry point to the **Statistics overlay**. Drop "dashboard (implies interactivity)" from _Avoid_ or rescope it.
-- **CONTEXT.md — Flagged ambiguities:** note that the Statistics overlay is **Profile-scoped** even though launched from global Overview-bar chrome; and that Turn line counts are **net-vs-base** and `NULL` when concurrent same-Workspace Turns make attribution ambiguous.
+- **GLOSSARY.md — new canonical terms:** **Turn** (one unit of agent work, prompt-submit → turn-finished/failed; the atomic telemetry record), **Session** (the span of one Agent process in a Pane, launch→`SessionEnd`/exit, comprising one or more Turns; derived `session_id`), **Statistics overlay** (a per-Window, full-area surface over the **workspace stack**, scoped to the **Active profile**, launched from the **Overview bar**; terminals stay alive behind it).
+- **GLOSSARY.md — amend Overview bar entry:** "read-only" = *never mutates app/workspace state*; it carries one **navigation affordance** — the entry point to the **Statistics overlay**. Drop "dashboard (implies interactivity)" from _Avoid_ or rescope it.
+- **GLOSSARY.md — Flagged ambiguities:** note that the Statistics overlay is **Profile-scoped** even though launched from global Overview-bar chrome; and that Turn line counts are **net-vs-base** and `NULL` when concurrent same-Workspace Turns make attribution ambiguous.
 - **ADR-0005** — append a note: the Overview bar gained the Statistics-overlay launch button.
 - **ADR-0018 (new)** — "Agent Turn telemetry & git-delta code attribution": records unit=Turn(+session_id), Profile-scoped viewing, split deletion lifetime (cascade Profile / survive Workspace), git-diff net-vs-base attribution (chosen over precise per-agent hook parsing), and the concurrent-Turn null-out. Meets all three ADR criteria (hard to reverse, surprising to a future reader, real trade-off).
 
@@ -207,7 +207,7 @@ StatisticsOverlay        // header (title + range controls + close); owns range+
 
 ## Scope
 
-**v1:** migration 012; `agentTurnTracker.ts` + wiring; backend CRUD/aggregation/commands/IPC/`telemetryStore`; OverviewBar toggle + per-Window `StatisticsOverlay` (Profile-scoped, all four metric groups, hand-rolled charts); overlap null-out; orphan recovery + quit flush; doc updates (CONTEXT.md terms + Overview-bar amend + ADR-0005 note + ADR-0018); tests.
+**v1:** migration 012; `agentTurnTracker.ts` + wiring; backend CRUD/aggregation/commands/IPC/`telemetryStore`; OverviewBar toggle + per-Window `StatisticsOverlay` (Profile-scoped, all four metric groups, hand-rolled charts); overlap null-out; orphan recovery + quit flush; doc updates (GLOSSARY.md terms + Overview-bar amend + ADR-0005 note + ADR-0018); tests.
 
 **Later (additive, no schema break):** precise per-agent line counts via hook tool-payload parsing (prefer when present, fall back to git-delta — removes R1/overlap/untracked limits); per-language breakdown; commits-during-Turn; autonomy ratio; tokens/cost if a uniform signal appears.
 
@@ -225,4 +225,4 @@ StatisticsOverlay        // header (title + range controls + close); owns range+
 - `src/stores/telemetryStore.ts` *(new)*, `src/stores/windowUiStore.ts` (toggle state)
 - `src/components/OverviewBar.tsx` (toggle button), `src/App.tsx` (mount overlay), `src/lib/keybindings.ts`
 - `src/components/Statistics/*` *(new)*
-- `CONTEXT.md`, `docs/adr/0005-overview-bar.md` (note), `docs/adr/0018-agent-turn-telemetry.md` *(new)*
+- `GLOSSARY.md`, `docs/adr/0005-overview-bar.md` (note), `docs/adr/0018-agent-turn-telemetry.md` *(new)*

@@ -17,6 +17,7 @@ import {
 	type SetRow,
 	type WorkspaceRow,
 } from "../../lib/worktreeGrouping";
+import { confirmMarkdownWindowsClean } from "../../stores/markdownCloseConfirmStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -654,24 +655,28 @@ export function WorkspaceList({
 						pendingLinked.length > 0 ? "Remove workspaces" : "Remove Workspace"
 					}
 					confirmVariant="danger"
-					onConfirm={() => {
-						if (pendingDeleteId) {
-							// Remove the primary and any linked worktrees together. Run
-							// them through allSettled so one failed delete doesn't abort
-							// the rest and, crucially, isn't swallowed as an unhandled
-							// rejection — surface it instead.
-							const ids = [pendingDeleteId, ...pendingLinked.map((w) => w.id)];
-							Promise.allSettled(ids.map((id) => deleteWorkspace(id))).then(
-								(results) => {
-									for (const r of results) {
-										if (r.status === "rejected") {
-											console.error("Failed to remove workspace:", r.reason);
-										}
-									}
-								},
-							);
-						}
+					onConfirm={async () => {
+						const deleteId = pendingDeleteId;
+						const linked = pendingLinked;
 						setPendingDeleteId(null);
+						if (!deleteId) return;
+						// Remove the primary and any linked worktrees together. Run
+						// them through allSettled so one failed delete doesn't abort
+						// the rest and, crucially, isn't swallowed as an unhandled
+						// rejection — surface it instead.
+						const ids = [deleteId, ...linked.map((w) => w.id)];
+						// Removing closes their Markdown windows (the folder stays on
+						// disk), so unsaved edits there are asked about first.
+						if (!(await confirmMarkdownWindowsClean(ids))) return;
+						Promise.allSettled(ids.map((id) => deleteWorkspace(id))).then(
+							(results) => {
+								for (const r of results) {
+									if (r.status === "rejected") {
+										console.error("Failed to remove workspace:", r.reason);
+									}
+								}
+							},
+						);
 					}}
 					onCancel={() => setPendingDeleteId(null)}
 				/>

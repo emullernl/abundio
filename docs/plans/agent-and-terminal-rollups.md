@@ -1,6 +1,6 @@
 # Agent and Terminal rollups
 
-Decision record: ADR-0032. Glossary: **Agent rollup**, **Terminal rollup**, **Hidden rollup** in `CONTEXT.md`.
+Decision record: ADR-0032. Glossary: **Agent rollup**, **Terminal rollup**, **Hidden rollup** in `GLOSSARY.md`.
 
 ## Goal
 

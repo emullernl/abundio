@@ -21,7 +21,7 @@ The five PTY status terms — **Idle, Working, Ready, Error, Waiting** — were 
 
 ## Consequences
 
-- `PtyActivityState` value `"active"` in code remains; the doc canonically uses **Working**. Renaming the code value is a deferred follow-up (see CONTEXT.md "Flagged ambiguities").
+- `PtyActivityState` value `"active"` in code remains; the doc canonically uses **Working**. Renaming the code value is a deferred follow-up (see GLOSSARY.md "Flagged ambiguities").
 - The Overview bar's `Terminals` section shows three tiles: Idle, Working, Error. The `showShellActivityDetail` prop and the `shellActivityStatus` setting are removed.
 - The `idleScanner` in `stores/ptyActivityStore.ts` no longer branches on focus for shell-mode PTYs — a Working shell whose output stops simply returns to Idle, regardless of which pane has focus. The focus-driven Ready transition remains for agent-mode only.
 - `classifyShellExit` in `lib/activityGate.ts` returns `"idle"` (not `"ready"`) on a clean shell exit. Error classification is unchanged.

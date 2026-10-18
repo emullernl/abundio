@@ -142,7 +142,7 @@ Two cadences (not pause): each cycle the task computes its effective interval â€
 
 - **Rust:** new `src-tauri/src/pr_poller.rs`; edit `gh_commands.rs`, `git_libgit2.rs`, `commands.rs`, `lib.rs`.
 - **Frontend:** `src/lib/ipc.ts`, `src/lib/types.ts`, `src/stores/prStore.ts`, `src/stores/settingsStore.ts`, `src/hooks/useGitDataSync.ts`, `src/components/GitChanges/PullRequestsSection.tsx`, `src/components/OverviewBar.tsx` (+ its parent in `App.tsx`), `src/components/SettingsPanel.tsx`, `src/SettingsApp.tsx`, demo files. `PullRequestItem.tsx` only if empty-state props shift.
-- **Docs:** `docs/adr/0019-app-global-pr-poller.md` (new); `docs/adr/0005-overview-bar.md` (supersede note); `CONTEXT.md` (empty-state flagged-ambiguity + Overview bar ADR ref).
+- **Docs:** `docs/adr/0019-app-global-pr-poller.md` (new); `docs/adr/0005-overview-bar.md` (supersede note); `GLOSSARY.md` (empty-state flagged-ambiguity + Overview bar ADR ref).
 
 ## Tests
 

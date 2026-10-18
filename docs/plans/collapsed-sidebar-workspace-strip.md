@@ -17,7 +17,7 @@ User wants the collapsed sidebar to:
 - **Click semantics**: strip is fully clickable — same `beginWorkspaceSwitch` / context-menu / focus behaviour as the expanded item. Popover is purely informational + a host for the hover-X delete button and rename input.
 - **No drag-to-reorder in collapsed**: dragging from a 56px strip with a ghost rendered at expanded width is awkward; users reorder by expanding first. The 5px drag threshold also made accidental switches likely.
 - **Row height = 50px**: matches the expanded item height so an item at viewport Y=300 stays at Y=300 across a collapse/expand toggle. The cursor stays parked on the same workspace.
-- **No ADR / no CONTEXT.md update**: the change is reversible CSS + component-structure choices; the collapsed mode is a UI affordance, not domain language.
+- **No ADR / no GLOSSARY.md update**: the change is reversible CSS + component-structure choices; the collapsed mode is a UI affordance, not domain language.
 
 ## Approach
 

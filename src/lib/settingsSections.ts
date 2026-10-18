@@ -4,7 +4,7 @@
  * Section ids cross the Rust→JS boundary — `open_settings_window { section }`
  * encodes one into the window URL on a cold open and emits it as a
  * `settings-set-section` event when the window is already open — so they are
- * vocabulary, not an implementation detail. See CONTEXT.md.
+ * vocabulary, not an implementation detail. See GLOSSARY.md.
  *
  * This is a pure module rather than a store on purpose: the Settings window is
  * its own webview (ADR-0008), so a value written to a zustand store in a

@@ -16,7 +16,7 @@ We want to:
 
 Design decisions and rationale are recorded in
 [`docs/adr/0001-markdown-preview-pane-model.md`](../adr/0001-markdown-preview-pane-model.md).
-Canonical terms (**File pane**, **Preview pane**, **Source pane**) are in `CONTEXT.md`.
+Canonical terms (**File pane**, **Preview pane**, **Source pane**) are in `GLOSSARY.md`.
 
 ### Resolved design
 

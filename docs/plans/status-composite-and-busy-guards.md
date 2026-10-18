@@ -1,6 +1,6 @@
 # Status composite and busy-based close guards
 
-Decision records: ADR-0033 (composite), ADR-0034 (guards). Glossary: **Status composite**, **Primary icon**, **Status badge**, **Busy PTY** in `CONTEXT.md`.
+Decision records: ADR-0033 (composite), ADR-0034 (guards). Glossary: **Status composite**, **Primary icon**, **Status badge**, **Busy PTY** in `GLOSSARY.md`.
 
 ## Goal
 

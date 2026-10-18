@@ -71,7 +71,7 @@ type IssueState =
 
 /**
  * **New task**: start a **Task-capable** Agent with a Task as its first
- * prompt, in one of three **Task destinations**. See CONTEXT.md and ADR-0042.
+ * prompt, in one of three **Task destinations**. See GLOSSARY.md and ADR-0042.
  *
  * Opened from the keyboard, the Command palette, the Tab bar, a sidebar row's
  * menu, or the Fleet Console's Add agent. From the Console (`fromFleet`) the

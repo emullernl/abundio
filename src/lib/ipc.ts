@@ -260,6 +260,17 @@ export const windowSession = {
 		commands: number;
 	}) => invoke<void>("report_busy_counts", { counts }),
 
+	/** Report the paths of this Window's unsaved File panes, so the quit
+	 *  confirmation can offer Save and Quit across every Window. Sent only
+	 *  when the list changes. */
+	reportUnsavedFiles: (paths: string[]) =>
+		invoke<void>("report_unsaved_files", { paths }),
+
+	/** Save and Quit: Rust asks this Window to save every unsaved File pane.
+	 *  Aimed at one Window, so heard on this webview. */
+	onSaveAllBeforeQuit: (callback: () => void) =>
+		listenToThisWindow<void>("save-all-before-quit", () => callback()),
+
 	/** Bring another Window to the front — used when the Profile asked for is
 	 *  already open there (ADR-0007). */
 	focus: (label: string) => invoke<void>("focus_window", { label }),
@@ -1164,4 +1175,55 @@ export const env = {
 	 *  true when the key is available again. Process-global: affects every
 	 *  window, which is the right semantics for "the keychain was unlocked". */
 	retryKey: () => invoke<boolean>("env_retry_key"),
+};
+
+/** Which of its two views a **Markdown window** shows (ADR-0046). */
+export type MarkdownView = "rendered" | "source";
+
+export interface MarkdownWindowInfo {
+	workspaceId: string;
+	workspaceName: string;
+	rootFolder: string;
+	filePath: string;
+	view: MarkdownView;
+}
+
+export interface DirtyMarkdownWindow {
+	label: string;
+	filePath: string;
+}
+
+export const markdownWindows = {
+	/** Opens the file's Markdown window, or focuses the one showing it. */
+	open: (workspaceId: string, filePath: string) =>
+		invoke<void>("md_window_open", { workspaceId, filePath }),
+
+	/** The calling Markdown window's file, Workspace and last view. */
+	info: () => invoke<MarkdownWindowInfo>("md_window_info"),
+
+	setView: (view: MarkdownView) => invoke<void>("md_window_set_view", { view }),
+
+	setDirty: (dirty: boolean) => invoke<void>("md_window_set_dirty", { dirty }),
+
+	/** The user closed this window themselves: do not reopen it. */
+	forget: () => invoke<void>("md_window_forget"),
+
+	/** Open Markdown windows of these Workspaces with unsaved edits. */
+	dirty: (workspaceIds: string[]) =>
+		invoke<DirtyMarkdownWindow[]>("md_windows_dirty", { workspaceIds }),
+
+	/** Asks these windows to save; each reports itself clean when done. */
+	save: (labels: string[]) => invoke<void>("md_windows_save", { labels }),
+
+	/** Closes these Workspaces' Markdown windows and remembers them. */
+	close: (workspaceIds: string[]) =>
+		invoke<void>("md_windows_close", { workspaceIds }),
+
+	/** Reopens a Workspace's remembered Markdown windows. */
+	restore: (workspaceId: string) =>
+		invoke<void>("md_windows_restore", { workspaceId }),
+
+	/** Rust aims this at one Markdown window, so it is heard on this webview. */
+	onSaveRequested: (callback: () => void) =>
+		listenToThisWindow<void>("markdown-window-save", () => callback()),
 };

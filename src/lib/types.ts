@@ -227,7 +227,7 @@ export interface GitChangedFile {
 	deletions: number;
 	/** Which pair of git endpoints this row was produced by — except
 	 *  "conflicted", which is a *state* rather than an endpoint pair and is the
-	 *  deliberate exception in this union (see CONTEXT.md). */
+	 *  deliberate exception in this union (see GLOSSARY.md). */
 	section: "conflicted" | "against_base" | "staged" | "unstaged" | "untracked";
 }
 
@@ -242,7 +242,7 @@ export interface BranchInfo {
 	currentBranch: string;
 }
 
-/** One row of the **Commits** section (see CONTEXT.md). */
+/** One row of the **Commits** section (see GLOSSARY.md). */
 export interface HistoryCommit {
 	oid: string;
 	subject: string;
@@ -329,7 +329,7 @@ export interface PullRequest {
 	labels: string[];
 	repository: string;
 	/** Id of the PR's GitHub notification thread when that thread is unread,
-	 *  else null. GitHub owns the flag — see **Unread PR** in CONTEXT.md. */
+	 *  else null. GitHub owns the flag — see **Unread PR** in GLOSSARY.md. */
 	unreadThreadId: string | null;
 }
 

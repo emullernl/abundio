@@ -39,7 +39,7 @@ pub struct BranchInfo {
     pub current_branch: String,
 }
 
-/// One commit in the **Commits** section (see CONTEXT.md).
+/// One commit in the **Commits** section (see GLOSSARY.md).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryCommit {
@@ -65,7 +65,7 @@ pub struct HistoryCommit {
 /// The **Commits** section's list: the Workspace's recent history, newest
 /// first, capped at `COMMIT_HISTORY_CAP` rows. First every **Ahead commit**
 /// (`base..HEAD`), then the **Shared history** from where the branch last met
-/// its base — so the two halves never interleave. See CONTEXT.md.
+/// its base — so the two halves never interleave. See GLOSSARY.md.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitHistory {

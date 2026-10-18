@@ -19,10 +19,11 @@ pub const MAIN_WINDOW_LABEL: &str = "main";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
 
 /// True for any window that is a profile-bound Abundio window (vs. auxiliary
-/// like Settings). Used to filter which windows are counted as "the last
-/// window" for the quit-on-empty rule.
+/// like Settings, or Workspace-bound like a Markdown window). Used to filter
+/// which windows are counted as "the last window" for the quit-on-empty rule,
+/// which are saved in `windows.json`, and which may claim a Profile.
 pub fn is_profile_window_label(label: &str) -> bool {
-    label != SETTINGS_WINDOW_LABEL
+    label != SETTINGS_WINDOW_LABEL && !crate::markdown_windows::is_markdown_window_label(label)
 }
 
 /// Picks the one Window a single-Window event should go to: the focused
@@ -380,6 +381,14 @@ mod tests {
     fn pick_prefers_the_focused_profile_window() {
         let w = [("main", false), ("window-b", true)];
         assert_eq!(pick_one_profile_window(w).as_deref(), Some("window-b"));
+    }
+
+    #[test]
+    fn markdown_windows_are_not_profile_windows() {
+        assert!(!is_profile_window_label(&crate::markdown_windows::new_label()));
+        assert!(!is_profile_window_label(SETTINGS_WINDOW_LABEL));
+        assert!(is_profile_window_label(MAIN_WINDOW_LABEL));
+        assert!(is_profile_window_label(&generate_window_label()));
     }
 
     // Settings focused (the macOS menu bar is shared): it has no listener, so

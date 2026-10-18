@@ -2,7 +2,7 @@
 
 One-click, parameterised prompts fired at a running **Agent** from a strip at the bottom of its **Pane**.
 
-Vocabulary lives in `CONTEXT.md` (**Prompt action**, **Action bar**, **Action scope**, **Firing**, **Parameter**, **Toggle parameter**, **Attachment**, **Required**, **Show in bar**, **Palette firing**, **Prompt action store**). Two decisions are recorded as ADRs: attachments travel by path (ADR-0038) and the store is SQLite rather than `settingsStore` (ADR-0039). This document is the build order.
+Vocabulary lives in `GLOSSARY.md` (**Prompt action**, **Action bar**, **Action scope**, **Firing**, **Parameter**, **Toggle parameter**, **Attachment**, **Required**, **Show in bar**, **Palette firing**, **Prompt action store**). Two decisions are recorded as ADRs: attachments travel by path (ADR-0038) and the store is SQLite rather than `settingsStore` (ADR-0039). This document is the build order.
 
 ## Shape
 
@@ -68,7 +68,7 @@ Opens for any action with one or more Parameters. All fields required, Send disa
 
 ### 7. Settings ▸ Prompt actions
 
-New leaf section id `prompt-actions` under the *Application* caption, after *Agents*. No legacy alias needed. `CONTEXT.md`'s "Eight of them" is already updated to nine. Full editor: body, derived parameters with types and defaults, scope, **Show in bar**, reorder, duplicate, delete, and a live preview resolved from defaults.
+New leaf section id `prompt-actions` under the *Application* caption, after *Agents*. No legacy alias needed. `GLOSSARY.md`'s "Eight of them" is already updated to nine. Full editor: body, derived parameters with types and defaults, scope, **Show in bar**, reorder, duplicate, delete, and a live preview resolved from defaults.
 
 Separately, a global **Show Action bar** toggle in Settings ▸ Terminal beside `smartImageDrop` — a preference, so it stays in `settingsStore` (ADR-0039).
 
@@ -94,7 +94,7 @@ Then: `WorkspaceRow` / `WorkspaceUpdate` in `workspace_store.rs`, the three inte
 
 **Back up `abundio.db`, `-wal` and `-shm` before this runs**, and rehearse on a copy of the real database. There are no down-migrations.
 
-**Not part of this branch, by decision.** The word "preset" therefore stays ambiguous until then — `CONTEXT.md`'s **Prompt action** entry says so explicitly, so nothing here reuses the name.
+**Not part of this branch, by decision.** The word "preset" therefore stays ambiguous until then — `GLOSSARY.md`'s **Prompt action** entry says so explicitly, so nothing here reuses the name.
 
 ## Deliberately not in v1
 

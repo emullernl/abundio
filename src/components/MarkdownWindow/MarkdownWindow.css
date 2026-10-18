@@ -1,0 +1,11 @@
+/* Find in the rendered view of a Markdown window (lib/renderedFind.ts). The
+   CSS Custom Highlight API paints these without touching the DOM. */
+::highlight(abundio-md-find) {
+	background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+	color: inherit;
+}
+
+::highlight(abundio-md-find-current) {
+	background-color: var(--accent);
+	color: var(--bg-primary);
+}

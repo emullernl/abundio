@@ -18,7 +18,7 @@ The dominant cost is the blocking `libgit2` work in `src-tauri/src/git_libgit2.r
   - **Create error:** buttons **Edit** (reopens `AddWorktreeDialog` pre-filled with the values just entered) and **Close**.
   - **Remove error:** **Close** only; the workspace is still intact (ADR-0017 prunes the folder before tearing down the workspace, so a locked/EBUSY failure is non-destructive).
 - **Dialog text:** concise with identifier — `Creating worktree feature/foo…` (branch) and `Removing worktree 'foo'…` (workspace name).
-- **No `CONTEXT.md` term and no ADR** — UI affordance, not domain language; reversible polish, no architectural trade-off.
+- **No `GLOSSARY.md` term and no ADR** — UI affordance, not domain language; reversible polish, no architectural trade-off.
 
 ## Changes
 

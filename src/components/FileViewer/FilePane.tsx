@@ -31,6 +31,7 @@ import {
 	toggleMergeBase,
 	toggleMergeViewForPane,
 } from "../../lib/mergeView";
+import { openMarkdownWindow } from "../../lib/openMarkdownWindow";
 import { findPreviewForSource } from "../../lib/paneTree";
 import { sc } from "../../lib/platform";
 import {
@@ -430,6 +431,13 @@ export function FilePane({
 					label: "Print",
 					onClick: () => {
 						handlePrintMarkdown();
+					},
+				},
+				{
+					label: "Open in Markdown Window",
+					shortcut: shortcutLabelFor("open-markdown-window", keyOverrides),
+					onClick: () => {
+						void openMarkdownWindow(workspaceId, paneState.filePath);
 					},
 				},
 				{ separator: true },

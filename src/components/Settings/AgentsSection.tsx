@@ -569,7 +569,7 @@ function AddAgentForm({
  * Deliberately **not** called "Detect": in this section that word belongs to
  * the green *Detected* badge, which means one thing — the command is on
  * `$PATH`. This button acts on the toggles instead. See ADR-0037 and the
- * *Installed* / *Watched* entries in CONTEXT.md.
+ * *Installed* / *Watched* entries in GLOSSARY.md.
  *
  * No confirm dialog — every effect is one toggle-flip away from undone.
  */

@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the **Fleet Console** (see CONTEXT.md and ADR-0040):
+ * Pure helpers for the **Fleet Console** (see GLOSSARY.md and ADR-0040):
  * which panes become **Fleet tiles**, in what order, and how the grid is
  * shaped. No stores, no DOM — the component feeds these from the stores.
  */

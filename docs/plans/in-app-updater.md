@@ -104,7 +104,7 @@ pnpm tauri signer generate -w ~/.tauri/abundio_updater.key   # choose a password
 > **In-app updater via Tauri updater + GitHub Releases, applied on quit.**
 > We add `tauri-plugin-updater` pointed at `releases/latest/download/latest.json`, signed with a dedicated Tauri updater key (separate from Apple notarization, which we defer). Because Abundio is a terminal multiplexer where a relaunch kills every live PTY and mid-turn Agent across all Windows, updates **download eagerly but install on the next natural quit** by default (`download()` on accept, `install()` from the `quit-app`/`RunEvent` path — see ADR-0007); an explicit, generically-warned "Install & Restart now" is the only path that interrupts running work. The version **check runs in Rust** and emits to the focused Window so N windows don't each prompt. Releases stay **draft** in CI; clicking *Publish* on GitHub is the deliberate ship action. Considered and rejected: auto-relaunch (destroys the app's core value), auto-publish (no human gate), per-window checks (duplicate prompts).
 
-### CONTEXT.md — Language addition
+### GLOSSARY.md — Language addition
 > **Update**: A newer published Abundio release the running app can fetch and apply via the Tauri updater. App-global (not per-Profile). Lifecycle: *available* → *downloading* → *staged* → *installed on quit*. By default applied only on the next natural quit so live **PTY**s and **Agent** turns survive; an explicit guarded "restart now" is the exception.
 > _Avoid_: upgrade, patch, version bump.
 > Relationship line: installing an Update on quit ties into the "last-window-closing quits the app" rule — the staged install runs in the quit path before Windows tear down.

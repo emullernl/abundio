@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
 import { FleetConsole } from "./components/FleetConsole/FleetConsole";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
+import { MarkdownCloseConfirmDialog } from "./components/MarkdownWindow/MarkdownCloseConfirmDialog";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
@@ -26,6 +27,7 @@ import { WhatsNewCard } from "./components/WhatsNewCard";
 import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
+import { useMarkdownWindowRestore } from "./hooks/useMarkdownWindowRestore";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -71,6 +73,10 @@ import {
 } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { applyMonacoOverrides } from "./lib/monacoKeymap";
+import {
+	markdownFileForPane,
+	openMarkdownWindow,
+} from "./lib/openMarkdownWindow";
 import { openNewTask } from "./lib/openNewTask";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
@@ -81,6 +87,7 @@ import {
 	pasteIntoTerminal,
 } from "./lib/terminalClipboard";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
+import { unsavedFilePaths } from "./lib/unsavedFiles";
 import { cycleOpenedWorkspace } from "./lib/workspaceCycle";
 import {
 	addWorktreeTargetId,
@@ -90,6 +97,7 @@ import {
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
+import { confirmMarkdownWindowsClean } from "./stores/markdownCloseConfirmStore";
 import { useNotesStore } from "./stores/notesStore";
 import {
 	clearPaneClose,
@@ -316,6 +324,7 @@ export function App() {
 	useWorkspace();
 	useDemoBootstrap();
 	useFileReloadWatcher();
+	useMarkdownWindowRestore();
 	useGitDataSync();
 	useWorktreeSync();
 	useTerminalFileDrop();
@@ -667,6 +676,10 @@ export function App() {
 		appWindowRef.current = win;
 		const unlisten = win.onCloseRequested(async (event) => {
 			event.preventDefault();
+			// Markdown windows close with this Window; their unsaved edits live
+			// in other webviews, so ask about them first (ADR-0046).
+			const opened = [...usePtyActivityStore.getState().openedWorkspaceIds];
+			if (!(await confirmMarkdownWindowsClean(opened))) return;
 			const dirtyPaneCount = Object.values(
 				useExplorerStore.getState().filePanes,
 			).filter((p) => p.isDirty).length;
@@ -715,6 +728,36 @@ export function App() {
 		return usePtyActivityStore.subscribe((state) => {
 			report(busyCounts(state.activities));
 		});
+	}, []);
+
+	// Mirror this Window's unsaved File panes into Rust for the quit
+	// confirmation, and answer its Save and Quit by saving all of them.
+	useEffect(() => {
+		let last = "";
+		const report = (paths: string[]) => {
+			const key = paths.join("\n");
+			if (key === last) return;
+			last = key;
+			windowSession.reportUnsavedFiles(paths).catch(() => {});
+		};
+		report(unsavedFilePaths(useExplorerStore.getState().filePanes));
+		const unsubscribe = useExplorerStore.subscribe((state) => {
+			report(unsavedFilePaths(state.filePanes));
+		});
+		const unlisten = windowSession.onSaveAllBeforeQuit(() => {
+			const explorer = useExplorerStore.getState();
+			for (const [paneId, pane] of Object.entries(explorer.filePanes)) {
+				if (pane.isDirty) {
+					explorer.saveFile(paneId).catch((e) => {
+						console.error("[quit] save failed:", e);
+					});
+				}
+			}
+		});
+		return () => {
+			unsubscribe();
+			unlisten.then((fn) => fn()).catch(() => {});
+		};
 	}, []);
 
 	// Settings menu is now handled entirely in Rust — it opens the singleton
@@ -981,6 +1024,21 @@ export function App() {
 			workspaceViewOnly(() => {
 				const paneId = useWorkspaceStore.getState().focusedPaneId;
 				if (paneId) toggleMarkdownPreviewForPane(paneId);
+			}),
+		);
+		registerAction(
+			"open-markdown-window",
+			workspaceViewOnly(() => {
+				const ws = useWorkspaceStore.getState();
+				const paneId = ws.focusedPaneId;
+				const workspaceId = ws.activeWorkspaceId;
+				if (!paneId || !workspaceId) return;
+				const filePath = markdownFileForPane(
+					paneId,
+					ws.getActiveLayout(),
+					useExplorerStore.getState().filePanes,
+				);
+				if (filePath) void openMarkdownWindow(workspaceId, filePath);
 			}),
 		);
 		registerAction(
@@ -1324,6 +1382,7 @@ export function App() {
 					onCancel={() => setWorkspaceCloseRequested(null)}
 				/>
 			)}
+			<MarkdownCloseConfirmDialog />
 			<DragPanePreview />
 			<UpdatePrompt />
 			<WhatsNewCard />

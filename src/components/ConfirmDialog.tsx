@@ -11,6 +11,9 @@ interface ConfirmDialogProps {
 	confirmVariant?: "danger" | "default";
 	onConfirm: () => void;
 	onCancel: () => void;
+	/** One button only: a notice to acknowledge, not a choice. Escape and
+	 *  the backdrop still dismiss it through `onCancel`. */
+	hideCancel?: boolean;
 }
 
 function ConfirmDialogBody({
@@ -20,6 +23,7 @@ function ConfirmDialogBody({
 	confirmVariant = "default",
 	onConfirm,
 	onCancel,
+	hideCancel = false,
 }: ConfirmDialogProps) {
 	const confirmRef = useRef<HTMLButtonElement>(null);
 
@@ -125,24 +129,26 @@ function ConfirmDialogBody({
 						>
 							{confirmLabel}
 						</button>
-						<button
-							type="button"
-							onClick={onCancel}
-							className="w-full py-2.5 rounded-lg transition-all cursor-pointer"
-							style={{
-								fontSize: 13,
-								color: "var(--fg-secondary)",
-								backgroundColor: "var(--bg-tertiary)",
-							}}
-							onMouseEnter={(e) => {
-								e.currentTarget.style.color = "var(--fg-primary)";
-							}}
-							onMouseLeave={(e) => {
-								e.currentTarget.style.color = "var(--fg-secondary)";
-							}}
-						>
-							Cancel
-						</button>
+						{!hideCancel && (
+							<button
+								type="button"
+								onClick={onCancel}
+								className="w-full py-2.5 rounded-lg transition-all cursor-pointer"
+								style={{
+									fontSize: 13,
+									color: "var(--fg-secondary)",
+									backgroundColor: "var(--bg-tertiary)",
+								}}
+								onMouseEnter={(e) => {
+									e.currentTarget.style.color = "var(--fg-primary)";
+								}}
+								onMouseLeave={(e) => {
+									e.currentTarget.style.color = "var(--fg-secondary)";
+								}}
+							>
+								Cancel
+							</button>
+						)}
 					</div>
 				</motion.div>
 			</motion.div>

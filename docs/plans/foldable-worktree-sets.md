@@ -14,7 +14,7 @@ top of the rows `buildWorkspaceRows()` already produces.
 
 "Collapsed" was already taken: `windowUiStore.sidebarCollapsed` / `CollapsedStrip` mean *the sidebar
 is narrow*. The new state is therefore **folded**, and it is honoured in both sidebar widths. See the
-**Folded set** entry in `CONTEXT.md`.
+**Folded set** entry in `GLOSSARY.md`.
 
 ## Decisions
 
@@ -84,7 +84,7 @@ is narrow*. The new state is therefore **folded**, and it is honoured in both si
   mid-transition rects.
 - **No bulk fold-all in v1.** Per-set only.
 - **No ADR.** The decision is cheap to reverse (one store field plus a render branch), introduces no
-  new source of truth, and rides entirely on ADR-0017's derived grouping. `CONTEXT.md` gains the
+  new source of truth, and rides entirely on ADR-0017's derived grouping. `GLOSSARY.md` gains the
   **Folded set** term; that is the whole documentation debt.
 
 ## Approach

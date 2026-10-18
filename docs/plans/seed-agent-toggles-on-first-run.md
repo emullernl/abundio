@@ -2,7 +2,7 @@
 
 Implements ADR-0037. One branch, ordered commits — not split into separate PRs.
 
-Vocabulary is fixed by CONTEXT.md: **Installed** (on `$PATH`, live, the green *Detected* badge), **Watched** (the per-Agent toggle, persisted as `enabled`), **Agent seeding** (the one-time act). The word "detection" now refers only to the runtime title/process match that flips a PTY into agent mode.
+Vocabulary is fixed by GLOSSARY.md: **Installed** (on `$PATH`, live, the green *Detected* badge), **Watched** (the per-Agent toggle, persisted as `enabled`), **Agent seeding** (the one-time act). The word "detection" now refers only to the runtime title/process match that flips a PTY into agent mode.
 
 ## 1. Rust: is this a new install?
 

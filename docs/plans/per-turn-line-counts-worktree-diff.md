@@ -32,7 +32,7 @@ Net-vs-base reads 0/0 whenever a turn reverts/cleans up (floored), re-edits line
 4. **`src/lib/ipc.ts`** — export `interface TreeDiffStats`; add `git.snapshotWorktree` / `git.diffTrees`. **`src/lib/demo/mockInvoke.ts`** — `git_snapshot_worktree → null`, `git_diff_trees → {additions:0,deletions:0,files:0}`.
 5. **`src/lib/agentTurnTracker.ts`** — remove `gitStart`/`cachedGitSnapshot`/`workspaceGitStore`; `OpenTurn` gains `startTreeOid` + `startTreePromise`; begin fires `git.snapshotWorktree` fire-and-forget; `writeRecord` drops `fetchBundle`, NULLs `git_*_start/end`, computes lines from `diffTrees(startOid, endOid)` (no `Math.max`); preserves `contaminated → NULL` and non-git → NULL.
 6. **`src/components/Statistics/StatsSummaryCards.tsx`** — "Net lines" → "Lines changed" / "changed during turns" / new tooltip.
-7. Schema — none. Docs — DONE (ADR-0021, ADR-0018 annotation, CONTEXT.md).
+7. Schema — none. Docs — DONE (ADR-0021, ADR-0018 annotation, GLOSSARY.md).
 
 ## Tests
 

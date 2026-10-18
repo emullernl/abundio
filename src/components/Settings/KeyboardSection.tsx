@@ -145,7 +145,7 @@ let catalogueCache: EditorShortcut[] | null = null;
 /**
  * Settings ▸ Keyboard: every app Shortcut and every labelled editor action,
  * each with a chord pill to record a new Chord, unbind (Backspace) or reset.
- * Only Overrides are written; resetting deletes the entry. See ADR-0043 and CONTEXT.md (Shortcut).
+ * Only Overrides are written; resetting deletes the entry. See ADR-0043 and GLOSSARY.md (Shortcut).
  */
 export function KeyboardSection() {
 	const overrides = useSettingsStore((s) => s.keybindingOverrides);

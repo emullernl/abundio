@@ -10,11 +10,13 @@ import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { type KeyAction, triggerAction } from "../lib/keybindings";
+import { markdownFileForPane } from "../lib/openMarkdownWindow";
 import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
 import { addWorktreeTargetId } from "../lib/worktreeGrouping";
+import { useExplorerStore } from "../stores/explorerStore";
 import { useProfileStore } from "../stores/profileStore";
 import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePromptActionStore } from "../stores/promptActionStore";
@@ -170,6 +172,24 @@ export function CommandPalette({
 					action: () => triggerAction("prev-workspace"),
 				},
 			);
+		}
+
+		const markdownFile =
+			focusedPaneId && !inFleet
+				? markdownFileForPane(
+						focusedPaneId,
+						useWorkspaceStore.getState().getActiveLayout(),
+						useExplorerStore.getState().filePanes,
+					)
+				: null;
+		if (markdownFile) {
+			result.push({
+				id: "action-open-markdown-window",
+				label: "Open in Markdown Window",
+				category: "Actions",
+				shortcut: "open-markdown-window",
+				action: () => triggerAction("open-markdown-window"),
+			});
 		}
 
 		if (focusedPaneId && !inFleet) {

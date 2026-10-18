@@ -1,7 +1,7 @@
 /**
  * Pure helpers for **Prompt actions** — named, parameterised prompts fired at a
  * running Agent from the **Action bar**. See the `Prompt action`, `Parameter`,
- * `Firing`, `Action scope` and `Position number` entries in CONTEXT.md, plus
+ * `Firing`, `Action scope` and `Position number` entries in GLOSSARY.md, plus
  * ADR-0038 and ADR-0039.
  *
  * Kept side-effect-free so it is unit-testable, in the same spirit as

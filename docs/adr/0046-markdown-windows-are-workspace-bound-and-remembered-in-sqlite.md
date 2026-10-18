@@ -1,0 +1,16 @@
+# Markdown windows are Workspace-bound and remembered in SQLite
+
+A **Markdown window** is a real OS Window that shows one markdown file, either rendered (read-only) or as Monaco source (editable). It belongs to one **Workspace**. It is open only while that Workspace is an **Opened workspace**. When the Workspace closes, the app quits, the owning Window closes or that Window switches Profile, the Markdown window closes and is *remembered*. It reopens, in the view it was last in, the next time the Workspace is opened. If you close it yourself, it is forgotten. Remembered windows live in a SQLite table, one row per window, keyed by Workspace and the file's canonical path (so every spelling of one file shares one window), with a stable window label. They are not stored in `windows.json`.
+
+## Considered Options
+
+- **Stretch "Auxiliary window" to cover it.** Rejected. ADR-0008 defines an Auxiliary window as *global* (it belongs to no Profile), and code relies on that: `is_profile_window_label` is "everything except `settings`". A Markdown window belongs to a Workspace and so, through it, to a Profile. Calling it Auxiliary would make "Auxiliary" mean only "not Profile-bound". So the glossary now names a third kind, the **Workspace-bound window**. Like Settings, it is left out of `windows.json` and out of the "last window quits" rule.
+- **Tie the lifetime to app launch.** Rejected. Restoring every remembered window at start-up would open windows for Workspaces that are not Opened. Their file watchers and PTYs are not running then, so the windows would show files nothing is watching.
+- **Tie the lifetime to the owning Window, through `windows.json`.** Rejected. `windows.json` is written only at quit, or when the last Window is destroyed, so a crash would lose every remembered window. It is also keyed by Profile, not Workspace, so "reopen when the Workspace reopens" could not be expressed. SQLite is written the moment a window opens, closes or changes view. It is epoch-versioned (ADR-0025), and its rows are deleted along with their Workspace.
+
+## Consequences
+
+- `is_profile_window_label` must return false for Markdown window labels (`md-<uuid>`). Otherwise the quit rule, `windows.json` saving, `pick_one_profile_window` and the per-Window event filters would all count them as Profile windows. `md-*` needs a capability, or every IPC call from these windows fails silently. It has its own, `markdown-window.json`, narrower than `default`: a window that renders file content gets no shell execute, dialogs, notifications or clipboard plugin.
+- The label is generated once and stored in the row, so `tauri-plugin-window-state` restores the window's size and position when it reopens.
+- To tell "forget" apart from "remember", a close must know its cause. A close you start yourself (the window's own `onCloseRequested`) deletes the row. Closes driven by the owner (closing the Workspace, switching Profile, destroying the owning Window, quitting) keep it.
+- Unsaved edits in a Markdown window live in another webview's JS context. So the owning Window's close check, and the Workspace close check, have to ask Rust about them. Each Markdown window reports whether it has unsaved edits to Rust; the owning Window cannot see that state directly.

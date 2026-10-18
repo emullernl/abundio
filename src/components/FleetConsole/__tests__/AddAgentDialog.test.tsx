@@ -51,7 +51,7 @@ function ws(id: string, agentId?: string): WorkspaceWithTabs {
 	} as unknown as WorkspaceWithTabs;
 }
 
-// See the Add agent and Relaunch entries in CONTEXT.md.
+// See the Add agent and Relaunch entries in GLOSSARY.md.
 describe("AddAgentDialog", () => {
 	let container: HTMLDivElement;
 	let root: ReturnType<typeof createRoot>;

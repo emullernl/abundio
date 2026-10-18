@@ -12,6 +12,7 @@ pub mod error;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
+pub mod markdown_windows;
 pub mod gh_commands;
 pub mod git_commands;
 pub mod git_libgit2;
@@ -33,6 +34,7 @@ pub mod workspace_store;
 pub mod worktree_commands;
 pub mod worktree_watcher;
 pub mod shell_env;
+pub mod unsaved_edits;
 
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Wry};
@@ -788,6 +790,11 @@ pub fn run() {
             let prompt_actions_conn = migrations::open_db().expect("Failed to open database");
             app.manage(prompt_actions::PromptActionStore::new(prompt_actions_conn));
 
+            // Own connection: Markdown windows read their row on every open and
+            // view toggle, independent of the WorkspaceStore mutex. ADR-0046.
+            let markdown_conn = migrations::open_db().expect("Failed to open database");
+            app.manage(markdown_windows::MarkdownWindowStore::new(markdown_conn));
+
             // Pasted Prompt action attachments are a cache, not user data
             // (ADR-0038). Nothing owns their lifetime, so they are swept by age
             // at startup. Best-effort: this must never stop the app opening.
@@ -805,6 +812,7 @@ pub fn run() {
             // Per-window Opened-workspace counts (pushed by the frontend),
             // summed at quit time to drive the quit confirmation. See ADR-0016.
             app.manage(profile_store::BusyCountsState::default());
+            app.manage(unsaved_edits::UnsavedFilesState::default());
             // Guards against stacking quit-confirmation dialogs on a repeated
             // Cmd+Q (the native dialog is non-blocking). See ADR-0016.
             app.manage(profile_store::QuitConfirmInFlight::default());
@@ -978,6 +986,18 @@ pub fn run() {
                 let app_handle = window.app_handle().clone();
                 let label = window.label().to_string();
 
+                // A Markdown window is Workspace-bound: no Profile, not in
+                // windows.json, not counted by the quit rule. Its row stays
+                // (only its own close handler forgets it); release what it
+                // held. ADR-0046.
+                if markdown_windows::is_markdown_window_label(&label) {
+                    markdown_windows::on_destroyed(&app_handle, &label);
+                    if let Some(fw) = app_handle.try_state::<file_watcher::FileWatcher>() {
+                        fw.release_window(&label);
+                    }
+                    return;
+                }
+
                 // The settings window is auxiliary — never claims a profile,
                 // not persisted in windows.json, and doesn't count toward
                 // "last window closing quits the app". Treat its destroy as
@@ -999,7 +1019,12 @@ pub fn run() {
                 if let Some(state) =
                     app_handle.try_state::<profile_store::ActiveProfileState>()
                 {
-                    state.remove_for_window(&label);
+                    // The Profile's Markdown windows close with its Window and
+                    // are remembered. React cleanup never runs on a destroyed
+                    // webview, so this is the backstop. ADR-0046.
+                    if let Some(profile_id) = state.remove_for_window(&label) {
+                        markdown_windows::destroy_for_profile(&app_handle, &profile_id);
+                    }
                 }
                 // Drop this window's worktree watch contribution so closed
                 // Windows don't keep repos watched forever. See ADR-0017.
@@ -1022,6 +1047,13 @@ pub fn run() {
                 // opened again starts fresh PTYs and never reattaches.
                 if let Some(pm) = app_handle.try_state::<PtyManager>() {
                     pm.kill_for_window(&label);
+                }
+                // Same for its unsaved File panes: a closed Window's edits
+                // were already asked about (or discarded) by its own close.
+                if let Some(unsaved) =
+                    app_handle.try_state::<unsaved_edits::UnsavedFilesState>()
+                {
+                    unsaved.remove_for_window(&label);
                 }
                 // Drop this window's busy tally so it can't inflate the
                 // quit-time total. See ADR-0034.
@@ -1099,6 +1131,56 @@ pub fn run() {
                     .try_state::<profile_store::BusyCountsState>()
                     .map(|s| s.total())
                     .unwrap_or_default();
+
+                // Unsaved edits come first, and get three answers: they can be
+                // saved, which busy work cannot. Busy work, if any, is named
+                // in the same dialog so there is only ever one. File panes
+                // and Markdown windows (ADR-0046) both count.
+                let unsaved = unsaved_edits::unsaved_paths(app);
+                if !unsaved.is_empty() {
+                    if let Some(flag) =
+                        app.try_state::<profile_store::QuitConfirmInFlight>()
+                    {
+                        let mut in_flight = flag.0.lock().unwrap();
+                        if *in_flight {
+                            return;
+                        }
+                        *in_flight = true;
+                    }
+                    let busy = window_management::describe_busy(&totals);
+                    let busy = (totals.blocks_quit() && !busy.is_empty()).then_some(busy);
+                    let message = unsaved_edits::unsaved_quit_message(&unsaved, busy.as_deref());
+                    let app_handle = app.clone();
+                    app.dialog()
+                        .message(message)
+                        .title("Quit Abundio?")
+                        .kind(MessageDialogKind::Warning)
+                        .buttons(MessageDialogButtons::YesNoCancelCustom(
+                            unsaved_edits::SAVE_AND_QUIT.to_string(),
+                            unsaved_edits::QUIT_WITHOUT_SAVING.to_string(),
+                            "Cancel".to_string(),
+                        ))
+                        .show_with_result(move |result| {
+                            let choice = unsaved_edits::quit_choice(&result);
+                            if choice == unsaved_edits::QuitChoice::Save {
+                                // The guard stays up while the saves land, so
+                                // a second Cmd+Q cannot stack another dialog;
+                                // `save_all_then_quit` lowers it if it gives up.
+                                unsaved_edits::save_all_then_quit(&app_handle, perform_quit);
+                                return;
+                            }
+                            if let Some(flag) =
+                                app_handle.try_state::<profile_store::QuitConfirmInFlight>()
+                            {
+                                *flag.0.lock().unwrap() = false;
+                            }
+                            if choice == unsaved_edits::QuitChoice::Discard {
+                                perform_quit(&app_handle);
+                            }
+                        });
+                    return;
+                }
+
                 if totals.blocks_quit() {
                     // The native dialog is non-blocking, so a second Cmd+Q while
                     // it's open would re-enter here and stack another dialog.
@@ -1249,6 +1331,7 @@ pub fn run() {
             commands::set_active_profile_id,
             commands::set_settings_accelerator,
             commands::report_busy_counts,
+            unsaved_edits::report_unsaved_files,
             commands::get_active_profile_for_window,
             commands::get_profile_ownership_map,
             commands::open_window_with_profile,
@@ -1323,6 +1406,15 @@ pub fn run() {
             dev_environments::launch_dev_environment,
             prompt_attachments::prompt_attachment_from_clipboard,
             prompt_actions::prompt_actions_list,
+            markdown_windows::md_window_open,
+            markdown_windows::md_window_info,
+            markdown_windows::md_window_set_view,
+            markdown_windows::md_window_set_dirty,
+            markdown_windows::md_window_forget,
+            markdown_windows::md_windows_dirty,
+            markdown_windows::md_windows_save,
+            markdown_windows::md_windows_close,
+            markdown_windows::md_windows_restore,
             prompt_actions::prompt_action_create,
             prompt_actions::prompt_action_update,
             prompt_actions::prompt_action_delete,
@@ -1366,7 +1458,7 @@ pub fn run() {
             // straight to tao's `applicationWillTerminate`, which emits only
             // `LoopDestroyed` → `RunEvent::Exit`. Handling both is what makes
             // "installs on the next natural quit" true for all three routes.
-            // See the `Quit route` entry in CONTEXT.md and ADR-0014.
+            // See the `Quit route` entry in GLOSSARY.md and ADR-0014.
             if matches!(
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit

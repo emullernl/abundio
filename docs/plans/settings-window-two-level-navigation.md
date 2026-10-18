@@ -40,14 +40,14 @@ Group captions are **presentation only**: non-clickable, non-focusable `<div>`s.
 ### Decisions taken, with their reasons
 
 - **Both fonts live on `fonts`, not on `terminal`.** You choose interface and terminal font *relative to each other*, so they belong side by side; the Terminal page stays about PTY and rendering behaviour, never about looks. This keeps the plan's one acknowledged cross-section coupling: `handleTerminalFontSizeChange` calls `setAllTerminalsFontSize` from `lib/terminalManager`, and moves into `FontsSection`.
-- **The leaf is called "Editor", not "Files" or "Editor & Preview".** It configures both a file pane and a preview pane, so it is not an exact glossary term — but "Files" collides with the Explorer tab in users' heads, and "Editor & Preview" truncates in a 160px rail where every other label is one word. Paid for with one CONTEXT.md line stating that Settings ▸ Editor covers file-pane *and* preview-pane concerns; **"Editor" stays a UI label and never enters the domain glossary.**
+- **The leaf is called "Editor", not "Files" or "Editor & Preview".** It configures both a file pane and a preview pane, so it is not an exact glossary term — but "Files" collides with the Explorer tab in users' heads, and "Editor & Preview" truncates in a 160px rail where every other label is one word. Paid for with one GLOSSARY.md line stating that Settings ▸ Editor covers file-pane *and* preview-pane concerns; **"Editor" stays a UI label and never enters the domain glossary.**
 - **Leaf rows keep icons and take no extra indent.** The caption carries the hierarchy on its own; indenting as well would be a third redundant signal and would break the icon column's vertical alignment. Rail stays 160px.
 - **Nav captions get their own component**, `NavGroupLabel` — smaller (10px), dimmer, wider letter-tracking, no icon column. `SectionLabel` (`:166`) keeps its exact current styling for **in-page** group headings ("GPU Acceleration", "Diagnostics", "Notifications"), so five existing pages get zero visual churn. Two hierarchy levels, two components — reusing `SectionLabel` in the rail would have a page-group and a control-group claiming equal rank.
 - **No section is remembered across opens.** Closing the Settings window destroys its webview (ADR-0008), so persistence would need a new settings key plus a broadcast-denylist entry as a write-on-use breadcrumb. `DEFAULT_SECTION = "theme"` — Cmd+, is deterministic, and the deep-link already covers "take me somewhere specific".
 - **No settings-wide search.** `SearchInput` (`:184`) has exactly one call site — inside `FontPicker` (`:329`) — and stays font-only.
 - **Preview color mode stays on the preview title bar** (ADR-0013). Its icon *is* the state readout, which a Settings row can't be. The Editor page carries one line of help text pointing at it, so its absence reads as intentional rather than as a gap.
-- **The section stays named "GitHub", not "Integrations".** It holds one integration and there is no second one pending — dev environments are auto-detected with no settings. Naming a category with one member is speculative generality; CONTEXT.md's one deliberate exception (**Profile**, `:198`) is flagged *as* an exception with a stated reason.
-- **Smart image drop stays in Terminal**, honouring CONTEXT.md:168's existing "(Terminal section, on by default)" — wrong today, made true here. Its label becomes the canonical glossary term, **Smart image drop**.
+- **The section stays named "GitHub", not "Integrations".** It holds one integration and there is no second one pending — dev environments are auto-detected with no settings. Naming a category with one member is speculative generality; GLOSSARY.md's one deliberate exception (**Profile**, `:198`) is flagged *as* an exception with a stated reason.
+- **Smart image drop stays in Terminal**, honouring GLOSSARY.md:168's existing "(Terminal section, on by default)" — wrong today, made true here. Its label becomes the canonical glossary term, **Smart image drop**.
 - **No About block is built.** `lib.rs:68–74` already supplies name/version/copyright/license to the native `PredefinedMenuItem::about` on every platform, and Updates shows the version anyway.
 
 ### Deep-link vocabulary — five of eight ids survive
@@ -63,7 +63,7 @@ All of this lands on the existing (currently empty) `feat/reorganise-settings` b
 1. **Broadcast fix** — `SettingsApp.tsx` only; independent of the reorg.
 2. **Pure-move extraction** — cut into `Settings/`, no behaviour change.
 3. **Regroup + two-level nav + deep-link + new controls.**
-4. **Docs** — CONTEXT.md.
+4. **Docs** — GLOSSARY.md.
 
 Steps 2 and 3 must be separate commits: step 2's entire verification is that `git diff --stat` reads as moves, and folding it into the regroup destroys that property — a 2465-line deletion beside 14 new files reads as a rewrite, and a real behaviour change could hide in it. Step 1 goes first so the cross-window retest at the end exercises the final code.
 
@@ -81,7 +81,7 @@ const NOT_BROADCAST = new Set([
 ]);
 ```
 
-The denylist is defensible because `settingsStore` **is** the global store by construction — per-Window state lives in `windowUiStore` (ADR-0007/0008). So the exclusions are about *noise*, not scope: sidebar widths are global by CONTEXT.md:156, but broadcasting them would live-resize your other windows mid-drag when last-drag-wins-on-next-open is the intent.
+The denylist is defensible because `settingsStore` **is** the global store by construction — per-Window state lives in `windowUiStore` (ADR-0007/0008). So the exclusions are about *noise*, not scope: sidebar widths are global by GLOSSARY.md:156, but broadcasting them would live-resize your other windows mid-drag when last-drag-wins-on-next-open is the intent.
 
 Keep the ADR-0014 comment on `skippedUpdateVersion` / `updateSnoozedUntil`. Note the bridge runs in **every** window (`main.tsx:12`), so propagation is bidirectional — a command-palette toggle in a Profile window reaches Settings too.
 
@@ -220,10 +220,10 @@ Per `feedback_verify_runtime_not_just_tests`: green unit tests are not enough �
 
 **No new ADR, and no ADR amendment.** All three criteria fail:
 - The denylist doesn't reverse ADR-0008 — it *restores* what its consequences section already describes. The 15-key hand-list was the drift.
-- The IA is vocabulary, and cheap to reverse; it belongs in CONTEXT.md.
+- The IA is vocabulary, and cheap to reverse; it belongs in GLOSSARY.md.
 - ADR-0013's placement decision is honoured, not overturned.
 
-**CONTEXT.md edits:**
+**GLOSSARY.md edits:**
 
 - **Line 14 (Settings window)** — enumerate the navigation as three groups over eight canonical sections (*Appearance:* Theme, Fonts · *Panes:* Terminal, Editor · *Application:* Agents, Profiles, GitHub, Updates), and note that the **leaf ids only** are the deep-link vocabulary crossing `open_settings_window { section }` — group captions are presentation and not addressable. Broaden "Theme, font, and agent changes here propagate live…" to state that *every* global setting propagates except a small denied set of drag-derived widths and write-on-use breadcrumbs.
 - **Line 14 or 73 (File pane)** — one line: Settings ▸ **Editor** is a UI label covering both **file pane** (`editorWordWrap`) and **preview pane** (`markdownPreviewAutoOpen`) concerns; "Editor" is not a domain term and does not enter the glossary.

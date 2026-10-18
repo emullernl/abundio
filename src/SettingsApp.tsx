@@ -2,7 +2,7 @@ import { emit } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Titlebar } from "./components/Titlebar";
-import { appWindow } from "./lib/appWindow";
+import { appWindow, currentWindowLabel } from "./lib/appWindow";
 import { listen, profiles as profilesApi, updates } from "./lib/ipc";
 import { broadcastSliceOf } from "./lib/settingsBroadcast";
 import { useProfileStore } from "./stores/profileStore";
@@ -208,6 +208,19 @@ export function setupCrossWindowSync(): void {
 		emit("settings-store-changed", slice).catch(() => {});
 	});
 
+	// A Window that just opened asks for the current settings: its webview's
+	// localStorage may be empty or stale (isolated per WKWebView). Every other
+	// Window answers with its slice; the asker never answers itself, or its
+	// stale copy would reach everyone else.
+	const self = currentWindowLabel();
+	listen<{ from?: string }>("settings-store-request", (event) => {
+		if (event.payload?.from === self) return;
+		const slice = sliceOf(
+			useSettingsStore.getState() as unknown as Record<string, unknown>,
+		);
+		emit("settings-store-changed", slice).catch(() => {});
+	}).catch(() => {});
+
 	// Apply changes broadcast by any window (including our own echo, which the
 	// canonical guard short-circuits).
 	listen<Record<string, unknown>>("settings-store-changed", (event) => {
@@ -245,4 +258,12 @@ export function setupCrossWindowSync(): void {
 		}
 		useSettingsStore.persist.rehydrate();
 	}).catch(() => {});
+}
+
+/** Asks the other Windows for the current settings. A newly opened auxiliary
+ *  Window calls this once, after `setupCrossWindowSync`. */
+export function requestSettingsSnapshot(): void {
+	emit("settings-store-request", { from: currentWindowLabel() }).catch(
+		() => {},
+	);
 }
