@@ -1392,6 +1392,18 @@ export const fileContents: Record<string, string> = {
 		"- API reference",
 		"- Webhooks",
 		"",
+		"## Run locally",
+		"",
+		"```sh",
+		"pnpm install",
+		"pnpm dev --port 4000",
+		"```",
+		"",
+		"```mermaid",
+		"graph LR",
+		"  A[Docs] --> B[Build]",
+		"```",
+		"",
 	].join("\n"),
 };
 

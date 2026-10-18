@@ -7,6 +7,7 @@ import remarkFrontmatter from "remark-frontmatter";
 import { remarkFrontmatterTable } from "../../lib/markdownFrontmatter";
 import { markdownSanitizeSchema } from "../../lib/markdownSanitizeSchema";
 import { rehypeSourceLines } from "../../lib/rehypeSourceLines";
+import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { makeMarkdownImageComponent } from "./MarkdownImage";
 import { makeMarkdownCodeComponent } from "./MermaidCode";
 
@@ -69,6 +70,7 @@ export function MarkdownRendered({
 
 	const components = useMemo(
 		() => ({
+			pre: MarkdownCodeBlock,
 			code: makeMarkdownCodeComponent(resolvedMode === "dark"),
 			img: makeMarkdownImageComponent(baseDir),
 			a: ({
@@ -113,6 +115,10 @@ export function MarkdownRendered({
 				components={components}
 				remarkPlugins={REMARK_PLUGINS}
 				rehypePlugins={REHYPE_PLUGINS}
+				// @uiw's own copy button copies a `data-code` attribute, not the code
+				// shown; MarkdownCodeBlock supplies ours. (The sanitizer strips @uiw's
+				// anyway, but only by accident of its markup.)
+				disableCopy
 				// @uiw's dark CSS keys off `.wmde-markdown[data-color-mode*='dark']`
 				// — the attribute must sit on the rendered root element, which
 				// `wrapperElement` controls. (The outer container's matching

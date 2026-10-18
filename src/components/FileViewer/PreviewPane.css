@@ -13,10 +13,49 @@
 .abundio-mermaid-svg {
 	cursor: zoom-in;
 }
-/* @uiw injects a copy button into every <pre>; it's meaningless over a
-   rendered diagram and overlaps our expand control — hide it for mermaid. */
-.abundio-md-preview .wmde-markdown pre:has(.abundio-mermaid) .copied {
-	display: none;
+/* ── Code block copy button (MarkdownCodeBlock) ──
+   Shown on hover or keyboard focus, like GitHub's. @uiw's own button is off
+   (`disableCopy`); its `pre { position: relative }` anchors this one. */
+.abundio-code-copy {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border: 1px solid var(--color-border-default);
+	border-radius: 4px;
+	background: var(--color-canvas-default);
+	color: var(--color-fg-muted);
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.wmde-markdown pre:hover .abundio-code-copy,
+.abundio-code-copy:focus-visible,
+.abundio-code-copy:not([data-state="idle"]) {
+	opacity: 1;
+}
+.abundio-code-copy:hover {
+	color: var(--color-fg-default);
+}
+.abundio-code-copy[data-state="copied"] {
+	color: var(--color-success-fg, #2e9b33);
+}
+.abundio-code-copy[data-state="failed"] {
+	color: var(--color-danger-fg, #d1242f);
+}
+/* A diagram's expand button already holds the corner; sit to its left. */
+.wmde-markdown pre:has(.abundio-mermaid) > .abundio-code-copy {
+	right: 36px;
+}
+@media print {
+	.abundio-code-copy {
+		display: none;
+	}
 }
 .abundio-mermaid-expand {
 	position: absolute;
