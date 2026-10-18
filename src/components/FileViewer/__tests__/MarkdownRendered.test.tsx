@@ -1,7 +1,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MarkdownRendered } from "../MarkdownRendered";
+
+const writeClipboardText = vi.fn(async (_text: string) => {});
+vi.mock("../../../lib/clipboard", () => ({
+	writeClipboardText: (text: string) => writeClipboardText(text),
+}));
 
 // The whole pipeline — @uiw's remark/rehype chain plus ours and the sanitizer —
 // so a regression in plugin order or the sanitize schema shows up here.
@@ -28,6 +33,7 @@ function render(content: string): HTMLElement {
 }
 
 afterEach(() => {
+	writeClipboardText.mockClear();
 	act(() => root?.unmount());
 	host?.remove();
 	root = null;
@@ -66,5 +72,66 @@ describe("MarkdownRendered frontmatter", () => {
 		const el = render("Intro\n\n---\n\nMore\n");
 		expect(el.querySelector("hr")).not.toBeNull();
 		expect(el.querySelector("table.frontmatter")).toBeNull();
+	});
+});
+
+describe("MarkdownRendered code block copy button", () => {
+	async function clickCopy(pre: Element | null | undefined) {
+		const button = pre?.querySelector("button.abundio-code-copy");
+		expect(button).not.toBeNull();
+		await act(async () => {
+			(button as HTMLButtonElement).click();
+		});
+		return button as HTMLButtonElement;
+	}
+
+	it("puts one copy button on each code block, and none of @uiw's", () => {
+		const el = render(
+			"```sh\necho one\n```\n\n```\ntwo\n```\n\nSome `inline` code\n",
+		);
+		expect(el.querySelectorAll("pre")).toHaveLength(2);
+		expect(el.querySelectorAll("pre button.abundio-code-copy")).toHaveLength(2);
+		expect(el.querySelectorAll("button.abundio-code-copy")).toHaveLength(2);
+		expect(el.querySelector(".copied")).toBeNull();
+	});
+
+	it("copies the code shown, without the trailing newline", async () => {
+		const el = render("```ts\nconst a = 1;\nconst b = 2;\n```\n");
+		const button = await clickCopy(el.querySelector("pre"));
+		expect(writeClipboardText).toHaveBeenCalledWith(
+			"const a = 1;\nconst b = 2;",
+		);
+		expect(button.getAttribute("data-state")).toBe("copied");
+		expect(button.getAttribute("aria-label")).toBe("Copied");
+	});
+
+	it("keeps a deliberate blank last line", async () => {
+		const el = render("```\nx\n\n```\n");
+		await clickCopy(el.querySelector("pre"));
+		expect(writeClipboardText).toHaveBeenCalledWith("x\n");
+	});
+
+	it("copies a Mermaid diagram's source", async () => {
+		const el = render("```mermaid\ngraph TD\n  A --> B\n```\n");
+		const pre = el.querySelector("pre");
+		expect(pre?.querySelector(".abundio-mermaid")).not.toBeNull();
+		await clickCopy(pre);
+		expect(writeClipboardText).toHaveBeenCalledWith("graph TD\n  A --> B");
+	});
+
+	it("copies the visible code, never a raw-HTML data-code", async () => {
+		const el = render(
+			'<pre><code>echo hi</code><div class="copied" data-code="rm -rf ~"></div></pre>\n',
+		);
+		await clickCopy(el.querySelector("pre"));
+		expect(writeClipboardText).toHaveBeenCalledWith("echo hi");
+	});
+
+	it("shows failure when the clipboard write throws", async () => {
+		writeClipboardText.mockRejectedValueOnce(new Error("denied"));
+		const el = render("```\nx\n```\n");
+		const button = await clickCopy(el.querySelector("pre"));
+		expect(button.getAttribute("data-state")).toBe("failed");
+		expect(button.getAttribute("aria-label")).toBe("Copy failed");
 	});
 });

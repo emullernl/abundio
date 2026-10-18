@@ -2,6 +2,7 @@ import { Maximize2 } from "lucide-react";
 import mermaid from "mermaid";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { hastText } from "../../lib/codeBlockCopy";
 import { MermaidModal } from "./MermaidModal";
 
 // Global theme stays light ("default"); a dark preview renders each diagram
@@ -17,16 +18,6 @@ mermaid.initialize({ startOnLoad: false, theme: "default" });
 // and `url(#…)` refs resolve to the wrong or removed defs — broken diagrams. A
 // module-level, never-reused counter guarantees each render gets a unique id.
 let mermaidRenderSeq = 0;
-
-/** Walk a hast node collecting text — code children may be highlighted spans. */
-// biome-ignore lint/suspicious/noExplicitAny: hast node shape from react-markdown
-function getCodeText(node: any): string {
-	if (!node) return "";
-	if (node.type === "text") return node.value ?? "";
-	if (Array.isArray(node.children))
-		return node.children.map(getCodeText).join("");
-	return "";
-}
 
 /** Renders one ```mermaid fenced block as an SVG diagram. */
 function MermaidDiagram({ code, dark }: { code: string; dark: boolean }) {
@@ -148,7 +139,7 @@ export function makeMarkdownCodeComponent(dark: boolean) {
 		node?: any;
 	}) {
 		if (className && /\blanguage-mermaid\b/i.test(className)) {
-			const code = getCodeText(node).replace(/\n$/, "");
+			const code = hastText(node).replace(/\n$/, "");
 			return <MermaidDiagram code={code} dark={dark} />;
 		}
 		return (

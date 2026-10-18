@@ -1,6 +1,6 @@
 {
   "identifier": "markdown-window",
-  "description": "Markdown windows (ADR-0046) render file content, so they get only the window, print and link-opening permissions they use: no shell execute, dialogs, notifications or clipboard plugin.",
+  "description": "Markdown windows (ADR-0046) render file content, so they get only the window, print, link-opening and clipboard-write (a code block's copy button) permissions they use: no shell execute, dialogs, notifications or clipboard read.",
   "windows": ["md-*"],
   "permissions": [
     "core:default",
@@ -10,6 +10,7 @@
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:webview:allow-print",
-    "shell:allow-open"
+    "shell:allow-open",
+    "clipboard-manager:allow-write-text"
   ]
 }
