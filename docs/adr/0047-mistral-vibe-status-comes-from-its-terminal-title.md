@@ -12,7 +12,7 @@ Mistral Vibe's hooks (`pre_tool`, `post_tool`, `post_agent`) cannot drive the st
 ## Consequences
 
 - While the title says busy, the idle backstop stands down: a long tool run prints nothing, yet the Turn is still running. A title that loses its prefix starts a 1.5 s grace window. If `post_agent` lands inside it (it travels over loopback HTTP, the title through the PTY stream, so either may arrive first), the pane goes Ready. If not, the pane goes Idle, so Esc, Ctrl+C and an API error all end on Idle, because nothing tells them apart.
-- `post_agent` is ignored until the pane has shown a Title status. With Vibe's `experimental_enable_tab_status` off, the hook would otherwise silence the byte heuristic for good, leaving no Working signal at all.
+- `post_agent` and the title are both ignored until the pane has shown a status *prefix*. With Vibe's `experimental_enable_tab_status` off, the hook would otherwise silence the byte heuristic for good, leaving no Working signal at all. A suffix is not enough: Vibe writes `… - Action Required` even with tab status off.
 - Vibe Subagents inherit the parent's hooks and fire `post_agent` when they finish, so every event carrying a `parent_session_id` is dropped. Background Subagents that outlive the parent's Turn are therefore not shown (contrast ADR-0022).
 - Only `post_agent` is registered. Vibe awaits every hook before continuing, so tool hooks would add a curl round-trip to each tool call.
 - Hook provisioning merges one named entry (`abundio-post_agent`) into `$VIBE_HOME/hooks.toml` or `~/.vibe/hooks.toml`, never `config.toml`. Vibe ignores unknown keys, unlike Kimi, but a duplicate `name` is dropped (first wins, project file first), hence the prefix.

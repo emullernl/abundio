@@ -1015,6 +1015,10 @@ const VIBE_EVENTS: &[&str] = &["post_agent"];
 /// (KIMI_CODE_HOME, GROK_HOME, …) this one is honoured: an absolute path joined
 /// onto `$HOME` replaces it. A `VIBE_HOME` set only in the user's shell rc is
 /// not seen by a GUI-launched app, which then provisions the default.
+/// Read on every call, so a run that sees a different `VIBE_HOME` from the one
+/// that provisioned disables the wrong file and leaves `abundio-post_agent`
+/// behind in the other. That entry is harmless: the relay is a no-op when
+/// Abundio isn't listening.
 fn vibe_home_rel() -> PathBuf {
     match std::env::var_os("VIBE_HOME").map(PathBuf::from) {
         Some(p) if p.is_absolute() => p,

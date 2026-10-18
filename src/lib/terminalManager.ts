@@ -37,7 +37,7 @@ import {
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import {
 	hasTitleStatus,
-	readTitleStatus,
+	readTitle,
 	TITLE_TURN_END_GRACE_MS,
 	type TitleStatus,
 	titleStep,
@@ -399,9 +399,13 @@ export interface ManagedTerminal {
 	/** The **Title status** last read from this agent session's terminal title
 	 *  (ADR-0047); null until its first title. */
 	titleStatus: TitleStatus | null;
-	/** The Agent has announced a Title status this agent session — proof its
-	 *  title is live, so its turn-finished hook may drive Ready. */
+	/** The Agent's title carried a status *prefix* this agent session — proof
+	 *  its tab status is on, so its title and turn-finished hook drive status.
+	 *  A suffix alone is not proof (agentTitleMap `readTitle`). */
 	titleStatusSeen: boolean;
+	/** While the grace window runs: the busy status the title held before it
+	 *  went bare, so a prompt answered across a bare title resumes its Turn. */
+	titleBusyBeforeBare: TitleStatus | null;
 	/** The grace window after the title ended a Turn, waiting for the
 	 *  turn-finished hook before calling it a cancel or failure. */
 	titleTurnEndTimer: ReturnType<typeof setTimeout> | null;
@@ -889,20 +893,21 @@ setTimeout(() => {
 
 let consoleReconcileFrame: number | null = null;
 
-/** Mark which terminal is the one receiving input — the Focused tile in the
- *  Fleet Console, the Focused pane otherwise (`targetPaneId`) — for cursor
- *  blink, activity suppression and restore handling; and make sure every live
- *  PTY has an activity entry (grey → green). */
 /** Forget a pane's **Title status** — a new agent session, or none. */
 function resetTitleStatus(managed: ManagedTerminal): void {
 	managed.titleStatus = null;
 	managed.titleStatusSeen = false;
+	managed.titleBusyBeforeBare = null;
 	if (managed.titleTurnEndTimer) {
 		clearTimeout(managed.titleTurnEndTimer);
 		managed.titleTurnEndTimer = null;
 	}
 }
 
+/** Mark which terminal is the one receiving input — the Focused tile in the
+ *  Fleet Console, the Focused pane otherwise (`targetPaneId`) — for cursor
+ *  blink, activity suppression and restore handling; and make sure every live
+ *  PTY has an activity entry (grey → green). */
 function syncFocusFlags(): void {
 	const target = targetPaneId();
 	const activityStore = usePtyActivityStore.getState();
@@ -1171,6 +1176,7 @@ export async function createTerminal(
 		awaitingTypedAgentStart: false,
 		titleStatus: null,
 		titleStatusSeen: false,
+		titleBusyBeforeBare: null,
 		titleTurnEndTimer: null,
 		writes: createWriteBatcher((data) => term.write(data)),
 		queuedAltScreen: false,
@@ -1976,19 +1982,26 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		// **Title status** (ADR-0047): an agent-mode pane whose Agent announces
 		// its state in the title. Replayed scrollback is a dead session's title.
 		if (managed.restoring || !actStore.agentPtyIds.has(currentPtyId)) return;
-		const status = readTitleStatus(
-			actStore.detectedAgentIds[currentPtyId],
-			title,
+		const reading = readTitle(actStore.detectedAgentIds[currentPtyId], title);
+		if (reading === null) return;
+		// Until a prefix proves tab status is on, the pane stays on the byte
+		// heuristic — a suffix alone would turn it hook-driven for good.
+		if (reading.live) managed.titleStatusSeen = true;
+		if (!managed.titleStatusSeen) return;
+		const { status } = reading;
+		const step = titleStep(
+			managed.titleStatus,
+			status,
+			managed.titleBusyBeforeBare,
 		);
-		if (status === null) return;
-		const step = titleStep(managed.titleStatus, status);
+		const prev = managed.titleStatus;
 		managed.titleStatus = status;
-		if (status !== "none") managed.titleStatusSeen = true;
 		if (!step.dispatch) return;
 		if (managed.titleTurnEndTimer) {
 			clearTimeout(managed.titleTurnEndTimer);
 			managed.titleTurnEndTimer = null;
 		}
+		managed.titleBusyBeforeBare = step.awaitTurnEnd ? prev : null;
 		actStore.applyTitleStatus(
 			currentPtyId,
 			step.dispatch.status,
@@ -1998,6 +2011,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			const ptyId = currentPtyId;
 			managed.titleTurnEndTimer = setTimeout(() => {
 				managed.titleTurnEndTimer = null;
+				managed.titleBusyBeforeBare = null;
 				usePtyActivityStore.getState().titleTurnEnded(ptyId);
 			}, TITLE_TURN_END_GRACE_MS);
 		}

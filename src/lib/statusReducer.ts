@@ -164,7 +164,7 @@ export type StatusEvent =
 	| { kind: "title"; status: TitleStatus; now: number; startsTurn?: boolean }
 	// A Turn end announced by the title, with no turn-finished hook inside the
 	// grace window: the Turn was cancelled or failed. → Idle.
-	| { kind: "titleTurnEnded" }
+	| { kind: "titleTurnEnded"; now: number }
 	// The PTY process exited.
 	| { kind: "ptyExited"; code: number | null }
 	// The global idle scanner ticked. `rule` names which backstop the scanner
@@ -679,7 +679,7 @@ export function statusReducer(
 			// that beat the grace window already moved the pane to Ready.
 			return s.mode === "agent" &&
 				(s.state === "working" || s.state === "waiting")
-				? applyHook(s, "idle", 0)
+				? applyHook(s, "idle", e.now)
 				: s;
 		case "agentDetected":
 			return s.mode === "agent"
@@ -720,6 +720,7 @@ export function statusReducer(
 				...s,
 				activeSubagents: NO_SUBAGENTS,
 				stopHeldForSubagents: false,
+				titleHeld: false,
 			};
 			return classifyShellExit(e.code) === "error"
 				? recordError(cleared)

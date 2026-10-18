@@ -35,11 +35,20 @@ export function hasTitleStatus(agentId: string | undefined): boolean {
 	return agentId !== undefined && agentId in TITLE_RULES;
 }
 
-/** The Title status in `title`, or null when the Agent has no title rules. */
-export function readTitleStatus(
+/** One title, read: its Title status, and whether it proves the Agent's tab
+ *  status is on. Only a prefix does — Vibe writes its suffixes even with
+ *  `experimental_enable_tab_status` off, so a suffix alone must not switch a
+ *  pane from the byte heuristic to the title. A bare title proves nothing. */
+export interface TitleReading {
+	status: TitleStatus;
+	live: boolean;
+}
+
+/** Read `title` against the Agent's rules, or null when it has none. */
+export function readTitle(
 	agentId: string | undefined,
 	title: string,
-): TitleStatus | null {
+): TitleReading | null {
 	if (!agentId) return null;
 	const rules = TITLE_RULES[agentId];
 	if (!rules) return null;
@@ -48,15 +57,26 @@ export function readTitleStatus(
 			rule.match === "prefix"
 				? title.startsWith(rule.text)
 				: title.endsWith(rule.text);
-		if (hit) return rule.status;
+		if (hit) return { status: rule.status, live: rule.match === "prefix" };
 	}
-	return "none";
+	return { status: "none", live: false };
+}
+
+/** The Title status in `title`, or null when the Agent has no title rules. */
+export function readTitleStatus(
+	agentId: string | undefined,
+	title: string,
+): TitleStatus | null {
+	return readTitle(agentId, title)?.status ?? null;
 }
 
 /** What one title change asks of the pane.
  *  - `dispatch`: the Title status to hand the Status machine, if it changed.
  *    `startsTurn` marks a Turn boundary (ADR-0027) — Working reached from
- *    anything but Waiting; an answered prompt resumes the same Turn.
+ *    anything but Waiting; an answered prompt resumes the same Turn. A bare
+ *    title still inside the grace window does not hide that Waiting:
+ *    `resumeFrom` is the busy status the title held before it went bare, so
+ *    `? t` → `t` → `>> t` resumes rather than opening a second Turn.
  *  - `awaitTurnEnd`: the title lost its status, so the Turn ended — but not
  *    *how*. Wait briefly for the Agent's turn-finished hook (Ready); without
  *    one, the Turn was cancelled or failed (Idle). */
@@ -68,6 +88,7 @@ export interface TitleStep {
 export function titleStep(
 	prev: TitleStatus | null,
 	next: TitleStatus,
+	resumeFrom: TitleStatus | null = null,
 ): TitleStep {
 	if (prev === next) return { dispatch: null, awaitTurnEnd: false };
 	if (next === "none") {
@@ -81,7 +102,8 @@ export function titleStep(
 	return {
 		dispatch: {
 			status: next,
-			startsTurn: next === "working" && prev !== "waiting",
+			startsTurn:
+				next === "working" && prev !== "waiting" && resumeFrom !== "waiting",
 		},
 		awaitTurnEnd: false,
 	};

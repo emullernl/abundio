@@ -509,7 +509,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 
 		titleTurnEnded: (ptyId) => {
 			if (!get().activities[ptyId]) return;
-			applyStatusEvent(ptyId, { kind: "titleTurnEnded" });
+			applyStatusEvent(ptyId, { kind: "titleTurnEnded", now: Date.now() });
 		},
 
 		clearWaiting: (ptyId) => {

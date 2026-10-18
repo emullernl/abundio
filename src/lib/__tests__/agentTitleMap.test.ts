@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { hasTitleStatus, readTitleStatus, titleStep } from "../agentTitleMap";
+import {
+	hasTitleStatus,
+	readTitle,
+	readTitleStatus,
+	titleStep,
+} from "../agentTitleMap";
 
 describe("readTitleStatus (Mistral Vibe)", () => {
 	it("reads the focused-pane prefixes", () => {
@@ -32,6 +37,26 @@ describe("readTitleStatus (Mistral Vibe)", () => {
 	});
 });
 
+describe("readTitle", () => {
+	it("only a prefix proves tab status is on", () => {
+		expect(readTitle("vibe", ">> Fix")).toEqual({
+			status: "working",
+			live: true,
+		});
+		expect(readTitle("vibe", "? Fix")).toEqual({
+			status: "waiting",
+			live: true,
+		});
+		// Vibe writes the suffixes with tab status off too.
+		expect(readTitle("vibe", "Fix - Action Required")).toEqual({
+			status: "waiting",
+			live: false,
+		});
+		expect(readTitle("vibe", "Fix")).toEqual({ status: "none", live: false });
+		expect(readTitle("claude", ">> Fix")).toBeNull();
+	});
+});
+
 describe("titleStep", () => {
 	it("does nothing when the status is unchanged", () => {
 		expect(titleStep("working", "working")).toEqual({
@@ -59,6 +84,18 @@ describe("titleStep", () => {
 		expect(titleStep("working", "waiting").dispatch).toEqual({
 			status: "waiting",
 			startsTurn: false,
+		});
+	});
+
+	it("resumes across a bare title that followed Waiting", () => {
+		// `? t` → `t` → `>> t` inside the grace window.
+		expect(titleStep("none", "working", "waiting").dispatch).toEqual({
+			status: "working",
+			startsTurn: false,
+		});
+		expect(titleStep("none", "working", "working").dispatch).toEqual({
+			status: "working",
+			startsTurn: true,
 		});
 	});
 

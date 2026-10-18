@@ -53,7 +53,8 @@ Facts below come from the docs (docs.mistral.ai/vibe/code/cli/hooks) and from th
 - [ ] Send a prompt with no tools. The icon goes Working, then Ready.
 - [ ] Trigger an approval prompt. The icon goes Waiting; approve it and the icon is Working again.
 - [ ] Switch focus to another pane while Vibe waits for approval. The title becomes `… - Action Required` and the icon stays Waiting.
+- [ ] Approve a prompt in a pane that was in the background. Statistics' Turn count goes up by exactly one.
 - [ ] Press Esc mid-turn. The icon goes Idle, not Ready.
 - [ ] Run a long tool (e.g. `sleep 60` via bash) that prints nothing. The icon stays Working past 30 s.
 - [ ] New task with Vibe. The prompt arrives as the first turn.
-- [ ] Turn tab status off in Vibe. The icon falls back to the byte heuristic and never sticks on Working.
+- [ ] Turn tab status off in Vibe. The icon falls back to the byte heuristic and never sticks on Working, even after a background pane shows `… - Action Required`.

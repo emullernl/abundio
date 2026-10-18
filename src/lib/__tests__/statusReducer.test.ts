@@ -1117,7 +1117,7 @@ describe("statusReducer — Title status (ADR-0047)", () => {
 			{ kind: "title", status: "working", now: 0 },
 			{ kind: "hook", transition: "ready", now: 5 },
 			{ kind: "title", status: "none", now: 6 },
-			{ kind: "titleTurnEnded" },
+			{ kind: "titleTurnEnded", now: 1 },
 		);
 		expect(s.state).toBe("ready");
 	});
@@ -1127,14 +1127,14 @@ describe("statusReducer — Title status (ADR-0047)", () => {
 			agent(),
 			{ kind: "title", status: "working", now: 0 },
 			{ kind: "title", status: "none", now: 6 },
-			{ kind: "titleTurnEnded" },
+			{ kind: "titleTurnEnded", now: 1 },
 		);
 		expect(working.state).toBe("idle");
 		const waiting = run(
 			agent(),
 			{ kind: "title", status: "waiting", now: 0 },
 			{ kind: "title", status: "none", now: 6 },
-			{ kind: "titleTurnEnded" },
+			{ kind: "titleTurnEnded", now: 1 },
 		);
 		expect(waiting.state).toBe("idle");
 	});
@@ -1149,5 +1149,14 @@ describe("statusReducer — Title status (ADR-0047)", () => {
 			{ kind: "agentExited" },
 		);
 		expect(exited.titleHeld).toBe(false);
+	});
+
+	it("PTY exit drops the hold too", () => {
+		const s = run(
+			agent(),
+			{ kind: "title", status: "working", now: 0 },
+			{ kind: "ptyExited", code: 0 },
+		);
+		expect(s.titleHeld).toBe(false);
 	});
 });
