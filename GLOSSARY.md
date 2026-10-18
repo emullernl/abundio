@@ -159,6 +159,9 @@ _Avoid_: merge, finish merge, complete merge, commit the merge.
 **Preview pane**: A Pane that renders a live, read-only rendering of its **source pane**'s markdown buffer — including Mermaid diagrams. Owns no file of its own; it mirrors. Created beside a file pane when a markdown file is opened. Its appearance is governed by the **Preview color mode**.
 _Avoid_: render pane, markdown viewer
 
+**Frontmatter**: The YAML metadata block at the very top of a markdown file, opened by a `---` line on line 1 and closed by the next `---` line. It is metadata, not document content: the rendered view (**Preview pane**, **Markdown window**) shows it as a compact key/value table above the body, every key alike — a `title` key is not promoted to a heading. A list value reads as its items joined by commas; a nested mapping reads as its YAML text. Frontmatter that is not valid YAML is shown as its raw text in a code block, never hidden. An empty block renders as nothing. Only YAML is recognised; TOML (`+++`) is ordinary text.
+_Avoid_: header, metadata header, front-matter
+
 **Preview color mode**: A global, persisted user preference governing every **Preview pane**'s appearance. Binary: **follow theme** (the default — the preview adopts the active theme's *actual colours*: its canvas, text, borders, links and accents match the rest of the UI) or **printed paper** (forced pure-white "document" look regardless of theme). There is no forced-*dark* state — a dark preview arises only because the active theme is dark. Toggled from the preview's title bar — Settings ▸ Editor points at that toggle rather than duplicating it. Follow-theme remaps the document **surface** only; code-block **syntax-highlighting** token colours stay at the rendering library's light/dark defaults (themes carry no syntax palette). **Print** always renders on white paper, ignoring this preference. See ADR-0013.
 _Avoid_: preview theme, dark mode
 

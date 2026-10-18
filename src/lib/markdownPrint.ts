@@ -76,6 +76,12 @@ export async function printMarkdownPreview(container: Element): Promise<void> {
     border: 1px solid #e5e7eb; padding: 0.5em 0.75em;
   }
   #${PRINT_DIV_ID} th { background: #f9fafb; font-weight: 600; }
+  /* Frontmatter (lib/markdownFrontmatter.ts): metadata, not one of the
+     document's tables. PreviewPane.css's rules don't reach this copy. */
+  #${PRINT_DIV_ID} table.frontmatter { width: auto; font-size: 0.85em; color: #4b5563; margin-bottom: 1.5em; }
+  #${PRINT_DIV_ID} table.frontmatter th { text-align: left; vertical-align: top; white-space: nowrap; }
+  #${PRINT_DIV_ID} table.frontmatter td { vertical-align: top; white-space: pre-wrap; }
+  #${PRINT_DIV_ID} table.frontmatter td code { display: block; white-space: pre-wrap; }
   #${PRINT_DIV_ID} hr { border-color: #e5e7eb; }
   #${PRINT_DIV_ID} img, #${PRINT_DIV_ID} svg { max-width: 100%; }
   /* Strip interactive chrome from the printed page: the autolink-headings
