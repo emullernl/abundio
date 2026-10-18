@@ -1,6 +1,6 @@
 [package]
 name = "abundio"
-version = "2.1.2"
+version = "2.1.3"
 description = "A GPU-accelerated terminal multiplexer with AI agent support"
 authors = ["Emil Müller"]
 edition = "2021"
