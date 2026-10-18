@@ -112,3 +112,30 @@
 	text-align: center;
 	user-select: none;
 }
+
+/* ── Frontmatter: a file's leading YAML block, shown as metadata rather than
+   content (see `lib/markdownFrontmatter.ts`). Smaller and muted so it never
+   reads as one of the document's own tables. ── */
+.abundio-md-preview .wmde-markdown table.frontmatter {
+	display: table;
+	width: auto;
+	max-width: 100%;
+	margin-bottom: 24px;
+	font-size: 0.85em;
+	color: var(--color-fg-muted);
+}
+.abundio-md-preview .wmde-markdown table.frontmatter th {
+	text-align: left;
+	vertical-align: top;
+	white-space: nowrap;
+	font-weight: 600;
+}
+.abundio-md-preview .wmde-markdown table.frontmatter td {
+	vertical-align: top;
+	overflow-wrap: anywhere;
+}
+.abundio-md-preview .wmde-markdown table.frontmatter td code {
+	display: block;
+	white-space: pre;
+	overflow-x: auto;
+}

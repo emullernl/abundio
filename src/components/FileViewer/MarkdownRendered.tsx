@@ -3,6 +3,8 @@ import "@uiw/react-markdown-preview/markdown.css";
 import "./PreviewPane.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import rehypeSanitize from "rehype-sanitize";
+import remarkFrontmatter from "remark-frontmatter";
+import { remarkFrontmatterTable } from "../../lib/markdownFrontmatter";
 import { markdownSanitizeSchema } from "../../lib/markdownSanitizeSchema";
 import { rehypeSourceLines } from "../../lib/rehypeSourceLines";
 import { makeMarkdownImageComponent } from "./MarkdownImage";
@@ -11,6 +13,11 @@ import { makeMarkdownCodeComponent } from "./MermaidCode";
 // Re-rendering the markdown (parse + Mermaid) on every keystroke lags the
 // editor, so the rendering only updates after a typing pause.
 const RENDER_DEBOUNCE_MS = 250;
+
+// `remark-frontmatter` lifts a leading `---` YAML block out of the document
+// (otherwise its closing fence turns the last line into an `<h2>`), and
+// `remarkFrontmatterTable` renders it as a key/value table.
+const REMARK_PLUGINS = [remarkFrontmatter, remarkFrontmatterTable];
 
 // `rehypeSourceLines` stamps `data-source-line` anchors for editor↔preview
 // sync. `rehypeSanitize` strips dangerous raw HTML (@uiw bakes in `rehype-raw`
@@ -104,6 +111,7 @@ export function MarkdownRendered({
 			<MarkdownPreview
 				source={renderedContent}
 				components={components}
+				remarkPlugins={REMARK_PLUGINS}
 				rehypePlugins={REHYPE_PLUGINS}
 				// @uiw's dark CSS keys off `.wmde-markdown[data-color-mode*='dark']`
 				// — the attribute must sit on the rendered root element, which

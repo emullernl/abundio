@@ -16,6 +16,8 @@ import { defaultSchema } from "rehype-sanitize";
  *    for editor↔preview scroll sync.
  *  - `class="anchor"` on `<a>` — added by @uiw's autolink-headings; PreviewPane.css
  *    targets it to hide the heading-anchor icon.
+ *  - `class="frontmatter"` on `<table>` — the **Frontmatter** table built by
+ *    `remarkFrontmatterTable`, styled apart from the document's own tables.
  */
 
 type PropertyDefinition = NonNullable<
@@ -39,5 +41,9 @@ export const markdownSanitizeSchema: SanitizeSchema = {
 		...defaultSchema.attributes,
 		"*": [...(defaultSchema.attributes?.["*"] ?? []), "dataSourceLine"],
 		a: anchorAttrs,
+		table: [
+			...(defaultSchema.attributes?.table ?? []),
+			["className", "frontmatter"],
+		],
 	},
 };
