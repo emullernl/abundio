@@ -132,6 +132,8 @@
 }
 .abundio-md-preview .wmde-markdown table.frontmatter td {
 	vertical-align: top;
+	/* A block scalar (`description: |`) keeps its line breaks. */
+	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
 .abundio-md-preview .wmde-markdown table.frontmatter td code {

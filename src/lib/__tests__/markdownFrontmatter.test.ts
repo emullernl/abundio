@@ -18,6 +18,22 @@ describe("frontmatterView", () => {
 		});
 	});
 
+	it("keeps integer-like keys in source order", () => {
+		const view = frontmatterView("title: Notes\n2024: shipped\n1: first");
+		expect(view.kind === "table" && view.rows.map((r) => r.key)).toEqual([
+			"title",
+			"2024",
+			"1",
+		]);
+	});
+
+	it("keeps a block scalar's line breaks", () => {
+		expect(frontmatterView("description: |\n  Line one\n  Line two")).toEqual({
+			kind: "table",
+			rows: [{ key: "description", value: "Line one\nLine two", block: false }],
+		});
+	});
+
 	it("does not promote a title key", () => {
 		const view = frontmatterView("title: Hello");
 		expect(view).toEqual({

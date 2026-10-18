@@ -1,4 +1,4 @@
-import { parse, stringify } from "yaml";
+import { isMap, isNode, isScalar, parseDocument, stringify } from "yaml";
 
 /**
  * **Frontmatter** in the rendered markdown (Preview pane and Markdown window).
@@ -22,38 +22,53 @@ export type FrontmatterView =
 	| { kind: "raw" }
 	| { kind: "table"; rows: FrontmatterRow[] };
 
-function isScalar(value: unknown): boolean {
+function isPlainValue(value: unknown): boolean {
 	return value === null || typeof value !== "object";
 }
 
 function scalarText(value: unknown): string {
-	return value === null || value === undefined ? "" : String(value);
+	// A `|` block scalar ends in a newline that would show as a blank line
+	// under `white-space: pre-wrap`.
+	return value === null || value === undefined
+		? ""
+		: String(value).replace(/\n+$/, "");
+}
+
+function rowFor(key: string, value: unknown): FrontmatterRow {
+	if (isPlainValue(value)) {
+		return { key, value: scalarText(value), block: false };
+	}
+	if (Array.isArray(value) && value.every(isPlainValue)) {
+		return { key, value: value.map(scalarText).join(", "), block: false };
+	}
+	return { key, value: stringify(value).trimEnd(), block: true };
 }
 
 /** Pure: how a frontmatter block's YAML source should be shown. */
 export function frontmatterView(source: string): FrontmatterView {
-	let data: unknown;
+	// `logLevel: "error"`: a warning is not worth a console line per render.
+	const doc = parseDocument(source, { logLevel: "error" });
+	if (doc.errors.length > 0) return { kind: "raw" };
+	// An empty block, or one holding only comments.
+	if (doc.contents === null) return { kind: "empty" };
+	if (!isMap(doc.contents)) return { kind: "raw" };
+
+	// Walk the document's pairs rather than `toJS()`'s object: a JS object
+	// lists integer-like keys first, so `title`, `2024`, `1` would come out as
+	// `1`, `2024`, `title`.
+	const rows: FrontmatterRow[] = [];
 	try {
-		// `logLevel: "error"`: a warning is not worth a console line per render.
-		data = parse(source, { logLevel: "error" });
+		for (const pair of doc.contents.items) {
+			const key = isScalar(pair.key)
+				? scalarText(pair.key.value)
+				: scalarText(pair.key);
+			const value = isNode(pair.value) ? pair.value.toJS(doc) : pair.value;
+			rows.push(rowFor(key, value));
+		}
 	} catch {
+		// `toJS` throws on alias abuse (more expansions than `maxAliasCount`).
 		return { kind: "raw" };
 	}
-	// An empty block, or one holding only comments.
-	if (data === null || data === undefined) return { kind: "empty" };
-	if (typeof data !== "object" || Array.isArray(data)) return { kind: "raw" };
-
-	const rows = Object.entries(data as Record<string, unknown>).map(
-		([key, value]): FrontmatterRow => {
-			if (isScalar(value)) {
-				return { key, value: scalarText(value), block: false };
-			}
-			if (Array.isArray(value) && value.every(isScalar)) {
-				return { key, value: value.map(scalarText).join(", "), block: false };
-			}
-			return { key, value: stringify(value).trimEnd(), block: true };
-		},
-	);
 	return rows.length === 0 ? { kind: "empty" } : { kind: "table", rows };
 }
 
