@@ -184,6 +184,17 @@ HOOK_EVENT_MAP.grok = {
 // docs/plans/subagent-aware-status.md.
 HOOK_EVENT_MAP.qwen = HOOK_EVENT_MAP.claude;
 
+// Mistral Vibe has only pre_tool / post_tool / post_agent hooks — no prompt
+// submit, no approval prompt, no cancel, no session end. Working and Waiting
+// come from its terminal title (a **Title status**, agentTitleMap.ts); the one
+// hook Abundio registers says the Turn *finished*, which the title cannot tell
+// apart from a cancel or failure. terminalManager drops it until the pane has
+// shown a Title status, so a Vibe with tab status off stays on the byte
+// heuristic. See ADR-0047.
+HOOK_EVENT_MAP.vibe = {
+	post_agent: "ready",
+};
+
 // Copilot tools whose preToolUse IS the act of blocking on the user: running
 // the tool presents a plan / question and waits for an answer. Copilot emits no
 // `notification` for these (and no permissionRequest) — preToolUse is the only
@@ -416,6 +427,8 @@ function str(v: unknown): string | undefined {
  * - copilot: `subagentStart` / `subagentStop`, id = `agentName` (no instance id
  *   exists; concurrent same-named subagents may release the hold early, and the
  *   built-in `general-purpose` agent emits neither event — accepted gaps).
+ * - vibe: any event carrying a `parent_session_id` comes from a Subagent and
+ *   is ignored — Vibe has no Subagent start/stop events to track.
  * - opencode (1.x): child sessions. `session.created`/`session.updated` with a
  *   truthy `parentID` → started; `session.idle`/`session.error`/`session.deleted`
  *   of a session in the live set → stopped; ANY other event from a live
@@ -449,6 +462,16 @@ export function mapSubagentHookEvent(
 			action: eventName === "SubagentStart" ? "started" : "stopped",
 			id,
 		};
+	}
+	if (agentId === "vibe") {
+		// Vibe's Subagents are child sessions that inherit the parent's hooks,
+		// so a child finishing fires `post_agent` too — and could flip the pane
+		// Ready mid-Turn. They announce no start or stop, so they are not
+		// tracked (a background child can outlive the parent's Turn unseen);
+		// every event from one is dropped. ADR-0047.
+		const parent = str(p?.parent_session_id);
+		if (!parent) return null;
+		return { action: "ignored", id: str(p?.session_id) ?? parent };
 	}
 	if (agentId === "copilot") {
 		if (eventName !== "subagentStart" && eventName !== "subagentStop") {

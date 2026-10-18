@@ -7,7 +7,8 @@ export const TASK_PROMPT_PLACEHOLDER = "{prompt}";
 // Agent interactive; the one-shot flags (`-p`, `exec`, `run`, `--single`)
 // would print an answer and exit. Kimi Code has no such form, so it carries
 // no `taskArgs`. Note Qwen: a bare positional prompt there is
-// one-shot, so it needs `-i` even though Claude/Codex/Grok take it bare.
+// one-shot, so it needs `-i` even though Claude/Codex/Grok/Vibe take it bare
+// (Vibe's one-shot form is `-p`).
 
 export const BUILTIN_AGENTS: CodingAgent[] = [
 	{
@@ -73,6 +74,14 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		builtin: true,
 		enabled: true,
 	},
+	{
+		id: "vibe",
+		name: "Mistral Vibe",
+		command: "vibe",
+		taskArgs: ["{prompt}"],
+		builtin: true,
+		enabled: true,
+	},
 ];
 
 /**
@@ -113,7 +122,8 @@ export function matchProcessToAgent(
 
 /**
  * Number of ESC presses required to cancel an in-flight agent task.
- * Claude, Gemini, and Qwen treat a single ESC as the cancellation key;
+ * Claude, Gemini, Qwen, and Mistral Vibe treat a single ESC as the
+ * cancellation key (Vibe's double-ESC is idle-only: clear input / rewind);
  * the others require a deliberate double-ESC. Unknown agents default to
  * double-ESC — the safer choice when we can't identify the CLI.
  * Kimi Code deliberately stays on the double-ESC default: its `Interrupt`
@@ -124,7 +134,12 @@ export function matchProcessToAgent(
  * its `Stop` hook with `reason: "cancelled"` is the authoritative signal.
  */
 export function escPressesToCancelAgent(agentId: string | undefined): number {
-	if (agentId === "claude" || agentId === "gemini" || agentId === "qwen") {
+	if (
+		agentId === "claude" ||
+		agentId === "gemini" ||
+		agentId === "qwen" ||
+		agentId === "vibe"
+	) {
 		return 1;
 	}
 	return 2;
