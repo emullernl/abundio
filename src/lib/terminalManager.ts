@@ -35,6 +35,13 @@ import {
 	isSessionEnd,
 } from "./agentModeEvents";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
+import {
+	hasTitleStatus,
+	readTitleStatus,
+	TITLE_TURN_END_GRACE_MS,
+	type TitleStatus,
+	titleStep,
+} from "./agentTitleMap";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
 import { targetPaneId } from "./fleetFocus";
@@ -389,6 +396,15 @@ export interface ManagedTerminal {
 	 *  cleaning it. Cleared on that `command_start`, or when the filter window
 	 *  ends, so it can never exempt the Agent's own redraws later. */
 	awaitingTypedAgentStart: boolean;
+	/** The **Title status** last read from this agent session's terminal title
+	 *  (ADR-0047); null until its first title. */
+	titleStatus: TitleStatus | null;
+	/** The Agent has announced a Title status this agent session — proof its
+	 *  title is live, so its turn-finished hook may drive Ready. */
+	titleStatusSeen: boolean;
+	/** The grace window after the title ended a Turn, waiting for the
+	 *  turn-finished hook before calling it a cancel or failure. */
+	titleTurnEndTimer: ReturnType<typeof setTimeout> | null;
 	/** Output chunks waiting to be written to xterm as one batch. See
 	 *  `writeBatcher.ts` for why a frame alone cannot be trusted to drain it. */
 	writes: WriteBatcher;
@@ -877,6 +893,16 @@ let consoleReconcileFrame: number | null = null;
  *  Fleet Console, the Focused pane otherwise (`targetPaneId`) — for cursor
  *  blink, activity suppression and restore handling; and make sure every live
  *  PTY has an activity entry (grey → green). */
+/** Forget a pane's **Title status** — a new agent session, or none. */
+function resetTitleStatus(managed: ManagedTerminal): void {
+	managed.titleStatus = null;
+	managed.titleStatusSeen = false;
+	if (managed.titleTurnEndTimer) {
+		clearTimeout(managed.titleTurnEndTimer);
+		managed.titleTurnEndTimer = null;
+	}
+}
+
 function syncFocusFlags(): void {
 	const target = targetPaneId();
 	const activityStore = usePtyActivityStore.getState();
@@ -1143,6 +1169,9 @@ export async function createTerminal(
 		startupShellReady: false,
 		awaitingTaskStart: false,
 		awaitingTypedAgentStart: false,
+		titleStatus: null,
+		titleStatusSeen: false,
+		titleTurnEndTimer: null,
 		writes: createWriteBatcher((data) => term.write(data)),
 		queuedAltScreen: false,
 		wantedMouseModes: new Set(),
@@ -1543,6 +1572,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							const agents = useSettingsStore.getState().agents;
 							const matched = matchTitleToAgent(cmd.commandText, agents);
 							if (matched) {
+								resetTitleStatus(managed);
 								actState.setAgentPty(currentPtyId, matched.id);
 								// Persist the agent identity onto the layout so a
 								// manually-typed agent re-runs after a restart, mirroring
@@ -1591,6 +1621,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// Exit agent mode when the command finishes (reads fresh state,
 						// since setAgentPty above may have mutated it).
 						const wasAgentMode = applyAgentExit(currentPtyId, paneId);
+						if (wasAgentMode) resetTitleStatus(managed);
 						const freshState = usePtyActivityStore.getState();
 						if (!managed.suppressActivity && !wasAgentMode) {
 							freshState.setShellCommandRunning(currentPtyId, false);
@@ -1660,6 +1691,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				);
 				if (action === "agentExit") {
 					applyAgentExit(currentPtyId, paneId);
+					resetTitleStatus(managed);
 					return;
 				}
 				if (action === "ignore" || !entry) return;
@@ -1825,6 +1857,18 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					return;
 				}
 
+				// A Title-status Agent's turn-finished hook means nothing until its
+				// title has proved live: with tab status off, Working comes from the
+				// byte heuristic, which a hook would silence for good (ADR-0047).
+				if (hasTitleStatus(hookEvent.agent) && !managed.titleStatusSeen) {
+					console.debug(
+						"[abundio:hook] no Title status yet, dropping",
+						hookEvent.agent,
+						hookEvent.event,
+					);
+					return;
+				}
+
 				// OpenCode 1.x folds its payload discriminators into the event name
 				// — after the Subagent check above, which keys on raw names.
 				const eventKey =
@@ -1929,6 +1973,34 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	const onTitleSub = term.onTitleChange((title) => {
 		const actStore = usePtyActivityStore.getState();
 		actStore.setTitle(paneId, title);
+		// **Title status** (ADR-0047): an agent-mode pane whose Agent announces
+		// its state in the title. Replayed scrollback is a dead session's title.
+		if (managed.restoring || !actStore.agentPtyIds.has(currentPtyId)) return;
+		const status = readTitleStatus(
+			actStore.detectedAgentIds[currentPtyId],
+			title,
+		);
+		if (status === null) return;
+		const step = titleStep(managed.titleStatus, status);
+		managed.titleStatus = status;
+		if (status !== "none") managed.titleStatusSeen = true;
+		if (!step.dispatch) return;
+		if (managed.titleTurnEndTimer) {
+			clearTimeout(managed.titleTurnEndTimer);
+			managed.titleTurnEndTimer = null;
+		}
+		actStore.applyTitleStatus(
+			currentPtyId,
+			step.dispatch.status,
+			step.dispatch.startsTurn,
+		);
+		if (step.awaitTurnEnd) {
+			const ptyId = currentPtyId;
+			managed.titleTurnEndTimer = setTimeout(() => {
+				managed.titleTurnEndTimer = null;
+				usePtyActivityStore.getState().titleTurnEnded(ptyId);
+			}, TITLE_TURN_END_GRACE_MS);
+		}
 	});
 
 	// NOTE: a click in the terminal is handled by TerminalSlot's onMouseDown, which
@@ -1950,6 +2022,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenHook();
 		onDataSub.dispose();
 		onTitleSub.dispose();
+		resetTitleStatus(managed);
 		escPressTimestamps.delete(currentPtyId);
 		managed.writes.flush();
 	};

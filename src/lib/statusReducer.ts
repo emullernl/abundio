@@ -17,6 +17,7 @@
 // until the app-wide rename lands.
 
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
+import type { TitleStatus } from "./agentTitleMap";
 
 export type StatusDotState = "idle" | "working" | "waiting" | "ready" | "error";
 export type StatusMode = "agent" | "shell";
@@ -95,6 +96,11 @@ export interface StatusState {
 	 *  `state === "error"` — every route INTO Error writes this field, and every
 	 *  route out of Error clears it, so it can never go stale. */
 	preErrorState: "working" | "waiting" | null;
+	// ── Title status (ADR-0047) ──
+	/** The Agent's terminal title says it is busy (Working or Waiting). While it
+	 *  does, quiet output proves nothing — a long tool run prints nothing yet the
+	 *  title still says busy — so the idle backstop stands down. */
+	titleHeld: boolean;
 }
 
 export interface StatusConfig {
@@ -152,6 +158,13 @@ export type StatusEvent =
 	// `mapHookEvent` because they carry an id, not a transition). ADR-0022.
 	| { kind: "subagentStarted"; agentId: string; now: number }
 	| { kind: "subagentStopped"; agentId: string; now: number }
+	// The Agent's terminal title changed its **Title status** (ADR-0047).
+	// `startsTurn` as on the hook event: the title's Working is the only
+	// turn-start signal an Agent like Mistral Vibe gives.
+	| { kind: "title"; status: TitleStatus; now: number; startsTurn?: boolean }
+	// A Turn end announced by the title, with no turn-finished hook inside the
+	// grace window: the Turn was cancelled or failed. → Idle.
+	| { kind: "titleTurnEnded" }
 	// The PTY process exited.
 	| { kind: "ptyExited"; code: number | null }
 	// The global idle scanner ticked. `rule` names which backstop the scanner
@@ -192,7 +205,14 @@ export function initialStatusState(mode: StatusMode): StatusState {
 		activeSubagents: NO_SUBAGENTS,
 		stopHeldForSubagents: false,
 		preErrorState: null,
+		titleHeld: false,
 	};
+}
+
+/** Whether a Status event opens a **Turn** (ADR-0027): a turn-start hook, or a
+ *  Title status of Working reached from outside a Turn. */
+export function eventStartsTurn(e: StatusEvent): boolean {
+	return (e.kind === "hook" || e.kind === "title") && e.startsTurn === true;
 }
 
 /** Shared empty set — keeps referential equality so `hydrate`/sync can use
@@ -573,6 +593,8 @@ function reduceKeystroke(
 function reduceTick(s: StatusState, now: number): StatusState {
 	if (s.state !== "working") return s;
 	if (s.shellCommandRunning) return s;
+	// The Agent's own title says it is still busy — silence proves nothing.
+	if (s.titleHeld) return s;
 	// Live Subagents hold Working and SUPPRESS the idle backstop — background
 	// Subagents produce no pane output, so quietness proves nothing (ADR-0022).
 	// Only the stale prune (a lost SubagentStop) can shrink the set here.
@@ -605,6 +627,42 @@ function reduceTick(s: StatusState, now: number): StatusState {
 	return s;
 }
 
+/** A **Title status** change (ADR-0047). The title is trusted over the byte
+ *  heuristic (`hookDriven`) and, while busy, over the idle backstop
+ *  (`titleHeld`). "none" only releases the hold: the title cannot say *how* the
+ *  Turn ended, so the turn-finished hook (Ready) or `titleTurnEnded` (Idle)
+ *  decides. Agent mode only — a shell's title means nothing here. */
+function reduceTitle(
+	s: StatusState,
+	status: TitleStatus,
+	now: number,
+): StatusState {
+	if (s.mode !== "agent") return s;
+	if (status === "none") return s.titleHeld ? { ...s, titleHeld: false } : s;
+	if (status === "waiting") {
+		return {
+			...s,
+			state: "waiting",
+			hookDriven: true,
+			titleHeld: true,
+			preErrorState: null,
+		};
+	}
+	if (s.state === "working") {
+		return { ...s, hookDriven: true, titleHeld: true, lastActivityAt: now };
+	}
+	return {
+		...s,
+		state: "working",
+		hookDriven: true,
+		titleHeld: true,
+		workingSince: now,
+		lastActivityAt: now,
+		stopHeldForSubagents: false,
+		preErrorState: null,
+	};
+}
+
 /** The pure status reducer. */
 export function statusReducer(
 	s: StatusState,
@@ -614,6 +672,15 @@ export function statusReducer(
 	switch (e.kind) {
 		case "hook":
 			return applyHook(s, e.transition, e.now);
+		case "title":
+			return reduceTitle(s, e.status, e.now);
+		case "titleTurnEnded":
+			// Only a Turn still showing busy ends here — a turn-finished hook
+			// that beat the grace window already moved the pane to Ready.
+			return s.mode === "agent" &&
+				(s.state === "working" || s.state === "waiting")
+				? applyHook(s, "idle", 0)
+				: s;
 		case "agentDetected":
 			return s.mode === "agent"
 				? s
@@ -627,6 +694,7 @@ export function statusReducer(
 						hookDriven: false,
 						activeSubagents: NO_SUBAGENTS,
 						stopHeldForSubagents: false,
+						titleHeld: false,
 					};
 		case "shellCommandStarted":
 			if (s.mode === "agent") return s;

@@ -1,8 +1,10 @@
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
+import type { TitleStatus } from "../lib/agentTitleMap";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
 import { parseTabLayout } from "../lib/paneTree";
 import {
+	eventStartsTurn,
 	NO_SUBAGENTS,
 	type StatusEvent,
 	type StatusState,
@@ -51,6 +53,11 @@ const subagentState = new Map<
 // entry would ripple through project/entriesEqual/snap and emit same-state
 // StatusChanges. Non-null only while the entry state is "error".
 const preErrorStates = new Map<string, "working" | "waiting">();
+
+// PTYs whose Agent's terminal title says it is busy (a **Title status**,
+// ADR-0047). Out-of-band like the maps above: it only gates the idle backstop,
+// so it must not ripple through project/entriesEqual/snap.
+const titleHeldPtys = new Set<string>();
 
 /** What the pane was doing before a **Mid-turn failure**, or null if the red
  *  icon came from a **Turn failure** (or the PTY isn't in Error at all). Lets
@@ -130,6 +137,14 @@ interface PtyActivityState_Store {
 			| "attach",
 		startsTurn?: boolean,
 	) => void;
+	/** A **Title status** change in the Agent's terminal title (ADR-0047). */
+	applyTitleStatus: (
+		ptyId: string,
+		status: TitleStatus,
+		startsTurn: boolean,
+	) => void;
+	/** The title ended the Turn and no turn-finished hook followed: → Idle. */
+	titleTurnEnded: (ptyId: string) => void;
 	clearWaiting: (ptyId: string) => void;
 	clearActive: (ptyId: string) => void;
 	subagentStarted: (ptyId: string, agentId: string) => void;
@@ -193,6 +208,7 @@ function hydrate(
 		activeSubagents: subagentState.get(ptyId)?.subagents ?? NO_SUBAGENTS,
 		stopHeldForSubagents: subagentState.get(ptyId)?.stopHeld ?? false,
 		preErrorState: preErrorStates.get(ptyId) ?? null,
+		titleHeld: titleHeldPtys.has(ptyId),
 	};
 }
 
@@ -321,6 +337,8 @@ function applyStatusEvent(
 	} else {
 		preErrorStates.delete(ptyId);
 	}
+	if (after.titleHeld) titleHeldPtys.add(ptyId);
+	else titleHeldPtys.delete(ptyId);
 
 	const nextEntry = project(after, prevEntry);
 	const changed = !prevEntry || !entriesEqual(prevEntry, nextEntry);
@@ -341,7 +359,7 @@ function applyStatusEvent(
 	// stays behaviourally inert (the tracker no-ops on an open Turn and the
 	// notification subscriber early-returns on an unchanged state); the cost is
 	// two `snap()` allocations and a listener walk.
-	const isTurnStart = event.kind === "hook" && event.startsTurn === true;
+	const isTurnStart = eventStartsTurn(event);
 
 	if (extra || changed) {
 		usePtyActivityStore.setState((s) => ({
@@ -479,6 +497,21 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			});
 		},
 
+		applyTitleStatus: (ptyId, status, startsTurn) => {
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, {
+				kind: "title",
+				status,
+				now: Date.now(),
+				startsTurn,
+			});
+		},
+
+		titleTurnEnded: (ptyId) => {
+			if (!get().activities[ptyId]) return;
+			applyStatusEvent(ptyId, { kind: "titleTurnEnded" });
+		},
+
 		clearWaiting: (ptyId) => {
 			if (!get().activities[ptyId]) return;
 			applyStatusEvent(ptyId, { kind: "clearWaiting" });
@@ -610,6 +643,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			lastOutputTimestamps.delete(ptyId);
 			subagentState.delete(ptyId);
 			preErrorStates.delete(ptyId);
+			titleHeldPtys.delete(ptyId);
 			set((s) => {
 				const { [ptyId]: _, ...rest } = s.activities;
 				const { [ptyId]: _rc, ...restRunning } = s.runningCommands;

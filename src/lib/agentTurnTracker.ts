@@ -31,6 +31,7 @@ import {
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { type AgentTurnRecord, git, telemetry } from "./ipc";
 import { findPaneLocation } from "./notificationRouter";
+import { eventStartsTurn } from "./statusReducer";
 import type { PtyActivityState } from "./types";
 
 interface OpenTurn {
@@ -467,10 +468,11 @@ export function initAgentTurnTracker(): void {
 				);
 				return;
 			}
-			// A turn-start hook IS a boundary even when the dot is already Working —
+			// A turn-start hook (or a Title status of Working, ADR-0047) IS a
+			// boundary even when the dot is already Working —
 			// `startsTurn` (from `isTurnStartEvent`), not `transition === "working"`,
 			// which permission replies and OpenCode's token stream also produce.
-			const startsWork = cause.kind === "hook" && cause.startsTurn === true;
+			const startsWork = eventStartsTurn(cause);
 			if (prev.state === next.state && !startsWork) return;
 			// A **hook-driven** pane has an authoritative turn-start signal, so only
 			// that signal may OPEN a Turn. Without this, any other route to Working

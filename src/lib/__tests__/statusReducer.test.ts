@@ -1062,3 +1062,92 @@ describe("statusReducer — mid-turn failure acknowledgement (ADR-0026)", () => 
 		expect(failed).toEqual(copy);
 	});
 });
+
+describe("statusReducer — Title status (ADR-0047)", () => {
+	const agent = (o: Partial<StatusState> = {}) => mk(o, "agent");
+
+	it("title Working opens Working and silences the heuristic", () => {
+		const s = run(agent(), {
+			kind: "title",
+			status: "working",
+			now: 100,
+			startsTurn: true,
+		});
+		expect(s.state).toBe("working");
+		expect(s.hookDriven).toBe(true);
+		expect(s.titleHeld).toBe(true);
+		expect(s.workingSince).toBe(100);
+	});
+
+	it("title Waiting shows Waiting", () => {
+		const s = run(agent({ state: "working" }), {
+			kind: "title",
+			status: "waiting",
+			now: 1,
+		});
+		expect(s.state).toBe("waiting");
+		expect(s.titleHeld).toBe(true);
+	});
+
+	it("a held title suppresses the idle backstop", () => {
+		const s = run(
+			agent(),
+			{ kind: "title", status: "working", now: 0 },
+			{ kind: "tick", now: HOOK_IDLE_BACKSTOP_MS * 10 },
+		);
+		expect(s.state).toBe("working");
+	});
+
+	it("a plain title only releases the hold — the backstop is back", () => {
+		const s = run(
+			agent(),
+			{ kind: "title", status: "working", now: 0 },
+			{ kind: "title", status: "none", now: 1 },
+		);
+		expect(s.state).toBe("working");
+		expect(s.titleHeld).toBe(false);
+		expect(
+			run(s, { kind: "tick", now: HOOK_IDLE_BACKSTOP_MS + 10 }).state,
+		).toBe("ready");
+	});
+
+	it("turn-finished hook then grace expiry stays Ready", () => {
+		const s = run(
+			agent(),
+			{ kind: "title", status: "working", now: 0 },
+			{ kind: "hook", transition: "ready", now: 5 },
+			{ kind: "title", status: "none", now: 6 },
+			{ kind: "titleTurnEnded" },
+		);
+		expect(s.state).toBe("ready");
+	});
+
+	it("no turn-finished hook: grace expiry lands on Idle (cancel or failure)", () => {
+		const working = run(
+			agent(),
+			{ kind: "title", status: "working", now: 0 },
+			{ kind: "title", status: "none", now: 6 },
+			{ kind: "titleTurnEnded" },
+		);
+		expect(working.state).toBe("idle");
+		const waiting = run(
+			agent(),
+			{ kind: "title", status: "waiting", now: 0 },
+			{ kind: "title", status: "none", now: 6 },
+			{ kind: "titleTurnEnded" },
+		);
+		expect(waiting.state).toBe("idle");
+	});
+
+	it("ignores titles outside agent mode, and agent exit drops the hold", () => {
+		expect(run(mk(), { kind: "title", status: "working", now: 0 }).state).toBe(
+			"idle",
+		);
+		const exited = run(
+			agent(),
+			{ kind: "title", status: "working", now: 0 },
+			{ kind: "agentExited" },
+		);
+		expect(exited.titleHeld).toBe(false);
+	});
+});
