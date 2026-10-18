@@ -78,7 +78,14 @@ describe("PullRequestsSection", () => {
 		useWorkspaceGitStore.setState({ repoSlugsById: { "ws-1": ["acme/web"] } });
 		useWorkspaceStore.setState({
 			workspaces: [
-				{ id: "ws-1", rootFolder: "/web", baseBranch: null },
+				// `tabs` is required even though nothing here reads it:
+				// terminalManager's workspace-store subscription maps over it.
+				// That subscription is armed by a module-load setTimeout, and
+				// whether it goes live depends on whether the timer fires
+				// before or after the workspaceStore ↔ terminalManager import
+				// cycle finishes loading, so a missing `tabs` fails only some
+				// runs.
+				{ id: "ws-1", rootFolder: "/web", baseBranch: null, tabs: [] },
 				// biome-ignore lint/suspicious/noExplicitAny: partial workspace fixture
 			] as any,
 		});
