@@ -576,13 +576,13 @@ const WS_DEFS: WsDef[] = [
 			["src/router.ts", "M", 9, 3, "unstaged"],
 		],
 	},
-	// 29 — admin-portal (idle agent, clean)
+	// 29 — admin-portal (finished agent, clean)
 	{
 		id: "ws-admin",
 		name: "admin-portal",
 		base: "main",
 		branch: "main",
-		tabs: one("Agent", a("kimi", "idle", "kimiSession")),
+		tabs: one("Agent", a("vibe", "ready", "vibeSession")),
 	},
 	// 30 — iot-bridge (no agent, running dev server)
 	{
@@ -1487,6 +1487,7 @@ export const installedAgentCommands = new Set([
 	"qwen",
 	"kimi",
 	"grok",
+	"vibe",
 ]);
 
 /** Per-agent hook footprint shown in Settings → Agents (demo, no real files). */
@@ -1500,6 +1501,8 @@ export const agentHookStatuses: AgentHookStatus[] = [
 			"PermissionRequest",
 			"Stop",
 			"StopFailure",
+			"SubagentStart",
+			"SubagentStop",
 			"SessionEnd",
 		],
 		state: "registered",
@@ -1515,14 +1518,28 @@ export const agentHookStatuses: AgentHookStatus[] = [
 		agentId: "qwen",
 		configPath: "~/.qwen/settings.json",
 		ownership: "merged",
-		events: ["BeforeAgent", "AfterAgent", "Notification", "SessionEnd"],
+		events: [
+			"UserPromptSubmit",
+			"PermissionRequest",
+			"Stop",
+			"StopFailure",
+			"SubagentStart",
+			"SubagentStop",
+			"SessionEnd",
+		],
 		state: "notRegistered",
 	},
 	{
 		agentId: "codex",
 		configPath: "~/.codex/hooks.json",
 		ownership: "owned",
-		events: ["UserPromptSubmit", "PermissionRequest", "Stop"],
+		events: [
+			"UserPromptSubmit",
+			"PermissionRequest",
+			"Stop",
+			"SubagentStart",
+			"SubagentStop",
+		],
 		state: "registered",
 	},
 	{
@@ -1533,6 +1550,8 @@ export const agentHookStatuses: AgentHookStatus[] = [
 			"userPromptSubmitted",
 			"preToolUse",
 			"notification",
+			"subagentStart",
+			"subagentStop",
 			"agentStop",
 			"errorOccurred",
 			"sessionEnd",
@@ -1568,8 +1587,10 @@ export const agentHookStatuses: AgentHookStatus[] = [
 		configPath: "~/.grok/hooks/abundio.json",
 		ownership: "owned",
 		events: [
+			"SessionStart",
 			"UserPromptSubmit",
 			"Notification",
+			"PreToolUse",
 			"PermissionDenied",
 			"Stop",
 			"StopFailure",
@@ -1577,6 +1598,13 @@ export const agentHookStatuses: AgentHookStatus[] = [
 			"SubagentStop",
 			"SessionEnd",
 		],
+		state: "registered",
+	},
+	{
+		agentId: "vibe",
+		configPath: "~/.vibe/hooks.toml",
+		ownership: "merged",
+		events: ["post_agent"],
 		state: "registered",
 	},
 ];

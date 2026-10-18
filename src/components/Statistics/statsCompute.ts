@@ -193,6 +193,9 @@ const AGENT_COLORS: Record<string, string> = {
 	// Aider is a retired built-in; kept for converted agents and old Turns.
 	aider: "rgb(251 191 36)", // amber
 	opencode: "rgb(244 114 182)", // pink
+	kimi: "rgb(163 230 53)", // lime
+	grok: "rgb(232 121 249)", // fuchsia
+	vibe: "rgb(251 146 60)", // orange
 };
 
 const FALLBACK_PALETTE = [
@@ -216,6 +219,9 @@ export function agentLabel(agentId: string): string {
 		codex: "Codex",
 		aider: "Aider", // retired built-in: converted agents and old Turns
 		opencode: "OpenCode",
+		kimi: "Kimi Code",
+		grok: "Grok Build",
+		vibe: "Mistral Vibe",
 	};
 	return names[agentId] ?? agentId;
 }

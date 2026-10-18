@@ -166,6 +166,22 @@ const grokSession = [
 	"",
 ].join("\r\n");
 
+/** Mistral Vibe — finished a Turn (ready, purple). */
+const vibeSession = [
+	`${DIM}~/code/admin-portal${RESET} ${GREEN}❯${RESET} vibe`,
+	"",
+	`${ORANGE}▙▟${RESET} ${BOLD}Mistral Vibe${RESET} ${DIM}· devstral${RESET}`,
+	`${DIM}  /Users/demo/code/admin-portal · main${RESET}`,
+	"",
+	`${GREY}> Paginate the audit-log table.${RESET}`,
+	"",
+	`${ORANGE}●${RESET} Added cursor pagination to the audit-log query and table.`,
+	`${GREEN}    src/audit/AuditLogTable.tsx (+41 −12)${RESET}`,
+	`${GREEN}    src/audit/query.ts (+19 −4)${RESET}`,
+	`${DIM}  pnpm test audit — 14 passed${RESET}`,
+	"",
+].join("\r\n");
+
 /** OpenAI Codex CLI — run failed (error, red). */
 const codexSession = [
 	`${DIM}~/code/infra-terraform${RESET} ${GREEN}❯${RESET} codex`,
@@ -277,6 +293,7 @@ export const TRANSCRIPTS: Record<string, string> = {
 	geminiSession,
 	kimiSession,
 	grokSession,
+	vibeSession,
 	codexSession,
 	opencodeSession,
 	qwenSession,
