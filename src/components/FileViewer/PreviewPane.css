@@ -43,10 +43,10 @@
 	color: var(--color-fg-default);
 }
 .abundio-code-copy[data-state="copied"] {
-	color: #2e9b33;
+	color: var(--color-success-fg, #2e9b33);
 }
 .abundio-code-copy[data-state="failed"] {
-	color: #d1242f;
+	color: var(--color-danger-fg, #d1242f);
 }
 /* A diagram's expand button already holds the corner; sit to its left. */
 .wmde-markdown pre:has(.abundio-mermaid) > .abundio-code-copy {
