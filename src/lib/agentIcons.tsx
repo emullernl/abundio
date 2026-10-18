@@ -9,6 +9,7 @@ import kimiIconUrl from "../assets/agent-icons/kimi.svg";
 import opencodeIconUrl from "../assets/agent-icons/opencode.svg";
 import qwenIconUrl from "../assets/agent-icons/qwen.svg";
 import terminalIconUrl from "../assets/agent-icons/terminal.jpg";
+import vibeIconUrl from "../assets/agent-icons/vibe.svg";
 
 // Real brand assets pulled from each vendor's official site and bundled as
 // Vite-hashed URLs. Rendered via <img> so the icons keep their authentic
@@ -30,6 +31,9 @@ import terminalIconUrl from "../assets/agent-icons/terminal.jpg";
 //                        white glyph on a near-black rounded tile — the tile
 //                        is part of the asset, so it reads on light AND dark;
 //                        decorative Figma foreignObject/drop-shadow stripped)
+//   - vibe.svg         → mistral.ai/favicon.svg (Mistral's pixel "M" mark,
+//                        used for Mistral Vibe; full-colour, reads on light
+//                        and dark)
 //   - terminal.jpg     → iterm2.com (for the "New Terminal" option)
 
 interface IconProps {
@@ -67,6 +71,7 @@ const OpenCodeIcon = brandImg(opencodeIconUrl, "OpenCode");
 const QwenIcon = brandImg(qwenIconUrl, "Qwen");
 const KimiIcon = brandImg(kimiIconUrl, "Kimi");
 const GrokIcon = brandImg(grokIconUrl, "Grok");
+const VibeIcon = brandImg(vibeIconUrl, "Mistral Vibe");
 
 export const TerminalBrandIcon = brandImg(terminalIconUrl, "New Terminal");
 
@@ -97,6 +102,8 @@ export function getAgentIconComponent(
 			return KimiIcon;
 		case "grok":
 			return GrokIcon;
+		case "vibe":
+			return VibeIcon;
 		default:
 			return undefined;
 	}

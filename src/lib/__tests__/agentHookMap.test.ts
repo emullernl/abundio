@@ -20,6 +20,12 @@ import {
 } from "./fixtures/opencodeEvents";
 
 describe("mapHookEvent", () => {
+	it("maps Mistral Vibe's one hook to Ready (Working/Waiting come from its title)", () => {
+		expect(mapHookEvent("vibe", "post_agent")).toBe("ready");
+		expect(mapHookEvent("vibe", "pre_tool")).toBeNull();
+		expect(isTurnStartEvent("vibe", "post_agent")).toBe(false);
+	});
+
 	it("maps Claude Code lifecycle events", () => {
 		expect(mapHookEvent("claude", "UserPromptSubmit")).toBe("active");
 		expect(mapHookEvent("claude", "PermissionRequest")).toBe("waiting");
@@ -440,6 +446,17 @@ describe("mapHookEvent", () => {
 });
 
 describe("mapSubagentHookEvent (ADR-0022)", () => {
+	it("drops every Mistral Vibe event from a child session", () => {
+		const child = { session_id: "c1", parent_session_id: "p1" };
+		expect(
+			mapSubagentHookEvent("vibe", "post_agent", child, () => false),
+		).toEqual({ action: "ignored", id: "c1" });
+		const own = { session_id: "p1", parent_session_id: null };
+		expect(mapSubagentHookEvent("vibe", "post_agent", own, () => false)).toBe(
+			null,
+		);
+	});
+
 	const never = () => false;
 	const always = () => true;
 

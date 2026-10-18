@@ -314,7 +314,7 @@ fn provision_merge_settings(
 }
 
 /// Merge (or strip) Abundio's `[[hooks]]` entries in a co-owned TOML config
-/// (Kimi Code's `config.toml`). Counterpart of `provision_merge_settings` for
+/// (Kimi Code's `config.toml`, Mistral Vibe's `hooks.toml`). Counterpart of `provision_merge_settings` for
 /// `ConfigFormat::Toml`; `toml_edit` preserves the user's comments and layout,
 /// where a serde rewrite would destroy them. Abundio's entries are recognized
 /// by the relay path inside `command` — Kimi's strict loader forbids any
@@ -371,19 +371,21 @@ fn provision_merge_toml_hooks(
             .entry("hooks")
             .or_insert(toml_edit::Item::ArrayOfTables(Default::default()));
         if let Some(hooks) = item.as_array_of_tables_mut() {
-            for event in KIMI_EVENTS {
+            for event in toml_hook_schema(agent).events {
                 let mut t = toml_edit::Table::new();
-                t["event"] = toml_edit::value(*event);
-                t["command"] = toml_edit::value(command_str(relay, event, agent));
+                for (key, value) in toml_hook_entry(agent, event, relay) {
+                    t[key] = toml_edit::value(value);
+                }
                 hooks.push(t);
             }
         } else if let Some(arr) = item.as_value_mut().and_then(|v| v.as_array_mut()) {
             // The user keeps their hooks in the inline form — append matching
             // inline tables rather than forcing a format change on their file.
-            for event in KIMI_EVENTS {
+            for event in toml_hook_schema(agent).events {
                 let mut t = toml_edit::InlineTable::new();
-                t.insert("event", (*event).into());
-                t.insert("command", command_str(relay, event, agent).into());
+                for (key, value) in toml_hook_entry(agent, event, relay) {
+                    t.insert(key, value.into());
+                }
                 arr.push(toml_edit::Value::InlineTable(t));
             }
         } else {
@@ -927,7 +929,7 @@ fn curl_available() -> bool {
 /// agents (including a converted Aider) are intentionally absent — Abundio has no hook
 /// integration for them.
 const SUPPORTED_AGENTS: &[&str] = &[
-    "claude", "gemini", "qwen", "codex", "copilot", "opencode", "kimi", "grok",
+    "claude", "gemini", "qwen", "codex", "copilot", "opencode", "kimi", "grok", "vibe",
 ];
 
 /// Grok Build (xAI) hook events Abundio registers. Grok's hook system is a
@@ -997,6 +999,74 @@ const KIMI_EVENTS: &[&str] = &[
     "SubagentStop",
     "SessionEnd",
 ];
+
+/// Mistral Vibe hook events Abundio registers. Vibe has only three hook types
+/// (`pre_tool`, `post_tool`, `post_agent`) and none for prompt submit, approval
+/// prompts, cancel or session end — Working and Waiting come from its terminal
+/// title instead (a **Title status**, see agentTitleMap.ts and ADR-0047).
+/// `post_agent` ("an assistant turn ended without pending tool calls") is the
+/// one fact the title cannot give: a finished Turn as opposed to a cancelled or
+/// failed one. The tool hooks are deliberately absent: Vibe awaits every hook
+/// before it continues, so they would add a curl round-trip to each tool call.
+const VIBE_EVENTS: &[&str] = &["post_agent"];
+
+/// Vibe's own config home — `$VIBE_HOME` when the app process has it as an
+/// absolute path, else `~/.vibe`. Unlike the other agents' relocatable homes
+/// (KIMI_CODE_HOME, GROK_HOME, …) this one is honoured: an absolute path joined
+/// onto `$HOME` replaces it. A `VIBE_HOME` set only in the user's shell rc is
+/// not seen by a GUI-launched app, which then provisions the default.
+/// Read on every call, so a run that sees a different `VIBE_HOME` from the one
+/// that provisioned disables the wrong file and leaves `abundio-post_agent`
+/// behind in the other. That entry is harmless: the relay is a no-op when
+/// Abundio isn't listening.
+fn vibe_home_rel() -> PathBuf {
+    match std::env::var_os("VIBE_HOME").map(PathBuf::from) {
+        Some(p) if p.is_absolute() => p,
+        _ => PathBuf::from(".vibe"),
+    }
+}
+
+/// How one agent's `[[hooks]]` entries look in its TOML config: the key that
+/// names the event, and the events Abundio registers.
+struct TomlHookSchema {
+    event_key: &'static str,
+    events: &'static [&'static str],
+}
+
+/// The TOML hook layout of a `ConfigFormat::Toml` agent. Kimi keys entries by
+/// `event` and forbids any other key; Vibe keys them by `type` and requires a
+/// unique `name`.
+fn toml_hook_schema(agent: &str) -> TomlHookSchema {
+    match agent {
+        "vibe" => TomlHookSchema {
+            event_key: "type",
+            events: VIBE_EVENTS,
+        },
+        _ => TomlHookSchema {
+            event_key: "event",
+            events: KIMI_EVENTS,
+        },
+    }
+}
+
+/// Abundio's `[[hooks]]` entry for one event, as ordered key/value pairs.
+/// Kimi's strict loader allows only event/matcher/command/timeout, so its
+/// entries carry nothing else. Vibe ignores unknown keys but needs a `name`
+/// unique across its user and project files (a duplicate is dropped, first one
+/// wins) — hence the `abundio-` prefix.
+fn toml_hook_entry(agent: &str, event: &str, relay: &Path) -> Vec<(&'static str, String)> {
+    let schema = toml_hook_schema(agent);
+    let command = command_str(relay, event, agent);
+    if agent == "vibe" {
+        vec![
+            ("name", format!("abundio-{event}")),
+            (schema.event_key, event.to_string()),
+            ("command", command),
+        ]
+    } else {
+        vec![(schema.event_key, event.to_string()), ("command", command)]
+    }
+}
 
 /// Whether Abundio merges entries into a config the agent also owns, or owns
 /// the whole file itself.
@@ -1123,6 +1193,15 @@ fn agent_descriptor(agent_id: &str) -> Option<AgentDescriptor> {
             format: ConfigFormat::Json,
             events: GROK_EVENTS.iter().map(|s| s.to_string()).collect(),
         }),
+        // Vibe's user hooks file is separate from its config.toml, so Abundio
+        // never touches the user's settings or API key. Honours VIBE_HOME.
+        "vibe" => Some(AgentDescriptor {
+            dir_rel: vibe_home_rel(),
+            config_rel: vibe_home_rel().join("hooks.toml"),
+            ownership: Ownership::Merged,
+            format: ConfigFormat::Toml,
+            events: owned_events(VIBE_EVENTS),
+        }),
         _ => None,
     }
 }
@@ -1222,7 +1301,12 @@ fn merge_is_current(root: &Value, marker: &str, agent_id: &str) -> bool {
 /// `ensure_agent_hooks` upgrades it at agent launch. Recognizes both the
 /// `[[hooks]]` header form and the inline `hooks = [{ ... }]` form, matching
 /// `provision_merge_toml_hooks`.
-fn toml_merge_is_current(doc: &toml_edit::DocumentMut, marker: &str, events: &[&str]) -> bool {
+fn toml_merge_is_current(
+    doc: &toml_edit::DocumentMut,
+    marker: &str,
+    schema: &TomlHookSchema,
+) -> bool {
+    let (key, events) = (schema.event_key, schema.events);
     if events.is_empty() {
         return false;
     }
@@ -1234,7 +1318,7 @@ fn toml_merge_is_current(doc: &toml_edit::DocumentMut, marker: &str, events: &[&
         aot.iter()
             .map(|t| {
                 (
-                    t.get("event").and_then(|e| e.as_str()),
+                    t.get(key).and_then(|e| e.as_str()),
                     t.get("command").and_then(|c| c.as_str()),
                 )
             })
@@ -1244,7 +1328,7 @@ fn toml_merge_is_current(doc: &toml_edit::DocumentMut, marker: &str, events: &[&
             .filter_map(|v| v.as_inline_table())
             .map(|t| {
                 (
-                    t.get("event").and_then(|e| e.as_str()),
+                    t.get(key).and_then(|e| e.as_str()),
                     t.get("command").and_then(|c| c.as_str()),
                 )
             })
@@ -1301,7 +1385,7 @@ fn config_state(home: &Path, relay: &RelayPaths, agent_id: &str) -> HookConfigSt
                 ConfigFormat::Toml => match text.parse::<toml_edit::DocumentMut>() {
                     Err(_) => HookConfigState::ConfigError,
                     Ok(doc) => {
-                        if toml_merge_is_current(&doc, &marker, KIMI_EVENTS) {
+                        if toml_merge_is_current(&doc, &marker, &toml_hook_schema(agent_id)) {
                             HookConfigState::Registered
                         } else {
                             HookConfigState::NotRegistered
@@ -2187,7 +2271,7 @@ timeout = 10
         assert!(toml_merge_is_current(
             &doc,
             "abundio-hook.sh",
-            KIMI_EVENTS
+            &toml_hook_schema("kimi")
         ));
 
         // Disable — back to exactly the user's entries.
@@ -2280,6 +2364,82 @@ timeout = 10
         );
         provision_agent(home.path(), &relay, "kimi", false, false).unwrap();
         assert!(!is_provisioned(home.path(), &relay, "kimi"));
+        assert!(!fs::read_to_string(&path).unwrap().contains("abundio-hook"));
+    }
+
+    // ── Mistral Vibe: TOML merge into the user's hooks.toml ──
+
+    /// A hooks.toml the way a real Vibe user might keep it (the docs' example).
+    const VIBE_USER_HOOKS: &str = r#"# my guard hooks
+[[hooks]]
+name = "deny-rm-rf"
+type = "pre_tool"
+match = "bash"
+command = "uv run python /path/to/guard-bash"
+"#;
+
+    #[test]
+    fn vibe_toml_merge_adds_named_post_agent_then_strips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hooks.toml");
+        fs::write(&path, VIBE_USER_HOOKS).unwrap();
+
+        provision_merge_toml_hooks(&path, true, "vibe", &relay()).unwrap();
+        provision_merge_toml_hooks(&path, true, "vibe", &relay()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# my guard hooks"), "user comment survives");
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+        let hooks = doc["hooks"].as_array_of_tables().unwrap();
+        assert_eq!(hooks.len(), 2, "user's hook + exactly one Abundio entry");
+        let ours = hooks
+            .iter()
+            .find(|t| t["name"].as_str() == Some("abundio-post_agent"))
+            .expect("Abundio entry is named");
+        assert_eq!(ours["type"].as_str(), Some("post_agent"));
+        let cmd = ours["command"].as_str().unwrap();
+        assert!(cmd.contains("abundio-hook.sh") && cmd.contains("post_agent vibe"));
+        // Vibe rejects `match` on a post_agent hook — never write one.
+        assert!(ours.get("match").is_none());
+        assert!(toml_merge_is_current(
+            &doc,
+            "abundio-hook.sh",
+            &toml_hook_schema("vibe")
+        ));
+        // Keyed by `type`, so Kimi's `event` reading must not count it.
+        assert!(!toml_merge_is_current(
+            &doc,
+            "abundio-hook.sh",
+            &toml_hook_schema("kimi")
+        ));
+
+        provision_merge_toml_hooks(&path, false, "vibe", &relay()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), VIBE_USER_HOOKS);
+    }
+
+    #[test]
+    fn vibe_dir_gating_and_config_state() {
+        if std::env::var_os("VIBE_HOME").is_some() {
+            return; // the descriptor would point outside the temp home
+        }
+        let home = tempfile::tempdir().unwrap();
+        let relay = test_relay(&home);
+
+        // No-litter: absent ~/.vibe with create_dir=false is left alone.
+        provision_agent(home.path(), &relay, "vibe", true, false).unwrap();
+        assert!(!home.path().join(".vibe").exists());
+
+        // Launch path creates hooks.toml next to (never inside) config.toml.
+        provision_agent(home.path(), &relay, "vibe", true, true).unwrap();
+        let path = home.path().join(".vibe").join("hooks.toml");
+        assert!(path.exists());
+        assert!(!home.path().join(".vibe").join("config.toml").exists());
+        assert_eq!(
+            config_state(home.path(), &relay, "vibe"),
+            HookConfigState::Registered
+        );
+
+        provision_agent(home.path(), &relay, "vibe", false, false).unwrap();
+        assert!(!is_provisioned(home.path(), &relay, "vibe"));
         assert!(!fs::read_to_string(&path).unwrap().contains("abundio-hook"));
     }
 }

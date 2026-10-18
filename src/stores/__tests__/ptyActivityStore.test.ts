@@ -1149,6 +1149,38 @@ describe("hook-driven status", () => {
 		second: { type: "terminal", id: "p2", ptyId: "pty-2" },
 	});
 
+	it("a Title status drives Working → Waiting → Idle with no turn-finished hook (ADR-0047)", () => {
+		const { initPty, applyTitleStatus, titleTurnEnded } =
+			usePtyActivityStore.getState();
+		initPty("pty-1", "agent");
+		applyTitleStatus("pty-1", "working", true);
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"active",
+		);
+		applyTitleStatus("pty-1", "waiting", false);
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"waiting",
+		);
+		applyTitleStatus("pty-1", "none", false);
+		titleTurnEnded("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"idle",
+		);
+	});
+
+	it("a turn-finished hook inside the grace window keeps Ready (ADR-0047)", () => {
+		const { initPty, applyTitleStatus, applyHookEvent, titleTurnEnded } =
+			usePtyActivityStore.getState();
+		initPty("pty-1", "agent");
+		applyTitleStatus("pty-1", "working", true);
+		applyTitleStatus("pty-1", "none", false);
+		applyHookEvent("pty-1", "ready");
+		titleTurnEnded("pty-1");
+		expect(usePtyActivityStore.getState().activities["pty-1"].state).toBe(
+			"ready",
+		);
+	});
+
 	it("applyHookEvent waiting sets waiting state and hookDriven", () => {
 		const { initPty, applyHookEvent } = usePtyActivityStore.getState();
 		initPty("pty-1");

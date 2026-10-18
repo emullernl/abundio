@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v2. It manages workspaces (each bound to a folder), supports split panes with tabs, and has first-class support for AI coding CLI agents (Claude Code, GitHub Copilot CLI, Gemini CLI, Codex, OpenCode, Qwen Code, Kimi Code, Grok Build). It includes a built-in file explorer, code editor (Monaco), git integration, GitHub PR panel, and full-text workspace search.
+Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v2. It manages workspaces (each bound to a folder), supports split panes with tabs, and has first-class support for AI coding CLI agents (Claude Code, GitHub Copilot CLI, Gemini CLI, Codex, OpenCode, Qwen Code, Kimi Code, Grok Build, Mistral Vibe). It includes a built-in file explorer, code editor (Monaco), git integration, GitHub PR panel, and full-text workspace search.
 
 > **Domain language**: see `GLOSSARY.md` for canonical term definitions (Workspace, Pane, PTY, Tab, Agent, etc.) and flagged ambiguities to avoid.
 
@@ -97,6 +97,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/ipc.ts` — Typed wrappers around Tauri `invoke()` and `listen()`.
 - `lib/themes.ts` — Built-in themes. `applyTheme()` sets CSS variables on `:root`.
 - `lib/terminalManager.ts` — `ManagedTerminal` wraps xterm.js with FitAddon, SearchAddon, SerializeAddon, WebGL (canvas fallback). Handles PTY connection, scrollback restore, font updates, and `restartPanePty` (the third lifecycle path — ADR-0023).
+- `lib/agentTitleMap.ts` — **Title status** (ADR-0047): per-Agent title rules (Mistral Vibe's `>> ` / `? ` prefixes and blurred-pane suffixes) and the pure `titleStep` decision. terminalManager feeds it `onTitleChange`.
 - `lib/fleetConsole.ts` — Pure Fleet Console helpers: which panes are tiles and in what order, grid shape, Auto columns, divider drags, grid navigation.
 - `lib/fleetFocus.ts` — `targetPaneId()`: the Focused tile in the Fleet Console, the Focused pane otherwise. Every pane-scoped shortcut resolves its target here; `workspaceViewOnly` mutes layout shortcuts in the console.
 - `lib/paneLocation.ts` — `findPaneLocation`, `revealPane`, and `switchToPane` (the Fleet Console's **Switch to**).
@@ -117,7 +118,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/chords.ts` — Pure **Chord** helpers: record from a key event, spell, compare, vet (refuse/warn), and convert to Monaco keybindings and Tauri accelerators.
 - `lib/keymapConflicts.ts` — Pure conflict check and recording plan for Settings ▸ Keyboard.
 - `lib/monacoKeymap.ts` — Applies editor Overrides as Monaco keybinding rules (once per Window) and reads Monaco's action catalogue for Settings.
-- `lib/agents.ts` — Built-in agent definitions (Claude Code, Copilot, Gemini, Codex, OpenCode, Qwen, Kimi, Grok). `agentCommandFor()` is the single source of truth for an agent's launch string. `RETIRED_BUILTINS` lists built-ins a later release dropped (Aider); `mergeAgentsWithBuiltins` converts a Watched one into a custom Agent with the same id (ADR-0044).
+- `lib/agents.ts` — Built-in agent definitions (Claude Code, Copilot, Gemini, Codex, OpenCode, Qwen, Kimi, Grok, Vibe). `agentCommandFor()` is the single source of truth for an agent's launch string. `RETIRED_BUILTINS` lists built-ins a later release dropped (Aider); `mergeAgentsWithBuiltins` converts a Watched one into a custom Agent with the same id (ADR-0044).
 - `lib/paneTree.ts` — Pure helper functions for pane tree traversal and manipulation.
 - `lib/appWindow.ts` — `appWindow()` / `appWebview()` / `currentWindowLabel()`: the guarded way to reach Tauri's window APIs. `getCurrentWindow()` **throws** where there is no Tauri webview (the browser demo, jsdom), so never import it directly.
 - `lib/platform.ts` — Platform detection (`isMac`).

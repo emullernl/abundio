@@ -24,6 +24,7 @@ describe("BUILTIN_AGENTS", () => {
 		expect(commands).toContain("qwen");
 		expect(commands).toContain("kimi");
 		expect(commands).toContain("grok");
+		expect(commands).toContain("vibe");
 	});
 
 	it("no longer ships Aider (a retired built-in)", () => {
@@ -43,6 +44,8 @@ describe("escPressesToCancelAgent", () => {
 		expect(escPressesToCancelAgent("claude")).toBe(1);
 		expect(escPressesToCancelAgent("gemini")).toBe(1);
 		expect(escPressesToCancelAgent("qwen")).toBe(1);
+		// Vibe interrupts a running Turn on one ESC; its double-ESC is idle-only.
+		expect(escPressesToCancelAgent("vibe")).toBe(1);
 	});
 
 	it("returns 2 for agents that require double-ESC", () => {
@@ -291,6 +294,7 @@ describe("Task-capable agents", () => {
 				"grok",
 				"opencode",
 				"qwen",
+				"vibe",
 			].sort(),
 		);
 	});
