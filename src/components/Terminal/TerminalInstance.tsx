@@ -119,8 +119,12 @@ export const TerminalInstance = memo(function TerminalInstance({
 						// switch: then the program sees no resize and has nothing to
 						// redraw, so there is nothing to filter either.
 						if (!isPtySpawned(id)) {
+							// A new PTY is spawned at the fitted grid, so it is sized.
+							// A reconnection (the layout already had a ptyId) keeps
+							// whatever size it had, so it still owes one resize.
+							const isNewPty = !managed.ptyId;
 							ensurePtySpawned(id);
-							ptySizedRef.current = true;
+							ptySizedRef.current = isNewPty;
 						} else if (
 							managed.ptyId &&
 							needsPtyResizeOnProject({
@@ -129,10 +133,14 @@ export const TerminalInstance = memo(function TerminalInstance({
 							})
 						) {
 							beginResizeFilter(id);
+							ptySizedRef.current = true;
 							pty
 								.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-								.catch(() => {});
-							ptySizedRef.current = true;
+								.catch(() => {
+									// The PTY may not have this size: resize on the next
+									// projection even if the grid is unchanged.
+									ptySizedRef.current = false;
+								});
 						}
 						// Reveal after the browser has painted the settled content
 						requestAnimationFrame(() => {
@@ -174,7 +182,12 @@ export const TerminalInstance = memo(function TerminalInstance({
 							managed.ptyId &&
 							(managed.term.cols !== prevCols || managed.term.rows !== prevRows)
 						) {
-							pty.resize(managed.ptyId, managed.term.cols, managed.term.rows);
+							pty
+								.resize(managed.ptyId, managed.term.cols, managed.term.rows)
+								.catch(() => {
+									// See the projection path: re-send on the next one.
+									ptySizedRef.current = false;
+								});
 						}
 					}, RESIZE_SETTLE_MS);
 				});
