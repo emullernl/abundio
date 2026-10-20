@@ -251,6 +251,24 @@ describe("CollapsedStrip", () => {
 		});
 	});
 
+	describe("Title", () => {
+		const title = () =>
+			[...container.querySelectorAll<HTMLElement>("span.font-medium")].find(
+				(el) => el.textContent === "acme-web",
+			);
+
+		it("dims the name of a workspace not opened in this Window", () => {
+			render(workspace([]));
+			expect(title()?.style.color).toBe("var(--fg-unopened)");
+		});
+
+		it("draws an opened workspace's name at full brightness", () => {
+			usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["ws-1"]) });
+			render(workspace([]));
+			expect(title()?.style.color).toBe("var(--fg-primary)");
+		});
+	});
+
 	describe("Dirty marker", () => {
 		const marker = () =>
 			container.querySelector<HTMLElement>("[data-dirty-marker]");

@@ -247,6 +247,10 @@
 	   re-resolve when applyTheme() swaps --accent / --bg-tertiary. */
 	--row-active-bg: color-mix(in srgb, var(--accent) 18%, transparent);
 	--row-hover-bg: color-mix(in srgb, var(--bg-tertiary) 50%, transparent);
+	/* Title of a Workspace not Opened in this Window: most of the way to
+	   secondary text, so it reads as inactive but stays a shade brighter
+	   than its path line. */
+	--fg-unopened: color-mix(in srgb, var(--fg-primary) 20%, var(--fg-secondary));
 	/* Ambient glow rising from the bottom of a surface — a vertical LINEAR
 	   gradient (used by the narrow left sidebar, where a linear wash reads
 	   cleaner than a radial hotspot). Built from the active theme's --accent

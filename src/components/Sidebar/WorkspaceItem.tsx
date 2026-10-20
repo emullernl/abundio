@@ -283,7 +283,10 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 					<div className="flex items-center justify-between gap-2 min-w-0">
 						<span
 							className="truncate font-medium flex-shrink-0 max-w-[50%]"
-							style={{ color: "var(--fg-primary)", fontSize: 13 }}
+							style={{
+								color: isLoaded ? "var(--fg-primary)" : "var(--fg-unopened)",
+								fontSize: 13,
+							}}
 							title={workspace.name}
 						>
 							{workspace.name}

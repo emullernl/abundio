@@ -9,6 +9,7 @@ import { shortenPath } from "../../lib/shortenPath";
 import { isAttentionStatus, PRIMARY_SIZE } from "../../lib/statusComposite";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { Z_SIDEBAR_POPOVER } from "../../lib/zLayers";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { DOT_STATUS_COLOR } from "../AgentStatusIcon";
@@ -63,6 +64,9 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	const rollups = useWorkspaceRollups(workspace);
 	const uncommitted = useWorkspaceGitStore(
 		(s) => s.uncommittedById[workspace.id],
+	);
+	const isOpened = usePtyActivityStore((s) =>
+		s.openedWorkspaceIds.has(workspace.id),
 	);
 	const ownDirty = uncommitted?.dirty === true;
 	const hiddenDirty = hidden?.dirty === true;
@@ -237,7 +241,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 					<span
 						className="font-medium"
 						style={{
-							color: "var(--fg-primary)",
+							color: isOpened ? "var(--fg-primary)" : "var(--fg-unopened)",
 							fontSize: 12,
 							lineHeight: `${STRIP_ICON_SIZE}px`,
 							letterSpacing: "0.01em",
