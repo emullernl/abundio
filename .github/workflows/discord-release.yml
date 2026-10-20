@@ -21,9 +21,13 @@ jobs:
   announce:
     if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

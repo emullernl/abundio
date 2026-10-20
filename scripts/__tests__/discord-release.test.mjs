@@ -21,6 +21,18 @@ describe("linkifyPrRefs", () => {
 		expect(linkifyPrRefs(text, REPO)).toBe(text);
 	});
 
+	it("leaves fenced blocks alone, even with an odd number of backticks", () => {
+		const text = "```\nsee ` #1\n```\nafter #2";
+		expect(linkifyPrRefs(text, REPO)).toBe(
+			`\`\`\`\nsee \` #1\n\`\`\`\nafter [#2](${REPO}/pull/2)`,
+		);
+	});
+
+	it("leaves an unclosed fence alone", () => {
+		const text = "#1\n```\n#2";
+		expect(linkifyPrRefs(text, REPO)).toBe(`[#1](${REPO}/pull/1)\n\`\`\`\n#2`);
+	});
+
 	it("does not touch headings", () => {
 		expect(linkifyPrRefs("## 🐛 Bug Fixes", REPO)).toBe("## 🐛 Bug Fixes");
 	});
@@ -58,6 +70,29 @@ describe("truncateNotes", () => {
 		const out = truncateNotes(`- ${"x".repeat(5000)}`, URL);
 		expect(out.length).toBeLessThanOrEqual(DESCRIPTION_LIMIT);
 		expect(out.endsWith(`(${URL})`)).toBe(true);
+	});
+
+	it("never cuts inside a fenced block", () => {
+		const notes = `- one\n\`\`\`\n- a\n- b\n\`\`\`\n- ${"t".repeat(200)}`;
+		const suffix = `\n\n…[read the full notes](${URL})`;
+		const limit = "- one\n```\n- a".length + suffix.length;
+		expect(truncateNotes(notes, URL, limit)).toBe(`- one${suffix}`);
+	});
+
+	it("hard-cuts at whitespace, keeping emoji and links whole", () => {
+		const link = `[#227](${REPO}/pull/227)`;
+		const notes = `- ${"🐛 ".repeat(1500)}${link} ${"x".repeat(3000)}`;
+		const out = truncateNotes(notes, URL);
+		const body = out.slice(0, out.indexOf("\n\n…"));
+		expect(out.length).toBeLessThanOrEqual(DESCRIPTION_LIMIT);
+		expect(body).not.toMatch(/[\uD800-\uDBFF]$/);
+		expect(body.endsWith("🐛") || body.endsWith(link)).toBe(true);
+	});
+
+	it("keeps a surrogate pair whole in an unbroken run", () => {
+		const out = truncateNotes(`-${"🐛".repeat(3000)}`, URL);
+		const body = out.slice(0, out.indexOf("\n\n…"));
+		expect(body).not.toMatch(/[\uD800-\uDBFF]$/);
 	});
 
 	it("always fits Discord's limit", () => {

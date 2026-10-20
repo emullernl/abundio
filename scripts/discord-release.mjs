@@ -10,17 +10,22 @@ import { pathToFileURL } from "node:url";
 export const DESCRIPTION_LIMIT = 4096;
 const TITLE_LIMIT = 256;
 
+// A hung Discord must not hold the job for the runner's 6-hour limit.
+const POST_TIMEOUT_MS = 30_000;
+
+const FENCE = /^\s*(```|~~~)/;
+
 // The app's default accent (themes.ts).
 const EMBED_COLOR = 0x58d5ba;
 
 /**
  * Discord does not link `#123`, so point each one at the PR. GitHub
- * redirects /pull/N to the issue when N is an issue. Code spans and
- * existing links (`[#123](…)`, `page#123`) are left alone.
+ * redirects /pull/N to the issue when N is an issue. Fenced blocks, code
+ * spans and existing links (`[#123](…)`, `page#123`) are left alone.
  */
 export function linkifyPrRefs(markdown, repoUrl) {
 	return markdown
-		.split(/(`[^`]*`)/)
+		.split(/(^[ \t]*```[\s\S]*?(?:^[ \t]*```|$(?![\s\S]))|`[^`\n]*`)/m)
 		.map((part, i) =>
 			i % 2 === 1
 				? part
@@ -34,7 +39,9 @@ export function linkifyPrRefs(markdown, repoUrl) {
 
 // A line that starts a new block, so cutting just before it never splits an item.
 function startsBlock(line) {
-	return line.trim() === "" || /^(#{1,6} |[-*] |\d+\. )/.test(line);
+	return (
+		line.trim() === "" || FENCE.test(line) || /^(#{1,6} |[-*] |\d+\. )/.test(line)
+	);
 }
 
 /**
@@ -50,10 +57,14 @@ export function truncateNotes(markdown, releaseUrl, limit = DESCRIPTION_LIMIT) {
 
 	let kept = 0;
 	let length = 0;
+	let inFence = false;
 	for (let i = 0; i < lines.length; i++) {
 		const next = length + (i > 0 ? 1 : 0) + lines[i].length;
 		if (next > budget) break;
 		length = next;
+		if (FENCE.test(lines[i])) inFence = !inFence;
+		// Never cut inside a fence: Discord would render the link as code.
+		if (inFence) continue;
 		if (i + 1 === lines.length || startsBlock(lines[i + 1])) kept = i + 1;
 	}
 
@@ -63,10 +74,18 @@ export function truncateNotes(markdown, releaseUrl, limit = DESCRIPTION_LIMIT) {
 		head.pop();
 	}
 
-	// No whole item fits: hard cut.
-	const body =
-		head.length > 0 ? head.join("\n") : markdown.slice(0, budget).trimEnd();
+	const body = head.length > 0 ? head.join("\n") : hardCut(markdown, budget);
 	return body + suffix;
+}
+
+// No whole item fits. Cut at the last whitespace, so neither a word, a link
+// nor an emoji's surrogate pair is split.
+function hardCut(markdown, budget) {
+	const cut = markdown.slice(0, budget);
+	const ws = cut.search(/\s\S*$/);
+	if (ws > 0) return cut.slice(0, ws).trimEnd();
+	// One unbroken run: at least keep a surrogate pair whole.
+	return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
 }
 
 export function buildPayload(release, repoUrl) {
@@ -107,6 +126,7 @@ async function main() {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(buildPayload(release, repoUrl)),
+		signal: AbortSignal.timeout(POST_TIMEOUT_MS),
 	});
 	if (!res.ok) {
 		throw new Error(`Discord answered ${res.status}: ${await res.text()}`);
