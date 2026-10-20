@@ -241,6 +241,12 @@
 	--font-ui: system-ui, -apple-system, sans-serif;
 	--pane-border: 1px solid var(--border);
 	--pane-focus-glow: 0 0 0 1px var(--accent);
+	/* Left sidebar rows. The Active workspace is an accent tint, and hover is
+	   a fainter neutral wash, so a hovered row never reads as active. Both
+	   translucent, so they sit over the sidebar's ambient glow, and both
+	   re-resolve when applyTheme() swaps --accent / --bg-tertiary. */
+	--row-active-bg: color-mix(in srgb, var(--accent) 18%, transparent);
+	--row-hover-bg: color-mix(in srgb, var(--bg-tertiary) 50%, transparent);
 	/* Ambient glow rising from the bottom of a surface — a vertical LINEAR
 	   gradient (used by the narrow left sidebar, where a linear wash reads
 	   cleaner than a radial hotspot). Built from the active theme's --accent

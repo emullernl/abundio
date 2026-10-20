@@ -128,8 +128,6 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 		setOpen(true);
 	}, [isRenaming, cancelClose]);
 
-	const tinted = open || isActive;
-
 	return (
 		<>
 			{/* biome-ignore lint/a11y/useSemanticElements: div used for styling parity with expanded item */}
@@ -152,7 +150,11 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 					paddingLeft: 8 + indent,
 					paddingRight: 4,
 					gap: 6,
-					backgroundColor: tinted ? "var(--bg-tertiary)" : "transparent",
+					backgroundColor: isActive
+						? "var(--row-active-bg)"
+						: open
+							? "var(--row-hover-bg)"
+							: "transparent",
 					borderLeft: isActive
 						? "2px solid var(--accent)"
 						: "2px solid transparent",
