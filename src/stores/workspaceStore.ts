@@ -21,6 +21,7 @@ import {
 	setCwd,
 } from "../lib/paneTree";
 import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
+import { perfMark } from "../lib/perfMarks";
 import { teardownTerminal } from "../lib/terminalManager";
 import type {
 	CodingAgent,
@@ -779,6 +780,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	setActiveWorkspace: (id) => {
+		perfMark("abundio:switch-workspace");
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
@@ -1029,7 +1031,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}));
 	},
 
-	setActiveTab: (workspaceId, tabId) =>
+	setActiveTab: (workspaceId, tabId) => {
+		perfMark("abundio:switch-tab");
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
 			// Save current focused pane for the old tab
@@ -1052,7 +1055,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				focusedPaneId: restoredFocus,
 				focusedPaneByTab,
 			};
-		}),
+		});
+	},
 
 	renameTab: async (tabId, name) => {
 		await tabsApi.update(tabId, { name });

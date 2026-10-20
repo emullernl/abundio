@@ -194,7 +194,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			style={{
 				position: "relative",
 				paddingLeft: 8,
-				backgroundColor: isActive ? "var(--bg-tertiary)" : "transparent",
+				backgroundColor: isActive ? "var(--row-active-bg)" : "transparent",
 				borderLeft: isActive
 					? "2px solid var(--accent)"
 					: "2px solid transparent",
@@ -203,7 +203,7 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			}}
 			onMouseEnter={(e) => {
 				if (!isActive)
-					e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+					e.currentTarget.style.backgroundColor = "var(--row-hover-bg)";
 			}}
 			onMouseLeave={(e) => {
 				if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
@@ -283,7 +283,10 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 					<div className="flex items-center justify-between gap-2 min-w-0">
 						<span
 							className="truncate font-medium flex-shrink-0 max-w-[50%]"
-							style={{ color: "var(--fg-primary)", fontSize: 13 }}
+							style={{
+								color: isLoaded ? "var(--fg-primary)" : "var(--fg-unopened)",
+								fontSize: 13,
+							}}
 							title={workspace.name}
 						>
 							{workspace.name}

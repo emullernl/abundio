@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useRef } from "react";
 import { fleetConsoleShowing } from "../../lib/fleetFocus";
-import { pty } from "../../lib/ipc";
+import { perfMeasure } from "../../lib/perfMarks";
 import { getTarget, onTargetChange } from "../../lib/portalRegistry";
+import { needsPtyResizeOnProject } from "../../lib/projectionResize";
 import {
 	beginResizeFilter,
 	createTerminal,
@@ -12,6 +13,7 @@ import {
 	isPtySpawned,
 	markProgramRedrawNeeded,
 	markSettled,
+	resizePtyToTerminal,
 } from "../../lib/terminalManager";
 import { getTheme } from "../../lib/themes";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -65,6 +67,7 @@ export const TerminalInstance = memo(function TerminalInstance({
 			if (!managed) return;
 
 			const termEl = managed.term.element;
+			const projectStart = performance.now();
 
 			// Hide terminal during projection to prevent flicker from fit/restore/resize
 			if (termEl) termEl.style.visibility = "hidden";
@@ -90,7 +93,13 @@ export const TerminalInstance = memo(function TerminalInstance({
 					if (!initialised) {
 						// First callback — container now has real dimensions
 						initialised = true;
+						const prevCols = managed.term.cols;
+						const prevRows = managed.term.rows;
+						const fitStart = performance.now();
 						managed.fitAddon.fit();
+						perfMeasure("abundio:fit", fitStart, id);
+						const gridChanged =
+							managed.term.cols !== prevCols || managed.term.rows !== prevRows;
 						// Retry WebGL loading now that the terminal is in a visible,
 						// sized container. The first attempt during createTerminal
 						// runs while the canvas is still 0×0 offscreen, which some
@@ -102,19 +111,28 @@ export const TerminalInstance = memo(function TerminalInstance({
 						// container so the shell never observes a size change.
 						// For PTYs already spawned (reconnection or workspace
 						// switch), fall back to the original resize-on-project
-						// behavior under a filterResets grace window.
+						// behavior under a filterResets grace window — unless the
+						// grid is the size the PTY already has, the usual case for a
+						// switch: then the program sees no resize and has nothing to
+						// redraw, so there is nothing to filter either. (A
+						// reconnection is sized by initPty, once its listeners are up.)
 						if (!isPtySpawned(id)) {
 							ensurePtySpawned(id);
-						} else if (managed.ptyId) {
+						} else if (
+							managed.ptyId &&
+							needsPtyResizeOnProject({
+								gridChanged,
+								sizedBefore: managed.ptySized,
+							})
+						) {
 							beginResizeFilter(id);
-							pty
-								.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-								.catch(() => {});
+							resizePtyToTerminal(managed);
 						}
 						// Reveal after the browser has painted the settled content
 						requestAnimationFrame(() => {
 							if (termEl) termEl.style.visibility = "";
 							markSettled(id);
+							perfMeasure("abundio:project", projectStart, id);
 						});
 						return;
 					}
@@ -150,7 +168,7 @@ export const TerminalInstance = memo(function TerminalInstance({
 							managed.ptyId &&
 							(managed.term.cols !== prevCols || managed.term.rows !== prevRows)
 						) {
-							pty.resize(managed.ptyId, managed.term.cols, managed.term.rows);
+							resizePtyToTerminal(managed);
 						}
 					}, RESIZE_SETTLE_MS);
 				});

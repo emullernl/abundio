@@ -47,10 +47,10 @@ _Avoid_: primary profile, root profile, main profile
 **Workspace**: A folder-bound container with its own pane layout, tabs, and PTY processes. Belongs to exactly one **Profile**.
 _Avoid_: project, folder
 
-**Active workspace**: The single Workspace currently selected and visible to the user *within a Window*. Per-Window singleton (`useWorkspaceStore.activeWorkspaceId` — each Window has its own JS context and so its own store instance).
+**Active workspace**: The single Workspace currently selected and visible to the user *within a Window*. Per-Window singleton (`useWorkspaceStore.activeWorkspaceId` — each Window has its own JS context and so its own store instance). In the **Left sidebar**, at both widths, its row is drawn with an accent-tinted background (`--row-active-bg`) and the accent bar on its left edge. A hovered row gets a fainter neutral wash (`--row-hover-bg`), so hover never looks like active.
 _Avoid_: selected workspace, current workspace, focused workspace
 
-**Opened workspace**: A Workspace the user has activated at least once *in its Window*, or opened from the **Fleet Console** (which opens without activating), and has not closed. Tracked per-Window by `usePtyActivityStore.openedWorkspaceIds`. PTY processes and file watchers stay alive for these even when not the Active workspace.
+**Opened workspace**: A Workspace the user has activated at least once *in its Window*, or opened from the **Fleet Console** (which opens without activating), and has not closed. Tracked per-Window by `usePtyActivityStore.openedWorkspaceIds`. PTY processes and file watchers stay alive for these even when not the Active workspace. In the **Left sidebar**, a Workspace that is *not* Opened has its name drawn dimmer (`--fg-unopened`, most of the way from primary to secondary text), so it reads as inactive.
 _Avoid_: loaded workspace, mounted workspace
 
 **Background workspace**: An Opened workspace that is not currently the Active workspace. Not a separate state — derived as `openedWorkspaceIds \ {activeWorkspaceId}`.

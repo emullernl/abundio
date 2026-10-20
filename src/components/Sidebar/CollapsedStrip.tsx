@@ -9,6 +9,7 @@ import { shortenPath } from "../../lib/shortenPath";
 import { isAttentionStatus, PRIMARY_SIZE } from "../../lib/statusComposite";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { Z_SIDEBAR_POPOVER } from "../../lib/zLayers";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { DOT_STATUS_COLOR } from "../AgentStatusIcon";
@@ -63,6 +64,9 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	const rollups = useWorkspaceRollups(workspace);
 	const uncommitted = useWorkspaceGitStore(
 		(s) => s.uncommittedById[workspace.id],
+	);
+	const isOpened = usePtyActivityStore((s) =>
+		s.openedWorkspaceIds.has(workspace.id),
 	);
 	const ownDirty = uncommitted?.dirty === true;
 	const hiddenDirty = hidden?.dirty === true;
@@ -128,8 +132,6 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 		setOpen(true);
 	}, [isRenaming, cancelClose]);
 
-	const tinted = open || isActive;
-
 	return (
 		<>
 			{/* biome-ignore lint/a11y/useSemanticElements: div used for styling parity with expanded item */}
@@ -152,7 +154,11 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 					paddingLeft: 8 + indent,
 					paddingRight: 4,
 					gap: 6,
-					backgroundColor: tinted ? "var(--bg-tertiary)" : "transparent",
+					backgroundColor: isActive
+						? "var(--row-active-bg)"
+						: open
+							? "var(--row-hover-bg)"
+							: "transparent",
 					borderLeft: isActive
 						? "2px solid var(--accent)"
 						: "2px solid transparent",
@@ -235,7 +241,7 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 					<span
 						className="font-medium"
 						style={{
-							color: "var(--fg-primary)",
+							color: isOpened ? "var(--fg-primary)" : "var(--fg-unopened)",
 							fontSize: 12,
 							lineHeight: `${STRIP_ICON_SIZE}px`,
 							letterSpacing: "0.01em",

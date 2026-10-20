@@ -90,12 +90,16 @@ describe("CollapsedStrip", () => {
 		container.remove();
 	});
 
-	function render(ws: WorkspaceWithTabs, hidden?: HiddenRollup) {
+	function render(
+		ws: WorkspaceWithTabs,
+		hidden?: HiddenRollup,
+		isActive = false,
+	) {
 		act(() => {
 			root.render(
 				<CollapsedStrip
 					workspace={ws}
-					isActive={false}
+					isActive={isActive}
 					isRenaming={false}
 					onClick={() => {}}
 					onDelete={() => {}}
@@ -219,6 +223,50 @@ describe("CollapsedStrip", () => {
 		// must sit under it (#206 follow-up).
 		expect(Number(popover?.style.zIndex)).toBe(Z_SIDEBAR_POPOVER);
 		expect(Z_SIDEBAR_POPOVER).toBeLessThan(Z_CONTEXT_MENU);
+	});
+
+	describe("Row background", () => {
+		const strip = () => container.querySelector<HTMLElement>('[role="button"]');
+
+		it("tints the Active workspace with the accent", () => {
+			render(workspace([]), undefined, true);
+			expect(strip()?.style.backgroundColor).toBe("var(--row-active-bg)");
+		});
+
+		it("gives an open popover the fainter hover wash, never the active tint", () => {
+			render(workspace([]));
+			act(() => strip()?.focus());
+			expect(strip()?.style.backgroundColor).toBe("var(--row-hover-bg)");
+		});
+
+		it("keeps the active tint while the popover is open", () => {
+			render(workspace([]), undefined, true);
+			act(() => strip()?.focus());
+			expect(strip()?.style.backgroundColor).toBe("var(--row-active-bg)");
+		});
+
+		it("leaves an idle row transparent", () => {
+			render(workspace([]));
+			expect(strip()?.style.backgroundColor).toBe("transparent");
+		});
+	});
+
+	describe("Title", () => {
+		const title = () =>
+			[...container.querySelectorAll<HTMLElement>("span.font-medium")].find(
+				(el) => el.textContent === "acme-web",
+			);
+
+		it("dims the name of a workspace not opened in this Window", () => {
+			render(workspace([]));
+			expect(title()?.style.color).toBe("var(--fg-unopened)");
+		});
+
+		it("draws an opened workspace's name at full brightness", () => {
+			usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["ws-1"]) });
+			render(workspace([]));
+			expect(title()?.style.color).toBe("var(--fg-primary)");
+		});
 	});
 
 	describe("Dirty marker", () => {
