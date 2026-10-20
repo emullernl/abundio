@@ -17,6 +17,13 @@ describe("perfMarks", () => {
 		);
 	});
 
+	it("clears each entry once recorded, so the buffer never grows", () => {
+		perfMark("abundio:switch-tab");
+		perfMeasure("abundio:project", performance.now());
+		expect(performance.getEntriesByName("abundio:switch-tab")).toHaveLength(0);
+		expect(performance.getEntriesByName("abundio:project")).toHaveLength(0);
+	});
+
 	it("never throws when the timing API refuses", () => {
 		vi.spyOn(performance, "mark").mockImplementation(() => {
 			throw new Error("unsupported");

@@ -4,15 +4,37 @@
  * it left, so the fit changes nothing and the resize is skipped: no IPC, no
  * reset-filter window, no redraw for the program to make.
  *
- * `sizedBefore` says a projection in this app session already sent the PTY
- * its size. Every PTY resize sends the terminal's own rows and columns, so
- * after that an unchanged grid means an unchanged PTY. A reconnection — a PTY
- * spawned by an earlier webview — has not been sized yet and may have any
- * size, so it always gets one resize.
+ * `sizedBefore` is `ManagedTerminal.ptySized`: the PTY was last sent the
+ * terminal's own rows and columns, and that resize did not fail. After that an
+ * unchanged grid means an unchanged PTY. Any failed resize clears it (see
+ * `trackPtyResize`), so the next projection re-sends the size.
  */
 export function needsPtyResizeOnProject(opts: {
 	gridChanged: boolean;
 	sizedBefore: boolean;
 }): boolean {
 	return opts.gridChanged || !opts.sizedBefore;
+}
+
+/** Anything that remembers whether its PTY has the terminal's size. */
+export interface PtySizeRecord {
+	ptySized: boolean;
+}
+
+/**
+ * Send a PTY resize and keep `record.ptySized` true to it. A failed resize
+ * leaves the PTY at a size nobody knows, so the flag drops and the next
+ * projection re-sends the size even at an unchanged grid. Never rejects.
+ */
+export function trackPtyResize(
+	record: PtySizeRecord,
+	resize: () => Promise<unknown>,
+): Promise<void> {
+	record.ptySized = true;
+	return resize().then(
+		() => {},
+		() => {
+			record.ptySized = false;
+		},
+	);
 }

@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useRef } from "react";
 import { fleetConsoleShowing } from "../../lib/fleetFocus";
-import { pty } from "../../lib/ipc";
 import { perfMeasure } from "../../lib/perfMarks";
 import { getTarget, onTargetChange } from "../../lib/portalRegistry";
 import { needsPtyResizeOnProject } from "../../lib/projectionResize";
@@ -14,6 +13,7 @@ import {
 	isPtySpawned,
 	markProgramRedrawNeeded,
 	markSettled,
+	resizePtyToTerminal,
 } from "../../lib/terminalManager";
 import { getTheme } from "../../lib/themes";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -50,9 +50,6 @@ export const TerminalInstance = memo(function TerminalInstance({
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 	const rafRef = useRef<number | null>(null);
-	// True once a projection has sized this pane's PTY (see
-	// `needsPtyResizeOnProject`).
-	const ptySizedRef = useRef(false);
 
 	const cleanupResizeObserver = useCallback(() => {
 		clearTimeout(resizeTimerRef.current);
@@ -117,30 +114,19 @@ export const TerminalInstance = memo(function TerminalInstance({
 						// behavior under a filterResets grace window — unless the
 						// grid is the size the PTY already has, the usual case for a
 						// switch: then the program sees no resize and has nothing to
-						// redraw, so there is nothing to filter either.
+						// redraw, so there is nothing to filter either. (A
+						// reconnection is sized by initPty, once its listeners are up.)
 						if (!isPtySpawned(id)) {
-							// A new PTY is spawned at the fitted grid, so it is sized.
-							// A reconnection (the layout already had a ptyId) keeps
-							// whatever size it had, so it still owes one resize.
-							const isNewPty = !managed.ptyId;
 							ensurePtySpawned(id);
-							ptySizedRef.current = isNewPty;
 						} else if (
 							managed.ptyId &&
 							needsPtyResizeOnProject({
 								gridChanged,
-								sizedBefore: ptySizedRef.current,
+								sizedBefore: managed.ptySized,
 							})
 						) {
 							beginResizeFilter(id);
-							ptySizedRef.current = true;
-							pty
-								.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-								.catch(() => {
-									// The PTY may not have this size: resize on the next
-									// projection even if the grid is unchanged.
-									ptySizedRef.current = false;
-								});
+							resizePtyToTerminal(managed);
 						}
 						// Reveal after the browser has painted the settled content
 						requestAnimationFrame(() => {
@@ -182,12 +168,7 @@ export const TerminalInstance = memo(function TerminalInstance({
 							managed.ptyId &&
 							(managed.term.cols !== prevCols || managed.term.rows !== prevRows)
 						) {
-							pty
-								.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-								.catch(() => {
-									// See the projection path: re-send on the next one.
-									ptySizedRef.current = false;
-								});
+							resizePtyToTerminal(managed);
 						}
 					}, RESIZE_SETTLE_MS);
 				});

@@ -67,6 +67,7 @@ import {
 	takePendingTask,
 } from "./pendingAgentRegistry";
 import { isMac } from "./platform";
+import { trackPtyResize } from "./projectionResize";
 import { stripControlChars } from "./promptActions";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
@@ -434,6 +435,11 @@ export interface ManagedTerminal {
 	 *  emitting a resize-driven repaint whose absolute cursor positioning
 	 *  lands the caret on the wrong row after restored scrollback is applied. */
 	deferredInit: (() => void) | null;
+	/** The PTY was last sent this terminal's rows and columns, and that resize
+	 *  did not fail. Lets a projection at an unchanged grid skip the resize
+	 *  (`needsPtyResizeOnProject`). Every PTY resize goes through
+	 *  `trackPtyResize`, which clears it on failure. */
+	ptySized: boolean;
 }
 
 const instances = new Map<string, ManagedTerminal>();
@@ -1003,11 +1009,7 @@ function applyFontSize(
 	managed.term.options.fontSize = size;
 	if (!refit) return;
 	managed.fitAddon.fit();
-	if (managed.ptyId) {
-		pty
-			.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-			.catch(() => {});
-	}
+	if (managed.ptyId) resizePtyToTerminal(managed);
 }
 
 /**
@@ -1183,6 +1185,7 @@ export async function createTerminal(
 		wantedMouseModes: new Set(),
 		sweepingMouseModes: 0,
 		deferredInit: null,
+		ptySized: false,
 	};
 
 	installMouseReportingHooks(managed);
@@ -1383,6 +1386,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	if (isNewPty) {
 		currentPtyId = crypto.randomUUID();
 		managed.ptyId = currentPtyId;
+		// Spawned below at the terminal's grid, so it starts out sized.
+		managed.ptySized = true;
 		bumpPaneRevision(paneId);
 	}
 
@@ -1954,6 +1959,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		// buffer to flush. Write parked scrollback immediately — there's no
 		// race since no shell init will follow.
 		writeRestoreData(managed);
+		// The PTY keeps the size an earlier view gave it, which need not be this
+		// fit. Send it now that the listeners are up, so the program's redraw
+		// lands here and the reset filter can clean it.
+		beginResizeFilter(paneId);
+		resizePtyToTerminal(managed);
 	}
 
 	if (isNewPty) {
@@ -2177,6 +2187,13 @@ function disarmFilterResets(managed: ManagedTerminal): void {
  *  content. Safe to call repeatedly — each call resets the timer. Output from
  *  an Agent or an alternate-screen program is never filtered: its redraw
  *  needs the very clears and cursor-home moves this strips (#207). */
+/** Resize the PTY to the terminal's grid, recording the outcome in
+ *  `managed.ptySized`. Never rejects. */
+export function resizePtyToTerminal(managed: ManagedTerminal): Promise<void> {
+	const { ptyId, term } = managed;
+	return trackPtyResize(managed, () => pty.resize(ptyId, term.cols, term.rows));
+}
+
 export function beginResizeFilter(paneId: string): void {
 	const managed = instances.get(paneId);
 	if (!managed) return;
@@ -2278,15 +2295,15 @@ export function redrawProgram(paneId: string): void {
 			if (signalled) return;
 			const { cols, rows } = managed.term;
 			if (rows < 2) return;
-			return pty.resize(ptyId, cols, rows - 1).then(
+			return trackPtyResize(managed, () =>
+				pty.resize(ptyId, cols, rows - 1),
+			).then(
 				() =>
 					new Promise<void>((resolve) =>
 						setTimeout(() => {
 							// Back to whatever the terminal is now, in case it was
 							// refitted meanwhile.
-							void pty
-								.resize(ptyId, managed.term.cols, managed.term.rows)
-								.finally(resolve);
+							void resizePtyToTerminal(managed).finally(resolve);
 						}, 50),
 					),
 			);
@@ -2368,11 +2385,7 @@ export async function setAllTerminalsFontFamily(
 		managed.webglAddon?.clearTextureAtlas();
 		managed.term.refresh(0, managed.term.rows - 1);
 		managed.fitAddon.fit();
-		if (managed.ptyId) {
-			pty
-				.resize(managed.ptyId, managed.term.cols, managed.term.rows)
-				.catch(() => {});
-		}
+		if (managed.ptyId) resizePtyToTerminal(managed);
 	}
 }
 
