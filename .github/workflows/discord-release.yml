@@ -1,0 +1,46 @@
+name: Announce release on Discord
+
+# Posts a release's notes to the Discord release channel when it is published.
+# CI creates releases as drafts, so this fires on the manual Publish click.
+# Edits after publishing do not post again. Prereleases are skipped.
+# Run it by hand to (re)announce a published release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of a published release (e.g. v2.1.4)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Fetch release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: gh api "repos/${{ github.repository }}/releases/tags/$TAG" > "$RUNNER_TEMP/release.json"
+
+      - name: Post to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+        run: node scripts/discord-release.mjs "$RUNNER_TEMP/release.json" "${{ github.server_url }}/${{ github.repository }}"
