@@ -2,6 +2,8 @@
 # routine version-update PRs, but security updates still use this file.
 # Patch and minor fixes are grouped into one PR per ecosystem; a fix that needs
 # a major bump gets its own PR so it can't hold the safe fixes back.
+# Cooldown only affects version updates (security fixes ignore it); it is set
+# so new releases wait 7 days if version updates are ever turned on.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -9,6 +11,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
     groups:
       npm-security:
         applies-to: security-updates
@@ -20,6 +24,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
     groups:
       cargo-security:
         applies-to: security-updates
@@ -31,6 +37,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
     groups:
       actions-security:
         applies-to: security-updates
