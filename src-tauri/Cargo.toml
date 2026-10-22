@@ -59,7 +59,7 @@ notify = "7"
 # which kept the WKWebView's host process busy long enough to noticeably
 # stall the JS main thread during a `git stash` burst. Using libgit2 cuts
 # each operation to ~10-50 ms.
-git2 = { version = "0.19", default-features = false, features = ["vendored-libgit2"] }
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 font-kit = "0.14"
 ignore = "0.4"
 regex = "1"
