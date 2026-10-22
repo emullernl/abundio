@@ -1815,10 +1815,13 @@ mod task_launch_tests {
                 .output()
                 .unwrap();
             let out = String::from_utf8_lossy(&out.stdout);
+            // `env` prints in no fixed order, and its first line follows the
+            // OSC's BEL directly, so split on both rather than expecting "\n".
+            let lines: Vec<&str> = out.split(['\n', '\x07']).collect();
             assert!(out.contains("AGENT_SAW=none"), "{shell}: {out}");
-            assert!(out.contains("\nABUNDIO_ENV__FOO=a b $(x) 'q'\n"), "{shell}: {out}");
-            assert!(out.contains("\nABUNDIO_ENV__BAR=\n"), "{shell}: {out}");
-            assert!(out.contains("\nABUNDIO_ENV_KEYS=FOO BAR\n"), "{shell}: {out}");
+            assert!(lines.contains(&"ABUNDIO_ENV__FOO=a b $(x) 'q'"), "{shell}: {out}");
+            assert!(lines.contains(&"ABUNDIO_ENV__BAR="), "{shell}: {out}");
+            assert!(lines.contains(&"ABUNDIO_ENV_KEYS=FOO BAR"), "{shell}: {out}");
             assert!(!out.contains("ABUNDIO_TASK_ENV_KEYS"), "{shell}: {out}");
         }
     }
