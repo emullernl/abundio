@@ -42,6 +42,10 @@ jobs:
         platform: [ubuntu-latest]
 
     runs-on: ${{ matrix.platform }}
+    # A normal run takes ~5 minutes, but a slow apt mirror has stretched the
+    # system-dependency step to 26 on its own. Cap a hung step well short of
+    # GitHub's 6-hour default without failing those slow-but-healthy runs.
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
