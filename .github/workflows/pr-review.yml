@@ -12,6 +12,8 @@ on:
 
 jobs:
   claude-code-review:
+    # Dependabot PRs cannot read repo secrets, so the review would only fail.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read

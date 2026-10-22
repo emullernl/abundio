@@ -1,0 +1,38 @@
+# Dependabot opens security-fix PRs only: open-pull-requests-limit: 0 turns off
+# routine version-update PRs, but security updates still use this file.
+# Patch and minor fixes are grouped into one PR per ecosystem; a fix that needs
+# a major bump gets its own PR so it can't hold the safe fixes back.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
