@@ -34,12 +34,12 @@ jobs:
         run: pnpm build
 
   rust:
-    # do not run rust tests yet
-    if: false
+    # Linux only for now: it is the cheapest runner, and it is enough to
+    # catch a dependency bump (e.g. a Dependabot PR) that breaks the build.
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest, macos-latest, windows-latest]
+        platform: [ubuntu-latest]
 
     runs-on: ${{ matrix.platform }}
     steps:
