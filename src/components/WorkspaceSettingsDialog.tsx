@@ -298,6 +298,7 @@ export function WorkspaceSettingsDialog({
 										inheritFromWorkspaceId={inheritFromId}
 										inheritFromName={inheritFromName}
 										workspaceFolder={workspace.rootFolder}
+										workspaceName={workspace.name}
 										liveTerminalCount={livePanes.length}
 										onApplyToRunning={() => setApplyOpen(true)}
 										onShowUsage={() => setEnvView("usage")}

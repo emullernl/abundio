@@ -21,6 +21,7 @@ vi.mock("../../../lib/ipc", () => ({
 		reveal: vi.fn(),
 		injectedSummary: vi.fn(),
 		retryKey: vi.fn(),
+		exportToPath: vi.fn(),
 	},
 }));
 
@@ -83,6 +84,7 @@ describe("EnvVarsSection", () => {
 					workspaceId="ws-1"
 					inheritFromWorkspaceId={null}
 					workspaceFolder="/tmp/ws"
+					workspaceName="proj"
 					liveTerminalCount={0}
 					onApplyToRunning={() => {}}
 					onShowUsage={() => {}}
@@ -162,43 +164,6 @@ describe("EnvVarsSection", () => {
 		expect(names()).toEqual(["path", "PATH"]);
 	});
 
-	describe("prefix peek", () => {
-		it("shows the four-character prefix in front of the mask", () => {
-			useWorkspaceEnvStore.setState({
-				bundles: [bundle("default", true)],
-				selectedBundle: "default",
-				vars: [variable("TOKEN", 0)],
-			});
-			renderSection();
-
-			expect(rowLabel(container, "TOKEN")).toContain("abcd••••");
-		});
-
-		it("shows plain dots when the backend has no safe prefix", () => {
-			useWorkspaceEnvStore.setState({
-				bundles: [bundle("default", true)],
-				selectedBundle: "default",
-				vars: [{ ...variable("SHORT", 0), prefix: null }],
-			});
-			renderSection();
-
-			expect(rowLabel(container, "SHORT")).not.toContain("abcd");
-			expect(rowLabel(container, "SHORT")).toContain("••••");
-		});
-
-		// An unreadable row must not claim a prefix it could not read.
-		it("says unreadable rather than showing a prefix", () => {
-			useWorkspaceEnvStore.setState({
-				bundles: [bundle("default", true)],
-				selectedBundle: "default",
-				vars: [{ ...variable("LOST", 0), undecryptable: true, prefix: null }],
-			});
-			renderSection();
-
-			expect(rowLabel(container, "LOST")).toContain("unreadable");
-		});
-	});
-
 	describe("empty values", () => {
 		it("renders (empty) instead of dots and a size", () => {
 			useWorkspaceEnvStore.setState({
@@ -262,6 +227,43 @@ describe("EnvVarsSection", () => {
 				"EMPTY_FLAG",
 				"",
 			);
+		});
+	});
+
+	describe("prefix peek", () => {
+		it("shows the four-character prefix in front of the mask", () => {
+			useWorkspaceEnvStore.setState({
+				bundles: [bundle("default", true)],
+				selectedBundle: "default",
+				vars: [variable("TOKEN", 0)],
+			});
+			renderSection();
+
+			expect(rowLabel(container, "TOKEN")).toContain("abcd••••");
+		});
+
+		it("shows plain dots when the backend has no safe prefix", () => {
+			useWorkspaceEnvStore.setState({
+				bundles: [bundle("default", true)],
+				selectedBundle: "default",
+				vars: [{ ...variable("SHORT", 0), prefix: null }],
+			});
+			renderSection();
+
+			expect(rowLabel(container, "SHORT")).not.toContain("abcd");
+			expect(rowLabel(container, "SHORT")).toContain("••••");
+		});
+
+		// An unreadable row must not claim a prefix it could not read.
+		it("says unreadable rather than showing a prefix", () => {
+			useWorkspaceEnvStore.setState({
+				bundles: [bundle("default", true)],
+				selectedBundle: "default",
+				vars: [{ ...variable("LOST", 0), undecryptable: true, prefix: null }],
+			});
+			renderSection();
+
+			expect(rowLabel(container, "LOST")).toContain("unreadable");
 		});
 	});
 });

@@ -9,7 +9,9 @@
 //
 // The one partial exception is `EnvVarMeta.prefix` — four characters of each
 // value, carried by `env_list` for the collapsed row (ADR-0048). It is a
-// deliberate, bounded break: the full value is still only ever in `revealed`.
+// deliberate, bounded break: the full value is still only ever in `revealed`,
+// and **Export** never enters this store at all, because Rust resolves and
+// writes the file in one step.
 
 import { create } from "zustand";
 import type { ParsedEnvEntry } from "../lib/dotenvParse";
@@ -103,6 +105,14 @@ interface WorkspaceEnvState {
 		inheritFrom: string | null,
 		bundle: string,
 		entries: ParsedEnvEntry[],
+	) => Promise<boolean>;
+	/** Write a Bundle to `path` as a `.env` file. Resolved and written in Rust,
+	 *  so no plaintext enters this store. Returns false and sets `error`. */
+	exportBundle: (
+		workspaceId: string,
+		bundle: string,
+		workspaceName: string,
+		path: string,
 	) => Promise<boolean>;
 	remove: (
 		workspaceId: string,
@@ -279,6 +289,19 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 			await get().load(workspaceId, inheritFrom, bundle);
 			return true;
 		} catch (e) {
+			set({ error: message(e) });
+			return false;
+		}
+	},
+
+	exportBundle: async (workspaceId, bundle, workspaceName, path) => {
+		try {
+			await env.exportToPath(workspaceId, bundle, workspaceName, path);
+			set({ error: null });
+			return true;
+		} catch (e) {
+			// Refused exports (an unreadable row, a locked keychain) arrive here
+			// with the names of what blocked them. Nothing was written.
 			set({ error: message(e) });
 			return false;
 		}

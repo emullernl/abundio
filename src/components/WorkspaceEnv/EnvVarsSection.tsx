@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { injectionCost, isValidEnvName } from "../../lib/dotenvParse";
 import { useWorkspaceEnvStore } from "../../stores/workspaceEnvStore";
 import { BundleTabs } from "./BundleTabs";
+import { EnvExportDialog } from "./EnvExportDialog";
 import { EnvImportDialog } from "./EnvImportDialog";
 import { EnvVarRow } from "./EnvVarRow";
 import { formatValueSize } from "./formatValueSize";
@@ -14,8 +15,11 @@ interface Props {
 	/** Display name of that workspace, for the inherited-row tooltip. */
 	inheritFromName?: string;
 	/** Number of live PTYs in this workspace — gates "Apply to running". */
-	/** Root folder — where the import file picker opens. */
+	/** Root folder — where the import file picker opens, and where an export
+	 *  defaults to. */
 	workspaceFolder: string;
+	/** The Workspace's own name, written into an export's header comment. */
+	workspaceName: string;
 	liveTerminalCount: number;
 	onApplyToRunning: () => void;
 	/** Jump to the Usage tab, where the `abundio-env` recipes live. */
@@ -27,6 +31,7 @@ export function EnvVarsSection({
 	inheritFromWorkspaceId,
 	inheritFromName,
 	workspaceFolder,
+	workspaceName,
 	liveTerminalCount,
 	onApplyToRunning,
 	onShowUsage,
@@ -34,6 +39,7 @@ export function EnvVarsSection({
 	const store = useWorkspaceEnvStore();
 	const [expandedName, setExpandedName] = useState<string | null>(null);
 	const [importing, setImporting] = useState(false);
+	const [exporting, setExporting] = useState(false);
 	const [newName, setNewName] = useState("");
 	const [newValue, setNewValue] = useState("");
 
@@ -145,6 +151,7 @@ export function EnvVarsSection({
 				onDelete={(name) =>
 					store.deleteBundle(workspaceId, inheritFromWorkspaceId, name)
 				}
+				onExport={() => setExporting(true)}
 			/>
 
 			{/* Gated on a loaded list: the dialog resets the store on close, so an
@@ -446,6 +453,19 @@ export function EnvVarsSection({
 				<span style={helpStyle}>
 					Changes apply to terminals opened from now on.
 				</span>
+			)}
+
+			{exporting && (
+				<EnvExportDialog
+					bundle={selected}
+					count={store.vars.filter((v) => !v.inherited).length}
+					inheritedCount={store.vars.filter((v) => v.inherited).length}
+					workspaceFolder={workspaceFolder}
+					onExport={(path) =>
+						store.exportBundle(workspaceId, selected, workspaceName, path)
+					}
+					onClose={() => setExporting(false)}
+				/>
 			)}
 
 			{importing && (

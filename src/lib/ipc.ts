@@ -1175,6 +1175,23 @@ export const env = {
 	reorder: (workspaceId: string, bundle: string, names: string[]) =>
 		invoke<void>("env_vars_reorder", { workspaceId, bundle, names }),
 
+	/** Write one Bundle to `path` as `.env` text. Rust resolves AND writes, so
+	 *  the plaintext never crosses IPC — the save dialog only supplies the
+	 *  path. Own variables only, and all-or-nothing: an unreadable row fails
+	 *  the whole export rather than producing a file missing a secret. */
+	exportToPath: (
+		workspaceId: string,
+		bundle: string,
+		workspaceName: string,
+		path: string,
+	) =>
+		invoke<string>("env_export_to_path", {
+			workspaceId,
+			bundle,
+			workspaceName,
+			path,
+		}),
+
 	/** Drop the cached master key and re-read the credential store. Returns
 	 *  true when the key is available again. Process-global: affects every
 	 *  window, which is the right semantics for "the keychain was unlocked". */

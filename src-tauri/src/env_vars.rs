@@ -25,6 +25,13 @@
 //! variable: `NAME=""` is exported to a spawned shell, so a program can tell
 //! "set to nothing" from "not set". [`env_crypto::validate_value`] only bounds
 //! the size, so nothing in Rust refuses one — the add form was the only gate.
+//!
+//! ## Export
+//!
+//! [`EnvVarStore::export_bundle`] is the second way plaintext leaves this
+//! module: it renders a Bundle as `.env` text for the in-app **Export**.
+//! [`env_export_to_path`] resolves *and* writes in one step, so a Bundle's
+//! values never cross IPC — the frontend supplies only a path.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -229,6 +236,63 @@ impl EnvVarStore {
         Err(AbundioError::NotFound(format!(
             "environment variable {name}"
         )))
+    }
+
+    /// Render one Bundle as `.env` text for the in-app Export — own rows only.
+    ///
+    /// Unlike [`EnvVarStore::resolve_bundle`] this does *not* fall back to
+    /// inherited rows, and it is not lenient about a row that will not open: a
+    /// file that silently omits a secret is worse than no file, because the
+    /// user finds out when `source`ing it, not here. Every unreadable row is
+    /// named in the error.
+    pub fn export_bundle(
+        &self,
+        key: &MasterKey,
+        workspace_id: &str,
+        bundle: &str,
+        workspace_name: &str,
+        now: i64,
+    ) -> Result<String, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+
+        let Some(row) = find_bundle(&conn, workspace_id, bundle)? else {
+            return Err(AbundioError::NotFound(format!("bundle {bundle}")));
+        };
+
+        let mut stmt = conn.prepare(
+            "SELECT name, nonce, ciphertext FROM workspace_env_vars
+             WHERE bundle_id = ?1 ORDER BY position ASC, name ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![row.id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut pairs: Vec<(String, Zeroizing<String>)> = Vec::with_capacity(rows.len());
+        let mut failed: Vec<String> = Vec::new();
+        for (name, nonce, ciphertext) in rows {
+            match env_crypto::open(key, &name, &nonce, &ciphertext) {
+                Ok(plain) => match String::from_utf8(plain.to_vec()) {
+                    Ok(text) => pairs.push((name, Zeroizing::new(text))),
+                    Err(_) => failed.push(name),
+                },
+                Err(_) => failed.push(name),
+            }
+        }
+        if !failed.is_empty() {
+            return Err(AbundioError::InvalidOperation(format!(
+                "Cannot export {bundle}: {n} variable(s) could not be decrypted ({names}).                  Nothing was written.",
+                n = failed.len(),
+                names = failed.join(", ")
+            )));
+        }
+
+        Ok(render_dotenv(workspace_name, bundle, &pairs, now))
     }
 
     /// Whether this Workspace's injected Bundle holds anything at all.
@@ -936,6 +1000,63 @@ pub fn prefix_of(plaintext: &[u8]) -> Option<String> {
     Some(head)
 }
 
+/// Render one Bundle as `.env` text: a header comment, then one
+/// `NAME="value"` line per variable, own rows only.
+///
+/// Own rows only on purpose: an inherited variable belongs to the main
+/// worktree, and an export written in a linked worktree must not carry the
+/// primary's secrets. That is the one deliberate difference from
+/// `abundio-env print`, which resolves inheritance because a process needs the
+/// effective environment.
+///
+/// Quoting is [`crate::hook_server::quote_dotenv_value`], the same function
+/// `abundio-env print` uses, so both outputs round-trip through `parseDotenv`.
+fn render_dotenv(
+    workspace_name: &str,
+    bundle: &str,
+    vars: &[(String, Zeroizing<String>)],
+    now: i64,
+) -> String {
+    let stamp = format_timestamp(now);
+    let mut out = String::with_capacity(64 + vars.iter().map(|(n, v)| n.len() + v.len() + 4).sum::<usize>());
+    out.push_str(&format!(
+        "# Abundio environment export — {workspace_name} / {bundle} — {stamp}\n"
+    ));
+    for (name, value) in vars {
+        out.push_str(name);
+        out.push('=');
+        out.push_str(&crate::hook_server::quote_dotenv_value(value));
+        out.push('\n');
+    }
+    out
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ`, written by hand rather than pulling in a date crate
+/// for one header line. The timestamp is informational: it is what makes a
+/// stale export obvious once the file has been emailed around.
+fn format_timestamp(unix_secs: i64) -> String {
+    // Civil-from-days, Howard Hinnant's algorithm. No leap seconds, which is
+    // the right call for a comment.
+    let days = unix_secs.div_euclid(86_400);
+    let secs_of_day = unix_secs.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60,
+        secs_of_day % 60
+    )
+}
+
 /// Resolve one Bundle to plaintext pairs, inherited first then own.
 ///
 /// A row that fails to open is skipped and logged, never propagated: this runs
@@ -1221,6 +1342,29 @@ pub fn env_vars_reorder(
     names: Vec<String>,
 ) -> Result<(), AbundioError> {
     store.reorder(&workspace_id, &bundle, &names)
+}
+
+/// Write one Bundle to `path` as `.env` text and return the path.
+///
+/// Rust resolves *and* writes in one step so the plaintext never crosses IPC:
+/// the save dialog only supplies a path. Own rows only, and all-or-nothing —
+/// see [`EnvVarStore::export_bundle`].
+#[tauri::command]
+pub fn env_export_to_path(
+    store: State<EnvVarStore>,
+    workspace_id: String,
+    bundle: String,
+    workspace_name: String,
+    path: String,
+) -> Result<String, AbundioError> {
+    let key = env_crypto::master_key()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let text = store.export_bundle(&key, &workspace_id, &bundle, &workspace_name, now)?;
+    std::fs::write(&path, text.as_bytes())?;
+    Ok(path)
 }
 
 /// Drop the cached master key and report whether the credential store can be
@@ -2054,4 +2198,75 @@ mod tests {
         assert_eq!(meta.prefix, None);
         assert!(meta.undecryptable);
     }
-}
+
+    #[test]
+    fn an_empty_value_exports_to_an_empty_quoted_string() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "EMPTY", "").unwrap();
+        let text = store.export_bundle(&key, WS, DEFAULT_BUNDLE, "proj", 0).unwrap();
+        assert!(text.contains("EMPTY=\"\"\n"), "{text}");
+    }
+
+    #[test]
+    fn export_writes_own_rows_only() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, PARENT, None, DEFAULT_BUNDLE, "INHERITED", "from-main")
+            .unwrap();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "OWN", "from-linked")
+            .unwrap();
+
+        let text = store.export_bundle(&key, WS, DEFAULT_BUNDLE, "proj", 0).unwrap();
+        assert!(text.contains("OWN=\"from-linked\""), "{text}");
+        assert!(
+            !text.contains("INHERITED"),
+            "a linked worktree export must not carry the primary's secrets: {text}"
+        );
+        assert!(text.starts_with("# Abundio environment export — proj / default"));
+    }
+
+    #[test]
+    fn export_refuses_rather_than_omitting_an_unreadable_row() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "GOOD", "ok")
+            .unwrap();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "BAD", "also-ok")
+            .unwrap();
+
+        // A different key cannot open either row.
+        let wrong = MasterKey::from_bytes([9u8; KEY_LEN]);
+        let err = store
+            .export_bundle(&wrong, WS, DEFAULT_BUNDLE, "proj", 0)
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("Nothing was written"), "{message}");
+    }
+
+    #[test]
+    fn export_quotes_values_so_they_parse_back() {
+        let (store, key) = test_store();
+        let pem = "-----BEGIN-----\nline \"quoted\"\n	indented\\back";
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "CERT", pem)
+            .unwrap();
+        let text = store.export_bundle(&key, WS, DEFAULT_BUNDLE, "proj", 0).unwrap();
+        // Same escaping `parseDotenv` decodes: no raw newline inside the line.
+        assert!(text.contains("CERT=\"-----BEGIN-----\\nline \\\"quoted\\\"\\n\\tindented\\\\back\""), "{text}");
+        assert_eq!(text.lines().count(), 2, "header plus one value line");
+    }
+
+    #[test]
+    fn export_of_an_unknown_bundle_is_not_found() {
+        let (store, key) = test_store();
+        assert!(store.export_bundle(&key, WS, "nope", "proj", 0).is_err());
+    }
+
+    #[test]
+    fn format_timestamp_renders_a_known_instant() {
+        assert_eq!(format_timestamp(0), "1970-01-01T00:00:00Z");
+        // 2024-02-29T12:34:56Z — a leap day, so the civil-date maths is probed.
+        assert_eq!(format_timestamp(1_709_210_096), "2024-02-29T12:34:56Z");
+    }}

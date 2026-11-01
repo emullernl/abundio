@@ -508,6 +508,11 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "env_vars_delete":
 		case "env_vars_reorder":
 			return undefined;
+		// The demo has no keychain and writes no files, so an export is refused
+		// the same way a locked one would be — never a silent success that
+		// promises a file on disk.
+		case "env_export_to_path":
+			throw "Export is unavailable in the demo.";
 
 		// Markdown windows are real OS windows (ADR-0046); the browser demo has
 		// none, so opening one does nothing and nothing is ever unsaved.

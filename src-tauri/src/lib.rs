@@ -1428,6 +1428,7 @@ pub fn run() {
             env_vars::env_bundle_delete,
             env_vars::env_vars_upsert,
             env_vars::env_vars_upsert_many,
+            env_vars::env_export_to_path,
             env_vars::env_vars_delete,
             env_vars::env_vars_reveal,
             env_vars::env_vars_reorder,
