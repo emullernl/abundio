@@ -163,3 +163,28 @@ export function webglReconcilePlan(
 
 	return { toUnload, toLoad };
 }
+
+export interface WebglLoadStep {
+	/** Panes to give a context in this step, in priority order. */
+	now: string[];
+	/** Whether loadable panes remain for a later step. */
+	more: boolean;
+}
+
+/**
+ * One step of a reconcile that creates at most `maxLoads` contexts. Only the
+ * panes that can take a context right now count: the budget is built from
+ * every pane id in a layout, so it also names File panes and terminals that
+ * don't exist yet. If those counted toward the step, a step whose first entry
+ * was one would load nothing and still report more to do, every frame forever,
+ * and the terminals after it would never get a context.
+ */
+export function webglLoadStep(
+	toLoad: readonly string[],
+	canLoad: (paneId: string) => boolean,
+	maxLoads: number,
+): WebglLoadStep {
+	const pending = toLoad.filter(canLoad);
+	const now = pending.slice(0, maxLoads);
+	return { now, more: pending.length > now.length };
+}

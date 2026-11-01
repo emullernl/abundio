@@ -131,6 +131,24 @@ describe("useGitDataSync — repo slug lookup", () => {
 		await act(async () => root.unmount());
 	});
 
+	it("does not cache a folder with no GitHub remote, so a remote added later is found", async () => {
+		vi.mocked(git.repoSlug).mockResolvedValueOnce(null);
+		const root = createRoot(document.createElement("div"));
+		await act(async () => root.render(<Harness />));
+		expect(repoSlugByCwd.has("/a")).toBe(false);
+		expect(usePrStore.getState().activeRepoSlug).toBeNull();
+
+		// The remote now exists: switching away and back asks again.
+		await act(async () =>
+			useWorkspaceStore.setState({ activeWorkspaceId: "b" }),
+		);
+		await act(async () =>
+			useWorkspaceStore.setState({ activeWorkspaceId: "a" }),
+		);
+		expect(usePrStore.getState().activeRepoSlug).toBe("me/a");
+		await act(async () => root.unmount());
+	});
+
 	it("does not cache a failed lookup", async () => {
 		vi.mocked(git.repoSlug).mockRejectedValueOnce(new Error("busy"));
 		const root = createRoot(document.createElement("div"));

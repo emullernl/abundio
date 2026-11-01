@@ -86,6 +86,7 @@ import type { PaneNode } from "./types";
 import {
 	MAX_WEBGL_CONTEXTS,
 	pickWebglPanes,
+	webglLoadStep,
 	webglReconcilePlan,
 } from "./webglBudget";
 import { addWindowFocusListener } from "./windowFocus";
@@ -241,19 +242,24 @@ function reconcileWebgl(maxLoads = Number.POSITIVE_INFINITY): boolean {
 	const { toUnload, toLoad } = webglReconcilePlan(loaded, budget);
 	for (const paneId of toUnload) unloadWebgl(paneId);
 	// Straight to the loader: the budget was just computed by the caller.
-	const now = toLoad.slice(0, maxLoads);
+	const { now, more } = webglLoadStep(
+		toLoad,
+		(paneId) => {
+			const managed = instances.get(paneId);
+			return managed !== undefined && !managed.webglAddon;
+		},
+		maxLoads,
+	);
 	let refused = false;
 	for (const paneId of now) {
-		const managed = instances.get(paneId);
-		if (managed && !managed.webglAddon) {
-			tryLoadWebgl(managed);
-			if (!managed.webglAddon) refused = true;
-		}
+		const managed = instances.get(paneId) as ManagedTerminal;
+		tryLoadWebgl(managed);
+		if (!managed.webglAddon) refused = true;
 	}
 	// More to load? Not after a refusal (the cap, or a canvas the browser
 	// won't give a context yet): stepping again would retry it every frame
 	// forever. The next store change, or projection, tries again instead.
-	return !refused && toLoad.length > now.length;
+	return !refused && more;
 }
 
 /** Flip GPU rendering on/off and reconcile every live terminal: enabling loads

@@ -13,9 +13,10 @@ import {
 } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
-/** GitHub repo slug per Workspace folder, resolved once per session. A
- *  folder with no GitHub remote is cached as null. Exported for tests. */
-export const repoSlugByCwd = new Map<string, string | null>();
+/** GitHub repo slug per Workspace folder, resolved once per session. Folders
+ *  with no GitHub remote are not cached, so a remote added later is picked up.
+ *  Exported for tests. */
+export const repoSlugByCwd = new Map<string, string>();
 
 interface SchedulerEntry {
 	workspaceId: string;
@@ -215,7 +216,11 @@ export function useGitDataSync() {
 			git
 				.repoSlug(cwd)
 				.then((slug) => {
-					repoSlugByCwd.set(cwd, slug);
+					// Only a found remote is cached. "No GitHub remote" is not: a
+					// `git remote add` or `gh repo create` in an open Workspace
+					// should scope the PR filter on the next switch, as it did
+					// before this cache existed.
+					if (slug) repoSlugByCwd.set(cwd, slug);
 					if (!cancelled) usePrStore.getState().setActiveRepoSlug(slug);
 				})
 				.catch(() => {
