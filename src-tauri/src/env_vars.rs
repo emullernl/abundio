@@ -286,7 +286,7 @@ impl EnvVarStore {
         }
         if !failed.is_empty() {
             return Err(AbundioError::InvalidOperation(format!(
-                "Cannot export {bundle}: {n} variable(s) could not be decrypted ({names}).                  Nothing was written.",
+                "Cannot export {bundle}: {n} variable(s) could not be decrypted ({names}). Nothing was written.",
                 n = failed.len(),
                 names = failed.join(", ")
             )));
@@ -1018,7 +1018,16 @@ fn render_dotenv(
     now: i64,
 ) -> String {
     let stamp = format_timestamp(now);
-    let mut out = String::with_capacity(64 + vars.iter().map(|(n, v)| n.len() + v.len() + 4).sum::<usize>());
+    // The header is a comment, so anything that could end the line early would
+    // turn the rest of a Workspace name into a real `NAME=value` line.
+    let workspace_name = workspace_name.replace(['\n', '\r'], " ");
+    let bundle = bundle.replace(['\n', '\r'], " ");
+    let mut out = String::with_capacity(
+        64 + vars
+            .iter()
+            .map(|(n, v)| n.len() + v.len() + 4)
+            .sum::<usize>(),
+    );
     out.push_str(&format!(
         "# Abundio environment export — {workspace_name} / {bundle} — {stamp}\n"
     ));
@@ -1031,30 +1040,13 @@ fn render_dotenv(
     out
 }
 
-/// `YYYY-MM-DDTHH:MM:SSZ`, written by hand rather than pulling in a date crate
-/// for one header line. The timestamp is informational: it is what makes a
+/// `YYYY-MM-DDTHH:MM:SSZ`. The timestamp is informational: it is what makes a
 /// stale export obvious once the file has been emailed around.
 fn format_timestamp(unix_secs: i64) -> String {
-    // Civil-from-days, Howard Hinnant's algorithm. No leap seconds, which is
-    // the right call for a comment.
-    let days = unix_secs.div_euclid(86_400);
-    let secs_of_day = unix_secs.rem_euclid(86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        secs_of_day / 3600,
-        (secs_of_day % 3600) / 60,
-        secs_of_day % 60
-    )
+    match chrono::DateTime::from_timestamp(unix_secs, 0) {
+        Some(dt) => dt.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        None => "unknown".to_string(),
+    }
 }
 
 /// Resolve one Bundle to plaintext pairs, inherited first then own.
@@ -1363,8 +1355,37 @@ pub fn env_export_to_path(
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     let text = store.export_bundle(&key, &workspace_id, &bundle, &workspace_name, now)?;
-    std::fs::write(&path, text.as_bytes())?;
+    write_secret_file(&path, text.as_bytes())?;
     Ok(path)
+}
+
+/// Write the exported `.env` text, owner-only where the platform has modes.
+///
+/// The file holds every value in plaintext, and `std::fs::write` creates it
+/// with the default umask (0644 on most systems), which leaves a Bundle of
+/// credentials readable by every local user. Set the mode at creation time so
+/// the plaintext is never momentarily world-readable.
+fn write_secret_file(path: &str, bytes: &[u8]) -> Result<(), AbundioError> {
+    use std::io::Write;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+        // `mode` only applies on creation, so an existing file keeps whatever
+        // mode it already had. Tighten it explicitly.
+        if let Ok(meta) = std::fs::metadata(path) {
+            use std::os::unix::fs::PermissionsExt;
+            if meta.permissions().mode() & 0o077 != 0 {
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    Ok(())
 }
 
 /// Drop the cached master key and report whether the credential store can be
@@ -2262,6 +2283,37 @@ mod tests {
     fn export_of_an_unknown_bundle_is_not_found() {
         let (store, key) = test_store();
         assert!(store.export_bundle(&key, WS, "nope", "proj", 0).is_err());
+    }
+
+    // A Workspace name is user data and lands in a comment line. A newline in
+    // it would end the comment and turn the rest of the name into a variable
+    // that `parseDotenv` then imports.
+    #[test]
+    fn export_header_stays_one_line_whatever_the_names_contain() {
+        let none: Vec<(String, Zeroizing<String>)> = Vec::new();
+        let text = render_dotenv("proj\nEVIL=1", "def\r\nault", &none, 0);
+        // One line, and it is a comment: `EVIL=1` may appear in it, but only
+        // after the `#`, so a dotenv reader skips it.
+        assert_eq!(text.lines().count(), 1, "{text}");
+        assert!(text.starts_with("# "), "{text}");
+    }
+
+    /// The file holds plaintext credentials, so it must never be world-readable
+    /// — including when the user picks a path that already exists.
+    #[cfg(unix)]
+    #[test]
+    fn export_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.env");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_secret_file(path.to_str().unwrap(), b"NAME=\"v\"\n").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "exported secrets must not be world-readable");
     }
 
     #[test]

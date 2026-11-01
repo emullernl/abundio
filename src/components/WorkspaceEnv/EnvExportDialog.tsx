@@ -15,7 +15,10 @@ interface Props {
 	 *  out of the file. Shown so a zero-count export is not a mystery. */
 	inheritedCount: number;
 	workspaceFolder: string;
-	onExport: (path: string) => Promise<boolean>;
+	/** Resolves to null on success, or the reason the export was refused.
+	 *  The reason is shown HERE: the variables list that also carries it is
+	 *  behind this modal, so "see the message in the list" was unreadable. */
+	onExport: (path: string) => Promise<string | null>;
 	onClose: () => void;
 }
 
@@ -59,26 +62,27 @@ export function EnvExportDialog({
 		if (!path) return;
 
 		setBusy(true);
-		const ok = await onExport(path);
+		const refusal = await onExport(path);
 		setBusy(false);
-		if (ok) setSavedTo(path);
-		else
-			setFailed(
-				"The export was refused. See the message in the variables list.",
-			);
+		if (refusal === null) setSavedTo(path);
+		else setFailed(refusal);
 	};
 
 	return (
 		<AnimatePresence>
 			<motion.div
+				role="presentation"
 				initial={{ opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: 0 }}
+				transition={{ duration: 0.15 }}
 				onClick={onClose}
 				style={{
 					position: "fixed",
 					inset: 0,
-					zIndex: 1000,
+					// Matches EnvImportDialog, its sibling in this section: the
+					// two open from the same dialog and must stack alike.
+					zIndex: 210,
 					display: "flex",
 					alignItems: "center",
 					justifyContent: "center",
@@ -86,9 +90,12 @@ export function EnvExportDialog({
 				}}
 			>
 				<motion.div
+					role="dialog"
+					aria-label={`Export ${bundle} to a .env file`}
 					initial={{ opacity: 0, scale: 0.97 }}
 					animate={{ opacity: 1, scale: 1 }}
 					exit={{ opacity: 0, scale: 0.97 }}
+					transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
 					onClick={(e) => e.stopPropagation()}
 					onKeyDown={(e) => e.stopPropagation()}
 					style={{
@@ -155,10 +162,11 @@ export function EnvExportDialog({
 									}}
 								>
 									{inheritedCount}{" "}
-									{inheritedCount === 1 ? "variable is" : "variables are"}{" "}
-									inherited from the main worktree and {"isn't"} in the file.
-									Export there to include {inheritedCount === 1 ? "it" : "them"}
-									.
+									{inheritedCount === 1
+										? "variable is inherited from the main worktree and is not in the file"
+										: "variables are inherited from the main worktree and are not in the file"}
+									. Export there to include{" "}
+									{inheritedCount === 1 ? "it" : "them"}.
 								</span>
 							)}
 							{failed && (

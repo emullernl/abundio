@@ -107,13 +107,14 @@ interface WorkspaceEnvState {
 		entries: ParsedEnvEntry[],
 	) => Promise<boolean>;
 	/** Write a Bundle to `path` as a `.env` file. Resolved and written in Rust,
-	 *  so no plaintext enters this store. Returns false and sets `error`. */
+	 *  so no plaintext enters this store. Resolves to null on success, or the
+	 *  refusal reason — which the dialog shows inline. */
 	exportBundle: (
 		workspaceId: string,
 		bundle: string,
 		workspaceName: string,
 		path: string,
-	) => Promise<boolean>;
+	) => Promise<string | null>;
 	remove: (
 		workspaceId: string,
 		inheritFrom: string | null,
@@ -298,12 +299,15 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 		try {
 			await env.exportToPath(workspaceId, bundle, workspaceName, path);
 			set({ error: null });
-			return true;
+			return null;
 		} catch (e) {
 			// Refused exports (an unreadable row, a locked keychain) arrive here
-			// with the names of what blocked them. Nothing was written.
-			set({ error: message(e) });
-			return false;
+			// with the names of what blocked them. Nothing was written. The
+			// reason is returned rather than only stored: the list that shows
+			// `error` is behind the export dialog.
+			const reason = message(e);
+			set({ error: reason });
+			return reason;
 		}
 	},
 

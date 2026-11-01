@@ -395,7 +395,8 @@ export function EnvVarsSection({
 				{isInjected ? (
 					<>
 						Injected into every terminal opened in this workspace. Values are
-						encrypted at rest and never written to disk in plain text.
+						encrypted at rest — Export to a .env file is the only way they reach
+						disk in plain text.
 						{store.bytesBudget > 0 && (
 							<>
 								{" "}

@@ -30,7 +30,7 @@ describe("EnvExportDialog", () => {
 	function render(
 		overrides: Partial<Parameters<typeof EnvExportDialog>[0]> = {},
 	) {
-		const onExport = vi.fn().mockResolvedValue(true);
+		const onExport = vi.fn().mockResolvedValue(null);
 		act(() => {
 			root.render(
 				<EnvExportDialog
@@ -107,9 +107,13 @@ describe("EnvExportDialog", () => {
 		expect(container.textContent).toContain("No variables");
 	});
 
-	it("reports a refused export without claiming the file was written", async () => {
+	// The reason is shown here rather than pointed at: the variables list that
+	// also carries it is behind this modal.
+	it("shows the refusal reason inline and claims no file was written", async () => {
 		save.mockResolvedValue("/tmp/proj/production.env");
-		render({ onExport: vi.fn().mockResolvedValue(false) });
+		const reason =
+			"Cannot export production: 1 variable(s) could not be decrypted (BAD). Nothing was written.";
+		render({ onExport: vi.fn().mockResolvedValue(reason) });
 
 		await act(async () => {
 			button("Choose file…")?.dispatchEvent(
@@ -117,7 +121,32 @@ describe("EnvExportDialog", () => {
 			);
 		});
 
-		expect(container.textContent).toContain("refused");
+		expect(container.textContent).toContain(reason);
 		expect(container.textContent).not.toContain("Written to");
+		expect(container.textContent).not.toContain("See the message in the list");
+	});
+
+	// Both dialogs open from the same settings section, so they must stack and
+	// announce themselves the same way.
+	it("is an announced dialog above the settings modal", () => {
+		render();
+		const dialog = container.querySelector('[role="dialog"]');
+		expect(dialog?.getAttribute("aria-label")).toBe(
+			"Export production to a .env file",
+		);
+		const backdrop = container.querySelector('[role="presentation"]');
+		expect(backdrop).not.toBeNull();
+	});
+
+	// Escape belongs to the topmost overlay; the hook's stack supplies that.
+	it("closes on Escape", () => {
+		const onClose = vi.fn();
+		render({ onClose });
+		act(() => {
+			document.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+			);
+		});
+		expect(onClose).toHaveBeenCalled();
 	});
 });
