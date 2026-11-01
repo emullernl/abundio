@@ -18,6 +18,13 @@
 //! short leading fragment that the collapsed row shows instead of dots
 //! (ADR-0048). Keep the full value out of the frontend: the JS heap is a much
 //! larger attack surface than this process.
+//!
+//! ## Empty values
+//!
+//! A value may be the empty string, and that is a real state, not an absent
+//! variable: `NAME=""` is exported to a spawned shell, so a program can tell
+//! "set to nothing" from "not set". [`env_crypto::validate_value`] only bounds
+//! the size, so nothing in Rust refuses one — the add form was the only gate.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -2004,6 +2011,26 @@ mod tests {
         assert_eq!(prefix_of(b"\tabcdef").as_deref(), None);
         // Not valid UTF-8: nothing to show.
         assert_eq!(prefix_of(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb]), None);
+    }
+
+    // ── Empty values ──
+
+    /// An empty value is a real value, not an absent variable, so it must
+    /// survive the whole round trip to the spawn path as `NAME=""`.
+    #[test]
+    fn an_empty_value_round_trips_through_the_store() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "EMPTY", "").unwrap();
+
+        let pairs = store.resolve_for_spawn(&key, WS, None).unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "EMPTY");
+        assert_eq!(pairs[0].1.as_str(), "");
+
+        let meta = &store.list(WS, None, None, Some(&key)).unwrap().vars[0];
+        assert_eq!(meta.byte_len, 0);
+        assert!(!meta.undecryptable, "an empty value is readable");
+        assert_eq!(meta.prefix, None, "nothing to peek at");
     }
 
     #[test]

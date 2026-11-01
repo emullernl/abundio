@@ -75,9 +75,11 @@ export function EnvVarsSection({
 	// post-write banner is what covers those paths.
 	const overBudget =
 		isInjected && store.bytesBudget > 0 && store.bytesUsed > store.bytesBudget;
+	// An empty value is allowed on purpose: `NAME=""` is a real state a shell
+	// can tell from "not set" (ADR-0048), and some tools require the variable
+	// to exist. Only the name has to be well-formed.
 	const canAdd =
 		isValidEnvName(newName.trim()) &&
-		newValue.length > 0 &&
 		!duplicate &&
 		!wouldExceedBudget &&
 		!store.keyError;

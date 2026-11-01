@@ -24,7 +24,8 @@ interface Props {
  * Expanding IS the full reveal: it fetches the plaintext for this one variable.
  *
  * The mask carries a four-character prefix where one can be shown safely
- * (`sk-l••••`, ADR-0048).
+ * (`sk-l••••`, ADR-0048), and an empty value reads `(empty)` rather than
+ * `0 B` beside dots, which would look like a row that failed to load.
  */
 export function EnvVarRow({
 	variable,
@@ -52,6 +53,7 @@ export function EnvVarRow({
 	}, [expanded, revealedValue]);
 
 	const unreadable = locked || variable.undecryptable;
+	const empty = !unreadable && variable.byteLen === 0;
 	const dirty = revealedValue !== null && draft !== revealedValue;
 
 	return (
@@ -156,7 +158,9 @@ export function EnvVarRow({
 					>
 						{unreadable
 							? "unreadable"
-							: `${variable.prefix ?? ""}•••••••• · ${formatValueSize(variable.byteLen)}`}
+							: empty
+								? "(empty)"
+								: `${variable.prefix ?? ""}•••••••• · ${formatValueSize(variable.byteLen)}`}
 					</span>
 				</button>
 

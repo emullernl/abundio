@@ -198,4 +198,70 @@ describe("EnvVarsSection", () => {
 			expect(rowLabel(container, "LOST")).toContain("unreadable");
 		});
 	});
+
+	describe("empty values", () => {
+		it("renders (empty) instead of dots and a size", () => {
+			useWorkspaceEnvStore.setState({
+				bundles: [bundle("default", true)],
+				selectedBundle: "default",
+				vars: [{ ...variable("EMPTY", 0), byteLen: 0, prefix: null }],
+			});
+			renderSection();
+
+			expect(rowLabel(container, "EMPTY")).toContain("(empty)");
+			expect(rowLabel(container, "EMPTY")).not.toContain("••••");
+			expect(rowLabel(container, "EMPTY")).not.toContain("0 B");
+		});
+
+		it("lets the add form submit a variable with no value", () => {
+			const upsert = vi.fn().mockResolvedValue(undefined);
+			useWorkspaceEnvStore.setState({
+				bundles: [bundle("default", true)],
+				selectedBundle: "default",
+				vars: [],
+				upsert: upsert as never,
+			});
+			renderSection();
+
+			const nameInput = container.querySelector<HTMLInputElement>(
+				'input[placeholder="NAME"]',
+			);
+			const valueInput = container.querySelector<HTMLTextAreaElement>(
+				'textarea[placeholder="value"]',
+			);
+			// React tracks the DOM value itself, so a plain `.value =` assignment
+			// is ignored. Go through the native setter it installed.
+			const setNativeValue = (
+				el: HTMLInputElement | HTMLTextAreaElement,
+				value: string,
+			) => {
+				const proto =
+					el instanceof HTMLTextAreaElement
+						? HTMLTextAreaElement.prototype
+						: HTMLInputElement.prototype;
+				Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
+				el.dispatchEvent(new Event("input", { bubbles: true }));
+			};
+			act(() => {
+				if (nameInput) setNativeValue(nameInput, "EMPTY_FLAG");
+				if (valueInput) setNativeValue(valueInput, "");
+			});
+
+			const addButton = Array.from(
+				container.querySelectorAll<HTMLButtonElement>("button"),
+			).find((el) => el.textContent === "Add");
+			expect(addButton?.disabled).toBe(false);
+
+			act(() => {
+				addButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+			});
+			expect(upsert).toHaveBeenCalledWith(
+				"ws-1",
+				null,
+				"default",
+				"EMPTY_FLAG",
+				"",
+			);
+		});
+	});
 });
