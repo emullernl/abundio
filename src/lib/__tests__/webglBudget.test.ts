@@ -3,6 +3,7 @@ import {
 	MAX_WEBGL_CONTEXTS,
 	pickWebglPanes,
 	type WebglBudgetInput,
+	webglLoadStep,
 	webglReconcilePlan,
 } from "../webglBudget";
 
@@ -223,5 +224,43 @@ describe("webglReconcilePlan", () => {
 		const plan = webglReconcilePlan(new Set(["a", "b"]), new Set());
 		expect(plan.toUnload).toEqual(["a", "b"]);
 		expect(plan.toLoad).toEqual([]);
+	});
+});
+
+describe("webglLoadStep", () => {
+	const terminals = new Set(["t1", "t2", "t3"]);
+	const canLoad = (id: string) => terminals.has(id);
+
+	it("skips panes that cannot take a context, so the step is never empty", () => {
+		// A File pane first in the tab used to stall the stepper: the step tried
+		// nothing, reported more to do, and the terminal behind it never loaded.
+		expect(webglLoadStep(["file", "t1"], canLoad, 1)).toEqual({
+			now: ["t1"],
+			more: false,
+		});
+	});
+
+	it("reports more only while loadable panes remain", () => {
+		expect(webglLoadStep(["t1", "file", "t2", "t3"], canLoad, 1)).toEqual({
+			now: ["t1"],
+			more: true,
+		});
+		expect(webglLoadStep(["t3"], canLoad, 1)).toEqual({
+			now: ["t3"],
+			more: false,
+		});
+	});
+
+	it("has nothing to do when nothing is loadable", () => {
+		expect(webglLoadStep(["file", "not-created"], canLoad, 1)).toEqual({
+			now: [],
+			more: false,
+		});
+	});
+
+	it("loads everything loadable with no limit", () => {
+		expect(
+			webglLoadStep(["t1", "file", "t2"], canLoad, Number.POSITIVE_INFINITY),
+		).toEqual({ now: ["t1", "t2"], more: false });
 	});
 });

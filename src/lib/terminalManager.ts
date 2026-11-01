@@ -86,6 +86,7 @@ import type { PaneNode } from "./types";
 import {
 	MAX_WEBGL_CONTEXTS,
 	pickWebglPanes,
+	webglLoadStep,
 	webglReconcilePlan,
 } from "./webglBudget";
 import { addWindowFocusListener } from "./windowFocus";
@@ -232,7 +233,7 @@ let webglEnabled = true;
  *  This is the single gate the callers of ensureWebglLoaded lean on: they may
  *  spend a slot on a pane the budget doesn't cover, and the next reconcile
  *  takes it back. */
-function reconcileWebgl(): void {
+function reconcileWebgl(maxLoads = Number.POSITIVE_INFINITY): boolean {
 	const loaded = new Set<string>();
 	for (const [paneId, managed] of instances) {
 		if (managed.webglAddon) loaded.add(paneId);
@@ -241,10 +242,24 @@ function reconcileWebgl(): void {
 	const { toUnload, toLoad } = webglReconcilePlan(loaded, budget);
 	for (const paneId of toUnload) unloadWebgl(paneId);
 	// Straight to the loader: the budget was just computed by the caller.
-	for (const paneId of toLoad) {
-		const managed = instances.get(paneId);
-		if (managed && !managed.webglAddon) tryLoadWebgl(managed);
+	const { now, more } = webglLoadStep(
+		toLoad,
+		(paneId) => {
+			const managed = instances.get(paneId);
+			return managed !== undefined && !managed.webglAddon;
+		},
+		maxLoads,
+	);
+	let refused = false;
+	for (const paneId of now) {
+		const managed = instances.get(paneId) as ManagedTerminal;
+		tryLoadWebgl(managed);
+		if (!managed.webglAddon) refused = true;
 	}
+	// More to load? Not after a refusal (the cap, or a canvas the browser
+	// won't give a context yet): stepping again would retry it every frame
+	// forever. The next store change, or projection, tries again instead.
+	return !refused && more;
 }
 
 /** Flip GPU rendering on/off and reconcile every live terminal: enabling loads
@@ -857,7 +872,13 @@ setTimeout(() => {
 		// which is the only order that works once the cap binds — and it also
 		// covers orphans (a paneId still in `instances` but no longer in any
 		// opened workspace's layout; rare, a tear-down race).
-		reconcileWebgl();
+		//
+		// After the switch has painted, not inside it: building a context
+		// compiles shaders and costs tens of milliseconds per pane (ADR-0041
+		// measured ~85 ms for one, ~260 ms for eight), and doing it in the
+		// store update held the new Workspace or Tab off the screen until every
+		// context was ready. Meanwhile those panes draw with the DOM renderer.
+		scheduleWebglReconcile();
 	});
 	// The focus flags follow the Focused tile while the Console is on screen,
 	// so they must also move when it does, or when the Console opens/closes.
@@ -884,20 +905,29 @@ setTimeout(() => {
 		// After the view change has painted, not inside it: disposing and
 		// creating contexts swaps renderers on every pane involved, and doing
 		// that in the click's own frame is what kept the Console from
-		// appearing at all until the swaps were done. Coalesced, so opening
-		// then spotlighting in quick succession reconciles once.
-		if (consoleReconcileFrame !== null) return;
-		consoleReconcileFrame = requestAnimationFrame(() => {
-			consoleReconcileFrame = requestAnimationFrame(() => {
-				consoleReconcileFrame = null;
-				webglBudget = computeWebglBudget();
-				reconcileWebgl();
-			});
-		});
+		// appearing at all until the swaps were done.
+		scheduleWebglReconcile();
 	});
 }, 0);
 
-let consoleReconcileFrame: number | null = null;
+let reconcileFrame: number | null = null;
+
+/** Reconcile WebGL two frames from now — after the change that asked for it
+ *  has painted — creating at most one context per step, then step again until
+ *  the budget is met. Coalesced: any number of requests before the step runs
+ *  (a burst of switches, opening the Console then spotlighting a tile) cost one
+ *  step, and each step re-reads the budget, so it always serves the latest
+ *  view rather than the one that scheduled it. */
+function scheduleWebglReconcile(): void {
+	if (reconcileFrame !== null) return;
+	reconcileFrame = requestAnimationFrame(() => {
+		reconcileFrame = requestAnimationFrame(() => {
+			reconcileFrame = null;
+			webglBudget = computeWebglBudget();
+			if (reconcileWebgl(1)) scheduleWebglReconcile();
+		});
+	});
+}
 
 /** Forget a pane's **Title status** — a new agent session, or none. */
 function resetTitleStatus(managed: ManagedTerminal): void {

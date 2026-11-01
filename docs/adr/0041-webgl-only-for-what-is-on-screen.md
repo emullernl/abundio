@@ -17,6 +17,6 @@ ADR-0002 and `webglBudget.ts` held a context on every pane of every opened Works
 
 ## Consequences
 
-- Switching to a Tab that is neither visible nor the one just left rebuilds its contexts: measured ~85 ms for one pane and ~260 ms for eight (see `webglBudget.ts`). For a moment those panes draw with the DOM renderer, then WebGL takes over.
+- Switching to a Tab that is neither visible nor the one just left rebuilds its contexts: measured ~85 ms for one pane and ~260 ms for eight (see `webglBudget.ts`). For a moment those panes draw with the DOM renderer, then WebGL takes over. The rebuild runs two frames after the change, one context per frame, so the switch paints first; building the contexts inside the store update held the new view off screen until all of them were ready (measured in the demo build: workspace switch median 87 ms → 35 ms, tab switch 83 ms → 24 ms).
 - Opening the Console, spotlighting a tile and closing the Console each swap renderers on the panes involved.
 - The WebGL glyph atlas is shared between terminals with the same configuration, so a renderer change must never clear it through one terminal alone (see `clearGlyphCaches`).
