@@ -14,8 +14,24 @@
 //!
 //! Only [`EnvVarStore::reveal`] and the resolve methods produce plaintext.
 //! [`EnvVarStore::list`] returns names and byte lengths so the settings UI can
-//! render without ever holding a secret. Keep it that way — the frontend heap
-//! is a much larger attack surface than this process.
+//! render without ever holding a secret — plus [`prefix_of`], a deliberately
+//! short leading fragment that the collapsed row shows instead of dots
+//! (ADR-0048). Keep the full value out of the frontend: the JS heap is a much
+//! larger attack surface than this process.
+//!
+//! ## Empty values
+//!
+//! A value may be the empty string, and that is a real state, not an absent
+//! variable: `NAME=""` is exported to a spawned shell, so a program can tell
+//! "set to nothing" from "not set". [`env_crypto::validate_value`] only bounds
+//! the size, so nothing in Rust refuses one — the add form was the only gate.
+//!
+//! ## Export
+//!
+//! [`EnvVarStore::export_bundle`] is the second way plaintext leaves this
+//! module: it renders a Bundle as `.env` text for the in-app **Export**.
+//! [`env_export_to_path`] resolves *and* writes in one step, so a Bundle's
+//! values never cross IPC — the frontend supplies only a path.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -64,6 +80,11 @@ pub struct EnvVarMeta {
     /// e.g. the database was restored onto a machine without the key. The row
     /// renders locked: visible and deletable, but not expandable.
     pub undecryptable: bool,
+    /// The first [`PREFIX_CHARS`] characters of the value, for the collapsed
+    /// row — `None` when there is no master key, the row will not open, the
+    /// value is too short to have a safe prefix, or it does not start with four
+    /// printable non-space characters. See [`prefix_of`] and ADR-0048.
+    pub prefix: Option<String>,
     pub updated_at: i64,
 }
 
@@ -215,6 +236,63 @@ impl EnvVarStore {
         Err(AbundioError::NotFound(format!(
             "environment variable {name}"
         )))
+    }
+
+    /// Render one Bundle as `.env` text for the in-app Export — own rows only.
+    ///
+    /// Unlike [`EnvVarStore::resolve_bundle`] this does *not* fall back to
+    /// inherited rows, and it is not lenient about a row that will not open: a
+    /// file that silently omits a secret is worse than no file, because the
+    /// user finds out when `source`ing it, not here. Every unreadable row is
+    /// named in the error.
+    pub fn export_bundle(
+        &self,
+        key: &MasterKey,
+        workspace_id: &str,
+        bundle: &str,
+        workspace_name: &str,
+        now: i64,
+    ) -> Result<String, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+
+        let Some(row) = find_bundle(&conn, workspace_id, bundle)? else {
+            return Err(AbundioError::NotFound(format!("bundle {bundle}")));
+        };
+
+        let mut stmt = conn.prepare(
+            "SELECT name, nonce, ciphertext FROM workspace_env_vars
+             WHERE bundle_id = ?1 ORDER BY position ASC, name ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![row.id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut pairs: Vec<(String, Zeroizing<String>)> = Vec::with_capacity(rows.len());
+        let mut failed: Vec<String> = Vec::new();
+        for (name, nonce, ciphertext) in rows {
+            match env_crypto::open(key, &name, &nonce, &ciphertext) {
+                Ok(plain) => match String::from_utf8(plain.to_vec()) {
+                    Ok(text) => pairs.push((name, Zeroizing::new(text))),
+                    Err(_) => failed.push(name),
+                },
+                Err(_) => failed.push(name),
+            }
+        }
+        if !failed.is_empty() {
+            return Err(AbundioError::InvalidOperation(format!(
+                "Cannot export {bundle}: {n} variable(s) could not be decrypted ({names}). Nothing was written.",
+                n = failed.len(),
+                names = failed.join(", ")
+            )));
+        }
+
+        Ok(render_dotenv(workspace_name, bundle, &pairs, now))
     }
 
     /// Whether this Workspace's injected Bundle holds anything at all.
@@ -845,10 +923,14 @@ fn vars_of(
         .into_iter()
         .map(|(id, name, nonce, ciphertext, position, updated_at)| {
             // With a key available, probe each row so the UI can mark
-            // unreadable values. The plaintext is dropped immediately.
-            let undecryptable = match key {
-                Some(k) => env_crypto::open(k, &name, &nonce, &ciphertext).is_err(),
-                None => true,
+            // unreadable values, and keep the short prefix the collapsed row
+            // shows. The plaintext itself is dropped immediately.
+            let (undecryptable, prefix) = match key {
+                Some(k) => match env_crypto::open(k, &name, &nonce, &ciphertext) {
+                    Ok(plain) => (false, prefix_of(&plain)),
+                    Err(_) => (true, None),
+                },
+                None => (true, None),
             };
             EnvVarMeta {
                 id,
@@ -858,6 +940,7 @@ fn vars_of(
                 position,
                 inherited: false,
                 undecryptable,
+                prefix,
                 updated_at,
             }
         })
@@ -880,6 +963,90 @@ fn lookup_var(
             |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)),
         )
         .optional()?)
+}
+
+/// How many leading characters of a value the collapsed row shows.
+///
+/// Four is enough to tell `sk-live-…` from `sk-test-…` — the case this exists
+/// for, catching a variable pasted into the wrong Bundle — and short enough
+/// that the remainder is still the secret. See ADR-0048.
+pub const PREFIX_CHARS: usize = 4;
+
+/// The leading fragment of a value that the collapsed row may show.
+///
+/// Deliberately conservative, because this puts part of every secret on screen
+/// without an explicit reveal:
+///
+///  - `None` for a value of [`PREFIX_CHARS`] characters or fewer. A short
+///    secret has no safe prefix — showing four of five characters is showing it.
+///  - `None` unless the first four characters are all printable and none is
+///    whitespace. A value starting with a newline or a space would render as an
+///    empty prefix, which reads as a broken row.
+///  - Counted in Unicode scalar values, not bytes: slicing UTF-8 by bytes can
+///    land mid-character and produce a replacement glyph.
+pub fn prefix_of(plaintext: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(plaintext).ok()?;
+    let mut chars = text.chars();
+    let mut head = String::with_capacity(PREFIX_CHARS * 4);
+    for _ in 0..PREFIX_CHARS {
+        let c = chars.next()?;
+        if c.is_whitespace() || c.is_control() {
+            return None;
+        }
+        head.push(c);
+    }
+    // More than PREFIX_CHARS characters, or there is nothing left to hide.
+    chars.next()?;
+    Some(head)
+}
+
+/// Render one Bundle as `.env` text: a header comment, then one
+/// `NAME="value"` line per variable, own rows only.
+///
+/// Own rows only on purpose: an inherited variable belongs to the main
+/// worktree, and an export written in a linked worktree must not carry the
+/// primary's secrets. That is the one deliberate difference from
+/// `abundio-env print`, which resolves inheritance because a process needs the
+/// effective environment.
+///
+/// Quoting is [`crate::hook_server::quote_dotenv_value`], the same function
+/// `abundio-env print` uses, so both outputs round-trip through `parseDotenv`.
+fn render_dotenv(
+    workspace_name: &str,
+    bundle: &str,
+    vars: &[(String, Zeroizing<String>)],
+    now: i64,
+) -> String {
+    let stamp = format_timestamp(now);
+    // The header is a comment, so anything that could end the line early would
+    // turn the rest of a Workspace name into a real `NAME=value` line.
+    let workspace_name = workspace_name.replace(['\n', '\r'], " ");
+    let bundle = bundle.replace(['\n', '\r'], " ");
+    let mut out = String::with_capacity(
+        64 + vars
+            .iter()
+            .map(|(n, v)| n.len() + v.len() + 4)
+            .sum::<usize>(),
+    );
+    out.push_str(&format!(
+        "# Abundio environment export — {workspace_name} / {bundle} — {stamp}\n"
+    ));
+    for (name, value) in vars {
+        out.push_str(name);
+        out.push('=');
+        out.push_str(&crate::hook_server::quote_dotenv_value(value));
+        out.push('\n');
+    }
+    out
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ`. The timestamp is informational: it is what makes a
+/// stale export obvious once the file has been emailed around.
+fn format_timestamp(unix_secs: i64) -> String {
+    match chrono::DateTime::from_timestamp(unix_secs, 0) {
+        Some(dt) => dt.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        None => "unknown".to_string(),
+    }
 }
 
 /// Resolve one Bundle to plaintext pairs, inherited first then own.
@@ -995,6 +1162,7 @@ fn upsert_one(
         position,
         inherited: false,
         undecryptable: false,
+        prefix: prefix_of(value.as_bytes()),
         updated_at,
     })
 }
@@ -1166,6 +1334,58 @@ pub fn env_vars_reorder(
     names: Vec<String>,
 ) -> Result<(), AbundioError> {
     store.reorder(&workspace_id, &bundle, &names)
+}
+
+/// Write one Bundle to `path` as `.env` text and return the path.
+///
+/// Rust resolves *and* writes in one step so the plaintext never crosses IPC:
+/// the save dialog only supplies a path. Own rows only, and all-or-nothing —
+/// see [`EnvVarStore::export_bundle`].
+#[tauri::command]
+pub fn env_export_to_path(
+    store: State<EnvVarStore>,
+    workspace_id: String,
+    bundle: String,
+    workspace_name: String,
+    path: String,
+) -> Result<String, AbundioError> {
+    let key = env_crypto::master_key()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let text = store.export_bundle(&key, &workspace_id, &bundle, &workspace_name, now)?;
+    write_secret_file(&path, text.as_bytes())?;
+    Ok(path)
+}
+
+/// Write the exported `.env` text, owner-only where the platform has modes.
+///
+/// The file holds every value in plaintext, and `std::fs::write` creates it
+/// with the default umask (0644 on most systems), which leaves a Bundle of
+/// credentials readable by every local user. Set the mode at creation time so
+/// the plaintext is never momentarily world-readable.
+fn write_secret_file(path: &str, bytes: &[u8]) -> Result<(), AbundioError> {
+    use std::io::Write;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+        // `mode` only applies on creation, so an existing file keeps whatever
+        // mode it already had. Tighten it explicitly.
+        if let Ok(meta) = std::fs::metadata(path) {
+            use std::os::unix::fs::PermissionsExt;
+            if meta.permissions().mode() & 0o077 != 0 {
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    Ok(())
 }
 
 /// Drop the cached master key and report whether the credential store can be
@@ -1929,4 +2149,176 @@ mod tests {
         let (store, key) = test_store();
         assert!(store.resolve_for_spawn(&key, WS, None).unwrap().is_empty());
     }
-}
+
+    // ── Prefix peek ──
+
+    #[test]
+    fn prefix_of_takes_four_characters_only_from_a_longer_value() {
+        assert_eq!(prefix_of(b"sk-live-abcdef").as_deref(), Some("sk-l"));
+        // Four characters is the whole value: no safe prefix.
+        assert_eq!(prefix_of(b"abcd"), None);
+        assert_eq!(prefix_of(b"abc"), None);
+        assert_eq!(prefix_of(b""), None);
+        // Five is one character of concealment, which is not concealment.
+        assert_eq!(prefix_of(b"abcde").as_deref(), Some("abcd"));
+    }
+
+    #[test]
+    fn prefix_of_counts_characters_not_bytes() {
+        // Four two-byte characters, then more. A byte slice would split one.
+        assert_eq!(prefix_of("ünïcödé".as_bytes()).as_deref(), Some("ünïc"));
+    }
+
+    #[test]
+    fn prefix_of_refuses_leading_whitespace_and_control_characters() {
+        assert_eq!(prefix_of(b" secret").as_deref(), None);
+        assert_eq!(prefix_of(b"\nabcdef").as_deref(), None);
+        assert_eq!(prefix_of(b"\tabcdef").as_deref(), None);
+        // Not valid UTF-8: nothing to show.
+        assert_eq!(prefix_of(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb]), None);
+    }
+
+    // ── Empty values ──
+
+    /// An empty value is a real value, not an absent variable, so it must
+    /// survive the whole round trip to the spawn path as `NAME=""`.
+    #[test]
+    fn an_empty_value_round_trips_through_the_store() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "EMPTY", "").unwrap();
+
+        let pairs = store.resolve_for_spawn(&key, WS, None).unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "EMPTY");
+        assert_eq!(pairs[0].1.as_str(), "");
+
+        let meta = &store.list(WS, None, None, Some(&key)).unwrap().vars[0];
+        assert_eq!(meta.byte_len, 0);
+        assert!(!meta.undecryptable, "an empty value is readable");
+        assert_eq!(meta.prefix, None, "nothing to peek at");
+    }
+
+    #[test]
+    fn list_carries_the_prefix_and_never_the_value() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "TOKEN", "sk-live-abcdef")
+            .unwrap();
+        let meta = &store.list(WS, None, None, Some(&key)).unwrap().vars[0];
+        assert_eq!(meta.prefix.as_deref(), Some("sk-l"));
+        assert_eq!(meta.byte_len, "sk-live-abcdef".len() as i64);
+    }
+
+    #[test]
+    fn without_a_key_there_is_no_prefix() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "TOKEN", "sk-live-abcdef")
+            .unwrap();
+        let meta = &store.list(WS, None, None, None).unwrap().vars[0];
+        assert_eq!(meta.prefix, None);
+        assert!(meta.undecryptable);
+    }
+
+    #[test]
+    fn an_empty_value_exports_to_an_empty_quoted_string() {
+        let (store, key) = test_store();
+        store.upsert(&key, WS, None, DEFAULT_BUNDLE, "EMPTY", "").unwrap();
+        let text = store.export_bundle(&key, WS, DEFAULT_BUNDLE, "proj", 0).unwrap();
+        assert!(text.contains("EMPTY=\"\"\n"), "{text}");
+    }
+
+    #[test]
+    fn export_writes_own_rows_only() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, PARENT, None, DEFAULT_BUNDLE, "INHERITED", "from-main")
+            .unwrap();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "OWN", "from-linked")
+            .unwrap();
+
+        let text = store.export_bundle(&key, WS, DEFAULT_BUNDLE, "proj", 0).unwrap();
+        assert!(text.contains("OWN=\"from-linked\""), "{text}");
+        assert!(
+            !text.contains("INHERITED"),
+            "a linked worktree export must not carry the primary's secrets: {text}"
+        );
+        assert!(text.starts_with("# Abundio environment export — proj / default"));
+    }
+
+    #[test]
+    fn export_refuses_rather_than_omitting_an_unreadable_row() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "GOOD", "ok")
+            .unwrap();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "BAD", "also-ok")
+            .unwrap();
+
+        // A different key cannot open either row.
+        let wrong = MasterKey::from_bytes([9u8; KEY_LEN]);
+        let err = store
+            .export_bundle(&wrong, WS, DEFAULT_BUNDLE, "proj", 0)
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("Nothing was written"), "{message}");
+    }
+
+    #[test]
+    fn export_quotes_values_so_they_parse_back() {
+        let (store, key) = test_store();
+        let pem = "-----BEGIN-----\nline \"quoted\"\n	indented\\back";
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "CERT", pem)
+            .unwrap();
+        let text = store.export_bundle(&key, WS, DEFAULT_BUNDLE, "proj", 0).unwrap();
+        // Same escaping `parseDotenv` decodes: no raw newline inside the line.
+        assert!(text.contains("CERT=\"-----BEGIN-----\\nline \\\"quoted\\\"\\n\\tindented\\\\back\""), "{text}");
+        assert_eq!(text.lines().count(), 2, "header plus one value line");
+    }
+
+    #[test]
+    fn export_of_an_unknown_bundle_is_not_found() {
+        let (store, key) = test_store();
+        assert!(store.export_bundle(&key, WS, "nope", "proj", 0).is_err());
+    }
+
+    // A Workspace name is user data and lands in a comment line. A newline in
+    // it would end the comment and turn the rest of the name into a variable
+    // that `parseDotenv` then imports.
+    #[test]
+    fn export_header_stays_one_line_whatever_the_names_contain() {
+        let none: Vec<(String, Zeroizing<String>)> = Vec::new();
+        let text = render_dotenv("proj\nEVIL=1", "def\r\nault", &none, 0);
+        // One line, and it is a comment: `EVIL=1` may appear in it, but only
+        // after the `#`, so a dotenv reader skips it.
+        assert_eq!(text.lines().count(), 1, "{text}");
+        assert!(text.starts_with("# "), "{text}");
+    }
+
+    /// The file holds plaintext credentials, so it must never be world-readable
+    /// — including when the user picks a path that already exists.
+    #[cfg(unix)]
+    #[test]
+    fn export_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.env");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_secret_file(path.to_str().unwrap(), b"NAME=\"v\"\n").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "exported secrets must not be world-readable");
+    }
+
+    #[test]
+    fn format_timestamp_renders_a_known_instant() {
+        assert_eq!(format_timestamp(0), "1970-01-01T00:00:00Z");
+        // 2024-02-29T12:34:56Z — a leap day, so the civil-date maths is probed.
+        assert_eq!(format_timestamp(1_709_210_096), "2024-02-29T12:34:56Z");
+    }}

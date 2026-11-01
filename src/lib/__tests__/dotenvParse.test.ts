@@ -251,3 +251,55 @@ describe("injectionCost", () => {
 		expect(injectionCost(5, 3)).toBeGreaterThan(5 + 3);
 	});
 });
+
+/**
+ * Export writes `NAME="value"` through `quote_dotenv_value` in Rust
+ * (`env_vars::render_dotenv`), and Import reads it back with `parseDotenv`.
+ * These are the exact strings Rust produces, so the two doors are pinned to
+ * one format: a change to either side that breaks the round trip fails here.
+ */
+describe("export round trip", () => {
+	// `String.raw`: these backslashes are literal characters in the file Rust
+	// writes, not escapes this test is applying.
+	const exported = String.raw`# Abundio environment export — proj / production — 2026-11-01T00:00:00Z
+SIMPLE="abc"
+EMPTY=""
+SPACED="has space"
+QUOTED="a\"b"
+BACKSLASH="a\\b"
+NEWLINES="line1\nline2"
+TABBED="a\tb"`;
+
+	it("reads back every value byte-identically", () => {
+		const r = parseDotenv(exported);
+		expect(r.entries).toEqual([
+			{ name: "SIMPLE", value: "abc" },
+			{ name: "EMPTY", value: "" },
+			{ name: "SPACED", value: "has space" },
+			{ name: "QUOTED", value: 'a"b' },
+			{ name: "BACKSLASH", value: "a\\b" },
+			{ name: "NEWLINES", value: "line1\nline2" },
+			{ name: "TABBED", value: "a\tb" },
+		]);
+		expect(r.invalidNames).toEqual([]);
+		expect(r.unterminated).toEqual([]);
+		expect(r.skippedLines).toBe(0);
+	});
+
+	it("ignores the header comment", () => {
+		expect(
+			parseDotenv(exported).entries.find((e) => e.name.startsWith("#")),
+		).toBe(undefined);
+	});
+
+	// The flagship case: a certificate written by Export must not import as a
+	// truncated secret, and its newlines must survive.
+	it("round-trips a PEM certificate", () => {
+		const pem = "-----BEGIN-----\nMIIEow\n-----END-----";
+		// What Rust's quote_dotenv_value produces for `pem`.
+		const line = String.raw`CERT="-----BEGIN-----\nMIIEow\n-----END-----"`;
+		const back = parseDotenv(line).entries[0];
+		expect(back.name).toBe("CERT");
+		expect(back.value).toBe(pem);
+	});
+});

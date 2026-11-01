@@ -12,6 +12,8 @@ interface Props {
 	/** Stop injecting anything — every Bundle becomes on-demand. */
 	onClearInjected: () => void;
 	onDelete: (name: string) => void;
+	/** Export the selected Bundle to a `.env` file. */
+	onExport: (name: string) => void;
 }
 
 /**
@@ -31,6 +33,7 @@ export function BundleTabs({
 	onSetInjected,
 	onClearInjected,
 	onDelete,
+	onExport,
 }: Props) {
 	const [creating, setCreating] = useState(false);
 	const [draft, setDraft] = useState("");
@@ -185,6 +188,7 @@ export function BundleTabs({
 				onSetInjected={onSetInjected}
 				onClearInjected={onClearInjected}
 				onDelete={onDelete}
+				onExport={onExport}
 			/>
 		</div>
 	);
@@ -199,12 +203,14 @@ function BundleActions({
 	onSetInjected,
 	onClearInjected,
 	onDelete,
+	onExport,
 }: {
 	bundles: EnvBundleMeta[];
 	selected: string;
 	onSetInjected: (name: string) => void;
 	onClearInjected: () => void;
 	onDelete: (name: string) => void;
+	onExport: (name: string) => void;
 }) {
 	const current = bundles.find((b) => b.name === selected);
 	if (!current) return null;
@@ -264,6 +270,26 @@ function BundleActions({
 			>
 				{injected ? <Zap size={10} /> : <ZapOff size={10} />}
 				{injected ? "Injected" : "Inject"}
+			</button>
+			{/* Offered for an inherited Bundle too: what is exported is always
+			    this Workspace's own variables, so an inherited Bundle with own
+			    overrides has something to write, and one with none opens the
+			    dialog saying so. */}
+			<button
+				type="button"
+				onClick={() => onExport(selected)}
+				title={`Write ${selected}'s variables to a .env file`}
+				style={{
+					padding: "3px 8px",
+					borderRadius: 999,
+					border: "1px solid var(--border)",
+					backgroundColor: "transparent",
+					color: "var(--fg-secondary)",
+					fontSize: 10.5,
+					cursor: "pointer",
+				}}
+			>
+				Export…
 			</button>
 			{canDelete && (
 				<button

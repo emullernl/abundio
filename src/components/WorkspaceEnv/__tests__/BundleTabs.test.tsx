@@ -28,6 +28,7 @@ describe("BundleTabs injection toggle", () => {
 		onSetInjected: vi.fn(),
 		onClearInjected: vi.fn(),
 		onDelete: vi.fn(),
+		onExport: vi.fn(),
 	};
 
 	beforeEach(() => {

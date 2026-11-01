@@ -6,6 +6,12 @@
 // structurally prevents the settings dialog from accumulating every secret in
 // the JS heap as the user clicks around. Everything else here is names, sizes
 // and flags.
+//
+// The one partial exception is `EnvVarMeta.prefix` — four characters of each
+// value, carried by `env_list` for the collapsed row (ADR-0048). It is a
+// deliberate, bounded break: the full value is still only ever in `revealed`,
+// and **Export** never enters this store at all, because Rust resolves and
+// writes the file in one step.
 
 import { create } from "zustand";
 import type { ParsedEnvEntry } from "../lib/dotenvParse";
@@ -100,6 +106,15 @@ interface WorkspaceEnvState {
 		bundle: string,
 		entries: ParsedEnvEntry[],
 	) => Promise<boolean>;
+	/** Write a Bundle to `path` as a `.env` file. Resolved and written in Rust,
+	 *  so no plaintext enters this store. Resolves to null on success, or the
+	 *  refusal reason — which the dialog shows inline. */
+	exportBundle: (
+		workspaceId: string,
+		bundle: string,
+		workspaceName: string,
+		path: string,
+	) => Promise<string | null>;
 	remove: (
 		workspaceId: string,
 		inheritFrom: string | null,
@@ -277,6 +292,22 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 		} catch (e) {
 			set({ error: message(e) });
 			return false;
+		}
+	},
+
+	exportBundle: async (workspaceId, bundle, workspaceName, path) => {
+		try {
+			await env.exportToPath(workspaceId, bundle, workspaceName, path);
+			set({ error: null });
+			return null;
+		} catch (e) {
+			// Refused exports (an unreadable row, a locked keychain) arrive here
+			// with the names of what blocked them. Nothing was written. The
+			// reason is returned rather than only stored: the list that shows
+			// `error` is behind the export dialog.
+			const reason = message(e);
+			set({ error: reason });
+			return reason;
 		}
 	},
 

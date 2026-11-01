@@ -420,7 +420,10 @@ fn handle_env_request(app: &AppHandle, path: &str, mut request: tiny_http::Reque
 /// escaping rather than shell escaping. Must round-trip through
 /// `parseDotenv` in `src/lib/dotenvParse.ts` — a certificate's newlines have to
 /// survive both directions.
-fn quote_dotenv_value(value: &str) -> String {
+///
+/// Public because the in-app **Export** writes the same format: one quoting
+/// rule for both doors, so an exported file and `abundio-env print` agree.
+pub(crate) fn quote_dotenv_value(value: &str) -> String {
     let escaped = value
         .replace('\\', "\\\\")
         .replace('"', "\\\"")

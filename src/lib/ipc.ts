@@ -1041,6 +1041,10 @@ export interface EnvVarMeta {
 	/** True when the value cannot be decrypted with the current master key
 	 *  (e.g. a database restored onto a machine without it). */
 	undecryptable: boolean;
+	/** The first four characters of the value, for the collapsed row — null
+	 *  when they cannot be shown safely (no key, too short, or not starting
+	 *  with four printable non-space characters). See ADR-0048. */
+	prefix: string | null;
 	updatedAt: number;
 }
 
@@ -1170,6 +1174,23 @@ export const env = {
 
 	reorder: (workspaceId: string, bundle: string, names: string[]) =>
 		invoke<void>("env_vars_reorder", { workspaceId, bundle, names }),
+
+	/** Write one Bundle to `path` as `.env` text. Rust resolves AND writes, so
+	 *  the plaintext never crosses IPC — the save dialog only supplies the
+	 *  path. Own variables only, and all-or-nothing: an unreadable row fails
+	 *  the whole export rather than producing a file missing a secret. */
+	exportToPath: (
+		workspaceId: string,
+		bundle: string,
+		workspaceName: string,
+		path: string,
+	) =>
+		invoke<string>("env_export_to_path", {
+			workspaceId,
+			bundle,
+			workspaceName,
+			path,
+		}),
 
 	/** Drop the cached master key and re-read the credential store. Returns
 	 *  true when the key is available again. Process-global: affects every
