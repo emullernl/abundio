@@ -17,6 +17,11 @@ vi.mock("../../../lib/clipboard", () => ({
 	writeClipboardText: vi.fn().mockResolvedValue(undefined),
 }));
 
+const openMarkdownWindow = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../../lib/openMarkdownWindow", () => ({
+	openMarkdownWindow: (...a: unknown[]) => openMarkdownWindow(...a),
+}));
+
 const FILE: GitChangedFile = {
 	path: "src/lib/ipc.ts",
 	section: "unstaged",
@@ -121,5 +126,71 @@ describe("GitChangesTab — Row menu lifetime", () => {
 		});
 
 		expect(menuLabels()).toHaveLength(0);
+	});
+});
+
+describe("GitChangesTab — Open in Markdown Window", () => {
+	let container: HTMLDivElement;
+	let root: ReturnType<typeof createRoot>;
+
+	function render(file: GitChangedFile) {
+		useGitChangesStore.setState({
+			changedFiles: [file],
+			baseBranch: "main",
+			currentBranch: "feature",
+			loading: false,
+			error: null,
+			collapsedSections: {},
+			operationInProgress: null,
+		});
+		useWorkspaceGitStore.setState({
+			// biome-ignore lint/suspicious/noExplicitAny: partial store fixture
+			byWorkspaceId: { a: { isGitRepo: true } } as any,
+		});
+		useWorkspaceStore.setState({
+			activeWorkspaceId: "a",
+			workspaces: [workspace("a", "/repos/a")],
+			activeTabByWorkspace: {},
+		});
+		act(() => root.render(<GitChangesTab />));
+		const row = container.querySelector(
+			'[aria-haspopup="menu"]',
+		) as HTMLElement;
+		act(() => {
+			row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+	}
+
+	const item = () =>
+		[...document.querySelectorAll<HTMLButtonElement>("body button")].find(
+			(b) => b.textContent === "Open in Markdown Window",
+		);
+
+	beforeEach(() => {
+		openMarkdownWindow.mockClear();
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+	});
+
+	afterEach(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	it("opens a markdown row's file, resolved against the Workspace root", () => {
+		render({ ...FILE, path: "docs/notes.md" });
+		act(() => {
+			item()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+		expect(openMarkdownWindow).toHaveBeenCalledWith(
+			"a",
+			"/repos/a/docs/notes.md",
+		);
+	});
+
+	it("is not offered on a non-markdown row", () => {
+		render(FILE);
+		expect(item()).toBeUndefined();
 	});
 });

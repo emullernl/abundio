@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
 import { fs as fsApi, type GitOperation, git } from "../../lib/ipc";
+import { openMarkdownWindow } from "../../lib/openMarkdownWindow";
 import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -128,6 +129,15 @@ export function GitChangesTab() {
 			"open-file": () => {
 				close();
 				handleOpenFile(file);
+			},
+			"open-markdown-window": () => {
+				close();
+				if (activeWorkspaceId) {
+					void openMarkdownWindow(
+						activeWorkspaceId,
+						resolveWorkspacePath(cwd, file.path),
+					);
+				}
 			},
 			reveal: () => {
 				close();
