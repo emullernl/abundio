@@ -504,3 +504,22 @@ If first-visit latency ever becomes the primary complaint, the natural next step
 ## Notes on the constraint that drove this design
 
 The CSS technique works *because* opened workspaces already render eagerly into the DOM (one of them at a time was just toggled visible). If a future change ever switches Abundio to lazily-mount opened workspaces, this whole plan becomes moot — and the trade-off in ADR-0002 reverses (the cheap thing then is to keep `display: none` because the layout cost is paid on first mount, not on every switch). Flag for any future refactor that touches the workspaces map.
+
+## Pass 11 — switch timer, and WebGL rebuilt after paint (2026-11-01)
+
+ADR-0041 later narrowed WebGL to the visible Tab plus the one just left, which brought back a per-switch cost: the store subscriber in `terminalManager.ts` built contexts for the newly visible panes **inside** the store update, so nothing could paint until they were ready.
+
+**Timer.** `src/lib/switchTimer.ts` brings back the Pass 3 bookends as a permanent tool: start/set in `setActiveWorkspace` / `setActiveTab`, commit in an `App.tsx` layout effect, then frame watching until the main thread settles. On in dev and the demo; elsewhere set `localStorage["abundio-switch-timer"] = "1"` and reload. Results go to the console, a small readout at the bottom right, and `window.__abundioSwitchTimings`.
+
+**Measured** (production demo build, desktop Chrome, IPC mocked, 12 workspace and 8 tab switches by clicking). Nearly all the switch time was the `set` phase, and nearly all of `set` was `reconcileWebgl` (26–94 ms per switch, probed directly).
+
+| | before (median / worst) | after (median / worst) |
+|---|---|---|
+| Workspace switch, click → first paint | 87 / 239 ms | 35 / 47 ms |
+| Tab switch, click → first paint | 83 / 201 ms | 24 / 50 ms |
+
+**Fixes.**
+- `terminalManager.ts`: the reconcile is scheduled two frames out and loads one context per step (`scheduleWebglReconcile`), coalescing bursts; the Fleet Console's own double-rAF path now uses the same scheduler. A refused context stops the stepping, so it never retries every frame.
+- `useGitDataSync.ts`: the repo slug is cached per folder (`repoSlugByCwd`), so a switch no longer pays an IPC round trip for it. The demo mocks IPC, so this one does not show in the numbers above.
+
+**Not the cause:** the git, commit and PR panels. They render from cache and never hold the switch back, so a skeleton loader would not help.
