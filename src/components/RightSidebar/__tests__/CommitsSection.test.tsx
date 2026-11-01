@@ -32,6 +32,11 @@ vi.mock("../../../lib/clipboard", () => ({
 	writeClipboardText: vi.fn().mockResolvedValue(undefined),
 }));
 
+const { openMarkdownWindow } = vi.hoisted(() => ({
+	openMarkdownWindow: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../../lib/openMarkdownWindow", () => ({ openMarkdownWindow }));
+
 function workspace(id: string, rootFolder: string): WorkspaceWithTabs {
 	return {
 		id,
@@ -365,8 +370,9 @@ describe("CommitsSection", () => {
 		render({ commitHistory: list(commit(oid)) });
 		const row = container.querySelector("[aria-expanded]") as HTMLElement;
 		await act(async () => row.click());
+		const name = (file.path ?? "src/x.ts").split("/").pop() ?? "";
 		const fileRow = [...container.querySelectorAll("button")].find((b) =>
-			b.textContent?.includes("x.ts"),
+			b.textContent?.includes(name),
 		) as HTMLElement;
 		act(() => {
 			fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
@@ -425,6 +431,28 @@ describe("CommitsSection", () => {
 		await openFileMenu("f4", { status: "D" });
 		expect(menuButton("Open File")?.disabled).toBe(true);
 		expect(menuButton("Open Diff")?.disabled).toBe(false);
+	});
+
+	// Today's file, not the commit's version — the same meaning as Open File
+	// on this row.
+	it("opens a markdown file's Markdown window, as it is on disk now", async () => {
+		openMarkdownWindow.mockClear();
+		await openFileMenu("f5", { path: "docs/guide.md" });
+		act(() => menuButton("Open in Markdown Window")?.click());
+		expect(openMarkdownWindow).toHaveBeenCalledWith(
+			"a",
+			"/repos/a/docs/guide.md",
+		);
+	});
+
+	it("disables Open in Markdown Window for a markdown file the commit deleted", async () => {
+		await openFileMenu("f6", { path: "docs/guide.md", status: "D" });
+		expect(menuButton("Open in Markdown Window")?.disabled).toBe(true);
+	});
+
+	it("does not offer Open in Markdown Window on a non-markdown file", async () => {
+		await openFileMenu("f7");
+		expect(menuButton("Open in Markdown Window")).toBeUndefined();
 	});
 
 	it("disables Open on GitHub for an unpushed commit", () => {
