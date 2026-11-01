@@ -4,3 +4,14 @@ minimumReleaseAgeExclude:
   - dompurify@3.4.0
 patchedDependencies:
   "@xterm/addon-webgl@0.19.0": patches/@xterm__addon-webgl@0.19.0.patch
+overrides:
+  # Clears the lockfile alert only. monaco-editor is types-only here: the editor
+  # that runs comes from the CDN default of @monaco-editor/loader, with its own
+  # bundled DOMPurify, which this override cannot reach. monaco-editor pins
+  # dompurify exactly (even 0.57.0 pins a vulnerable 3.4.15). Capped at major 3
+  # so mermaid's sanitizer never silently gets a 4.x.
+  dompurify: "^3.4.17"
+  # katex 0.18.11 is deprecated ("accidentally published with breaking
+  # changes"), and mermaid's ^0.18.0 range excludes 0.19. 0.18.10 is fixed.
+  # Drop this once mermaid allows katex 0.19.
+  katex: "0.18.10"
