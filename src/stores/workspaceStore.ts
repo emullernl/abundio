@@ -22,7 +22,6 @@ import {
 } from "../lib/paneTree";
 import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
 import { perfMark } from "../lib/perfMarks";
-import { beginSwitch, markSwitchSet } from "../lib/switchTimer";
 import { teardownTerminal } from "../lib/terminalManager";
 import type {
 	CodingAgent,
@@ -782,10 +781,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	setActiveWorkspace: (id) => {
 		perfMark("abundio:switch-workspace");
-		if (id) {
-			const name = get().workspaces.find((w) => w.id === id)?.name ?? id;
-			beginSwitch("workspace", name);
-		}
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
@@ -809,7 +804,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				focusedPaneByTab,
 			};
 		});
-		markSwitchSet();
 		// Fetch real branch name and change stats for the newly active workspace.
 		// Deferred so the workspace UI (terminals, layout) renders first.
 		if (id) {
@@ -1039,19 +1033,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	setActiveTab: (workspaceId, tabId) => {
 		perfMark("abundio:switch-tab");
-		// Time only a real change of the visible tab; re-activating the current
-		// tab commits nothing new, so a timer started here would never finish.
-		const timed =
-			workspaceId === get().activeWorkspaceId &&
-			get().activeTabByWorkspace[workspaceId] !== tabId;
-		if (timed) {
-			beginSwitch(
-				"tab",
-				get()
-					.workspaces.find((w) => w.id === workspaceId)
-					?.tabs.find((t) => t.id === tabId)?.name ?? tabId,
-			);
-		}
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
 			// Save current focused pane for the old tab
@@ -1075,7 +1056,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				focusedPaneByTab,
 			};
 		});
-		if (timed) markSwitchSet();
 	},
 
 	renameTab: async (tabId, name) => {
