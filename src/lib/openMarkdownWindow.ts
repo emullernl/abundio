@@ -7,8 +7,8 @@ import type { PaneNode } from "./types";
 
 /**
  * Every way into a **Markdown window** goes through here (ADR-0046): the
- * explorer menu and Cmd/Ctrl+click, the File and Preview pane menus, and the
- * `open-markdown-window` command.
+ * explorer menu and Cmd/Ctrl+click, the File and Preview pane menus, the Git
+ * changes and Commits **Row menus**, and the `open-markdown-window` command.
  */
 export function openMarkdownWindow(
 	workspaceId: string,

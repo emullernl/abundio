@@ -14,7 +14,9 @@
  * Relative Path` never moves up two slots because the file happens to be
  * deleted. The file's *kind* is the one thing that changes the shape: `Open in
  * Markdown Window` is present only on a markdown file's row, as in the
- * Explorer, because on every other row it would be a dead item.
+ * Explorer, because on every other row it would be a dead item. A submodule is
+ * a kind too — on disk it is a folder — so it never gets the item, even when
+ * its name ends in `.md`.
  */
 
 import { COPY_PATH_LABELS } from "./copyPathEntries";
@@ -69,7 +71,8 @@ export function gitRowMenuEntries(
 
 	// Opens the file as it is on disk now — on a Commits row too, never as that
 	// commit left it — so it is disabled exactly where Open File is. Enabled on
-	// a conflicted row, markers and all, as Open File is.
+	// a conflicted row, markers and all, as Open File is. A submodule is left
+	// out rather than disabled: being a folder is its kind, not its state.
 	const markdownEntries: GitRowMenuEntry[] =
 		isMarkdownFile(file.path) && !isSubmodule
 			? [

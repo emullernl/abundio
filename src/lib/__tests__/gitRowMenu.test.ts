@@ -185,6 +185,21 @@ describe("gitRowMenuEntries", () => {
 			expect(disabledIds(md("U", "conflicted"))).toEqual(["open-diff"]);
 		});
 
+		// A submodule is a folder on disk — a kind, not a state — so the item is
+		// absent, not disabled, even when the name looks like markdown.
+		it("is not offered on a submodule, whatever its name", () => {
+			expect(
+				ids(
+					gitRowMenuEntries({
+						path: "vendor/docs.md",
+						status: "M",
+						section: "commit",
+						isSubmodule: true,
+					}),
+				),
+			).not.toContain("open-markdown-window");
+		});
+
 		it("is enabled on a commit file that still exists", () => {
 			expect(disabledIds(md("M", "commit"))).toEqual([]);
 		});
