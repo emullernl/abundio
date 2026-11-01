@@ -1,5 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -82,6 +90,7 @@ import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { firePaneSlot } from "./lib/promptActionRegistry";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
+import { markSwitchCommit } from "./lib/switchTimer";
 import {
 	copyTerminalSelection,
 	pasteIntoTerminal,
@@ -331,6 +340,15 @@ export function App() {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const activeTabByWorkspace = useWorkspaceStore((s) => s.activeTabByWorkspace);
+	const activeTabIdForTimer = activeWorkspaceId
+		? activeTabByWorkspace[activeWorkspaceId]
+		: undefined;
+	// Switch timer: a layout effect runs after React commits and before the
+	// browser paints, which is the boundary the timer needs.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the deps are the trigger — re-run on every switch
+	useLayoutEffect(() => {
+		markSwitchCommit();
+	}, [activeWorkspaceId, activeTabIdForTimer]);
 	const setActiveTab = useWorkspaceStore((s) => s.setActiveTab);
 	const createTab = useWorkspaceStore((s) => s.createTab);
 	const renameTab = useWorkspaceStore((s) => s.renameTab);
