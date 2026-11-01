@@ -1,17 +1,21 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { git } from "../../lib/ipc";
 import type { WorkspaceWithTabs } from "../../lib/types";
+import { usePrStore } from "../../stores/prStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { useGitDataSync } from "../useGitDataSync";
+import { repoSlugByCwd, useGitDataSync } from "../useGitDataSync";
 
 vi.mock("../../lib/ipc", () => ({
 	git: {
 		schedulerStart: vi.fn().mockResolvedValue(undefined),
 		schedulerStop: vi.fn().mockResolvedValue(undefined),
 		onGitState: vi.fn().mockResolvedValue(() => {}),
+		repoSlug: vi.fn().mockResolvedValue("me/a"),
+		changedFiles: vi.fn().mockResolvedValue([]),
 	},
 	pr: {
 		snapshot: vi.fn().mockResolvedValue(null),
@@ -91,5 +95,47 @@ describe("useGitDataSync — live dirtiness lifecycle", () => {
 			a: { dirty: true, breakdown: null },
 			b: { dirty: true, breakdown: null },
 		});
+	});
+});
+
+describe("useGitDataSync — repo slug lookup", () => {
+	beforeEach(() => {
+		repoSlugByCwd.clear();
+		vi.mocked(git.repoSlug).mockClear();
+		useWorkspaceStore.setState({
+			workspaces: [ws("a"), ws("b")],
+			activeWorkspaceId: "a",
+		});
+		usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["a", "b"]) });
+	});
+
+	it("asks the backend once per folder, not on every switch", async () => {
+		const root = createRoot(document.createElement("div"));
+		await act(async () => root.render(<Harness />));
+		expect(usePrStore.getState().activeRepoSlug).toBe("me/a");
+
+		// a → b → a: only b is new.
+		await act(async () =>
+			useWorkspaceStore.setState({ activeWorkspaceId: "b" }),
+		);
+		await act(async () =>
+			useWorkspaceStore.setState({ activeWorkspaceId: "a" }),
+		);
+
+		expect(vi.mocked(git.repoSlug).mock.calls.map((c) => c[0])).toEqual([
+			"/a",
+			"/b",
+		]);
+		// The cached answer is applied straight away on the way back.
+		expect(usePrStore.getState().activeRepoSlug).toBe("me/a");
+		await act(async () => root.unmount());
+	});
+
+	it("does not cache a failed lookup", async () => {
+		vi.mocked(git.repoSlug).mockRejectedValueOnce(new Error("busy"));
+		const root = createRoot(document.createElement("div"));
+		await act(async () => root.render(<Harness />));
+		expect(repoSlugByCwd.has("/a")).toBe(false);
+		await act(async () => root.unmount());
 	});
 });

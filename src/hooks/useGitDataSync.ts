@@ -13,6 +13,10 @@ import {
 } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
+/** GitHub repo slug per Workspace folder, resolved once per session. A
+ *  folder with no GitHub remote is cached as null. Exported for tests. */
+export const repoSlugByCwd = new Map<string, string | null>();
+
 interface SchedulerEntry {
 	workspaceId: string;
 	unlisten: (() => void) | null;
@@ -201,15 +205,24 @@ export function useGitDataSync() {
 		let cancelled = false;
 
 		// Resolve the workspace's GitHub repo (owner/repo) for the repo-scoped
-		// PR filter. Null when the workspace has no github remote.
-		git
-			.repoSlug(cwd)
-			.then((slug) => {
-				if (!cancelled) usePrStore.getState().setActiveRepoSlug(slug);
-			})
-			.catch(() => {
-				if (!cancelled) usePrStore.getState().setActiveRepoSlug(null);
-			});
+		// PR filter. Null when the workspace has no github remote. Once per
+		// folder per session: a folder's remote almost never changes, and every
+		// IPC call costs main-thread time in WKWebView, which this effect would
+		// otherwise pay on every switch.
+		if (repoSlugByCwd.has(cwd)) {
+			usePrStore.getState().setActiveRepoSlug(repoSlugByCwd.get(cwd) ?? null);
+		} else {
+			git
+				.repoSlug(cwd)
+				.then((slug) => {
+					repoSlugByCwd.set(cwd, slug);
+					if (!cancelled) usePrStore.getState().setActiveRepoSlug(slug);
+				})
+				.catch(() => {
+					// Not cached: a transient failure gets another try next time.
+					if (!cancelled) usePrStore.getState().setActiveRepoSlug(null);
+				});
+		}
 
 		const rafId = requestAnimationFrame(() => {
 			if (cancelled) return;
