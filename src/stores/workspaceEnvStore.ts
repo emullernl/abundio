@@ -6,6 +6,10 @@
 // structurally prevents the settings dialog from accumulating every secret in
 // the JS heap as the user clicks around. Everything else here is names, sizes
 // and flags.
+//
+// The one partial exception is `EnvVarMeta.prefix` — four characters of each
+// value, carried by `env_list` for the collapsed row (ADR-0048). It is a
+// deliberate, bounded break: the full value is still only ever in `revealed`.
 
 import { create } from "zustand";
 import type { ParsedEnvEntry } from "../lib/dotenvParse";

@@ -46,6 +46,7 @@ const variable = (name: string, overrides = {}) => ({
 	position: 0,
 	inherited: false,
 	undecryptable: false,
+	prefix: null,
 	updatedAt: 0,
 	...overrides,
 });

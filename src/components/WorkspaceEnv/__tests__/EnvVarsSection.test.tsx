@@ -46,8 +46,15 @@ const variable = (name: string, position: number, inherited = false) => ({
 	position,
 	inherited,
 	undecryptable: false,
+	prefix: "abcd",
 	updatedAt: 0,
 });
+
+/** The collapsed label of one row, by name. */
+const rowLabel = (container: HTMLElement, name: string) =>
+	Array.from(container.querySelectorAll("button[aria-expanded]")).find(
+		(el) => el.querySelector("span")?.textContent === name,
+	)?.textContent ?? "";
 
 describe("EnvVarsSection", () => {
 	let container: HTMLDivElement;
@@ -153,5 +160,42 @@ describe("EnvVarsSection", () => {
 		renderSection();
 
 		expect(names()).toEqual(["path", "PATH"]);
+	});
+
+	describe("prefix peek", () => {
+		it("shows the four-character prefix in front of the mask", () => {
+			useWorkspaceEnvStore.setState({
+				bundles: [bundle("default", true)],
+				selectedBundle: "default",
+				vars: [variable("TOKEN", 0)],
+			});
+			renderSection();
+
+			expect(rowLabel(container, "TOKEN")).toContain("abcd••••");
+		});
+
+		it("shows plain dots when the backend has no safe prefix", () => {
+			useWorkspaceEnvStore.setState({
+				bundles: [bundle("default", true)],
+				selectedBundle: "default",
+				vars: [{ ...variable("SHORT", 0), prefix: null }],
+			});
+			renderSection();
+
+			expect(rowLabel(container, "SHORT")).not.toContain("abcd");
+			expect(rowLabel(container, "SHORT")).toContain("••••");
+		});
+
+		// An unreadable row must not claim a prefix it could not read.
+		it("says unreadable rather than showing a prefix", () => {
+			useWorkspaceEnvStore.setState({
+				bundles: [bundle("default", true)],
+				selectedBundle: "default",
+				vars: [{ ...variable("LOST", 0), undecryptable: true, prefix: null }],
+			});
+			renderSection();
+
+			expect(rowLabel(container, "LOST")).toContain("unreadable");
+		});
 	});
 });

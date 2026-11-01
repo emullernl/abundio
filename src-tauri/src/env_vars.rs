@@ -14,8 +14,10 @@
 //!
 //! Only [`EnvVarStore::reveal`] and the resolve methods produce plaintext.
 //! [`EnvVarStore::list`] returns names and byte lengths so the settings UI can
-//! render without ever holding a secret. Keep it that way — the frontend heap
-//! is a much larger attack surface than this process.
+//! render without ever holding a secret — plus [`prefix_of`], a deliberately
+//! short leading fragment that the collapsed row shows instead of dots
+//! (ADR-0048). Keep the full value out of the frontend: the JS heap is a much
+//! larger attack surface than this process.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -64,6 +66,11 @@ pub struct EnvVarMeta {
     /// e.g. the database was restored onto a machine without the key. The row
     /// renders locked: visible and deletable, but not expandable.
     pub undecryptable: bool,
+    /// The first [`PREFIX_CHARS`] characters of the value, for the collapsed
+    /// row — `None` when there is no master key, the row will not open, the
+    /// value is too short to have a safe prefix, or it does not start with four
+    /// printable non-space characters. See [`prefix_of`] and ADR-0048.
+    pub prefix: Option<String>,
     pub updated_at: i64,
 }
 
@@ -845,10 +852,14 @@ fn vars_of(
         .into_iter()
         .map(|(id, name, nonce, ciphertext, position, updated_at)| {
             // With a key available, probe each row so the UI can mark
-            // unreadable values. The plaintext is dropped immediately.
-            let undecryptable = match key {
-                Some(k) => env_crypto::open(k, &name, &nonce, &ciphertext).is_err(),
-                None => true,
+            // unreadable values, and keep the short prefix the collapsed row
+            // shows. The plaintext itself is dropped immediately.
+            let (undecryptable, prefix) = match key {
+                Some(k) => match env_crypto::open(k, &name, &nonce, &ciphertext) {
+                    Ok(plain) => (false, prefix_of(&plain)),
+                    Err(_) => (true, None),
+                },
+                None => (true, None),
             };
             EnvVarMeta {
                 id,
@@ -858,6 +869,7 @@ fn vars_of(
                 position,
                 inherited: false,
                 undecryptable,
+                prefix,
                 updated_at,
             }
         })
@@ -880,6 +892,41 @@ fn lookup_var(
             |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)),
         )
         .optional()?)
+}
+
+/// How many leading characters of a value the collapsed row shows.
+///
+/// Four is enough to tell `sk-live-…` from `sk-test-…` — the case this exists
+/// for, catching a variable pasted into the wrong Bundle — and short enough
+/// that the remainder is still the secret. See ADR-0048.
+pub const PREFIX_CHARS: usize = 4;
+
+/// The leading fragment of a value that the collapsed row may show.
+///
+/// Deliberately conservative, because this puts part of every secret on screen
+/// without an explicit reveal:
+///
+///  - `None` for a value of [`PREFIX_CHARS`] characters or fewer. A short
+///    secret has no safe prefix — showing four of five characters is showing it.
+///  - `None` unless the first four characters are all printable and none is
+///    whitespace. A value starting with a newline or a space would render as an
+///    empty prefix, which reads as a broken row.
+///  - Counted in Unicode scalar values, not bytes: slicing UTF-8 by bytes can
+///    land mid-character and produce a replacement glyph.
+pub fn prefix_of(plaintext: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(plaintext).ok()?;
+    let mut chars = text.chars();
+    let mut head = String::with_capacity(PREFIX_CHARS * 4);
+    for _ in 0..PREFIX_CHARS {
+        let c = chars.next()?;
+        if c.is_whitespace() || c.is_control() {
+            return None;
+        }
+        head.push(c);
+    }
+    // More than PREFIX_CHARS characters, or there is nothing left to hide.
+    chars.next()?;
+    Some(head)
 }
 
 /// Resolve one Bundle to plaintext pairs, inherited first then own.
@@ -995,6 +1042,7 @@ fn upsert_one(
         position,
         inherited: false,
         undecryptable: false,
+        prefix: prefix_of(value.as_bytes()),
         updated_at,
     })
 }
@@ -1928,5 +1976,55 @@ mod tests {
     fn resolve_for_spawn_is_empty_for_a_workspace_with_nothing() {
         let (store, key) = test_store();
         assert!(store.resolve_for_spawn(&key, WS, None).unwrap().is_empty());
+    }
+
+    // ── Prefix peek ──
+
+    #[test]
+    fn prefix_of_takes_four_characters_only_from_a_longer_value() {
+        assert_eq!(prefix_of(b"sk-live-abcdef").as_deref(), Some("sk-l"));
+        // Four characters is the whole value: no safe prefix.
+        assert_eq!(prefix_of(b"abcd"), None);
+        assert_eq!(prefix_of(b"abc"), None);
+        assert_eq!(prefix_of(b""), None);
+        // Five is one character of concealment, which is not concealment.
+        assert_eq!(prefix_of(b"abcde").as_deref(), Some("abcd"));
+    }
+
+    #[test]
+    fn prefix_of_counts_characters_not_bytes() {
+        // Four two-byte characters, then more. A byte slice would split one.
+        assert_eq!(prefix_of("ünïcödé".as_bytes()).as_deref(), Some("ünïc"));
+    }
+
+    #[test]
+    fn prefix_of_refuses_leading_whitespace_and_control_characters() {
+        assert_eq!(prefix_of(b" secret").as_deref(), None);
+        assert_eq!(prefix_of(b"\nabcdef").as_deref(), None);
+        assert_eq!(prefix_of(b"\tabcdef").as_deref(), None);
+        // Not valid UTF-8: nothing to show.
+        assert_eq!(prefix_of(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb]), None);
+    }
+
+    #[test]
+    fn list_carries_the_prefix_and_never_the_value() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "TOKEN", "sk-live-abcdef")
+            .unwrap();
+        let meta = &store.list(WS, None, None, Some(&key)).unwrap().vars[0];
+        assert_eq!(meta.prefix.as_deref(), Some("sk-l"));
+        assert_eq!(meta.byte_len, "sk-live-abcdef".len() as i64);
+    }
+
+    #[test]
+    fn without_a_key_there_is_no_prefix() {
+        let (store, key) = test_store();
+        store
+            .upsert(&key, WS, None, DEFAULT_BUNDLE, "TOKEN", "sk-live-abcdef")
+            .unwrap();
+        let meta = &store.list(WS, None, None, None).unwrap().vars[0];
+        assert_eq!(meta.prefix, None);
+        assert!(meta.undecryptable);
     }
 }

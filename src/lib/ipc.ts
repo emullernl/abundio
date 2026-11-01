@@ -1041,6 +1041,10 @@ export interface EnvVarMeta {
 	/** True when the value cannot be decrypted with the current master key
 	 *  (e.g. a database restored onto a machine without it). */
 	undecryptable: boolean;
+	/** The first four characters of the value, for the collapsed row — null
+	 *  when they cannot be shown safely (no key, too short, or not starting
+	 *  with four printable non-space characters). See ADR-0048. */
+	prefix: string | null;
 	updatedAt: number;
 }
 
