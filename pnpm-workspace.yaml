@@ -4,3 +4,7 @@ minimumReleaseAgeExclude:
   - dompurify@3.4.0
 patchedDependencies:
   "@xterm/addon-webgl@0.19.0": patches/@xterm__addon-webgl@0.19.0.patch
+overrides:
+  # monaco-editor pins dompurify exactly (0.57.0 pins 3.4.15, still vulnerable).
+  # Force a fixed version until Monaco ships one. Drop this once it does.
+  dompurify: ">=3.4.17"
