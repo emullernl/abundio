@@ -594,10 +594,27 @@ describe("statusReducer — focus reassertion", () => {
 });
 
 describe("statusReducer — click", () => {
-	it("dismisses a Waiting agent (clearWaiting on pane click)", () => {
+	it("leaves a Waiting agent Waiting — a click is not an answer", () => {
 		expect(
 			statusReducer(mk({ state: "waiting" }, "agent"), { kind: "click" }).state,
-		).toBe("idle");
+		).toBe("waiting");
+	});
+
+	it("click then Enter on a Waiting agent lands on Working", () => {
+		// Regression: the click used to dismiss Waiting to Idle, so the answer
+		// keystroke that followed found Idle and stayed there. A hook-driven pane
+		// has no output path back to Working, so it read Idle for the whole Turn.
+		const clicked = statusReducer(
+			mk({ state: "waiting", hookDriven: true }, "agent"),
+			{ kind: "click" },
+		);
+		const answered = statusReducer(clicked, {
+			kind: "keystroke",
+			key: "answer",
+			escRequired: 1,
+			now: 5000,
+		});
+		expect(answered.state).toBe("working");
 	});
 
 	it("clears Error and dismisses Ready", () => {
@@ -859,7 +876,7 @@ describe("statusReducer — mid-turn failure acknowledgement (ADR-0026)", () => 
 		expect(acked.lastActivityAt).toBe(20);
 	});
 
-	it("survives the click compound (clearWaiting → clearError → markIdle)", () => {
+	it("survives the click compound (clearError → markIdle)", () => {
 		// This is the real code path: terminalManager's mousedown handler and the
 		// keystroke fallthrough both clear then markIdle. markIdle must not undo
 		// the restore.
@@ -882,23 +899,18 @@ describe("statusReducer — mid-turn failure acknowledgement (ADR-0026)", () => 
 	});
 
 	it("a click restores Waiting rather than dismissing it", () => {
-		// `click` is markIdle(clearError(clearWaiting(s))): clearWaiting runs
-		// first and no-ops on Error, so the restore survives. That is the honest
-		// outcome — the Agent really is still blocked on the user, and a click is
-		// not an answer. (A click on a Waiting pane with no failure still
-		// dismisses to Idle; only the restored case differs.)
+		// `click` is markIdle(clearError(s)) and markIdle holds a Waiting agent,
+		// so the restore survives. That is the honest outcome — the Agent really
+		// is still blocked on the user, and a click is not an answer.
 		const s = run(mk({ state: "waiting" }, "agent"), midTurnFail(), {
 			kind: "click",
 		});
 		expect(s.state).toBe("waiting");
-		expect(
-			run(mk({ state: "waiting" }, "agent"), { kind: "click" }).state,
-		).toBe("idle");
 	});
 
 	it("records nothing from Idle, or from a shell", () => {
 		// Idle is an observed intent — an ESC-cancel, an authoritative idle hook, or
-		// a click-dismissed Waiting. A late failure must not put the spinner back.
+		// an ESC-dismissed Waiting. A late failure must not put the spinner back.
 		const s = statusReducer(mk({ state: "idle" }, "agent"), midTurnFail());
 		expect(s.preErrorState).toBeNull();
 		expect(statusReducer(s, { kind: "clearError" }).state).toBe("idle");

@@ -325,13 +325,12 @@ export function TerminalSlot({
 	}, [onFocus, paneId]);
 
 	// A deliberate left-click into the terminal screen is the user engaging with
-	// the pane: it dismisses a waiting agent's sky-blue dot (the same effect ESC
-	// has in terminalManager's onData keystroke path), acknowledges a red Error,
-	// and dismisses a purple Ready. All three are one `click` status event, whose
-	// internal ordering the reducer owns — notably clearWaiting runs before
-	// clearError so a **Mid-turn failure** restored to Waiting survives the click
-	// (ADR-0026). Every step no-ops unless the pane is in the matching state, so
-	// this is safe to call on any click. Two deliberate restrictions:
+	// the pane: it acknowledges a red Error and dismisses a purple Ready, as one
+	// `click` status event whose internal ordering the reducer owns. It does NOT
+	// dismiss a Waiting agent: a click is not an answer, and a Waiting pane
+	// clicked to Idle stayed Idle for the rest of the Turn once answered
+	// (ADR-0015 amendment). Every step no-ops unless the pane is in the matching
+	// state, so this is safe to call on any click. Two deliberate restrictions:
 	//   • We do NOT fold this into handleFocus: that also fires on programmatic
 	//     focus (tab switch via the isFocused effect), and switching to a tab
 	//     should keep showing its waiting dot, not silently clear it.

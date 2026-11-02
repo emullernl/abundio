@@ -177,7 +177,8 @@ export type StatusEvent =
 	| { kind: "tick"; now: number; rule?: "idle_backstop" | "subagent_drain" }
 	// Focus reassertion (workspace switch / projection) — acknowledge alerts.
 	| { kind: "focus" }
-	// A deliberate click/mousedown in the pane — acknowledge + dismiss Waiting.
+	// A deliberate click/mousedown in the pane — acknowledge Error/Ready. It
+	// never dismisses Waiting: a click is not an answer (ADR-0015 amendment).
 	| { kind: "click" }
 	// ── Atomic transitions (the old ptyActivityStore action methods, kept as
 	// events so the store layer can drive the reducer 1:1 during migration). The
@@ -275,10 +276,9 @@ function markIdle(s: StatusState): StatusState {
  *
  *  A **Mid-turn failure** left a `preErrorState`: the Agent never stopped
  *  working, so acknowledging it returns the pane to what it was doing — Working,
- *  or Waiting if it was blocked on the user. Note the `click` event runs
- *  `clearWaiting` BEFORE this, so it no-ops on the Error state and a restored
- *  Waiting survives the click. That's deliberate: the Agent really is still
- *  blocked, and a click is not an answer.
+ *  or Waiting if it was blocked on the user. A `click` runs this too, and the
+ *  restored Waiting survives it: `click` never dismisses Waiting, because the
+ *  Agent really is still blocked and a click is not an answer.
  *  `workingSince`/`lastActivityAt` are deliberately NOT refreshed —
  *  `touchLastOutput` keeps `lastActivityAt` current even while Error (the gate
  *  in terminalManager is `hookDriven`, not `state`), so if the Agent did fall
@@ -395,8 +395,8 @@ function applyHook(
 		// on the next tick after acknowledgement (ADR-0027).
 		//
 		// **Idle** deliberately records nothing. Unlike Ready it is an observed
-		// intent — an ESC-cancel (`clearActive`), an authoritative idle hook, or a
-		// click-dismissed Waiting — and a late failure from the operation that was
+		// intent — an ESC-cancel (`clearActive`), an authoritative idle hook, or an
+		// ESC-dismissed Waiting — and a late failure from the operation that was
 		// in flight must not put the spinner back, or the cancel would feel like it
 		// didn't take.
 		return {
@@ -731,7 +731,11 @@ export function statusReducer(
 		case "focus":
 			return markIdle(s);
 		case "click":
-			return markIdle(clearError(clearWaiting(s)));
+			// No clearWaiting: a click is not an answer. Dismissing Waiting here
+			// left a hook-driven pane Idle for the rest of the Turn once the user
+			// answered — Enter only lifts Waiting, and nothing else lifts Idle.
+			// markIdle already holds a Waiting agent.
+			return markIdle(clearError(s));
 		case "recordOutput":
 			return recordActivity(s, e.now);
 		case "recordError":

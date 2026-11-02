@@ -1576,15 +1576,18 @@ describe("the click action", () => {
 		);
 	});
 
-	it("still dismisses a plain Waiting pane to idle (PR #140)", () => {
+	it("leaves a plain Waiting pane Waiting — a click is not an answer", () => {
+		// Regression: clicking into a Claude permission prompt dismissed it to
+		// idle, and once answered the pane read idle for the rest of the Turn.
 		const s = usePtyActivityStore.getState();
 		s.initPty("pty-cpw", "agent");
-		s.setAgentPty("pty-cpw", "copilot");
+		s.setAgentPty("pty-cpw", "claude");
+		s.applyHookEvent("pty-cpw", "active");
 		s.applyHookEvent("pty-cpw", "waiting");
 
 		usePtyActivityStore.getState().click("pty-cpw");
 		expect(usePtyActivityStore.getState().activities["pty-cpw"].state).toBe(
-			"idle",
+			"waiting",
 		);
 	});
 
