@@ -18,8 +18,8 @@ let termFocusCalls = 0;
 let currentTermElement: HTMLElement | null = null;
 
 // Mock the heavy IO + child modules so the only thing rendered is TerminalSlot's
-// own container div. We keep the real ptyActivityStore so clearWaiting actually
-// runs and we can assert on the resulting state transition.
+// own container div. We keep the real ptyActivityStore so the `click` status
+// event actually runs and we can assert on the resulting state transition.
 vi.mock("../../../lib/terminalManager", () => ({
 	getTerminal: () =>
 		currentManagedPtyId
@@ -100,16 +100,24 @@ import { TerminalSlot } from "../TerminalSlot";
 function makeWaiting(ptyId: string) {
 	const { initPty, setAgentPty, applyHookEvent } =
 		usePtyActivityStore.getState();
-	initPty(ptyId);
+	initPty(ptyId, "agent");
 	setAgentPty(ptyId);
 	applyHookEvent(ptyId, "waiting");
+}
+
+function makeReady(ptyId: string) {
+	const { initPty, setAgentPty, applyHookEvent } =
+		usePtyActivityStore.getState();
+	initPty(ptyId, "agent");
+	setAgentPty(ptyId);
+	applyHookEvent(ptyId, "ready");
 }
 
 function stateOf(ptyId: string) {
 	return usePtyActivityStore.getState().activities[ptyId]?.state;
 }
 
-describe("TerminalSlot — click clears a waiting agent", () => {
+describe("TerminalSlot — click acknowledges the status icon", () => {
 	let container: HTMLDivElement;
 	let root: ReturnType<typeof createRoot>;
 
@@ -160,25 +168,43 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 		});
 	}
 
-	it("left-click inside the terminal screen drops a waiting agent to idle", () => {
-		makeWaiting("pty-1");
-		expect(stateOf("pty-1")).toBe("waiting");
+	it("left-click inside the terminal screen dismisses Ready to idle", () => {
+		makeReady("pty-1");
+		expect(stateOf("pty-1")).toBe("ready");
 		mouseDownOn(screenEl(), 0);
 		expect(stateOf("pty-1")).toBe("idle");
 	});
 
-	it("left-click on pane chrome (outside the screen) leaves the dot lit", () => {
+	it("left-click inside the screen leaves a waiting agent Waiting", () => {
+		// A click is not an answer. Dismissing Waiting here left the pane Idle
+		// for the rest of the Turn once the user answered (ADR-0015).
 		makeWaiting("pty-1");
-		// Click the outer container directly — stands in for the title bar / a
-		// pane drag-reorder that starts outside the xterm screen.
-		mouseDownOn(paneEl(), 0);
+		mouseDownOn(screenEl(), 0);
 		expect(stateOf("pty-1")).toBe("waiting");
 	});
 
-	it("right-click inside the screen leaves the waiting dot untouched", () => {
+	it("left-click on a Mid-turn failure raised while Waiting restores Waiting", () => {
+		// The click acknowledges the red icon, and the restored Waiting must
+		// survive it: the Agent is still blocked on the user (ADR-0026).
 		makeWaiting("pty-1");
-		mouseDownOn(screenEl(), 2);
+		usePtyActivityStore.getState().applyHookEvent("pty-1", "errorMidTurn");
+		expect(stateOf("pty-1")).toBe("error");
+		mouseDownOn(screenEl(), 0);
 		expect(stateOf("pty-1")).toBe("waiting");
+	});
+
+	it("left-click on pane chrome (outside the screen) leaves the dot lit", () => {
+		makeReady("pty-1");
+		// Click the outer container directly — stands in for the title bar / a
+		// pane drag-reorder that starts outside the xterm screen.
+		mouseDownOn(paneEl(), 0);
+		expect(stateOf("pty-1")).toBe("ready");
+	});
+
+	it("right-click inside the screen leaves the dot untouched", () => {
+		makeReady("pty-1");
+		mouseDownOn(screenEl(), 2);
+		expect(stateOf("pty-1")).toBe("ready");
 	});
 
 	it("programmatic focus does not clear the waiting dot", () => {
@@ -194,7 +220,7 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 		// mousedown listener — on a descendant, and ending in `cancel(ev)` when the
 		// TUI has mouse reporting on — cannot suppress the only click path we have.
 		// A bubble-phase binding would never see this event.
-		makeWaiting("pty-1");
+		makeReady("pty-1");
 		const screen = screenEl();
 		const swallow = (e: Event) => e.stopPropagation();
 		screen?.addEventListener("mousedown", swallow);
@@ -207,10 +233,10 @@ describe("TerminalSlot — click clears a waiting agent", () => {
 	});
 
 	it("is a no-op when the pane has no managed PTY yet", () => {
-		makeWaiting("pty-1");
+		makeReady("pty-1");
 		currentManagedPtyId = null;
 		mouseDownOn(screenEl(), 0);
-		expect(stateOf("pty-1")).toBe("waiting");
+		expect(stateOf("pty-1")).toBe("ready");
 	});
 });
 

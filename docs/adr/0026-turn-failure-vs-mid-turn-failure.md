@@ -55,8 +55,8 @@ through to the Idle path too.
   restored and then immediately wiped to Idle, mid-Turn. The fix deletes the terminalManager
   listener and has TerminalSlot dispatch the single `click` event, which also stops a
   right-click from acknowledging an Error before opening the context menu (the native listener
-  had no button guard). The click-dismisses-Waiting behaviour it inherits is PR #140's; see the
-  amendment in ADR-0015.
+  had no button guard). The click-dismisses-Waiting behaviour it inherited from PR #140 was later
+  removed; see the second amendment in ADR-0015. `click` is now `clearError` → `markIdle`.
 - A Mid-turn failure raises no notification. It would be the first of two pings for one Turn,
   and the alarming one is the one the Agent handles itself.
 - `agentTurnTracker` must not finalize the Turn on `errorMidTurn` — it counts the error and
@@ -76,9 +76,9 @@ through to the Idle path too.
   depends on ADR-0027's Rule A — without it, restoring Working when the backstop has already
   finalized the Turn opens a brand-new Turn attributed to the user's mouse.
 - **Idle records nothing**, deliberately. Unlike Ready it is an *observed* intent — an ESC-cancel,
-  an authoritative idle hook, or a Waiting pane the user dismissed with a click (ADR-0015) — and a
+  an authoritative idle hook, or a Waiting pane the user dismissed with ESC (ADR-0015) — and a
   late failure from the operation that was in flight must not put the spinner back. The accepted
-  gap: dismiss a Waiting pane by clicking it, then take a Mid-turn failure, and acknowledging it
+  gap: dismiss a Waiting pane with ESC, then take a Mid-turn failure, and acknowledging it
   rests at Idle while the Turn continues. That `idle` is indistinguishable from a cancel.
 - The reducer keeps the memory the *first* Mid-turn failure recorded. A second one in the same
   Turn must not re-derive `preErrorState` from `s.state`, which is already `"error"` by then.

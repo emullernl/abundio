@@ -2060,8 +2060,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	// NOTE: a click in the terminal is handled by TerminalSlot's onMouseDown, which
 	// dispatches the single `click` status event. This used to be a second, native
 	// mousedown listener on term.element firing clearError + markIdle — but it ran
-	// BEFORE TerminalSlot's clearWaiting (a listener on a descendant beats React's
-	// root-delegated handler), inverting the order the reducer's `click` specifies
+	// BEFORE TerminalSlot's handler, which then called clearWaiting (a listener on
+	// a descendant beats React's root-delegated handler), inverting the order the
+	// reducer's `click` then specified,
 	// and dropping a Mid-turn failure restored to Waiting straight to Idle. It also
 	// had no button guard, so a right-click acknowledged an Error before opening the
 	// context menu. See ADR-0026.
