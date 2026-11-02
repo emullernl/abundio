@@ -18,8 +18,8 @@ let termFocusCalls = 0;
 let currentTermElement: HTMLElement | null = null;
 
 // Mock the heavy IO + child modules so the only thing rendered is TerminalSlot's
-// own container div. We keep the real ptyActivityStore so clearWaiting actually
-// runs and we can assert on the resulting state transition.
+// own container div. We keep the real ptyActivityStore so the `click` status
+// event actually runs and we can assert on the resulting state transition.
 vi.mock("../../../lib/terminalManager", () => ({
 	getTerminal: () =>
 		currentManagedPtyId
@@ -179,6 +179,16 @@ describe("TerminalSlot — click acknowledges the status icon", () => {
 		// A click is not an answer. Dismissing Waiting here left the pane Idle
 		// for the rest of the Turn once the user answered (ADR-0015).
 		makeWaiting("pty-1");
+		mouseDownOn(screenEl(), 0);
+		expect(stateOf("pty-1")).toBe("waiting");
+	});
+
+	it("left-click on a Mid-turn failure raised while Waiting restores Waiting", () => {
+		// The click acknowledges the red icon, and the restored Waiting must
+		// survive it: the Agent is still blocked on the user (ADR-0026).
+		makeWaiting("pty-1");
+		usePtyActivityStore.getState().applyHookEvent("pty-1", "errorMidTurn");
+		expect(stateOf("pty-1")).toBe("error");
 		mouseDownOn(screenEl(), 0);
 		expect(stateOf("pty-1")).toBe("waiting");
 	});

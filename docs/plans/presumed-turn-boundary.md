@@ -1,5 +1,11 @@
 # Fix: a second mid-turn failure resolves to Idle instead of restoring the turn
 
+> **Superseded in part (PR #244).** This plan keeps PR #140's click-dismisses-Waiting behaviour,
+> so it describes `click` as `markIdle(clearError(clearWaiting(s)))`. PR #244 removed that: a
+> click no longer dismisses Waiting, and `click` is now `markIdle(clearError(s))`. Every line
+> below that relies on a click-dismissed Waiting is historical. See the second amendment in
+> ADR-0015.
+
 ## Context
 
 With Copilot, a mid-turn error painted the pane red. Clicking it correctly put the pane back
