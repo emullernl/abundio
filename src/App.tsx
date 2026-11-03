@@ -27,6 +27,7 @@ import { WhatsNewCard } from "./components/WhatsNewCard";
 import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useGitDataSync } from "./hooks/useGitDataSync";
+import { useMarkdownWindowRaise } from "./hooks/useMarkdownWindowRaise";
 import { useMarkdownWindowRestore } from "./hooks/useMarkdownWindowRestore";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
@@ -325,6 +326,7 @@ export function App() {
 	useDemoBootstrap();
 	useFileReloadWatcher();
 	useMarkdownWindowRestore();
+	useMarkdownWindowRaise();
 	useGitDataSync();
 	useWorktreeSync();
 	useTerminalFileDrop();

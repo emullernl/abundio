@@ -7,6 +7,7 @@ import {
 	workspaces as workspacesApi,
 	worktrees as worktreesApi,
 } from "../lib/ipc";
+import { raiseMarkdownWindows } from "../lib/markdownWindowRaise";
 import {
 	collectAgentPanes,
 	collectPaneIds,
@@ -827,6 +828,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		if (id === get().activeWorkspaceId) {
 			if (get().switchingWorkspaceId !== null)
 				set({ switchingWorkspaceId: null });
+			// Selecting the Active workspace again still raises its Markdown
+			// windows (GLOSSARY.md); the hook only hears real changes.
+			if (id) void raiseMarkdownWindows(id);
 			return;
 		}
 		// Fast path: already mounted — switch instantly with no overlay.
