@@ -30,6 +30,7 @@ pub mod search;
 pub mod updater;
 pub mod window_management;
 pub mod window_persistence;
+pub mod window_raise;
 pub mod workspace_store;
 pub mod worktree_commands;
 pub mod worktree_watcher;
@@ -1415,6 +1416,7 @@ pub fn run() {
             markdown_windows::md_windows_save,
             markdown_windows::md_windows_close,
             markdown_windows::md_windows_restore,
+            markdown_windows::md_windows_raise,
             prompt_actions::prompt_action_create,
             prompt_actions::prompt_action_update,
             prompt_actions::prompt_action_delete,
