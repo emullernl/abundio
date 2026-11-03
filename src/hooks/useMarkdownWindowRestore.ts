@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { markdownWindows } from "../lib/ipc";
+import { restoreMarkdownWindows } from "../lib/markdownWindowRaise";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 
 /** Ids in `next` that are not in `prev`. Exported for testing. */
@@ -19,12 +19,12 @@ export function newlyOpened(
 export function useMarkdownWindowRestore(): void {
 	useEffect(() => {
 		let prev = usePtyActivityStore.getState().openedWorkspaceIds;
-		for (const id of prev) markdownWindows.restore(id).catch(() => {});
+		for (const id of prev) restoreMarkdownWindows(id).catch(() => {});
 		return usePtyActivityStore.subscribe((s) => {
 			const next = s.openedWorkspaceIds;
 			if (next === prev) return;
 			for (const id of newlyOpened(prev, next)) {
-				markdownWindows.restore(id).catch((e) => {
+				restoreMarkdownWindows(id).catch((e) => {
 					console.error("[markdown-window] restore failed:", e);
 				});
 			}

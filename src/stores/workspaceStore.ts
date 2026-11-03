@@ -7,6 +7,7 @@ import {
 	workspaces as workspacesApi,
 	worktrees as worktreesApi,
 } from "../lib/ipc";
+import { raiseMarkdownWindows } from "../lib/markdownWindowRaise";
 import {
 	collectAgentPanes,
 	collectPaneIds,
@@ -781,6 +782,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	setActiveWorkspace: (id) => {
 		perfMark("abundio:switch-workspace");
+		// Order matters: marking Opened first starts the Markdown window
+		// restore, which the raise (heard on the `activeWorkspaceId` change
+		// below) waits on. Swapped, the raise finds no windows on a Workspace's
+		// first activation. Covered by useMarkdownWindowRaise.test.tsx.
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
@@ -827,6 +832,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		if (id === get().activeWorkspaceId) {
 			if (get().switchingWorkspaceId !== null)
 				set({ switchingWorkspaceId: null });
+			// Selecting the Active workspace again still raises its Markdown
+			// windows (GLOSSARY.md); the hook only hears real changes.
+			if (id) void raiseMarkdownWindows(id);
 			return;
 		}
 		// Fast path: already mounted — switch instantly with no overlay.
@@ -837,6 +845,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 		// Slow path: pre-mount the target workspace's DOM behind the overlay,
 		// then flip once React has committed the new subtree (~2 frames).
+		// Marking Opened before the flip also keeps the Markdown window restore
+		// ahead of the raise (see setActiveWorkspace).
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set({ switchingWorkspaceId: id });
 		requestAnimationFrame(() => {

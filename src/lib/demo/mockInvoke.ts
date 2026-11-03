@@ -523,6 +523,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "md_windows_save":
 		case "md_windows_close":
 		case "md_windows_restore":
+		case "md_windows_raise":
 			return undefined;
 
 		default:

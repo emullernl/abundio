@@ -1244,6 +1244,10 @@ export const markdownWindows = {
 	restore: (workspaceId: string) =>
 		invoke<void>("md_windows_restore", { workspaceId }),
 
+	/** Raises a Workspace's open Markdown windows without focusing them. */
+	raise: (workspaceId: string) =>
+		invoke<void>("md_windows_raise", { workspaceId }),
+
 	/** Rust aims this at one Markdown window, so it is heard on this webview. */
 	onSaveRequested: (callback: () => void) =>
 		listenToThisWindow<void>("markdown-window-save", () => callback()),

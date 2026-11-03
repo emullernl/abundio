@@ -594,6 +594,24 @@ pub async fn md_windows_restore(
     Ok(())
 }
 
+/// **Markdown window raise**: brings a Workspace's open Markdown windows up
+/// above other windows without focusing them (see GLOSSARY.md). Best effort:
+/// a failure is logged, never shown to the user.
+#[tauri::command]
+pub async fn md_windows_raise(
+    app: AppHandle,
+    store: State<'_, MarkdownWindowStore>,
+    workspace_id: String,
+) -> Result<(), AbundioError> {
+    let windows: Vec<WebviewWindow> = store
+        .list_for_workspace(&workspace_id)?
+        .iter()
+        .filter_map(|r| app.get_webview_window(&r.label))
+        .collect();
+    crate::window_raise::raise_without_focus(&app, windows);
+    Ok(())
+}
+
 /// Restoring opens windows without stealing focus: the user is working in the
 /// Profile window that just opened the Workspace.
 fn open_or_focus_unfocused(
