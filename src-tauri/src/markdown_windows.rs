@@ -594,15 +594,6 @@ pub async fn md_windows_restore(
     Ok(())
 }
 
-/// Labels of the rows whose window is open now, in row order. Exported for
-/// testing; `is_open` stands in for `app.get_webview_window`.
-pub fn raisable_labels(rows: &[MarkdownWindowRow], is_open: impl Fn(&str) -> bool) -> Vec<String> {
-    rows.iter()
-        .filter(|r| is_open(&r.label))
-        .map(|r| r.label.clone())
-        .collect()
-}
-
 /// **Markdown window raise**: brings a Workspace's open Markdown windows up
 /// above other windows without focusing them (see GLOSSARY.md). Best effort:
 /// a failure is logged, never shown to the user.
@@ -612,14 +603,10 @@ pub async fn md_windows_raise(
     store: State<'_, MarkdownWindowStore>,
     workspace_id: String,
 ) -> Result<(), AbundioError> {
-    let rows = store.list_for_workspace(&workspace_id)?;
-    let labels = raisable_labels(&rows, |l| app.get_webview_window(l).is_some());
-    if labels.is_empty() {
-        return Ok(());
-    }
-    let windows: Vec<WebviewWindow> = labels
+    let windows: Vec<WebviewWindow> = store
+        .list_for_workspace(&workspace_id)?
         .iter()
-        .filter_map(|l| app.get_webview_window(l))
+        .filter_map(|r| app.get_webview_window(&r.label))
         .collect();
     crate::window_raise::raise_without_focus(&app, windows);
     Ok(())
@@ -663,27 +650,6 @@ mod tests {
             .unwrap();
         }
         MarkdownWindowStore::new(conn)
-    }
-
-    #[test]
-    fn raisable_labels_keeps_only_open_windows_in_row_order() {
-        let s = store_with(&["w1", "w2"]);
-        let a = s.upsert("w1", "/tmp/a.md", "/tmp/a.md").unwrap();
-        let b = s.upsert("w1", "/tmp/b.md", "/tmp/b.md").unwrap();
-        let c = s.upsert("w1", "/tmp/c.md", "/tmp/c.md").unwrap();
-        s.upsert("w2", "/tmp/d.md", "/tmp/d.md").unwrap();
-        let rows = s.list_for_workspace("w1").unwrap();
-        let open = [a.label.clone(), c.label.clone()];
-        let got = raisable_labels(&rows, |l| open.iter().any(|o| o == l));
-        assert_eq!(got, vec![a.label, c.label]);
-        assert!(!got.contains(&b.label));
-    }
-
-    #[test]
-    fn raisable_labels_is_empty_for_a_workspace_without_rows() {
-        let s = store_with(&["w1"]);
-        let rows = s.list_for_workspace("w1").unwrap();
-        assert!(raisable_labels(&rows, |_| true).is_empty());
     }
 
     #[test]

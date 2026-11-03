@@ -123,6 +123,9 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 # program in a PTY to redraw at its current size. nix's safe wrapper rather
 # than a raw libc call, so the PTY code carries no `unsafe`. Already in the
 # dependency tree transitively.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"] }
+
 # Raise a window without focusing it (window_raise.rs, the Markdown window
 # raise). Tauri has no such API. Each crate is pinned to the version Tauri
 # already pulls in, so nothing new is downloaded.
@@ -136,6 +139,3 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsA
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
-
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", default-features = false, features = ["signal"] }

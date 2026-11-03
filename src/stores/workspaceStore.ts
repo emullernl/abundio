@@ -782,6 +782,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	setActiveWorkspace: (id) => {
 		perfMark("abundio:switch-workspace");
+		// Order matters: marking Opened first starts the Markdown window
+		// restore, which the raise (heard on the `activeWorkspaceId` change
+		// below) waits on. Swapped, the raise finds no windows on a Workspace's
+		// first activation. Covered by useMarkdownWindowRaise.test.tsx.
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
@@ -841,6 +845,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 		// Slow path: pre-mount the target workspace's DOM behind the overlay,
 		// then flip once React has committed the new subtree (~2 frames).
+		// Marking Opened before the flip also keeps the Markdown window restore
+		// ahead of the raise (see setActiveWorkspace).
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set({ switchingWorkspaceId: id });
 		requestAnimationFrame(() => {

@@ -17,8 +17,10 @@ import {
 	raiseMarkdownWindows,
 	restoreMarkdownWindows,
 } from "../../lib/markdownWindowRaise";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useMarkdownWindowRaise } from "../useMarkdownWindowRaise";
+import { useMarkdownWindowRestore } from "../useMarkdownWindowRestore";
 
 (
 	globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -84,6 +86,32 @@ describe("useMarkdownWindowRaise", () => {
 		act(() => root.render(<Probe />));
 		await flush();
 		expect(raise).not.toHaveBeenCalled();
+	});
+});
+
+describe("first activation of a Workspace", () => {
+	function BothHooks() {
+		useMarkdownWindowRestore();
+		useMarkdownWindowRaise();
+		return null;
+	}
+
+	it("raises only after the restore that reopens its windows", async () => {
+		// Guards the order in setActiveWorkspace: markWorkspaceOpened (which
+		// starts the restore) must run before activeWorkspaceId changes.
+		usePtyActivityStore.setState({ openedWorkspaceIds: new Set() });
+		let finish!: () => void;
+		restore.mockImplementation(() => new Promise<void>((r) => (finish = r)));
+		act(() => root.render(<BothHooks />));
+
+		act(() => useWorkspaceStore.getState().setActiveWorkspace("w1"));
+		await flush();
+		expect(restore).toHaveBeenCalledWith("w1");
+		expect(raise).not.toHaveBeenCalled();
+
+		finish();
+		await flush();
+		expect(raise).toHaveBeenCalledWith("w1");
 	});
 });
 

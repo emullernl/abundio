@@ -49,8 +49,10 @@ mod platform {
         targets.sort_by_key(|&p| std::cmp::Reverse(depth(p)));
 
         for p in targets {
-            // SAFETY: Tauri's `ns_window()` is a live NSWindow owned by the
-            // window we hold, and we are on the main thread.
+            // SAFETY: `p` came from `ns_window()` earlier in this same
+            // main-thread closure, and we still hold its `WebviewWindow`.
+            // AppKit frees windows only on the main thread, so nothing can
+            // release it between that call and this dereference.
             let w: &NSWindow = unsafe { &*p };
             if !w.isVisible() || w.isMiniaturized() || !w.isOnActiveSpace() {
                 continue;
@@ -73,7 +75,9 @@ mod platform {
     pub fn raise(windows: &[WebviewWindow]) {
         for w in windows {
             let Ok(hwnd) = w.hwnd() else { continue };
-            // SAFETY: plain Win32 calls on a window handle Tauri owns.
+            // SAFETY: these calls take a handle, not a pointer. A handle that
+            // went stale since `hwnd()` makes them fail or return false;
+            // no memory is read through it.
             unsafe {
                 if IsIconic(hwnd).as_bool() || !IsWindowVisible(hwnd).as_bool() {
                     continue;
