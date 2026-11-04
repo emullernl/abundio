@@ -12,21 +12,22 @@
  * Items that cannot apply because of a row's *state* are **disabled, never
  * dropped**, so the menu keeps one shape for every row of a kind — `Copy
  * Relative Path` never moves up two slots because the file happens to be
- * deleted. The file's *kind* is the one thing that changes the shape: `Open in
- * Markdown Window` is present only on a markdown file's row, as in the
- * Explorer, because on every other row it would be a dead item. A submodule is
- * a kind too — on disk it is a folder — so it never gets the item, even when
- * its name ends in `.md`.
+ * deleted. The file's *kind* is the one thing that changes the shape: the two
+ * Separate Window items are present only on a row whose file has a **File
+ * window** (text or image, by name), as in the Explorer, because on every other
+ * row they would be dead items. A submodule is a kind too — on disk it is a
+ * folder — so it never gets them, whatever its name.
  */
 
 import { COPY_PATH_LABELS } from "./copyPathEntries";
-import { isMarkdownFile } from "./isMarkdownFile";
+import { fileWindowKindFor } from "./fileWindowKind";
 import { revealLabel } from "./platform";
 
 export type GitRowMenuActionId =
 	| "open-diff"
 	| "open-file"
-	| "open-markdown-window"
+	| "open-diff-window"
+	| "open-file-window"
 	| "reveal"
 	| "copy-relative-path"
 	| "copy-path";
@@ -46,7 +47,7 @@ export type GitRowMenuEntry = GitRowMenuAction | GitRowMenuSeparator;
 /** The row fields the menu's shape depends on. */
 export interface GitRowMenuTarget {
 	/** Repo-relative path. Only its extension matters here: it decides whether
-	 *  the row is a markdown file. */
+	 *  the row's file has a File window. */
 	path: string;
 	status: string;
 	section: string;
@@ -69,17 +70,28 @@ export function gitRowMenuEntries(
 	// Conflicted section's rows open a text pane instead. See ADR-0029.
 	const isConflicted = file.section === "conflicted";
 
-	// Opens the file as it is on disk now — on a Commits row too, never as that
-	// commit left it — so it is disabled exactly where Open File is. Enabled on
-	// a conflicted row, markers and all, as Open File is. A submodule is left
-	// out rather than disabled: being a folder is its kind, not its state.
-	const markdownEntries: GitRowMenuEntry[] =
-		isMarkdownFile(file.path) && !isSubmodule
+	const openDiffDisabled =
+		isConflicted || file.isBinary === true || isSubmodule;
+	const openFileDisabled = isDeleted || isSubmodule;
+
+	// Each follows its in-pane twin, state rules included. The diff item opens
+	// the row's live diff, or on a Commits row that commit's diff; the file
+	// item opens the file as it is on disk now — on a Commits row too, never as
+	// that commit left it — and is enabled on a conflicted row, markers and
+	// all, as Open File is. Left out rather than disabled on a submodule or a
+	// file with no File window: that is its kind, not its state.
+	const windowEntries: GitRowMenuEntry[] =
+		fileWindowKindFor(file.path) && !isSubmodule
 			? [
 					{
-						id: "open-markdown-window",
-						label: "Open in Markdown Window",
-						disabled: isDeleted,
+						id: "open-diff-window",
+						label: "Open Diff in Separate Window",
+						disabled: openDiffDisabled,
+					},
+					{
+						id: "open-file-window",
+						label: "Open File in Separate Window",
+						disabled: openFileDisabled,
 					},
 				]
 			: [];
@@ -88,10 +100,10 @@ export function gitRowMenuEntries(
 		{
 			id: "open-diff",
 			label: "Open Diff",
-			disabled: isConflicted || file.isBinary === true || isSubmodule,
+			disabled: openDiffDisabled,
 		},
-		{ id: "open-file", label: "Open File", disabled: isDeleted || isSubmodule },
-		...markdownEntries,
+		{ id: "open-file", label: "Open File", disabled: openFileDisabled },
+		...windowEntries,
 		{ separator: true },
 		{ id: "reveal", label: reveal, disabled: isDeleted },
 		{ separator: true },

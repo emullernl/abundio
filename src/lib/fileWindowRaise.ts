@@ -1,15 +1,15 @@
-import { markdownWindows } from "./ipc";
+import { fileWindows } from "./ipc";
 
 /**
  * Restores in flight, by Workspace id. A Workspace's first activation both
- * reopens its remembered Markdown windows and raises them, and the raise must
+ * reopens its remembered File windows and raises them, and the raise must
  * wait for the reopen or it finds no windows.
  */
 const pendingRestores = new Map<string, Promise<void>>();
 
-/** Reopens a Workspace's remembered Markdown windows, tracking the call. */
-export function restoreMarkdownWindows(workspaceId: string): Promise<void> {
-	const p = markdownWindows.restore(workspaceId).finally(() => {
+/** Reopens a Workspace's remembered File windows, tracking the call. */
+export function restoreFileWindows(workspaceId: string): Promise<void> {
+	const p = fileWindows.restore(workspaceId).finally(() => {
 		if (pendingRestores.get(workspaceId) === p) {
 			pendingRestores.delete(workspaceId);
 		}
@@ -25,14 +25,14 @@ export function afterRestore(workspaceId: string): Promise<void> {
 }
 
 /**
- * **Markdown window raise** (GLOSSARY.md): bring this Workspace's Markdown
+ * **File window raise** (GLOSSARY.md): bring this Workspace's Markdown
  * windows up above other windows, without focusing them. Best effort — a
  * failure is logged, never thrown.
  */
-export function raiseMarkdownWindows(workspaceId: string): Promise<void> {
+export function raiseFileWindows(workspaceId: string): Promise<void> {
 	return afterRestore(workspaceId)
-		.then(() => markdownWindows.raise(workspaceId))
+		.then(() => fileWindows.raise(workspaceId))
 		.catch((e) => {
-			console.error("[markdown-window] raise failed:", e);
+			console.error("[file-window] raise failed:", e);
 		});
 }

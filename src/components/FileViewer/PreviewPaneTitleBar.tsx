@@ -126,7 +126,7 @@ export function PreviewPaneTitleBar({
 			<TitleBarButton
 				icon={AppWindow}
 				onClick={onOpenInWindow}
-				label="Open in Markdown Window"
+				label="Open in Separate Window"
 			/>
 			<TitleBarButton
 				icon={SquareSplitVertical}

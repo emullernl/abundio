@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { appWindow } from "../lib/appWindow";
 import { windowSession } from "../lib/ipc";
-import { confirmMarkdownWindowsClean } from "./markdownCloseConfirmStore";
+import { confirmFileWindowsClean } from "./fileWindowCloseConfirmStore";
 import { useProfileStore } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 
@@ -70,9 +70,9 @@ export async function confirmProfileSwitch(): Promise<void> {
 	const pending = useProfileSwitchConfirmStore.getState().pending;
 	useProfileSwitchConfirmStore.setState({ pending: null });
 	if (!pending) return;
-	// The switch closes every Opened workspace, and their Markdown windows.
+	// The switch closes every Opened workspace, and their File windows.
 	const opened = [...usePtyActivityStore.getState().openedWorkspaceIds];
-	if (!(await confirmMarkdownWindowsClean(opened))) return;
+	if (!(await confirmFileWindowsClean(opened))) return;
 	await useProfileStore.getState().switchProfile(pending.targetProfileId);
 }
 

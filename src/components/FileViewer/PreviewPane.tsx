@@ -13,7 +13,7 @@ import {
 	unregisterPreviewPrinter,
 } from "../../lib/markdownPreviewPrint";
 import { printMarkdownPreview } from "../../lib/markdownPrint";
-import { openMarkdownWindow } from "../../lib/openMarkdownWindow";
+import { openFileWindow } from "../../lib/openFileWindow";
 import { resolvePreviewColorMode } from "../../lib/previewColorMode";
 import {
 	registerSyncPreview,
@@ -180,7 +180,10 @@ export function PreviewPane({
 				onPrint={doPrint}
 				onOpenInWindow={() => {
 					if (activeWorkspace && sourceState?.filePath) {
-						void openMarkdownWindow(activeWorkspace.id, sourceState.filePath);
+						void openFileWindow(activeWorkspace.id, {
+							kind: "text",
+							filePath: sourceState.filePath,
+						});
 					}
 				}}
 				onSplitDown={() => splitPaneWithPicker(paneId, "horizontal")}

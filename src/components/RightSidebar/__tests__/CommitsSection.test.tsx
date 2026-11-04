@@ -32,10 +32,14 @@ vi.mock("../../../lib/clipboard", () => ({
 	writeClipboardText: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { openMarkdownWindow } = vi.hoisted(() => ({
-	openMarkdownWindow: vi.fn().mockResolvedValue(undefined),
+const { openFileWindow, openFileWindowForPath } = vi.hoisted(() => ({
+	openFileWindow: vi.fn().mockResolvedValue(undefined),
+	openFileWindowForPath: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("../../../lib/openMarkdownWindow", () => ({ openMarkdownWindow }));
+vi.mock("../../../lib/openFileWindow", () => ({
+	openFileWindow,
+	openFileWindowForPath,
+}));
 
 function workspace(id: string, rootFolder: string): WorkspaceWithTabs {
 	return {
@@ -435,24 +439,38 @@ describe("CommitsSection", () => {
 
 	// Today's file, not the commit's version — the same meaning as Open File
 	// on this row.
-	it("opens a markdown file's Markdown window, as it is on disk now", async () => {
-		openMarkdownWindow.mockClear();
+	it("opens the file's File window as it is on disk now", async () => {
+		openFileWindowForPath.mockClear();
 		await openFileMenu("f5", { path: "docs/guide.md" });
-		act(() => menuButton("Open in Markdown Window")?.click());
-		expect(openMarkdownWindow).toHaveBeenCalledWith(
+		act(() => menuButton("Open File in Separate Window")?.click());
+		expect(openFileWindowForPath).toHaveBeenCalledWith(
 			"a",
 			"/repos/a/docs/guide.md",
 		);
 	});
 
-	it("disables Open in Markdown Window for a markdown file the commit deleted", async () => {
-		await openFileMenu("f6", { path: "docs/guide.md", status: "D" });
-		expect(menuButton("Open in Markdown Window")?.disabled).toBe(true);
+	// The commit's diff, the same meaning as Open Diff on this row.
+	it("opens the commit's diff in a File window", async () => {
+		openFileWindow.mockClear();
+		await openFileMenu("f5", { path: "docs/guide.md" });
+		act(() => menuButton("Open Diff in Separate Window")?.click());
+		expect(openFileWindow).toHaveBeenCalledWith("a", {
+			kind: "commit-diff",
+			filePath: "docs/guide.md",
+			commitOid: "f5",
+		});
 	});
 
-	it("does not offer Open in Markdown Window on a non-markdown file", async () => {
-		await openFileMenu("f7");
-		expect(menuButton("Open in Markdown Window")).toBeUndefined();
+	it("disables only the file's window for a path the commit deleted", async () => {
+		await openFileMenu("f6", { path: "docs/guide.md", status: "D" });
+		expect(menuButton("Open File in Separate Window")?.disabled).toBe(true);
+		expect(menuButton("Open Diff in Separate Window")?.disabled).toBe(false);
+	});
+
+	it("does not offer a separate window on a file a pane cannot show", async () => {
+		await openFileMenu("f7", { path: "dist/app.zip" });
+		expect(menuButton("Open File in Separate Window")).toBeUndefined();
+		expect(menuButton("Open Diff in Separate Window")).toBeUndefined();
 	});
 
 	it("disables Open on GitHub for an unpushed commit", () => {

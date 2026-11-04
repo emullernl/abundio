@@ -1198,57 +1198,84 @@ export const env = {
 	retryKey: () => invoke<boolean>("env_retry_key"),
 };
 
-/** Which of its two views a **Markdown window** shows (ADR-0046). */
+/** Which of its two views a markdown **File window** shows (ADR-0046). */
 export type MarkdownView = "rendered" | "source";
 
-export interface MarkdownWindowInfo {
+/** What a **File window** shows (ADR-0049). */
+export type FileWindowKind = "text" | "image" | "diff" | "commit-diff";
+
+/** What to open in a File window. Text and image paths are absolute; diff
+ *  paths are Workspace-relative, as git and diff panes spell them. */
+export type FileWindowTarget =
+	| { kind: "text" | "image"; filePath: string }
+	| { kind: "diff"; filePath: string; diffSection: string }
+	| { kind: "commit-diff"; filePath: string; commitOid: string };
+
+export interface FileWindowInfo {
 	workspaceId: string;
 	workspaceName: string;
 	rootFolder: string;
+	baseBranch: string | null;
+	kind: FileWindowKind;
 	filePath: string;
+	commitOid: string | null;
+	diffSection: string | null;
 	view: MarkdownView;
 }
 
-export interface DirtyMarkdownWindow {
+export interface DirtyFileWindow {
 	label: string;
 	filePath: string;
 }
 
-export const markdownWindows = {
-	/** Opens the file's Markdown window, or focuses the one showing it. */
-	open: (workspaceId: string, filePath: string) =>
-		invoke<void>("md_window_open", { workspaceId, filePath }),
+export const fileWindows = {
+	/** Opens the target's File window, or focuses the one showing it. */
+	open: (workspaceId: string, target: FileWindowTarget) =>
+		invoke<void>("file_window_open", {
+			workspaceId,
+			kind: target.kind,
+			filePath: target.filePath,
+			commitOid: target.kind === "commit-diff" ? target.commitOid : null,
+			diffSection: target.kind === "diff" ? target.diffSection : null,
+		}),
 
-	/** The calling Markdown window's file, Workspace and last view. */
-	info: () => invoke<MarkdownWindowInfo>("md_window_info"),
+	/** The calling File window's target, Workspace and last view. */
+	info: () => invoke<FileWindowInfo>("file_window_info"),
 
-	setView: (view: MarkdownView) => invoke<void>("md_window_set_view", { view }),
+	setView: (view: MarkdownView) =>
+		invoke<void>("file_window_set_view", { view }),
 
-	setDirty: (dirty: boolean) => invoke<void>("md_window_set_dirty", { dirty }),
+	setDirty: (dirty: boolean) =>
+		invoke<void>("file_window_set_dirty", { dirty }),
 
 	/** The user closed this window themselves: do not reopen it. */
-	forget: () => invoke<void>("md_window_forget"),
+	forget: () => invoke<void>("file_window_forget"),
 
-	/** Open Markdown windows of these Workspaces with unsaved edits. */
+	/** Open File windows of these Workspaces with unsaved edits. */
 	dirty: (workspaceIds: string[]) =>
-		invoke<DirtyMarkdownWindow[]>("md_windows_dirty", { workspaceIds }),
+		invoke<DirtyFileWindow[]>("file_windows_dirty", { workspaceIds }),
 
 	/** Asks these windows to save; each reports itself clean when done. */
-	save: (labels: string[]) => invoke<void>("md_windows_save", { labels }),
+	save: (labels: string[]) => invoke<void>("file_windows_save", { labels }),
 
-	/** Closes these Workspaces' Markdown windows and remembers them. */
+	/** Closes these Workspaces' File windows and remembers them. */
 	close: (workspaceIds: string[]) =>
-		invoke<void>("md_windows_close", { workspaceIds }),
+		invoke<void>("file_windows_close", { workspaceIds }),
 
-	/** Reopens a Workspace's remembered Markdown windows. */
+	/** Reopens a Workspace's remembered File windows. */
 	restore: (workspaceId: string) =>
-		invoke<void>("md_windows_restore", { workspaceId }),
+		invoke<void>("file_windows_restore", { workspaceId }),
 
-	/** Raises a Workspace's open Markdown windows without focusing them. */
+	/** Raises a Workspace's open File windows without focusing them. */
 	raise: (workspaceId: string) =>
-		invoke<void>("md_windows_raise", { workspaceId }),
+		invoke<void>("file_windows_raise", { workspaceId }),
 
-	/** Rust aims this at one Markdown window, so it is heard on this webview. */
+	/** Rust aims this at one File window, so it is heard on this webview. */
 	onSaveRequested: (callback: () => void) =>
-		listenToThisWindow<void>("markdown-window-save", () => callback()),
+		listenToThisWindow<void>("file-window-save", () => callback()),
+
+	/** Rust changed this window's row under it (a live diff opened again from
+	 *  another section): re-read `info`. */
+	onReloadRequested: (callback: () => void) =>
+		listenToThisWindow<void>("file-window-reload", () => callback()),
 };

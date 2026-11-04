@@ -40,34 +40,38 @@ pub struct FileContent {
 	pub size: u64,
 }
 
+/// Image extensions and their MIME types. Shared with the frontend's
+/// `src/lib/fileWindowKind.ts`; a test in `file_windows.rs` checks they match.
+pub(crate) const IMAGE_MIMES: &[(&str, &str)] = &[
+	("png", "image/png"),
+	("jpg", "image/jpeg"),
+	("jpeg", "image/jpeg"),
+	("gif", "image/gif"),
+	("webp", "image/webp"),
+	("svg", "image/svg+xml"),
+	("ico", "image/x-icon"),
+	("bmp", "image/bmp"),
+];
+
+/// Extensions read as binary without looking at the bytes. Shared with the
+/// frontend like `IMAGE_MIMES`.
+pub(crate) const BINARY_EXTS: &[&str] = &[
+	"exe", "o", "so", "dylib", "a", "wasm", "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "pdf",
+	"doc", "docx", "xls", "xlsx", "ppt", "pptx", "class", "pyc", "pyo", "dll", "lib", "bin",
+	"dat", "db", "sqlite", "sqlite3", "ttf", "otf", "woff", "woff2", "eot", "mp3", "mp4", "avi",
+	"mov", "mkv", "flac", "wav", "ogg", "jar",
+];
+
 fn extension_to_mime(ext: &str) -> Option<&'static str> {
-	match ext {
-		"png" => Some("image/png"),
-		"jpg" | "jpeg" => Some("image/jpeg"),
-		"gif" => Some("image/gif"),
-		"webp" => Some("image/webp"),
-		"svg" => Some("image/svg+xml"),
-		"ico" => Some("image/x-icon"),
-		"bmp" => Some("image/bmp"),
-		_ => None,
-	}
+	IMAGE_MIMES.iter().find(|(e, _)| *e == ext).map(|(_, m)| *m)
 }
 
-fn is_image_ext(ext: &str) -> bool {
+pub(crate) fn is_image_ext(ext: &str) -> bool {
 	extension_to_mime(ext).is_some()
 }
 
-fn is_binary_ext(ext: &str) -> bool {
-	matches!(
-		ext,
-		"exe" | "o" | "so" | "dylib" | "a" | "wasm" | "zip" | "tar" | "gz"
-			| "bz2" | "xz" | "7z" | "rar" | "pdf" | "doc" | "docx"
-			| "xls" | "xlsx" | "ppt" | "pptx" | "class" | "pyc"
-			| "pyo" | "dll" | "lib" | "bin" | "dat" | "db" | "sqlite"
-			| "sqlite3" | "ttf" | "otf" | "woff" | "woff2" | "eot"
-			| "mp3" | "mp4" | "avi" | "mov" | "mkv" | "flac" | "wav"
-			| "ogg" | "jar"
-	)
+pub(crate) fn is_binary_ext(ext: &str) -> bool {
+	BINARY_EXTS.contains(&ext)
 }
 
 fn has_null_bytes(data: &[u8]) -> bool {

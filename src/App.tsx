@@ -6,9 +6,9 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DragPanePreview } from "./components/DragPanePreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
+import { FileWindowCloseConfirmDialog } from "./components/FileWindow/FileWindowCloseConfirmDialog";
 import { FleetConsole } from "./components/FleetConsole/FleetConsole";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
-import { MarkdownCloseConfirmDialog } from "./components/MarkdownWindow/MarkdownCloseConfirmDialog";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
@@ -26,9 +26,9 @@ import { UpdatePrompt } from "./components/UpdatePrompt";
 import { WhatsNewCard } from "./components/WhatsNewCard";
 import { useConfirmCloseTerminalTab } from "./hooks/useConfirmCloseTerminalTab";
 import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
+import { useFileWindowRaise } from "./hooks/useFileWindowRaise";
+import { useFileWindowRestore } from "./hooks/useFileWindowRestore";
 import { useGitDataSync } from "./hooks/useGitDataSync";
-import { useMarkdownWindowRaise } from "./hooks/useMarkdownWindowRaise";
-import { useMarkdownWindowRestore } from "./hooks/useMarkdownWindowRestore";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -74,10 +74,7 @@ import {
 } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { applyMonacoOverrides } from "./lib/monacoKeymap";
-import {
-	markdownFileForPane,
-	openMarkdownWindow,
-} from "./lib/openMarkdownWindow";
+import { fileWindowTargetForPane, openFileWindow } from "./lib/openFileWindow";
 import { openNewTask } from "./lib/openNewTask";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
@@ -98,7 +95,7 @@ import {
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
-import { confirmMarkdownWindowsClean } from "./stores/markdownCloseConfirmStore";
+import { confirmFileWindowsClean } from "./stores/fileWindowCloseConfirmStore";
 import { useNotesStore } from "./stores/notesStore";
 import {
 	clearPaneClose,
@@ -325,8 +322,8 @@ export function App() {
 	useWorkspace();
 	useDemoBootstrap();
 	useFileReloadWatcher();
-	useMarkdownWindowRestore();
-	useMarkdownWindowRaise();
+	useFileWindowRestore();
+	useFileWindowRaise();
 	useGitDataSync();
 	useWorktreeSync();
 	useTerminalFileDrop();
@@ -678,10 +675,10 @@ export function App() {
 		appWindowRef.current = win;
 		const unlisten = win.onCloseRequested(async (event) => {
 			event.preventDefault();
-			// Markdown windows close with this Window; their unsaved edits live
+			// File windows close with this Window; their unsaved edits live
 			// in other webviews, so ask about them first (ADR-0046).
 			const opened = [...usePtyActivityStore.getState().openedWorkspaceIds];
-			if (!(await confirmMarkdownWindowsClean(opened))) return;
+			if (!(await confirmFileWindowsClean(opened))) return;
 			const dirtyPaneCount = Object.values(
 				useExplorerStore.getState().filePanes,
 			).filter((p) => p.isDirty).length;
@@ -1035,12 +1032,12 @@ export function App() {
 				const paneId = ws.focusedPaneId;
 				const workspaceId = ws.activeWorkspaceId;
 				if (!paneId || !workspaceId) return;
-				const filePath = markdownFileForPane(
+				const target = fileWindowTargetForPane(
 					paneId,
 					ws.getActiveLayout(),
 					useExplorerStore.getState().filePanes,
 				);
-				if (filePath) void openMarkdownWindow(workspaceId, filePath);
+				if (target) void openFileWindow(workspaceId, target);
 			}),
 		);
 		registerAction(
@@ -1384,7 +1381,7 @@ export function App() {
 					onCancel={() => setWorkspaceCloseRequested(null)}
 				/>
 			)}
-			<MarkdownCloseConfirmDialog />
+			<FileWindowCloseConfirmDialog />
 			<DragPanePreview />
 			<UpdatePrompt />
 			<WhatsNewCard />

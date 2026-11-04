@@ -1,5 +1,5 @@
 /**
- * Find in the rendered view of a **Markdown window**. The source view has
+ * Find in the rendered view of a markdown **File window**. The source view has
  * Monaco's own Find; rendered HTML has nothing, so matches are found over the
  * DOM's text nodes and painted with the CSS Custom Highlight API, which marks
  * text without touching the DOM React owns.

@@ -1,13 +1,13 @@
 /**
- * The edit buffer of a **Markdown window**, as pure transitions.
+ * The edit buffer of a **File window**, as pure transitions.
  *
- * A Markdown window keeps its own buffer, separate from any File pane on the
+ * A File window keeps its own buffer, separate from any File pane on the
  * same file (ADR-0046): a save on either side reaches the other as an external
  * change. So the window has to tell its own save coming back from the watcher
  * apart from someone else's write — it does that by comparing the disk content
  * with what it last saved.
  */
-export interface MarkdownBuffer {
+export interface FileBuffer {
 	/** What is on disk, as far as this window knows. */
 	saved: string;
 	/** What the user sees and edits. */
@@ -19,7 +19,7 @@ export interface MarkdownBuffer {
 	deletedOnDisk: boolean;
 }
 
-export function loadedBuffer(content: string): MarkdownBuffer {
+export function loadedBuffer(content: string): FileBuffer {
 	return {
 		saved: content,
 		content,
@@ -29,16 +29,16 @@ export function loadedBuffer(content: string): MarkdownBuffer {
 	};
 }
 
-export function isDirty(b: MarkdownBuffer): boolean {
+export function isDirty(b: FileBuffer): boolean {
 	return b.content !== b.saved;
 }
 
-export function edited(b: MarkdownBuffer, content: string): MarkdownBuffer {
+export function edited(b: FileBuffer, content: string): FileBuffer {
 	return { ...b, content };
 }
 
 /** The file's content as just read from disk after a change event. */
-export function diskChanged(b: MarkdownBuffer, disk: string): MarkdownBuffer {
+export function diskChanged(b: FileBuffer, disk: string): FileBuffer {
 	// Our own save echoing back, or a touch that changed nothing.
 	if (disk === b.saved) return { ...b, deletedOnDisk: false };
 	if (!isDirty(b)) return loadedBuffer(disk);
@@ -50,18 +50,18 @@ export function diskChanged(b: MarkdownBuffer, disk: string): MarkdownBuffer {
 	};
 }
 
-export function diskRemoved(b: MarkdownBuffer): MarkdownBuffer {
+export function diskRemoved(b: FileBuffer): FileBuffer {
 	return { ...b, deletedOnDisk: true, externallyChanged: false };
 }
 
 /** "Reload from disk": drop the edits. */
-export function reloaded(b: MarkdownBuffer): MarkdownBuffer {
+export function reloaded(b: FileBuffer): FileBuffer {
 	return loadedBuffer(b.pendingDisk ?? b.saved);
 }
 
 /** "Keep my edits": the disk version becomes the baseline, so the buffer is
  *  still dirty against it and a later save overwrites it. */
-export function keptEdits(b: MarkdownBuffer): MarkdownBuffer {
+export function keptEdits(b: FileBuffer): FileBuffer {
 	return {
 		...b,
 		saved: b.pendingDisk ?? b.saved,
@@ -70,6 +70,6 @@ export function keptEdits(b: MarkdownBuffer): MarkdownBuffer {
 	};
 }
 
-export function savedBuffer(b: MarkdownBuffer): MarkdownBuffer {
+export function savedBuffer(b: FileBuffer): FileBuffer {
 	return loadedBuffer(b.content);
 }

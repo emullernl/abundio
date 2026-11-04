@@ -1,7 +1,7 @@
 import { isMap, isNode, isScalar, parseDocument, stringify } from "yaml";
 
 /**
- * **Frontmatter** in the rendered markdown (Preview pane and Markdown window).
+ * **Frontmatter** in the rendered markdown (Preview pane and markdown File window).
  *
  * Without frontmatter support, `---\ntitle: x\n---` renders as a thematic
  * break followed by a setext `<h2>` — the closing `---` underlines the text

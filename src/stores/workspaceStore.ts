@@ -1,13 +1,13 @@
 import { create } from "zustand";
 import { agentCommandFor } from "../lib/agents";
+import { raiseFileWindows } from "../lib/fileWindowRaise";
 import {
-	markdownWindows,
+	fileWindows,
 	pty,
 	tabs as tabsApi,
 	workspaces as workspacesApi,
 	worktrees as worktreesApi,
 } from "../lib/ipc";
-import { raiseMarkdownWindows } from "../lib/markdownWindowRaise";
 import {
 	collectAgentPanes,
 	collectPaneIds,
@@ -697,9 +697,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Drop any pending debounced note save — the note row is cascade-deleted
 		// with the workspace, so letting the timer fire would error on a missing FK.
 		useNotesStore.getState().cancelPendingSave(id);
-		// Close its Markdown windows while their rows still name them; the
+		// Close its File windows while their rows still name them; the
 		// delete then cascades the rows away (ADR-0046).
-		await markdownWindows.close([id]).catch(() => {});
+		await fileWindows.close([id]).catch(() => {});
 		await workspacesApi.delete(id);
 		usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
 		useWorkspaceGitStore.getState().remove(id);
@@ -732,9 +732,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Reset dot to grey
 		activityStore.unmarkWorkspaceOpened(id);
 
-		// Its Markdown windows close with it and are remembered, to reopen with
+		// Its File windows close with it and are remembered, to reopen with
 		// it. Unsaved edits were asked about by the caller (ADR-0046).
-		markdownWindows.close([id]).catch(() => {});
+		fileWindows.close([id]).catch(() => {});
 
 		// Clear ptyIds from layouts so fresh PTYs spawn on next open, and re-seed
 		// pendingAgentRegistry for any pane that remembers an agent.
@@ -782,10 +782,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 	setActiveWorkspace: (id) => {
 		perfMark("abundio:switch-workspace");
-		// Order matters: marking Opened first starts the Markdown window
+		// Order matters: marking Opened first starts the File window
 		// restore, which the raise (heard on the `activeWorkspaceId` change
 		// below) waits on. Swapped, the raise finds no windows on a Workspace's
-		// first activation. Covered by useMarkdownWindowRaise.test.tsx.
+		// first activation. Covered by useFileWindowRaise.test.tsx.
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
@@ -834,7 +834,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				set({ switchingWorkspaceId: null });
 			// Selecting the Active workspace again still raises its Markdown
 			// windows (GLOSSARY.md); the hook only hears real changes.
-			if (id) void raiseMarkdownWindows(id);
+			if (id) void raiseFileWindows(id);
 			return;
 		}
 		// Fast path: already mounted — switch instantly with no overlay.
@@ -845,7 +845,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 		// Slow path: pre-mount the target workspace's DOM behind the overlay,
 		// then flip once React has committed the new subtree (~2 frames).
-		// Marking Opened before the flip also keeps the Markdown window restore
+		// Marking Opened before the flip also keeps the File window restore
 		// ahead of the raise (see setActiveWorkspace).
 		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
 		set({ switchingWorkspaceId: id });

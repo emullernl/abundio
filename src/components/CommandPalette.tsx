@@ -10,7 +10,7 @@ import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { type KeyAction, triggerAction } from "../lib/keybindings";
-import { markdownFileForPane } from "../lib/openMarkdownWindow";
+import { fileWindowTargetForPane } from "../lib/openFileWindow";
 import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
@@ -174,18 +174,18 @@ export function CommandPalette({
 			);
 		}
 
-		const markdownFile =
+		const windowTarget =
 			focusedPaneId && !inFleet
-				? markdownFileForPane(
+				? fileWindowTargetForPane(
 						focusedPaneId,
 						useWorkspaceStore.getState().getActiveLayout(),
 						useExplorerStore.getState().filePanes,
 					)
 				: null;
-		if (markdownFile) {
+		if (windowTarget) {
 			result.push({
 				id: "action-open-markdown-window",
-				label: "Open in Markdown Window",
+				label: "Open in Separate Window",
 				category: "Actions",
 				shortcut: "open-markdown-window",
 				action: () => triggerAction("open-markdown-window"),

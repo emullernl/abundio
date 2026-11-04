@@ -1,6 +1,6 @@
 {
   "identifier": "markdown-window",
-  "description": "Markdown windows (ADR-0046) render file content, so they get only the window, print, link-opening and clipboard-write (a code block's copy button) permissions they use: no shell execute, dialogs, notifications or clipboard read.",
+  "description": "File windows (ADR-0046, ADR-0049; labels still md-*) render file content, so they get only the window, print, link-opening and clipboard-write (a code block's copy button) permissions they use: no shell execute, dialogs, notifications or clipboard read.",
   "windows": ["md-*"],
   "permissions": [
     "core:default",

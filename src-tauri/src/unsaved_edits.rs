@@ -1,7 +1,7 @@
 //! Unsaved edits across every Window, for the quit confirmation.
 //!
 //! Each Profile window mirrors the file names of its unsaved **File panes**
-//! here; Markdown windows already report theirs to `MarkdownWindowStore`.
+//! here; File windows already report theirs to `FileWindowStore`.
 //! Quit is decided in Rust (the frontend never sees the `quit-app` route), so
 //! this is the only place a cross-window list exists — the same reason
 //! `BusyCountsState` mirrors busy work (ADR-0034).
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State, Window, Wry};
 
 use crate::error::AbundioError;
-use crate::markdown_windows::{self, MarkdownWindowStore, MARKDOWN_WINDOW_SAVE};
+use crate::file_windows::{self, FileWindowStore, FILE_WINDOW_SAVE};
 use crate::window_management::is_profile_window_label;
 
 /// Sent to every Profile window by **Save and Quit**: save every unsaved File
@@ -78,14 +78,14 @@ impl UnsavedFilesState {
 }
 
 /// Paths of every unsaved buffer in the app: File panes in Profile windows,
-/// then open Markdown windows.
+/// then open File windows.
 pub fn unsaved_paths(app: &AppHandle<Wry>) -> Vec<String> {
     let mut out = app
         .try_state::<UnsavedFilesState>()
         .map(|s| s.all())
         .unwrap_or_default();
-    if let Some(store) = app.try_state::<MarkdownWindowStore>() {
-        for label in dirty_markdown_labels(app, &store) {
+    if let Some(store) = app.try_state::<FileWindowStore>() {
+        for label in dirty_file_window_labels(app, &store) {
             if let Ok(Some(row)) = store.find_by_label(&label) {
                 out.push(row.file_path);
             }
@@ -94,10 +94,10 @@ pub fn unsaved_paths(app: &AppHandle<Wry>) -> Vec<String> {
     out
 }
 
-fn dirty_markdown_labels(app: &AppHandle<Wry>, store: &MarkdownWindowStore) -> Vec<String> {
+fn dirty_file_window_labels(app: &AppHandle<Wry>, store: &FileWindowStore) -> Vec<String> {
     app.webview_windows()
         .keys()
-        .filter(|l| markdown_windows::is_markdown_window_label(l) && store.is_dirty(l))
+        .filter(|l| file_windows::is_file_window_label(l) && store.is_dirty(l))
         .cloned()
         .collect()
 }
@@ -130,8 +130,8 @@ pub fn unsaved_quit_message(paths: &[String], busy: Option<&str>) -> String {
 /// hung), stay open and say so — never quit over edits the user asked to keep.
 pub fn save_all_then_quit(app: &AppHandle<Wry>, quit: fn(&AppHandle<Wry>)) {
     for label in app.webview_windows().keys() {
-        if markdown_windows::is_markdown_window_label(label) {
-            let _ = app.emit_to(label.as_str(), MARKDOWN_WINDOW_SAVE, ());
+        if file_windows::is_file_window_label(label) {
+            let _ = app.emit_to(label.as_str(), FILE_WINDOW_SAVE, ());
         } else if is_profile_window_label(label) {
             let _ = app.emit_to(label.as_str(), SAVE_ALL_BEFORE_QUIT, ());
         }
@@ -164,7 +164,7 @@ pub fn save_all_then_quit(app: &AppHandle<Wry>, quit: fn(&AppHandle<Wry>)) {
 }
 
 /// A Profile window mirrors the paths of its unsaved File panes. Other
-/// windows are ignored: Markdown windows report through `md_window_set_dirty`.
+/// windows are ignored: File windows report through `file_window_set_dirty`.
 #[tauri::command]
 pub async fn report_unsaved_files(
     window: Window,

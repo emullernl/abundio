@@ -549,7 +549,7 @@ export const ACTION_META: Record<KeyAction, ActionMeta> = {
 		category: "Files",
 	},
 	"open-markdown-window": {
-		label: "Open in Markdown window",
+		label: "Open in separate window",
 		category: "Files",
 	},
 	"command-palette": { label: "Command palette", category: "App" },
