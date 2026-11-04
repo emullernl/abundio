@@ -865,8 +865,8 @@ export function AgentsSection() {
 			</div>
 			<div className="flex-shrink-0">
 				<AddAgentForm
-					onAdd={(name, command) => {
-						addAgent(name, command);
+					onAdd={(name, command, taskArgs) => {
+						addAgent(name, command, undefined, taskArgs);
 						// A newly added agent isn't in the last $PATH scan yet —
 						// rescan so its Detected badge reflects reality.
 						reloadRegistry(
