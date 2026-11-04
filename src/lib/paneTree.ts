@@ -78,17 +78,40 @@ export function setAgentId(
 ): PaneNode {
 	if (tree.type === "terminal") {
 		if (tree.id !== paneId) return tree;
-		if (agentId === undefined) {
-			if (tree.agentId === undefined) return tree;
-			const { agentId: _drop, ...rest } = tree;
-			return rest;
-		}
 		if (tree.agentId === agentId) return tree;
-		return { ...tree, agentId };
+		// The session belongs to the Agent it came from: forgetting the Agent,
+		// or replacing it with another, forgets the session too.
+		const { agentId: _drop, agentSessionId: _session, ...rest } = tree;
+		return agentId === undefined ? rest : { ...rest, agentId };
 	}
 	if (tree.type !== "split") return tree;
 	const first = setAgentId(tree.first, paneId, agentId);
 	const second = setAgentId(tree.second, paneId, agentId);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
+/**
+ * Remember `sessionId` as the **Agent session id** of the terminal node with
+ * the given paneId — but only while that node runs `agentId`. A hook can land
+ * just after its Agent exited (and the pane forgot it), and must not leave a
+ * session behind on a pane with no Agent. Returns the same tree when nothing
+ * changes, so callers can skip the write.
+ */
+export function setAgentSessionId(
+	tree: PaneNode,
+	paneId: string,
+	agentId: string,
+	sessionId: string,
+): PaneNode {
+	if (tree.type === "terminal") {
+		if (tree.id !== paneId || tree.agentId !== agentId) return tree;
+		if (tree.agentSessionId === sessionId) return tree;
+		return { ...tree, agentSessionId: sessionId };
+	}
+	if (tree.type !== "split") return tree;
+	const first = setAgentSessionId(tree.first, paneId, agentId, sessionId);
+	const second = setAgentSessionId(tree.second, paneId, agentId, sessionId);
 	if (first === tree.first && second === tree.second) return tree;
 	return { ...tree, first, second };
 }

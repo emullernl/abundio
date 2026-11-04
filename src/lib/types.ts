@@ -6,6 +6,10 @@ export type PaneNode =
 			id: string;
 			ptyId: string;
 			agentId?: string;
+			/** The Agent's own id for its conversation, from its hooks: what a
+			 *  **Session resume** reopens (ADR-0050). Only ever set alongside
+			 *  `agentId`, and dropped with it. */
+			agentSessionId?: string;
 			cwd?: string;
 	  }
 	| {

@@ -570,6 +570,51 @@ describe("workspaceStore", () => {
 		});
 	});
 
+	describe("stampAgentSessionOnPane", () => {
+		const running: PaneNode = {
+			type: "terminal",
+			id: "pane-1",
+			ptyId: "",
+			agentId: "claude",
+		};
+
+		it("persists the id onto a pane running that Agent", () => {
+			const workspace = makeWorkspace({
+				tabs: [makeTab({ layoutJson: JSON.stringify(running) })],
+			});
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+			vi.mocked(tabs.update).mockClear();
+
+			useWorkspaceStore
+				.getState()
+				.stampAgentSessionOnPane("pane-1", "claude", "sid");
+
+			const tab = useWorkspaceStore.getState().workspaces[0].tabs[0];
+			expect(JSON.parse(tab.layoutJson).agentSessionId).toBe("sid");
+			expect(tabs.update).toHaveBeenCalledWith("tab-1", {
+				layoutJson: tab.layoutJson,
+			});
+		});
+
+		it("writes nothing when the id is unchanged or the Agent differs", () => {
+			const workspace = makeWorkspace({
+				tabs: [
+					makeTab({
+						layoutJson: JSON.stringify({ ...running, agentSessionId: "sid" }),
+					}),
+				],
+			});
+			useWorkspaceStore.setState({ workspaces: [workspace] });
+			vi.mocked(tabs.update).mockClear();
+
+			const store = useWorkspaceStore.getState();
+			store.stampAgentSessionOnPane("pane-1", "claude", "sid");
+			store.stampAgentSessionOnPane("pane-1", "codex", "other");
+
+			expect(tabs.update).not.toHaveBeenCalled();
+		});
+	});
+
 	describe("stampCwdOnPane", () => {
 		it("persists a cwd onto the matching terminal pane", () => {
 			const workspace = makeWorkspace();

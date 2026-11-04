@@ -19,6 +19,7 @@ import {
 	parseTabLayout,
 	pruneOrphanDerived,
 	setAgentId,
+	setAgentSessionId,
 	setCwd,
 } from "../lib/paneTree";
 import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
@@ -143,6 +144,13 @@ interface WorkspaceState {
 	// Pane/layout actions
 	setFocusedPane: (paneId: string | null) => void;
 	stampAgentOnPane: (paneId: string, agentId: string | undefined) => void;
+	/** Remember an **Agent session id** on a pane running `agentId`. No write
+	 *  when it is already the pane's id, or the pane runs no such Agent. */
+	stampAgentSessionOnPane: (
+		paneId: string,
+		agentId: string,
+		sessionId: string,
+	) => void;
 	stampCwdOnPane: (paneId: string, cwd: string) => void;
 	updateLayout: (tabId: string, layout: PaneNode) => Promise<void>;
 	updateLayoutLocal: (tabId: string, layout: PaneNode) => void;
@@ -1089,6 +1097,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	stampAgentOnPane: (paneId, agentId) => {
 		const result = findMutatedTabLayout(get().workspaces, (layout) =>
 			setAgentId(layout, paneId, agentId),
+		);
+		if (!result) return;
+		set((s) => ({
+			workspaces: updateTabInWorkspaces(
+				s.workspaces,
+				result.tabId,
+				result.layoutJson,
+			),
+		}));
+		tabsApi
+			.update(result.tabId, { layoutJson: result.layoutJson })
+			.catch(() => {});
+	},
+
+	stampAgentSessionOnPane: (paneId, agentId, sessionId) => {
+		const result = findMutatedTabLayout(get().workspaces, (layout) =>
+			setAgentSessionId(layout, paneId, agentId, sessionId),
 		);
 		if (!result) return;
 		set((s) => ({

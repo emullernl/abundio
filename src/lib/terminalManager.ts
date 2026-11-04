@@ -34,6 +34,7 @@ import {
 	applySessionEnd,
 	isSessionEnd,
 } from "./agentModeEvents";
+import { agentSessionIdFrom } from "./agentSessionId";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import {
 	hasTitleStatus,
@@ -1829,6 +1830,19 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					useWorkspaceStore
 						.getState()
 						.stampAgentOnPane(paneId, hookEvent.agent);
+					// After the stamp above: the session is kept only on a pane
+					// running this Agent. Never on a Session end, which does not
+					// adopt (ADR-0050). No write when the id is unchanged.
+					const sessionId = agentSessionIdFrom(
+						hookEvent.agent,
+						hookEvent.event,
+						payload,
+					);
+					if (sessionId) {
+						useWorkspaceStore
+							.getState()
+							.stampAgentSessionOnPane(paneId, hookEvent.agent, sessionId);
+					}
 				};
 				const applyTransition = (
 					transition: HookTransition,
