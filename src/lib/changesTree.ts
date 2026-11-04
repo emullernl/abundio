@@ -30,9 +30,14 @@ export type TreeRow =
 	| { kind: "folder"; node: FolderNode; depth: number; collapsed: boolean }
 	| { kind: "file"; file: GitChangedFile; depth: number };
 
-/** The key a folded Folder row is remembered under. */
-export function folderKey(section: string, folderPath: string): string {
-	return `${section}\u0000${folderPath}`;
+/** The key a folded Folder row is remembered under. Folder paths belong to
+ *  one Workspace, so folding `src` in one Workspace leaves another's alone. */
+export function folderKey(
+	workspaceId: string,
+	section: string,
+	folderPath: string,
+): string {
+	return `${workspaceId}\u0000${section}\u0000${folderPath}`;
 }
 
 interface MutableFolder {
@@ -43,11 +48,21 @@ interface MutableFolder {
 
 const byName = (a: string, b: string) => a.localeCompare(b);
 
-function splitPath(path: string): [folder: string, name: string] {
-	const slash = path.lastIndexOf("/");
-	return slash === -1
-		? ["", path]
-		: [path.slice(0, slash), path.slice(slash + 1)];
+/**
+ * A changed path's folder and the name its row shows.
+ *
+ * A new folder that git has not looked inside arrives as **one** untracked
+ * path ending in `/` (`newdir/`), because the untracked walk does not descend
+ * into new folders. That is a row of its own, named `newdir/`, in its parent
+ * folder. Splitting it like a file path would give it an empty name.
+ */
+export function splitChangedPath(path: string): [folder: string, name: string] {
+	const isFolder = path.endsWith("/");
+	const core = isFolder ? path.slice(0, -1) : path;
+	const slash = core.lastIndexOf("/");
+	const folder = slash === -1 ? "" : core.slice(0, slash);
+	const name = slash === -1 ? core : core.slice(slash + 1);
+	return [folder, isFolder ? `${name}/` : name];
 }
 
 /**
@@ -57,8 +72,8 @@ function splitPath(path: string): [folder: string, name: string] {
  * `src/z.ts`, splitting `src`'s own files apart.
  */
 export function compareByFolderThenName(a: string, b: string): number {
-	const [folderA, nameA] = splitPath(a);
-	const [folderB, nameB] = splitPath(b);
+	const [folderA, nameA] = splitChangedPath(a);
+	const [folderB, nameB] = splitChangedPath(b);
 	return byName(folderA, folderB) || byName(nameA, nameB);
 }
 
@@ -70,9 +85,9 @@ export function compareByFolderThenName(a: string, b: string): number {
 export function buildChangesTree(files: GitChangedFile[]): TreeNode[] {
 	const root: MutableFolder = { path: "", folders: new Map(), files: [] };
 	for (const file of files) {
-		const parts = file.path.split("/");
+		const [folderPath] = splitChangedPath(file.path);
 		let folder = root;
-		for (const part of parts.slice(0, -1)) {
+		for (const part of folderPath ? folderPath.split("/") : []) {
 			let next = folder.folders.get(part);
 			if (!next) {
 				next = {

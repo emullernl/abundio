@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import { gitFolderMenuEntries } from "../../lib/gitFolderMenu";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
@@ -69,6 +69,10 @@ export function GitChangesTab() {
 		existsOnDisk: boolean;
 		fromKeyboard: boolean;
 	} | null>(null);
+	// Bumped whenever a menu opens or the Workspace changes. A Folder menu
+	// whose disk lookup finishes after a newer request is dropped, so a slow
+	// lookup can neither open on the wrong folder nor open beside the Row menu.
+	const menuRequest = useRef(0);
 	const treeView = useSettingsStore((s) => s.gitChangesTreeView);
 	const setTreeView = useSettingsStore((s) => s.setGitChangesTreeView);
 
@@ -91,6 +95,7 @@ export function GitChangesTab() {
 	// keyboard alone and does not.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: clears on switch only
 	useEffect(() => {
+		menuRequest.current++;
 		setMenu(null);
 		setFolderMenu(null);
 	}, [activeWorkspaceId]);
@@ -102,13 +107,13 @@ export function GitChangesTab() {
 		fromKeyboard: boolean,
 	) {
 		if (!cwd) return;
+		const request = ++menuRequest.current;
 		setMenu(null);
-		const requestedFor = activeWorkspaceId;
 		const existsOnDisk = await fsApi
 			.fileExists(resolveWorkspacePath(cwd, folder.path))
 			.catch(() => false);
-		// A Workspace switch during the lookup would resolve against the old root.
-		if (useWorkspaceStore.getState().activeWorkspaceId !== requestedFor) return;
+		// A newer menu request, or a Workspace switch, came in while we waited.
+		if (request !== menuRequest.current) return;
 		setFolderMenu({ x, y, folder, existsOnDisk, fromKeyboard });
 	}
 
@@ -427,6 +432,7 @@ export function GitChangesTab() {
 							onSelectFile={handleSelectFile}
 							onOpenFile={handleOpenFile}
 							onContextMenu={(x, y, file, fromKeyboard) => {
+								menuRequest.current++;
 								setFolderMenu(null);
 								setMenu({ x, y, file, fromKeyboard });
 							}}

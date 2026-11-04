@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitChangedFile } from "../../../lib/types";
 import { useGitChangesStore } from "../../../stores/gitChangesStore";
 import { useSettingsStore } from "../../../stores/settingsStore";
+import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { GitChangesFileList } from "../GitChangesFileList";
 
 function file(
@@ -173,6 +174,20 @@ describe("GitChangesFileList — Tree view", () => {
 			{ section: "unstaged", path: "src/lib" },
 			false,
 		);
+	});
+
+	it("names an untracked folder row with its trailing slash", () => {
+		renderList([file("src/newdir/", "untracked", "?")]);
+		expect(rowTexts()).toEqual(["src", "Unewdir/"]);
+	});
+
+	it("does not carry a fold into another Workspace", () => {
+		useWorkspaceStore.setState({ activeWorkspaceId: "a" });
+		renderList([file("src/a.ts", "unstaged")]);
+		act(() => folderRow("src").click());
+		expect(rowTexts()).toEqual(["src"]);
+		act(() => useWorkspaceStore.setState({ activeWorkspaceId: "b" }));
+		expect(rowTexts()).toEqual(["src", "a.ts"]);
 	});
 
 	it("drops the grey folder path from file rows", () => {

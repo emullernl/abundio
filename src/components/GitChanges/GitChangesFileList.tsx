@@ -8,6 +8,7 @@ import {
 import type { GitChangedFile } from "../../lib/types";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ChevronDown, ChevronRight } from "../Icons";
 import { GitChangesFileItem } from "./GitChangesFileItem";
 import { GitChangesFolderRow } from "./GitChangesFolderRow";
@@ -74,6 +75,7 @@ export function GitChangesFileList({
 	const collapsedFolders = useGitChangesStore((s) => s.collapsedFolders);
 	const toggleFolder = useGitChangesStore((s) => s.toggleFolder);
 	const treeView = useSettingsStore((s) => s.gitChangesTreeView);
+	const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId) ?? "";
 
 	function rowsOf(section: string, files: GitChangedFile[]): TreeRow[] {
 		if (!treeView) {
@@ -81,7 +83,8 @@ export function GitChangesFileList({
 		}
 		return visibleTreeRows(
 			buildChangesTree(files),
-			(path) => collapsedFolders[folderKey(section, path)] ?? false,
+			(path) =>
+				collapsedFolders[folderKey(workspaceId, section, path)] ?? false,
 		);
 	}
 
@@ -201,7 +204,9 @@ export function GitChangesFileList({
 													menuTargetFolder?.section === group.key &&
 													menuTargetFolder?.path === node.path
 												}
-												onToggle={() => toggleFolder(group.key, node.path)}
+												onToggle={() =>
+													toggleFolder(workspaceId, group.key, node.path)
+												}
 												onContextMenu={(x, y, fromKeyboard) =>
 													onFolderContextMenu(
 														x,

@@ -101,9 +101,10 @@ interface GitChangesState {
 	loading: boolean;
 	error: string | null;
 	collapsedSections: Record<string, boolean>;
-	/** Folded **Folder rows** in Tree view, keyed by `folderKey(section, path)`
-	 *  so a folder folded in one Section stays open in the others. In memory
-	 *  only, like `collapsedSections`. */
+	/** Folded **Folder rows** in Tree view, keyed by
+	 *  `folderKey(workspaceId, section, path)` so a folder folded in one
+	 *  Section, or one Workspace, stays open in the others. In memory only,
+	 *  like `collapsedSections`. */
 	collapsedFolders: Record<string, boolean>;
 	branchSelectorOpen: boolean;
 	/** The suspended git operation, surfaced as a single read-only line in the
@@ -130,7 +131,11 @@ interface GitChangesState {
 		notGitRepo: boolean,
 	) => void;
 	toggleSection: (section: string) => void;
-	toggleFolder: (section: string, folderPath: string) => void;
+	toggleFolder: (
+		workspaceId: string,
+		section: string,
+		folderPath: string,
+	) => void;
 	setBaseBranch: (
 		workspaceId: string,
 		branch: string | null,
@@ -417,9 +422,9 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			},
 		})),
 
-	toggleFolder: (section, folderPath) =>
+	toggleFolder: (workspaceId, section, folderPath) =>
 		set((s) => {
-			const key = folderKey(section, folderPath);
+			const key = folderKey(workspaceId, section, folderPath);
 			return {
 				collapsedFolders: {
 					...s.collapsedFolders,

@@ -281,6 +281,34 @@ describe("GitChangesTab — Folder menu", () => {
 		expect(menuButton("Open Diff")).toBeUndefined();
 	});
 
+	it("drops a Folder menu whose lookup finishes after a Row menu opened", async () => {
+		let resolveLookup: (exists: boolean) => void = () => {};
+		vi.mocked(fsApi.fileExists).mockReturnValueOnce(
+			new Promise((r) => {
+				resolveLookup = r;
+			}),
+		);
+		const folderRow = [
+			...container.querySelectorAll<HTMLElement>('[aria-haspopup="menu"]'),
+		].find((el) => el.textContent === "src/lib") as HTMLElement;
+		act(() => {
+			folderRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+		const fileRow = [
+			...container.querySelectorAll<HTMLElement>('[aria-haspopup="menu"]'),
+		].find((el) => el.textContent?.includes("ipc.ts")) as HTMLElement;
+		act(() => {
+			fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+		await act(async () => resolveLookup(true));
+		// Only the Row menu: one Copy Relative Path, and its Open Diff.
+		const copies = [...document.querySelectorAll("body button")].filter(
+			(b) => b.textContent === "Copy Relative Path",
+		);
+		expect(copies).toHaveLength(1);
+		expect(menuButton("Open Diff")).toBeDefined();
+	});
+
 	it("disables Reveal on a folder that is gone from disk", async () => {
 		await openFolderMenu(false);
 		const reveal = [

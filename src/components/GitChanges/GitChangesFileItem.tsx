@@ -1,3 +1,4 @@
+import { splitChangedPath } from "../../lib/changesTree";
 import type { GitChangedFile } from "../../lib/types";
 import { File } from "../Icons";
 
@@ -39,16 +40,6 @@ const STATUS_LABELS: Record<string, string> = {
 	U: "U",
 };
 
-function fileName(path: string): string {
-	return path.split("/").pop() ?? path;
-}
-
-function dirPath(path: string): string {
-	const parts = path.split("/");
-	if (parts.length <= 1) return "";
-	return parts.slice(0, -1).join("/");
-}
-
 export function GitChangesFileItem({
 	file,
 	isSelected,
@@ -61,7 +52,8 @@ export function GitChangesFileItem({
 }: Props) {
 	const color = STATUS_COLORS[file.status] ?? "var(--fg-secondary)";
 	const label = STATUS_LABELS[file.status] ?? file.status;
-	const dir = showDir ? dirPath(file.path) : "";
+	const [folder, name] = splitChangedPath(file.path);
+	const dir = showDir ? folder : "";
 	const isDeleted = file.status === "D";
 	// A conflicted row's own click already opens the text pane, so the nested
 	// "Open File" button would be a duplicate of it.
@@ -167,7 +159,7 @@ export function GitChangesFileItem({
 					fontFamily: "var(--font-ui)",
 				}}
 			>
-				{fileName(file.path)}
+				{name}
 				{dir && (
 					<span style={{ color: "var(--fg-secondary)", marginLeft: 4 }}>
 						{dir}
