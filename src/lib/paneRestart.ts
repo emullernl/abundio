@@ -7,15 +7,18 @@
 
 import type { PtyActivityEntry } from "../stores/ptyActivityStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
-import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { agentCommandFor } from "./agents";
 import { containsPane, parseTabLayout } from "./paneTree";
 import {
 	type PendingTask,
 	setPendingAgent,
 	setPendingTask,
 } from "./pendingAgentRegistry";
+import {
+	countAgentPanesByFolder,
+	relaunchCommandForPane,
+	terminalNodes,
+} from "./sessionResume";
 import {
 	killUnmountedPanePty,
 	livePtyIdByPane,
@@ -31,6 +34,8 @@ export interface LivePane {
 	/** Terminal title, for telling two shells apart in the confirm list. */
 	title: string;
 	agentId?: string;
+	/** The pane's remembered **Agent session id**, for a Session resume. */
+	agentSessionId?: string;
 	state: PtyActivityState;
 	cwd: string;
 	/** False when the pane has a PTY but no mounted xterm instance. */
@@ -72,6 +77,7 @@ export function pickLivePanes(
 				tabName: tab.name,
 				title: titles[node.id] ?? "",
 				agentId: node.agentId,
+				agentSessionId: node.agentSessionId,
 				state: activities[ptyId]?.state ?? "idle",
 				cwd: node.cwd ?? workspace.rootFolder,
 				mounted: instancePtyIdByPane[node.id] !== undefined,
@@ -80,18 +86,6 @@ export function pickLivePanes(
 	}
 
 	return out;
-}
-
-/** Terminal leaves of a layout, in tree order. File and preview panes have no
- *  PTY and are skipped. */
-function terminalNodes(
-	node: PaneNode,
-): Array<Extract<PaneNode, { type: "terminal" }>> {
-	if (node.type === "terminal") return [node];
-	if (node.type === "split") {
-		return [...terminalNodes(node.first), ...terminalNodes(node.second)];
-	}
-	return [];
 }
 
 /** `pickLivePanes` bound to the live stores. */
@@ -114,7 +108,8 @@ export function collectLivePanes(workspaceId: string): LivePane[] {
 /**
  * Kill and respawn every live PTY in a Workspace so they pick up the current
  * injected Bundle. Agent panes relaunch through the same pendingAgentRegistry
- * path a cold start uses — a NEW agent session, not a resumed one.
+ * path a cold start uses, resuming their session when they can (**Session
+ * resume**, ADR-0050).
  *
  * Sequential rather than `Promise.all`: N shells starting at once all race
  * `fit()` and `pty.resize` on shared xterm machinery, which is the class of race
@@ -124,12 +119,26 @@ export async function restartWorkspacePtys(
 	workspaceId: string,
 ): Promise<{ restarted: number; failed: number }> {
 	const panes = collectLivePanes(workspaceId);
-	const agents = useSettingsStore.getState().agents;
+	const store = useWorkspaceStore.getState();
+	const rootFolder =
+		store.workspaces.find((w) => w.id === workspaceId)?.rootFolder ?? ".";
+	const counts = countAgentPanesByFolder(store.workspaces);
 	let restarted = 0;
 	let failed = 0;
 
 	for (const pane of panes) {
-		const command = agentCommandFor(agents, pane.agentId);
+		const command = relaunchCommandForPane(
+			{
+				type: "terminal",
+				id: pane.paneId,
+				ptyId: pane.ptyId,
+				agentId: pane.agentId,
+				agentSessionId: pane.agentSessionId,
+				cwd: pane.cwd,
+			},
+			rootFolder,
+			counts,
+		);
 		try {
 			if (pane.mounted) {
 				await restartPanePty(pane.paneId, {

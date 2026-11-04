@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { appWebview } from "../lib/appWindow";
+import { getDefaultShell } from "../lib/defaultShell";
 import { isDemoMode } from "../lib/demo";
 import {
 	buildDropText,
@@ -9,7 +10,7 @@ import {
 } from "../lib/fileDrop";
 import { useFileDropStore } from "../lib/fileDropStore";
 import { focusPaneForInput } from "../lib/fleetFocus";
-import { clipboardImage, pty, shells } from "../lib/ipc";
+import { clipboardImage, pty } from "../lib/ipc";
 import { isWindows } from "../lib/platform";
 import { getTerminal } from "../lib/terminalManager";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
@@ -18,27 +19,6 @@ import { useSettingsStore } from "../stores/settingsStore";
 // Ctrl+V control byte. Agents that support clipboard-image paste (Claude Code,
 // Gemini CLI) read the OS clipboard when they receive this on stdin.
 const CTRL_V = "\x16";
-
-// The PTY's "System Default" shell, resolved once in Rust and memoized. Only
-// needed on Windows to tell whether the default is Git Bash (→ unix paths).
-let _defaultShell: string | null = null;
-let _defaultShellInflight: Promise<string> | null = null;
-function getDefaultShell(): Promise<string> {
-	if (_defaultShell !== null) return Promise.resolve(_defaultShell);
-	if (!_defaultShellInflight) {
-		_defaultShellInflight = shells
-			.default()
-			.then((s) => {
-				_defaultShell = s;
-				return s;
-			})
-			.catch(() => {
-				_defaultShell = "";
-				return "";
-			});
-	}
-	return _defaultShellInflight;
-}
 
 /** Map a webview drop position (physical px) to the terminal pane under it.
  *  `document.elementFromPoint` wants CSS px, so divide out the device ratio. */

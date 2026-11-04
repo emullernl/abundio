@@ -411,6 +411,32 @@ export function parseTaskArgsForm(
 	return { taskArgs: parts };
 }
 
+/**
+ * Parse the continue argument form a user types for a custom Agent (for
+ * example `--continue`): what reopens its most recent session in the launch
+ * folder. Empty input means "cannot resume" (`continueArgs: undefined`). A
+ * placeholder is an error: a custom Agent is never given a prompt or an id
+ * on relaunch, so the form must stand on its own.
+ */
+export function parseContinueArgsForm(
+	form: string,
+): { continueArgs: string[] | undefined } | { error: string } {
+	const parts = form.trim().split(/\s+/).filter(Boolean);
+	if (parts.length === 0) return { continueArgs: undefined };
+	if (
+		parts.some(
+			(p) =>
+				p.includes(TASK_PROMPT_PLACEHOLDER) ||
+				p.includes(SESSION_ID_PLACEHOLDER),
+		)
+	) {
+		return {
+			error: `No placeholders here: just the flag that continues the latest session (for example: --continue)`,
+		};
+	}
+	return { continueArgs: parts };
+}
+
 function escapeRegExp(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -17,6 +17,9 @@ vi.mock("../../lib/ipc", () => ({
 		delete: vi.fn(() => Promise.resolve()),
 		update: vi.fn(() => Promise.resolve()),
 	},
+	shells: {
+		default: vi.fn(() => Promise.resolve("/bin/zsh")),
+	},
 	pty: {
 		deleteLog: vi.fn(() => Promise.resolve()),
 		cleanupStaleLogs: vi.fn(() => Promise.resolve()),
@@ -75,6 +78,7 @@ import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
+import { useSettingsStore } from "../settingsStore";
 import {
 	findMutatedTabLayout,
 	restoreTabFocus,
@@ -143,6 +147,84 @@ describe("workspaceStore", () => {
 			expect(useWorkspaceStore.getState().workspacesInitialized).toBe(false);
 			await useWorkspaceStore.getState().loadWorkspaces();
 			expect(useWorkspaceStore.getState().workspacesInitialized).toBe(true);
+		});
+
+		describe("Session resume (ADR-0050)", () => {
+			const agentPane = (id: string, extra: Partial<PaneNode> = {}) =>
+				({
+					type: "terminal",
+					id,
+					ptyId: "stale",
+					agentId: "claude",
+					...extra,
+				}) as PaneNode;
+			const split = (first: PaneNode, second: PaneNode): PaneNode => ({
+				type: "split",
+				id: "split",
+				direction: "horizontal",
+				ratio: 0.5,
+				first,
+				second,
+			});
+			const load = async (layout: PaneNode) => {
+				const { workspaces } = await import("../../lib/ipc");
+				vi.mocked(workspaces.list).mockResolvedValueOnce([
+					makeWorkspace({
+						tabs: [makeTab({ layoutJson: JSON.stringify(layout) })],
+					}),
+				]);
+				await useWorkspaceStore.getState().loadWorkspaces();
+			};
+
+			beforeEach(() => {
+				useSettingsStore.setState({
+					resumeAgentSessions: true,
+					shellPath: null,
+				});
+			});
+
+			it("resumes a pane's remembered session by id", async () => {
+				await load(agentPane("p1", { agentSessionId: "sid-1" }));
+				expect(takePendingAgent("p1")).toEqual({
+					command: "claude --resume sid-1 || claude",
+				});
+			});
+
+			it("continues the folder's latest session for a pane alone in it", async () => {
+				await load(agentPane("p1"));
+				expect(takePendingAgent("p1")).toEqual({
+					command: "claude --continue || claude",
+				});
+			});
+
+			it("starts fresh when two panes share the Agent and folder", async () => {
+				await load(
+					split(agentPane("p1"), agentPane("p2", { agentSessionId: "sid-2" })),
+				);
+				expect(takePendingAgent("p1")).toEqual({ command: "claude" });
+				// Its own id still resumes: no ambiguity about whose session it is.
+				expect(takePendingAgent("p2")).toEqual({
+					command: "claude --resume sid-2 || claude",
+				});
+			});
+
+			it("continues for each pane when their folders differ", async () => {
+				await load(
+					split(agentPane("p1", { cwd: "/a" }), agentPane("p2", { cwd: "/b" })),
+				);
+				expect(takePendingAgent("p1")?.command).toBe(
+					"claude --continue || claude",
+				);
+				expect(takePendingAgent("p2")?.command).toBe(
+					"claude --continue || claude",
+				);
+			});
+
+			it("starts fresh when the setting is off", async () => {
+				useSettingsStore.setState({ resumeAgentSessions: false });
+				await load(agentPane("p1", { agentSessionId: "sid-1" }));
+				expect(takePendingAgent("p1")).toEqual({ command: "claude" });
+			});
 		});
 
 		it("does not auto-select any workspace on load", async () => {

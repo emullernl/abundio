@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { type LivePane, restartWorkspacePtys } from "../../lib/paneRestart";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceEnvStore } from "../../stores/workspaceEnvStore";
 
 interface Props {
@@ -28,6 +29,7 @@ export function ApplyEnvToTerminalsDialog({
 	const clearDirty = useWorkspaceEnvStore((s) => s.clearInjectedDirty);
 
 	const agentCount = panes.filter((p) => p.agentId).length;
+	const resume = useSettingsStore((s) => s.resumeAgentSessions);
 
 	const run = async () => {
 		setBusy(true);
@@ -181,7 +183,9 @@ export function ApplyEnvToTerminalsDialog({
 						{agentCount > 0 ? (
 							<>
 								{agentCount} running {agentCount === 1 ? "agent" : "agents"}{" "}
-								will lose the current session and relaunch from scratch.
+								{resume
+									? "will relaunch and resume their session where they can, or start fresh where they cannot."
+									: "will lose the current session and relaunch from scratch."}{" "}
 								Scrollback is preserved.
 							</>
 						) : (

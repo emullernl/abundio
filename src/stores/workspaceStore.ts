@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { agentCommandFor } from "../lib/agents";
+import { getDefaultShell } from "../lib/defaultShell";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
 import {
 	fileWindows,
@@ -9,7 +9,6 @@ import {
 	worktrees as worktreesApi,
 } from "../lib/ipc";
 import {
-	collectAgentPanes,
 	collectPaneIds,
 	collectTerminalIds,
 	containsPane,
@@ -24,6 +23,11 @@ import {
 } from "../lib/paneTree";
 import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
 import { perfMark } from "../lib/perfMarks";
+import {
+	countAgentPanesByFolder,
+	relaunchCommandForPane,
+	terminalNodes,
+} from "../lib/sessionResume";
 import { teardownTerminal } from "../lib/terminalManager";
 import type {
 	CodingAgent,
@@ -37,7 +41,6 @@ import { useExplorerStore } from "./explorerStore";
 import { useNotesStore } from "./notesStore";
 import { fallbackProfileId } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
-import { useSettingsStore } from "./settingsStore";
 import { useWorkspaceGitStore } from "./workspaceGitStore";
 
 /** What a **New task** hands the store to start its Agent: the argv with the
@@ -286,19 +289,21 @@ function clearPtyIds(node: PaneNode): PaneNode {
 }
 
 /**
- * For each terminal pane in the layout that has an agentId, look the agent up
- * in settingsStore and seed pendingAgentRegistry so the agent re-runs the next
- * time the pane spawns its PTY. Agents that no longer exist are skipped — the
- * pane comes up as a plain shell.
+ * For each terminal pane in the layout that has an agentId, seed
+ * pendingAgentRegistry so the agent re-runs the next time the pane spawns its
+ * PTY — resuming its last session when it can (**Session resume**, ADR-0050).
+ * `counts` is `countAgentPanesByFolder` over every loaded Workspace. Agents
+ * that no longer exist are skipped — the pane comes up as a plain shell.
  */
-function seedPendingAgentsForLayout(layout: PaneNode): void {
-	const entries = collectAgentPanes(layout);
-	if (entries.length === 0) return;
-	const agents: CodingAgent[] = useSettingsStore.getState().agents;
-	for (const { paneId, agentId } of entries) {
-		const command = agentCommandFor(agents, agentId);
+function seedPendingAgentsForLayout(
+	layout: PaneNode,
+	rootFolder: string,
+	counts: Map<string, number>,
+): void {
+	for (const node of terminalNodes(layout)) {
+		const command = relaunchCommandForPane(node, rootFolder, counts);
 		if (!command) continue;
-		setPendingAgent(paneId, { command });
+		setPendingAgent(node.id, { command });
 	}
 }
 
@@ -397,10 +402,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				const pruned = pruneOrphanDerived(layout) ?? layout;
 				allPaneIds.push(...collectPaneIds(pruned));
 				const cleared = clearPtyIds(pruned);
-				seedPendingAgentsForLayout(cleared);
 				return { ...t, layoutJson: JSON.stringify(cleared) };
 			}),
 		}));
+		// After every layout is cleaned: whether a pane may take its folder's
+		// latest session depends on every other Workspace's panes. The default
+		// shell decides whether a resume can fall back, so resolve it first.
+		await getDefaultShell();
+		const counts = countAgentPanesByFolder(cleaned);
+		for (const ws of cleaned) {
+			for (const t of ws.tabs) {
+				const layout = parseTabLayout(t.layoutJson);
+				if (layout) seedPendingAgentsForLayout(layout, ws.rootFolder, counts);
+			}
+		}
 
 		// Set default active tab for each workspace
 		const activeTabByWorkspace: Record<string, string> = {};
@@ -747,6 +762,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Clear ptyIds from layouts so fresh PTYs spawn on next open, and re-seed
 		// pendingAgentRegistry for any pane that remembers an agent.
 		const isActive = state.activeWorkspaceId === id;
+		const counts = countAgentPanesByFolder(state.workspaces);
 		set({
 			workspaces: state.workspaces.map((s) =>
 				s.id === id
@@ -756,7 +772,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 								const layout = parseTabLayout(t.layoutJson);
 								if (!layout) return t;
 								const cleared = clearPtyIds(layout);
-								seedPendingAgentsForLayout(cleared);
+								seedPendingAgentsForLayout(cleared, s.rootFolder, counts);
 								return {
 									...t,
 									layoutJson: JSON.stringify(cleared),

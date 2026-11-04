@@ -4,6 +4,7 @@ import {
 	BUILTIN_AGENTS,
 	isSafeSessionId,
 	mergeAgentsWithBuiltins,
+	parseContinueArgsForm,
 	type RelaunchOptions,
 	shellSupportsOrFallback,
 } from "../agents";
@@ -182,5 +183,19 @@ describe("shellSupportsOrFallback", () => {
 		for (const s of ["powershell.exe", "/usr/bin/nu", "/bin/csh", null]) {
 			expect(shellSupportsOrFallback(s), String(s)).toBe(false);
 		}
+	});
+});
+
+describe("parseContinueArgsForm", () => {
+	it("splits a form into args; empty means none", () => {
+		expect(parseContinueArgsForm(" --continue  --quiet ")).toEqual({
+			continueArgs: ["--continue", "--quiet"],
+		});
+		expect(parseContinueArgsForm("   ")).toEqual({ continueArgs: undefined });
+	});
+
+	it("refuses placeholders", () => {
+		expect(parseContinueArgsForm("--resume {session}")).toHaveProperty("error");
+		expect(parseContinueArgsForm("-i {prompt}")).toHaveProperty("error");
 	});
 });
