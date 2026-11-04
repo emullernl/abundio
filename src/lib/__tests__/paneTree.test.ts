@@ -19,6 +19,7 @@ import {
 	removeNode,
 	replaceNode,
 	setAgentId,
+	setAgentSessionId,
 } from "../paneTree";
 import type { PaneNode } from "../types";
 
@@ -538,5 +539,80 @@ describe("derived panes cover more than previews", () => {
 		};
 		expect(findDerivedForSource(tree, leafA.id, "mergeSide")?.id).toBe("side");
 		expect(findDerivedForSource(tree, leafA.id, "preview")).toBeNull();
+	});
+});
+
+describe("setAgentSessionId", () => {
+	const running: PaneNode = {
+		type: "terminal",
+		id: "a",
+		ptyId: "pty-a",
+		agentId: "claude",
+	};
+	const tree: PaneNode = {
+		type: "split",
+		id: "s",
+		direction: "horizontal",
+		ratio: 0.5,
+		first: running,
+		second: leafB,
+	};
+
+	it("stamps the id on a pane running that Agent", () => {
+		const result = setAgentSessionId(tree, "a", "claude", "sid");
+		expect(result.type === "split" && result.first).toEqual({
+			...running,
+			agentSessionId: "sid",
+		});
+		expect(result.type === "split" && result.second).toBe(leafB);
+	});
+
+	it("returns the same tree when nothing changes", () => {
+		const once = setAgentSessionId(tree, "a", "claude", "sid");
+		expect(setAgentSessionId(once, "a", "claude", "sid")).toBe(once);
+	});
+
+	it("follows a new session (latest wins)", () => {
+		const once = setAgentSessionId(running, "a", "claude", "old");
+		expect(setAgentSessionId(once, "a", "claude", "new")).toEqual({
+			...running,
+			agentSessionId: "new",
+		});
+	});
+
+	it("ignores a pane that runs no Agent, or another one", () => {
+		expect(setAgentSessionId(leafA, "a", "claude", "sid")).toBe(leafA);
+		expect(setAgentSessionId(running, "a", "codex", "sid")).toBe(running);
+	});
+});
+
+describe("setAgentId and the Agent session id", () => {
+	const withSession: PaneNode = {
+		type: "terminal",
+		id: "a",
+		ptyId: "pty-a",
+		agentId: "claude",
+		agentSessionId: "sid",
+	};
+
+	it("drops the session when the Agent is forgotten", () => {
+		expect(setAgentId(withSession, "a", undefined)).toEqual({
+			type: "terminal",
+			id: "a",
+			ptyId: "pty-a",
+		});
+	});
+
+	it("drops the session when another Agent replaces it", () => {
+		expect(setAgentId(withSession, "a", "codex")).toEqual({
+			type: "terminal",
+			id: "a",
+			ptyId: "pty-a",
+			agentId: "codex",
+		});
+	});
+
+	it("keeps the session when the same Agent is stamped again", () => {
+		expect(setAgentId(withSession, "a", "claude")).toBe(withSession);
 	});
 });

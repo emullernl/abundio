@@ -3,6 +3,9 @@ import type { CodingAgent } from "./types";
 /** The one element of `CodingAgent.taskArgs` that the Task prompt replaces. */
 export const TASK_PROMPT_PLACEHOLDER = "{prompt}";
 
+/** The text in `CodingAgent.resumeArgs` that an Agent session id replaces. */
+export const SESSION_ID_PLACEHOLDER = "{session}";
+
 // Task-capable forms (see **Task-capable** in GLOSSARY.md). Each keeps the
 // Agent interactive; the one-shot flags (`-p`, `exec`, `run`, `--single`)
 // would print an answer and exit. Kimi Code has no such form, so it carries
@@ -16,6 +19,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Claude Code",
 		command: "claude",
 		taskArgs: ["{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -24,6 +29,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "GitHub Copilot CLI",
 		command: "copilot",
 		taskArgs: ["-i", "{prompt}"],
+		resumeArgs: ["--resume={session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -32,6 +39,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Gemini CLI",
 		command: "gemini",
 		taskArgs: ["-i", "{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--resume", "latest"],
 		builtin: true,
 		enabled: true,
 	},
@@ -40,6 +49,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Codex",
 		command: "codex",
 		taskArgs: ["{prompt}"],
+		resumeArgs: ["resume", "{session}"],
+		continueArgs: ["resume", "--last"],
 		builtin: true,
 		enabled: true,
 	},
@@ -48,6 +59,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "OpenCode",
 		command: "opencode",
 		taskArgs: ["--prompt", "{prompt}"],
+		resumeArgs: ["--session", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -56,6 +69,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Qwen Code",
 		command: "qwen",
 		taskArgs: ["-i", "{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -63,6 +78,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		id: "kimi",
 		name: "Kimi Code",
 		command: "kimi",
+		resumeArgs: ["--session", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -71,6 +88,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Grok Build",
 		command: "grok",
 		taskArgs: ["{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -79,6 +98,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Mistral Vibe",
 		command: "vibe",
 		taskArgs: ["{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -244,6 +265,74 @@ export function agentCommandFor(
 	return [agent.command, ...(agent.args ?? [])].join(" ");
 }
 
+/**
+ * An **Agent session id** safe to type into a shell. The id comes from a hook
+ * payload, which any process in the pane could forge, and the relaunch line is
+ * typed, so anything else is treated as no id at all. The first character
+ * must be a letter or digit: an id starting with `-` would be read as an
+ * option (`claude --resume --dangerously-skip-permissions`), because several
+ * resume flags take an optional value. Every built-in's ids fit (UUIDs,
+ * `ses_…`, `session_<uuid>`).
+ */
+const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+export function isSafeSessionId(id: string | undefined): id is string {
+	return id !== undefined && SAFE_SESSION_ID.test(id);
+}
+
+export interface RelaunchOptions {
+	/** The Pane's remembered **Agent session id**, if any. */
+	sessionId?: string;
+	/** True when this Pane is the only one running this Agent in its launch
+	 *  folder, so "most recent session in this folder" means *its* session. */
+	alone: boolean;
+	/** The global **Session resume** setting. */
+	resume: boolean;
+}
+
+/**
+ * The line typed to relaunch an Agent on Workspace open or a Bundle restart:
+ * a **Session resume** when one is possible, else the plain launch command
+ * (ADR-0050). Undefined when the Agent is gone.
+ *
+ * In order: the remembered session by id; else, when the Pane is alone in its
+ * folder, the folder's most recent session; else fresh.
+ *
+ * There is deliberately no `|| <plain>` fallback. A shell cannot tell "the
+ * resume failed" from "the user quit the resumed Agent with a non-zero exit"
+ * (Copilot exits 1 on Ctrl+C), so a fallback would start an unasked-for fresh
+ * Agent. A failed resume instead leaves the Agent's error in a plain shell;
+ * the Agent process has exited, so the pane also forgets it and its session,
+ * and the next relaunch does not retry it.
+ */
+export function agentRelaunchCommandFor(
+	agents: CodingAgent[],
+	agentId: string | undefined,
+	opts: RelaunchOptions,
+): string | undefined {
+	const plain = agentCommandFor(agents, agentId);
+	if (!plain || !opts.resume) return plain;
+	const agent = agents.find((a) => a.id === agentId);
+	if (!agent) return plain;
+	if (isSafeSessionId(opts.sessionId) && isResumeForm(agent.resumeArgs)) {
+		const id = opts.sessionId;
+		const resumeArgs = agent.resumeArgs.map((a) =>
+			a.replace(SESSION_ID_PLACEHOLDER, id),
+		);
+		return [plain, ...resumeArgs].join(" ");
+	}
+	if (opts.alone && agent.continueArgs?.length) {
+		return [plain, ...agent.continueArgs].join(" ");
+	}
+	return plain;
+}
+
+/** A resume form with the session placeholder exactly once. */
+function isResumeForm(args: string[] | undefined): args is string[] {
+	if (!args) return false;
+	return args.join(" ").split(SESSION_ID_PLACEHOLDER).length === 2;
+}
+
 /** True of an Agent that can start with a Task prompt and stay interactive. */
 export function isTaskCapable(agent: CodingAgent): boolean {
 	return (
@@ -308,6 +397,32 @@ export function parseTaskArgsForm(
 		};
 	}
 	return { taskArgs: parts };
+}
+
+/**
+ * Parse the continue argument form a user types for a custom Agent (for
+ * example `--continue`): what reopens its most recent session in the launch
+ * folder. Empty input means "cannot resume" (`continueArgs: undefined`). A
+ * placeholder is an error: a custom Agent is never given a prompt or an id
+ * on relaunch, so the form must stand on its own.
+ */
+export function parseContinueArgsForm(
+	form: string,
+): { continueArgs: string[] | undefined } | { error: string } {
+	const parts = form.trim().split(/\s+/).filter(Boolean);
+	if (parts.length === 0) return { continueArgs: undefined };
+	if (
+		parts.some(
+			(p) =>
+				p.includes(TASK_PROMPT_PLACEHOLDER) ||
+				p.includes(SESSION_ID_PLACEHOLDER),
+		)
+	) {
+		return {
+			error: `No placeholders here: just the flag that continues the latest session (for example: --continue)`,
+		};
+	}
+	return { continueArgs: parts };
 }
 
 function escapeRegExp(s: string): string {

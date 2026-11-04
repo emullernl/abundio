@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
 	isTaskCapable,
+	parseContinueArgsForm,
 	parseTaskArgsForm,
 	TASK_PROMPT_PLACEHOLDER,
 } from "../../lib/agents";
@@ -67,30 +68,36 @@ function TaskBadge() {
 }
 
 /**
- * A custom Agent's task argument form (`-i {prompt}`). Commits on blur or
- * Enter; an invalid form stays in the field with its error and is not saved.
- * Built-in Agents never show this: their form is fixed in code.
+ * One of a custom Agent's argument forms, such as its Task form (`-i {prompt}`)
+ * or its continue form (`--continue`). Commits on blur or Enter; an invalid
+ * form stays in the field with its error and is not saved. Built-in Agents
+ * never show these: their forms are fixed in code.
  */
-function TaskArgsField({
-	agent,
+function ArgsField({
+	saved,
+	label,
+	placeholder,
+	parse,
 	onChange,
 }: {
-	agent: CodingAgent;
-	onChange: (taskArgs: string[] | undefined) => void;
+	saved: string;
+	label: string;
+	placeholder: string;
+	parse: (form: string) => { args: string[] | undefined } | { error: string };
+	onChange: (args: string[] | undefined) => void;
 }) {
-	const saved = agent.taskArgs?.join(" ") ?? "";
 	const [value, setValue] = useState(saved);
 	const [error, setError] = useState<string | null>(null);
 	useEffect(() => setValue(saved), [saved]);
 
 	const commit = () => {
-		const parsed = parseTaskArgsForm(value);
+		const parsed = parse(value);
 		if ("error" in parsed) {
 			setError(parsed.error);
 			return;
 		}
 		setError(null);
-		onChange(parsed.taskArgs);
+		onChange(parsed.args);
 	};
 
 	return (
@@ -98,8 +105,8 @@ function TaskArgsField({
 			<input
 				type="text"
 				value={value}
-				placeholder={`Task arguments (optional), e.g. -i ${TASK_PROMPT_PLACEHOLDER}`}
-				aria-label="Task arguments"
+				placeholder={placeholder}
+				aria-label={label}
 				onChange={(e) => {
 					setValue(e.target.value);
 					setError(null);
@@ -122,6 +129,50 @@ function TaskArgsField({
 				</div>
 			)}
 		</div>
+	);
+}
+
+function TaskArgsField({
+	agent,
+	onChange,
+}: {
+	agent: CodingAgent;
+	onChange: (taskArgs: string[] | undefined) => void;
+}) {
+	return (
+		<ArgsField
+			saved={agent.taskArgs?.join(" ") ?? ""}
+			label="Task arguments"
+			placeholder={`Task arguments (optional), e.g. -i ${TASK_PROMPT_PLACEHOLDER}`}
+			parse={(form) => {
+				const parsed = parseTaskArgsForm(form);
+				return "error" in parsed ? parsed : { args: parsed.taskArgs };
+			}}
+			onChange={onChange}
+		/>
+	);
+}
+
+/** A custom Agent's continue form, used by a **Session resume** when the
+ *  pane is the only one running that Agent in its folder (ADR-0050). */
+function ContinueArgsField({
+	agent,
+	onChange,
+}: {
+	agent: CodingAgent;
+	onChange: (continueArgs: string[] | undefined) => void;
+}) {
+	return (
+		<ArgsField
+			saved={agent.continueArgs?.join(" ") ?? ""}
+			label="Continue arguments"
+			placeholder="Continue arguments (optional), e.g. --continue"
+			parse={(form) => {
+				const parsed = parseContinueArgsForm(form);
+				return "error" in parsed ? parsed : { args: parsed.continueArgs };
+			}}
+			onChange={onChange}
+		/>
 	);
 }
 
@@ -287,6 +338,7 @@ function AgentRow({
 	onToggle,
 	onRemove,
 	onTaskArgsChange,
+	onContinueArgsChange,
 }: {
 	agent: CodingAgent;
 	installed: boolean;
@@ -296,6 +348,7 @@ function AgentRow({
 	onRemove?: () => void;
 	/** Only for custom Agents; built-ins have a fixed form. */
 	onTaskArgsChange?: (taskArgs: string[] | undefined) => void;
+	onContinueArgsChange?: (continueArgs: string[] | undefined) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const supported = hookStatus !== undefined;
@@ -422,6 +475,9 @@ function AgentRow({
 			</div>
 			{onTaskArgsChange && (
 				<TaskArgsField agent={agent} onChange={onTaskArgsChange} />
+			)}
+			{onContinueArgsChange && (
+				<ContinueArgsField agent={agent} onChange={onContinueArgsChange} />
 			)}
 			{expanded && hookStatus && (
 				<HookFootprint status={hookStatus} hooksEnabled={hooksEnabled} />
@@ -699,6 +755,10 @@ export function AgentsSection() {
 	const setAppIconBadgeEnabled = useSettingsStore(
 		(s) => s.setAppIconBadgeEnabled,
 	);
+	const resumeAgentSessions = useSettingsStore((s) => s.resumeAgentSessions);
+	const setResumeAgentSessions = useSettingsStore(
+		(s) => s.setResumeAgentSessions,
+	);
 
 	// Live per-agent hook footprint, keyed by agentId. Re-fetched when the
 	// section mounts, and again after a toggle re-provisions, so the Hooks
@@ -746,6 +806,13 @@ export function AgentsSection() {
 					label="Show attention count on app icon"
 					description="Puts a number on the Dock or taskbar icon: agents that are waiting for you or ready, plus agents and terminals in error, across every window. On Linux it shows only on desktops that support launcher badges, such as Ubuntu and KDE."
 				/>
+				<ToggleRow
+					checked={resumeAgentSessions}
+					onChange={setResumeAgentSessions}
+					style={{ marginBottom: 18 }}
+					label="Resume the last session when agents relaunch"
+					description="When a workspace opens, or its terminals restart for a changed environment, each agent comes back into the conversation it last had in that pane instead of starting fresh. If that session is gone, the agent shows its error and you start it again yourself. New task never resumes: it always starts fresh with its task."
+				/>
 				{/* The label and the action share a baseline: the button operates on
 				    the toggles in the rows below, so it belongs to their heading and
 				    not to the Add-agent form at the foot of the pane. */}
@@ -787,14 +854,19 @@ export function AgentsSection() {
 									? undefined
 									: (taskArgs) => updateAgent(agent.id, { taskArgs })
 							}
+							onContinueArgsChange={
+								agent.builtin
+									? undefined
+									: (continueArgs) => updateAgent(agent.id, { continueArgs })
+							}
 						/>
 					))}
 				</div>
 			</div>
 			<div className="flex-shrink-0">
 				<AddAgentForm
-					onAdd={(name, command) => {
-						addAgent(name, command);
+					onAdd={(name, command, taskArgs) => {
+						addAgent(name, command, undefined, taskArgs);
 						// A newly added agent isn't in the last $PATH scan yet —
 						// rescan so its Detected badge reflects reality.
 						reloadRegistry(

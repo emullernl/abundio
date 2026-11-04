@@ -67,6 +67,9 @@ interface SettingsState {
 	smartImageDrop: boolean;
 	/** Draw the **Attention count** on the app icon (the **App icon badge**). */
 	appIconBadgeEnabled: boolean;
+	/** **Session resume** (ADR-0050): relaunched Agents reopen their last
+	 *  conversation instead of starting fresh. */
+	resumeAgentSessions: boolean;
 	/** Whether the Action bar renders at the bottom of agent panes. Off hides
 	 *  the strip everywhere without deleting anyone's Prompt actions — the
 	 *  Command palette still reaches them. A preference, which is why it lives
@@ -146,7 +149,10 @@ interface SettingsState {
 	updateAgent: (
 		id: string,
 		updates: Partial<
-			Pick<CodingAgent, "name" | "command" | "args" | "taskArgs">
+			Pick<
+				CodingAgent,
+				"name" | "command" | "args" | "taskArgs" | "continueArgs"
+			>
 		>,
 	) => void;
 	setLastOpenedDevEnvId: (id: string) => void;
@@ -159,6 +165,7 @@ interface SettingsState {
 	setBlockMouseReporting: (enabled: boolean) => void;
 	setSmartImageDrop: (enabled: boolean) => void;
 	setAppIconBadgeEnabled: (enabled: boolean) => void;
+	setResumeAgentSessions: (enabled: boolean) => void;
 	setFocusSweep: (enabled: boolean) => void;
 	setShowActionBar: (enabled: boolean) => void;
 	setGitChangesTreeView: (enabled: boolean) => void;
@@ -223,6 +230,7 @@ export const PERSISTED_KEYS = [
 	"blockMouseReporting",
 	"smartImageDrop",
 	"appIconBadgeEnabled",
+	"resumeAgentSessions",
 	"showActionBar",
 	"gitChangesTreeView",
 	"focusSweep",
@@ -272,6 +280,7 @@ const PERSISTED_DEFAULTS: {
 	blockMouseReporting: boolean;
 	smartImageDrop: boolean;
 	appIconBadgeEnabled: boolean;
+	resumeAgentSessions: boolean;
 	showActionBar: boolean;
 	gitChangesTreeView: boolean;
 	focusSweep: boolean;
@@ -309,6 +318,7 @@ const PERSISTED_DEFAULTS: {
 		blockMouseReporting: true,
 		smartImageDrop: true,
 		appIconBadgeEnabled: true,
+		resumeAgentSessions: true,
 		showActionBar: true,
 		gitChangesTreeView: true,
 		focusSweep: true,
@@ -427,6 +437,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.appIconBadgeEnabled === "boolean"
 					? s.appIconBadgeEnabled
 					: defaults.appIconBadgeEnabled,
+			resumeAgentSessions:
+				typeof s.resumeAgentSessions === "boolean"
+					? s.resumeAgentSessions
+					: defaults.resumeAgentSessions,
 			showActionBar:
 				typeof s.showActionBar === "boolean"
 					? s.showActionBar
@@ -598,6 +612,7 @@ export const useSettingsStore = create<SettingsState>()(
 			blockMouseReporting: PERSISTED_DEFAULTS.blockMouseReporting,
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			appIconBadgeEnabled: PERSISTED_DEFAULTS.appIconBadgeEnabled,
+			resumeAgentSessions: PERSISTED_DEFAULTS.resumeAgentSessions,
 			showActionBar: PERSISTED_DEFAULTS.showActionBar,
 			gitChangesTreeView: PERSISTED_DEFAULTS.gitChangesTreeView,
 			focusSweep: PERSISTED_DEFAULTS.focusSweep,
@@ -787,6 +802,8 @@ export const useSettingsStore = create<SettingsState>()(
 			setSmartImageDrop: (smartImageDrop) => set({ smartImageDrop }),
 			setAppIconBadgeEnabled: (appIconBadgeEnabled) =>
 				set({ appIconBadgeEnabled }),
+			setResumeAgentSessions: (resumeAgentSessions) =>
+				set({ resumeAgentSessions }),
 			setShowActionBar: (showActionBar) => set({ showActionBar }),
 			setGitChangesTreeView: (gitChangesTreeView) =>
 				set({ gitChangesTreeView }),
@@ -845,7 +862,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 15,
+			version: 16,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -945,6 +962,11 @@ export const useSettingsStore = create<SettingsState>()(
 				// guarantees the key exists during the rehydrate window.
 				if (version < 15) {
 					state = { appIconBadgeEnabled: true, ...state };
+				}
+				// v16: Session resume (default on, ADR-0050). Additive
+				// default-true key, as v15.
+				if (version < 16) {
+					state = { resumeAgentSessions: true, ...state };
 				}
 				// v7: app-global PR poller (ADR-0019). Additive default keys;
 				// PERSISTED_DEFAULTS + merge already supply them — this only
