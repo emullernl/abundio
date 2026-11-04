@@ -494,6 +494,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		// Per-window bookkeeping the Rust side owns; nothing to report in the
 		// demo, and it fires whenever the busy tally changes.
 		case "report_busy_counts":
+		case "report_attention_count":
 			return undefined;
 		case "env_retry_key":
 			return true;

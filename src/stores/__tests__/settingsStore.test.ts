@@ -58,6 +58,13 @@ describe("settingsStore", () => {
 		expect(state.rightSidebarPrRatio).toBe(0.5);
 	});
 
+	it("shows the App icon badge by default and can turn it off", () => {
+		expect(useSettingsStore.getState().appIconBadgeEnabled).toBe(true);
+		useSettingsStore.getState().setAppIconBadgeEnabled(false);
+		expect(useSettingsStore.getState().appIconBadgeEnabled).toBe(false);
+		useSettingsStore.getState().setAppIconBadgeEnabled(true);
+	});
+
 	it("setTerminalFontFamily updates terminalFontFamily", () => {
 		useSettingsStore
 			.getState()

@@ -43,6 +43,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `file_windows.rs` — **File windows** (ADR-0046, ADR-0049): the `file_windows` table (one row per remembered window, keyed by file, kind and commit; stable `md-<uuid>` label, last view), per-kind path validation, in-memory dirty flags, and the `file_window_*` / `file_windows_*` commands. Kinds: `text` (markdown also rendered), `image`, `diff` (live) and `commit-diff`. Text and image paths are absolute and must be an existing file of that kind inside the Workspace folder; diff paths are Workspace-relative.
 - `window_raise.rs` — `raise_without_focus`: per-platform native calls (AppKit `orderFront`, Win32 `SetWindowPos` + `SWP_NOACTIVATE`, GDK `raise`) behind the **File window raise**. Skips minimised windows and windows on another desktop.
 - `unsaved_edits.rs` — Cross-window list of unsaved File panes and File windows, the quit dialog's message, and Save and Quit.
+- `app_badge.rs` — **App icon badge**: sums each Profile window's reported **Attention count** and draws it (Dock / Linux launcher via `set_badge_count`; Windows via a drawn taskbar overlay on every window).
 - `owner_map.rs` — `OwnerMap`: which Windows hold each git scheduler worker and file watch. A Window's `Destroyed` releases its holds, because React cleanup never runs when a webview is destroyed.
 - `search.rs` — Full-text workspace search with cancellation support (`fs_search`, `fs_search_cancel`).
 - `git_commands.rs` — Git operations: changed files, file diffs, branch info, list branches, status fingerprint.
@@ -110,6 +111,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/markdownLinks.ts` — Classifies a link click in rendered markdown (fragment / external / Workspace markdown / ignore). A plain `<a>` click would navigate the whole webview away from the app.
 - `lib/fileWindowBuffer.ts` — Pure buffer transitions for a text File window (its own save echoing back vs. someone else's write).
 - `lib/renderedFind.ts` — Find over rendered markdown, painted with the CSS Custom Highlight API.
+- `lib/attentionCount.ts` — This Window's share of the **Attention count** (Waiting + Ready + Error PTYs), reported to Rust for the App icon badge.
 - `lib/osc52.ts` — Parses OSC 52 clipboard payloads (write-only; reads are refused). See the clipboard convention below.
 - `lib/mouseReporting.ts` — The DEC private modes that turn mouse reporting on, and the pure decisions around refusing them (swallow or not, badge state, sweep or replay). See ADR-0031.
 - `lib/dotenvParse.ts` — Tolerant `.env` parser for the Bundle import dialog.

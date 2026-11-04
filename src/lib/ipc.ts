@@ -260,6 +260,12 @@ export const windowSession = {
 		commands: number;
 	}) => invoke<void>("report_busy_counts", { counts }),
 
+	/** Report this Window's share of the **Attention count** (0 when the App
+	 *  icon badge is off). Rust sums every Window's share and draws the badge.
+	 *  Sent only when the number changes. */
+	reportAttentionCount: (count: number) =>
+		invoke<void>("report_attention_count", { count }),
+
 	/** Report the paths of this Window's unsaved File panes, so the quit
 	 *  confirmation can offer Save and Quit across every Window. Sent only
 	 *  when the list changes. */
