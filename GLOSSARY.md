@@ -377,6 +377,12 @@ _Avoid_: main dot, big icon, agent icon (it is the Terminal rollup when there ar
 **Status badge**: The small icon on a **Status composite**'s lower-right corner, always the **Terminal rollup**, and drawn **only** when the **Primary icon** is the Agent rollup and the Terminal rollup is Error or Working. A terminal's Idle never earns a badge — the badge exists to surface what wants attention, and idle shells are the normal case. When the Terminal rollup *is* the Primary icon it shows Idle as usual: the suppression is a property of the badge, not of the rollup. Offset outward so most of it falls outside the Primary icon's box, because every status glyph is a stroked outline and two overlapping outlines read as neither.
 _Avoid_: corner dot, secondary status, overlay
 
+**Attention count**: The number of panes, across every **Window**, whose PTY is **Waiting**, **Ready** or **Error** (both a **Turn failure** and a **Mid-turn failure**). Each PTY counts once, however many places it is shown. A pane counts even while it is in view: the number always matches the status icons on screen.
+_Avoid_: unread count, notification count
+
+**App icon badge**: The **Attention count** drawn on Abundio's app icon: the Dock on macOS, the launcher or dock on Linux (only on desktops that support it), and an overlay on each Window's taskbar button on Windows. Every Window shows the same app-wide total. Hidden when the count is zero or the user turns it off.
+_Avoid_: dock badge (macOS-only word), status badge (that is the corner icon on a **Status composite**)
+
 **Status event**: The normalized *input* to the **Status machine** — a single fact about a **PTY** that may drive its status, regardless of source. Producers are an **Agent hook**, a **Title status**, a shell-integration OSC marker (or its process-monitor fallback for `ShellType::Other`), a user keystroke, a PTY exit, or the periodic idle **Tick**. Consumed by the **status reducer** (and, at finer grain, by **Turn** telemetry); never observed directly by the UI. See docs/plans/status-machine.md.
 _Avoid_: hook (that's one *producer*, not the event), signal (collides with OS signals), activity event.
 

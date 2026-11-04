@@ -38,6 +38,7 @@ import {
 	initAgentTurnTracker,
 } from "./lib/agentTurnTracker";
 import { appWindow } from "./lib/appWindow";
+import { attentionCount } from "./lib/attentionCount";
 import {
 	type BusyCounts,
 	buildWindowCloseMessage,
@@ -727,6 +728,30 @@ export function App() {
 		return usePtyActivityStore.subscribe((state) => {
 			report(busyCounts(state.activities));
 		});
+	}, []);
+
+	// Mirror this Window's share of the **Attention count** into Rust, which
+	// sums every Window's share and draws the **App icon badge**. A disabled
+	// badge reports 0; the setting syncs to every Window, so all of them do.
+	// Same shape as the busy tally above: runs on every PTY tick, sends only
+	// when the number changes.
+	useEffect(() => {
+		let last = -1;
+		const report = () => {
+			const count = useSettingsStore.getState().appIconBadgeEnabled
+				? attentionCount(usePtyActivityStore.getState().activities)
+				: 0;
+			if (count === last) return;
+			last = count;
+			windowSession.reportAttentionCount(count).catch(() => {});
+		};
+		report();
+		const unsubPty = usePtyActivityStore.subscribe(report);
+		const unsubSettings = useSettingsStore.subscribe(report);
+		return () => {
+			unsubPty();
+			unsubSettings();
+		};
 	}, []);
 
 	// Mirror this Window's unsaved File panes into Rust for the quit

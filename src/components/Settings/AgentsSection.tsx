@@ -695,6 +695,10 @@ export function AgentsSection() {
 	const reloadRegistry = useAgentRegistryStore((s) => s.reload);
 	const agentHooksEnabled = useSettingsStore((s) => s.agentHooksEnabled);
 	const setAgentHooksEnabled = useSettingsStore((s) => s.setAgentHooksEnabled);
+	const appIconBadgeEnabled = useSettingsStore((s) => s.appIconBadgeEnabled);
+	const setAppIconBadgeEnabled = useSettingsStore(
+		(s) => s.setAppIconBadgeEnabled,
+	);
 
 	// Live per-agent hook footprint, keyed by agentId. Re-fetched when the
 	// section mounts, and again after a toggle re-provisions, so the Hooks
@@ -734,6 +738,13 @@ export function AgentsSection() {
 					// drifted — Kimi and Grok were missing. The per-agent rows below
 					// are the authoritative, self-updating answer.
 					description="Registers hooks in every supported agent so its status icon reflects real agent state — including a distinct icon when an agent is waiting for your input. Edits each agent's global config; expand a row below to see exactly which file and which events. When off, those entries are removed and agent status falls back to detecting terminal activity, which can't tell when an agent is waiting for your input."
+				/>
+				<ToggleRow
+					checked={appIconBadgeEnabled}
+					onChange={setAppIconBadgeEnabled}
+					style={{ marginBottom: 18 }}
+					label="Show attention count on app icon"
+					description="Puts a number on the Dock or taskbar icon: agents that are waiting for you or ready, plus agents and terminals in error, across every window. On Linux it shows only on desktops that support launcher badges, such as Ubuntu and KDE."
 				/>
 				{/* The label and the action share a baseline: the button operates on
 				    the toggles in the rows below, so it belongs to their heading and

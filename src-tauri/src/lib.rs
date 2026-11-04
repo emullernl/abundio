@@ -1,4 +1,5 @@
 pub mod agent_hooks;
+pub mod app_badge;
 pub mod app_paths;
 pub mod agent_registry;
 pub mod app_metrics;
@@ -813,6 +814,7 @@ pub fn run() {
             // Per-window Opened-workspace counts (pushed by the frontend),
             // summed at quit time to drive the quit confirmation. See ADR-0016.
             app.manage(profile_store::BusyCountsState::default());
+            app.manage(app_badge::AttentionCountsState::default());
             app.manage(unsaved_edits::UnsavedFilesState::default());
             // Guards against stacking quit-confirmation dialogs on a repeated
             // Cmd+Q (the native dialog is non-blocking). See ADR-0016.
@@ -1062,6 +1064,14 @@ pub fn run() {
                     app_handle.try_state::<profile_store::BusyCountsState>()
                 {
                     counts.remove_for_window(&label);
+                }
+                // Same for its share of the Attention count, then redraw the
+                // App icon badge without it.
+                if let Some(attention) =
+                    app_handle.try_state::<app_badge::AttentionCountsState>()
+                {
+                    attention.remove_for_window(&label);
+                    app_badge::apply(&app_handle, Some(&label));
                 }
                 let _ = app_handle.emit("profile-ownership-changed", ());
                 rebuild_menu_for_focused_window(&app_handle);
@@ -1332,6 +1342,7 @@ pub fn run() {
             commands::set_active_profile_id,
             commands::set_settings_accelerator,
             commands::report_busy_counts,
+            app_badge::report_attention_count,
             unsaved_edits::report_unsaved_files,
             commands::get_active_profile_for_window,
             commands::get_profile_ownership_map,
