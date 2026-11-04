@@ -6,7 +6,6 @@ import {
 	mergeAgentsWithBuiltins,
 	parseContinueArgsForm,
 	type RelaunchOptions,
-	relaunchFallbackFor,
 } from "../agents";
 import type { CodingAgent } from "../types";
 
@@ -14,40 +13,33 @@ const ID = "4f3d4bed-f865-4d18-ae8e-f420c373cd18";
 const base: RelaunchOptions = {
 	alone: false,
 	resume: true,
-	shell: "/bin/zsh",
 };
 const cmd = (agentId: string, opts: Partial<RelaunchOptions> = {}) =>
 	agentRelaunchCommandFor(BUILTIN_AGENTS, agentId, { ...base, ...opts });
 
 describe("agentRelaunchCommandFor", () => {
-	it("resumes the remembered session by id, falling back to fresh", () => {
-		expect(cmd("claude", { sessionId: ID })).toBe(
-			`claude --resume ${ID} || claude`,
-		);
+	it("resumes the remembered session by id", () => {
+		expect(cmd("claude", { sessionId: ID })).toBe(`claude --resume ${ID}`);
 	});
 
 	it("substitutes an id inside an element (Copilot)", () => {
-		expect(cmd("copilot", { sessionId: ID })).toBe(
-			`copilot --resume=${ID} || copilot`,
-		);
+		expect(cmd("copilot", { sessionId: ID })).toBe(`copilot --resume=${ID}`);
 	});
 
 	it("puts Codex's resume subcommand after the command", () => {
-		expect(cmd("codex", { sessionId: ID })).toBe(`codex resume ${ID} || codex`);
-		expect(cmd("codex", { alone: true })).toBe("codex resume --last || codex");
+		expect(cmd("codex", { sessionId: ID })).toBe(`codex resume ${ID}`);
+		expect(cmd("codex", { alone: true })).toBe("codex resume --last");
 	});
 
 	it("prefers the id over continue-latest when both apply", () => {
 		expect(cmd("claude", { sessionId: ID, alone: true })).toBe(
-			`claude --resume ${ID} || claude`,
+			`claude --resume ${ID}`,
 		);
 	});
 
 	it("continues the folder's latest session only when the pane is alone", () => {
-		expect(cmd("claude", { alone: true })).toBe("claude --continue || claude");
-		expect(cmd("gemini", { alone: true })).toBe(
-			"gemini --resume latest || gemini",
-		);
+		expect(cmd("claude", { alone: true })).toBe("claude --continue");
+		expect(cmd("gemini", { alone: true })).toBe("gemini --resume latest");
 		expect(cmd("claude", { alone: false })).toBe("claude");
 	});
 
@@ -60,27 +52,13 @@ describe("agentRelaunchCommandFor", () => {
 	it("treats an id that is not shell-safe as no id", () => {
 		expect(cmd("claude", { sessionId: "x; rm -rf ~" })).toBe("claude");
 		expect(cmd("claude", { sessionId: "x; rm -rf ~", alone: true })).toBe(
-			"claude --continue || claude",
+			"claude --continue",
 		);
 	});
 
-	it("uses Windows PowerShell 5.1's $? test, which has no ||", () => {
-		expect(
-			cmd("claude", {
-				sessionId: ID,
-				shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-			}),
-		).toBe(`claude --resume ${ID}; if (-not $?) { claude }`);
-		expect(cmd("codex", { alone: true, shell: "powershell.exe" })).toBe(
-			"codex resume --last; if (-not $?) { codex }",
-		);
-	});
-
-	it("starts fresh in a shell with no known fallback, or an unknown shell", () => {
-		expect(cmd("claude", { sessionId: ID, shell: "/usr/bin/nu" })).toBe(
-			"claude",
-		);
-		expect(cmd("claude", { sessionId: ID, shell: null })).toBe("claude");
+	it("never adds a fallback: a shell cannot tell a failed resume from a quit", () => {
+		expect(cmd("copilot", { sessionId: ID })).not.toContain("||");
+		expect(cmd("claude", { alone: true })).not.toContain("||");
 	});
 
 	it("is undefined for an Agent that no longer exists", () => {
@@ -90,7 +68,7 @@ describe("agentRelaunchCommandFor", () => {
 		).toBeUndefined();
 	});
 
-	it("keeps an Agent's args in both halves", () => {
+	it("keeps an Agent's args", () => {
 		const agents: CodingAgent[] = [
 			{
 				id: "c",
@@ -104,7 +82,7 @@ describe("agentRelaunchCommandFor", () => {
 		];
 		expect(
 			agentRelaunchCommandFor(agents, "c", { ...base, sessionId: ID }),
-		).toBe(`claude --model opus --resume ${ID} || claude --model opus`);
+		).toBe(`claude --model opus --resume ${ID}`);
 	});
 
 	it("uses a custom Agent's continue args only when alone", () => {
@@ -122,7 +100,7 @@ describe("agentRelaunchCommandFor", () => {
 		expect(agentRelaunchCommandFor(agents, "mine", opts)).toBe("my-agent");
 		expect(
 			agentRelaunchCommandFor(agents, "mine", { ...opts, alone: true }),
-		).toBe("my-agent -c || my-agent");
+		).toBe("my-agent -c");
 	});
 
 	it("starts fresh for an Agent with no resume forms", () => {
@@ -169,40 +147,23 @@ describe("isSafeSessionId", () => {
 		for (const id of [ID, "ses_abc123", `session_${ID}`]) {
 			expect(isSafeSessionId(id)).toBe(true);
 		}
-		for (const id of ["", "a b", "a;b", "$(x)", "a`b", "x".repeat(129)]) {
+		for (const id of [
+			"",
+			"a b",
+			"a;b",
+			"$(x)",
+			"a`b",
+			"x".repeat(129),
+			// A leading `-` would be read as an option by resume flags that
+			// take an optional value.
+			"-p",
+			"--yolo",
+			"--dangerously-skip-permissions",
+			"_x",
+		]) {
 			expect(isSafeSessionId(id)).toBe(false);
 		}
 		expect(isSafeSessionId(undefined)).toBe(false);
-	});
-});
-
-describe("relaunchFallbackFor", () => {
-	const join = (shell: string | null) =>
-		relaunchFallbackFor(shell)?.("r", "p") ?? null;
-
-	it("uses || where the shell has it, matched on the binary name", () => {
-		for (const s of [
-			"/bin/zsh",
-			"/bin/bash",
-			"C:\\Program Files\\Git\\bin\\BASH.EXE",
-			"/opt/homebrew/bin/fish",
-			"/bin/sh",
-			"C:\\Windows\\system32\\cmd.exe",
-			"pwsh",
-		]) {
-			expect(join(s), s).toBe("r || p");
-		}
-	});
-
-	it("uses $? for Windows PowerShell 5.1", () => {
-		expect(join("powershell.exe")).toBe("r; if (-not $?) { p }");
-		expect(join("POWERSHELL")).toBe("r; if (-not $?) { p }");
-	});
-
-	it("has none for other shells or an unknown one", () => {
-		for (const s of ["/usr/bin/nu", "/bin/csh", null]) {
-			expect(join(s), String(s)).toBeNull();
-		}
 	});
 });
 

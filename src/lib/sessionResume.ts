@@ -3,7 +3,6 @@
 
 import { useSettingsStore } from "../stores/settingsStore";
 import { agentRelaunchCommandFor } from "./agents";
-import { peekDefaultShell } from "./defaultShell";
 import { parseTabLayout } from "./paneTree";
 import type { PaneNode, WorkspaceWithTabs } from "./types";
 
@@ -72,7 +71,6 @@ export function relaunchCommandForPane(
 			launchFolder(node, rootFolder),
 		),
 		resume: settings.resumeAgentSessions,
-		shell: settings.shellPath ?? peekDefaultShell(),
 	});
 }
 

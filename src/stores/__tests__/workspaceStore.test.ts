@@ -17,9 +17,6 @@ vi.mock("../../lib/ipc", () => ({
 		delete: vi.fn(() => Promise.resolve()),
 		update: vi.fn(() => Promise.resolve()),
 	},
-	shells: {
-		default: vi.fn(() => Promise.resolve("/bin/zsh")),
-	},
 	pty: {
 		deleteLog: vi.fn(() => Promise.resolve()),
 		cleanupStaleLogs: vi.fn(() => Promise.resolve()),
@@ -177,23 +174,20 @@ describe("workspaceStore", () => {
 			};
 
 			beforeEach(() => {
-				useSettingsStore.setState({
-					resumeAgentSessions: true,
-					shellPath: null,
-				});
+				useSettingsStore.setState({ resumeAgentSessions: true });
 			});
 
 			it("resumes a pane's remembered session by id", async () => {
 				await load(agentPane("p1", { agentSessionId: "sid-1" }));
 				expect(takePendingAgent("p1")).toEqual({
-					command: "claude --resume sid-1 || claude",
+					command: "claude --resume sid-1",
 				});
 			});
 
 			it("continues the folder's latest session for a pane alone in it", async () => {
 				await load(agentPane("p1"));
 				expect(takePendingAgent("p1")).toEqual({
-					command: "claude --continue || claude",
+					command: "claude --continue",
 				});
 			});
 
@@ -204,7 +198,7 @@ describe("workspaceStore", () => {
 				expect(takePendingAgent("p1")).toEqual({ command: "claude" });
 				// Its own id still resumes: no ambiguity about whose session it is.
 				expect(takePendingAgent("p2")).toEqual({
-					command: "claude --resume sid-2 || claude",
+					command: "claude --resume sid-2",
 				});
 			});
 
@@ -212,12 +206,8 @@ describe("workspaceStore", () => {
 				await load(
 					split(agentPane("p1", { cwd: "/a" }), agentPane("p2", { cwd: "/b" })),
 				);
-				expect(takePendingAgent("p1")?.command).toBe(
-					"claude --continue || claude",
-				);
-				expect(takePendingAgent("p2")?.command).toBe(
-					"claude --continue || claude",
-				);
+				expect(takePendingAgent("p1")?.command).toBe("claude --continue");
+				expect(takePendingAgent("p2")?.command).toBe("claude --continue");
 			});
 
 			it("starts fresh when the setting is off", async () => {

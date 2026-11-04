@@ -268,39 +268,16 @@ export function agentCommandFor(
 /**
  * An **Agent session id** safe to type into a shell. The id comes from a hook
  * payload, which any process in the pane could forge, and the relaunch line is
- * typed, so anything beyond this alphabet is treated as no id at all. Every
- * built-in's ids fit (UUIDs, `ses_…`, `session_<uuid>`).
+ * typed, so anything else is treated as no id at all. The first character
+ * must be a letter or digit: an id starting with `-` would be read as an
+ * option (`claude --resume --dangerously-skip-permissions`), because several
+ * resume flags take an optional value. Every built-in's ids fit (UUIDs,
+ * `ses_…`, `session_<uuid>`).
  */
-const SAFE_SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export function isSafeSessionId(id: string | undefined): id is string {
 	return id !== undefined && SAFE_SESSION_ID.test(id);
-}
-
-/**
- * How a shell runs `plain` only when `resume` fails, or null when Abundio
- * does not know one for it, matched on the binary name. Most shells have
- * `a || b`. Windows PowerShell 5.1 (`powershell`) does not, but its `$?` is
- * false after a native command that exited non-zero, so `a; if (-not $?) { b }`
- * does the same. PowerShell 7 (`pwsh`) has `||`. Anything else (nushell,
- * csh) gets null.
- */
-export function relaunchFallbackFor(
-	shellPath: string | null,
-): ((resume: string, plain: string) => string) | null {
-	if (!shellPath) return null;
-	const base = (shellPath.split(/[\\/]/).pop() ?? "")
-		.toLowerCase()
-		.replace(/\.exe$/, "");
-	if (
-		["zsh", "bash", "fish", "sh", "dash", "ksh", "cmd", "pwsh"].includes(base)
-	) {
-		return (resume, plain) => `${resume} || ${plain}`;
-	}
-	if (base === "powershell") {
-		return (resume, plain) => `${resume}; if (-not $?) { ${plain} }`;
-	}
-	return null;
 }
 
 export interface RelaunchOptions {
@@ -311,21 +288,22 @@ export interface RelaunchOptions {
 	alone: boolean;
 	/** The global **Session resume** setting. */
 	resume: boolean;
-	/** The shell the line will be typed into (null when unknown). */
-	shell: string | null;
 }
 
 /**
  * The line typed to relaunch an Agent on Workspace open or a Bundle restart:
- * a **Session resume** with a fresh-session fallback when one is possible,
- * else the plain launch command (ADR-0050). Undefined when the Agent is gone.
+ * a **Session resume** when one is possible, else the plain launch command
+ * (ADR-0050). Undefined when the Agent is gone.
  *
  * In order: the remembered session by id; else, when the Pane is alone in its
- * folder, the folder's most recent session; else fresh. The resume half is
- * joined to the plain half with the shell's "on failure" form (`||`, or
- * PowerShell 5.1's `$?` test), so a resume that fails (a deleted session)
- * still leaves the user an Agent. A shell with no known form gets the plain
- * command: a failed resume there would leave a bare shell.
+ * folder, the folder's most recent session; else fresh.
+ *
+ * There is deliberately no `|| <plain>` fallback. A shell cannot tell "the
+ * resume failed" from "the user quit the resumed Agent with a non-zero exit"
+ * (Copilot exits 1 on Ctrl+C), so a fallback would start an unasked-for fresh
+ * Agent. A failed resume instead leaves the Agent's error in a plain shell;
+ * the Agent process has exited, so the pane also forgets it and its session,
+ * and the next relaunch does not retry it.
  */
 export function agentRelaunchCommandFor(
 	agents: CodingAgent[],
@@ -333,21 +311,20 @@ export function agentRelaunchCommandFor(
 	opts: RelaunchOptions,
 ): string | undefined {
 	const plain = agentCommandFor(agents, agentId);
-	const fallback = relaunchFallbackFor(opts.shell);
-	if (!plain || !opts.resume || !fallback) return plain;
+	if (!plain || !opts.resume) return plain;
 	const agent = agents.find((a) => a.id === agentId);
 	if (!agent) return plain;
-	let resumeArgs: string[] | undefined;
 	if (isSafeSessionId(opts.sessionId) && isResumeForm(agent.resumeArgs)) {
 		const id = opts.sessionId;
-		resumeArgs = agent.resumeArgs.map((a) =>
+		const resumeArgs = agent.resumeArgs.map((a) =>
 			a.replace(SESSION_ID_PLACEHOLDER, id),
 		);
-	} else if (opts.alone && agent.continueArgs?.length) {
-		resumeArgs = agent.continueArgs;
+		return [plain, ...resumeArgs].join(" ");
 	}
-	if (!resumeArgs) return plain;
-	return fallback([plain, ...resumeArgs].join(" "), plain);
+	if (opts.alone && agent.continueArgs?.length) {
+		return [plain, ...agent.continueArgs].join(" ");
+	}
+	return plain;
 }
 
 /** A resume form with the session placeholder exactly once. */

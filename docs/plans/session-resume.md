@@ -13,7 +13,7 @@ The decisions were settled in a grilling session. They are recorded in **ADR-005
   1. The pane knows its **Agent session id** → resume that session.
   2. No id, and the pane is the **only pane running that agent in its launch folder** → continue the agent's most recent session in that folder.
   3. Otherwise → the plain launch command.
-- **Fallback:** the typed line is `<resume command> || <plain command>`, so a failed resume starts a fresh session.
+- **No fallback** (changed after review): the typed line is the resume command alone. A `|| <plain>` fallback also fired when the user quit a resumed agent with a non-zero exit (Copilot exits 1 on Ctrl+C). A failed resume leaves the agent's error in a plain shell.
 - **Storage:** `agentSessionId` on the terminal `PaneNode`, next to `agentId`. The latest id wins. It is dropped whenever `agentId` is cleared or changes to a different agent.
 - **Scrollback:** unchanged. It is still restored, so the conversation may appear twice.
 - **Setting:** one global `resumeAgentSessions` in `settingsStore`, **on by default**, with a toggle in Settings ▸ Agents.
@@ -43,9 +43,9 @@ Checked against the installed CLIs, their source and their docs. Copilot and Cla
 
 - `lib/types.ts`: add to `CodingAgent` `resumeArgs?: string[]` (exactly one element `{session}`) and `continueArgs?: string[]`.
 - `lib/agents.ts`: fill both for the nine built-ins from the table. Like `taskArgs`, built-in values come from code in `mergeAgentsWithBuiltins`, never from the saved copy.
-- New pure `agentRelaunchCommandFor(agents, agentId, { sessionId, alone, resume, shell })` next to `agentCommandFor`. It returns the typed line: the plain command, or `<resume> || <plain>`. The rules:
-  - Use the session id only if it matches `^[A-Za-z0-9_-]{1,128}$`. The id comes from a hook payload and is typed into a shell, so anything else means "no id".
-  - Use `||` for shells known to support it (zsh, bash, fish, sh, cmd.exe, pwsh 7), and `<resume>; if (-not $?) { <plain> }` for Windows PowerShell 5.1. For any other shell (nushell, csh), return the plain command: no resume, rather than a failed resume with no fallback.
+- New pure `agentRelaunchCommandFor(agents, agentId, { sessionId, alone, resume })` next to `agentCommandFor`. It returns the typed line: the resume command or the plain command. The rules:
+  - Use the session id only if it matches `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`. The id comes from a hook payload and is typed into a shell, so anything else means "no id". The first character may not be `-` (review of PR #249): resume flags with an optional value would read such an id as an option, e.g. `claude --resume --dangerously-skip-permissions`.
+  - (Removed after review: the per-shell `||` / PowerShell 5.1 fallback forms.)
   - Keep `agentCommandFor` as the plain form, and build on it, so the plain half of the line cannot drift.
 - Tests: every rule (id / alone / neither / resume off / invalid id / unsupported shell / custom agent with and without continue args / Codex subcommand ordering with `args`).
 
@@ -79,7 +79,7 @@ Unit tests are not enough here (the status-machine and hook-flow lesson). Run `p
 2. Copilot, the same.
 3. Two Claude panes in one Workspace → each comes back into its own conversation.
 4. `/clear` in Claude, then quit and relaunch → the *new* session comes back.
-5. Delete the session's file on disk, then relaunch → the error flashes and a fresh session starts.
+5. Delete the session's file on disk, then relaunch → the agent's error stays in a plain shell, and the next relaunch does not retry it.
 6. Turn the setting off → fresh sessions, as before.
 7. New task ▸ Restart agent → a fresh session with the Task.
 8. Environment Bundle "Apply to terminals" → agents resume.
@@ -90,7 +90,7 @@ A temporary hook file in `~/.copilot/hooks/` (removed afterwards) dumped each pa
 
 - Every event (`sessionStart`, `userPromptSubmitted`, `agentStop`, `sessionEnd`) carries **`sessionId`** (camelCase), the same UUID Copilot prints as `copilot --resume=<id>`.
 - `copilot --resume=<id>` kept the same `sessionId` and the earlier conversation.
-- An unknown id prints `Error: No session, task, or name matched '<id>'` and **exits 1**, so the `||` fallback works.
+- An unknown id prints `Error: No session, task, or name matched '<id>'` and **exits 1**.
 
 ## Claude Code live test (done, 2026-11-04)
 
@@ -98,5 +98,9 @@ Claude Code 2.1.318, run as `claude -p` in a throwaway folder with no tools. The
 
 - Every event (`SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`) carries **`session_id`**, the same id `--output-format json` reports.
 - `claude --resume <id>` kept the same `session_id` and the earlier conversation (it remembered "PINEAPPLE").
-- An unknown id prints `No conversation found with session ID: <id>` and **exits 1**, so the `||` fallback works.
+- An unknown id prints `No conversation found with session ID: <id>` and **exits 1**.
 - `claude --continue` in a folder with no earlier session **started fresh** (exit 0). This is not the error the research expected; checked in `-p` mode only.
+
+## Exit code on Ctrl+C (review of PR #249, 2026-11-04)
+
+Copilot 1.0.105, quit with Ctrl+C twice in a real terminal, **exits 1**. So a `<resume> || <plain>` fallback would start a fresh Copilot every time the user quit a resumed one that way. The fallback was dropped.

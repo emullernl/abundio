@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { getDefaultShell } from "../lib/defaultShell";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
 import {
 	fileWindows,
@@ -406,9 +405,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			}),
 		}));
 		// After every layout is cleaned: whether a pane may take its folder's
-		// latest session depends on every other Workspace's panes. The default
-		// shell decides whether a resume can fall back, so resolve it first.
-		await getDefaultShell();
+		// latest session depends on every other Workspace's panes.
 		const counts = countAgentPanesByFolder(cleaned);
 		for (const ws of cleaned) {
 			for (const t of ws.tabs) {

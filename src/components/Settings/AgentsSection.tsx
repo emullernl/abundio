@@ -811,7 +811,7 @@ export function AgentsSection() {
 					onChange={setResumeAgentSessions}
 					style={{ marginBottom: 18 }}
 					label="Resume the last session when agents relaunch"
-					description="When a workspace opens, or its terminals restart for a changed environment, each agent comes back into the conversation it last had in that pane instead of starting fresh. If that session is gone, the agent starts a new one. New task never resumes: it always starts fresh with its task."
+					description="When a workspace opens, or its terminals restart for a changed environment, each agent comes back into the conversation it last had in that pane instead of starting fresh. If that session is gone, the agent shows its error and you start it again yourself. New task never resumes: it always starts fresh with its task."
 				/>
 				{/* The label and the action share a baseline: the button operates on
 				    the toggles in the rows below, so it belongs to their heading and

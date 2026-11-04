@@ -12,12 +12,13 @@ Each pane remembers its agent's own **Agent session id** next to its `agentId` i
 2. **No id, and this is the only pane running that agent in its folder:** resume the agent's most recent session in that folder (`--continue`, Gemini `--resume latest`, `codex resume --last`).
 3. **Otherwise:** start fresh.
 
-The command is wrapped as `<resume command> || <plain command>`, so a resume that fails starts a fresh session instead of leaving a bare shell. Windows PowerShell 5.1 has no `||`, so it gets `<resume>; if (-not $?) { <plain> }`. A shell with neither form (nushell, csh) gets the plain command. **New task ▸ Restart agent never resumes:** a Task is new work with its own first prompt.
+There is **no fallback** to a fresh session. A resume that fails (a deleted session) leaves the agent's error in a plain shell. The agent process has exited, so the pane forgets the agent and its session, and the next relaunch does not retry it. Because the line is a single command, it works the same in every shell. **New task ▸ Restart agent never resumes:** a Task is new work with its own first prompt.
 
 ## Considered Options
 
 - **Plain `--continue` everywhere.** It was the obvious choice, since every built-in agent has such a flag. Rejected because "most recent session in this folder" is the same session for every pane in that folder: two Claude panes in one Workspace would both reopen the same conversation, with two processes writing to it. This is also why rule 2 only applies when the pane is alone.
-- **Checking that the session exists before launching** (for example, looking for the agent's session file on disk). Rejected: every agent stores sessions differently, and that layout can change between versions. The `||` fallback works the same way for every agent. Its cost: if the user quits a resumed agent and it exits non-zero, a fresh one starts without being asked.
+- **A `<resume> || <plain>` fallback**, so a failed resume starts a fresh session. Built first, then rejected: `||` fires on *any* non-zero exit, and Copilot exits 1 when the user quits it with Ctrl+C, so quitting a resumed Copilot started a fresh one unasked. A shell cannot tell "the resume failed" from "the user quit". Only firing when the resume exits within a few seconds would need a timing form per shell (and none for cmd.exe).
+- **Checking that the session exists before launching** (for example, looking for the agent's session file on disk). Rejected: every agent stores sessions differently, and that layout can change between versions.
 - **Dropping the old scrollback when resuming**, so the conversation does not appear twice. Rejected: if the resume fails, the pane would be blank.
 
 ## Consequences
