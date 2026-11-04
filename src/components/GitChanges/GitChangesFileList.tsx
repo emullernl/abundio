@@ -1,7 +1,27 @@
+import { useMemo } from "react";
+import {
+	buildChangesTree,
+	compareByFolderThenName,
+	folderKey,
+	type TreeNode,
+	type TreeRow,
+	visibleTreeRows,
+} from "../../lib/changesTree";
 import type { GitChangedFile } from "../../lib/types";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ChevronDown, ChevronRight } from "../Icons";
 import { GitChangesFileItem } from "./GitChangesFileItem";
+import { GitChangesFolderRow } from "./GitChangesFolderRow";
+
+/** A **Folder row** the **Folder menu** is about: which Section, which
+ *  folder. */
+export interface FolderTarget {
+	section: string;
+	/** Repo-relative path of the deepest folder the row stands for. */
+	path: string;
+}
 
 interface Props {
 	files: GitChangedFile[];
@@ -17,6 +37,14 @@ interface Props {
 	selectedFile: GitChangedFile | null;
 	/** The row the **Row menu** is open on, if any. */
 	menuTargetFile: GitChangedFile | null;
+	onFolderContextMenu: (
+		x: number,
+		y: number,
+		folder: FolderTarget,
+		fromKeyboard: boolean,
+	) => void;
+	/** The Folder row the **Folder menu** is open on, if any. */
+	menuTargetFolder: FolderTarget | null;
 }
 
 const SECTION_ORDER: Array<{
@@ -41,17 +69,52 @@ export function GitChangesFileList({
 	onContextMenu,
 	selectedFile,
 	menuTargetFile,
+	onFolderContextMenu,
+	menuTargetFolder,
 }: Props) {
 	const collapsedSections = useGitChangesStore((s) => s.collapsedSections);
 	const toggleSection = useGitChangesStore((s) => s.toggleSection);
+	const collapsedFolders = useGitChangesStore((s) => s.collapsedFolders);
+	const toggleFolder = useGitChangesStore((s) => s.toggleFolder);
+	const treeView = useSettingsStore((s) => s.gitChangesTreeView);
+	const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId) ?? "";
 
-	const grouped = SECTION_ORDER.map(({ key, label }) => ({
-		key,
-		label: label(baseBranch),
-		files: files
-			.filter((f) => f.section === key)
-			.sort((a, b) => a.path.localeCompare(b.path)),
-	})).filter((g) => g.files.length > 0);
+	// Grouping, sorting and building the trees depend only on the files (and
+	// the view), so they are kept across renders. The tab re-renders on every
+	// git store update and on each fold, and a large rename or reformat can
+	// change thousands of tracked files at once.
+	const sections = useMemo(
+		() =>
+			SECTION_ORDER.map(({ key, label }) => {
+				const sectionFiles = files
+					.filter((f) => f.section === key)
+					.sort((a, b) => compareByFolderThenName(a.path, b.path));
+				return {
+					key,
+					label,
+					files: sectionFiles,
+					tree: treeView ? buildChangesTree(sectionFiles) : null,
+				};
+			}).filter((g) => g.files.length > 0),
+		[files, treeView],
+	);
+
+	function rowsOf(
+		section: string,
+		files: GitChangedFile[],
+		tree: TreeNode[] | null,
+	): TreeRow[] {
+		if (!tree) {
+			return files.map((file) => ({ kind: "file", file, depth: 0 }));
+		}
+		return visibleTreeRows(
+			tree,
+			(path) =>
+				collapsedFolders[folderKey(workspaceId, section, path)] ?? false,
+		);
+	}
+
+	const grouped = sections.map((g) => ({ ...g, label: g.label(baseBranch) }));
 
 	if (grouped.length === 0) {
 		return (
@@ -148,25 +211,56 @@ export function GitChangesFileList({
 						</button>
 						{!isCollapsed && (
 							<div>
-								{group.files.map((file) => (
-									<GitChangesFileItem
-										key={`${group.key}-${file.path}`}
-										file={file}
-										isSelected={
-											selectedFile?.path === file.path &&
-											selectedFile?.section === file.section
-										}
-										isMenuTarget={
-											menuTargetFile?.path === file.path &&
-											menuTargetFile?.section === file.section
-										}
-										onClick={() => onSelectFile(file)}
-										onOpenFile={() => onOpenFile(file)}
-										onContextMenu={(x, y, fromKeyboard) =>
-											onContextMenu(x, y, file, fromKeyboard)
-										}
-									/>
-								))}
+								{rowsOf(group.key, group.files, group.tree).map((row) => {
+									if (row.kind === "folder") {
+										const { node } = row;
+										return (
+											<GitChangesFolderRow
+												key={`${group.key}-dir-${node.path}`}
+												node={node}
+												depth={row.depth}
+												collapsed={row.collapsed}
+												isMenuTarget={
+													menuTargetFolder?.section === group.key &&
+													menuTargetFolder?.path === node.path
+												}
+												onToggle={() =>
+													toggleFolder(workspaceId, group.key, node.path)
+												}
+												onContextMenu={(x, y, fromKeyboard) =>
+													onFolderContextMenu(
+														x,
+														y,
+														{ section: group.key, path: node.path },
+														fromKeyboard,
+													)
+												}
+											/>
+										);
+									}
+									const { file } = row;
+									return (
+										<GitChangesFileItem
+											key={`${group.key}-${file.path}`}
+											file={file}
+											depth={row.depth}
+											showDir={!treeView}
+											isSelected={
+												selectedFile?.path === file.path &&
+												selectedFile?.section === file.section
+											}
+											isMenuTarget={
+												menuTargetFile?.path === file.path &&
+												menuTargetFile?.section === file.section
+											}
+											onClick={() => onSelectFile(file)}
+											onOpenFile={() => onOpenFile(file)}
+											onContextMenu={(x, y, fromKeyboard) =>
+												onContextMenu(x, y, file, fromKeyboard)
+											}
+										/>
+									);
+								})}
 							</div>
 						)}
 					</div>

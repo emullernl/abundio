@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
+import { gitFolderMenuEntries } from "../../lib/gitFolderMenu";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
 import { fs as fsApi, type GitOperation, git } from "../../lib/ipc";
 import {
@@ -10,12 +11,16 @@ import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { BranchSelector } from "../GitChanges/BranchSelector";
-import { GitChangesFileList } from "../GitChanges/GitChangesFileList";
+import {
+	type FolderTarget,
+	GitChangesFileList,
+} from "../GitChanges/GitChangesFileList";
 import { NotAGitRepoEmpty } from "../GitChanges/NotAGitRepoEmpty";
-import { RefreshCw } from "../Icons";
+import { ListBullet, ListTree, RefreshCw } from "../Icons";
 import type { ContextMenuItem } from "../Terminal/PaneContextMenu";
 import { PaneContextMenu } from "../Terminal/PaneContextMenu";
 
@@ -55,6 +60,21 @@ export function GitChangesTab() {
 		/** Opened from the keyboard, so the menu must take focus itself. */
 		fromKeyboard: boolean;
 	} | null>(null);
+	// The **Folder menu**. Whether the folder still exists is looked up before
+	// the menu opens, so Reveal is never briefly enabled on a deleted folder.
+	const [folderMenu, setFolderMenu] = useState<{
+		x: number;
+		y: number;
+		folder: FolderTarget;
+		existsOnDisk: boolean;
+		fromKeyboard: boolean;
+	} | null>(null);
+	// Bumped whenever a menu opens or the Workspace changes. A Folder menu
+	// whose disk lookup finishes after a newer request is dropped, so a slow
+	// lookup can neither open on the wrong folder nor open beside the Row menu.
+	const menuRequest = useRef(0);
+	const treeView = useSettingsStore((s) => s.gitChangesTreeView);
+	const setTreeView = useSettingsStore((s) => s.setGitChangesTreeView);
 
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -74,7 +94,58 @@ export function GitChangesTab() {
 	// PaneContextMenu's outside handler); the command palette switches from the
 	// keyboard alone and does not.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: clears on switch only
-	useEffect(() => setMenu(null), [activeWorkspaceId]);
+	useEffect(() => {
+		menuRequest.current++;
+		setMenu(null);
+		setFolderMenu(null);
+	}, [activeWorkspaceId]);
+
+	async function openFolderMenu(
+		x: number,
+		y: number,
+		folder: FolderTarget,
+		fromKeyboard: boolean,
+	) {
+		if (!cwd) return;
+		const request = ++menuRequest.current;
+		setMenu(null);
+		const existsOnDisk = await fsApi
+			.fileExists(resolveWorkspacePath(cwd, folder.path))
+			.catch(() => false);
+		// A newer menu request, or a Workspace switch, came in while we waited.
+		if (request !== menuRequest.current) return;
+		setFolderMenu({ x, y, folder, existsOnDisk, fromKeyboard });
+	}
+
+	function buildFolderMenuItems(): ContextMenuItem[] {
+		if (!folderMenu || !cwd) return [];
+		const { folder } = folderMenu;
+		const absolutePath = resolveWorkspacePath(cwd, folder.path);
+		const close = () => setFolderMenu(null);
+		const run: Record<string, () => void> = {
+			reveal: () => {
+				close();
+				fsApi.revealInFolder(absolutePath).catch(console.error);
+			},
+			"copy-relative-path": () => {
+				close();
+				writeClipboardText(folder.path).catch(console.error);
+			},
+			"copy-path": () => {
+				close();
+				writeClipboardText(absolutePath).catch(console.error);
+			},
+		};
+		return gitFolderMenuEntries(folderMenu.existsOnDisk).map((entry) =>
+			"separator" in entry
+				? { separator: true as const }
+				: {
+						label: entry.label,
+						disabled: entry.disabled,
+						onClick: run[entry.id],
+					},
+		);
+	}
 
 	async function handleSelectFile(file: GitChangedFile) {
 		if (!cwd || !activeWorkspaceId) return;
@@ -246,6 +317,17 @@ export function GitChangesTab() {
 
 				<button
 					type="button"
+					onClick={() => setTreeView(!treeView)}
+					className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0 text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
+					style={{ transitionDuration: "var(--transition-fast)" }}
+					title={treeView ? "View as List" : "View as Tree"}
+					aria-label={treeView ? "View as List" : "View as Tree"}
+				>
+					{treeView ? <ListBullet size={12} /> : <ListTree size={12} />}
+				</button>
+
+				<button
+					type="button"
 					onClick={handleRefresh}
 					className="flex items-center justify-center rounded w-6 h-6 transition-colors flex-shrink-0"
 					style={{
@@ -349,11 +431,17 @@ export function GitChangesTab() {
 							baseBranch={baseBranch}
 							onSelectFile={handleSelectFile}
 							onOpenFile={handleOpenFile}
-							onContextMenu={(x, y, file, fromKeyboard) =>
-								setMenu({ x, y, file, fromKeyboard })
-							}
+							onContextMenu={(x, y, file, fromKeyboard) => {
+								menuRequest.current++;
+								setFolderMenu(null);
+								setMenu({ x, y, file, fromKeyboard });
+							}}
 							selectedFile={selectedFile}
 							menuTargetFile={menu?.file ?? null}
+							onFolderContextMenu={(x, y, folder, fromKeyboard) => {
+								void openFolderMenu(x, y, folder, fromKeyboard);
+							}}
+							menuTargetFolder={folderMenu?.folder ?? null}
 						/>
 					</div>
 				)}
@@ -366,6 +454,16 @@ export function GitChangesTab() {
 					items={buildMenuItems()}
 					autoFocus={menu.fromKeyboard}
 					onClose={() => setMenu(null)}
+				/>
+			)}
+
+			{folderMenu && cwd && (
+				<PaneContextMenu
+					x={folderMenu.x}
+					y={folderMenu.y}
+					items={buildFolderMenuItems()}
+					autoFocus={folderMenu.fromKeyboard}
+					onClose={() => setFolderMenu(null)}
 				/>
 			)}
 		</div>

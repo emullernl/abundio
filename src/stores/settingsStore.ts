@@ -70,6 +70,9 @@ interface SettingsState {
 	 *  Command palette still reaches them. A preference, which is why it lives
 	 *  here and the actions themselves do not (ADR-0039). */
 	showActionBar: boolean;
+	/** Whether the Git changes tab shows its Sections in **Tree view** (rows
+	 *  nested under **Folder rows**) rather than **List view**. */
+	gitChangesTreeView: boolean;
 	/** Whether a Pane plays the **Focus sweep** when it becomes the Focused
 	 *  pane. A look-and-feel preference, set in Settings ▸ Theme. */
 	focusSweep: boolean;
@@ -155,6 +158,7 @@ interface SettingsState {
 	setSmartImageDrop: (enabled: boolean) => void;
 	setFocusSweep: (enabled: boolean) => void;
 	setShowActionBar: (enabled: boolean) => void;
+	setGitChangesTreeView: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
 	setUpdateSnoozedUntil: (until: number | null) => void;
@@ -216,6 +220,7 @@ export const PERSISTED_KEYS = [
 	"blockMouseReporting",
 	"smartImageDrop",
 	"showActionBar",
+	"gitChangesTreeView",
 	"focusSweep",
 	"autoCheckUpdatesEnabled",
 	"skippedUpdateVersion",
@@ -263,6 +268,7 @@ const PERSISTED_DEFAULTS: {
 	blockMouseReporting: boolean;
 	smartImageDrop: boolean;
 	showActionBar: boolean;
+	gitChangesTreeView: boolean;
 	focusSweep: boolean;
 	autoCheckUpdatesEnabled: boolean;
 	skippedUpdateVersion: string | null;
@@ -298,6 +304,7 @@ const PERSISTED_DEFAULTS: {
 		blockMouseReporting: true,
 		smartImageDrop: true,
 		showActionBar: true,
+		gitChangesTreeView: true,
 		focusSweep: true,
 		autoCheckUpdatesEnabled: true,
 		skippedUpdateVersion: null as string | null,
@@ -414,6 +421,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.showActionBar === "boolean"
 					? s.showActionBar
 					: defaults.showActionBar,
+			gitChangesTreeView:
+				typeof s.gitChangesTreeView === "boolean"
+					? s.gitChangesTreeView
+					: defaults.gitChangesTreeView,
 			focusSweep:
 				typeof s.focusSweep === "boolean" ? s.focusSweep : defaults.focusSweep,
 			autoCheckUpdatesEnabled:
@@ -577,6 +588,7 @@ export const useSettingsStore = create<SettingsState>()(
 			blockMouseReporting: PERSISTED_DEFAULTS.blockMouseReporting,
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			showActionBar: PERSISTED_DEFAULTS.showActionBar,
+			gitChangesTreeView: PERSISTED_DEFAULTS.gitChangesTreeView,
 			focusSweep: PERSISTED_DEFAULTS.focusSweep,
 			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
 			skippedUpdateVersion: PERSISTED_DEFAULTS.skippedUpdateVersion,
@@ -763,6 +775,8 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			setSmartImageDrop: (smartImageDrop) => set({ smartImageDrop }),
 			setShowActionBar: (showActionBar) => set({ showActionBar }),
+			setGitChangesTreeView: (gitChangesTreeView) =>
+				set({ gitChangesTreeView }),
 			setFocusSweep: (focusSweep) => set({ focusSweep }),
 			setAutoCheckUpdatesEnabled: (autoCheckUpdatesEnabled) => {
 				// Rust holds the app-wide auto-check flag (the background loop

@@ -325,6 +325,14 @@ export function ListBullet({ size, ...props }: IconProps) {
 	);
 }
 
+export function ListTree({ size, ...props }: IconProps) {
+	return (
+		<svg aria-hidden="true" {...defaults(size)} {...props}>
+			<path d="M21 6H8M21 12h-8M21 18h-8M3 6v4a2 2 0 002 2h3M3 10v6a2 2 0 002 2h3" />
+		</svg>
+	);
+}
+
 export function ListChecks({ size, ...props }: IconProps) {
 	return (
 		<svg aria-hidden="true" {...defaults(size)} {...props}>

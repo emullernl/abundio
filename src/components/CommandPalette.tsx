@@ -75,6 +75,10 @@ export function CommandPalette({
 	);
 	const focusSweep = useSettingsStore((s) => s.focusSweep);
 	const setFocusSweep = useSettingsStore((s) => s.setFocusSweep);
+	const gitChangesTreeView = useSettingsStore((s) => s.gitChangesTreeView);
+	const setGitChangesTreeView = useSettingsStore(
+		(s) => s.setGitChangesTreeView,
+	);
 	const promptActionList = usePromptActionStore((s) => s.actions);
 	const { splitPane, closePane } = useSplitPane();
 
@@ -284,6 +288,15 @@ export function CommandPalette({
 		});
 
 		result.push({
+			id: "action-toggle-git-changes-tree-view",
+			label: gitChangesTreeView
+				? "Git Changes: View as List"
+				: "Git Changes: View as Tree",
+			category: "Actions",
+			action: () => setGitChangesTreeView(!gitChangesTreeView),
+		});
+
+		result.push({
 			id: "action-toggle-markdown-preview",
 			label: "Toggle Markdown Preview",
 			category: "Actions",
@@ -410,6 +423,8 @@ export function CommandPalette({
 		promptActionList,
 		focusSweep,
 		setFocusSweep,
+		gitChangesTreeView,
+		setGitChangesTreeView,
 		addWorktreeTarget,
 	]);
 
