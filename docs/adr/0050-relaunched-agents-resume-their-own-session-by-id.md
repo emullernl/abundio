@@ -12,7 +12,7 @@ Each pane remembers its agent's own **Agent session id** next to its `agentId` i
 2. **No id, and this is the only pane running that agent in its folder:** resume the agent's most recent session in that folder (`--continue`, Gemini `--resume latest`, `codex resume --last`).
 3. **Otherwise:** start fresh.
 
-The command is wrapped as `<resume command> || <plain command>`, so a resume that fails starts a fresh session instead of leaving a bare shell. **New task ▸ Restart agent never resumes:** a Task is new work with its own first prompt.
+The command is wrapped as `<resume command> || <plain command>`, so a resume that fails starts a fresh session instead of leaving a bare shell. Windows PowerShell 5.1 has no `||`, so it gets `<resume>; if (-not $?) { <plain> }`. A shell with neither form (nushell, csh) gets the plain command. **New task ▸ Restart agent never resumes:** a Task is new work with its own first prompt.
 
 ## Considered Options
 

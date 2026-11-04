@@ -278,18 +278,29 @@ export function isSafeSessionId(id: string | undefined): id is string {
 }
 
 /**
- * Whether a shell understands `a || b`, matched on the binary name. Only then
- * can a relaunch try a resume and fall back to a fresh session. Windows
- * PowerShell 5.1 (`powershell`) and nushell do not; PowerShell 7 (`pwsh`) does.
+ * How a shell runs `plain` only when `resume` fails, or null when Abundio
+ * does not know one for it, matched on the binary name. Most shells have
+ * `a || b`. Windows PowerShell 5.1 (`powershell`) does not, but its `$?` is
+ * false after a native command that exited non-zero, so `a; if (-not $?) { b }`
+ * does the same. PowerShell 7 (`pwsh`) has `||`. Anything else (nushell,
+ * csh) gets null.
  */
-export function shellSupportsOrFallback(shellPath: string | null): boolean {
-	if (!shellPath) return false;
+export function relaunchFallbackFor(
+	shellPath: string | null,
+): ((resume: string, plain: string) => string) | null {
+	if (!shellPath) return null;
 	const base = (shellPath.split(/[\\/]/).pop() ?? "")
 		.toLowerCase()
 		.replace(/\.exe$/, "");
-	return ["zsh", "bash", "fish", "sh", "dash", "ksh", "cmd", "pwsh"].includes(
-		base,
-	);
+	if (
+		["zsh", "bash", "fish", "sh", "dash", "ksh", "cmd", "pwsh"].includes(base)
+	) {
+		return (resume, plain) => `${resume} || ${plain}`;
+	}
+	if (base === "powershell") {
+		return (resume, plain) => `${resume}; if (-not $?) { ${plain} }`;
+	}
+	return null;
 }
 
 export interface RelaunchOptions {
@@ -311,9 +322,10 @@ export interface RelaunchOptions {
  *
  * In order: the remembered session by id; else, when the Pane is alone in its
  * folder, the folder's most recent session; else fresh. The resume half is
- * joined to the plain half with `||`, so a resume that fails (a deleted
- * session) still leaves the user an Agent. A shell without `||` gets the
- * plain command: a failed resume there would leave a bare shell.
+ * joined to the plain half with the shell's "on failure" form (`||`, or
+ * PowerShell 5.1's `$?` test), so a resume that fails (a deleted session)
+ * still leaves the user an Agent. A shell with no known form gets the plain
+ * command: a failed resume there would leave a bare shell.
  */
 export function agentRelaunchCommandFor(
 	agents: CodingAgent[],
@@ -321,9 +333,8 @@ export function agentRelaunchCommandFor(
 	opts: RelaunchOptions,
 ): string | undefined {
 	const plain = agentCommandFor(agents, agentId);
-	if (!plain || !opts.resume || !shellSupportsOrFallback(opts.shell)) {
-		return plain;
-	}
+	const fallback = relaunchFallbackFor(opts.shell);
+	if (!plain || !opts.resume || !fallback) return plain;
 	const agent = agents.find((a) => a.id === agentId);
 	if (!agent) return plain;
 	let resumeArgs: string[] | undefined;
@@ -336,7 +347,7 @@ export function agentRelaunchCommandFor(
 		resumeArgs = agent.continueArgs;
 	}
 	if (!resumeArgs) return plain;
-	return `${[plain, ...resumeArgs].join(" ")} || ${plain}`;
+	return fallback([plain, ...resumeArgs].join(" "), plain);
 }
 
 /** A resume form with the session placeholder exactly once. */

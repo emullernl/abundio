@@ -6,7 +6,7 @@ import {
 	mergeAgentsWithBuiltins,
 	parseContinueArgsForm,
 	type RelaunchOptions,
-	shellSupportsOrFallback,
+	relaunchFallbackFor,
 } from "../agents";
 import type { CodingAgent } from "../types";
 
@@ -64,11 +64,20 @@ describe("agentRelaunchCommandFor", () => {
 		);
 	});
 
-	it("starts fresh in a shell without ||, or an unknown shell", () => {
-		expect(cmd("claude", { sessionId: ID, shell: "/usr/bin/nu" })).toBe(
-			"claude",
+	it("uses Windows PowerShell 5.1's $? test, which has no ||", () => {
+		expect(
+			cmd("claude", {
+				sessionId: ID,
+				shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+			}),
+		).toBe(`claude --resume ${ID}; if (-not $?) { claude }`);
+		expect(cmd("codex", { alone: true, shell: "powershell.exe" })).toBe(
+			"codex resume --last; if (-not $?) { codex }",
 		);
-		expect(cmd("claude", { sessionId: ID, shell: "powershell.exe" })).toBe(
+	});
+
+	it("starts fresh in a shell with no known fallback, or an unknown shell", () => {
+		expect(cmd("claude", { sessionId: ID, shell: "/usr/bin/nu" })).toBe(
 			"claude",
 		);
 		expect(cmd("claude", { sessionId: ID, shell: null })).toBe("claude");
@@ -167,21 +176,32 @@ describe("isSafeSessionId", () => {
 	});
 });
 
-describe("shellSupportsOrFallback", () => {
-	it("matches on the binary name", () => {
+describe("relaunchFallbackFor", () => {
+	const join = (shell: string | null) =>
+		relaunchFallbackFor(shell)?.("r", "p") ?? null;
+
+	it("uses || where the shell has it, matched on the binary name", () => {
 		for (const s of [
 			"/bin/zsh",
 			"/bin/bash",
 			"C:\\Program Files\\Git\\bin\\BASH.EXE",
 			"/opt/homebrew/bin/fish",
 			"/bin/sh",
-			"cmd.exe",
+			"C:\\Windows\\system32\\cmd.exe",
 			"pwsh",
 		]) {
-			expect(shellSupportsOrFallback(s), s).toBe(true);
+			expect(join(s), s).toBe("r || p");
 		}
-		for (const s of ["powershell.exe", "/usr/bin/nu", "/bin/csh", null]) {
-			expect(shellSupportsOrFallback(s), String(s)).toBe(false);
+	});
+
+	it("uses $? for Windows PowerShell 5.1", () => {
+		expect(join("powershell.exe")).toBe("r; if (-not $?) { p }");
+		expect(join("POWERSHELL")).toBe("r; if (-not $?) { p }");
+	});
+
+	it("has none for other shells or an unknown one", () => {
+		for (const s of ["/usr/bin/nu", "/bin/csh", null]) {
+			expect(join(s), String(s)).toBeNull();
 		}
 	});
 });

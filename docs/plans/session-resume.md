@@ -45,7 +45,7 @@ Checked against the installed CLIs, their source and their docs. Copilot and Cla
 - `lib/agents.ts`: fill both for the nine built-ins from the table. Like `taskArgs`, built-in values come from code in `mergeAgentsWithBuiltins`, never from the saved copy.
 - New pure `agentRelaunchCommandFor(agents, agentId, { sessionId, alone, resume, shell })` next to `agentCommandFor`. It returns the typed line: the plain command, or `<resume> || <plain>`. The rules:
   - Use the session id only if it matches `^[A-Za-z0-9_-]{1,128}$`. The id comes from a hook payload and is typed into a shell, so anything else means "no id".
-  - Use `||` only for shells known to support it (zsh, bash, fish, sh, cmd.exe, pwsh 7). For any other shell (nushell, Windows PowerShell 5.1), return the plain command: no resume, rather than a failed resume with no fallback.
+  - Use `||` for shells known to support it (zsh, bash, fish, sh, cmd.exe, pwsh 7), and `<resume>; if (-not $?) { <plain> }` for Windows PowerShell 5.1. For any other shell (nushell, csh), return the plain command: no resume, rather than a failed resume with no fallback.
   - Keep `agentCommandFor` as the plain form, and build on it, so the plain half of the line cannot drift.
 - Tests: every rule (id / alone / neither / resume off / invalid id / unsupported shell / custom agent with and without continue args / Codex subcommand ordering with `args`).
 
