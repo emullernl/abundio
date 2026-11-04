@@ -19,11 +19,11 @@ pub const MAIN_WINDOW_LABEL: &str = "main";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
 
 /// True for any window that is a profile-bound Abundio window (vs. auxiliary
-/// like Settings, or Workspace-bound like a Markdown window). Used to filter
+/// like Settings, or Workspace-bound like a File window). Used to filter
 /// which windows are counted as "the last window" for the quit-on-empty rule,
 /// which are saved in `windows.json`, and which may claim a Profile.
 pub fn is_profile_window_label(label: &str) -> bool {
-    label != SETTINGS_WINDOW_LABEL && !crate::markdown_windows::is_markdown_window_label(label)
+    label != SETTINGS_WINDOW_LABEL && !crate::file_windows::is_file_window_label(label)
 }
 
 /// Picks the one Window a single-Window event should go to: the focused
@@ -384,8 +384,8 @@ mod tests {
     }
 
     #[test]
-    fn markdown_windows_are_not_profile_windows() {
-        assert!(!is_profile_window_label(&crate::markdown_windows::new_label()));
+    fn file_windows_are_not_profile_windows() {
+        assert!(!is_profile_window_label(&crate::file_windows::new_label()));
         assert!(!is_profile_window_label(SETTINGS_WINDOW_LABEL));
         assert!(is_profile_window_label(MAIN_WINDOW_LABEL));
         assert!(is_profile_window_label(&generate_window_label()));

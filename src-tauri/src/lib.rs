@@ -12,7 +12,7 @@ pub mod error;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
-pub mod markdown_windows;
+pub mod file_windows;
 pub mod gh_commands;
 pub mod git_commands;
 pub mod git_libgit2;
@@ -791,10 +791,10 @@ pub fn run() {
             let prompt_actions_conn = migrations::open_db().expect("Failed to open database");
             app.manage(prompt_actions::PromptActionStore::new(prompt_actions_conn));
 
-            // Own connection: Markdown windows read their row on every open and
+            // Own connection: File windows read their row on every open and
             // view toggle, independent of the WorkspaceStore mutex. ADR-0046.
-            let markdown_conn = migrations::open_db().expect("Failed to open database");
-            app.manage(markdown_windows::MarkdownWindowStore::new(markdown_conn));
+            let file_window_conn = migrations::open_db().expect("Failed to open database");
+            app.manage(file_windows::FileWindowStore::new(file_window_conn));
 
             // Pasted Prompt action attachments are a cache, not user data
             // (ADR-0038). Nothing owns their lifetime, so they are swept by age
@@ -987,12 +987,12 @@ pub fn run() {
                 let app_handle = window.app_handle().clone();
                 let label = window.label().to_string();
 
-                // A Markdown window is Workspace-bound: no Profile, not in
+                // A File window is Workspace-bound: no Profile, not in
                 // windows.json, not counted by the quit rule. Its row stays
                 // (only its own close handler forgets it); release what it
                 // held. ADR-0046.
-                if markdown_windows::is_markdown_window_label(&label) {
-                    markdown_windows::on_destroyed(&app_handle, &label);
+                if file_windows::is_file_window_label(&label) {
+                    file_windows::on_destroyed(&app_handle, &label);
                     if let Some(fw) = app_handle.try_state::<file_watcher::FileWatcher>() {
                         fw.release_window(&label);
                     }
@@ -1020,11 +1020,11 @@ pub fn run() {
                 if let Some(state) =
                     app_handle.try_state::<profile_store::ActiveProfileState>()
                 {
-                    // The Profile's Markdown windows close with its Window and
+                    // The Profile's File windows close with its Window and
                     // are remembered. React cleanup never runs on a destroyed
                     // webview, so this is the backstop. ADR-0046.
                     if let Some(profile_id) = state.remove_for_window(&label) {
-                        markdown_windows::destroy_for_profile(&app_handle, &profile_id);
+                        file_windows::destroy_for_profile(&app_handle, &profile_id);
                     }
                 }
                 // Drop this window's worktree watch contribution so closed
@@ -1136,7 +1136,7 @@ pub fn run() {
                 // Unsaved edits come first, and get three answers: they can be
                 // saved, which busy work cannot. Busy work, if any, is named
                 // in the same dialog so there is only ever one. File panes
-                // and Markdown windows (ADR-0046) both count.
+                // and File windows (ADR-0046) both count.
                 let unsaved = unsaved_edits::unsaved_paths(app);
                 if !unsaved.is_empty() {
                     if let Some(flag) =
@@ -1407,16 +1407,16 @@ pub fn run() {
             dev_environments::launch_dev_environment,
             prompt_attachments::prompt_attachment_from_clipboard,
             prompt_actions::prompt_actions_list,
-            markdown_windows::md_window_open,
-            markdown_windows::md_window_info,
-            markdown_windows::md_window_set_view,
-            markdown_windows::md_window_set_dirty,
-            markdown_windows::md_window_forget,
-            markdown_windows::md_windows_dirty,
-            markdown_windows::md_windows_save,
-            markdown_windows::md_windows_close,
-            markdown_windows::md_windows_restore,
-            markdown_windows::md_windows_raise,
+            file_windows::file_window_open,
+            file_windows::file_window_info,
+            file_windows::file_window_set_view,
+            file_windows::file_window_set_dirty,
+            file_windows::file_window_forget,
+            file_windows::file_windows_dirty,
+            file_windows::file_windows_save,
+            file_windows::file_windows_close,
+            file_windows::file_windows_restore,
+            file_windows::file_windows_raise,
             prompt_actions::prompt_action_create,
             prompt_actions::prompt_action_update,
             prompt_actions::prompt_action_delete,

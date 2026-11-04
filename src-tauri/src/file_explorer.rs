@@ -53,11 +53,11 @@ fn extension_to_mime(ext: &str) -> Option<&'static str> {
 	}
 }
 
-fn is_image_ext(ext: &str) -> bool {
+pub(crate) fn is_image_ext(ext: &str) -> bool {
 	extension_to_mime(ext).is_some()
 }
 
-fn is_binary_ext(ext: &str) -> bool {
+pub(crate) fn is_binary_ext(ext: &str) -> bool {
 	matches!(
 		ext,
 		"exe" | "o" | "so" | "dylib" | "a" | "wasm" | "zip" | "tar" | "gz"

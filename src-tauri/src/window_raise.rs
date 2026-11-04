@@ -1,4 +1,4 @@
-//! Raise windows above others **without focusing them**: the **Markdown
+//! Raise windows above others **without focusing them**: the **File
 //! window raise** (see GLOSSARY.md). Tauri has `set_focus()` but no raise that
 //! leaves keyboard focus where it is, so each platform gets a few native calls.
 //!
