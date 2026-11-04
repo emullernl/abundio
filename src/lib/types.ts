@@ -210,6 +210,16 @@ export interface CodingAgent {
 	 *  `TASK_PROMPT_PLACEHOLDER`. Present means **Task-capable**. Built-ins
 	 *  always take theirs from code (see `mergeAgentsWithBuiltins`). */
 	taskArgs?: string[];
+	/** How to relaunch this Agent into one session by id (**Session resume**,
+	 *  ADR-0050): the arguments after `command`/`args`, containing
+	 *  `SESSION_ID_PLACEHOLDER` exactly once, possibly inside an element
+	 *  (Copilot's `--resume={session}`). Built-ins only: a custom Agent has no
+	 *  hooks, so it never learns an id. */
+	resumeArgs?: string[];
+	/** How to relaunch this Agent into its most recent session in the launch
+	 *  folder (`--continue`). Used only when the Pane is the sole one running
+	 *  this Agent in that folder. The user sets it for a custom Agent. */
+	continueArgs?: string[];
 	builtin: boolean;
 	enabled: boolean;
 	/** Set on a custom Agent converted from a **retired built-in** until a

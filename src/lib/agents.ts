@@ -3,6 +3,9 @@ import type { CodingAgent } from "./types";
 /** The one element of `CodingAgent.taskArgs` that the Task prompt replaces. */
 export const TASK_PROMPT_PLACEHOLDER = "{prompt}";
 
+/** The text in `CodingAgent.resumeArgs` that an Agent session id replaces. */
+export const SESSION_ID_PLACEHOLDER = "{session}";
+
 // Task-capable forms (see **Task-capable** in GLOSSARY.md). Each keeps the
 // Agent interactive; the one-shot flags (`-p`, `exec`, `run`, `--single`)
 // would print an answer and exit. Kimi Code has no such form, so it carries
@@ -16,6 +19,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Claude Code",
 		command: "claude",
 		taskArgs: ["{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -24,6 +29,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "GitHub Copilot CLI",
 		command: "copilot",
 		taskArgs: ["-i", "{prompt}"],
+		resumeArgs: ["--resume={session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -32,6 +39,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Gemini CLI",
 		command: "gemini",
 		taskArgs: ["-i", "{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--resume", "latest"],
 		builtin: true,
 		enabled: true,
 	},
@@ -40,6 +49,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Codex",
 		command: "codex",
 		taskArgs: ["{prompt}"],
+		resumeArgs: ["resume", "{session}"],
+		continueArgs: ["resume", "--last"],
 		builtin: true,
 		enabled: true,
 	},
@@ -48,6 +59,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "OpenCode",
 		command: "opencode",
 		taskArgs: ["--prompt", "{prompt}"],
+		resumeArgs: ["--session", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -56,6 +69,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Qwen Code",
 		command: "qwen",
 		taskArgs: ["-i", "{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -63,6 +78,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		id: "kimi",
 		name: "Kimi Code",
 		command: "kimi",
+		resumeArgs: ["--session", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -71,6 +88,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Grok Build",
 		command: "grok",
 		taskArgs: ["{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -79,6 +98,8 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Mistral Vibe",
 		command: "vibe",
 		taskArgs: ["{prompt}"],
+		resumeArgs: ["--resume", "{session}"],
+		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -242,6 +263,86 @@ export function agentCommandFor(
 	const agent = agents.find((a) => a.id === agentId);
 	if (!agent) return undefined;
 	return [agent.command, ...(agent.args ?? [])].join(" ");
+}
+
+/**
+ * An **Agent session id** safe to type into a shell. The id comes from a hook
+ * payload, which any process in the pane could forge, and the relaunch line is
+ * typed, so anything beyond this alphabet is treated as no id at all. Every
+ * built-in's ids fit (UUIDs, `ses_…`, `session_<uuid>`).
+ */
+const SAFE_SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isSafeSessionId(id: string | undefined): id is string {
+	return id !== undefined && SAFE_SESSION_ID.test(id);
+}
+
+/**
+ * Whether a shell understands `a || b`, matched on the binary name. Only then
+ * can a relaunch try a resume and fall back to a fresh session. Windows
+ * PowerShell 5.1 (`powershell`) and nushell do not; PowerShell 7 (`pwsh`) does.
+ */
+export function shellSupportsOrFallback(shellPath: string | null): boolean {
+	if (!shellPath) return false;
+	const base = (shellPath.split(/[\\/]/).pop() ?? "")
+		.toLowerCase()
+		.replace(/\.exe$/, "");
+	return ["zsh", "bash", "fish", "sh", "dash", "ksh", "cmd", "pwsh"].includes(
+		base,
+	);
+}
+
+export interface RelaunchOptions {
+	/** The Pane's remembered **Agent session id**, if any. */
+	sessionId?: string;
+	/** True when this Pane is the only one running this Agent in its launch
+	 *  folder, so "most recent session in this folder" means *its* session. */
+	alone: boolean;
+	/** The global **Session resume** setting. */
+	resume: boolean;
+	/** The shell the line will be typed into (null when unknown). */
+	shell: string | null;
+}
+
+/**
+ * The line typed to relaunch an Agent on Workspace open or a Bundle restart:
+ * a **Session resume** with a fresh-session fallback when one is possible,
+ * else the plain launch command (ADR-0050). Undefined when the Agent is gone.
+ *
+ * In order: the remembered session by id; else, when the Pane is alone in its
+ * folder, the folder's most recent session; else fresh. The resume half is
+ * joined to the plain half with `||`, so a resume that fails (a deleted
+ * session) still leaves the user an Agent. A shell without `||` gets the
+ * plain command: a failed resume there would leave a bare shell.
+ */
+export function agentRelaunchCommandFor(
+	agents: CodingAgent[],
+	agentId: string | undefined,
+	opts: RelaunchOptions,
+): string | undefined {
+	const plain = agentCommandFor(agents, agentId);
+	if (!plain || !opts.resume || !shellSupportsOrFallback(opts.shell)) {
+		return plain;
+	}
+	const agent = agents.find((a) => a.id === agentId);
+	if (!agent) return plain;
+	let resumeArgs: string[] | undefined;
+	if (isSafeSessionId(opts.sessionId) && isResumeForm(agent.resumeArgs)) {
+		const id = opts.sessionId;
+		resumeArgs = agent.resumeArgs.map((a) =>
+			a.replace(SESSION_ID_PLACEHOLDER, id),
+		);
+	} else if (opts.alone && agent.continueArgs?.length) {
+		resumeArgs = agent.continueArgs;
+	}
+	if (!resumeArgs) return plain;
+	return `${[plain, ...resumeArgs].join(" ")} || ${plain}`;
+}
+
+/** A resume form with the session placeholder exactly once. */
+function isResumeForm(args: string[] | undefined): args is string[] {
+	if (!args) return false;
+	return args.join(" ").split(SESSION_ID_PLACEHOLDER).length === 2;
 }
 
 /** True of an Agent that can start with a Task prompt and stay interactive. */
