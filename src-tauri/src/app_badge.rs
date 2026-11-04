@@ -148,11 +148,19 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, skip: Option<&str>) {
 
     #[cfg(not(target_os = "windows"))]
     {
-        // App-wide on macOS and Linux, so any live window will do.
+        // App-wide on macOS and Linux, so one window is enough. Prefer a
+        // Profile window: on the Destroyed path its File windows have just
+        // been destroyed and may still be listed while they tear down. Fall
+        // back to any other window, lowest label first, so the pick does not
+        // depend on HashMap order.
         let window = app
             .webview_windows()
             .into_iter()
-            .find(|(label, _)| Some(label.as_str()) != skip)
+            .filter(|(label, _)| Some(label.as_str()) != skip)
+            .min_by(|(a, _), (b, _)| {
+                let rank = |l: &str| !crate::window_management::is_profile_window_label(l);
+                (rank(a), a).cmp(&(rank(b), b))
+            })
             .map(|(_, w)| w);
         if let Some(w) = window {
             let count = if total == 0 { None } else { Some(total as i64) };
@@ -192,6 +200,12 @@ pub async fn report_attention_count(
 ) -> Result<(), AbundioError> {
     let label = window.label().to_string();
     if !crate::window_management::is_profile_window_label(&label) {
+        return Ok(());
+    }
+    // A report still in flight when the Window is destroyed must not put its
+    // share back after the Destroyed handler removed it, or the badge would
+    // stay up until quit.
+    if app.get_webview_window(&label).is_none() {
         return Ok(());
     }
     state.set_for_window(&label, count);

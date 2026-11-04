@@ -19,3 +19,20 @@ export function attentionCount(
 	}
 	return n;
 }
+
+/** Reports this Window's share of the Attention count, sending only when the
+ *  number changes. A disabled badge reports 0. Call the returned function on
+ *  start and whenever PTY status or settings change. */
+export function createAttentionReporter(
+	getEnabled: () => boolean,
+	getActivities: () => Record<string, PtyActivityEntry>,
+	send: (count: number) => void,
+): () => void {
+	let last = -1;
+	return () => {
+		const count = getEnabled() ? attentionCount(getActivities()) : 0;
+		if (count === last) return;
+		last = count;
+		send(count);
+	};
+}

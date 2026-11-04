@@ -38,7 +38,7 @@ import {
 	initAgentTurnTracker,
 } from "./lib/agentTurnTracker";
 import { appWindow } from "./lib/appWindow";
-import { attentionCount } from "./lib/attentionCount";
+import { createAttentionReporter } from "./lib/attentionCount";
 import {
 	type BusyCounts,
 	buildWindowCloseMessage,
@@ -736,15 +736,13 @@ export function App() {
 	// Same shape as the busy tally above: runs on every PTY tick, sends only
 	// when the number changes.
 	useEffect(() => {
-		let last = -1;
-		const report = () => {
-			const count = useSettingsStore.getState().appIconBadgeEnabled
-				? attentionCount(usePtyActivityStore.getState().activities)
-				: 0;
-			if (count === last) return;
-			last = count;
-			windowSession.reportAttentionCount(count).catch(() => {});
-		};
+		const report = createAttentionReporter(
+			() => useSettingsStore.getState().appIconBadgeEnabled,
+			() => usePtyActivityStore.getState().activities,
+			(count) => {
+				windowSession.reportAttentionCount(count).catch(() => {});
+			},
+		);
 		report();
 		const unsubPty = usePtyActivityStore.subscribe(report);
 		const unsubSettings = useSettingsStore.subscribe(report);
