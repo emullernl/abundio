@@ -1,5 +1,6 @@
 import {
 	buildChangesTree,
+	compareByFolderThenName,
 	folderKey,
 	type TreeRow,
 	visibleTreeRows,
@@ -89,7 +90,7 @@ export function GitChangesFileList({
 		label: label(baseBranch),
 		files: files
 			.filter((f) => f.section === key)
-			.sort((a, b) => a.path.localeCompare(b.path)),
+			.sort((a, b) => compareByFolderThenName(a.path, b.path)),
 	})).filter((g) => g.files.length > 0);
 
 	if (grouped.length === 0) {

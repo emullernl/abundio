@@ -43,6 +43,25 @@ interface MutableFolder {
 
 const byName = (a: string, b: string) => a.localeCompare(b);
 
+function splitPath(path: string): [folder: string, name: string] {
+	const slash = path.lastIndexOf("/");
+	return slash === -1
+		? ["", path]
+		: [path.slice(0, slash), path.slice(slash + 1)];
+}
+
+/**
+ * **List view** order: by folder, then by file name, so every file of one
+ * folder sits together. Root files have no folder and come first. Sorting the
+ * whole path instead would put `src/lib/b.ts` between `src/a.ts` and
+ * `src/z.ts`, splitting `src`'s own files apart.
+ */
+export function compareByFolderThenName(a: string, b: string): number {
+	const [folderA, nameA] = splitPath(a);
+	const [folderB, nameB] = splitPath(b);
+	return byName(folderA, folderB) || byName(nameA, nameB);
+}
+
 /**
  * Builds the tree for one Section's files: folders before files, each
  * alphabetical, and a chain of folders that each hold only one folder merged

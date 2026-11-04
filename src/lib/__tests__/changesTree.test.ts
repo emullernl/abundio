@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildChangesTree,
+	compareByFolderThenName,
 	folderKey,
 	type TreeRow,
 	visibleTreeRows,
@@ -89,6 +90,27 @@ describe("visibleTreeRows", () => {
 		const rows = visibleTreeRows(tree, (p) => p === "a");
 		expect(shape(rows)).toEqual(["a/", "c.ts"]);
 		expect(rows[0]).toMatchObject({ kind: "folder", collapsed: true });
+	});
+});
+
+describe("compareByFolderThenName", () => {
+	const sorted = (paths: string[]) => [...paths].sort(compareByFolderThenName);
+
+	it("keeps a folder's own files together, ahead of its subfolders", () => {
+		expect(sorted(["src/z.ts", "src/lib/b.ts", "src/a.ts"])).toEqual([
+			"src/a.ts",
+			"src/z.ts",
+			"src/lib/b.ts",
+		]);
+	});
+
+	it("puts root files first, then folders alphabetically", () => {
+		expect(sorted(["docs/x.md", "README.md", "src/a.ts", "LICENSE"])).toEqual([
+			"LICENSE",
+			"README.md",
+			"docs/x.md",
+			"src/a.ts",
+		]);
 	});
 });
 
