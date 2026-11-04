@@ -1,7 +1,23 @@
+import {
+	buildChangesTree,
+	folderKey,
+	type TreeRow,
+	visibleTreeRows,
+} from "../../lib/changesTree";
 import type { GitChangedFile } from "../../lib/types";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { ChevronDown, ChevronRight } from "../Icons";
 import { GitChangesFileItem } from "./GitChangesFileItem";
+import { GitChangesFolderRow } from "./GitChangesFolderRow";
+
+/** A **Folder row** the **Folder menu** is about: which Section, which
+ *  folder. */
+export interface FolderTarget {
+	section: string;
+	/** Repo-relative path of the deepest folder the row stands for. */
+	path: string;
+}
 
 interface Props {
 	files: GitChangedFile[];
@@ -17,6 +33,14 @@ interface Props {
 	selectedFile: GitChangedFile | null;
 	/** The row the **Row menu** is open on, if any. */
 	menuTargetFile: GitChangedFile | null;
+	onFolderContextMenu: (
+		x: number,
+		y: number,
+		folder: FolderTarget,
+		fromKeyboard: boolean,
+	) => void;
+	/** The Folder row the **Folder menu** is open on, if any. */
+	menuTargetFolder: FolderTarget | null;
 }
 
 const SECTION_ORDER: Array<{
@@ -41,9 +65,24 @@ export function GitChangesFileList({
 	onContextMenu,
 	selectedFile,
 	menuTargetFile,
+	onFolderContextMenu,
+	menuTargetFolder,
 }: Props) {
 	const collapsedSections = useGitChangesStore((s) => s.collapsedSections);
 	const toggleSection = useGitChangesStore((s) => s.toggleSection);
+	const collapsedFolders = useGitChangesStore((s) => s.collapsedFolders);
+	const toggleFolder = useGitChangesStore((s) => s.toggleFolder);
+	const treeView = useSettingsStore((s) => s.gitChangesTreeView);
+
+	function rowsOf(section: string, files: GitChangedFile[]): TreeRow[] {
+		if (!treeView) {
+			return files.map((file) => ({ kind: "file", file, depth: 0 }));
+		}
+		return visibleTreeRows(
+			buildChangesTree(files),
+			(path) => collapsedFolders[folderKey(section, path)] ?? false,
+		);
+	}
 
 	const grouped = SECTION_ORDER.map(({ key, label }) => ({
 		key,
@@ -148,25 +187,54 @@ export function GitChangesFileList({
 						</button>
 						{!isCollapsed && (
 							<div>
-								{group.files.map((file) => (
-									<GitChangesFileItem
-										key={`${group.key}-${file.path}`}
-										file={file}
-										isSelected={
-											selectedFile?.path === file.path &&
-											selectedFile?.section === file.section
-										}
-										isMenuTarget={
-											menuTargetFile?.path === file.path &&
-											menuTargetFile?.section === file.section
-										}
-										onClick={() => onSelectFile(file)}
-										onOpenFile={() => onOpenFile(file)}
-										onContextMenu={(x, y, fromKeyboard) =>
-											onContextMenu(x, y, file, fromKeyboard)
-										}
-									/>
-								))}
+								{rowsOf(group.key, group.files).map((row) => {
+									if (row.kind === "folder") {
+										const { node } = row;
+										return (
+											<GitChangesFolderRow
+												key={`${group.key}-dir-${node.path}`}
+												node={node}
+												depth={row.depth}
+												collapsed={row.collapsed}
+												isMenuTarget={
+													menuTargetFolder?.section === group.key &&
+													menuTargetFolder?.path === node.path
+												}
+												onToggle={() => toggleFolder(group.key, node.path)}
+												onContextMenu={(x, y, fromKeyboard) =>
+													onFolderContextMenu(
+														x,
+														y,
+														{ section: group.key, path: node.path },
+														fromKeyboard,
+													)
+												}
+											/>
+										);
+									}
+									const { file } = row;
+									return (
+										<GitChangesFileItem
+											key={`${group.key}-${file.path}`}
+											file={file}
+											depth={row.depth}
+											showDir={!treeView}
+											isSelected={
+												selectedFile?.path === file.path &&
+												selectedFile?.section === file.section
+											}
+											isMenuTarget={
+												menuTargetFile?.path === file.path &&
+												menuTargetFile?.section === file.section
+											}
+											onClick={() => onSelectFile(file)}
+											onOpenFile={() => onOpenFile(file)}
+											onContextMenu={(x, y, fromKeyboard) =>
+												onContextMenu(x, y, file, fromKeyboard)
+											}
+										/>
+									);
+								})}
 							</div>
 						)}
 					</div>

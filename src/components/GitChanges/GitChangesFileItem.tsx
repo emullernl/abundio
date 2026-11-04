@@ -11,7 +11,15 @@ interface Props {
 	onClick: () => void;
 	onOpenFile: () => void;
 	onContextMenu: (x: number, y: number, fromKeyboard: boolean) => void;
+	/** How deep the row sits in **Tree view**; 0 in List view. */
+	depth?: number;
+	/** List view shows the folder path in grey after the name; Tree view does
+	 *  not, because the tree already says where the file lives. */
+	showDir?: boolean;
 }
+
+/** Indent per Tree view level. Shared with the Folder row so the two line up. */
+export const TREE_INDENT = 14;
 
 const STATUS_COLORS: Record<string, string> = {
 	A: "var(--success)",
@@ -48,10 +56,12 @@ export function GitChangesFileItem({
 	onClick,
 	onOpenFile,
 	onContextMenu,
+	depth = 0,
+	showDir = true,
 }: Props) {
 	const color = STATUS_COLORS[file.status] ?? "var(--fg-secondary)";
 	const label = STATUS_LABELS[file.status] ?? file.status;
-	const dir = dirPath(file.path);
+	const dir = showDir ? dirPath(file.path) : "";
 	const isDeleted = file.status === "D";
 	// A conflicted row's own click already opens the text pane, so the nested
 	// "Open File" button would be a duplicate of it.
@@ -114,7 +124,7 @@ export function GitChangesFileItem({
 			style={{
 				height: 28,
 				// Inline padding instead of Tailwind px-3 to avoid specificity issues with the borderLeft style
-				paddingLeft: 12,
+				paddingLeft: 12 + depth * TREE_INDENT,
 				paddingRight: 12,
 				backgroundColor: isSelected ? "var(--bg-tertiary)" : "transparent",
 				borderLeft: isSelected

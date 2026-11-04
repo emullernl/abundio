@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { GitChangedFile } from "../../../lib/types";
 import { useGitChangesStore } from "../../../stores/gitChangesStore";
+import { useSettingsStore } from "../../../stores/settingsStore";
 import { GitChangesFileList } from "../GitChangesFileList";
 
 function file(
@@ -14,12 +15,34 @@ function file(
 	return { path, section, status, additions: 0, deletions: 0 };
 }
 
-describe("GitChangesFileList — conflicted section", () => {
-	let container: HTMLDivElement;
-	let root: ReturnType<typeof createRoot>;
+let container: HTMLDivElement;
+let root: ReturnType<typeof createRoot>;
+const onFolderContextMenu = vi.fn();
 
+function renderList(files: GitChangedFile[]) {
+	act(() => {
+		root.render(
+			<GitChangesFileList
+				files={files}
+				baseBranch="main"
+				onSelectFile={vi.fn()}
+				onOpenFile={vi.fn()}
+				onContextMenu={vi.fn()}
+				selectedFile={null}
+				menuTargetFile={null}
+				onFolderContextMenu={onFolderContextMenu}
+				menuTargetFolder={null}
+			/>,
+		);
+	});
+}
+
+describe("GitChangesFileList — conflicted section", () => {
 	beforeEach(() => {
-		useGitChangesStore.setState({ collapsedSections: {} });
+		useGitChangesStore.setState({
+			collapsedSections: {},
+			collapsedFolders: {},
+		});
 		container = document.createElement("div");
 		document.body.appendChild(container);
 		root = createRoot(container);
@@ -29,22 +52,6 @@ describe("GitChangesFileList — conflicted section", () => {
 		act(() => root.unmount());
 		container.remove();
 	});
-
-	function renderList(files: GitChangedFile[]) {
-		act(() => {
-			root.render(
-				<GitChangesFileList
-					files={files}
-					baseBranch="main"
-					onSelectFile={vi.fn()}
-					onOpenFile={vi.fn()}
-					onContextMenu={vi.fn()}
-					selectedFile={null}
-					menuTargetFile={null}
-				/>,
-			);
-		});
-	}
 
 	const headings = () =>
 		[...container.querySelectorAll("*")]
@@ -84,5 +91,98 @@ describe("GitChangesFileList — conflicted section", () => {
 	it("keeps the Open File button on an ordinary row", () => {
 		renderList([file("b.txt", "unstaged")]);
 		expect(container.querySelector('[title="Open File"]')).not.toBeNull();
+	});
+});
+
+describe("GitChangesFileList — Tree view", () => {
+	beforeEach(() => {
+		useGitChangesStore.setState({
+			collapsedSections: {},
+			collapsedFolders: {},
+		});
+		useSettingsStore.setState({ gitChangesTreeView: true });
+		onFolderContextMenu.mockClear();
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+	});
+
+	afterEach(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	const rowTexts = () =>
+		[...container.querySelectorAll('[role="button"]')].map((el) =>
+			(el.textContent ?? "").replace(/^M/, ""),
+		);
+
+	const folderRow = (name: string) =>
+		[...container.querySelectorAll('[role="button"][aria-expanded]')].find(
+			(el) => el.textContent === name && !el.hasAttribute("aria-label"),
+		) as HTMLElement;
+
+	it("nests files under merged folder rows, folders first", () => {
+		renderList([
+			file("README.md", "unstaged"),
+			file("src/components/GitChanges/List.tsx", "unstaged"),
+			file("src/App.tsx", "unstaged"),
+		]);
+		expect(rowTexts()).toEqual([
+			"src",
+			"components/GitChanges",
+			"List.tsx",
+			"App.tsx",
+			"README.md",
+		]);
+	});
+
+	it("folds a folder in one Section only", () => {
+		renderList([file("src/a.ts", "staged"), file("src/b.ts", "unstaged")]);
+		const [stagedSrc] = [
+			...container.querySelectorAll('[role="button"][aria-expanded]'),
+		].filter((el) => el.textContent === "src") as HTMLElement[];
+		act(() => stagedSrc.click());
+		expect(rowTexts()).toEqual(["src", "src", "b.ts"]);
+	});
+
+	it("folds from the keyboard", () => {
+		renderList([file("src/a.ts", "unstaged")]);
+		act(() => {
+			folderRow("src").dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+			);
+		});
+		expect(rowTexts()).toEqual(["src"]);
+	});
+
+	it("opens the Folder menu with the deepest folder of a merged row", () => {
+		renderList([file("src/lib/a.ts", "unstaged")]);
+		act(() => {
+			folderRow("src/lib").dispatchEvent(
+				new MouseEvent("contextmenu", {
+					bubbles: true,
+					clientX: 5,
+					clientY: 6,
+				}),
+			);
+		});
+		expect(onFolderContextMenu).toHaveBeenCalledWith(
+			5,
+			6,
+			{ section: "unstaged", path: "src/lib" },
+			false,
+		);
+	});
+
+	it("drops the grey folder path from file rows", () => {
+		renderList([file("src/a.ts", "unstaged")]);
+		expect(container.textContent).not.toContain("a.tssrc");
+	});
+
+	it("List view keeps the flat rows with their folder path", () => {
+		useSettingsStore.setState({ gitChangesTreeView: false });
+		renderList([file("src/a.ts", "unstaged"), file("b.ts", "unstaged")]);
+		expect(rowTexts()).toEqual(["b.ts", "a.tssrc"]);
 	});
 });

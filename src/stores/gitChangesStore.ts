@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { folderKey } from "../lib/changesTree";
 import { branchStatOf } from "../lib/dirtyWorkspace";
 import {
 	type GitFetchBundle,
@@ -100,6 +101,10 @@ interface GitChangesState {
 	loading: boolean;
 	error: string | null;
 	collapsedSections: Record<string, boolean>;
+	/** Folded **Folder rows** in Tree view, keyed by `folderKey(section, path)`
+	 *  so a folder folded in one Section stays open in the others. In memory
+	 *  only, like `collapsedSections`. */
+	collapsedFolders: Record<string, boolean>;
 	branchSelectorOpen: boolean;
 	/** The suspended git operation, surfaced as a single read-only line in the
 	 *  Git changes tab. Abundio never continues or aborts one. */
@@ -125,6 +130,7 @@ interface GitChangesState {
 		notGitRepo: boolean,
 	) => void;
 	toggleSection: (section: string) => void;
+	toggleFolder: (section: string, folderPath: string) => void;
 	setBaseBranch: (
 		workspaceId: string,
 		branch: string | null,
@@ -145,6 +151,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 	loading: false,
 	error: null,
 	collapsedSections: {},
+	collapsedFolders: {},
 	branchSelectorOpen: false,
 	operationInProgress: null,
 	commitHistory: null,
@@ -409,6 +416,17 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 				[section]: !s.collapsedSections[section],
 			},
 		})),
+
+	toggleFolder: (section, folderPath) =>
+		set((s) => {
+			const key = folderKey(section, folderPath);
+			return {
+				collapsedFolders: {
+					...s.collapsedFolders,
+					[key]: !s.collapsedFolders[key],
+				},
+			};
+		}),
 
 	setBaseBranch: async (workspaceId, branch, cwd) => {
 		await workspacesApi.update(workspaceId, { baseBranch: branch });

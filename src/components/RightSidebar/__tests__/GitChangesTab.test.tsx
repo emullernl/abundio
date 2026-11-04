@@ -1,16 +1,20 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import { fs as fsApi } from "../../../lib/ipc";
 import type { GitChangedFile, WorkspaceWithTabs } from "../../../lib/types";
 import { useGitChangesStore } from "../../../stores/gitChangesStore";
+import { useSettingsStore } from "../../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { GitChangesTab } from "../GitChangesTab";
 
 vi.mock("../../../lib/ipc", () => ({
 	git: { fileDiff: vi.fn().mockResolvedValue({ original: "", modified: "" }) },
-	fs: { revealInFolder: vi.fn().mockResolvedValue(undefined) },
+	fs: {
+		revealInFolder: vi.fn().mockResolvedValue(undefined),
+		fileExists: vi.fn().mockResolvedValue(true),
+	},
 }));
 
 vi.mock("../../../lib/clipboard", () => ({
@@ -73,6 +77,9 @@ describe("GitChangesTab — Row menu lifetime", () => {
 			collapsedSections: {},
 			operationInProgress: null,
 		});
+		// These suites are about the file **Row menu**; List view keeps the file
+		// row the first thing that carries a menu.
+		useSettingsStore.setState({ gitChangesTreeView: false });
 		useWorkspaceGitStore.setState({
 			byWorkspaceId: {
 				a: { isGitRepo: true },
@@ -145,6 +152,9 @@ describe("GitChangesTab — Open in Separate Window", () => {
 			collapsedSections: {},
 			operationInProgress: null,
 		});
+		// These suites are about the file **Row menu**; List view keeps the file
+		// row the first thing that carries a menu.
+		useSettingsStore.setState({ gitChangesTreeView: false });
 		useWorkspaceGitStore.setState({
 			// biome-ignore lint/suspicious/noExplicitAny: partial store fixture
 			byWorkspaceId: { a: { isGitRepo: true } } as any,
@@ -210,5 +220,73 @@ describe("GitChangesTab — Open in Separate Window", () => {
 		render({ ...FILE, path: "dist/app.zip" });
 		expect(item()).toBeUndefined();
 		expect(item("Open Diff in Separate Window")).toBeUndefined();
+	});
+});
+
+describe("GitChangesTab — Folder menu", () => {
+	let container: HTMLDivElement;
+	let root: ReturnType<typeof createRoot>;
+
+	beforeEach(() => {
+		useGitChangesStore.setState({
+			changedFiles: [FILE],
+			baseBranch: "main",
+			currentBranch: "feature",
+			loading: false,
+			error: null,
+			collapsedSections: {},
+			collapsedFolders: {},
+			operationInProgress: null,
+		});
+		useSettingsStore.setState({ gitChangesTreeView: true });
+		useWorkspaceGitStore.setState({
+			// biome-ignore lint/suspicious/noExplicitAny: partial store fixture
+			byWorkspaceId: { a: { isGitRepo: true } } as any,
+		});
+		useWorkspaceStore.setState({
+			activeWorkspaceId: "a",
+			workspaces: [workspace("a", "/repos/a")],
+			activeTabByWorkspace: {},
+		});
+		container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+		act(() => root.render(<GitChangesTab />));
+	});
+
+	afterEach(() => {
+		act(() => root.unmount());
+		container.remove();
+	});
+
+	async function openFolderMenu(exists: boolean) {
+		vi.mocked(fsApi.fileExists).mockResolvedValueOnce(exists);
+		const row = [
+			...container.querySelectorAll<HTMLElement>('[aria-haspopup="menu"]'),
+		].find((el) => el.textContent === "src/lib") as HTMLElement;
+		await act(async () => {
+			row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+		});
+	}
+
+	const menuButton = (label: string) =>
+		[...document.querySelectorAll<HTMLButtonElement>("body button")].find(
+			(b) => b.textContent === label,
+		);
+
+	it("checks the deepest folder of the merged row on disk", async () => {
+		await openFolderMenu(true);
+		expect(fsApi.fileExists).toHaveBeenLastCalledWith("/repos/a/src/lib");
+		expect(menuButton("Copy Relative Path")).toBeDefined();
+		expect(menuButton("Open Diff")).toBeUndefined();
+	});
+
+	it("disables Reveal on a folder that is gone from disk", async () => {
+		await openFolderMenu(false);
+		const reveal = [
+			...document.querySelectorAll<HTMLButtonElement>("body button"),
+		].find((b) => (b.textContent ?? "").startsWith("Reveal"));
+		expect(reveal?.disabled).toBe(true);
+		expect(menuButton("Copy Path")?.disabled).toBe(false);
 	});
 });
