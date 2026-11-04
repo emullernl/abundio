@@ -1,3 +1,7 @@
+---
+status: accepted, amended by ADR-0049 (Markdown windows are now File windows)
+---
+
 # Markdown windows are Workspace-bound and remembered in SQLite
 
 A **Markdown window** is a real OS Window that shows one markdown file, either rendered (read-only) or as Monaco source (editable). It belongs to one **Workspace**. It is open only while that Workspace is an **Opened workspace**. When the Workspace closes, the app quits, the owning Window closes or that Window switches Profile, the Markdown window closes and is *remembered*. It reopens, in the view it was last in, the next time the Workspace is opened. If you close it yourself, it is forgotten. Remembered windows live in a SQLite table, one row per window, keyed by Workspace and the file's canonical path (so every spelling of one file shares one window), with a stable window label. They are not stored in `windows.json`.

@@ -17,10 +17,13 @@ Today a **Markdown window** (ADR-0046) can open only `.md`/`.mdx` files. We are 
 - **Title:** `notes.md`, `app.ts — Diff`, `app.ts @ a1b2c3d`.
 - **Code names:** rename the table to `file_windows` and add a `kind` column. **Keep the `md-<uuid>` labels**, the `markdown-window.json` capability and the label checks.
 
-## Open points to settle during implementation
+## Points settled during implementation
 
-1. **Is the live diff's section part of its key?** Check how `explorerStore` keys a diff pane (`diff:path`) and whether a staged diff and an unstaged diff of the same file can be two panes. The window copies the pane's rule. Whatever the rule is, the row stores `diff_section` so the window can re-fetch.
-2. **Explorer Cmd/Ctrl+click.** This plan extends it to every file that has a File window (text and images), for consistency. Confirm with the user before merging.
+1. **The live diff's section is not part of its key.** `explorerStore` keys a live diff pane `diff:<path>`, one per file whichever section opened it. The window copies this: the row stores the latest `diff_section`, and opening it again from another section updates the row and asks the open window to re-read (`file-window-reload`).
+2. **Explorer Cmd/Ctrl+click** now opens every file that has a File window (text and images). Approved by the user.
+3. **Titles** follow the pane names (`app.ts (diff)`, `app.ts @ a1b2c3d`) rather than a new spelling.
+4. **The kind comes from `file_window_info`**, not the window URL, like the file path already did.
+5. **A live diff re-reads on any change under the Workspace folder** (debounced) and when its window gains focus, because staging changes the diff without touching the file.
 
 ## Commits (one branch, in order)
 

@@ -10,7 +10,7 @@ There is at most one File window per **file and kind**, keyed the way File panes
 
 We renamed the domain term and the table (`markdown_windows` → `file_windows`, with a `kind` column). We deliberately kept two old names:
 
-- **Window labels stay `md-<uuid>`.** The label is the key `tauri-plugin-window-state` uses for a window's saved size and position. It is also the pattern the `markdown-window.json` capability matches, and the pattern `is_markdown_window_label` and `is_profile_window_label` test. A new `file-` prefix would mean handling both prefixes for good, because existing rows keep their labels. So `md-` is now just a historical prefix. **Do not "fix" it.**
+- **Window labels stay `md-<uuid>`.** The label is the key `tauri-plugin-window-state` uses for a window's saved size and position. It is also the pattern the `markdown-window.json` capability matches, and the pattern `is_file_window_label` and `is_profile_window_label` test. A new `file-` prefix would mean handling both prefixes for good, because existing rows keep their labels. So `md-` is now just a historical prefix. **Do not "fix" it.**
 - **The shortcut's action id stays `open-markdown-window`.** Keymap Overrides (ADR-0043) are stored by action id, so renaming it would silently drop every user's rebind unless we wrote migration code. Only its label changes, to "Open in Separate Window".
 
 ## Considered Options
@@ -22,5 +22,5 @@ We renamed the domain term and the table (`markdown_windows` → `file_windows`,
 ## Consequences
 
 - The window's permissions stay as narrow as `markdown-window.json` makes them. Diffs need git data, but app commands are callable from every window (there is no command manifest), so no new capability is needed.
-- A live diff depends on a git section (staged, unstaged, against base), so a diff window's row stores the section, and a commit diff's row stores the commit id. The commit id is part of the window's key. Whether the section is part of the key follows whatever the live diff pane does (see the plan).
+- A live diff depends on a git section (staged, unstaged, against base), so a diff window's row stores the section, and a commit diff's row stores the commit id. The commit id is part of the window's key; the section is not, because there is one live diff pane per file whichever section opened it. A second open from another section updates the row and the open window re-reads it.
 - The menu item is **absent**, not disabled, on a file that has no File window kind (binary, unsupported, folder, submodule). This follows the Row menu rule that a file's kind may change the menu's shape but its state may not.
