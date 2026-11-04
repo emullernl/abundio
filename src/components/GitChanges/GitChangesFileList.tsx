@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import {
 	buildChangesTree,
 	compareByFolderThenName,
 	folderKey,
+	type TreeNode,
 	type TreeRow,
 	visibleTreeRows,
 } from "../../lib/changesTree";
@@ -77,24 +79,42 @@ export function GitChangesFileList({
 	const treeView = useSettingsStore((s) => s.gitChangesTreeView);
 	const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId) ?? "";
 
-	function rowsOf(section: string, files: GitChangedFile[]): TreeRow[] {
-		if (!treeView) {
+	// Grouping, sorting and building the trees depend only on the files (and
+	// the view), so they are kept across renders. The tab re-renders on every
+	// git store update and on each fold, and a large rename or reformat can
+	// change thousands of tracked files at once.
+	const sections = useMemo(
+		() =>
+			SECTION_ORDER.map(({ key, label }) => {
+				const sectionFiles = files
+					.filter((f) => f.section === key)
+					.sort((a, b) => compareByFolderThenName(a.path, b.path));
+				return {
+					key,
+					label,
+					files: sectionFiles,
+					tree: treeView ? buildChangesTree(sectionFiles) : null,
+				};
+			}).filter((g) => g.files.length > 0),
+		[files, treeView],
+	);
+
+	function rowsOf(
+		section: string,
+		files: GitChangedFile[],
+		tree: TreeNode[] | null,
+	): TreeRow[] {
+		if (!tree) {
 			return files.map((file) => ({ kind: "file", file, depth: 0 }));
 		}
 		return visibleTreeRows(
-			buildChangesTree(files),
+			tree,
 			(path) =>
 				collapsedFolders[folderKey(workspaceId, section, path)] ?? false,
 		);
 	}
 
-	const grouped = SECTION_ORDER.map(({ key, label }) => ({
-		key,
-		label: label(baseBranch),
-		files: files
-			.filter((f) => f.section === key)
-			.sort((a, b) => compareByFolderThenName(a.path, b.path)),
-	})).filter((g) => g.files.length > 0);
+	const grouped = sections.map((g) => ({ ...g, label: g.label(baseBranch) }));
 
 	if (grouped.length === 0) {
 		return (
@@ -191,7 +211,7 @@ export function GitChangesFileList({
 						</button>
 						{!isCollapsed && (
 							<div>
-								{rowsOf(group.key, group.files).map((row) => {
+								{rowsOf(group.key, group.files, group.tree).map((row) => {
 									if (row.kind === "folder") {
 										const { node } = row;
 										return (

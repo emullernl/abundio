@@ -190,6 +190,14 @@ describe("GitChangesFileList — Tree view", () => {
 		expect(rowTexts()).toEqual(["src", "a.ts"]);
 	});
 
+	it("keeps a merged row's fold on its deepest folder when the row splits", () => {
+		renderList([file("a/b/x.ts", "unstaged")]);
+		act(() => folderRow("a/b").click());
+		renderList([file("a/b/x.ts", "unstaged"), file("a/y.ts", "unstaged")]);
+		expect(rowTexts()).toEqual(["a", "b", "y.ts"]);
+		expect(folderRow("b").getAttribute("aria-expanded")).toBe("false");
+	});
+
 	it("drops the grey folder path from file rows", () => {
 		renderList([file("src/a.ts", "unstaged")]);
 		expect(container.textContent).not.toContain("a.tssrc");
