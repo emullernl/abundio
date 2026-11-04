@@ -623,19 +623,34 @@ function diffIsEmpty(diff: GitFileDiff): boolean {
 	return diff.original === diff.modified;
 }
 
+/** Two spellings of one path compare equal: the watcher reports native
+ *  separators, `resolveWorkspacePath` joins with `/`. */
+const samePath = (a: string, b: string) =>
+	a.replace(/\\/g, "/") === b.replace(/\\/g, "/");
+
 /**
- * A diff File window, read-only. A live diff (`diff`) is read again whenever
- * something under the Workspace folder changes, or the window gains focus,
- * because staging changes the diff without touching the file. A commit's
- * diff (`commit-diff`) is frozen history, read once.
+ * A diff File window, read-only. A commit's diff (`commit-diff`) is frozen
+ * history, read once. A live diff (`diff`) is read again when:
+ *
+ * - its file changes on disk;
+ * - git reports a ref change (`git-change`: a commit, a branch switch, a
+ *   moved base branch);
+ * - the window gains focus. This is the only signal for staging from a
+ *   terminal: `.git/index` is deliberately not watched (see `stagePath` in
+ *   `lib/ipc.ts`), so nothing in the app hears a bare `git add`.
  */
 function DiffWindow({ info }: { info: FileWindowInfo }) {
 	const [diff, setDiff] = useState<GitFileDiff | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const live = info.kind === "diff";
 	useReadOnlyWindowChrome();
+	// Reads overlap (a change, then focus, then a reload to another section);
+	// only the newest one's reply may land, or an overtaken read would show the
+	// old section's diff under the new title.
+	const latestRead = useRef(0);
 
 	const load = useCallback(() => {
+		const read = ++latestRead.current;
 		const request =
 			info.kind === "commit-diff" && info.commitOid
 				? gitApi.commitFileDiff(info.rootFolder, info.commitOid, info.filePath)
@@ -647,30 +662,39 @@ function DiffWindow({ info }: { info: FileWindowInfo }) {
 					);
 		request
 			.then((d) => {
+				if (read !== latestRead.current) return;
 				setError(null);
 				setDiff(d);
 			})
-			.catch((e) => setError(String(e)));
+			.catch((e) => {
+				if (read === latestRead.current) setError(String(e));
+			});
 	}, [info]);
 	useEffect(load, [load]);
 
-	useFolderChanges(info.rootFolder, live, () => load());
+	const absolutePath = resolveWorkspacePath(info.rootFolder, info.filePath);
+	useFolderChanges(info.rootFolder, live, (change) => {
+		const touched = [...change.changedFiles, ...change.removedFiles];
+		if (touched.some((p) => samePath(p, absolutePath))) load();
+	});
 	useEffect(() => {
 		if (!live) return;
-		const unlisten = appWindow()?.onFocusChanged(({ payload: focused }) => {
+		const win = appWindow();
+		const unlistenFocus = win?.onFocusChanged(({ payload: focused }) => {
 			if (focused) load();
 		});
+		const unlistenGit = fsApi.onGitChange(info.rootFolder, load);
 		return () => {
-			unlisten?.then((fn) => fn()).catch(() => {});
+			unlistenFocus?.then((fn) => fn()).catch(() => {});
+			unlistenGit.then((fn) => fn()).catch(() => {});
 		};
-	}, [live, load]);
+	}, [live, load, info.rootFolder]);
 
 	const name = fileNameOf(info.filePath);
 	const shown =
 		info.kind === "commit-diff" && info.commitOid
 			? `${name} @ ${info.commitOid.slice(0, 7)}`
 			: `${name} (diff)`;
-	const absolutePath = resolveWorkspacePath(info.rootFolder, info.filePath);
 
 	return (
 		<Shell>

@@ -23,7 +23,7 @@ Today a **Markdown window** (ADR-0046) can open only `.md`/`.mdx` files. We are 
 2. **Explorer Cmd/Ctrl+click** now opens every file that has a File window (text and images). Approved by the user.
 3. **Titles** follow the pane names (`app.ts (diff)`, `app.ts @ a1b2c3d`) rather than a new spelling.
 4. **The kind comes from `file_window_info`**, not the window URL, like the file path already did.
-5. **A live diff re-reads on any change under the Workspace folder** (debounced) and when its window gains focus, because staging changes the diff without touching the file.
+5. **A live diff re-reads when its file changes, on `git-change` (commits, branch moves) and when its window gains focus.** Focus is the only signal for a bare `git add` from a terminal, because `.git/index` is deliberately not watched. Only the newest read may land, so an overtaken one never shows the old section under the new title (PR #246 review).
 
 ## Commits (one branch, in order)
 

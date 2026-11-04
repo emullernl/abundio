@@ -42,6 +42,12 @@ pub enum FileWindowKind {
     Diff,
     /// One file as one commit changed it. Frozen history, read-only.
     CommitDiff,
+    /// A kind this build does not know: a row written by a newer build of the
+    /// same data epoch. Never opened, never validated, and kept on restore, so
+    /// going back to the newer build still finds the window. The IPC cannot
+    /// create one: `validate_target` refuses it.
+    #[serde(other)]
+    Unknown,
 }
 
 impl FileWindowKind {
@@ -51,17 +57,20 @@ impl FileWindowKind {
             FileWindowKind::Image => "image",
             FileWindowKind::Diff => "diff",
             FileWindowKind::CommitDiff => "commit-diff",
+            // Never written: `validate_target` refuses it before any upsert.
+            FileWindowKind::Unknown => "unknown",
         }
     }
 
-    /// Unknown values read as `Text`, like `MarkdownView` reads as rendered.
-    /// Validation on restore forgets a row whose file is not text.
+    /// Unknown values read as `Unknown`, not as `Text`: reading a newer
+    /// kind as text would canonicalise its path as a file and forget the row.
     fn from_str(s: &str) -> Self {
         match s {
+            "text" => FileWindowKind::Text,
             "image" => FileWindowKind::Image,
             "diff" => FileWindowKind::Diff,
             "commit-diff" => FileWindowKind::CommitDiff,
-            _ => FileWindowKind::Text,
+            _ => FileWindowKind::Unknown,
         }
     }
 
@@ -226,6 +235,9 @@ pub fn validate_target(root_folder: &str, target: &FileWindowTarget) -> Result<S
             }
             relative_key(&target.file_path)
         }
+        FileWindowKind::Unknown => Err(AbundioError::InvalidOperation(
+            "Unknown kind of window".into(),
+        )),
     }
 }
 
@@ -248,6 +260,9 @@ pub enum RestoreCheck {
 /// file on disk (a deleted file still has a diff, and a commit's never
 /// changes), only a reachable folder.
 pub fn check_restore(root_folder: &str, row: &FileWindowRow) -> RestoreCheck {
+    if row.kind == FileWindowKind::Unknown {
+        return RestoreCheck::Keep;
+    }
     let Ok(root) = Path::new(root_folder).canonicalize() else {
         return RestoreCheck::Keep;
     };
@@ -289,7 +304,7 @@ pub fn window_title(row: &FileWindowRow, workspace_name: &str) -> String {
         .unwrap_or(&row.file_path)
         .to_string();
     let shown = match row.kind {
-        FileWindowKind::Text | FileWindowKind::Image => file_name,
+        FileWindowKind::Text | FileWindowKind::Image | FileWindowKind::Unknown => file_name,
         FileWindowKind::Diff => format!("{file_name} (diff)"),
         FileWindowKind::CommitDiff => {
             let oid = row.commit_oid.as_deref().unwrap_or("");
@@ -600,6 +615,27 @@ pub struct DirtyFileWindow {
     pub file_path: String,
 }
 
+/// What `file_window_open` was asked for, in canonical form: only the field
+/// its kind uses is kept, and a commit id is lowercased so `A1B2…` and
+/// `a1b2…` are one window (git always reports lowercase oids).
+pub fn target_from_ipc(
+    kind: FileWindowKind,
+    file_path: String,
+    commit_oid: Option<String>,
+    diff_section: Option<String>,
+) -> FileWindowTarget {
+    FileWindowTarget {
+        kind,
+        file_path,
+        commit_oid: if kind == FileWindowKind::CommitDiff {
+            commit_oid.map(|o| o.to_ascii_lowercase())
+        } else {
+            None
+        },
+        diff_section: if kind == FileWindowKind::Diff { diff_section } else { None },
+    }
+}
+
 /// Opens a file of a Workspace in its File window, or focuses the one already
 /// showing it.
 #[tauri::command]
@@ -615,12 +651,7 @@ pub async fn file_window_open(
     let meta = store
         .workspace_meta(&workspace_id)?
         .ok_or_else(|| AbundioError::NotFound(format!("workspace {workspace_id}")))?;
-    let mut target = FileWindowTarget {
-        kind,
-        file_path,
-        commit_oid: if kind == FileWindowKind::CommitDiff { commit_oid } else { None },
-        diff_section: if kind == FileWindowKind::Diff { diff_section } else { None },
-    };
+    let mut target = target_from_ipc(kind, file_path, commit_oid, diff_section);
     let canonical = validate_target(&meta.root_folder, &target)?;
     // Keyed by the canonical path, so a link and the explorer, which spell
     // one file differently, share one window. A text or image window keeps
@@ -968,7 +999,50 @@ mod tests {
     #[test]
     fn unknown_values_read_safely() {
         assert_eq!(MarkdownView::from_str("split"), MarkdownView::Rendered);
-        assert_eq!(FileWindowKind::from_str("video"), FileWindowKind::Text);
+        assert_eq!(FileWindowKind::from_str("video"), FileWindowKind::Unknown);
+        assert_eq!(FileWindowKind::from_str("text"), FileWindowKind::Text);
+    }
+
+    #[test]
+    fn a_newer_builds_kind_is_kept_on_restore_and_never_opened() {
+        // A Workspace-relative path, as a future kind might store: read as text
+        // it would canonicalise against the process CWD and be forgotten.
+        let dir = tempfile::tempdir().unwrap();
+        let row = row_of(FileWindowKind::Unknown, "src/app.ts");
+        assert_eq!(check_restore(dir.path().to_str().unwrap(), &row), RestoreCheck::Keep);
+        let t = FileWindowTarget { kind: FileWindowKind::Unknown, ..text("src/app.ts") };
+        assert!(validate_target(dir.path().to_str().unwrap(), &t).is_err());
+        // And the IPC's deserializer maps an unknown kind there too.
+        let k: FileWindowKind = serde_json::from_str("\"video\"").unwrap();
+        assert_eq!(k, FileWindowKind::Unknown);
+    }
+
+    /// The frontend decides which files get the menu item from its own copy
+    /// of the extension lists (`src/lib/fileWindowKind.ts`). If the copies
+    /// drift, the menu offers a window Rust then refuses, and the click does
+    /// nothing visible. Read that file and compare both ways.
+    #[test]
+    fn frontend_extension_lists_match_rust() {
+        let ts = include_str!("../../src/lib/fileWindowKind.ts");
+        let block = |start: &str, end: &str| -> String {
+            let a = ts.find(start).unwrap_or_else(|| panic!("{start} not found")) + start.len();
+            let b = a + ts[a..].find(end).unwrap();
+            ts[a..b].to_string()
+        };
+        let words = |s: &str| -> std::collections::BTreeSet<String> {
+            s.split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        let ts_images = words(&block("const IMAGE_EXTENSIONS = new Set([", "]);"));
+        let ts_binary = words(&block("const BINARY_EXTENSIONS = new Set(", ".split("));
+        let rust_images: std::collections::BTreeSet<String> =
+            crate::file_explorer::IMAGE_MIMES.iter().map(|(e, _)| e.to_string()).collect();
+        let rust_binary: std::collections::BTreeSet<String> =
+            crate::file_explorer::BINARY_EXTS.iter().map(|e| e.to_string()).collect();
+        assert_eq!(ts_images, rust_images, "image extensions differ");
+        assert_eq!(ts_binary, rust_binary, "binary extensions differ");
     }
 
     #[test]
@@ -1062,6 +1136,29 @@ mod tests {
         assert!(validate_target(root, &commit("a.ts", "0123abcd")).is_ok());
         assert!(validate_target(root, &commit("a.ts", "xyz")).is_err());
         assert!(validate_target(root, &commit("a.ts", "")).is_err());
+    }
+
+    #[test]
+    fn ipc_targets_lowercase_the_commit_and_drop_fields_their_kind_ignores() {
+        let t = target_from_ipc(
+            FileWindowKind::CommitDiff,
+            "a.ts".into(),
+            Some("A1B2C3D4".into()),
+            Some("staged".into()),
+        );
+        assert_eq!(t.commit_oid.as_deref(), Some("a1b2c3d4"));
+        assert_eq!(t.diff_section, None);
+        let d = target_from_ipc(FileWindowKind::Diff, "a.ts".into(), Some("abc1234".into()), Some("staged".into()));
+        assert_eq!(d.commit_oid, None);
+        assert_eq!(d.diff_section.as_deref(), Some("staged"));
+        // So two spellings of one commit share a row.
+        let s = store_with(&["w1"]);
+        let up = target_from_ipc(FileWindowKind::CommitDiff, "a.ts".into(), Some("A1B2C3D4".into()), None);
+        let low = target_from_ipc(FileWindowKind::CommitDiff, "a.ts".into(), Some("a1b2c3d4".into()), None);
+        assert_eq!(
+            s.upsert("w1", &up, "a.ts").unwrap().label,
+            s.upsert("w1", &low, "a.ts").unwrap().label
+        );
     }
 
     #[test]
