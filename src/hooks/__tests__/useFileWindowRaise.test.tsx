@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const raise = vi.fn((_id: string) => Promise.resolve());
 const restore = vi.fn((_id: string) => Promise.resolve());
 vi.mock("../../lib/ipc", () => ({
-	markdownWindows: {
+	fileWindows: {
 		raise: (id: string) => raise(id),
 		restore: (id: string) => restore(id),
 		close: () => Promise.resolve(),
@@ -14,20 +14,20 @@ vi.mock("../../lib/ipc", () => ({
 
 import {
 	afterRestore,
-	raiseMarkdownWindows,
-	restoreMarkdownWindows,
-} from "../../lib/markdownWindowRaise";
+	raiseFileWindows,
+	restoreFileWindows,
+} from "../../lib/fileWindowRaise";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { useMarkdownWindowRaise } from "../useMarkdownWindowRaise";
-import { useMarkdownWindowRestore } from "../useMarkdownWindowRestore";
+import { useFileWindowRaise } from "../useFileWindowRaise";
+import { useFileWindowRestore } from "../useFileWindowRestore";
 
 (
 	globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 function Probe() {
-	useMarkdownWindowRaise();
+	useFileWindowRaise();
 	return null;
 }
 
@@ -54,7 +54,7 @@ afterEach(() => {
 	act(() => root.unmount());
 });
 
-describe("useMarkdownWindowRaise", () => {
+describe("useFileWindowRaise", () => {
 	it("raises the Workspace that becomes Active, once per change", async () => {
 		act(() => root.render(<Probe />));
 		act(() => useWorkspaceStore.setState({ activeWorkspaceId: "w1" }));
@@ -91,8 +91,8 @@ describe("useMarkdownWindowRaise", () => {
 
 describe("first activation of a Workspace", () => {
 	function BothHooks() {
-		useMarkdownWindowRestore();
-		useMarkdownWindowRaise();
+		useFileWindowRestore();
+		useFileWindowRaise();
 		return null;
 	}
 
@@ -116,7 +116,7 @@ describe("first activation of a Workspace", () => {
 });
 
 describe("selecting the Active workspace again", () => {
-	it("raises its Markdown windows", async () => {
+	it("raises its File windows", async () => {
 		useWorkspaceStore.setState({ activeWorkspaceId: "w1" });
 		useWorkspaceStore.getState().beginWorkspaceSwitch("w1");
 		await flush();
@@ -125,12 +125,12 @@ describe("selecting the Active workspace again", () => {
 	});
 });
 
-describe("raiseMarkdownWindows", () => {
+describe("raiseFileWindows", () => {
 	it("waits for a restore of the same Workspace in flight", async () => {
 		let finish!: () => void;
 		restore.mockImplementation(() => new Promise<void>((r) => (finish = r)));
-		restoreMarkdownWindows("w1");
-		const raised = raiseMarkdownWindows("w1");
+		restoreFileWindows("w1");
+		const raised = raiseFileWindows("w1");
 		await flush();
 		expect(raise).not.toHaveBeenCalled();
 
@@ -141,15 +141,15 @@ describe("raiseMarkdownWindows", () => {
 
 	it("still raises after a failed restore", async () => {
 		restore.mockImplementation(() => Promise.reject(new Error("gone")));
-		restoreMarkdownWindows("w1").catch(() => {});
-		await raiseMarkdownWindows("w1");
+		restoreFileWindows("w1").catch(() => {});
+		await raiseFileWindows("w1");
 		expect(raise).toHaveBeenCalledWith("w1");
 	});
 
 	it("logs a failed raise instead of throwing", async () => {
 		const err = vi.spyOn(console, "error").mockImplementation(() => {});
 		raise.mockImplementation(() => Promise.reject(new Error("nope")));
-		await expect(raiseMarkdownWindows("w1")).resolves.toBeUndefined();
+		await expect(raiseFileWindows("w1")).resolves.toBeUndefined();
 		expect(err).toHaveBeenCalled();
 		err.mockRestore();
 	});
@@ -163,7 +163,7 @@ describe("afterRestore", () => {
 	it("settles only after the pending restore", async () => {
 		let finish!: () => void;
 		restore.mockImplementation(() => new Promise<void>((r) => (finish = r)));
-		restoreMarkdownWindows("w1");
+		restoreFileWindows("w1");
 		let settled = false;
 		afterRestore("w1").then(() => {
 			settled = true;

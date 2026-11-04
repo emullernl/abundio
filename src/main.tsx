@@ -1,12 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
+import { FileWindowApp } from "./FileWindowApp";
 import { currentWindowLabel } from "./lib/appWindow";
 import { isDemoMode } from "./lib/demo";
 import { disableNativeTextAssist } from "./lib/disableNativeTextAssist";
 import { initNotificationListener } from "./lib/notificationRouter";
 import { primaryFontFamily } from "./lib/terminalManager";
-import { MarkdownWindowApp } from "./MarkdownWindowApp";
 import { SettingsApp, setupCrossWindowSync } from "./SettingsApp";
 import "./lib/windowFocus";
 import "./styles/globals.css";
@@ -29,14 +29,14 @@ const IS_SETTINGS_WINDOW =
 	(isDemoMode() &&
 		new URLSearchParams(window.location.search).get("window") === "settings");
 
-// A Markdown window (ADR-0046). Same reasoning as Settings: no Workspaces,
+// A File window (ADR-0046). Same reasoning as Settings: no Workspaces,
 // PTYs or notification routing of its own. Never reachable in the browser
 // demo, where every label reads "main".
-const IS_MARKDOWN_WINDOW = currentWindowLabel().startsWith("md-");
+const IS_FILE_WINDOW = currentWindowLabel().startsWith("md-");
 
 // The settings window doesn't need the workspace notification router — it
 // has no workspaces / PTYs / notification routing of its own.
-if (!IS_SETTINGS_WINDOW && !IS_MARKDOWN_WINDOW) {
+if (!IS_SETTINGS_WINDOW && !IS_FILE_WINDOW) {
 	initNotificationListener();
 }
 
@@ -129,8 +129,8 @@ function renderRoot() {
 		<React.StrictMode>
 			{IS_SETTINGS_WINDOW ? (
 				<SettingsApp />
-			) : IS_MARKDOWN_WINDOW ? (
-				<MarkdownWindowApp />
+			) : IS_FILE_WINDOW ? (
+				<FileWindowApp />
 			) : (
 				<App />
 			)}
@@ -138,8 +138,8 @@ function renderRoot() {
 	);
 }
 
-if (IS_SETTINGS_WINDOW || IS_MARKDOWN_WINDOW) {
-	// Settings and Markdown windows don't render terminals — skip the
+if (IS_SETTINGS_WINDOW || IS_FILE_WINDOW) {
+	// Settings and File windows don't render terminals — skip the
 	// heavyweight font preload and mount immediately.
 	renderRoot();
 } else {

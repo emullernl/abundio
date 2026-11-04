@@ -3,17 +3,16 @@ import type { MarkdownView } from "../../lib/ipc";
 import { isMac } from "../../lib/platform";
 import type { PreviewColorMode } from "../../lib/previewColorMode";
 
-/** Height of the one bar a Markdown window has. On macOS it is also the title
+/** Height of the one bar a File window has. On macOS it is also the title
  *  bar: the native traffic lights float over its left end. */
-export const MARKDOWN_TOOLBAR_HEIGHT = 34;
+export const FILE_WINDOW_TOOLBAR_HEIGHT = 34;
 
 // The native traffic lights take roughly the first 70px (see Titlebar).
 const MAC_TRAFFIC_LIGHT_INSET = 84;
 
-interface Props {
-	fileName: string;
-	workspaceName: string;
-	dirty: boolean;
+/** The Rendered / Source switch and the rendered view's tools. Only a
+ *  markdown File window has them. */
+interface MarkdownControls {
 	view: MarkdownView;
 	onViewChange: (view: MarkdownView) => void;
 	colorMode: PreviewColorMode;
@@ -23,6 +22,15 @@ interface Props {
 	findLabel: string;
 	toggleLabel: string;
 }
+
+type Props = {
+	fileName: string;
+	workspaceName: string;
+	dirty?: boolean;
+} & (
+	| ({ markdown: true } & MarkdownControls)
+	| ({ markdown?: false } & Partial<MarkdownControls>)
+);
 
 // Colours that change on hover live in classes: an inline colour would beat
 // the `hover:` utility (CLAUDE.md, "An inline style silently defeats…").
@@ -62,32 +70,17 @@ function IconButton({
 }
 
 /**
- * The Markdown window's only chrome: which file, whether it has unsaved
- * edits, the Rendered / Source switch, and the rendered view's tools.
+ * A File window's only chrome: which file, whether it has unsaved edits, and,
+ * for markdown, the Rendered / Source switch and the rendered view's tools.
  */
-export function MarkdownWindowToolbar({
-	fileName,
-	workspaceName,
-	dirty,
-	view,
-	onViewChange,
-	colorMode,
-	onToggleColorMode,
-	onFind,
-	onPrint,
-	findLabel,
-	toggleLabel,
-}: Props) {
-	const views: Array<{ id: MarkdownView; label: string }> = [
-		{ id: "rendered", label: "Rendered" },
-		{ id: "source", label: "Source" },
-	];
+export function FileWindowToolbar(props: Props) {
+	const { fileName, workspaceName, dirty = false } = props;
 	return (
 		<div
 			data-tauri-drag-region
 			className="flex items-center gap-3 select-none shrink-0"
 			style={{
-				height: MARKDOWN_TOOLBAR_HEIGHT,
+				height: FILE_WINDOW_TOOLBAR_HEIGHT,
 				padding: `0 10px 0 ${isMac ? MAC_TRAFFIC_LIGHT_INSET : 12}px`,
 				backgroundColor: "var(--bg-secondary)",
 				borderBottom: "1px solid var(--border)",
@@ -129,6 +122,27 @@ export function MarkdownWindowToolbar({
 				</span>
 			</div>
 
+			{props.markdown && <MarkdownTools {...props} />}
+		</div>
+	);
+}
+
+function MarkdownTools({
+	view,
+	onViewChange,
+	colorMode,
+	onToggleColorMode,
+	onFind,
+	onPrint,
+	findLabel,
+	toggleLabel,
+}: MarkdownControls) {
+	const views: Array<{ id: MarkdownView; label: string }> = [
+		{ id: "rendered", label: "Rendered" },
+		{ id: "source", label: "Source" },
+	];
+	return (
+		<>
 			<div className="flex items-center gap-1">
 				{view === "rendered" && (
 					<>
@@ -170,6 +184,6 @@ export function MarkdownWindowToolbar({
 					</button>
 				))}
 			</div>
-		</div>
+		</>
 	);
 }

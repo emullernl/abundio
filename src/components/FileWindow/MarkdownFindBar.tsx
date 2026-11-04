@@ -19,7 +19,7 @@ const buttonClass =
 	"text-[var(--fg-secondary)] enabled:hover:bg-[var(--bg-tertiary)] enabled:hover:text-[var(--fg-primary)] " +
 	"disabled:opacity-40 disabled:cursor-default";
 
-/** Find over the rendered view of a Markdown window. */
+/** Find over the rendered view of a markdown File window. */
 export function MarkdownFindBar({ target, contentKey, onClose }: Props) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [query, setQuery] = useState("");

@@ -11,7 +11,7 @@ import { normalizePosixPath } from "./resolveMarkdownImageSrc";
  * - `fragment`: `#heading`, scroll within the document.
  * - `external`: `http(s)` or `mailto`, handed to the OS.
  * - `workspace-markdown`: a markdown file inside the Workspace folder, which a
- *   Markdown window opens in its own Markdown window (ADR-0046).
+ *   File window opens in its own File window (ADR-0046).
  * - `ignore`: everything else, including other schemes (`file:`,
  *   `javascript:`) and paths outside the Workspace.
  */

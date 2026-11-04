@@ -1,12 +1,12 @@
 import { create } from "zustand";
-import { markdownWindows } from "../lib/ipc";
+import { fileWindows } from "../lib/ipc";
 
 /**
- * Asks about unsaved edits in **Markdown windows** before their owner closes
+ * Asks about unsaved edits in **File windows** before their owner closes
  * them (ADR-0046): closing a Workspace, switching Profile, closing the Window.
  *
  * The edits live in another webview, so this Window cannot see them. Each
- * Markdown window reports its own state to Rust, and this asks Rust.
+ * File window reports its own state to Rust, and this asks Rust.
  */
 interface Pending {
 	workspaceIds: string[];
@@ -15,19 +15,21 @@ interface Pending {
 	resolve: (proceed: boolean) => void;
 }
 
-interface MarkdownCloseConfirmState {
+interface FileWindowCloseConfirmState {
 	pending: Pending | null;
 	/** File names a Save could not save. Shown as a notice; the close that
 	 *  asked for the save did not happen. */
 	saveFailed: string[] | null;
 }
 
-export const useMarkdownCloseConfirmStore = create<MarkdownCloseConfirmState>(
-	() => ({ pending: null, saveFailed: null }),
-);
+export const useFileWindowCloseConfirmStore =
+	create<FileWindowCloseConfirmState>(() => ({
+		pending: null,
+		saveFailed: null,
+	}));
 
-export function dismissMarkdownSaveFailed(): void {
-	useMarkdownCloseConfirmStore.setState({ saveFailed: null });
+export function dismissFileWindowSaveFailed(): void {
+	useFileWindowCloseConfirmStore.setState({ saveFailed: null });
 }
 
 const nameOf = (path: string) => path.split(/[\\/]/).pop() || path;
@@ -44,13 +46,13 @@ const SAVE_POLL_MS = 100;
  * A failure to *ask* does not block the close: a broken IPC must never trap
  * the user in a Window they are trying to close.
  */
-export async function confirmMarkdownWindowsClean(
+export async function confirmFileWindowsClean(
 	workspaceIds: readonly string[],
 ): Promise<boolean> {
 	if (workspaceIds.length === 0) return true;
-	let dirty: Awaited<ReturnType<typeof markdownWindows.dirty>>;
+	let dirty: Awaited<ReturnType<typeof fileWindows.dirty>>;
 	try {
-		dirty = await markdownWindows.dirty([...workspaceIds]);
+		dirty = await fileWindows.dirty([...workspaceIds]);
 	} catch {
 		return true;
 	}
@@ -58,9 +60,9 @@ export async function confirmMarkdownWindowsClean(
 	// A second request (the close button clicked again while the dialog is
 	// up) replaces the first; settle the first as cancelled, or its caller
 	// would wait forever.
-	useMarkdownCloseConfirmStore.getState().pending?.resolve(false);
+	useFileWindowCloseConfirmStore.getState().pending?.resolve(false);
 	return new Promise<boolean>((resolve) => {
-		useMarkdownCloseConfirmStore.setState({
+		useFileWindowCloseConfirmStore.setState({
 			pending: {
 				workspaceIds: [...workspaceIds],
 				fileNames: dirty.map((d) => nameOf(d.filePath)),
@@ -71,19 +73,19 @@ export async function confirmMarkdownWindowsClean(
 	});
 }
 
-export async function resolveMarkdownClose(
+export async function resolveFileWindowClose(
 	choice: "save" | "discard" | "cancel",
 ): Promise<void> {
-	const pending = useMarkdownCloseConfirmStore.getState().pending;
-	useMarkdownCloseConfirmStore.setState({ pending: null });
+	const pending = useFileWindowCloseConfirmStore.getState().pending;
+	useFileWindowCloseConfirmStore.setState({ pending: null });
 	if (!pending) return;
 	if (choice === "cancel") return pending.resolve(false);
 	if (choice === "discard") return pending.resolve(true);
 	try {
-		await markdownWindows.save(pending.labels);
+		await fileWindows.save(pending.labels);
 		const saved = await waitUntil(
 			async () => {
-				const still = await markdownWindows.dirty(pending.workspaceIds);
+				const still = await fileWindows.dirty(pending.workspaceIds);
 				return still.every((d) => !pending.labels.includes(d.label));
 			},
 			SAVE_TIMEOUT_MS,
@@ -103,20 +105,19 @@ export async function resolveMarkdownClose(
 async function reportSaveFailed(pending: Pending): Promise<void> {
 	let names = pending.fileNames;
 	try {
-		const still = await markdownWindows.dirty(pending.workspaceIds);
+		const still = await fileWindows.dirty(pending.workspaceIds);
 		const failed = still.filter((d) => pending.labels.includes(d.label));
 		if (failed.length > 0) names = failed.map((d) => nameOf(d.filePath));
 	} catch {
 		// Keep the full list.
 	}
-	useMarkdownCloseConfirmStore.setState({ saveFailed: names });
+	useFileWindowCloseConfirmStore.setState({ saveFailed: names });
 }
 
 /** The notice shown when Save did not land: what failed, and that nothing
  *  was closed. */
 export function saveFailedMessage(names: readonly string[]): string {
-	const where =
-		names.length === 1 ? "its Markdown window" : "their Markdown windows";
+	const where = names.length === 1 ? "its File window" : "their File windows";
 	return `Abundio could not save ${describeFiles(names)}, so nothing was closed. Your edits are still in ${where}. Check that the file can be written, then try again.`;
 }
 

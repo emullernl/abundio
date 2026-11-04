@@ -17,9 +17,11 @@ vi.mock("../../../lib/clipboard", () => ({
 	writeClipboardText: vi.fn().mockResolvedValue(undefined),
 }));
 
-const openMarkdownWindow = vi.fn().mockResolvedValue(undefined);
-vi.mock("../../../lib/openMarkdownWindow", () => ({
-	openMarkdownWindow: (...a: unknown[]) => openMarkdownWindow(...a),
+const openFileWindow = vi.fn().mockResolvedValue(undefined);
+const openFileWindowForPath = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../../lib/openFileWindow", () => ({
+	openFileWindow: (...a: unknown[]) => openFileWindow(...a),
+	openFileWindowForPath: (...a: unknown[]) => openFileWindowForPath(...a),
 }));
 
 const FILE: GitChangedFile = {
@@ -129,7 +131,7 @@ describe("GitChangesTab — Row menu lifetime", () => {
 	});
 });
 
-describe("GitChangesTab — Open in Markdown Window", () => {
+describe("GitChangesTab — Open in Separate Window", () => {
 	let container: HTMLDivElement;
 	let root: ReturnType<typeof createRoot>;
 
@@ -161,13 +163,14 @@ describe("GitChangesTab — Open in Markdown Window", () => {
 		});
 	}
 
-	const item = () =>
+	const item = (label = "Open File in Separate Window") =>
 		[...document.querySelectorAll<HTMLButtonElement>("body button")].find(
-			(b) => b.textContent === "Open in Markdown Window",
+			(b) => b.textContent === label,
 		);
 
 	beforeEach(() => {
-		openMarkdownWindow.mockClear();
+		openFileWindow.mockClear();
+		openFileWindowForPath.mockClear();
 		container = document.createElement("div");
 		document.body.appendChild(container);
 		root = createRoot(container);
@@ -178,19 +181,34 @@ describe("GitChangesTab — Open in Markdown Window", () => {
 		container.remove();
 	});
 
-	it("opens a markdown row's file, resolved against the Workspace root", () => {
+	it("opens a row's file, resolved against the Workspace root", () => {
 		render({ ...FILE, path: "docs/notes.md" });
 		act(() => {
 			item()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 		});
-		expect(openMarkdownWindow).toHaveBeenCalledWith(
+		expect(openFileWindowForPath).toHaveBeenCalledWith(
 			"a",
 			"/repos/a/docs/notes.md",
 		);
 	});
 
-	it("is not offered on a non-markdown row", () => {
-		render(FILE);
+	it("opens a row's live diff, from its section", () => {
+		render({ ...FILE, section: "staged" });
+		act(() => {
+			item("Open Diff in Separate Window")?.dispatchEvent(
+				new MouseEvent("click", { bubbles: true }),
+			);
+		});
+		expect(openFileWindow).toHaveBeenCalledWith("a", {
+			kind: "diff",
+			filePath: "src/lib/ipc.ts",
+			diffSection: "staged",
+		});
+	});
+
+	it("is not offered on a file a pane cannot show", () => {
+		render({ ...FILE, path: "dist/app.zip" });
 		expect(item()).toBeUndefined();
+		expect(item("Open Diff in Separate Window")).toBeUndefined();
 	});
 });

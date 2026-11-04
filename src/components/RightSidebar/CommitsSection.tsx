@@ -12,7 +12,10 @@ import {
 } from "../../lib/commitHistory";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
 import { fs as fsApi, git } from "../../lib/ipc";
-import { openMarkdownWindow } from "../../lib/openMarkdownWindow";
+import {
+	openFileWindow,
+	openFileWindowForPath,
+} from "../../lib/openFileWindow";
 import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { CommitFile, HistoryCommit } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -298,8 +301,9 @@ function CommitsBody() {
 		const root = cwd ?? "";
 		const close = () => setMenu(null);
 		// The same menu as a Git changes row, in the same shape. "Open Diff" is
-		// the commit's diff; "Open File", "Open in Markdown Window" and the
-		// paths are the file as it is on disk now. A path the commit deleted is
+		// the commit's diff, and so is "Open Diff in Separate Window"; "Open
+		// File", "Open File in Separate Window" and the paths are the file as it
+		// is on disk now. A path the commit deleted is
 		// disabled like a deleted row.
 		const run: Record<string, () => void> = {
 			"open-diff": () => {
@@ -310,10 +314,20 @@ function CommitsBody() {
 				close();
 				openFileNow(file);
 			},
-			"open-markdown-window": () => {
+			"open-diff-window": () => {
+				close();
+				if (activeWorkspaceId) {
+					void openFileWindow(activeWorkspaceId, {
+						kind: "commit-diff",
+						filePath: file.path,
+						commitOid: commit.oid,
+					});
+				}
+			},
+			"open-file-window": () => {
 				close();
 				if (activeWorkspaceId && cwd) {
-					void openMarkdownWindow(
+					void openFileWindowForPath(
 						activeWorkspaceId,
 						resolveWorkspacePath(cwd, file.path),
 					);

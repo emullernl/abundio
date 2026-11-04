@@ -1,4 +1,4 @@
-/* Find in the rendered view of a Markdown window (lib/renderedFind.ts). The
+/* Find in the rendered view of a markdown File window (lib/renderedFind.ts). The
    CSS Custom Highlight API paints these without touching the DOM. */
 ::highlight(abundio-md-find) {
 	background-color: color-mix(in srgb, var(--accent) 28%, transparent);

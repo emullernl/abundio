@@ -31,7 +31,10 @@ import {
 	toggleMergeBase,
 	toggleMergeViewForPane,
 } from "../../lib/mergeView";
-import { openMarkdownWindow } from "../../lib/openMarkdownWindow";
+import {
+	fileWindowTargetForPane,
+	openFileWindow,
+} from "../../lib/openFileWindow";
 import { findPreviewForSource } from "../../lib/paneTree";
 import { sc } from "../../lib/platform";
 import {
@@ -433,13 +436,6 @@ export function FilePane({
 						handlePrintMarkdown();
 					},
 				},
-				{
-					label: "Open in Markdown Window",
-					shortcut: shortcutLabelFor("open-markdown-window", keyOverrides),
-					onClick: () => {
-						void openMarkdownWindow(workspaceId, paneState.filePath);
-					},
-				},
 				{ separator: true },
 			]
 		: [];
@@ -533,8 +529,26 @@ export function FilePane({
 		},
 	];
 
+	// The window shows what this pane shows: a diff pane gives a diff window.
+	const windowTarget = fileWindowTargetForPane(paneId, null, {
+		[paneId]: paneState,
+	});
+	const windowItems: ContextMenuItem[] = windowTarget
+		? [
+				{
+					label: "Open in Separate Window",
+					shortcut: shortcutLabelFor("open-markdown-window", keyOverrides),
+					onClick: () => {
+						void openFileWindow(workspaceId, windowTarget);
+					},
+				},
+				{ separator: true },
+			]
+		: [];
+
 	const contextMenuItems: ContextMenuItem[] = [
 		...markdownItems,
+		...windowItems,
 		...(isPatchFile && paneState.fileType === "text"
 			? [
 					{

@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { isBusyPty } from "../lib/busyPty";
 import { parseTabLayout } from "../lib/paneTree";
-import { confirmMarkdownWindowsClean } from "../stores/markdownCloseConfirmStore";
+import { confirmFileWindowsClean } from "../stores/fileWindowCloseConfirmStore";
 import {
 	collectPtyIds,
 	type PtyActivityEntry,
@@ -113,9 +113,9 @@ export function useConfirmCloseWorkspace() {
 	} | null>(null);
 
 	const requestClose = useCallback(async (workspaceId: string) => {
-		// Unsaved edits in its Markdown windows are asked about first: they live
+		// Unsaved edits in its File windows are asked about first: they live
 		// in other webviews, so the busy check below cannot see them (ADR-0046).
-		if (!(await confirmMarkdownWindowsClean([workspaceId]))) return;
+		if (!(await confirmFileWindowsClean([workspaceId]))) return;
 		const signals = detectWorkForWorkspace(workspaceId);
 		if (!signals.hasWorkingAgent && !signals.hasRunningCommand) {
 			void useWorkspaceStore.getState().closeWorkspace(workspaceId);

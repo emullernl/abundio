@@ -20,7 +20,7 @@ function disabledIds(entries: GitRowMenuEntry[]) {
 		.map((e) => e.id);
 }
 
-/** Every row state the Git changes tab can produce, on a non-markdown file. */
+/** Every row state the Git changes tab can produce, on an ordinary text file. */
 const ROW_SHAPES = [
 	{ path: "src/a.ts", status: "M", section: "unstaged" },
 	{ path: "src/a.ts", status: "D", section: "staged" },
@@ -84,7 +84,7 @@ describe("gitRowMenuEntries", () => {
 			disabledIds(
 				gitRowMenuEntries({ path: "src/a.ts", status: "D", section: "staged" }),
 			),
-		).toEqual(["open-file", "reveal"]);
+		).toEqual(["open-file", "open-file-window", "reveal"]);
 	});
 
 	it("disables Open Diff on a conflicted row", () => {
@@ -97,7 +97,7 @@ describe("gitRowMenuEntries", () => {
 					section: "conflicted",
 				}),
 			),
-		).toEqual(["open-diff"]);
+		).toEqual(["open-diff", "open-diff-window"]);
 	});
 
 	it("disables Open Diff on a binary commit file, and only that", () => {
@@ -110,7 +110,7 @@ describe("gitRowMenuEntries", () => {
 					isBinary: true,
 				}),
 			),
-		).toEqual(["open-diff"]);
+		).toEqual(["open-diff", "open-diff-window"]);
 	});
 
 	it("disables Open Diff and Open File on a submodule", () => {
@@ -127,81 +127,88 @@ describe("gitRowMenuEntries", () => {
 		).toEqual(["open-diff", "open-file"]);
 	});
 
-	describe("Open in Markdown Window", () => {
-		const md = (status: string, section: string) =>
-			gitRowMenuEntries({ path: "docs/notes.md", status, section });
+	describe("Open Diff / Open File in Separate Window", () => {
+		const row = (path: string, status: string, section: string) =>
+			gitRowMenuEntries({ path, status, section });
+		const WINDOW_IDS = ["open-diff-window", "open-file-window"];
 
-		it("appears only on a markdown file's row", () => {
-			expect(ids(md("M", "unstaged"))).toContain("open-markdown-window");
-			expect(
-				ids(
-					gitRowMenuEntries({
-						path: "docs/page.MDX",
-						status: "M",
-						section: "unstaged",
-					}),
-				),
-			).toContain("open-markdown-window");
-			for (const file of ROW_SHAPES) {
-				expect(ids(gitRowMenuEntries(file))).not.toContain(
-					"open-markdown-window",
-				);
+		it("appears on every row whose file has a File window", () => {
+			for (const path of [
+				"docs/notes.md",
+				"src/a.ts",
+				"logo.PNG",
+				"Makefile",
+			]) {
+				const got = ids(row(path, "M", "unstaged"));
+				for (const id of WINDOW_IDS) expect(got, path).toContain(id);
+			}
+		});
+
+		it("is absent on a file a File pane cannot show", () => {
+			for (const path of ["dist/app.zip", "fonts/a.woff2", "doc.pdf"]) {
+				const got = ids(row(path, "M", "unstaged"));
+				for (const id of WINDOW_IDS) expect(got, path).not.toContain(id);
 			}
 		});
 
 		it("sits right after Open File, with the other open actions", () => {
-			const order = ids(md("M", "unstaged"));
-			expect(order.slice(0, 3)).toEqual([
+			expect(ids(row("src/a.ts", "M", "unstaged")).slice(0, 4)).toEqual([
 				"open-diff",
 				"open-file",
-				"open-markdown-window",
+				"open-diff-window",
+				"open-file-window",
 			]);
 		});
 
 		// File kind may change the shape; row state still only disables.
-		it("keeps one shape across every markdown row state", () => {
+		it("keeps one shape across every row state", () => {
 			const shapes = [
-				md("M", "unstaged"),
-				md("D", "staged"),
-				md("?", "untracked"),
-				md("U", "conflicted"),
-				md("D", "commit"),
+				row("docs/notes.md", "M", "unstaged"),
+				row("docs/notes.md", "D", "staged"),
+				row("docs/notes.md", "?", "untracked"),
+				row("docs/notes.md", "U", "conflicted"),
+				row("docs/notes.md", "D", "commit"),
 			].map(ids);
 			for (const shape of shapes) expect(shape).toEqual(shapes[0]);
 		});
 
-		it("is disabled where Open File is: a deleted path", () => {
-			expect(disabledIds(md("D", "staged"))).toEqual([
+		it("follows Open File on a deleted path", () => {
+			expect(disabledIds(row("docs/notes.md", "D", "staged"))).toEqual([
 				"open-file",
-				"open-markdown-window",
+				"open-file-window",
 				"reveal",
 			]);
-			// A path the commit deleted, likewise.
-			expect(disabledIds(md("D", "commit"))).toContain("open-markdown-window");
+			// A path the commit deleted, likewise. Its diff still opens.
+			const commitDeleted = disabledIds(row("docs/notes.md", "D", "commit"));
+			expect(commitDeleted).toContain("open-file-window");
+			expect(commitDeleted).not.toContain("open-diff-window");
 		});
 
-		// The file is opened as it is on disk, markers and all, as Open File is.
-		it("stays enabled on a conflicted row", () => {
-			expect(disabledIds(md("U", "conflicted"))).toEqual(["open-diff"]);
+		// The file is opened as it is on disk, markers and all, as Open File is;
+		// there is no diff, as with Open Diff.
+		it("follows Open Diff and Open File on a conflicted row", () => {
+			expect(disabledIds(row("docs/notes.md", "U", "conflicted"))).toEqual([
+				"open-diff",
+				"open-diff-window",
+			]);
 		});
 
-		// A submodule is a folder on disk — a kind, not a state — so the item is
-		// absent, not disabled, even when the name looks like markdown.
+		// A submodule is a folder on disk — a kind, not a state — so the items
+		// are absent, not disabled, whatever its name.
 		it("is not offered on a submodule, whatever its name", () => {
-			expect(
-				ids(
-					gitRowMenuEntries({
-						path: "vendor/docs.md",
-						status: "M",
-						section: "commit",
-						isSubmodule: true,
-					}),
-				),
-			).not.toContain("open-markdown-window");
+			const got = ids(
+				gitRowMenuEntries({
+					path: "vendor/docs.md",
+					status: "M",
+					section: "commit",
+					isSubmodule: true,
+				}),
+			);
+			for (const id of WINDOW_IDS) expect(got).not.toContain(id);
 		});
 
 		it("is enabled on a commit file that still exists", () => {
-			expect(disabledIds(md("M", "commit"))).toEqual([]);
+			expect(disabledIds(row("docs/notes.md", "M", "commit"))).toEqual([]);
 		});
 	});
 

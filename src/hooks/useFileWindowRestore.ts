@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { restoreMarkdownWindows } from "../lib/markdownWindowRaise";
+import { restoreFileWindows } from "../lib/fileWindowRaise";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 
 /** Ids in `next` that are not in `prev`. Exported for testing. */
@@ -11,21 +11,21 @@ export function newlyOpened(
 }
 
 /**
- * Reopens a Workspace's remembered **Markdown windows** when it becomes an
+ * Reopens a Workspace's remembered **File windows** when it becomes an
  * Opened workspace in this Window — including its first activation after an
  * app restart (ADR-0046). Closing is handled where the Workspace closes
  * (`closeWorkspace`), and by Rust when this Window is destroyed.
  */
-export function useMarkdownWindowRestore(): void {
+export function useFileWindowRestore(): void {
 	useEffect(() => {
 		let prev = usePtyActivityStore.getState().openedWorkspaceIds;
-		for (const id of prev) restoreMarkdownWindows(id).catch(() => {});
+		for (const id of prev) restoreFileWindows(id).catch(() => {});
 		return usePtyActivityStore.subscribe((s) => {
 			const next = s.openedWorkspaceIds;
 			if (next === prev) return;
 			for (const id of newlyOpened(prev, next)) {
-				restoreMarkdownWindows(id).catch((e) => {
-					console.error("[markdown-window] restore failed:", e);
+				restoreFileWindows(id).catch((e) => {
+					console.error("[file-window] restore failed:", e);
 				});
 			}
 			prev = next;

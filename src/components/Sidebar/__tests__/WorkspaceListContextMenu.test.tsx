@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 	getCurrentWindow: () => ({ label: "main" }),
 }));
 vi.mock("../../../lib/ipc", () => ({
-	markdownWindows: {
+	fileWindows: {
 		close: vi.fn(() => Promise.resolve()),
 		dirty: vi.fn(() => Promise.resolve([])),
 		restore: vi.fn(() => Promise.resolve()),
@@ -139,7 +139,7 @@ describe("WorkspaceList — context menu Open / Close", () => {
 		expect(menuLabels()).toContain("Close Workspace");
 		expect(menuLabels()).not.toContain("Open Workspace");
 		clickMenu("Close Workspace");
-		// The close first asks Rust about unsaved Markdown windows (ADR-0046).
+		// The close first asks Rust about unsaved File windows (ADR-0046).
 		await vi.waitFor(() =>
 			expect(closeWorkspace).toHaveBeenCalledWith(OPENED.id),
 		);

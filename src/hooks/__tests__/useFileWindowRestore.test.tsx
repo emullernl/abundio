@@ -4,21 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const restore = vi.fn((_id: string) => Promise.resolve());
 vi.mock("../../lib/ipc", () => ({
-	markdownWindows: { restore: (id: string) => restore(id) },
+	fileWindows: { restore: (id: string) => restore(id) },
 }));
 
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import {
-	newlyOpened,
-	useMarkdownWindowRestore,
-} from "../useMarkdownWindowRestore";
+import { newlyOpened, useFileWindowRestore } from "../useFileWindowRestore";
 
 (
 	globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 function Probe() {
-	useMarkdownWindowRestore();
+	useFileWindowRestore();
 	return null;
 }
 
@@ -44,7 +41,7 @@ describe("newlyOpened", () => {
 	});
 });
 
-describe("useMarkdownWindowRestore", () => {
+describe("useFileWindowRestore", () => {
 	it("restores the Workspaces already Opened at mount", () => {
 		usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["w1", "w2"]) });
 		act(() => root.render(<Probe />));

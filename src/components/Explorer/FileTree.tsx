@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import { copyPathEntries } from "../../lib/copyPathEntries";
+import { fileWindowKindFor } from "../../lib/fileWindowKind";
 import { fs as fsApi } from "../../lib/ipc";
-import { isMarkdownFile } from "../../lib/isMarkdownFile";
 import {
-	clickOpensMarkdownWindow,
-	openMarkdownWindow,
-} from "../../lib/openMarkdownWindow";
+	clickOpensFileWindow,
+	openFileWindowForPath,
+} from "../../lib/openFileWindow";
 import { revealLabel } from "../../lib/platform";
 import type { DirEntry } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -74,8 +74,8 @@ function TreeLevel({
 						isExpanded={!!expandedDirs[entry.path]}
 						onToggleDir={toggleDir}
 						onOpenFile={(filePath, modifiers) =>
-							clickOpensMarkdownWindow(modifiers, filePath)
-								? openMarkdownWindow(workspaceId, filePath)
+							clickOpensFileWindow(modifiers, filePath)
+								? openFileWindowForPath(workspaceId, filePath)
 								: openFile(workspaceId, filePath)
 						}
 						onContextMenu={onContextMenu}
@@ -247,13 +247,13 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 					openFileInSplit(workspaceId, entry.path, "horizontal");
 				},
 			},
-			...(isMarkdownFile(entry.name)
+			...(!entry.isDir && fileWindowKindFor(entry.name)
 				? [
 						{
-							label: "Open in Markdown Window",
+							label: "Open in Separate Window",
 							onClick: () => {
 								setMenu(null);
-								void openMarkdownWindow(workspaceId, entry.path);
+								void openFileWindowForPath(workspaceId, entry.path);
 							},
 						},
 					]

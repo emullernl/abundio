@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/ipc", () => ({
-	markdownWindows: {
+	fileWindows: {
 		close: vi.fn(() => Promise.resolve()),
 		dirty: vi.fn(() => Promise.resolve([])),
 		restore: vi.fn(() => Promise.resolve()),
@@ -58,7 +58,7 @@ vi.mock("../../lib/terminalManager", () => ({
 	teardownTerminal,
 }));
 
-import { markdownWindows, tabs, workspaces } from "../../lib/ipc";
+import { fileWindows, tabs, workspaces } from "../../lib/ipc";
 import { collectAgentPanes } from "../../lib/paneTree";
 import {
 	takePendingAgent,
@@ -886,8 +886,8 @@ describe("workspaceStore", () => {
 			expect(teardownTerminal).toHaveBeenCalledWith("pane-a");
 			expect(teardownTerminal).toHaveBeenCalledWith("pane-b");
 			expect(unmarkWorkspaceOpened).toHaveBeenCalledWith("workspace-1");
-			// Its Markdown windows close with it and are remembered (ADR-0046).
-			expect(markdownWindows.close).toHaveBeenCalledWith(["workspace-1"]);
+			// Its File windows close with it and are remembered (ADR-0046).
+			expect(fileWindows.close).toHaveBeenCalledWith(["workspace-1"]);
 			// Closed, not deleted — the workspace stays in the list.
 			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
 		});

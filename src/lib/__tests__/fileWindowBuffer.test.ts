@@ -8,9 +8,9 @@ import {
 	loadedBuffer,
 	reloaded,
 	savedBuffer,
-} from "../markdownWindowBuffer";
+} from "../fileWindowBuffer";
 
-describe("markdownWindowBuffer", () => {
+describe("fileWindowBuffer", () => {
 	it("is clean when loaded and dirty once edited", () => {
 		const b = loadedBuffer("# a");
 		expect(isDirty(b)).toBe(false);

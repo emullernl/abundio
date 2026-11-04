@@ -514,16 +514,16 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "env_export_to_path":
 			throw "Export is unavailable in the demo.";
 
-		// Markdown windows are real OS windows (ADR-0046); the browser demo has
+		// File windows are real OS windows (ADR-0046); the browser demo has
 		// none, so opening one does nothing and nothing is ever unsaved.
-		case "md_windows_dirty":
+		case "file_windows_dirty":
 			return [];
 		case "report_unsaved_files":
-		case "md_window_open":
-		case "md_windows_save":
-		case "md_windows_close":
-		case "md_windows_restore":
-		case "md_windows_raise":
+		case "file_window_open":
+		case "file_windows_save":
+		case "file_windows_close":
+		case "file_windows_restore":
+		case "file_windows_raise":
 			return undefined;
 
 		default:

@@ -17,7 +17,7 @@ import {
 	type SetRow,
 	type WorkspaceRow,
 } from "../../lib/worktreeGrouping";
-import { confirmMarkdownWindowsClean } from "../../stores/markdownCloseConfirmStore";
+import { confirmFileWindowsClean } from "../../stores/fileWindowCloseConfirmStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -665,9 +665,9 @@ export function WorkspaceList({
 						// the rest and, crucially, isn't swallowed as an unhandled
 						// rejection — surface it instead.
 						const ids = [deleteId, ...linked.map((w) => w.id)];
-						// Removing closes their Markdown windows (the folder stays on
+						// Removing closes their File windows (the folder stays on
 						// disk), so unsaved edits there are asked about first.
-						if (!(await confirmMarkdownWindowsClean(ids))) return;
+						if (!(await confirmFileWindowsClean(ids))) return;
 						Promise.allSettled(ids.map((id) => deleteWorkspace(id))).then(
 							(results) => {
 								for (const r of results) {
