@@ -81,6 +81,9 @@ pub struct RestorationPlan {
     /// should also adopt its saved geometry. `None` when the main window keeps
     /// its own geometry (genuine "main" entry, or a fresh start).
     pub main_adopted_label: Option<String>,
+    /// The **Window placement** the main window restores to: its own entry's,
+    /// or the adopted survivor's.
+    pub main_placement: Option<crate::window_placement::Remembered>,
     /// Additional windows to spawn, each reusing its persisted label.
     pub additional: Vec<WindowEntry>,
 }
@@ -116,20 +119,21 @@ pub fn plan_restoration(
         .iter()
         .position(|e| e.label == main_label)
         .or_else(|| if entries.is_empty() { None } else { Some(0) });
-    let (main_profile_id, main_adopted_label) = match main_idx {
+    let (main_profile_id, main_adopted_label, main_placement) = match main_idx {
         Some(i) => {
             let e = entries.remove(i);
             // Only flag a geometry adoption when a *survivor* (non-main label)
             // takes over the main window. The genuine main entry keeps its own.
             let adopted = (e.label != main_label).then_some(e.label);
-            (Some(e.profile_id), adopted)
+            (Some(e.profile_id), adopted, e.placement)
         }
-        None => (first_profile_id.map(|s| s.to_string()), None),
+        None => (first_profile_id.map(|s| s.to_string()), None, None),
     };
 
     RestorationPlan {
         main_profile_id,
         main_adopted_label,
+        main_placement,
         additional: entries,
     }
 }
@@ -214,6 +218,33 @@ mod tests {
         let plan = plan_restoration(vec![], &ids(&["p1", "p2"]), "main", Some("p1"));
         assert_eq!(plan.main_profile_id.as_deref(), Some("p1"));
         assert!(plan.additional.is_empty());
+    }
+
+    fn placed(label: &str, profile: &str, monitor: &str) -> WindowEntry {
+        let json = format!(
+            r#"{{"home":{{"monitor":{{"name":"{monitor}","arrangementIndex":0}},"relX":1,"relY":2,"width":3,"height":4}}}}"#
+        );
+        WindowEntry { placement: Some(serde_json::from_str(&json).unwrap()), ..entry(label, profile) }
+    }
+
+    #[test]
+    fn the_main_window_restores_its_own_or_the_adopted_survivors_placement() {
+        let own = plan_restoration(
+            vec![placed("window-a", "p2", "A"), placed("main", "p1", "M")],
+            &ids(&["p1", "p2"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(own.main_placement.unwrap().home.monitor.name, "M");
+        assert_eq!(own.additional[0].placement.as_ref().unwrap().home.monitor.name, "A");
+
+        let adopted = plan_restoration(
+            vec![placed("window-a", "p2", "A")],
+            &ids(&["p1", "p2"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(adopted.main_placement.unwrap().home.monitor.name, "A");
     }
 
     #[test]

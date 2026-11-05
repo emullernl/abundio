@@ -237,13 +237,17 @@ pub fn open_window_with_profile(
     app: &AppHandle<Wry>,
     profile_id: &str,
 ) -> Result<String, AbundioError> {
-    open_window_with_profile_and_label(app, profile_id, None)
+    open_window_with_profile_and_label(app, profile_id, None, None)
 }
 
+/// `placement` is the window's remembered **Window placement** when it is
+/// being restored at launch; such a window opens behind the main window
+/// without taking focus. A new window (`None`) opens focused.
 pub fn open_window_with_profile_and_label(
     app: &AppHandle<Wry>,
     profile_id: &str,
     desired_label: Option<&str>,
+    placement: Option<crate::window_placement::Remembered>,
 ) -> Result<String, AbundioError> {
     let state = app
         .try_state::<ActiveProfileState>()
@@ -296,7 +300,9 @@ pub fn open_window_with_profile_and_label(
         WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
             .title(&window_title_for(&profile_name))
             .inner_size(1200.0, 800.0)
-            .min_inner_size(600.0, 400.0);
+            .min_inner_size(600.0, 400.0)
+            // Hidden until placed, so it never shows at the default spot first.
+            .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
@@ -306,7 +312,9 @@ pub fn open_window_with_profile_and_label(
     let result = builder.build();
 
     match result {
-        Ok(_window) => {
+        Ok(window) => {
+            let focus = placement.is_none();
+            crate::window_frame::place_and_show(&window, placement, focus);
             // Tell other windows their menus need to refresh ("open elsewhere"
             // dimming for the now-owned profile).
             let _ = app.emit("profile-ownership-changed", ());

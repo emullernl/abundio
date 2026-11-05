@@ -13,10 +13,10 @@
 //! through untouched. Windows and X11 do keep one physical coordinate system,
 //! so there desktop space is physical pixels.
 
-use crate::window_placement::{self, MonitorInfo, Rect, Remembered, Resolved, WindowPlacement};
+use crate::window_placement::{self, LegacyEntry, MonitorInfo, Rect, Remembered, Resolved, WindowPlacement};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{Manager, Runtime, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Manager, Runtime, WebviewWindow, WindowEvent, Wry};
 #[cfg(target_os = "macos")]
 use tauri::{LogicalPosition, LogicalSize};
 #[cfg(not(target_os = "macos"))]
@@ -103,8 +103,12 @@ pub fn capture<R: Runtime>(
 /// fullscreen if it was. Call it while the window is still hidden. Returns
 /// where it went, or `None` when no monitor is reported (the window is then
 /// left where the OS put it).
-pub fn apply<R: Runtime>(window: &WebviewWindow<R>, placement: &WindowPlacement) -> Option<Resolved> {
-    let resolved = window_placement::resolve(placement, &monitors(window))?;
+pub fn apply<R: Runtime>(
+    window: &WebviewWindow<R>,
+    placement: &WindowPlacement,
+    monitors: &[MonitorInfo],
+) -> Option<Resolved> {
+    let resolved = window_placement::resolve(placement, monitors)?;
     let f = resolved.frame;
     // Position first, then size: on Windows a move onto a monitor with another
     // DPI rescales the window, so a size set before the move would be undone.
@@ -163,11 +167,12 @@ impl PlacementTracker {
 
 /// Starts keeping `window`'s placement current. Call it once the window has
 /// been placed, so the default spot it was built at is never recorded.
+///
+/// Nothing is recorded right away: on macOS the move `apply` asked for may
+/// not have happened yet, and recording the old frame would overwrite the
+/// remembered one. The move's own `Moved` event records it, and
+/// [`record_all`] catches a window that never moved before it is saved.
 pub fn track<R: Runtime>(window: &WebviewWindow<R>) {
-    let Some(tracker) = window.try_state::<PlacementTracker>() else {
-        return;
-    };
-    tracker.record(window);
     let w = window.clone();
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
@@ -176,6 +181,84 @@ pub fn track<R: Runtime>(window: &WebviewWindow<R>) {
             }
         }
     });
+}
+
+/// Records every open window that has a **Window placement** (Profile-bound
+/// and File windows), so what is saved next is where they are now. Call it
+/// before saving `windows.json` and before destroying windows on their
+/// owner's behalf: a destroyed window can no longer be asked.
+pub fn record_all(app: &AppHandle<Wry>) {
+    let Some(tracker) = app.try_state::<PlacementTracker>() else {
+        return;
+    };
+    for (label, window) in app.webview_windows() {
+        if has_placement(&label) {
+            tracker.record(&window);
+        }
+    }
+}
+
+/// The windows Abundio places itself; the Settings window is left to
+/// `tauri-plugin-window-state`.
+pub fn has_placement(label: &str) -> bool {
+    crate::window_management::is_profile_window_label(label)
+        || crate::file_windows::is_file_window_label(label)
+}
+
+/// Entries of the old `tauri-plugin-window-state` file, read once at startup
+/// so a window with no placement of its own yet can start from a guess.
+#[derive(Default)]
+pub struct LegacyPlacements(HashMap<String, LegacyEntry>);
+
+impl LegacyPlacements {
+    /// Reads `<app config dir>/.window-state.json`. Missing or unreadable is
+    /// an empty set.
+    pub fn load(app: &AppHandle<Wry>) -> Self {
+        let Ok(dir) = app.path().app_config_dir() else {
+            return Self::default();
+        };
+        let path = dir.join(tauri_plugin_window_state::DEFAULT_FILENAME);
+        let map = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<HashMap<String, serde_json::Value>>(&s).ok())
+            .map(|m| {
+                m.into_iter()
+                    .filter_map(|(k, v)| Some((k, serde_json::from_value(v).ok()?)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self(map)
+    }
+
+    pub fn get(&self, label: &str) -> Option<&LegacyEntry> {
+        self.0.get(label)
+    }
+}
+
+/// Places a freshly built, still hidden window where it was remembered (or,
+/// failing that, where the old window-state file had it), shows it, and
+/// starts tracking it. `focus: false` shows it behind the app's other windows
+/// without taking keyboard focus.
+pub fn place_and_show(window: &WebviewWindow<Wry>, remembered: Option<Remembered>, focus: bool) {
+    let app = window.app_handle();
+    let monitors = monitors(window);
+    let remembered = remembered.or_else(|| {
+        let legacy = app.try_state::<LegacyPlacements>()?;
+        window_placement::from_legacy(legacy.get(window.label())?, &monitors).map(Remembered::new)
+    });
+    if let Some(r) = &remembered {
+        apply(window, window_placement::choose(r, &monitors), &monitors);
+        if let Some(tracker) = app.try_state::<PlacementTracker>() {
+            tracker.set(window.label(), r.clone());
+        }
+    }
+    if focus {
+        let _ = window.show();
+        let _ = window.set_focus();
+    } else {
+        crate::window_raise::show_without_focus(app, window.clone());
+    }
+    track(window);
 }
 
 #[cfg(test)]

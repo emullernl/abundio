@@ -555,6 +555,7 @@ fn on_app_exit(app: &AppHandle<Wry>) {
         return;
     }
     if let Some(state) = app.try_state::<profile_store::ActiveProfileState>() {
+        window_frame::record_all(app);
         let tracker = app.try_state::<window_frame::PlacementTracker>();
         let snapshot = window_persistence::snapshot_from_state(&state, tracker.as_deref());
         if let Err(e) = window_persistence::save(&snapshot) {
@@ -737,7 +738,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::new().build())
+        .plugin(
+            // Only the Settings window: Abundio places the others itself, so
+            // they land on the right monitor whatever its scale (ADR-0051).
+            tauri_plugin_window_state::Builder::new()
+                .with_filter(|label| !window_frame::has_placement(label))
+                .build(),
+        )
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -799,6 +806,11 @@ pub fn run() {
             // view toggle, independent of the WorkspaceStore mutex. ADR-0046.
             let file_window_conn = migrations::open_db().expect("Failed to open database");
             app.manage(file_windows::FileWindowStore::new(file_window_conn));
+            // Window placement (ADR-0051). The old plugin file is read before
+            // any window is placed, so a window with no placement yet can
+            // start from where the plugin had it.
+            app.manage(window_frame::PlacementTracker::default());
+            app.manage(window_frame::LegacyPlacements::load(app.handle()));
 
             // Pasted Prompt action attachments are a cache, not user data
             // (ADR-0038). Nothing owns their lifetime, so they are swept by age
@@ -947,6 +959,12 @@ pub fn run() {
                 }
             }
 
+            // The main window is built hidden (tauri.conf.json `visible:
+            // false`), so it can be placed before it shows.
+            if let Some(main_window) = app.get_webview_window(main_label) {
+                window_frame::place_and_show(&main_window, plan.main_placement, true);
+            }
+
             // Spawn additional windows from the remaining persisted entries.
             // Defer spawning until after setup() returns so the main window is
             // fully initialised; otherwise the second window can race and end
@@ -965,6 +983,7 @@ pub fn run() {
                                 &app_handle,
                                 &entry.profile_id,
                                 Some(&entry.label),
+                                entry.placement.clone(),
                             )
                         {
                             eprintln!(
@@ -1098,6 +1117,7 @@ pub fn run() {
                 if let Some(state) =
                     app_handle.try_state::<profile_store::ActiveProfileState>()
                 {
+                    window_frame::record_all(&app_handle);
                     let tracker =
                         app_handle.try_state::<window_frame::PlacementTracker>();
                     let remaining =

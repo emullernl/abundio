@@ -20,10 +20,20 @@ pub fn raise_without_focus(app: &AppHandle<Wry>, windows: Vec<WebviewWindow>) {
     }
 }
 
+/// Shows a hidden `window` without focusing it or switching desktop: behind the
+/// app's other windows, with keyboard focus left where it is. tao's `show()`
+/// cannot do this on macOS, where it always makes the window key. Used for
+/// windows placed before they are shown (**Window placement**, ADR-0051).
+pub fn show_without_focus(app: &AppHandle<Wry>, window: WebviewWindow) {
+    if let Err(e) = app.run_on_main_thread(move || platform::show(&window)) {
+        eprintln!("[abundio] show window: {e}");
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSWindow};
+    use objc2_app_kit::{NSApplication, NSWindow, NSWindowOrderingMode};
     use tauri::WebviewWindow;
 
     pub fn raise(windows: &[WebviewWindow]) {
@@ -62,15 +72,39 @@ mod platform {
             w.orderFront(None);
         }
     }
+
+    pub fn show(window: &WebviewWindow) {
+        if MainThreadMarker::new().is_none() {
+            return;
+        }
+        let Ok(p) = window.ns_window() else { return };
+        if p.is_null() {
+            return;
+        }
+        // SAFETY: as in `raise`: main thread, and we hold the `WebviewWindow`.
+        let w: &NSWindow = unsafe { &*(p as *const NSWindow) };
+        // Ordered to the back, not made key: making a window on another Space
+        // key would switch the user there. Same call as Chromium's session
+        // restore.
+        w.orderWindow_relativeTo(NSWindowOrderingMode::Below, 0);
+    }
 }
 
 #[cfg(windows)]
 mod platform {
     use tauri::WebviewWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
-        IsIconic, IsWindowVisible, SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOSIZE,
+        IsIconic, IsWindowVisible, SetWindowPos, ShowWindow, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SW_SHOWNOACTIVATE,
     };
+
+    pub fn show(window: &WebviewWindow) {
+        let Ok(hwnd) = window.hwnd() else { return };
+        // SAFETY: takes a handle; a stale one makes the call fail harmlessly.
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
 
     pub fn raise(windows: &[WebviewWindow]) {
         for w in windows {
@@ -103,6 +137,16 @@ mod platform {
     use gtk::prelude::*;
     use tauri::WebviewWindow;
 
+    pub fn show(window: &WebviewWindow) {
+        // Ask the window manager not to focus it when it maps. X11 window
+        // managers mostly honour this; Wayland compositors decide for
+        // themselves.
+        if let Ok(gtk_window) = window.gtk_window() {
+            gtk_window.set_focus_on_map(false);
+        }
+        let _ = window.show();
+    }
+
     pub fn raise(windows: &[WebviewWindow]) {
         for w in windows {
             let Ok(gtk_window) = w.gtk_window() else { continue };
@@ -123,4 +167,7 @@ mod platform {
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod platform {
     pub fn raise(_windows: &[tauri::WebviewWindow]) {}
+    pub fn show(window: &tauri::WebviewWindow) {
+        let _ = window.show();
+    }
 }

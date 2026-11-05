@@ -520,8 +520,8 @@ impl FileWindowStore {
 
 // ── Windows ──
 
-/// Focuses the row's window if it is open, or builds it. The stored label is
-/// reused so the window-state plugin restores its size and position.
+/// Focuses the row's window if it is open, or builds it where it was last
+/// (its **Window placement**).
 pub fn open_or_focus(
     app: &AppHandle<Wry>,
     row: &FileWindowRow,
@@ -560,16 +560,22 @@ fn build_window(
     .inner_size(880.0, 760.0)
     .min_inner_size(420.0, 320.0)
     .resizable(true)
-    .focused(focus);
+    .focused(focus)
+    // Hidden until placed, so it never shows at the default spot first.
+    .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true);
     }
-    builder.build().map_err(|e| {
+    let window = builder.build().map_err(|e| {
         AbundioError::InvalidOperation(format!("File window build failed: {e}"))
     })?;
+    let placement = app
+        .try_state::<FileWindowStore>()
+        .and_then(|s| s.placement(&row.label).ok().flatten());
+    crate::window_frame::place_and_show(&window, placement, focus);
     Ok(())
 }
 
@@ -578,6 +584,8 @@ fn build_window(
 /// already asked about unsaved edits, and `destroy` skips the window's own
 /// close handler — which is the one place a row is forgotten.
 pub fn destroy_remembered(app: &AppHandle<Wry>, labels: &[String]) {
+    // Record where they are first: once destroyed they cannot be asked.
+    crate::window_frame::record_all(app);
     for label in labels {
         if let Some(w) = app.get_webview_window(label) {
             let _ = w.destroy();
