@@ -23,6 +23,8 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, Webvi
 use uuid::Uuid;
 
 use crate::error::AbundioError;
+use crate::window_frame::PlacementTracker;
+use crate::window_placement::Remembered;
 
 /// Every File window label starts with this: `md-<uuid>`. The prefix dates
 /// from when these were Markdown windows. It is kept on purpose (ADR-0049):
@@ -471,6 +473,33 @@ impl FileWindowStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// The window's remembered **Window placement** (ADR-0051). `None` when it
+    /// was never placed, or the stored value no longer parses.
+    pub fn placement(&self, label: &str) -> Result<Option<Remembered>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let json: Option<Option<String>> = conn
+            .query_row(
+                "SELECT placement FROM file_windows WHERE label = ?1",
+                params![label],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(json.flatten().and_then(|j| serde_json::from_str(&j).ok()))
+    }
+
+    /// Stores the window's placement. A forgotten row (already deleted by its
+    /// own close handler) is left forgotten.
+    pub fn set_placement(&self, label: &str, placement: &Remembered) -> Result<(), AbundioError> {
+        let json = serde_json::to_string(placement)
+            .map_err(|e| AbundioError::InvalidOperation(format!("placement: {e}")))?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE file_windows SET placement = ?1 WHERE label = ?2",
+            params![json, label],
+        )?;
+        Ok(())
+    }
+
     pub fn set_view(&self, label: &str, view: MarkdownView) -> Result<(), AbundioError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -558,8 +587,20 @@ pub fn destroy_remembered(app: &AppHandle<Wry>, labels: &[String]) {
 
 /// Cleans up after a File window's `Destroyed`. Its row is untouched.
 pub fn on_destroyed(app: &AppHandle<Wry>, label: &str) {
+    let placement = app
+        .try_state::<PlacementTracker>()
+        .and_then(|t| {
+            let p = t.get(label);
+            t.forget(label);
+            p
+        });
     if let Some(store) = app.try_state::<FileWindowStore>() {
         store.set_dirty(label, false);
+        if let Some(p) = placement {
+            if let Err(e) = store.set_placement(label, &p) {
+                eprintln!("[abundio] failed to save File window placement: {e}");
+            }
+        }
     }
 }
 
@@ -962,6 +1003,22 @@ mod tests {
         let a = s.upsert("w1", &text("/tmp/a.md"), "/tmp/a.md").unwrap();
         let b = s.upsert("w2", &text("/tmp/a.md"), "/tmp/a.md").unwrap();
         assert_ne!(a.label, b.label);
+    }
+
+    #[test]
+    fn placement_is_stored_per_row_and_a_forgotten_row_stays_forgotten() {
+        let store = store_with(&["w1"]);
+        let row = store.upsert("w1", &text("/r/a.md"), "/r/a.md").unwrap();
+        assert_eq!(store.placement(&row.label).unwrap(), None);
+        let p: Remembered = serde_json::from_str(
+            r#"{"home":{"monitor":{"name":"DELL","arrangementIndex":1},"relX":5,"relY":6,"width":700,"height":500,"maximized":true}}"#,
+        )
+        .unwrap();
+        store.set_placement(&row.label, &p).unwrap();
+        assert_eq!(store.placement(&row.label).unwrap(), Some(p.clone()));
+        store.delete_by_label(&row.label).unwrap();
+        store.set_placement(&row.label, &p).unwrap();
+        assert_eq!(store.placement(&row.label).unwrap(), None);
     }
 
     #[test]

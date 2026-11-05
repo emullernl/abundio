@@ -17,6 +17,10 @@ pub struct WindowEntry {
     pub label: String,
     #[serde(rename = "profileId")]
     pub profile_id: String,
+    /// Where the window was (ADR-0051). Absent in files written before
+    /// Window placement, and for a window that was never placed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<crate::window_placement::Remembered>,
 }
 
 pub fn windows_json_path() -> PathBuf {
@@ -50,12 +54,20 @@ pub fn save(entries: &[WindowEntry]) -> std::io::Result<()> {
 
 /// Builds a `WindowEntry` snapshot from the live `ActiveProfileState` map.
 /// Filters out entries whose profile id is empty (defensive).
-pub fn snapshot_from_state(state: &crate::profile_store::ActiveProfileState) -> Vec<WindowEntry> {
+/// Each entry carries its window's placement from `tracker`, when given.
+pub fn snapshot_from_state(
+    state: &crate::profile_store::ActiveProfileState,
+    tracker: Option<&crate::window_frame::PlacementTracker>,
+) -> Vec<WindowEntry> {
     state
         .snapshot()
         .into_iter()
         .filter(|(_, profile_id)| !profile_id.is_empty())
-        .map(|(label, profile_id)| WindowEntry { label, profile_id })
+        .map(|(label, profile_id)| WindowEntry {
+            placement: tracker.and_then(|t| t.get(&label)),
+            label,
+            profile_id,
+        })
         .collect()
 }
 
@@ -159,10 +171,12 @@ mod tests {
                 WindowEntry {
                     label: "main".into(),
                     profile_id: "p1".into(),
+                    placement: None,
                 },
                 WindowEntry {
                     label: "window-abc".into(),
                     profile_id: "p2".into(),
+                    placement: None,
                 },
             ];
             let payload = serde_json::to_string_pretty(&entries).unwrap();
@@ -187,6 +201,7 @@ mod tests {
         WindowEntry {
             label: label.into(),
             profile_id: profile.into(),
+            placement: None,
         }
     }
 
@@ -315,5 +330,20 @@ mod tests {
     #[test]
     fn migrate_geometry_unparseable_is_noop() {
         assert!(migrate_geometry_to_main("not json", "window-abc", "main").is_none());
+    }
+
+    #[test]
+    fn entries_without_placement_still_load_and_placement_round_trips() {
+        let old = r#"[{"label":"main","profileId":"p1"}]"#;
+        let entries: Vec<WindowEntry> = serde_json::from_str(old).unwrap();
+        assert!(entries[0].placement.is_none());
+        assert!(!serde_json::to_string(&entries).unwrap().contains("placement"));
+
+        let json = r#"[{"label":"main","profileId":"p1","placement":{"home":{"monitor":{"name":"DELL","arrangementIndex":0},"relX":1.0,"relY":2.0,"width":3.0,"height":4.0}}}]"#;
+        let entries: Vec<WindowEntry> = serde_json::from_str(json).unwrap();
+        let back: Vec<WindowEntry> =
+            serde_json::from_str(&serde_json::to_string(&entries).unwrap()).unwrap();
+        assert_eq!(back[0].placement, entries[0].placement);
+        assert_eq!(back[0].placement.as_ref().unwrap().home.monitor.name, "DELL");
     }
 }

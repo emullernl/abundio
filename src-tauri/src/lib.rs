@@ -555,7 +555,8 @@ fn on_app_exit(app: &AppHandle<Wry>) {
         return;
     }
     if let Some(state) = app.try_state::<profile_store::ActiveProfileState>() {
-        let snapshot = window_persistence::snapshot_from_state(&state);
+        let tracker = app.try_state::<window_frame::PlacementTracker>();
+        let snapshot = window_persistence::snapshot_from_state(&state, tracker.as_deref());
         if let Err(e) = window_persistence::save(&snapshot) {
             eprintln!("[abundio] failed to persist windows.json at exit: {e}");
         }
@@ -1097,7 +1098,10 @@ pub fn run() {
                 if let Some(state) =
                     app_handle.try_state::<profile_store::ActiveProfileState>()
                 {
-                    let remaining = window_persistence::snapshot_from_state(&state);
+                    let tracker =
+                        app_handle.try_state::<window_frame::PlacementTracker>();
+                    let remaining =
+                        window_persistence::snapshot_from_state(&state, tracker.as_deref());
                     if let Err(e) = window_persistence::save(&remaining) {
                         eprintln!("[abundio] failed to persist windows.json: {e}");
                     }

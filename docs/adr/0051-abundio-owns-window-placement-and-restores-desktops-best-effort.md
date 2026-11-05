@@ -31,4 +31,4 @@ The desktop is restored too, but only at app start and only as best effort:
 - Apple can break the macOS desktop restore in any update, with no error. Read the window's Space back after restoring and treat a mismatch as "opened on the current desktop", never as a failure.
 - A restore never switches the user's desktop. Restored windows are shown without being activated, because activating a window on another Space makes macOS jump to it.
 - A File window reopened with its Workspace later in a session opens on the current desktop. Its monitor and position are still restored.
-- A missing monitor or desktop is remembered, not overwritten, until the user moves the window. It comes back when the monitor or desktop does.
+- A missing monitor is never overwritten. Each window remembers a **home** placement and, while home's monitor is not connected, an **away** one. Moves while home's monitor is away (including the OS moving the window when the monitor is unplugged mid-session) update away; moves while it is connected replace home. Telling a user's move from the OS's is impossible, which is why this rule does not try. A missing desktop is kept the same way.

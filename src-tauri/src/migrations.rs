@@ -66,6 +66,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "018_file_windows",
         include_str!("../migrations/018_file_windows.sql"),
     ),
+    (
+        "019_file_window_placement",
+        include_str!("../migrations/019_file_window_placement.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {

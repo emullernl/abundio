@@ -13,8 +13,10 @@
 //! through untouched. Windows and X11 do keep one physical coordinate system,
 //! so there desktop space is physical pixels.
 
-use crate::window_placement::{self, MonitorInfo, Rect, Resolved, WindowPlacement};
-use tauri::{Runtime, WebviewWindow};
+use crate::window_placement::{self, MonitorInfo, Rect, Remembered, Resolved, WindowPlacement};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tauri::{Manager, Runtime, WebviewWindow, WindowEvent};
 #[cfg(target_os = "macos")]
 use tauri::{LogicalPosition, LogicalSize};
 #[cfg(not(target_os = "macos"))]
@@ -81,15 +83,20 @@ pub fn read_frame<R: Runtime>(window: &WebviewWindow<R>) -> Option<Rect> {
 
 /// Records where the window is now, keeping what `previous` knew that the
 /// window itself cannot say (the size it returns to from maximised, the
-/// desktop).
+/// desktop). `None` while minimised: a minimised window's frame is not where
+/// it will come back (on Windows it is parked far off-screen).
 pub fn capture<R: Runtime>(
     window: &WebviewWindow<R>,
     previous: Option<&WindowPlacement>,
+    monitors: &[MonitorInfo],
 ) -> Option<WindowPlacement> {
+    if window.is_minimized().unwrap_or(false) {
+        return None;
+    }
     let frame = read_frame(window)?;
     let maximized = window.is_maximized().unwrap_or(false);
     let fullscreen = window.is_fullscreen().unwrap_or(false);
-    window_placement::capture(&frame, maximized, fullscreen, &monitors(window), previous)
+    window_placement::capture(&frame, maximized, fullscreen, monitors, previous)
 }
 
 /// Puts the window where `placement` says, then maximises or makes it
@@ -117,6 +124,58 @@ pub fn apply<R: Runtime>(window: &WebviewWindow<R>, placement: &WindowPlacement)
         let _ = window.maximize();
     }
     Some(resolved)
+}
+
+/// The **Window placement** of every tracked window, kept current in memory
+/// as the windows move. Written to disk from here (with `windows.json`, and
+/// into a File window's row when it is destroyed), because a destroyed window
+/// can no longer be asked where it was.
+#[derive(Default)]
+pub struct PlacementTracker {
+    map: Mutex<HashMap<String, Remembered>>,
+}
+
+impl PlacementTracker {
+    pub fn get(&self, label: &str) -> Option<Remembered> {
+        self.map.lock().unwrap().get(label).cloned()
+    }
+
+    pub fn set(&self, label: &str, remembered: Remembered) {
+        self.map.lock().unwrap().insert(label.to_string(), remembered);
+    }
+
+    pub fn forget(&self, label: &str) {
+        self.map.lock().unwrap().remove(label);
+    }
+
+    /// Captures `window` now and records it against what was remembered.
+    pub fn record<R: Runtime>(&self, window: &WebviewWindow<R>) {
+        let monitors = monitors(window);
+        let label = window.label();
+        let previous = self.get(label);
+        let compare = previous.as_ref().map(|r| window_placement::choose(r, &monitors));
+        if let Some(now) = capture(window, compare, &monitors) {
+            let next = window_placement::remember(previous.as_ref(), now, &monitors);
+            self.set(label, next);
+        }
+    }
+}
+
+/// Starts keeping `window`'s placement current. Call it once the window has
+/// been placed, so the default spot it was built at is never recorded.
+pub fn track<R: Runtime>(window: &WebviewWindow<R>) {
+    let Some(tracker) = window.try_state::<PlacementTracker>() else {
+        return;
+    };
+    tracker.record(window);
+    let w = window.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+            if let Some(tracker) = w.try_state::<PlacementTracker>() {
+                tracker.record(&w);
+            }
+        }
+    });
 }
 
 #[cfg(test)]

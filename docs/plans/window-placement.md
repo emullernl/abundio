@@ -70,7 +70,9 @@ Lessons for the Rust port:
 - Capture on `Moved` and `Resized` (debounced), and before destroy or quit.
   - Profile windows: kept in memory, written with the existing `windows.json` save.
   - File windows: written to the row.
-- "Keep the remembered monitor/desktop until moved": a restore that had to fall back marks the placement `fallback`. Captures are ignored until the first `Moved` that the user starts, which Abundio recognises by not being inside its own restore.
+- Each window remembers `Remembered { home, away }` (`window_placement::remember` / `choose`). A capture while home's monitor is not connected goes to `away`, so the OS moving windows off an unplugged monitor, mid-session or not, never loses home. This replaces the "kept until the user moves it" idea, which would need telling user moves from OS moves.
+- `window_frame::PlacementTracker` (managed state) keeps each tracked window's `Remembered` in memory. `track(window)` records on every `Moved`/`Resized` (skipped while minimised), starting only after the window is placed.
+- Written out: Profile windows through `snapshot_from_state` into `windows.json`; File windows into a `placement` JSON column (migration 019) in `on_destroyed`.
 
 ### 4. Hook up both window kinds
 

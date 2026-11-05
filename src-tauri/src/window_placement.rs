@@ -235,6 +235,51 @@ pub fn resolve(placement: &WindowPlacement, monitors: &[MonitorInfo]) -> Option<
     Some(Resolved { monitor_index: index, frame: Rect::new(x, y, width, height), fallback })
 }
 
+/// What is remembered for one window: its **home** placement, and where it
+/// is while its home monitor is not connected (**away**).
+///
+/// A window's monitor is kept while that monitor is unplugged, so the window
+/// returns to it once it is back. Whatever happens to the window meanwhile
+/// (the OS moving it to the laptop screen when the monitor goes, or the user
+/// moving it about there) is recorded as `away`, never over `home`. Moving the
+/// window while its home monitor *is* connected makes the new spot home.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Remembered {
+    pub home: WindowPlacement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub away: Option<WindowPlacement>,
+}
+
+impl Remembered {
+    pub fn new(home: WindowPlacement) -> Self {
+        Self { home, away: None }
+    }
+}
+
+/// Records a new capture `now` against what was remembered.
+pub fn remember(previous: Option<&Remembered>, now: WindowPlacement, monitors: &[MonitorInfo]) -> Remembered {
+    match previous {
+        Some(prev) if find_monitor(&prev.home.monitor, monitors).is_none() => Remembered {
+            home: prev.home.clone(),
+            away: Some(now),
+        },
+        _ => Remembered::new(now),
+    }
+}
+
+/// The placement to restore: home if its monitor is connected, else away if
+/// its monitor is, else home (which [`resolve`] then puts on the main display).
+pub fn choose<'a>(remembered: &'a Remembered, monitors: &[MonitorInfo]) -> &'a WindowPlacement {
+    if find_monitor(&remembered.home.monitor, monitors).is_some() {
+        return &remembered.home;
+    }
+    match &remembered.away {
+        Some(away) if find_monitor(&away.monitor, monitors).is_some() => away,
+        _ => &remembered.home,
+    }
+}
+
 /// The part of an old `tauri-plugin-window-state` entry this needs. It stored
 /// the window's outer position and inner size in physical pixels, converted
 /// with the scale of whichever monitor the window was on at the time.
@@ -470,6 +515,35 @@ mod tests {
         assert_eq!(from_legacy(&empty, &mons), None);
         let gone = LegacyEntry { x: -5000, y: 0, width: 100, height: 100, maximized: false, fullscreen: false };
         assert_eq!(from_legacy(&gone, &mons), None);
+    }
+
+    #[test]
+    fn unplugging_the_home_monitor_records_moves_as_away() {
+        let home = placement("DELL", 0, 100.0, 100.0, 800.0, 600.0);
+        let rem = Remembered::new(home.clone());
+        let laptop_only = [laptop()];
+        // The OS moves the window to the laptop when the monitor goes.
+        let now = placement("Built-in Retina Display", 0, 50.0, 50.0, 800.0, 600.0);
+        let rem = remember(Some(&rem), now.clone(), &laptop_only);
+        assert_eq!(rem, Remembered { home: home.clone(), away: Some(now.clone()) });
+        assert_eq!(choose(&rem, &laptop_only), &now);
+        // Plugged back in: home again.
+        let both = [laptop(), external("DELL", 1728.0)];
+        assert_eq!(choose(&rem, &both), &home);
+    }
+
+    #[test]
+    fn moving_the_window_while_home_is_connected_makes_a_new_home() {
+        let both = [laptop(), external("DELL", 1728.0)];
+        let rem = Remembered { home: placement("DELL", 0, 1.0, 1.0, 9.0, 9.0), away: Some(placement("Built-in Retina Display", 0, 2.0, 2.0, 9.0, 9.0)) };
+        let now = placement("Built-in Retina Display", 0, 300.0, 300.0, 500.0, 500.0);
+        assert_eq!(remember(Some(&rem), now.clone(), &both), Remembered::new(now));
+    }
+
+    #[test]
+    fn with_neither_home_nor_away_connected_home_is_chosen() {
+        let rem = Remembered { home: placement("DELL", 0, 1.0, 1.0, 9.0, 9.0), away: Some(placement("LG", 0, 2.0, 2.0, 9.0, 9.0)) };
+        assert_eq!(choose(&rem, &[laptop()]).monitor.name, "DELL");
     }
 
     #[test]
