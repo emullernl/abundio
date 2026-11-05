@@ -17,13 +17,36 @@ use std::sync::mpsc;
 use std::time::Duration;
 use tauri::{AppHandle, Wry};
 
+static MAIN_THREAD: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
+
+/// Records the current thread as the main thread. Call it once, from
+/// `setup()`, which Tauri runs on the main thread.
+pub fn mark_main_thread() {
+    let _ = MAIN_THREAD.set(std::thread::current().id());
+}
+
+fn on_main_thread() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        objc2::MainThreadMarker::new().is_some()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        MAIN_THREAD.get() == Some(&std::thread::current().id())
+    }
+}
+
 /// Runs `f` on the main thread and waits for its result. Runs it directly when
-/// already there. `None` if the main thread did not answer within two seconds.
+/// already there.
+///
+/// `None` if the main thread did not answer within two seconds. That is a
+/// timeout, not a cancel: `f` is still queued and may run later, so a caller
+/// must not treat `None` as "it did not happen".
 pub fn on_main<T: Send + 'static>(
     app: &AppHandle<Wry>,
     f: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
-    if std::thread::current().name() == Some("main") {
+    if on_main_thread() {
         return Some(f());
     }
     let (tx, rx) = mpsc::channel();
@@ -51,6 +74,9 @@ mod platform {
         /// Keeps the archiver from encoding the window itself, or any view,
         /// when they are referenced from its restorable state (the first
         /// responder, say). AppKit's own restoration coder does the same.
+        // SAFETY (all of define_class!): a plain NSObject subclass; the
+        // delegate method's signature matches NSKeyedArchiverDelegate's
+        // `archiver:willEncodeObject:` (returns the object to encode, or nil).
         #[unsafe(super(NSObject))]
         #[name = "AbundioRestorableStateFilter"]
         #[ivars = usize]
@@ -64,6 +90,8 @@ mod platform {
                 if object as *const AnyObject as usize == *self.ivars() {
                     return ptr::null_mut();
                 }
+                // SAFETY: `isKindOfClass:` exists on every object the archiver
+                // hands a delegate, and takes and returns plain values.
                 let is_view: bool = unsafe { msg_send![object, isKindOfClass: NSView::class()] };
                 if is_view {
                     return ptr::null_mut();
@@ -78,6 +106,9 @@ mod platform {
         /// Space. Returning a default-initialised `NSWindowRestorationOptions`
         /// from `_windowRestorationOptions` is the whole trick (Chromium's
         /// `RestorationOptionsKeyedUnarchiver`).
+        // SAFETY (all of define_class!): the superclass chain is AppKit's own
+        // (NSKeyedUnarchiver → NSCoder → NSObject), and the one method added
+        // takes no arguments and returns an autoreleased object or nil.
         #[unsafe(super(NSKeyedUnarchiver, objc2_foundation::NSCoder, NSObject))]
         #[name = "AbundioRestorationOptionsUnarchiver"]
         struct Unarchiver;
@@ -88,6 +119,8 @@ mod platform {
                 let Some(class) = AnyClass::get(c"NSWindowRestorationOptions") else {
                     return ptr::null_mut();
                 };
+                // SAFETY: `new` on a class that exists (checked just above)
+                // returns a +1 object, which `Retained` takes over.
                 let options: Retained<AnyObject> = unsafe { msg_send![class, new] };
                 Retained::autorelease_return(options)
             }
@@ -105,7 +138,12 @@ mod platform {
         let w = ns_window(window)?;
         let archiver = NSKeyedArchiver::initRequiringSecureCoding(NSKeyedArchiver::alloc(), true);
         let filter = Filter::alloc().set_ivars(w as *const NSWindow as usize);
+        // SAFETY: NSObject's `init` on our freshly allocated subclass, whose
+        // ivars were just set.
         let filter: Retained<Filter> = unsafe { msg_send![super(filter), init] };
+        // SAFETY: main thread (see the module docs), `w` is alive (above), and
+        // `filter` outlives the archiver's use of it: both live to the end of
+        // this function, and `finishEncoding` runs before either is dropped.
         unsafe {
             archiver.setDelegate(Some(ProtocolObject::from_ref(&*filter)));
             w.encodeRestorableStateWithCoder(&archiver);
@@ -123,6 +161,9 @@ mod platform {
         let data = NSData::with_bytes(&bytes);
         // `initForReadingFromData:error:` requires secure coding, which
         // AppKit's restoration asserts on: with it off the app aborts.
+        // SAFETY: `initForReadingFromData:error:` on a freshly allocated
+        // NSKeyedUnarchiver subclass; a null error pointer is allowed. The data
+        // is our own archive, read back from windows.json or the database.
         let decoder: Option<Retained<Unarchiver>> = unsafe {
             msg_send![
                 Unarchiver::alloc(),
@@ -131,6 +172,8 @@ mod platform {
             ]
         };
         let Some(decoder) = decoder else { return };
+        // SAFETY: main thread, `w` is alive, and the decoder requires secure
+        // coding, so only NSSecureCoding classes can come out of the archive.
         unsafe {
             w.restoreStateWithCoder(&decoder);
             decoder.finishDecoding();

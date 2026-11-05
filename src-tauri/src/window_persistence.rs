@@ -71,6 +71,21 @@ pub fn snapshot_from_state(
         .collect()
 }
 
+/// An entry that keeps only a placement: the last window's, when the user
+/// closed it rather than quitting. It names no Profile, so restoration skips
+/// it as a window, but [`plan_restoration`] gives its placement to the main
+/// window of a fresh start. `None` when there is no placement to keep.
+pub fn placement_only_entry(
+    label: &str,
+    placement: Option<crate::window_placement::Remembered>,
+) -> Option<WindowEntry> {
+    placement.map(|p| WindowEntry {
+        label: label.to_string(),
+        profile_id: String::new(),
+        placement: Some(p),
+    })
+}
+
 /// The outcome of planning window restoration from persisted entries.
 pub struct RestorationPlan {
     /// Profile the always-present main window should adopt (`None` only when
@@ -82,7 +97,7 @@ pub struct RestorationPlan {
     /// its own geometry (genuine "main" entry, or a fresh start).
     pub main_adopted_label: Option<String>,
     /// The **Window placement** the main window restores to: its own entry's,
-    /// or the adopted survivor's.
+    /// the adopted survivor's, or on a fresh start the last closed window's.
     pub main_placement: Option<crate::window_placement::Remembered>,
     /// Additional windows to spawn, each reusing its persisted label.
     pub additional: Vec<WindowEntry>,
@@ -95,7 +110,8 @@ pub struct RestorationPlan {
 ///   2. else the first surviving entry — so closing the main window while
 ///      others stay open lets a survivor take over the main window rather than
 ///      the closed main window being resurrected alongside it;
-///   3. else `first_profile_id` (a fresh start).
+///   3. else `first_profile_id` (a fresh start), at the last closed window's
+///      placement if one was kept (see [`placement_only_entry`]).
 /// The adopted entry is removed from `additional`. Entries are first filtered
 /// to valid, profile-bound labels and deduped by profile id (keeping the first
 /// occurrence — a Profile can't be owned by two windows at once).
@@ -105,6 +121,12 @@ pub fn plan_restoration(
     main_label: &str,
     first_profile_id: Option<&str>,
 ) -> RestorationPlan {
+    // A placement-only entry (the last window closed) names no Profile, so
+    // the filter below drops it; keep its placement for a fresh start.
+    let last_closed_placement = entries
+        .iter()
+        .find(|e| e.profile_id.is_empty())
+        .and_then(|e| e.placement.clone());
     let mut seen_profiles: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut entries: Vec<WindowEntry> = entries
         .into_iter()
@@ -127,7 +149,7 @@ pub fn plan_restoration(
             let adopted = (e.label != main_label).then_some(e.label);
             (Some(e.profile_id), adopted, e.placement)
         }
-        None => (first_profile_id.map(|s| s.to_string()), None, None),
+        None => (first_profile_id.map(|s| s.to_string()), None, last_closed_placement),
     };
 
     RestorationPlan {
@@ -245,6 +267,20 @@ mod tests {
             Some("p1"),
         );
         assert_eq!(adopted.main_placement.unwrap().home.monitor.name, "A");
+    }
+
+    #[test]
+    fn closing_the_last_window_starts_over_but_keeps_its_placement() {
+        let kept = placed("window-a", "p2", "DELL");
+        let only = placement_only_entry("window-a", kept.placement.clone()).unwrap();
+        assert!(only.profile_id.is_empty());
+        let plan = plan_restoration(vec![only], &ids(&["p1", "p2"]), "main", Some("p1"));
+        // Profiles start over: the main window shows the first Profile...
+        assert_eq!(plan.main_profile_id.as_deref(), Some("p1"));
+        assert!(plan.additional.is_empty());
+        // ...where the last window was.
+        assert_eq!(plan.main_placement.unwrap().home.monitor.name, "DELL");
+        assert!(placement_only_entry("window-a", None).is_none());
     }
 
     #[test]

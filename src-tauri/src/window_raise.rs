@@ -144,6 +144,18 @@ mod platform {
         // themselves.
         if let Ok(gtk_window) = window.gtk_window() {
             gtk_window.set_focus_on_map(false);
+            // Only for this show: GTK keeps the flag, so turn it back on once
+            // the window has mapped, or every later map would skip focus too.
+            let handler = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let handler_in = handler.clone();
+            let id = gtk_window.connect_map_event(move |w, _| {
+                w.set_focus_on_map(true);
+                if let Some(id) = handler_in.take() {
+                    w.disconnect(id);
+                }
+                gtk::glib::Propagation::Proceed
+            });
+            handler.replace(Some(id));
         }
         let _ = window.show();
     }

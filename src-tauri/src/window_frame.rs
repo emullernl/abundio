@@ -47,6 +47,9 @@ pub fn monitors<R: Runtime>(window: &WebviewWindow<R>) -> Vec<MonitorInfo> {
     let primary = window.primary_monitor().ok().flatten();
     let primary_origin = primary.as_ref().map(|m| *m.position());
     list.iter()
+        // A monitor can report 0×0 while it is being unplugged, or in a
+        // headless session; nothing can be placed on it.
+        .filter(|m| m.size().width > 0 && m.size().height > 0)
         .map(|m| {
             let s = m.scale_factor();
             let pos = m.position();
@@ -81,6 +84,20 @@ pub fn read_frame<R: Runtime>(window: &WebviewWindow<R>) -> Option<Rect> {
     ))
 }
 
+/// How much bigger the window's outer frame is than its inner size (title bar
+/// and borders), in desktop space. About zero on macOS with an overlay title
+/// bar; real on Windows and on Linux with server-side decorations.
+fn chrome<R: Runtime>(window: &WebviewWindow<R>) -> (f64, f64) {
+    let (Ok(outer), Ok(inner), Ok(s)) = (window.outer_size(), window.inner_size(), window.scale_factor())
+    else {
+        return (0.0, 0.0);
+    };
+    (
+        physical_to_desktop(outer.width.saturating_sub(inner.width) as f64, s),
+        physical_to_desktop(outer.height.saturating_sub(inner.height) as f64, s),
+    )
+}
+
 /// Records where the window is now, keeping what `previous` knew that the
 /// window itself cannot say (the size it returns to from maximised, the
 /// desktop). `None` while minimised: a minimised window's frame is not where
@@ -108,7 +125,7 @@ pub fn apply<R: Runtime>(
     placement: &WindowPlacement,
     monitors: &[MonitorInfo],
 ) -> Option<Resolved> {
-    let resolved = window_placement::resolve(placement, monitors)?;
+    let resolved = window_placement::resolve(placement, monitors, chrome(window))?;
     let f = resolved.frame;
     // Position first, then size: on Windows a move onto a monitor with another
     // DPI rescales the window, so a size set before the move would be undone.
@@ -189,15 +206,28 @@ impl PlacementTracker {
     pub fn record<R: Runtime>(&self, window: &WebviewWindow<R>, desktop: Option<Option<String>>) {
         let monitors = monitors(window);
         let label = window.label();
-        let previous = self.get(label);
-        let compare = previous.as_ref().map(|r| window_placement::choose(r, &monitors));
-        if let Some(mut now) = capture(window, compare, &monitors) {
-            if let Some(d) = desktop {
-                now.desktop = self.desktop_to_keep(label, d);
-            }
-            let next = window_placement::remember(previous.as_ref(), now, &monitors);
-            self.set(label, next);
+        let compare = self.get(label).map(|r| window_placement::choose(&r, &monitors).clone());
+        let now = capture(window, compare.as_ref(), &monitors);
+        self.record_capture(label, now, desktop, &monitors);
+    }
+
+    /// The pure half of [`record`](Self::record): records a capture (`None`
+    /// while the window is minimised, which changes nothing) against what was
+    /// remembered, with the home/away and held-desktop rules.
+    fn record_capture(
+        &self,
+        label: &str,
+        now: Option<WindowPlacement>,
+        desktop: Option<Option<String>>,
+        monitors: &[MonitorInfo],
+    ) {
+        let Some(mut now) = now else { return };
+        if let Some(d) = desktop {
+            now.desktop = self.desktop_to_keep(label, d);
         }
+        let previous = self.get(label);
+        let next = window_placement::remember(previous.as_ref(), now, monitors);
+        self.set(label, next);
     }
 }
 
@@ -258,7 +288,7 @@ pub fn has_placement(label: &str) -> bool {
         || crate::file_windows::is_file_window_label(label)
 }
 
-/// Entries of the old `tauri-plugin-window-state` file, read once at startup
+/// Entries of the old `tauri-plugin-window-state` file, read at each startup
 /// so a window with no placement of its own yet can start from a guess.
 #[derive(Default)]
 pub struct LegacyPlacements(HashMap<String, LegacyEntry>);
@@ -295,10 +325,15 @@ const DESKTOP_SETTLE: std::time::Duration = std::time::Duration::from_millis(500
 /// After app start has restored its windows: focuses the first of `labels`
 /// that is on the current desktop, or none. Never one on another desktop,
 /// because focusing it would switch the user there (ADR-0051).
-pub fn focus_launch_window(app: &AppHandle<Wry>, labels: Vec<String>) {
+///
+/// `settle`: wait [`DESKTOP_SETTLE`] first, which only matters when a desktop
+/// was restored; otherwise focus goes to the window straight away.
+pub fn focus_launch_window(app: &AppHandle<Wry>, labels: Vec<String>, settle: bool) {
     let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(DESKTOP_SETTLE);
+        if settle {
+            std::thread::sleep(DESKTOP_SETTLE);
+        }
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             let target = labels.iter().find_map(|l| {
@@ -438,6 +473,7 @@ pub fn show_launch_windows(app: &AppHandle<Wry>) {
     };
     let pending = std::mem::take(&mut *launch.pending.lock().unwrap());
     let labels: Vec<String> = pending.iter().map(|(l, _)| l.clone()).collect();
+    let settle = pending.iter().any(|(_, desktop)| desktop.is_some());
     let handle = app.clone();
     crate::desktop::on_main(app, move || {
         crate::desktop::step_back();
@@ -447,7 +483,7 @@ pub fn show_launch_windows(app: &AppHandle<Wry>) {
             }
         }
     });
-    focus_launch_window(app, labels);
+    focus_launch_window(app, labels, settle);
 }
 
 #[cfg(test)]
@@ -494,5 +530,64 @@ mod tests {
         let t = PlacementTracker::default();
         assert_eq!(t.desktop_to_keep("w", Some("d".into())).as_deref(), Some("d"));
         assert_eq!(t.desktop_to_keep("w", None), None);
+    }
+
+    fn screen(name: &str, x: f64) -> MonitorInfo {
+        MonitorInfo {
+            name: name.into(),
+            rect: Rect::new(x, 0.0, 1000.0, 800.0),
+            units_per_point: 1.0,
+            scale: 1.0,
+            is_main: x == 0.0,
+        }
+    }
+
+    fn at(name: &str, x: f64) -> WindowPlacement {
+        WindowPlacement {
+            monitor: window_placement::MonitorKey { name: name.into(), arrangement_index: 0 },
+            rel_x: x,
+            rel_y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            maximized: false,
+            fullscreen: false,
+            desktop: None,
+        }
+    }
+
+    #[test]
+    fn an_unplugged_monitor_keeps_home_and_its_held_desktop_until_it_returns() {
+        let t = PlacementTracker::default();
+        let both = [screen("Laptop", 0.0), screen("DELL", 1000.0)];
+        let laptop_only = [screen("Laptop", 0.0)];
+
+        t.record_capture("w", Some(at("DELL", 10.0)), Some(Some("d2".into())), &both);
+        assert_eq!(t.get("w").unwrap().home.desktop.as_deref(), Some("d2"));
+
+        // Launched without the DELL, and desktop d2 is gone: the window lands
+        // on the laptop, desktop d1.
+        t.hold_desktop("w", "d2".into(), Some("d1".into()));
+        t.record_capture("w", Some(at("Laptop", 50.0)), Some(Some("d1".into())), &laptop_only);
+        let r = t.get("w").unwrap();
+        assert_eq!(r.home.monitor.name, "DELL", "home survives the unplug");
+        let away = r.away.as_ref().unwrap();
+        assert_eq!((away.monitor.name.as_str(), away.desktop.as_deref()), ("Laptop", Some("d2")));
+
+        // A minimised capture changes nothing.
+        t.record_capture("w", None, None, &laptop_only);
+        assert_eq!(t.get("w").unwrap(), r);
+
+        // The DELL is back: home is what gets restored.
+        assert_eq!(window_placement::choose(&r, &both).monitor.name, "DELL");
+    }
+
+    #[test]
+    fn forget_drops_the_window_and_its_held_desktop() {
+        let t = PlacementTracker::default();
+        t.record_capture("w", Some(at("Laptop", 0.0)), None, &[screen("Laptop", 0.0)]);
+        t.hold_desktop("w", "gone".into(), None);
+        t.forget("w");
+        assert!(t.get("w").is_none());
+        assert_eq!(t.desktop_to_keep("w", Some("now".into())).as_deref(), Some("now"));
     }
 }

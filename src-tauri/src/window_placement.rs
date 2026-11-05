@@ -221,17 +221,33 @@ fn main_monitor(monitors: &[MonitorInfo]) -> Option<usize> {
 /// The window keeps its spot relative to its monitor. If the monitor got
 /// smaller, the window is shrunk and pulled in to fit. If the monitor is gone,
 /// the same rules place it on the main display, and `fallback` is set.
-pub fn resolve(placement: &WindowPlacement, monitors: &[MonitorInfo]) -> Option<Resolved> {
+///
+/// A placement's size is the window's inner size, but what has to fit on the
+/// monitor is the whole window: `chrome` is how much bigger the outer frame is
+/// (title bar and borders, in desktop space; about zero on macOS with an
+/// overlay title bar).
+pub fn resolve(
+    placement: &WindowPlacement,
+    monitors: &[MonitorInfo],
+    chrome: (f64, f64),
+) -> Option<Resolved> {
     let (index, fallback) = match find_monitor(&placement.monitor, monitors) {
         Some(i) => (i, false),
         None => (main_monitor(monitors)?, true),
     };
     let m = &monitors[index];
     let u = m.units_per_point;
-    let width = (placement.width * u).min(m.rect.width).max(1.0);
-    let height = (placement.height * u).min(m.rect.height).max(1.0);
-    let x = (m.rect.x + placement.rel_x * u).clamp(m.rect.x, m.rect.x + m.rect.width - width);
-    let y = (m.rect.y + placement.rel_y * u).clamp(m.rect.y, m.rect.y + m.rect.height - height);
+    let (cw, ch) = (chrome.0.max(0.0), chrome.1.max(0.0));
+    let width = (placement.width * u).min(m.rect.width - cw).max(1.0);
+    let height = (placement.height * u).min(m.rect.height - ch).max(1.0);
+    // `min` then `max`, never `clamp`: `clamp` panics when the monitor is
+    // smaller than the window can shrink to, and this runs during startup.
+    let x = (m.rect.x + placement.rel_x * u)
+        .min(m.rect.x + m.rect.width - width - cw)
+        .max(m.rect.x);
+    let y = (m.rect.y + placement.rel_y * u)
+        .min(m.rect.y + m.rect.height - height - ch)
+        .max(m.rect.y);
     Some(Resolved { monitor_index: index, frame: Rect::new(x, y, width, height), fallback })
 }
 
@@ -295,7 +311,10 @@ pub struct LegacyEntry {
     pub fullscreen: bool,
 }
 
-/// A best guess at a placement from an old window-state entry, used once.
+/// A best guess at a placement from an old window-state entry, for a window
+/// with no placement of its own. The plugin keeps those entries in its file
+/// for good but no longer updates them, so once a window has saved a placement
+/// this is never used for it again.
 ///
 /// Physical pixels mean nothing without the scale they were taken with, so each
 /// monitor is tried in turn: the entry is read with that monitor's scale, and
@@ -336,6 +355,8 @@ pub fn from_legacy(entry: &LegacyEntry, monitors: &[MonitorInfo]) -> Option<Wind
 mod tests {
     use super::*;
 
+    const NO_CHROME: (f64, f64) = (0.0, 0.0);
+
     /// macOS-style desktop space (points): a 2× laptop at the origin and a 1×
     /// external to its right.
     fn laptop() -> MonitorInfo {
@@ -374,7 +395,7 @@ mod tests {
         let mons = [laptop(), external("DELL U2720Q", 1728.0)];
         let p = capture(&Rect::new(2000.0, 100.0, 1200.0, 800.0), false, false, &mons, None).unwrap();
         assert_eq!(p, placement("DELL U2720Q", 0, 272.0, 100.0, 1200.0, 800.0));
-        let r = resolve(&p, &mons).unwrap();
+        let r = resolve(&p, &mons, NO_CHROME).unwrap();
         assert_eq!(r.monitor_index, 1);
         assert_eq!(r.frame, Rect::new(2000.0, 100.0, 1200.0, 800.0));
         assert!(!r.fallback);
@@ -386,14 +407,14 @@ mod tests {
         let p = capture(&Rect::new(1828.0, 50.0, 800.0, 600.0), false, false, &before, None).unwrap();
         // External moved to the left of the laptop.
         let after = [laptop(), external("DELL", -2560.0)];
-        assert_eq!(resolve(&p, &after).unwrap().frame, Rect::new(-2460.0, 50.0, 800.0, 600.0));
+        assert_eq!(resolve(&p, &after, NO_CHROME).unwrap().frame, Rect::new(-2460.0, 50.0, 800.0, 600.0));
     }
 
     #[test]
     fn a_smaller_monitor_shrinks_and_pulls_the_window_in() {
         let p = placement("DELL", 0, 2000.0, 1000.0, 3000.0, 600.0);
         let mons = [laptop(), external("DELL", 1728.0)];
-        let r = resolve(&p, &mons).unwrap();
+        let r = resolve(&p, &mons, NO_CHROME).unwrap();
         assert_eq!(r.frame, Rect::new(1728.0, 840.0, 2560.0, 600.0));
     }
 
@@ -401,7 +422,7 @@ mod tests {
     fn a_missing_monitor_falls_back_to_the_main_display() {
         let p = placement("DELL", 0, 300.0, 200.0, 2000.0, 900.0);
         let mons = [external("LG", -2560.0), laptop()];
-        let r = resolve(&p, &mons).unwrap();
+        let r = resolve(&p, &mons, NO_CHROME).unwrap();
         assert_eq!(r.monitor_index, 1);
         assert!(r.fallback);
         // Same relative spot, shrunk to the laptop's width and pulled in.
@@ -409,8 +430,27 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_size_monitor_does_not_panic() {
+        let zero = MonitorInfo { rect: Rect::new(0.0, 0.0, 0.0, 0.0), ..laptop() };
+        let r = resolve(&placement("Built-in Retina Display", 0, 10.0, 10.0, 800.0, 600.0), &[zero], NO_CHROME)
+            .unwrap();
+        assert_eq!(r.frame, Rect::new(0.0, 0.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn the_title_bar_and_borders_count_when_fitting() {
+        // 30 px of title bar and 8 px of borders around the inner size.
+        let mons = [laptop()];
+        let p = placement("Built-in Retina Display", 0, 100.0, 1000.0, 2000.0, 600.0);
+        let r = resolve(&p, &mons, (8.0, 30.0)).unwrap();
+        assert_eq!(r.frame.width, 1720.0);
+        assert_eq!(r.frame.x + r.frame.width + 8.0, 1728.0);
+        assert_eq!(r.frame.y + r.frame.height + 30.0, 1117.0);
+    }
+
+    #[test]
     fn no_monitors_resolves_to_nothing() {
-        assert_eq!(resolve(&placement("DELL", 0, 0.0, 0.0, 10.0, 10.0), &[]), None);
+        assert_eq!(resolve(&placement("DELL", 0, 0.0, 0.0, 10.0, 10.0), &[], NO_CHROME), None);
         assert_eq!(capture(&Rect::new(0.0, 0.0, 10.0, 10.0), false, false, &[], None), None);
     }
 
@@ -422,15 +462,15 @@ mod tests {
         let left = capture(&Rect::new(1800.0, 10.0, 500.0, 500.0), false, false, &mons, None).unwrap();
         assert_eq!(right.monitor.arrangement_index, 1);
         assert_eq!(left.monitor.arrangement_index, 0);
-        assert_eq!(resolve(&right, &mons).unwrap().monitor_index, 1);
-        assert_eq!(resolve(&left, &mons).unwrap().monitor_index, 2);
+        assert_eq!(resolve(&right, &mons, NO_CHROME).unwrap().monitor_index, 1);
+        assert_eq!(resolve(&left, &mons, NO_CHROME).unwrap().monitor_index, 2);
     }
 
     #[test]
     fn with_one_of_two_identical_monitors_left_the_window_goes_to_it() {
         let p = placement("DELL", 1, 100.0, 100.0, 500.0, 500.0);
         let mons = [laptop(), external("DELL", 1728.0)];
-        let r = resolve(&p, &mons).unwrap();
+        let r = resolve(&p, &mons, NO_CHROME).unwrap();
         assert_eq!(r.monitor_index, 1);
         assert!(!r.fallback);
     }
@@ -455,7 +495,7 @@ mod tests {
         let mons = [main, m];
         let p = capture(&Rect::new(2070.0, 150.0, 1500.0, 900.0), false, false, &mons, None).unwrap();
         assert_eq!((p.rel_x, p.rel_y, p.width, p.height), (100.0, 100.0, 1000.0, 600.0));
-        assert_eq!(resolve(&p, &mons).unwrap().frame, Rect::new(2070.0, 150.0, 1500.0, 900.0));
+        assert_eq!(resolve(&p, &mons, NO_CHROME).unwrap().frame, Rect::new(2070.0, 150.0, 1500.0, 900.0));
     }
 
     #[test]

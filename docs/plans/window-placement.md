@@ -15,7 +15,7 @@ Remember and restore each window's **Window placement**: its monitor, its spot o
 | Monitor identity | Recognised by name. Two monitors with the same name are told apart by their place in the display arrangement. |
 | Position | Logical units, relative to the monitor's top-left corner. If the monitor shrank, the window is clamped to fit. |
 | Missing monitor | The window opens on the main display at the same relative spot, shrunk to fit if needed. The remembered monitor is kept until the user moves the window. |
-| Old data | On the first launch after the update, read `.window-state.json` once as a best guess. |
+| Old data | A window with no placement of its own starts from its `.window-state.json` entry, as a best guess. The plugin keeps those entries for good but no longer updates them, so after the first save of a placement they are never used again for that window. |
 | Storage | Profile windows: `windows.json` (an extra `placement` field on each entry). File windows: new columns on their `file_windows` row. |
 | Desktop: when | At app start only. A File window reopened with its Workspace later in a session opens on the current desktop. |
 | Desktop: focus | Restoring never switches the user's desktop. Restored windows are shown without being activated. |

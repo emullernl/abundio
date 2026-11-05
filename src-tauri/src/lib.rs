@@ -750,6 +750,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
+            // Tauri runs setup on the main thread; `desktop::on_main` needs to
+            // know which thread that is.
+            desktop::mark_main_thread();
             // Initialize SQLite + run migrations. Three connections so the
             // ProfileStore, WorkspaceStore and EnvVarStore can be locked
             // independently; SQLite WAL mode (set in open_db) handles
@@ -1134,10 +1137,22 @@ pub fn run() {
                     window_frame::record_all(&app_handle);
                     let tracker =
                         app_handle.try_state::<window_frame::PlacementTracker>();
-                    let remaining =
+                    let mut remaining =
                         window_persistence::snapshot_from_state(&state, tracker.as_deref());
+                    // Closing the last window starts over for Profiles, but
+                    // not for where it was: keep its placement for the next
+                    // launch's main window (`plan_restoration`).
+                    if remaining.is_empty() {
+                        remaining.extend(window_persistence::placement_only_entry(
+                            &label,
+                            tracker.as_ref().and_then(|t| t.get(&label)),
+                        ));
+                    }
                     if let Err(e) = window_persistence::save(&remaining) {
                         eprintln!("[abundio] failed to persist windows.json: {e}");
+                    }
+                    if let Some(t) = tracker {
+                        t.forget(&label);
                     }
                 }
                 if no_profile_windows_open(&app_handle) {
