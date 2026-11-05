@@ -32,6 +32,7 @@ pub mod updater;
 pub mod window_management;
 pub mod window_persistence;
 pub mod window_placement;
+pub mod window_frame;
 pub mod window_raise;
 pub mod workspace_store;
 pub mod worktree_commands;

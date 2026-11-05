@@ -86,8 +86,8 @@ pub struct WindowPlacement {
     /// corner, in logical points.
     pub rel_x: f64,
     pub rel_y: f64,
-    /// Outer size, in logical points. For a maximised or fullscreen window,
-    /// the size it returns to.
+    /// Inner size (what `set_size` takes), in logical points. For a maximised
+    /// or fullscreen window, the size it returns to.
     pub width: f64,
     pub height: f64,
     #[serde(default)]
