@@ -33,6 +33,7 @@ pub mod window_management;
 pub mod window_persistence;
 pub mod window_placement;
 pub mod window_frame;
+pub mod desktop;
 pub mod window_raise;
 pub mod workspace_store;
 pub mod worktree_commands;
@@ -810,6 +811,7 @@ pub fn run() {
             // any window is placed, so a window with no placement yet can
             // start from where the plugin had it.
             app.manage(window_frame::PlacementTracker::default());
+            app.manage(window_frame::LaunchRestore::default());
             app.manage(window_frame::LegacyPlacements::load(app.handle()));
 
             // Pasted Prompt action attachments are a cache, not user data
@@ -959,10 +961,23 @@ pub fn run() {
                 }
             }
 
+            // Windows restored now get their desktop back, and so do the File
+            // windows each of them reopens first (ADR-0051).
+            {
+                let launch = app.state::<window_frame::LaunchRestore>();
+                launch.add(main_label);
+                for entry in &plan.additional {
+                    launch.add(&entry.label);
+                }
+            }
+
             // The main window is built hidden (tauri.conf.json `visible:
             // false`), so it can be placed before it shows.
+            // Placed now, shown with every other restored window once all
+            // are built (`show_launch_windows` explains why).
             if let Some(main_window) = app.get_webview_window(main_label) {
-                window_frame::place_and_show(&main_window, plan.main_placement, true);
+                let desktop = window_frame::place(&main_window, plan.main_placement, true);
+                app.state::<window_frame::LaunchRestore>().defer_show(main_label, desktop);
             }
 
             // Spawn additional windows from the remaining persisted entries.
@@ -971,8 +986,7 @@ pub fn run() {
             // up without its assets fully wired.
             let app_handle = app.handle().clone();
             let additional = plan.additional;
-            if !additional.is_empty() {
-                tauri::async_runtime::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                     for entry in additional {
                         // Reuse the persisted label so tauri-plugin-window-state
                         // can match the saved geometry — its per-window state
@@ -992,8 +1006,8 @@ pub fn run() {
                             );
                         }
                     }
-                });
-            }
+                    window_frame::show_launch_windows(&app_handle);
+            });
 
             Ok(())
         })

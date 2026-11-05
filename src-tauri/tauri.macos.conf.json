@@ -4,7 +4,8 @@
       {
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "visible": false
+        "visible": false,
+        "focus": false
       }
     ]
   }

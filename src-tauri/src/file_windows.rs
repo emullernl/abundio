@@ -536,7 +536,7 @@ pub fn open_or_focus(
         }
         return Ok(());
     }
-    build_window(app, row, meta, true)
+    build_window(app, row, meta, true, false)
 }
 
 /// Sent to an open File window whose row changed under it (a live diff opened
@@ -544,11 +544,13 @@ pub fn open_or_focus(
 pub const FILE_WINDOW_RELOAD: &str = "file-window-reload";
 
 /// Builds the row's window. `focus: false` opens it behind the current one.
+/// `restore_desktop` puts it back on its remembered desktop (app start only).
 fn build_window(
     app: &AppHandle<Wry>,
     row: &FileWindowRow,
     meta: &WorkspaceMeta,
     focus: bool,
+    restore_desktop: bool,
 ) -> Result<(), AbundioError> {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = WebviewWindowBuilder::new(
@@ -575,7 +577,7 @@ fn build_window(
     let placement = app
         .try_state::<FileWindowStore>()
         .and_then(|s| s.placement(&row.label).ok().flatten());
-    crate::window_frame::place_and_show(&window, placement, focus);
+    crate::window_frame::place_and_show(&window, placement, focus, restore_desktop);
     Ok(())
 }
 
@@ -830,9 +832,15 @@ pub async fn file_windows_close(
 #[tauri::command]
 pub async fn file_windows_restore(
     app: AppHandle,
+    window: WebviewWindow,
     store: State<'_, FileWindowStore>,
     workspace_id: String,
 ) -> Result<(), AbundioError> {
+    // The first reopen from a Window restored at app start is part of app
+    // start, so its File windows go back to their desktops (ADR-0051).
+    let restore_desktop = app
+        .try_state::<crate::window_frame::LaunchRestore>()
+        .is_some_and(|l| l.take(window.label()));
     let Some(meta) = store.workspace_meta(&workspace_id)? else {
         return Ok(());
     };
@@ -852,7 +860,7 @@ pub async fn file_windows_restore(
                 }
             }
         }
-        if let Err(e) = open_unfocused(&app, &row, &meta) {
+        if let Err(e) = open_unfocused(&app, &row, &meta, restore_desktop) {
             eprintln!("[abundio] reopen file window {}: {e}", row.label);
         }
     }
@@ -879,11 +887,16 @@ pub async fn file_windows_raise(
 
 /// Restoring opens windows without stealing focus: the user is working in the
 /// Profile window that just opened the Workspace.
-fn open_unfocused(app: &AppHandle<Wry>, row: &FileWindowRow, meta: &WorkspaceMeta) -> Result<(), AbundioError> {
+fn open_unfocused(
+    app: &AppHandle<Wry>,
+    row: &FileWindowRow,
+    meta: &WorkspaceMeta,
+    restore_desktop: bool,
+) -> Result<(), AbundioError> {
     if app.get_webview_window(&row.label).is_some() {
         return Ok(());
     }
-    build_window(app, row, meta, false)
+    build_window(app, row, meta, false, restore_desktop)
 }
 
 fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileWindowRow> {

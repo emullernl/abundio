@@ -137,6 +137,15 @@ pub fn apply<R: Runtime>(
 #[derive(Default)]
 pub struct PlacementTracker {
     map: Mutex<HashMap<String, Remembered>>,
+    /// Desktops that could not be restored (they no longer exist), with the
+    /// desktop the window landed on instead. While the window stays there,
+    /// the missing desktop is kept, so it is tried again next time.
+    held_desktops: Mutex<HashMap<String, HeldDesktop>>,
+}
+
+struct HeldDesktop {
+    remembered: String,
+    landed: Option<String>,
 }
 
 impl PlacementTracker {
@@ -150,15 +159,42 @@ impl PlacementTracker {
 
     pub fn forget(&self, label: &str) {
         self.map.lock().unwrap().remove(label);
+        self.held_desktops.lock().unwrap().remove(label);
+    }
+
+    fn hold_desktop(&self, label: &str, remembered: String, landed: Option<String>) {
+        self.held_desktops
+            .lock()
+            .unwrap()
+            .insert(label.to_string(), HeldDesktop { remembered, landed });
+    }
+
+    /// The desktop to remember, given the one the window is on now.
+    fn desktop_to_keep(&self, label: &str, now: Option<String>) -> Option<String> {
+        let mut held = self.held_desktops.lock().unwrap();
+        match held.get(label) {
+            Some(h) if h.landed == now => Some(h.remembered.clone()),
+            Some(_) => {
+                // Moved to another desktop since: that one is now its desktop.
+                held.remove(label);
+                now
+            }
+            None => now,
+        }
     }
 
     /// Captures `window` now and records it against what was remembered.
-    pub fn record<R: Runtime>(&self, window: &WebviewWindow<R>) {
+    /// `desktop` is the desktop just read from the window, when it was read
+    /// (that has to happen on the main thread, so only [`record_all`] does).
+    pub fn record<R: Runtime>(&self, window: &WebviewWindow<R>, desktop: Option<Option<String>>) {
         let monitors = monitors(window);
         let label = window.label();
         let previous = self.get(label);
         let compare = previous.as_ref().map(|r| window_placement::choose(r, &monitors));
-        if let Some(now) = capture(window, compare, &monitors) {
+        if let Some(mut now) = capture(window, compare, &monitors) {
+            if let Some(d) = desktop {
+                now.desktop = self.desktop_to_keep(label, d);
+            }
             let next = window_placement::remember(previous.as_ref(), now, &monitors);
             self.set(label, next);
         }
@@ -177,25 +213,42 @@ pub fn track<R: Runtime>(window: &WebviewWindow<R>) {
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
             if let Some(tracker) = w.try_state::<PlacementTracker>() {
-                tracker.record(&w);
+                tracker.record(&w, None);
             }
         }
     });
 }
 
 /// Records every open window that has a **Window placement** (Profile-bound
-/// and File windows), so what is saved next is where they are now. Call it
-/// before saving `windows.json` and before destroying windows on their
-/// owner's behalf: a destroyed window can no longer be asked.
+/// and File windows), so what is saved next is where they are now, and writes
+/// File windows' placements to their rows. Call it before saving
+/// `windows.json` and before destroying windows on their owner's behalf: a
+/// destroyed window can no longer be asked.
 pub fn record_all(app: &AppHandle<Wry>) {
-    let Some(tracker) = app.try_state::<PlacementTracker>() else {
-        return;
-    };
-    for (label, window) in app.webview_windows() {
-        if has_placement(&label) {
-            tracker.record(&window);
+    let handle = app.clone();
+    // On the main thread: reading a window's desktop needs it, and it is cheap
+    // enough to do there for the handful of windows an app has.
+    crate::desktop::on_main(app, move || {
+        let Some(tracker) = handle.try_state::<PlacementTracker>() else {
+            return;
+        };
+        let file_windows = handle.try_state::<crate::file_windows::FileWindowStore>();
+        for (label, window) in handle.webview_windows() {
+            if !has_placement(&label) {
+                continue;
+            }
+            tracker.record(&window, Some(crate::desktop::read(&window)));
+            // A File window's row is written now, not when it is destroyed:
+            // on quit the app exits before its `Destroyed` ever runs.
+            if let (Some(store), Some(p)) = (&file_windows, tracker.get(&label)) {
+                if crate::file_windows::is_file_window_label(&label) {
+                    if let Err(e) = store.set_placement(&label, &p) {
+                        eprintln!("[abundio] failed to save File window placement: {e}");
+                    }
+                }
+            }
         }
-    }
+    });
 }
 
 /// The windows Abundio places itself; the Settings window is left to
@@ -235,30 +288,166 @@ impl LegacyPlacements {
     }
 }
 
+/// How long the OS gets to settle restored windows onto their desktops
+/// before Abundio asks which desktop each is on.
+const DESKTOP_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// After app start has restored its windows: focuses the first of `labels`
+/// that is on the current desktop, or none. Never one on another desktop,
+/// because focusing it would switch the user there (ADR-0051).
+pub fn focus_launch_window(app: &AppHandle<Wry>, labels: Vec<String>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(DESKTOP_SETTLE);
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let target = labels.iter().find_map(|l| {
+                let w = handle.get_webview_window(l)?;
+                (w.is_visible().unwrap_or(false) && crate::desktop::is_on_current(&w)).then_some(w)
+            });
+            if cfg!(debug_assertions) {
+                eprintln!(
+                    "[abundio] launch focus: {}",
+                    target.as_ref().map(|w| w.label()).unwrap_or("none on this desktop")
+                );
+            }
+            if let Some(w) = target {
+                let _ = w.set_focus();
+            }
+        });
+    });
+}
+
+/// Profile-bound windows restored at app start whose first File-window
+/// reopen has not happened yet. That first reopen (its Active workspace's
+/// File windows) is part of app start, so those windows get their desktop
+/// back; any later one is the user opening a Workspace, and opens on the
+/// current desktop.
+#[derive(Default)]
+pub struct LaunchRestore {
+    first_reopen: Mutex<std::collections::HashSet<String>>,
+    /// Restored windows built and placed but not shown yet, with the desktop
+    /// [`place`] returned for each. Shown by [`show_launch_windows`].
+    pending: Mutex<Vec<(String, Option<String>)>>,
+}
+
+impl LaunchRestore {
+    pub fn add(&self, label: &str) {
+        self.first_reopen.lock().unwrap().insert(label.to_string());
+    }
+
+    /// `true` once for each window added: its first reopen.
+    pub fn take(&self, label: &str) -> bool {
+        self.first_reopen.lock().unwrap().remove(label)
+    }
+
+    /// Holds a placed window back until [`show_launch_windows`].
+    pub fn defer_show(&self, label: &str, desktop: Option<String>) {
+        self.pending.lock().unwrap().push((label.to_string(), desktop));
+    }
+}
+
 /// Places a freshly built, still hidden window where it was remembered (or,
-/// failing that, where the old window-state file had it), shows it, and
-/// starts tracking it. `focus: false` shows it behind the app's other windows
-/// without taking keyboard focus.
-pub fn place_and_show(window: &WebviewWindow<Wry>, remembered: Option<Remembered>, focus: bool) {
+/// failing that, where the old window-state file had it). With
+/// `restore_desktop` it also puts it on its remembered desktop where that has
+/// to happen before the window shows (macOS), and returns the desktop for
+/// [`show_placed`]. The window stays hidden.
+pub fn place(
+    window: &WebviewWindow<Wry>,
+    remembered: Option<Remembered>,
+    restore_desktop: bool,
+) -> Option<String> {
     let app = window.app_handle();
     let monitors = monitors(window);
     let remembered = remembered.or_else(|| {
         let legacy = app.try_state::<LegacyPlacements>()?;
         window_placement::from_legacy(legacy.get(window.label())?, &monitors).map(Remembered::new)
     });
+    let desktop = remembered
+        .as_ref()
+        .filter(|_| restore_desktop)
+        .and_then(|r| window_placement::choose(r, &monitors).desktop.clone());
+
+    // Restorable state carries a frame too, so it goes first and the
+    // placement's own frame wins.
+    if let Some(key) = desktop.clone() {
+        let w = window.clone();
+        crate::desktop::on_main(app, move || crate::desktop::restore_before_show(&w, &key));
+    }
     if let Some(r) = &remembered {
         apply(window, window_placement::choose(r, &monitors), &monitors);
         if let Some(tracker) = app.try_state::<PlacementTracker>() {
             tracker.set(window.label(), r.clone());
         }
     }
-    if focus {
+    desktop
+}
+
+/// Shows a window [`place`] placed, and starts tracking it. `desktop` is what
+/// `place` returned: the window then always shows without focus, and is moved
+/// to that desktop where that happens after showing (Windows, X11).
+/// Otherwise `focus: false` shows it without taking keyboard focus.
+pub fn show_placed(window: &WebviewWindow<Wry>, desktop: Option<String>, focus: bool) {
+    let app = window.app_handle();
+    let w = window.clone();
+    let handle = app.clone();
+    let shown = crate::desktop::on_main(app, move || {
+        if desktop.is_none() && focus {
+            let _ = w.show();
+            let _ = w.set_focus();
+            return;
+        }
+        crate::window_raise::show_without_focus(&w);
+        if let Some(key) = desktop {
+            if !crate::desktop::restore_after_show(&w, &key) {
+                if let Some(tracker) = handle.try_state::<PlacementTracker>() {
+                    tracker.hold_desktop(w.label(), key, crate::desktop::read(&w));
+                }
+            }
+        }
+    });
+    if shown.is_none() {
+        // The main thread did not answer: never leave a window hidden.
         let _ = window.show();
-        let _ = window.set_focus();
-    } else {
-        crate::window_raise::show_without_focus(app, window.clone());
     }
     track(window);
+}
+
+/// [`place`] then [`show_placed`], for a window that shows straight away.
+pub fn place_and_show(
+    window: &WebviewWindow<Wry>,
+    remembered: Option<Remembered>,
+    focus: bool,
+    restore_desktop: bool,
+) {
+    let desktop = place(window, remembered, restore_desktop);
+    show_placed(window, desktop, focus);
+}
+
+/// Shows every Profile-bound window restored at app start, once all of them
+/// are built and placed, then focuses one on the current desktop (or none).
+///
+/// Why all at once, at the end: Tauri's webview layer activates the app each
+/// time it creates a webview, and an active app that has a visible window
+/// but no key window gets that window made key by AppKit, which switches the
+/// user to its desktop. So no restored window is visible while webviews are
+/// still being created, and the app steps back before they show.
+pub fn show_launch_windows(app: &AppHandle<Wry>) {
+    let Some(launch) = app.try_state::<LaunchRestore>() else {
+        return;
+    };
+    let pending = std::mem::take(&mut *launch.pending.lock().unwrap());
+    let labels: Vec<String> = pending.iter().map(|(l, _)| l.clone()).collect();
+    let handle = app.clone();
+    crate::desktop::on_main(app, move || {
+        crate::desktop::step_back();
+        for (label, desktop) in pending {
+            if let Some(w) = handle.get_webview_window(&label) {
+                show_placed(&w, desktop, false);
+            }
+        }
+    });
+    focus_launch_window(app, labels);
 }
 
 #[cfg(test)]
@@ -278,5 +467,32 @@ mod tests {
     fn elsewhere_desktop_space_is_physical_pixels() {
         assert_eq!(physical_to_desktop(4000.0, 2.0), 4000.0);
         assert_eq!(units_per_point(1.5), 1.5);
+    }
+
+    #[test]
+    fn launch_restore_is_taken_once_per_window() {
+        let l = LaunchRestore::default();
+        l.add("main");
+        assert!(l.take("main"));
+        assert!(!l.take("main"));
+        assert!(!l.take("window-new"));
+    }
+
+    #[test]
+    fn a_missing_desktop_is_kept_while_the_window_stays_where_it_landed() {
+        let t = PlacementTracker::default();
+        t.hold_desktop("w", "gone".into(), Some("current".into()));
+        assert_eq!(t.desktop_to_keep("w", Some("current".into())).as_deref(), Some("gone"));
+        assert_eq!(t.desktop_to_keep("w", Some("current".into())).as_deref(), Some("gone"));
+        // Moved to another desktop: that one wins, and the hold is dropped.
+        assert_eq!(t.desktop_to_keep("w", Some("other".into())).as_deref(), Some("other"));
+        assert_eq!(t.desktop_to_keep("w", Some("current".into())).as_deref(), Some("current"));
+    }
+
+    #[test]
+    fn without_a_hold_the_current_desktop_is_kept() {
+        let t = PlacementTracker::default();
+        assert_eq!(t.desktop_to_keep("w", Some("d".into())).as_deref(), Some("d"));
+        assert_eq!(t.desktop_to_keep("w", None), None);
     }
 }

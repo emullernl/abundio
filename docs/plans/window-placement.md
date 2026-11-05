@@ -82,11 +82,18 @@ Lessons for the Rust port:
 
 ### 5. Desktops
 
-- `desktop.rs` with `read(window) -> Option<DesktopKey>` and `move_to(window, key) -> bool`, per platform:
-  - **macOS:** `DesktopKey` holds the restorable-state blob (base64). It is applied once, before the first show, at app start only. Afterwards, check `isOnActiveSpace` to log success or failure.
-  - **Windows:** a GUID from `GetWindowDesktopId`, applied with `MoveWindowToDesktop` after the window is shown but not activated.
-  - **X11:** the `_NET_WM_DESKTOP` number, set before the window is mapped. On Wayland: `None`.
-- Only at app start. File windows opened by `file_windows_restore` after startup skip the desktop.
+- `desktop.rs`: `read`, `restore_before_show`, `restore_after_show` and `is_on_current`, per platform, all on the main thread (`on_main`).
+  - **macOS:** the key is the base64 restorable-state archive. It is replayed before the first show through `AbundioRestorationOptionsUnarchiver` (`_windowRestorationOptions`). The archiver's delegate, `AbundioRestorableStateFilter`, skips the window and its views. There is no way to check the result, so a missing Space is not held.
+  - **Windows:** the desktop GUID as 32 hex digits. `MoveWindowToDesktop` runs after the window is shown, then the GUID is read back to check.
+  - **X11:** the `_NET_WM_DESKTOP` number. A number at or past `number_of_desktops` counts as gone. On Wayland: `None`.
+- The desktop is read only in `record_all`, which runs before every save and on the main thread. `Moved`/`Resized` events keep the desktop already remembered.
+- **App start only:** windows restored from `windows.json` (and `main`) restore their desktop. `LaunchRestore` holds their labels, and the *first* `file_windows_restore` from each of them restores its File windows' desktops too. At launch that call is the Active workspace's own reopen. Later reopens open on the current desktop.
+- **Never switch desktop:** when restoring a desktop, the window is always shown without being activated, and it is focused only if `is_on_current`.
+- **Launch shows all at once:** `place` (hidden) for `main` and every restored window, then `show_launch_windows` steps the app back (`NSApp.deactivate`), shows them all without focus, and `focus_launch_window` focuses the first on the current desktop after 500 ms. Found in testing: wry activates the app for every webview it creates, and AppKit then makes a visible window key, switching Space.
+- **Shown in front, not behind:** `orderFront` on macOS, so the window is the one macOS focuses when the user switches to its desktop.
+- **Windows/Linux show:** through tao on windows built `.focused(false)` (tao's own no-activate show), never a native `ShowWindow`, which desyncs tao's visible flag. X11's desktop move waits for `map-event`, since window managers ignore requests for unmapped windows.
+- **Verified:** the four placement modules compile cleanly for `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu` with a scratch check crate (stubs for the app modules; a fake `pkg-config` for GTK). That caught one Linux compile error. Behaviour on Windows and Linux is untested.
+- **Missing desktop:** `PlacementTracker::hold_desktop` keeps the remembered desktop while the window stays on the desktop it landed on. If the window moves to another desktop, that one wins.
 
 ### 6. Docs
 
