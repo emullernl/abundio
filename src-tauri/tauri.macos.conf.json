@@ -3,7 +3,9 @@
     "windows": [
       {
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "visible": false,
+        "focus": false
       }
     ]
   }

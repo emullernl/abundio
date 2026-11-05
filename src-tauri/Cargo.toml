@@ -126,16 +126,19 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", default-features = false, features = ["signal"] }
 
-# Raise a window without focusing it (window_raise.rs, the Markdown window
-# raise). Tauri has no such API. Each crate is pinned to the version Tauri
-# already pulls in, so nothing new is downloaded.
+# Native window calls Tauri has no API for: raising or showing a window
+# without focusing it (window_raise.rs) and a window's desktop (desktop.rs).
+# Each crate is pinned to the version Tauri already pulls in, so nothing new
+# is downloaded.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSApplicationScripting", "NSResponder", "NSWindow"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSApplicationScripting", "NSResponder", "NSView", "NSWindow", "NSWindowRestoration"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSCoder", "NSData", "NSError", "NSKeyedArchiver", "NSObject"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+# X11 desktop of a window (desktop.rs). Already pulled in by wry.
+gdkx11 = "0.18"

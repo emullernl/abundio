@@ -31,6 +31,9 @@ pub mod search;
 pub mod updater;
 pub mod window_management;
 pub mod window_persistence;
+pub mod window_placement;
+pub mod window_frame;
+pub mod desktop;
 pub mod window_raise;
 pub mod workspace_store;
 pub mod worktree_commands;
@@ -553,8 +556,8 @@ fn on_app_exit(app: &AppHandle<Wry>) {
         return;
     }
     if let Some(state) = app.try_state::<profile_store::ActiveProfileState>() {
-        let snapshot = window_persistence::snapshot_from_state(&state);
-        if let Err(e) = window_persistence::save(&snapshot) {
+        window_frame::record_all(app);
+        if let Err(e) = window_persistence::save(&windows_snapshot(app, &state)) {
             eprintln!("[abundio] failed to persist windows.json at exit: {e}");
         }
     }
@@ -562,6 +565,25 @@ fn on_app_exit(app: &AppHandle<Wry>) {
     // restoration snapshot is never lost to a stalled or failed install.
     // See ADR-0014.
     updater::apply_staged_update_on_quit(app);
+}
+
+/// What `windows.json` should hold now: the open Profile windows with their
+/// placements. With none open (the user closed the last one), it keeps that
+/// window's placement alone, for the next launch's main window. Every save
+/// goes through here, because closing the last window saves twice: once in
+/// its `Destroyed`, and again at exit, which must not overwrite the first.
+fn windows_snapshot(
+    app: &AppHandle<Wry>,
+    state: &profile_store::ActiveProfileState,
+) -> Vec<window_persistence::WindowEntry> {
+    let tracker = app.try_state::<window_frame::PlacementTracker>();
+    let mut entries = window_persistence::snapshot_from_state(state, tracker.as_deref());
+    if entries.is_empty() {
+        if let Some((label, placement)) = tracker.and_then(|t| t.last_closed()) {
+            entries.extend(window_persistence::placement_only_entry(&label, Some(placement)));
+        }
+    }
+    entries
 }
 
 /// Runs the actual app quit: the shared quit-time work, then exit. Used by the
@@ -734,11 +756,20 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::new().build())
+        .plugin(
+            // Only the Settings window: Abundio places the others itself, so
+            // they land on the right monitor whatever its scale (ADR-0051).
+            tauri_plugin_window_state::Builder::new()
+                .with_filter(|label| !window_frame::has_placement(label))
+                .build(),
+        )
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
+            // Tauri runs setup on the main thread; `desktop::on_main` needs to
+            // know which thread that is.
+            desktop::mark_main_thread();
             // Initialize SQLite + run migrations. Three connections so the
             // ProfileStore, WorkspaceStore and EnvVarStore can be locked
             // independently; SQLite WAL mode (set in open_db) handles
@@ -796,6 +827,12 @@ pub fn run() {
             // view toggle, independent of the WorkspaceStore mutex. ADR-0046.
             let file_window_conn = migrations::open_db().expect("Failed to open database");
             app.manage(file_windows::FileWindowStore::new(file_window_conn));
+            // Window placement (ADR-0051). The old plugin file is read before
+            // any window is placed, so a window with no placement yet can
+            // start from where the plugin had it.
+            app.manage(window_frame::PlacementTracker::default());
+            app.manage(window_frame::LaunchRestore::default());
+            app.manage(window_frame::LegacyPlacements::load(app.handle()));
 
             // Pasted Prompt action attachments are a cache, not user data
             // (ADR-0038). Nothing owns their lifetime, so they are swept by age
@@ -944,14 +981,32 @@ pub fn run() {
                 }
             }
 
+            // Windows restored now get their desktop back, and so do the File
+            // windows each of them reopens first (ADR-0051).
+            {
+                let launch = app.state::<window_frame::LaunchRestore>();
+                launch.add(main_label);
+                for entry in &plan.additional {
+                    launch.add(&entry.label);
+                }
+            }
+
+            // The main window is built hidden (tauri.conf.json `visible:
+            // false`), so it can be placed before it shows.
+            // Placed now, shown with every other restored window once all
+            // are built (`show_launch_windows` explains why).
+            if let Some(main_window) = app.get_webview_window(main_label) {
+                let desktop = window_frame::place(&main_window, plan.main_placement, true);
+                app.state::<window_frame::LaunchRestore>().defer_show(main_label, desktop);
+            }
+
             // Spawn additional windows from the remaining persisted entries.
             // Defer spawning until after setup() returns so the main window is
             // fully initialised; otherwise the second window can race and end
             // up without its assets fully wired.
             let app_handle = app.handle().clone();
             let additional = plan.additional;
-            if !additional.is_empty() {
-                tauri::async_runtime::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                     for entry in additional {
                         // Reuse the persisted label so tauri-plugin-window-state
                         // can match the saved geometry — its per-window state
@@ -962,6 +1017,7 @@ pub fn run() {
                                 &app_handle,
                                 &entry.profile_id,
                                 Some(&entry.label),
+                                entry.placement.clone(),
                             )
                         {
                             eprintln!(
@@ -970,8 +1026,8 @@ pub fn run() {
                             );
                         }
                     }
-                });
-            }
+                    window_frame::show_launch_windows(&app_handle);
+            });
 
             Ok(())
         })
@@ -983,6 +1039,20 @@ pub fn run() {
                 // own min-gap). See ADR-0019.
                 if let Some(poller) = app_handle.try_state::<pr_poller::PrPoller>() {
                     poller.on_focus();
+                }
+            }
+            tauri::WindowEvent::CloseRequested { .. } => {
+                // Last chance to ask the window where it is, desktop included:
+                // by `Destroyed` it is gone (ADR-0051). Window events arrive on
+                // the main thread, which reading a desktop needs.
+                let label = window.label();
+                if window_frame::has_placement(label) {
+                    if let (Some(t), Some(w)) = (
+                        window.app_handle().try_state::<window_frame::PlacementTracker>(),
+                        window.app_handle().get_webview_window(label),
+                    ) {
+                        t.record(&w, Some(desktop::read(&w)));
+                    }
                 }
             }
             tauri::WindowEvent::Destroyed => {
@@ -1095,7 +1165,14 @@ pub fn run() {
                 if let Some(state) =
                     app_handle.try_state::<profile_store::ActiveProfileState>()
                 {
-                    let remaining = window_persistence::snapshot_from_state(&state);
+                    window_frame::record_all(&app_handle);
+                    // Closing the last window starts over for Profiles, but
+                    // not for where it was: the tracker keeps its placement
+                    // and `windows_snapshot` saves it when no window is left.
+                    if let Some(t) = app_handle.try_state::<window_frame::PlacementTracker>() {
+                        t.close(&label);
+                    }
+                    let remaining = windows_snapshot(&app_handle, &state);
                     if let Err(e) = window_persistence::save(&remaining) {
                         eprintln!("[abundio] failed to persist windows.json: {e}");
                     }

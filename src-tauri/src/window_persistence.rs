@@ -17,6 +17,10 @@ pub struct WindowEntry {
     pub label: String,
     #[serde(rename = "profileId")]
     pub profile_id: String,
+    /// Where the window was (ADR-0051). Absent in files written before
+    /// Window placement, and for a window that was never placed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<crate::window_placement::Remembered>,
 }
 
 pub fn windows_json_path() -> PathBuf {
@@ -50,13 +54,36 @@ pub fn save(entries: &[WindowEntry]) -> std::io::Result<()> {
 
 /// Builds a `WindowEntry` snapshot from the live `ActiveProfileState` map.
 /// Filters out entries whose profile id is empty (defensive).
-pub fn snapshot_from_state(state: &crate::profile_store::ActiveProfileState) -> Vec<WindowEntry> {
+/// Each entry carries its window's placement from `tracker`, when given.
+pub fn snapshot_from_state(
+    state: &crate::profile_store::ActiveProfileState,
+    tracker: Option<&crate::window_frame::PlacementTracker>,
+) -> Vec<WindowEntry> {
     state
         .snapshot()
         .into_iter()
         .filter(|(_, profile_id)| !profile_id.is_empty())
-        .map(|(label, profile_id)| WindowEntry { label, profile_id })
+        .map(|(label, profile_id)| WindowEntry {
+            placement: tracker.and_then(|t| t.get(&label)),
+            label,
+            profile_id,
+        })
         .collect()
+}
+
+/// An entry that keeps only a placement: the last window's, when the user
+/// closed it rather than quitting. It names no Profile, so restoration skips
+/// it as a window, but [`plan_restoration`] gives its placement to the main
+/// window of a fresh start. `None` when there is no placement to keep.
+pub fn placement_only_entry(
+    label: &str,
+    placement: Option<crate::window_placement::Remembered>,
+) -> Option<WindowEntry> {
+    placement.map(|p| WindowEntry {
+        label: label.to_string(),
+        profile_id: String::new(),
+        placement: Some(p),
+    })
 }
 
 /// The outcome of planning window restoration from persisted entries.
@@ -69,6 +96,9 @@ pub struct RestorationPlan {
     /// should also adopt its saved geometry. `None` when the main window keeps
     /// its own geometry (genuine "main" entry, or a fresh start).
     pub main_adopted_label: Option<String>,
+    /// The **Window placement** the main window restores to: its own entry's,
+    /// the adopted survivor's, or on a fresh start the last closed window's.
+    pub main_placement: Option<crate::window_placement::Remembered>,
     /// Additional windows to spawn, each reusing its persisted label.
     pub additional: Vec<WindowEntry>,
 }
@@ -80,7 +110,8 @@ pub struct RestorationPlan {
 ///   2. else the first surviving entry — so closing the main window while
 ///      others stay open lets a survivor take over the main window rather than
 ///      the closed main window being resurrected alongside it;
-///   3. else `first_profile_id` (a fresh start).
+///   3. else `first_profile_id` (a fresh start), at the last closed window's
+///      placement if one was kept (see [`placement_only_entry`]).
 /// The adopted entry is removed from `additional`. Entries are first filtered
 /// to valid, profile-bound labels and deduped by profile id (keeping the first
 /// occurrence — a Profile can't be owned by two windows at once).
@@ -90,6 +121,12 @@ pub fn plan_restoration(
     main_label: &str,
     first_profile_id: Option<&str>,
 ) -> RestorationPlan {
+    // A placement-only entry (the last window closed) names no Profile, so
+    // the filter below drops it; keep its placement for a fresh start.
+    let last_closed_placement = entries
+        .iter()
+        .find(|e| e.profile_id.is_empty())
+        .and_then(|e| e.placement.clone());
     let mut seen_profiles: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut entries: Vec<WindowEntry> = entries
         .into_iter()
@@ -104,20 +141,21 @@ pub fn plan_restoration(
         .iter()
         .position(|e| e.label == main_label)
         .or_else(|| if entries.is_empty() { None } else { Some(0) });
-    let (main_profile_id, main_adopted_label) = match main_idx {
+    let (main_profile_id, main_adopted_label, main_placement) = match main_idx {
         Some(i) => {
             let e = entries.remove(i);
             // Only flag a geometry adoption when a *survivor* (non-main label)
             // takes over the main window. The genuine main entry keeps its own.
             let adopted = (e.label != main_label).then_some(e.label);
-            (Some(e.profile_id), adopted)
+            (Some(e.profile_id), adopted, e.placement)
         }
-        None => (first_profile_id.map(|s| s.to_string()), None),
+        None => (first_profile_id.map(|s| s.to_string()), None, last_closed_placement),
     };
 
     RestorationPlan {
         main_profile_id,
         main_adopted_label,
+        main_placement,
         additional: entries,
     }
 }
@@ -159,10 +197,12 @@ mod tests {
                 WindowEntry {
                     label: "main".into(),
                     profile_id: "p1".into(),
+                    placement: None,
                 },
                 WindowEntry {
                     label: "window-abc".into(),
                     profile_id: "p2".into(),
+                    placement: None,
                 },
             ];
             let payload = serde_json::to_string_pretty(&entries).unwrap();
@@ -187,6 +227,7 @@ mod tests {
         WindowEntry {
             label: label.into(),
             profile_id: profile.into(),
+            placement: None,
         }
     }
 
@@ -199,6 +240,47 @@ mod tests {
         let plan = plan_restoration(vec![], &ids(&["p1", "p2"]), "main", Some("p1"));
         assert_eq!(plan.main_profile_id.as_deref(), Some("p1"));
         assert!(plan.additional.is_empty());
+    }
+
+    fn placed(label: &str, profile: &str, monitor: &str) -> WindowEntry {
+        let json = format!(
+            r#"{{"home":{{"monitor":{{"name":"{monitor}","arrangementIndex":0}},"relX":1,"relY":2,"width":3,"height":4}}}}"#
+        );
+        WindowEntry { placement: Some(serde_json::from_str(&json).unwrap()), ..entry(label, profile) }
+    }
+
+    #[test]
+    fn the_main_window_restores_its_own_or_the_adopted_survivors_placement() {
+        let own = plan_restoration(
+            vec![placed("window-a", "p2", "A"), placed("main", "p1", "M")],
+            &ids(&["p1", "p2"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(own.main_placement.unwrap().home.monitor.name, "M");
+        assert_eq!(own.additional[0].placement.as_ref().unwrap().home.monitor.name, "A");
+
+        let adopted = plan_restoration(
+            vec![placed("window-a", "p2", "A")],
+            &ids(&["p1", "p2"]),
+            "main",
+            Some("p1"),
+        );
+        assert_eq!(adopted.main_placement.unwrap().home.monitor.name, "A");
+    }
+
+    #[test]
+    fn closing_the_last_window_starts_over_but_keeps_its_placement() {
+        let kept = placed("window-a", "p2", "DELL");
+        let only = placement_only_entry("window-a", kept.placement.clone()).unwrap();
+        assert!(only.profile_id.is_empty());
+        let plan = plan_restoration(vec![only], &ids(&["p1", "p2"]), "main", Some("p1"));
+        // Profiles start over: the main window shows the first Profile...
+        assert_eq!(plan.main_profile_id.as_deref(), Some("p1"));
+        assert!(plan.additional.is_empty());
+        // ...where the last window was.
+        assert_eq!(plan.main_placement.unwrap().home.monitor.name, "DELL");
+        assert!(placement_only_entry("window-a", None).is_none());
     }
 
     #[test]
@@ -315,5 +397,20 @@ mod tests {
     #[test]
     fn migrate_geometry_unparseable_is_noop() {
         assert!(migrate_geometry_to_main("not json", "window-abc", "main").is_none());
+    }
+
+    #[test]
+    fn entries_without_placement_still_load_and_placement_round_trips() {
+        let old = r#"[{"label":"main","profileId":"p1"}]"#;
+        let entries: Vec<WindowEntry> = serde_json::from_str(old).unwrap();
+        assert!(entries[0].placement.is_none());
+        assert!(!serde_json::to_string(&entries).unwrap().contains("placement"));
+
+        let json = r#"[{"label":"main","profileId":"p1","placement":{"home":{"monitor":{"name":"DELL","arrangementIndex":0},"relX":1.0,"relY":2.0,"width":3.0,"height":4.0}}}]"#;
+        let entries: Vec<WindowEntry> = serde_json::from_str(json).unwrap();
+        let back: Vec<WindowEntry> =
+            serde_json::from_str(&serde_json::to_string(&entries).unwrap()).unwrap();
+        assert_eq!(back[0].placement, entries[0].placement);
+        assert_eq!(back[0].placement.as_ref().unwrap().home.monitor.name, "DELL");
     }
 }

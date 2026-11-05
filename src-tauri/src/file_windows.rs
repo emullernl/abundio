@@ -23,6 +23,8 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, Webvi
 use uuid::Uuid;
 
 use crate::error::AbundioError;
+use crate::window_frame::PlacementTracker;
+use crate::window_placement::Remembered;
 
 /// Every File window label starts with this: `md-<uuid>`. The prefix dates
 /// from when these were Markdown windows. It is kept on purpose (ADR-0049):
@@ -471,6 +473,33 @@ impl FileWindowStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// The window's remembered **Window placement** (ADR-0051). `None` when it
+    /// was never placed, or the stored value no longer parses.
+    pub fn placement(&self, label: &str) -> Result<Option<Remembered>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let json: Option<Option<String>> = conn
+            .query_row(
+                "SELECT placement FROM file_windows WHERE label = ?1",
+                params![label],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(json.flatten().and_then(|j| serde_json::from_str(&j).ok()))
+    }
+
+    /// Stores the window's placement. A forgotten row (already deleted by its
+    /// own close handler) is left forgotten.
+    pub fn set_placement(&self, label: &str, placement: &Remembered) -> Result<(), AbundioError> {
+        let json = serde_json::to_string(placement)
+            .map_err(|e| AbundioError::InvalidOperation(format!("placement: {e}")))?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE file_windows SET placement = ?1 WHERE label = ?2",
+            params![json, label],
+        )?;
+        Ok(())
+    }
+
     pub fn set_view(&self, label: &str, view: MarkdownView) -> Result<(), AbundioError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -491,8 +520,8 @@ impl FileWindowStore {
 
 // ── Windows ──
 
-/// Focuses the row's window if it is open, or builds it. The stored label is
-/// reused so the window-state plugin restores its size and position.
+/// Focuses the row's window if it is open, or builds it where it was last
+/// (its **Window placement**).
 pub fn open_or_focus(
     app: &AppHandle<Wry>,
     row: &FileWindowRow,
@@ -507,7 +536,7 @@ pub fn open_or_focus(
         }
         return Ok(());
     }
-    build_window(app, row, meta, true)
+    build_window(app, row, meta, true, false)
 }
 
 /// Sent to an open File window whose row changed under it (a live diff opened
@@ -515,11 +544,13 @@ pub fn open_or_focus(
 pub const FILE_WINDOW_RELOAD: &str = "file-window-reload";
 
 /// Builds the row's window. `focus: false` opens it behind the current one.
+/// `restore_desktop` puts it back on its remembered desktop (app start only).
 fn build_window(
     app: &AppHandle<Wry>,
     row: &FileWindowRow,
     meta: &WorkspaceMeta,
     focus: bool,
+    restore_desktop: bool,
 ) -> Result<(), AbundioError> {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = WebviewWindowBuilder::new(
@@ -531,16 +562,22 @@ fn build_window(
     .inner_size(880.0, 760.0)
     .min_inner_size(420.0, 320.0)
     .resizable(true)
-    .focused(focus);
+    .focused(focus)
+    // Hidden until placed, so it never shows at the default spot first.
+    .visible(false);
     #[cfg(target_os = "macos")]
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true);
     }
-    builder.build().map_err(|e| {
+    let window = builder.build().map_err(|e| {
         AbundioError::InvalidOperation(format!("File window build failed: {e}"))
     })?;
+    let placement = app
+        .try_state::<FileWindowStore>()
+        .and_then(|s| s.placement(&row.label).ok().flatten());
+    crate::window_frame::place_and_show(&window, placement, focus, restore_desktop);
     Ok(())
 }
 
@@ -549,6 +586,8 @@ fn build_window(
 /// already asked about unsaved edits, and `destroy` skips the window's own
 /// close handler — which is the one place a row is forgotten.
 pub fn destroy_remembered(app: &AppHandle<Wry>, labels: &[String]) {
+    // Record where they are first: once destroyed they cannot be asked.
+    crate::window_frame::record_all(app);
     for label in labels {
         if let Some(w) = app.get_webview_window(label) {
             let _ = w.destroy();
@@ -558,8 +597,20 @@ pub fn destroy_remembered(app: &AppHandle<Wry>, labels: &[String]) {
 
 /// Cleans up after a File window's `Destroyed`. Its row is untouched.
 pub fn on_destroyed(app: &AppHandle<Wry>, label: &str) {
+    let placement = app
+        .try_state::<PlacementTracker>()
+        .and_then(|t| {
+            let p = t.get(label);
+            t.forget(label);
+            p
+        });
     if let Some(store) = app.try_state::<FileWindowStore>() {
         store.set_dirty(label, false);
+        if let Some(p) = placement {
+            if let Err(e) = store.set_placement(label, &p) {
+                eprintln!("[abundio] failed to save File window placement: {e}");
+            }
+        }
     }
 }
 
@@ -781,9 +832,15 @@ pub async fn file_windows_close(
 #[tauri::command]
 pub async fn file_windows_restore(
     app: AppHandle,
+    window: WebviewWindow,
     store: State<'_, FileWindowStore>,
     workspace_id: String,
 ) -> Result<(), AbundioError> {
+    // The first reopen from a Window restored at app start is part of app
+    // start, so its File windows go back to their desktops (ADR-0051).
+    let restore_desktop = app
+        .try_state::<crate::window_frame::LaunchRestore>()
+        .is_some_and(|l| l.take(window.label()));
     let Some(meta) = store.workspace_meta(&workspace_id)? else {
         return Ok(());
     };
@@ -803,7 +860,7 @@ pub async fn file_windows_restore(
                 }
             }
         }
-        if let Err(e) = open_unfocused(&app, &row, &meta) {
+        if let Err(e) = open_unfocused(&app, &row, &meta, restore_desktop) {
             eprintln!("[abundio] reopen file window {}: {e}", row.label);
         }
     }
@@ -830,11 +887,16 @@ pub async fn file_windows_raise(
 
 /// Restoring opens windows without stealing focus: the user is working in the
 /// Profile window that just opened the Workspace.
-fn open_unfocused(app: &AppHandle<Wry>, row: &FileWindowRow, meta: &WorkspaceMeta) -> Result<(), AbundioError> {
+fn open_unfocused(
+    app: &AppHandle<Wry>,
+    row: &FileWindowRow,
+    meta: &WorkspaceMeta,
+    restore_desktop: bool,
+) -> Result<(), AbundioError> {
     if app.get_webview_window(&row.label).is_some() {
         return Ok(());
     }
-    build_window(app, row, meta, false)
+    build_window(app, row, meta, false, restore_desktop)
 }
 
 fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileWindowRow> {
@@ -962,6 +1024,22 @@ mod tests {
         let a = s.upsert("w1", &text("/tmp/a.md"), "/tmp/a.md").unwrap();
         let b = s.upsert("w2", &text("/tmp/a.md"), "/tmp/a.md").unwrap();
         assert_ne!(a.label, b.label);
+    }
+
+    #[test]
+    fn placement_is_stored_per_row_and_a_forgotten_row_stays_forgotten() {
+        let store = store_with(&["w1"]);
+        let row = store.upsert("w1", &text("/r/a.md"), "/r/a.md").unwrap();
+        assert_eq!(store.placement(&row.label).unwrap(), None);
+        let p: Remembered = serde_json::from_str(
+            r#"{"home":{"monitor":{"name":"DELL","arrangementIndex":1},"relX":5,"relY":6,"width":700,"height":500,"maximized":true}}"#,
+        )
+        .unwrap();
+        store.set_placement(&row.label, &p).unwrap();
+        assert_eq!(store.placement(&row.label).unwrap(), Some(p.clone()));
+        store.delete_by_label(&row.label).unwrap();
+        store.set_placement(&row.label, &p).unwrap();
+        assert_eq!(store.placement(&row.label).unwrap(), None);
     }
 
     #[test]
