@@ -1,7 +1,7 @@
 {
 	"name": "abundio",
 	"private": true,
-	"version": "2.1.5",
+	"version": "2.2.0",
 	"license": "MIT OR Apache-2.0",
 	"type": "module",
 	"engines": {
