@@ -158,6 +158,10 @@ pub struct PlacementTracker {
     /// desktop the window landed on instead. While the window stays there,
     /// the missing desktop is kept, so it is tried again next time.
     held_desktops: Mutex<HashMap<String, HeldDesktop>>,
+    /// The last Profile window the user closed, with its placement. When no
+    /// window is left, this is what `windows.json` keeps for the next launch's
+    /// main window, by every save that runs, including the one at exit.
+    last_closed: Mutex<Option<(String, Remembered)>>,
 }
 
 struct HeldDesktop {
@@ -172,6 +176,19 @@ impl PlacementTracker {
 
     pub fn set(&self, label: &str, remembered: Remembered) {
         self.map.lock().unwrap().insert(label.to_string(), remembered);
+    }
+
+    /// A Profile window was closed: stop tracking it, but keep its placement
+    /// as [`last_closed`](Self::last_closed).
+    pub fn close(&self, label: &str) {
+        if let Some(p) = self.get(label) {
+            *self.last_closed.lock().unwrap() = Some((label.to_string(), p));
+        }
+        self.forget(label);
+    }
+
+    pub fn last_closed(&self) -> Option<(String, Remembered)> {
+        self.last_closed.lock().unwrap().clone()
     }
 
     pub fn forget(&self, label: &str) {
@@ -589,5 +606,18 @@ mod tests {
         t.forget("w");
         assert!(t.get("w").is_none());
         assert_eq!(t.desktop_to_keep("w", Some("now".into())).as_deref(), Some("now"));
+    }
+
+    #[test]
+    fn closing_a_window_keeps_its_placement_as_last_closed() {
+        let t = PlacementTracker::default();
+        t.record_capture("window-a", Some(at("Laptop", 7.0)), None, &[screen("Laptop", 0.0)]);
+        t.close("window-a");
+        assert!(t.get("window-a").is_none());
+        let (label, p) = t.last_closed().unwrap();
+        assert_eq!((label.as_str(), p.home.rel_x), ("window-a", 7.0));
+        // A window with nothing recorded leaves the last one in place.
+        t.close("window-b");
+        assert_eq!(t.last_closed().unwrap().0, "window-a");
     }
 }

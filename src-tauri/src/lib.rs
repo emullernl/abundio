@@ -557,9 +557,7 @@ fn on_app_exit(app: &AppHandle<Wry>) {
     }
     if let Some(state) = app.try_state::<profile_store::ActiveProfileState>() {
         window_frame::record_all(app);
-        let tracker = app.try_state::<window_frame::PlacementTracker>();
-        let snapshot = window_persistence::snapshot_from_state(&state, tracker.as_deref());
-        if let Err(e) = window_persistence::save(&snapshot) {
+        if let Err(e) = window_persistence::save(&windows_snapshot(app, &state)) {
             eprintln!("[abundio] failed to persist windows.json at exit: {e}");
         }
     }
@@ -567,6 +565,25 @@ fn on_app_exit(app: &AppHandle<Wry>) {
     // restoration snapshot is never lost to a stalled or failed install.
     // See ADR-0014.
     updater::apply_staged_update_on_quit(app);
+}
+
+/// What `windows.json` should hold now: the open Profile windows with their
+/// placements. With none open (the user closed the last one), it keeps that
+/// window's placement alone, for the next launch's main window. Every save
+/// goes through here, because closing the last window saves twice: once in
+/// its `Destroyed`, and again at exit, which must not overwrite the first.
+fn windows_snapshot(
+    app: &AppHandle<Wry>,
+    state: &profile_store::ActiveProfileState,
+) -> Vec<window_persistence::WindowEntry> {
+    let tracker = app.try_state::<window_frame::PlacementTracker>();
+    let mut entries = window_persistence::snapshot_from_state(state, tracker.as_deref());
+    if entries.is_empty() {
+        if let Some((label, placement)) = tracker.and_then(|t| t.last_closed()) {
+            entries.extend(window_persistence::placement_only_entry(&label, Some(placement)));
+        }
+    }
+    entries
 }
 
 /// Runs the actual app quit: the shared quit-time work, then exit. Used by the
@@ -1024,6 +1041,20 @@ pub fn run() {
                     poller.on_focus();
                 }
             }
+            tauri::WindowEvent::CloseRequested { .. } => {
+                // Last chance to ask the window where it is, desktop included:
+                // by `Destroyed` it is gone (ADR-0051). Window events arrive on
+                // the main thread, which reading a desktop needs.
+                let label = window.label();
+                if window_frame::has_placement(label) {
+                    if let (Some(t), Some(w)) = (
+                        window.app_handle().try_state::<window_frame::PlacementTracker>(),
+                        window.app_handle().get_webview_window(label),
+                    ) {
+                        t.record(&w, Some(desktop::read(&w)));
+                    }
+                }
+            }
             tauri::WindowEvent::Destroyed => {
                 let app_handle = window.app_handle().clone();
                 let label = window.label().to_string();
@@ -1135,24 +1166,15 @@ pub fn run() {
                     app_handle.try_state::<profile_store::ActiveProfileState>()
                 {
                     window_frame::record_all(&app_handle);
-                    let tracker =
-                        app_handle.try_state::<window_frame::PlacementTracker>();
-                    let mut remaining =
-                        window_persistence::snapshot_from_state(&state, tracker.as_deref());
                     // Closing the last window starts over for Profiles, but
-                    // not for where it was: keep its placement for the next
-                    // launch's main window (`plan_restoration`).
-                    if remaining.is_empty() {
-                        remaining.extend(window_persistence::placement_only_entry(
-                            &label,
-                            tracker.as_ref().and_then(|t| t.get(&label)),
-                        ));
+                    // not for where it was: the tracker keeps its placement
+                    // and `windows_snapshot` saves it when no window is left.
+                    if let Some(t) = app_handle.try_state::<window_frame::PlacementTracker>() {
+                        t.close(&label);
                     }
+                    let remaining = windows_snapshot(&app_handle, &state);
                     if let Err(e) = window_persistence::save(&remaining) {
                         eprintln!("[abundio] failed to persist windows.json: {e}");
-                    }
-                    if let Some(t) = tracker {
-                        t.forget(&label);
                     }
                 }
                 if no_profile_windows_open(&app_handle) {
