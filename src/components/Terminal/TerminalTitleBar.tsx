@@ -115,9 +115,9 @@ function TitleBarButton({
 
 /** The pane's mouse badge, or nothing at all when the program never asked for
  *  the mouse. Both states are worth surfacing: "blocked" explains why a TUI's
- *  mouse support appears broken — the default configuration's one confusing
- *  moment — and "reporting" explains why right-click stopped opening this
- *  menu. Clicking flips this pane, and only this pane. See ADR-0031. */
+ *  mouse support appears broken, and "reporting" explains why right-click
+ *  stopped opening this menu. Clicking flips this pane, and only this pane.
+ *  See ADR-0031. */
 function MouseBadge({ paneId }: { paneId: string }) {
 	const state = useSyncExternalStore(
 		useCallback(

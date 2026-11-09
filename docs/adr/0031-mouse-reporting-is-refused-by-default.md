@@ -4,6 +4,8 @@ status: accepted
 
 # Mouse reporting is refused by default
 
+> **Update (2026-11-09) — the default was reversed.** *Block mouse reporting* is now **off** by default, so a program that asks for the mouse gets it, right button included. The refusal, the mouse badge, the `⋯` button and modifier-drag selection all stand as described below; only the starting position changed, so read "default" in this ADR as the original decision. Installs that already saved a value keep it.
+
 A terminal pane refuses, by default, to hand the mouse to the program running in it. The refusal is a swallowed DECSET, taken before xterm ever sees it. Where the refusal is lifted, the program gets the **whole** mouse including the right button — which reverses the contract #170 shipped — and the pane context menu moves to a permanent button in the pane's title bar so it stays reachable regardless.
 
 See the **Mouse-reporting pane**, **Mouse-blocked pane** and **Mouse badge** entries in GLOSSARY.md.
