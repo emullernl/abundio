@@ -3,7 +3,7 @@
 
 use crate::error::AbundioError;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,6 +384,18 @@ pub fn build_cli_args(
     }
 }
 
+/// Build the command that starts an editor, with `path` as its `PATH`.
+///
+/// Abundio opened from Finder or the Dock has only the minimal system `PATH`.
+/// An editor would inherit that, and VS Code-family editors do not load the
+/// user's shell environment themselves when started through their CLI, so
+/// their extensions and tasks would not find tools like `node` or `pnpm`.
+fn launch_command(bin: &Path, args: &[String], path: &str) -> Command {
+    let mut cmd = Command::new(bin);
+    cmd.args(args).env("PATH", path);
+    cmd
+}
+
 pub fn launch(
     id: &str,
     workspace_folder: &str,
@@ -397,8 +409,7 @@ pub fn launch(
     for cli in def.cli_names {
         if let Some(bin) = resolve_cli(def, cli) {
             let args = build_cli_args(def.launch_style, workspace_folder, file);
-            Command::new(bin)
-                .args(&args)
+            launch_command(&bin, &args, crate::shell_env::shell_path())
                 .spawn()
                 .map_err(AbundioError::Io)?;
             return Ok(());
@@ -529,6 +540,21 @@ mod tests {
         let file = lf("/ws/app.swift", Some(40), Some(12));
         let args = build_cli_args(LaunchStyle::Xed, "/ws", Some(&file));
         assert_eq!(args, vec!["-l", "40", "/ws/app.swift"]);
+    }
+
+    #[test]
+    fn launch_command_gives_the_editor_the_shell_path() {
+        let args = vec!["/ws".to_string()];
+        let cmd = launch_command(Path::new("/bin/code"), &args, "/opt/homebrew/bin:/usr/bin");
+
+        let path = cmd
+            .get_envs()
+            .find(|(key, _)| key.to_str() == Some("PATH"))
+            .and_then(|(_, value)| value);
+
+        assert_eq!(path, Some(std::ffi::OsStr::new("/opt/homebrew/bin:/usr/bin")));
+        assert_eq!(cmd.get_program(), "/bin/code");
+        assert_eq!(cmd.get_args().collect::<Vec<_>>(), vec!["/ws"]);
     }
 
     #[test]
