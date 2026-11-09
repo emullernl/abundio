@@ -43,7 +43,7 @@ export function TerminalSection() {
 					checked={blockMouseReporting}
 					onChange={setBlockMouseReporting}
 					label="Block mouse reporting"
-					description="Stop programs from taking the mouse, so click-drag selection and right-click keep working in every pane. Turning this off lets tmux, vim and agent TUIs handle clicks themselves — and hands them the right button. Either way, any pane can be flipped on its own from the mouse badge in its title bar."
+					description="Stop programs from taking the mouse, so click-drag selection and right-click keep working in every pane. While this is off, tmux, vim and agent TUIs handle clicks themselves, right button included; use Option+drag (macOS) or Shift+drag (Windows/Linux) to select text. Either way, any pane can be flipped on its own from the mouse badge in its title bar."
 				/>
 			</div>
 			<div className="flex-shrink-0">

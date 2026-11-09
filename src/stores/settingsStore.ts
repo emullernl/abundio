@@ -570,7 +570,9 @@ function applyRehydratedSettings(state: SettingsState | undefined): void {
 	// after the user un-blocked here. setMouseReportingBlocked no-ops
 	// when the value is unchanged, so the extra call costs nothing.
 	withTerminalSettings((t) =>
-		t.setMouseReportingBlocked(state?.blockMouseReporting ?? false),
+		t.setMouseReportingBlocked(
+			state?.blockMouseReporting ?? PERSISTED_DEFAULTS.blockMouseReporting,
+		),
 	);
 	// Sync the Rust-side auto-check flag with the persisted setting on
 	// startup. Rust defaults this OFF and waits for this explicit push
@@ -986,10 +988,13 @@ export const useSettingsStore = create<SettingsState>()(
 				}
 				// v9: the Block mouse reporting setting (ADR-0031). Additive key;
 				// PERSISTED_DEFAULTS + merge already supply it — this only
-				// guarantees it exists during the rehydrate window. Off, to match
-				// today's default: a snapshot this old never held an answer.
+				// guarantees it exists during the rehydrate window. Follows today's
+				// default: a snapshot this old never held an answer.
 				if (version < 9) {
-					state = { blockMouseReporting: false, ...state };
+					state = {
+						blockMouseReporting: PERSISTED_DEFAULTS.blockMouseReporting,
+						...state,
+					};
 				}
 				return state;
 			},

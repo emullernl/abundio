@@ -86,6 +86,36 @@ it("leaves mouse reporting unblocked on a fresh install", async () => {
 	expect(calls).toEqual([false]);
 });
 
+it.each([
+	{
+		name: "keeps a stored answer of true from before the default flipped",
+		snapshot: { state: { blockMouseReporting: true }, version: 9 },
+		expected: true,
+	},
+	{
+		name: "gives a snapshot older than the setting today's default",
+		snapshot: { state: {}, version: 8 },
+		expected: false,
+	},
+])("$name", async ({ snapshot, expected }) => {
+	localStorage.setItem("abundio-settings", JSON.stringify(snapshot));
+	const bridge = await import("../../lib/terminalSettingsBridge");
+	const calls: boolean[] = [];
+	bridge.registerTerminalSettings({
+		setAllTerminalsFontFamily: () => {},
+		setAllTerminalsFontSize: () => {},
+		setAllTerminalsScrollback: () => {},
+		setAllTerminalsTheme: () => {},
+		setActivityByteThreshold: () => {},
+		setWebglEnabled: () => {},
+		setMouseReportingBlocked: (blocked) => calls.push(blocked),
+	});
+	const { useSettingsStore } = await import("../settingsStore");
+
+	expect(useSettingsStore.getState().blockMouseReporting).toBe(expected);
+	expect(calls).toEqual([expected]);
+});
+
 it("pushes GPU acceleration in both directions, not only when disabled", async () => {
 	// `gpuAccelerationEnabled` crosses Window boundaries (it is not in
 	// NOT_BROADCAST), and the receiving side's only reaction is a rehydrate. A
