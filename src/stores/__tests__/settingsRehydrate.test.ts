@@ -67,6 +67,25 @@ it("hands a stored mouse-reporting answer of false to terminalManager", async ()
 	expect(calls).toEqual([false]);
 });
 
+it("leaves mouse reporting unblocked on a fresh install", async () => {
+	localStorage.removeItem("abundio-settings");
+	const bridge = await import("../../lib/terminalSettingsBridge");
+	const calls: boolean[] = [];
+	bridge.registerTerminalSettings({
+		setAllTerminalsFontFamily: () => {},
+		setAllTerminalsFontSize: () => {},
+		setAllTerminalsScrollback: () => {},
+		setAllTerminalsTheme: () => {},
+		setActivityByteThreshold: () => {},
+		setWebglEnabled: () => {},
+		setMouseReportingBlocked: (blocked) => calls.push(blocked),
+	});
+	const { useSettingsStore } = await import("../settingsStore");
+
+	expect(useSettingsStore.getState().blockMouseReporting).toBe(false);
+	expect(calls).toEqual([false]);
+});
+
 it("pushes GPU acceleration in both directions, not only when disabled", async () => {
 	// `gpuAccelerationEnabled` crosses Window boundaries (it is not in
 	// NOT_BROADCAST), and the receiving side's only reaction is a rehydrate. A

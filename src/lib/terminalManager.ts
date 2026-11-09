@@ -497,10 +497,10 @@ function bumpPaneRevision(paneId: string): void {
 
 /** Master switch for refusing mouse reporting, mirrored from the persisted
  *  `blockMouseReporting` setting. Supplies the default for every pane; a pane
- *  whose `mouseBlockOverride` is set ignores it. Defaults to true, matching
+ *  whose `mouseBlockOverride` is set ignores it. Defaults to false, matching
  *  PERSISTED_DEFAULTS — the settings store pushes the persisted value on
  *  rehydration. See ADR-0031. */
-let blockMouseReportingGlobally = true;
+let blockMouseReportingGlobally = false;
 
 /** Panes whose mouse badge has been clicked, and the answer it was given.
  *  Keyed by paneId rather than held on the ManagedTerminal, because the pane
