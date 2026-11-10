@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useProfileStore } from "../../stores/profileStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Plus, X } from "../Icons";
-import { SectionLabel } from "./primitives";
+import { SectionLabel, ToggleRow } from "./primitives";
 
 /* ─── Profile row ─── */
 function ProfileRow({
@@ -196,6 +197,10 @@ export function ProfilesSection() {
 	const createProfile = useProfileStore((s) => s.createProfile);
 	const renameProfile = useProfileStore((s) => s.renameProfile);
 	const deleteProfile = useProfileStore((s) => s.deleteProfile);
+	const reopenWorkspaces = useSettingsStore((s) => s.reopenWorkspacesOnOpen);
+	const setReopenWorkspaces = useSettingsStore(
+		(s) => s.setReopenWorkspacesOnOpen,
+	);
 	// Pending profile-delete confirmation. When non-null, the ConfirmDialog
 	// is mounted asking the user to confirm. If the profile is open in some
 	// window, the dialog message also warns that the window will close.
@@ -221,6 +226,13 @@ export function ProfilesSection() {
 					profiles closes the current profile's opened workspaces. Click a name
 					to rename it.
 				</p>
+				<ToggleRow
+					checked={reopenWorkspaces}
+					onChange={setReopenWorkspaces}
+					style={{ marginBottom: 18 }}
+					label="Reopen workspaces when a Profile opens"
+					description="When the app starts, when you switch Profile, or when you open a Profile in a new window, the workspaces it had open come back, and the one you were looking at is selected again. This also works after a crash. Every reopened workspace starts its terminals and agents straight away."
+				/>
 				<div className="flex flex-col gap-0.5">
 					{profiles.map((p) => (
 						<ProfileRow
