@@ -29,6 +29,7 @@ import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useFileWindowRaise } from "./hooks/useFileWindowRaise";
 import { useFileWindowRestore } from "./hooks/useFileWindowRestore";
 import { useGitDataSync } from "./hooks/useGitDataSync";
+import { useMissingFolderRefresh } from "./hooks/useMissingFolderRefresh";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -321,6 +322,7 @@ const TabContent = memo(function TabContent({
 
 export function App() {
 	useWorkspace();
+	useMissingFolderRefresh();
 	useDemoBootstrap();
 	useFileReloadWatcher();
 	useFileWindowRestore();

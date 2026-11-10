@@ -57,6 +57,19 @@ import { useWorkspaceGitStore } from "./workspaceGitStore";
  * The Active one goes first: `TerminalPool` spawns its terminals at once and
  * the others' a moment later, so the one you look at is ready first.
  */
+/** The Profile's Missing-folder ids, or `null` when the check failed (a
+ *  failure must leave the current marks alone, not clear them). */
+async function fetchMissingFolders(
+	profileId: string,
+): Promise<Set<string> | null> {
+	try {
+		return new Set(await workspacesApi.missingFolders(profileId));
+	} catch (err) {
+		console.warn("[abundio] missing folder check failed", err);
+		return null;
+	}
+}
+
 async function restoreOpenedWorkspaces(profileId: string): Promise<void> {
 	if (!useSettingsStore.getState().reopenWorkspacesOnOpen) return;
 	if (useWorkspaceStore.getState().activeWorkspaceId) return;
@@ -106,6 +119,14 @@ interface WorkspaceState {
 	workspaces: WorkspaceWithTabs[];
 	activeWorkspaceId: string | null;
 	switchingWorkspaceId: string | null;
+	/** Workspaces whose folder is missing right now (**Missing folder**,
+	 *  ADR-0053). Refreshed when the list loads and when the Window gets
+	 *  focus. Such a Workspace can be Active without being Opened. */
+	missingFolderIds: Set<string>;
+	/** Re-check which folders are missing. A Workspace whose folder came
+	 *  back reopens: in place if it is Active, in the background if it is on
+	 *  its Profile's restore list. */
+	refreshMissingFolders: () => Promise<void>;
 	activeTabByWorkspace: Record<string, string>; // workspaceId → active tabId
 	focusedPaneId: string | null;
 	focusedPaneByTab: Record<string, string>; // tabId → last focused paneId
@@ -419,6 +440,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	workspaces: [],
 	activeWorkspaceId: null,
 	switchingWorkspaceId: null,
+	missingFolderIds: new Set(),
 	activeTabByWorkspace: {},
 	focusedPaneId: null,
 	focusedPaneByTab: {},
@@ -480,6 +502,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			focusedPaneId: null,
 		}));
 		pty.cleanupStaleLogs(allPaneIds).catch(() => {});
+
+		// Before the restore, so a Missing-folder Workspace is never picked
+		// as the Active one. A fresh set: the previous Profile's ids mean
+		// nothing here.
+		const missing = await fetchMissingFolders(profileId);
+		if (missing) set({ missingFolderIds: missing });
 
 		await restoreOpenedWorkspaces(profileId);
 
@@ -851,7 +879,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// restore, which the raise (heard on the `activeWorkspaceId` change
 		// below) waits on. Swapped, the raise finds no windows on a Workspace's
 		// first activation. Covered by useFileWindowRaise.test.tsx.
-		if (id) {
+		// A Missing folder is Active but not Opened (ADR-0053): it shows the
+		// "Folder not found" panel and starts nothing, so it is neither marked
+		// Opened nor remembered as the Profile's Active workspace.
+		const missing = !!id && get().missingFolderIds.has(id);
+		if (id && !missing) {
 			usePtyActivityStore.getState().markWorkspaceOpened(id);
 			rememberActive(fallbackProfileId(), id);
 		}
@@ -879,7 +911,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		});
 		// Fetch real branch name and change stats for the newly active workspace.
 		// Deferred so the workspace UI (terminals, layout) renders first.
-		if (id) {
+		// Skipped for a Missing folder: there is no repository to ask.
+		if (id && !missing) {
 			setTimeout(() => {
 				const ws = get().workspaces.find((s) => s.id === id);
 				if (ws) {
@@ -905,8 +938,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			if (id) void raiseFileWindows(id);
 			return;
 		}
-		// Fast path: already mounted — switch instantly with no overlay.
-		if (id && usePtyActivityStore.getState().openedWorkspaceIds.has(id)) {
+		// Fast path: already mounted — switch instantly with no overlay. A
+		// Missing folder has nothing to mount, so it takes this path too.
+		if (
+			id &&
+			(usePtyActivityStore.getState().openedWorkspaceIds.has(id) ||
+				get().missingFolderIds.has(id))
+		) {
 			set({ switchingWorkspaceId: null });
 			get().setActiveWorkspace(id);
 			return;
@@ -924,6 +962,39 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				set({ switchingWorkspaceId: null });
 			});
 		});
+	},
+
+	refreshMissingFolders: async () => {
+		const profileId = fallbackProfileId();
+		const next = await fetchMissingFolders(profileId);
+		if (!next || fallbackProfileId() !== profileId) return;
+		const prev = get().missingFolderIds;
+		const back = [...prev].filter((id) => !next.has(id));
+		const changed = back.length > 0 || [...next].some((id) => !prev.has(id));
+		if (changed) set({ missingFolderIds: next });
+		if (back.length === 0) return;
+		const opened = () => usePtyActivityStore.getState().openedWorkspaceIds;
+		// Shown in the panel: it opens in place.
+		const active = get().activeWorkspaceId;
+		if (active && back.includes(active) && !opened().has(active)) {
+			get().setActiveWorkspace(active);
+		}
+		// On the restore list: finish the restore the missing folder
+		// interrupted, in the background.
+		if (!useSettingsStore.getState().reopenWorkspacesOnOpen) return;
+		let restore: Awaited<ReturnType<typeof workspacesApi.restoreSet>>;
+		try {
+			restore = await workspacesApi.restoreSet(profileId);
+		} catch (err) {
+			console.warn("[abundio] workspace restore: read failed", err);
+			return;
+		}
+		if (fallbackProfileId() !== profileId) return;
+		for (const id of restore.opened) {
+			if (back.includes(id) && !opened().has(id)) {
+				usePtyActivityStore.getState().markWorkspaceOpened(id);
+			}
+		}
 	},
 
 	reorderWorkspaces: (ids) => {

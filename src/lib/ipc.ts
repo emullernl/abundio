@@ -199,6 +199,11 @@ export const workspaces = {
 	/** A Profile's **Workspace restore** list (ADR-0052). Rust leaves out
 	 *  Workspaces whose folder is missing right now, but keeps them on the
 	 *  list, so they come back once the folder does. */
+	/** Ids of the Profile's Workspaces whose folder is missing right now
+	 *  (**Missing folder**, ADR-0053). */
+	missingFolders: (profileId: string) =>
+		invoke<string[]>("workspace_missing_folders", { profileId }),
+
 	restoreSet: (profileId: string) =>
 		invoke<WorkspaceRestoreSet>("workspace_restore_set", { profileId }),
 
@@ -208,6 +213,10 @@ export const workspaces = {
 	setRestoreActive: (profileId: string, id: string | null) =>
 		invoke<void>("workspace_set_restore_active", { profileId, id }),
 };
+
+/** How Rust words a spawn refused for a **Missing folder** (ADR-0053),
+ *  followed by the folder's path. Matches `AbundioError::FolderMissing`. */
+export const FOLDER_MISSING_PREFIX = "Folder not found: ";
 
 /** See `workspaces.restoreSet`. `opened` is in sidebar order. */
 export interface WorkspaceRestoreSet {
