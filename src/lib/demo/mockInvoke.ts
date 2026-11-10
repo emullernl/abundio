@@ -129,7 +129,12 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "workspace_update":
 		case "workspace_delete":
 		case "workspace_reorder":
+		case "workspace_set_restore_opened":
+		case "workspace_set_restore_active":
 			return undefined;
+		// The demo picks its own Workspaces (useDemoBootstrap).
+		case "workspace_restore_set":
+			return { opened: [], active: null };
 		case "tab_list": {
 			const ws = fixtures.workspaces.find((w) => w.id === args.workspaceId);
 			return ws?.tabs ?? [];

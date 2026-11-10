@@ -36,11 +36,48 @@ import type {
 	WorkspaceWithTabs,
 	WorktreeEntry,
 } from "../lib/types";
+import {
+	forgetOpened,
+	pickActive,
+	rememberActive,
+} from "../lib/workspaceRestore";
 import { useExplorerStore } from "./explorerStore";
 import { useNotesStore } from "./notesStore";
 import { fallbackProfileId } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
+import { useSettingsStore } from "./settingsStore";
 import { useWorkspaceGitStore } from "./workspaceGitStore";
+
+/**
+ * **Workspace restore** (ADR-0052): reopen the Workspaces the Profile had
+ * Opened and make its Active one Active again. Runs at the end of every
+ * `loadWorkspaces` — Window start and Switch Profile alike. Does nothing when
+ * the setting is off, or when the Window already has an Active workspace.
+ *
+ * The Active one goes first: `TerminalPool` spawns its terminals at once and
+ * the others' a moment later, so the one you look at is ready first.
+ */
+async function restoreOpenedWorkspaces(profileId: string): Promise<void> {
+	if (!useSettingsStore.getState().reopenWorkspacesOnOpen) return;
+	if (useWorkspaceStore.getState().activeWorkspaceId) return;
+	let set: Awaited<ReturnType<typeof workspacesApi.restoreSet>>;
+	try {
+		set = await workspacesApi.restoreSet(profileId);
+	} catch (err) {
+		console.warn("[abundio] workspace restore: read failed", err);
+		return;
+	}
+	const store = useWorkspaceStore.getState();
+	// The Profile may have changed, or the user picked a Workspace, while the
+	// read was in flight.
+	if (fallbackProfileId() !== profileId || store.activeWorkspaceId) return;
+	const known = new Set(store.workspaces.map((w) => w.id));
+	const opened = set.opened.filter((id) => known.has(id));
+	const active = pickActive({ opened, active: set.active });
+	if (active) store.setActiveWorkspace(active);
+	const activity = usePtyActivityStore.getState();
+	for (const id of opened) activity.markWorkspaceOpened(id);
+}
 
 /** What a **New task** hands the store to start its Agent: the argv with the
  *  prompt as one element (`agentTaskArgvFor`), and the Tab's name. */
@@ -120,7 +157,11 @@ interface WorkspaceState {
 		worktreePath: string,
 	) => Promise<void>;
 	deleteWorkspace: (id: string) => Promise<void>;
-	closeWorkspace: (id: string) => Promise<void>;
+	/** Close a Workspace: kill its PTYs and close its File windows. By default
+	 *  it is also taken off its Profile's **Workspace restore** list, because
+	 *  the user closed it. Profile switch passes `{ forget: false }`: the
+	 *  Workspace must come back when the Profile is opened again (ADR-0052). */
+	closeWorkspace: (id: string, opts?: { forget?: boolean }) => Promise<void>;
 	renameWorkspace: (id: string, name: string) => Promise<void>;
 	setWorktreeSetupCommands: (id: string, commands: string) => Promise<void>;
 	setActiveWorkspace: (id: string | null) => void;
@@ -440,6 +481,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}));
 		pty.cleanupStaleLogs(allPaneIds).catch(() => {});
 
+		await restoreOpenedWorkspaces(profileId);
+
 		// Pre-populate branch chips from the persisted lastBranch so chips appear
 		// immediately. The real branch name is fetched the first time each
 		// workspace is activated (see setActiveWorkspace).
@@ -730,10 +773,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}));
 	},
 
-	closeWorkspace: async (id) => {
+	closeWorkspace: async (id, opts) => {
 		const state = get();
 		const workspace = state.workspaces.find((s) => s.id === id);
 		if (!workspace) return;
+		if (opts?.forget ?? true) forgetOpened(id);
 
 		const activityStore = usePtyActivityStore.getState();
 
@@ -807,7 +851,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// restore, which the raise (heard on the `activeWorkspaceId` change
 		// below) waits on. Swapped, the raise finds no windows on a Workspace's
 		// first activation. Covered by useFileWindowRaise.test.tsx.
-		if (id) usePtyActivityStore.getState().markWorkspaceOpened(id);
+		if (id) {
+			usePtyActivityStore.getState().markWorkspaceOpened(id);
+			rememberActive(fallbackProfileId(), id);
+		}
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
 			// Save current focused pane for the current tab
