@@ -1087,12 +1087,55 @@ describe("workspaceStore", () => {
 			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("a");
 		});
 
-		it("remembers the Active workspace", () => {
+		it("gives way to a Workspace the user picked while the read was in flight", async () => {
+			let resolve: (v: { opened: string[]; active: string | null }) => void =
+				() => {};
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			vi.mocked(workspaces.restoreSet).mockReturnValueOnce(
+				new Promise((r) => {
+					resolve = r;
+				}),
+			);
+			const loading = useWorkspaceStore.getState().loadWorkspaces();
+			await vi.waitFor(() => expect(workspaces.restoreSet).toHaveBeenCalled());
+			useWorkspaceStore.getState().setActiveWorkspace("b");
+			markWorkspaceOpened.mockClear();
+			resolve({ opened: ["a", "c"], active: "c" });
+			await loading;
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("b");
+			expect(markWorkspaceOpened).not.toHaveBeenCalled();
+		});
+
+		it("gives way when the Profile changed while the read was in flight", async () => {
+			const { useProfileStore } = await import("../profileStore");
+			const before = useProfileStore.getState().activeProfileId;
+			let resolve: (v: { opened: string[]; active: string | null }) => void =
+				() => {};
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			vi.mocked(workspaces.restoreSet).mockReturnValueOnce(
+				new Promise((r) => {
+					resolve = r;
+				}),
+			);
+			const loading = useWorkspaceStore.getState().loadWorkspaces();
+			await vi.waitFor(() => expect(workspaces.restoreSet).toHaveBeenCalled());
+			useProfileStore.setState({ activeProfileId: "p-other" });
+			resolve({ opened: ["a"], active: "a" });
+			await loading;
+			useProfileStore.setState({ activeProfileId: before });
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
+			expect(markWorkspaceOpened).not.toHaveBeenCalled();
+		});
+
+		it("remembers the Active workspace", async () => {
 			useWorkspaceStore.setState({ workspaces: three() });
 			useWorkspaceStore.getState().setActiveWorkspace("b");
-			expect(workspaces.setRestoreActive).toHaveBeenCalledWith(
-				expect.any(String),
-				"b",
+			// Writes are queued per row, so they start a microtask later.
+			await vi.waitFor(() =>
+				expect(workspaces.setRestoreActive).toHaveBeenCalledWith(
+					expect.any(String),
+					"b",
+				),
 			);
 		});
 
@@ -1102,6 +1145,7 @@ describe("workspaceStore", () => {
 			expect(workspaces.setRestoreOpened).toHaveBeenCalledWith("a", false);
 			vi.mocked(workspaces.setRestoreOpened).mockClear();
 			await useWorkspaceStore.getState().closeWorkspace("b", { forget: false });
+			await new Promise((r) => setTimeout(r, 0));
 			expect(workspaces.setRestoreOpened).not.toHaveBeenCalled();
 		});
 	});

@@ -529,8 +529,8 @@ impl WorkspaceStore {
         profile_id: &str,
         folder_exists: impl Fn(&str) -> bool,
     ) -> Result<RestoreSet, AbundioError> {
-        let conn = self.conn.lock().unwrap();
         let rows: Vec<(String, String)> = {
+            let conn = self.conn.lock().unwrap();
             let mut stmt = conn.prepare(
                 "SELECT id, root_folder FROM workspaces
                  WHERE profile_id = ?1 AND restore_opened = 1
@@ -539,13 +539,19 @@ impl WorkspaceStore {
             let mapped = stmt.query_map([profile_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
             mapped.collect::<Result<_, _>>()?
         };
-        let mut opened = Vec::new();
-        for (id, folder) in rows {
-            if folder_exists(&folder) {
-                opened.push(id);
-            } else {
-                conn.execute("UPDATE workspaces SET restore_opened = 0 WHERE id = ?1", [&id])?;
-            }
+        // Checked with the lock released: on a hung network mount `stat` can
+        // block for seconds, and every other WorkspaceStore IPC would wait.
+        let (opened, missing): (Vec<_>, Vec<_>) =
+            rows.into_iter().partition(|(_, folder)| folder_exists(folder));
+        let opened: Vec<String> = opened.into_iter().map(|(id, _)| id).collect();
+        let conn = self.conn.lock().unwrap();
+        for (id, folder) in missing {
+            // Guarded on the folder, in case the Workspace was repointed while
+            // the lock was released.
+            conn.execute(
+                "UPDATE workspaces SET restore_opened = 0 WHERE id = ?1 AND root_folder = ?2",
+                rusqlite::params![id, folder],
+            )?;
         }
         let saved: Option<String> = conn
             .query_row(
@@ -1034,6 +1040,19 @@ mod tests {
         let set = store.restore_set_with(DEFAULT_PID, |_| true).unwrap();
         assert_eq!(set.opened, vec![a]);
         assert_eq!(set.active, None);
+    }
+
+    /// A hung network mount must not stall every other store call
+    /// (review of #253): the folder check runs with the lock released.
+    #[test]
+    fn restore_set_checks_folders_without_holding_the_lock() {
+        let store = test_store();
+        let a = store.create("a", "/a", DEFAULT_PID).unwrap().workspace.id;
+        store.set_restore_opened(&a, true).unwrap();
+        let set = store
+            .restore_set_with(DEFAULT_PID, |_| store.conn.try_lock().is_ok())
+            .unwrap();
+        assert_eq!(set.opened, vec![a]);
     }
 
     #[test]
