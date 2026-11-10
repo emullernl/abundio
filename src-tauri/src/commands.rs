@@ -39,7 +39,19 @@ pub async fn pty_spawn(
     // A **New task** launch (ADR-0042): the shell runs the Agent with the
     // Task prompt as a positional argument instead of a typed command.
     task: Option<crate::pty_manager::TaskLaunch>,
+    store: State<'_, WorkspaceStore>,
 ) -> Result<String, AbundioError> {
+    // Never start a Workspace pane in the wrong folder (ADR-0053): refuse a
+    // Missing folder, and start in the Workspace folder when only the pane's
+    // own remembered folder is gone. The lookup releases the store lock
+    // before the disk is touched.
+    let root = match workspace_id.as_deref() {
+        Some(id) => store.root_folder(id)?,
+        None => None,
+    };
+    let cwd = crate::pty_manager::resolve_spawn_cwd(&cwd, root.as_deref(), |p| {
+        std::path::Path::new(p).is_dir()
+    })?;
     let pty_id = pty_mgr.spawn(
         app.clone(),
         window.label(),
@@ -375,6 +387,15 @@ pub async fn workspace_delete(
     id: String,
 ) -> Result<(), AbundioError> {
     store.delete(&id)
+}
+
+/// Ids of the Profile's Workspaces whose folder is missing (ADR-0053).
+#[tauri::command]
+pub async fn workspace_missing_folders(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+) -> Result<Vec<String>, AbundioError> {
+    store.missing_folders(&profile_id)
 }
 
 /// A Profile's **Workspace restore** list (ADR-0052).

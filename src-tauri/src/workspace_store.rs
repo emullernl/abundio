@@ -486,6 +486,48 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    // ── Missing folder (ADR-0053) ──
+
+    /// A Workspace's folder, or `None` for an unknown id.
+    pub fn root_folder(&self, workspace_id: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT root_folder FROM workspaces WHERE id = ?1",
+                [workspace_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Ids of the Profile's Workspaces whose folder is not a directory right
+    /// now, in sidebar order.
+    pub fn missing_folders(&self, profile_id: &str) -> Result<Vec<String>, AbundioError> {
+        self.missing_folders_with(profile_id, |p| std::path::Path::new(p).is_dir())
+    }
+
+    fn missing_folders_with(
+        &self,
+        profile_id: &str,
+        folder_exists: impl Fn(&str) -> bool,
+    ) -> Result<Vec<String>, AbundioError> {
+        let rows: Vec<(String, String)> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT id, root_folder FROM workspaces WHERE profile_id = ?1 ORDER BY position ASC",
+            )?;
+            let mapped = stmt.query_map([profile_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            mapped.collect::<Result<_, _>>()?
+        };
+        // Checked with the lock released, as in `restore_set`: a hung network
+        // mount must not stall every other store call.
+        Ok(rows
+            .into_iter()
+            .filter(|(_, folder)| !folder_exists(folder))
+            .map(|(id, _)| id)
+            .collect())
+    }
+
     // ── Workspace restore (ADR-0052) ──
 
     /// Puts a Workspace on (or takes it off) its Profile's restore list.
@@ -992,6 +1034,23 @@ mod tests {
     }
 
     const DEFAULT_PID: &str = "00000000-0000-0000-0000-000000000001";
+
+    // ── Missing folder (ADR-0053) ──
+
+    #[test]
+    fn missing_folders_lists_only_this_profiles_missing_ones() {
+        let store = test_store();
+        add_profile(&store, "p2");
+        let here = store.create("h", "/here", DEFAULT_PID).unwrap().workspace.id;
+        let gone = store.create("g", "/gone", DEFAULT_PID).unwrap().workspace.id;
+        store.create("o", "/gone-too", "p2").unwrap();
+        let missing = store
+            .missing_folders_with(DEFAULT_PID, |p| p == "/here" && store.conn.try_lock().is_ok())
+            .unwrap();
+        assert_eq!(missing, vec![gone]);
+        assert_eq!(store.root_folder(&here).unwrap().as_deref(), Some("/here"));
+        assert_eq!(store.root_folder("nope").unwrap(), None);
+    }
 
     // ── Workspace restore (ADR-0052) ──
 

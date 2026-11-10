@@ -44,6 +44,11 @@ pub enum AbundioError {
     /// must never carry plaintext or key material.
     #[error("Crypto error: {0}")]
     Crypto(String),
+    /// A **Missing folder** (ADR-0053): the Workspace's folder does not
+    /// exist, so nothing is started there. The frontend matches on the
+    /// `Folder not found: ` prefix (`FOLDER_MISSING_PREFIX` in ipc.ts).
+    #[error("Folder not found: {0}")]
+    FolderMissing(String),
 }
 
 impl Serialize for AbundioError {
@@ -63,6 +68,13 @@ mod tests {
         assert!(AbundioError::UpdateDownloading
             .to_string()
             .starts_with("E_UPDATE_DOWNLOADING:"));
+    }
+
+    /// The frontend recognises a Missing folder by this prefix.
+    #[test]
+    fn folder_missing_display_carries_its_prefix() {
+        let err = AbundioError::FolderMissing("/Volumes/ssd/repo".into());
+        assert_eq!(err.to_string(), "Folder not found: /Volumes/ssd/repo");
     }
 
     #[test]

@@ -1433,6 +1433,7 @@ pub fn run() {
             commands::workspace_delete,
             commands::workspace_reorder,
             commands::workspace_restore_set,
+            commands::workspace_missing_folders,
             commands::workspace_set_restore_opened,
             commands::workspace_set_restore_active,
             commands::pty_read_log,
