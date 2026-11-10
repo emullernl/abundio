@@ -9,6 +9,7 @@ import { FileSearchPalette } from "./components/FileSearchPalette";
 import { FileWindowCloseConfirmDialog } from "./components/FileWindow/FileWindowCloseConfirmDialog";
 import { FleetConsole } from "./components/FleetConsole/FleetConsole";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
+import { MissingFolderPanel } from "./components/MissingFolderPanel";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
@@ -428,6 +429,15 @@ export function App() {
 	);
 	const switchingWorkspaceId = useWorkspaceStore((s) => s.switchingWorkspaceId);
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	const missingFolderIds = useWorkspaceStore((s) => s.missingFolderIds);
+	// Active but not Opened: its folder is missing and nothing started
+	// (ADR-0053). The panel takes the place of its panes.
+	const missingActive =
+		activeWorkspaceId &&
+		missingFolderIds.has(activeWorkspaceId) &&
+		!openedWorkspaceIds.has(activeWorkspaceId)
+			? workspaces.find((w) => w.id === activeWorkspaceId)
+			: undefined;
 	const fleetConsoleOpen = useWindowUiStore((s) => s.fleetConsoleOpen);
 	const newTaskRequest = useWindowUiStore((s) => s.newTaskRequest);
 
@@ -1160,6 +1170,7 @@ export function App() {
 							</div>
 						</div>
 					)}
+					{missingActive && <MissingFolderPanel workspace={missingActive} />}
 					{workspaces
 						.filter((w) => openedWorkspaceIds.has(w.id))
 						.map((workspace) => {

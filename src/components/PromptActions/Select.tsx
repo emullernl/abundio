@@ -94,6 +94,34 @@ function SelectList({
 export interface SelectOption {
 	value: string;
 	label: string;
+	/** Listed but not choosable: skipped by the arrow keys, ignored on click,
+	 *  and drawn dimmed. */
+	disabled?: boolean;
+	/** Short text at the row's right edge, e.g. why it is disabled. */
+	hint?: string;
+}
+
+/** The nearest choosable row from `from` in direction `step` (±1), or
+ *  `from` itself when there is none that way. Exported for tests. */
+export function nextEnabledIndex(
+	options: readonly SelectOption[],
+	from: number,
+	step: 1 | -1,
+): number {
+	for (let i = from + step; i >= 0 && i < options.length; i += step) {
+		if (!options[i].disabled) return i;
+	}
+	return from;
+}
+
+/** The first (or last) choosable row, or 0 when none is. */
+function edgeEnabledIndex(
+	options: readonly SelectOption[],
+	edge: "first" | "last",
+): number {
+	const start = edge === "first" ? -1 : options.length;
+	const i = nextEnabledIndex(options, start, edge === "first" ? 1 : -1);
+	return i === start ? 0 : i;
 }
 
 interface SelectProps {
@@ -186,6 +214,7 @@ export function Select({
 
 	function commit(index: number) {
 		const option = options[index];
+		if (option?.disabled) return;
 		if (option) onChange(option.value);
 		close();
 	}
@@ -258,16 +287,16 @@ export function Select({
 	function onListKeyDown(e: React.KeyboardEvent) {
 		if (e.key === "ArrowDown") {
 			e.preventDefault();
-			setActive((i) => Math.min(i + 1, options.length - 1));
+			setActive((i) => nextEnabledIndex(options, i, 1));
 		} else if (e.key === "ArrowUp") {
 			e.preventDefault();
-			setActive((i) => Math.max(i - 1, 0));
+			setActive((i) => nextEnabledIndex(options, i, -1));
 		} else if (e.key === "Home") {
 			e.preventDefault();
-			setActive(0);
+			setActive(edgeEnabledIndex(options, "first"));
 		} else if (e.key === "End") {
 			e.preventDefault();
-			setActive(options.length - 1);
+			setActive(edgeEnabledIndex(options, "last"));
 		} else if (e.key === "Enter" || e.key === " ") {
 			e.preventDefault();
 			commit(active);
@@ -366,7 +395,7 @@ export function Select({
 					>
 						{options.map((option, i) => {
 							const isSelected = option.value === value;
-							const isActive = i === active;
+							const isActive = i === active && !option.disabled;
 							return (
 								// biome-ignore lint/a11y/useKeyWithClickEvents: the listbox owns the keyboard; rows are pointer targets only
 								<div
@@ -379,6 +408,7 @@ export function Select({
 									// `aria-activedescendant`.
 									tabIndex={-1}
 									aria-selected={isSelected}
+									aria-disabled={option.disabled || undefined}
 									className="w-full flex items-center gap-2 rounded-md text-left"
 									style={{
 										padding: "0 8px",
@@ -386,8 +416,12 @@ export function Select({
 										fontSize: 12,
 										color: isActive ? "var(--bg-primary)" : "var(--fg-primary)",
 										backgroundColor: isActive ? "var(--accent)" : "transparent",
+										opacity: option.disabled ? 0.5 : 1,
+										cursor: option.disabled ? "default" : "pointer",
 									}}
-									onMouseEnter={() => setActive(i)}
+									onMouseEnter={() => {
+										if (!option.disabled) setActive(i);
+									}}
 									onClick={() => commit(i)}
 								>
 									<span
@@ -397,6 +431,20 @@ export function Select({
 										{isSelected && <Check />}
 									</span>
 									<span className="truncate">{option.label}</span>
+									{option.hint && (
+										<span
+											className="shrink-0"
+											style={{
+												marginLeft: "auto",
+												fontSize: 11,
+												color: isActive
+													? "var(--bg-primary)"
+													: "var(--warning)",
+											}}
+										>
+											{option.hint}
+										</span>
+									)}
 								</div>
 							);
 						})}

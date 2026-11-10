@@ -83,6 +83,7 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	const close = () => useWindowUiStore.getState().closeNewTask();
 
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const missingFolderIds = useWorkspaceStore((s) => s.missingFolderIds);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
 	const focusedTileId = useWindowUiStore((s) => s.focusedTileId);
@@ -500,6 +501,11 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 								options={orderedWorkspaces.map((w) => ({
 									value: w.id,
 									label: w.name,
+									// Nothing may start in a Missing folder (ADR-0053).
+									...(missingFolderIds.has(w.id) && {
+										disabled: true,
+										hint: "Folder not found",
+									}),
 								}))}
 								onChange={(id) => {
 									setWorkspaceId(id);

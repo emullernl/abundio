@@ -22,6 +22,7 @@ import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
+import { useWorkspaceRemoveRequestStore } from "../../stores/workspaceRemoveRequestStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	AddWorktreeDialog,
@@ -179,6 +180,13 @@ export function WorkspaceList({
 
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+	// The Missing folder panel asks for this same confirm (ADR-0053).
+	const removeRequestId = useWorkspaceRemoveRequestStore((s) => s.requestedId);
+	useEffect(() => {
+		if (!removeRequestId) return;
+		setPendingDeleteId(removeRequestId);
+		useWorkspaceRemoveRequestStore.getState().clear();
+	}, [removeRequestId]);
 	const pendingWorkspace = pendingDeleteId
 		? workspaces.find((w) => w.id === pendingDeleteId)
 		: null;
