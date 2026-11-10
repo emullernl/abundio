@@ -196,8 +196,9 @@ export const workspaces = {
 
 	reorder: (ids: string[]) => invoke<void>("workspace_reorder", { ids }),
 
-	/** A Profile's **Workspace restore** list (ADR-0052). Rust leaves out,
-	 *  and forgets, Workspaces whose folder is gone. */
+	/** A Profile's **Workspace restore** list (ADR-0052). Rust leaves out
+	 *  Workspaces whose folder is missing right now, but keeps them on the
+	 *  list, so they come back once the folder does. */
 	restoreSet: (profileId: string) =>
 		invoke<WorkspaceRestoreSet>("workspace_restore_set", { profileId }),
 

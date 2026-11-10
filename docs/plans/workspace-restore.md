@@ -16,7 +16,7 @@ The Opened set lives only in memory (`usePtyActivityStore.openedWorkspaceIds`), 
 | Terminals | All restored Workspaces spawn their PTYs right away. Agent panes relaunch and resume (ADR-0050). |
 | Saving | Every change, straight to SQLite. Crash-safe. Nothing is done at quit. |
 | What removes a Workspace from the list | Only the user closing it, or deleting it (including worktree removal). Switch Profile and closing a Window keep it. |
-| Missing folder | Left unopened and taken off the list. If it was the Active one, the first restored Workspace in sidebar order becomes Active. No dialog. |
+| Missing folder | Left unopened but kept on the list, so it comes back once the folder does (an external drive, network share or encrypted volume mounted late). If it was the Active one, the first restored Workspace in sidebar order becomes Active. No dialog. Changed after the PR review: the first version forgot it for good. |
 | View | Always the Workspace view, never the Fleet Console. |
 | Setting | "Reopen workspaces when a Profile opens", on by default. Off: nothing is reopened in any case. The list keeps being saved while off, so turning it on again picks up the latest state. |
 | Name | "Workspace restore". Not "session restore", which clashes with Session resume. |
@@ -33,7 +33,7 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 - `workspace_store.rs`:
   - `set_restore_opened(workspace_id, bool)`.
   - `set_restore_active(profile_id, Option<workspace_id>)`.
-  - `restore_set(profile_id) -> RestoreSet { opened: Vec<String>, active: Option<String> }`. Returns only Workspaces of that Profile whose `root_folder` is an existing directory. In the same call it clears `restore_opened` on the ones whose folder is gone, and clears `restore_active_workspace_id` if it no longer names a returned Workspace. Order: sidebar `position`.
+  - `restore_set(profile_id) -> RestoreSet { opened: Vec<String>, active: Option<String> }`. Returns only Workspaces of that Profile whose `root_folder` is an existing directory. Missing folders are left out but keep `restore_opened`; the folders are checked with the lock released. It clears `restore_active_workspace_id` if it no longer names a returned Workspace. Order: sidebar `position`.
 - Commands in `commands.rs`: `workspace_restore_set`, `workspace_set_restore_opened`, `workspace_set_restore_active`. All `Result<_, AbundioError>`.
 - Tests (in-memory DB): round-trip; missing folder is dropped and cleared; a Workspace of another Profile is never returned; stale active id is cleared; deleting a Workspace or Profile leaves nothing behind.
 
@@ -75,4 +75,4 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
   - `markWorkspaceOpened` remembers only on first add.
   - `closeWorkspace` forgets by default and keeps with `{ forget: false }`; `switchProfile` keeps.
   - `loadWorkspaces` restores Opened + Active when on; restores nothing when off; does not override a non-null Active.
-- Runtime (real app, per the "verify runtime" rule): open three Workspaces with an agent in one, quit with Cmd+Q, relaunch → all three Opened, same Active, agent resumed. Repeat with `kill -9` instead of quit. Switch Profile away and back. Rename a Workspace's folder, relaunch → it is unopened and does not come back after restoring the folder name.
+- Runtime (real app, per the "verify runtime" rule): open three Workspaces with an agent in one, quit with Cmd+Q, relaunch → all three Opened, same Active, agent resumed. Repeat with `kill -9` instead of quit. Switch Profile away and back. Rename a Workspace's folder, relaunch → it is unopened; rename it back, relaunch → it is reopened.

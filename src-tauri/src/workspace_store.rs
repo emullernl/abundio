@@ -517,9 +517,12 @@ impl WorkspaceStore {
         Ok(())
     }
 
-    /// The Profile's restore list. A Workspace whose folder is no longer a
-    /// directory is left out and taken off the list for good; a remembered
-    /// Active id that is not in the returned list is cleared.
+    /// The Profile's restore list. A Workspace whose folder is not a
+    /// directory right now is left out of this restore but **stays on the
+    /// list**: an external drive, network share or encrypted volume may simply
+    /// not be mounted yet, and it comes back once the folder does. Only the
+    /// user closing a Workspace takes it off. A remembered Active id that is
+    /// not in the returned list is cleared.
     pub fn restore_set(&self, profile_id: &str) -> Result<RestoreSet, AbundioError> {
         self.restore_set_with(profile_id, |p| std::path::Path::new(p).is_dir())
     }
@@ -541,18 +544,12 @@ impl WorkspaceStore {
         };
         // Checked with the lock released: on a hung network mount `stat` can
         // block for seconds, and every other WorkspaceStore IPC would wait.
-        let (opened, missing): (Vec<_>, Vec<_>) =
-            rows.into_iter().partition(|(_, folder)| folder_exists(folder));
-        let opened: Vec<String> = opened.into_iter().map(|(id, _)| id).collect();
+        let opened: Vec<String> = rows
+            .into_iter()
+            .filter(|(_, folder)| folder_exists(folder))
+            .map(|(id, _)| id)
+            .collect();
         let conn = self.conn.lock().unwrap();
-        for (id, folder) in missing {
-            // Guarded on the folder, in case the Workspace was repointed while
-            // the lock was released.
-            conn.execute(
-                "UPDATE workspaces SET restore_opened = 0 WHERE id = ?1 AND root_folder = ?2",
-                rusqlite::params![id, folder],
-            )?;
-        }
         let saved: Option<String> = conn
             .query_row(
                 "SELECT restore_active_workspace_id FROM profiles WHERE id = ?1",
@@ -1026,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_set_drops_and_forgets_missing_folders() {
+    fn restore_set_skips_missing_folders_until_they_come_back() {
         let store = test_store();
         let a = store.create("a", "/a", DEFAULT_PID).unwrap().workspace.id;
         let gone = store.create("g", "/gone", DEFAULT_PID).unwrap().workspace.id;
@@ -1036,10 +1033,10 @@ mod tests {
         let set = store.restore_set_with(DEFAULT_PID, |p| p != "/gone").unwrap();
         assert_eq!(set.opened, vec![a.clone()]);
         assert_eq!(set.active, None);
-        // Forgotten for good: the folder coming back does not bring it back.
+        // Still on the list: the folder coming back (a drive mounted late)
+        // brings the Workspace back too.
         let set = store.restore_set_with(DEFAULT_PID, |_| true).unwrap();
-        assert_eq!(set.opened, vec![a]);
-        assert_eq!(set.active, None);
+        assert_eq!(set.opened, vec![a, gone]);
     }
 
     /// A hung network mount must not stall every other store call
