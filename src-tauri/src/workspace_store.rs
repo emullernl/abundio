@@ -202,6 +202,15 @@ impl GroupBy {
     }
 }
 
+/// A Profile's **Workspace restore** list (ADR-0052), as `restore_set`
+/// returns it: only Workspaces whose folder still exists, in sidebar order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreSet {
+    pub opened: Vec<String>,
+    pub active: Option<String>,
+}
+
 pub struct WorkspaceStore {
     pub conn: Mutex<Connection>,
 }
@@ -475,6 +484,89 @@ impl WorkspaceStore {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    // ── Workspace restore (ADR-0052) ──
+
+    /// Puts a Workspace on (or takes it off) its Profile's restore list.
+    pub fn set_restore_opened(&self, workspace_id: &str, opened: bool) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE workspaces SET restore_opened = ?1 WHERE id = ?2",
+            rusqlite::params![opened as i32, workspace_id],
+        )?;
+        Ok(())
+    }
+
+    /// Remembers which Workspace was Active in a Profile. Ignored unless the
+    /// Workspace belongs to that Profile.
+    pub fn set_restore_active(&self, profile_id: &str, workspace_id: Option<&str>) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        match workspace_id {
+            Some(wid) => conn.execute(
+                "UPDATE profiles SET restore_active_workspace_id = ?2
+                 WHERE id = ?1
+                   AND EXISTS (SELECT 1 FROM workspaces WHERE id = ?2 AND profile_id = ?1)",
+                rusqlite::params![profile_id, wid],
+            )?,
+            None => conn.execute(
+                "UPDATE profiles SET restore_active_workspace_id = NULL WHERE id = ?1",
+                [profile_id],
+            )?,
+        };
+        Ok(())
+    }
+
+    /// The Profile's restore list. A Workspace whose folder is no longer a
+    /// directory is left out and taken off the list for good; a remembered
+    /// Active id that is not in the returned list is cleared.
+    pub fn restore_set(&self, profile_id: &str) -> Result<RestoreSet, AbundioError> {
+        self.restore_set_with(profile_id, |p| std::path::Path::new(p).is_dir())
+    }
+
+    fn restore_set_with(
+        &self,
+        profile_id: &str,
+        folder_exists: impl Fn(&str) -> bool,
+    ) -> Result<RestoreSet, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let rows: Vec<(String, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, root_folder FROM workspaces
+                 WHERE profile_id = ?1 AND restore_opened = 1
+                 ORDER BY position ASC",
+            )?;
+            let mapped = stmt.query_map([profile_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            mapped.collect::<Result<_, _>>()?
+        };
+        let mut opened = Vec::new();
+        for (id, folder) in rows {
+            if folder_exists(&folder) {
+                opened.push(id);
+            } else {
+                conn.execute("UPDATE workspaces SET restore_opened = 0 WHERE id = ?1", [&id])?;
+            }
+        }
+        let saved: Option<String> = conn
+            .query_row(
+                "SELECT restore_active_workspace_id FROM profiles WHERE id = ?1",
+                [profile_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        let active = match saved {
+            Some(id) if opened.contains(&id) => Some(id),
+            Some(_) => {
+                conn.execute(
+                    "UPDATE profiles SET restore_active_workspace_id = NULL WHERE id = ?1",
+                    [profile_id],
+                )?;
+                None
+            }
+            None => None,
+        };
+        Ok(RestoreSet { opened, active })
     }
 
     // ── Agent telemetry ──
@@ -897,6 +989,92 @@ mod tests {
     }
 
     const DEFAULT_PID: &str = "00000000-0000-0000-0000-000000000001";
+
+    // ── Workspace restore (ADR-0052) ──
+
+    fn add_profile(store: &WorkspaceStore, id: &str) {
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO profiles (id, name) VALUES (?1, ?1)", [id])
+            .unwrap();
+    }
+
+    #[test]
+    fn restore_set_round_trips_in_sidebar_order() {
+        let store = test_store();
+        let a = store.create("a", "/a", DEFAULT_PID).unwrap().workspace.id;
+        let b = store.create("b", "/b", DEFAULT_PID).unwrap().workspace.id;
+        let c = store.create("c", "/c", DEFAULT_PID).unwrap().workspace.id;
+        store.set_restore_opened(&c, true).unwrap();
+        store.set_restore_opened(&a, true).unwrap();
+        store.set_restore_active(DEFAULT_PID, Some(&c)).unwrap();
+        let set = store.restore_set_with(DEFAULT_PID, |_| true).unwrap();
+        assert_eq!(set.opened, vec![a.clone(), c.clone()]);
+        assert_eq!(set.active, Some(c.clone()));
+        store.set_restore_opened(&a, false).unwrap();
+        let set = store.restore_set_with(DEFAULT_PID, |_| true).unwrap();
+        assert_eq!(set.opened, vec![c]);
+        let _ = b;
+    }
+
+    #[test]
+    fn restore_set_drops_and_forgets_missing_folders() {
+        let store = test_store();
+        let a = store.create("a", "/a", DEFAULT_PID).unwrap().workspace.id;
+        let gone = store.create("g", "/gone", DEFAULT_PID).unwrap().workspace.id;
+        store.set_restore_opened(&a, true).unwrap();
+        store.set_restore_opened(&gone, true).unwrap();
+        store.set_restore_active(DEFAULT_PID, Some(&gone)).unwrap();
+        let set = store.restore_set_with(DEFAULT_PID, |p| p != "/gone").unwrap();
+        assert_eq!(set.opened, vec![a.clone()]);
+        assert_eq!(set.active, None);
+        // Forgotten for good: the folder coming back does not bring it back.
+        let set = store.restore_set_with(DEFAULT_PID, |_| true).unwrap();
+        assert_eq!(set.opened, vec![a]);
+        assert_eq!(set.active, None);
+    }
+
+    #[test]
+    fn restore_set_is_scoped_to_its_profile() {
+        let store = test_store();
+        add_profile(&store, "p2");
+        let mine = store.create("m", "/m", DEFAULT_PID).unwrap().workspace.id;
+        let theirs = store.create("t", "/t", "p2").unwrap().workspace.id;
+        store.set_restore_opened(&mine, true).unwrap();
+        store.set_restore_opened(&theirs, true).unwrap();
+        // Another Profile's Workspace cannot become this Profile's Active.
+        store.set_restore_active(DEFAULT_PID, Some(&theirs)).unwrap();
+        let set = store.restore_set_with(DEFAULT_PID, |_| true).unwrap();
+        assert_eq!(set.opened, vec![mine]);
+        assert_eq!(set.active, None);
+        assert_eq!(store.restore_set_with("p2", |_| true).unwrap().opened, vec![theirs]);
+    }
+
+    #[test]
+    fn deleting_the_active_workspace_clears_it_on_read() {
+        let store = test_store();
+        let a = store.create("a", "/a", DEFAULT_PID).unwrap().workspace.id;
+        let b = store.create("b", "/b", DEFAULT_PID).unwrap().workspace.id;
+        store.set_restore_opened(&a, true).unwrap();
+        store.set_restore_opened(&b, true).unwrap();
+        store.set_restore_active(DEFAULT_PID, Some(&b)).unwrap();
+        store.delete(&b).unwrap();
+        let set = store.restore_set_with(DEFAULT_PID, |_| true).unwrap();
+        assert_eq!(set, RestoreSet { opened: vec![a], active: None });
+        let saved: Option<String> = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT restore_active_workspace_id FROM profiles WHERE id = ?1",
+                [DEFAULT_PID],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(saved, None);
+    }
 
     // ── App-global settings ──
 
