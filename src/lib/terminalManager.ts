@@ -47,6 +47,7 @@ import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
 import { targetPaneId } from "./fleetFocus";
 import { agentHooks, pty } from "./ipc";
+import { folderMissingReason } from "./missingFolder";
 import {
 	decrstOutcome,
 	decsetOutcome,
@@ -1523,6 +1524,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		pty.write(currentPtyId, data);
 	});
 
+	// Set when Rust refused the spawn for a **Missing folder** (ADR-0053).
+	// Nothing runs: the pane prints why and shows as exited, and Restart
+	// tries again (the pending agent, if any, is kept for that retry).
+	let refusedReason: string | null = null;
+
 	// Register all event listeners and spawn PTY in parallel — each is an async
 	// IPC round-trip, so running them concurrently cuts init time significantly.
 	const [unlistenOutput, unlistenActivity, unlistenStatus, unlistenHook] =
@@ -1985,19 +1991,36 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							},
 							pendingTask,
 							managed,
-						),
+						).catch((err) => {
+							const reason = folderMissingReason(err);
+							if (!reason) throw err;
+							refusedReason = reason;
+							return currentPtyId;
+						}),
 					]
 				: []),
 		]);
+
+	if (refusedReason) {
+		managed.startupBuffer = null;
+		managed.startupShellReady = true;
+		managed.awaitingTaskStart = false;
+		term.write(`\x1b[33m${stripControlChars(refusedReason)}\x1b[0m\r\n`);
+		setPtyStatus(currentPtyId, { type: "exited", code: null });
+	}
 
 	// Safety timeout: flush the startup buffer even if shell integration
 	// hooks never fire (e.g. custom shell without integration support).
 	// The flush also emits the parked scrollback, so this doubles as the
 	// fallback for scrollback restoration on shells without integration.
 	if (isNewPty) {
-		setTimeout(() => {
-			flushStartupBuffer(managed);
-		}, 3000);
+		// No flush for a refused spawn: there is no shell to type a pending
+		// agent into.
+		if (!refusedReason) {
+			setTimeout(() => {
+				flushStartupBuffer(managed);
+			}, 3000);
+		}
 	} else {
 		// Reconnection: the shell is already running so there's no startup
 		// buffer to flush. Write parked scrollback immediately — there's no
