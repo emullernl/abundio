@@ -21,6 +21,7 @@ import {
 	getWindowBlurredMs,
 	NOTIFICATION_BLUR_THRESHOLD_MS,
 } from "../lib/windowFocus";
+import { rememberOpened } from "../lib/workspaceRestore";
 import { currentNotificationTitle } from "./profileStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
@@ -624,6 +625,10 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		markWorkspaceOpened: (workspaceId) => {
 			const s = get();
 			if (s.openedWorkspaceIds.has(workspaceId)) return;
+			// Every way into Opened passes here (sidebar, Workspace cycle, Fleet
+			// Console, New task, a new Workspace), so this is the one place that
+			// puts a Workspace on its Profile's restore list (ADR-0052).
+			rememberOpened(workspaceId);
 			set({
 				openedWorkspaceIds: new Set([...s.openedWorkspaceIds, workspaceId]),
 			});

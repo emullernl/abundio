@@ -195,7 +195,25 @@ export const workspaces = {
 	delete: (id: string) => invoke<void>("workspace_delete", { id }),
 
 	reorder: (ids: string[]) => invoke<void>("workspace_reorder", { ids }),
+
+	/** A Profile's **Workspace restore** list (ADR-0052). Rust leaves out
+	 *  Workspaces whose folder is missing right now, but keeps them on the
+	 *  list, so they come back once the folder does. */
+	restoreSet: (profileId: string) =>
+		invoke<WorkspaceRestoreSet>("workspace_restore_set", { profileId }),
+
+	setRestoreOpened: (id: string, opened: boolean) =>
+		invoke<void>("workspace_set_restore_opened", { id, opened }),
+
+	setRestoreActive: (profileId: string, id: string | null) =>
+		invoke<void>("workspace_set_restore_active", { profileId, id }),
 };
+
+/** See `workspaces.restoreSet`. `opened` is in sidebar order. */
+export interface WorkspaceRestoreSet {
+	opened: string[];
+	active: string | null;
+}
 
 export const notes = {
 	/** Fetch a workspace's note (TipTap JSON string). `""` means no note yet. */

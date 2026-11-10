@@ -59,6 +59,9 @@ _Avoid_: selected workspace, current workspace, focused workspace
 **Opened workspace**: A Workspace the user has activated at least once *in its Window*, or opened from the **Fleet Console** (which opens without activating), and has not closed. Tracked per-Window by `usePtyActivityStore.openedWorkspaceIds`. PTY processes and file watchers stay alive for these even when not the Active workspace. In the **Left sidebar**, a Workspace that is *not* Opened has its name drawn dimmer (`--fg-unopened`, most of the way from primary to secondary text), so it reads as inactive.
 _Avoid_: loaded workspace, mounted workspace
 
+**Workspace restore**: A **Profile** coming back as it was left: when it is opened in a Window (at app start, by Switch Profile, or in a new Window), every Workspace that was Opened when it was last open is Opened again, and the one that was Active is Active again. It survives any stop, including a crash. A Workspace whose folder is missing is left unopened but stays remembered, so it comes back once the folder does (a drive mounted late); only closing it yourself forgets it. The Window always returns in the **Workspace view**. Controlled by one setting; with it off, a Profile always opens with nothing Opened.
+_Avoid_: session restore (clashes with an Agent's **Session resume**)
+
 **Background workspace**: An Opened workspace that is not currently the Active workspace. Not a separate state — derived as `openedWorkspaceIds \ {activeWorkspaceId}`.
 
 **Dormant workspace**: A Workspace in the **Active profile** that is not Opened in *this* Window but whose saved layout remembers at least one Agent Abundio still knows (one since removed would come back as a plain shell) — so opening it brings those Agents back (they relaunch). Nothing is running: it has no PTYs. Per-Window like Opened. A closed Workspace that remembers no Agent is not Dormant. Derived, never stored.

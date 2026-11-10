@@ -11,6 +11,9 @@ vi.mock("../../lib/ipc", () => ({
 		create: vi.fn(),
 		delete: vi.fn(() => Promise.resolve()),
 		reorder: vi.fn(() => Promise.resolve()),
+		restoreSet: vi.fn(() => Promise.resolve({ opened: [], active: null })),
+		setRestoreOpened: vi.fn(() => Promise.resolve()),
+		setRestoreActive: vi.fn(() => Promise.resolve()),
 	},
 	tabs: {
 		create: vi.fn(),
@@ -1007,6 +1010,143 @@ describe("workspaceStore", () => {
 			expect(fileWindows.close).toHaveBeenCalledWith(["workspace-1"]);
 			// Closed, not deleted — the workspace stays in the list.
 			expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
+		});
+	});
+
+	describe("Workspace restore (ADR-0052)", () => {
+		const three = () => [
+			makeWorkspace({
+				id: "a",
+				tabs: [makeTab({ id: "ta", workspaceId: "a" })],
+			}),
+			makeWorkspace({
+				id: "b",
+				tabs: [makeTab({ id: "tb", workspaceId: "b" })],
+			}),
+			makeWorkspace({
+				id: "c",
+				tabs: [makeTab({ id: "tc", workspaceId: "c" })],
+			}),
+		];
+
+		beforeEach(() => {
+			useSettingsStore.setState({ reopenWorkspacesOnOpen: true });
+			vi.mocked(workspaces.restoreSet).mockClear();
+			vi.mocked(workspaces.setRestoreOpened).mockClear();
+			vi.mocked(workspaces.setRestoreActive).mockClear();
+		});
+
+		it("reopens the remembered Workspaces and makes the Active one Active", async () => {
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			vi.mocked(workspaces.restoreSet).mockResolvedValueOnce({
+				opened: ["a", "c"],
+				active: "c",
+			});
+			await useWorkspaceStore.getState().loadWorkspaces();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("c");
+			const marked = markWorkspaceOpened.mock.calls.map((c) => c[0]);
+			expect(new Set(marked)).toEqual(new Set(["a", "c"]));
+			// The Active one is opened first, so its terminals spawn first.
+			expect(marked[0]).toBe("c");
+		});
+
+		it("falls back to the first restored Workspace when the Active one did not come back", async () => {
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			vi.mocked(workspaces.restoreSet).mockResolvedValueOnce({
+				opened: ["b", "c"],
+				active: null,
+			});
+			await useWorkspaceStore.getState().loadWorkspaces();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("b");
+		});
+
+		it("ignores ids the loaded list does not contain", async () => {
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			vi.mocked(workspaces.restoreSet).mockResolvedValueOnce({
+				opened: ["gone"],
+				active: "gone",
+			});
+			await useWorkspaceStore.getState().loadWorkspaces();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
+			expect(markWorkspaceOpened).not.toHaveBeenCalled();
+		});
+
+		it("restores nothing when the setting is off", async () => {
+			useSettingsStore.setState({ reopenWorkspacesOnOpen: false });
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			await useWorkspaceStore.getState().loadWorkspaces();
+			expect(workspaces.restoreSet).not.toHaveBeenCalled();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
+		});
+
+		it("does not override a Workspace that is already Active", async () => {
+			useWorkspaceStore.setState({ activeWorkspaceId: "a" });
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			await useWorkspaceStore.getState().loadWorkspaces();
+			expect(workspaces.restoreSet).not.toHaveBeenCalled();
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("a");
+		});
+
+		it("gives way to a Workspace the user picked while the read was in flight", async () => {
+			let resolve: (v: { opened: string[]; active: string | null }) => void =
+				() => {};
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			vi.mocked(workspaces.restoreSet).mockReturnValueOnce(
+				new Promise((r) => {
+					resolve = r;
+				}),
+			);
+			const loading = useWorkspaceStore.getState().loadWorkspaces();
+			await vi.waitFor(() => expect(workspaces.restoreSet).toHaveBeenCalled());
+			useWorkspaceStore.getState().setActiveWorkspace("b");
+			markWorkspaceOpened.mockClear();
+			resolve({ opened: ["a", "c"], active: "c" });
+			await loading;
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("b");
+			expect(markWorkspaceOpened).not.toHaveBeenCalled();
+		});
+
+		it("gives way when the Profile changed while the read was in flight", async () => {
+			const { useProfileStore } = await import("../profileStore");
+			const before = useProfileStore.getState().activeProfileId;
+			let resolve: (v: { opened: string[]; active: string | null }) => void =
+				() => {};
+			vi.mocked(workspaces.list).mockResolvedValueOnce(three());
+			vi.mocked(workspaces.restoreSet).mockReturnValueOnce(
+				new Promise((r) => {
+					resolve = r;
+				}),
+			);
+			const loading = useWorkspaceStore.getState().loadWorkspaces();
+			await vi.waitFor(() => expect(workspaces.restoreSet).toHaveBeenCalled());
+			useProfileStore.setState({ activeProfileId: "p-other" });
+			resolve({ opened: ["a"], active: "a" });
+			await loading;
+			useProfileStore.setState({ activeProfileId: before });
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
+			expect(markWorkspaceOpened).not.toHaveBeenCalled();
+		});
+
+		it("remembers the Active workspace", async () => {
+			useWorkspaceStore.setState({ workspaces: three() });
+			useWorkspaceStore.getState().setActiveWorkspace("b");
+			// Writes are queued per row, so they start a microtask later.
+			await vi.waitFor(() =>
+				expect(workspaces.setRestoreActive).toHaveBeenCalledWith(
+					expect.any(String),
+					"b",
+				),
+			);
+		});
+
+		it("closing forgets by default, and keeps with { forget: false }", async () => {
+			useWorkspaceStore.setState({ workspaces: three() });
+			await useWorkspaceStore.getState().closeWorkspace("a");
+			expect(workspaces.setRestoreOpened).toHaveBeenCalledWith("a", false);
+			vi.mocked(workspaces.setRestoreOpened).mockClear();
+			await useWorkspaceStore.getState().closeWorkspace("b", { forget: false });
+			await new Promise((r) => setTimeout(r, 0));
+			expect(workspaces.setRestoreOpened).not.toHaveBeenCalled();
 		});
 	});
 

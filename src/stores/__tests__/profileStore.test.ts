@@ -271,7 +271,8 @@ describe("switchProfile", () => {
 		await useProfileStore.getState().switchProfile("p-work");
 		expect(order).toEqual(["claim", "close"]);
 		expect(profilesApi.setActiveProfileId).toHaveBeenCalledWith("p-work");
-		expect(closeWorkspace).toHaveBeenCalledWith("ws-1");
+		// Closed but kept on the old Profile's restore list (ADR-0052).
+		expect(closeWorkspace).toHaveBeenCalledWith("ws-1", { forget: false });
 		expect(loadWorkspaces).toHaveBeenCalled();
 		expect(useProfileStore.getState().activeProfileId).toBe("p-work");
 	});

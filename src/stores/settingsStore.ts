@@ -70,6 +70,9 @@ interface SettingsState {
 	/** **Session resume** (ADR-0050): relaunched Agents reopen their last
 	 *  conversation instead of starting fresh. */
 	resumeAgentSessions: boolean;
+	/** **Workspace restore** (ADR-0052): a Profile reopens the Workspaces it
+	 *  had Opened, and its Active one, whenever it opens in a Window. */
+	reopenWorkspacesOnOpen: boolean;
 	/** Whether the Action bar renders at the bottom of agent panes. Off hides
 	 *  the strip everywhere without deleting anyone's Prompt actions — the
 	 *  Command palette still reaches them. A preference, which is why it lives
@@ -166,6 +169,7 @@ interface SettingsState {
 	setSmartImageDrop: (enabled: boolean) => void;
 	setAppIconBadgeEnabled: (enabled: boolean) => void;
 	setResumeAgentSessions: (enabled: boolean) => void;
+	setReopenWorkspacesOnOpen: (enabled: boolean) => void;
 	setFocusSweep: (enabled: boolean) => void;
 	setShowActionBar: (enabled: boolean) => void;
 	setGitChangesTreeView: (enabled: boolean) => void;
@@ -231,6 +235,7 @@ export const PERSISTED_KEYS = [
 	"smartImageDrop",
 	"appIconBadgeEnabled",
 	"resumeAgentSessions",
+	"reopenWorkspacesOnOpen",
 	"showActionBar",
 	"gitChangesTreeView",
 	"focusSweep",
@@ -281,6 +286,7 @@ const PERSISTED_DEFAULTS: {
 	smartImageDrop: boolean;
 	appIconBadgeEnabled: boolean;
 	resumeAgentSessions: boolean;
+	reopenWorkspacesOnOpen: boolean;
 	showActionBar: boolean;
 	gitChangesTreeView: boolean;
 	focusSweep: boolean;
@@ -319,6 +325,7 @@ const PERSISTED_DEFAULTS: {
 		smartImageDrop: true,
 		appIconBadgeEnabled: true,
 		resumeAgentSessions: true,
+		reopenWorkspacesOnOpen: true,
 		showActionBar: true,
 		gitChangesTreeView: true,
 		focusSweep: true,
@@ -441,6 +448,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.resumeAgentSessions === "boolean"
 					? s.resumeAgentSessions
 					: defaults.resumeAgentSessions,
+			reopenWorkspacesOnOpen:
+				typeof s.reopenWorkspacesOnOpen === "boolean"
+					? s.reopenWorkspacesOnOpen
+					: defaults.reopenWorkspacesOnOpen,
 			showActionBar:
 				typeof s.showActionBar === "boolean"
 					? s.showActionBar
@@ -615,6 +626,7 @@ export const useSettingsStore = create<SettingsState>()(
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			appIconBadgeEnabled: PERSISTED_DEFAULTS.appIconBadgeEnabled,
 			resumeAgentSessions: PERSISTED_DEFAULTS.resumeAgentSessions,
+			reopenWorkspacesOnOpen: PERSISTED_DEFAULTS.reopenWorkspacesOnOpen,
 			showActionBar: PERSISTED_DEFAULTS.showActionBar,
 			gitChangesTreeView: PERSISTED_DEFAULTS.gitChangesTreeView,
 			focusSweep: PERSISTED_DEFAULTS.focusSweep,
@@ -806,6 +818,8 @@ export const useSettingsStore = create<SettingsState>()(
 				set({ appIconBadgeEnabled }),
 			setResumeAgentSessions: (resumeAgentSessions) =>
 				set({ resumeAgentSessions }),
+			setReopenWorkspacesOnOpen: (reopenWorkspacesOnOpen) =>
+				set({ reopenWorkspacesOnOpen }),
 			setShowActionBar: (showActionBar) => set({ showActionBar }),
 			setGitChangesTreeView: (gitChangesTreeView) =>
 				set({ gitChangesTreeView }),
@@ -864,7 +878,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 16,
+			version: 17,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -969,6 +983,11 @@ export const useSettingsStore = create<SettingsState>()(
 				// default-true key, as v15.
 				if (version < 16) {
 					state = { resumeAgentSessions: true, ...state };
+				}
+				// v17: Workspace restore (default on, ADR-0052). Additive
+				// default-true key, as v15.
+				if (version < 17) {
+					state = { reopenWorkspacesOnOpen: true, ...state };
 				}
 				// v7: app-global PR poller (ADR-0019). Additive default keys;
 				// PERSISTED_DEFAULTS + merge already supply them — this only

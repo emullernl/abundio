@@ -293,6 +293,21 @@ describe("store actions", () => {
 		expect(usePtyActivityStore.getState().titles).toBe(stateBefore.titles);
 	});
 
+	it("markWorkspaceOpened remembers a Workspace only when it is new to the set (ADR-0052)", async () => {
+		const { workspaces } = await import("../../lib/ipc");
+		const spy = vi
+			.spyOn(workspaces, "setRestoreOpened")
+			.mockResolvedValue(undefined);
+		usePtyActivityStore.getState().markWorkspaceOpened("r1");
+		usePtyActivityStore.getState().markWorkspaceOpened("r1");
+		// Writes are queued per row, so they start a microtask later.
+		await vi.waitFor(() => expect(spy).toHaveBeenCalled());
+		await new Promise((r) => setTimeout(r, 0));
+		expect(spy).toHaveBeenCalledTimes(1);
+		expect(spy).toHaveBeenCalledWith("r1", true);
+		spy.mockRestore();
+	});
+
 	it("markWorkspaceOpened adds to set", () => {
 		usePtyActivityStore.getState().markWorkspaceOpened("s1");
 		expect(usePtyActivityStore.getState().openedWorkspaceIds.has("s1")).toBe(

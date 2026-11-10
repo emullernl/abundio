@@ -218,7 +218,9 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 		);
 		const wsStore = useWorkspaceStore.getState();
 		for (const wid of openedIds) {
-			await wsStore.closeWorkspace(wid).catch(() => {});
+			// Kept on the old Profile's restore list: it reopens when that
+			// Profile is opened again (ADR-0052).
+			await wsStore.closeWorkspace(wid, { forget: false }).catch(() => {});
 		}
 
 		set({ activeProfileId: id });

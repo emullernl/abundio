@@ -377,6 +377,33 @@ pub async fn workspace_delete(
     store.delete(&id)
 }
 
+/// A Profile's **Workspace restore** list (ADR-0052).
+#[tauri::command]
+pub async fn workspace_restore_set(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+) -> Result<crate::workspace_store::RestoreSet, AbundioError> {
+    store.restore_set(&profile_id)
+}
+
+#[tauri::command]
+pub async fn workspace_set_restore_opened(
+    store: State<'_, WorkspaceStore>,
+    id: String,
+    opened: bool,
+) -> Result<(), AbundioError> {
+    store.set_restore_opened(&id, opened)
+}
+
+#[tauri::command]
+pub async fn workspace_set_restore_active(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    id: Option<String>,
+) -> Result<(), AbundioError> {
+    store.set_restore_active(&profile_id, id.as_deref())
+}
+
 #[tauri::command]
 pub async fn workspace_reorder(
     store: State<'_, WorkspaceStore>,
