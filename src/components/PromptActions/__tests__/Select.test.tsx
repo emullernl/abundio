@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Select } from "../Select";
+import { nextEnabledIndex, Select } from "../Select";
 
 const OPTIONS = [
 	{ value: "text", label: "text" },
@@ -51,6 +51,34 @@ describe("Select", () => {
 	function openWith(trigger: HTMLButtonElement) {
 		act(() => trigger.click());
 	}
+
+	it("ignores a click on a disabled option and shows its hint", () => {
+		act(() => {
+			root.render(
+				<Select
+					value="a"
+					options={[
+						{ value: "a", label: "a" },
+						{
+							value: "b",
+							label: "b",
+							disabled: true,
+							hint: "Folder not found",
+						},
+					]}
+					onChange={onChange}
+					aria-label="Workspace"
+				/>,
+			);
+		});
+		act(() => (container.querySelector("button") as HTMLButtonElement).click());
+		const row = options()[1];
+		expect(row.getAttribute("aria-disabled")).toBe("true");
+		expect(row.textContent).toContain("Folder not found");
+		act(() => row.click());
+		expect(onChange).not.toHaveBeenCalled();
+		expect(listbox()).not.toBeNull();
+	});
 
 	it("shows the selected option's label when closed", () => {
 		const trigger = render("number");
@@ -292,5 +320,23 @@ describe("Select", () => {
 			});
 			expect(ref.current).toBe(container.querySelector("button"));
 		});
+	});
+});
+
+describe("nextEnabledIndex", () => {
+	const opts = [
+		{ value: "a", label: "a" },
+		{ value: "b", label: "b", disabled: true },
+		{ value: "c", label: "c" },
+	];
+
+	it("steps over disabled rows", () => {
+		expect(nextEnabledIndex(opts, 0, 1)).toBe(2);
+		expect(nextEnabledIndex(opts, 2, -1)).toBe(0);
+	});
+
+	it("stays put when nothing choosable lies that way", () => {
+		expect(nextEnabledIndex(opts, 2, 1)).toBe(2);
+		expect(nextEnabledIndex(opts, 0, -1)).toBe(0);
 	});
 });

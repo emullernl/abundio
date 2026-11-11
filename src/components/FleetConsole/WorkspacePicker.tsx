@@ -14,6 +14,7 @@ import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { MissingFolderMark } from "../Sidebar/MissingFolderMark";
 
 /**
  * Open and close Workspaces from the **Fleet Console**. Opening one adds its
@@ -126,6 +127,8 @@ export function openInBackground(workspaceId: string): void {
 	if (!ws) return;
 	const activity = usePtyActivityStore.getState();
 	if (activity.openedWorkspaceIds.has(workspaceId)) return;
+	// No tiles for a Workspace that cannot open (ADR-0053).
+	if (useWorkspaceStore.getState().missingFolderIds.has(workspaceId)) return;
 	activity.markWorkspaceOpened(workspaceId);
 	const known = new Set(useSettingsStore.getState().agents.map((a) => a.id));
 	useWindowUiStore.getState().expectFleetTiles(relaunchablePanes(ws, known));
@@ -152,6 +155,7 @@ function WorkspaceList({
 }) {
 	useEscapeKey(onClose);
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
+	const missingFolderIds = useWorkspaceStore((s) => s.missingFolderIds);
 	const gitById = useWorkspaceGitStore((s) => s.byWorkspaceId);
 	const [query, setQuery] = useState("");
 
@@ -221,6 +225,8 @@ function WorkspaceList({
 				)}
 				{ordered.map((w) => {
 					const isOpen = openedIds.has(w.id);
+					// Can still be closed when Opened; never opened (ADR-0053).
+					const missing = missingFolderIds.has(w.id);
 					const agents = agentCountByWorkspace.get(w.id) ?? 0;
 					const branch = gitById[w.id]?.currentBranch ?? w.lastBranch;
 					return (
@@ -254,14 +260,21 @@ function WorkspaceList({
 										` · ${agents === 0 ? "no agents" : `${agents} agent${agents === 1 ? "" : "s"}`}`}
 								</span>
 							</div>
+							{missing && <MissingFolderMark rootFolder={w.rootFolder} />}
 							<button
 								type="button"
+								disabled={missing && !isOpen}
+								title={
+									missing && !isOpen
+										? `Folder not found: ${w.rootFolder}`
+										: undefined
+								}
 								onClick={() => (isOpen ? onCloseWorkspace(w.id) : onOpen(w.id))}
 								aria-label={isOpen ? `Close ${w.name}` : `Open ${w.name}`}
 								className={`flex items-center shrink-0 ${
 									isOpen
 										? "text-[var(--fg-secondary)] hover:text-[var(--error)]"
-										: "text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_14%,transparent)]"
+										: "text-[var(--accent)] enabled:hover:bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] disabled:opacity-50 disabled:cursor-default"
 								}`}
 								style={{
 									height: 24,
@@ -269,7 +282,7 @@ function WorkspaceList({
 									gap: 5,
 									borderRadius: 5,
 									fontSize: 11.5,
-									cursor: "pointer",
+									cursor: missing && !isOpen ? "default" : "pointer",
 									border: `1px solid ${
 										isOpen
 											? "var(--border)"

@@ -12,9 +12,11 @@ import { Z_SIDEBAR_POPOVER } from "../../lib/zLayers";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DOT_STATUS_COLOR } from "../AgentStatusIcon";
 import { DirtyEdge, DirtyRing } from "../DirtyMarker";
 import { StatusComposite } from "../StatusComposite";
+import { MissingFolderDot } from "./MissingFolderMark";
 import { WORKSPACE_ITEM_HEIGHT_FALLBACK, WorkspaceItem } from "./WorkspaceItem";
 
 interface Props {
@@ -67,6 +69,9 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 	);
 	const isOpened = usePtyActivityStore((s) =>
 		s.openedWorkspaceIds.has(workspace.id),
+	);
+	const folderMissing = useWorkspaceStore((s) =>
+		s.missingFolderIds.has(workspace.id),
 	);
 	const ownDirty = uncommitted?.dirty === true;
 	const hiddenDirty = hidden?.dirty === true;
@@ -192,6 +197,11 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 					title={hidden ? hidden.membersTooltip : undefined}
 				>
 					<StatusComposite rollups={rollups} />
+					{/* Top-left: top-right is the hidden Dirty ring's, bottom-right
+					    the Status badge's. */}
+					{folderMissing && (
+						<MissingFolderDot rootFolder={workspace.rootFolder} />
+					)}
 					{/* A hidden member's Dirty marker sits at the composite's
 					    TOP-right: the bottom-right corner now belongs to the Status
 					    badge, so the two would otherwise collide. The strip's own

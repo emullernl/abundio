@@ -135,6 +135,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		// The demo picks its own Workspaces (useDemoBootstrap).
 		case "workspace_restore_set":
 			return { opened: [], active: null };
+		case "workspace_missing_folders":
+			return [];
 		case "tab_list": {
 			const ws = fixtures.workspaces.find((w) => w.id === args.workspaceId);
 			return ws?.tabs ?? [];

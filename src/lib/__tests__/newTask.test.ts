@@ -7,6 +7,7 @@ import {
 	defaultTaskAgentId,
 	defaultWorktreeFolder,
 	initialDestination,
+	initialTaskWorkspaceId,
 	type LiveAgentState,
 	shellSupportsTasks,
 	stepIssueIndex,
@@ -215,5 +216,23 @@ describe("issue picking", () => {
 		expect(stepIssueIndex(2, 1, 3)).toBe(2);
 		expect(stepIssueIndex(0, -1, 3)).toBe(0);
 		expect(stepIssueIndex(-1, 1, 0)).toBeNull();
+	});
+});
+
+describe("initialTaskWorkspaceId (ADR-0053)", () => {
+	const ids = ["gone", "a", "b"];
+	const missing = new Set(["gone"]);
+
+	it("keeps the requested Workspace when its folder is there", () => {
+		expect(initialTaskWorkspaceId("b", true, ids, missing)).toBe("b");
+	});
+
+	it("from the Fleet Console, skips a Missing folder for the first one that is there", () => {
+		expect(initialTaskWorkspaceId("gone", true, ids, missing)).toBe("a");
+		expect(initialTaskWorkspaceId(null, true, ids, missing)).toBe("a");
+	});
+
+	it("elsewhere, with no picker, keeps the Missing folder so the dialog can say why", () => {
+		expect(initialTaskWorkspaceId("gone", false, ids, missing)).toBe("gone");
 	});
 });

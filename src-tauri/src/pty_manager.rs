@@ -731,6 +731,35 @@ pub(crate) fn build_env_injection(
     (pairs, names.join(" "), skipped)
 }
 
+/// Where a Workspace pane's shell starts (ADR-0053). Never the home folder:
+/// - the Workspace folder is missing → refused (`FolderMissing`), nothing starts;
+/// - the pane's own remembered folder is missing → the Workspace folder;
+/// - otherwise the pane's folder.
+///
+/// `root` is `None` for a spawn with no known Workspace, which keeps the old
+/// behaviour (the spawn itself skips a cwd that is not a directory).
+pub fn resolve_spawn_cwd(
+    cwd: &str,
+    root: Option<&str>,
+    is_dir: impl Fn(&str) -> bool,
+) -> Result<String, AbundioError> {
+    let Some(root) = root else {
+        return Ok(cwd.to_string());
+    };
+    if !is_dir(root) {
+        return Err(AbundioError::FolderMissing(root.to_string()));
+    }
+    #[cfg(target_os = "windows")]
+    let native = msys_to_windows_path(cwd);
+    #[cfg(not(target_os = "windows"))]
+    let native = cwd.to_string();
+    if !cwd.is_empty() && is_dir(&native) {
+        Ok(cwd.to_string())
+    } else {
+        Ok(root.to_string())
+    }
+}
+
 /// Convert a Git Bash / MSYS path to its native Windows form. Pure string
 /// transform; non-MSYS shapes pass through unchanged. Applied only on Windows,
 /// where a leading `/c/` is unambiguously an MSYS drive path (a native path is
@@ -2250,5 +2279,39 @@ mod wrapper_script_tests {
         write_shell_integration_files_into(dir.path());
         fs::read_to_string(dir.path().join(".bashrc"))
             .expect("bashrc should have been written")
+    }
+}
+
+#[cfg(test)]
+mod spawn_cwd_tests {
+    use super::*;
+
+    fn dirs<'a>(present: &'a [&'a str]) -> impl Fn(&str) -> bool + 'a {
+        move |p| present.contains(&p)
+    }
+
+    #[test]
+    fn a_missing_workspace_folder_refuses_the_spawn() {
+        let err = resolve_spawn_cwd("/repo/src", Some("/repo"), dirs(&[])).unwrap_err();
+        assert!(matches!(err, AbundioError::FolderMissing(ref p) if p == "/repo"));
+    }
+
+    #[test]
+    fn a_missing_pane_folder_falls_back_to_the_workspace_folder() {
+        let cwd = resolve_spawn_cwd("/repo/build", Some("/repo"), dirs(&["/repo"])).unwrap();
+        assert_eq!(cwd, "/repo");
+        let cwd = resolve_spawn_cwd("", Some("/repo"), dirs(&["/repo"])).unwrap();
+        assert_eq!(cwd, "/repo");
+    }
+
+    #[test]
+    fn an_existing_pane_folder_is_kept() {
+        let cwd = resolve_spawn_cwd("/repo/src", Some("/repo"), dirs(&["/repo", "/repo/src"])).unwrap();
+        assert_eq!(cwd, "/repo/src");
+    }
+
+    #[test]
+    fn no_workspace_keeps_the_old_behaviour() {
+        assert_eq!(resolve_spawn_cwd("/gone", None, dirs(&[])).unwrap(), "/gone");
     }
 }

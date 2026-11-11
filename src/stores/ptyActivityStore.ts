@@ -625,6 +625,12 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		markWorkspaceOpened: (workspaceId) => {
 			const s = get();
 			if (s.openedWorkspaceIds.has(workspaceId)) return;
+			// A Missing folder is never newly Opened (ADR-0053): nothing may
+			// start there. This is the one place every opening path passes
+			// through, so no picker can get around it. One already Opened when
+			// its folder vanished stays Opened (the early return above).
+			if (useWorkspaceStore.getState().missingFolderIds?.has(workspaceId))
+				return;
 			// Every way into Opened passes here (sidebar, Workspace cycle, Fleet
 			// Console, New task, a new Workspace), so this is the one place that
 			// puts a Workspace on its Profile's restore list (ADR-0052).

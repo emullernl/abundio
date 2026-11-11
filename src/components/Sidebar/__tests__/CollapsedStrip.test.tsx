@@ -12,6 +12,7 @@ import {
 	usePtyActivityStore,
 } from "../../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../../stores/workspaceGitStore";
+import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { DOT_STATUS_COLOR } from "../../AgentStatusIcon";
 import { CollapsedStrip } from "../CollapsedStrip";
 
@@ -80,6 +81,7 @@ describe("CollapsedStrip", () => {
 			openedWorkspaceIds: new Set<string>(),
 		});
 		useWorkspaceGitStore.setState({ uncommittedById: {} });
+		useWorkspaceStore.setState({ missingFolderIds: new Set() });
 		container = document.createElement("div");
 		document.body.appendChild(container);
 		root = createRoot(container);
@@ -116,6 +118,20 @@ describe("CollapsedStrip", () => {
 		container.querySelector<HTMLElement>("[data-status-composite]");
 	const badge = () =>
 		container.querySelector<HTMLElement>("[data-status-badge]");
+
+	it("dots a Missing folder with its path as the hover text (ADR-0053)", () => {
+		useWorkspaceStore.setState({ missingFolderIds: new Set(["ws-1"]) });
+		render(workspace([]));
+		const dot = container.querySelector("[data-missing-folder]");
+		expect(dot?.getAttribute("title")).toBe(
+			"Folder not found: /Users/demo/code/acme-web",
+		);
+	});
+
+	it("has no Missing folder dot when the folder is there", () => {
+		render(workspace([]));
+		expect(container.querySelector("[data-missing-folder]")).toBeNull();
+	});
 
 	it("shows the single grey icon for a never-opened workspace", () => {
 		render(workspace([]));

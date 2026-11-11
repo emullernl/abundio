@@ -12,9 +12,11 @@ import { PRIMARY_SIZE } from "../../lib/statusComposite";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DirtyEdge, DirtyRing } from "../DirtyMarker";
 import { ChevronRight, GitBranch, X } from "../Icons";
 import { StatusComposite } from "../StatusComposite";
+import { MissingFolderMark } from "./MissingFolderMark";
 
 // Fallback height for the collapsed sidebar's strip when no expanded
 // WorkspaceItem has mounted yet to measure. Replaced at runtime by the
@@ -114,6 +116,9 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 	// Workspaces that have never been opened only show the cached branch name, dimmed.
 	const isLoaded = usePtyActivityStore((s) =>
 		s.openedWorkspaceIds.has(workspace.id),
+	);
+	const folderMissing = useWorkspaceStore((s) =>
+		s.missingFolderIds.has(workspace.id),
 	);
 
 	const [renameValue, setRenameValue] = useState(workspace.name);
@@ -291,6 +296,9 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 						>
 							{workspace.name}
 						</span>
+						{folderMissing && (
+							<MissingFolderMark rootFolder={workspace.rootFolder} />
+						)}
 						{gitInfo?.isGitRepo && gitInfo.currentBranch && (
 							<div
 								className="inline-flex items-center gap-1 rounded flex-shrink-0 min-w-0 max-w-[50%]"

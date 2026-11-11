@@ -308,6 +308,16 @@ describe("store actions", () => {
 		spy.mockRestore();
 	});
 
+	it("markWorkspaceOpened refuses a Missing folder, but keeps one already Opened (ADR-0053)", () => {
+		const before = useWorkspaceStore.getState().missingFolderIds;
+		useWorkspaceStore.setState({ missingFolderIds: new Set(["gone"]) });
+		usePtyActivityStore.getState().markWorkspaceOpened("gone");
+		expect(usePtyActivityStore.getState().openedWorkspaceIds.has("gone")).toBe(
+			false,
+		);
+		useWorkspaceStore.setState({ missingFolderIds: before });
+	});
+
 	it("markWorkspaceOpened adds to set", () => {
 		usePtyActivityStore.getState().markWorkspaceOpened("s1");
 		expect(usePtyActivityStore.getState().openedWorkspaceIds.has("s1")).toBe(

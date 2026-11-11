@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, CornerDownLeft, GitBranch } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { collectTerminalIds, parseTabLayout } from "../../lib/paneTree";
@@ -41,6 +41,8 @@ export function NewAgentDialog({
 	animateIn?: boolean;
 }) {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	// Listed but not choosable: nothing may start there (ADR-0053).
+	const missingFolderIds = useWorkspaceStore((s) => s.missingFolderIds);
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const opened = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const agents = useSettingsStore((s) => s.agents);
@@ -78,6 +80,16 @@ export function NewAgentDialog({
 	const [error, setError] = useState<string | null>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
+	// Never rest on a Missing folder (ADR-0053): when the dialog opens or a
+	// filter puts one under the selection, move to the first row that can be
+	// picked. Rendered one frame on the old row at most.
+	useEffect(() => {
+		const current = filtered[Math.min(wsIndex, filtered.length - 1)];
+		if (!current || !missingFolderIds.has(current.id)) return;
+		const first = filtered.findIndex((w) => !missingFolderIds.has(w.id));
+		if (first !== -1) setWsIndex(first);
+	}, [filtered, missingFolderIds, wsIndex]);
+
 	const selectedWs = filtered[Math.min(wsIndex, filtered.length - 1)];
 	const agent = enabledAgents[agentIndex];
 	const worktreeTarget = selectedWs
@@ -85,13 +97,27 @@ export function NewAgentDialog({
 		: null;
 	const canWorktree = worktreeTarget !== null;
 	const useWorktree = worktree && canWorktree;
-	const canSubmit = !!selectedWs && !!agent && !starting;
+	const canSubmit =
+		!!selectedWs &&
+		!missingFolderIds.has(selectedWs.id) &&
+		!!agent &&
+		!starting;
 
 	useEscapeKey(onClose);
 
 	const moveWs = (step: number) => {
 		if (filtered.length === 0) return;
-		const next = Math.max(0, Math.min(filtered.length - 1, wsIndex + step));
+		let next = Math.max(0, Math.min(filtered.length - 1, wsIndex + step));
+		// Step over Missing folders; stay put if there is nothing choosable.
+		const dir = step > 0 ? 1 : -1;
+		while (
+			next > 0 &&
+			next < filtered.length - 1 &&
+			missingFolderIds.has(filtered[next].id)
+		) {
+			next += dir;
+		}
+		if (missingFolderIds.has(filtered[next].id)) return;
 		setWsIndex(next);
 		listRef.current
 			?.querySelector(`[data-index="${next}"]`)
@@ -99,7 +125,7 @@ export function NewAgentDialog({
 	};
 
 	const submit = async (target = selectedWs) => {
-		if (!target || !agent) return;
+		if (!target || !agent || missingFolderIds.has(target.id)) return;
 		const selectedWs = target;
 		const worktreeTarget = addWorktreeTargetId(
 			workspaces,
@@ -270,6 +296,7 @@ export function NewAgentDialog({
 										? "Not opened — opens in the background"
 										: null;
 							const selected = w.id === selectedWs?.id;
+							const missing = missingFolderIds.has(w.id);
 							return (
 								<div key={w.id}>
 									{heading && (
@@ -290,19 +317,24 @@ export function NewAgentDialog({
 									<button
 										type="button"
 										data-index={i}
+										disabled={missing}
+										title={
+											missing ? `Folder not found: ${w.rootFolder}` : undefined
+										}
 										onClick={() => setWsIndex(i)}
 										onDoubleClick={() => {
 											setWsIndex(i);
 											void submit(w);
 										}}
 										className={`w-full flex items-center text-left ${
-											selected ? "" : "hover:bg-[var(--bg-tertiary)]"
+											selected ? "" : "enabled:hover:bg-[var(--bg-tertiary)]"
 										}`}
 										style={{
 											padding: "7px 10px",
 											gap: 10,
 											borderRadius: 7,
-											cursor: "pointer",
+											cursor: missing ? "default" : "pointer",
+											opacity: missing ? 0.5 : 1,
 											background: selected
 												? "color-mix(in srgb, var(--accent) 16%, transparent)"
 												: undefined,
@@ -335,6 +367,14 @@ export function NewAgentDialog({
 										>
 											{w.rootFolder}
 										</span>
+										{missing && (
+											<span
+												className="shrink-0"
+												style={{ fontSize: 11, color: "var(--warning)" }}
+											>
+												Folder not found
+											</span>
+										)}
 									</button>
 								</div>
 							);
