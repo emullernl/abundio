@@ -48,15 +48,45 @@ import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
 import { useWorkspaceGitStore } from "./workspaceGitStore";
 
-/**
- * **Workspace restore** (ADR-0052): reopen the Workspaces the Profile had
- * Opened and make its Active one Active again. Runs at the end of every
- * `loadWorkspaces` — Window start and Switch Profile alike. Does nothing when
- * the setting is off, or when the Window already has an Active workspace.
- *
- * The Active one goes first: `TerminalPool` spawns its terminals at once and
- * the others' a moment later, so the one you look at is ready first.
- */
+/** The one Missing folder refresh in flight, if any. */
+let refreshInFlight: Promise<void> | null = null;
+
+/** The body of `refreshMissingFolders`. */
+async function runMissingFolderRefresh(): Promise<void> {
+	const get = useWorkspaceStore.getState;
+	const set = useWorkspaceStore.setState;
+	const profileId = fallbackProfileId();
+	const next = await fetchMissingFolders(profileId);
+	if (!next || fallbackProfileId() !== profileId) return;
+	const prev = get().missingFolderIds;
+	const back = [...prev].filter((id) => !next.has(id));
+	const changed = back.length > 0 || [...next].some((id) => !prev.has(id));
+	if (changed) set({ missingFolderIds: next });
+	if (back.length === 0) return;
+	const opened = () => usePtyActivityStore.getState().openedWorkspaceIds;
+	// Shown in the panel: it opens in place.
+	const active = get().activeWorkspaceId;
+	if (active && back.includes(active) && !opened().has(active)) {
+		get().setActiveWorkspace(active);
+	}
+	// On the restore list: finish the restore the missing folder
+	// interrupted, in the background.
+	if (!useSettingsStore.getState().reopenWorkspacesOnOpen) return;
+	let restore: Awaited<ReturnType<typeof workspacesApi.restoreSet>>;
+	try {
+		restore = await workspacesApi.restoreSet(profileId);
+	} catch (err) {
+		console.warn("[abundio] workspace restore: read failed", err);
+		return;
+	}
+	if (fallbackProfileId() !== profileId) return;
+	for (const id of restore.opened) {
+		if (back.includes(id) && !opened().has(id)) {
+			usePtyActivityStore.getState().markWorkspaceOpened(id);
+		}
+	}
+}
+
 /** The Profile's Missing-folder ids, or `null` when the check failed (a
  *  failure must leave the current marks alone, not clear them). */
 async function fetchMissingFolders(
@@ -70,6 +100,15 @@ async function fetchMissingFolders(
 	}
 }
 
+/**
+ * **Workspace restore** (ADR-0052): reopen the Workspaces the Profile had
+ * Opened and make its Active one Active again. Runs at the end of every
+ * `loadWorkspaces` — Window start and Switch Profile alike. Does nothing when
+ * the setting is off, or when the Window already has an Active workspace.
+ *
+ * The Active one goes first: `TerminalPool` spawns its terminals at once and
+ * the others' a moment later, so the one you look at is ready first.
+ */
 async function restoreOpenedWorkspaces(profileId: string): Promise<void> {
 	if (!useSettingsStore.getState().reopenWorkspacesOnOpen) return;
 	if (useWorkspaceStore.getState().activeWorkspaceId) return;
@@ -881,8 +920,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// first activation. Covered by useFileWindowRaise.test.tsx.
 		// A Missing folder is Active but not Opened (ADR-0053): it shows the
 		// "Folder not found" panel and starts nothing, so it is neither marked
-		// Opened nor remembered as the Profile's Active workspace.
-		const missing = !!id && get().missingFolderIds.has(id);
+		// Opened nor remembered as the Profile's Active workspace. One that was
+		// already Opened when its folder vanished still has its panes on
+		// screen, so it is remembered like any other — the same test App.tsx
+		// uses for the panel.
+		const missing =
+			!!id &&
+			get().missingFolderIds.has(id) &&
+			!usePtyActivityStore.getState().openedWorkspaceIds.has(id);
 		if (id && !missing) {
 			usePtyActivityStore.getState().markWorkspaceOpened(id);
 			rememberActive(fallbackProfileId(), id);
@@ -964,37 +1009,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		});
 	},
 
-	refreshMissingFolders: async () => {
-		const profileId = fallbackProfileId();
-		const next = await fetchMissingFolders(profileId);
-		if (!next || fallbackProfileId() !== profileId) return;
-		const prev = get().missingFolderIds;
-		const back = [...prev].filter((id) => !next.has(id));
-		const changed = back.length > 0 || [...next].some((id) => !prev.has(id));
-		if (changed) set({ missingFolderIds: next });
-		if (back.length === 0) return;
-		const opened = () => usePtyActivityStore.getState().openedWorkspaceIds;
-		// Shown in the panel: it opens in place.
-		const active = get().activeWorkspaceId;
-		if (active && back.includes(active) && !opened().has(active)) {
-			get().setActiveWorkspace(active);
-		}
-		// On the restore list: finish the restore the missing folder
-		// interrupted, in the background.
-		if (!useSettingsStore.getState().reopenWorkspacesOnOpen) return;
-		let restore: Awaited<ReturnType<typeof workspacesApi.restoreSet>>;
-		try {
-			restore = await workspacesApi.restoreSet(profileId);
-		} catch (err) {
-			console.warn("[abundio] workspace restore: read failed", err);
-			return;
-		}
-		if (fallbackProfileId() !== profileId) return;
-		for (const id of restore.opened) {
-			if (back.includes(id) && !opened().has(id)) {
-				usePtyActivityStore.getState().markWorkspaceOpened(id);
-			}
-		}
+	refreshMissingFolders: () => {
+		// One check at a time: on a hung mount each one can take long, and a
+		// burst of focus changes would otherwise stack them up.
+		refreshInFlight ??= runMissingFolderRefresh().finally(() => {
+			refreshInFlight = null;
+		});
+		return refreshInFlight;
 	},
 
 	reorderWorkspaces: (ids) => {

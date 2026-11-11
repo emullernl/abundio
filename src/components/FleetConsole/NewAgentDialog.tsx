@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, CornerDownLeft, GitBranch } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { collectTerminalIds, parseTabLayout } from "../../lib/paneTree";
@@ -79,6 +79,16 @@ export function NewAgentDialog({
 	const [starting, setStarting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const listRef = useRef<HTMLDivElement>(null);
+
+	// Never rest on a Missing folder (ADR-0053): when the dialog opens or a
+	// filter puts one under the selection, move to the first row that can be
+	// picked. Rendered one frame on the old row at most.
+	useEffect(() => {
+		const current = filtered[Math.min(wsIndex, filtered.length - 1)];
+		if (!current || !missingFolderIds.has(current.id)) return;
+		const first = filtered.findIndex((w) => !missingFolderIds.has(w.id));
+		if (first !== -1) setWsIndex(first);
+	}, [filtered, missingFolderIds, wsIndex]);
 
 	const selectedWs = filtered[Math.min(wsIndex, filtered.length - 1)];
 	const agent = enabledAgents[agentIndex];

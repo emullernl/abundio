@@ -178,3 +178,25 @@ export function stepIssueIndex(
 	if (current < 0) return step === 1 ? 0 : count - 1;
 	return Math.max(0, Math.min(count - 1, current + step));
 }
+
+/**
+ * The Workspace a **New task** dialog starts on. From the Fleet Console,
+ * where there is a Workspace picker, skip a **Missing folder** (ADR-0053):
+ * nothing can start there. Elsewhere there is no picker, so keep the
+ * requested one and let the dialog say why it cannot start.
+ */
+export function initialTaskWorkspaceId(
+	wanted: string | null | undefined,
+	fromFleet: boolean,
+	workspaceIds: readonly string[],
+	missingFolderIds: ReadonlySet<string>,
+): string {
+	if (!fromFleet || (wanted && !missingFolderIds.has(wanted)))
+		return wanted ?? workspaceIds[0] ?? "";
+	return (
+		workspaceIds.find((id) => !missingFolderIds.has(id)) ??
+		wanted ??
+		workspaceIds[0] ??
+		""
+	);
+}

@@ -211,6 +211,15 @@ pub struct RestoreSet {
     pub active: Option<String>,
 }
 
+/// The ids whose folder does not exist, from `WorkspaceStore::folder_rows`.
+/// Touches the disk, so call it off the async runtime (`spawn_blocking`).
+pub fn missing_ids(rows: Vec<(String, String)>, folder_exists: impl Fn(&str) -> bool) -> Vec<String> {
+    rows.into_iter()
+        .filter(|(_, folder)| !folder_exists(folder))
+        .map(|(id, _)| id)
+        .collect()
+}
+
 pub struct WorkspaceStore {
     pub conn: Mutex<Connection>,
 }
@@ -500,32 +509,16 @@ impl WorkspaceStore {
             .optional()?)
     }
 
-    /// Ids of the Profile's Workspaces whose folder is not a directory right
-    /// now, in sidebar order.
-    pub fn missing_folders(&self, profile_id: &str) -> Result<Vec<String>, AbundioError> {
-        self.missing_folders_with(profile_id, |p| std::path::Path::new(p).is_dir())
-    }
-
-    fn missing_folders_with(
-        &self,
-        profile_id: &str,
-        folder_exists: impl Fn(&str) -> bool,
-    ) -> Result<Vec<String>, AbundioError> {
-        let rows: Vec<(String, String)> = {
-            let conn = self.conn.lock().unwrap();
-            let mut stmt = conn.prepare(
-                "SELECT id, root_folder FROM workspaces WHERE profile_id = ?1 ORDER BY position ASC",
-            )?;
-            let mapped = stmt.query_map([profile_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            mapped.collect::<Result<_, _>>()?
-        };
-        // Checked with the lock released, as in `restore_set`: a hung network
-        // mount must not stall every other store call.
-        Ok(rows
-            .into_iter()
-            .filter(|(_, folder)| !folder_exists(folder))
-            .map(|(id, _)| id)
-            .collect())
+    /// `(id, root_folder)` for each of the Profile's Workspaces, in sidebar
+    /// order. Reads the database only; the caller checks the disk, with the
+    /// lock released, so a hung network mount cannot stall other store calls.
+    pub fn folder_rows(&self, profile_id: &str) -> Result<Vec<(String, String)>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, root_folder FROM workspaces WHERE profile_id = ?1 ORDER BY position ASC",
+        )?;
+        let mapped = stmt.query_map([profile_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(mapped.collect::<Result<_, _>>()?)
     }
 
     // ── Workspace restore (ADR-0052) ──
@@ -1044,9 +1037,8 @@ mod tests {
         let here = store.create("h", "/here", DEFAULT_PID).unwrap().workspace.id;
         let gone = store.create("g", "/gone", DEFAULT_PID).unwrap().workspace.id;
         store.create("o", "/gone-too", "p2").unwrap();
-        let missing = store
-            .missing_folders_with(DEFAULT_PID, |p| p == "/here" && store.conn.try_lock().is_ok())
-            .unwrap();
+        let rows = store.folder_rows(DEFAULT_PID).unwrap();
+        let missing = missing_ids(rows, |p| p == "/here");
         assert_eq!(missing, vec![gone]);
         assert_eq!(store.root_folder(&here).unwrap().as_deref(), Some("/here"));
         assert_eq!(store.root_folder("nope").unwrap(), None);

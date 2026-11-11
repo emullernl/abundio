@@ -49,9 +49,14 @@ pub async fn pty_spawn(
         Some(id) => store.root_folder(id)?,
         None => None,
     };
-    let cwd = crate::pty_manager::resolve_spawn_cwd(&cwd, root.as_deref(), |p| {
-        std::path::Path::new(p).is_dir()
-    })?;
+    // Off the async runtime: a `stat` on a hung mount can block for long.
+    let cwd = tauri::async_runtime::spawn_blocking(move || {
+        crate::pty_manager::resolve_spawn_cwd(&cwd, root.as_deref(), |p| {
+            std::path::Path::new(p).is_dir()
+        })
+    })
+    .await
+    .map_err(|e| AbundioError::InvalidOperation(format!("folder check failed: {e}")))??;
     let pty_id = pty_mgr.spawn(
         app.clone(),
         window.label(),
@@ -395,7 +400,14 @@ pub async fn workspace_missing_folders(
     store: State<'_, WorkspaceStore>,
     profile_id: String,
 ) -> Result<Vec<String>, AbundioError> {
-    store.missing_folders(&profile_id)
+    let rows = store.folder_rows(&profile_id)?;
+    // `stat` on a hung network mount can block for tens of seconds; keep it
+    // off the async runtime's worker threads. Runs on every Window focus.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::workspace_store::missing_ids(rows, |p| std::path::Path::new(p).is_dir())
+    })
+    .await
+    .map_err(|e| AbundioError::InvalidOperation(format!("folder check failed: {e}")))
 }
 
 /// A Profile's **Workspace restore** list (ADR-0052).

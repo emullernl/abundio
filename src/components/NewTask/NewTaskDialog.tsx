@@ -21,6 +21,7 @@ import {
 	defaultTaskAgentId,
 	defaultWorktreeFolder,
 	initialDestination,
+	initialTaskWorkspaceId,
 	shellSupportsTasks,
 	stepIssueIndex,
 	type TaskDestination,
@@ -100,8 +101,13 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	const detectedAgentIds = usePtyActivityStore((s) => s.detectedAgentIds);
 	const activities = usePtyActivityStore((s) => s.activities);
 
-	const [workspaceId, setWorkspaceId] = useState(
-		request.workspaceId ?? activeWorkspaceId ?? workspaces[0]?.id ?? "",
+	const [workspaceId, setWorkspaceId] = useState(() =>
+		initialTaskWorkspaceId(
+			request.workspaceId ?? activeWorkspaceId,
+			!!fromFleet,
+			workspaces.map((w) => w.id),
+			missingFolderIds,
+		),
 	);
 	const ws = workspaces.find((w) => w.id === workspaceId);
 	const focused = fromFleet ? focusedTileId : focusedPaneId;
@@ -265,11 +271,14 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	const [error, setError] = useState<string | null>(null);
 	const progress = useWorktreeProgress();
 
-	const blocker = !shellOk
-		? `New task needs zsh or bash as the terminal shell (this one is ${basename(shell ?? "")}). Change it in Settings ▸ Terminal.`
-		: offered.length === 0
-			? "No task-capable agent is switched on. Turn one on in Settings ▸ Agents."
-			: null;
+	const blocker =
+		ws && missingFolderIds.has(ws.id)
+			? `Folder not found: ${ws.rootFolder}. Nothing can start in this workspace until its folder is back.`
+			: !shellOk
+				? `New task needs zsh or bash as the terminal shell (this one is ${basename(shell ?? "")}). Change it in Settings ▸ Terminal.`
+				: offered.length === 0
+					? "No task-capable agent is switched on. Turn one on in Settings ▸ Agents."
+					: null;
 	const canSubmit =
 		!!ws &&
 		!!task &&

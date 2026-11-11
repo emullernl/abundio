@@ -408,6 +408,10 @@ export interface ManagedTerminal {
 	 *  only drain at the safety timeout), and the task script's `command_start`
 	 *  ends any reset filtering, so the Agent's first frame arrives intact. */
 	awaitingTaskStart: boolean;
+	/** Rust refused this pane's spawn for a **Missing folder** (ADR-0053):
+	 *  there is no PTY behind `ptyId`, so input is dropped instead of being
+	 *  written to an id Rust never spawned. Cleared by the next spawn. */
+	refused: boolean;
 	/** A typed agent launch (after the startup flush) whose Agent has not
 	 *  started yet. The pane is already in agent mode, but until the Agent's
 	 *  `command_start` the output is still the shell's, so the reset filter keeps
@@ -1207,6 +1211,7 @@ export async function createTerminal(
 		startupFlushScheduled: false,
 		startupShellReady: false,
 		awaitingTaskStart: false,
+		refused: false,
 		awaitingTypedAgentStart: false,
 		titleStatus: null,
 		titleStatusSeen: false,
@@ -1416,6 +1421,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	// For new PTYs, generate the ID upfront and register event listeners BEFORE
 	// spawning so no shell output is lost in the gap between spawn and listen.
 	if (isNewPty) {
+		managed.refused = false;
 		currentPtyId = crypto.randomUUID();
 		managed.ptyId = currentPtyId;
 		// Spawned below at the terminal's grid, so it starts out sized.
@@ -1436,7 +1442,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	// same xterm, and a handler left behind would keep sending every keystroke
 	// to the killed PTY.
 	const onDataSub = term.onData((data) => {
-		if (managed.restoring) return;
+		if (managed.restoring || managed.refused) return;
 		// Drop focus-in/out reports before they touch any of the activity
 		// bookkeeping below — they're not user input. See isFocusReport's
 		// docstring for the user-visible regression this fixes (p10k +
@@ -2002,6 +2008,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		]);
 
 	if (refusedReason) {
+		managed.refused = true;
 		managed.startupBuffer = null;
 		managed.startupShellReady = true;
 		managed.awaitingTaskStart = false;

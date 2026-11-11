@@ -731,14 +731,6 @@ pub(crate) fn build_env_injection(
     (pairs, names.join(" "), skipped)
 }
 
-/// Convert a Git Bash / MSYS path to its native Windows form. Pure string
-/// transform; non-MSYS shapes pass through unchanged. Applied only on Windows,
-/// where a leading `/c/` is unambiguously an MSYS drive path (a native path is
-/// `C:\…` / `C:/…`); on Unix `/c/…` is a real path and must not be rewritten.
-///   `/c/Users/x`     -> `c:/Users/x`
-///   `/c`             -> `c:`
-///   `//server/share` -> `\\server\share`   (UNC)
-///   `/usr/bin`       -> `/usr/bin`          (not a single-letter drive segment)
 /// Where a Workspace pane's shell starts (ADR-0053). Never the home folder:
 /// - the Workspace folder is missing → refused (`FolderMissing`), nothing starts;
 /// - the pane's own remembered folder is missing → the Workspace folder;
@@ -768,6 +760,14 @@ pub fn resolve_spawn_cwd(
     }
 }
 
+/// Convert a Git Bash / MSYS path to its native Windows form. Pure string
+/// transform; non-MSYS shapes pass through unchanged. Applied only on Windows,
+/// where a leading `/c/` is unambiguously an MSYS drive path (a native path is
+/// `C:\…` / `C:/…`); on Unix `/c/…` is a real path and must not be rewritten.
+///   `/c/Users/x`     -> `c:/Users/x`
+///   `/c`             -> `c:`
+///   `//server/share` -> `\\server\share`   (UNC)
+///   `/usr/bin`       -> `/usr/bin`          (not a single-letter drive segment)
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn msys_to_windows_path(cwd: &str) -> String {
     if let Some(rest) = cwd.strip_prefix("//") {

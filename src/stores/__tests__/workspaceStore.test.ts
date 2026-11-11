@@ -1235,6 +1235,36 @@ describe("workspaceStore", () => {
 			expect(markWorkspaceOpened).not.toHaveBeenCalled();
 		});
 
+		it("switching back to an Opened Workspace whose folder vanished remembers it as Active", async () => {
+			useWorkspaceStore.setState({
+				workspaces: two(),
+				missingFolderIds: new Set(["m"]),
+			});
+			mockOpenedWorkspaceIds.add("m");
+			useWorkspaceStore.getState().setActiveWorkspace("m");
+			await vi.waitFor(() =>
+				expect(workspaces.setRestoreActive).toHaveBeenCalledWith(
+					expect.any(String),
+					"m",
+				),
+			);
+		});
+
+		it("runs one check at a time", async () => {
+			let release: (ids: string[]) => void = () => {};
+			vi.mocked(workspaces.missingFolders).mockReturnValueOnce(
+				new Promise((r) => {
+					release = r;
+				}),
+			);
+			const first = useWorkspaceStore.getState().refreshMissingFolders();
+			const second = useWorkspaceStore.getState().refreshMissingFolders();
+			expect(second).toBe(first);
+			release([]);
+			await first;
+			expect(workspaces.missingFolders).toHaveBeenCalledTimes(1);
+		});
+
 		it("a failed check leaves the marks alone", async () => {
 			useWorkspaceStore.setState({ missingFolderIds: new Set(["m"]) });
 			vi.mocked(workspaces.missingFolders).mockRejectedValueOnce(
