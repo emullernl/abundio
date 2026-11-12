@@ -211,6 +211,29 @@ The original list:
 
 ### 8. Start, split, run, close
 
+**Done.** As built:
+
+- `lib/agentControl/spawn.ts` (pure): `autoDirection` (right when `cols ≥ 2 × rows`), `layoutDirection` (Split Right is a `vertical` split), `startArgv`, `runRefusal`, `cleanCommand`, `closeRefusal`.
+- `pane split`: wraps the caller's pane in a split, in the caller's own Tab. The new node is an empty terminal (`ptyId: ""`, so it spawns when it renders) with `spawnedBy` set to the caller. Focus stays put unless `--focus`, which reveals the new pane (switching to its Tab). Reply: the new pane as `pane list` shows it, which also gives it its number.
+- `agent start`: the argv is the Agent's command and args, then the caller's `--` args, then (with `--prompt`) its Task arguments with the prompt as one element. Without `--prompt` it still goes through the task path, just with no prompt.
+  - Refused:
+    - `not_found` for an unknown or switched-off Agent (the message lists the ones that are on).
+    - `unsupported` for `--prompt` to an Agent that is not Task-capable.
+    - `unsupported_shell` for anything but zsh or bash.
+    - `handle_taken` / `invalid_handle`.
+    - All of these are checked before anything is split.
+  - Hooks are ensured first (capped at 2 s), as a split launch does.
+  - The pending task is seeded under a pre-made pane id **before** the node enters the layout, so the terminal cannot spawn first and miss it. If the split fails, the seed is taken back.
+  - Reply: once the pane is in agent mode, with the Agent's description; `stalled` after 30 s.
+- `pane run`: refused for an exited shell (`not_found`), an agent-mode pane or a running command (`busy`), and a PTY where shell integration has not reported yet (`state_unknown`). That last signal is new: `ManagedTerminal.shellIntegrationSeen`, set on the first shell-integration sequence and reset by `restartPanePty`. After an app restart a reconnected shell is `state_unknown` until its next prompt. The command is made one line with no control characters, then written with `\r`.
+- `pane close`: only a Spawned pane, only by its owner, never one's own pane (`not_owner`).
+  - **Changed from the plan:** no confirmation. Every user close asks "Close pane?", and that dialog would stop an Agent cold. The unsaved-edits checks only concern file panes, and a Spawned pane is always a terminal.
+  - The close logic moved out of `useSplitPane` into `lib/closePane.ts`, used by both. The user's close behaves as before. Agent control passes `keepFocus`, so focus stays where the user has it.
+  - Closing any terminal pane now frees its Spawned panes in every Tab of its Workspace (`paneTree.clearSpawnedBy`).
+- Tests: split direction and the layout mapping, the start argv (extra args, prompt last, multi-word command, option-safe prompt, refusals), run refusals and the command cleaner, close ownership, `clearSpawnedBy`. The handler is tested for split, start (seeded task, handle, hooks, answer in agent mode, 30 s stall, shell and handle refusals), run and close. `closePane` is tested for freeing Spawned panes and for focus with and without `keepFocus`.
+
+The original list:
+
 - `pane split`: split the caller's pane, right if its width is at least twice its height in cells, else down; never focus unless `--focus`. Mark the new node `spawnedBy: caller`, give it a number.
 - `agent start`: split as above, then launch through the New task path (`pendingAgentRegistry.setPendingTask` → `pty_spawn` `task`), with the optional `--prompt` as the task prompt and the handle set on the new node. Reply once the PTY is in agent mode and Idle or Ready, or with `stalled` after 30 s. zsh and bash only, as for New task (`unsupported_shell`).
 - `pane run`: refuse unless shell integration shows the shell at its prompt and the PTY is not in agent mode (`busy`, `state_unknown`); then write the command and `\r`.

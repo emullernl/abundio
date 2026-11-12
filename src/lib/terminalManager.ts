@@ -403,6 +403,10 @@ export interface ManagedTerminal {
 	filterResetsTimer: ReturnType<typeof setTimeout> | null;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
 	startupShellReady: boolean;
+	/** Shell integration has reported in this PTY (a prompt, a command or a
+	 *  cwd). `abundio pane run` types only into a shell it can see is at its
+	 *  prompt, which takes this. */
+	shellIntegrationSeen: boolean;
 	/** A **New task** spawn whose Agent has not started yet. Such a pane has no
 	 *  startup buffer (its `-c` shell never prints a prompt, so the buffer would
 	 *  only drain at the safety timeout), and the task script's `command_start`
@@ -1210,6 +1214,7 @@ export async function createTerminal(
 		startupBuffer: [],
 		startupFlushScheduled: false,
 		startupShellReady: false,
+		shellIntegrationSeen: false,
 		awaitingTaskStart: false,
 		refused: false,
 		awaitingTypedAgentStart: false,
@@ -1543,6 +1548,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				// Always parse and strip shell integration sequences in both modes,
 				// so command_end is detected even while in agent mode.
 				const { cleaned, commands } = shellIntegration.parse(data);
+				if (commands.length > 0) managed.shellIntegrationSeen = true;
 
 				// Cache store state once per chunk to avoid repeated getState() calls
 				const actState = usePtyActivityStore.getState();
@@ -2556,6 +2562,7 @@ export async function restartPanePty(
 	managed.startupShellReady = false;
 	managed.awaitingTaskStart = false;
 	managed.awaitingTypedAgentStart = false;
+	managed.shellIntegrationSeen = false;
 	// `settled` deliberately stays true: the pane is already projected and
 	// painted, and clearing it would make the flush wait for the safety timeout.
 

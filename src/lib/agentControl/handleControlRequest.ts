@@ -4,14 +4,23 @@
 
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { checkHandle } from "../agentHandle";
+import { closePaneNow } from "../closePane";
 import { pasteAndSubmit } from "../firePromptAction";
 import {
 	type AgentControlReply,
 	type AgentControlRequestEvent,
 	agentControl,
+	agentHooks,
 	pty,
+	shells,
 } from "../ipc";
+import { shellSupportsTasks } from "../newTask";
+import { revealPane } from "../paneLocation";
+import { parseTabLayout, wrapInSplit } from "../paneTree";
+import { setPendingTask, takePendingTask } from "../pendingAgentRegistry";
 import { canFire } from "../promptActions";
 import { getTerminal, type ManagedTerminal } from "../terminalManager";
 import {
@@ -26,10 +35,24 @@ import { cleanPromptText } from "./promptText";
 import { readBuffer } from "./readBuffer";
 import {
 	resolveTarget,
+	type TerminalNode,
 	type WorkspacePane,
 	workspacePanes,
 } from "./resolveTarget";
-import { type ControlCaller, ControlError, type ControlRequest } from "./types";
+import {
+	autoDirection,
+	cleanCommand,
+	closeRefusal,
+	layoutDirection,
+	runRefusal,
+	startArgv,
+} from "./spawn";
+import {
+	type ControlCaller,
+	ControlError,
+	type ControlRequest,
+	type Direction,
+} from "./types";
 import { type WaitOutcome, waitForPane } from "./waitForPane";
 
 /** The caller's Workspace as this Window sees it right now. */
@@ -182,12 +205,202 @@ export async function runRequest(
 				};
 			});
 		}
+		case "pane.split": {
+			const paneId = await splitCaller(scope, request.direction, {});
+			if (request.focus) focusNewPane(scope, paneId);
+			return describeNew(caller, paneId);
+		}
+		case "agent.start":
+			return startAgent(scope, request, signal);
+		case "pane.run": {
+			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			return withBadge(scope, pane, async () => {
+				const managed = mountedTerminal(pane);
+				const facts = liveFacts(pane);
+				const refusal = runRefusal({
+					mode: facts.mode,
+					exited: facts.exited,
+					integrationSeen: managed.shellIntegrationSeen,
+					shellCommandRunning:
+						usePtyActivityStore.getState().activities[managed.ptyId]
+							?.shellCommandRunning === true,
+				});
+				if (refusal) throw refusal;
+				const command = cleanCommand(request.command);
+				if (command === "") {
+					throw new ControlError("empty_prompt", "the command is empty");
+				}
+				await pty.write(managed.ptyId, `${command}\r`);
+				return {
+					pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
+					sent: true,
+				};
+			});
+		}
+		case "pane.close": {
+			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			const refusal = closeRefusal(
+				pane.node.spawnedBy,
+				caller.paneId,
+				pane.node.id,
+			);
+			if (refusal) throw refusal;
+			const label = paneLabel(scope.numbers.get(pane.node.id) ?? 0);
+			await closePaneNow(pane.node.id, { keepFocus: true });
+			return { pane: label, closed: true };
+		}
 		default:
 			throw new ControlError(
 				"unsupported",
-				`\`${request.op}\` is not available in this version of Abundio yet`,
+				`\`${(request as { op: string }).op}\` is not available in this version of Abundio`,
 			);
 	}
+}
+
+/** How long `agent start` waits for the new pane to reach agent mode. */
+export const START_STALL_MS = 30_000;
+const START_POLL_MS = 200;
+
+/** Resolve once `ready()` holds; reject with `stalled` after `limitMs`, or
+ *  when `signal` aborts. */
+function waitUntil(
+	ready: () => boolean,
+	limitMs: number,
+	signal: AbortSignal,
+	stalledMessage: string,
+): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const started = Date.now();
+		const tick = () => {
+			if (signal.aborted) return reject(new Error("cancelled"));
+			if (ready()) return resolve();
+			if (Date.now() - started >= limitMs) {
+				return reject(new ControlError("stalled", stalledMessage));
+			}
+			setTimeout(tick, START_POLL_MS);
+		};
+		tick();
+	});
+}
+
+/**
+ * Split the caller's pane and return the new pane's id. The new pane is a
+ * **Spawned pane** owned by the caller. Keyboard focus does not move: the
+ * user may be typing somewhere else entirely.
+ */
+async function splitCaller(
+	scope: Scope,
+	direction: Direction | null,
+	extra: Partial<TerminalNode>,
+): Promise<string> {
+	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
+	if (!self) {
+		throw new ControlError("not_found", "your pane is no longer open");
+	}
+	const store = useWorkspaceStore.getState();
+	const tab = store.workspaces
+		.find((w) => w.id === scope.caller.workspaceId)
+		?.tabs.find((t) => t.id === self.tabId);
+	const layout = tab ? parseTabLayout(tab.layoutJson) : null;
+	if (!tab || !layout) {
+		throw new ControlError("not_found", "your pane's Tab is no longer open");
+	}
+	const term = getTerminal(self.node.id)?.term;
+	const side = direction ?? autoDirection(term?.cols ?? 80, term?.rows ?? 24);
+	const node: TerminalNode = {
+		type: "terminal",
+		id: crypto.randomUUID(),
+		ptyId: "",
+		...extra,
+		spawnedBy: scope.caller.paneId,
+	};
+	const next = wrapInSplit(layout, self.node.id, node, layoutDirection(side));
+	await store.updateLayout(tab.id, next);
+	return node.id;
+}
+
+function focusNewPane(scope: Scope, paneId: string): void {
+	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
+	if (self) revealPane(paneId, scope.caller.workspaceId, self.tabId);
+}
+
+/** The new pane as `pane list` would show it (which also numbers it). */
+async function describeNew(caller: ControlCaller, paneId: string) {
+	const scope = await loadScope(caller);
+	const pane = scope.panes.find((p) => p.node.id === paneId);
+	if (!pane) throw new ControlError("not_found", "the new pane closed again");
+	return describePane(pane, liveFacts(pane), scope.numbers, caller.paneId);
+}
+
+/**
+ * `agent start`: split the caller and launch an Agent in the new pane
+ * through the **New task** path (its argv rides the spawn; nothing is
+ * typed). Answers once the pane is in agent mode.
+ */
+async function startAgent(
+	scope: Scope,
+	request: Extract<ControlRequest, { op: "agent.start" }>,
+	signal: AbortSignal,
+) {
+	const settings = useSettingsStore.getState();
+	const { agent, argv } = startArgv(
+		settings.agents,
+		request.kind,
+		request.prompt === null ? null : cleanPromptText(request.prompt),
+		request.args,
+	);
+	const shell = settings.shellPath || (await shells.default().catch(() => ""));
+	if (shell && !shellSupportsTasks(shell)) {
+		throw new ControlError(
+			"unsupported_shell",
+			"agents can only be started in zsh or bash panes; change the shell in Settings",
+		);
+	}
+	if (request.handle !== null) {
+		const ws = useWorkspaceStore
+			.getState()
+			.workspaces.find((w) => w.id === scope.caller.workspaceId);
+		const check = checkHandle(ws?.tabs ?? [], "", request.handle);
+		if (!check.ok) throw new ControlError(check.code, check.message);
+	}
+	// Register the Agent's hooks before it starts, as a split launch does,
+	// capped so a slow disk cannot hold the call up.
+	if (settings.agentHooksEnabled) {
+		await Promise.race([
+			agentHooks.ensure(agent.id, true).catch(() => {}),
+			new Promise((r) => setTimeout(r, 2000)),
+		]);
+	}
+	// Seeded before the pane is in the layout: its terminal takes the task
+	// when it spawns, which can happen as soon as the layout renders.
+	const paneId = crypto.randomUUID();
+	setPendingTask(paneId, { argv, agentId: agent.id });
+	try {
+		await splitCaller(scope, request.direction, {
+			id: paneId,
+			agentId: agent.id,
+			...(request.handle !== null ? { agentHandle: request.handle } : {}),
+		});
+	} catch (e) {
+		takePendingTask(paneId);
+		throw e;
+	}
+	await waitUntil(
+		() => {
+			const ptyId =
+				getTerminal(paneId)?.ptyId ||
+				usePtyActivityStore.getState().panePtyMap[paneId];
+			return (
+				!!ptyId &&
+				usePtyActivityStore.getState().activities[ptyId]?.detectionMode ===
+					"agent"
+			);
+		},
+		START_STALL_MS,
+		signal,
+		"the pane opened, but its Agent did not start within 30 seconds; read the pane to see why",
+	);
+	return describeAgent(await describeNew(scope.caller, paneId));
 }
 
 /** The caller as the badge names it: its handle, else its Pane number. */

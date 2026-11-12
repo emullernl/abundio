@@ -148,6 +148,23 @@ export function setAgentHandle(
 }
 
 /**
+ * Forget `ownerPaneId` as the owner of every **Spawned pane** it made: when
+ * the owner closes, they become ordinary panes. Same tree when none.
+ */
+export function clearSpawnedBy(tree: PaneNode, ownerPaneId: string): PaneNode {
+	if (tree.type === "terminal") {
+		if (tree.spawnedBy !== ownerPaneId) return tree;
+		const { spawnedBy: _owner, ...rest } = tree;
+		return rest;
+	}
+	if (tree.type !== "split") return tree;
+	const first = clearSpawnedBy(tree.first, ownerPaneId);
+	const second = clearSpawnedBy(tree.second, ownerPaneId);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
+/**
  * Set the cwd on the terminal node with the given paneId.
  * Pass `undefined` or empty string to clear it. Returns a new tree with structural sharing.
  */
