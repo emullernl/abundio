@@ -686,6 +686,77 @@ impl WorkspaceStore {
         Ok(out)
     }
 
+    /// The raw connection, for other modules' tests to set up rows this
+    /// store has no method for (another Profile, say).
+    #[cfg(test)]
+    pub fn conn_for_tests(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
+
+    /// The Profile a Workspace belongs to.
+    pub fn profile_of(&self, workspace_id: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT profile_id FROM workspaces WHERE id = ?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(AbundioError::Db(other)),
+        })
+    }
+
+    /// Every **Agent handle** in a Profile's layouts, as `(workspace_id,
+    /// workspace name, pane_id, handle)`. Read from the database, which every
+    /// Window writes its layouts to, so it covers the Profile's other Windows
+    /// too (ADR-0055).
+    pub fn profile_handles(
+        &self,
+        profile_id: &str,
+    ) -> Result<Vec<(String, String, String, String)>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT w.id, w.name, t.layout_json FROM workspaces w
+             JOIN tabs t ON t.workspace_id = w.id
+             WHERE w.profile_id = ?1",
+        )?;
+        let rows = stmt
+            .query_map([profile_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out = Vec::new();
+        for (ws_id, ws_name, layout) in rows {
+            let Ok(tree) = serde_json::from_str::<serde_json::Value>(&layout) else {
+                continue;
+            };
+            let mut stack = vec![&tree];
+            while let Some(node) = stack.pop() {
+                match node.get("type").and_then(|t| t.as_str()) {
+                    Some("terminal") => {
+                        if let (Some(id), Some(h)) = (
+                            node.get("id").and_then(|v| v.as_str()),
+                            node.get("agentHandle").and_then(|v| v.as_str()),
+                        ) {
+                            out.push((ws_id.clone(), ws_name.clone(), id.to_string(), h.to_string()));
+                        }
+                    }
+                    Some("split") => {
+                        for side in ["first", "second"] {
+                            if let Some(child) = node.get(side) {
+                                stack.push(child);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// The pane that holds a **Pane number** in a Workspace, if any. A number
     /// whose pane has closed still answers with that pane's id; the caller
     /// checks the pane is still in a layout.

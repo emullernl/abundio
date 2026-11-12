@@ -459,6 +459,20 @@ The original list:
 
 ### 17. Default handles and Profile-wide uniqueness
 
+**Done.** As built:
+
+- `workspace_store`: `profile_of(workspace_id)` and `profile_handles(profile_id)`, which walks every Tab layout of the Profile in Rust and returns `(workspace id, workspace name, pane id, handle)`.
+- New `agent_names.rs`:
+  - `number_words` goes up to Nine Hundred Ninety-Nine, then digits. `default_handle(n)` gives "Agent " plus that. `lowest_free` skips any key in use, so a user's "agent two" takes Two.
+  - `HandleReservations`: one mutex around reading what is taken and reserving, 10 s per reservation. A second ask for the same pane returns what it holds. A check by another pane sees reservations.
+  - Commands `agent_handle_check` (answers `{ ok }` or `{ ok: false, code, message }`, naming the Workspace that holds the handle) and `agent_handle_default`.
+- Frontend: `setAgentHandle` is now async. It runs the local check (grammar, this Workspace) and then Rust's Profile-wide one. If Rust cannot be asked (the browser demo), the local check stands. Clearing a handle assigns a default. `ensureDefaultHandle(paneId)` names an Agent pane (one with `agentId`, or in agent mode) that has none, and never overwrites a name set while it waited.
+- The one trigger is `startAgentControl` (Profile windows): a `subscribeStatusChange` listener names every pane that enters agent mode without a handle. That covers typed, task, split and hook-detected launches, and Agents relaunching when a Workspace opens, so no load-time pass is needed. `agent start` also calls `ensureDefaultHandle` before replying, so the caller learns the name.
+- The pane menu dialog says the name works across the Profile, and that leaving it empty gives a default name ("Use a default name").
+- Tests: Rust for number words (joins, hundreds, past 999), every default being a valid handle, gaps and look-alikes, counting across the Profile and not across Profiles, reservations for concurrent asks, a number freed when its Agent is gone, Profile-wide checks by key, and the answer's JSON shape. Store for naming Agent panes (stamped or only in agent mode), leaving shells and named panes alone, a concurrent rename winning, refusal from Rust, the tidied name, clearing to a default, and the demo fallback.
+
+The original list:
+
 - `workspace_store`: `profile_handles(profile_id) -> Vec<(workspace_id, pane_id, handle)>`, read from every Tab layout of the Profile's Workspaces (layout JSON parsed in Rust, terminal nodes only).
 - `number_words(n)` (pure, Rust): One … Ninety-Nine, then One Hundred and on; tests across the joins (Twenty, Twenty-One, Ninety-Nine, One Hundred).
 - Commands:

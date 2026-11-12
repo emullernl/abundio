@@ -4,6 +4,8 @@ const tabUpdates: [string, Record<string, unknown>][] = [];
 let created = 0;
 vi.mock("../../ipc", () => ({
 	agentControl: {
+		handleCheck: async () => ({ ok: true }),
+		handleDefault: async () => "Agent One",
 		paneNumbers: async (_ws: string, ids: string[]) =>
 			ids.map((id, i) => [id, i + 1]),
 	},

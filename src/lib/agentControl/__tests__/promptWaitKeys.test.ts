@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const write = vi.fn(async () => {});
 vi.mock("../../ipc", () => ({
 	agentControl: {
+		handleCheck: async () => ({ ok: true }),
+		handleDefault: async () => "Agent One",
 		paneNumbers: async (_ws: string, ids: string[]) =>
 			ids.map((id, i) => [id, i + 1]),
 	},

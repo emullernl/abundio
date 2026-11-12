@@ -1360,6 +1360,19 @@ export const agentControl = {
 			paneIds,
 		}),
 
+	/** Whether `paneId` may take `handle`, checked against every layout of
+	 *  the Profile (ADR-0055). */
+	handleCheck: (workspaceId: string, paneId: string, handle: string) =>
+		invoke<
+			| { ok: true }
+			| { ok: false; code: "invalid_handle" | "handle_taken"; message: string }
+		>("agent_handle_check", { workspaceId, paneId, handle }),
+
+	/** The lowest free **Default handle** in the Profile, reserved for
+	 *  `paneId` for a few seconds. */
+	handleDefault: (workspaceId: string, paneId: string) =>
+		invoke<string>("agent_handle_default", { workspaceId, paneId }),
+
 	/** Rust aims requests at the owning Window, so they are heard here only. */
 	onRequest: (cb: (e: AgentControlRequestEvent) => void) =>
 		listenToThisWindow<AgentControlRequestEvent>("agent-control-request", (e) =>

@@ -5,6 +5,8 @@ const ensure = vi.fn(async () => {});
 let defaultShell = "/bin/zsh";
 vi.mock("../../ipc", () => ({
 	agentControl: {
+		handleCheck: async () => ({ ok: true }),
+		handleDefault: async () => "Agent One",
 		paneNumbers: async (_ws: string, ids: string[]) =>
 			ids.map((id, i) => [id, i + 1]),
 	},

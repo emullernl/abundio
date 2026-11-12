@@ -36,9 +36,9 @@ function NameAgentDialogBody({ paneId, current, onClose }: Props) {
 	const canSave = clearing ? current !== undefined : problem === null;
 	const message = problem ?? refusal;
 
-	const save = () => {
+	const save = async () => {
 		if (!canSave) return;
-		const result = useWorkspaceStore
+		const result = await useWorkspaceStore
 			.getState()
 			.setAgentHandle(paneId, clearing ? null : trimmed);
 		if (result.ok) onClose();
@@ -81,9 +81,9 @@ function NameAgentDialogBody({ paneId, current, onClose }: Props) {
 					Name agent
 				</h2>
 				<p style={{ color: "var(--fg-secondary)", fontSize: 13 }}>
-					Other agents in this Workspace can address this one by its name, for
+					Other agents in this Profile can address this one by its name, for
 					example <code>abundio agent prompt reviewer …</code>. Leave it empty
-					to remove the name.
+					to give it a default name ("Agent One", "Agent Two"…) again.
 				</p>
 				<input
 					ref={inputRef}
@@ -133,7 +133,7 @@ function NameAgentDialogBody({ paneId, current, onClose }: Props) {
 							opacity: canSave ? 1 : 0.35,
 						}}
 					>
-						{clearing && current !== undefined ? "Remove name" : "Save"}
+						{clearing && current !== undefined ? "Use a default name" : "Save"}
 					</button>
 				</div>
 			</div>

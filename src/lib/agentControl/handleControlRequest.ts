@@ -3,7 +3,10 @@
 // Workspace to carry it out. This module answers.
 
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
-import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import {
+	subscribeStatusChange,
+	usePtyActivityStore,
+} from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -151,7 +154,7 @@ export async function runRequest(
 			};
 		case "agent.rename": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, () => {
+			return withBadge(scope, pane, async () => {
 				const facts = liveFacts(pane);
 				if (facts.mode !== "agent") {
 					throw new ControlError(
@@ -159,14 +162,12 @@ export async function runRequest(
 						"that pane is not running an Agent; only Agents have handles",
 					);
 				}
-				const check = useWorkspaceStore
+				const check = await useWorkspaceStore
 					.getState()
 					.setAgentHandle(pane.node.id, request.handle);
 				if (!check.ok) throw new ControlError(check.code, check.message);
-				const node = { ...pane.node, agentHandle: request.handle ?? undefined };
-				return describeAgent(
-					describePane({ ...pane, node }, facts, scope.numbers, caller.paneId),
-				);
+				// Read back: a cleared handle has become a default one.
+				return describeAgent(await describeNew(caller, pane.node.id));
 			});
 		}
 		case "pane.read": {
@@ -439,6 +440,8 @@ async function startAgent(
 		signal,
 		"the pane opened, but its Agent did not start within 30 seconds; read the pane to see why",
 	);
+	// Named before the reply, so the caller learns its default handle.
+	await useWorkspaceStore.getState().ensureDefaultHandle(paneId);
 	// In the Fleet Console its tile exists only now that it is in agent mode.
 	if (request.focus && fleetConsoleShowing()) {
 		useWindowUiStore.getState().setFocusedTile(paneId);
@@ -675,6 +678,12 @@ async function onRequest(e: AgentControlRequestEvent): Promise<void> {
  * Answer Agent control requests aimed at this Window. Profile windows only:
  * File windows and Settings own no Workspace panes. Returns the unlisten.
  */
+/** The pane a PTY belongs to, among this Window's panes. */
+function paneOfPty(ptyId: string): string | undefined {
+	const map = usePtyActivityStore.getState().panePtyMap;
+	return Object.keys(map).find((paneId) => map[paneId] === ptyId);
+}
+
 export function startAgentControl(): () => void {
 	const unlistens = [
 		agentControl.onRequest((e) => {
@@ -684,7 +693,17 @@ export function startAgentControl(): () => void {
 			running.get(id)?.abort();
 		}),
 	];
+	// Every Agent has a handle (ADR-0055): a pane entering agent mode
+	// without one gets the lowest free Default handle.
+	const unsubscribe = subscribeStatusChange((c) => {
+		if (c.next.detectionMode !== "agent" || c.prev.detectionMode === "agent") {
+			return;
+		}
+		const paneId = paneOfPty(c.ptyId);
+		if (paneId) void useWorkspaceStore.getState().ensureDefaultHandle(paneId);
+	});
 	return () => {
+		unsubscribe();
 		for (const u of unlistens) u.then((fn) => fn()).catch(() => {});
 	};
 }

@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const paneNumbers = vi.fn();
 vi.mock("../../ipc", () => ({
-	agentControl: { paneNumbers: (...a: unknown[]) => paneNumbers(...a) },
+	agentControl: {
+		paneNumbers: (...a: unknown[]) => paneNumbers(...a),
+		handleCheck: async () => ({ ok: true }),
+		handleDefault: async () => "Agent One",
+	},
 	tabs: { update: async () => {} },
 }));
 
@@ -174,13 +178,14 @@ describe("agent rename", () => {
 		expect(tabs[0].layoutJson).toContain('"agentHandle":"tester"');
 	});
 
-	it("clears a handle with null", async () => {
+	it("clearing a handle gives a default one back", async () => {
 		const r = await runRequest(caller, {
 			op: "agent.rename",
 			target: { kind: "handle", value: "rev" },
 			handle: null,
 		});
-		expect(r).toMatchObject({ handle: null });
+		// Every Agent has a handle (ADR-0055): clearing gives a default back.
+		expect(r).toMatchObject({ handle: "Agent One" });
 	});
 
 	it("refuses a shell pane", async () => {
