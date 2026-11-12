@@ -1,7 +1,13 @@
 import { useCallback, useRef, useState } from "react";
+import {
+	agentsShareFromDrag,
+	leftSidebarShares,
+} from "../../lib/leftSidebarLayout";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { ChevronLeft, ChevronRight, Grid, Plus } from "../Icons";
+import { SectionDivider } from "../RightSidebar/SectionDivider";
+import { AgentsList } from "./AgentsList";
 import { WorkspaceList } from "./WorkspaceList";
 
 interface SidebarProps {
@@ -207,10 +213,55 @@ export function Sidebar({
 				</div>
 			</div>
 
-			{/* Workspace list — fills the rest of the sidebar (the bottom split
-			 *  + Explorer/Search tab strip moved to the right sidebar per ADR-0010). */}
-			<div className="overflow-y-auto px-4 py-2 flex-1 min-h-0">
+			<SidebarBody />
+		</div>
+	);
+}
+
+/**
+ * Everything under the sidebar header: the Workspace list, then the
+ * **Agents list** under a draggable divider. The divider reports a fraction
+ * of this container's height, so it must stay the divider's parent.
+ */
+function SidebarBody() {
+	const collapsed = useWindowUiStore((s) => s.agentsListCollapsed);
+	const agentsShare = useSettingsStore((s) => s.leftSidebarAgentsShare);
+	const setAgentsShare = useSettingsStore((s) => s.setLeftSidebarAgentsShare);
+	// Live drag value; persisted only on mouseup, like every other divider.
+	const [localShare, setLocalShare] = useState<number | null>(null);
+	const shares = leftSidebarShares({
+		agentsShare: localShare ?? agentsShare,
+		agentsCollapsed: collapsed,
+	});
+
+	const handleResize = useCallback((y: number) => {
+		setLocalShare(agentsShareFromDrag(y));
+	}, []);
+	const handleResizeEnd = useCallback(() => {
+		if (localShare !== null) {
+			setAgentsShare(localShare);
+			setLocalShare(null);
+		}
+	}, [localShare, setAgentsShare]);
+
+	return (
+		<div className="flex flex-col flex-1 min-h-0">
+			{/* Workspace list (the bottom split + Explorer/Search tab strip moved
+			 *  to the right sidebar per ADR-0010). */}
+			<div
+				className="overflow-y-auto px-4 py-2 min-h-0"
+				style={{ flex: `${shares.workspaces} 1 0%` }}
+			>
 				<WorkspaceList />
+			</div>
+			{!collapsed && (
+				<SectionDivider onResize={handleResize} onResizeEnd={handleResizeEnd} />
+			)}
+			<div
+				className="flex flex-col min-h-0"
+				style={{ flex: collapsed ? "0 0 auto" : `${shares.agents} 1 0%` }}
+			>
+				<AgentsList />
 			</div>
 		</div>
 	);
