@@ -1,3 +1,4 @@
+import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { agentRowTitle } from "../../lib/agentRowTitle";
@@ -18,6 +19,7 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 	const { paneId, ptyId, workspaceId, tabName } = tile;
 	const status = usePaneStatus(paneId);
 	const xtermTitle = usePtyActivityStore((s) => s.titles[paneId] ?? "");
+	const handle = useAgentHandle(paneId);
 	const agentId = usePtyActivityStore((s) => s.detectedAgentIds[ptyId]);
 	const agentName = useSettingsStore((s) =>
 		agentId ? (s.agents.find((a) => a.id === agentId)?.name ?? "") : "",
@@ -31,7 +33,11 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 
 	const AgentIcon = (agentId && getAgentIconComponent(agentId)) || undefined;
 	const displayName = agentName || "Agent";
-	const title = agentRowTitle({ agentName: displayName, xtermTitle });
+	const title = agentRowTitle({
+		agentName: displayName,
+		xtermTitle,
+		handle,
+	});
 	const tooltip = [
 		displayName,
 		xtermTitle.trim(),

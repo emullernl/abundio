@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { checkHandle, type HandleCheck } from "../lib/agentHandle";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
 import {
 	fileWindows,
@@ -16,6 +17,7 @@ import {
 	insertBesideNode,
 	parseTabLayout,
 	pruneOrphanDerived,
+	setAgentHandle,
 	setAgentId,
 	setAgentSessionId,
 	setCwd,
@@ -255,6 +257,9 @@ interface WorkspaceState {
 		sessionId: string,
 	) => void;
 	stampCwdOnPane: (paneId: string, cwd: string) => void;
+	/** Name (or, with null, un-name) the Agent in `paneId`: its **Agent
+	 *  handle**, checked for grammar and uniqueness in its Workspace. */
+	setAgentHandle: (paneId: string, handle: string | null) => HandleCheck;
 	updateLayout: (tabId: string, layout: PaneNode) => Promise<void>;
 	updateLayoutLocal: (tabId: string, layout: PaneNode) => void;
 	persistLayout: (tabId: string) => Promise<void>;
@@ -1278,6 +1283,36 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		tabsApi
 			.update(result.tabId, { layoutJson: result.layoutJson })
 			.catch(() => {});
+	},
+
+	setAgentHandle: (paneId, handle) => {
+		const ws = get().findWorkspaceForPane(paneId);
+		if (!ws) {
+			return {
+				ok: false,
+				code: "invalid_handle",
+				message: "That pane is not open.",
+			};
+		}
+		if (handle !== null) {
+			const check = checkHandle(ws.tabs, paneId, handle);
+			if (!check.ok) return check;
+		}
+		const result = findMutatedTabLayout([ws], (layout) =>
+			setAgentHandle(layout, paneId, handle ?? undefined),
+		);
+		if (!result) return { ok: true };
+		set((s) => ({
+			workspaces: updateTabInWorkspaces(
+				s.workspaces,
+				result.tabId,
+				result.layoutJson,
+			),
+		}));
+		tabsApi
+			.update(result.tabId, { layoutJson: result.layoutJson })
+			.catch(() => {});
+		return { ok: true };
 	},
 
 	stampCwdOnPane: (paneId, cwd) => {

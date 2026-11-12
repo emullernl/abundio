@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const paneNumbers = vi.fn();
 vi.mock("../../ipc", () => ({
 	agentControl: { paneNumbers: (...a: unknown[]) => paneNumbers(...a) },
+	tabs: { update: async () => {} },
 }));
 
 const terminals = new Map<string, unknown>();
@@ -10,6 +11,7 @@ vi.mock("../../terminalManager", () => ({
 	getTerminal: (id: string) => terminals.get(id),
 }));
 
+import { useControlBadgeStore } from "../../../stores/controlBadgeStore";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import type { WorkspaceWithTabs } from "../../types";
@@ -150,6 +152,71 @@ describe("runRequest", () => {
 		await expect(
 			runRequest({ ...caller, workspaceId: "other" }, { op: "pane.list" }),
 		).rejects.toMatchObject({ code: "not_found" });
+	});
+});
+
+describe("agent rename", () => {
+	it("names an Agent and shows the badge while it runs", async () => {
+		const seen: (string | undefined)[] = [];
+		const unsub = useControlBadgeStore.subscribe((s) =>
+			seen.push(s.badges.b?.by),
+		);
+		const r = await runRequest(caller, {
+			op: "agent.rename",
+			target: { kind: "pane", value: 2 },
+			handle: "tester",
+		});
+		unsub();
+		expect(r).toMatchObject({ pane: "p2", handle: "tester" });
+		expect(seen).toContain("p1");
+		expect(useControlBadgeStore.getState().badges.b).toBeUndefined();
+		const tabs = useWorkspaceStore.getState().workspaces[0].tabs;
+		expect(tabs[0].layoutJson).toContain('"agentHandle":"tester"');
+	});
+
+	it("clears a handle with null", async () => {
+		const r = await runRequest(caller, {
+			op: "agent.rename",
+			target: { kind: "handle", value: "rev" },
+			handle: null,
+		});
+		expect(r).toMatchObject({ handle: null });
+	});
+
+	it("refuses a shell pane", async () => {
+		await expect(
+			runRequest(caller, {
+				op: "agent.rename",
+				target: { kind: "pane", value: 1 },
+				handle: "x",
+			}),
+		).rejects.toMatchObject({ code: "not_an_agent" });
+	});
+
+	it("refuses a handle another pane has", async () => {
+		await runRequest(caller, {
+			op: "agent.rename",
+			target: { kind: "pane", value: 2 },
+			handle: "rev",
+		});
+		const ws = useWorkspaceStore.getState().workspaces[0];
+		const layout = JSON.parse(ws.tabs[0].layoutJson);
+		layout.first.agentHandle = "taken";
+		useWorkspaceStore.setState({
+			workspaces: [
+				{
+					...ws,
+					tabs: [{ ...ws.tabs[0], layoutJson: JSON.stringify(layout) }],
+				},
+			],
+		});
+		await expect(
+			runRequest(caller, {
+				op: "agent.rename",
+				target: { kind: "pane", value: 2 },
+				handle: "taken",
+			}),
+		).rejects.toMatchObject({ code: "handle_taken" });
 	});
 });
 

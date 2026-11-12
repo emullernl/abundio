@@ -171,6 +171,19 @@ The original list:
 
 ### 6. Handles, numbers and the Control badge
 
+**Done.** As built:
+
+- `lib/agentHandle.ts`: the grammar (same as Rust's, with the dialog's wording for each problem), `checkHandle` (unique across every Tab of the Workspace; a pane may keep its own), and `handleForPane`, which builds one pane → handle map per `workspaces` array for every title bar to share.
+- `paneTree.setAgentId` drops the handle with the session when the Agent is cleared or replaced. One exception: a pane that had **no** Agent keeps its handle when its first Agent arrives, because `agent start` (step 8) names the pane before its Agent is detected. Re-stamping the same Agent changes nothing.
+- `workspaceStore.setAgentHandle(paneId, handle | null)` returns `{ ok }` or `{ ok: false, code, message }`, which `agent rename` passes through as its error.
+- Pane menu: "Name Agent…" / "Rename Agent…" (title case, like the other entries), enabled in agent-mode panes only. It opens `NameAgentDialog`; an empty name removes the handle.
+- The handle shows as an accent-coloured name before the pane title, and before the title in a Fleet tile's bar and an Agent row (`reviewer · Fix the build`). The handle goes *first*, rather than replacing the title.
+- Control badge: `stores/controlBadgeStore.ts` (counted per pane, so overlapping calls keep it up and it names the latest caller). It shows as `← p2` / `← reviewer` in the pane's bar and the Fleet tile's bar. It is shown for every call that targets *another* pane (`pane read`, `agent rename` now; the rest as they land). `resolve` and calls on one's own pane get none.
+- `agent rename` requires an agent-mode pane (`not_an_agent`) and answers with the Agent's description.
+- Tests: grammar (matching the Rust cases), uniqueness across Tabs, clearing on Agent change and keeping on first Agent, row title order, the badge counter, and `agent rename` through the handler (badge shown and cleared, layout written, clear with null, `not_an_agent`, `handle_taken`).
+
+The original list:
+
 - `workspaceStore`: `setAgentHandle(paneId, handle | null)`, checked for grammar and Workspace uniqueness. Clear it where `setAgentId` clears or changes the Agent, so it follows the Agent-mode rules (and the known nested-shell gap) exactly.
 - Pane ⋯ menu: "Name agent…" (agent-mode panes only), using the app's own dialog components (no native `<select>`; padding inline).
 - Show the handle on the pane title bar and in the Agent row (`lib/agentRowTitle.ts`: handle, then terminal title, then product name).

@@ -16,3 +16,14 @@ describe("agentRowTitle", () => {
 		);
 	});
 });
+
+describe("agentRowTitle with a handle", () => {
+	it("leads with the handle, then the title or name", () => {
+		expect(
+			agentRowTitle({ agentName: "Codex", xtermTitle: "Fix", handle: "rev" }),
+		).toBe("rev · Fix");
+		expect(
+			agentRowTitle({ agentName: "Codex", xtermTitle: " ", handle: "rev" }),
+		).toBe("rev · Codex");
+	});
+});

@@ -2,6 +2,7 @@
 // token and parses the command, then asks the Window that owns the caller's
 // Workspace to carry it out. This module answers.
 
+import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
@@ -112,24 +113,29 @@ export async function runRequest(
 					.filter((p) => p.mode === "agent")
 					.map(describeAgent),
 			};
+		case "agent.rename": {
+			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			return withBadge(scope, pane, () => {
+				const facts = liveFacts(pane);
+				if (facts.mode !== "agent") {
+					throw new ControlError(
+						"not_an_agent",
+						"that pane is not running an Agent; only Agents have handles",
+					);
+				}
+				const check = useWorkspaceStore
+					.getState()
+					.setAgentHandle(pane.node.id, request.handle);
+				if (!check.ok) throw new ControlError(check.code, check.message);
+				const node = { ...pane.node, agentHandle: request.handle ?? undefined };
+				return describeAgent(
+					describePane({ ...pane, node }, facts, scope.numbers, caller.paneId),
+				);
+			});
+		}
 		case "pane.read": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			const managed = getTerminal(pane.node.id);
-			if (!managed) {
-				throw new ControlError(
-					"state_unknown",
-					"that pane's terminal is not loaded yet; try again in a moment",
-				);
-			}
-			const lines = readBuffer(managed.term.buffer.active, managed.term.rows, {
-				lines: request.lines,
-				visible: request.visible,
-			});
-			return {
-				pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
-				lines: lines.length,
-				text: lines.join("\n"),
-			};
+			return withBadge(scope, pane, () => readPane(scope, pane, request));
 		}
 		default:
 			throw new ControlError(
@@ -137,6 +143,55 @@ export async function runRequest(
 				`\`${request.op}\` is not available in this version of Abundio yet`,
 			);
 	}
+}
+
+/** The caller as the badge names it: its handle, else its Pane number. */
+export function callerLabel(scope: Scope): string {
+	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
+	if (self?.node.agentHandle) return self.node.agentHandle;
+	const n = scope.numbers.get(scope.caller.paneId);
+	return n !== undefined ? paneLabel(n) : "an Agent";
+}
+
+/** Run `fn` with the **Control badge** on `pane`. An Agent acting on its own
+ *  pane gets no badge: nobody else is driving it. */
+async function withBadge<T>(
+	scope: Scope,
+	pane: WorkspacePane,
+	fn: () => T | Promise<T>,
+): Promise<T> {
+	if (pane.node.id === scope.caller.paneId) return fn();
+	const end = useControlBadgeStore
+		.getState()
+		.begin(pane.node.id, callerLabel(scope));
+	try {
+		return await fn();
+	} finally {
+		end();
+	}
+}
+
+function readPane(
+	scope: Scope,
+	pane: WorkspacePane,
+	request: Extract<ControlRequest, { op: "pane.read" }>,
+) {
+	const managed = getTerminal(pane.node.id);
+	if (!managed) {
+		throw new ControlError(
+			"state_unknown",
+			"that pane's terminal is not loaded yet; try again in a moment",
+		);
+	}
+	const lines = readBuffer(managed.term.buffer.active, managed.term.rows, {
+		lines: request.lines,
+		visible: request.visible,
+	});
+	return {
+		pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
+		lines: lines.length,
+		text: lines.join("\n"),
+	};
 }
 
 /** Turn a handler's outcome into the reply Rust expects. */
