@@ -1099,6 +1099,151 @@ if (Get-Module -Name PSReadLine) {
     // Stage F / hook_server.rs. Written here so it lives next to the wrapper
     // rc files that put it on PATH.
     write_abundio_env_helper(dir);
+    // The `abundio` command (Agent control, ADR-0054), on the same PATH.
+    write_abundio_cli(dir);
+}
+
+/// `abundio` — Agent control (ADR-0054). A thin client: it sends its own
+/// arguments, NUL-separated and unparsed, to the hook server's `/control`
+/// route with this pane's `ABUNDIO_AGENT_TOKEN`, and prints the answer. Rust
+/// parses the arguments, writes the help text and formats the JSON, so this
+/// script and its PowerShell twin never need to change when a command does.
+///
+/// Exit codes: 0 success (stdout), 2 usage error, 1 anything else (stderr).
+///
+/// Retries: a connection refused never reached the app, so it is retried as
+/// is. A connection that dropped after the request went out (sleep, the server
+/// rebinding its port) may already have acted, so it is retried with
+/// `X-Abundio-Retry`: Rust then turns `prompt --wait` into a plain wait and
+/// refuses to repeat any other change. No `eval`: the arguments are data.
+pub(crate) const ABUNDIO_CLI_SH: &str = r#"#!/usr/bin/env bash
+# Abundio — control the panes and Agents of this Workspace. Run `abundio help`.
+set -uo pipefail
+
+if [ -z "${ABUNDIO_AGENT_TOKEN:-}" ] || [ -z "${ABUNDIO_HOOK_PORT:-}" ]; then
+  echo "abundio: not running inside an Abundio Workspace pane" >&2
+  exit 1
+fi
+
+__abundio_send() {   # $1 = 1 to mark a retry; the rest are the arguments
+  local retry=$1
+  shift
+  local extra=()
+  [ "$retry" = 1 ] && extra=(-H 'X-Abundio-Retry: 1')
+  # No arguments must send an empty body, not one empty argument. The status
+  # comes last, on a line of its own, so no temporary file is needed.
+  # (`||`, not `&&`: under pipefail a false test would fail the whole pipe.)
+  { [ $# -eq 0 ] || printf '%s\0' "$@"; } |
+    curl -s -w '\n%{http_code}' --connect-timeout 5 \
+      -X POST --data-binary @- \
+      -H "X-Abundio-Agent-Token: ${ABUNDIO_AGENT_TOKEN}" \
+      -H 'Content-Type: application/octet-stream' \
+      ${extra[@]+"${extra[@]}"} \
+      "http://127.0.0.1:${ABUNDIO_HOOK_PORT}/control"
+}
+
+retry=0
+reply=""
+rc=1
+for attempt in 1 2 3 4; do
+  reply=$(__abundio_send "$retry" "$@")
+  rc=$?
+  case $rc in
+    0) break ;;
+    # Connection refused: the request never arrived.
+    7) ;;
+    # The connection dropped after the request went out.
+    18|52|55|56) retry=1 ;;
+    *) break ;;
+  esac
+  [ "$attempt" -lt 4 ] && sleep 1
+done
+
+status=""
+body=""
+if [ "$rc" = 0 ]; then
+  status=${reply##*$'\n'}
+  body=${reply%$'\n'*}
+  body=${body%$'\n'}
+fi
+case "$status" in
+  200) printf '%s\n' "$body"; exit 0 ;;
+  400) printf '%s\n' "$body" >&2; exit 2 ;;
+  ''|000)
+    echo "abundio: could not reach Abundio (is the app still running?)" >&2
+    exit 1 ;;
+  *) printf '%s\n' "$body" >&2; exit 1 ;;
+esac
+"#;
+
+/// PowerShell twin of [`ABUNDIO_CLI_SH`]; the same protocol, exit codes and
+/// retry rules. PowerShell swallows a bare `--` given to a script, so on
+/// Windows `agent start … -- <agent args>` needs it quoted: `'--'`.
+pub(crate) const ABUNDIO_CLI_PS1: &str = r#"# Abundio — control the panes and Agents of this Workspace. Run `abundio help`.
+if (-not $env:ABUNDIO_AGENT_TOKEN -or -not $env:ABUNDIO_HOOK_PORT) {
+    [Console]::Error.WriteLine("abundio: not running inside an Abundio Workspace pane"); exit 1
+}
+
+$bytes = New-Object System.Collections.Generic.List[byte]
+foreach ($a in $args) {
+    $bytes.AddRange([Text.Encoding]::UTF8.GetBytes([string]$a))
+    $bytes.Add(0)
+}
+$body = $bytes.ToArray()
+$uri = "http://127.0.0.1:$($env:ABUNDIO_HOOK_PORT)/control"
+
+Add-Type -AssemblyName System.Net.Http
+$client = New-Object System.Net.Http.HttpClient
+$client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
+
+function Test-Refused($err) {
+    $e = $err.Exception
+    while ($e) {
+        if ($e -is [System.Net.Sockets.SocketException] -and
+            $e.SocketErrorCode -eq [System.Net.Sockets.SocketError]::ConnectionRefused) { return $true }
+        $e = $e.InnerException
+    }
+    return $false
+}
+
+$retry = $false
+$response = $null
+for ($attempt = 1; $attempt -le 4; $attempt++) {
+    $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $uri)
+    $request.Headers.Add("X-Abundio-Agent-Token", $env:ABUNDIO_AGENT_TOKEN)
+    if ($retry) { $request.Headers.Add("X-Abundio-Retry", "1") }
+    $request.Content = New-Object System.Net.Http.ByteArrayContent(,$body)
+    try {
+        $response = $client.SendAsync($request).GetAwaiter().GetResult()
+        break
+    } catch {
+        # Refused: it never arrived. Anything else: it may have, so mark the retry.
+        if (-not (Test-Refused $_)) { $retry = $true }
+        if ($attempt -lt 4) { Start-Sleep -Seconds 1 }
+    }
+}
+
+if (-not $response) {
+    [Console]::Error.WriteLine("abundio: could not reach Abundio (is the app still running?)"); exit 1
+}
+$text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+switch ([int]$response.StatusCode) {
+    200 { [Console]::Out.WriteLine($text); exit 0 }
+    400 { [Console]::Error.WriteLine($text); exit 2 }
+    default { [Console]::Error.WriteLine($text); exit 1 }
+}
+"#;
+
+fn write_abundio_cli(dir: &Path) {
+    let sh = dir.join("abundio");
+    if fs::write(&sh, ABUNDIO_CLI_SH).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&sh, fs::Permissions::from_mode(0o755));
+        }
+    }
+    let _ = fs::write(dir.join("abundio.ps1"), ABUNDIO_CLI_PS1);
 }
 
 /// `abundio-env` — use an on-demand Environment Bundle in the calling pane.
@@ -2351,5 +2496,181 @@ mod spawn_cwd_tests {
     #[test]
     fn no_workspace_keeps_the_old_behaviour() {
         assert_eq!(resolve_spawn_cwd("/gone", None, dirs(&[])).unwrap(), "/gone");
+    }
+}
+
+
+#[cfg(all(test, unix))]
+mod abundio_cli_tests {
+    //! Runs the real `abundio` script with a fake `curl` first on PATH. The
+    //! fake records its arguments and stdin, and answers from a script of
+    //! replies, one line per call: `<curl exit code> <http status> <body>`.
+    use super::*;
+    use std::process::Command;
+
+    struct Fixture {
+        dir: tempfile::TempDir,
+    }
+
+    const FAKE_CURL: &str = r#"#!/usr/bin/env bash
+dir="$(dirname "$0")"
+n=$(( $(cat "$dir/calls" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$dir/calls"
+printf '%s\n' "$@" > "$dir/args.$n"
+cat > "$dir/stdin.$n"
+line=$(sed -n "${n}p" "$dir/replies")
+rc=${line%% *}; rest=${line#* }
+status=${rest%% *}; body=${rest#* }
+# Like `curl -w '\n%{http_code}'`: the body, then the status on its own line.
+[ "$rc" = 0 ] && printf '%b\n%s' "$body" "$status"
+exit "$rc"
+"#;
+
+    impl Fixture {
+        fn new(replies: &[&str]) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            write_abundio_cli(dir.path());
+            let curl = dir.path().join("curl");
+            fs::write(&curl, FAKE_CURL).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::write(dir.path().join("replies"), replies.join("\n") + "\n").unwrap();
+            Fixture { dir }
+        }
+
+        fn run(&self, args: &[&str]) -> std::process::Output {
+            Command::new("bash")
+                .arg(self.dir.path().join("abundio"))
+                .args(args)
+                .env("PATH", format!("{}:/usr/bin:/bin", self.dir.path().display()))
+                .env("ABUNDIO_AGENT_TOKEN", "tok")
+                .env("ABUNDIO_HOOK_PORT", "4242")
+                .output()
+                .unwrap()
+        }
+
+        fn calls(&self) -> usize {
+            fs::read_to_string(self.dir.path().join("calls"))
+                .map(|s| s.trim().parse().unwrap())
+                .unwrap_or(0)
+        }
+
+        fn stdin(&self, n: usize) -> Vec<u8> {
+            fs::read(self.dir.path().join(format!("stdin.{n}"))).unwrap()
+        }
+
+        fn args(&self, n: usize) -> String {
+            fs::read_to_string(self.dir.path().join(format!("args.{n}"))).unwrap()
+        }
+    }
+
+    fn stdout(o: &std::process::Output) -> String {
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    }
+
+    fn stderr(o: &std::process::Output) -> String {
+        String::from_utf8_lossy(&o.stderr).into_owned()
+    }
+
+    #[test]
+    fn sends_its_arguments_nul_separated_with_the_pane_token() {
+        let f = Fixture::new(&[r#"0 200 {"panes":[]}"#]);
+        let out = f.run(&["agent", "prompt", "p2", "two words\nand a line", ""]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(stdout(&out), "{\"panes\":[]}\n");
+        assert_eq!(f.stdin(1), b"agent\0prompt\0p2\0two words\nand a line\0\0");
+        let args = f.args(1);
+        assert!(args.contains("X-Abundio-Agent-Token: tok"));
+        assert!(args.contains("http://127.0.0.1:4242/control"));
+        assert!(!args.contains("X-Abundio-Retry"));
+    }
+
+    #[test]
+    fn no_arguments_send_an_empty_body() {
+        let f = Fixture::new(&["0 200 help text\\n"]);
+        let out = f.run(&[]);
+        assert_eq!(f.stdin(1), b"");
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(stdout(&out), "help text\n");
+    }
+
+    #[test]
+    fn a_usage_error_exits_2_on_stderr() {
+        let f = Fixture::new(&[r#"0 400 {"error":{"code":"usage"}}"#]);
+        let out = f.run(&["pane", "frob"]);
+        assert_eq!(out.status.code(), Some(2));
+        assert!(stderr(&out).contains("\"usage\""));
+        assert!(out.stdout.is_empty());
+    }
+
+    #[test]
+    fn other_errors_exit_1_on_stderr() {
+        let f = Fixture::new(&[r#"0 409 {"error":{"code":"busy"}}"#]);
+        let out = f.run(&["agent", "prompt", "p1", "go"]);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(stderr(&out).contains("\"busy\""));
+    }
+
+    #[test]
+    fn a_refused_connection_is_retried_as_is() {
+        let f = Fixture::new(&["7 000 ", r#"0 200 {"ok":true}"#]);
+        let out = f.run(&["pane", "list"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(f.calls(), 2);
+        assert!(!f.args(2).contains("X-Abundio-Retry"));
+        assert_eq!(f.stdin(2), b"pane\0list\0");
+    }
+
+    #[test]
+    fn a_dropped_connection_is_retried_as_a_retry() {
+        let f = Fixture::new(&["52 000 ", r#"0 200 {"state":"ready"}"#]);
+        let out = f.run(&["agent", "prompt", "p1", "go", "--wait"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert!(f.args(2).contains("X-Abundio-Retry: 1"));
+        // The same arguments again: Rust decides what a retry means.
+        assert_eq!(f.stdin(2), f.stdin(1));
+    }
+
+    #[test]
+    fn it_gives_up_after_four_attempts() {
+        let f = Fixture::new(&["7 000 ", "7 000 ", "7 000 ", "7 000 ", "0 200 never"]);
+        let out = f.run(&["pane", "list"]);
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(f.calls(), 4);
+        assert!(stderr(&out).contains("could not reach Abundio"));
+    }
+
+    #[test]
+    fn outside_an_abundio_pane_it_refuses_without_calling() {
+        let f = Fixture::new(&["0 200 x"]);
+        let out = Command::new("bash")
+            .arg(f.dir.path().join("abundio"))
+            .args(["pane", "list"])
+            .env("PATH", format!("{}:/usr/bin:/bin", f.dir.path().display()))
+            .env_remove("ABUNDIO_AGENT_TOKEN")
+            .env("ABUNDIO_HOOK_PORT", "4242")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(stderr(&out).contains("not running inside an Abundio"));
+        assert_eq!(f.calls(), 0);
+    }
+
+    #[test]
+    fn neither_client_evaluates_its_arguments() {
+        assert!(!ABUNDIO_CLI_SH.contains("eval"));
+        assert!(!ABUNDIO_CLI_PS1.contains("Invoke-Expression"));
+        assert!(ABUNDIO_CLI_PS1.contains("X-Abundio-Retry"));
+        assert!(ABUNDIO_CLI_PS1.contains("ConnectionRefused"));
+    }
+
+    #[test]
+    fn written_executable_next_to_abundio_env() {
+        let dir = tempfile::tempdir().unwrap();
+        write_abundio_cli(dir.path());
+        assert!(dir.path().join("abundio.ps1").is_file());
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(dir.path().join("abundio")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111);
     }
 }

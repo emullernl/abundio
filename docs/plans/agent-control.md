@@ -131,6 +131,16 @@ The original list:
 
 ### 4. The `abundio` command
 
+**Done.** As built:
+
+- `ABUNDIO_CLI_SH` / `ABUNDIO_CLI_PS1` in `pty_manager.rs`, written as `abundio` and `abundio.ps1` by `write_abundio_cli`, next to `abundio-env`.
+- No temporary file: curl appends the status on its own last line (`-w '\n%{http_code}'`), and the script splits it off.
+- Retries, at most four attempts one second apart. curl exit 7 (refused) means the request never arrived, so it is retried as is. Exits 18, 52, 55 and 56 mean the connection dropped after the request went out, so it is retried with `X-Abundio-Retry`. PowerShell tells the two apart by a `SocketException` with `ConnectionRefused`.
+- Tested by running the real script with a fake `curl` first on PATH (no sockets, so it runs in sandboxes too): argv bytes and token, empty argv, exit codes and streams, both kinds of retry, giving up, and refusing outside a pane.
+- Known Windows gap: PowerShell swallows a bare `--` given to a script, so `agent start … -- <args>` needs `'--'` quoted there. Check this on Windows (see Verify).
+
+The original list:
+
 - `write_abundio_cli(dir)` in `pty_manager.rs`, next to `write_abundio_env_helper`, written to the same `shell-integration` folder (already on PATH in every PTY).
 - sh: `printf '%s\0' "$@" | curl -s -m <timeout> --data-binary @- -H "X-Abundio-Agent-Token: $ABUNDIO_AGENT_TOKEN" http://127.0.0.1:$ABUNDIO_HOOK_PORT/control`. The script maps the HTTP status to the exit code and splits stdout/stderr. PowerShell twin for Windows.
 - Outside an Abundio Pane (no token), print one line saying so and exit 1.
