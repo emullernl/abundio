@@ -59,6 +59,8 @@ interface WindowUiState {
 	prSectionCollapsed: boolean;
 	/** The **Commits** Anchored section's collapse state. */
 	commitsSectionCollapsed: boolean;
+	/** The Left sidebar's **Agents list** collapse state. */
+	agentsListCollapsed: boolean;
 
 	toggleSidebar: () => void;
 	setSidebarCollapsed: (collapsed: boolean) => void;
@@ -73,6 +75,7 @@ interface WindowUiState {
 	togglePrSectionCollapsed: () => void;
 	setPrSectionCollapsed: (collapsed: boolean) => void;
 	toggleCommitsSectionCollapsed: () => void;
+	toggleAgentsListCollapsed: () => void;
 
 	/** Worktree sets whose Linked worktree rows are hidden in the Left sidebar
 	 *  — **Folded sets**. Keyed by the set's git-derived `worktreeGroupKey`
@@ -174,6 +177,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 			rightSidebarActiveTab: "git",
 			prSectionCollapsed: false,
 			commitsSectionCollapsed: false,
+			agentsListCollapsed: false,
 			toggleSidebar: () =>
 				set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 			setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
@@ -196,6 +200,8 @@ export const useWindowUiStore = create<WindowUiState>()(
 				set({ prSectionCollapsed: collapsed }),
 			toggleCommitsSectionCollapsed: () =>
 				set((s) => ({ commitsSectionCollapsed: !s.commitsSectionCollapsed })),
+			toggleAgentsListCollapsed: () =>
+				set((s) => ({ agentsListCollapsed: !s.agentsListCollapsed })),
 			foldedSetKeys: [],
 			toggleSetFolded: (groupKey) =>
 				set((s) => ({
@@ -345,6 +351,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				rightSidebarActiveTab: s.rightSidebarActiveTab,
 				prSectionCollapsed: s.prSectionCollapsed,
 				commitsSectionCollapsed: s.commitsSectionCollapsed,
+				agentsListCollapsed: s.agentsListCollapsed,
 				statisticsOverlayOpen: s.statisticsOverlayOpen,
 				foldedSetKeys: s.foldedSetKeys,
 				fleetGrid: s.fleetGrid,
