@@ -16,7 +16,7 @@ import {
 	useWorkspaceRollups,
 } from "../../hooks/useWorkspaceRollups";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
-import { raiseFileWindows } from "../../lib/fileWindowRaise";
+import { focusFileWindow } from "../../lib/fileWindowRaise";
 import { targetPaneId } from "../../lib/fleetFocus";
 import { fileWindows, type OpenFileWindow } from "../../lib/ipc";
 import {
@@ -66,14 +66,10 @@ function goTo(row: NavRow): void {
 	}
 	useWindowUiStore.getState().setFleetConsoleOpen(false);
 	if (row.kind === "window") {
-		// Its Workspace becomes Active, which raises all its File windows
-		// without focus; focus the picked one once that raise is done, so it
-		// ends up on top.
-		const { workspaceId, windowLabel } = row;
-		useWorkspaceStore.getState().beginWorkspaceSwitch(workspaceId);
-		void raiseFileWindows(workspaceId).then(() =>
-			fileWindows.focus(windowLabel).catch(() => {}),
-		);
+		// Switching raises all its File windows without focus (once, from the
+		// store); focus the picked one after that raise, so it ends up on top.
+		useWorkspaceStore.getState().beginWorkspaceSwitch(row.workspaceId);
+		void focusFileWindow(row.workspaceId, row.windowLabel);
 		return;
 	}
 	if (row.kind === "tab") {
@@ -136,14 +132,19 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 	const detectedAgentIds = usePtyActivityStore((s) => s.detectedAgentIds);
 	const agents = useSettingsStore((s) => s.agents);
 
-	// File windows live in Rust; read them once per open. They cannot change
-	// while the dialog has focus, short of a Workspace closing under it.
+	// File windows live in Rust; read them when the dialog opens and when the
+	// Opened set changes. One can still be closed with the mouse while the
+	// dialog is up (it does not hold OS focus); picking its stale row then
+	// just switches Workspace, and the focus fails quietly.
 	const [openWindows, setOpenWindows] = useState<OpenFileWindow[]>([]);
 	const openedKey = [...openedWorkspaceIds].sort().join("|");
 	useEffect(() => {
 		let live = true;
 		const ids = openedKey ? openedKey.split("|") : [];
-		if (ids.length === 0) return;
+		if (ids.length === 0) {
+			setOpenWindows([]);
+			return;
+		}
 		fileWindows
 			.list(ids)
 			.then((list) => live && setOpenWindows(list))
@@ -237,14 +238,15 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 		el?.scrollIntoView?.({ block: "nearest" });
 	}, [selected]);
 
-	const pick = useCallback(
-		(row: NavRow) => {
-			onClose();
-			goTo(row);
-			restoreTerminalFocus();
-		},
-		[onClose],
-	);
+	// The caller's onClose is usually a new closure each render; a ref keeps
+	// pick stable so memoised rows do not re-render for it.
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	const pick = useCallback((row: NavRow) => {
+		onCloseRef.current();
+		goTo(row);
+		restoreTerminalFocus();
+	}, []);
 
 	const setFolded = useCallback((key: string, fold: boolean) => {
 		setCollapsed((prev) => {
@@ -255,6 +257,13 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 			return next;
 		});
 	}, []);
+
+	const toggleRow = useCallback(
+		(row: NavRow) => {
+			if (isFolder(row)) setFolded(row.key, row.expanded);
+		},
+		[setFolded],
+	);
 
 	const toggleStatus = (st: NavStatus) => {
 		setStatuses((prev) => {
@@ -279,7 +288,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 		} else if (e.key === "Enter" && selected) {
 			e.preventDefault();
 			pick(selected);
-		} else if (query === "" && selected && e.key === "ArrowLeft") {
+		} else if (query.trim() === "" && selected && e.key === "ArrowLeft") {
 			// With a search the tree is fully expanded and Left/Right move the
 			// caret instead.
 			e.preventDefault();
@@ -289,7 +298,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 				const parent = parentKey(selected);
 				if (parent) setSelectedKey(parent);
 			}
-		} else if (query === "" && selected && e.key === "ArrowRight") {
+		} else if (query.trim() === "" && selected && e.key === "ArrowRight") {
 			e.preventDefault();
 			if (!isFolder(selected) || !selected.hasChildren) return;
 			if (!selected.expanded) setFolded(selected.key, false);
@@ -446,11 +455,9 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 										? computePtyDotStatus(row.ptyId, activities)
 										: null
 								}
-								onHover={() => setSelectedKey(row.key)}
-								onPick={() => pick(row)}
-								onToggle={() =>
-									isFolder(row) && setFolded(row.key, row.expanded)
-								}
+								onHover={setSelectedKey}
+								onPick={pick}
+								onToggle={toggleRow}
 							/>
 						))
 					)}
@@ -474,6 +481,36 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 	);
 }
 
+type NavRowProps = {
+	row: NavRow;
+	selected: boolean;
+	workspace: WorkspaceWithTabs | undefined;
+	status: DotStatus | null;
+	onHover: (key: string) => void;
+	onPick: (row: NavRow) => void;
+	onToggle: (row: NavRow) => void;
+};
+
+/** `navigatorRows` builds new row objects on every run (a title tick is
+ *  enough), so rows compare by their fields, not by identity. */
+function sameRowProps(a: NavRowProps, b: NavRowProps): boolean {
+	if (
+		a.selected !== b.selected ||
+		a.workspace !== b.workspace ||
+		a.status !== b.status ||
+		a.onHover !== b.onHover ||
+		a.onPick !== b.onPick ||
+		a.onToggle !== b.onToggle
+	)
+		return false;
+	const ra = a.row as Record<string, unknown>;
+	const rb = b.row as Record<string, unknown>;
+	const keys = Object.keys(ra);
+	return (
+		keys.length === Object.keys(rb).length && keys.every((k) => ra[k] === rb[k])
+	);
+}
+
 const NavRowView = memo(function NavRowView({
 	row,
 	selected,
@@ -482,15 +519,7 @@ const NavRowView = memo(function NavRowView({
 	onHover,
 	onPick,
 	onToggle,
-}: {
-	row: NavRow;
-	selected: boolean;
-	workspace: WorkspaceWithTabs | undefined;
-	status: DotStatus | null;
-	onHover: () => void;
-	onPick: () => void;
-	onToggle: () => void;
-}) {
+}: NavRowProps) {
 	const depth =
 		(row.kind === "workspace" ? 0 : row.kind === "pane" ? 2 : 1) +
 		(row.linked ? 1 : 0);
@@ -509,9 +538,9 @@ const NavRowView = memo(function NavRowView({
 			}
 			data-nav-key={row.key}
 			data-testid="navigator-row"
-			onMouseMove={selected ? undefined : onHover}
+			onMouseMove={selected ? undefined : () => onHover(row.key)}
 			onMouseDown={(e) => e.preventDefault()}
-			onClick={onPick}
+			onClick={() => onPick(row)}
 			onKeyDown={undefined}
 			className={`flex items-center gap-2 rounded-md cursor-pointer select-none ${
 				selected ? "bg-[var(--row-active-bg)]" : ""
@@ -535,7 +564,7 @@ const NavRowView = memo(function NavRowView({
 						onMouseDown={(e) => e.preventDefault()}
 						onClick={(e) => {
 							e.stopPropagation();
-							onToggle();
+							onToggle(row);
 						}}
 						className="flex items-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
 					>
@@ -555,7 +584,7 @@ const NavRowView = memo(function NavRowView({
 			{row.kind === "window" && <WindowLine row={row} />}
 		</div>
 	);
-});
+}, sameRowProps);
 
 function WorkspaceLine({
 	row,

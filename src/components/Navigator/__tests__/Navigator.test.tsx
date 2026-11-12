@@ -222,6 +222,21 @@ describe("Navigator", () => {
 		expect(onClose).toHaveBeenCalled();
 	});
 
+	it("a whitespace-only search still lets Left fold", () => {
+		render();
+		act(() => {
+			const el = input();
+			const set = Object.getOwnPropertyDescriptor(
+				HTMLInputElement.prototype,
+				"value",
+			)?.set;
+			set?.call(el, " ");
+			el.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		key("ArrowLeft");
+		expect(selectedText()).toContain("Build");
+	});
+
 	it("a status chip keeps only Agents in that state", () => {
 		render();
 		const waiting = Array.from(container.querySelectorAll("button")).find(

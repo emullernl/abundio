@@ -161,6 +161,23 @@ function leaves(node: PaneNode): Leaf[] {
 	return [node];
 }
 
+/** Parsed leaves by layout JSON. The tree is rebuilt on every title or
+ *  status tick while the dialog is open, but a layout changes only when the
+ *  user changes it, so parse each one once. Cleared when it grows past
+ *  `LEAF_CACHE_MAX`, which only a long session of layout edits reaches. */
+const leafCache = new Map<string, Leaf[]>();
+const LEAF_CACHE_MAX = 500;
+
+function leavesOf(layoutJson: string): Leaf[] {
+	const cached = leafCache.get(layoutJson);
+	if (cached) return cached;
+	const layout = parseTabLayout(layoutJson);
+	const out = layout ? leaves(layout) : [];
+	if (leafCache.size >= LEAF_CACHE_MAX) leafCache.clear();
+	leafCache.set(layoutJson, out);
+	return out;
+}
+
 interface PaneFacts {
 	paneKind: NavPaneKind;
 	ptyId: string;
@@ -243,8 +260,7 @@ export function navigatorRows(input: NavigatorInput): NavRow[] {
 		const tabBlocks: { header: NavRow; panes: NavRow[] }[] = [];
 		if (opened) {
 			for (const tab of ws.tabs) {
-				const layout = parseTabLayout(tab.layoutJson);
-				const all = layout ? leaves(layout) : [];
+				const all = leavesOf(tab.layoutJson);
 				const tabMatches = wsMatches || matches(query, tab.name);
 				const panes: NavRow[] = [];
 				for (const leaf of all) {
