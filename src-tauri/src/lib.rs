@@ -1,4 +1,5 @@
 pub mod agent_control;
+pub mod agent_skills;
 pub mod agent_hooks;
 pub mod app_badge;
 pub mod app_paths;
@@ -944,6 +945,7 @@ pub fn run() {
             // per process even though every Window's settings rehydrate calls
             // `agent_hooks_provision_startup`. See ADR-0003 (Revisited).
             app.manage(agent_hooks::StartupProvisionGuard::default());
+            app.manage(agent_skills::SkillStartupGuard::default());
 
             // Restore windows from windows.json. The tauri.conf-spawned main
             // window is already mounting; we seed its profile from the
@@ -1460,6 +1462,9 @@ pub fn run() {
             agent_control::agent_control_set_enabled,
             agent_control::agent_control_pane_numbers,
             agent_control::agent_control_pane_for_number,
+            agent_skills::agent_skill_provision,
+            agent_skills::agent_skill_provision_startup,
+            agent_skills::agent_skill_status,
             commands::workspace_set_restore_active,
             commands::pty_read_log,
             commands::pty_write_snapshot,

@@ -1372,3 +1372,23 @@ export const agentControl = {
 			cb(e.payload.id),
 		),
 };
+
+/** What is at one place the Abundio skill is installed (mirrors Rust
+ *  `SkillEntryStatus`). `shared` is `~/.agents/skills/abundio`, read by every
+ *  built-in Agent but Claude Code; `claude` is Claude Code's own entry. */
+export interface AgentSkillStatus {
+	location: "shared" | "claude";
+	path: string;
+	state: "absent" | "installed" | "outdated" | "linked" | "conflict";
+}
+
+/** **Skill provisioning** (ADR-0054). */
+export const agentSkill = {
+	provision: (enabled: boolean, enabledAgents: string[]) =>
+		invoke<void>("agent_skill_provision", { enabled, enabledAgents }),
+	/** Once per process, however many Windows call it: rewrites the skill so
+	 *  an upgraded app installs its new text. */
+	provisionStartup: (enabled: boolean, enabledAgents: string[]) =>
+		invoke<void>("agent_skill_provision_startup", { enabled, enabledAgents }),
+	status: () => invoke<AgentSkillStatus[]>("agent_skill_status"),
+};

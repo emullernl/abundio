@@ -7,6 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../../lib/ipc", () => ({
 	fonts: { listSystemFonts: () => Promise.resolve([]) },
 	shells: { listAvailable: () => Promise.resolve([]) },
+	agentSkill: {
+		provision: vi.fn(() => Promise.resolve()),
+		provisionStartup: vi.fn(() => Promise.resolve()),
+		status: vi.fn(() => Promise.resolve([])),
+	},
 	agentHooks: { status: () => Promise.resolve([]) },
 	fs: { revealInFolder: () => Promise.resolve() },
 	updates: {

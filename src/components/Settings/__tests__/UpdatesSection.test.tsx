@@ -17,6 +17,11 @@ vi.mock("../../../lib/ipc", () => ({
 		setAutoCheck: () => Promise.resolve(),
 		onDownloadProgress: () => Promise.resolve(() => {}),
 	},
+	agentSkill: {
+		provision: vi.fn(() => Promise.resolve()),
+		provisionStartup: vi.fn(() => Promise.resolve()),
+		status: vi.fn(() => Promise.resolve([])),
+	},
 	agentHooks: { provision: () => Promise.resolve() },
 }));
 vi.mock("@tauri-apps/api/app", () => ({

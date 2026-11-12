@@ -242,6 +242,25 @@ The original list:
 
 ### 9. Skill provisioning
 
+**Done.** As built:
+
+- The skill text is `src-tauri/skill/SKILL.md`, compiled in with `include_str!`. Its first instruction is to stop unless `ABUNDIO_AGENT_TOKEN` is set.
+- `agent_skills.rs`: `provision_at(paths, enabled, watched)` and `status_at(paths)`, with paths passed in so the tests run in a temporary folder.
+  - **Shared copy** `~/.agents/skills/abundio/` (`SKILL.md` plus the marker `.abundio-managed`): present while the setting is on and any Watched Agent other than Claude Code reads that folder. Otherwise it is removed.
+  - **Claude Code entry** `$CLAUDE_CONFIG_DIR/skills/abundio`, else `~/.claude/skills/abundio`: present while the setting is on, Claude Code is Watched and its config folder already exists (no litter). It is a link to the shared copy when there is one and a link can be made. Otherwise it is a marked copy of its own (Claude Code alone; Windows without symlink rights). A link whose shared copy went away becomes a copy.
+  - Files are rewritten only when their text differs.
+  - Anything at either place that Abundio did not write is left alone: no marker, or a link pointing elsewhere. It is reported as a conflict (an error when the skill is wanted there, silence when removing).
+- Commands: `agent_skill_provision`, `agent_skill_provision_startup` (once per process, its own `SkillStartupGuard`), `agent_skill_status` (each place's path and state: `absent`, `installed`, `outdated`, `linked`, `conflict`).
+- `settingsStore.agentSkillEnabled`, on by default. An install whose saved settings predate it reads it as on, so upgrades get the skill with no migration.
+  - Startup provisioning always runs, on or off, so switching it off removes the skill on the next start too.
+  - The skill re-syncs wherever hooks do (an Agent toggled, the `$PATH` seeding, retired built-ins pruned), even while Status Hooks are off. `setAgentSkillEnabled` re-syncs too.
+- Left for step 10: the Settings toggle and showing `agent_skill_status` in the Provisioning footprint.
+- Tests:
+  - Rust: write with marker, rewrite when changed, untouched when equal, removal when off or unread, a foreign folder or link never touched, nothing for Claude without its folder, the link and its removal, Claude alone as a copy, a dangling link becoming a copy.
+  - Store: re-sync on toggle (also with hooks off), the setting off, startup on a fresh profile, on an upgraded one, and when off.
+
+The original list:
+
 - The skill text (`SKILL.md`) lives in the repo. It teaches: check `ABUNDIO_AGENT_TOKEN` is set; `abundio help`; list before acting; address by handle or Pane number; prefer `agent prompt --wait`; read before re-sending after a timeout; never close panes it did not spawn.
 - `agent_skills.rs` (or an extension of `agent_hooks.rs`): write `~/.agents/skills/abundio/` (with a marker file saying Abundio owns it) and the Claude Code link, following the rules found in step 1. Rewrite the copy on every start when its contents differ. Remove the shared copy when no Watched Agent reads it or the setting is off; remove the Claude Code link when Claude Code is un-Watched. Never touch an `abundio` skill folder without the marker. Follow `provision_own_file`: no litter in an Agent's config folder that does not exist.
 - Setting "Install the Abundio skill for agents", next to Status Hooks, on by default. Show its paths in the Provisioning footprint display.

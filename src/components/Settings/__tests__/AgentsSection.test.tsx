@@ -3,6 +3,11 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../lib/ipc", () => ({
+	agentSkill: {
+		provision: vi.fn(() => Promise.resolve()),
+		provisionStartup: vi.fn(() => Promise.resolve()),
+		status: vi.fn(() => Promise.resolve([])),
+	},
 	agentHooks: {
 		status: vi.fn(() => Promise.resolve([])),
 		provision: vi.fn(() => Promise.resolve()),

@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the IPC surface the store touches so we can assert provisioning calls.
 vi.mock("../../lib/ipc", () => ({
+	agentSkill: {
+		provision: vi.fn(() => Promise.resolve()),
+		provisionStartup: vi.fn(() => Promise.resolve()),
+		status: vi.fn(() => Promise.resolve([])),
+	},
 	agentHooks: {
 		provision: vi.fn(() => Promise.resolve()),
 		provisionStartup: vi.fn(() => Promise.resolve()),

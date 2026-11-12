@@ -14,6 +14,11 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/ipc", () => ({
 	pty: {},
+	agentSkill: {
+		provision: vi.fn(() => Promise.resolve()),
+		provisionStartup: vi.fn(() => Promise.resolve()),
+		status: vi.fn(() => Promise.resolve([])),
+	},
 	agentHooks: { provisionStartup: vi.fn().mockResolvedValue(undefined) },
 	updates: { setAutoCheck: vi.fn().mockResolvedValue(undefined) },
 	pr: { setConfig: vi.fn().mockResolvedValue(undefined) },

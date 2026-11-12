@@ -11,7 +11,7 @@ import {
 	type KeybindingOverrides,
 	sanitizeOverrides,
 } from "../lib/chords";
-import { agentHooks, pr, updates } from "../lib/ipc";
+import { agentHooks, agentSkill, pr, updates } from "../lib/ipc";
 import { SYSTEM_UI_FONT } from "../lib/nerdFonts";
 import type { PreviewColorMode } from "../lib/previewColorMode";
 import { nextPreviewColorMode } from "../lib/previewColorMode";
@@ -31,6 +31,17 @@ import type { CodingAgent } from "../lib/types";
  */
 function provisionableAgentIds(agents: CodingAgent[]): string[] {
 	return agents.filter((a) => a.enabled).map((a) => a.id);
+}
+
+/** Re-sync **Skill provisioning** with the skill setting and the Watched
+ *  Agents. Rust also removes the skill when it is off, so this always runs,
+ *  unlike the hook re-sync, which is skipped while hooks are off. */
+function syncSkill(agents: CodingAgent[], enabled: boolean): Promise<void> {
+	return agentSkill
+		.provision(enabled, provisionableAgentIds(agents))
+		.catch((err) => {
+			console.error("[agentSkill] provision failed:", err);
+		});
 }
 
 interface SettingsState {
@@ -57,6 +68,9 @@ interface SettingsState {
 	markdownPreviewAutoOpen: boolean;
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
+	/** **Skill provisioning** (ADR-0054): install the Abundio skill for every
+	 *  Watched Agent that reads skills. On by default. */
+	agentSkillEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
 	/** Refuse to hand the mouse to programs running in a terminal pane, so
 	 *  click-drag selection and right-click keep working everywhere. The default
@@ -167,6 +181,7 @@ interface SettingsState {
 	toggleMarkdownPreviewColorMode: () => void;
 	/** Resolves once (un)provisioning has settled — see `toggleAgent`. */
 	setAgentHooksEnabled: (enabled: boolean) => Promise<void>;
+	setAgentSkillEnabled: (enabled: boolean) => Promise<void>;
 	setGpuAcceleration: (enabled: boolean) => void;
 	setBlockMouseReporting: (enabled: boolean) => void;
 	setSmartImageDrop: (enabled: boolean) => void;
@@ -234,6 +249,7 @@ export const PERSISTED_KEYS = [
 	"markdownPreviewAutoOpen",
 	"markdownPreviewColorMode",
 	"agentHooksEnabled",
+	"agentSkillEnabled",
 	"gpuAccelerationEnabled",
 	"blockMouseReporting",
 	"smartImageDrop",
@@ -287,6 +303,9 @@ const PERSISTED_DEFAULTS: {
 	markdownPreviewAutoOpen: boolean;
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
+	/** **Skill provisioning** (ADR-0054): install the Abundio skill for every
+	 *  Watched Agent that reads skills. On by default. */
+	agentSkillEnabled: boolean;
 	gpuAccelerationEnabled: boolean;
 	blockMouseReporting: boolean;
 	smartImageDrop: boolean;
@@ -327,6 +346,7 @@ const PERSISTED_DEFAULTS: {
 		markdownPreviewAutoOpen: true,
 		markdownPreviewColorMode: "auto" as PreviewColorMode,
 		agentHooksEnabled: true,
+		agentSkillEnabled: true,
 		gpuAccelerationEnabled: true,
 		blockMouseReporting: false,
 		smartImageDrop: true,
@@ -439,6 +459,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.agentHooksEnabled === "boolean"
 					? s.agentHooksEnabled
 					: defaults.agentHooksEnabled,
+			agentSkillEnabled:
+				typeof s.agentSkillEnabled === "boolean"
+					? s.agentSkillEnabled
+					: defaults.agentSkillEnabled,
 			gpuAccelerationEnabled:
 				typeof s.gpuAccelerationEnabled === "boolean"
 					? s.gpuAccelerationEnabled
@@ -567,6 +591,19 @@ function applyRehydratedSettings(state: SettingsState | undefined): void {
 			`${state.uiFontSize}px`,
 		);
 	}
+	// **Skill provisioning** at startup, on or off: Rust rewrites the skill so
+	// an upgraded app installs its new text, or removes it when switched off.
+	// Once per process, like hooks.
+	if (state) {
+		agentSkill
+			.provisionStartup(
+				state.agentSkillEnabled ?? PERSISTED_DEFAULTS.agentSkillEnabled,
+				provisionableAgentIds(state.agents),
+			)
+			.catch((err) => {
+				console.error("[agentSkill] startup provision failed:", err);
+			});
+	}
 	// Re-sync agent hook provisioning with the persisted setting on
 	// startup. Uses the once-per-process startup command so that, with
 	// multiple Windows open, only the first rehydrate actually rewrites
@@ -633,6 +670,7 @@ export const useSettingsStore = create<SettingsState>()(
 			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
 			markdownPreviewColorMode: PERSISTED_DEFAULTS.markdownPreviewColorMode,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
+			agentSkillEnabled: PERSISTED_DEFAULTS.agentSkillEnabled,
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
 			blockMouseReporting: PERSISTED_DEFAULTS.blockMouseReporting,
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
@@ -734,12 +772,14 @@ export const useSettingsStore = create<SettingsState>()(
 				// supported agent to match its toggle, so the disabled one is stripped.
 				// Returns the provision promise so callers can refresh the footprint.
 				const state = get();
-				if (!state.agentHooksEnabled) return Promise.resolve();
-				return agentHooks
+				const skill = syncSkill(state.agents, state.agentSkillEnabled);
+				if (!state.agentHooksEnabled) return skill;
+				const hooks = agentHooks
 					.provision(true, provisionableAgentIds(state.agents))
 					.catch((err) => {
 						console.error("[agentHooks] provision failed:", err);
 					});
+				return Promise.all([hooks, skill]).then(() => {});
 			},
 			matchAgentsToInstalled: async (installed) => {
 				if (installed.size === 0) return "empty-scan";
@@ -761,6 +801,7 @@ export const useSettingsStore = create<SettingsState>()(
 							console.error("[agentHooks] provision failed:", err);
 						});
 				}
+				await syncSkill(after, get().agentSkillEnabled);
 				return "changed";
 			},
 			pruneRetiredAgents: async (installed, scanned) => {
@@ -777,6 +818,7 @@ export const useSettingsStore = create<SettingsState>()(
 							console.error("[agentHooks] provision failed:", err);
 						});
 				}
+				await syncSkill(after, get().agentSkillEnabled);
 				return true;
 			},
 			updateAgent: (id, updates) => {
@@ -803,6 +845,10 @@ export const useSettingsStore = create<SettingsState>()(
 						s.markdownPreviewColorMode,
 					),
 				})),
+			setAgentSkillEnabled: (agentSkillEnabled) => {
+				set({ agentSkillEnabled });
+				return syncSkill(get().agents, agentSkillEnabled);
+			},
 			setAgentHooksEnabled: (agentHooksEnabled) => {
 				// Provision/unprovision agent hook configs to match the setting.
 				// The Rust side accumulates per-agent errors into a single message
