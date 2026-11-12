@@ -114,3 +114,21 @@ describe("mockInvoke", () => {
 		}
 	});
 });
+
+describe("mockInvoke — Agent control", () => {
+	it("answers the Agent control and skill commands without warning", async () => {
+		expect(await mockInvoke("agent_control_enabled")).toBe(true);
+		expect(
+			await mockInvoke("agent_control_pane_numbers", {
+				workspaceId: "w",
+				paneIds: ["a", "b"],
+			}),
+		).toEqual([
+			["a", 1],
+			["b", 2],
+		]);
+		const status = await mockInvoke<{ state: string }[]>("agent_skill_status");
+		expect(status.map((s) => s.state)).toEqual(["installed", "linked"]);
+		expect(await mockInvoke("agent_skill_provision_startup")).toBeUndefined();
+	});
+});

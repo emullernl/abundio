@@ -268,6 +268,28 @@ The original list:
 
 ### 10. Settings, demo, docs
 
+**Done.** As built:
+
+- Settings ▸ Agents has a new **Agent Control** group after the Status Hooks rows.
+  - "Let agents control panes" reads and writes the Rust-held setting (`agent_control_enabled` / `agent_control_set_enabled`). It is not in `settingsStore`, so one value serves every Window and the `/control` route.
+  - "Install the Abundio skill for agents" drives `agentSkillEnabled`. Under it, each place the skill goes is listed with its path and state (Installed, Linked, Outdated, "Not Abundio's — left alone", Not needed / Off). This is the skill's Provisioning footprint. It refreshes when the section opens and after the skill toggle; after toggling an Agent it shows the new state on the next open.
+- `lib/demo/mockInvoke.ts` answers every new command (`agent_control_*`, `agent_skill_*`). `agent_skill_status` shows a sample footprint.
+- `CLAUDE.md`: `agent_control.rs`, `agent_skills.rs`, `lib/agentControl/`, `lib/agentHandle.ts`, `lib/closePane.ts` and `stores/controlBadgeStore.ts` in the architecture lists. A Key Conventions entry says only the per-pane token is trusted, the shared hook token is not a pane boundary, and changing calls are not retried.
+- Release notes: Abundio's notes are written on the GitHub release at release time (the in-app "What's new" reads them from there). There is no file in the repo for them, so the draft is below, to use then.
+- Tests: the Settings group (the control toggle writes to Rust, the skill toggle goes through the store, the footprint lists both places with their states), `skillBadge`, and the demo commands.
+
+#### Release notes draft
+
+```markdown
+## ✨ New Features & Improvements
+
+- **Your agents can now talk to each other.** An agent in one pane can list the other panes of its workspace, read what they show, prompt another agent and wait for its answer, start a helper agent beside itself, or run a command in an idle shell, all through a new `abundio` command. It never reaches beyond its own workspace, and closes only the panes it opened itself, so no one is evicted mid-sentence. A small badge on a pane shows who is driving it. Turn it off in Settings ▸ Agents ▸ Let agents control panes. (#PR)
+- **Agents learn the trick on their own.** Abundio installs an `abundio` skill for your watched agents, in `~/.agents/skills/abundio` (read by Codex, Copilot, Gemini, OpenCode, Qwen, Kimi, Grok and Vibe) and, for Claude Code, in `~/.claude/skills/abundio`. It is rewritten on every start and removed when you switch it off in Settings ▸ Agents. A folder of that name that Abundio didn't write is politely left alone. (#PR)
+- **Give an agent a name.** "Name Agent…" in the pane menu gives it a handle such as `reviewer`, shown in its title bar and in the Agents list, which other agents can use to address it. (#PR)
+```
+
+The original list:
+
 - Settings ▸ Agents: the "Let agents control panes" toggle and the skill toggle.
 - `lib/demo/`: mock `agent_control_reply` and the setting commands so `pnpm demo:web` keeps working; no control requests arrive in the demo.
 - `CLAUDE.md`: add `agent_control.rs` and `lib/agentControl/` to the architecture list, plus a Key Conventions line: the caller is whatever its token says; the shared hook token is not a pane boundary.

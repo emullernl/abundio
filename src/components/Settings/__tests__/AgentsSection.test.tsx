@@ -12,6 +12,10 @@ vi.mock("../../../lib/ipc", () => ({
 		status: vi.fn(() => Promise.resolve([])),
 		provision: vi.fn(() => Promise.resolve()),
 	},
+	agentControl: {
+		enabled: vi.fn(() => Promise.resolve(true)),
+		setEnabled: vi.fn(() => Promise.resolve()),
+	},
 	fs: {},
 }));
 

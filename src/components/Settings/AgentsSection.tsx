@@ -5,7 +5,14 @@ import {
 	parseTaskArgsForm,
 	TASK_PROMPT_PLACEHOLDER,
 } from "../../lib/agents";
-import { type AgentHookStatus, agentHooks, fs as fsApi } from "../../lib/ipc";
+import {
+	type AgentHookStatus,
+	type AgentSkillStatus,
+	agentControl,
+	agentHooks,
+	agentSkill,
+	fs as fsApi,
+} from "../../lib/ipc";
 import type { CodingAgent } from "../../lib/types";
 import { useAgentRegistryStore } from "../../stores/agentRegistryStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -44,6 +51,116 @@ function hookBadge(
 		default:
 			return { label: "Hooks not registered", tone: "warning" };
 	}
+}
+
+/** The badge for one place the Abundio skill goes (**Skill provisioning**). */
+export function skillBadge(
+	skillEnabled: boolean,
+	state: AgentSkillStatus["state"],
+): { label: string; tone: HookTone } {
+	switch (state) {
+		case "installed":
+			return { label: "Installed", tone: "success" };
+		case "linked":
+			return { label: "Linked", tone: "success" };
+		case "outdated":
+			return { label: "Outdated", tone: "warning" };
+		case "conflict":
+			return { label: "Not Abundio's — left alone", tone: "error" };
+		default:
+			return { label: skillEnabled ? "Not needed" : "Off", tone: "muted" };
+	}
+}
+
+const SKILL_LOCATION_LABEL: Record<AgentSkillStatus["location"], string> = {
+	shared: "Shared",
+	claude: "Claude",
+};
+
+/** **Agent control** (ADR-0054): the master switch, which lives in Rust so
+ *  every Window and the `/control` route read one value, and the skill. */
+function AgentControlSettings() {
+	const [controlEnabled, setControlEnabled] = useState<boolean | null>(null);
+	const skillEnabled = useSettingsStore((s) => s.agentSkillEnabled);
+	const setSkillEnabled = useSettingsStore((s) => s.setAgentSkillEnabled);
+	const [skill, setSkill] = useState<AgentSkillStatus[]>([]);
+	const refreshSkill = useCallback(() => {
+		agentSkill
+			.status()
+			.then(setSkill)
+			.catch(() => setSkill([]));
+	}, []);
+	useEffect(() => {
+		agentControl
+			.enabled()
+			.then(setControlEnabled)
+			.catch(() => setControlEnabled(true));
+		refreshSkill();
+	}, [refreshSkill]);
+
+	return (
+		<>
+			<SectionLabel>Agent Control</SectionLabel>
+			<ToggleRow
+				checked={controlEnabled ?? true}
+				onChange={(v) => {
+					setControlEnabled(v);
+					agentControl.setEnabled(v).catch(() => setControlEnabled(!v));
+				}}
+				style={{ marginBottom: 18 }}
+				label="Let agents control panes"
+				description={
+					<>
+						Agents in a workspace's panes can use the <code>abundio</code>{" "}
+						command to list that workspace's panes and agents, read them, prompt
+						another agent and wait for its answer, start a new agent beside
+						them, and run commands in idle shells. They never reach another
+						workspace, and can close only the panes they opened. A badge on a
+						pane shows when another agent is driving it.
+					</>
+				}
+			/>
+			<ToggleRow
+				checked={skillEnabled}
+				onChange={(v) => {
+					setSkillEnabled(v).then(refreshSkill);
+				}}
+				style={{ marginBottom: skill.length ? 8 : 18 }}
+				label="Install the Abundio skill for agents"
+				description="Teaches your watched agents the abundio command, as a skill they load when a task calls for it. Rewritten on every start; removed when this is off. A folder named abundio that Abundio did not write is never touched."
+			/>
+			{skill.length > 0 && (
+				<div
+					className="flex flex-col rounded-lg"
+					style={{
+						gap: 6,
+						padding: "8px 12px",
+						marginBottom: 18,
+						border: "1px solid var(--border)",
+					}}
+				>
+					{skill.map((entry) => {
+						const badge = skillBadge(skillEnabled, entry.state);
+						return (
+							<FootprintRow
+								key={entry.location}
+								label={SKILL_LOCATION_LABEL[entry.location]}
+							>
+								<code
+									className="truncate"
+									style={{ fontSize: 11, color: "var(--fg-primary)" }}
+									title={entry.path}
+								>
+									{entry.path}
+								</code>
+								<HookBadge label={badge.label} tone={badge.tone} />
+							</FootprintRow>
+						);
+					})}
+				</div>
+			)}
+		</>
+	);
 }
 
 /** The *Task-capable* badge: this Agent can be started by **New task**. */
@@ -813,6 +930,7 @@ export function AgentsSection() {
 					label="Resume the last session when agents relaunch"
 					description="When a workspace opens, or its terminals restart for a changed environment, each agent comes back into the conversation it last had in that pane instead of starting fresh. If that session is gone, the agent shows its error and you start it again yourself. New task never resumes: it always starts fresh with its task."
 				/>
+				<AgentControlSettings />
 				{/* The label and the action share a baseline: the button operates on
 				    the toggles in the rows below, so it belongs to their heading and
 				    not to the Add-agent form at the foot of the pane. */}
