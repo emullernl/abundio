@@ -12,7 +12,7 @@ Agents already run side by side in Abundio, but they cannot see or reach each ot
 |-------|----------|
 | Capabilities | List Panes and Agents; read a Pane; prompt an Agent and wait; start an Agent in a new Pane; send keys; run a command in an idle shell; close a Spawned pane. |
 | Callers | Only processes inside the app's own Panes. Each PTY gets its own token; the token says who is calling (ADR-0054). |
-| Reach | The caller's own Workspace only. |
+| Reach | The caller's own Workspace only. **Changed by ADR-0055 (steps 16–20): every Workspace of the caller's Profile.** |
 | Transport | New routes on the existing hook server. The CLI is a thin client; Rust parses its arguments. |
 | Who carries it out | The Window owning the Workspace. Rust checks and routes. |
 | Approval | None. A Control badge on the target Pane while a call runs, and one log line per call in the app log. |
@@ -52,7 +52,7 @@ abundio help [<group>]
 
 `<pane>` is a Pane number. `<agent>` is an Agent handle or a Pane number. `--kind` takes the ids from `lib/agents.ts` (built-in and custom). Keys use logical names (`esc`, `enter`, `tab`, `ctrl+c`, `up`…); all keys are checked before any byte is written.
 
-Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`. A bad Tab name (steps 11–15) is a usage error, like a bad handle.
+Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`. A bad Tab name (steps 11–15) is a usage error, like a bad handle. Steps 16–20 add `ambiguous_workspace` and `folder_missing`.
 
 Handle grammar: `[a-z][a-z0-9_-]{0,31}`, and never a Pane number (`p` followed by digits only), so the two never collide.
 
@@ -417,6 +417,73 @@ The original list:
 - Release notes draft: one more bullet (Agents can open helpers in their own Tab and name Tabs).
 - Verify (below): a Spawned tab survives a restart with its owner; the user renaming a Tab stops further Agent renames; a hint appears in a crowded Tab.
 
+## Across Workspaces, and names for every Agent (third round: steps 16–20)
+
+Agents reach every Workspace of their own Profile, and every Agent has a name ("Agent Two" by default). See ADR-0055, and **Agent control**, **Agent handle**, **Default handle**, **Spawned tab** and **Control badge** in `GLOSSARY.md`.
+
+### Decisions
+
+| Topic | Decision |
+|-------|----------|
+| Reach | Every Workspace of the caller's Profile, in any of its Windows. Never another Profile. Own Workspace by default. |
+| Addressing | `--workspace <name>` on every command: matched exactly, ignoring case. Two Workspaces of that name: refused, listing them by folder. Handles are unique in the Profile, so `--workspace` is needed only for Pane numbers (and is allowed with handles). |
+| Discovery | `abundio workspace list`: each Workspace of the Profile with name, folder, branch, whether it is open, and its Agents (handle, kind, pane). |
+| Actions | Every command works in another Workspace. A new pane there (`pane split`, `agent start`, `tab new`) always gets a **Spawned tab**, owned by the caller, never a split. |
+| Not opened | Opened for the call in the background, as the user would open it: panes spawn, Agents relaunch with Session resume, it joins the restore list, the user's view does not move. It stays open. A Missing folder is refused. |
+| Badge | `← reviewer · api` when the caller is in another Workspace; unchanged within one. |
+| Skill | Stay in your own Workspace unless the user names another or asks you to work across them. Never open a closed Workspace uninvited. |
+| Names | Every Agent has an **Agent handle**: letters, digits, spaces, `-`, `_`, 1–32 characters, never Pane-number-like (`p3`, any case). Matched ignoring case, with a space and a dash treated alike. |
+| Default names | A pane entering agent mode without a handle gets "Agent" + the lowest free number in words ("Agent One" … "Agent Twenty-One"), counted across the Profile. A number is free again once its Agent leaves its pane. User-chosen names that look like defaults are skipped. |
+| Rename | Any time, from the pane menu or `agent rename`. Clearing a handle gives a default back. Every handle goes with its Agent when it leaves the pane, whoever chose it. |
+| Uniqueness | In the Profile, checked by Rust against every layout of the Profile in the database (other Windows' copies can be stale). |
+
+### 16. Handles become names
+
+- Grammar, in Rust (`valid_handle`) and TypeScript (`lib/agentHandle.ts`) together: letters (any case), digits, spaces, `-`, `_`; trimmed; inner runs of spaces collapsed to one; 1–32 characters; must start with a letter; never `p` + digits in any case.
+- `handle_key(name)`: the matching form, lowercased with every run of spaces and dashes made one `-`. "Agent Two", "agent-two" and "AGENT  two" share the key `agent-two`. Targets resolve by key; uniqueness is by key.
+- `parse_target`: a Pane number (`p3`, any case) or else a handle. Handles with spaces arrive as one argv element when quoted; the help text and skill show the quotes.
+- The pane menu dialog's checks and wording follow the new grammar.
+- Tests: grammar both sides (the same table run in Rust and TS), keys, targets with spaces, Pane-number look-alikes refused in any case.
+
+### 17. Default handles and Profile-wide uniqueness
+
+- `workspace_store`: `profile_handles(profile_id) -> Vec<(workspace_id, pane_id, handle)>`, read from every Tab layout of the Profile's Workspaces (layout JSON parsed in Rust, terminal nodes only).
+- `number_words(n)` (pure, Rust): One … Ninety-Nine, then One Hundred and on; tests across the joins (Twenty, Twenty-One, Ninety-Nine, One Hundred).
+- Commands:
+  - `agent_handle_check(workspace_id, pane_id, handle)`: `ok`, or `handle_taken` naming the Workspace that has it, or `invalid_handle`.
+  - `agent_handle_default(workspace_id, pane_id)`: the lowest free "Agent N" in the Profile. Rust holds a short reservation (pane → handle, in memory, under one mutex) until that pane's layout carries it or 10 s pass, so two Windows naming two new Agents at once never pick the same number.
+- Frontend: `setAgentHandle` asks `agent_handle_check` before writing. `stampAgentOnPane` (and every other place a pane gains an Agent: typed launch, task launch, hook detection) calls `ensureDefaultHandle(paneId)`, which asks for a default when the pane has none. On Workspace load, agent panes without a handle get one. Clearing a handle (`agent rename <agent>` with no name, or an empty name in the dialog) assigns a default.
+- The **Agent row**, title bar and Fleet tile already show the handle; with every Agent named, the row's first line is `Agent Two · <title>`.
+- Tests: lowest free number with gaps, a user's "Agent Five" skipped, reservation across two concurrent asks, release when the Agent leaves, uniqueness across Workspaces of a Profile and not across Profiles, defaults on load.
+
+### 18. Reach (Rust)
+
+- `--workspace <name>`: accepted on every command, anywhere before `--`, parsed once at the top of `parse_args` into `Parsed::Request { workspace: Option<String>, request }`.
+- Resolution, in Rust: the caller's Profile (from its Workspace) → its Workspaces in the database → the one whose name matches ignoring case. None: `not_found` listing the Profile's Workspace names. Several: `ambiguous_workspace` listing them by folder. A Missing folder: `folder_missing` (ADR-0053).
+- Routing: the target Workspace's Window is found from the live control tokens (any PTY of that Workspace names its Window). With none, the target is not Opened, and the request goes to the caller's Window with `open: true`. The event gains `target: { workspaceId, open }`; `caller` is unchanged.
+- `workspace list` is answered by Rust alone: Workspaces of the Profile (name, folder, last branch), `open` (any live PTY), and for each its Agents from the layouts (handle, `agentId`, Pane number).
+- Help text: `--workspace` in the header and the `workspace` group.
+- Tests: resolution (case, ambiguity, unknown, other Profile never matched, Missing folder), routing choice, `workspace list` shape, `--workspace` anywhere on the command line.
+
+### 19. The Window: another Workspace
+
+- `runRequest` takes the target Workspace (default: the caller's) for its `Scope`. Pane numbers and handles resolve there.
+- `open: true`: `markWorkspaceOpened(id)` without activating, then wait (up to 30 s, else `stalled`) until that Workspace's terminals are mounted, before carrying out the call.
+- New panes in another Workspace: `pane split`, `agent start` and `tab new` all go through `openSpawnedTab` there, owned by the caller; no `hint` (it is not the caller's Tab that is crowded).
+- Ownership across Workspaces and Windows: `spawnedBy` in a description shows the owner as `p2 · api` when it is elsewhere. When a pane closes, its Window releases what it owns in its own Workspaces and Rust tells the Profile's other Windows (`agent-control-pane-closed { paneId }`, heard with `listenToThisWindow`). An owner id left in a Workspace no Window has open is inert: Pane ids are never reused.
+- `tab rename --tab <pane> --workspace <name>`: the same rules; "own Tab" is only ever in the caller's Workspace.
+- Control badge: `callerLabel` adds the caller's Workspace name when it is not the target's.
+- Tests: calls into another Workspace (list, read, prompt), opening in the background (view and focus unchanged, call waits for mount, stall), new pane always a Spawned tab there, badge label, `spawnedBy` across Workspaces, release on owner close from another Window.
+
+### 20. Skill, Settings, demo, docs
+
+- Skill: the `--workspace` option and `workspace list`; stay home unless the user asks; never open a closed Workspace uninvited; quote handles with spaces (`"Agent Two"`).
+- Settings ▸ Agents: the "Let agents control panes" description says Agents reach every Workspace of the Profile (it now says they never reach another Workspace).
+- Demo: mock the new commands (`agent_handle_check`, `agent_handle_default`); `workspace list` never reaches the demo.
+- `CLAUDE.md`: reach is the Profile; handles are unique in the Profile and checked in Rust; every Agent has a handle.
+- Release notes draft: a bullet for cross-Workspace reach and one for default names.
+- Verify (below): an Agent in one worktree prompts and waits on an Agent in another; a call into a closed Workspace opens it in the background with its Agents; two new Agents in two Windows at once get different default names; a handle with spaces works from the CLI.
+
 ## Verify in the real app
 
 Unit tests will not catch the integration paths. Before calling it done:
@@ -430,3 +497,5 @@ Unit tests will not catch the integration paths. Before calling it done:
 - Put the Mac to sleep during a long wait: the CLI's wait retry recovers.
 - Windows: the PowerShell client, and the shells it supports.
 - Tabs: an Agent opens a helper with `--tab`; the user's view stays put and the new Tab is at the end, named after the task. After a restart the Tab is still the Agent's to rename. Once the user renames it by hand, the Agent's `tab rename` is refused. In a Tab with four panes, `agent start` replies with a `hint`.
+- Across Workspaces: from one worktree's Agent, `workspace list`, then `agent prompt "Agent One" "…" --wait --workspace <other>`; the other Workspace's pane shows `← … · <this>`. A call into a closed Workspace opens it in the background (its Agents relaunch, the user's view stays put) and it is still open after a restart.
+- Default names: start Agents in two Windows of one Profile at the same moment; they get different names. Rename one to "Reviewer" in the pane menu and address it as `reviewer` from the CLI. Quit it: the name is gone and the next Agent there gets the lowest free default.

@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: accepted, amended by ADR-0055 (reach is the whole Profile)
 ---
 
 # Agent control runs in the Window and trusts a per-pane token
+
+> **Update: amended by ADR-0055.** An Agent now reaches every Workspace of its own Profile, not only its own Workspace, and every Agent has a handle. The per-pane token, the Window carrying out each call and the thin client below are unchanged; "reaches only its own Workspace" now reads "reaches only its own Profile".
 
 **Agent control** lets an Agent in one Pane drive other Panes of its Workspace through the `abundio` command: list Panes and Agents, read a Pane's text, prompt an Agent and wait for it to **settle**, start an Agent in a new Pane, send keys, and run a command in an idle shell. Two facts about the app shape how it works:
 
