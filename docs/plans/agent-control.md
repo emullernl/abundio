@@ -364,6 +364,18 @@ The original list:
 
 ### 13. The Window: new Tabs and renames
 
+**Done.** As built:
+
+- `createTab` gains `name` (over every default) and `spawn: { ownerPaneId, handle? }`. The owner goes on the Tab and on its pane (`spawnedBy`, plus the handle), written to `tab.layoutJson` and the Tab row before the Tab reaches the store. Nothing can render and spawn without them. Patching the layout afterwards could have overwritten the pane's real `ptyId` once its terminal had spawned.
+- `openSpawnedTab` (handler) is shared by `agent start --tab` and `tab new`. It always creates with `activate: false` (the Fleet Console's New agent path), then, with `--focus`, calls `revealPane` on the new Tab. The user's active Tab and Focused pane are untouched otherwise. The Agent's argv rides the spawn through `createTab`'s task seed, as for New task's New tab.
+- Default names: `--tab-name`; else `taskTabName` of the prompt (New task's rule, 30 characters with an ellipsis); else the handle; else the Agent's name. `tab new` without `--name` gets `createTab`'s own default (`Terminal N`).
+- `tab rename`: the caller's own Tab, or the one holding `--tab`'s pane. `spawn.tabRenameRefusal` (pure) refuses a Tab that is neither the caller's nor opened by it, and any user-named Tab (`not_owner`). The rename goes through `renameTab` without `byUser`, so it never marks the Tab user-named. Reply: `{ tab, renamed: true }`.
+- Replies: `agent start --tab` answers like `agent start` (its `tab` is the new Tab's name). `tab new` answers with the new pane's description.
+- Not done, unlike the first draft: the Control badge on the new pane. `agent start` never showed it for a split either: the badge marks a pane another Agent is driving, and a new pane is not being driven yet.
+- Tests: Tab at the end with its owner on the Tab, on the pane and in the Tab row; task seeded for the new pane; the user's Tab and focus unchanged; each default name; `--focus` revealing; `tab new` (default name, `--name`, `--focus`); rename of own and spawned Tabs, refusal of another Tab and of a user-named one; `tabRenameRefusal`.
+
+The original list:
+
 - `agent start --tab`: `createTab(workspaceId, agent, seed, { activate: focus, task })`, with the pane node carrying `spawnedBy`, `agentHandle` and `agentId` as in a split, and the Tab marked `spawnedByPane: caller`. The task seed rides the spawn exactly as in step 8. Reply: the Agent's description (which already names its `tab`).
 - `tab new`: the same, with a plain shell pane. Reply: the new pane's description.
 - `--focus`: the new Tab becomes the active Tab and its pane the Focused pane. Without it, the Tab is added without activating (the Fleet Console's New agent path) and focus stays on the caller.

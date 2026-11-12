@@ -124,3 +124,26 @@ export function closeRefusal(
 	}
 	return null;
 }
+
+/** Why `tab rename` may not rename this Tab, or null when it may. An Agent
+ *  names its own Tab and the **Spawned tabs** it opened, and never a Tab the
+ *  user has named by hand: the user's name wins. */
+export function tabRenameRefusal(t: {
+	ownTab: boolean;
+	spawnedByCaller: boolean;
+	userNamed: boolean;
+}): ControlError | null {
+	if (!t.ownTab && !t.spawnedByCaller) {
+		return new ControlError(
+			"not_owner",
+			"you can rename only your own Tab and Tabs you opened",
+		);
+	}
+	if (t.userNamed) {
+		return new ControlError(
+			"not_owner",
+			"the user named this Tab; leave its name to them",
+		);
+	}
+	return null;
+}

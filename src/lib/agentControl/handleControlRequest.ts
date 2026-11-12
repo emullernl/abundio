@@ -21,10 +21,12 @@ import {
 } from "../ipc";
 import { shellSupportsTasks } from "../newTask";
 import { revealPane } from "../paneLocation";
-import { parseTabLayout, wrapInSplit } from "../paneTree";
+import { collectTerminalIds, parseTabLayout, wrapInSplit } from "../paneTree";
 import { setPendingTask, takePendingTask } from "../pendingAgentRegistry";
 import { canFire } from "../promptActions";
+import { taskTabName } from "../taskPrompt";
 import { getTerminal, type ManagedTerminal } from "../terminalManager";
+import type { CodingAgent } from "../types";
 import {
 	describeAgent,
 	describePane,
@@ -48,6 +50,7 @@ import {
 	layoutDirection,
 	runRefusal,
 	startArgv,
+	tabRenameRefusal,
 } from "./spawn";
 import {
 	type ControlCaller,
@@ -214,6 +217,16 @@ export async function runRequest(
 		}
 		case "agent.start":
 			return startAgent(scope, request, signal);
+		case "tab.new": {
+			const paneId = await openSpawnedTab(scope, {
+				handle: null,
+				name: request.name ?? undefined,
+				focus: request.focus,
+			});
+			return describeNew(caller, paneId);
+		}
+		case "tab.rename":
+			return renameTabFor(scope, request);
 		case "pane.run": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			return withBadge(scope, pane, async () => {
@@ -373,21 +386,36 @@ async function startAgent(
 			new Promise((r) => setTimeout(r, 2000)),
 		]);
 	}
-	// Seeded before the pane is in the layout: its terminal takes the task
-	// when it spawns, which can happen as soon as the layout renders.
-	const paneId = crypto.randomUUID();
-	setPendingTask(paneId, { argv, agentId: agent.id });
-	try {
-		await splitCaller(scope, request.direction, {
-			id: paneId,
-			agentId: agent.id,
-			...(request.handle !== null ? { agentHandle: request.handle } : {}),
+	let paneId: string;
+	if (request.tab) {
+		paneId = await openSpawnedTab(scope, {
+			agent,
+			argv,
+			handle: request.handle,
+			name:
+				request.tabName ??
+				(request.prompt !== null
+					? taskTabName({ kind: "text", input: request.prompt })
+					: (request.handle ?? agent.name)),
+			focus: request.focus,
 		});
-	} catch (e) {
-		takePendingTask(paneId);
-		throw e;
+	} else {
+		// Seeded before the pane is in the layout: its terminal takes the task
+		// when it spawns, which can happen as soon as the layout renders.
+		paneId = crypto.randomUUID();
+		setPendingTask(paneId, { argv, agentId: agent.id });
+		try {
+			await splitCaller(scope, request.direction, {
+				id: paneId,
+				agentId: agent.id,
+				...(request.handle !== null ? { agentHandle: request.handle } : {}),
+			});
+		} catch (e) {
+			takePendingTask(paneId);
+			throw e;
+		}
+		if (request.focus) focusNewPane(scope, paneId);
 	}
-	if (request.focus) focusNewPane(scope, paneId);
 	await waitUntil(
 		() => {
 			const ptyId =
@@ -408,6 +436,81 @@ async function startAgent(
 		useWindowUiStore.getState().setFocusedTile(paneId);
 	}
 	return describeAgent(await describeNew(scope.caller, paneId));
+}
+
+/**
+ * Open a **Spawned tab** owned by the caller: at the end of the Tab bar,
+ * through the same path as New task's New tab (an Agent's argv rides the
+ * spawn). The user's view does not change unless `focus`. Returns the new
+ * pane's id.
+ */
+async function openSpawnedTab(
+	scope: Scope,
+	opts: {
+		agent?: CodingAgent;
+		argv?: string[];
+		handle: string | null;
+		name: string | undefined;
+		focus: boolean;
+	},
+): Promise<string> {
+	let seeded: string | null = null;
+	const { agent, argv } = opts;
+	const tab = await useWorkspaceStore
+		.getState()
+		.createTab(scope.caller.workspaceId, agent, undefined, {
+			activate: false,
+			name: opts.name,
+			...(agent && argv
+				? {
+						task: {
+							argv,
+							agentId: agent.id,
+							tabName: opts.name ?? agent.name,
+							onSeeded: (id: string) => {
+								seeded = id;
+							},
+						},
+					}
+				: {}),
+			spawn: {
+				ownerPaneId: scope.caller.paneId,
+				...(opts.handle !== null ? { handle: opts.handle } : {}),
+			},
+		});
+	const layout = parseTabLayout(tab.layoutJson);
+	const paneId = seeded ?? (layout ? collectTerminalIds(layout)[0] : undefined);
+	if (!paneId) throw new ControlError("internal", "the new Tab has no pane");
+	if (opts.focus) revealPane(paneId, scope.caller.workspaceId, tab.id);
+	return paneId;
+}
+
+/** `tab rename`: the caller's own Tab, or one it opened, and never one the
+ *  user has named by hand. */
+async function renameTabFor(
+	scope: Scope,
+	request: Extract<ControlRequest, { op: "tab.rename" }>,
+) {
+	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
+	if (!self) {
+		throw new ControlError("not_found", "your pane is no longer open");
+	}
+	const pane = request.target
+		? resolveTarget(request.target, scope.panes, scope.numbers)
+		: self;
+	const tab = useWorkspaceStore
+		.getState()
+		.workspaces.find((w) => w.id === scope.caller.workspaceId)
+		?.tabs.find((t) => t.id === pane.tabId);
+	if (!tab) throw new ControlError("not_found", "that Tab is no longer open");
+	const refusal = tabRenameRefusal({
+		ownTab: tab.id === self.tabId,
+		spawnedByCaller: tab.spawnedByPane === scope.caller.paneId,
+		userNamed: tab.userNamed === true,
+	});
+	if (refusal) throw refusal;
+	await useWorkspaceStore.getState().renameTab(tab.id, request.name);
+	return { tab: request.name, renamed: true };
 }
 
 /** The caller as the badge names it: its handle, else its Pane number. */

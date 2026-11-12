@@ -14,9 +14,11 @@ import {
 	containsPane,
 	extractNode,
 	findFilePaneInTree,
+	findNode,
 	insertBesideNode,
 	parseTabLayout,
 	pruneOrphanDerived,
+	replaceNode,
 	setAgentHandle,
 	setAgentId,
 	setAgentSessionId,
@@ -239,8 +241,17 @@ interface WorkspaceState {
 		/** `activate: false` appends the Tab without making it the Workspace's
 		 *  active Tab or moving focus — the Fleet Console's New agent, which must
 		 *  not rearrange the Workspace view (ADR-0040). Defaults to true.
-		 *  `task`: start `agent` on a **New task**, in a Tab named after it. */
-		opts?: { activate?: boolean; task?: TaskSeed },
+		 *  `task`: start `agent` on a **New task**, in a Tab named after it.
+		 *  `name`: the Tab's name, over every default.
+		 *  `spawn`: a **Spawned tab** for Agent control (ADR-0054), owned by
+		 *  `ownerPaneId`; its pane is a Spawned pane of that owner, with
+		 *  `handle` as its Agent handle. */
+		opts?: {
+			activate?: boolean;
+			task?: TaskSeed;
+			name?: string;
+			spawn?: { ownerPaneId: string; handle?: string };
+		},
 	) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
@@ -1079,6 +1090,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		} else if (agent) {
 			name = agent.name;
 		}
+		if (opts?.name) name = opts.name;
 
 		const tab = await tabsApi.create(workspaceId, name);
 
@@ -1116,6 +1128,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				tabsApi.update(tab.id, { layoutJson: stampedJson }).catch(() => {});
 				initialFocus = terminalFocus;
 			}
+		}
+
+		// A Spawned tab: owner on the Tab and on its pane, written before the
+		// Tab reaches the store, so nothing can render (and spawn) without them.
+		if (opts?.spawn && !seedLayout) {
+			const { ownerPaneId, handle } = opts.spawn;
+			const layout = parseTabLayout(tab.layoutJson) ?? finalLayout;
+			const paneId = collectTerminalIds(layout)[0];
+			const node = paneId ? findNode(layout, paneId) : null;
+			if (node?.type === "terminal") {
+				const owned = replaceNode(layout, node.id, {
+					...node,
+					spawnedBy: ownerPaneId,
+					...(handle ? { agentHandle: handle } : {}),
+				});
+				tab.layoutJson = JSON.stringify(owned);
+			}
+			tab.spawnedByPane = ownerPaneId;
+			tabsApi
+				.update(tab.id, {
+					layoutJson: tab.layoutJson,
+					spawnedByPane: ownerPaneId,
+				})
+				.catch(() => {});
 		}
 
 		if (!activate) {
