@@ -1336,6 +1336,9 @@ export const fileWindows = {
 export interface AgentControlRequestEvent {
 	id: string;
 	caller: { ptyId: string; paneId: string; workspaceId: string };
+	/** The Workspace the call acts on (the caller's unless it named another
+	 *  with `--workspace`), and whether this Window must open it first. */
+	target?: { workspaceId: string; open: boolean };
 	request: unknown;
 }
 

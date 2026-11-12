@@ -53,6 +53,16 @@ pub struct ControlTokens {
 }
 
 impl ControlTokens {
+    /// The Window holding `workspace_id`, read off any live PTY of it: a
+    /// Workspace is Opened in at most one Window. None when no PTY of it
+    /// lives, which means it is not Opened.
+    pub fn window_for_workspace(&self, workspace_id: &str) -> Option<String> {
+        self.by_token
+            .iter()
+            .find(|e| e.value().workspace_id == workspace_id)
+            .map(|e| e.value().window_label.clone())
+    }
+
     /// Issue a token for `caller`, replacing any earlier token of its PTY.
     pub fn issue(&self, caller: Caller) -> String {
         let token = format!(
@@ -263,6 +273,9 @@ pub enum Request {
     /// `target`'s pane.
     #[serde(rename = "tab.rename", rename_all = "camelCase")]
     TabRename { name: String, target: Option<Target> },
+    /// Every Workspace of the caller's Profile. Answered by Rust alone.
+    #[serde(rename = "workspace.list")]
+    WorkspaceList,
 }
 
 /// What a command line asks for: a request, or help text.
@@ -455,12 +468,21 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
     match (group, command) {
         (None, _) | (Some("help" | "--help" | "-h"), None) => Ok(Parsed::Help(help(None))),
         (Some("help"), Some(g)) => Ok(Parsed::Help(help(Some(g)))),
-        (Some(g @ ("pane" | "agent" | "tab")), None | Some("--help" | "-h" | "help")) => {
+        (Some(g @ ("pane" | "agent" | "tab" | "workspace")), None | Some("--help" | "-h" | "help")) => {
             Ok(Parsed::Help(help(Some(g))))
         }
         (Some("pane"), Some(c)) => parse_pane(c, rest).map(Parsed::Request),
         (Some("agent"), Some(c)) => parse_agent(c, rest).map(Parsed::Request),
         (Some("tab"), Some(c)) => parse_tab(c, rest).map(Parsed::Request),
+        (Some("workspace"), Some("list")) => {
+            if !rest.is_empty() {
+                return Err("usage: abundio workspace list".into());
+            }
+            Ok(Parsed::Request(Request::WorkspaceList))
+        }
+        (Some("workspace"), Some(c)) => Err(format!(
+            "unknown command `workspace {c}`; run `abundio help workspace`"
+        )),
         (Some(g), _) => Err(format!("unknown command {g:?}; run `abundio help`")),
     }
 }
@@ -761,6 +783,11 @@ Agents:
                                           enter, esc, tab, ctrl+c, up, …
   abundio agent rename <agent> [<handle>] set or clear an Agent handle
 ";
+    const WORKSPACE: &str = "\
+Workspaces:
+  abundio workspace list                  every Workspace of your Profile: name, folder,
+                                          branch, whether it is open, and its Agents
+";
     const TAB: &str = "\
 Tabs:
   abundio tab new [--name <name>] [--focus]
@@ -771,7 +798,7 @@ Tabs:
                                           one the user named
 ";
     const HEAD: &str = "\
-abundio: control the panes and Agents of your Workspace.
+abundio: control the panes and Agents of your Profile's Workspaces.
 
 <pane> is a Pane number (p1, p2, …). <agent> is an Agent handle or a Pane number.
 A handle is matched ignoring case, a space and a dash alike; quote one with spaces
@@ -781,13 +808,18 @@ the default for waits is 30 minutes. A new pane leaves the user's keyboard focus
 where it is; pass --focus to move it there, but only when the user asks for that.
 A split in a crowded Tab still happens, and its reply carries a \"hint\": next time,
 open the Agent with --tab.
+Every command acts on your own Workspace; add --workspace <name> to act on another
+of your Profile (see `abundio workspace list`). A closed one is opened for the call,
+which starts its Agents: do that only when the user asks. A new pane there always
+gets a Tab of its own.
 
 ";
     match group {
         Some("pane") => PANE.to_string(),
         Some("agent") => AGENT.to_string(),
         Some("tab") => TAB.to_string(),
-        _ => format!("{HEAD}{PANE}\n{AGENT}\n{TAB}"),
+        Some("workspace") => WORKSPACE.to_string(),
+        _ => format!("{HEAD}{PANE}\n{AGENT}\n{TAB}\n{WORKSPACE}"),
     }
 }
 
@@ -853,6 +885,7 @@ fn is_mutating(request: &Request) -> bool {
     !matches!(
         request,
         Request::PaneList
+            | Request::WorkspaceList
             | Request::PaneCurrent
             | Request::PaneRead { .. }
             | Request::AgentList
@@ -867,24 +900,261 @@ fn op_name(request: &Request) -> String {
         .unwrap_or_default()
 }
 
+// ── Reach across the Profile (ADR-0055) ──
+
+/// Take `--workspace <name>` out of `argv` (anywhere before `--`), leaving
+/// the command line every parser already knows.
+pub fn split_workspace(argv: &[String]) -> Result<(Option<String>, Vec<String>), String> {
+    let mut rest = Vec::with_capacity(argv.len());
+    let mut workspace = None;
+    let mut i = 0;
+    while i < argv.len() {
+        let a = &argv[i];
+        if a == "--" {
+            rest.extend(argv[i..].iter().cloned());
+            break;
+        }
+        if a == "--workspace" {
+            let name = argv
+                .get(i + 1)
+                .filter(|n| !n.trim().is_empty())
+                .ok_or("--workspace needs a Workspace name; run `abundio workspace list`")?;
+            if workspace.is_some() {
+                return Err("--workspace given twice".into());
+            }
+            workspace = Some(name.trim().to_string());
+            i += 2;
+            continue;
+        }
+        rest.push(a.clone());
+        i += 1;
+    }
+    Ok((workspace, rest))
+}
+
+/// One Workspace of a Profile, as resolution needs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceRow {
+    pub id: String,
+    pub name: String,
+    pub folder: String,
+}
+
+/// The Workspace `name` names among `rows` (one Profile's), matched exactly
+/// but ignoring case. `Err((code, message))` when none or several do.
+pub fn pick_workspace<'a>(
+    rows: &'a [WorkspaceRow],
+    name: &str,
+) -> Result<&'a WorkspaceRow, (&'static str, String)> {
+    let wanted = name.to_lowercase();
+    let hits: Vec<&WorkspaceRow> = rows.iter().filter(|r| r.name.to_lowercase() == wanted).collect();
+    match hits.as_slice() {
+        [one] => Ok(one),
+        [] => {
+            let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+            Err((
+                "not_found",
+                format!(
+                    "no Workspace called {name:?} in this Profile; it has: {}",
+                    names.join(", ")
+                ),
+            ))
+        }
+        many => {
+            let folders: Vec<&str> = many.iter().map(|r| r.folder.as_str()).collect();
+            Err((
+                "ambiguous_workspace",
+                format!(
+                    "{} Workspaces are called {name:?} (in {}); ask the user to rename one",
+                    many.len(),
+                    folders.join(", ")
+                ),
+            ))
+        }
+    }
+}
+
+/// Where a call naming `workspace` goes, for `caller`.
+fn resolve_scope(app: &AppHandle, caller: &Caller, workspace: Option<&str>) -> Result<Scope, Answer> {
+    let Some(name) = workspace else {
+        return Ok(Scope::home(caller));
+    };
+    let store = app
+        .try_state::<crate::workspace_store::WorkspaceStore>()
+        .ok_or_else(|| error_answer(503, "unavailable", "Agent control is not ready"))?;
+    let profile = store
+        .profile_of(&caller.workspace_id)
+        .map_err(|e| error_answer(500, "internal", &e.to_string()))?
+        .ok_or_else(|| error_answer(409, "not_found", "your Workspace no longer exists"))?;
+    let rows: Vec<WorkspaceRow> = store
+        .list(&profile)
+        .map_err(|e| error_answer(500, "internal", &e.to_string()))?
+        .into_iter()
+        .map(|w| WorkspaceRow {
+            id: w.workspace.id,
+            name: w.workspace.name,
+            folder: w.workspace.root_folder,
+        })
+        .collect();
+    let target = pick_workspace(&rows, name).map_err(|(code, msg)| error_answer(409, code, &msg))?;
+    if target.id == caller.workspace_id {
+        return Ok(Scope::home(caller));
+    }
+    // Nothing new starts in a Missing folder (ADR-0053).
+    if !std::path::Path::new(&target.folder).is_dir() {
+        return Err(error_answer(
+            409,
+            "folder_missing",
+            &format!("the Workspace {:?} has lost its folder ({})", target.name, target.folder),
+        ));
+    }
+    let live = app
+        .try_state::<crate::pty_manager::PtyManager>()
+        .and_then(|mgr| mgr.control_tokens().window_for_workspace(&target.id));
+    Ok(match live {
+        Some(window_label) => Scope {
+            workspace_id: target.id.clone(),
+            open: false,
+            window_label,
+        },
+        // Not Opened anywhere: the caller's Window opens it in the background.
+        None => Scope {
+            workspace_id: target.id.clone(),
+            open: true,
+            window_label: caller.window_label.clone(),
+        },
+    })
+}
+
+/// Terminal panes of a layout in tree order, with their Agent and handle.
+fn terminal_panes(tree: &Value, out: &mut Vec<(String, Option<String>, Option<String>)>) {
+    match tree.get("type").and_then(|t| t.as_str()) {
+        Some("terminal") => {
+            if let Some(id) = tree.get("id").and_then(|v| v.as_str()) {
+                let s = |k: &str| tree.get(k).and_then(|v| v.as_str()).map(str::to_string);
+                out.push((id.to_string(), s("agentId"), s("agentHandle")));
+            }
+        }
+        Some("split") => {
+            for side in ["first", "second"] {
+                if let Some(child) = tree.get(side) {
+                    terminal_panes(child, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `workspace list`: every Workspace of the caller's Profile, from the
+/// database, with `open` from the live PTYs. Running status is the Windows'
+/// to tell (`agent list --workspace <name>`).
+pub fn workspace_listing(
+    store: &crate::workspace_store::WorkspaceStore,
+    caller: &Caller,
+    is_open: &dyn Fn(&str) -> bool,
+) -> Result<Value, crate::error::AbundioError> {
+    let Some(profile) = store.profile_of(&caller.workspace_id)? else {
+        return Ok(json!({ "workspaces": [] }));
+    };
+    let mut out = Vec::new();
+    for w in store.list(&profile)? {
+        let mut panes = Vec::new();
+        for tab in &w.tabs {
+            if let Ok(tree) = serde_json::from_str::<Value>(&tab.layout_json) {
+                terminal_panes(&tree, &mut panes);
+            }
+        }
+        let ids: Vec<String> = panes.iter().map(|(id, _, _)| id.clone()).collect();
+        let numbers: HashMap<String, u32> =
+            store.pane_numbers(&w.workspace.id, &ids)?.into_iter().collect();
+        let agents: Vec<Value> = panes
+            .iter()
+            .filter(|(_, agent, _)| agent.is_some())
+            .map(|(id, agent, handle)| {
+                json!({
+                    "pane": numbers.get(id).map(|n| format!("p{n}")),
+                    "handle": handle,
+                    "agent": agent,
+                })
+            })
+            .collect();
+        out.push(json!({
+            "name": w.workspace.name,
+            "folder": w.workspace.root_folder,
+            "branch": w.workspace.last_branch,
+            "open": is_open(&w.workspace.id),
+            "self": w.workspace.id == caller.workspace_id,
+            "agents": agents,
+        }));
+    }
+    Ok(json!({ "workspaces": out }))
+}
+
+fn workspace_list_answer(app: &AppHandle, caller: &Caller) -> Answer {
+    let Some(store) = app.try_state::<crate::workspace_store::WorkspaceStore>() else {
+        return error_answer(503, "unavailable", "Agent control is not ready");
+    };
+    let tokens = app.try_state::<crate::pty_manager::PtyManager>();
+    let is_open = |ws: &str| {
+        tokens
+            .as_ref()
+            .and_then(|m| m.control_tokens().window_for_workspace(ws))
+            .is_some()
+    };
+    match workspace_listing(&store, caller, &is_open) {
+        Ok(v) => Answer {
+            status: 200,
+            body: v.to_string(),
+        },
+        Err(e) => error_answer(500, "internal", &e.to_string()),
+    }
+}
+
+/// The Workspace a call acts on, and the Window that carries it out
+/// (ADR-0055). Its own Workspace unless the caller named another with
+/// `--workspace`. `open`: the Workspace is not Opened anywhere, so the Window
+/// (the caller's) opens it in the background first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Scope {
+    pub workspace_id: String,
+    pub open: bool,
+    #[serde(skip)]
+    pub window_label: String,
+}
+
+impl Scope {
+    /// The caller's own Workspace, in its own Window.
+    pub fn home(caller: &Caller) -> Self {
+        Scope {
+            workspace_id: caller.workspace_id.clone(),
+            open: false,
+            window_label: caller.window_label.clone(),
+        }
+    }
+}
+
 /// The request event a Window hears.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ControlEvent<'a> {
     id: &'a str,
     caller: &'a Caller,
+    target: &'a Scope,
     request: &'a Value,
 }
 
-/// Send `request` to the caller's Window and wait up to `limit` for its reply
+/// Send `request` to the target's Window and wait up to `limit` for its reply
 /// (`None`: no limit). On a timeout the Window is told to drop the request.
 fn ask_window(
     app: &AppHandle,
     caller: &Caller,
+    scope: &Scope,
     request: &Value,
     limit: Option<Duration>,
 ) -> Result<Value, Answer> {
-    if app.get_webview_window(&caller.window_label).is_none() {
+    if app.get_webview_window(&scope.window_label).is_none() {
         return Err(error_answer(
             503,
             "window_gone",
@@ -898,10 +1168,11 @@ fn ask_window(
     let event = ControlEvent {
         id: &id,
         caller,
+        target: scope,
         request,
     };
     if app
-        .emit_to(&caller.window_label, "agent-control-request", event)
+        .emit_to(&scope.window_label, "agent-control-request", event)
         .is_err()
     {
         pending.forget(&id);
@@ -916,7 +1187,7 @@ fn ask_window(
         None => {
             pending.forget(&id);
             let _ = app.emit_to(
-                &caller.window_label,
+                &scope.window_label,
                 "agent-control-cancel",
                 json!({ "id": id }),
             );
@@ -931,7 +1202,16 @@ fn ask_window(
 
 /// Carry out one parsed request for `caller`. `retry` is set when the CLI is
 /// sending the same command again after the connection dropped mid-call.
-pub fn handle(app: &AppHandle, caller: &Caller, request: Request, retry: bool) -> Answer {
+pub fn handle(
+    app: &AppHandle,
+    caller: &Caller,
+    scope: &Scope,
+    request: Request,
+    retry: bool,
+) -> Answer {
+    if let Request::WorkspaceList = request {
+        return workspace_list_answer(app, caller);
+    }
     let request = match (retry, request) {
         // The prompt reached the Window the first time; only wait again.
         (
@@ -975,7 +1255,7 @@ pub fn handle(app: &AppHandle, caller: &Caller, request: Request, retry: bool) -
     };
 
     let Some((target, timeout_ms)) = wait else {
-        return match ask_window(app, caller, &value, Some(PLAIN_REPLY_TIMEOUT)) {
+        return match ask_window(app, caller, scope, &value, Some(PLAIN_REPLY_TIMEOUT)) {
             Ok(reply) => answer_from_reply(reply),
             Err(answer) => answer,
         };
@@ -983,7 +1263,7 @@ pub fn handle(app: &AppHandle, caller: &Caller, request: Request, retry: bool) -
 
     // A wait: learn the target's pane, refuse a loop, then wait.
     let resolve = json!({ "op": "resolve", "target": target });
-    let target_pane = match ask_window(app, caller, &resolve, Some(PLAIN_REPLY_TIMEOUT)) {
+    let target_pane = match ask_window(app, caller, scope, &resolve, Some(PLAIN_REPLY_TIMEOUT)) {
         Ok(reply) => match reply
             .get("result")
             .and_then(|r| r.get("paneId"))
@@ -1005,7 +1285,7 @@ pub fn handle(app: &AppHandle, caller: &Caller, request: Request, retry: bool) -
             "that Agent is already waiting on you (directly or through others), so this wait would never end",
         );
     }
-    let answer = match ask_window(app, caller, &value, timeout_ms.map(Duration::from_millis)) {
+    let answer = match ask_window(app, caller, scope, &value, timeout_ms.map(Duration::from_millis)) {
         Ok(reply) => answer_from_reply(reply),
         Err(answer) => answer,
     };
@@ -1077,6 +1357,10 @@ fn serve_inner(app: &AppHandle, token: &str, body: &[u8], retry: bool) -> (Answe
         Ok(a) => a,
         Err(e) => return (error_answer(400, "usage", &e), who),
     };
+    let (workspace, argv) = match split_workspace(&argv) {
+        Ok(split) => split,
+        Err(e) => return (error_answer(400, "usage", &e), format!("{who} op=usage-error")),
+    };
     let request = match parse_args(&argv) {
         Ok(Parsed::Help(text)) => {
             return (
@@ -1105,8 +1389,20 @@ fn serve_inner(app: &AppHandle, token: &str, body: &[u8], retry: bool) -> (Answe
             format!("{who} op={op}"),
         );
     }
-    let answer = handle(app, &caller, request, retry);
-    (answer, format!("{who} op={op}{}", if retry { " retry" } else { "" }))
+    let scope = match resolve_scope(app, &caller, workspace.as_deref()) {
+        Ok(s) => s,
+        Err(answer) => return (answer, format!("{who} op={op} target=?")),
+    };
+    let target = if scope.workspace_id == caller.workspace_id {
+        String::new()
+    } else {
+        format!(" target={}{}", scope.workspace_id, if scope.open { " opening" } else { "" })
+    };
+    let answer = handle(app, &caller, &scope, request, retry);
+    (
+        answer,
+        format!("{who} op={op}{target}{}", if retry { " retry" } else { "" }),
+    )
 }
 
 // ── Commands ──
@@ -1415,6 +1711,107 @@ mod tests {
         assert!(is_mutating(&req(&["tab", "new"])));
         assert!(is_mutating(&req(&["tab", "rename", "x"])));
         assert_eq!(op_name(&req(&["tab", "rename", "x"])), "tab.rename");
+    }
+
+    // ── Reach across the Profile (ADR-0055) ──
+
+    #[test]
+    fn workspace_option_is_taken_out_anywhere_before_the_passthrough() {
+        let (ws, rest) = split_workspace(&argv(&["agent", "prompt", "reviewer", "hi", "--workspace", " api "])).unwrap();
+        assert_eq!(ws.as_deref(), Some("api"));
+        assert_eq!(rest, argv(&["agent", "prompt", "reviewer", "hi"]));
+        let (ws, rest) = split_workspace(&argv(&["--workspace", "web", "agent", "list"])).unwrap();
+        assert_eq!(ws.as_deref(), Some("web"));
+        assert_eq!(rest, argv(&["agent", "list"]));
+        // After `--` it belongs to the Agent's own arguments.
+        let (ws, rest) =
+            split_workspace(&argv(&["agent", "start", "--kind", "codex", "--", "--workspace", "x"])).unwrap();
+        assert_eq!(ws, None);
+        assert_eq!(rest.last().map(String::as_str), Some("x"));
+        assert!(split_workspace(&argv(&["agent", "list", "--workspace"])).is_err());
+        assert!(split_workspace(&argv(&["agent", "list", "--workspace", " "])).is_err());
+        assert!(split_workspace(&argv(&["--workspace", "a", "--workspace", "b", "pane", "list"]))
+            .unwrap_err()
+            .contains("twice"));
+    }
+
+    fn rows() -> Vec<WorkspaceRow> {
+        [("1", "api", "/src/api"), ("2", "Web", "/src/web"), ("3", "dup", "/a/dup"), ("4", "Dup", "/b/dup")]
+            .map(|(id, name, folder)| WorkspaceRow { id: id.into(), name: name.into(), folder: folder.into() })
+            .to_vec()
+    }
+
+    #[test]
+    fn workspaces_are_picked_by_name_ignoring_case() {
+        let rows = rows();
+        assert_eq!(pick_workspace(&rows, "API").unwrap().id, "1");
+        assert_eq!(pick_workspace(&rows, "web").unwrap().id, "2");
+        let (code, msg) = pick_workspace(&rows, "dup").unwrap_err();
+        assert_eq!(code, "ambiguous_workspace");
+        assert!(msg.contains("/a/dup") && msg.contains("/b/dup"));
+        let (code, msg) = pick_workspace(&rows, "mobile").unwrap_err();
+        assert_eq!(code, "not_found");
+        assert!(msg.contains("api, Web"));
+        // Exact names only: no prefix matching.
+        assert!(pick_workspace(&rows, "ap").is_err());
+    }
+
+    #[test]
+    fn a_workspace_window_is_read_off_its_live_ptys() {
+        let tokens = ControlTokens::default();
+        assert_eq!(tokens.window_for_workspace("ws"), None);
+        tokens.issue(Caller { window_label: "window-2".into(), ..caller("a") });
+        assert_eq!(tokens.window_for_workspace("ws").as_deref(), Some("window-2"));
+        assert_eq!(tokens.window_for_workspace("other"), None);
+    }
+
+    #[test]
+    fn workspace_list_parses_and_is_read_only() {
+        assert_eq!(req(&["workspace", "list"]), Request::WorkspaceList);
+        assert!(!is_mutating(&Request::WorkspaceList));
+        assert!(usage_err(&["workspace", "list", "extra"]).contains("usage"));
+        assert!(usage_err(&["workspace", "open", "x"]).contains("unknown command `workspace open`"));
+        assert!(matches!(parse_args(&argv(&["workspace"])), Ok(Parsed::Help(t)) if t.starts_with("Workspaces")));
+        assert!(matches!(parse_args(&[]), Ok(Parsed::Help(t)) if t.contains("--workspace <name>")));
+    }
+
+    #[test]
+    fn the_request_event_carries_its_target() {
+        let c = caller("a");
+        let scope = Scope { workspace_id: "other".into(), open: true, window_label: "main".into() };
+        let v = serde_json::to_value(ControlEvent { id: "1", caller: &c, target: &scope, request: &json!({}) }).unwrap();
+        assert_eq!(v["target"], json!({ "workspaceId": "other", "open": true }));
+        assert_eq!(Scope::home(&c), Scope { workspace_id: "ws".into(), open: false, window_label: "main".into() });
+    }
+
+    #[test]
+    fn workspace_listing_covers_the_profile_with_its_agents() {
+        use crate::workspace_store::{TabUpdate, WorkspaceStore};
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::migrations::run_migrations(&conn).unwrap();
+        let store = WorkspaceStore::new(conn);
+        const PID: &str = "00000000-0000-0000-0000-000000000001";
+        let api = store.create("api", "/src/api", PID).unwrap();
+        let web = store.create("web", "/src/web", PID).unwrap();
+        let layout = json!({
+            "type": "split", "id": "s", "direction": "vertical", "ratio": 0.5,
+            "first": { "type": "terminal", "id": "sh", "ptyId": "" },
+            "second": { "type": "terminal", "id": "ag", "ptyId": "", "agentId": "claude", "agentHandle": "Agent One" }
+        });
+        store
+            .update_tab(&web.tabs[0].id, TabUpdate { layout_json: Some(layout.to_string()), ..Default::default() })
+            .unwrap();
+        let me = Caller { workspace_id: api.workspace.id.clone(), ..caller("a") };
+        let web_id = web.workspace.id.clone();
+        let v = workspace_listing(&store, &me, &|ws| ws == web_id).unwrap();
+        let list = v["workspaces"].as_array().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0]["name"], "api");
+        assert_eq!(list[0]["self"], true);
+        assert_eq!(list[0]["open"], false);
+        assert_eq!(list[1]["open"], true);
+        // Numbered in tree order, like the Window does: the shell is p1.
+        assert_eq!(list[1]["agents"], json!([{ "pane": "p2", "handle": "Agent One", "agent": "claude" }]));
     }
 
     #[test]

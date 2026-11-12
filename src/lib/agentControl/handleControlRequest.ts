@@ -663,6 +663,17 @@ export function toReply(
 const running = new Map<string, AbortController>();
 
 async function onRequest(e: AgentControlRequestEvent): Promise<void> {
+	if (e.target && e.target.workspaceId !== e.caller.workspaceId) {
+		await agentControl
+			.reply(e.id, {
+				error: {
+					code: "unsupported",
+					message: "this version of Abundio cannot act in another Workspace yet",
+				},
+			})
+			.catch(() => {});
+		return;
+	}
 	const abort = new AbortController();
 	running.set(e.id, abort);
 	const [outcome] = await Promise.allSettled([

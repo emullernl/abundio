@@ -484,6 +484,19 @@ The original list:
 
 ### 18. Reach (Rust)
 
+**Done.** As built:
+
+- `split_workspace(argv)` takes `--workspace <name>` out of the command line, anywhere before `--`, ahead of `parse_args`. Every parser and its tests stay as they were (changed from the plan's `Parsed` field). Missing or blank value, or given twice: a usage error.
+- `pick_workspace` (pure): an exact name ignoring case, among the caller's Profile's Workspaces only. None: `not_found`, listing the names. Several: `ambiguous_workspace`, listing their folders.
+- `resolve_scope`: naming one's own Workspace is the same as not naming one. Another Workspace whose folder is gone: `folder_missing`. Otherwise its Window is read off any live PTY of it (`ControlTokens::window_for_workspace`). With none, it is not Opened, and the request goes to the caller's Window with `open: true`.
+- `Scope { workspaceId, open }` travels on every `agent-control-request` as `target`, and `ask_window` sends to the scope's Window (resolve, wait and cancel included). The app log notes `target=<id>`, and `opening` when it is.
+- `workspace list` (`Request::WorkspaceList`, read-only) is answered by Rust alone. For each Workspace: name, folder, `branch` (the last known), `open`, `self`, and its Agents (`pane`, `handle`, `agent`) from the layouts. Panes are numbered in tree order, as the Window numbers them.
+- Help: the header says the reach is the Profile, explains `--workspace` and the cost of opening, and there is a `Workspaces:` group.
+- The Window does not act in another Workspace until step 19: it answers such a call with `unsupported` rather than acting on its own Workspace.
+- Tests: `--workspace` anywhere and not after `--`, its usage errors, picking (case, ambiguity, unknown, no prefix match), the Window from live PTYs, `workspace list` parsing and its listing from a real store (open flags, numbering), and the event's `target`.
+
+The original list:
+
 - `--workspace <name>`: accepted on every command, anywhere before `--`, parsed once at the top of `parse_args` into `Parsed::Request { workspace: Option<String>, request }`.
 - Resolution, in Rust: the caller's Profile (from its Workspace) → its Workspaces in the database → the one whose name matches ignoring case. None: `not_found` listing the Profile's Workspace names. Several: `ambiguous_workspace` listing them by folder. A Missing folder: `folder_missing` (ADR-0053).
 - Routing: the target Workspace's Window is found from the live control tokens (any PTY of that Workspace names its Window). With none, the target is not Opened, and the request goes to the caller's Window with `open: true`. The event gains `target: { workspaceId, open }`; `caller` is unchanged.
