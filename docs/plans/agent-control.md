@@ -91,11 +91,14 @@ What this means for step 9:
 
 ### 2. Storage (Rust)
 
-- Migration `021_agent_control.sql`: `ALTER TABLE workspaces ADD COLUMN next_pane_number INTEGER NOT NULL DEFAULT 1;`
-- The rest lives in the layout JSON, which the frontend owns. Each `terminal` node gains three optional fields: `number` (integer), `agentHandle` (string) and `spawnedBy` (the owner's internal pane id). Add them to the `PaneNode` type in `lib/types.ts`.
-- `workspace_store.rs`: `take_pane_numbers(workspace_id, count) -> first` claims numbers atomically, so two Windows or two quick splits never get the same number.
-- On load, number every terminal node that has none (existing layouts), in tree order.
-- Tests: numbers are never reused after a close; existing layouts get numbered once; numbers survive a save and reload.
+**Done.** Changed from the first draft: Pane numbers live in their own table, not in the layout JSON. The frontend writes layouts from many places, and any write that forgot the field would silently drop the number.
+
+- Migration `021_pane_numbers.sql`: `workspaces.next_pane_number` (the counter) and `pane_numbers (workspace_id, pane_id, number)`, both unique per Workspace, cascading on Workspace delete. Rows of closed panes stay; the counter alone prevents reuse.
+- `workspace_store.rs`:
+  - `pane_numbers(workspace_id, pane_ids)` returns each pane's number in the order given, claiming new ones in that order, in one transaction. Existing layouts are numbered the first time the Window lists them, in tree order. No load-time pass is needed.
+  - `pane_for_number(workspace_id, number)` resolves a `pN` target. The caller checks the pane is still in a layout.
+- `PaneNode` (terminal) gains `agentHandle` and `spawnedBy` (the owner's pane id). Both are filled in by later steps.
+- Tests: order and stability; no reuse after a close; per-Workspace; survives reopening the database; removed with the Workspace.
 
 ### 3. Per-pane token and request routing (Rust)
 

@@ -607,6 +607,72 @@ impl WorkspaceStore {
         Ok(RestoreSet { opened, active })
     }
 
+    // ── Pane numbers (Agent control, ADR-0054) ──
+
+    /// The **Pane number** of each pane, in the order given, claiming new
+    /// numbers for panes that have none yet. New numbers follow the order of
+    /// `pane_ids`, so a caller passing panes in tree order numbers an existing
+    /// layout in tree order. One transaction: two callers never get the same
+    /// number, and a number is never reused, because the counter only grows.
+    pub fn pane_numbers(
+        &self,
+        workspace_id: &str,
+        pane_ids: &[String],
+    ) -> Result<Vec<(String, u32)>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let mut next: u32 = tx
+            .query_row(
+                "SELECT next_pane_number FROM workspaces WHERE id = ?1",
+                [workspace_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| AbundioError::NotFound(format!("Workspace not found: {workspace_id}")))?;
+        let mut out = Vec::with_capacity(pane_ids.len());
+        for pane_id in pane_ids {
+            let existing: Option<u32> = tx
+                .query_row(
+                    "SELECT number FROM pane_numbers WHERE workspace_id = ?1 AND pane_id = ?2",
+                    rusqlite::params![workspace_id, pane_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let number = match existing {
+                Some(n) => n,
+                None => {
+                    tx.execute(
+                        "INSERT INTO pane_numbers (workspace_id, pane_id, number) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![workspace_id, pane_id, next],
+                    )?;
+                    next += 1;
+                    next - 1
+                }
+            };
+            out.push((pane_id.clone(), number));
+        }
+        tx.execute(
+            "UPDATE workspaces SET next_pane_number = ?1 WHERE id = ?2",
+            rusqlite::params![next, workspace_id],
+        )?;
+        tx.commit()?;
+        Ok(out)
+    }
+
+    /// The pane that holds a **Pane number** in a Workspace, if any. A number
+    /// whose pane has closed still answers with that pane's id; the caller
+    /// checks the pane is still in a layout.
+    pub fn pane_for_number(&self, workspace_id: &str, number: u32) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT pane_id FROM pane_numbers WHERE workspace_id = ?1 AND number = ?2",
+                rusqlite::params![workspace_id, number],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     // ── Agent telemetry ──
 
     /// Persists a Turn (insert, or replace by id — finalize is idempotent).
@@ -1027,6 +1093,80 @@ mod tests {
     }
 
     const DEFAULT_PID: &str = "00000000-0000-0000-0000-000000000001";
+
+    // ── Pane numbers (ADR-0054) ──
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn pane_numbers_follow_the_given_order_and_are_stable() {
+        let store = test_store();
+        let ws = store.create("w", "/w", DEFAULT_PID).unwrap().workspace.id;
+        let first = store.pane_numbers(&ws, &ids(&["a", "b", "c"])).unwrap();
+        assert_eq!(first, vec![("a".into(), 1), ("b".into(), 2), ("c".into(), 3)]);
+        // Asking again, in another order, changes nothing.
+        let again = store.pane_numbers(&ws, &ids(&["c", "a"])).unwrap();
+        assert_eq!(again, vec![("c".into(), 3), ("a".into(), 1)]);
+    }
+
+    #[test]
+    fn pane_numbers_are_never_reused_after_a_close() {
+        let store = test_store();
+        let ws = store.create("w", "/w", DEFAULT_PID).unwrap().workspace.id;
+        store.pane_numbers(&ws, &ids(&["a", "b"])).unwrap();
+        // "b" closed; the next pane gets 3, not 2.
+        let next = store.pane_numbers(&ws, &ids(&["a", "d"])).unwrap();
+        assert_eq!(next, vec![("a".into(), 1), ("d".into(), 3)]);
+    }
+
+    #[test]
+    fn pane_numbers_are_per_workspace() {
+        let store = test_store();
+        let w1 = store.create("w1", "/w1", DEFAULT_PID).unwrap().workspace.id;
+        let w2 = store.create("w2", "/w2", DEFAULT_PID).unwrap().workspace.id;
+        store.pane_numbers(&w1, &ids(&["a", "b"])).unwrap();
+        let other = store.pane_numbers(&w2, &ids(&["x"])).unwrap();
+        assert_eq!(other, vec![("x".into(), 1)]);
+        assert_eq!(store.pane_for_number(&w1, 2).unwrap().as_deref(), Some("b"));
+        assert_eq!(store.pane_for_number(&w2, 2).unwrap(), None);
+    }
+
+    #[test]
+    fn pane_numbers_survive_a_reopen_of_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let open = || {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            crate::migrations::run_migrations(&conn).unwrap();
+            WorkspaceStore::new(conn)
+        };
+        let ws = {
+            let store = open();
+            let ws = store.create("w", "/w", DEFAULT_PID).unwrap().workspace.id;
+            store.pane_numbers(&ws, &ids(&["a", "b"])).unwrap();
+            ws
+        };
+        let store = open();
+        let after = store.pane_numbers(&ws, &ids(&["b", "new"])).unwrap();
+        assert_eq!(after, vec![("b".into(), 2), ("new".into(), 3)]);
+    }
+
+    #[test]
+    fn pane_numbers_go_with_their_workspace() {
+        let store = test_store();
+        let ws = store.create("w", "/w", DEFAULT_PID).unwrap().workspace.id;
+        store.pane_numbers(&ws, &ids(&["a"])).unwrap();
+        store.delete(&ws).unwrap();
+        assert!(store.pane_numbers(&ws, &ids(&["a"])).is_err());
+        let conn = store.conn.lock().unwrap();
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pane_numbers", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
 
     // ── Missing folder (ADR-0053) ──
 
