@@ -8,13 +8,13 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useAgentPanes } from "../../hooks/useAgentPanes";
 import { useShortcutLabel, withShortcut } from "../../hooks/useShortcutLabel";
 import {
 	autoColumns,
 	autoVisibleRows,
 	dragDivider,
 	type FleetTile as FleetTileData,
-	fleetTiles,
 	gridShape,
 	normalizeRatios,
 } from "../../lib/fleetConsole";
@@ -26,10 +26,6 @@ import {
 	redrawProgram,
 	repaintTerminal,
 } from "../../lib/terminalManager";
-import {
-	buildWorkspaceRows,
-	flattenRowsToIds,
-} from "../../lib/worktreeGrouping";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import {
 	TILE_ZOOM_DEFAULT,
@@ -85,42 +81,9 @@ export function stagingOrder(
 	return { first, rest: paneIds.filter((id) => !first.includes(id)) };
 }
 
-/** The live tile list, in derived order. Shared by the console and by the
- *  keyboard routing, which must walk the same order the grid shows. */
+/** The live tile list, in derived order (see `useAgentPanes`). */
 export function useFleetTiles(): FleetTileData[] {
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
-	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
-	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
-	const panePtyMap = usePtyActivityStore((s) => s.panePtyMap);
-	// Membership only changes with detection mode, so select a stable key of
-	// the agent-mode ptyIds rather than the whole (hot) activities map.
-	const agentKey = usePtyActivityStore((s) =>
-		Object.keys(s.activities)
-			.filter((id) => s.activities[id]?.detectionMode === "agent")
-			.sort()
-			.join("|"),
-	);
-	const pendingTiles = useWindowUiStore((s) => s.pendingTiles);
-	return useMemo(() => {
-		void agentKey;
-		return fleetTiles({
-			alsoShow: new Set(Object.keys(pendingTiles)),
-			workspaces,
-			sidebarOrder: flattenRowsToIds(
-				buildWorkspaceRows(workspaces, worktreeFacts),
-			),
-			openedWorkspaceIds,
-			activities: usePtyActivityStore.getState().activities,
-			panePtyMap,
-		});
-	}, [
-		workspaces,
-		worktreeFacts,
-		openedWorkspaceIds,
-		panePtyMap,
-		agentKey,
-		pendingTiles,
-	]);
+	return useAgentPanes({ includePending: true });
 }
 
 /**
