@@ -49,12 +49,26 @@ an unknown kind's error lists the valid ones). Then
 `abundio agent wait <name>` until it is done, and read its pane.
 
 The new pane does not take the user's keyboard focus, so they can keep
-typing to you. Add `--focus` (to `agent start` or `pane split`) only when
-the user asks to be taken to the new pane.
+typing to you. Add `--focus` (to `agent start`, `pane split` or `tab new`)
+only when the user asks to be taken to the new pane.
 
-`abundio pane split` opens a plain shell beside you;
-`abundio pane run <pane> "<command>"` runs one line in a shell that is at its
-prompt.
+### In a Tab of its own
+
+Add `--tab` to `agent start` to open the helper in a new Tab instead of
+splitting yours. Prefer it when:
+
+- a reply came back with a `"hint"` (your Tab is getting crowded), or
+- your Tab already has several panes, or the helper's work is long and
+  separate from yours.
+
+The Tab is named after the task; `--tab-name "<name>"` sets a better one.
+`abundio tab rename "<name>"` names your own Tab, for example after the
+task you are on. You can rename only your own Tab and Tabs you opened, and
+never one the user has named: leave those as they are.
+
+`abundio pane split` opens a plain shell beside you, `abundio tab new` one in
+a new Tab; `abundio pane run <pane> "<command>"` runs one line in a shell
+that is at its prompt.
 
 ## Be a good neighbour
 

@@ -219,6 +219,12 @@ describe("agent start --tab", () => {
 		);
 	});
 
+	it("never hints: it already took a Tab of its own", async () => {
+		terminals.set("a", { ptyId: "pty-a", term: { cols: 40, rows: 10 } });
+		const { reply } = await startAndSettle();
+		expect(reply).not.toHaveProperty("hint");
+	});
+
 	it("with --focus, reveals the new Tab's pane", async () => {
 		const { tab: t } = await startAndSettle({ focus: true });
 		expect(revealed).toEqual([[paneOf(t).id, "ws", t.id]]);

@@ -139,6 +139,27 @@ describe("pane split", () => {
 		expect(useWorkspaceStore.getState().focusedPaneId).toBe("a");
 	});
 
+	it("adds no hint when the Tab has room", async () => {
+		const r = await runRequest(caller, {
+			op: "pane.split",
+			direction: null,
+			focus: false,
+		});
+		expect(r).not.toHaveProperty("hint");
+	});
+
+	it("hints at --tab when the split leaves cramped panes", async () => {
+		terminals.set("a", { ptyId: "pty-a", term: { cols: 100, rows: 40 } });
+		const r = (await runRequest(caller, {
+			op: "pane.split",
+			direction: null,
+			focus: false,
+		})) as { hint?: string };
+		expect(r.hint).toContain("--tab");
+		// The split still happened.
+		expect(layout().type).toBe("split");
+	});
+
 	it("splits down when tall, or as asked", async () => {
 		terminals.set("a", { ptyId: "pty-a", term: { cols: 60, rows: 40 } });
 		await runRequest(caller, {

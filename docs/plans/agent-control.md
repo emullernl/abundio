@@ -385,6 +385,16 @@ The original list:
 
 ### 14. Crowded hint
 
+**Done.** As built:
+
+- `crowding.ts`: `crowdHint` with `MIN_COLS` 60, `MIN_ROWS` 12 and `MAX_PANES` 4. Only the side the split halves is halved, and one cell goes to the divider (121 columns split right gives 60 + 60, so no hint; 120 gives 59, a hint). The side not halved counts as it is, so a down split of a 50-column pane hints too. The pane count is the Tab's terminal panes before the split.
+- The hint names the reason ("this Tab already had 4 panes", or "the new panes are only 59 columns × 40 rows") and ends with the advice to use `--tab`.
+- `splitCaller` returns `{ paneId, hint }`. `pane split` and `agent start` (split) add `hint` only when it is non-null. `agent start --tab` and `tab new` never carry one.
+- Skill: a section "In a Tab of its own". It says when to prefer `--tab` (a `hint`, a busy Tab, long separate work), what `--tab-name` and `tab rename` are for, and that a Tab the user named is left alone. `--focus` is listed for `tab new` too.
+- Tests: each threshold exactly at its limit, both directions, the side not halved, the pane count, the reason in the text. Replies: no hint with room, a hint (and still a split) when cramped, never with `--tab`.
+
+The original list:
+
 - `lib/agentControl/crowding.ts` (pure): `crowdHint({ terminalPanes, cols, rows, direction })` returns a hint string or null. The halves are computed from the caller's grid as the split would make them (half the columns for right, half the rows for down).
 - `pane split` and `agent start` without `--tab` add `hint` to their reply when it is non-null. A reply with `--tab` never carries one.
 - Skill text: when a reply has a `hint`, or the user's Tab already has several panes, prefer `--tab`; name the Tab after the task.

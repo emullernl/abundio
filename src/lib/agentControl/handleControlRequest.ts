@@ -27,6 +27,7 @@ import { canFire } from "../promptActions";
 import { taskTabName } from "../taskPrompt";
 import { getTerminal, type ManagedTerminal } from "../terminalManager";
 import type { CodingAgent } from "../types";
+import { crowdHint } from "./crowding";
 import {
 	describeAgent,
 	describePane,
@@ -211,9 +212,9 @@ export async function runRequest(
 			});
 		}
 		case "pane.split": {
-			const paneId = await splitCaller(scope, request.direction, {});
+			const { paneId, hint } = await splitCaller(scope, request.direction, {});
 			if (request.focus) focusNewPane(scope, paneId);
-			return describeNew(caller, paneId);
+			return withHint(await describeNew(caller, paneId), hint);
 		}
 		case "agent.start":
 			return startAgent(scope, request, signal);
@@ -307,7 +308,7 @@ async function splitCaller(
 	scope: Scope,
 	direction: Direction | null,
 	extra: Partial<TerminalNode>,
-): Promise<string> {
+): Promise<{ paneId: string; hint: string | null }> {
 	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
 	if (!self) {
 		throw new ControlError("not_found", "your pane is no longer open");
@@ -329,9 +330,15 @@ async function splitCaller(
 		...extra,
 		spawnedBy: scope.caller.paneId,
 	};
+	const hint = crowdHint({
+		terminalPanes: collectTerminalIds(layout).length,
+		cols: term?.cols ?? 80,
+		rows: term?.rows ?? 24,
+		direction: side,
+	});
 	const next = wrapInSplit(layout, self.node.id, node, layoutDirection(side));
 	await store.updateLayout(tab.id, next);
-	return node.id;
+	return { paneId: node.id, hint };
 }
 
 function focusNewPane(scope: Scope, paneId: string): void {
@@ -387,6 +394,7 @@ async function startAgent(
 		]);
 	}
 	let paneId: string;
+	let hint: string | null = null;
 	if (request.tab) {
 		paneId = await openSpawnedTab(scope, {
 			agent,
@@ -405,11 +413,11 @@ async function startAgent(
 		paneId = crypto.randomUUID();
 		setPendingTask(paneId, { argv, agentId: agent.id });
 		try {
-			await splitCaller(scope, request.direction, {
+			({ hint } = await splitCaller(scope, request.direction, {
 				id: paneId,
 				agentId: agent.id,
 				...(request.handle !== null ? { agentHandle: request.handle } : {}),
-			});
+			}));
 		} catch (e) {
 			takePendingTask(paneId);
 			throw e;
@@ -435,7 +443,12 @@ async function startAgent(
 	if (request.focus && fleetConsoleShowing()) {
 		useWindowUiStore.getState().setFocusedTile(paneId);
 	}
-	return describeAgent(await describeNew(scope.caller, paneId));
+	return withHint(describeAgent(await describeNew(scope.caller, paneId)), hint);
+}
+
+/** A reply with a crowded-Tab `hint` when there is one (`crowding.ts`). */
+function withHint<T extends object>(reply: T, hint: string | null): T {
+	return hint ? { ...reply, hint } : reply;
 }
 
 /**
