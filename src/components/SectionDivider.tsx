@@ -5,9 +5,10 @@ interface Props {
 	onResizeEnd: () => void;
 }
 
-/** Horizontal drag handle above an expanded Anchored section (Commits
- *  or Pull Requests), and above the Left sidebar's **Agents list**. Reports the pointer's height fraction; the caller turns
- *  it into a share. Renders only while that section is expanded — collapsed,
+/** Horizontal drag handle above an expanded Anchored section (Commits or
+ *  Pull Requests) or the Left sidebar's **Agents list**. Reports the
+ *  pointer's height fraction within its parent element; the caller turns it
+ *  into a share. Renders only while that section is expanded — collapsed,
  *  the section pins itself at its header height and the divider has no role. */
 export function SectionDivider({ onResize, onResizeEnd }: Props) {
 	const dividerRef = useRef<HTMLDivElement>(null);

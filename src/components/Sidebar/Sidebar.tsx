@@ -6,7 +6,7 @@ import {
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { ChevronLeft, ChevronRight, Grid, Plus } from "../Icons";
-import { SectionDivider } from "../RightSidebar/SectionDivider";
+import { SectionDivider } from "../SectionDivider";
 import { AgentsList } from "./AgentsList";
 import { WorkspaceList } from "./WorkspaceList";
 
@@ -249,7 +249,7 @@ function SidebarBody() {
 			{/* Workspace list (the bottom split + Explorer/Search tab strip moved
 			 *  to the right sidebar per ADR-0010). */}
 			<div
-				className="overflow-y-auto px-4 py-2 min-h-0"
+				className="overflow-y-auto min-h-0"
 				style={{ flex: `${shares.workspaces} 1 0%` }}
 			>
 				<WorkspaceList />

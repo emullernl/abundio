@@ -6,8 +6,33 @@ import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
+type PtyActivities = ReturnType<
+	typeof usePtyActivityStore.getState
+>["activities"];
+
 /** Stable empty set, so `includePending: false` never changes identity. */
 const NO_PENDING: ReadonlySet<string> = new Set();
+
+let lastActivities: PtyActivities | null = null;
+let lastKey = "";
+
+/**
+ * A stable key of the agent-mode ptyIds. The store's selectors run on
+ * *every* store update (titles, cwds, running commands…), but `activities`
+ * is only replaced when a status changes, so the key is recomputed only for
+ * a new `activities` object. One cache serves every caller, since they all
+ * read the same store. Exported for tests.
+ */
+export function agentModeKey(activities: PtyActivities): string {
+	if (activities !== lastActivities) {
+		lastActivities = activities;
+		lastKey = Object.keys(activities)
+			.filter((id) => activities[id]?.detectionMode === "agent")
+			.sort()
+			.join("|");
+	}
+	return lastKey;
+}
 
 /**
  * Every agent-mode pane of this Window's Opened workspaces, in **derived
@@ -28,12 +53,7 @@ export function useAgentPanes({
 	const panePtyMap = usePtyActivityStore((s) => s.panePtyMap);
 	// Membership only changes with detection mode, so select a stable key of
 	// the agent-mode ptyIds rather than the whole (hot) activities map.
-	const agentKey = usePtyActivityStore((s) =>
-		Object.keys(s.activities)
-			.filter((id) => s.activities[id]?.detectionMode === "agent")
-			.sort()
-			.join("|"),
-	);
+	const agentKey = usePtyActivityStore((s) => agentModeKey(s.activities));
 	const pendingTiles = useWindowUiStore((s) =>
 		includePending ? s.pendingTiles : undefined,
 	);

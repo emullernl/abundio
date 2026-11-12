@@ -43,6 +43,11 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 	return (
 		<button
 			type="button"
+			// Keep DOM focus where it is (the terminal): Switch to focuses the
+			// target pane only when the Focused pane changes, so clicking the row
+			// of the pane that is already focused would otherwise leave focus on
+			// this button and lose the next keystroke.
+			onMouseDown={(e) => e.preventDefault()}
 			onClick={() => switchToPane(paneId)}
 			title={tooltip}
 			aria-current={selected ? "true" : undefined}
