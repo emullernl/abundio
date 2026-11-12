@@ -32,6 +32,9 @@ export type ControlRequest =
 			direction: Direction | null;
 			args: string[];
 			focus: boolean;
+			/** Open in a new **Spawned tab** instead of a split. */
+			tab: boolean;
+			tabName: string | null;
 	  }
 	| {
 			op: "agent.prompt";
@@ -47,7 +50,10 @@ export type ControlRequest =
 			timeoutMs: number | null;
 	  }
 	| { op: "agent.sendKeys"; target: Target; keys: string[] }
-	| { op: "agent.rename"; target: Target; handle: string | null };
+	| { op: "agent.rename"; target: Target; handle: string | null }
+	| { op: "tab.new"; name: string | null; focus: boolean }
+	/** `target: null` is the caller's own Tab. */
+	| { op: "tab.rename"; name: string; target: Target | null };
 
 export interface ControlCaller {
 	ptyId: string;

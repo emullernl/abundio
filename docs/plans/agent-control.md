@@ -52,7 +52,7 @@ abundio help [<group>]
 
 `<pane>` is a Pane number. `<agent>` is an Agent handle or a Pane number. `--kind` takes the ids from `lib/agents.ts` (built-in and custom). Keys use logical names (`esc`, `enter`, `tab`, `ctrl+c`, `up`…); all keys are checked before any byte is written.
 
-Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`, `invalid_name` (a Tab name; steps 11–15).
+Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`. A bad Tab name (steps 11–15) is a usage error, like a bad handle.
 
 Handle grammar: `[a-z][a-z0-9_-]{0,31}`, and never a Pane number (`p` followed by digits only), so the two never collide.
 
@@ -321,7 +321,7 @@ Agents can open an Agent or a shell in a new **Tab** instead of splitting their 
 | Default name | With `--prompt`, the New task rule (`taskTabName`, the start of the task text). Else the Agent handle, else the Agent's name. A shell Tab gets the app's usual default name. |
 | Crowded | The split still happens. The reply carries `hint` ("this Tab is crowded; consider --tab"). Crowded means either half of the split would be under 60 columns or 12 rows, or the Tab already holds 4 or more terminal panes. The skill says to prefer `--tab` after a hint, or when the user's Tab is busy. |
 
-Tab names: one line, no control characters, 1–64 characters after trimming. Error code for a bad name: `invalid_name`.
+Tab names: one line, no control characters, 1–64 characters after trimming. A bad name is a usage error (exit 2), caught by the parser.
 
 ### 11. Storage
 
@@ -344,9 +344,21 @@ The original list:
 
 ### 12. Parsing (Rust)
 
+**Done.** As built:
+
+- `agent start` takes `--tab` and `--tab-name <name>`. `--tab-name` without `--tab` is refused, and so is `--direction` with `--tab` (a new Tab has no split side).
+- `tab new [--name <name>] [--focus]` and `tab rename <name> [--tab <pane|agent>]`; `--tab` takes a Pane number or a handle, like every other target. `tab close` is an unknown command.
+- `check_tab_name`: trimmed, then 1–64 characters (`TAB_NAME_MAX`, counted in characters, not bytes), with no control characters. Every failure is a `usage` error, exit 2. There is no separate `invalid_name` code.
+- `Request::TabNew` / `Request::TabRename` (ops `tab.new`, `tab.rename`); `AgentStart` gains `tab` and `tab_name`. Neither new request is in the read-only list, so neither is retried after a dropped connection.
+- Help: a `Tabs:` group (`abundio help tab`), the `--tab` options on `agent start`, and a line on crowded hints in the header.
+- The TypeScript request union matches. Until step 13 the Window answers the new ops with `unsupported`.
+- Tests: every new form, each usage error, the name limits (64 multi-byte characters pass, 65 fail), help, retry and op names.
+
+The original list:
+
 - `agent start` gains `--tab` and `--tab-name <name>` (the latter only with `--tab`). New group `tab`: `tab new [--name <name>] [--focus]` and `tab rename <name> [--tab <pane|handle>]`.
 - `Request::TabNew { name, focus }`, `Request::TabRename { name, target }`; `AgentStart` gains `tab: bool`, `tab_name`. Both new requests change something, so they are not retried after a dropped connection.
-- Name checks in the parser (`invalid_name` is a usage error, exit 2).
+- Name checks in the parser (a bad name is a usage error, exit 2).
 - Help text: the `tab` group, the `--tab` options, and one line on crowded hints.
 - Tests: every new form and usage error.
 

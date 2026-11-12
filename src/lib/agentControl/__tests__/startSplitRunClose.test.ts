@@ -173,6 +173,8 @@ describe("agent start", () => {
 			direction: null,
 			args: [],
 			focus: false,
+			tab: false,
+			tabName: null,
 			...over,
 		});
 

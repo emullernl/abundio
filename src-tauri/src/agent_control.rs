@@ -230,6 +230,10 @@ pub enum Request {
         /// Move keyboard focus to the new pane. Off by default: the user is
         /// usually typing to the caller.
         focus: bool,
+        /// Open it in a new **Spawned tab** instead of splitting the caller.
+        tab: bool,
+        /// The new Tab's name (only with `tab`); else a default.
+        tab_name: Option<String>,
     },
     #[serde(rename = "agent.prompt", rename_all = "camelCase")]
     AgentPrompt {
@@ -252,6 +256,13 @@ pub enum Request {
         target: Target,
         handle: Option<String>,
     },
+    /// A shell in a new **Spawned tab**.
+    #[serde(rename = "tab.new", rename_all = "camelCase")]
+    TabNew { name: Option<String>, focus: bool },
+    /// Rename the caller's own Tab (`target: None`), or the Tab holding
+    /// `target`'s pane.
+    #[serde(rename = "tab.rename", rename_all = "camelCase")]
+    TabRename { name: String, target: Option<Target> },
 }
 
 /// What a command line asks for: a request, or help text.
@@ -404,11 +415,12 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
     match (group, command) {
         (None, _) | (Some("help" | "--help" | "-h"), None) => Ok(Parsed::Help(help(None))),
         (Some("help"), Some(g)) => Ok(Parsed::Help(help(Some(g)))),
-        (Some(g @ ("pane" | "agent")), None | Some("--help" | "-h" | "help")) => {
+        (Some(g @ ("pane" | "agent" | "tab")), None | Some("--help" | "-h" | "help")) => {
             Ok(Parsed::Help(help(Some(g))))
         }
         (Some("pane"), Some(c)) => parse_pane(c, rest).map(Parsed::Request),
         (Some("agent"), Some(c)) => parse_agent(c, rest).map(Parsed::Request),
+        (Some("tab"), Some(c)) => parse_tab(c, rest).map(Parsed::Request),
         (Some(g), _) => Err(format!("unknown command {g:?}; run `abundio help`")),
     }
 }
@@ -493,8 +505,21 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
             Ok(Request::AgentList)
         }
         "start" => {
-            let usage = "abundio agent start --kind <agent> [--handle <h>] [--prompt <text>] [--direction right|down] [--focus] [-- <agent args>]";
-            let a = split_args(rest, &["--kind", "--handle", "--prompt", "--direction"], &["--focus"])?;
+            let usage = "abundio agent start --kind <agent> [--handle <h>] [--prompt <text>] [--direction right|down | --tab [--tab-name <name>]] [--focus] [-- <agent args>]";
+            let a = split_args(
+                rest,
+                &["--kind", "--handle", "--prompt", "--direction", "--tab-name"],
+                &["--focus", "--tab"],
+            )?;
+            let tab = a.flags.contains_key("--tab");
+            let tab_name = match a.flags.get("--tab-name").copied().flatten() {
+                Some(_) if !tab => return Err("--tab-name needs --tab".into()),
+                Some(n) => Some(check_tab_name(n)?),
+                None => None,
+            };
+            if tab && a.flags.contains_key("--direction") {
+                return Err("--direction is for a split; a new Tab has none".into());
+            }
             expect_positionals(&a, 0, 0, usage)?;
             let kind = a
                 .flags
@@ -526,6 +551,8 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
                     .transpose()?,
                 args: a.passthrough.iter().map(|s| s.to_string()).collect(),
                 focus: a.flags.contains_key("--focus"),
+                tab,
+                tab_name,
             })
         }
         "prompt" => {
@@ -608,6 +635,61 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
     }
 }
 
+/// The longest Tab name an Agent may set, in characters.
+pub const TAB_NAME_MAX: usize = 64;
+
+/// A Tab name an Agent gives: trimmed, one line, no control characters,
+/// 1–[`TAB_NAME_MAX`] characters.
+fn check_tab_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("the Tab name is empty".into());
+    }
+    if name.chars().any(char::is_control) {
+        return Err("a Tab name must be one line with no control characters".into());
+    }
+    if name.chars().count() > TAB_NAME_MAX {
+        return Err(format!("a Tab name can have at most {TAB_NAME_MAX} characters"));
+    }
+    Ok(name.to_string())
+}
+
+fn parse_tab(command: &str, rest: &[String]) -> Result<Request, String> {
+    match command {
+        "new" => {
+            let a = split_args(rest, &["--name"], &["--focus"])?;
+            expect_positionals(&a, 0, 0, "abundio tab new [--name <name>] [--focus]")?;
+            Ok(Request::TabNew {
+                name: a
+                    .flags
+                    .get("--name")
+                    .copied()
+                    .flatten()
+                    .map(check_tab_name)
+                    .transpose()?,
+                focus: a.flags.contains_key("--focus"),
+            })
+        }
+        "rename" => {
+            let a = split_args(rest, &["--tab"], &[])?;
+            expect_positionals(&a, 1, 1, "abundio tab rename <name> [--tab <pane|agent>]")?;
+            Ok(Request::TabRename {
+                name: check_tab_name(a.positional[0])?,
+                target: a
+                    .flags
+                    .get("--tab")
+                    .copied()
+                    .flatten()
+                    .map(parse_target)
+                    .transpose()?,
+            })
+        }
+        other => Err(format!(
+            "unknown command `tab {other}`; run `abundio help tab`"
+        )),
+    }
+}
+
 fn invalid_handle(h: &str) -> String {
     format!(
         "{h:?} is not a valid Agent handle: start with a lowercase letter, then up to 31 lowercase letters, digits, '-' or '_', and not p followed by digits"
@@ -630,14 +712,25 @@ Panes (only those of your own Workspace):
 Agents:
   abundio agent list                      every Agent in your Workspace
   abundio agent start --kind <agent> [--handle <h>] [--prompt <text>]
-                      [--direction right|down] [--focus] [-- <agent args>]
-                                          start an Agent in a new pane
+                      [--direction right|down | --tab [--tab-name <name>]]
+                      [--focus] [-- <agent args>]
+                                          start an Agent in a new pane, or with --tab
+                                          in a new Tab of its own
   abundio agent prompt <agent> <text> [--wait] [--timeout <ms>]
                                           send a prompt; --wait returns when it settles
   abundio agent wait <agent> [--until settled|ready|waiting|error] [--timeout <ms>]
   abundio agent send-keys <agent|pane> <key>...
                                           enter, esc, tab, ctrl+c, up, …
   abundio agent rename <agent> [<handle>] set or clear an Agent handle
+";
+    const TAB: &str = "\
+Tabs:
+  abundio tab new [--name <name>] [--focus]
+                                          a shell in a new Tab
+  abundio tab rename <name> [--tab <pane|agent>]
+                                          rename your own Tab, or the Tab holding that
+                                          pane: only yours or ones you opened, never
+                                          one the user named
 ";
     const HEAD: &str = "\
 abundio: control the panes and Agents of your Workspace.
@@ -646,12 +739,15 @@ abundio: control the panes and Agents of your Workspace.
 Every command prints one JSON object. --timeout is in milliseconds; 0 means no limit;
 the default for waits is 30 minutes. A new pane leaves the user's keyboard focus
 where it is; pass --focus to move it there, but only when the user asks for that.
+A split in a crowded Tab still happens, and its reply carries a \"hint\": next time,
+open the Agent with --tab.
 
 ";
     match group {
         Some("pane") => PANE.to_string(),
         Some("agent") => AGENT.to_string(),
-        _ => format!("{HEAD}{PANE}\n{AGENT}"),
+        Some("tab") => TAB.to_string(),
+        _ => format!("{HEAD}{PANE}\n{AGENT}\n{TAB}"),
     }
 }
 
@@ -1227,6 +1323,58 @@ mod tests {
     }
 
     #[test]
+    fn tab_commands() {
+        assert_eq!(
+            req(&["tab", "new"]),
+            Request::TabNew { name: None, focus: false }
+        );
+        assert_eq!(
+            req(&["tab", "new", "--name", "Logs", "--focus"]),
+            Request::TabNew { name: Some("Logs".into()), focus: true }
+        );
+        assert_eq!(
+            req(&["tab", "rename", "Fix the build"]),
+            Request::TabRename { name: "Fix the build".into(), target: None }
+        );
+        assert_eq!(
+            req(&["tab", "rename", "Review", "--tab", "p7"]),
+            Request::TabRename { name: "Review".into(), target: Some(Target::Pane(7)) }
+        );
+        assert_eq!(
+            req(&["tab", "rename", "Review", "--tab", "reviewer"]),
+            Request::TabRename {
+                name: "Review".into(),
+                target: Some(Target::Handle("reviewer".into()))
+            }
+        );
+        // Tab names: one line, no control characters, 1–64 characters.
+        assert!(usage_err(&["tab", "rename", "  "]).contains("empty"));
+        assert!(usage_err(&["tab", "rename", "a\nb"]).contains("one line"));
+        assert!(usage_err(&["tab", "new", "--name", "a\u{1b}[2J"]).contains("one line"));
+        assert!(usage_err(&["tab", "rename", &"x".repeat(65)]).contains("at most 64"));
+        assert!(matches!(
+            req(&["tab", "rename", &"é".repeat(64)]),
+            Request::TabRename { .. }
+        ));
+        assert!(usage_err(&["tab", "rename"]).contains("abundio tab rename"));
+        assert!(usage_err(&["tab", "close", "p2"]).contains("unknown command `tab close`"));
+        // Both change something, so a dropped connection is not retried.
+        assert!(is_mutating(&req(&["tab", "new"])));
+        assert!(is_mutating(&req(&["tab", "rename", "x"])));
+        assert_eq!(op_name(&req(&["tab", "rename", "x"])), "tab.rename");
+    }
+
+    #[test]
+    fn tab_help() {
+        let Ok(Parsed::Help(text)) = parse_args(&["tab".to_string()]) else {
+            panic!("tab alone is help");
+        };
+        assert!(text.contains("abundio tab rename"));
+        let Ok(Parsed::Help(all)) = parse_args(&[]) else { panic!() };
+        assert!(all.contains("Tabs:") && all.contains("--tab-name"));
+    }
+
+    #[test]
     fn agent_start() {
         assert_eq!(
             req(&["agent", "start", "--kind", "codex", "--handle", "reviewer", "--prompt", "hi", "--", "--model", "x"]),
@@ -1237,12 +1385,26 @@ mod tests {
                 direction: None,
                 args: vec!["--model".into(), "x".into()],
                 focus: false,
+                tab: false,
+                tab_name: None,
             }
         );
         assert!(matches!(
             req(&["agent", "start", "--kind", "codex", "--focus"]),
             Request::AgentStart { focus: true, .. }
         ));
+        assert!(matches!(
+            req(&["agent", "start", "--kind", "codex", "--tab", "--tab-name", "  Review  "]),
+            Request::AgentStart { tab: true, tab_name: Some(ref n), .. } if n == "Review"
+        ));
+        assert!(matches!(
+            req(&["agent", "start", "--kind", "codex", "--tab"]),
+            Request::AgentStart { tab: true, tab_name: None, .. }
+        ));
+        assert!(usage_err(&["agent", "start", "--kind", "codex", "--tab-name", "x"]).contains("needs --tab"));
+        assert!(usage_err(&["agent", "start", "--kind", "codex", "--tab", "--direction", "down"])
+            .contains("--direction is for a split"));
+        assert!(usage_err(&["agent", "start", "--kind", "codex", "--tab", "--tab-name", " "]).contains("empty"));
         assert!(usage_err(&["agent", "start"]).contains("--kind is required"));
         assert!(usage_err(&["agent", "start", "--kind", "codex", "--handle", "p1"]).contains("not a valid Agent handle"));
         assert!(usage_err(&["agent", "start", "--kind", "codex", "--", "a\u{1b}b"]).contains("control characters"));
