@@ -52,7 +52,7 @@ abundio help [<group>]
 
 `<pane>` is a Pane number. `<agent>` is an Agent handle or a Pane number. `--kind` takes the ids from `lib/agents.ts` (built-in and custom). Keys use logical names (`esc`, `enter`, `tab`, `ctrl+c`, `up`…); all keys are checked before any byte is written.
 
-Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`.
+Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`, `invalid_name` (a Tab name; steps 11–15).
 
 Handle grammar: `[a-z][a-z0-9_-]{0,31}`, and never a Pane number (`p` followed by digits only), so the two never collide.
 
@@ -299,8 +299,68 @@ The original list:
 
 In the real app the caller's pane lost keyboard focus when an Agent split it, although Agent control never moved focus. The cause was not Agent control. Splitting a pane re-parents its terminal: `projectInto` (`TerminalInstance.tsx`) moves the xterm element into the new split's container with `appendChild` and hides it until it has painted, and both drop the browser's focus. The slot's own refocus had already run, before the move. The same happened to the user's own splits, where the new pane taking focus hid it.
 
-- Fix: `projectInto` notes whether the terminal had focus before the move and calls `term.focus()` when it reveals it, if that pane is still the Focused pane (or Focused tile) and focus has not gone anywhere else meanwhile (`lib/projectionFocus.ts`, pure and tested). So the user keeps typing to the Agent that made the split.
+- Fix: when `projectInto` reveals a terminal, it calls `term.focus()` if that pane is the Focused pane (or Focused tile) and nothing else holds focus: focus is on `<body>`, or already inside the terminal (`lib/projectionFocus.ts`, pure and tested). So the user keeps typing to the Agent that made the split.
+- First try, which did not work in the app: refocus only if the terminal had focus just before the projection. It never had. When the split replaces the old slot, the element is first retracted to its holding container, and that move already drops focus, so at projection time focus was on `<body>`.
 - `agent start` gained `--focus`, like `pane split`: reveal the new pane at once and, in the Fleet Console, focus its tile once it is in agent mode. The help text and the skill say to pass it only when the user asks to be taken to the new pane.
+
+## Tabs (second round: steps 11–15)
+
+Agents can open an Agent or a shell in a new **Tab** instead of splitting their own, and can name Tabs. When the caller's Tab is getting crowded, the reply suggests a new Tab. See **Spawned tab** in `GLOSSARY.md`.
+
+### Decisions
+
+| Topic | Decision |
+|-------|----------|
+| CLI | `agent start … --tab [--tab-name <name>]` opens the Agent in a new Tab. `abundio tab new [--name <name>] [--focus]` opens a shell Tab. `abundio tab rename <name> [--tab <pane>]` renames a Tab. `pane split` stays a split. |
+| Spawned tab | A Tab Agent control opens. Owned by the caller's pane, persisted, and becomes an ordinary Tab when that pane closes. |
+| Rename reach | The caller's own Tab and its Spawned tabs. Never a Tab the user has named by hand: the user's name wins (`not_owner`). |
+| Addressing | `tab rename` without `--tab` renames the caller's own Tab. `--tab p7` (or a handle) names the Tab holding that pane. No Tab numbers. |
+| Close | No `tab close`. `pane close` on its Spawned panes; the Tab closes with its last pane. |
+| Position | At the end of the Tab bar, like a user's New tab. |
+| View | The user's view does not switch. `--focus` (passed only when the user asks) makes the new Tab active and focuses its pane. |
+| Default name | With `--prompt`, the New task rule (`taskTabName`, the start of the task text). Else the Agent handle, else the Agent's name. A shell Tab gets the app's usual default name. |
+| Crowded | The split still happens. The reply carries `hint` ("this Tab is crowded; consider --tab"). Crowded means either half of the split would be under 60 columns or 12 rows, or the Tab already holds 4 or more terminal panes. The skill says to prefer `--tab` after a hint, or when the user's Tab is busy. |
+
+Tab names: one line, no control characters, 1–64 characters after trimming. Error code for a bad name: `invalid_name`.
+
+### 11. Storage
+
+- Migration `022_tab_ownership.sql`: `tabs.spawned_by_pane TEXT` (null for ordinary Tabs) and `tabs.user_named INTEGER NOT NULL DEFAULT 0`. Back up `abundio.db` first, as for 021.
+- `Tab` / `TabUpdate` (Rust and `lib/types.ts`) gain `spawnedByPane` and `userNamed`.
+- Every rename the user makes in the UI (Tab bar double-click and context menu, palette) sets `userNamed`. The app's own renames do not: New task naming its Tab, and Agent control. `workspaceStore.renameTab` gains an `{ byUser }` option and the UI call sites pass it. Tabs renamed before this ships count as not user-named: there is no record.
+- When a pane closes, Tabs whose `spawnedByPane` is that pane become ordinary (`closePane.ts`, next to `clearSpawnedBy`).
+- Tests: the migration on an existing database, the flags round-tripping, the UI rename setting `userNamed`, owner close releasing the Tab.
+
+### 12. Parsing (Rust)
+
+- `agent start` gains `--tab` and `--tab-name <name>` (the latter only with `--tab`). New group `tab`: `tab new [--name <name>] [--focus]` and `tab rename <name> [--tab <pane|handle>]`.
+- `Request::TabNew { name, focus }`, `Request::TabRename { name, target }`; `AgentStart` gains `tab: bool`, `tab_name`. Both new requests change something, so they are not retried after a dropped connection.
+- Name checks in the parser (`invalid_name` is a usage error, exit 2).
+- Help text: the `tab` group, the `--tab` options, and one line on crowded hints.
+- Tests: every new form and usage error.
+
+### 13. The Window: new Tabs and renames
+
+- `agent start --tab`: `createTab(workspaceId, agent, seed, { activate: focus, task })`, with the pane node carrying `spawnedBy`, `agentHandle` and `agentId` as in a split, and the Tab marked `spawnedByPane: caller`. The task seed rides the spawn exactly as in step 8. Reply: the Agent's description (which already names its `tab`).
+- `tab new`: the same, with a plain shell pane. Reply: the new pane's description.
+- `--focus`: the new Tab becomes the active Tab and its pane the Focused pane. Without it, the Tab is added without activating (the Fleet Console's New agent path) and focus stays on the caller.
+- `tab rename`: resolve the Tab (the caller's, or the one holding `--tab`'s pane). Refuse unless it is the caller's own Tab or `spawnedByPane` is the caller (`not_owner`), and refuse if `userNamed` (`not_owner`, "the user named this Tab"). Then `renameTab` without `byUser`. Reply `{ tab, name }`.
+- The Control badge shows on the new pane while `agent start --tab` runs, as for a split.
+- Tests: Tab created at the end with the right owner, name rules (prompt, handle, Agent name, shell default), `--focus` on and off, rename reach (own, spawned, other, user-named).
+
+### 14. Crowded hint
+
+- `lib/agentControl/crowding.ts` (pure): `crowdHint({ terminalPanes, cols, rows, direction })` returns a hint string or null. The halves are computed from the caller's grid as the split would make them (half the columns for right, half the rows for down).
+- `pane split` and `agent start` without `--tab` add `hint` to their reply when it is non-null. A reply with `--tab` never carries one.
+- Skill text: when a reply has a `hint`, or the user's Tab already has several panes, prefer `--tab`; name the Tab after the task.
+- Tests: each threshold, both directions, exactly at the limits.
+
+### 15. Settings, demo, docs
+
+- `lib/demo/mockInvoke.ts`: anything new the demo calls.
+- `CLAUDE.md`: the Tab ownership columns and the user-named rule (an Agent never renames a Tab the user named).
+- Release notes draft: one more bullet (Agents can open helpers in their own Tab and name Tabs).
+- Verify (below): a Spawned tab survives a restart with its owner; the user renaming a Tab stops further Agent renames; a hint appears in a crowded Tab.
 
 ## Verify in the real app
 
@@ -314,3 +374,4 @@ Unit tests will not catch the integration paths. Before calling it done:
 - Turn the setting off mid-wait: new calls fail with `disabled`, the open wait still ends.
 - Put the Mac to sleep during a long wait: the CLI's wait retry recovers.
 - Windows: the PowerShell client, and the shells it supports.
+- Tabs: an Agent opens a helper with `--tab`; the user's view stays put and the new Tab is at the end, named after the task. After a restart the Tab is still the Agent's to rename. Once the user renames it by hand, the Agent's `tab rename` is refused. In a Tab with four panes, `agent start` replies with a `hint`.

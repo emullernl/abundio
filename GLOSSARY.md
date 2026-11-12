@@ -483,6 +483,9 @@ _Avoid_: agent name (that is the Agent's product name, "Claude Code"), callsign,
 **Pane number**: A short, Workspace-wide id for a Pane (`p1`, `p2`…) used by **Agent control**. Never reused after its Pane closes, and kept across restarts.
 _Avoid_: pane id (the internal id, which is never shown to Agents)
 
+**Spawned tab**: A **Tab** created by **Agent control**, for an Agent or a shell to start in instead of splitting the caller's Tab. Like a **Spawned pane**, it is owned by the Pane whose Agent asked for it; if that Pane closes, it becomes an ordinary Tab. Its owner may rename it, as it may rename the Tab it is itself in, and no other Tab, and neither once the user has named that Tab by hand: the user's name wins. It is never closed as a whole: closing its last Pane closes it, as with any Tab.
+_Avoid_: agent tab
+
 **Spawned pane**: A Pane created by **Agent control**. It is owned by the Pane whose Agent asked for it — the Pane, not the Agent, so it stays owned when that Pane later runs a different Agent. Only its owner may close it through Agent control. If the owner closes, it becomes an ordinary Pane no Agent can close.
 _Avoid_: child pane, agent pane
 
