@@ -67,6 +67,7 @@ export type ControlErrorCode =
 	| "not_owner"
 	| "unsupported_shell"
 	| "unsupported"
+	| "empty_prompt"
 	| "internal";
 
 /** Thrown by a handler; becomes `{ error: { code, message } }`. */

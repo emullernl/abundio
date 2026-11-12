@@ -5,12 +5,15 @@
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { pasteAndSubmit } from "../firePromptAction";
 import {
 	type AgentControlReply,
 	type AgentControlRequestEvent,
 	agentControl,
+	pty,
 } from "../ipc";
-import { getTerminal } from "../terminalManager";
+import { canFire } from "../promptActions";
+import { getTerminal, type ManagedTerminal } from "../terminalManager";
 import {
 	describeAgent,
 	describePane,
@@ -18,6 +21,8 @@ import {
 	type PaneLiveFacts,
 	paneLabel,
 } from "./describe";
+import { keysToBytes } from "./keys";
+import { cleanPromptText } from "./promptText";
 import { readBuffer } from "./readBuffer";
 import {
 	resolveTarget,
@@ -25,6 +30,7 @@ import {
 	workspacePanes,
 } from "./resolveTarget";
 import { type ControlCaller, ControlError, type ControlRequest } from "./types";
+import { type WaitOutcome, waitForPane } from "./waitForPane";
 
 /** The caller's Workspace as this Window sees it right now. */
 interface Scope {
@@ -91,6 +97,7 @@ function describeAll(scope: Scope): PaneDescription[] {
 export async function runRequest(
 	caller: ControlCaller,
 	request: ControlRequest,
+	signal: AbortSignal = new AbortController().signal,
 ): Promise<unknown> {
 	const scope = await loadScope(caller);
 	switch (request.op) {
@@ -137,6 +144,44 @@ export async function runRequest(
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			return withBadge(scope, pane, () => readPane(scope, pane, request));
 		}
+		case "agent.prompt": {
+			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			return withBadge(scope, pane, () =>
+				promptAgent(scope, pane, request, signal),
+			);
+		}
+		case "agent.wait": {
+			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			return withBadge(scope, pane, async () => {
+				requireAgent(pane);
+				const outcome = await waitForPane(
+					pane.node.id,
+					ptyIdOf(pane),
+					{ until: request.until, needWorking: false },
+					signal,
+				);
+				return waitResult(scope, pane, outcome);
+			});
+		}
+		case "agent.sendKeys": {
+			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			return withBadge(scope, pane, async () => {
+				const managed = mountedTerminal(pane);
+				const appCursor = managed.term.modes.applicationCursorKeysMode;
+				const keys = keysToBytes(request.keys, appCursor);
+				if (!keys.ok) {
+					throw new ControlError(
+						"internal",
+						`unknown key "${keys.unknown}"; nothing was sent`,
+					);
+				}
+				await pty.write(managed.ptyId, keys.bytes);
+				return {
+					pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
+					sent: request.keys.length,
+				};
+			});
+		}
 		default:
 			throw new ControlError(
 				"unsupported",
@@ -171,18 +216,82 @@ async function withBadge<T>(
 	}
 }
 
-function readPane(
-	scope: Scope,
-	pane: WorkspacePane,
-	request: Extract<ControlRequest, { op: "pane.read" }>,
-) {
+function mountedTerminal(pane: WorkspacePane): ManagedTerminal {
 	const managed = getTerminal(pane.node.id);
-	if (!managed) {
+	if (!managed?.ptyId) {
 		throw new ControlError(
 			"state_unknown",
 			"that pane's terminal is not loaded yet; try again in a moment",
 		);
 	}
+	return managed;
+}
+
+function requireAgent(pane: WorkspacePane): PaneLiveFacts {
+	const facts = liveFacts(pane);
+	if (facts.exited || facts.mode !== "agent") {
+		throw new ControlError(
+			"not_an_agent",
+			"that pane is not running an Agent; use `abundio pane run` for a shell",
+		);
+	}
+	return facts;
+}
+
+function waitResult(scope: Scope, pane: WorkspacePane, outcome: WaitOutcome) {
+	return {
+		...describeAgent(
+			describePane(pane, liveFacts(pane), scope.numbers, scope.caller.paneId),
+		),
+		status: outcome.end === "left" ? "exited" : outcome.end,
+		waitedMs: outcome.waitedMs,
+	};
+}
+
+/** `agent prompt`: paste the text into the Agent and press Enter, without
+ *  moving keyboard focus; with `--wait`, until it has Settled. */
+async function promptAgent(
+	scope: Scope,
+	pane: WorkspacePane,
+	request: Extract<ControlRequest, { op: "agent.prompt" }>,
+	signal: AbortSignal,
+) {
+	const managed = mountedTerminal(pane);
+	const facts = requireAgent(pane);
+	if (!canFire(facts.state ?? undefined)) {
+		throw new ControlError(
+			"busy",
+			"that Agent is Waiting for an answer (a permission prompt, say); read the pane, answer it with `agent send-keys`, then prompt again",
+		);
+	}
+	const text = cleanPromptText(request.text);
+	if (text.trim() === "") {
+		throw new ControlError(
+			"empty_prompt",
+			"nothing is left of the prompt once control characters are removed",
+		);
+	}
+	// Watch first, so a fast Agent's Working cannot happen before we look.
+	const waiting = request.wait
+		? waitForPane(
+				pane.node.id,
+				managed.ptyId,
+				{ until: "settled", needWorking: true },
+				signal,
+			)
+		: null;
+	pasteAndSubmit(managed, text, true);
+	const label = paneLabel(scope.numbers.get(pane.node.id) ?? 0);
+	if (!waiting) return { pane: label, sent: true };
+	return { sent: true, ...waitResult(scope, pane, await waiting) };
+}
+
+function readPane(
+	scope: Scope,
+	pane: WorkspacePane,
+	request: Extract<ControlRequest, { op: "pane.read" }>,
+) {
+	const managed = mountedTerminal(pane);
 	const lines = readBuffer(managed.term.buffer.active, managed.term.rows, {
 		lines: request.lines,
 		visible: request.visible,
@@ -211,18 +320,18 @@ export function toReply(
 	};
 }
 
-/** Requests Rust gave up on. Later steps check this before acting. */
-const cancelled = new Set<string>();
-
-export function isCancelled(id: string): boolean {
-	return cancelled.has(id);
-}
+/** Requests still running, so Rust's cancel (its timeout) can stop a wait. */
+const running = new Map<string, AbortController>();
 
 async function onRequest(e: AgentControlRequestEvent): Promise<void> {
+	const abort = new AbortController();
+	running.set(e.id, abort);
 	const [outcome] = await Promise.allSettled([
-		runRequest(e.caller, e.request as ControlRequest),
+		runRequest(e.caller, e.request as ControlRequest, abort.signal),
 	]);
-	if (cancelled.delete(e.id)) return;
+	running.delete(e.id);
+	// Rust has stopped listening; it already answered the Agent.
+	if (abort.signal.aborted) return;
 	await agentControl.reply(e.id, toReply(outcome)).catch(() => {});
 }
 
@@ -236,7 +345,7 @@ export function startAgentControl(): () => void {
 			void onRequest(e);
 		}),
 		agentControl.onCancel((id) => {
-			cancelled.add(id);
+			running.get(id)?.abort();
 		}),
 	];
 	return () => {

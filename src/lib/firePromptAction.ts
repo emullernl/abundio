@@ -15,7 +15,7 @@ import {
 	type ParamValue,
 	resolveBody,
 } from "./promptActions";
-import { getTerminal } from "./terminalManager";
+import { getTerminal, type ManagedTerminal } from "./terminalManager";
 
 export interface FireOptions {
 	/** The Prompt action's id, so the **Action bar** can pulse the button that
@@ -71,12 +71,7 @@ export function firePromptAction(
 	// this: the *body* is non-empty, it is the resolution that is.
 	if (text.trim().length === 0) return { ok: false, reason: "empty" };
 
-	managed.term.paste(text);
-	if (!opts.stageOnly) {
-		// `\r`, not `\n`: a TUI's line discipline reads CR as submit, and xterm's
-		// own key handling sends CR for Enter.
-		managed.term.input("\r");
-	}
+	pasteAndSubmit(managed, text, !opts.stageOnly);
 
 	// Focus lands in the terminal, never on the button — the next thing the user
 	// does is watch or type.
@@ -95,4 +90,22 @@ export function isAgentPane(ptyId: string | undefined): boolean {
 	return (
 		usePtyActivityStore.getState().activities[ptyId]?.detectionMode === "agent"
 	);
+}
+
+/**
+ * Paste `text` into a pane's terminal and, with `submit`, press Enter: steps
+ * 3 and 4 of `firePromptAction`, shared with Agent control's `agent prompt`,
+ * which must not take focus. `term.paste` adds the bracketed-paste guard
+ * when the program has it on; the `\r` goes separately, so it is never inside
+ * the guard.
+ */
+export function pasteAndSubmit(
+	managed: Pick<ManagedTerminal, "term">,
+	text: string,
+	submit: boolean,
+): void {
+	managed.term.paste(text);
+	// `\r`, not `\n`: a TUI's line discipline reads CR as submit, and xterm's
+	// own key handling sends CR for Enter.
+	if (submit) managed.term.input("\r");
 }

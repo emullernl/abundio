@@ -52,7 +52,7 @@ abundio help [<group>]
 
 `<pane>` is a Pane number. `<agent>` is an Agent handle or a Pane number. `--kind` takes the ids from `lib/agents.ts` (built-in and custom). Keys use logical names (`esc`, `enter`, `tab`, `ctrl+c`, `up`…); all keys are checked before any byte is written.
 
-Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`.
+Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`.
 
 Handle grammar: `[a-z][a-z0-9_-]{0,31}`, and never a Pane number (`p` followed by digits only), so the two never collide.
 
@@ -192,6 +192,17 @@ The original list:
 - Tests: grammar, uniqueness, clearing on Agent change, row title order.
 
 ### 7. Prompt, wait and keys
+
+**Done.** As built:
+
+- `lib/agentControl/settle.ts` (pure): `waitStep(goal, progress, snapshot)` and `isStalled`. A prompted wait (`needWorking`) ignores the state the Agent starts in, so the Ready left from its last turn is not an answer; Working already under way when the prompt goes out counts as seen. A plain `agent wait` ends at once if the target is already in the asked-for state. Either ends as `exited` if the Agent quits or the pane closes first. With `--until ready`, a Waiting or Error target keeps the wait open until Rust's timeout.
+- `waitForPane.ts`: subscribes to `subscribeStatusChange` and also re-checks every 250 ms (a closed pane, an exited PTY and the 5 s stall deadline have no status event). It starts watching *before* the prompt is pasted, so a fast Agent's Working cannot be missed.
+- Cancellation: each running request has an `AbortController`. `agent-control-cancel` aborts it, the wait unsubscribes, and no reply is sent.
+- `agent prompt`: `not_an_agent` for a shell or exited pane, `busy` while Waiting (the Prompt action rule, `canFire`), `empty_prompt` if nothing is left after cleaning. `promptText.cleanPromptText` drops every control character except `\n` and `\t`, and turns CR/CRLF into `\n`. The paste and `\r` are `pasteAndSubmit`, extracted from `firePromptAction`; unlike a Prompt action it never moves focus. Reply: `{ pane, sent: true }`, or with `--wait` the Agent's description plus `status` (`ready`/`waiting`/`error`/`exited`) and `waitedMs`.
+- `agent send-keys`: `keys.ts` maps every name Rust accepts. Arrows, Home and End follow the program's application-cursor mode (`ESC O A` vs `ESC [ A`), as a real key press does. All bytes go in one `pty_write`; an unknown name sends nothing. Any pane, any state: this is how a Waiting prompt is answered.
+- Tests: settle sequences (Working → Ready / Waiting / Error, the left-over Ready, Working at the start, stall at 5 s, quitting, `--until`), key bytes in both cursor modes, the cleaner (keeps newlines, drops `ESC[201~`), and the handler with fake timers (prompt sent without focus, refusals, `--wait` settling and stalling, cancel, exit, send-keys bytes).
+
+The original list:
 
 - `agent prompt`: refuse unless the target is an agent-mode PTY (`not_an_agent`) and not Waiting (`busy`). Strip control characters except `\n` and `\t` (reuse the Prompt action parameter sanitiser), then send like `firePromptAction` without focusing the pane: `term.paste(text)`, then `term.input("\r")`. Extract the shared part of `firePromptAction` instead of copying it.
 - `agent wait`: subscribe to the pane's status in `ptyActivityStore`. **Settled** = Ready, Waiting or Error after Working was seen. With `--until`, that state only. Reply `stalled` if no Working within 5 s of a prompt. The timeout is enforced in Rust; the Window drops its subscription when Rust cancels.
