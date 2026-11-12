@@ -286,6 +286,7 @@ The original list:
 - **Your agents can now talk to each other.** An agent in one pane can list the other panes of its workspace, read what they show, prompt another agent and wait for its answer, start a helper agent beside itself, or run a command in an idle shell, all through a new `abundio` command. It never reaches beyond its own workspace, and closes only the panes it opened itself, so no one is evicted mid-sentence. A small badge on a pane shows who is driving it. Turn it off in Settings ▸ Agents ▸ Let agents control panes. (#PR)
 - **Agents learn the trick on their own.** Abundio installs an `abundio` skill for your watched agents, in `~/.agents/skills/abundio` (read by Codex, Copilot, Gemini, OpenCode, Qwen, Kimi, Grok and Vibe) and, for Claude Code, in `~/.claude/skills/abundio`. It is rewritten on every start and removed when you switch it off in Settings ▸ Agents. A folder of that name that Abundio didn't write is politely left alone. (#PR)
 - **Give an agent a name.** "Name Agent…" in the pane menu gives it a handle such as `reviewer`, shown in its title bar and in the Agents list, which other agents can use to address it. (#PR)
+- **Helpers get a room of their own.** An agent can open its helper in a new tab instead of squeezing it in beside itself, and name tabs (its own, and the ones it opened). When a split would leave the panes cramped, the agent is nudged to use a tab next time. A tab you renamed by hand keeps your name: agents leave it alone. (#PR)
 ```
 
 The original list:
@@ -401,6 +402,15 @@ The original list:
 - Tests: each threshold, both directions, exactly at the limits.
 
 ### 15. Settings, demo, docs
+
+**Done.** As built:
+
+- Demo: no new commands are called (`tab_create` and `tab_update` were already mocked). The demo's `tab_create` now returns `spawnedByPane: null` and `userNamed: false`, as the real one does.
+- `CLAUDE.md`: a Key Conventions entry. Only the Tab bar's rename passes `byUser`. `spawned_by_pane` marks a Spawned tab and is released when its owner closes. A Spawned tab is created through `createTab`'s `spawn` option, never by patching the layout afterwards. Also `crowding` is added to the `lib/agentControl/` line.
+- Release notes draft: a fourth bullet, "Helpers get a room of their own".
+- Verify: the Tabs item was added when this round was planned.
+
+The original list:
 
 - `lib/demo/mockInvoke.ts`: anything new the demo calls.
 - `CLAUDE.md`: the Tab ownership columns and the user-named rule (an Agent never renames a Tab the user named).

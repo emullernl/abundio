@@ -157,6 +157,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				position: 0,
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
+				spawnedByPane: null,
+				userNamed: false,
 			};
 		}
 		case "tab_update":
