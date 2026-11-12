@@ -36,6 +36,7 @@ import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
+import { startAgentControl } from "./lib/agentControl/handleControlRequest";
 import {
 	finalizeAllOpenTurns,
 	initAgentTurnTracker,
@@ -811,6 +812,9 @@ export function App() {
 			unlisten.then((fn) => fn());
 		};
 	}, []);
+
+	// Agent control (ADR-0054): `abundio` calls from this Window's panes.
+	useEffect(() => startAgentControl(), []);
 
 	// Listen for native menu "Switch Profile" submenu clicks.
 	useEffect(() => {

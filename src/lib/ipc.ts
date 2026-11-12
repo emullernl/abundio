@@ -1328,3 +1328,47 @@ export const fileWindows = {
 	onReloadRequested: (callback: () => void) =>
 		listenToThisWindow<void>("file-window-reload", () => callback()),
 };
+
+// ── Agent control (ADR-0054) ──
+
+/** One `abundio` call, as Rust forwards it to the Window that owns the
+ *  caller's Workspace. `request` is typed in `lib/agentControl/types.ts`. */
+export interface AgentControlRequestEvent {
+	id: string;
+	caller: { ptyId: string; paneId: string; workspaceId: string };
+	request: unknown;
+}
+
+export type AgentControlReply =
+	| { result: unknown }
+	| { error: { code: string; message: string } };
+
+export const agentControl = {
+	reply: (id: string, reply: AgentControlReply) =>
+		invoke<boolean>("agent_control_reply", { id, reply }),
+
+	enabled: () => invoke<boolean>("agent_control_enabled"),
+
+	setEnabled: (enabled: boolean) =>
+		invoke<void>("agent_control_set_enabled", { enabled }),
+
+	/** The **Pane number** of each pane, claiming new ones in the order
+	 *  given. Numbers are never reused within a Workspace. */
+	paneNumbers: (workspaceId: string, paneIds: string[]) =>
+		invoke<[string, number][]>("agent_control_pane_numbers", {
+			workspaceId,
+			paneIds,
+		}),
+
+	/** Rust aims requests at the owning Window, so they are heard here only. */
+	onRequest: (cb: (e: AgentControlRequestEvent) => void) =>
+		listenToThisWindow<AgentControlRequestEvent>("agent-control-request", (e) =>
+			cb(e.payload),
+		),
+
+	/** Rust stopped waiting for this request (timeout): drop it. */
+	onCancel: (cb: (id: string) => void) =>
+		listenToThisWindow<{ id: string }>("agent-control-cancel", (e) =>
+			cb(e.payload.id),
+		),
+};

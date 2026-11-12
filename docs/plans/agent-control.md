@@ -149,6 +149,18 @@ The original list:
 
 ### 5. The Window side: read-only calls
 
+**Done.** As built:
+
+- `lib/agentControl/`: `types.ts` (the request union, mirroring Rust; `ControlError`), `resolveTarget.ts` (`workspacePanes`: terminal panes Tab by Tab in Tab order, tree order inside; `resolveTarget`), `describe.ts`, `readBuffer.ts`, `handleControlRequest.ts` (`runRequest`, `toReply`, `startAgentControl`). IPC wrappers are `agentControl` in `lib/ipc.ts`.
+- Only terminal panes get Pane numbers. Every call claims numbers for all the Workspace's terminal panes in `workspacePanes` order, then resolves against that map, so `agent_control_pane_for_number` is not needed by the Window. A number whose pane has closed is `not_found`.
+- Answers `resolve` with `{ paneId }`. Ops from later steps answer `unsupported` until they land.
+- Shapes: `pane list` → `{ panes: [...] }`, `agent list` → `{ agents: [...] }` (agent-mode panes only), `pane current` → one pane. A pane is `{ pane: "p3", number, handle, tab, self, mode, agent, status, cwd, title, command, spawnedBy }`; an Agent drops `mode` and `command`. `status` uses the glossary's words (`working`, not the store's `active`) plus `exited`.
+- `pane read` → `{ pane, lines, text }`. Wrapped rows are joined, keeping the spaces inside a joined line; blank rows at the end are dropped; `--lines` counts joined lines. A pane with no mounted terminal is `state_unknown`. `TerminalPool` mounts every Tab of an Opened Workspace (the non-active ones after 2 s), so background Tabs can be read.
+- A request Rust cancelled (timeout) is not answered when it finishes.
+- Tests: target resolution (numbers, handles, misses, closed panes), pane order, description shapes and status words, buffer joining, and the handler over mocked IPC and terminals.
+
+The original list:
+
 - `lib/agentControl/` (new):
   - `handleControlRequest.ts`: hears `agent-control-request` with `listenToThisWindow` and dispatches.
   - `resolveTarget.ts` (pure): a handle or Pane number → pane id, using the Workspace's layouts across all its Tabs.
