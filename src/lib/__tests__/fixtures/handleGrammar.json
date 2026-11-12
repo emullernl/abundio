@@ -1,0 +1,43 @@
+{
+	"_comment": "Agent handle grammar (ADR-0055), shared by src-tauri/src/agent_control.rs and src/lib/agentHandle.ts tests so the two cannot drift. valid: [input, normalized, key].",
+	"valid": [
+		["reviewer", "reviewer", "reviewer"],
+		["Reviewer", "Reviewer", "reviewer"],
+		["Agent Two", "Agent Two", "agent-two"],
+		["  Agent   Two  ", "Agent Two", "agent-two"],
+		["agent-two", "agent-two", "agent-two"],
+		["AGENT two", "AGENT two", "agent-two"],
+		["Agent - Two", "Agent - Two", "agent-two"],
+		["r2-d2", "r2-d2", "r2-d2"],
+		["x_y", "x_y", "x_y"],
+		["ab-", "ab-", "ab"],
+		["Agent Two -", "Agent Two -", "agent-two"],
+		["Agent Twenty-One", "Agent Twenty-One", "agent-twenty-one"],
+		["pane", "pane", "pane"],
+		["p1x", "p1x", "p1x"],
+		["P Three", "P Three", "p-three"],
+		[
+			"abcdefghijklmnopqrstuvwxyz012345",
+			"abcdefghijklmnopqrstuvwxyz012345",
+			"abcdefghijklmnopqrstuvwxyz012345"
+		]
+	],
+	"invalid": [
+		"",
+		"   ",
+		"1abc",
+		"-a",
+		"_a",
+		"a.b",
+		"a/b",
+		"é",
+		"Agent\tTwo",
+		"Agent\nTwo",
+		"abcdefghijklmnopqrstuvwxyz0123456",
+		"p1",
+		"P1",
+		"p42",
+		"p0",
+		"p007"
+	]
+}

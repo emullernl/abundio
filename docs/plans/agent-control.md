@@ -439,6 +439,18 @@ Agents reach every Workspace of their own Profile, and every Agent has a name ("
 
 ### 16. Handles become names
 
+**Done.** As built:
+
+- Rust: `normalize_handle` (the stored form, or none), `valid_handle` (already in stored form) and `handle_key`. TypeScript: `normalizeHandle`, `isValidHandle`, `handleKey`, `sameHandle`, `handleGrammarProblem` (the dialog's wording). Letters are ASCII. A key drops leading and trailing dashes, so "ab-" and "ab" are one handle.
+- Both are tested against one table, `src/lib/__tests__/fixtures/handleGrammar.json`: Rust reads it with `include_str!`, Vitest imports it.
+- `parse_target` takes `P3` as Pane 3 too, and stores a handle target in normalized form. `--handle` and `agent rename` store normalized names ("  Agent  Two " becomes "Agent Two").
+- The Window resolves handles by key (`resolveTarget`), and `checkHandle` compares keys. Uniqueness is still per Workspace here; step 17 moves it to the Profile, in Rust.
+- `setAgentHandle` normalizes before checking. The dialog's hint and placeholder follow the new grammar.
+- Help explains matching and quoting.
+- Tests: the shared table both sides, case and spacing matches, `P3`, a quoted handle as one argument, a capitalised rename.
+
+The original list:
+
 - Grammar, in Rust (`valid_handle`) and TypeScript (`lib/agentHandle.ts`) together: letters (any case), digits, spaces, `-`, `_`; trimmed; inner runs of spaces collapsed to one; 1–32 characters; must start with a letter; never `p` + digits in any case.
 - `handle_key(name)`: the matching form, lowercased with every run of spaces and dashes made one `-`. "Agent Two", "agent-two" and "AGENT  two" share the key `agent-two`. Targets resolve by key; uniqueness is by key.
 - `parse_target`: a Pane number (`p3`, any case) or else a handle. Handles with spaces arrive as one argv element when quoted; the help text and skill show the quotes.

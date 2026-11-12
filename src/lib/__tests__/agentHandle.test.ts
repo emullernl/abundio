@@ -3,10 +3,14 @@ import {
 	checkHandle,
 	handleForPane,
 	handleGrammarProblem,
+	handleKey,
 	isValidHandle,
+	normalizeHandle,
+	sameHandle,
 } from "../agentHandle";
 import { setAgentHandle, setAgentId } from "../paneTree";
 import type { PaneNode, Tab } from "../types";
+import grammar from "./fixtures/handleGrammar.json";
 
 const tab = (id: string, layout: PaneNode): Tab => ({
 	id,
@@ -19,34 +23,24 @@ const tab = (id: string, layout: PaneNode): Tab => ({
 });
 
 describe("handle grammar", () => {
-	it("matches the Rust grammar", () => {
-		for (const ok of [
-			"a",
-			"reviewer",
-			"a-b_c9",
-			"p",
-			"px",
-			"p1a",
-			"a".repeat(32),
-		]) {
-			expect(isValidHandle(ok)).toBe(true);
-			expect(handleGrammarProblem(ok)).toBeNull();
+	it("matches the shared table Rust is tested against", () => {
+		for (const [input, normalized, key] of grammar.valid) {
+			expect(normalizeHandle(input)).toBe(normalized);
+			expect(handleKey(input)).toBe(key);
+			expect(isValidHandle(normalized)).toBe(true);
+			expect(handleGrammarProblem(input)).toBeNull();
 		}
-		for (const bad of [
-			"",
-			"1a",
-			"-a",
-			"Rev",
-			"a b",
-			"a.b",
-			"p1",
-			"p0",
-			"p007",
-			"a".repeat(33),
-		]) {
-			expect(isValidHandle(bad)).toBe(false);
+		for (const bad of grammar.invalid) {
+			expect(normalizeHandle(bad)).toBeNull();
 			expect(handleGrammarProblem(bad)).not.toBeNull();
 		}
+	});
+
+	it("treats names that differ only in case, spaces or dashes as one", () => {
+		expect(sameHandle("Agent Two", "agent-two")).toBe(true);
+		expect(sameHandle("Agent Two", "AGENT  two")).toBe(true);
+		expect(sameHandle("Agent Two", "Agent Three")).toBe(false);
+		expect(sameHandle(undefined, "x")).toBe(false);
 	});
 });
 

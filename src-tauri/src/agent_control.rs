@@ -282,24 +282,64 @@ pub const PLAIN_REPLY_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Whether `s` is a valid **Agent handle**: `[a-z][a-z0-9_-]{0,31}`, and never
 /// shaped like a Pane number (`p` then digits only), so the two cannot clash.
-pub fn valid_handle(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    if bytes.is_empty() || bytes.len() > 32 || !bytes[0].is_ascii_lowercase() {
-        return false;
+/// An Agent handle as stored and shown (ADR-0055), or None when `s` is not
+/// one: trimmed, inner runs of spaces made one, 1–32 characters, starting
+/// with a letter, then ASCII letters, digits, spaces, `-` and `_`; never
+/// anything that reads as a Pane number (`p3`, `P3`, `p007`).
+pub fn normalize_handle(s: &str) -> Option<String> {
+    if s.chars().any(|c| c.is_control()) {
+        return None;
     }
-    if !bytes
-        .iter()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-' || *b == b'_')
+    let name = s.split(' ').filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+    let len = name.chars().count();
+    if len == 0 || len > 32 {
+        return None;
+    }
+    if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_')
     {
-        return false;
+        return None;
     }
+    let lower = name.to_ascii_lowercase();
     // `p0` and `p007` are not valid Pane numbers, but they look like one.
-    !matches!(s.strip_prefix('p'), Some(d) if !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+    if matches!(lower.strip_prefix('p'), Some(d) if !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    Some(name)
+}
+
+/// Whether `s` is already a handle in its stored form.
+pub fn valid_handle(s: &str) -> bool {
+    normalize_handle(s).as_deref() == Some(s)
+}
+
+/// The form handles are matched and kept unique by: lowercase, with every
+/// run of spaces and dashes made one `-`. "Agent Two", "agent-two" and
+/// "AGENT  two" are the same handle.
+pub fn handle_key(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut gap = false;
+    for c in s.trim().chars() {
+        if c == ' ' || c == '-' {
+            gap = true;
+            continue;
+        }
+        if gap && !out.is_empty() {
+            out.push('-');
+        }
+        gap = false;
+        out.push(c.to_ascii_lowercase());
+    }
+    out
 }
 
 /// `p12` → 12. Anything else, including `p0` and `p`, is not a Pane number.
 fn parse_pane_number(s: &str) -> Option<u32> {
-    let digits = s.strip_prefix('p')?;
+    let digits = s.strip_prefix('p').or_else(|| s.strip_prefix('P'))?;
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -310,8 +350,8 @@ fn parse_target(s: &str) -> Result<Target, String> {
     if let Some(n) = parse_pane_number(s) {
         return Ok(Target::Pane(n));
     }
-    if valid_handle(s) {
-        return Ok(Target::Handle(s.to_string()));
+    if let Some(h) = normalize_handle(s) {
+        return Ok(Target::Handle(h));
     }
     Err(format!(
         "{s:?} is neither a Pane number (p1, p2, …) nor an Agent handle"
@@ -531,8 +571,7 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
                 return Err("--kind is empty".into());
             }
             let handle = match a.flags.get("--handle").copied().flatten() {
-                Some(h) if valid_handle(h) => Some(h.to_string()),
-                Some(h) => return Err(invalid_handle(h)),
+                Some(h) => Some(normalize_handle(h).ok_or_else(|| invalid_handle(h))?),
                 None => None,
             };
             if a.passthrough.iter().any(|s| s.chars().any(char::is_control)) {
@@ -620,8 +659,7 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
             let a = split_args(rest, &[], &[])?;
             expect_positionals(&a, 1, 2, "abundio agent rename <agent> [<handle>]")?;
             let handle = match a.positional.get(1) {
-                Some(h) if valid_handle(h) => Some(h.to_string()),
-                Some(h) => return Err(invalid_handle(h)),
+                Some(h) => Some(normalize_handle(h).ok_or_else(|| invalid_handle(h))?),
                 None => None,
             };
             Ok(Request::AgentRename {
@@ -692,7 +730,7 @@ fn parse_tab(command: &str, rest: &[String]) -> Result<Request, String> {
 
 fn invalid_handle(h: &str) -> String {
     format!(
-        "{h:?} is not a valid Agent handle: start with a lowercase letter, then up to 31 lowercase letters, digits, '-' or '_', and not p followed by digits"
+        "{h:?} is not a valid Agent handle: up to 32 characters, starting with a letter, then letters, digits, spaces, '-' or '_', and not p followed by digits (that is a Pane number)"
     )
 }
 
@@ -736,6 +774,8 @@ Tabs:
 abundio: control the panes and Agents of your Workspace.
 
 <pane> is a Pane number (p1, p2, …). <agent> is an Agent handle or a Pane number.
+A handle is matched ignoring case, a space and a dash alike; quote one with spaces
+(\"Agent Two\" and agent-two are the same Agent).
 Every command prints one JSON object. --timeout is in milliseconds; 0 means no limit;
 the default for waits is 30 minutes. A new pane leaves the user's keyboard focus
 where it is; pass --focus to move it there, but only when the user asks for that.
@@ -1259,24 +1299,37 @@ mod tests {
 
     // ── Handles and targets ──
 
+    /// The same table `lib/agentHandle.ts` is tested against.
+    #[derive(serde::Deserialize)]
+    struct HandleCases {
+        valid: Vec<(String, String, String)>,
+        invalid: Vec<String>,
+    }
+
     #[test]
-    fn handle_grammar() {
-        for ok in ["reviewer", "a", "r2-d2", "x_y", "abcdefghijklmnopqrstuvwxyz012345", "pane", "p1x"] {
-            assert!(valid_handle(ok), "{ok:?} should be valid");
+    fn handle_grammar_matches_the_shared_table() {
+        let cases: HandleCases = serde_json::from_str(include_str!(
+            "../../src/lib/__tests__/fixtures/handleGrammar.json"
+        ))
+        .unwrap();
+        for (input, normalized, key) in &cases.valid {
+            assert_eq!(normalize_handle(input).as_deref(), Some(normalized.as_str()), "{input:?}");
+            assert_eq!(handle_key(input), *key, "key of {input:?}");
+            assert!(valid_handle(normalized), "{normalized:?} is stored form");
         }
-        for bad in [
-            "", "Reviewer", "1abc", "-a", "a b", "a.b", "é", "abcdefghijklmnopqrstuvwxyz0123456", "p1", "p42", "p0", "p007",
-        ] {
-            assert!(!valid_handle(bad), "{bad:?} should be invalid");
+        for bad in &cases.invalid {
+            assert_eq!(normalize_handle(bad), None, "{bad:?} should be invalid");
         }
     }
 
     #[test]
     fn targets_are_pane_numbers_or_handles() {
         assert_eq!(parse_target("p3"), Ok(Target::Pane(3)));
+        assert_eq!(parse_target("P3"), Ok(Target::Pane(3)));
         assert_eq!(parse_target("reviewer"), Ok(Target::Handle("reviewer".into())));
+        // A quoted name arrives as one argument, spaces and all.
+        assert_eq!(parse_target("  Agent   Two "), Ok(Target::Handle("Agent Two".into())));
         assert!(parse_target("p0").is_err());
-        assert!(parse_target("P3").is_err());
         assert!(parse_target("").is_err());
     }
 
@@ -1451,7 +1504,12 @@ mod tests {
             Request::AgentRename { target: Target::Pane(1), handle: Some("reviewer".into()) }
         );
         assert_eq!(req(&["agent", "rename", "reviewer"]), Request::AgentRename { target: Target::Handle("reviewer".into()), handle: None });
-        assert!(usage_err(&["agent", "rename", "p1", "Bad"]).contains("not a valid"));
+        assert!(usage_err(&["agent", "rename", "p1", "Bad.Name"]).contains("not a valid"));
+        // Capitals and spaces are fine now (ADR-0055); stored trimmed.
+        assert_eq!(
+            req(&["agent", "rename", "p1", " Agent  Two "]),
+            Request::AgentRename { target: Target::Pane(1), handle: Some("Agent Two".into()) }
+        );
     }
 
     #[test]

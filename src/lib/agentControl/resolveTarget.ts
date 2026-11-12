@@ -1,3 +1,4 @@
+import { sameHandle } from "../agentHandle";
 import { parseTabLayout } from "../paneTree";
 import type { PaneNode, Tab } from "../types";
 import { ControlError, type Target } from "./types";
@@ -56,7 +57,7 @@ export function resolveTarget(
 		}
 		return hit;
 	}
-	const hit = panes.find((p) => p.node.agentHandle === target.value);
+	const hit = panes.find((p) => sameHandle(p.node.agentHandle, target.value));
 	if (!hit) {
 		throw new ControlError(
 			"not_found",

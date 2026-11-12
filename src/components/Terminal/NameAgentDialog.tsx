@@ -92,7 +92,7 @@ function NameAgentDialogBody({ paneId, current, onClose }: Props) {
 					spellCheck={false}
 					autoCapitalize="off"
 					autoCorrect="off"
-					placeholder="reviewer"
+					placeholder="Reviewer"
 					onChange={(e) => {
 						setValue(e.target.value);
 						setRefusal(null);
@@ -107,7 +107,7 @@ function NameAgentDialogBody({ paneId, current, onClose }: Props) {
 						color: message ? "var(--error)" : "var(--fg-secondary)",
 					}}
 				>
-					{message ?? "Lowercase letters, digits, - and _."}
+					{message ?? "Letters, digits, spaces, - and _."}
 				</p>
 				<div className="flex justify-end" style={{ gap: 8 }}>
 					<button

@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import { checkHandle, type HandleCheck } from "../lib/agentHandle";
+import {
+	checkHandle,
+	type HandleCheck,
+	normalizeHandle,
+} from "../lib/agentHandle";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
 import {
 	fileWindows,
@@ -1356,6 +1360,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	},
 
 	setAgentHandle: (paneId, handle) => {
+		// Stored trimmed, inner spaces collapsed ("  Agent  Two " → "Agent Two").
+		if (handle !== null) handle = normalizeHandle(handle) ?? handle;
 		const ws = get().findWorkspaceForPane(paneId);
 		if (!ws) {
 			return {
