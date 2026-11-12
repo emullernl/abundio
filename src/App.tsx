@@ -10,6 +10,7 @@ import { FileWindowCloseConfirmDialog } from "./components/FileWindow/FileWindow
 import { FleetConsole } from "./components/FleetConsole/FleetConsole";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { MissingFolderPanel } from "./components/MissingFolderPanel";
+import { Navigator } from "./components/Navigator/Navigator";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
@@ -348,6 +349,7 @@ export function App() {
 	} = useSplitPane();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
+	const [navigatorOpen, setNavigatorOpen] = useState(false);
 	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
 
 	// LaunchPicker is shared for new-tab and split flows
@@ -798,6 +800,18 @@ export function App() {
 	// `settings` window via window_management::open_or_focus_settings_window.
 	// No frontend listener needed in profile windows for that path.
 
+	// Go ▸ Navigator… in the native menu. Rust aims it at one Window.
+	useEffect(() => {
+		const unlisten = listenToThisWindow<void>("open-navigator", () => {
+			setPaletteOpen(false);
+			setFileSearchOpen(false);
+			setNavigatorOpen(true);
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
 	// Listen for native menu "Switch Profile" submenu clicks.
 	useEffect(() => {
 		const unlisten = listenToThisWindow<string>(
@@ -941,12 +955,20 @@ export function App() {
 		);
 		registerAction("command-palette", () => {
 			setFileSearchOpen(false);
+			setNavigatorOpen(false);
 			setPaletteOpen((v) => !v);
+		});
+		// Works in the Fleet Console too: picking a row leaves it (Switch to).
+		registerAction("open-navigator", () => {
+			setPaletteOpen(false);
+			setFileSearchOpen(false);
+			setNavigatorOpen((v) => !v);
 		});
 		registerAction(
 			"open-file-search",
 			workspaceViewOnly(() => {
 				setPaletteOpen(false);
+				setNavigatorOpen(false);
 				setFileSearchOpen((v) => !v);
 			}),
 		);
@@ -1275,6 +1297,7 @@ export function App() {
 				open={fileSearchOpen}
 				onClose={() => setFileSearchOpen(false)}
 			/>
+			<Navigator open={navigatorOpen} onClose={() => setNavigatorOpen(false)} />
 			{newTaskRequest && <NewTaskDialog request={newTaskRequest} />}
 			<LaunchPicker
 				isOpen={!!launchPicker}

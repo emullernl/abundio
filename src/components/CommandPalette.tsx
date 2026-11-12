@@ -153,6 +153,14 @@ export function CommandPalette({
 		});
 
 		result.push({
+			id: "action-open-navigator",
+			label: "Open Navigator",
+			category: "Actions",
+			shortcut: "open-navigator",
+			action: () => triggerAction("open-navigator"),
+		});
+
+		result.push({
 			id: "action-toggle-fleet-console",
 			label: "Toggle Fleet Console",
 			category: "Actions",

@@ -12,6 +12,7 @@ export type KeyAction =
 	| "prev-workspace"
 	| "add-worktree"
 	| "command-palette"
+	| "open-navigator"
 	| "open-file-search"
 	| "search-in-terminal"
 	| "search-in-workspace"
@@ -98,6 +99,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"prev-workspace",
 	"add-worktree",
 	"command-palette",
+	"open-navigator",
 	"open-file-search",
 	"search-in-workspace",
 	"new-workspace",
@@ -259,6 +261,15 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		shift: false,
 		ctrl: !isMac,
 		action: "command-palette",
+	},
+	// J for jump. Plain Ctrl+J is a terminal key (newline) on Windows/Linux,
+	// so it takes Shift there; Cmd is never a terminal modifier on macOS.
+	{
+		key: "j",
+		meta: isMac,
+		shift: !isMac,
+		ctrl: !isMac,
+		action: "open-navigator",
 	},
 	{
 		key: "p",
@@ -553,6 +564,7 @@ export const ACTION_META: Record<KeyAction, ActionMeta> = {
 		category: "Files",
 	},
 	"command-palette": { label: "Command palette", category: "App" },
+	"open-navigator": { label: "Navigator", category: "App" },
 	"open-settings": { label: "Open settings", category: "App" },
 	"prompt-action-1": {
 		label: "Fire prompt action 1",

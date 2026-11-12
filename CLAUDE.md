@@ -69,6 +69,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `components/FileWindow/` — `FileWindowToolbar`, `MarkdownFindBar`, `FileWindowCloseConfirmDialog` (the owner's Save / Don't Save / Cancel). The root is `src/FileWindowApp.tsx`, rendered by `main.tsx` for `md-*` labels; it reads its kind from `file_window_info` and shows a text, image or diff view.
 - `components/NewTask/` — `NewTaskDialog`: **New task** (describe a task or pick a GitHub issue; Restart agent / New tab / New worktree). Opened only through `lib/openNewTask.ts`.
 - `components/FleetConsole/` — The **Fleet Console** (ADR-0040): `FleetConsole` (grid of every agent-mode pane in the Window), `FleetTile` (a borrowed `TerminalSlot` with `fleet` set), `GridPicker`, `NewAgentDialog`.
+- `components/Navigator/` — The **Navigator** (`Navigator`): Workspace › Tab › Pane for this Window, with search, scope toggle and Agent status chips; each Workspace's open File windows are listed under it (`file_windows_list`, focused with `file_window_focus`). Rows come from the pure `lib/navigatorTree.ts`. Opened by the `open-navigator` action and the native Go ▸ Navigator… menu (`open-navigator` event, heard with `listenToThisWindow`).
 - Top-level: `CommandPalette`, `FileSearchPalette`, `SettingsPanel`, `TabBar`, `StatusBar`, `Titlebar`, `OverviewBar`, `AppLoader`, `AgentStatusIcon`, `ConfirmDialog`, `SaveConfirmDialog`, `ErrorBoundary`, `LaunchPicker`, `NewWorkspaceDialog`, `OpenInDevEnvButton`, `DragPanePreview`, `PaneDropIndicator`.
 
 #### Hooks
@@ -299,6 +300,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux. These are the **defaults*
 | Next / previous Opened workspace | `Ctrl+Cmd+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
 | Add worktree | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 | Command palette | `Cmd+K` | `Ctrl+K` |
+| Navigator | `Cmd+J` | `Ctrl+Shift+J` |
 | File quickopen | `Cmd+P` | `Ctrl+P` |
 | Find in terminal | `Cmd+F` | `Ctrl+F` |
 | Search workspace | `Cmd+Shift+F` | `Ctrl+Shift+F` |

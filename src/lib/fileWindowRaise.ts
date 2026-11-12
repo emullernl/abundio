@@ -30,9 +30,33 @@ export function afterRestore(workspaceId: string): Promise<void> {
  * failure is logged, never thrown.
  */
 export function raiseFileWindows(workspaceId: string): Promise<void> {
-	return afterRestore(workspaceId)
+	const p = afterRestore(workspaceId)
 		.then(() => fileWindows.raise(workspaceId))
 		.catch((e) => {
 			console.error("[file-window] raise failed:", e);
 		});
+	lastRaises.set(workspaceId, p);
+	void p.then(() => {
+		if (lastRaises.get(workspaceId) === p) lastRaises.delete(workspaceId);
+	});
+	return p;
+}
+
+/** The latest raise of each Workspace still in flight. Never rejects. */
+const lastRaises = new Map<string, Promise<void>>();
+
+/**
+ * Focus one File window once any raise of its Workspace in flight is done.
+ * The raise orders every sibling window to the front, so a focus that landed
+ * before it could leave the picked window covered. The Navigator calls this
+ * right after switching to the Workspace, whose switch starts that raise.
+ * Best effort, like the raise: a window closed meanwhile is ignored.
+ */
+export function focusFileWindow(
+	workspaceId: string,
+	label: string,
+): Promise<void> {
+	return (lastRaises.get(workspaceId) ?? Promise.resolve())
+		.then(() => fileWindows.focus(label))
+		.catch(() => {});
 }

@@ -380,6 +380,13 @@ pub fn build_menu(
         &[&PredefinedMenuItem::fullscreen(handle, None)?],
     )?;
 
+    // Go menu: the Navigator. No accelerator: a native one would take the key
+    // before the webview and would have to follow rebinds the way Settings…
+    // does; the webview's own Keymap already handles Cmd+J / Ctrl+Shift+J.
+    let navigator_item =
+        MenuItem::with_id(handle, "navigator", "Navigator…", true, None::<&str>)?;
+    let go_menu = Submenu::with_items(handle, "Go", true, &[&navigator_item])?;
+
     let window_menu = Submenu::with_items(
         handle,
         "Window",
@@ -410,6 +417,7 @@ pub fn build_menu(
             &edit_menu,
             #[cfg(target_os = "macos")]
             &view_menu,
+            &go_menu,
             &window_menu,
             #[cfg(not(target_os = "macos"))]
             &help_menu,
@@ -1192,6 +1200,15 @@ pub fn run() {
         })
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
+            if id == "navigator" {
+                // One Window only: a broadcast would open it in every Window.
+                let _ = window_management::emit_to_one_profile_window(
+                    app,
+                    "open-navigator",
+                    (),
+                );
+                return;
+            }
             if id == "quit-app" {
                 // Custom Quit handler — must run BEFORE Tauri starts
                 // destroying windows so we can snapshot windows.json with the
@@ -1509,6 +1526,8 @@ pub fn run() {
             file_windows::file_windows_close,
             file_windows::file_windows_restore,
             file_windows::file_windows_raise,
+            file_windows::file_windows_list,
+            file_windows::file_window_focus,
             prompt_actions::prompt_action_create,
             prompt_actions::prompt_action_update,
             prompt_actions::prompt_action_delete,

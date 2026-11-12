@@ -525,6 +525,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		// File windows are real OS windows (ADR-0046); the browser demo has
 		// none, so opening one does nothing and nothing is ever unsaved.
 		case "file_windows_dirty":
+		case "file_windows_list":
 			return [];
 		case "report_unsaved_files":
 		case "file_window_open":
@@ -532,6 +533,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "file_windows_close":
 		case "file_windows_restore":
 		case "file_windows_raise":
+		case "file_window_focus":
 			return undefined;
 
 		default:
