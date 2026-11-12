@@ -130,5 +130,8 @@ describe("mockInvoke — Agent control", () => {
 		const status = await mockInvoke<{ state: string }[]>("agent_skill_status");
 		expect(status.map((s) => s.state)).toEqual(["installed", "linked"]);
 		expect(await mockInvoke("agent_skill_provision_startup")).toBeUndefined();
+		expect(await mockInvoke("agent_handle_check")).toEqual({ ok: true });
+		expect(await mockInvoke("agent_handle_default")).toBe("Agent One");
+		expect(await mockInvoke("agent_control_pane_closed")).toBeUndefined();
 	});
 });

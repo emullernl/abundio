@@ -287,6 +287,8 @@ The original list:
 - **Agents learn the trick on their own.** Abundio installs an `abundio` skill for your watched agents, in `~/.agents/skills/abundio` (read by Codex, Copilot, Gemini, OpenCode, Qwen, Kimi, Grok and Vibe) and, for Claude Code, in `~/.claude/skills/abundio`. It is rewritten on every start and removed when you switch it off in Settings ▸ Agents. A folder of that name that Abundio didn't write is politely left alone. (#PR)
 - **Give an agent a name.** "Name Agent…" in the pane menu gives it a handle such as `reviewer`, shown in its title bar and in the Agents list, which other agents can use to address it. (#PR)
 - **Helpers get a room of their own.** An agent can open its helper in a new tab instead of squeezing it in beside itself, and name tabs (its own, and the ones it opened). When a split would leave the panes cramped, the agent is nudged to use a tab next time. A tab you renamed by hand keeps your name: agents leave it alone. (#PR)
+- **Agents talk across workspaces.** An agent can now reach the agents of your other workspaces in the same profile: ask one worktree's agent to review another's branch, or check how a sibling repo is getting on. `abundio workspace list` shows what is out there; a closed workspace is opened quietly in the background when asked for (and only then). Other profiles stay out of reach. (#PR)
+- **Every agent gets a name.** New agents are called Agent One, Agent Two and so on, counted across your profile and handed back when an agent leaves, so nobody ends up as Agent Thirty-Seven. Rename one any time from its pane menu or with `abundio agent rename`; names can be proper words now ("Reviewer", "Docs Writer"). (#PR)
 ```
 
 The original list:
@@ -530,6 +532,19 @@ The original list:
 - Tests: calls into another Workspace (list, read, prompt), opening in the background (view and focus unchanged, call waits for mount, stall), new pane always a Spawned tab there, badge label, `spawnedBy` across Workspaces, release on owner close from another Window.
 
 ### 20. Skill, Settings, demo, docs
+
+**Done.** As built:
+
+- Skill:
+  - The description mentions the Profile's other Workspaces, and the "Look before you act" section explains names (defaults, matching, quoting, renaming yourself when asked).
+  - A new section, "Other Workspaces", covers `workspace list` and `--workspace`, staying home unless asked, never opening a closed Workspace uninvited, and new panes there getting a Tab.
+- Settings ▸ Agents: the description now says Agents reach the profile's other workspaces when asked, that a closed one is opened in the background, and that they never reach another profile.
+- Demo: `agent_handle_check` (always ok: no other Window in the demo), `agent_handle_default` and `agent_control_pane_closed`.
+- `CLAUDE.md`: `agent_names.rs` in the architecture list. Reach is the Profile in the Agent control convention. A new convention: every Agent has a handle, Rust judges uniqueness, one trigger only, `handleKey` shared with Rust, and a Window edits only its own Opened Workspaces.
+- Release notes draft: "Agents talk across workspaces" and "Every agent gets a name".
+- Verify: both items were added when this round was planned.
+
+The original list:
 
 - Skill: the `--workspace` option and `workspace list`; stay home unless the user asks; never open a closed Workspace uninvited; quote handles with spaces (`"Agent Two"`).
 - Settings ▸ Agents: the "Let agents control panes" description says Agents reach every Workspace of the Profile (it now says they never reach another Workspace).

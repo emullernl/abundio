@@ -1,12 +1,13 @@
 ---
 name: abundio
-description: Work with the other agents and terminal panes in your Abundio Workspace — list them, read their output, prompt another agent and wait for its answer, start a helper agent in a new pane, or run a command in an idle shell. Use when the user asks you to delegate to, coordinate with, check on or review the work of another agent, or to use another pane. Only works inside an Abundio pane.
+description: Work with the other agents and terminal panes in Abundio — in your own Workspace, and in the other Workspaces of your Profile when the user asks — list them, read their output, prompt another agent and wait for its answer, start a helper agent in a new pane, or run a command in an idle shell. Use when the user asks you to delegate to, coordinate with, check on or review the work of another agent, or to use another pane. Only works inside an Abundio pane.
 ---
 
 # Abundio: other agents and panes
 
 Abundio is the terminal app you may be running in. Its `abundio` command lets
-you see and drive the other panes of your Workspace.
+you see and drive the other panes of your Workspace, and of the other
+Workspaces of your Profile.
 
 ## First, check you are inside Abundio
 
@@ -22,8 +23,12 @@ exit 1; a usage error exits 2. Read the message: it says what to do next.
 ## Look before you act
 
 Start with `abundio agent list` (or `abundio pane list` for shells too). Each
-pane has a **Pane number** (`p1`, `p2`, …) and may have an **Agent handle**
-(`reviewer`). Address a pane by either. `"self": true` is you.
+pane has a **Pane number** (`p1`, `p2`, …), and every agent has a name, its
+**Agent handle** ("Agent One" by default, or one the user chose, like
+"Reviewer"). Address a pane by either; a name is matched ignoring case, so
+`reviewer` finds "Reviewer". Quote a name with spaces: `"Agent Two"`.
+`"self": true` is you. `abundio agent rename "<name>"` names you, if the user
+asks.
 
 ## Talk to another agent
 
@@ -69,6 +74,19 @@ never one the user has named: leave those as they are.
 `abundio pane split` opens a plain shell beside you, `abundio tab new` one in
 a new Tab; `abundio pane run <pane> "<command>"` runs one line in a shell
 that is at its prompt.
+
+## Other Workspaces
+
+Your Profile may have other Workspaces (other repositories, or other worktrees
+of yours). `abundio workspace list` shows them, with their agents and whether
+each is open. Add `--workspace <name>` to any command to act there, e.g.
+`abundio agent prompt "Reviewer" "<text>" --wait --workspace api`.
+
+- Stay in your own Workspace unless the user names another one or asks you
+  to work across them.
+- A Workspace that is not open is opened for your call, which starts all its
+  agents. Never do that uninvited.
+- A new pane in another Workspace always gets a Tab of its own there.
 
 ## Be a good neighbour
 

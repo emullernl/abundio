@@ -111,12 +111,13 @@ function AgentControlSettings() {
 				label="Let agents control panes"
 				description={
 					<>
-						Agents in a workspace's panes can use the <code>abundio</code>{" "}
-						command to list that workspace's panes and agents, read them, prompt
-						another agent and wait for its answer, start a new agent beside
-						them, and run commands in idle shells. They never reach another
-						workspace, and can close only the panes they opened. A badge on a
-						pane shows when another agent is driving it.
+						Agents in your panes can use the <code>abundio</code> command to
+						list panes and agents, read them, prompt another agent and wait for
+						its answer, start a new agent, and run commands in idle shells: in
+						their own workspace, and in the other workspaces of this profile
+						when asked (one that is closed is opened in the background). They
+						never reach another profile, and can close only the panes they
+						opened. A badge on a pane shows when another agent is driving it.
 					</>
 				}
 			/>

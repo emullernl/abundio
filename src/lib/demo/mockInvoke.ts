@@ -371,6 +371,13 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		}
 		case "agent_control_pane_for_number":
 			return null;
+		case "agent_control_pane_closed":
+			return undefined;
+		// No other Window in the demo: the local check is the whole answer.
+		case "agent_handle_check":
+			return { ok: true };
+		case "agent_handle_default":
+			return "Agent One";
 		case "agent_skill_provision":
 		case "agent_skill_provision_startup":
 			return undefined;
