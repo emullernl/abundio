@@ -68,12 +68,19 @@ export function describePane(
 	facts: PaneLiveFacts,
 	numbers: ReadonlyMap<string, number>,
 	callerPaneId: string,
+	/** Owners outside this Workspace (ADR-0055): pane id → `p2 · api`. */
+	ownersElsewhere: ReadonlyMap<string, string> = new Map(),
 ): PaneDescription {
 	const number = numbers.get(pane.node.id) ?? 0;
 	const mode = facts.mode === "agent" ? "agent" : "shell";
-	const owner = pane.node.spawnedBy
-		? numbers.get(pane.node.spawnedBy)
-		: undefined;
+	const ownerId = pane.node.spawnedBy;
+	const ownerNumber = ownerId ? numbers.get(ownerId) : undefined;
+	const spawnedBy =
+		ownerNumber !== undefined
+			? paneLabel(ownerNumber)
+			: ownerId
+				? (ownersElsewhere.get(ownerId) ?? null)
+				: null;
 	return {
 		pane: paneLabel(number),
 		number,
@@ -89,7 +96,7 @@ export function describePane(
 		cwd: facts.cwd ?? pane.node.cwd ?? null,
 		title: facts.title || null,
 		command: mode === "shell" ? facts.runningCommand || null : null,
-		spawnedBy: owner !== undefined ? paneLabel(owner) : null,
+		spawnedBy,
 	};
 }
 

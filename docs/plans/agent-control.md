@@ -506,6 +506,21 @@ The original list:
 
 ### 19. The Window: another Workspace
 
+**Done.** As built:
+
+- `runRequest(caller, request, signal, target)`. `loadScope` builds the `Scope` of the target Workspace: its panes and numbers, `home` (whether it is the caller's), `ownersElsewhere` (owners of its Spawned panes that sit in another Workspace, labelled `p2 · api`) and `callerName`, which is what the Control badge shows (`Agent One · home` when the caller is elsewhere).
+- `open: true` → `openInBackground`: `markWorkspaceOpened` (the Fleet Console's way in: no activation, onto the restore list), then wait up to 30 s (`stalled`) until every terminal pane of it is mounted. A Missing folder is refused there too (`folder_missing`, new in the code union).
+- In another Workspace, `pane split` and `agent start` (even without `--tab`) go through `openSpawnedTab` there, never `splitCaller`, and carry no `hint`. `openSpawnedTab` and `tab rename` act on the scope's Workspace. `tab rename` without `--tab` in another Workspace is `not_found` (the caller has no Tab of its own there). `pane current` always describes the caller's own pane.
+- `describePane` takes `ownersElsewhere`.
+- Release across Windows:
+  - `closePane.releaseOwner(paneId)` frees `spawnedBy` in every Workspace **Opened in this Window**. It does not write others: this Window's copy of a Workspace another Window has open can be stale, and writing it back would undo that Window's edits.
+  - The Tab rows' owner column is freed from any Window.
+  - A closing pane announces itself through the new `agent_control_pane_closed` command, which broadcasts `agent-control-pane-closed`. Every Profile window runs `releaseOwner` when it hears it.
+- The interim refusal from step 18 is gone.
+- Tests: list, read (badge naming the caller's Workspace) and `pane current` across Workspaces; a split there becoming a Spawned tab with an owner labelled across Workspaces and the caller's layout untouched; `tab rename` needing `--tab` there; opening in the background (restore list, view and focus unchanged, call waits for mount), stalling, and a Missing folder; release telling every Window and never writing an un-Opened Workspace's layout.
+
+The original list:
+
 - `runRequest` takes the target Workspace (default: the caller's) for its `Scope`. Pane numbers and handles resolve there.
 - `open: true`: `markWorkspaceOpened(id)` without activating, then wait (up to 30 s, else `stalled`) until that Workspace's terminals are mounted, before carrying out the call.
 - New panes in another Workspace: `pane split`, `agent start` and `tab new` all go through `openSpawnedTab` there, owned by the caller; no `hint` (it is not the caller's Tab that is crowded).

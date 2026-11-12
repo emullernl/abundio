@@ -1,5 +1,7 @@
 import { useExplorerStore } from "../stores/explorerStore";
+import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { agentControl } from "./ipc";
 import { suppressMarkdownPreview } from "./markdownPreview";
 import {
 	clearSpawnedBy,
@@ -26,18 +28,34 @@ export function locatePane(
 	return null;
 }
 
-/** When a pane closes, its **Spawned panes** and **Spawned tabs** become
- *  ordinary ones. */
-async function releaseSpawned(workspaceId: string, ownerPaneId: string) {
+/**
+ * When a pane closes, its **Spawned panes** and **Spawned tabs** become
+ * ordinary ones, in every Workspace Opened in this Window. Since ADR-0055
+ * they may sit in another Workspace than their owner. Only Opened ones are
+ * edited: this Window's copy of a Workspace another Window has open is
+ * stale, and writing it back would undo that Window's changes. Every Window
+ * runs this when it hears the pane closed. An owner id left in a Workspace
+ * open nowhere is inert, since pane ids are never reused.
+ */
+export async function releaseOwner(ownerPaneId: string): Promise<void> {
+	const opened = usePtyActivityStore.getState().openedWorkspaceIds;
 	const store = useWorkspaceStore.getState();
-	const ws = store.workspaces.find((w) => w.id === workspaceId);
-	for (const tab of ws?.tabs ?? []) {
-		const layout = parseTabLayout(tab.layoutJson);
-		if (!layout) continue;
-		const cleared = clearSpawnedBy(layout, ownerPaneId);
-		if (cleared !== layout) await store.updateLayout(tab.id, cleared);
+	for (const ws of store.workspaces) {
+		if (!opened.has(ws.id)) continue;
+		for (const tab of ws.tabs) {
+			const layout = parseTabLayout(tab.layoutJson);
+			if (!layout) continue;
+			const cleared = clearSpawnedBy(layout, ownerPaneId);
+			if (cleared !== layout) await store.updateLayout(tab.id, cleared);
+		}
 	}
+	// Only the Tab row's owner column: safe for any Window to write.
 	await useWorkspaceStore.getState().releaseSpawnedTabs(ownerPaneId);
+}
+
+async function releaseSpawned(ownerPaneId: string) {
+	await releaseOwner(ownerPaneId);
+	await agentControl.paneClosed(ownerPaneId).catch(() => {});
 }
 
 /**
@@ -97,7 +115,7 @@ export async function closePaneNow(
 		// Last pane removed — close the tab itself
 		await store.closeTab(tab.id);
 	}
-	if (node?.type === "terminal") await releaseSpawned(tab.workspaceId, paneId);
+	if (node?.type === "terminal") await releaseSpawned(paneId);
 	if (!newLayout || !inActiveTab) return;
 	// `keepFocus` (Agent control): leave focus where it is when it is on
 	// another pane still open, so an Agent closing a pane it spawned does not

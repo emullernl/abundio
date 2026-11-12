@@ -1382,6 +1382,16 @@ export const agentControl = {
 			cb(e.payload),
 		),
 
+	/** Tell every Window a pane closed, so each frees what it owned there. */
+	paneClosed: (paneId: string) =>
+		invoke<void>("agent_control_pane_closed", { paneId }),
+
+	/** A pane closed in some Window (a broadcast, heard by every Window). */
+	onPaneClosed: (cb: (paneId: string) => void) =>
+		listen<{ paneId: string }>("agent-control-pane-closed", (e) =>
+			cb(e.payload.paneId),
+		),
+
 	/** Rust stopped waiting for this request (timeout): drop it. */
 	onCancel: (cb: (id: string) => void) =>
 		listenToThisWindow<{ id: string }>("agent-control-cancel", (e) =>

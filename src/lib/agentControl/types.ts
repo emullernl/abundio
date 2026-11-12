@@ -75,6 +75,7 @@ export type ControlErrorCode =
 	| "unsupported_shell"
 	| "unsupported"
 	| "empty_prompt"
+	| "folder_missing"
 	| "internal";
 
 /** Thrown by a handler; becomes `{ error: { code, message } }`. */

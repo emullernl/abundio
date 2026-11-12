@@ -11,7 +11,7 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { checkHandle } from "../agentHandle";
-import { closePaneNow } from "../closePane";
+import { closePaneNow, releaseOwner } from "../closePane";
 import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
 import {
@@ -65,20 +65,78 @@ import {
 import { type WaitOutcome, waitForPane } from "./waitForPane";
 
 /** The caller's Workspace as this Window sees it right now. */
-interface Scope {
-	caller: ControlCaller;
-	panes: WorkspacePane[];
-	numbers: Map<string, number>;
+/** Where a call acts (ADR-0055): the caller's own Workspace unless Rust
+ *  resolved `--workspace` to another one of its Profile. */
+export interface ControlTarget {
+	workspaceId: string;
+	/** Not Opened anywhere: open it in this Window first, in the background. */
+	open: boolean;
 }
 
-async function loadScope(caller: ControlCaller): Promise<Scope> {
+interface Scope {
+	caller: ControlCaller;
+	/** The Workspace the call acts on. */
+	workspaceId: string;
+	/** It is the caller's own Workspace. */
+	home: boolean;
+	panes: WorkspacePane[];
+	numbers: Map<string, number>;
+	/** Owners of this Workspace's Spawned panes that sit in another
+	 *  Workspace: pane id → `p2 · api`. */
+	ownersElsewhere: Map<string, string>;
+	/** The caller as the Control badge names it. */
+	callerName: string;
+}
+
+/** `p2 · api` for a pane in another Workspace of this Window, if found. */
+async function labelElsewhere(paneId: string): Promise<string | undefined> {
+	const ws = useWorkspaceStore.getState().findWorkspaceForPane(paneId);
+	if (!ws) return undefined;
+	const [[, n] = ["", 0]] = await agentControl.paneNumbers(ws.id, [paneId]);
+	return `${paneLabel(n)} · ${ws.name}`;
+}
+
+/** The caller as a badge in `workspaceId` shows it: its handle, else its
+ *  Pane number; plus its Workspace's name when that is another one. */
+async function nameOfCaller(
+	caller: ControlCaller,
+	workspaceId: string,
+): Promise<string> {
+	const store = useWorkspaceStore.getState();
+	const home = store.workspaces.find((w) => w.id === caller.workspaceId);
+	const self = home
+		? workspacePanes(home.tabs).find((p) => p.node.id === caller.paneId)
+		: undefined;
+	let name = self?.node.agentHandle;
+	if (!name) {
+		const [[, n] = ["", 0]] = await agentControl.paneNumbers(
+			caller.workspaceId,
+			[caller.paneId],
+		);
+		name = n ? paneLabel(n) : "an Agent";
+	}
+	return workspaceId === caller.workspaceId || !home
+		? name
+		: `${name} · ${home.name}`;
+}
+
+async function loadScope(
+	caller: ControlCaller,
+	target?: ControlTarget,
+	signal?: AbortSignal,
+): Promise<Scope> {
+	const workspaceId = target?.workspaceId ?? caller.workspaceId;
+	const home = workspaceId === caller.workspaceId;
+	if (!home && target?.open) await openInBackground(workspaceId, signal);
 	const ws = useWorkspaceStore
 		.getState()
-		.workspaces.find((w) => w.id === caller.workspaceId);
+		.workspaces.find((w) => w.id === workspaceId);
 	if (!ws) {
 		throw new ControlError(
 			"not_found",
-			"your Workspace is not open in this Window",
+			home
+				? "your Workspace is not open in this Window"
+				: "that Workspace is not loaded in this Window",
 		);
 	}
 	const panes = workspacePanes(ws.tabs);
@@ -88,7 +146,55 @@ async function loadScope(caller: ControlCaller): Promise<Scope> {
 			panes.map((p) => p.node.id),
 		),
 	);
-	return { caller, panes, numbers };
+	const ownersElsewhere = new Map<string, string>();
+	for (const p of panes) {
+		const owner = p.node.spawnedBy;
+		if (!owner || numbers.has(owner) || ownersElsewhere.has(owner)) continue;
+		const label = await labelElsewhere(owner);
+		if (label) ownersElsewhere.set(owner, label);
+	}
+	return {
+		caller,
+		workspaceId,
+		home,
+		panes,
+		numbers,
+		ownersElsewhere,
+		callerName: await nameOfCaller(caller, workspaceId),
+	};
+}
+
+/**
+ * Open a Workspace that is Opened nowhere, in this Window and in the
+ * background, as the user would (ADR-0055): its panes spawn and its Agents
+ * relaunch, and the user's view does not move. Resolves once its terminals
+ * are mounted, so the call can act on them.
+ */
+async function openInBackground(
+	workspaceId: string,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	const activity = usePtyActivityStore.getState();
+	activity.markWorkspaceOpened(workspaceId);
+	if (!usePtyActivityStore.getState().openedWorkspaceIds.has(workspaceId)) {
+		// markWorkspaceOpened refuses a Missing folder (ADR-0053).
+		throw new ControlError(
+			"folder_missing",
+			"that Workspace's folder is missing, so it cannot be opened",
+		);
+	}
+	await waitUntil(
+		() => {
+			const ws = useWorkspaceStore
+				.getState()
+				.workspaces.find((w) => w.id === workspaceId);
+			if (!ws) return false;
+			return workspacePanes(ws.tabs).every((p) => !!getTerminal(p.node.id));
+		},
+		START_STALL_MS,
+		signal ?? new AbortController().signal,
+		"the Workspace was opened, but its panes did not load within 30 seconds",
+	);
 }
 
 function ptyIdOf(pane: WorkspacePane): string {
@@ -118,20 +224,30 @@ function liveFacts(pane: WorkspacePane): PaneLiveFacts {
 	};
 }
 
-function describeAll(scope: Scope): PaneDescription[] {
-	return scope.panes.map((p) =>
-		describePane(p, liveFacts(p), scope.numbers, scope.caller.paneId),
+function describeIn(scope: Scope, p: WorkspacePane): PaneDescription {
+	return describePane(
+		p,
+		liveFacts(p),
+		scope.numbers,
+		scope.caller.paneId,
+		scope.ownersElsewhere,
 	);
 }
 
+function describeAll(scope: Scope): PaneDescription[] {
+	return scope.panes.map((p) => describeIn(scope, p));
+}
+
 /** Carry out one request. Throws `ControlError` for an answer the Agent
- *  should see as an error. Exported for tests. */
+ *  should see as an error. `target` is where Rust routed it (ADR-0055);
+ *  without one, the caller's own Workspace. Exported for tests. */
 export async function runRequest(
 	caller: ControlCaller,
 	request: ControlRequest,
 	signal: AbortSignal = new AbortController().signal,
+	target?: ControlTarget,
 ): Promise<unknown> {
-	const scope = await loadScope(caller);
+	const scope = await loadScope(caller, target, signal);
 	switch (request.op) {
 		case "resolve": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
@@ -140,11 +256,13 @@ export async function runRequest(
 		case "pane.list":
 			return { panes: describeAll(scope) };
 		case "pane.current": {
-			const pane = scope.panes.find((p) => p.node.id === caller.paneId);
+			// Always the caller's own pane, whatever --workspace says.
+			const own = scope.home ? scope : await loadScope(caller);
+			const pane = own.panes.find((p) => p.node.id === caller.paneId);
 			if (!pane) {
 				throw new ControlError("not_found", "your pane is no longer open");
 			}
-			return describePane(pane, liveFacts(pane), scope.numbers, caller.paneId);
+			return describeIn(own, pane);
 		}
 		case "agent.list":
 			return {
@@ -167,7 +285,7 @@ export async function runRequest(
 					.setAgentHandle(pane.node.id, request.handle);
 				if (!check.ok) throw new ControlError(check.code, check.message);
 				// Read back: a cleared handle has become a default one.
-				return describeAgent(await describeNew(caller, pane.node.id));
+				return describeAgent(await describeNew(scope, pane.node.id));
 			});
 		}
 		case "pane.read": {
@@ -213,9 +331,19 @@ export async function runRequest(
 			});
 		}
 		case "pane.split": {
+			// In another Workspace there is no caller pane to split, and its
+			// layout is not the caller's to rearrange: a Spawned tab instead.
+			if (!scope.home) {
+				const paneId = await openSpawnedTab(scope, {
+					handle: null,
+					name: undefined,
+					focus: request.focus,
+				});
+				return describeNew(scope, paneId);
+			}
 			const { paneId, hint } = await splitCaller(scope, request.direction, {});
 			if (request.focus) focusNewPane(scope, paneId);
-			return withHint(await describeNew(caller, paneId), hint);
+			return withHint(await describeNew(scope, paneId), hint);
 		}
 		case "agent.start":
 			return startAgent(scope, request, signal);
@@ -225,7 +353,7 @@ export async function runRequest(
 				name: request.name ?? undefined,
 				focus: request.focus,
 			});
-			return describeNew(caller, paneId);
+			return describeNew(scope, paneId);
 		}
 		case "tab.rename":
 			return renameTabFor(scope, request);
@@ -348,11 +476,14 @@ function focusNewPane(scope: Scope, paneId: string): void {
 }
 
 /** The new pane as `pane list` would show it (which also numbers it). */
-async function describeNew(caller: ControlCaller, paneId: string) {
-	const scope = await loadScope(caller);
+async function describeNew(within: Scope, paneId: string) {
+	const scope = await loadScope(within.caller, {
+		workspaceId: within.workspaceId,
+		open: false,
+	});
 	const pane = scope.panes.find((p) => p.node.id === paneId);
 	if (!pane) throw new ControlError("not_found", "the new pane closed again");
-	return describePane(pane, liveFacts(pane), scope.numbers, caller.paneId);
+	return describeIn(scope, pane);
 }
 
 /**
@@ -396,7 +527,8 @@ async function startAgent(
 	}
 	let paneId: string;
 	let hint: string | null = null;
-	if (request.tab) {
+	// In another Workspace a new pane always gets a Tab of its own (ADR-0055).
+	if (request.tab || !scope.home) {
 		paneId = await openSpawnedTab(scope, {
 			agent,
 			argv,
@@ -446,7 +578,7 @@ async function startAgent(
 	if (request.focus && fleetConsoleShowing()) {
 		useWindowUiStore.getState().setFocusedTile(paneId);
 	}
-	return withHint(describeAgent(await describeNew(scope.caller, paneId)), hint);
+	return withHint(describeAgent(await describeNew(scope, paneId)), hint);
 }
 
 /** A reply with a crowded-Tab `hint` when there is one (`crowding.ts`). */
@@ -474,7 +606,7 @@ async function openSpawnedTab(
 	const { agent, argv } = opts;
 	const tab = await useWorkspaceStore
 		.getState()
-		.createTab(scope.caller.workspaceId, agent, undefined, {
+		.createTab(scope.workspaceId, agent, undefined, {
 			activate: false,
 			name: opts.name,
 			...(agent && argv
@@ -497,7 +629,7 @@ async function openSpawnedTab(
 	const layout = parseTabLayout(tab.layoutJson);
 	const paneId = seeded ?? (layout ? collectTerminalIds(layout)[0] : undefined);
 	if (!paneId) throw new ControlError("internal", "the new Tab has no pane");
-	if (opts.focus) revealPane(paneId, scope.caller.workspaceId, tab.id);
+	if (opts.focus) revealPane(paneId, scope.workspaceId, tab.id);
 	return paneId;
 }
 
@@ -507,20 +639,28 @@ async function renameTabFor(
 	scope: Scope,
 	request: Extract<ControlRequest, { op: "tab.rename" }>,
 ) {
-	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
-	if (!self) {
-		throw new ControlError("not_found", "your pane is no longer open");
+	// The caller's own Tab exists only in its own Workspace.
+	const self = scope.home
+		? scope.panes.find((p) => p.node.id === scope.caller.paneId)
+		: undefined;
+	if (!request.target && !self) {
+		throw new ControlError(
+			"not_found",
+			scope.home
+				? "your pane is no longer open"
+				: "in another Workspace, name the Tab by a pane in it: --tab <pane>",
+		);
 	}
 	const pane = request.target
 		? resolveTarget(request.target, scope.panes, scope.numbers)
-		: self;
+		: (self as WorkspacePane);
 	const tab = useWorkspaceStore
 		.getState()
-		.workspaces.find((w) => w.id === scope.caller.workspaceId)
+		.workspaces.find((w) => w.id === scope.workspaceId)
 		?.tabs.find((t) => t.id === pane.tabId);
 	if (!tab) throw new ControlError("not_found", "that Tab is no longer open");
 	const refusal = tabRenameRefusal({
-		ownTab: tab.id === self.tabId,
+		ownTab: self !== undefined && tab.id === self.tabId,
 		spawnedByCaller: tab.spawnedByPane === scope.caller.paneId,
 		userNamed: tab.userNamed === true,
 	});
@@ -531,10 +671,7 @@ async function renameTabFor(
 
 /** The caller as the badge names it: its handle, else its Pane number. */
 export function callerLabel(scope: Scope): string {
-	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
-	if (self?.node.agentHandle) return self.node.agentHandle;
-	const n = scope.numbers.get(scope.caller.paneId);
-	return n !== undefined ? paneLabel(n) : "an Agent";
+	return scope.callerName;
 }
 
 /** Run `fn` with the **Control badge** on `pane`. An Agent acting on its own
@@ -579,9 +716,7 @@ function requireAgent(pane: WorkspacePane): PaneLiveFacts {
 
 function waitResult(scope: Scope, pane: WorkspacePane, outcome: WaitOutcome) {
 	return {
-		...describeAgent(
-			describePane(pane, liveFacts(pane), scope.numbers, scope.caller.paneId),
-		),
+		...describeAgent(describeIn(scope, pane)),
 		status: outcome.end === "left" ? "exited" : outcome.end,
 		waitedMs: outcome.waitedMs,
 	};
@@ -663,21 +798,10 @@ export function toReply(
 const running = new Map<string, AbortController>();
 
 async function onRequest(e: AgentControlRequestEvent): Promise<void> {
-	if (e.target && e.target.workspaceId !== e.caller.workspaceId) {
-		await agentControl
-			.reply(e.id, {
-				error: {
-					code: "unsupported",
-					message: "this version of Abundio cannot act in another Workspace yet",
-				},
-			})
-			.catch(() => {});
-		return;
-	}
 	const abort = new AbortController();
 	running.set(e.id, abort);
 	const [outcome] = await Promise.allSettled([
-		runRequest(e.caller, e.request as ControlRequest, abort.signal),
+		runRequest(e.caller, e.request as ControlRequest, abort.signal, e.target),
 	]);
 	running.delete(e.id);
 	// Rust has stopped listening; it already answered the Agent.
@@ -702,6 +826,11 @@ export function startAgentControl(): () => void {
 		}),
 		agentControl.onCancel((id) => {
 			running.get(id)?.abort();
+		}),
+		// Another Window (or this one) closed a pane that may own panes and
+		// Tabs here (ADR-0055).
+		agentControl.onPaneClosed((paneId) => {
+			void releaseOwner(paneId);
 		}),
 	];
 	// Every Agent has a handle (ADR-0055): a pane entering agent mode

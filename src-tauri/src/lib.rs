@@ -1464,6 +1464,7 @@ pub fn run() {
             agent_control::agent_control_set_enabled,
             agent_control::agent_control_pane_numbers,
             agent_control::agent_control_pane_for_number,
+            agent_control::agent_control_pane_closed,
             agent_names::agent_handle_check,
             agent_names::agent_handle_default,
             agent_skills::agent_skill_provision,

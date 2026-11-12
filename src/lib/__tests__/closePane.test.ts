@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const tabUpdates: [string, unknown][] = [];
+const closedPanes: string[] = [];
 vi.mock("../ipc", () => ({
+	agentControl: {
+		paneClosed: async (paneId: string) => {
+			closedPanes.push(paneId);
+		},
+	},
 	tabs: {
 		update: async (id: string, u: unknown) => {
 			tabUpdates.push([id, u]);
@@ -10,8 +16,9 @@ vi.mock("../ipc", () => ({
 }));
 vi.mock("../terminalManager", () => ({ teardownTerminal: () => {} }));
 
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { closePaneNow } from "../closePane";
+import { closePaneNow, releaseOwner } from "../closePane";
 import type { PaneNode, WorkspaceWithTabs } from "../types";
 
 const tree: PaneNode = {
@@ -38,6 +45,8 @@ const other: PaneNode = {
 
 beforeEach(() => {
 	tabUpdates.length = 0;
+	closedPanes.length = 0;
+	usePtyActivityStore.setState({ openedWorkspaceIds: new Set(["ws"]) });
 	useWorkspaceStore.setState({
 		workspaces: [
 			{
@@ -135,5 +144,24 @@ describe("renameTab", () => {
 			.workspaces[0].tabs.find((t) => t.id === "t1");
 		expect(t1?.userNamed).toBeUndefined();
 		expect(tabUpdates).toContainEqual(["t1", { name: "Fix the build" }]);
+	});
+});
+
+describe("releasing across Workspaces and Windows (ADR-0055)", () => {
+	it("tells every Window the pane closed", async () => {
+		await closePaneNow("a");
+		expect(closedPanes).toEqual(["a"]);
+	});
+
+	it("never writes a Workspace this Window does not have open", async () => {
+		// This Window's copy may be stale; another Window owns that layout.
+		usePtyActivityStore.setState({ openedWorkspaceIds: new Set() });
+		await releaseOwner("a");
+		const layoutWrites = tabUpdates.filter(
+			([, u]) => (u as { layoutJson?: string }).layoutJson !== undefined,
+		);
+		expect(layoutWrites).toEqual([]);
+		// The Tab row's owner column is still freed: safe from any Window.
+		expect(tabUpdates).toContainEqual(["t2", { spawnedByPane: null }]);
 	});
 });

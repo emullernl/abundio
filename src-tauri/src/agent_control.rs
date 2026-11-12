@@ -1407,6 +1407,15 @@ fn serve_inner(app: &AppHandle, token: &str, body: &[u8], retry: bool) -> (Answe
 
 // ── Commands ──
 
+/// A pane closed: tell every Window (ADR-0055). Its **Spawned panes** and
+/// **Spawned tabs** may sit in other Workspaces, opened in other Windows, and
+/// only each Window may edit its own Workspaces' layouts.
+#[tauri::command]
+pub fn agent_control_pane_closed(app: AppHandle, pane_id: String) -> Result<(), crate::error::AbundioError> {
+    let _ = app.emit("agent-control-pane-closed", json!({ "paneId": pane_id }));
+    Ok(())
+}
+
 /// A Window's answer to an `agent-control-request`.
 #[tauri::command]
 pub fn agent_control_reply(
