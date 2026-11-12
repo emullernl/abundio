@@ -299,7 +299,7 @@ _Avoid_: maximize, fullscreen, zoom (that is the **Tile zoom**), focus mode (col
 **Filmstrip**: The column of small **Fleet tiles** to the right of the spotlighted tile in **Spotlight**, in the Console's usual order, drawn at the **Tile zoom**. Its width is a draggable divider (default a third of the Console, remembered per **Window**); each tile is a third of the height and more scroll. The **Add agent** button sits at its end.
 _Avoid_: sidebar, strip, thumbnails (they are live, interactive tiles).
 
-**Switch to**: Leaving the **Fleet Console** for one **Fleet tile**'s place in the **Workspace view** — its Workspace becomes Active, its Tab active and its Pane the **Focused pane**. The only way the Console changes the Workspace view.
+**Switch to**: Leaving the **Fleet Console** for one **Fleet tile**'s place in the **Workspace view** — its Workspace becomes Active, its Tab active and its Pane the **Focused pane**. The only way the Console changes the Workspace view. Clicking an **Agent row** does the same from the **Left sidebar**.
 _Avoid_: open, jump, go to (fine in prose).
 
 **New agent** (Fleet Console): Starting an **Agent** from the **Fleet Console** by picking a Workspace — any Workspace in the **Active profile**, Opened ones first; an unopened one is opened in the background — and an Agent. The Agent starts in a **new Tab** of that Workspace, never a split, because the user cannot see the layout it would change. For a git Workspace a *Create a new worktree* option hands off to the ordinary **Add worktree** dialog, with the Agent already selected, for the branch and folder (new **Linked worktree**, its **Worktree setup commands**, then the Agent), targeting the set's **Primary worktree** when picked from a Linked one. The new worktree's Workspace opens in the background rather than becoming Active.
@@ -413,11 +413,16 @@ _Avoid_: metrics bar, status bar (already taken — bottom of window), header. (
 _Avoid_: footer, info bar; do not call the **Overview bar** a "status bar".
 
 **Sidebar**: A collapsible vertical strip of chrome flanking the workspace stack. Two instances, one on each side, with different responsibilities:
-- **Left sidebar**: cross-workspace navigation — the **Workspace** list for the Window's **Active profile**. Belongs to the Window, not the Workspace.
+- **Left sidebar**: cross-workspace navigation — the **Workspace** list for the Window's **Active profile**, with the **Agents list** beneath it. Belongs to the Window, not the Workspace.
 - **Right sidebar**: in-workspace tooling for the **Active workspace** — tabs (**Git changes**, **Explorer**, **Search**, **Notes**) plus two **Anchored sections** underneath them, top to bottom: **Commits**, then **Pull Requests**. The tab strip and the Anchored sections are independent: each Anchored section is shared chrome across every tab and collapses independently.
 
 Both sidebars collapse to a 44px icon strip. Open/closed state and (for the right sidebar) the active tab + PR-collapsed state are per-Window. Width is global.
 _Avoid_: panel (collides with **Pane** colloquially), drawer, rail.
+
+**Agents list**: The part of the **Left sidebar** below the Workspace list, headed "Agents" and its count, with one **Agent row** for every **agent-mode PTY** in the Window's **Opened workspaces** — the same set the **Fleet Console** shows as **Fleet tiles**, in the same derived order, so rows never jump as statuses change. Sits under a draggable divider and collapses to its header (collapsed per-Window, height global, as for an **Anchored section**); with no Agent running it keeps its header and says so, so the layout does not jump when the first one starts. A **Folded set** hides Workspace rows only, never Agent rows. Absent while the Left sidebar is collapsed to its icon strip, where each Workspace's **Agent rollup** stands in for it. Not an **Anchored section** (that term belongs to the Right sidebar) nor a **Section**.
+_Avoid_: Agents section, agent panel.
+
+**Agent row**: One entry in the **Agents list**, for one **agent-mode PTY**. Its first line is the **status icon**, the **Agent**'s icon and the Agent's own terminal title (the Agent's name when it has set none); its second, dimmer line is the Workspace name and the Tab name. Clicking it is **Switch to**. The row of the **Focused pane** of the **Active workspace** is drawn selected. Has no right-click menu.
 
 **Anchored section**: A collapsible panel of the **Right sidebar** that sits below the tab content and stays visible whichever tab is active — **Commits** and **Pull Requests**. Each collapses to its header on its own (per-Window) and is sized by a draggable divider above it (sizes are global). Not a **Section**: that word belongs to the row groups inside the **Git changes tab**.
 _Avoid_: panel, pane (collides with **Pane**), sub-panel; bare "section" when the Git changes tab's **Section** could be meant.

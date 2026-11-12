@@ -42,6 +42,10 @@ describe("settingsBroadcast", () => {
 		}
 	});
 
+	it("does not broadcast the drag-derived Agents list height", () => {
+		expect(NOT_BROADCAST.has("leftSidebarAgentsShare")).toBe(true);
+	});
+
 	it("broadcasts every persisted key except the denied ones", () => {
 		expect(new Set(BROADCAST_KEYS)).toEqual(
 			new Set(PERSISTED_KEYS.filter((k) => !NOT_BROADCAST.has(k))),

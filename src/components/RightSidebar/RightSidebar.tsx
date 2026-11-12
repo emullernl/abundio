@@ -9,12 +9,12 @@ import { useWindowUiStore } from "../../stores/windowUiStore";
 import { Explorer } from "../Explorer/Explorer";
 import { NotesPanel } from "../Notes/NotesPanel";
 import { SearchPanel } from "../Search/SearchPanel";
+import { SectionDivider } from "../SectionDivider";
 import { RightSidebarCollapsedStrip } from "./CollapsedStrip";
 import { CommitsSection } from "./CommitsSection";
 import { GitChangesTab } from "./GitChangesTab";
 import { PrSection } from "./PrSection";
 import { RightSidebarResizer } from "./Resizer";
-import { SectionDivider } from "./SectionDivider";
 import { RightSidebarTabStrip } from "./TabStrip";
 
 interface Props {

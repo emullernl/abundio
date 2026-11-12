@@ -60,7 +60,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 #### Components
 
 - `components/Terminal/` — Terminal pane system: `TerminalInstance`, `TerminalSlot`, `TerminalPool`, `SplitContainer`, `TerminalTitleBar`, `PaneResizer`, `SearchBar`, `PaneContextMenu`, `DebugActivityMeter`.
-- `components/Sidebar/` — `Sidebar`, `WorkspaceList`, `WorkspaceItem`.
+- `components/Sidebar/` — `Sidebar`, `WorkspaceList`, `WorkspaceItem`, `AgentsList` + `AgentRow` (the **Agents list** under the Workspace list: every agent-mode pane, click is **Switch to**).
 - `components/Explorer/` — File tree: `Explorer`, `FileTree`, `FileTreeItem`.
 - `components/FileViewer/` — `FileViewerContainer`, `CodeEditor` (Monaco), `ImageViewer`, `UnsupportedFile`.
 - `components/GitChanges/` — `GitChangesPanel`, `GitChangesFileList`, `GitChangesFileItem`, `DiffViewer`, `BranchSelector`, `PullRequestsSection`, `PullRequestItem`, `GitChangesResizer`, `GitPanelDivider`.
@@ -80,6 +80,8 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `hooks/useFileReloadWatcher.ts` — Watches open files for external changes and prompts reload.
 - `hooks/useGitDataSync.ts` — Syncs git data for active and opened workspaces.
 - `hooks/usePaneDrag.ts` — Drag-and-drop pane reordering logic.
+- `hooks/useAgentPanes.ts` — Every agent-mode pane of the Window's Opened workspaces in derived order; feeds the Fleet Console (with its pending tiles) and the Agents list (without).
+- `hooks/usePaneStatus.ts` — One pane's status icon state; shared by the pane title bar and the Agent row.
 
 #### Stores
 
@@ -104,6 +106,8 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/terminalManager.ts` — `ManagedTerminal` wraps xterm.js with FitAddon, SearchAddon, SerializeAddon, WebGL (canvas fallback). Handles PTY connection, scrollback restore, font updates, and `restartPanePty` (the third lifecycle path — ADR-0023).
 - `lib/agentTitleMap.ts` — **Title status** (ADR-0047): per-Agent title rules (Mistral Vibe's `>> ` / `? ` prefixes and blurred-pane suffixes) and the pure `titleStep` decision. terminalManager feeds it `onTitleChange`.
 - `lib/fleetConsole.ts` — Pure Fleet Console helpers: which panes are tiles and in what order, grid shape, Auto columns, divider drags, grid navigation.
+- `lib/agentRowTitle.ts` — An Agent row's first line: the Agent's terminal title, or its name.
+- `lib/leftSidebarLayout.ts` — Height split between the Workspace list and the Agents list.
 - `lib/fleetFocus.ts` — `targetPaneId()`: the Focused tile in the Fleet Console, the Focused pane otherwise. Every pane-scoped shortcut resolves its target here; `workspaceViewOnly` mutes layout shortcuts in the console.
 - `lib/paneLocation.ts` — `findPaneLocation`, `revealPane`, and `switchToPane` (the Fleet Console's **Switch to**).
 - `lib/taskPrompt.ts` — Pure **New task** text: resolve a Task through the Task/Issue template, name its Tab, suggest a branch for an issue.

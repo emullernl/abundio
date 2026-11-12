@@ -11,17 +11,16 @@ import {
 } from "lucide-react";
 import { useCallback, useSyncExternalStore } from "react";
 import { usePaneDrag } from "../../hooks/usePaneDrag";
+import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { useShortcutLabel, withShortcut } from "../../hooks/useShortcutLabel";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import {
-	getTerminal,
 	mouseBadgeState,
 	subscribePaneRevision,
 	togglePaneMouseBlocked,
 } from "../../lib/terminalManager";
-import type { DotStatus } from "../../stores/ptyActivityStore";
 import {
-	computePtyDotStatus,
+	type DotStatus,
 	usePtyActivityStore,
 } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -171,12 +170,6 @@ function MouseBadge({ paneId }: { paneId: string }) {
 	);
 }
 
-function usePtyDotStatus(paneId: string): DotStatus {
-	const panePtyId = usePtyActivityStore((s) => s.panePtyMap[paneId] ?? "");
-	const ptyId = getTerminal(paneId)?.ptyId || panePtyId;
-	return usePtyActivityStore((s) => computePtyDotStatus(ptyId, s.activities));
-}
-
 function basename(path: string): string {
 	if (!path) return "";
 	return path.split("/").filter(Boolean).pop() ?? path;
@@ -199,7 +192,7 @@ export function TerminalTitleBar({
 	const detectedAgentId = usePtyActivityStore((s) =>
 		ptyId ? s.detectedAgentIds[ptyId] : undefined,
 	);
-	const dotStatus = usePtyDotStatus(paneId);
+	const dotStatus = usePaneStatus(paneId);
 
 	// Only show agent identity while the agent is actively running (detectedAgentId set).
 	// Once it exits and detection clears, fall back to plain terminal title.
