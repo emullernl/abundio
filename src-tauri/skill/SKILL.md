@@ -48,6 +48,10 @@ are the agents switched on in Abundio (`agent list` shows the ones running;
 an unknown kind's error lists the valid ones). Then
 `abundio agent wait <name>` until it is done, and read its pane.
 
+The new pane does not take the user's keyboard focus, so they can keep
+typing to you. Add `--focus` (to `agent start` or `pane split`) only when
+the user asks to be taken to the new pane.
+
 `abundio pane split` opens a plain shell beside you;
 `abundio pane run <pane> "<command>"` runs one line in a shell that is at its
 prompt.

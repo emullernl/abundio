@@ -227,6 +227,9 @@ pub enum Request {
         prompt: Option<String>,
         direction: Option<Direction>,
         args: Vec<String>,
+        /// Move keyboard focus to the new pane. Off by default: the user is
+        /// usually typing to the caller.
+        focus: bool,
     },
     #[serde(rename = "agent.prompt", rename_all = "camelCase")]
     AgentPrompt {
@@ -490,8 +493,8 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
             Ok(Request::AgentList)
         }
         "start" => {
-            let usage = "abundio agent start --kind <agent> [--handle <h>] [--prompt <text>] [--direction right|down] [-- <agent args>]";
-            let a = split_args(rest, &["--kind", "--handle", "--prompt", "--direction"], &[])?;
+            let usage = "abundio agent start --kind <agent> [--handle <h>] [--prompt <text>] [--direction right|down] [--focus] [-- <agent args>]";
+            let a = split_args(rest, &["--kind", "--handle", "--prompt", "--direction"], &["--focus"])?;
             expect_positionals(&a, 0, 0, usage)?;
             let kind = a
                 .flags
@@ -522,6 +525,7 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
                     .map(parse_direction)
                     .transpose()?,
                 args: a.passthrough.iter().map(|s| s.to_string()).collect(),
+                focus: a.flags.contains_key("--focus"),
             })
         }
         "prompt" => {
@@ -626,7 +630,7 @@ Panes (only those of your own Workspace):
 Agents:
   abundio agent list                      every Agent in your Workspace
   abundio agent start --kind <agent> [--handle <h>] [--prompt <text>]
-                      [--direction right|down] [-- <agent args>]
+                      [--direction right|down] [--focus] [-- <agent args>]
                                           start an Agent in a new pane
   abundio agent prompt <agent> <text> [--wait] [--timeout <ms>]
                                           send a prompt; --wait returns when it settles
@@ -640,7 +644,8 @@ abundio: control the panes and Agents of your Workspace.
 
 <pane> is a Pane number (p1, p2, …). <agent> is an Agent handle or a Pane number.
 Every command prints one JSON object. --timeout is in milliseconds; 0 means no limit;
-the default for waits is 30 minutes.
+the default for waits is 30 minutes. A new pane leaves the user's keyboard focus
+where it is; pass --focus to move it there, but only when the user asks for that.
 
 ";
     match group {
@@ -1231,8 +1236,13 @@ mod tests {
                 prompt: Some("hi".into()),
                 direction: None,
                 args: vec!["--model".into(), "x".into()],
+                focus: false,
             }
         );
+        assert!(matches!(
+            req(&["agent", "start", "--kind", "codex", "--focus"]),
+            Request::AgentStart { focus: true, .. }
+        ));
         assert!(usage_err(&["agent", "start"]).contains("--kind is required"));
         assert!(usage_err(&["agent", "start", "--kind", "codex", "--handle", "p1"]).contains("not a valid Agent handle"));
         assert!(usage_err(&["agent", "start", "--kind", "codex", "--", "a\u{1b}b"]).contains("control characters"));

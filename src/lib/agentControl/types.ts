@@ -31,6 +31,7 @@ export type ControlRequest =
 			prompt: string | null;
 			direction: Direction | null;
 			args: string[];
+			focus: boolean;
 	  }
 	| {
 			op: "agent.prompt";

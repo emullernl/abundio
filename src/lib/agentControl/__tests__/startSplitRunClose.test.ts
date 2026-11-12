@@ -20,6 +20,11 @@ vi.mock("../../terminalManager", () => ({
 	teardownTerminal: () => {},
 }));
 
+const revealed: string[] = [];
+vi.mock("../../paneLocation", () => ({
+	revealPane: (paneId: string) => revealed.push(paneId),
+}));
+
 const closed: { paneId: string; opts: unknown }[] = [];
 vi.mock("../../closePane", () => ({
 	closePaneNow: async (paneId: string, opts: unknown) => {
@@ -96,6 +101,7 @@ beforeEach(() => {
 	write.mockClear();
 	ensure.mockClear();
 	closed.length = 0;
+	revealed.length = 0;
 	defaultShell = "/bin/zsh";
 	terminals.clear();
 	terminals.set("a", {
@@ -153,7 +159,11 @@ describe("pane split", () => {
 
 describe("agent start", () => {
 	const start = (
-		over: Partial<{ handle: string | null; prompt: string | null }> = {},
+		over: Partial<{
+			handle: string | null;
+			prompt: string | null;
+			focus: boolean;
+		}> = {},
 	) =>
 		runRequest(caller, {
 			op: "agent.start",
@@ -162,6 +172,7 @@ describe("agent start", () => {
 			prompt: "fix it",
 			direction: null,
 			args: [],
+			focus: false,
 			...over,
 		});
 
@@ -178,6 +189,9 @@ describe("agent start", () => {
 			spawnedBy: "a",
 		});
 		expect(ensure).toHaveBeenCalledWith("claude", true);
+		// Without --focus the user stays where they are typing.
+		expect(revealed).toEqual([]);
+		expect(useWorkspaceStore.getState().focusedPaneId).toBe("a");
 		terminals.set(node.id, { ptyId: "pty-new", term: {} });
 		activity("pty-new", { detectionMode: "agent", state: "active" });
 		await vi.advanceTimersByTimeAsync(500);
@@ -191,6 +205,17 @@ describe("agent start", () => {
 			argv: ["claude", "fix it"],
 			agentId: "claude",
 		});
+	});
+
+	it("with --focus, reveals the new pane as soon as it exists", async () => {
+		vi.useFakeTimers();
+		const p = start({ focus: true });
+		const settled = expect(p).rejects.toMatchObject({ code: "stalled" });
+		await vi.advanceTimersByTimeAsync(10);
+		const node = (layout() as { second: { id: string } }).second;
+		expect(revealed).toEqual([node.id]);
+		await vi.advanceTimersByTimeAsync(31_000);
+		await settled;
 	});
 
 	it("stalls when the Agent never starts", async () => {

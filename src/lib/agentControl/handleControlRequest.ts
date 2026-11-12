@@ -5,10 +5,12 @@
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { checkHandle } from "../agentHandle";
 import { closePaneNow } from "../closePane";
 import { pasteAndSubmit } from "../firePromptAction";
+import { fleetConsoleShowing } from "../fleetFocus";
 import {
 	type AgentControlReply,
 	type AgentControlRequestEvent,
@@ -385,6 +387,7 @@ async function startAgent(
 		takePendingTask(paneId);
 		throw e;
 	}
+	if (request.focus) focusNewPane(scope, paneId);
 	await waitUntil(
 		() => {
 			const ptyId =
@@ -400,6 +403,10 @@ async function startAgent(
 		signal,
 		"the pane opened, but its Agent did not start within 30 seconds; read the pane to see why",
 	);
+	// In the Fleet Console its tile exists only now that it is in agent mode.
+	if (request.focus && fleetConsoleShowing()) {
+		useWindowUiStore.getState().setFocusedTile(paneId);
+	}
 	return describeAgent(await describeNew(scope.caller, paneId));
 }
 

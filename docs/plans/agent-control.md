@@ -20,7 +20,7 @@ Agents already run side by side in Abundio, but they cannot see or reach each ot
 | CLI name | `abundio`, next to `abundio-env`. JSON output. |
 | Addressing | An Agent handle (optional, unique in the Workspace) or a Pane number (`p1`, `p2`, never reused). Both are kept across restarts. Handles are set from the pane ⋯ menu ("Name agent…") or `abundio agent rename`. |
 | Handle lifetime | Belongs to the Pane. Survives restart and Session resume. Cleared when the Pane's PTY leaves agent mode or another Agent takes over. |
-| Start | Always a fresh Pane, launched through the New task path (prompt as argv, never typed). Split the caller: right if wide, down if tall. Keyboard focus stays put. |
+| Start | Always a fresh Pane, launched through the New task path (prompt as argv, never typed). Split the caller: right if wide, down if tall. Keyboard focus stays on the caller unless `--focus` (on `pane split` and `agent start`), which the Agent passes only when the user asks. |
 | Prompt | Control characters are stripped except `\n` and `\t`. Refused while the target is Waiting. Sent like a Prompt action: bracketed paste, then `\r`. |
 | Settled | Ready, Waiting or Error, after the target was seen Working. No Working within 5 s: `stalled`. |
 | Wait timeout | 30 minutes by default; `--timeout <ms>`; `--timeout 0` means no limit. |
@@ -42,7 +42,7 @@ abundio pane split [--direction right|down] [--focus]
 abundio pane run <pane> <command>
 abundio pane close <pane>
 abundio agent list
-abundio agent start [--handle <h>] --kind <agent-id> [--prompt <text>] [--direction right|down] [-- <agent args>]
+abundio agent start [--handle <h>] --kind <agent-id> [--prompt <text>] [--direction right|down] [--focus] [-- <agent args>]
 abundio agent prompt <agent> <text> [--wait] [--timeout <ms>]
 abundio agent wait <agent> [--until ready|waiting|error|settled] [--timeout <ms>]
 abundio agent send-keys <agent|pane> <key>...
@@ -294,6 +294,13 @@ The original list:
 - `lib/demo/`: mock `agent_control_reply` and the setting commands so `pnpm demo:web` keeps working; no control requests arrive in the demo.
 - `CLAUDE.md`: add `agent_control.rs` and `lib/agentControl/` to the architecture list, plus a Key Conventions line: the caller is whatever its token says; the shared hook token is not a pane boundary.
 - Release notes: say what the skill is and where it is installed.
+
+### Focus stays on the caller (after step 10)
+
+In the real app the caller's pane lost keyboard focus when an Agent split it, although Agent control never moved focus. The cause was not Agent control. Splitting a pane re-parents its terminal: `projectInto` (`TerminalInstance.tsx`) moves the xterm element into the new split's container with `appendChild` and hides it until it has painted, and both drop the browser's focus. The slot's own refocus had already run, before the move. The same happened to the user's own splits, where the new pane taking focus hid it.
+
+- Fix: `projectInto` notes whether the terminal had focus before the move and calls `term.focus()` when it reveals it, if that pane is still the Focused pane (or Focused tile) and focus has not gone anywhere else meanwhile (`lib/projectionFocus.ts`, pure and tested). So the user keeps typing to the Agent that made the split.
+- `agent start` gained `--focus`, like `pane split`: reveal the new pane at once and, in the Fleet Console, focus its tile once it is in agent mode. The help text and the skill say to pass it only when the user asks to be taken to the new pane.
 
 ## Verify in the real app
 
