@@ -66,7 +66,26 @@ export type NavRow =
 			ptyId: string;
 			agentId: string | null;
 			label: string;
+	  }
+	| {
+			/** A **File window** of the Workspace: listed after its Tabs. */
+			kind: "window";
+			key: string;
+			workspaceId: string;
+			label: string;
+			windowLabel: string;
+			windowKind: NavFileWindow["kind"];
+			linked: boolean;
 	  };
+
+/** An open File window, as Rust reports it. */
+export interface NavFileWindow {
+	label: string;
+	workspaceId: string;
+	kind: "text" | "image" | "diff" | "commit-diff";
+	filePath: string;
+	commitOid: string | null;
+}
 
 export interface NavigatorInput {
 	workspaces: NavWorkspaceEntry[];
@@ -88,6 +107,17 @@ export interface NavigatorInput {
 	agentNames: Record<string, string>;
 	/** Workspace id → current branch. */
 	branches: Record<string, string | undefined>;
+	/** Open File windows of the Opened workspaces. */
+	fileWindows: readonly NavFileWindow[];
+}
+
+/** A File window's row text: the file name, marked for a diff. */
+export function fileWindowLabel(w: NavFileWindow): string {
+	const name = basename(w.filePath);
+	if (w.kind === "diff") return `${name} (diff)`;
+	if (w.kind === "commit-diff")
+		return `${name} @ ${(w.commitOid ?? "").slice(0, 7)}`;
+	return name;
 }
 
 /** The Left sidebar's order flattened, every Linked worktree included even
@@ -264,7 +294,32 @@ export function navigatorRows(input: NavigatorInput): NavRow[] {
 			}
 		}
 
-		const keepWs = tabBlocks.length > 0 || (!filtering && wsMatches);
+		// File windows hold no Agent, so the status filter hides them.
+		const windowRows: NavRow[] =
+			opened && !filtering
+				? input.fileWindows
+						.filter((w) => w.workspaceId === ws.id)
+						.filter(
+							(w) =>
+								!searching ||
+								wsMatches ||
+								matches(query, fileWindowLabel(w), w.filePath),
+						)
+						.map((w) => ({
+							kind: "window",
+							key: `fw:${w.label}`,
+							workspaceId: ws.id,
+							label: fileWindowLabel(w),
+							windowLabel: w.label,
+							windowKind: w.kind,
+							linked,
+						}))
+				: [];
+
+		const keepWs =
+			tabBlocks.length > 0 ||
+			windowRows.length > 0 ||
+			(!filtering && wsMatches);
 		if (!keepWs) continue;
 		const wsExpanded = searching || !input.collapsed.has(wsKey);
 		rows.push({
@@ -275,7 +330,7 @@ export function navigatorRows(input: NavigatorInput): NavRow[] {
 			branch,
 			linked,
 			opened,
-			hasChildren: tabBlocks.length > 0,
+			hasChildren: tabBlocks.length > 0 || windowRows.length > 0,
 			expanded: wsExpanded,
 		});
 		if (!wsExpanded) continue;
@@ -285,14 +340,23 @@ export function navigatorRows(input: NavigatorInput): NavRow[] {
 				rows.push(...block.panes);
 			}
 		}
+		rows.push(...windowRows);
 	}
 	return rows;
+}
+
+/** A row that has children it can fold: a Workspace or a Tab. */
+export function isFolder(
+	row: NavRow,
+): row is Extract<NavRow, { kind: "workspace" | "tab" }> {
+	return row.kind === "workspace" || row.kind === "tab";
 }
 
 /** The key of a row's parent, or null for a Workspace row. */
 export function parentKey(row: NavRow): string | null {
 	if (row.kind === "workspace") return null;
-	if (row.kind === "tab") return `ws:${row.workspaceId}`;
+	if (row.kind === "tab" || row.kind === "window")
+		return `ws:${row.workspaceId}`;
 	return `tab:${row.tabId}`;
 }
 

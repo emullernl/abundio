@@ -1526,6 +1526,8 @@ pub fn run() {
             file_windows::file_windows_close,
             file_windows::file_windows_restore,
             file_windows::file_windows_raise,
+            file_windows::file_windows_list,
+            file_windows::file_window_focus,
             prompt_actions::prompt_action_create,
             prompt_actions::prompt_action_update,
             prompt_actions::prompt_action_delete,

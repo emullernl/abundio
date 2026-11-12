@@ -1256,6 +1256,15 @@ export interface FileWindowInfo {
 	view: MarkdownView;
 }
 
+/** One open File window, as the Navigator lists it. */
+export interface OpenFileWindow {
+	label: string;
+	workspaceId: string;
+	kind: FileWindowKind;
+	filePath: string;
+	commitOid: string | null;
+}
+
 export interface DirtyFileWindow {
 	label: string;
 	filePath: string;
@@ -1298,6 +1307,13 @@ export const fileWindows = {
 	/** Reopens a Workspace's remembered File windows. */
 	restore: (workspaceId: string) =>
 		invoke<void>("file_windows_restore", { workspaceId }),
+
+	/** The open File windows of these Workspaces. */
+	list: (workspaceIds: string[]) =>
+		invoke<OpenFileWindow[]>("file_windows_list", { workspaceIds }),
+
+	/** Brings one open File window to the front and focuses it. */
+	focus: (label: string) => invoke<void>("file_window_focus", { label }),
 
 	/** Raises a Workspace's open File windows without focusing them. */
 	raise: (workspaceId: string) =>

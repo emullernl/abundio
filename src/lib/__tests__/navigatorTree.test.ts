@@ -78,6 +78,7 @@ function input(over: Partial<NavigatorInput> = {}): NavigatorInput {
 		detectedAgentIds: { x1: "claude", x4: "codex", y1: "claude" },
 		agentNames: { claude: "Claude Code", codex: "Codex" },
 		branches: { a: "main", b: "feat/x" },
+		fileWindows: [],
 		...over,
 	};
 }
@@ -189,6 +190,77 @@ describe("navigatorRows", () => {
 			}),
 		);
 		expect(keys(rows)).toEqual(["ws:c", "tab:c1", "pane:pc1"]);
+	});
+});
+
+describe("File windows", () => {
+	const fileWindows = [
+		{
+			label: "md-1",
+			workspaceId: "a",
+			kind: "text" as const,
+			filePath: "/a/NOTES.md",
+			commitOid: null,
+		},
+		{
+			label: "md-2",
+			workspaceId: "a",
+			kind: "commit-diff" as const,
+			filePath: "src/main.rs",
+			commitOid: "abcdef1234",
+		},
+		{
+			label: "md-3",
+			workspaceId: "c",
+			kind: "diff" as const,
+			filePath: "x.ts",
+			commitOid: null,
+		},
+	];
+
+	it("lists a Workspace's windows after its Tabs", () => {
+		const rows = navigatorRows(input({ fileWindows }));
+		const a = rows.filter((r) => r.workspaceId === "a").map((r) => r.key);
+		expect(a.slice(-2)).toEqual(["fw:md-1", "fw:md-2"]);
+		const labels = rows
+			.filter((r) => r.kind === "window")
+			.map((r) => (r.kind === "window" ? r.label : ""));
+		expect(labels).toEqual(["NOTES.md", "main.rs @ abcdef1"]);
+		expect(parentKey(rows.find((r) => r.key === "fw:md-1") as NavRow)).toBe(
+			"ws:a",
+		);
+	});
+
+	it("are hidden by the status filter and by collapsing the Workspace", () => {
+		expect(
+			navigatorRows(
+				input({ fileWindows, statuses: new Set(["waiting"]) }),
+			).some((r) => r.kind === "window"),
+		).toBe(false);
+		expect(
+			navigatorRows(input({ fileWindows, collapsed: new Set(["ws:a"]) })).some(
+				(r) => r.kind === "window",
+			),
+		).toBe(false);
+	});
+
+	it("search matches the window's file and keeps the Workspace", () => {
+		expect(keys(navigatorRows(input({ fileWindows, query: "notes" })))).toEqual(
+			["ws:a", "fw:md-1"],
+		);
+	});
+
+	it("a Workspace with only a window still has children", () => {
+		const only = ws("d", []);
+		const rows = navigatorRows(
+			input({
+				workspaces: [{ workspace: only, linked: false }],
+				openedWorkspaceIds: new Set(["d"]),
+				fileWindows: [{ ...fileWindows[0], workspaceId: "d" }],
+			}),
+		);
+		expect(rows[0]).toMatchObject({ key: "ws:d", hasChildren: true });
+		expect(keys(rows)).toEqual(["ws:d", "fw:md-1"]);
 	});
 });
 

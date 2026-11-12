@@ -16,6 +16,12 @@ search and an Agent status filter. See **Navigator** in `GLOSSARY.md`.
   shown even for a single Tab.
 - Order: Left sidebar order. Linked worktrees are indented under their
   Primary and always listed, even inside a Folded set.
+- **File windows** (added after the first build): each open File window is
+  listed under its Workspace, after its Tabs. Picking one makes its Workspace
+  Active (which raises all its File windows without focus), then focuses the
+  picked one. Hidden by the status filter. Rust lists them with
+  `file_windows_list` (rows with a live window only) and focuses one with
+  `file_window_focus`.
 - Opens fully expanded, the current target pane (Focused pane, or Focused
   tile in the Fleet Console) preselected. Always opens fresh: Opened scope,
   no status filter, empty search.
@@ -58,5 +64,5 @@ search and an Agent status filter. See **Navigator** in `GLOSSARY.md`.
 ## Not doing
 
 - Other Windows' workspaces (would need cross-window state queries).
-- File windows and Notes as tree entries.
+- Notes as tree entries.
 - Remembering scope/filters between opens.

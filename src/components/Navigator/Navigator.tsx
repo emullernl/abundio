@@ -1,4 +1,5 @@
 import {
+	AppWindow,
 	ChevronDown,
 	ChevronRight,
 	Eye,
@@ -15,9 +16,12 @@ import {
 	useWorkspaceRollups,
 } from "../../hooks/useWorkspaceRollups";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
+import { raiseFileWindows } from "../../lib/fileWindowRaise";
 import { targetPaneId } from "../../lib/fleetFocus";
+import { fileWindows, type OpenFileWindow } from "../../lib/ipc";
 import {
 	initialSelection,
+	isFolder,
 	NAV_STATUSES,
 	type NavRow,
 	type NavScope,
@@ -61,6 +65,17 @@ function goTo(row: NavRow): void {
 		return;
 	}
 	useWindowUiStore.getState().setFleetConsoleOpen(false);
+	if (row.kind === "window") {
+		// Its Workspace becomes Active, which raises all its File windows
+		// without focus; focus the picked one once that raise is done, so it
+		// ends up on top.
+		const { workspaceId, windowLabel } = row;
+		useWorkspaceStore.getState().beginWorkspaceSwitch(workspaceId);
+		void raiseFileWindows(workspaceId).then(() =>
+			fileWindows.focus(windowLabel).catch(() => {}),
+		);
+		return;
+	}
 	if (row.kind === "tab") {
 		revealPane(null, row.workspaceId, row.tabId);
 	} else {
@@ -121,6 +136,23 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 	const detectedAgentIds = usePtyActivityStore((s) => s.detectedAgentIds);
 	const agents = useSettingsStore((s) => s.agents);
 
+	// File windows live in Rust; read them once per open. They cannot change
+	// while the dialog has focus, short of a Workspace closing under it.
+	const [openWindows, setOpenWindows] = useState<OpenFileWindow[]>([]);
+	const openedKey = [...openedWorkspaceIds].sort().join("|");
+	useEffect(() => {
+		let live = true;
+		const ids = openedKey ? openedKey.split("|") : [];
+		if (ids.length === 0) return;
+		fileWindows
+			.list(ids)
+			.then((list) => live && setOpenWindows(list))
+			.catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [openedKey]);
+
 	const order = useMemo(
 		() =>
 			navigatorWorkspaceOrder(buildWorkspaceRows(workspaces, worktreeFacts)),
@@ -154,6 +186,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 				detectedAgentIds,
 				agentNames,
 				branches,
+				fileWindows: openWindows,
 			}),
 		[
 			order,
@@ -169,6 +202,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 			detectedAgentIds,
 			agentNames,
 			branches,
+			openWindows,
 		],
 	);
 
@@ -249,11 +283,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 			// With a search the tree is fully expanded and Left/Right move the
 			// caret instead.
 			e.preventDefault();
-			if (
-				selected.kind !== "pane" &&
-				selected.hasChildren &&
-				selected.expanded
-			) {
+			if (isFolder(selected) && selected.hasChildren && selected.expanded) {
 				setFolded(selected.key, true);
 			} else {
 				const parent = parentKey(selected);
@@ -261,7 +291,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 			}
 		} else if (query === "" && selected && e.key === "ArrowRight") {
 			e.preventDefault();
-			if (selected.kind === "pane" || !selected.hasChildren) return;
+			if (!isFolder(selected) || !selected.hasChildren) return;
 			if (!selected.expanded) setFolded(selected.key, false);
 			else move(selectedIndex + 1);
 		}
@@ -419,7 +449,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 								onHover={() => setSelectedKey(row.key)}
 								onPick={() => pick(row)}
 								onToggle={() =>
-									row.kind !== "pane" && setFolded(row.key, row.expanded)
+									isFolder(row) && setFolded(row.key, row.expanded)
 								}
 							/>
 						))
@@ -462,7 +492,7 @@ const NavRowView = memo(function NavRowView({
 	onToggle: () => void;
 }) {
 	const depth =
-		(row.kind === "workspace" ? 0 : row.kind === "tab" ? 1 : 2) +
+		(row.kind === "workspace" ? 0 : row.kind === "pane" ? 2 : 1) +
 		(row.linked ? 1 : 0);
 	const tab =
 		row.kind === "tab"
@@ -475,7 +505,7 @@ const NavRowView = memo(function NavRowView({
 			tabIndex={-1}
 			aria-selected={selected}
 			aria-expanded={
-				row.kind !== "pane" && row.hasChildren ? row.expanded : undefined
+				isFolder(row) && row.hasChildren ? row.expanded : undefined
 			}
 			data-nav-key={row.key}
 			data-testid="navigator-row"
@@ -498,7 +528,7 @@ const NavRowView = memo(function NavRowView({
 				className="flex items-center justify-center flex-shrink-0"
 				style={{ width: 14 }}
 			>
-				{row.kind !== "pane" && row.hasChildren && (
+				{isFolder(row) && row.hasChildren && (
 					<button
 						type="button"
 						aria-label={row.expanded ? "Collapse" : "Expand"}
@@ -522,6 +552,7 @@ const NavRowView = memo(function NavRowView({
 			)}
 			{row.kind === "tab" && <TabLine name={row.name} tab={tab} />}
 			{row.kind === "pane" && <PaneLine row={row} status={status} />}
+			{row.kind === "window" && <WindowLine row={row} />}
 		</div>
 	);
 });
@@ -625,6 +656,30 @@ function PaneLine({
 				style={{ fontSize: 12.5, color: "var(--fg-primary)" }}
 			>
 				{row.label}
+			</span>
+		</>
+	);
+}
+
+function WindowLine({ row }: { row: Extract<NavRow, { kind: "window" }> }) {
+	return (
+		<>
+			<span
+				className="flex items-center flex-shrink-0"
+				style={{ color: "var(--fg-secondary)" }}
+				title="Separate window"
+			>
+				<AppWindow size={13} />
+			</span>
+			<span
+				className="truncate"
+				style={{ fontSize: 12.5, color: "var(--fg-primary)" }}
+			>
+				{row.label}
+			</span>
+			<span className="flex-1" />
+			<span style={{ fontSize: 10.5, color: "var(--fg-secondary)" }}>
+				Window
 			</span>
 		</>
 	);

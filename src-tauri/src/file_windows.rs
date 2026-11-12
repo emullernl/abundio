@@ -806,6 +806,61 @@ pub fn dirty_windows(
         .collect()
 }
 
+/// One open File window, as the **Navigator** lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenFileWindow {
+    pub label: String,
+    pub workspace_id: String,
+    pub kind: FileWindowKind,
+    pub file_path: String,
+    pub commit_oid: Option<String>,
+}
+
+/// The open File windows of these Workspaces. A row is remembered while its
+/// window is closed with its Workspace, so only rows with a live window count.
+#[tauri::command]
+pub async fn file_windows_list(
+    app: AppHandle,
+    store: State<'_, FileWindowStore>,
+    workspace_ids: Vec<String>,
+) -> Result<Vec<OpenFileWindow>, AbundioError> {
+    let mut rows = Vec::new();
+    for id in &workspace_ids {
+        rows.extend(store.list_for_workspace(id)?);
+    }
+    Ok(open_windows(rows, |l| app.get_webview_window(l).is_some()))
+}
+
+/// The rows whose window is open, in row order.
+pub fn open_windows(rows: Vec<FileWindowRow>, is_open: impl Fn(&str) -> bool) -> Vec<OpenFileWindow> {
+    rows.into_iter()
+        .filter(|r| is_open(&r.label))
+        .map(|r| OpenFileWindow {
+            label: r.label,
+            workspace_id: r.workspace_id,
+            kind: r.kind,
+            file_path: r.file_path,
+            commit_oid: r.commit_oid,
+        })
+        .collect()
+}
+
+/// Brings one open File window to the front and focuses it: the user picked
+/// it in the Navigator. Only File window labels are accepted.
+#[tauri::command]
+pub async fn file_window_focus(app: AppHandle, label: String) -> Result<(), AbundioError> {
+    if !is_file_window_label(&label) {
+        return Err(AbundioError::NotFound(format!("file window {label}")));
+    }
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| AbundioError::NotFound(format!("file window {label}")))?;
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    Ok(())
+}
+
 /// Asks these windows to save. Each answers by reporting itself clean.
 #[tauri::command]
 pub async fn file_windows_save(app: AppHandle, labels: Vec<String>) -> Result<(), AbundioError> {
@@ -1368,6 +1423,18 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].label, "md-a");
         assert_eq!(out[0].file_path, "/r/md-a.md");
+    }
+
+    #[test]
+    fn open_windows_keeps_only_live_windows() {
+        let row = |label: &str| FileWindowRow {
+            label: label.into(),
+            ..row_of(FileWindowKind::Text, &format!("/r/{label}.md"))
+        };
+        let out = open_windows(vec![row("md-a"), row("md-b"), row("md-c")], |l| l != "md-b");
+        let labels: Vec<_> = out.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, ["md-a", "md-c"]);
+        assert_eq!(out[1].file_path, "/r/md-c.md");
     }
 
     #[test]

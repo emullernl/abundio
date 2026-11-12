@@ -2,7 +2,23 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+const invoke = vi.fn(
+	async (cmd: string, _args?: unknown): Promise<unknown> =>
+		cmd === "file_windows_list"
+			? [
+					{
+						label: "md-1",
+						workspaceId: "b",
+						kind: "text",
+						filePath: "/code/b/NOTES.md",
+						commitOid: null,
+					},
+				]
+			: undefined,
+);
+vi.mock("@tauri-apps/api/core", () => ({
+	invoke: (cmd: string, args?: unknown) => invoke(cmd, args),
+}));
 vi.mock("../../../lib/terminalManager", () => ({
 	getTerminal: () => undefined,
 }));
@@ -189,6 +205,21 @@ describe("Navigator", () => {
 		expect(rowTexts().some((t) => t.includes("Fix the flaky test"))).toBe(
 			false,
 		);
+	});
+
+	it("lists File windows under their Workspace; picking one focuses it", async () => {
+		render();
+		await act(async () => {});
+		const texts = rowTexts();
+		expect(texts).toHaveLength(9);
+		expect(texts[8]).toContain("NOTES.md");
+		const row = container.querySelectorAll<HTMLElement>(
+			'[data-testid="navigator-row"]',
+		)[8];
+		await act(async () => row.click());
+		await act(async () => {});
+		expect(invoke).toHaveBeenCalledWith("file_window_focus", { label: "md-1" });
+		expect(onClose).toHaveBeenCalled();
 	});
 
 	it("a status chip keeps only Agents in that state", () => {
