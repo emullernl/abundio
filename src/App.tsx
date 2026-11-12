@@ -1238,7 +1238,9 @@ export function App() {
 											onActivate={(tabId) => setActiveTab(workspace.id, tabId)}
 											onClose={(tabId) => requestCloseTerminalTab(tabId)}
 											onNew={() => requestNewTab(workspace.id)}
-											onRename={(tabId, name) => renameTab(tabId, name)}
+											onRename={(tabId, name) =>
+												renameTab(tabId, name, { byUser: true })
+											}
 										/>
 										<OpenInDevEnvButton
 											workspaceFolder={workspace.rootFolder}

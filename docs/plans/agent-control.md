@@ -325,6 +325,17 @@ Tab names: one line, no control characters, 1–64 characters after trimming. Er
 
 ### 11. Storage
 
+**Done.** As built:
+
+- `022_tab_ownership.sql` adds both columns. `Tab` (Rust) carries `spawned_by_pane` and `user_named` in every query, including the joined Workspace list the frontend loads.
+- `TabUpdate.spawned_by_pane` is `Option<Option<String>>`: left out means unchanged, `null` makes it an ordinary Tab again. A small `present` deserializer tells the two apart. `TabUpdate` now derives `Default`.
+- Frontend `Tab` / `TabUpdate`: `spawnedByPane?` and `userNamed?`, optional so fixtures need not change.
+- `renameTab(tabId, name, { byUser })`. The Tab bar's rename (`App.tsx`) is the only user path and passes `byUser: true`. New task names its Tab through `tabsApi.update` directly, so it never marks one.
+- `workspaceStore.releaseSpawnedTabs(ownerPaneId)`, called from `closePane.ts` with the Spawned-pane release.
+- Tests: Rust for defaults, setting, clearing with `null` and the joined list; `null` versus left out. Frontend for owner close releasing Tabs (and another pane's close not), and user versus app renames.
+
+The original list:
+
 - Migration `022_tab_ownership.sql`: `tabs.spawned_by_pane TEXT` (null for ordinary Tabs) and `tabs.user_named INTEGER NOT NULL DEFAULT 0`. Back up `abundio.db` first, as for 021.
 - `Tab` / `TabUpdate` (Rust and `lib/types.ts`) gain `spawnedByPane` and `userNamed`.
 - Every rename the user makes in the UI (Tab bar double-click and context menu, palette) sets `userNamed`. The app's own renames do not: New task naming its Tab, and Agent control. `workspaceStore.renameTab` gains an `{ byUser }` option and the UI call sites pass it. Tabs renamed before this ships count as not user-named: there is no record.

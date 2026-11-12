@@ -46,14 +46,31 @@ pub struct Tab {
     pub position: i32,
     pub created_at: i64,
     pub updated_at: i64,
+    /// The pane whose Agent opened this Tab: a **Spawned tab** (ADR-0054).
+    pub spawned_by_pane: Option<String>,
+    /// The user renamed this Tab by hand, so Agent control may not.
+    pub user_named: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabUpdate {
     pub name: Option<String>,
     pub layout_json: Option<String>,
     pub position: Option<i32>,
+    /// Absent: unchanged. `null`: no longer a Spawned tab. A pane id: its owner.
+    #[serde(default, deserialize_with = "present")]
+    pub spawned_by_pane: Option<Option<String>>,
+    pub user_named: Option<bool>,
+}
+
+/// Tells a field sent as `null` (`Some(None)`) from one left out (`None`).
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,7 +292,7 @@ impl WorkspaceStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT s.id, s.name, s.root_folder, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.profile_id, s.created_at, s.updated_at, s.worktree_setup_commands,
-                    t.id, t.workspace_id, t.name, t.layout_json, t.position, t.created_at, t.updated_at
+                    t.id, t.workspace_id, t.name, t.layout_json, t.position, t.created_at, t.updated_at, t.spawned_by_pane, t.user_named
              FROM workspaces s
              LEFT JOIN tabs t ON t.workspace_id = s.id
              WHERE s.profile_id = ?1
@@ -323,6 +340,8 @@ impl WorkspaceStore {
                         position: row.get(16)?,
                         created_at: row.get(17)?,
                         updated_at: row.get(18)?,
+                        spawned_by_pane: row.get(19)?,
+                        user_named: row.get::<_, i64>(20)? != 0,
                     });
                 }
             }
@@ -432,6 +451,14 @@ impl WorkspaceStore {
         if let Some(ref position) = updates.position {
             sets.push(format!("position = ?{}", params.len() + 1));
             params.push(Box::new(*position));
+        }
+        if let Some(ref owner) = updates.spawned_by_pane {
+            sets.push(format!("spawned_by_pane = ?{}", params.len() + 1));
+            params.push(Box::new(owner.clone()));
+        }
+        if let Some(named) = updates.user_named {
+            sets.push(format!("user_named = ?{}", params.len() + 1));
+            params.push(Box::new(named as i64));
         }
 
         let idx = params.len() + 1;
@@ -911,7 +938,7 @@ impl WorkspaceStore {
 
     fn list_tabs_with_conn(conn: &Connection, workspace_id: &str) -> Result<Vec<Tab>, AbundioError> {
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_id, name, layout_json, position, created_at, updated_at
+            "SELECT id, workspace_id, name, layout_json, position, created_at, updated_at, spawned_by_pane, user_named
              FROM tabs WHERE workspace_id = ?1 ORDER BY position ASC",
         )?;
 
@@ -925,6 +952,8 @@ impl WorkspaceStore {
                     position: row.get(4)?,
                     created_at: row.get(5)?,
                     updated_at: row.get(6)?,
+                    spawned_by_pane: row.get(7)?,
+                    user_named: row.get::<_, i64>(8)? != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -934,7 +963,7 @@ impl WorkspaceStore {
 
     fn get_tab_with_conn(conn: &Connection, id: &str) -> Result<Tab, AbundioError> {
         conn.query_row(
-            "SELECT id, workspace_id, name, layout_json, position, created_at, updated_at
+            "SELECT id, workspace_id, name, layout_json, position, created_at, updated_at, spawned_by_pane, user_named
              FROM tabs WHERE id = ?1",
             [id],
             |row| {
@@ -946,6 +975,8 @@ impl WorkspaceStore {
                     position: row.get(4)?,
                     created_at: row.get(5)?,
                     updated_at: row.get(6)?,
+                    spawned_by_pane: row.get(7)?,
+                    user_named: row.get::<_, i64>(8)? != 0,
                 })
             },
         )
@@ -1553,11 +1584,65 @@ mod tests {
                     name: Some("Renamed".to_string()),
                     layout_json: None,
                     position: None,
+                    ..Default::default()
                 },
             )
             .unwrap();
         let tabs = store.list_tabs(&workspace.workspace.id).unwrap();
         assert_eq!(tabs[0].name, "Renamed");
+    }
+
+    #[test]
+    fn tab_ownership_and_user_named() {
+        let store = test_store();
+        let workspace = store.create("Test", "/tmp", DEFAULT_PID).unwrap();
+        let tab = store.create_tab(&workspace.workspace.id, "Helper").unwrap();
+        // New and existing Tabs: ordinary, not user-named.
+        assert_eq!(tab.spawned_by_pane, None);
+        assert!(!tab.user_named);
+
+        store
+            .update_tab(
+                &tab.id,
+                TabUpdate {
+                    spawned_by_pane: Some(Some("pane-a".into())),
+                    user_named: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let got = store.list_tabs(&workspace.workspace.id).unwrap();
+        let got = got.iter().find(|t| t.id == tab.id).unwrap();
+        assert_eq!(got.spawned_by_pane.as_deref(), Some("pane-a"));
+        assert!(got.user_named);
+        // The joined list (what the frontend loads) carries them too.
+        let listed = store.list(DEFAULT_PID).unwrap();
+        let listed = listed[0].tabs.iter().find(|t| t.id == tab.id).unwrap();
+        assert_eq!(listed.spawned_by_pane.as_deref(), Some("pane-a"));
+        assert!(listed.user_named);
+
+        // A rename alone leaves both alone; a null owner clears it.
+        store
+            .update_tab(&tab.id, TabUpdate { name: Some("X".into()), ..Default::default() })
+            .unwrap();
+        store
+            .update_tab(&tab.id, TabUpdate { spawned_by_pane: Some(None), ..Default::default() })
+            .unwrap();
+        let got = store.list_tabs(&workspace.workspace.id).unwrap();
+        let got = got.iter().find(|t| t.id == tab.id).unwrap();
+        assert_eq!(got.spawned_by_pane, None);
+        assert!(got.user_named);
+    }
+
+    #[test]
+    fn tab_update_tells_null_from_absent() {
+        let absent: TabUpdate = serde_json::from_str(r#"{"name":"A"}"#).unwrap();
+        assert_eq!(absent.spawned_by_pane, None);
+        let null: TabUpdate = serde_json::from_str(r#"{"spawnedByPane":null}"#).unwrap();
+        assert_eq!(null.spawned_by_pane, Some(None));
+        let set: TabUpdate = serde_json::from_str(r#"{"spawnedByPane":"p","userNamed":true}"#).unwrap();
+        assert_eq!(set.spawned_by_pane, Some(Some("p".into())));
+        assert_eq!(set.user_named, Some(true));
     }
 
     #[test]
@@ -1573,6 +1658,7 @@ mod tests {
                     name: None,
                     layout_json: Some(new_layout.to_string()),
                     position: None,
+                    ..Default::default()
                 },
             )
             .unwrap();

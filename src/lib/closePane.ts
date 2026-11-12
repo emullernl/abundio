@@ -26,7 +26,8 @@ export function locatePane(
 	return null;
 }
 
-/** When a pane closes, its **Spawned panes** become ordinary panes. */
+/** When a pane closes, its **Spawned panes** and **Spawned tabs** become
+ *  ordinary ones. */
 async function releaseSpawned(workspaceId: string, ownerPaneId: string) {
 	const store = useWorkspaceStore.getState();
 	const ws = store.workspaces.find((w) => w.id === workspaceId);
@@ -36,6 +37,7 @@ async function releaseSpawned(workspaceId: string, ownerPaneId: string) {
 		const cleared = clearSpawnedBy(layout, ownerPaneId);
 		if (cleared !== layout) await store.updateLayout(tab.id, cleared);
 	}
+	await useWorkspaceStore.getState().releaseSpawnedTabs(ownerPaneId);
 }
 
 /**

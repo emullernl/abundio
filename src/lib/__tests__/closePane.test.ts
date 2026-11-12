@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../ipc", () => ({ tabs: { update: async () => {} } }));
+const tabUpdates: [string, unknown][] = [];
+vi.mock("../ipc", () => ({
+	tabs: {
+		update: async (id: string, u: unknown) => {
+			tabUpdates.push([id, u]);
+		},
+	},
+}));
 vi.mock("../terminalManager", () => ({ teardownTerminal: () => {} }));
 
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -30,6 +37,7 @@ const other: PaneNode = {
 };
 
 beforeEach(() => {
+	tabUpdates.length = 0;
 	useWorkspaceStore.setState({
 		workspaces: [
 			{
@@ -52,6 +60,7 @@ beforeEach(() => {
 						position: 1,
 						createdAt: 0,
 						updatedAt: 0,
+						spawnedByPane: "a",
 					},
 				],
 			} as unknown as WorkspaceWithTabs,
@@ -82,5 +91,49 @@ describe("closePaneNow", () => {
 	it("with keepFocus, leaves focus on another open pane", async () => {
 		await closePaneNow("b", { keepFocus: true });
 		expect(useWorkspaceStore.getState().focusedPaneId).toBe("c");
+	});
+});
+
+describe("closePaneNow and Spawned tabs", () => {
+	it("makes the closed pane's Spawned tabs ordinary Tabs", async () => {
+		await closePaneNow("a");
+		const t2 = useWorkspaceStore
+			.getState()
+			.workspaces[0].tabs.find((t) => t.id === "t2");
+		expect(t2?.spawnedByPane).toBeNull();
+		expect(tabUpdates).toContainEqual(["t2", { spawnedByPane: null }]);
+	});
+
+	it("leaves them owned when another pane closes", async () => {
+		await closePaneNow("c");
+		const t2 = useWorkspaceStore
+			.getState()
+			.workspaces[0].tabs.find((t) => t.id === "t2");
+		expect(t2?.spawnedByPane).toBe("a");
+	});
+});
+
+describe("renameTab", () => {
+	it("marks a rename by the user as user-named", async () => {
+		await useWorkspaceStore
+			.getState()
+			.renameTab("t1", "Mine", { byUser: true });
+		const t1 = useWorkspaceStore
+			.getState()
+			.workspaces[0].tabs.find((t) => t.id === "t1");
+		expect(t1).toMatchObject({ name: "Mine", userNamed: true });
+		expect(tabUpdates).toContainEqual([
+			"t1",
+			{ name: "Mine", userNamed: true },
+		]);
+	});
+
+	it("does not mark the app's own renames", async () => {
+		await useWorkspaceStore.getState().renameTab("t1", "Fix the build");
+		const t1 = useWorkspaceStore
+			.getState()
+			.workspaces[0].tabs.find((t) => t.id === "t1");
+		expect(t1?.userNamed).toBeUndefined();
+		expect(tabUpdates).toContainEqual(["t1", { name: "Fix the build" }]);
 	});
 });

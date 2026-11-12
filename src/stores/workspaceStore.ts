@@ -244,7 +244,15 @@ interface WorkspaceState {
 	) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
-	renameTab: (tabId: string, name: string) => Promise<void>;
+	/** `byUser`: the user renamed it by hand (the Tab bar), which marks it
+	 *  **user-named**: Agent control may not rename it from then on. */
+	renameTab: (
+		tabId: string,
+		name: string,
+		opts?: { byUser?: boolean },
+	) => Promise<void>;
+	/** The Tabs `ownerPaneId` opened become ordinary Tabs (it closed). */
+	releaseSpawnedTabs: (ownerPaneId: string) => Promise<void>;
 
 	// Pane/layout actions
 	setFocusedPane: (paneId: string | null) => void;
@@ -1233,14 +1241,40 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		});
 	},
 
-	renameTab: async (tabId, name) => {
-		await tabsApi.update(tabId, { name });
+	renameTab: async (tabId, name, opts) => {
+		const byUser = opts?.byUser === true;
+		await tabsApi.update(tabId, byUser ? { name, userNamed: true } : { name });
 		set((state) => ({
 			workspaces: state.workspaces.map((s) => ({
 				...s,
-				tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, name } : t)),
+				tabs: s.tabs.map((t) =>
+					t.id === tabId
+						? { ...t, name, ...(byUser ? { userNamed: true } : {}) }
+						: t,
+				),
 			})),
 		}));
+	},
+
+	releaseSpawnedTabs: async (ownerPaneId) => {
+		const owned = get()
+			.workspaces.flatMap((w) => w.tabs)
+			.filter((t) => t.spawnedByPane === ownerPaneId);
+		if (owned.length === 0) return;
+		const ids = new Set(owned.map((t) => t.id));
+		set((state) => ({
+			workspaces: state.workspaces.map((s) => ({
+				...s,
+				tabs: s.tabs.map((t) =>
+					ids.has(t.id) ? { ...t, spawnedByPane: null } : t,
+				),
+			})),
+		}));
+		await Promise.all(
+			owned.map((t) =>
+				tabsApi.update(t.id, { spawnedByPane: null }).catch(() => {}),
+			),
+		);
 	},
 
 	// ── Pane/layout actions ──
