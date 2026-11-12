@@ -7,10 +7,12 @@ const inside = document.createElement("textarea");
 termEl.appendChild(inside);
 const elsewhere = document.createElement("input");
 
-const base = { hadFocus: true, stillTarget: true, body, termEl };
+const base = { isTarget: true, body, termEl };
 
 describe("shouldRefocusAfterProjection", () => {
-	it("gives focus back when the move dropped it to <body>", () => {
+	it("takes focus back when the moves dropped it to <body>", () => {
+		// The split case: the retract already lost focus, so at reveal time
+		// the focused pane's terminal finds nothing focused.
 		expect(shouldRefocusAfterProjection({ ...base, active: body })).toBe(true);
 		expect(shouldRefocusAfterProjection({ ...base, active: null })).toBe(true);
 		expect(shouldRefocusAfterProjection({ ...base, active: inside })).toBe(
@@ -18,23 +20,13 @@ describe("shouldRefocusAfterProjection", () => {
 		);
 	});
 
-	it("never takes focus it did not have", () => {
+	it("leaves a pane that is not the one keystrokes go to", () => {
 		expect(
-			shouldRefocusAfterProjection({ ...base, hadFocus: false, active: body }),
+			shouldRefocusAfterProjection({ ...base, isTarget: false, active: body }),
 		).toBe(false);
 	});
 
-	it("leaves it when another pane is now the target", () => {
-		expect(
-			shouldRefocusAfterProjection({
-				...base,
-				stillTarget: false,
-				active: body,
-			}),
-		).toBe(false);
-	});
-
-	it("leaves it when something else took focus meanwhile", () => {
+	it("never takes focus from an input, editor or other terminal", () => {
 		expect(shouldRefocusAfterProjection({ ...base, active: elsewhere })).toBe(
 			false,
 		);

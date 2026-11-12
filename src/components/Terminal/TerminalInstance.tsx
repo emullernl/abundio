@@ -70,9 +70,8 @@ export const TerminalInstance = memo(function TerminalInstance({
 			const termEl = managed.term.element;
 			const projectStart = performance.now();
 
-			// Moving and hiding the element below both drop keyboard focus; note
-			// whether it had it, to hand it back once shown (`projectionFocus.ts`).
-			const hadFocus = !!termEl && termEl.contains(document.activeElement);
+			// Moving and hiding the element below drop keyboard focus (so did the
+			// retract before it); it is handed back on reveal (`projectionFocus.ts`).
 
 			// Hide terminal during projection to prevent flicker from fit/restore/resize
 			if (termEl) termEl.style.visibility = "hidden";
@@ -139,8 +138,7 @@ export const TerminalInstance = memo(function TerminalInstance({
 							if (
 								termEl &&
 								shouldRefocusAfterProjection({
-									hadFocus,
-									stillTarget: targetPaneId() === id,
+									isTarget: targetPaneId() === id,
 									active: document.activeElement,
 									body: document.body,
 									termEl,
