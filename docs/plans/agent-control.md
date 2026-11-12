@@ -102,6 +102,21 @@ What this means for step 9:
 
 ### 3. Per-pane token and request routing (Rust)
 
+**Done.** As built, where it differs from or adds to the list below:
+
+- The pane id comes from `log_id`, which the frontend already sets to the pane id; `pty_spawn` is unchanged. Only a spawn with both a Workspace id and a pane id gets a token. The token is revoked on kill, when the PTY thread ends (only that spawn's token, so a respawn under the same pty id keeps its new one), and when the spawn itself fails.
+- `/control` is checked before the shared hook token and authenticates with `X-Abundio-Agent-Token` alone.
+- `prompt --wait` is **one** request: the Window sends the prompt and waits, because the 5-second stall check must start when the prompt is sent. If the connection drops, the CLI retries with `X-Abundio-Retry`. Rust turns a retried `prompt --wait` into `agent wait`, and refuses a retry of any other call that changes something (`connection_lost`). Reads and waits simply run again.
+- To check for a cycle, Rust first asks the Window to resolve the target (`{ op: "resolve", target }` → `{ result: { paneId } }`). Then it adds the edge, forwards the wait, and removes the edge when the wait ends.
+- Window protocol: Rust emits `agent-control-request { id, caller: { ptyId, paneId, workspaceId }, request }` to the owning Window. `request` is tagged by `op` (`pane.list`, `agent.prompt`, …), and a target is `{ kind: "pane", value: 3 }` or `{ kind: "handle", value: "reviewer" }`. The Window answers with `agent_control_reply(id, { result } | { error: { code, message } })`. When Rust stops waiting (timeout) it emits `agent-control-cancel { id }`.
+- HTTP status: 200 is the result (or help text); 400 is a usage error; 403 is `unauthorized` or `disabled`; 409 is any error the Window returns, plus `cycle` and `connection_lost`; 503 is `window_gone`; 504 is `timeout`.
+- Calls that do not wait time out after 45 s; waits use their own timeout, and `--timeout 0` means no limit.
+- Pane commands accept an Agent handle as well as a Pane number.
+- Extra commands for the Window side: `agent_control_pane_numbers(workspaceId, paneIds)` and `agent_control_pane_for_number(workspaceId, number)`.
+- Keys are validated here; mapping them to bytes is step 7.
+
+The original list:
+
 - New `agent_control.rs`:
   - `AgentControlTokens`: token → `Caller { pty_id, pane_id, workspace_id, window_label }`. Issued in `pty_spawn` (the frontend already passes the pane id as `log_id`; pass it explicitly as `pane_id`), revoked when the PTY exits or is killed. Compared in constant time, like the hook token.
   - `PendingRequests`: request id → one-shot reply channel.

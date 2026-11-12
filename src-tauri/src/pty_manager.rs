@@ -69,6 +69,8 @@ pub struct PtyManager {
     /// kill its PTYs. React cleanup never runs when a webview is destroyed, so
     /// without this every shell and Agent of a closed Window ran until quit.
     owner_windows: DashMap<String, String>,
+    /// Per-PTY **Agent control** tokens (ADR-0054), issued at spawn.
+    control_tokens: crate::agent_control::ControlTokens,
 }
 
 impl PtyManager {
@@ -77,7 +79,12 @@ impl PtyManager {
             entries: DashMap::new(),
             spawn_contexts: DashMap::new(),
             owner_windows: DashMap::new(),
+            control_tokens: Default::default(),
         }
+    }
+
+    pub fn control_tokens(&self) -> &crate::agent_control::ControlTokens {
+        &self.control_tokens
     }
 
     /// The Workspace a live PTY belongs to, or `None` if the pty id is unknown
@@ -251,6 +258,23 @@ impl PtyManager {
             cmd.env("ABUNDIO_WINDOW_LABEL", window_label.unwrap_or(""));
         }
 
+        // Agent control (ADR-0054): a token of this PTY's own, naming its
+        // pane, Workspace and Window. Only a Workspace pane gets one; the
+        // frontend passes the pane id as `log_id`.
+        let control_token = match (workspace_id, log_id) {
+            (Some(ws), Some(pane)) => {
+                let token = self.control_tokens.issue(crate::agent_control::Caller {
+                    pty_id: pty_id.clone(),
+                    pane_id: pane.to_string(),
+                    workspace_id: ws.to_string(),
+                    window_label: owner_window.to_string(),
+                });
+                cmd.env("ABUNDIO_AGENT_TOKEN", &token);
+                Some(token)
+            }
+            _ => None,
+        };
+
         // ── Workspace environment variables (injected Bundle) ──
         //
         // This must NEVER block the spawn. A locked or denied credential store,
@@ -337,10 +361,15 @@ impl PtyManager {
             cmd.cwd(cwd);
         }
 
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .map_err(|e| AbundioError::Pty(e.to_string()))?;
+        let child = match pair.slave.spawn_command(cmd) {
+            Ok(child) => child,
+            Err(e) => {
+                if let Some(t) = &control_token {
+                    self.control_tokens.revoke_token(t);
+                }
+                return Err(AbundioError::Pty(e.to_string()));
+            }
+        };
 
         // Drop slave — we only need the master
         drop(pair.slave);
@@ -374,8 +403,16 @@ impl PtyManager {
         let id_clone = pty_id.clone();
         let master = pair.master;
 
+        let app_for_exit = app.clone();
         thread::spawn(move || {
             pty_thread(id_clone, master, child, rx, alive, app, log_file, shell_type);
+            // The PTY is gone: its token must not outlive it (a background
+            // process it left behind still has the token in its environment).
+            if let Some(t) = control_token {
+                if let Some(mgr) = app_for_exit.try_state::<PtyManager>() {
+                    mgr.control_tokens.revoke_token(&t);
+                }
+            }
         });
 
         Ok(pty_id)
@@ -435,6 +472,7 @@ impl PtyManager {
         self.entries.remove(pty_id);
         self.spawn_contexts.remove(pty_id);
         self.owner_windows.remove(pty_id);
+        self.control_tokens.revoke_pty(pty_id);
         Ok(())
     }
 

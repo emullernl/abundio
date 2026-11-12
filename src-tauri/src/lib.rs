@@ -1,3 +1,4 @@
+pub mod agent_control;
 pub mod agent_hooks;
 pub mod app_badge;
 pub mod app_paths;
@@ -838,6 +839,8 @@ pub fn run() {
             // Window placement (ADR-0051). The old plugin file is read before
             // any window is placed, so a window with no placement yet can
             // start from where the plugin had it.
+            app.manage(agent_control::PendingRequests::default());
+            app.manage(agent_control::WaitGraph::default());
             app.manage(window_frame::PlacementTracker::default());
             app.manage(window_frame::LaunchRestore::default());
             app.manage(window_frame::LegacyPlacements::load(app.handle()));
@@ -1452,6 +1455,11 @@ pub fn run() {
             commands::workspace_restore_set,
             commands::workspace_missing_folders,
             commands::workspace_set_restore_opened,
+            agent_control::agent_control_reply,
+            agent_control::agent_control_enabled,
+            agent_control::agent_control_set_enabled,
+            agent_control::agent_control_pane_numbers,
+            agent_control::agent_control_pane_for_number,
             commands::workspace_set_restore_active,
             commands::pty_read_log,
             commands::pty_write_snapshot,
