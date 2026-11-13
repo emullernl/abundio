@@ -13,6 +13,7 @@ vi.mock("../../ipc", () => ({
 const terminals = new Map<string, unknown>();
 vi.mock("../../terminalManager", () => ({
 	getTerminal: (id: string) => terminals.get(id),
+	startPtyUnlessShown: () => () => {},
 }));
 
 import { useControlBadgeStore } from "../../../stores/controlBadgeStore";

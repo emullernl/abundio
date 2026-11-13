@@ -44,6 +44,7 @@ vi.mock("../../ipc", () => ({
 const terminals = new Map<string, unknown>();
 vi.mock("../../terminalManager", () => ({
 	getTerminal: (id: string) => terminals.get(id),
+	startPtyUnlessShown: () => () => {},
 	teardownTerminal: () => {},
 }));
 vi.mock("../../paneLocation", () => ({ revealPane: () => {} }));

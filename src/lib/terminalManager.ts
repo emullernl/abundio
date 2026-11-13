@@ -46,6 +46,7 @@ import {
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
 import { targetPaneId } from "./fleetFocus";
+import { startUnlessShown } from "./hiddenSpawn";
 import { agentHooks, pty } from "./ipc";
 import { folderMissingReason } from "./missingFolder";
 import {
@@ -1300,6 +1301,31 @@ export function ensurePtySpawned(paneId: string): void {
 	if (!init) return;
 	managed.deferredInit = null;
 	init();
+}
+
+/**
+ * Start a new pane's PTY even if nothing shows it: Agent control opens panes
+ * in Tabs and Workspaces the user is not looking at (`lib/hiddenSpawn.ts`).
+ * It starts at `size` (the caller's grid is a fair guess); showing it later
+ * resizes it. Returns a cancel.
+ */
+export function startPtyUnlessShown(
+	paneId: string,
+	size: { cols: number; rows: number } | null,
+): () => void {
+	return startUnlessShown({
+		exists: () => instances.has(paneId),
+		started: () => isPtySpawned(paneId),
+		start: () => {
+			const managed = instances.get(paneId);
+			if (!managed) return;
+			if (size && size.cols > 0 && size.rows > 0) {
+				managed.term.resize(size.cols, size.rows);
+			}
+			ensurePtySpawned(paneId);
+		},
+		subscribe: (listener) => subscribePaneRevision(paneId, listener),
+	});
 }
 
 /** True if the PTY has been spawned (or is in the process of being spawned)

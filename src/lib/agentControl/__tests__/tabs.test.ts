@@ -38,9 +38,14 @@ vi.mock("../../ipc", () => ({
 }));
 
 const terminals = new Map<string, unknown>();
+const startedHidden: [string, unknown][] = [];
 vi.mock("../../terminalManager", () => ({
 	getTerminal: (id: string) => terminals.get(id),
 	teardownTerminal: () => {},
+	startPtyUnlessShown: (id: string, size: unknown) => {
+		startedHidden.push([id, size]);
+		return () => {};
+	},
 }));
 
 const revealed: [string, string, string][] = [];
@@ -188,6 +193,8 @@ describe("agent start --tab", () => {
 		expect(s.activeTabByWorkspace.ws).toBe("t1");
 		expect(s.focusedPaneId).toBe("a");
 		expect(revealed).toEqual([]);
+		// Nothing shows the new Tab, so its Agent must start without it.
+		expect(startedHidden.map(([id]) => id)).toContain(paneOf(t).id);
 		expect(reply).toMatchObject({
 			handle: "fixer",
 			agent: "claude",

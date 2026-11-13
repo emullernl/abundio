@@ -36,7 +36,11 @@ import {
 import { setPendingTask, takePendingTask } from "../pendingAgentRegistry";
 import { canFire } from "../promptActions";
 import { taskTabName } from "../taskPrompt";
-import { getTerminal, type ManagedTerminal } from "../terminalManager";
+import {
+	getTerminal,
+	type ManagedTerminal,
+	startPtyUnlessShown,
+} from "../terminalManager";
 import type { CodingAgent, WorkspaceWithTabs } from "../types";
 import { addWorktreeTargetId } from "../worktreeGrouping";
 import { basename, resolvePath } from "../worktreePath";
@@ -539,6 +543,17 @@ async function checkNewHandle(
 	}
 }
 
+/** Start a new pane's Agent even when nothing shows the pane: a Tab or
+ *  Workspace the user is not looking at would otherwise hold it until the
+ *  user went there. It starts at the caller's terminal size. */
+function startEvenIfHidden(scope: Scope, paneId: string): void {
+	const term = getTerminal(scope.caller.paneId)?.term;
+	startPtyUnlessShown(
+		paneId,
+		term ? { cols: term.cols, rows: term.rows } : null,
+	);
+}
+
 /** Resolve once `paneId` is in agent mode; `stalled` after 30 s. */
 function untilAgentMode(paneId: string, signal: AbortSignal): Promise<void> {
 	return waitUntil(
@@ -682,6 +697,7 @@ async function newWorktree(
 				),
 			);
 	}
+	startEvenIfHidden(scope, paneId);
 	await untilAgentMode(paneId, signal);
 	await useWorkspaceStore.getState().ensureDefaultHandle(paneId);
 	return {
@@ -757,6 +773,7 @@ async function splitCaller(
 	});
 	const next = wrapInSplit(layout, self.node.id, node, layoutDirection(side));
 	await store.updateLayout(tab.id, next);
+	startEvenIfHidden(scope, node.id);
 	return { paneId: node.id, hint };
 }
 
@@ -905,6 +922,7 @@ async function openSpawnedTab(
 	const paneId = seeded ?? (layout ? collectTerminalIds(layout)[0] : undefined);
 	if (!paneId) throw new ControlError("internal", "the new Tab has no pane");
 	if (opts.focus) revealPane(paneId, scope.workspaceId, tab.id);
+	startEvenIfHidden(scope, paneId);
 	return paneId;
 }
 

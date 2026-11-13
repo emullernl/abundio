@@ -31,6 +31,7 @@ let worktreeList: { path: string; branch: string | null }[] = [];
 const outputs = vi.hoisted(() => new Map<string, (d: Uint8Array) => void>());
 vi.mock("../../terminalManager", () => ({
 	getTerminal: () => undefined,
+	startPtyUnlessShown: () => () => {},
 }));
 vi.mock("@tauri-apps/plugin-notification", () => ({
 	sendNotification: () => {},
