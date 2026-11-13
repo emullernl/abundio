@@ -1247,6 +1247,7 @@ export function App() {
 										<TabBar
 											tabs={workspace.tabs}
 											activeTabId={activeTabId}
+											workspaceActive={isActive}
 											onActivate={(tabId) => setActiveTab(workspace.id, tabId)}
 											onClose={(tabId) => requestCloseTerminalTab(tabId)}
 											onNew={() => requestNewTab(workspace.id)}
