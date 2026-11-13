@@ -8,6 +8,12 @@ vi.mock("../../ipc", () => ({
 		handleDefault: async () => "Agent One",
 	},
 	tabs: { update: async () => {} },
+	pty: {
+		onOutput: (ptyId: string, cb: (d: Uint8Array) => void) => {
+			outputs.set(ptyId, cb);
+			return Promise.resolve(() => outputs.delete(ptyId));
+		},
+	},
 	notes: {
 		get: async () => "",
 		set: async (...a: unknown[]) => {
@@ -16,6 +22,7 @@ vi.mock("../../ipc", () => ({
 	},
 }));
 const noteSets: unknown[] = vi.hoisted(() => []);
+const outputs = vi.hoisted(() => new Map<string, (d: Uint8Array) => void>());
 vi.mock("../../terminalManager", () => ({
 	getTerminal: () => undefined,
 }));
@@ -258,5 +265,40 @@ describe("notes", () => {
 			{ updateSelection: false },
 		);
 		unregister();
+	});
+});
+
+describe("pane watch", () => {
+	const watch = (pattern: string, ignoreCase = false) =>
+		runRequest(agent, {
+			op: "pane.watch",
+			target: { kind: "pane", value: 1 },
+			pattern,
+			ignoreCase,
+			timeoutMs: null,
+		});
+	const print = (s: string) =>
+		outputs.get("pty-a")?.(new TextEncoder().encode(s));
+
+	it("returns the first matching line of new output", async () => {
+		const p = watch("ready in \\d+ms", true);
+		await vi.waitFor(() => expect(outputs.has("pty-a")).toBe(true));
+		print("\x1b[32mVITE\x1b[0m starting\r\n");
+		print("  READY in 312ms\r\n");
+		await expect(p).resolves.toEqual({ line: "  READY in 312ms" });
+		expect(outputs.has("pty-a")).toBe(false);
+	});
+
+	it("ends when the PTY exits", async () => {
+		const p = watch("never");
+		await vi.waitFor(() => expect(outputs.has("pty-a")).toBe(true));
+		useWorkspaceStore.setState({
+			ptyStatuses: { "pty-a": { type: "exited", code: 0 } as never },
+		});
+		await expect(p).rejects.toMatchObject({ code: "exited" });
+	});
+
+	it("refuses a broken pattern", async () => {
+		await expect(watch("(")).rejects.toMatchObject({ code: "invalid_pattern" });
 	});
 });

@@ -67,6 +67,7 @@ import {
 } from "./types";
 import { notifyUser, startSignalClearing } from "./userSignals";
 import { type WaitOutcome, waitForPane } from "./waitForPane";
+import { compilePattern, EscapeStripper, LineMatcher } from "./watchLines";
 
 /** The caller's Workspace as this Window sees it right now. */
 /** Where a call acts (ADR-0055): the caller's own Workspace unless Rust
@@ -343,6 +344,19 @@ export async function runRequest(
 				promptAgent(scope, pane, request, signal),
 			);
 		}
+		case "pane.watch": {
+			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			const pattern = compilePattern(request.pattern, request.ignoreCase);
+			if (!pattern) {
+				throw new ControlError(
+					"invalid_pattern",
+					"--match is not a valid JavaScript regular expression",
+				);
+			}
+			return withBadge(scope, pane, () =>
+				watchPane(ptyIdOf(pane), pattern, signal),
+			);
+		}
 		case "agent.wait": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			return withBadge(scope, pane, async () => {
@@ -444,6 +458,48 @@ export async function runRequest(
 				"unsupported",
 				`\`${(request as { op: string }).op}\` is not available in this version of Abundio`,
 			);
+	}
+}
+
+/** `pane watch`: the first line of output from now on that matches. Ends
+ *  early when the PTY exits, or when Rust cancels the call (its timeout). */
+async function watchPane(
+	ptyId: string,
+	pattern: RegExp,
+	signal: AbortSignal,
+): Promise<{ line: string }> {
+	if (!ptyId) {
+		throw new ControlError("state_unknown", "that pane has no running PTY");
+	}
+	const exited = () =>
+		useWorkspaceStore.getState().ptyStatuses[ptyId]?.type === "exited";
+	if (exited()) throw new ControlError("exited", "that pane's PTY has exited");
+	const stripper = new EscapeStripper();
+	const lines = new LineMatcher(pattern);
+	let stop = () => {};
+	try {
+		return await new Promise<{ line: string }>((resolve, reject) => {
+			const unlisten = pty.onOutput(ptyId, (data) => {
+				const line = lines.feed(stripper.feed(data));
+				if (line !== null) resolve({ line });
+			});
+			const unsubStatus = useWorkspaceStore.subscribe(() => {
+				if (exited()) {
+					reject(new ControlError("exited", "that pane's PTY exited"));
+				}
+			});
+			const onAbort = () =>
+				reject(new ControlError("cancelled", "the watch was stopped"));
+			if (signal.aborted) onAbort();
+			signal.addEventListener("abort", onAbort);
+			stop = () => {
+				unlisten.then((fn) => fn()).catch(() => {});
+				unsubStatus();
+				signal.removeEventListener("abort", onAbort);
+			};
+		});
+	} finally {
+		stop();
 	}
 }
 
