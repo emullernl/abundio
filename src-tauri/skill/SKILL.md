@@ -1,6 +1,6 @@
 ---
 name: abundio
-description: Work with the other agents and terminal panes in Abundio — in your own Workspace, and in the other Workspaces of your Profile when the user asks — list them, read their output, prompt another agent and wait for its answer, start a helper agent in a new pane, or run a command in an idle shell. Use when the user asks you to delegate to, coordinate with, check on or review the work of another agent, or to use another pane. Only works inside an Abundio pane.
+description: Work with the other agents and terminal panes in Abundio — in your own Workspace, and in the other Workspaces of your Profile when the user asks — list them, read their output, prompt another agent and wait for its answer, start a helper agent in a new pane or a new git worktree, run a command in an idle shell and wait for its output, share the Workspace's notes, and reach the user (ask a question, call them over, show your progress). Use when the user asks you to delegate to, coordinate with, check on or review the work of another agent, or to use another pane, and when you work for another agent and need the user. Only works inside an Abundio pane.
 ---
 
 # Abundio: other agents and panes
@@ -78,6 +78,50 @@ never one the user has named: leave those as they are.
 `abundio pane split` opens a plain shell beside you, `abundio tab new` one in
 a new Tab; `abundio pane run <pane> "<command>"` runs one line in a shell
 that is at its prompt.
+
+### Waiting for output
+
+`abundio pane watch <pane> --match "<regex>"` waits for a line of output,
+printed after you call it, that matches (a JavaScript regex; `-i` ignores
+case), and prints it. Use it after `pane run` to wait for a dev server
+("ready in", "listening on") or a build to finish, instead of polling.
+
+### In a worktree of its own
+
+`abundio worktree new <branch> --agent <kind> --prompt "<task>"` makes a git
+worktree of your repository (a branch in its own folder), opens it as a new
+Workspace in the background, and starts the helper there. Use it when the
+helper's work should happen on a separate branch. The helper is yours, as
+with `agent start`; address it with `--workspace` (the reply names the
+Workspace). Without `--agent` it only makes the worktree.
+
+## The Workspace's notes
+
+`abundio notes read` prints the Workspace's notes (the Notes panel), which the
+user and other agents share. `abundio notes append "<text>"` adds to the end,
+signed with your name: paragraphs, `- ` bullets and `- [ ] ` checklist items.
+Use it to leave a short handoff or decision others will need. You cannot
+change what is already there.
+
+## Reaching the user
+
+These act on your own pane only.
+
+- `abundio progress "<what you are doing>"` shows a short line (up to 80
+  characters) beside your name; update it at each stage of a long task, and
+  `abundio progress --clear` when done.
+- `abundio notify "<message>"` marks your pane so the user comes and looks,
+  and may show a desktop notification. Use it when you have finished
+  something they are waiting for, not for every step.
+- `abundio ask "<question>" --choice "<a>" --choice "<b>"` shows the user a
+  question on your pane and waits for the answer, printed as
+  `{"choice": …, "text": …}` (they may type an answer instead; `--no-text`
+  allows only the choices). Use it when another agent started or prompted
+  you, so your question reaches the user rather than that agent, or when you
+  need a decision partway through a task without ending your turn.
+  Otherwise just ask in your own conversation. It waits up to 30 minutes
+  (`--timeout`); if your tool limits how long a command may run, give it the
+  longest you can.
 
 ## Other Workspaces
 

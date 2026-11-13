@@ -289,6 +289,9 @@ The original list:
 - **Helpers get a room of their own.** An agent can open its helper in a new tab instead of squeezing it in beside itself, and name tabs (its own, and the ones it opened). When a split would leave the panes cramped, the agent is nudged to use a tab next time. A tab you renamed by hand keeps your name: agents leave it alone. (#PR)
 - **Agents talk across workspaces.** An agent can now reach the agents of your other workspaces in the same profile: ask one worktree's agent to review another's branch, or check how a sibling repo is getting on. `abundio workspace list` shows what is out there; a closed workspace is opened quietly in the background when asked for (and only then). Other profiles stay out of reach. (#PR)
 - **Every agent gets a name.** New agents are called Agent One, Agent Two and so on, counted across your profile and handed back when an agent leaves, so nobody ends up as Agent Thirty-Seven. Rename one any time from its pane menu or with `abundio agent rename`; names can be proper words now ("Reviewer", "Docs Writer"). (#PR)
+- **Agents can ask you, and call you over.** An agent working for another agent can put a question on its own pane, with buttons for the answers, without stealing your keyboard: `abundio ask`. `abundio notify` puts a little bell on its pane (and at most one desktop notification a minute), and `abundio progress` shows what it is up to beside its name. (#PR)
+- **Helpers get their own worktree.** `abundio worktree new feat/x --agent claude --prompt "…"` makes a branch in its own folder, opens it quietly as a workspace, and starts the helper there. (#PR)
+- **Shared notes, and waiting for the right line.** Agents can read the workspace's notes and add to the end, signed, without touching what you wrote, even while you are typing in them. `abundio pane watch p2 --match "ready in"` waits for a dev server instead of poking it every few seconds. (#PR)
 ```
 
 The original list:
@@ -572,6 +575,15 @@ Agents can ask the user a question, call them over, show what they are doing, cr
 
 ### 21. Parsing (Rust)
 
+**Done.** As built: as planned, plus:
+- The error code for a plain-shell caller is `agents_only`, not `not_agent` (too close to the existing `not_an_agent`, which is about the target).
+- `ask` is a wait without the wait graph; `pane watch` goes through it. `notes read` and `pane watch` are not mutating.
+- Interrupting the CLI cancels its call. Each call carries `X-Abundio-Request-Id`; Rust remembers which pending request it is (`PendingRequests::track_client`) for the caller's PTY only. The sh client runs curl in the background and `wait`s for it, because bash runs a trap only between commands; its INT, TERM and HUP traps kill curl and send `X-Abundio-Cancel`. The PowerShell client polls its send so Ctrl+C reaches it, and cancels in `finally`. A SIGKILL cannot be caught; the card then ends with the Agent's turn (step 24) or the timeout.
+- `split_workspace` also copies the values of `--choice` and `--match` as is.
+- The branch-name table is `src/lib/__tests__/fixtures/branchNames.json`.
+
+The plan:
+
 - New requests: `Ask { question, choices, text, timeout_ms }`, `Notify { message }`, `Progress { text: Option }`, `WorktreeNew { branch, agent: Option<AgentSpec>, focus }`, `NotesRead`, `NotesAppend { text }`, `PaneWatch { target, pattern, ignore_case, timeout_ms }`.
 - Rust checks: lengths (question up to 2000 characters, choices up to 8 of 60 characters each, message 200, progress 80, notes text 4 KB), no control characters except newlines in a question and in notes text, and branch names with the same rules as `isValidBranch` (one table for Rust and TS, like the handle grammar).
 - Regexes are JavaScript regexes, compiled in the Window. A bad one there is `invalid_pattern`.
@@ -581,6 +593,10 @@ Agents can ask the user a question, call them over, show what they are doing, cr
 - Tests: every shape, the limits, branch grammar from the shared table, the wait and mutating classification.
 
 ### 22. Agent-mode guard, Attention flag and `notify`
+
+**Done.** As built: one store, `agentSignalsStore`, for flags, Progress lines and questions. `attentionCount(activities, alsoWanting)`; App.tsx maps flagged and questioned panes to PTYs. Clearing (`userSignals.startSignalClearing`): the Focused pane or tile changing to it with the Window focused, the Window gaining focus while it is the target, deliberate input into it (`lib/paneInput.ts`, reported by terminalManager after the focus and mouse report filters), or its status turning Working. A pane's signals go when it closes (`closePaneNow`) or its Agent leaves agent mode. The flag is a bell (`BellRing`) with the message as its tooltip.
+
+The plan:
 
 - The Window refuses the guarded ops with `not_agent` when the caller's PTY is not in agent mode (its `detectionMode`).
 - A per-window store `attentionStore` keeps flags `{paneId → {message, at}}`, in memory only.
@@ -592,12 +608,20 @@ Agents can ask the user a question, call them over, show what they are doing, cr
 
 ### 23. Progress line
 
+**Done.** As built: as planned. The Progress line is italic after the title in the title bar and Fleet tile header.
+
+The plan:
+
 - Kept with the pane's runtime facts in the Window, not in the layout. Cleared when the PTY exits or the Agent leaves agent mode.
 - Shown after the title on the title bar and in the Fleet tile header, and as the Agent row's second line in place of `Workspace · Tab` while set.
 - `progress` in `PaneDescription` and `AgentDescription`.
 - Tests: set, replace, clear, cleared on exit, shown in descriptions.
 
 ### 24. Question card and `ask`
+
+**Done.** As built: `askUser` opens the card, sends the Waiting-rule notification, and ends on an answer, an abort (Rust's cancel), the pane's signals being cleared (it closed), or the Agent's status turning Ready or leaving agent mode (its turn is over, so the CLI is gone). `usePaneStatus` shows Waiting while a card is open. `pane list` keeps the Agent's real status, so a caller waiting on a helper is not told it is Waiting for the user. The card is `QuestionCard.tsx`, mounted above the Action bar; it stops keys and clicks from reaching the terminal.
+
+The plan:
 
 - `questionStore`: at most one open question per pane, `{id, question, choices, text, resolve}`.
 - `QuestionCard` is a component pinned to the bottom of the pane (and its Fleet tile) above the terminal. It never takes focus by itself: buttons for the choices, an optional text field and Send, with Enter submitting the field. It follows the theme and the inline-padding and hover-class conventions.
@@ -608,6 +632,10 @@ Agents can ask the user a question, call them over, show what they are doing, cr
 
 ### 25. Notes
 
+**Done.** As built, simpler than planned: no Rust `note_append`. A note is edited only in the Window holding its Profile, which is where Rust routes the call, so that Window's store is the freshest copy and the only writer; the append changes the store (or the open editor, via `lib/notesEditors.ts`, with `updateSelection: false`) and flushes at once. `notes read` reads the store, which is newer than the database while a save is pending. Appended text is plain (no inline marks); the byline is its own paragraph when the text starts with a list. An empty note is replaced rather than kept as a blank first line.
+
+The plan:
+
 - Pure `lib/notesText.ts`: the note's editor JSON to the read text, and appended text to editor nodes (paragraphs, bullet lists, task items, bold byline), with tests both ways.
 - Rust: `note_append(workspace_id, nodes_json)` reads, appends and writes in one transaction, and emits `notes-changed { workspaceId }` to the Profile's Window.
 - The Window: `notes read` from the DB (not the possibly stale cache). On `notes-changed`, `notesStore` and an open `NotesEditor` insert the new nodes at the end through the editor (`insertContentAt(end)`), so the cursor and unsaved typing are kept. A pending debounced save is flushed first, so it cannot overwrite the append.
@@ -615,11 +643,19 @@ Agents can ask the user a question, call them over, show what they are doing, cr
 
 ### 26. `pane watch`
 
+**Done.** As built: `watchLines.ts` (`EscapeStripper`, `LineMatcher`, `compilePattern`). Output comes from `pty.onOutput`; the open line is kept to 8 KB.
+
+The plan:
+
 - Subscribe to the pane's PTY output (`pty.onOutputRaw`), strip escape sequences (pure `lib/stripAnsi.ts`), split into lines across chunks (CR and LF), and test each completed line, and the unfinished tail on every chunk, against the regex.
 - Ends on a match (`{line}`), timeout, cancel, or the PTY exiting (`exited`).
 - Tests: a match split across chunks, escape sequences, `-i`, no match in output printed before the call, exit.
 
 ### 27. `worktree new`
+
+**Done.** As built: the repository is found as New task finds it (`addWorktreeTargetId`). No new `spawn` option on the store: the task's `onSeeded` gives the pane id, and the layout is marked (`paneTree.markSpawned`, owner and name) straight after creation, before the pane can spawn and write its `ptyId`. An existing folder is reported as `exists` from git's error. The handle check is shared with `agent start` (`checkNewHandle`).
+
+The plan:
 
 - The Window runs `createWorktreeWorkspace(primaryCwd, branch, defaultWorktreeFolder(…), setupCommands, agent, {background: !focus, task, spawn: {ownerPaneId, handle}})`. The `spawn` option is new: the first pane is written as a Spawned pane of the caller before it reaches the store, as with `createTab`.
 - `branch_in_use` when the branch is checked out in another worktree. `exists` when the default folder exists.
@@ -627,6 +663,10 @@ Agents can ask the user a question, call them over, show what they are doing, cr
 - Tests: background vs `--focus`, owner on the first pane, branch in use, existing folder, no Agent.
 
 ### 28. Skill, Settings, demo, docs
+
+**Done.** As built: as planned. No demo mocks were needed (no new Tauri commands).
+
+The plan:
 
 - Skill: a section "Talking to the user" (`ask` only when working for another Agent or for a choice partway through a task; `notify` to call the user over; `progress` for long tasks), plus `worktree new`, `notes` and `pane watch` with one example each.
 - Settings ▸ Agents: the description lists the new abilities.
