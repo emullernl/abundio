@@ -31,6 +31,7 @@ import { canFire } from "../promptActions";
 import { taskTabName } from "../taskPrompt";
 import { getTerminal, type ManagedTerminal } from "../terminalManager";
 import type { CodingAgent } from "../types";
+import { askUser } from "./askUser";
 import { crowdHint } from "./crowding";
 import {
 	describeAgent,
@@ -273,6 +274,10 @@ export async function runRequest(
 	if (AGENTS_ONLY.has(request.op)) requireAgentCaller(caller);
 	const scope = await loadScope(caller, target, signal);
 	switch (request.op) {
+		case "ask": {
+			const name = await nameOfCaller(caller, caller.workspaceId);
+			return askUser(caller.paneId, caller.ptyId, name, request, signal);
+		}
 		case "progress": {
 			useAgentSignalsStore.getState().setProgress(caller.paneId, request.text);
 			return { progress: request.text };
