@@ -75,6 +75,19 @@ export const useAgentSignalsStore = create<AgentSignalsState>()((set) => ({
 		})),
 }));
 
+/** The panes with an open Question card, as a stable key (ids joined by
+ *  newlines, sorted) so a selector re-renders only when the set changes. */
+export function askingPanesKey(
+	s: Pick<AgentSignalsState, "questions">,
+): string {
+	return Object.keys(s.questions).sort().join("\n");
+}
+
+/** The inverse of `askingPanesKey`. */
+export function askingPanesOf(key: string): string[] {
+	return key ? key.split("\n") : [];
+}
+
 /** Panes that want the user without a status saying so: flagged, or with
  *  an open Question card. Each feeds the **Attention count**. */
 export function panesWantingAttention(

@@ -2,6 +2,11 @@ import { useMemo } from "react";
 import { parseTabLayout } from "../lib/paneTree";
 import type { PaneNode, Tab, WorkspaceWithTabs } from "../lib/types";
 import {
+	askingPanesKey,
+	askingPanesOf,
+	useAgentSignalsStore,
+} from "../stores/agentSignalsStore";
+import {
 	computeTabRollups,
 	computeWorkspaceRollups,
 	type DotStatus,
@@ -13,6 +18,7 @@ import {
 	type Rollups,
 	usePtyActivityStore,
 	type WorkspaceRollups,
+	withQuestionsWaiting,
 } from "../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 
@@ -33,6 +39,22 @@ function tabLayoutsOf(tabs: WorkspaceWithTabs["tabs"]): PaneNode[] {
 // is rebuilt from the key. See "Rollup keys" in ptyActivityStore.
 type StoreState = ReturnType<typeof usePtyActivityStore.getState>;
 
+/** The activities a rollup counts: a pane with an open **Question card**
+ *  counts as Waiting, as its own status icon shows (ADR-0056). */
+function shownActivities(
+	s: StoreState,
+	asking: string[],
+): StoreState["activities"] {
+	return withQuestionsWaiting(s.activities, s.panePtyMap, asking);
+}
+
+/** The panes with an open Question card, re-rendering only when that set
+ *  changes. */
+function useAskingPanes(): string[] {
+	const key = useAgentSignalsStore(askingPanesKey);
+	return useMemo(() => askingPanesOf(key), [key]);
+}
+
 /** Separates hidden members' keys; never produced by `encodeRollups`. */
 const MEMBER_SEPARATOR = ";";
 
@@ -44,12 +66,13 @@ export function useWorkspaceRollups(
 		() => tabLayoutsOf(workspace.tabs),
 		[workspace.tabs],
 	);
+	const asking = useAskingPanes();
 	const key = usePtyActivityStore((s: StoreState) =>
 		encodeRollups(
 			computeWorkspaceRollups(
 				workspace.id,
 				tabLayouts,
-				s.activities,
+				shownActivities(s, asking),
 				s.openedWorkspaceIds,
 				s.panePtyMap,
 			),
@@ -60,8 +83,11 @@ export function useWorkspaceRollups(
 
 /** A Tab's **Agent rollup** and **Terminal rollup**. */
 export function useTabRollups(tab: Tab): Rollups {
+	const asking = useAskingPanes();
 	const key = usePtyActivityStore((s: StoreState) =>
-		encodeRollups(computeTabRollups(tab, s.activities, s.panePtyMap)),
+		encodeRollups(
+			computeTabRollups(tab, shownActivities(s, asking), s.panePtyMap),
+		),
 	);
 	return useMemo(() => {
 		const { agent, terminal } = decodeRollups(key);
@@ -114,6 +140,7 @@ export function useHiddenRollup(
 		[hidden],
 	);
 
+	const asking = useAskingPanes();
 	const key = usePtyActivityStore((s: StoreState) =>
 		members
 			.map((m) =>
@@ -121,7 +148,7 @@ export function useHiddenRollup(
 					computeWorkspaceRollups(
 						m.id,
 						m.layouts,
-						s.activities,
+						shownActivities(s, asking),
 						s.openedWorkspaceIds,
 						s.panePtyMap,
 					),

@@ -28,6 +28,7 @@ import {
 	selectWorkingShellCount,
 	touchLastOutput,
 	usePtyActivityStore,
+	withQuestionsWaiting,
 } from "../ptyActivityStore";
 import { useWorkspaceStore } from "../workspaceStore";
 
@@ -576,6 +577,39 @@ describe("computeTabRollups", () => {
 		});
 		expect(r.agent).toBeNull();
 		expect(r.terminal?.status).toBe("green");
+	});
+});
+
+describe("withQuestionsWaiting", () => {
+	it("counts a Working Agent with an open Question card as Waiting", () => {
+		const activities = {
+			a: rollupEntry("active", "agent"),
+			b: rollupEntry("active", "agent"),
+		};
+		const shown = withQuestionsWaiting(activities, { "p-a": "a" }, ["p-a"]);
+		expect(shown.a.state).toBe("waiting");
+		expect(shown.b.state).toBe("active");
+		// Display only: the store's own entry is untouched.
+		expect(activities.a.state).toBe("active");
+		const tab = {
+			id: "t1",
+			workspaceId: "s1",
+			name: "Tab 1",
+			layoutJson: JSON.stringify(splitOf(pane("a"), pane("b"))),
+			position: 0,
+			createdAt: 0,
+			updatedAt: 0,
+		};
+		expect(computeTabRollups(tab, shown).agent?.counts).toMatchObject({
+			waiting: 1,
+			working: 1,
+		});
+	});
+
+	it("returns the same object when no asking pane has a PTY", () => {
+		const activities = { a: rollupEntry("active", "agent") };
+		expect(withQuestionsWaiting(activities, {}, ["p-x"])).toBe(activities);
+		expect(withQuestionsWaiting(activities, {}, [])).toBe(activities);
 	});
 });
 

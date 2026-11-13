@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { switchToPane } from "../../lib/paneLocation";
 import { getTerminal, setPaneFontScale } from "../../lib/terminalManager";
+import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { requestPaneClose } from "../../stores/paneCloseConfirmStore";
 import {
 	computePtyDotStatus,
@@ -60,9 +61,12 @@ export const FleetTile = memo(function FleetTile({
 	viewportHeight,
 	live,
 }: Props) {
-	const status = usePtyActivityStore((s) =>
+	const rawStatus = usePtyActivityStore((s) =>
 		computePtyDotStatus(getTerminal(paneId)?.ptyId || ptyId, s.activities),
 	);
+	// An open Question card shows as Waiting, as in the title bar (ADR-0056).
+	const asking = useAgentSignalsStore((s) => !!s.questions[paneId]);
+	const status: DotStatus = asking ? "skyblue" : rawStatus;
 	const color = DOT_STATUS_COLOR[status];
 	const attention = ATTENTION.has(status);
 

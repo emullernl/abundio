@@ -1054,6 +1054,27 @@ export function decodeRollups(key: string): WorkspaceRollups {
 	};
 }
 
+/**
+ * `activities` with each pane in `askingPaneIds` shown as Waiting: an open
+ * **Question card** (ADR-0056). Derived for display, never written to the
+ * status machine. Returns `activities` itself when no asking pane has a PTY.
+ */
+export function withQuestionsWaiting(
+	activities: Record<string, PtyActivityEntry>,
+	panePtyMap: Record<string, string>,
+	askingPaneIds: readonly string[],
+): Record<string, PtyActivityEntry> {
+	let out = activities;
+	for (const paneId of askingPaneIds) {
+		const ptyId = panePtyMap[paneId];
+		const entry = ptyId ? activities[ptyId] : undefined;
+		if (!entry || entry.state === "waiting") continue;
+		if (out === activities) out = { ...activities };
+		out[ptyId] = { ...entry, state: "waiting" };
+	}
+	return out;
+}
+
 export function computeWorkspaceRollups(
 	workspaceId: string,
 	tabLayouts: PaneNode[],
