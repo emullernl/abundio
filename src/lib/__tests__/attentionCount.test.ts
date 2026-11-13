@@ -21,6 +21,16 @@ describe("attentionCount", () => {
 		expect(attentionCount({})).toBe(0);
 	});
 
+	it("adds panes with an Attention flag or Question card, each PTY once", () => {
+		// `a` is Waiting and flagged: one. `b` is Working but flagged: one.
+		expect(
+			attentionCount(
+				{ a: entry("waiting", "agent"), b: entry("active", "agent") },
+				["a", "b", "b"],
+			),
+		).toBe(2);
+	});
+
 	it.each([
 		["waiting", "agent", 1],
 		["ready", "agent", 1],

@@ -60,6 +60,7 @@ import {
 import { taskSetupFailed } from "./newTask";
 import { parseOsc52 } from "./osc52";
 import { publishPaneFontSize } from "./paneFontSize";
+import { notePaneInput } from "./paneInput";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import {
 	type PendingTask,
@@ -1475,6 +1476,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 		managed.lastInputAt = Date.now();
 		managed.bytesSinceIdle = 0;
+		notePaneInput(paneId);
 		const actStore = usePtyActivityStore.getState();
 		let entry = actStore.activities[currentPtyId];
 		// A **Mid-turn failure** painted this pane red while the Agent kept

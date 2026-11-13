@@ -1,3 +1,4 @@
+import { useAgentSignalsStore } from "../stores/agentSignalsStore";
 import { useExplorerStore } from "../stores/explorerStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -89,6 +90,7 @@ export async function closePaneNow(
 		// re-runs teardownTerminal over the still-stale stored layout — an
 		// intentional, idempotent no-op.
 		teardownTerminal(paneId);
+		useAgentSignalsStore.getState().clearPane(paneId);
 	} else if (node?.type === "file") {
 		useExplorerStore.getState().unregisterFilePane(paneId);
 		cascadePreviewId = findPreviewForSource(layout, paneId)?.id ?? null;

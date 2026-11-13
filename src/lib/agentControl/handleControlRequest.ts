@@ -62,6 +62,7 @@ import {
 	type ControlRequest,
 	type Direction,
 } from "./types";
+import { notifyUser, startSignalClearing } from "./userSignals";
 import { type WaitOutcome, waitForPane } from "./waitForPane";
 
 /** The caller's Workspace as this Window sees it right now. */
@@ -238,6 +239,26 @@ function describeAll(scope: Scope): PaneDescription[] {
 	return scope.panes.map((p) => describeIn(scope, p));
 }
 
+/** Commands that speak or act in an Agent's name (ADR-0056). */
+const AGENTS_ONLY = new Set<ControlRequest["op"]>([
+	"ask",
+	"notify",
+	"progress",
+	"worktree.new",
+]);
+
+/** Refuse a caller whose pane runs no Agent: a plain shell has no Agent to
+ *  speak for. */
+export function requireAgentCaller(caller: ControlCaller): void {
+	const entry = usePtyActivityStore.getState().activities[caller.ptyId];
+	if (entry?.detectionMode !== "agent") {
+		throw new ControlError(
+			"agents_only",
+			"only an Agent can do this, and your pane is running a plain shell",
+		);
+	}
+}
+
 /** Carry out one request. Throws `ControlError` for an answer the Agent
  *  should see as an error. `target` is where Rust routed it (ADR-0055);
  *  without one, the caller's own Workspace. Exported for tests. */
@@ -247,8 +268,14 @@ export async function runRequest(
 	signal: AbortSignal = new AbortController().signal,
 	target?: ControlTarget,
 ): Promise<unknown> {
+	if (AGENTS_ONLY.has(request.op)) requireAgentCaller(caller);
 	const scope = await loadScope(caller, target, signal);
 	switch (request.op) {
+		case "notify": {
+			const name = await nameOfCaller(caller, caller.workspaceId);
+			const { popup } = notifyUser(caller.paneId, name, request.message);
+			return { flagged: true, notification: popup };
+		}
 		case "resolve": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			return { paneId: pane.node.id };
@@ -860,8 +887,10 @@ export function startAgentControl(): () => void {
 		const paneId = paneOfPty(c.ptyId);
 		if (paneId) void useWorkspaceStore.getState().ensureDefaultHandle(paneId);
 	});
+	const stopSignals = startSignalClearing();
 	return () => {
 		unsubscribe();
+		stopSignals();
 		for (const u of unlistens) u.then((fn) => fn()).catch(() => {});
 	};
 }

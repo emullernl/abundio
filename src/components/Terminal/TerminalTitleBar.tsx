@@ -1,5 +1,6 @@
 import {
 	ArrowUpRight,
+	BellRing,
 	Maximize2,
 	Minimize2,
 	MoreHorizontal,
@@ -20,6 +21,7 @@ import {
 	subscribePaneRevision,
 	togglePaneMouseBlocked,
 } from "../../lib/terminalManager";
+import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import {
 	type DotStatus,
@@ -153,6 +155,53 @@ function ControlBadge({ paneId }: { paneId: string }) {
 			}}
 		>
 			{`← ${by}`}
+		</span>
+	);
+}
+
+/** The **Attention flag**: the pane's Agent asked the user to look
+ *  (ADR-0056). Its message is the tooltip. */
+export function AttentionFlagBadge({ paneId }: { paneId: string }) {
+	const flag = useAgentSignalsStore((s) => s.flags[paneId]);
+	if (!flag) return null;
+	return (
+		<span
+			className="shrink-0 flex items-center select-none"
+			title={flag.message}
+			role="img"
+			aria-label={`Wants your attention: ${flag.message}`}
+			style={{ marginLeft: 6, color: "var(--warning)" }}
+		>
+			<BellRing size={12} />
+		</span>
+	);
+}
+
+/** The **Progress line**: what the pane's Agent says it is doing. */
+export function ProgressText({
+	paneId,
+	maxWidth = 220,
+}: {
+	paneId: string;
+	maxWidth?: number;
+}) {
+	const text = useAgentSignalsStore((s) => s.progress[paneId]);
+	if (!text) return null;
+	return (
+		<span
+			className="shrink truncate select-none"
+			title={text}
+			style={{
+				fontSize: 10.5,
+				lineHeight: "16px",
+				maxWidth,
+				marginLeft: 6,
+				color: "var(--fg-secondary)",
+				opacity: 0.8,
+				fontStyle: "italic",
+			}}
+		>
+			{text}
 		</span>
 	);
 }
@@ -328,6 +377,8 @@ export function TerminalTitleBar({
 			>
 				{title}
 			</span>
+			<ProgressText paneId={paneId} />
+			<AttentionFlagBadge paneId={paneId} />
 			<ControlBadge paneId={paneId} />
 			<MouseBadge paneId={paneId} />
 			<div className="shrink-0" style={{ width: 8 }} />
@@ -446,6 +497,8 @@ function FleetTitleBar({
 					{fleet.tabName}
 				</span>
 			</span>
+			<ProgressText paneId={paneId} maxWidth={140} />
+			<AttentionFlagBadge paneId={paneId} />
 			<ControlBadge paneId={paneId} />
 			<MouseBadge paneId={paneId} />
 			<TitleBarButton

@@ -98,6 +98,10 @@ import {
 	flattenRowsToIds,
 } from "./lib/worktreeGrouping";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
+import {
+	panesWantingAttention,
+	useAgentSignalsStore,
+} from "./stores/agentSignalsStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
 import { confirmFileWindowsClean } from "./stores/fileWindowCloseConfirmStore";
@@ -757,13 +761,21 @@ export function App() {
 			(count) => {
 				windowSession.reportAttentionCount(count).catch(() => {});
 			},
+			() => {
+				const map = usePtyActivityStore.getState().panePtyMap;
+				return [...panesWantingAttention(useAgentSignalsStore.getState())].map(
+					(paneId) => map[paneId] ?? `pane:${paneId}`,
+				);
+			},
 		);
 		report();
 		const unsubPty = usePtyActivityStore.subscribe(report);
 		const unsubSettings = useSettingsStore.subscribe(report);
+		const unsubSignals = useAgentSignalsStore.subscribe(report);
 		return () => {
 			unsubPty();
 			unsubSettings();
+			unsubSignals();
 		};
 	}, []);
 
