@@ -1,7 +1,10 @@
-import { MessageCircleQuestion } from "lucide-react";
+import { MessageCircleQuestion, X } from "lucide-react";
 import { useState } from "react";
 import { useAgentHandle } from "../../hooks/useAgentHandle";
-import { answerQuestion } from "../../lib/agentControl/askUser";
+import {
+	answerQuestion,
+	dismissQuestion,
+} from "../../lib/agentControl/askUser";
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import {
 	paramTextInputStyle,
@@ -13,13 +16,19 @@ import {
  * The **Question card** (ADR-0056): an Agent's `abundio ask`, pinned below
  * its pane's terminal. It never takes focus by itself, so the user can keep
  * typing wherever they are. Choices are buttons; the text field, when
- * offered, is sent with Enter or Send.
+ * offered, is sent with Enter or Send. The close button (or Escape inside
+ * the card) dismisses it, and the Agent's `ask` ends as `declined`.
  */
 export function QuestionCard({ paneId }: { paneId: string }) {
 	const q = useAgentSignalsStore((s) => s.questions[paneId]);
 	const handle = useAgentHandle(paneId);
 	const [text, setText] = useState("");
 	if (!q) return null;
+
+	const dismiss = () => {
+		dismissQuestion(paneId, q.id);
+		setText("");
+	};
 
 	const send = (choice: string | null) => {
 		const typed = text.trim();
@@ -35,7 +44,13 @@ export function QuestionCard({ paneId }: { paneId: string }) {
 		<section
 			className="shrink-0 flex flex-col"
 			aria-label={`${handle ?? "The Agent"} asks`}
-			onKeyDown={(e) => e.stopPropagation()}
+			onKeyDown={(e) => {
+				e.stopPropagation();
+				if (e.key === "Escape") {
+					e.preventDefault();
+					dismiss();
+				}
+			}}
 			onMouseDown={(e) => e.stopPropagation()}
 			style={{
 				gap: 8,
@@ -55,7 +70,7 @@ export function QuestionCard({ paneId }: { paneId: string }) {
 				>
 					<MessageCircleQuestion size={14} />
 				</span>
-				<div className="min-w-0 flex flex-col" style={{ gap: 2 }}>
+				<div className="min-w-0 flex-1 flex flex-col" style={{ gap: 2 }}>
 					<span
 						style={{
 							fontSize: 11,
@@ -78,6 +93,16 @@ export function QuestionCard({ paneId }: { paneId: string }) {
 						{q.question}
 					</span>
 				</div>
+				<button
+					type="button"
+					onClick={dismiss}
+					aria-label="Dismiss the question"
+					title="Dismiss without answering"
+					className="shrink-0 flex items-center justify-center rounded cursor-pointer text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
+					style={{ width: 20, height: 20 }}
+				>
+					<X size={13} />
+				</button>
 			</div>
 			{q.choices.length > 0 && (
 				<div className="flex flex-wrap" style={{ gap: 6 }}>

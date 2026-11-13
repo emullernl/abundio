@@ -1123,7 +1123,8 @@ Workspaces:
 You and the user (Agents only, about your own pane):
   abundio ask <question> [--choice <c>]... [--no-text] [--timeout <ms>]
                                           ask the user on your pane and wait for the
-                                          answer: {\"choice\", \"text\"}
+                                          answer: {\"choice\", \"text\"}; fails with
+                                          \"declined\" if the user dismisses it
   abundio notify <message>                ask the user to come and look at your pane
   abundio progress <text> | --clear       a short line saying what you are doing
 ";

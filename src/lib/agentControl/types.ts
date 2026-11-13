@@ -119,6 +119,8 @@ export type ControlErrorCode =
 	| "branch_in_use"
 	| "exists"
 	| "cancelled"
+	/** The user dismissed a Question card without answering. */
+	| "declined"
 	| "exited"
 	| "internal";
 

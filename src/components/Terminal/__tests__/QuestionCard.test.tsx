@@ -3,8 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const answers: unknown[] = [];
+const dismissed: unknown[] = [];
 vi.mock("../../../lib/agentControl/askUser", () => ({
 	answerQuestion: (...a: unknown[]) => answers.push(a),
+	dismissQuestion: (...a: unknown[]) => dismissed.push(a),
 }));
 vi.mock("../../../hooks/useAgentHandle", () => ({
 	useAgentHandle: () => "Builder",
@@ -22,6 +24,7 @@ let host: HTMLDivElement;
 
 beforeEach(() => {
 	answers.length = 0;
+	dismissed.length = 0;
 	host = document.createElement("div");
 	document.body.appendChild(host);
 	root = createRoot(host);
@@ -73,5 +76,24 @@ describe("QuestionCard", () => {
 		const form = host.querySelector("form") as HTMLFormElement;
 		act(() => form.requestSubmit());
 		expect(answers).toEqual([["b", "q1", { choice: null, text: "tomorrow" }]]);
+	});
+
+	it("dismisses with its close button, or Escape inside it", () => {
+		show({ choices: ["yes"], text: true });
+		const close = host.querySelector(
+			'button[aria-label="Dismiss the question"]',
+		) as HTMLButtonElement;
+		act(() => close.click());
+		const input = host.querySelector("input") as HTMLInputElement;
+		act(() => {
+			input.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+			);
+		});
+		expect(dismissed).toEqual([
+			["b", "q1"],
+			["b", "q1"],
+		]);
+		expect(answers).toEqual([]);
 	});
 });

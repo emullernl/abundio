@@ -1,7 +1,8 @@
 // `ask` (ADR-0056): a **Question card** on the asking Agent's own pane. The
-// call waits for the user's answer; it ends early when Rust cancels it (its
-// timeout, or the CLI interrupted), when the pane closes, or when the
-// Agent's turn ends (then nobody is waiting for the answer any more).
+// call waits for the user's answer; it ends early when the user dismisses
+// the card (`declined`), when Rust cancels it (its timeout, or the CLI
+// interrupted), when the pane closes, or when the Agent's turn ends (then
+// nobody is waiting for the answer any more).
 
 import {
 	type QuestionAnswer,
@@ -13,7 +14,10 @@ import { getWindowBlurredMs } from "../windowFocus";
 import { ControlError } from "./types";
 import { notifyPopupAllowed, sendPanePopup } from "./userSignals";
 
-const answerers = new Map<string, (a: QuestionAnswer) => void>();
+const answerers = new Map<
+	string,
+	{ answer: (a: QuestionAnswer) => void; decline: () => void }
+>();
 
 /** The user answered the card `id` on `paneId`. */
 export function answerQuestion(
@@ -23,7 +27,14 @@ export function answerQuestion(
 ): void {
 	const q = useAgentSignalsStore.getState().questions[paneId];
 	if (q?.id !== id) return;
-	answerers.get(id)?.(answer);
+	answerers.get(id)?.answer(answer);
+}
+
+/** The user dismissed the card `id` on `paneId` without answering. */
+export function dismissQuestion(paneId: string, id: string): void {
+	const q = useAgentSignalsStore.getState().questions[paneId];
+	if (q?.id !== id) return;
+	answerers.get(id)?.decline();
 }
 
 export async function askUser(
@@ -63,7 +74,16 @@ export async function askUser(
 	let cleanup = () => {};
 	try {
 		return await new Promise<QuestionAnswer>((resolve, reject) => {
-			answerers.set(id, resolve);
+			answerers.set(id, {
+				answer: resolve,
+				decline: () =>
+					reject(
+						new ControlError(
+							"declined",
+							"the user dismissed the question without answering",
+						),
+					),
+			});
 			const onAbort = () =>
 				reject(new ControlError("cancelled", "the question was withdrawn"));
 			if (signal.aborted) onAbort();

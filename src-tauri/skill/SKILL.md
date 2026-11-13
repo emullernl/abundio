@@ -119,7 +119,9 @@ These act on your own pane only.
   allows only the choices). Use it when another agent started or prompted
   you, so your question reaches the user rather than that agent, or when you
   need a decision partway through a task without ending your turn.
-  Otherwise just ask in your own conversation. It waits up to 30 minutes
+  Otherwise just ask in your own conversation. If the user dismisses the
+  question, it fails with `declined`: do not ask it again; carry on without
+  the answer, or stop and say what you needed. It waits up to 30 minutes
   (`--timeout`); if your tool limits how long a command may run, give it the
   longest you can.
 

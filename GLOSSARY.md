@@ -503,7 +503,7 @@ _Avoid_: driven badge, remote badge
 **Attention flag**: A mark an Agent puts on its own Pane to ask the user to look (`notify`), carrying a short message. It is not a status: the Pane may still be Working. It counts in the **Attention count**, and clears when the user focuses the Pane or a new prompt reaches it.
 _Avoid_: notification (that is the desktop popup that may come with it), alert
 
-**Question card**: A question an Agent puts to the user (`ask`), shown on the asking Pane without taking focus, with the Agent's choices and, unless left out, a text field. While it is open the Pane is **Waiting**. It ends when the user answers, when the Agent stops waiting for the answer, or when the Pane closes; a Pane has at most one at a time.
+**Question card**: A question an Agent puts to the user (`ask`), shown on the asking Pane without taking focus, with the Agent's choices and, unless left out, a text field. While it is open the Pane is **Waiting**. It ends when the user answers or dismisses it, when the Agent stops waiting for the answer, or when the Pane closes; a Pane has at most one at a time.
 _Avoid_: prompt (that is what is sent to an Agent), dialog, popup
 
 **Progress line**: A short line of text an Agent sets on its own Pane to say what it is doing ("running migrations 3/7"), shown wherever the Pane is named. It lasts until the Agent replaces or clears it, or leaves its Pane, and is not remembered across a restart. It says nothing about the Pane's status, which the **status icon** shows.

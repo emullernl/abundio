@@ -46,7 +46,7 @@ import { useWorkspaceGitStore } from "../../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { registerNotesEditor } from "../../notesEditors";
 import type { WorkspaceWithTabs } from "../../types";
-import { answerQuestion } from "../askUser";
+import { answerQuestion, dismissQuestion } from "../askUser";
 import { runRequest } from "../handleControlRequest";
 
 // `b` runs an Agent, `a` is a plain shell.
@@ -194,6 +194,16 @@ describe("ask", () => {
 		await vi.waitFor(() => expect(open()).toBeDefined());
 		ac.abort();
 		await expect(p).rejects.toMatchObject({ code: "cancelled" });
+		expect(open()).toBeUndefined();
+	});
+
+	it("ends as declined when the user dismisses the card", async () => {
+		const p = ask();
+		await vi.waitFor(() => expect(open()).toBeDefined());
+		dismissQuestion("b", "some-other-question");
+		expect(open()).toBeDefined();
+		dismissQuestion("b", open().id);
+		await expect(p).rejects.toMatchObject({ code: "declined" });
 		expect(open()).toBeUndefined();
 	});
 
