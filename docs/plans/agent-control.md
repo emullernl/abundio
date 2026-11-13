@@ -42,7 +42,7 @@ abundio pane split [--direction right|down] [--focus]
 abundio pane run <pane> <command>
 abundio pane close <pane>
 abundio agent list
-abundio agent start [--handle <h>] --kind <agent-id> [--prompt <text>] [--direction right|down] [--focus] [-- <agent args>]
+abundio agent start [--handle <h>] --kind <agent-id> [--prompt <text>] [--direction right|down] [--focus] [--agent-arg <arg>]... [-- <agent args>]
 abundio agent prompt <agent> <text> [--wait] [--timeout <ms>]
 abundio agent wait <agent> [--until ready|waiting|error|settled] [--timeout <ms>]
 abundio agent send-keys <agent|pane> <key>...
@@ -137,7 +137,7 @@ The original list:
 - No temporary file: curl appends the status on its own last line (`-w '\n%{http_code}'`), and the script splits it off.
 - Retries, at most four attempts one second apart. curl exit 7 (refused) means the request never arrived, so it is retried as is. Exits 18, 52, 55 and 56 mean the connection dropped after the request went out, so it is retried with `X-Abundio-Retry`. PowerShell tells the two apart by a `SocketException` with `ConnectionRefused`.
 - Tested by running the real script with a fake `curl` first on PATH (no sockets, so it runs in sandboxes too): argv bytes and token, empty argv, exit codes and streams, both kinds of retry, giving up, and refusing outside a pane.
-- Known Windows gap: PowerShell swallows a bare `--` given to a script, so `agent start … -- <args>` needs `'--'` quoted there. Check this on Windows (see Verify).
+- PowerShell swallows a bare `--` given to a script: for PowerShell commands it is the end-of-parameters token, and only native programs receive it (Microsoft's about_Parsing; npm hit the same bug in npm.ps1, npm/cli#7375). So `agent start` also takes `--agent-arg <arg>`, repeatable, which works in every shell; the skill teaches that form. Values given that way come first, then anything after `--`. `split_workspace` copies the value of `--agent-arg` and `--prompt` as is, so `--agent-arg --workspace` stays the Agent's. npm's fix (re-running the line with `Invoke-Expression`) is not an option: no `eval` in our scripts.
 
 The original list:
 
@@ -560,11 +560,11 @@ Unit tests will not catch the integration paths. Before calling it done:
 - From a Claude Code pane: start a second Agent with a handle, prompt it with `--wait`, read its answer, then close its pane.
 - Prompt an Agent that hits an approval dialog: the wait returns `waiting`.
 - Quit and relaunch: handles and numbers come back, a resumed Agent keeps its handle.
-- A call from a second Workspace's pane cannot see the first's panes.
+- Without `--workspace`, a call from a second Workspace's pane sees only its own panes; a Workspace of another Profile is never reached.
 - A cycle (A waits on B, B prompts A with `--wait`) is refused.
 - Turn the setting off mid-wait: new calls fail with `disabled`, the open wait still ends.
 - Put the Mac to sleep during a long wait: the CLI's wait retry recovers.
-- Windows: the PowerShell client, and the shells it supports.
+- Windows: the PowerShell client, and the shells it supports. From PowerShell, `agent start --kind codex --agent-arg --model --agent-arg o3` passes both arguments; a bare `--` is dropped (expected).
 - Tabs: an Agent opens a helper with `--tab`; the user's view stays put and the new Tab is at the end, named after the task. After a restart the Tab is still the Agent's to rename. Once the user renames it by hand, the Agent's `tab rename` is refused. In a Tab with four panes, `agent start` replies with a `hint`.
 - Across Workspaces: from one worktree's Agent, `workspace list`, then `agent prompt "Agent One" "…" --wait --workspace <other>`; the other Workspace's pane shows `← … · <this>`. A call into a closed Workspace opens it in the background (its Agents relaunch, the user's view stays put) and it is still open after a restart.
 - Default names: start Agents in two Windows of one Profile at the same moment; they get different names. Rename one to "Reviewer" in the pane menu and address it as `reviewer` from the CLI. Quit it: the name is gone and the next Agent there gets the lowest free default.

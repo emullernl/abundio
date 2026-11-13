@@ -1177,8 +1177,8 @@ esac
 "#;
 
 /// PowerShell twin of [`ABUNDIO_CLI_SH`]; the same protocol, exit codes and
-/// retry rules. PowerShell swallows a bare `--` given to a script, so on
-/// Windows `agent start … -- <agent args>` needs it quoted: `'--'`.
+/// retry rules. PowerShell swallows a bare `--` given to a script, so the
+/// skill teaches `--agent-arg <arg>` (one per argument), which needs no `--`.
 pub(crate) const ABUNDIO_CLI_PS1: &str = r#"# Abundio — control the panes and Agents of this Workspace. Run `abundio help`.
 if (-not $env:ABUNDIO_AGENT_TOKEN -or -not $env:ABUNDIO_HOOK_PORT) {
     [Console]::Error.WriteLine("abundio: not running inside an Abundio Workspace pane"); exit 1

@@ -53,6 +53,10 @@ are the agents switched on in Abundio (`agent list` shows the ones running;
 an unknown kind's error lists the valid ones). Then
 `abundio agent wait <name>` until it is done, and read its pane.
 
+To give the agent its own command-line arguments, add one `--agent-arg` per
+argument: `--agent-arg --model --agent-arg o3`. This works in every shell,
+PowerShell too (which would drop a bare `--`).
+
 The new pane does not take the user's keyboard focus, so they can keep
 typing to you. Add `--focus` (to `agent start`, `pane split` or `tab new`)
 only when the user asks to be taken to the new pane.

@@ -405,12 +405,20 @@ fn parse_timeout(s: &str) -> Result<Option<u64>, String> {
 
 /// Splits a command's arguments into positionals and flags. Flags in
 /// `with_value` take the next argument; the rest are switches. After `--`,
-/// everything is positional and is returned separately.
+/// everything is positional and is returned separately. A flag in
+/// [`REPEATABLE`] may be given many times; its values are kept in order.
 struct Args<'a> {
     positional: Vec<&'a str>,
     flags: HashMap<&'static str, Option<&'a str>>,
+    repeated: Vec<&'a str>,
     passthrough: Vec<&'a str>,
 }
+
+/// `--agent-arg <value>`: one argument for the new Agent, the way to pass them
+/// that works in every shell. PowerShell consumes a bare `--` given to a
+/// script itself (its end-of-parameters token), so `-- <agent args>` cannot
+/// work there unless the `--` is quoted.
+const REPEATABLE: &str = "--agent-arg";
 
 fn split_args<'a>(
     args: &'a [String],
@@ -420,6 +428,7 @@ fn split_args<'a>(
     let mut out = Args {
         positional: Vec::new(),
         flags: HashMap::new(),
+        repeated: Vec::new(),
         passthrough: Vec::new(),
     };
     let mut i = 0;
@@ -433,7 +442,11 @@ fn split_args<'a>(
             let value = args
                 .get(i + 1)
                 .ok_or_else(|| format!("{a} needs a value"))?;
-            out.flags.insert(name, Some(value.as_str()));
+            if *name == REPEATABLE {
+                out.repeated.push(value.as_str());
+            } else {
+                out.flags.insert(name, Some(value.as_str()));
+            }
             i += 2;
             continue;
         }
@@ -567,10 +580,10 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
             Ok(Request::AgentList)
         }
         "start" => {
-            let usage = "abundio agent start --kind <agent> [--handle <h>] [--prompt <text>] [--direction right|down | --tab [--tab-name <name>]] [--focus] [-- <agent args>]";
+            let usage = "abundio agent start --kind <agent> [--handle <h>] [--prompt <text>] [--direction right|down | --tab [--tab-name <name>]] [--focus] [--agent-arg <arg>]... [-- <agent args>]";
             let a = split_args(
                 rest,
-                &["--kind", "--handle", "--prompt", "--direction", "--tab-name"],
+                &["--kind", "--handle", "--prompt", "--direction", "--tab-name", REPEATABLE],
                 &["--focus", "--tab"],
             )?;
             let tab = a.flags.contains_key("--tab");
@@ -596,7 +609,8 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
                 Some(h) => Some(normalize_handle(h).ok_or_else(|| invalid_handle(h))?),
                 None => None,
             };
-            if a.passthrough.iter().any(|s| s.chars().any(char::is_control)) {
+            let agent_args: Vec<&str> = a.repeated.iter().chain(&a.passthrough).copied().collect();
+            if agent_args.iter().any(|s| s.chars().any(char::is_control)) {
                 return Err("agent arguments must not contain control characters".into());
             }
             Ok(Request::AgentStart {
@@ -610,7 +624,7 @@ fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
                     .flatten()
                     .map(parse_direction)
                     .transpose()?,
-                args: a.passthrough.iter().map(|s| s.to_string()).collect(),
+                args: agent_args.iter().map(|s| s.to_string()).collect(),
                 focus: a.flags.contains_key("--focus"),
                 tab,
                 tab_name,
@@ -773,9 +787,11 @@ Agents:
   abundio agent list                      every Agent in your Workspace
   abundio agent start --kind <agent> [--handle <h>] [--prompt <text>]
                       [--direction right|down | --tab [--tab-name <name>]]
-                      [--focus] [-- <agent args>]
+                      [--focus] [--agent-arg <arg>]... [-- <agent args>]
                                           start an Agent in a new pane, or with --tab
-                                          in a new Tab of its own
+                                          in a new Tab of its own; pass the Agent its
+                                          own arguments one --agent-arg each (works in
+                                          every shell) or all after --
   abundio agent prompt <agent> <text> [--wait] [--timeout <ms>]
                                           send a prompt; --wait returns when it settles
   abundio agent wait <agent> [--until settled|ready|waiting|error] [--timeout <ms>]
@@ -913,6 +929,13 @@ pub fn split_workspace(argv: &[String]) -> Result<(Option<String>, Vec<String>),
         if a == "--" {
             rest.extend(argv[i..].iter().cloned());
             break;
+        }
+        // A value that can be any text is copied as is, so `--agent-arg
+        // --workspace` stays the Agent's own argument.
+        if a == REPEATABLE || a == "--prompt" {
+            rest.extend(argv[i..(i + 2).min(argv.len())].iter().cloned());
+            i += 2;
+            continue;
         }
         if a == "--workspace" {
             let name = argv
@@ -1867,6 +1890,35 @@ mod tests {
         assert!(usage_err(&["agent", "start"]).contains("--kind is required"));
         assert!(usage_err(&["agent", "start", "--kind", "codex", "--handle", "p1"]).contains("not a valid Agent handle"));
         assert!(usage_err(&["agent", "start", "--kind", "codex", "--", "a\u{1b}b"]).contains("control characters"));
+    }
+
+    #[test]
+    fn agent_args_one_by_one_work_without_a_double_dash() {
+        // PowerShell drops a bare `--` before the script sees it.
+        let args = |r: Request| match r {
+            Request::AgentStart { args, .. } => args,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            args(req(&["agent", "start", "--agent-arg", "--model", "--kind", "codex", "--agent-arg", "o3"])),
+            vec!["--model".to_string(), "o3".to_string()]
+        );
+        // Both together: the --agent-arg ones first, then the rest after `--`.
+        assert_eq!(
+            args(req(&["agent", "start", "--kind", "codex", "--agent-arg", "-a", "--", "-b"])),
+            vec!["-a".to_string(), "-b".to_string()]
+        );
+        assert!(usage_err(&["agent", "start", "--kind", "codex", "--agent-arg"]).contains("needs a value"));
+        assert!(usage_err(&["agent", "start", "--kind", "codex", "--agent-arg", "a\u{7}"]).contains("control characters"));
+        // Only `agent start` takes it.
+        assert!(usage_err(&["pane", "split", "--agent-arg", "x"]).contains("unknown option"));
+        // Not mistaken for Abundio's own --workspace.
+        let (ws, rest) =
+            split_workspace(&argv(&["agent", "start", "--kind", "codex", "--agent-arg", "--workspace", "--agent-arg", "x"]))
+                .unwrap();
+        assert_eq!(ws, None);
+        let Ok(Parsed::Request(r)) = parse_args(&rest) else { panic!() };
+        assert_eq!(args(r), vec!["--workspace".to_string(), "x".to_string()]);
     }
 
     #[test]
