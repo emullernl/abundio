@@ -8,7 +8,14 @@ vi.mock("../../ipc", () => ({
 		handleDefault: async () => "Agent One",
 	},
 	tabs: { update: async () => {} },
+	notes: {
+		get: async () => "",
+		set: async (...a: unknown[]) => {
+			noteSets.push(a);
+		},
+	},
 }));
+const noteSets: unknown[] = vi.hoisted(() => []);
 vi.mock("../../terminalManager", () => ({
 	getTerminal: () => undefined,
 }));
@@ -18,8 +25,10 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 }));
 
 import { useAgentSignalsStore } from "../../../stores/agentSignalsStore";
+import { useNotesStore } from "../../../stores/notesStore";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
+import { registerNotesEditor } from "../../notesEditors";
 import type { WorkspaceWithTabs } from "../../types";
 import { answerQuestion } from "../askUser";
 import { runRequest } from "../handleControlRequest";
@@ -197,5 +206,57 @@ describe("ask", () => {
 				timeoutMs: null,
 			}),
 		).rejects.toMatchObject({ code: "agents_only" });
+	});
+});
+
+describe("notes", () => {
+	beforeEach(() => {
+		useNotesStore.setState({
+			contentByWorkspaceId: {
+				ws: JSON.stringify({
+					type: "doc",
+					content: [
+						{ type: "paragraph", content: [{ type: "text", text: "Mine" }] },
+					],
+				}),
+			},
+			loadedWorkspaceIds: new Set(["ws"]),
+		});
+		noteSets.length = 0;
+	});
+
+	it("reads the freshest copy and appends, signed, from any pane", async () => {
+		await runRequest(shell, { op: "notes.append", text: "- [ ] run tests" });
+		expect(await runRequest(agent, { op: "notes.read" })).toEqual({
+			notes: "Mine\n**p1:**\n- [ ] run tests",
+		});
+		// Written at once, not left to the debounce.
+		expect(noteSets).toHaveLength(1);
+	});
+
+	it("goes through an open editor, leaving the user's selection", async () => {
+		const insertContentAt = vi.fn();
+		const unregister = registerNotesEditor("ws", {
+			isDestroyed: false,
+			isEmpty: false,
+			state: { doc: { content: { size: 6 } } },
+			commands: { insertContentAt, setContent: vi.fn() },
+		} as never);
+		await runRequest(agent, { op: "notes.append", text: "done" });
+		expect(insertContentAt).toHaveBeenCalledWith(
+			6,
+			[
+				{
+					type: "paragraph",
+					content: [
+						{ type: "text", text: "Builder:", marks: [{ type: "bold" }] },
+						{ type: "text", text: " " },
+						{ type: "text", text: "done" },
+					],
+				},
+			],
+			{ updateSelection: false },
+		);
+		unregister();
 	});
 });

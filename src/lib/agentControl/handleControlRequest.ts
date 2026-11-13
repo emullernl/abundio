@@ -41,6 +41,7 @@ import {
 	paneLabel,
 } from "./describe";
 import { keysToBytes } from "./keys";
+import { appendNotes, readNotes } from "./notesOps";
 import { cleanPromptText } from "./promptText";
 import { readBuffer } from "./readBuffer";
 import {
@@ -277,6 +278,12 @@ export async function runRequest(
 		case "ask": {
 			const name = await nameOfCaller(caller, caller.workspaceId);
 			return askUser(caller.paneId, caller.ptyId, name, request, signal);
+		}
+		case "notes.read":
+			return { notes: await readNotes(scope.workspaceId) };
+		case "notes.append": {
+			await appendNotes(scope.workspaceId, request.text, scope.callerName);
+			return { appended: true };
 		}
 		case "progress": {
 			useAgentSignalsStore.getState().setProgress(caller.paneId, request.text);
