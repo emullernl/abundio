@@ -107,26 +107,31 @@ impl ControlTokens {
 #[derive(Default)]
 pub struct PendingRequests {
     waiting: DashMap<String, Sender<Value>>,
-    /// The CLI's id for a call → (pending id, caller's PTY, Window), while it
-    /// waits. Only the caller's own PTY may cancel it.
-    by_client: DashMap<String, (String, String, String)>,
+    /// (caller's PTY, the CLI's id for a call) → (pending id, Window), while
+    /// it waits. The CLI picks its id, so it is keyed by the PTY too: another
+    /// pane sending the same id can neither replace nor cancel this entry.
+    by_client: DashMap<(String, String), (String, String)>,
 }
 
 impl PendingRequests {
     /// Remember which pending request a CLI call is waiting on.
     pub fn track_client(&self, client_id: &str, id: &str, pty_id: &str, window: &str) {
-        self.by_client
-            .insert(client_id.to_string(), (id.to_string(), pty_id.to_string(), window.to_string()));
+        self.by_client.insert(
+            (pty_id.to_string(), client_id.to_string()),
+            (id.to_string(), window.to_string()),
+        );
     }
 
-    pub fn untrack_client(&self, client_id: &str) {
-        self.by_client.remove(client_id);
+    /// Forget the call, if the entry is still the one for pending `id`.
+    pub fn untrack_client(&self, client_id: &str, pty_id: &str, id: &str) {
+        self.by_client
+            .remove_if(&(pty_id.to_string(), client_id.to_string()), |_, (pending, _)| pending == id);
     }
 
     /// The CLI was interrupted: end the wait it started, if `pty_id` started
     /// it. Returns the Window to tell, and the pending id.
     pub fn cancel_client(&self, client_id: &str, pty_id: &str) -> Option<(String, String)> {
-        let (_, (id, _, window)) = self.by_client.remove_if(client_id, |_, (_, owner, _)| owner == pty_id)?;
+        let (_, (id, window)) = self.by_client.remove(&(pty_id.to_string(), client_id.to_string()))?;
         self.complete(
             &id,
             json!({ "error": { "code": "cancelled", "message": "the call was interrupted" } }),
@@ -1529,7 +1534,7 @@ fn ask_window(
     {
         pending.forget(&id);
         if let Some(client) = &scope.client_id {
-            pending.untrack_client(client);
+            pending.untrack_client(client, &caller.pty_id, &id);
         }
         return Err(error_answer(503, "window_gone", "could not reach the Window"));
     }
@@ -1537,7 +1542,7 @@ fn ask_window(
         app.get_webview_window(&scope.window_label).is_some()
     });
     if let Some(client) = &scope.client_id {
-        pending.untrack_client(client);
+        pending.untrack_client(client, &caller.pty_id, &id);
     }
     match reply {
         Reply::Answer(v) => Ok(v),
@@ -1663,14 +1668,40 @@ pub fn handle(
 
 /// Serve one `/control` request. Runs on its own thread: the hook server's
 /// accept loop is sequential, and a wait may last 30 minutes.
-pub fn serve(app: AppHandle, mut request: tiny_http::Request) {
-    const MAX_BODY: u64 = 1024 * 1024;
-    let token = request
+fn token_of(request: &tiny_http::Request) -> String {
+    request
         .headers()
         .iter()
         .find(|h| h.field.equiv("X-Abundio-Agent-Token"))
         .map(|h| h.value.as_str().to_string())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// Answer a `/control` request at once, before a thread is spawned or its
+/// body read, when its token belongs to no live pane. Returns the request
+/// back when the token is known.
+pub fn refuse_unknown(app: &AppHandle, request: tiny_http::Request) -> Option<tiny_http::Request> {
+    let known = app
+        .try_state::<crate::pty_manager::PtyManager>()
+        .and_then(|mgr| mgr.control_tokens().lookup(&token_of(&request)))
+        .is_some();
+    if known {
+        return Some(request);
+    }
+    let answer = error_answer(403, "unauthorized", "not running inside an Abundio pane");
+    let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+        .expect("static header");
+    let _ = request.respond(
+        tiny_http::Response::from_string(answer.body)
+            .with_status_code(answer.status)
+            .with_header(header),
+    );
+    None
+}
+
+pub fn serve(app: AppHandle, mut request: tiny_http::Request) {
+    const MAX_BODY: u64 = 1024 * 1024;
+    let token = token_of(&request);
     let retry = request
         .headers()
         .iter()
@@ -2254,6 +2285,12 @@ mod tests {
         let (id, rx) = p.register();
         p.track_client("c1", &id, "pty-a", "main");
         assert_eq!(p.cancel_client("c1", "pty-b"), None);
+        // Another pane picking the same id neither replaces the entry nor
+        // removes it when its own call ends.
+        let (other, _rx2) = p.register();
+        p.track_client("c1", &other, "pty-b", "main");
+        p.untrack_client("c1", "pty-b", &other);
+        p.untrack_client("c1", "pty-a", "not-this-call");
         assert_eq!(p.cancel_client("c1", "pty-a"), Some(("main".into(), id)));
         assert_eq!(rx.try_recv().unwrap()["error"]["code"], json!("cancelled"));
         assert_eq!(p.cancel_client("c1", "pty-a"), None);

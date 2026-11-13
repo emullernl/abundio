@@ -1132,10 +1132,15 @@ fi
 rid="${RANDOM}${RANDOM}-$$-$(date +%s)"
 out=$(mktemp "${TMPDIR:-/tmp}/abundio.XXXXXX") || exit 1
 child=""
+# The token goes to curl through a pipe, never on its command line: `ps`
+# shows every process's arguments to every local user.
+__abundio_token_header() {
+  printf 'X-Abundio-Agent-Token: %s\n' "$ABUNDIO_AGENT_TOKEN"
+}
 __abundio_cancel() {
   [ -n "$child" ] && kill "$child" 2>/dev/null
   curl -s -m 3 -o /dev/null -X POST \
-    -H "X-Abundio-Agent-Token: ${ABUNDIO_AGENT_TOKEN}" \
+    -H @<(__abundio_token_header) \
     -H "X-Abundio-Cancel: ${rid}" \
     "http://127.0.0.1:${ABUNDIO_HOOK_PORT}/control"
   rm -f "$out"
@@ -1155,7 +1160,7 @@ __abundio_send() {   # $1 = 1 to mark a retry; the rest are the arguments
   { [ $# -eq 0 ] || printf '%s\0' "$@"; } |
     curl -s -w '\n%{http_code}' --connect-timeout 5 \
       -X POST --data-binary @- \
-      -H "X-Abundio-Agent-Token: ${ABUNDIO_AGENT_TOKEN}" \
+      -H @<(__abundio_token_header) \
       -H "X-Abundio-Request-Id: ${rid}" \
       -H 'Content-Type: application/octet-stream' \
       ${extra[@]+"${extra[@]}"} \
@@ -2565,7 +2570,17 @@ mod abundio_cli_tests {
 dir="$(dirname "$0")"
 n=$(( $(cat "$dir/calls" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$dir/calls"
-printf '%s\n' "$@" > "$dir/args.$n"
+printf '%s\n' "$@" > "$dir/argv.$n"
+# The arguments as curl reads them: `@file` header values expanded.
+prev=""
+for a in "$@"; do
+  if [ "$prev" = -H ] && [ "${a#@}" != "$a" ] && [ -r "${a#@}" ]; then
+    cat "${a#@}"
+  else
+    printf '%s\n' "$a"
+  fi
+  prev=$a
+done > "$dir/args.$n"
 cat > "$dir/stdin.$n"
 line=$(sed -n "${n}p" "$dir/replies")
 rc=${line%% *}; rest=${line#* }
@@ -2613,6 +2628,11 @@ exit "$rc"
         fn args(&self, n: usize) -> String {
             fs::read_to_string(self.dir.path().join(format!("args.{n}"))).unwrap()
         }
+
+        /// curl's raw command line, as `ps` would show it.
+        fn argv(&self, n: usize) -> String {
+            fs::read_to_string(self.dir.path().join(format!("argv.{n}"))).unwrap()
+        }
     }
 
     fn stdout(o: &std::process::Output) -> String {
@@ -2632,6 +2652,8 @@ exit "$rc"
         assert_eq!(f.stdin(1), b"agent\0prompt\0p2\0two words\nand a line\0\0");
         let args = f.args(1);
         assert!(args.contains("X-Abundio-Agent-Token: tok"));
+        // The token reaches curl through a pipe, never on its command line.
+        assert!(!f.argv(1).contains("tok\n") && !f.argv(1).contains("Token: tok"));
         assert!(args.contains("http://127.0.0.1:4242/control"));
         assert!(!args.contains("X-Abundio-Retry"));
     }
@@ -2742,6 +2764,7 @@ exit "$rc"
                 .expect("the call carries an id");
             assert!(f.args(2).contains(&format!("X-Abundio-Cancel: {id}")), "{signal}");
             assert!(f.args(2).contains("X-Abundio-Agent-Token: tok"));
+            assert!(!f.argv(2).contains("Token: tok"), "{signal}");
         }
     }
 

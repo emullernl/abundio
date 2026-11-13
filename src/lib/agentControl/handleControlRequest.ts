@@ -79,7 +79,12 @@ import {
 } from "./types";
 import { notifyUser, startSignalClearing } from "./userSignals";
 import { type WaitOutcome, waitForPane } from "./waitForPane";
-import { compilePattern, EscapeStripper, LineMatcher } from "./watchLines";
+import {
+	compilePattern,
+	EscapeStripper,
+	hasNestedRepetition,
+	LineMatcher,
+} from "./watchLines";
 
 /** The caller's Workspace as this Window sees it right now. */
 /** Where a call acts (ADR-0055): the caller's own Workspace unless Rust
@@ -355,6 +360,12 @@ export async function runRequest(
 		}
 		case "pane.watch": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			if (hasNestedRepetition(request.pattern)) {
+				throw new ControlError(
+					"invalid_pattern",
+					"--match repeats a group that itself repeats, like (a+)+, which can take forever on some lines; simplify it",
+				);
+			}
 			const pattern = compilePattern(request.pattern, request.ignoreCase);
 			if (!pattern) {
 				throw new ControlError(

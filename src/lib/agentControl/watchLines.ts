@@ -95,8 +95,61 @@ export class LineMatcher {
 
 	private test(line: string): boolean {
 		this.pattern.lastIndex = 0;
-		return this.pattern.test(line);
+		// The match runs on the Window's main thread: bound its input.
+		return this.pattern.test(
+			line.length > TEST_LINE_MAX ? line.slice(0, TEST_LINE_MAX) : line,
+		);
 	}
+}
+
+/** Only the first this-many characters of a line are matched. */
+export const TEST_LINE_MAX = 4096;
+
+/** Whether a repetition (`*`, `+`, `{n,}`, `{n,m}` with m > 1) starts at
+ *  `p[i]`. */
+function repeatsAt(p: string, i: number): boolean {
+	if (p[i] === "*" || p[i] === "+") return true;
+	if (p[i] !== "{") return false;
+	const m = /^\{(\d+)(,(\d*))?\}/.exec(p.slice(i));
+	if (!m || m[2] === undefined) return false;
+	return m[3] === "" || Number(m[3]) > 1;
+}
+
+/**
+ * Whether the pattern repeats a group that itself repeats, like `(a+)+` or
+ * `(\w*\s?)*`. Those can take exponential time on a line that almost
+ * matches, and the match runs on the Window's main thread, so a slow one
+ * would freeze every terminal in it. Pure.
+ */
+export function hasNestedRepetition(p: string): boolean {
+	const outer: boolean[] = [];
+	// Whether the group being read contains a repetition.
+	let repeats = false;
+	for (let i = 0; i < p.length; i++) {
+		const c = p[i];
+		if (c === "\\") {
+			i++;
+		} else if (c === "[") {
+			// A character class: its `*` and `+` are literal.
+			i++;
+			if (p[i] === "^") i++;
+			if (p[i] === "]") i++;
+			while (i < p.length && p[i] !== "]") {
+				if (p[i] === "\\") i++;
+				i++;
+			}
+		} else if (c === "(") {
+			outer.push(repeats);
+			repeats = false;
+		} else if (c === ")") {
+			const inner: boolean = repeats;
+			repeats = (outer.pop() ?? false) || inner;
+			if (inner && repeatsAt(p, i + 1)) return true;
+		} else if (repeatsAt(p, i)) {
+			repeats = true;
+		}
+	}
+	return false;
 }
 
 /** The Agent's pattern as a regex, or null when it does not compile. */

@@ -656,6 +656,7 @@ impl WorkspaceStore {
             )
             .optional()?
             .ok_or_else(|| AbundioError::NotFound(format!("Workspace not found: {workspace_id}")))?;
+        let first = next;
         let mut out = Vec::with_capacity(pane_ids.len());
         for pane_id in pane_ids {
             let existing: Option<u32> = tx
@@ -678,11 +679,14 @@ impl WorkspaceStore {
             };
             out.push((pane_id.clone(), number));
         }
-        tx.execute(
-            "UPDATE workspaces SET next_pane_number = ?1 WHERE id = ?2",
-            rusqlite::params![next, workspace_id],
-        )?;
-        tx.commit()?;
+        // A read-only call (every pane already numbered) writes nothing.
+        if next != first {
+            tx.execute(
+                "UPDATE workspaces SET next_pane_number = ?1 WHERE id = ?2",
+                rusqlite::params![next, workspace_id],
+            )?;
+            tx.commit()?;
+        }
         Ok(out)
     }
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { compilePattern, EscapeStripper, LineMatcher } from "../watchLines";
+import {
+	compilePattern,
+	EscapeStripper,
+	hasNestedRepetition,
+	LineMatcher,
+	TEST_LINE_MAX,
+} from "../watchLines";
 
 const bytes = (s: string) => new TextEncoder().encode(s);
 
@@ -54,5 +60,43 @@ describe("LineMatcher", () => {
 
 	it("refuses a broken pattern", () => {
 		expect(compilePattern("(", false)).toBeNull();
+	});
+});
+
+describe("hasNestedRepetition", () => {
+	it.each([
+		"(a+)+",
+		"(a+)+$",
+		"(\\w*\\s?)*",
+		"((ab)*c)+",
+		"(?:x+y){2,}",
+		"(a*){1,5}",
+	])("refuses %s", (p) => {
+		expect(hasNestedRepetition(p)).toBe(true);
+	});
+
+	it.each([
+		"READY",
+		"^Listening on port \\d+",
+		"(foo|bar)+",
+		"(a+)?",
+		"(a+){1}",
+		"[(a+)]+",
+		"\\(a+\\)+",
+		"(\\d+)\\.(\\d+)",
+	])("allows %s", (p) => {
+		expect(hasNestedRepetition(p)).toBe(false);
+	});
+});
+
+describe("LineMatcher input bound", () => {
+	it("matches only the start of a very long line", () => {
+		const long = `${"x".repeat(TEST_LINE_MAX)}END`;
+		expect(
+			new LineMatcher(compilePattern("END", false) as RegExp).feed(`${long}\n`),
+		).toBeNull();
+		expect(
+			new LineMatcher(compilePattern("^x", false) as RegExp).feed(`${long}\n`),
+		).toBe(long);
 	});
 });
