@@ -391,7 +391,7 @@ _Avoid_: main dot, big icon, agent icon (it is the Terminal rollup when there ar
 **Status badge**: The small icon on a **Status composite**'s lower-right corner, always the **Terminal rollup**, and drawn **only** when the **Primary icon** is the Agent rollup and the Terminal rollup is Error or Working. A terminal's Idle never earns a badge — the badge exists to surface what wants attention, and idle shells are the normal case. When the Terminal rollup *is* the Primary icon it shows Idle as usual: the suppression is a property of the badge, not of the rollup. Offset outward so most of it falls outside the Primary icon's box, because every status glyph is a stroked outline and two overlapping outlines read as neither.
 _Avoid_: corner dot, secondary status, overlay
 
-**Attention count**: The number of panes, across every **Window**, whose PTY is **Waiting**, **Ready** or **Error** (both a **Turn failure** and a **Mid-turn failure**). Each PTY counts once, however many places it is shown. A pane counts even while it is in view: the number always matches the status icons on screen.
+**Attention count**: The number of panes, across every **Window**, whose PTY is **Waiting**, **Ready** or **Error** (both a **Turn failure** and a **Mid-turn failure**), or that carry an **Attention flag**. Each PTY counts once, however many places it is shown. A pane counts even while it is in view: the number always matches the status icons on screen.
 _Avoid_: unread count, notification count
 
 **App icon badge**: The **Attention count** drawn on Abundio's app icon: the Dock on macOS, the launcher or dock on Linux (only on desktops that support it), and an overlay on each Window's taskbar button on Windows. Every Window shows the same app-wide total. Hidden when the count is zero or the user turns it off.
@@ -499,6 +499,15 @@ _Avoid_: skill install (fine colloquially), skill injection
 
 **Control badge**: The marker on a Pane's title bar while another Pane's Agent is acting on it through **Agent control**, naming the caller by its **Agent handle** or **Pane number**, and by its **Workspace** too when the caller is in another one (a Pane number alone would point at the wrong Pane).
 _Avoid_: driven badge, remote badge
+
+**Attention flag**: A mark an Agent puts on its own Pane to ask the user to look (`notify`), carrying a short message. It is not a status: the Pane may still be Working. It counts in the **Attention count**, and clears when the user focuses the Pane or a new prompt reaches it.
+_Avoid_: notification (that is the desktop popup that may come with it), alert
+
+**Question card**: A question an Agent puts to the user (`ask`), shown on the asking Pane without taking focus, with the Agent's choices and, unless left out, a text field. While it is open the Pane is **Waiting**. It ends when the user answers, when the Agent stops waiting for the answer, or when the Pane closes; a Pane has at most one at a time.
+_Avoid_: prompt (that is what is sent to an Agent), dialog, popup
+
+**Progress line**: A short line of text an Agent sets on its own Pane to say what it is doing ("running migrations 3/7"), shown wherever the Pane is named. It lasts until the Agent replaces or clears it, or leaves its Pane, and is not remembered across a restart. It says nothing about the Pane's status, which the **status icon** shows.
+_Avoid_: status, status line, subtitle
 
 ## Relationships
 

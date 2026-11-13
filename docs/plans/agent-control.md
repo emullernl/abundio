@@ -553,6 +553,88 @@ The original list:
 - Release notes draft: a bullet for cross-Workspace reach and one for default names.
 - Verify (below): an Agent in one worktree prompts and waits on an Agent in another; a call into a closed Workspace opens it in the background with its Agents; two new Agents in two Windows at once get different default names; a handle with spaces works from the CLI.
 
+## Reaching the user, worktrees, notes and watching output (fourth round: steps 21–28)
+
+Agents can ask the user a question, call them over, show what they are doing, create a worktree with a helper in it, share notes, and wait for a line of output. See ADR-0056, and **Question card**, **Attention flag**, **Progress line** and **Attention count** in `GLOSSARY.md`.
+
+### Decisions
+
+| Topic | Decision |
+|-------|----------|
+| CLI shape | `ask`, `notify` and `progress` are top-level verbs that act on the caller's own pane. `worktree new`, `notes read|append` and `pane watch` join the groups. |
+| Agent-mode guard | `ask`, `notify`, `progress` and `worktree new` are refused (`not_agent`) unless the calling pane is in agent mode. `notes` and `pane watch` work from any pane. |
+| `ask` | `abundio ask "<question>" [--choice <c>]... [--no-text] [--timeout <ms>]` returns `{"choice": <c or null>, "text": <string or null>}`. It shows a **Question card** on the caller's pane (and its Fleet tile) without taking focus, and the pane shows as Waiting while it is open. With no choices it is a text question; `--no-text` with no choices is a usage error. Timeout as for waits: 30 minutes by default, `0` for none. The card ends when the user answers, when the call times out (`timeout`) or is cancelled (Ctrl+C drops the connection), or when the pane closes (`exited`). A second `ask` while one is open is `busy`. Only an Agent working for another Agent, or one needing a choice partway through a task, should use it (skill). |
+| `notify` | `abundio notify "<message>"` sets the pane's **Attention flag** with that message (one line, up to 200 characters). The flag counts in the Attention count and app badge, and is shown on the title bar, Agent row and Fleet tile. It clears when the user focuses the pane or a new prompt reaches it. A desktop notification comes with it under today's rule (Window in the background or pane not visible), at most once a minute per pane; clicking it goes to the pane. |
+| `progress` | `abundio progress "<text>"` sets the **Progress line** (one line, up to 80 characters), shown on the title bar, Agent row and Fleet tile, and in `pane list` / `agent list` as `progress`. `abundio progress --clear` clears it. It lasts until replaced, cleared or the Agent exits. It is not saved. |
+| `worktree new` | `abundio worktree new <branch> [--agent <kind> [--prompt <text>] [--handle <h>] [--agent-arg <a>]...] [--focus]` uses the repository of the caller's Workspace, or of `--workspace`. An existing branch with no worktree is checked out; one checked out elsewhere is refused (`branch_in_use`). The folder is always the default (`../<repo>.worktrees/<branch>`), and the primary's setup commands run. The new Workspace opens in the background (onto the restore list, the view does not move) unless `--focus`. With `--agent`, the Agent runs in its first pane as a **Spawned pane** of the caller. Answers `{workspace, folder, branch, agent?}`. There is no removal. |
+| `notes` | `abundio notes read` returns the Workspace's note as Markdown-like text: paragraphs, `- ` bullets, `- [ ]` / `- [x]` items, `**bold**`, `*italic*`, `~~strike~~`. `abundio notes append "<text>"` adds paragraphs, bullets and `- [ ]` items at the end, the first starting with the caller's name in bold (handle, or Pane number for a shell). Up to 4 KB per append. An Agent can never change or delete existing text. An open Notes panel shows the append at once, keeping the user's cursor and unsaved typing. `--workspace` works. |
+| `pane watch` | `abundio pane watch <pane> --match <regex> [-i] [--timeout <ms>]` matches only output printed after the call starts, with escape sequences stripped, a line at a time, and returns `{line}`. Works on any pane in reach, shell or Agent. The Control badge shows on the watched pane while it waits. |
+
+### 21. Parsing (Rust)
+
+- New requests: `Ask { question, choices, text, timeout_ms }`, `Notify { message }`, `Progress { text: Option }`, `WorktreeNew { branch, agent: Option<AgentSpec>, focus }`, `NotesRead`, `NotesAppend { text }`, `PaneWatch { target, pattern, ignore_case, timeout_ms }`.
+- Rust checks: lengths (question up to 2000 characters, choices up to 8 of 60 characters each, message 200, progress 80, notes text 4 KB), no control characters except newlines in a question and in notes text, and branch names with the same rules as `isValidBranch` (one table for Rust and TS, like the handle grammar).
+- Regexes are JavaScript regexes, compiled in the Window. A bad one there is `invalid_pattern`.
+- `ask` and `pane watch` are waits: their default and `0` limits are like `agent wait`, the CLI retry rules for waits apply, and a dropped `ask` cancels its card. `pane watch` goes through the wait graph like `agent wait`; `ask` does not (it waits on the user).
+- Mutating: `notify`, `progress`, `worktree new`, `notes append` (never retried after `connection_lost`).
+- Help: `ask`, `notify`, `progress` under a new `You:` group; `worktree new` under `Workspaces:`; `notes` under a new `Notes:` group; `pane watch` under `Panes:`.
+- Tests: every shape, the limits, branch grammar from the shared table, the wait and mutating classification.
+
+### 22. Agent-mode guard, Attention flag and `notify`
+
+- The Window refuses the guarded ops with `not_agent` when the caller's PTY is not in agent mode (its `detectionMode`).
+- A per-window store `attentionStore` keeps flags `{paneId → {message, at}}`, in memory only.
+- `attentionCount` adds flagged panes to its count, each pane once.
+- Title bar, Agent row and Fleet tile show the flag (a small bell and the message as a tooltip).
+- The flag clears when the pane becomes the Focused pane or Focused tile, or when a prompt reaches it (`agent prompt` or a hook's prompt-submit).
+- Desktop notification: through the same path as status notifications (`extra: {type: "pty", …}`, so a click goes to the pane), gated by the same blur and visibility rule, and at most once per 60 s per pane.
+- Tests: guard, count with and without status, clearing, rate limit, the click target.
+
+### 23. Progress line
+
+- Kept with the pane's runtime facts in the Window, not in the layout. Cleared when the PTY exits or the Agent leaves agent mode.
+- Shown after the title on the title bar and in the Fleet tile header, and as the Agent row's second line in place of `Workspace · Tab` while set.
+- `progress` in `PaneDescription` and `AgentDescription`.
+- Tests: set, replace, clear, cleared on exit, shown in descriptions.
+
+### 24. Question card and `ask`
+
+- `questionStore`: at most one open question per pane, `{id, question, choices, text, resolve}`.
+- `QuestionCard` is a component pinned to the bottom of the pane (and its Fleet tile) above the terminal. It never takes focus by itself: buttons for the choices, an optional text field and Send, with Enter submitting the field. It follows the theme and the inline-padding and hover-class conventions.
+- Waiting while open: `usePaneStatus` and `attentionCount` treat a pane with an open card as Waiting. This is derived, never written to the status machine.
+- The status notification for that Waiting fires through the same rule when the card opens.
+- `ask` resolves with the answer and ends on timeout or cancel (`agent-control-cancel`), or when the pane closes.
+- Tests: answer by choice and by text, `--no-text`, `busy`, timeout and cancel removing the card, pane close, Waiting derived and cleared, no focus change.
+
+### 25. Notes
+
+- Pure `lib/notesText.ts`: the note's editor JSON to the read text, and appended text to editor nodes (paragraphs, bullet lists, task items, bold byline), with tests both ways.
+- Rust: `note_append(workspace_id, nodes_json)` reads, appends and writes in one transaction, and emits `notes-changed { workspaceId }` to the Profile's Window.
+- The Window: `notes read` from the DB (not the possibly stale cache). On `notes-changed`, `notesStore` and an open `NotesEditor` insert the new nodes at the end through the editor (`insertContentAt(end)`), so the cursor and unsaved typing are kept. A pending debounced save is flushed first, so it cannot overwrite the append.
+- Tests: conversion, the byline, the 4 KB limit, flush-before-append, live insertion.
+
+### 26. `pane watch`
+
+- Subscribe to the pane's PTY output (`pty.onOutputRaw`), strip escape sequences (pure `lib/stripAnsi.ts`), split into lines across chunks (CR and LF), and test each completed line, and the unfinished tail on every chunk, against the regex.
+- Ends on a match (`{line}`), timeout, cancel, or the PTY exiting (`exited`).
+- Tests: a match split across chunks, escape sequences, `-i`, no match in output printed before the call, exit.
+
+### 27. `worktree new`
+
+- The Window runs `createWorktreeWorkspace(primaryCwd, branch, defaultWorktreeFolder(…), setupCommands, agent, {background: !focus, task, spawn: {ownerPaneId, handle}})`. The `spawn` option is new: the first pane is written as a Spawned pane of the caller before it reaches the store, as with `createTab`.
+- `branch_in_use` when the branch is checked out in another worktree. `exists` when the default folder exists.
+- With `--agent`: waits for agent mode and names the Agent, as `agent start` does, and answers with its description.
+- Tests: background vs `--focus`, owner on the first pane, branch in use, existing folder, no Agent.
+
+### 28. Skill, Settings, demo, docs
+
+- Skill: a section "Talking to the user" (`ask` only when working for another Agent or for a choice partway through a task; `notify` to call the user over; `progress` for long tasks), plus `worktree new`, `notes` and `pane watch` with one example each.
+- Settings ▸ Agents: the description lists the new abilities.
+- Demo: mocks for `note_append` and any new command.
+- `CLAUDE.md`: the stores and lib files, and a convention line that Waiting from a Question card is derived, never written into the status machine.
+- Release notes draft: "Agents can ask you, and call you over", "Agents spin up worktrees with a helper", "Shared notes", "Wait for a line of output".
+- Verify (below).
+
 ## Verify in the real app
 
 Unit tests will not catch the integration paths. Before calling it done:
@@ -568,3 +650,10 @@ Unit tests will not catch the integration paths. Before calling it done:
 - Tabs: an Agent opens a helper with `--tab`; the user's view stays put and the new Tab is at the end, named after the task. After a restart the Tab is still the Agent's to rename. Once the user renames it by hand, the Agent's `tab rename` is refused. In a Tab with four panes, `agent start` replies with a `hint`.
 - Across Workspaces: from one worktree's Agent, `workspace list`, then `agent prompt "Agent One" "…" --wait --workspace <other>`; the other Workspace's pane shows `← … · <this>`. A call into a closed Workspace opens it in the background (its Agents relaunch, the user's view stays put) and it is still open after a restart.
 - Default names: start two Agents in two Workspaces of one Profile at the same moment; they get different names. Rename one to "Reviewer" in the pane menu and address it as `reviewer` from the CLI. Quit it: the name is gone and the next Agent there gets the lowest free default.
+- Ask: a helper started with `agent start` runs `abundio ask "Ship it?" --choice yes --choice no`; the card shows on its pane (and Fleet tile) without taking focus, the pane shows Waiting, and a desktop notification comes when the app is in the background. Answering returns the choice; Ctrl+C on the call removes the card.
+- Notify: from a background Tab, `abundio notify "Tests are green"`: the flag shows, the app badge counts it, one desktop notification; a second call within a minute pops nothing. Focusing the pane clears it.
+- Progress: `abundio progress "step 2/5"` shows on the title bar and Agent row; it is gone after the Agent exits.
+- Worktree: `abundio worktree new feat/x --agent claude --prompt "…"` creates the folder next to the others, runs setup commands, opens the Workspace in the background with the Agent; the caller can prompt and close it.
+- Notes: with the Notes panel open and text half typed, an Agent's `notes append` appears at the end and the typed text survives.
+- Watch: start `pnpm dev` in a shell pane, then `abundio pane watch p2 --match "ready in"` returns the line.
+- A plain shell running `abundio notify x` is refused with `not_agent`.
