@@ -125,6 +125,35 @@ export function setAgentSessionId(
 	return { ...tree, first, second };
 }
 
+/** `tree` with the terminal `paneId` owned by `ownerPaneId` (a **Spawned
+ *  pane**) and, when given, named `handle`. Unchanged when it already is. */
+export function markSpawned(
+	tree: PaneNode,
+	paneId: string,
+	ownerPaneId: string,
+	handle?: string,
+): PaneNode {
+	if (tree.type === "terminal") {
+		if (tree.id !== paneId) return tree;
+		if (
+			tree.spawnedBy === ownerPaneId &&
+			(handle === undefined || tree.agentHandle === handle)
+		) {
+			return tree;
+		}
+		return {
+			...tree,
+			spawnedBy: ownerPaneId,
+			...(handle !== undefined ? { agentHandle: handle } : {}),
+		};
+	}
+	if (tree.type !== "split") return tree;
+	const first = markSpawned(tree.first, paneId, ownerPaneId, handle);
+	const second = markSpawned(tree.second, paneId, ownerPaneId, handle);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
 /**
  * Set or clear (`undefined`) the **Agent handle** of the terminal node with
  * the given paneId. Checks nothing: see `lib/agentHandle.ts`. Returns the

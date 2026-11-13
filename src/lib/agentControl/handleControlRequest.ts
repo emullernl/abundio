@@ -10,7 +10,8 @@ import {
 } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
+import { type TaskSeed, useWorkspaceStore } from "../../stores/workspaceStore";
 import { checkHandle } from "../agentHandle";
 import { closePaneNow, releaseOwner } from "../closePane";
 import { pasteAndSubmit } from "../firePromptAction";
@@ -22,15 +23,23 @@ import {
 	agentHooks,
 	pty,
 	shells,
+	worktrees as worktreesApi,
 } from "../ipc";
-import { shellSupportsTasks } from "../newTask";
+import { defaultWorktreeFolder, shellSupportsTasks } from "../newTask";
 import { revealPane } from "../paneLocation";
-import { collectTerminalIds, parseTabLayout, wrapInSplit } from "../paneTree";
+import {
+	collectTerminalIds,
+	markSpawned,
+	parseTabLayout,
+	wrapInSplit,
+} from "../paneTree";
 import { setPendingTask, takePendingTask } from "../pendingAgentRegistry";
 import { canFire } from "../promptActions";
 import { taskTabName } from "../taskPrompt";
 import { getTerminal, type ManagedTerminal } from "../terminalManager";
-import type { CodingAgent } from "../types";
+import type { CodingAgent, WorkspaceWithTabs } from "../types";
+import { addWorktreeTargetId } from "../worktreeGrouping";
+import { basename, resolvePath } from "../worktreePath";
 import { askUser } from "./askUser";
 import { crowdHint } from "./crowding";
 import {
@@ -286,6 +295,8 @@ export async function runRequest(
 			await appendNotes(scope.workspaceId, request.text, scope.callerName);
 			return { appended: true };
 		}
+		case "worktree.new":
+			return newWorktree(scope, request, signal);
 		case "progress": {
 			useAgentSignalsStore.getState().setProgress(caller.paneId, request.text);
 			return { progress: request.text };
@@ -503,6 +514,184 @@ async function watchPane(
 	}
 }
 
+/** A name for a new Agent: free in the scope's Workspace, then across the
+ *  Profile (Rust, which holds it for `paneId` until its layout carries it). */
+async function checkNewHandle(
+	scope: Scope,
+	handle: string,
+	paneId: string = crypto.randomUUID(),
+): Promise<void> {
+	const ws = useWorkspaceStore
+		.getState()
+		.workspaces.find((w) => w.id === scope.workspaceId);
+	const check = checkHandle(ws?.tabs ?? [], "", handle);
+	if (!check.ok) throw new ControlError(check.code, check.message);
+	const profileWide = await agentControl
+		.handleCheck(scope.workspaceId, paneId, handle)
+		.catch(() => {
+			throw new ControlError("internal", "could not check the name; try again");
+		});
+	if (!profileWide.ok) {
+		throw new ControlError(
+			profileWide.code === "handle_taken" ? "handle_taken" : "invalid_handle",
+			profileWide.message,
+		);
+	}
+}
+
+/** Resolve once `paneId` is in agent mode; `stalled` after 30 s. */
+function untilAgentMode(paneId: string, signal: AbortSignal): Promise<void> {
+	return waitUntil(
+		() => {
+			const ptyId =
+				getTerminal(paneId)?.ptyId ||
+				usePtyActivityStore.getState().panePtyMap[paneId];
+			return (
+				!!ptyId &&
+				usePtyActivityStore.getState().activities[ptyId]?.detectionMode ===
+					"agent"
+			);
+		},
+		START_STALL_MS,
+		signal,
+		"the pane opened, but its Agent did not start within 30 seconds; read the pane to see why",
+	);
+}
+
+/**
+ * `worktree new` (ADR-0056): a git worktree of the scope's repository, in
+ * the usual folder, as a new Workspace opened in the background (or made
+ * Active with `focus`), with the primary's setup commands. With an Agent,
+ * it starts in the new Workspace's first pane as a **Spawned pane** of the
+ * caller.
+ */
+async function newWorktree(
+	scope: Scope,
+	request: Extract<ControlRequest, { op: "worktree.new" }>,
+	signal: AbortSignal,
+) {
+	const store = useWorkspaceStore.getState();
+	const primary = store.workspaces.find(
+		(w) =>
+			w.id ===
+			addWorktreeTargetId(
+				store.workspaces,
+				useWorkspaceGitStore.getState().worktreeFacts,
+				scope.workspaceId,
+			),
+	);
+	if (!primary) {
+		throw new ControlError(
+			"unsupported",
+			"this Workspace is not in a git repository whose main worktree is a Workspace of this Profile",
+		);
+	}
+	const primaryCwd = primary.rootFolder;
+	const inUse = (await worktreesApi.list(primaryCwd).catch(() => [])).find(
+		(e) => e.branch === request.branch,
+	);
+	if (inUse) {
+		throw new ControlError(
+			"branch_in_use",
+			`the branch "${request.branch}" is already checked out in ${inUse.path}`,
+		);
+	}
+	const path = resolvePath(
+		primaryCwd,
+		defaultWorktreeFolder(basename(primaryCwd), request.branch),
+	);
+
+	const spec = request.agent;
+	let agent: CodingAgent | undefined;
+	let task: TaskSeed | undefined;
+	let seeded: string | null = null;
+	if (spec) {
+		const settings = useSettingsStore.getState();
+		const prompt = spec.prompt === null ? null : cleanPromptText(spec.prompt);
+		const start = startArgv(settings.agents, spec.kind, prompt, spec.args);
+		agent = start.agent;
+		const shell =
+			settings.shellPath || (await shells.default().catch(() => ""));
+		if (shell && !shellSupportsTasks(shell)) {
+			throw new ControlError(
+				"unsupported_shell",
+				"agents can only be started in zsh or bash panes; change the shell in Settings",
+			);
+		}
+		if (spec.handle !== null) await checkNewHandle(scope, spec.handle);
+		if (settings.agentHooksEnabled) {
+			await Promise.race([
+				agentHooks.ensure(agent.id, true).catch(() => {}),
+				new Promise((r) => setTimeout(r, 2000)),
+			]);
+		}
+		task = {
+			argv: start.argv,
+			agentId: agent.id,
+			tabName:
+				prompt !== null
+					? taskTabName({ kind: "text", input: prompt })
+					: (spec.handle ?? agent.name),
+			onSeeded: (id) => {
+				seeded = id;
+			},
+		};
+	}
+
+	let ws: WorkspaceWithTabs;
+	try {
+		ws = await store.createWorktreeWorkspace(
+			primaryCwd,
+			request.branch,
+			path,
+			primary.worktreeSetupCommands ?? "",
+			agent,
+			{ background: !request.focus, task },
+		);
+	} catch (e) {
+		const message = String(e);
+		throw new ControlError(
+			/exist/i.test(message) ? "exists" : "internal",
+			`could not create the worktree: ${message}`,
+		);
+	}
+	const reply = {
+		workspace: ws.name,
+		folder: ws.rootFolder,
+		branch: request.branch,
+	};
+	const paneId: string | null = seeded;
+	if (!spec || !paneId) return reply;
+
+	// The caller owns the new Agent, and it carries its name from the start.
+	const fresh = useWorkspaceStore
+		.getState()
+		.workspaces.find((w) => w.id === ws.id);
+	for (const tab of fresh?.tabs ?? []) {
+		const layout = parseTabLayout(tab.layoutJson);
+		if (!layout || !collectTerminalIds(layout).includes(paneId)) continue;
+		await useWorkspaceStore
+			.getState()
+			.updateLayout(
+				tab.id,
+				markSpawned(
+					layout,
+					paneId,
+					scope.caller.paneId,
+					spec.handle ?? undefined,
+				),
+			);
+	}
+	await untilAgentMode(paneId, signal);
+	await useWorkspaceStore.getState().ensureDefaultHandle(paneId);
+	return {
+		...reply,
+		agent: describeAgent(
+			await describeNew({ ...scope, workspaceId: ws.id }, paneId),
+		),
+	};
+}
+
 /** How long `agent start` waits for the new pane to reach agent mode. */
 export const START_STALL_MS = 30_000;
 const START_POLL_MS = 200;
@@ -615,26 +804,7 @@ async function startAgent(
 	// for it until its layout carries it.
 	const newPaneId = crypto.randomUUID();
 	if (request.handle !== null) {
-		// In the Workspace the pane goes into, then across the Profile (Rust).
-		const ws = useWorkspaceStore
-			.getState()
-			.workspaces.find((w) => w.id === scope.workspaceId);
-		const check = checkHandle(ws?.tabs ?? [], "", request.handle);
-		if (!check.ok) throw new ControlError(check.code, check.message);
-		const profileWide = await agentControl
-			.handleCheck(scope.workspaceId, newPaneId, request.handle)
-			.catch(() => {
-				throw new ControlError(
-					"internal",
-					"could not check the name; try again",
-				);
-			});
-		if (!profileWide.ok) {
-			throw new ControlError(
-				profileWide.code === "handle_taken" ? "handle_taken" : "invalid_handle",
-				profileWide.message,
-			);
-		}
+		await checkNewHandle(scope, request.handle, newPaneId);
 	}
 	// Register the Agent's hooks before it starts, as a split launch does,
 	// capped so a slow disk cannot hold the call up.
@@ -676,21 +846,7 @@ async function startAgent(
 		}
 		if (request.focus) focusNewPane(scope, paneId);
 	}
-	await waitUntil(
-		() => {
-			const ptyId =
-				getTerminal(paneId)?.ptyId ||
-				usePtyActivityStore.getState().panePtyMap[paneId];
-			return (
-				!!ptyId &&
-				usePtyActivityStore.getState().activities[ptyId]?.detectionMode ===
-					"agent"
-			);
-		},
-		START_STALL_MS,
-		signal,
-		"the pane opened, but its Agent did not start within 30 seconds; read the pane to see why",
-	);
+	await untilAgentMode(paneId, signal);
 	// Named before the reply, so the caller learns its default handle.
 	await useWorkspaceStore.getState().ensureDefaultHandle(paneId);
 	// In the Fleet Console its tile exists only now that it is in agent mode.

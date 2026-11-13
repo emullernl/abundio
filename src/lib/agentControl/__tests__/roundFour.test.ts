@@ -14,6 +14,11 @@ vi.mock("../../ipc", () => ({
 			return Promise.resolve(() => outputs.delete(ptyId));
 		},
 	},
+	worktrees: {
+		list: async () => worktreeList,
+	},
+	shells: { default: async () => "/bin/zsh" },
+	agentHooks: { ensure: async () => {} },
 	notes: {
 		get: async () => "",
 		set: async (...a: unknown[]) => {
@@ -22,6 +27,7 @@ vi.mock("../../ipc", () => ({
 	},
 }));
 const noteSets: unknown[] = vi.hoisted(() => []);
+let worktreeList: { path: string; branch: string | null }[] = [];
 const outputs = vi.hoisted(() => new Map<string, (d: Uint8Array) => void>());
 vi.mock("../../terminalManager", () => ({
 	getTerminal: () => undefined,
@@ -34,6 +40,8 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 import { useAgentSignalsStore } from "../../../stores/agentSignalsStore";
 import { useNotesStore } from "../../../stores/notesStore";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
+import { useSettingsStore } from "../../../stores/settingsStore";
+import { useWorkspaceGitStore } from "../../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { registerNotesEditor } from "../../notesEditors";
 import type { WorkspaceWithTabs } from "../../types";
@@ -300,5 +308,143 @@ describe("pane watch", () => {
 
 	it("refuses a broken pattern", async () => {
 		await expect(watch("(")).rejects.toMatchObject({ code: "invalid_pattern" });
+	});
+});
+
+describe("worktree new", () => {
+	const created: unknown[][] = [];
+	beforeEach(() => {
+		created.length = 0;
+		worktreeList = [];
+		useSettingsStore.setState({
+			agents: [
+				{
+					id: "claude",
+					name: "Claude Code",
+					command: "claude",
+					taskArgs: ["{prompt}"],
+					builtin: true,
+					enabled: true,
+				},
+			],
+			agentHooksEnabled: false,
+			shellPath: "/bin/zsh",
+		});
+		useWorkspaceStore.setState((st) => ({
+			workspaces: st.workspaces.map((w) => ({
+				...w,
+				rootFolder: "/src/home",
+				worktreeSetupCommands: "pnpm i",
+			})),
+		}));
+		useWorkspaceGitStore.setState({
+			worktreeFacts: { ws: { isMainWorktree: true } as never },
+		});
+		// The new Workspace, as the store would add it; its first pane is
+		// seeded with the Agent's task.
+		useWorkspaceStore.setState({
+			createWorktreeWorkspace: async (...args: unknown[]) => {
+				created.push(args);
+				const ws = {
+					id: "ws-new",
+					name: "home.worktrees-feat-x",
+					rootFolder: "/src/home.worktrees/feat-x",
+					tabs: [
+						{
+							id: "t-new",
+							workspaceId: "ws-new",
+							name: "go",
+							layoutJson: JSON.stringify({
+								type: "terminal",
+								id: "n1",
+								ptyId: "",
+							}),
+							position: 0,
+							createdAt: 0,
+							updatedAt: 0,
+						},
+					],
+				} as unknown as WorkspaceWithTabs;
+				useWorkspaceStore.setState((st) => ({
+					workspaces: [...st.workspaces, ws],
+				}));
+				(
+					args[5] as { task?: { onSeeded?: (id: string) => void } }
+				).task?.onSeeded?.("n1");
+				return ws;
+			},
+		} as never);
+	});
+
+	it("creates the worktree in the usual folder, in the background, with setup commands", async () => {
+		const r = await runRequest(agent, {
+			op: "worktree.new",
+			branch: "feat/x",
+			agent: null,
+			focus: false,
+		});
+		expect(created[0].slice(0, 5)).toEqual([
+			"/src/home",
+			"feat/x",
+			"/src/home.worktrees/feat-x",
+			"pnpm i",
+			undefined,
+		]);
+		expect(created[0][5]).toMatchObject({ background: true });
+		expect(r).toEqual({
+			workspace: "home.worktrees-feat-x",
+			folder: "/src/home.worktrees/feat-x",
+			branch: "feat/x",
+		});
+	});
+
+	it("starts an Agent there that the caller owns, named as asked", async () => {
+		usePtyActivityStore.setState((st) => ({
+			panePtyMap: { ...st.panePtyMap, n1: "pty-n1" },
+			activities: { ...st.activities, "pty-n1": activity("agent") },
+		}));
+		const r = (await runRequest(agent, {
+			op: "worktree.new",
+			branch: "feat/x",
+			agent: { kind: "claude", prompt: "go", handle: "Helper", args: [] },
+			focus: true,
+		})) as { agent: { handle: string } };
+		expect(created[0][5]).toMatchObject({
+			background: false,
+			task: { argv: ["claude", "go"], agentId: "claude" },
+		});
+		const tab = useWorkspaceStore
+			.getState()
+			.workspaces.find((w) => w.id === "ws-new")?.tabs[0];
+		expect(JSON.parse(tab?.layoutJson ?? "{}")).toMatchObject({
+			id: "n1",
+			spawnedBy: "b",
+			agentHandle: "Helper",
+		});
+		expect(r.agent.handle).toBe("Helper");
+	});
+
+	it("refuses a branch checked out elsewhere", async () => {
+		worktreeList = [{ path: "/src/other", branch: "feat/x" }];
+		await expect(
+			runRequest(agent, {
+				op: "worktree.new",
+				branch: "feat/x",
+				agent: null,
+				focus: false,
+			}),
+		).rejects.toMatchObject({ code: "branch_in_use" });
+		expect(created).toHaveLength(0);
+	});
+
+	it("is for Agents only", async () => {
+		await expect(
+			runRequest(shell, {
+				op: "worktree.new",
+				branch: "x",
+				agent: null,
+				focus: false,
+			}),
+		).rejects.toMatchObject({ code: "agents_only" });
 	});
 });
