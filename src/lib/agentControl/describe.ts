@@ -13,6 +13,8 @@ export interface PaneLiveFacts {
 	title: string | null;
 	/** The command running in a shell-mode PTY, if any. */
 	runningCommand: string | null;
+	/** The Agent's **Progress line** (ADR-0056). */
+	progress?: string | null;
 }
 
 /** One pane as `abundio pane list` / `pane current` print it. */
@@ -29,6 +31,7 @@ export interface PaneDescription {
 	title: string | null;
 	command: string | null;
 	spawnedBy: string | null;
+	progress: string | null;
 }
 
 /** One Agent as `abundio agent list` prints it. */
@@ -43,6 +46,7 @@ export interface AgentDescription {
 	cwd: string | null;
 	title: string | null;
 	spawnedBy: string | null;
+	progress: string | null;
 }
 
 export function paneLabel(n: number): string {
@@ -97,6 +101,7 @@ export function describePane(
 		title: facts.title || null,
 		command: mode === "shell" ? facts.runningCommand || null : null,
 		spawnedBy,
+		progress: mode === "agent" ? (facts.progress ?? null) : null,
 	};
 }
 
@@ -112,5 +117,6 @@ export function describeAgent(p: PaneDescription): AgentDescription {
 		cwd: p.cwd,
 		title: p.title,
 		spawnedBy: p.spawnedBy,
+		progress: p.progress,
 	};
 }

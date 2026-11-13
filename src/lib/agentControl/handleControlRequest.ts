@@ -2,6 +2,7 @@
 // token and parses the command, then asks the Window that owns the caller's
 // Workspace to carry it out. This module answers.
 
+import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import {
 	subscribeStatusChange,
@@ -222,6 +223,7 @@ function liveFacts(pane: WorkspacePane): PaneLiveFacts {
 		cwd: (ptyId && act.cwds[ptyId]) || null,
 		title: act.titles[pane.node.id] || null,
 		runningCommand: (ptyId && act.runningCommands[ptyId]) || null,
+		progress: useAgentSignalsStore.getState().progress[pane.node.id] ?? null,
 	};
 }
 
@@ -271,6 +273,10 @@ export async function runRequest(
 	if (AGENTS_ONLY.has(request.op)) requireAgentCaller(caller);
 	const scope = await loadScope(caller, target, signal);
 	switch (request.op) {
+		case "progress": {
+			useAgentSignalsStore.getState().setProgress(caller.paneId, request.text);
+			return { progress: request.text };
+		}
 		case "notify": {
 			const name = await nameOfCaller(caller, caller.workspaceId);
 			const { popup } = notifyUser(caller.paneId, name, request.message);

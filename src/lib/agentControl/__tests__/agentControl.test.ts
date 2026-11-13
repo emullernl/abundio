@@ -145,6 +145,7 @@ describe("describePane", () => {
 			title: null,
 			command: "make",
 			spawnedBy: null,
+			progress: null,
 		});
 	});
 
