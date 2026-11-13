@@ -2,7 +2,7 @@ import type { PtyActivityEntry } from "../stores/ptyActivityStore";
 
 /** This Window's share of the **Attention count**: PTYs that are Waiting,
  *  Ready or Error, agent or shell alike, plus `alsoWanting` (PTYs of panes
- *  with an **Attention flag** or an open **Question card**, ADR-0056). Each
+ *  with an **Attention flag**, ADR-0056). Each
  *  PTY counts once. Both kinds of Error count (a Turn failure and a Mid-turn
  *  failure), because both show the red status icon. Rust sums every Window's
  *  share for the **App icon badge**. */

@@ -1,6 +1,6 @@
 ---
 name: abundio
-description: Work with the other agents and terminal panes in Abundio — in your own Workspace, and in the other Workspaces of your Profile when the user asks — list them, read their output, prompt another agent and wait for its answer, start a helper agent in a new pane or a new git worktree, run a command in an idle shell and wait for its output, share the Workspace's notes, and reach the user (ask a question, call them over, show your progress). Use when the user asks you to delegate to, coordinate with, check on or review the work of another agent, or to use another pane, and when you work for another agent and need the user. Only works inside an Abundio pane.
+description: Work with the other agents and terminal panes in Abundio — in your own Workspace, and in the other Workspaces of your Profile when the user asks — list them, read their output, prompt another agent and wait for its answer, start a helper agent in a new pane or a new git worktree, run a command in an idle shell and wait for its output, share the Workspace's notes, and reach the user (call them over, show your progress). Use when the user asks you to delegate to, coordinate with, check on or review the work of another agent, or to use another pane. Only works inside an Abundio pane.
 ---
 
 # Abundio: other agents and panes
@@ -36,9 +36,12 @@ asks.
   when that agent has finished its turn (`status`: `ready`, `waiting` or
   `error`). Prefer this to sending and polling.
 - `status: "waiting"` means it is asking a question or wants permission:
-  `abundio pane read <agent> --lines 40` to see it, then answer with
-  `abundio agent send-keys <agent> …` (`enter`, `esc`, `up`, `down`, `tab`,
-  `ctrl+c`, …) or with another prompt.
+  `abundio pane read <agent> --lines 40` to see it. Answer it yourself only
+  when your own task settles it (a permission prompt for work you asked for,
+  a detail you already know), with `abundio agent send-keys <agent> …`
+  (`enter`, `esc`, `up`, `down`, `tab`, `ctrl+c`, …) or with another prompt.
+  If it needs the user's judgment, ask the user in your own conversation,
+  then pass their answer on the same way.
 - After a prompt, `abundio pane read <agent> --lines 80` shows its answer.
 - `stalled` means it never started working; read the pane before sending
   again. After a `timeout` or `connection_lost`, the prompt may have arrived:
@@ -113,17 +116,9 @@ These act on your own pane only.
 - `abundio notify "<message>"` marks your pane so the user comes and looks,
   and may show a desktop notification. Use it when you have finished
   something they are waiting for, not for every step.
-- `abundio ask "<question>" --choice "<a>" --choice "<b>"` shows the user a
-  question on your pane and waits for the answer, printed as
-  `{"choice": …, "text": …}` (they may type an answer instead; `--no-text`
-  allows only the choices). Use it when another agent started or prompted
-  you, so your question reaches the user rather than that agent, or when you
-  need a decision partway through a task without ending your turn.
-  Otherwise just ask in your own conversation. If the user dismisses the
-  question, it fails with `declined`: do not ask it again; carry on without
-  the answer, or stop and say what you needed. It waits up to 30 minutes
-  (`--timeout`); if your tool limits how long a command may run, give it the
-  longest you can.
+- To ask the user something, use your own way of asking questions. Your
+  pane then shows as waiting and the user is notified; if another agent
+  started you, it will pass the question on.
 
 ## Other Workspaces
 

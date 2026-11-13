@@ -115,14 +115,13 @@ function AgentControlSettings() {
 						list panes and agents, read them, prompt another agent and wait for
 						its answer, start a new agent (also in a new git worktree), run
 						commands in idle shells and wait for their output, add to the
-						workspace's notes, and ask you a question, call you over or show
-						their progress on their own pane: in their own workspace, and in the
-						other workspaces of this profile when asked (one that is closed is
-						opened in the background). They never reach another profile, and can
-						close only the panes they opened. A badge on a pane shows when
-						another agent is driving it. Any program a pane runs can do the
-						same, not only its agent, so turn this off if you run code you do
-						not trust.
+						workspace's notes, and call you over or show their progress on their
+						own pane: in their own workspace, and in the other workspaces of
+						this profile when asked (one that is closed is opened in the
+						background). They never reach another profile, and can close only
+						the panes they opened. A badge on a pane shows when another agent is
+						driving it. Any program a pane runs can do the same, not only its
+						agent, so turn this off if you run code you do not trust.
 					</>
 				}
 			/>

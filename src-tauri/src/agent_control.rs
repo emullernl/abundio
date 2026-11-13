@@ -303,15 +303,6 @@ pub enum Request {
     /// Every Workspace of the caller's Profile. Answered by Rust alone.
     #[serde(rename = "workspace.list")]
     WorkspaceList,
-    /// A **Question card** on the caller's own pane (ADR-0056). A wait.
-    #[serde(rename = "ask", rename_all = "camelCase")]
-    Ask {
-        question: String,
-        choices: Vec<String>,
-        /// Offer a text field (always, when there are no choices).
-        text: bool,
-        timeout_ms: Option<u64>,
-    },
     /// Set the caller's **Attention flag**.
     #[serde(rename = "notify", rename_all = "camelCase")]
     Notify { message: String },
@@ -351,9 +342,6 @@ pub struct AgentSpec {
 }
 
 /// Limits on what an Agent may show the user (ADR-0056), in characters.
-pub const QUESTION_MAX: usize = 2000;
-pub const CHOICES_MAX: usize = 8;
-pub const CHOICE_MAX: usize = 60;
 pub const NOTIFY_MAX: usize = 200;
 pub const PROGRESS_MAX: usize = 80;
 /// Notes text per `notes append`, in bytes.
@@ -515,17 +503,6 @@ fn split_args<'a>(
     }
 }
 
-/// [`split_args`] with `repeat` as a value flag that may be given many times
-/// (its values land in `repeated`, in order).
-fn split_args_repeating<'a>(
-    args: &'a [String],
-    with_value: &[&'static str],
-    switches: &[&'static str],
-    repeat: &'static str,
-) -> Result<Args<'a>, String> {
-    split_args_inner(args, with_value, switches, Some(repeat))
-}
-
 fn split_args_inner<'a>(
     args: &'a [String],
     with_value: &[&'static str],
@@ -607,7 +584,6 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
         (Some("workspace"), Some(c)) => Err(format!(
             "unknown command `workspace {c}`; run `abundio help workspace`"
         )),
-        (Some("ask"), _) => parse_ask(&argv[1..]).map(Parsed::Request),
         (Some("notify"), _) => parse_notify(&argv[1..]).map(Parsed::Request),
         (Some("progress"), _) => parse_progress(&argv[1..]).map(Parsed::Request),
         (Some("worktree"), Some("new")) => parse_worktree_new(rest).map(Parsed::Request),
@@ -942,34 +918,6 @@ fn wait_timeout(a: &Args) -> Result<Option<u64>, String> {
     }
 }
 
-fn parse_ask(rest: &[String]) -> Result<Request, String> {
-    let usage = "abundio ask <question> [--choice <c>]... [--no-text] [--timeout <ms>]";
-    let a = split_args_repeating(rest, &["--timeout"], &["--no-text"], "--choice")?;
-    expect_positionals(&a, 1, 1, usage)?;
-    let question = multi_line("question", a.positional[0])?;
-    if question.chars().count() > QUESTION_MAX {
-        return Err(format!("the question can have at most {QUESTION_MAX} characters"));
-    }
-    if a.repeated.len() > CHOICES_MAX {
-        return Err(format!("at most {CHOICES_MAX} choices"));
-    }
-    let choices = a
-        .repeated
-        .iter()
-        .map(|c| one_line("choice", c, CHOICE_MAX))
-        .collect::<Result<Vec<_>, _>>()?;
-    let no_text = a.flags.contains_key("--no-text");
-    if no_text && choices.is_empty() {
-        return Err("--no-text needs at least one --choice, or there is nothing to answer with".into());
-    }
-    Ok(Request::Ask {
-        question,
-        choices,
-        text: !no_text,
-        timeout_ms: wait_timeout(&a)?,
-    })
-}
-
 fn parse_notify(rest: &[String]) -> Result<Request, String> {
     let a = split_args(rest, &[], &[])?;
     expect_positionals(&a, 1, 1, "abundio notify <message>")?;
@@ -1121,10 +1069,6 @@ Workspaces:
 ";
     const YOU: &str = "\
 You and the user (Agents only, about your own pane):
-  abundio ask <question> [--choice <c>]... [--no-text] [--timeout <ms>]
-                                          ask the user on your pane and wait for the
-                                          answer: {\"choice\", \"text\"}; fails with
-                                          \"declined\" if the user dismisses it
   abundio notify <message>                ask the user to come and look at your pane
   abundio progress <text> | --clear       a short line saying what you are doing
 ";
@@ -1165,7 +1109,7 @@ gets a Tab of its own.
         Some("agent") => AGENT.to_string(),
         Some("tab") => TAB.to_string(),
         Some("workspace" | "worktree") => WORKSPACE.to_string(),
-        Some("ask" | "notify" | "progress") => YOU.to_string(),
+        Some("notify" | "progress") => YOU.to_string(),
         Some("notes") => NOTES.to_string(),
         _ => format!("{HEAD}{PANE}\n{AGENT}\n{TAB}\n{WORKSPACE}\n{YOU}\n{NOTES}"),
     }
@@ -1266,7 +1210,7 @@ pub fn split_workspace(argv: &[String]) -> Result<(Option<String>, Vec<String>),
         }
         // A value that can be any text is copied as is, so `--agent-arg
         // --workspace` stays the Agent's own argument.
-        if matches!(a.as_str(), REPEATABLE | "--prompt" | "--choice" | "--match") {
+        if matches!(a.as_str(), REPEATABLE | "--prompt" | "--match") {
             rest.extend(argv[i..(i + 2).min(argv.len())].iter().cloned());
             i += 2;
             continue;
@@ -1678,13 +1622,6 @@ pub fn handle(
         Err(e) => return error_answer(500, "internal", &e.to_string()),
     };
 
-    // `ask` waits on the user, not on a pane: no wait graph.
-    if let Request::Ask { timeout_ms, .. } = &request {
-        return match ask_window(app, caller, scope, &value, timeout_ms.map(Duration::from_millis)) {
-            Ok(reply) => answer_from_reply(reply),
-            Err(answer) => answer,
-        };
-    }
     let Some((target, timeout_ms)) = wait else {
         return match ask_window(app, caller, scope, &value, Some(PLAIN_REPLY_TIMEOUT)) {
             Ok(reply) => answer_from_reply(reply),
@@ -1777,7 +1714,7 @@ pub fn serve(app: AppHandle, mut request: tiny_http::Request) {
 }
 
 /// The CLI was interrupted (Ctrl+C, or its process killed politely) while a
-/// call waited: end that call, so a **Question card** does not outlive it.
+/// call waited: end that call, so the wait does not outlive it.
 fn serve_cancel(app: &AppHandle, token: &str, client_id: &str) -> (Answer, String) {
     let caller = app
         .try_state::<crate::pty_manager::PtyManager>()
@@ -2202,33 +2139,6 @@ mod tests {
     // ── Round four (ADR-0056) ──
 
     #[test]
-    fn ask_shapes_and_limits() {
-        assert_eq!(
-            req(&["ask", "Ship it?", "--choice", "yes", "--choice", " no ", "--timeout", "0"]),
-            Request::Ask {
-                question: "Ship it?".into(),
-                choices: vec!["yes".into(), "no".into()],
-                text: true,
-                timeout_ms: None,
-            }
-        );
-        assert!(matches!(
-            req(&["ask", "Which?\nline two", "--choice", "a", "--no-text"]),
-            Request::Ask { text: false, timeout_ms: Some(DEFAULT_WAIT_TIMEOUT_MS), ref question, .. } if question.contains('\n')
-        ));
-        assert!(usage_err(&["ask", "q", "--no-text"]).contains("--no-text needs"));
-        assert!(usage_err(&["ask", " "]).contains("empty"));
-        assert!(usage_err(&["ask", "q\u{1b}[2J"]).contains("control characters"));
-        assert!(usage_err(&["ask", &"x".repeat(QUESTION_MAX + 1)]).contains("at most"));
-        let many: Vec<String> = (0..=CHOICES_MAX).flat_map(|i| ["--choice".to_string(), format!("c{i}")]).collect();
-        let mut args = vec!["ask".to_string(), "q".to_string()];
-        args.extend(many);
-        assert!(matches!(parse_args(&args), Err(e) if e.contains("choices")));
-        assert!(usage_err(&["ask", "q", "--choice", "a\nb"]).contains("one line"));
-        assert!(usage_err(&["ask"]).contains("usage"));
-    }
-
-    #[test]
     fn notify_and_progress() {
         assert_eq!(req(&["notify", " Tests are green "]), Request::Notify { message: "Tests are green".into() });
         assert!(usage_err(&["notify", &"x".repeat(NOTIFY_MAX + 1)]).contains("at most"));
@@ -2322,23 +2232,20 @@ mod tests {
     #[test]
     fn help_lists_the_new_groups() {
         let Ok(Parsed::Help(all)) = parse_args(&[]) else { panic!() };
-        for s in ["abundio ask", "abundio notify", "abundio progress", "worktree new", "notes append", "pane watch"] {
+        for s in ["abundio notify", "abundio progress", "worktree new", "notes append", "pane watch"] {
             assert!(all.contains(s), "{s}");
         }
-        assert!(matches!(parse_args(&argv(&["help", "ask"])), Ok(Parsed::Help(t)) if t.contains("--choice")));
+        assert!(matches!(parse_args(&argv(&["help", "notify"])), Ok(Parsed::Help(t)) if t.contains("abundio progress")));
     }
 
     #[test]
     fn new_ops_serialise_with_their_names() {
-        assert_eq!(op_name(&req(&["ask", "q"])), "ask");
         assert_eq!(op_name(&req(&["progress", "--clear"])), "progress");
         assert_eq!(op_name(&req(&["worktree", "new", "x"])), "worktree.new");
         assert_eq!(op_name(&Request::NotesRead), "notes.read");
         assert_eq!(op_name(&req(&["pane", "watch", "p1", "--match", "x"])), "pane.watch");
         let v = serde_json::to_value(req(&["pane", "watch", "p1", "--match", "x", "-i"])).unwrap();
         assert_eq!(v["ignoreCase"], json!(true));
-        let v = serde_json::to_value(req(&["ask", "q", "--choice", "a", "--timeout", "5"])).unwrap();
-        assert_eq!(v["timeoutMs"], json!(5));
     }
 
     #[test]

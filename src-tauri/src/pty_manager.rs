@@ -1126,7 +1126,7 @@ if [ -z "${ABUNDIO_AGENT_TOKEN:-}" ] || [ -z "${ABUNDIO_HOOK_PORT:-}" ]; then
 fi
 
 # Each call carries an id, so an interrupted CLI can cancel the wait it
-# started (a Question card must not outlive its call). curl runs in the
+# started (a wait must not outlive its call). curl runs in the
 # background and is waited for, because bash runs a trap only between
 # commands, and `wait` is one it can interrupt.
 rid="${RANDOM}${RANDOM}-$$-$(date +%s)"
@@ -2714,7 +2714,7 @@ exit "$rc"
             let _ = fs::remove_file(f.dir.path().join("calls"));
             let mut child = Command::new("bash")
                 .arg(f.dir.path().join("abundio"))
-                .args(["ask", "q"])
+                .args(["agent", "wait", "p1"])
                 .env("PATH", format!("{}:/usr/bin:/bin", f.dir.path().display()))
                 .env("ABUNDIO_AGENT_TOKEN", "tok")
                 .env("ABUNDIO_HOOK_PORT", "4242")

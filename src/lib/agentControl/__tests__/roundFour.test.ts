@@ -46,7 +46,6 @@ import { useWorkspaceGitStore } from "../../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { registerNotesEditor } from "../../notesEditors";
 import type { WorkspaceWithTabs } from "../../types";
-import { answerQuestion, dismissQuestion } from "../askUser";
 import { runRequest } from "../handleControlRequest";
 
 // `b` runs an Agent, `a` is a plain shell.
@@ -80,7 +79,7 @@ function activity(mode: "agent" | "shell") {
 }
 
 beforeEach(() => {
-	useAgentSignalsStore.setState({ flags: {}, progress: {}, questions: {} });
+	useAgentSignalsStore.setState({ flags: {}, progress: {} });
 	useWorkspaceStore.setState({
 		workspaces: [
 			{
@@ -138,100 +137,6 @@ describe("notify", () => {
 		const r = await runRequest(agent, { op: "notify", message: "Look" });
 		expect(r).toMatchObject({ flagged: true });
 		expect(useAgentSignalsStore.getState().flags.b.message).toBe("Look");
-	});
-});
-
-describe("ask", () => {
-	const ask = (
-		over: Partial<{ choices: string[]; text: boolean }> = {},
-		signal = new AbortController().signal,
-	) =>
-		runRequest(
-			agent,
-			{
-				op: "ask",
-				question: "Ship it?",
-				choices: ["yes", "no"],
-				text: true,
-				timeoutMs: null,
-				...over,
-			},
-			signal,
-		);
-	const open = () => useAgentSignalsStore.getState().questions.b;
-
-	it("opens a card on the caller's pane and returns the chosen answer", async () => {
-		const p = ask();
-		await vi.waitFor(() => expect(open()).toBeDefined());
-		expect(open()).toMatchObject({
-			question: "Ship it?",
-			choices: ["yes", "no"],
-		});
-		answerQuestion("b", open().id, { choice: "yes", text: null });
-		await expect(p).resolves.toEqual({ choice: "yes", text: null });
-		expect(open()).toBeUndefined();
-	});
-
-	it("always offers text when there are no choices", async () => {
-		const p = ask({ choices: [], text: false });
-		await vi.waitFor(() => expect(open()).toBeDefined());
-		expect(open().text).toBe(true);
-		answerQuestion("b", open().id, { choice: null, text: "tomorrow" });
-		await expect(p).resolves.toEqual({ choice: null, text: "tomorrow" });
-	});
-
-	it("refuses a second question while one is open", async () => {
-		const first = ask();
-		await vi.waitFor(() => expect(open()).toBeDefined());
-		await expect(ask()).rejects.toMatchObject({ code: "busy" });
-		answerQuestion("b", open().id, { choice: "no", text: null });
-		await first;
-	});
-
-	it("ends when the call is cancelled, removing the card", async () => {
-		const ac = new AbortController();
-		const p = ask({}, ac.signal);
-		await vi.waitFor(() => expect(open()).toBeDefined());
-		ac.abort();
-		await expect(p).rejects.toMatchObject({ code: "cancelled" });
-		expect(open()).toBeUndefined();
-	});
-
-	it("ends as declined when the user dismisses the card", async () => {
-		const p = ask();
-		await vi.waitFor(() => expect(open()).toBeDefined());
-		dismissQuestion("b", "some-other-question");
-		expect(open()).toBeDefined();
-		dismissQuestion("b", open().id);
-		await expect(p).rejects.toMatchObject({ code: "declined" });
-		expect(open()).toBeUndefined();
-	});
-
-	it("ends when the pane closes", async () => {
-		const p = ask();
-		await vi.waitFor(() => expect(open()).toBeDefined());
-		useAgentSignalsStore.getState().clearPane("b");
-		await expect(p).rejects.toMatchObject({ code: "exited" });
-	});
-
-	it("ends when the Agent's turn ends", async () => {
-		const p = ask();
-		await vi.waitFor(() => expect(open()).toBeDefined());
-		usePtyActivityStore.getState().applyHookEvent("pty-b", "ready");
-		await expect(p).rejects.toMatchObject({ code: "exited" });
-		expect(open()).toBeUndefined();
-	});
-
-	it("is refused from a plain shell", async () => {
-		await expect(
-			runRequest(shell, {
-				op: "ask",
-				question: "q",
-				choices: [],
-				text: true,
-				timeoutMs: null,
-			}),
-		).rejects.toMatchObject({ code: "agents_only" });
 	});
 });
 

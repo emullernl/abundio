@@ -54,16 +54,8 @@ export type ControlRequest =
 	| { op: "tab.new"; name: string | null; focus: boolean }
 	/** `target: null` is the caller's own Tab. */
 	| { op: "tab.rename"; name: string; target: Target | null }
-	// Round four (ADR-0056). `ask`, `notify`, `progress` and `worktree.new`
-	// are for agent-mode callers only.
-	| {
-			op: "ask";
-			question: string;
-			choices: string[];
-			/** Offer a text field (always when there are no choices). */
-			text: boolean;
-			timeoutMs: number | null;
-	  }
+	// Round four (ADR-0056). `notify`, `progress` and `worktree.new` are for
+	// agent-mode callers only.
 	| { op: "notify"; message: string }
 	/** `text: null` clears the **Progress line**. */
 	| { op: "progress"; text: string | null }
@@ -119,8 +111,6 @@ export type ControlErrorCode =
 	| "branch_in_use"
 	| "exists"
 	| "cancelled"
-	/** The user dismissed a Question card without answering. */
-	| "declined"
 	| "exited"
 	| "internal";
 

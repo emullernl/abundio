@@ -1,6 +1,6 @@
 // Agents speaking to the user about their own pane (ADR-0056): the
 // **Attention flag** (`notify`) and the **Progress line** (`progress`), and
-// when each ends. The **Question card** lives in `askUser.ts`.
+// when each ends.
 
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";

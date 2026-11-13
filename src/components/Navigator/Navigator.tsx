@@ -35,15 +35,9 @@ import { getTerminal } from "../../lib/terminalManager";
 import type { Tab, WorkspaceWithTabs } from "../../lib/types";
 import { buildWorkspaceRows } from "../../lib/worktreeGrouping";
 import {
-	askingPanesKey,
-	askingPanesOf,
-	useAgentSignalsStore,
-} from "../../stores/agentSignalsStore";
-import {
 	computePtyDotStatus,
 	type DotStatus,
 	usePtyActivityStore,
-	withQuestionsWaiting,
 } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -131,15 +125,8 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const gitById = useWorkspaceGitStore((s) => s.byWorkspaceId);
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
-	const rawActivities = usePtyActivityStore((s) => s.activities);
+	const activities = usePtyActivityStore((s) => s.activities);
 	const panePtyMap = usePtyActivityStore((s) => s.panePtyMap);
-	const askingKey = useAgentSignalsStore(askingPanesKey);
-	// A pane with an open Question card shows as Waiting (ADR-0056).
-	const activities = useMemo(
-		() =>
-			withQuestionsWaiting(rawActivities, panePtyMap, askingPanesOf(askingKey)),
-		[rawActivities, panePtyMap, askingKey],
-	);
 	const titles = usePtyActivityStore((s) => s.titles);
 	const cwds = usePtyActivityStore((s) => s.cwds);
 	const detectedAgentIds = usePtyActivityStore((s) => s.detectedAgentIds);

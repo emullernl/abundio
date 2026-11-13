@@ -57,7 +57,6 @@ import { NameAgentDialog } from "./NameAgentDialog";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { ParameterDialog } from "./ParameterDialog";
 import { PromptActionPopover } from "./PromptActionPopover";
-import { QuestionCard } from "./QuestionCard";
 import { SearchBar } from "./SearchBar";
 import { type FleetSlotInfo, TerminalTitleBar } from "./TerminalTitleBar";
 
@@ -653,10 +652,6 @@ export function TerminalSlot({
 				className="w-full flex-1 min-h-0"
 				style={{ overflow: "hidden" }}
 			/>
-			{/* Below the terminal body, so it takes rows from it — the existing
-			    ResizeObserver on `innerRef` drives the xterm refit on appear and
-			    disappear. The space is deliberately not reserved. */}
-			<QuestionCard paneId={paneId} />
 			<ActionBar
 				paneId={paneId}
 				onRequestParams={setParamAction}

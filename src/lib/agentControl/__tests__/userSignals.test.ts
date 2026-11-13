@@ -44,7 +44,7 @@ beforeEach(() => {
 	h.visible = true;
 	h.blurredMs = null;
 	h.windowFocused = true;
-	useAgentSignalsStore.setState({ flags: {}, progress: {}, questions: {} });
+	useAgentSignalsStore.setState({ flags: {}, progress: {} });
 });
 
 describe("notifyPopupAllowed", () => {

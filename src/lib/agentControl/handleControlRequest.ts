@@ -44,7 +44,6 @@ import {
 import type { CodingAgent, WorkspaceWithTabs } from "../types";
 import { addWorktreeTargetId } from "../worktreeGrouping";
 import { basename, resolvePath } from "../worktreePath";
-import { askUser } from "./askUser";
 import { crowdHint } from "./crowding";
 import {
 	describeAgent,
@@ -259,7 +258,6 @@ function describeAll(scope: Scope): PaneDescription[] {
 
 /** Commands that speak or act in an Agent's name (ADR-0056). */
 const AGENTS_ONLY = new Set<ControlRequest["op"]>([
-	"ask",
 	"notify",
 	"progress",
 	"worktree.new",
@@ -289,10 +287,6 @@ export async function runRequest(
 	if (AGENTS_ONLY.has(request.op)) requireAgentCaller(caller);
 	const scope = await loadScope(caller, target, signal);
 	switch (request.op) {
-		case "ask": {
-			const name = await nameOfCaller(caller, caller.workspaceId);
-			return askUser(caller.paneId, caller.ptyId, name, request, signal);
-		}
 		case "notes.read":
 			return { notes: await readNotes(scope.workspaceId) };
 		case "notes.append": {
