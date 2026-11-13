@@ -107,9 +107,33 @@ impl ControlTokens {
 #[derive(Default)]
 pub struct PendingRequests {
     waiting: DashMap<String, Sender<Value>>,
+    /// The CLI's id for a call → (pending id, caller's PTY, Window), while it
+    /// waits. Only the caller's own PTY may cancel it.
+    by_client: DashMap<String, (String, String, String)>,
 }
 
 impl PendingRequests {
+    /// Remember which pending request a CLI call is waiting on.
+    pub fn track_client(&self, client_id: &str, id: &str, pty_id: &str, window: &str) {
+        self.by_client
+            .insert(client_id.to_string(), (id.to_string(), pty_id.to_string(), window.to_string()));
+    }
+
+    pub fn untrack_client(&self, client_id: &str) {
+        self.by_client.remove(client_id);
+    }
+
+    /// The CLI was interrupted: end the wait it started, if `pty_id` started
+    /// it. Returns the Window to tell, and the pending id.
+    pub fn cancel_client(&self, client_id: &str, pty_id: &str) -> Option<(String, String)> {
+        let (_, (id, _, window)) = self.by_client.remove_if(client_id, |_, (_, owner, _)| owner == pty_id)?;
+        self.complete(
+            &id,
+            json!({ "error": { "code": "cancelled", "message": "the call was interrupted" } }),
+        );
+        Some((window, id))
+    }
+
     pub fn register(&self) -> (String, Receiver<Value>) {
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = bounded(1);
@@ -279,7 +303,62 @@ pub enum Request {
     /// Every Workspace of the caller's Profile. Answered by Rust alone.
     #[serde(rename = "workspace.list")]
     WorkspaceList,
+    /// A **Question card** on the caller's own pane (ADR-0056). A wait.
+    #[serde(rename = "ask", rename_all = "camelCase")]
+    Ask {
+        question: String,
+        choices: Vec<String>,
+        /// Offer a text field (always, when there are no choices).
+        text: bool,
+        timeout_ms: Option<u64>,
+    },
+    /// Set the caller's **Attention flag**.
+    #[serde(rename = "notify", rename_all = "camelCase")]
+    Notify { message: String },
+    /// Set (`Some`) or clear the caller's **Progress line**.
+    #[serde(rename = "progress", rename_all = "camelCase")]
+    Progress { text: Option<String> },
+    /// A git worktree as a new Workspace, optionally with an Agent in it.
+    #[serde(rename = "worktree.new", rename_all = "camelCase")]
+    WorktreeNew {
+        branch: String,
+        agent: Option<AgentSpec>,
+        focus: bool,
+    },
+    #[serde(rename = "notes.read")]
+    NotesRead,
+    #[serde(rename = "notes.append", rename_all = "camelCase")]
+    NotesAppend { text: String },
+    /// Wait for a line of new output matching `pattern` (a JavaScript regex,
+    /// compiled by the Window).
+    #[serde(rename = "pane.watch", rename_all = "camelCase")]
+    PaneWatch {
+        target: Target,
+        pattern: String,
+        ignore_case: bool,
+        timeout_ms: Option<u64>,
+    },
 }
+
+/// The Agent `worktree new --agent` starts in the new Workspace.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSpec {
+    pub kind: String,
+    pub prompt: Option<String>,
+    pub handle: Option<String>,
+    pub args: Vec<String>,
+}
+
+/// Limits on what an Agent may show the user (ADR-0056), in characters.
+pub const QUESTION_MAX: usize = 2000;
+pub const CHOICES_MAX: usize = 8;
+pub const CHOICE_MAX: usize = 60;
+pub const NOTIFY_MAX: usize = 200;
+pub const PROGRESS_MAX: usize = 80;
+/// Notes text per `notes append`, in bytes.
+pub const NOTES_APPEND_MAX: usize = 4096;
+pub const PATTERN_MAX: usize = 500;
 
 /// What a command line asks for: a request, or help text.
 #[derive(Debug, PartialEq, Eq)]
@@ -428,6 +507,31 @@ fn split_args<'a>(
     with_value: &[&'static str],
     switches: &[&'static str],
 ) -> Result<Args<'a>, String> {
+    if with_value.contains(&REPEATABLE) {
+        let rest: Vec<&'static str> = with_value.iter().copied().filter(|f| *f != REPEATABLE).collect();
+        split_args_inner(args, &rest, switches, Some(REPEATABLE))
+    } else {
+        split_args_inner(args, with_value, switches, None)
+    }
+}
+
+/// [`split_args`] with `repeat` as a value flag that may be given many times
+/// (its values land in `repeated`, in order).
+fn split_args_repeating<'a>(
+    args: &'a [String],
+    with_value: &[&'static str],
+    switches: &[&'static str],
+    repeat: &'static str,
+) -> Result<Args<'a>, String> {
+    split_args_inner(args, with_value, switches, Some(repeat))
+}
+
+fn split_args_inner<'a>(
+    args: &'a [String],
+    with_value: &[&'static str],
+    switches: &[&'static str],
+    repeat: Option<&'static str>,
+) -> Result<Args<'a>, String> {
     let mut out = Args {
         positional: Vec::new(),
         flags: HashMap::new(),
@@ -441,15 +545,19 @@ fn split_args<'a>(
             out.passthrough = args[i + 1..].iter().map(String::as_str).collect();
             break;
         }
+        if repeat == Some(a) {
+            let value = args
+                .get(i + 1)
+                .ok_or_else(|| format!("{a} needs a value"))?;
+            out.repeated.push(value.as_str());
+            i += 2;
+            continue;
+        }
         if let Some(name) = with_value.iter().find(|f| **f == a) {
             let value = args
                 .get(i + 1)
                 .ok_or_else(|| format!("{a} needs a value"))?;
-            if *name == REPEATABLE {
-                out.repeated.push(value.as_str());
-            } else {
-                out.flags.insert(name, Some(value.as_str()));
-            }
+            out.flags.insert(name, Some(value.as_str()));
             i += 2;
             continue;
         }
@@ -484,7 +592,7 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
     match (group, command) {
         (None, _) | (Some("help" | "--help" | "-h"), None) => Ok(Parsed::Help(help(None))),
         (Some("help"), Some(g)) => Ok(Parsed::Help(help(Some(g)))),
-        (Some(g @ ("pane" | "agent" | "tab" | "workspace")), None | Some("--help" | "-h" | "help")) => {
+        (Some(g @ ("pane" | "agent" | "tab" | "workspace" | "notes" | "worktree")), None | Some("--help" | "-h" | "help")) => {
             Ok(Parsed::Help(help(Some(g))))
         }
         (Some("pane"), Some(c)) => parse_pane(c, rest).map(Parsed::Request),
@@ -499,6 +607,14 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
         (Some("workspace"), Some(c)) => Err(format!(
             "unknown command `workspace {c}`; run `abundio help workspace`"
         )),
+        (Some("ask"), _) => parse_ask(&argv[1..]).map(Parsed::Request),
+        (Some("notify"), _) => parse_notify(&argv[1..]).map(Parsed::Request),
+        (Some("progress"), _) => parse_progress(&argv[1..]).map(Parsed::Request),
+        (Some("worktree"), Some("new")) => parse_worktree_new(rest).map(Parsed::Request),
+        (Some("worktree"), Some(c)) => Err(format!(
+            "unknown command `worktree {c}`; run `abundio help worktree`"
+        )),
+        (Some("notes"), Some(c)) => parse_notes(c, rest).map(Parsed::Request),
         (Some(g), _) => Err(format!("unknown command {g:?}; run `abundio help`")),
     }
 }
@@ -531,6 +647,29 @@ fn parse_pane(command: &str, rest: &[String]) -> Result<Request, String> {
                 target: parse_target(a.positional[0])?,
                 lines,
                 visible: a.flags.contains_key("--visible"),
+            })
+        }
+        "watch" => {
+            let usage = "abundio pane watch <pane> --match <regex> [-i] [--timeout <ms>]";
+            let a = split_args(rest, &["--match", "--timeout"], &["-i"])?;
+            expect_positionals(&a, 1, 1, usage)?;
+            let pattern = a
+                .flags
+                .get("--match")
+                .copied()
+                .flatten()
+                .ok_or_else(|| format!("--match is required; usage: {usage}"))?;
+            if pattern.is_empty() {
+                return Err("--match is empty".into());
+            }
+            if pattern.chars().count() > PATTERN_MAX {
+                return Err(format!("--match can have at most {PATTERN_MAX} characters"));
+            }
+            Ok(Request::PaneWatch {
+                target: parse_target(a.positional[0])?,
+                pattern: pattern.to_string(),
+                ignore_case: a.flags.contains_key("-i"),
+                timeout_ms: wait_timeout(&a)?,
             })
         }
         "split" => {
@@ -767,6 +906,171 @@ fn parse_tab(command: &str, rest: &[String]) -> Result<Request, String> {
     }
 }
 
+/// One line of text for the user: trimmed, no control characters, 1–`max`
+/// characters.
+fn one_line(what: &str, s: &str, max: usize) -> Result<String, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(format!("the {what} is empty"));
+    }
+    if s.chars().any(char::is_control) {
+        return Err(format!("the {what} must be one line with no control characters"));
+    }
+    if s.chars().count() > max {
+        return Err(format!("the {what} can have at most {max} characters"));
+    }
+    Ok(s.to_string())
+}
+
+/// Text that may span lines: newlines and tabs allowed, other control
+/// characters (escape sequences) not.
+fn multi_line(what: &str, s: &str) -> Result<String, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(format!("the {what} is empty"));
+    }
+    if s.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) {
+        return Err(format!("the {what} must not contain control characters"));
+    }
+    Ok(s.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
+fn wait_timeout(a: &Args) -> Result<Option<u64>, String> {
+    match a.flags.get("--timeout").copied().flatten() {
+        Some(v) => parse_timeout(v),
+        None => Ok(Some(DEFAULT_WAIT_TIMEOUT_MS)),
+    }
+}
+
+fn parse_ask(rest: &[String]) -> Result<Request, String> {
+    let usage = "abundio ask <question> [--choice <c>]... [--no-text] [--timeout <ms>]";
+    let a = split_args_repeating(rest, &["--timeout"], &["--no-text"], "--choice")?;
+    expect_positionals(&a, 1, 1, usage)?;
+    let question = multi_line("question", a.positional[0])?;
+    if question.chars().count() > QUESTION_MAX {
+        return Err(format!("the question can have at most {QUESTION_MAX} characters"));
+    }
+    if a.repeated.len() > CHOICES_MAX {
+        return Err(format!("at most {CHOICES_MAX} choices"));
+    }
+    let choices = a
+        .repeated
+        .iter()
+        .map(|c| one_line("choice", c, CHOICE_MAX))
+        .collect::<Result<Vec<_>, _>>()?;
+    let no_text = a.flags.contains_key("--no-text");
+    if no_text && choices.is_empty() {
+        return Err("--no-text needs at least one --choice, or there is nothing to answer with".into());
+    }
+    Ok(Request::Ask {
+        question,
+        choices,
+        text: !no_text,
+        timeout_ms: wait_timeout(&a)?,
+    })
+}
+
+fn parse_notify(rest: &[String]) -> Result<Request, String> {
+    let a = split_args(rest, &[], &[])?;
+    expect_positionals(&a, 1, 1, "abundio notify <message>")?;
+    Ok(Request::Notify {
+        message: one_line("message", a.positional[0], NOTIFY_MAX)?,
+    })
+}
+
+fn parse_progress(rest: &[String]) -> Result<Request, String> {
+    let usage = "abundio progress <text> | abundio progress --clear";
+    let a = split_args(rest, &[], &["--clear"])?;
+    let clear = a.flags.contains_key("--clear");
+    match (clear, a.positional.as_slice()) {
+        (true, []) => Ok(Request::Progress { text: None }),
+        (false, [t]) => Ok(Request::Progress {
+            text: Some(one_line("progress line", t, PROGRESS_MAX)?),
+        }),
+        _ => Err(format!("usage: {usage}")),
+    }
+}
+
+/// Git's practical branch-name rules, as `isValidBranch` in
+/// `lib/worktreePath.ts` (both tested against one table).
+pub fn valid_branch(b: &str) -> bool {
+    if b.is_empty() || b == "@" || b.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if b.chars().any(|c| c.is_control() || "~^:?*[\\".contains(c)) {
+        return false;
+    }
+    if b.contains("..") || b.contains("@{") || b.contains("//") {
+        return false;
+    }
+    if b.starts_with('/') || b.starts_with('-') || b.ends_with('/') || b.ends_with('.') || b.ends_with(".lock") {
+        return false;
+    }
+    !b.split('/').any(|c| c.starts_with('.') || c.ends_with(".lock"))
+}
+
+fn parse_worktree_new(rest: &[String]) -> Result<Request, String> {
+    let usage = "abundio worktree new <branch> [--agent <kind> [--prompt <text>] [--handle <h>] [--agent-arg <arg>]...] [--focus]";
+    let a = split_args(rest, &["--agent", "--prompt", "--handle", REPEATABLE], &["--focus"])?;
+    expect_positionals(&a, 1, 1, usage)?;
+    let branch = a.positional[0].trim();
+    if !valid_branch(branch) {
+        return Err(format!("{branch:?} is not a valid git branch name"));
+    }
+    let kind = a.flags.get("--agent").copied().flatten();
+    let prompt = a.flags.get("--prompt").copied().flatten();
+    let handle = a.flags.get("--handle").copied().flatten();
+    if kind.is_none() && (prompt.is_some() || handle.is_some() || !a.repeated.is_empty() || !a.passthrough.is_empty()) {
+        return Err("--prompt, --handle and agent arguments need --agent <kind>".into());
+    }
+    let agent = match kind {
+        None => None,
+        Some(k) if k.trim().is_empty() => return Err("--agent is empty".into()),
+        Some(k) => {
+            let args: Vec<String> = a.repeated.iter().chain(&a.passthrough).map(|s| s.to_string()).collect();
+            if args.iter().any(|s| s.chars().any(char::is_control)) {
+                return Err("agent arguments must not contain control characters".into());
+            }
+            Some(AgentSpec {
+                kind: k.trim().to_string(),
+                prompt: prompt.map(str::to_string),
+                handle: match handle {
+                    Some(h) => Some(normalize_handle(h).ok_or_else(|| invalid_handle(h))?),
+                    None => None,
+                },
+                args,
+            })
+        }
+    };
+    Ok(Request::WorktreeNew {
+        branch: branch.to_string(),
+        agent,
+        focus: a.flags.contains_key("--focus"),
+    })
+}
+
+fn parse_notes(command: &str, rest: &[String]) -> Result<Request, String> {
+    match command {
+        "read" => {
+            let a = split_args(rest, &[], &[])?;
+            expect_positionals(&a, 0, 0, "abundio notes read")?;
+            Ok(Request::NotesRead)
+        }
+        "append" => {
+            let a = split_args(rest, &[], &[])?;
+            expect_positionals(&a, 1, 1, "abundio notes append <text>")?;
+            let text = multi_line("text", a.positional[0])?;
+            if text.len() > NOTES_APPEND_MAX {
+                return Err(format!("at most {NOTES_APPEND_MAX} bytes per append"));
+            }
+            Ok(Request::NotesAppend { text })
+        }
+        other => Err(format!(
+            "unknown command `notes {other}`; run `abundio help notes`"
+        )),
+    }
+}
+
 fn invalid_handle(h: &str) -> String {
     format!(
         "{h:?} is not a valid Agent handle: up to 32 characters, starting with a letter, then letters, digits, spaces, '-' or '_', and not p followed by digits (that is a Pane number)"
@@ -784,6 +1088,9 @@ Panes (only those of your own Workspace):
                                           a new shell pane beside yours
   abundio pane run <pane> <command>       run a one-line command in an idle shell
   abundio pane close <pane>               close a pane you created
+  abundio pane watch <pane> --match <regex> [-i] [--timeout <ms>]
+                                          wait for a line of new output matching a
+                                          JavaScript regex; prints that line
 ";
     const AGENT: &str = "\
 Agents:
@@ -806,6 +1113,25 @@ Agents:
 Workspaces:
   abundio workspace list                  every Workspace of your Profile: name, folder,
                                           branch, whether it is open, and its Agents
+  abundio worktree new <branch> [--agent <kind> [--prompt <text>] [--handle <h>]
+                      [--agent-arg <arg>]...] [--focus]
+                                          a git worktree of your repository as a new
+                                          Workspace, opened in the background, with an
+                                          Agent of yours in it (Agents only)
+";
+    const YOU: &str = "\
+You and the user (Agents only, about your own pane):
+  abundio ask <question> [--choice <c>]... [--no-text] [--timeout <ms>]
+                                          ask the user on your pane and wait for the
+                                          answer: {\"choice\", \"text\"}
+  abundio notify <message>                ask the user to come and look at your pane
+  abundio progress <text> | --clear       a short line saying what you are doing
+";
+    const NOTES: &str = "\
+Notes (the Workspace's shared notes):
+  abundio notes read                      the notes as text
+  abundio notes append <text>             add paragraphs, \"- \" bullets or \"- [ ] \" items
+                                          at the end, signed with your name
 ";
     const TAB: &str = "\
 Tabs:
@@ -837,8 +1163,10 @@ gets a Tab of its own.
         Some("pane") => PANE.to_string(),
         Some("agent") => AGENT.to_string(),
         Some("tab") => TAB.to_string(),
-        Some("workspace") => WORKSPACE.to_string(),
-        _ => format!("{HEAD}{PANE}\n{AGENT}\n{TAB}\n{WORKSPACE}"),
+        Some("workspace" | "worktree") => WORKSPACE.to_string(),
+        Some("ask" | "notify" | "progress") => YOU.to_string(),
+        Some("notes") => NOTES.to_string(),
+        _ => format!("{HEAD}{PANE}\n{AGENT}\n{TAB}\n{WORKSPACE}\n{YOU}\n{NOTES}"),
     }
 }
 
@@ -909,6 +1237,8 @@ fn is_mutating(request: &Request) -> bool {
             | Request::PaneRead { .. }
             | Request::AgentList
             | Request::AgentWait { .. }
+            | Request::NotesRead
+            | Request::PaneWatch { .. }
     )
 }
 
@@ -935,7 +1265,7 @@ pub fn split_workspace(argv: &[String]) -> Result<(Option<String>, Vec<String>),
         }
         // A value that can be any text is copied as is, so `--agent-arg
         // --workspace` stays the Agent's own argument.
-        if a == REPEATABLE || a == "--prompt" {
+        if matches!(a.as_str(), REPEATABLE | "--prompt" | "--choice" | "--match") {
             rest.extend(argv[i..(i + 2).min(argv.len())].iter().cloned());
             i += 2;
             continue;
@@ -1042,12 +1372,14 @@ fn resolve_scope(app: &AppHandle, caller: &Caller, workspace: Option<&str>) -> R
             workspace_id: target.id.clone(),
             open: false,
             window_label,
+            client_id: None,
         },
         // Not Opened anywhere: the caller's Window opens it in the background.
         None => Scope {
             workspace_id: target.id.clone(),
             open: true,
             window_label: caller.window_label.clone(),
+            client_id: None,
         },
     })
 }
@@ -1148,6 +1480,10 @@ pub struct Scope {
     pub open: bool,
     #[serde(skip)]
     pub window_label: String,
+    /// The id the CLI gave this call (`X-Abundio-Request-Id`), so an
+    /// interrupted CLI can cancel it.
+    #[serde(skip)]
+    pub client_id: Option<String>,
 }
 
 impl Scope {
@@ -1157,6 +1493,7 @@ impl Scope {
             workspace_id: caller.workspace_id.clone(),
             open: false,
             window_label: caller.window_label.clone(),
+            client_id: None,
         }
     }
 }
@@ -1232,6 +1569,9 @@ fn ask_window(
         .try_state::<PendingRequests>()
         .ok_or_else(|| error_answer(503, "unavailable", "Agent control is not ready"))?;
     let (id, rx) = pending.register();
+    if let Some(client) = &scope.client_id {
+        pending.track_client(client, &id, &caller.pty_id, &scope.window_label);
+    }
     let event = ControlEvent {
         id: &id,
         caller,
@@ -1243,11 +1583,17 @@ fn ask_window(
         .is_err()
     {
         pending.forget(&id);
+        if let Some(client) = &scope.client_id {
+            pending.untrack_client(client);
+        }
         return Err(error_answer(503, "window_gone", "could not reach the Window"));
     }
     let reply = wait_for_reply(&rx, limit, WINDOW_CHECK_EVERY, || {
         app.get_webview_window(&scope.window_label).is_some()
     });
+    if let Some(client) = &scope.client_id {
+        pending.untrack_client(client);
+    }
     match reply {
         Reply::Answer(v) => Ok(v),
         Reply::WindowGone => {
@@ -1321,6 +1667,9 @@ pub fn handle(
             timeout_ms,
             ..
         } => Some((target.clone(), *timeout_ms)),
+        Request::PaneWatch {
+            target, timeout_ms, ..
+        } => Some((target.clone(), *timeout_ms)),
         _ => None,
     };
     let value = match serde_json::to_value(&request) {
@@ -1328,6 +1677,13 @@ pub fn handle(
         Err(e) => return error_answer(500, "internal", &e.to_string()),
     };
 
+    // `ask` waits on the user, not on a pane: no wait graph.
+    if let Request::Ask { timeout_ms, .. } = &request {
+        return match ask_window(app, caller, scope, &value, timeout_ms.map(Duration::from_millis)) {
+            Ok(reply) => answer_from_reply(reply),
+            Err(answer) => answer,
+        };
+    }
     let Some((target, timeout_ms)) = wait else {
         return match ask_window(app, caller, scope, &value, Some(PLAIN_REPLY_TIMEOUT)) {
             Ok(reply) => answer_from_reply(reply),
@@ -1381,13 +1737,26 @@ pub fn serve(app: AppHandle, mut request: tiny_http::Request) {
         .headers()
         .iter()
         .any(|h| h.field.equiv("X-Abundio-Retry"));
+    let header = |name: &'static str| {
+        request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv(name))
+            .map(|h| h.value.as_str().to_string())
+            .filter(|v| !v.is_empty() && v.len() <= 64)
+    };
+    let client_id = header("X-Abundio-Request-Id");
+    let cancel = header("X-Abundio-Cancel");
     let mut body = Vec::new();
     let _ = request
         .as_reader()
         .take(MAX_BODY + 1)
         .read_to_end(&mut body);
 
-    let (answer, log) = serve_inner(&app, &token, &body, retry);
+    let (answer, log) = match cancel {
+        Some(c) => serve_cancel(&app, &token, &c),
+        None => serve_inner(&app, &token, &body, retry, client_id),
+    };
     let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
     // Never the prompt or the text read: only who did what, and how it went.
     eprintln!("[{ts}] [abundio:control] {log} status={}", answer.status);
@@ -1406,7 +1775,40 @@ pub fn serve(app: AppHandle, mut request: tiny_http::Request) {
     );
 }
 
-fn serve_inner(app: &AppHandle, token: &str, body: &[u8], retry: bool) -> (Answer, String) {
+/// The CLI was interrupted (Ctrl+C, or its process killed politely) while a
+/// call waited: end that call, so a **Question card** does not outlive it.
+fn serve_cancel(app: &AppHandle, token: &str, client_id: &str) -> (Answer, String) {
+    let caller = app
+        .try_state::<crate::pty_manager::PtyManager>()
+        .and_then(|mgr| mgr.control_tokens().lookup(token));
+    let Some(caller) = caller else {
+        return (
+            error_answer(403, "unauthorized", "not running inside an Abundio pane"),
+            "rejected cancel: bad or missing token".into(),
+        );
+    };
+    let done = app
+        .try_state::<PendingRequests>()
+        .and_then(|p| p.cancel_client(client_id, &caller.pty_id));
+    if let Some((window, id)) = &done {
+        let _ = app.emit_to(window.as_str(), "agent-control-cancel", json!({ "id": id }));
+    }
+    (
+        Answer {
+            status: 200,
+            body: json!({ "cancelled": done.is_some() }).to_string(),
+        },
+        format!("caller={} op=cancel", caller.pane_id),
+    )
+}
+
+fn serve_inner(
+    app: &AppHandle,
+    token: &str,
+    body: &[u8],
+    retry: bool,
+    client_id: Option<String>,
+) -> (Answer, String) {
     let caller = app
         .try_state::<crate::pty_manager::PtyManager>()
         .and_then(|mgr| mgr.control_tokens().lookup(token));
@@ -1464,7 +1866,7 @@ fn serve_inner(app: &AppHandle, token: &str, body: &[u8], retry: bool) -> (Answe
         );
     }
     let scope = match resolve_scope(app, &caller, workspace.as_deref()) {
-        Ok(s) => s,
+        Ok(s) => Scope { client_id, ..s },
         Err(answer) => return (answer, format!("{who} op={op} target=?")),
     };
     let target = if scope.workspace_id == caller.workspace_id {
@@ -1796,6 +2198,159 @@ mod tests {
         assert_eq!(op_name(&req(&["tab", "rename", "x"])), "tab.rename");
     }
 
+    // ── Round four (ADR-0056) ──
+
+    #[test]
+    fn ask_shapes_and_limits() {
+        assert_eq!(
+            req(&["ask", "Ship it?", "--choice", "yes", "--choice", " no ", "--timeout", "0"]),
+            Request::Ask {
+                question: "Ship it?".into(),
+                choices: vec!["yes".into(), "no".into()],
+                text: true,
+                timeout_ms: None,
+            }
+        );
+        assert!(matches!(
+            req(&["ask", "Which?\nline two", "--choice", "a", "--no-text"]),
+            Request::Ask { text: false, timeout_ms: Some(DEFAULT_WAIT_TIMEOUT_MS), ref question, .. } if question.contains('\n')
+        ));
+        assert!(usage_err(&["ask", "q", "--no-text"]).contains("--no-text needs"));
+        assert!(usage_err(&["ask", " "]).contains("empty"));
+        assert!(usage_err(&["ask", "q\u{1b}[2J"]).contains("control characters"));
+        assert!(usage_err(&["ask", &"x".repeat(QUESTION_MAX + 1)]).contains("at most"));
+        let many: Vec<String> = (0..=CHOICES_MAX).flat_map(|i| ["--choice".to_string(), format!("c{i}")]).collect();
+        let mut args = vec!["ask".to_string(), "q".to_string()];
+        args.extend(many);
+        assert!(matches!(parse_args(&args), Err(e) if e.contains("choices")));
+        assert!(usage_err(&["ask", "q", "--choice", "a\nb"]).contains("one line"));
+        assert!(usage_err(&["ask"]).contains("usage"));
+    }
+
+    #[test]
+    fn notify_and_progress() {
+        assert_eq!(req(&["notify", " Tests are green "]), Request::Notify { message: "Tests are green".into() });
+        assert!(usage_err(&["notify", &"x".repeat(NOTIFY_MAX + 1)]).contains("at most"));
+        assert!(usage_err(&["notify", "a\nb"]).contains("one line"));
+        assert_eq!(req(&["progress", "step 2/5"]), Request::Progress { text: Some("step 2/5".into()) });
+        assert_eq!(req(&["progress", "--clear"]), Request::Progress { text: None });
+        assert!(usage_err(&["progress"]).contains("usage"));
+        assert!(usage_err(&["progress", "x", "--clear"]).contains("usage"));
+        assert!(usage_err(&["progress", &"x".repeat(PROGRESS_MAX + 1)]).contains("at most"));
+    }
+
+    /// The same table `lib/worktreePath.ts` is tested against.
+    #[derive(serde::Deserialize)]
+    struct BranchCases {
+        valid: Vec<String>,
+        invalid: Vec<String>,
+    }
+
+    #[test]
+    fn branch_names_match_the_shared_table() {
+        let cases: BranchCases =
+            serde_json::from_str(include_str!("../../src/lib/__tests__/fixtures/branchNames.json")).unwrap();
+        for b in &cases.valid {
+            assert!(valid_branch(b), "{b:?} should be valid");
+        }
+        for b in &cases.invalid {
+            assert!(!valid_branch(b), "{b:?} should be invalid");
+        }
+    }
+
+    #[test]
+    fn worktree_new() {
+        assert_eq!(
+            req(&["worktree", "new", "feat/x"]),
+            Request::WorktreeNew { branch: "feat/x".into(), agent: None, focus: false }
+        );
+        assert_eq!(
+            req(&["worktree", "new", "feat/x", "--agent", "claude", "--prompt", "go", "--handle", "builder",
+                  "--agent-arg", "--model", "--agent-arg", "o3", "--focus"]),
+            Request::WorktreeNew {
+                branch: "feat/x".into(),
+                agent: Some(AgentSpec {
+                    kind: "claude".into(),
+                    prompt: Some("go".into()),
+                    handle: Some("builder".into()),
+                    args: vec!["--model".into(), "o3".into()],
+                }),
+                focus: true,
+            }
+        );
+        assert!(usage_err(&["worktree", "new", "a..b"]).contains("not a valid git branch"));
+        assert!(usage_err(&["worktree", "new", "x", "--prompt", "go"]).contains("need --agent"));
+        assert!(usage_err(&["worktree", "new", "x", "--agent", "c", "--handle", "p2"]).contains("not a valid Agent handle"));
+        assert!(usage_err(&["worktree", "remove", "x"]).contains("unknown command"));
+        assert!(is_mutating(&req(&["worktree", "new", "x"])));
+    }
+
+    #[test]
+    fn notes() {
+        assert_eq!(req(&["notes", "read"]), Request::NotesRead);
+        assert_eq!(
+            req(&["notes", "append", "done\r\n- [ ] next"]),
+            Request::NotesAppend { text: "done\n- [ ] next".into() }
+        );
+        assert!(usage_err(&["notes", "append", &"x".repeat(NOTES_APPEND_MAX + 1)]).contains("bytes"));
+        assert!(usage_err(&["notes", "append", "a\u{7}"]).contains("control characters"));
+        assert!(!is_mutating(&Request::NotesRead));
+        assert!(is_mutating(&req(&["notes", "append", "x"])));
+        assert!(matches!(parse_args(&argv(&["notes"])), Ok(Parsed::Help(t)) if t.contains("notes append")));
+    }
+
+    #[test]
+    fn pane_watch() {
+        assert_eq!(
+            req(&["pane", "watch", "p2", "--match", "ready in \\d+", "-i"]),
+            Request::PaneWatch {
+                target: Target::Pane(2),
+                pattern: "ready in \\d+".into(),
+                ignore_case: true,
+                timeout_ms: Some(DEFAULT_WAIT_TIMEOUT_MS),
+            }
+        );
+        assert!(usage_err(&["pane", "watch", "p2"]).contains("--match is required"));
+        assert!(!is_mutating(&req(&["pane", "watch", "p2", "--match", "x"])));
+        // A pattern that looks like Abundio's own option stays the pattern.
+        let (ws, rest) = split_workspace(&argv(&["pane", "watch", "p2", "--match", "--workspace"])).unwrap();
+        assert_eq!(ws, None);
+        assert!(matches!(parse_args(&rest), Ok(Parsed::Request(Request::PaneWatch { ref pattern, .. })) if pattern == "--workspace"));
+    }
+
+    #[test]
+    fn help_lists_the_new_groups() {
+        let Ok(Parsed::Help(all)) = parse_args(&[]) else { panic!() };
+        for s in ["abundio ask", "abundio notify", "abundio progress", "worktree new", "notes append", "pane watch"] {
+            assert!(all.contains(s), "{s}");
+        }
+        assert!(matches!(parse_args(&argv(&["help", "ask"])), Ok(Parsed::Help(t)) if t.contains("--choice")));
+    }
+
+    #[test]
+    fn new_ops_serialise_with_their_names() {
+        assert_eq!(op_name(&req(&["ask", "q"])), "ask");
+        assert_eq!(op_name(&req(&["progress", "--clear"])), "progress");
+        assert_eq!(op_name(&req(&["worktree", "new", "x"])), "worktree.new");
+        assert_eq!(op_name(&Request::NotesRead), "notes.read");
+        assert_eq!(op_name(&req(&["pane", "watch", "p1", "--match", "x"])), "pane.watch");
+        let v = serde_json::to_value(req(&["pane", "watch", "p1", "--match", "x", "-i"])).unwrap();
+        assert_eq!(v["ignoreCase"], json!(true));
+        let v = serde_json::to_value(req(&["ask", "q", "--choice", "a", "--timeout", "5"])).unwrap();
+        assert_eq!(v["timeoutMs"], json!(5));
+    }
+
+    #[test]
+    fn only_the_callers_own_pty_can_cancel_its_call() {
+        let p = PendingRequests::default();
+        let (id, rx) = p.register();
+        p.track_client("c1", &id, "pty-a", "main");
+        assert_eq!(p.cancel_client("c1", "pty-b"), None);
+        assert_eq!(p.cancel_client("c1", "pty-a"), Some(("main".into(), id)));
+        assert_eq!(rx.try_recv().unwrap()["error"]["code"], json!("cancelled"));
+        assert_eq!(p.cancel_client("c1", "pty-a"), None);
+    }
+
     #[test]
     fn a_wait_ends_when_its_window_is_gone() {
         let ms = Duration::from_millis;
@@ -1875,10 +2430,10 @@ mod tests {
     #[test]
     fn the_request_event_carries_its_target() {
         let c = caller("a");
-        let scope = Scope { workspace_id: "other".into(), open: true, window_label: "main".into() };
+        let scope = Scope { workspace_id: "other".into(), open: true, window_label: "main".into(), client_id: None };
         let v = serde_json::to_value(ControlEvent { id: "1", caller: &c, target: &scope, request: &json!({}) }).unwrap();
         assert_eq!(v["target"], json!({ "workspaceId": "other", "open": true }));
-        assert_eq!(Scope::home(&c), Scope { workspace_id: "ws".into(), open: false, window_label: "main".into() });
+        assert_eq!(Scope::home(&c), Scope { workspace_id: "ws".into(), open: false, window_label: "main".into(), client_id: None });
     }
 
     #[test]

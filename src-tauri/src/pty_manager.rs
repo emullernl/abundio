@@ -1125,29 +1125,55 @@ if [ -z "${ABUNDIO_AGENT_TOKEN:-}" ] || [ -z "${ABUNDIO_HOOK_PORT:-}" ]; then
   exit 1
 fi
 
+# Each call carries an id, so an interrupted CLI can cancel the wait it
+# started (a Question card must not outlive its call). curl runs in the
+# background and is waited for, because bash runs a trap only between
+# commands, and `wait` is one it can interrupt.
+rid="${RANDOM}${RANDOM}-$$-$(date +%s)"
+out=$(mktemp "${TMPDIR:-/tmp}/abundio.XXXXXX") || exit 1
+child=""
+__abundio_cancel() {
+  [ -n "$child" ] && kill "$child" 2>/dev/null
+  curl -s -m 3 -o /dev/null -X POST \
+    -H "X-Abundio-Agent-Token: ${ABUNDIO_AGENT_TOKEN}" \
+    -H "X-Abundio-Cancel: ${rid}" \
+    "http://127.0.0.1:${ABUNDIO_HOOK_PORT}/control"
+  rm -f "$out"
+}
+trap '__abundio_cancel; exit 130' INT
+trap '__abundio_cancel; exit 143' TERM
+trap '__abundio_cancel; exit 129' HUP
+
 __abundio_send() {   # $1 = 1 to mark a retry; the rest are the arguments
   local retry=$1
   shift
   local extra=()
   [ "$retry" = 1 ] && extra=(-H 'X-Abundio-Retry: 1')
   # No arguments must send an empty body, not one empty argument. The status
-  # comes last, on a line of its own, so no temporary file is needed.
+  # comes last, on a line of its own.
   # (`||`, not `&&`: under pipefail a false test would fail the whole pipe.)
   { [ $# -eq 0 ] || printf '%s\0' "$@"; } |
     curl -s -w '\n%{http_code}' --connect-timeout 5 \
       -X POST --data-binary @- \
       -H "X-Abundio-Agent-Token: ${ABUNDIO_AGENT_TOKEN}" \
+      -H "X-Abundio-Request-Id: ${rid}" \
       -H 'Content-Type: application/octet-stream' \
       ${extra[@]+"${extra[@]}"} \
-      "http://127.0.0.1:${ABUNDIO_HOOK_PORT}/control"
+      "http://127.0.0.1:${ABUNDIO_HOOK_PORT}/control" >"$out" &
+  child=$!
+  wait "$child"
+  local rc=$?
+  child=""
+  return $rc
 }
 
 retry=0
 reply=""
 rc=1
 for attempt in 1 2 3 4; do
-  reply=$(__abundio_send "$retry" "$@")
+  __abundio_send "$retry" "$@"
   rc=$?
+  reply=$(cat "$out")
   case $rc in
     0) break ;;
     # Connection refused: the request never arrived.
@@ -1158,6 +1184,8 @@ for attempt in 1 2 3 4; do
   esac
   [ "$attempt" -lt 4 ] && sleep 1
 done
+trap - INT TERM HUP
+rm -f "$out"
 
 status=""
 body=""
@@ -1206,20 +1234,41 @@ function Test-Refused($err) {
     return $false
 }
 
+# Each call carries an id, so an interrupted CLI can cancel the wait it
+# started. The send is polled rather than awaited in one blocking call,
+# because Ctrl+C reaches a script only between statements; `finally` then
+# sends the cancel.
+$rid = [guid]::NewGuid().ToString()
 $retry = $false
 $response = $null
-for ($attempt = 1; $attempt -le 4; $attempt++) {
-    $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $uri)
-    $request.Headers.Add("X-Abundio-Agent-Token", $env:ABUNDIO_AGENT_TOKEN)
-    if ($retry) { $request.Headers.Add("X-Abundio-Retry", "1") }
-    $request.Content = New-Object System.Net.Http.ByteArrayContent(,$body)
-    try {
-        $response = $client.SendAsync($request).GetAwaiter().GetResult()
-        break
-    } catch {
-        # Refused: it never arrived. Anything else: it may have, so mark the retry.
-        if (-not (Test-Refused $_)) { $retry = $true }
-        if ($attempt -lt 4) { Start-Sleep -Seconds 1 }
+try {
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $uri)
+        $request.Headers.Add("X-Abundio-Agent-Token", $env:ABUNDIO_AGENT_TOKEN)
+        $request.Headers.Add("X-Abundio-Request-Id", $rid)
+        if ($retry) { $request.Headers.Add("X-Abundio-Retry", "1") }
+        $request.Content = New-Object System.Net.Http.ByteArrayContent(,$body)
+        try {
+            $task = $client.SendAsync($request)
+            while (-not $task.Wait(250)) { }
+            $response = $task.Result
+            break
+        } catch {
+            # Refused: it never arrived. Anything else: it may have, so mark the retry.
+            if (-not (Test-Refused $_)) { $retry = $true }
+            if ($attempt -lt 4) { Start-Sleep -Seconds 1 }
+        }
+    }
+} finally {
+    if (-not $response) {
+        try {
+            $cancel = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $uri)
+            $cancel.Headers.Add("X-Abundio-Agent-Token", $env:ABUNDIO_AGENT_TOKEN)
+            $cancel.Headers.Add("X-Abundio-Cancel", $rid)
+            $quick = New-Object System.Net.Http.HttpClient
+            $quick.Timeout = [TimeSpan]::FromSeconds(3)
+            $null = $quick.SendAsync($cancel).Wait(3000)
+        } catch { }
     }
 }
 
@@ -2521,6 +2570,8 @@ cat > "$dir/stdin.$n"
 line=$(sed -n "${n}p" "$dir/replies")
 rc=${line%% *}; rest=${line#* }
 status=${rest%% *}; body=${rest#* }
+# A call that hangs, for interrupting.
+[ "$rc" = sleep ] && { sleep 30; exit 0; }
 # Like `curl -w '\n%{http_code}'`: the body, then the status on its own line.
 [ "$rc" = 0 ] && printf '%b\n%s' "$body" "$status"
 exit "$rc"
@@ -2657,11 +2708,51 @@ exit "$rc"
     }
 
     #[test]
+    fn an_interrupted_call_is_cancelled_by_its_id() {
+        let f = Fixture::new(&["sleep", "0 200 {}"]);
+        for (signal, code) in [("-INT", 130), ("-TERM", 143)] {
+            let _ = fs::remove_file(f.dir.path().join("calls"));
+            let mut child = Command::new("bash")
+                .arg(f.dir.path().join("abundio"))
+                .args(["ask", "q"])
+                .env("PATH", format!("{}:/usr/bin:/bin", f.dir.path().display()))
+                .env("ABUNDIO_AGENT_TOKEN", "tok")
+                .env("ABUNDIO_HOOK_PORT", "4242")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            // Until the call is in flight.
+            for _ in 0..100 {
+                if f.calls() >= 1 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            Command::new("kill").args([signal, &child.id().to_string()]).status().unwrap();
+            let status = child.wait().unwrap();
+            assert_eq!(status.code(), Some(code), "{signal}");
+            assert_eq!(f.calls(), 2, "{signal}: the call, then its cancel");
+            let id = f
+                .args(1)
+                .lines()
+                .find_map(|l| l.strip_prefix("X-Abundio-Request-Id: ").map(str::to_string))
+                .expect("the call carries an id");
+            assert!(f.args(2).contains(&format!("X-Abundio-Cancel: {id}")), "{signal}");
+            assert!(f.args(2).contains("X-Abundio-Agent-Token: tok"));
+        }
+    }
+
+    #[test]
     fn neither_client_evaluates_its_arguments() {
         assert!(!ABUNDIO_CLI_SH.contains("eval"));
         assert!(!ABUNDIO_CLI_PS1.contains("Invoke-Expression"));
         assert!(ABUNDIO_CLI_PS1.contains("X-Abundio-Retry"));
         assert!(ABUNDIO_CLI_PS1.contains("ConnectionRefused"));
+        assert!(ABUNDIO_CLI_PS1.contains("X-Abundio-Cancel"));
+        assert!(ABUNDIO_CLI_PS1.contains("X-Abundio-Request-Id"));
     }
 
     #[test]
