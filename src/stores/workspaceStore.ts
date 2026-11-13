@@ -1380,13 +1380,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 		if (handle !== null) {
 			// Grammar and this Workspace first, without a round trip; then
-			// Rust, which sees the whole Profile. If Rust cannot be asked
-			// (the browser demo), the local check stands.
+			// Rust, which sees the whole Profile. A check that fails refuses
+			// the name: letting it through could make a duplicate.
 			const check = checkHandle(ws.tabs, paneId, handle);
 			if (!check.ok) return check;
 			const profileWide = await agentControlApi
 				.handleCheck(ws.id, paneId, handle)
-				.catch(() => ({ ok: true }) as const);
+				.catch(
+					() =>
+						({
+							ok: false,
+							code: "invalid_handle",
+							message: "Could not check the name. Try again.",
+						}) as const,
+				);
 			if (!profileWide.ok) return profileWide;
 		}
 		const result = findMutatedTabLayout(

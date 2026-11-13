@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const write = vi.fn(async () => {});
+type HandleCheck =
+	| { ok: true }
+	| { ok: false; code: "handle_taken" | "invalid_handle"; message: string };
+const handleCheck = vi.fn(
+	async (_ws: string, _pane: string, _h: string): Promise<HandleCheck> => ({
+		ok: true,
+	}),
+);
 const ensure = vi.fn(async () => {});
 let defaultShell = "/bin/zsh";
 vi.mock("../../ipc", () => ({
 	agentControl: {
-		handleCheck: async () => ({ ok: true }),
+		handleCheck: (ws: string, pane: string, h: string) =>
+			handleCheck(ws, pane, h),
 		handleDefault: async () => "Agent One",
 		paneNumbers: async (_ws: string, ids: string[]) =>
 			ids.map((id, i) => [id, i + 1]),
@@ -102,6 +111,7 @@ const claude: CodingAgent = {
 beforeEach(() => {
 	write.mockClear();
 	ensure.mockClear();
+	handleCheck.mockClear();
 	closed.length = 0;
 	revealed.length = 0;
 	defaultShell = "/bin/zsh";
@@ -268,6 +278,39 @@ describe("agent start", () => {
 			code: "handle_taken",
 		});
 		expect(layout().type).toBe("terminal");
+	});
+
+	it("asks Rust about the whole Profile, for the new pane, before splitting", async () => {
+		handleCheck.mockResolvedValueOnce({
+			ok: false,
+			code: "handle_taken",
+			message: 'an Agent in the Workspace "api" is already called "fixer"',
+		});
+		await expect(start({ handle: "fixer" })).rejects.toMatchObject({
+			code: "handle_taken",
+			message: expect.stringContaining('"api"'),
+		});
+		expect(handleCheck).toHaveBeenCalledWith("ws", expect.any(String), "fixer");
+		expect(layout().type).toBe("terminal");
+	});
+
+	it("refuses the name when the Profile-wide check cannot run", async () => {
+		handleCheck.mockRejectedValueOnce(new Error("db"));
+		await expect(start({ handle: "fixer" })).rejects.toMatchObject({
+			code: "internal",
+		});
+		expect(layout().type).toBe("terminal");
+	});
+
+	it("checks the name for the pane it then creates", async () => {
+		vi.useFakeTimers();
+		const p = start({ handle: "fixer" });
+		const settled = expect(p).rejects.toMatchObject({ code: "stalled" });
+		await vi.advanceTimersByTimeAsync(10);
+		const node = (layout() as { second: { id: string } }).second;
+		expect(handleCheck).toHaveBeenCalledWith("ws", node.id, "fixer");
+		await vi.advanceTimersByTimeAsync(31_000);
+		await settled;
 	});
 });
 

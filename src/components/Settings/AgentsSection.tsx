@@ -118,6 +118,8 @@ function AgentControlSettings() {
 						when asked (one that is closed is opened in the background). They
 						never reach another profile, and can close only the panes they
 						opened. A badge on a pane shows when another agent is driving it.
+						Any program a pane runs can do the same, not only its agent, so turn
+						this off if you run code you do not trust.
 					</>
 				}
 			/>

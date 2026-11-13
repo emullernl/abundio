@@ -131,11 +131,11 @@ describe("setAgentHandle", () => {
 		expect(node().agentHandle).toBe("Agent Two");
 	});
 
-	it("still works when Rust cannot be asked (the browser demo)", async () => {
+	it("refuses the name when Rust cannot check it (the demo mocks the check)", async () => {
 		setLayout({ type: "terminal", id: "a", ptyId: "pa", agentId: "claude" });
-		handleCheck.mockRejectedValue(new Error("no Tauri"));
+		handleCheck.mockRejectedValue(new Error("db"));
 		const r = await useWorkspaceStore.getState().setAgentHandle("a", "Solo");
-		expect(r).toEqual({ ok: true });
-		expect(node().agentHandle).toBe("Solo");
+		expect(r).toMatchObject({ ok: false });
+		expect(node().agentHandle).toBeUndefined();
 	});
 });

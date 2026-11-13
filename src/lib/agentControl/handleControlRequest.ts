@@ -510,12 +510,30 @@ async function startAgent(
 			"agents can only be started in zsh or bash panes; change the shell in Settings",
 		);
 	}
+	// The new pane's id, known up front so the name check can hold the name
+	// for it until its layout carries it.
+	const newPaneId = crypto.randomUUID();
 	if (request.handle !== null) {
+		// In the Workspace the pane goes into, then across the Profile (Rust).
 		const ws = useWorkspaceStore
 			.getState()
-			.workspaces.find((w) => w.id === scope.caller.workspaceId);
+			.workspaces.find((w) => w.id === scope.workspaceId);
 		const check = checkHandle(ws?.tabs ?? [], "", request.handle);
 		if (!check.ok) throw new ControlError(check.code, check.message);
+		const profileWide = await agentControl
+			.handleCheck(scope.workspaceId, newPaneId, request.handle)
+			.catch(() => {
+				throw new ControlError(
+					"internal",
+					"could not check the name; try again",
+				);
+			});
+		if (!profileWide.ok) {
+			throw new ControlError(
+				profileWide.code === "handle_taken" ? "handle_taken" : "invalid_handle",
+				profileWide.message,
+			);
+		}
 	}
 	// Register the Agent's hooks before it starts, as a split launch does,
 	// capped so a slow disk cannot hold the call up.
@@ -543,7 +561,7 @@ async function startAgent(
 	} else {
 		// Seeded before the pane is in the layout: its terminal takes the task
 		// when it spawns, which can happen as soon as the layout renders.
-		paneId = crypto.randomUUID();
+		paneId = newPaneId;
 		setPendingTask(paneId, { argv, agentId: agent.id });
 		try {
 			({ hint } = await splitCaller(scope, request.direction, {

@@ -53,9 +53,12 @@ pub struct ControlTokens {
 }
 
 impl ControlTokens {
-    /// The Window holding `workspace_id`, read off any live PTY of it: a
-    /// Workspace is Opened in at most one Window. None when no PTY of it
-    /// lives, which means it is not Opened.
+    /// The Window holding `workspace_id`, read off any live PTY of it. None
+    /// when no PTY of it lives: it is not Opened, or it is Opened with every
+    /// pane exited or not yet spawned. Both are safe to route to the caller's
+    /// Window, because a Profile is open in at most one Window: an Opened
+    /// Workspace of the caller's Profile is always in the caller's Window, and
+    /// opening it again there does nothing.
     pub fn window_for_workspace(&self, workspace_id: &str) -> Option<String> {
         self.by_token
             .iter()
@@ -1168,6 +1171,47 @@ struct ControlEvent<'a> {
     request: &'a Value,
 }
 
+/// How often a waiting request checks that its Window still exists.
+const WINDOW_CHECK_EVERY: Duration = Duration::from_secs(2);
+
+#[derive(Debug, PartialEq)]
+enum Reply {
+    Answer(Value),
+    TimedOut,
+    WindowGone,
+}
+
+/// Wait up to `limit` (`None`: no limit) for a Window's reply, asking
+/// `window_alive` every `check_every`. A destroyed Window never answers and
+/// nothing else would end the wait, so without this a `--timeout 0` wait
+/// whose Window closes would block its thread, and its CLI, for ever.
+fn wait_for_reply(
+    rx: &Receiver<Value>,
+    limit: Option<Duration>,
+    check_every: Duration,
+    window_alive: impl Fn() -> bool,
+) -> Reply {
+    let deadline = limit.map(|d| std::time::Instant::now() + d);
+    loop {
+        let slice = match deadline {
+            Some(at) => match at.checked_duration_since(std::time::Instant::now()) {
+                Some(left) if !left.is_zero() => left.min(check_every),
+                _ => return Reply::TimedOut,
+            },
+            None => check_every,
+        };
+        match rx.recv_timeout(slice) {
+            Ok(v) => return Reply::Answer(v),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return Reply::WindowGone,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                if !window_alive() {
+                    return Reply::WindowGone;
+                }
+            }
+        }
+    }
+}
+
 /// Send `request` to the target's Window and wait up to `limit` for its reply
 /// (`None`: no limit). On a timeout the Window is told to drop the request.
 fn ask_window(
@@ -1201,13 +1245,20 @@ fn ask_window(
         pending.forget(&id);
         return Err(error_answer(503, "window_gone", "could not reach the Window"));
     }
-    let reply = match limit {
-        Some(d) => rx.recv_timeout(d).ok(),
-        None => rx.recv().ok(),
-    };
+    let reply = wait_for_reply(&rx, limit, WINDOW_CHECK_EVERY, || {
+        app.get_webview_window(&scope.window_label).is_some()
+    });
     match reply {
-        Some(v) => Ok(v),
-        None => {
+        Reply::Answer(v) => Ok(v),
+        Reply::WindowGone => {
+            pending.forget(&id);
+            Err(error_answer(
+                503,
+                "window_gone",
+                "the Window that owned this Workspace closed before it answered; the action may have happened, so check before retrying",
+            ))
+        }
+        Reply::TimedOut => {
             pending.forget(&id);
             let _ = app.emit_to(
                 &scope.window_label,
@@ -1743,6 +1794,20 @@ mod tests {
         assert!(is_mutating(&req(&["tab", "new"])));
         assert!(is_mutating(&req(&["tab", "rename", "x"])));
         assert_eq!(op_name(&req(&["tab", "rename", "x"])), "tab.rename");
+    }
+
+    #[test]
+    fn a_wait_ends_when_its_window_is_gone() {
+        let ms = Duration::from_millis;
+        // An answer arrives.
+        let (tx, rx) = bounded(1);
+        tx.send(json!({"ok": true})).unwrap();
+        assert_eq!(wait_for_reply(&rx, None, ms(5), || true), Reply::Answer(json!({"ok": true})));
+        // No limit, and the Window closes: the wait still ends.
+        let (_tx, rx) = bounded::<Value>(1);
+        assert_eq!(wait_for_reply(&rx, None, ms(5), || false), Reply::WindowGone);
+        // A limit, Window alive, no answer: a timeout.
+        assert_eq!(wait_for_reply(&rx, Some(ms(20)), ms(5), || true), Reply::TimedOut);
     }
 
     // ── Reach across the Profile (ADR-0055) ──

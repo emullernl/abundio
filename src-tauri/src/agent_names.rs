@@ -70,10 +70,14 @@ struct Reserved {
     profile_id: String,
     pane_id: String,
     handle: String,
+    /// Handed out by `take_default`, rather than held after a `check`.
+    default: bool,
     at: Instant,
 }
 
-/// Default handles handed out but maybe not in a layout yet, by key.
+/// Handles handed out or approved but maybe not in a layout yet, by key: the
+/// layout is written after the check, so without this two renames at once
+/// could both pass.
 #[derive(Default)]
 pub struct HandleReservations(Mutex<HashMap<String, Reserved>>);
 
@@ -152,9 +156,21 @@ impl HandleReservations {
         if Self::live_for(&mut map, &profile_id, pane_id).contains(&key) {
             return Ok(HandleCheck::refused(
                 "handle_taken",
-                format!("\"{name}\" was just given to another new Agent"),
+                format!("\"{name}\" was just given to another Agent"),
             ));
         }
+        // Hold it for this pane until its layout carries it.
+        map.retain(|_, r| r.pane_id != pane_id);
+        map.insert(
+            key,
+            Reserved {
+                profile_id,
+                pane_id: pane_id.to_string(),
+                handle: name,
+                default: false,
+                at: Instant::now(),
+            },
+        );
         Ok(HandleCheck::ok())
     }
 
@@ -175,7 +191,7 @@ impl HandleReservations {
         // Asked again for the same pane (a retry): hand back what it holds.
         if let Some(r) = map
             .values()
-            .find(|r| r.pane_id == pane_id && r.at.elapsed() < RESERVATION)
+            .find(|r| r.default && r.pane_id == pane_id && r.at.elapsed() < RESERVATION)
         {
             return Ok(r.handle.clone());
         }
@@ -190,6 +206,7 @@ impl HandleReservations {
                 profile_id,
                 pane_id: pane_id.to_string(),
                 handle: handle.clone(),
+                default: true,
                 at: Instant::now(),
             },
         );
@@ -362,6 +379,25 @@ mod tests {
         let p2 = other_profile(&s);
         let other = workspace(&s, "x", &p2, &[("d1", None)]);
         assert_eq!(r.check(&s, &other, "d1", "Reviewer").unwrap(), HandleCheck::ok());
+    }
+
+    #[test]
+    fn an_approved_name_is_held_until_its_layout_carries_it() {
+        let s = store();
+        let r = HandleReservations::default();
+        let ws = workspace(&s, "api", PID, &[("a1", None), ("a2", None)]);
+        // Two renames at once: the second is refused, though no layout has it yet.
+        assert_eq!(r.check(&s, &ws, "a1", "Reviewer").unwrap(), HandleCheck::ok());
+        assert!(matches!(
+            r.check(&s, &ws, "a2", "reviewer").unwrap(),
+            HandleCheck::Refused { code: "handle_taken", .. }
+        ));
+        // The same pane may check it again, or pick another name, which frees the first.
+        assert_eq!(r.check(&s, &ws, "a1", "Reviewer").unwrap(), HandleCheck::ok());
+        assert_eq!(r.check(&s, &ws, "a1", "Writer").unwrap(), HandleCheck::ok());
+        assert_eq!(r.check(&s, &ws, "a2", "Reviewer").unwrap(), HandleCheck::ok());
+        // A held name is never handed back as the pane's default.
+        assert_eq!(r.take_default(&s, &ws, "a1").unwrap(), "Agent One");
     }
 
     #[test]
