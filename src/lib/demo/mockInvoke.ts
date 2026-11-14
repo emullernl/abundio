@@ -8,6 +8,7 @@
  * Keyed off the stable **paneId** (`pty_spawn`'s `logId` arg), because
  * `workspaceStore.loadWorkspaces` clears layout ptyIds on load.
  */
+import type { OrchestratorFileTab } from "../ipc";
 import type { PromptActionRow } from "../types";
 import * as fixtures from "./fixtures";
 import { publish } from "./mockBus";
@@ -130,6 +131,8 @@ function seedPane(paneId: string, ptyId: string): void {
 	seedPaneActivity(ptyId, paneId, spec);
 }
 
+const demoOrchestratorTabs: OrchestratorFileTab[] = [];
+
 /** The Orchestrator Agent picked in this demo session (ADR-0057). */
 let demoOrchestratorAgent: string | null = null;
 
@@ -176,6 +179,36 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return fixtures.orchestratorWorkspace;
 		case "orchestrator_agent_get":
 			return demoOrchestratorAgent;
+		// Orchestrator file tabs live for the demo session only.
+		case "orchestrator_tabs_list":
+			return { tabs: demoOrchestratorTabs, selected: null };
+		case "orchestrator_tab_add": {
+			const tab = args?.tab as Record<string, unknown>;
+			const same = demoOrchestratorTabs.find(
+				(t) =>
+					t.workspaceId === tab.workspaceId &&
+					t.kind === tab.kind &&
+					t.path === tab.path,
+			);
+			if (same) return same;
+			const made = {
+				id: `demo-tab-${demoOrchestratorTabs.length + 1}`,
+				workspaceId: String(tab.workspaceId),
+				kind: tab.kind as "file" | "diff" | "commit",
+				path: String(tab.path),
+				commitOid: (tab.commitOid as string | null) ?? null,
+				preview: Boolean(tab.preview),
+			};
+			demoOrchestratorTabs.push(made);
+			return made;
+		}
+		case "orchestrator_tab_remove": {
+			const i = demoOrchestratorTabs.findIndex((t) => t.id === args?.id);
+			if (i >= 0) demoOrchestratorTabs.splice(i, 1);
+			return undefined;
+		}
+		case "orchestrator_tab_select":
+			return undefined;
 		case "orchestrator_agent_set":
 			demoOrchestratorAgent = (args?.agentId as string | null) ?? null;
 			return undefined;

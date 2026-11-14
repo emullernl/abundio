@@ -34,6 +34,31 @@ pub struct Workspace {
     pub kind: String,
 }
 
+/// One **Orchestrator tab** holding a file (ADR-0058). `path` is absolute
+/// for `file`, Workspace-relative for `diff` and `commit`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorTab {
+    pub id: String,
+    pub workspace_id: String,
+    pub kind: String,
+    pub path: String,
+    pub commit_oid: Option<String>,
+    pub preview: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewOrchestratorTab {
+    pub workspace_id: String,
+    pub kind: String,
+    pub path: String,
+    #[serde(default)]
+    pub commit_oid: Option<String>,
+    #[serde(default)]
+    pub preview: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceUpdate {
@@ -452,6 +477,130 @@ impl WorkspaceStore {
         let workspace = Self::get_workspace_with_conn(&conn, &workspace_id)?;
         let tabs = Self::list_tabs_with_conn(&conn, &workspace_id)?;
         Ok(WorkspaceWithTabs { workspace, tabs })
+    }
+
+    // ── Orchestrator tabs (ADR-0058) ──
+
+    /// The Profile's Orchestrator file tabs, in order, and the selected one.
+    pub fn orchestrator_tabs(
+        &self,
+        profile_id: &str,
+    ) -> Result<(Vec<OrchestratorTab>, Option<String>), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, workspace_id, kind, path, commit_oid, preview FROM orchestrator_tabs
+             WHERE profile_id = ?1 ORDER BY position ASC, created_at ASC",
+        )?;
+        let tabs = stmt
+            .query_map([profile_id], |r| {
+                Ok(OrchestratorTab {
+                    id: r.get(0)?,
+                    workspace_id: r.get(1)?,
+                    kind: r.get(2)?,
+                    path: r.get(3)?,
+                    commit_oid: r.get(4)?,
+                    preview: r.get::<_, i64>(5)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let selected: Option<Option<String>> = conn
+            .query_row(
+                "SELECT orchestrator_selected_tab FROM profiles WHERE id = ?1",
+                [profile_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let selected = selected.flatten().filter(|id| tabs.iter().any(|t| &t.id == id));
+        Ok((tabs, selected))
+    }
+
+    /// Adds a file tab, or returns the one already open for the same file,
+    /// kind and commit in that Workspace. Refuses a Workspace of another
+    /// Profile.
+    pub fn add_orchestrator_tab(
+        &self,
+        profile_id: &str,
+        tab: NewOrchestratorTab,
+    ) -> Result<OrchestratorTab, AbundioError> {
+        if !matches!(tab.kind.as_str(), "file" | "diff" | "commit") {
+            return Err(AbundioError::InvalidOperation(format!("Not a tab kind: {}", tab.kind)));
+        }
+        let conn = self.conn.lock().unwrap();
+        let owner: Option<String> = conn
+            .query_row("SELECT profile_id FROM workspaces WHERE id = ?1", [&tab.workspace_id], |r| r.get(0))
+            .optional()?;
+        if owner.as_deref() != Some(profile_id) {
+            return Err(AbundioError::NotFound(format!("Workspace not found: {}", tab.workspace_id)));
+        }
+        let existing: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT id, preview FROM orchestrator_tabs WHERE profile_id = ?1 AND workspace_id = ?2
+                   AND kind = ?3 AND path = ?4 AND COALESCE(commit_oid, '') = COALESCE(?5, '')",
+                rusqlite::params![profile_id, tab.workspace_id, tab.kind, tab.path, tab.commit_oid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if let Some((id, preview)) = existing {
+            return Ok(OrchestratorTab {
+                id,
+                workspace_id: tab.workspace_id,
+                kind: tab.kind,
+                path: tab.path,
+                commit_oid: tab.commit_oid,
+                preview: preview != 0,
+            });
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let position: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM orchestrator_tabs WHERE profile_id = ?1",
+            [profile_id],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO orchestrator_tabs (id, profile_id, workspace_id, position, kind, path, commit_oid, preview)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                id,
+                profile_id,
+                tab.workspace_id,
+                position,
+                tab.kind,
+                tab.path,
+                tab.commit_oid,
+                tab.preview as i64
+            ],
+        )?;
+        Ok(OrchestratorTab {
+            id,
+            workspace_id: tab.workspace_id,
+            kind: tab.kind,
+            path: tab.path,
+            commit_oid: tab.commit_oid,
+            preview: tab.preview,
+        })
+    }
+
+    pub fn remove_orchestrator_tab(&self, profile_id: &str, id: &str) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM orchestrator_tabs WHERE profile_id = ?1 AND id = ?2",
+            rusqlite::params![profile_id, id],
+        )?;
+        Ok(())
+    }
+
+    /// Remembers which Orchestrator tab is selected; `None` is the graph.
+    pub fn set_orchestrator_selected_tab(
+        &self,
+        profile_id: &str,
+        id: Option<&str>,
+    ) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE profiles SET orchestrator_selected_tab = ?2 WHERE id = ?1",
+            rusqlite::params![profile_id, id],
+        )?;
+        Ok(())
     }
 
     /// The Agent id the user picked for this Profile's Orchestrator, if any.

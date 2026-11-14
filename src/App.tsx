@@ -58,6 +58,7 @@ import {
 	cycleFleet,
 	fleetConsoleShowing,
 	navigateFleet,
+	orchestratorViewShowing,
 	paneLayoutOnly,
 	stepTileZoom,
 	targetPaneId,
@@ -85,6 +86,10 @@ import { applyMonacoOverrides } from "./lib/monacoKeymap";
 import { fileWindowTargetForPane, openFileWindow } from "./lib/openFileWindow";
 import { openNewTask } from "./lib/openNewTask";
 import { installOrchestratorSession } from "./lib/orchestratorSession";
+import {
+	tabPaneId,
+	toggleOrchestratorFileSearch,
+} from "./lib/orchestratorTabs";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { firePaneSlot } from "./lib/promptActionRegistry";
@@ -1034,14 +1039,21 @@ export function App() {
 			setFileSearchOpen(false);
 			setNavigatorOpen((v) => !v);
 		});
-		registerAction(
-			"open-file-search",
+		registerAction("open-file-search", () => {
+			// In the Orchestrator view: every Workspace's files, opened in an
+			// Orchestrator tab (ADR-0058).
+			if (orchestratorViewShowing()) {
+				setPaletteOpen(false);
+				setNavigatorOpen(false);
+				toggleOrchestratorFileSearch();
+				return;
+			}
 			workspaceViewOnly(() => {
 				setPaletteOpen(false);
 				setNavigatorOpen(false);
 				setFileSearchOpen((v) => !v);
-			}),
-		);
+			})();
+		});
 		registerAction("open-settings", () => {
 			setPaletteOpen(false);
 			// Settings is now a singleton OS window (ADR-0007). The Rust
@@ -1113,6 +1125,16 @@ export function App() {
 			"save-file",
 			paneLayoutOnly(() => {
 				const explorer = useExplorerStore.getState();
+				// A file in an Orchestrator tab, when that is where focus is.
+				const orch = useOrchestratorStore.getState();
+				if (
+					orchestratorViewShowing() &&
+					orch.fileTabFocused &&
+					orch.selectedTabId
+				) {
+					explorer.saveFile(tabPaneId(orch.selectedTabId));
+					return;
+				}
 				const focusedId = useWorkspaceStore.getState().focusedPaneId;
 				if (focusedId && explorer.filePanes[focusedId]) {
 					explorer.saveFile(focusedId);

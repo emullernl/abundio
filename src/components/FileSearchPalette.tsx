@@ -26,15 +26,25 @@ export function invalidateFileSearchCache(workspaceId?: string) {
 	else fileCache.clear();
 }
 
+/** A file found in one of the searched Workspaces. */
+type Found = FileEntry & { workspaceId: string; workspaceName: string };
+
 interface Props {
 	open: boolean;
 	onClose: () => void;
+	/** Search these Workspaces instead of the Active one, and hand the pick
+	 *  to `onPick` instead of opening a File pane (the Orchestrator view,
+	 *  ADR-0058). Each result then names its Workspace. */
+	scope?: {
+		workspaceIds: string[];
+		onPick: (workspaceId: string, entry: FileEntry) => void;
+	};
 }
 
-export function FileSearchPalette({ open: isOpen, onClose }: Props) {
+export function FileSearchPalette({ open: isOpen, onClose, scope }: Props) {
 	const [query, setQuery] = useState("");
 	const [selectedIndex, setSelectedIndex] = useState(0);
-	const [files, setFiles] = useState<FileEntry[]>([]);
+	const [files, setFiles] = useState<Found[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -46,6 +56,19 @@ export function FileSearchPalette({ open: isOpen, onClose }: Props) {
 		() => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
 		[workspaces, activeWorkspaceId],
 	);
+	// The Workspaces searched: the scope's, else the Active one.
+	const scopeKey = scope?.workspaceIds.join(",") ?? "";
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scopeKey stands for scope.workspaceIds
+	const targets = useMemo(
+		() =>
+			scope
+				? workspaces.filter((w) => scope.workspaceIds.includes(w.id))
+				: workspace
+					? [workspace]
+					: [],
+		[workspaces, workspace, scopeKey],
+	);
+	const multi = !!scope && targets.length > 1;
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -54,27 +77,32 @@ export function FileSearchPalette({ open: isOpen, onClose }: Props) {
 		setError(null);
 		setTimeout(() => inputRef.current?.focus(), 50);
 
-		if (!workspace) {
+		if (targets.length === 0) {
 			setFiles([]);
 			return;
 		}
 
-		const cached = fileCache.get(workspace.id);
-		if (cached) {
-			setFiles(cached);
+		let cancelled = false;
+		const tag = (w: (typeof targets)[number], list: FileEntry[]): Found[] =>
+			list.map((f) => ({ ...f, workspaceId: w.id, workspaceName: w.name }));
+		const cachedAll = targets.every((w) => fileCache.has(w.id));
+		if (cachedAll) {
+			setFiles(targets.flatMap((w) => tag(w, fileCache.get(w.id) ?? [])));
 			return;
 		}
-
-		let cancelled = false;
 		setLoading(true);
 		setFiles([]);
-		fsApi
-			.listFiles(workspace.rootFolder)
-			.then((result) => {
-				if (cancelled) return;
-				const sorted = sortFileEntries(result);
-				fileCache.set(workspace.id, sorted);
-				setFiles(sorted);
+		Promise.all(
+			targets.map(async (w) => {
+				const cached = fileCache.get(w.id);
+				if (cached) return tag(w, cached);
+				const sorted = sortFileEntries(await fsApi.listFiles(w.rootFolder));
+				fileCache.set(w.id, sorted);
+				return tag(w, sorted);
+			}),
+		)
+			.then((lists) => {
+				if (!cancelled) setFiles(lists.flat());
 			})
 			.catch((err) => {
 				if (cancelled) return;
@@ -86,7 +114,7 @@ export function FileSearchPalette({ open: isOpen, onClose }: Props) {
 		return () => {
 			cancelled = true;
 		};
-	}, [isOpen, workspace]);
+	}, [isOpen, targets]);
 
 	const filtered = useMemo(() => {
 		if (!query) return files.slice(0, MAX_VISIBLE_RESULTS);
@@ -112,7 +140,12 @@ export function FileSearchPalette({ open: isOpen, onClose }: Props) {
 	}, [selectedIndex]);
 
 	const openSelection = useCallback(
-		(entry: FileEntry) => {
+		(entry: Found) => {
+			if (scope) {
+				scope.onPick(entry.workspaceId, entry);
+				onClose();
+				return;
+			}
 			if (!workspace) return;
 			useExplorerStore
 				.getState()
@@ -122,7 +155,7 @@ export function FileSearchPalette({ open: isOpen, onClose }: Props) {
 				});
 			onClose();
 		},
-		[workspace, onClose],
+		[workspace, onClose, scope],
 	);
 
 	const handleKeyDown = useCallback(
@@ -174,11 +207,15 @@ export function FileSearchPalette({ open: isOpen, onClose }: Props) {
 						ref={inputRef}
 						type="text"
 						placeholder={
-							workspace ? "Search files by name..." : "No workspace selected"
+							targets.length === 0
+								? "No workspace selected"
+								: multi
+									? "Search files in every workspace..."
+									: "Search files by name..."
 						}
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
-						disabled={!workspace}
+						disabled={targets.length === 0}
 						className="w-full bg-transparent outline-none"
 						style={{
 							color: "var(--fg-primary)",
@@ -221,7 +258,7 @@ export function FileSearchPalette({ open: isOpen, onClose }: Props) {
 							const isSelected = i === selectedIndex;
 							return (
 								<button
-									key={entry.path}
+									key={`${entry.workspaceId}:${entry.path}`}
 									type="button"
 									onClick={() => openSelection(entry)}
 									onMouseEnter={() => setSelectedIndex(i)}
@@ -239,6 +276,18 @@ export function FileSearchPalette({ open: isOpen, onClose }: Props) {
 									}}
 								>
 									<span style={{ fontWeight: 500 }}>{entry.name}</span>
+									{multi && (
+										<span
+											className="shrink-0"
+											style={{
+												fontSize: 11,
+												fontFamily: "var(--font-mono)",
+												opacity: isSelected ? 0.85 : 0.7,
+											}}
+										>
+											{entry.workspaceName}
+										</span>
+									)}
 									{dir && (
 										<span
 											className="truncate"

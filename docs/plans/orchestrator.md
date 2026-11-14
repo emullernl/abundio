@@ -87,8 +87,14 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 
 ### 8. File Orchestrator tabs
 
-- An Orchestrator file tab renders the File pane views (CodeEditor / DiffViewer / ImageViewer / markdown preview) bound to the file's Workspace. Unsaved edits join `report_unsaved_files`. Reload on outside change via the file watcher (Orchestrator tab holds a watch).
-- Profile-wide quickopen in the view; Workspace box Open file….
+- Stored in `orchestrator_tabs` (Rust CRUD + `orchestrator_tab_*` commands; the same file, kind and commit in one Workspace is one tab; a Workspace of another Profile is refused), the selection in `profiles.orchestrator_selected_tab`. Loaded when the session starts.
+- Each tab is a real `FilePane` under its own pane id (`orch-tab:<id>`), never part of any layout, so editing, saving, reload-on-outside-change, the external-change banner and the quit dialog's unsaved edits all work unchanged. `FilePane.embedded` drops the split controls and makes its close close the tab.
+- `OrchestratorFileTabs` is mounted for the life of the Window, hidden unless the view shows a file tab: a File pane drops its buffer on unmount, and closing the view must never lose an edit.
+- The tab strip shows Agents, then the file tabs (a dot while unsaved); closing one with unsaved edits asks Save / Don't Save / Cancel.
+- Save (`Cmd+S`) goes to the file tab when keyboard focus is in it.
+- The file watcher also watches every Workspace with a file open in a tab, Opened or not.
+- `Cmd+P` in the view searches every work Workspace not missing (`FileSearchPalette` gained a `scope` of several Workspaces, each result naming its Workspace); a Workspace container's "Open file…" searches just that one. A pick opens and selects the tab.
+- **Deferred to step 9:** diff and commit tabs (the CLI's `--diff` / `--commit`): the kinds are stored, but only `file` renders yet.
 
 ### 9. `abundio file open`
 

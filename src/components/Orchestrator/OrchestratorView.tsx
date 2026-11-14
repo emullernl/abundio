@@ -2,6 +2,7 @@ import {
 	ChevronDown,
 	ChevronUp,
 	Eye,
+	FileText,
 	Network,
 	RefreshCw,
 	X,
@@ -10,6 +11,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { useAgentPanes } from "../../hooks/useAgentPanes";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
+import type { OrchestratorFileTab } from "../../lib/ipc";
 import { orchestratorPane, pickerAgents } from "../../lib/orchestrator";
 import { closePeek } from "../../lib/orchestratorActions";
 import {
@@ -24,16 +26,28 @@ import {
 	pickOrchestratorAgent,
 	restartOrchestrator,
 } from "../../lib/orchestratorSession";
+import {
+	closeOrchestratorTab,
+	openOrchestratorFile,
+	requestCloseOrchestratorTab,
+	selectOrchestratorTab,
+	tabLabel,
+	tabPaneId,
+} from "../../lib/orchestratorTabs";
+import { useExplorerStore } from "../../stores/explorerStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { FileSearchPalette } from "../FileSearchPalette";
 import { WorkspacePicker } from "../FleetConsole/WorkspacePicker";
 import {
 	primaryButtonClass,
 	secondaryButtonClass,
 } from "../PromptActions/fieldStyles";
+import { SaveConfirmDialog } from "../SaveConfirmDialog";
+import { OrchestratorFileTabs } from "./OrchestratorFileTabs";
 import { OrchestratorGraph } from "./OrchestratorGraph";
 import { PeekPane } from "./PeekPane";
 
@@ -50,8 +64,14 @@ import { PeekPane } from "./PeekPane";
  */
 export function OrchestratorView({ topOffset }: { topOffset: number }) {
 	const open = useWindowUiStore((s) => s.orchestratorViewOpen);
-	if (!open) return null;
-	return <OrchestratorViewBody topOffset={topOffset} />;
+	return (
+		<>
+			{open && <OrchestratorViewBody topOffset={topOffset} />}
+			{/* Mounted even while the view is closed: see the component. */}
+			<OrchestratorFileTabs topOffset={topOffset} />
+			<OrchestratorFileSearch />
+		</>
+	);
 }
 
 function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
@@ -143,6 +163,76 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 	);
 }
 
+/** The file search for an Orchestrator tab (Cmd+P in the view, or a
+ *  Workspace's "Open file…"): the pick opens in a tab and takes focus. */
+function OrchestratorFileSearch() {
+	const search = useOrchestratorStore((s) => s.fileSearch);
+	const close = () => useOrchestratorStore.getState().set({ fileSearch: null });
+	return (
+		<FileSearchPalette
+			open={search !== null}
+			onClose={close}
+			scope={
+				search
+					? {
+							workspaceIds: search.workspaceIds,
+							onPick: (workspaceId, entry) => {
+								void openOrchestratorFile(
+									{ workspaceId, kind: "file", path: entry.path },
+									{ focus: true },
+								).then(() =>
+									useOrchestratorStore.getState().set({ fileTabFocused: true }),
+								);
+							},
+						}
+					: undefined
+			}
+		/>
+	);
+}
+
+/** A file's **Orchestrator tab**: its name, a dot while it has unsaved
+ *  edits, its Workspace in the tooltip. */
+function FileTopTab({
+	tab,
+	active,
+	onClose,
+}: {
+	tab: OrchestratorFileTab;
+	active: boolean;
+	onClose: () => void;
+}) {
+	const dirty = useExplorerStore(
+		(s) => !!s.filePanes[tabPaneId(tab.id)]?.isDirty,
+	);
+	const workspaceName = useWorkspaceStore(
+		(s) => s.workspaces.find((w) => w.id === tab.workspaceId)?.name ?? "",
+	);
+	return (
+		<TopTab
+			active={active}
+			onSelect={() => selectOrchestratorTab(tab.id)}
+			onClose={onClose}
+			title={`${workspaceName} · ${tab.path}`}
+		>
+			<FileText size={13} />
+			<span className="truncate">{tabLabel(tab)}</span>
+			{dirty && (
+				<span
+					title="Unsaved changes"
+					style={{
+						width: 6,
+						height: 6,
+						borderRadius: 3,
+						background: "var(--accent)",
+						flexShrink: 0,
+					}}
+				/>
+			)}
+		</TopTab>
+	);
+}
+
 /** One **Orchestrator tab** in the strip. */
 function TopTab({
 	active,
@@ -194,8 +284,8 @@ function TopTab({
 					type="button"
 					className="flex items-center justify-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
 					style={{ width: 20, height: 20, marginRight: 2, borderRadius: 4 }}
-					title="Close the Peek"
-					aria-label="Close the Peek"
+					title="Close"
+					aria-label="Close"
 					onClick={onClose}
 				>
 					<X size={12} />
@@ -250,6 +340,12 @@ function TabStrip({
 	const agentId = useOrchestratorStore((s) => s.agentId);
 	const agents = useSettingsStore((s) => s.agents);
 	const agent = agents.find((a) => a.id === agentId);
+	const fileTabs = useOrchestratorStore((s) => s.fileTabs);
+	const selectedTabId = useOrchestratorStore((s) => s.selectedTabId);
+	const closingTabId = useOrchestratorStore((s) => s.closingTabId);
+	const closing = fileTabs.find((t) => t.id === closingTabId) ?? null;
+	const clearClosing = () =>
+		useOrchestratorStore.getState().set({ closingTabId: null });
 	return (
 		<div
 			className="flex items-center shrink-0 select-none"
@@ -261,10 +357,22 @@ function TabStrip({
 					"1px solid color-mix(in srgb, var(--border) 60%, transparent)",
 			}}
 		>
-			<TopTab active onSelect={() => {}} title="All agents of this profile">
+			<TopTab
+				active={selectedTabId === null}
+				onSelect={() => selectOrchestratorTab(null)}
+				title="All agents of this profile"
+			>
 				<Network size={13} />
 				Agents
 			</TopTab>
+			{fileTabs.map((tab) => (
+				<FileTopTab
+					key={tab.id}
+					tab={tab}
+					active={selectedTabId === tab.id}
+					onClose={() => requestCloseOrchestratorTab(tab.id)}
+				/>
+			))}
 			{phase === "ready" && <OpenWorkspaceButton />}
 			<div className="flex-1" />
 			{phase === "ready" && agent && (
@@ -292,6 +400,24 @@ function TabStrip({
 			>
 				{collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
 			</button>
+			{closing && (
+				<SaveConfirmDialog
+					fileName={tabLabel(closing)}
+					onSave={() => {
+						const tab = closing;
+						clearClosing();
+						void useExplorerStore
+							.getState()
+							.saveFile(tabPaneId(tab.id))
+							.then(() => closeOrchestratorTab(tab.id));
+					}}
+					onDontSave={() => {
+						closeOrchestratorTab(closing.id);
+						clearClosing();
+					}}
+					onCancel={() => clearClosing()}
+				/>
+			)}
 		</div>
 	);
 }

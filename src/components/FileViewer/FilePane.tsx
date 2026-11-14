@@ -76,6 +76,9 @@ interface FilePaneProps {
 	isDeleted?: boolean;
 	isFocused: boolean;
 	onFocus: () => void;
+	/** Set when the file is not a pane of any layout (an **Orchestrator
+	 *  tab**, ADR-0058): no splits, and closing closes that instead. */
+	embedded?: { onClose: () => void; closeLabel: string };
 }
 
 export function FilePane({
@@ -89,6 +92,7 @@ export function FilePane({
 	isDeleted,
 	isFocused,
 	onFocus,
+	embedded,
 }: FilePaneProps) {
 	const registerFilePane = useExplorerStore((s) => s.registerFilePane);
 	const keyOverrides = useKeybindingOverrides();
@@ -510,24 +514,26 @@ export function FilePane({
 				]
 			: [];
 
-	const paneItems: ContextMenuItem[] = [
-		{
-			label: "Split Right",
-			shortcut: shortcutLabelFor("split-vertical", keyOverrides),
-			onClick: () => splitPaneWithPicker(paneId, "vertical"),
-		},
-		{
-			label: "Split Down",
-			shortcut: shortcutLabelFor("split-horizontal", keyOverrides),
-			onClick: () => splitPaneWithPicker(paneId, "horizontal"),
-		},
-		{ separator: true },
-		{
-			label: "Close Pane",
-			shortcut: shortcutLabelFor("close-pane", keyOverrides),
-			onClick: () => closePane(paneId),
-		},
-	];
+	const paneItems: ContextMenuItem[] = embedded
+		? [{ label: embedded.closeLabel, onClick: embedded.onClose }]
+		: [
+				{
+					label: "Split Right",
+					shortcut: shortcutLabelFor("split-vertical", keyOverrides),
+					onClick: () => splitPaneWithPicker(paneId, "vertical"),
+				},
+				{
+					label: "Split Down",
+					shortcut: shortcutLabelFor("split-horizontal", keyOverrides),
+					onClick: () => splitPaneWithPicker(paneId, "horizontal"),
+				},
+				{ separator: true },
+				{
+					label: "Close Pane",
+					shortcut: shortcutLabelFor("close-pane", keyOverrides),
+					onClick: () => closePane(paneId),
+				},
+			];
 
 	// The window shows what this pane shows: a diff pane gives a diff window.
 	const windowTarget = fileWindowTargetForPane(paneId, null, {
@@ -583,9 +589,18 @@ export function FilePane({
 					fileName={paneState.fileName}
 					fileType={paneState.fileType}
 					isDirty={paneState.isDirty}
-					onSplitDown={() => splitPaneWithPicker(paneId, "horizontal")}
-					onSplitRight={() => splitPaneWithPicker(paneId, "vertical")}
-					onClose={() => closePane(paneId, paneState.fileName)}
+					onSplitDown={
+						embedded
+							? undefined
+							: () => splitPaneWithPicker(paneId, "horizontal")
+					}
+					onSplitRight={
+						embedded ? undefined : () => splitPaneWithPicker(paneId, "vertical")
+					}
+					onClose={
+						embedded?.onClose ?? (() => closePane(paneId, paneState.fileName))
+					}
+					closeLabel={embedded?.closeLabel}
 				/>
 			)}
 			{showBanner && (
@@ -596,7 +611,7 @@ export function FilePane({
 						onReload={() => reloadPaneFromDisk(paneId)}
 						onKeepEdits={() => dismissExternalChange(paneId)}
 						onSave={() => saveFile(paneId)}
-						onClose={() => closePane(paneId)}
+						onClose={embedded?.onClose ?? (() => closePane(paneId))}
 					/>
 				</div>
 			)}

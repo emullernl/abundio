@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { OrchestratorFileTab } from "../lib/ipc";
 
 /**
  * The Window's **Orchestrator** session (ADR-0057), in memory only: where the
@@ -38,6 +39,18 @@ interface OrchestratorState {
 	selectedPaneId: string | null;
 	/** The Agent shown in the **Peek**, to the right of the graph. */
 	peekPaneId: string | null;
+	/** **Orchestrator tabs** holding files (ADR-0058), in order. */
+	fileTabs: OrchestratorFileTab[];
+	/** The selected Orchestrator tab: a file tab's id, or null for the graph. */
+	selectedTabId: string | null;
+	/** A file tab with unsaved edits the user asked to close: Save / Don't
+	 *  Save / Cancel is showing. */
+	closingTabId: string | null;
+	/** Keyboard focus is in the selected file tab (Save goes there). */
+	fileTabFocused: boolean;
+	/** The file search is open, over these Workspaces (Cmd+P in the view, or
+	 *  a Workspace's "Open file…"). */
+	fileSearch: { workspaceIds: string[] } | null;
 	set: (patch: Partial<Omit<OrchestratorState, "set">>) => void;
 }
 
@@ -51,6 +64,11 @@ export const useOrchestratorStore = create<OrchestratorState>((set) => ({
 	panesTop: 0,
 	selectedPaneId: null,
 	peekPaneId: null,
+	fileTabs: [],
+	selectedTabId: null,
+	fileTabFocused: false,
+	closingTabId: null,
+	fileSearch: null,
 	workspacePickerOpen: false,
 	exited: false,
 	set: (patch) => set(patch),

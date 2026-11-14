@@ -9,7 +9,9 @@ use tauri::State;
 
 use crate::error::AbundioError;
 use crate::prompt_actions::PromptActionStore;
-use crate::workspace_store::{WorkspaceStore, WorkspaceWithTabs};
+use crate::workspace_store::{
+    NewOrchestratorTab, OrchestratorTab, WorkspaceStore, WorkspaceWithTabs,
+};
 
 /// Name of the Orchestrator's own folder, under `orchestrator/<profile-id>/`.
 const FOLDER_NAME: &str = "Orchestrator";
@@ -143,6 +145,51 @@ pub async fn orchestrator_agent_set(
     store.set_orchestrator_agent(&profile_id, agent_id.as_deref())
 }
 
+/// The Profile's Orchestrator file tabs and the selected one (`None`: the
+/// graph).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorTabs {
+    pub tabs: Vec<OrchestratorTab>,
+    pub selected: Option<String>,
+}
+
+#[tauri::command]
+pub async fn orchestrator_tabs_list(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+) -> Result<OrchestratorTabs, AbundioError> {
+    let (tabs, selected) = store.orchestrator_tabs(&profile_id)?;
+    Ok(OrchestratorTabs { tabs, selected })
+}
+
+#[tauri::command]
+pub async fn orchestrator_tab_add(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    tab: NewOrchestratorTab,
+) -> Result<OrchestratorTab, AbundioError> {
+    store.add_orchestrator_tab(&profile_id, tab)
+}
+
+#[tauri::command]
+pub async fn orchestrator_tab_remove(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    id: String,
+) -> Result<(), AbundioError> {
+    store.remove_orchestrator_tab(&profile_id, &id)
+}
+
+#[tauri::command]
+pub async fn orchestrator_tab_select(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    id: Option<String>,
+) -> Result<(), AbundioError> {
+    store.set_orchestrator_selected_tab(&profile_id, id.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +277,61 @@ mod tests {
             .unwrap()
             .contains("@AGENTS.md"));
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn file_tabs_are_kept_once_per_file_and_selectable() {
+        let store = test_store();
+        let ws = store.create("w", "/w", PID).unwrap().workspace.id;
+        let new = |path: &str| NewOrchestratorTab {
+            workspace_id: ws.clone(),
+            kind: "file".into(),
+            path: path.into(),
+            commit_oid: None,
+            preview: false,
+        };
+        let a = store.add_orchestrator_tab(PID, new("/w/a.md")).unwrap();
+        let again = store.add_orchestrator_tab(PID, new("/w/a.md")).unwrap();
+        assert_eq!(a.id, again.id);
+        let b = store.add_orchestrator_tab(PID, new("/w/b.md")).unwrap();
+        store
+            .set_orchestrator_selected_tab(PID, Some(&b.id))
+            .unwrap();
+        let (tabs, selected) = store.orchestrator_tabs(PID).unwrap();
+        assert_eq!(
+            tabs.iter().map(|t| t.path.as_str()).collect::<Vec<_>>(),
+            ["/w/a.md", "/w/b.md"]
+        );
+        assert_eq!(selected.as_deref(), Some(b.id.as_str()));
+        // Closing the selected tab: the selection falls back to the graph.
+        store.remove_orchestrator_tab(PID, &b.id).unwrap();
+        let (tabs, selected) = store.orchestrator_tabs(PID).unwrap();
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(selected, None);
+        // Not a kind we know.
+        assert!(store
+            .add_orchestrator_tab(
+                PID,
+                NewOrchestratorTab {
+                    kind: "x".into(),
+                    ..new("/w/c")
+                }
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn a_file_tab_of_another_profiles_workspace_is_refused() {
+        let store = test_store();
+        let ws = store.create("w", "/w", PID).unwrap().workspace.id;
+        let tab = NewOrchestratorTab {
+            workspace_id: ws,
+            kind: "file".into(),
+            path: "/w/a".into(),
+            commit_oid: None,
+            preview: false,
+        };
+        assert!(store.add_orchestrator_tab("someone-else", tab).is_err());
     }
 
     #[test]

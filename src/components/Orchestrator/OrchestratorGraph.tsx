@@ -46,6 +46,7 @@ import {
 	routeBetween,
 } from "../../lib/orchestratorGraph";
 import { restartOrchestrator } from "../../lib/orchestratorSession";
+import { toggleOrchestratorFileSearch } from "../../lib/orchestratorTabs";
 import { switchToPane } from "../../lib/paneLocation";
 import {
 	buildWorkspaceRows,
@@ -498,6 +499,11 @@ const ContainerNode = memo(function ContainerNode({
 					y={menu.y}
 					onClose={() => setMenu(null)}
 					items={[
+						{
+							label: "Open file…",
+							onClick: () => toggleOrchestratorFileSearch([workspaceId]),
+						},
+						{ separator: true },
 						{
 							label: "New agent…",
 							onClick: () => actions.newAgentIn(workspaceId),

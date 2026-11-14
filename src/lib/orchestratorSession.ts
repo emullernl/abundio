@@ -24,6 +24,7 @@ import {
 	startPane,
 } from "./orchestrator";
 import { orchestratorStart } from "./orchestratorLaunch";
+import { loadOrchestratorTabs } from "./orchestratorTabs";
 import { findNode, parseTabLayout } from "./paneTree";
 import { setPendingAgent, setPendingTask } from "./pendingAgentRegistry";
 import { getTerminal, restartPanePty } from "./terminalManager";
@@ -157,6 +158,7 @@ export function enterOrchestratorView(): Promise<void> {
 		try {
 			const ensured = await orchestratorApi.ensure(profileId);
 			upsertWorkspace(ensured);
+			if (store().fileTabs.length === 0) await loadOrchestratorTabs(profileId);
 			const agentId = await orchestratorApi.agent(profileId);
 			const ws = storedWorkspace(ensured.id) ?? ensured;
 			store().set({ workspaceId: ws.id, agentId });
@@ -240,6 +242,10 @@ export function installOrchestratorSession(): () => void {
 		workspaceId: null,
 		agentId: null,
 		exited: false,
+		// Another Profile's tabs are not this one's.
+		fileTabs: [],
+		selectedTabId: null,
+		peekPaneId: null,
 	});
 	if (orchestratorViewWanted()) void enterOrchestratorView();
 	const stopView = useWindowUiStore.subscribe((s, prev) => {
