@@ -196,6 +196,22 @@ describe("agent wait", () => {
 });
 
 describe("agent send-keys", () => {
+	// `b` is a Spawned pane of the caller's, unless a test says otherwise.
+	const ownedBy = (owner: string | undefined) =>
+		useWorkspaceStore.setState((st) => ({
+			workspaces: st.workspaces.map((w) => ({
+				...w,
+				tabs: w.tabs.map((t) => ({
+					...t,
+					layoutJson: JSON.stringify({
+						...layout,
+						second: { ...layout.second, spawnedBy: owner },
+					}),
+				})),
+			})),
+		}));
+	beforeEach(() => ownedBy("a"));
+
 	it("writes the keys' bytes to the PTY in one go", async () => {
 		const r = await runRequest(caller, {
 			op: "agent.sendKeys",
@@ -214,6 +230,20 @@ describe("agent send-keys", () => {
 				keys: ["esc", "f13"],
 			}),
 		).rejects.toMatchObject({ code: "internal" });
+		expect(write).not.toHaveBeenCalled();
+	});
+
+	it("refuses an Agent the caller did not start", async () => {
+		for (const owner of [undefined, "someone-else"]) {
+			ownedBy(owner);
+			await expect(
+				runRequest(caller, {
+					op: "agent.sendKeys",
+					target,
+					keys: ["enter"],
+				}),
+			).rejects.toMatchObject({ code: "not_owner" });
+		}
 		expect(write).not.toHaveBeenCalled();
 	});
 });

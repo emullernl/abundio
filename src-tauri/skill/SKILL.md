@@ -37,11 +37,11 @@ asks.
   `error`). Prefer this to sending and polling.
 - `status: "waiting"` means it is asking a question or wants permission:
   `abundio pane read <agent> --lines 40` to see it. Answer it yourself only
-  when your own task settles it (a permission prompt for work you asked for,
-  a detail you already know), with `abundio agent send-keys <agent> …`
-  (`enter`, `esc`, `up`, `down`, `tab`, `ctrl+c`, …) or with another prompt.
-  If it needs the user's judgment, ask the user in your own conversation,
-  then pass their answer on the same way.
+  when you started that agent and your own task settles it (a permission
+  prompt for work you asked for, a detail you already know), with
+  `abundio agent send-keys <agent> …` (`enter`, `esc`, `up`, `down`, `tab`,
+  `ctrl+c`, …). If it needs the user's judgment, or you did not start it,
+  tell the user in your own conversation and let them answer it there.
 - After a prompt, `abundio pane read <agent> --lines 80` shows its answer.
 - `stalled` means it never started working; read the pane before sending
   again. After a `timeout` or `connection_lost`, the prompt may have arrived:
@@ -81,6 +81,10 @@ never one the user has named: leave those as they are.
 `abundio pane split` opens a plain shell beside you, `abundio tab new` one in
 a new Tab; `abundio pane run <pane> "<command>"` runs one line in a shell
 that is at its prompt.
+
+`pane run` and `agent send-keys` work only in panes you started yourself
+(with `pane split`, `tab new`, `agent start` or `worktree new`). For any
+other pane, ask the user.
 
 ### Waiting for output
 

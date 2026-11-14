@@ -226,6 +226,7 @@ The original list:
   - The pending task is seeded under a pre-made pane id **before** the node enters the layout, so the terminal cannot spawn first and miss it. If the split fails, the seed is taken back.
   - Reply: once the pane is in agent mode, with the Agent's description; `stalled` after 30 s.
 - `pane run`: refused for an exited shell (`not_found`), an agent-mode pane or a running command (`busy`), and a PTY where shell integration has not reported yet (`state_unknown`). That last signal is new: `ManagedTerminal.shellIntegrationSeen`, set on the first shell-integration sequence and reset by `restartPanePty`. After an app restart a reconnected shell is `state_unknown` until its next prompt. The command is made one line with no control characters, then written with `\r`.
+- `pane run` and `agent send-keys`: only into a Spawned pane, by its owner (`not_owner`), so an Agent cannot type into a shell or an Agent it did not start and get around that Agent's permission prompts (PR #258 review; ADR-0054).
 - `pane close`: only a Spawned pane, only by its owner, never one's own pane (`not_owner`).
   - **Changed from the plan:** no confirmation. Every user close asks "Close pane?", and that dialog would stop an Agent cold. The unsaved-edits checks only concern file panes, and a Spawned pane is always a terminal.
   - The close logic moved out of `useSplitPane` into `lib/closePane.ts`, used by both. The user's close behaves as before. Agent control passes `keepFocus`, so focus stays where the user has it.
@@ -697,5 +698,6 @@ Unit tests will not catch the integration paths. Before calling it done:
 - Progress: `abundio progress "step 2/5"` shows on the title bar and Agent row; it is gone after the Agent exits.
 - Worktree: `abundio worktree new feat/x --agent claude --prompt "…"` creates the folder next to the others, runs setup commands, opens the Workspace in the background with the Agent; the caller can prompt and close it.
 - Notes: with the Notes panel open and text half typed, an Agent's `notes append` appears at the end and the typed text survives.
-- Watch: start `pnpm dev` in a shell pane, then `abundio pane watch p2 --match "ready in"` returns the line.
-- A plain shell running `abundio notify x` is refused with `not_agent`.
+- Watch: `abundio pane split`, `abundio pane run p2 "pnpm dev"`, then `abundio pane watch p2 --match "ready in"` returns the line.
+- Spawned panes only: `pane run` into a shell the user opened, and `agent send-keys` to an Agent the caller did not start, are refused with `not_owner`; both work on panes the caller started.
+- A plain shell running `abundio notify x` is refused with `agents_only`.

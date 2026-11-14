@@ -125,6 +125,22 @@ export function closeRefusal(
 	return null;
 }
 
+/** `pane run` and `agent send-keys` type into a pane, which can get around
+ *  the permission prompts of the Agent that would otherwise be asked (a
+ *  shell runs whatever it is given; keys can approve a prompt). So they are
+ *  allowed only on a **Spawned pane**, by its owner (ADR-0054). */
+export function driveRefusal(
+	spawnedBy: string | undefined,
+	callerPaneId: string,
+	command: "pane run" | "agent send-keys",
+): ControlError | null {
+	if (spawnedBy === callerPaneId) return null;
+	return new ControlError(
+		"not_owner",
+		`\`${command}\` works only in panes you started (with \`pane split\`, \`tab new\`, \`agent start\` or \`worktree new\`); ask the user to do it in this one`,
+	);
+}
+
 /** Why `tab rename` may not rename this Tab, or null when it may. An Agent
  *  names its own Tab and the **Spawned tabs** it opened, and never a Tab the
  *  user has named by hand: the user's name wins. */

@@ -1053,6 +1053,7 @@ Panes (only those of your own Workspace):
   abundio pane split [--direction right|down] [--focus]
                                           a new shell pane beside yours
   abundio pane run <pane> <command>       run a one-line command in an idle shell
+                                          you started
   abundio pane close <pane>               close a pane you created
   abundio pane watch <pane> --match <regex> [-i] [--timeout <ms>]
                                           wait for a line of new output matching a
@@ -1072,7 +1073,8 @@ Agents:
                                           send a prompt; --wait returns when it settles
   abundio agent wait <agent> [--until settled|ready|waiting|error] [--timeout <ms>]
   abundio agent send-keys <agent|pane> <key>...
-                                          enter, esc, tab, ctrl+c, up, …
+                                          enter, esc, tab, ctrl+c, up, … (only to
+                                          a pane you started)
   abundio agent rename <agent> [<handle>] set or clear an Agent handle
 ";
     const WORKSPACE: &str = "\

@@ -66,6 +66,7 @@ import {
 	autoDirection,
 	cleanCommand,
 	closeRefusal,
+	driveRefusal,
 	layoutDirection,
 	runRefusal,
 	startArgv,
@@ -392,6 +393,12 @@ export async function runRequest(
 		}
 		case "agent.sendKeys": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			const notYours = driveRefusal(
+				pane.node.spawnedBy,
+				caller.paneId,
+				"agent send-keys",
+			);
+			if (notYours) throw notYours;
 			return withBadge(scope, pane, async () => {
 				const managed = mountedTerminal(pane);
 				const appCursor = managed.term.modes.applicationCursorKeysMode;
@@ -438,6 +445,12 @@ export async function runRequest(
 			return renameTabFor(scope, request);
 		case "pane.run": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
+			const notYours = driveRefusal(
+				pane.node.spawnedBy,
+				caller.paneId,
+				"pane run",
+			);
+			if (notYours) throw notYours;
 			return withBadge(scope, pane, async () => {
 				const managed = mountedTerminal(pane);
 				const facts = liveFacts(pane);
@@ -1033,7 +1046,7 @@ async function promptAgent(
 	if (!canFire(facts.state ?? undefined)) {
 		throw new ControlError(
 			"busy",
-			"that Agent is Waiting for an answer (a permission prompt, say); read the pane, answer it with `agent send-keys`, then prompt again",
+			"that Agent is Waiting for an answer (a permission prompt, say); read the pane; if you started that Agent, answer it with `agent send-keys`, otherwise ask the user to; then prompt again",
 		);
 	}
 	const text = cleanPromptText(request.text);

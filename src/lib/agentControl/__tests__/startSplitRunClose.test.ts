@@ -323,7 +323,7 @@ describe("pane run", () => {
 			direction: "vertical",
 			ratio: 0.5,
 			first: { type: "terminal", id: "a", ptyId: "pty-a" },
-			second: { type: "terminal", id: "b", ptyId: "pty-b" },
+			second: { type: "terminal", id: "b", ptyId: "pty-b", spawnedBy: "a" },
 		});
 		terminals.set("b", {
 			ptyId: "pty-b",
@@ -357,6 +357,19 @@ describe("pane run", () => {
 			term: {},
 		});
 		await expect(run("ls")).rejects.toMatchObject({ code: "state_unknown" });
+	});
+
+	it("refuses an idle shell the caller did not start", async () => {
+		setLayout({
+			type: "split",
+			id: "s",
+			direction: "vertical",
+			ratio: 0.5,
+			first: { type: "terminal", id: "a", ptyId: "pty-a" },
+			second: { type: "terminal", id: "b", ptyId: "pty-b" },
+		});
+		await expect(run("ls")).rejects.toMatchObject({ code: "not_owner" });
+		expect(write).not.toHaveBeenCalled();
 	});
 });
 
