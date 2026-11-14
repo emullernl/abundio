@@ -204,6 +204,43 @@ describe("AgentsList", () => {
 		expect(switchToPane).toHaveBeenCalledWith("pa1");
 	});
 
+	it("right-clicking a row opens the Agent menu", () => {
+		render();
+		act(() => {
+			rows()[1].dispatchEvent(
+				new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+			);
+		});
+		const labels = Array.from(document.body.querySelectorAll("button"))
+			.map((b) => b.textContent)
+			.filter(Boolean);
+		expect(labels).toContain("Switch To");
+		expect(labels).toContain("Restart Agent…");
+		expect(labels).toContain("Close Pane");
+		expect(labels).not.toContain("Clear Attention Flag");
+	});
+
+	it("Open in Fleet Console focuses that Agent's tile", () => {
+		useWindowUiStore.setState({
+			fleetConsoleOpen: false,
+			focusedTileId: null,
+			spotlightTileId: null,
+		});
+		render();
+		act(() => {
+			rows()[0].dispatchEvent(
+				new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+			);
+		});
+		const item = Array.from(document.body.querySelectorAll("button")).find(
+			(b) => b.textContent === "Open in Fleet Console",
+		);
+		act(() => item?.click());
+		const ui = useWindowUiStore.getState();
+		expect(ui.fleetConsoleOpen).toBe(true);
+		expect(ui.focusedTileId).toBe("pa1");
+	});
+
 	it("keeps its header and says so when no Agent runs", () => {
 		usePtyActivityStore.setState({ activities: {} });
 		render();

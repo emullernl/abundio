@@ -127,28 +127,8 @@ export async function restartWorkspacePtys(
 	let failed = 0;
 
 	for (const pane of panes) {
-		const command = relaunchCommandForPane(
-			{
-				type: "terminal",
-				id: pane.paneId,
-				ptyId: pane.ptyId,
-				agentId: pane.agentId,
-				agentSessionId: pane.agentSessionId,
-				cwd: pane.cwd,
-			},
-			rootFolder,
-			counts,
-		);
 		try {
-			if (pane.mounted) {
-				await restartPanePty(pane.paneId, {
-					cwd: pane.cwd,
-					agentCommand: command,
-					preserveScrollback: true,
-				});
-			} else {
-				restartUnmountedPane(pane, command);
-			}
+			await restartLivePane(pane, rootFolder, counts);
 			restarted++;
 		} catch {
 			failed++;
@@ -156,6 +136,55 @@ export async function restartWorkspacePtys(
 	}
 
 	return { restarted, failed };
+}
+
+/** Kill and respawn one live pane, relaunching its Agent with **Session
+ *  resume** when it has one. */
+async function restartLivePane(
+	pane: LivePane,
+	rootFolder: string,
+	counts: ReturnType<typeof countAgentPanesByFolder>,
+): Promise<void> {
+	const command = relaunchCommandForPane(
+		{
+			type: "terminal",
+			id: pane.paneId,
+			ptyId: pane.ptyId,
+			agentId: pane.agentId,
+			agentSessionId: pane.agentSessionId,
+			cwd: pane.cwd,
+		},
+		rootFolder,
+		counts,
+	);
+	if (pane.mounted) {
+		await restartPanePty(pane.paneId, {
+			cwd: pane.cwd,
+			agentCommand: command,
+			preserveScrollback: true,
+		});
+	} else {
+		restartUnmountedPane(pane, command);
+	}
+}
+
+/**
+ * **Restart agent** from the **Agent menu**: kill one pane's PTY and relaunch
+ * its Agent, resuming its session (ADR-0050), the same way an Environment
+ * Bundle change restarts a Workspace. Does nothing when the pane has no live
+ * PTY.
+ */
+export async function restartAgentPane(paneId: string): Promise<void> {
+	const store = useWorkspaceStore.getState();
+	const workspace = store.findWorkspaceForPane(paneId);
+	if (!workspace) return;
+	const pane = collectLivePanes(workspace.id).find((p) => p.paneId === paneId);
+	if (!pane) return;
+	await restartLivePane(
+		pane,
+		workspace.rootFolder,
+		countAgentPanesByFolder(store.workspaces),
+	);
 }
 
 /**
