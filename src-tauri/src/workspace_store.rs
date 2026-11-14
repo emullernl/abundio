@@ -8,6 +8,9 @@ use crate::error::AbundioError;
 /// in `src/lib/tabName.ts`; change both together.
 const FIRST_TAB_NAME: &str = "Tab 1";
 
+/// Name of every Orchestrator workspace and of its first Tab.
+pub const ORCHESTRATOR_NAME: &str = "Orchestrator";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Workspace {
@@ -26,6 +29,9 @@ pub struct Workspace {
     /// after an in-app Add worktree. Only meaningful on a main-worktree
     /// Workspace. Empty string = none. See ADR-0017.
     pub worktree_setup_commands: String,
+    /// `"work"` for an ordinary Workspace, `"orchestrator"` for a Profile's
+    /// Orchestrator workspace (ADR-0057).
+    pub kind: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -278,7 +284,7 @@ impl WorkspaceStore {
     pub fn list(&self, profile_id: &str) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.name, s.root_folder, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.profile_id, s.created_at, s.updated_at, s.worktree_setup_commands,
+            "SELECT s.id, s.name, s.root_folder, s.agent_presets_json, s.file_tabs_json, s.base_branch, s.last_branch, s.position, s.profile_id, s.created_at, s.updated_at, s.worktree_setup_commands, s.kind,
                     t.id, t.workspace_id, t.name, t.layout_json, t.position, t.created_at, t.updated_at
              FROM workspaces s
              LEFT JOIN tabs t ON t.workspace_id = s.id
@@ -309,6 +315,7 @@ impl WorkspaceStore {
                         created_at: row.get(9)?,
                         updated_at: row.get(10)?,
                         worktree_setup_commands: row.get(11)?,
+                        kind: row.get(12)?,
                     },
                     tabs: Vec::new(),
                 });
@@ -316,17 +323,17 @@ impl WorkspaceStore {
             }
 
             // Append tab if present (LEFT JOIN may produce NULL tab columns)
-            let tab_id: Option<String> = row.get(12)?;
+            let tab_id: Option<String> = row.get(13)?;
             if let Some(tid) = tab_id {
                 if let Some(entry) = result.last_mut() {
                     entry.tabs.push(Tab {
                         id: tid,
-                        workspace_id: row.get(13)?,
-                        name: row.get(14)?,
-                        layout_json: row.get(15)?,
-                        position: row.get(16)?,
-                        created_at: row.get(17)?,
-                        updated_at: row.get(18)?,
+                        workspace_id: row.get(14)?,
+                        name: row.get(15)?,
+                        layout_json: row.get(16)?,
+                        position: row.get(17)?,
+                        created_at: row.get(18)?,
+                        updated_at: row.get(19)?,
                     });
                 }
             }
@@ -378,6 +385,84 @@ impl WorkspaceStore {
         let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         conn.execute(&sql, param_refs.as_slice())?;
 
+        Ok(())
+    }
+
+    // ── Orchestrator workspace (ADR-0057) ──
+
+    /// The Profile's Orchestrator workspace, created on first call with
+    /// `folder` as its folder. Idempotent: later calls return the same row,
+    /// and repoint it at `folder` if the app data folder moved.
+    pub fn ensure_orchestrator(
+        &self,
+        profile_id: &str,
+        folder: &str,
+    ) -> Result<WorkspaceWithTabs, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT id FROM workspaces WHERE profile_id = ?1 AND kind = 'orchestrator'",
+                [profile_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let workspace_id = match existing {
+            Some(id) => {
+                conn.execute(
+                    "UPDATE workspaces SET root_folder = ?2 WHERE id = ?1 AND root_folder <> ?2",
+                    rusqlite::params![id, folder],
+                )?;
+                id
+            }
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                // Position -1: never in the Workspace list, so it must not
+                // take a slot there either.
+                conn.execute(
+                    "INSERT INTO workspaces (id, name, root_folder, position, profile_id, kind) VALUES (?1, ?2, ?3, -1, ?4, 'orchestrator')",
+                    rusqlite::params![id, ORCHESTRATOR_NAME, folder, profile_id],
+                )?;
+                let tab_id = uuid::Uuid::new_v4().to_string();
+                let pane_id = uuid::Uuid::new_v4().to_string();
+                let layout_json = format!(r#"{{"type":"terminal","id":"{}","ptyId":""}}"#, pane_id);
+                conn.execute(
+                    "INSERT INTO tabs (id, workspace_id, name, layout_json, position) VALUES (?1, ?2, ?3, ?4, 0)",
+                    rusqlite::params![tab_id, id, ORCHESTRATOR_NAME, layout_json],
+                )?;
+                id
+            }
+        };
+        let workspace = Self::get_workspace_with_conn(&conn, &workspace_id)?;
+        let tabs = Self::list_tabs_with_conn(&conn, &workspace_id)?;
+        Ok(WorkspaceWithTabs { workspace, tabs })
+    }
+
+    /// The Agent id the user picked for this Profile's Orchestrator, if any.
+    pub fn orchestrator_agent(&self, profile_id: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let agent: Option<Option<String>> = conn
+            .query_row(
+                "SELECT orchestrator_agent_id FROM profiles WHERE id = ?1",
+                [profile_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(agent.flatten())
+    }
+
+    pub fn set_orchestrator_agent(
+        &self,
+        profile_id: &str,
+        agent_id: Option<&str>,
+    ) -> Result<(), AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE profiles SET orchestrator_agent_id = ?2 WHERE id = ?1",
+            rusqlite::params![profile_id, agent_id],
+        )?;
+        if n == 0 {
+            return Err(AbundioError::NotFound(format!("Profile not found: {}", profile_id)));
+        }
         Ok(())
     }
 
@@ -960,7 +1045,7 @@ impl WorkspaceStore {
 
     fn get_workspace_with_conn(conn: &Connection, id: &str) -> Result<Workspace, AbundioError> {
         conn.query_row(
-            "SELECT id, name, root_folder, agent_presets_json, file_tabs_json, base_branch, last_branch, position, profile_id, created_at, updated_at, worktree_setup_commands
+            "SELECT id, name, root_folder, agent_presets_json, file_tabs_json, base_branch, last_branch, position, profile_id, created_at, updated_at, worktree_setup_commands, kind
              FROM workspaces WHERE id = ?1",
             [id],
             |row| {
@@ -977,6 +1062,7 @@ impl WorkspaceStore {
                     created_at: row.get(9)?,
                     updated_at: row.get(10)?,
                     worktree_setup_commands: row.get(11)?,
+                    kind: row.get(12)?,
                 })
             },
         )

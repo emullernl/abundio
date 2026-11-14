@@ -178,6 +178,18 @@ export const pty = {
 		invoke<void>("pty_cleanup_stale_logs", { paneIds }),
 };
 
+/** The Profile's Orchestrator workspace and its Agent choice (ADR-0057). */
+export const orchestrator = {
+	/** Creates (first time) and returns the Profile's Orchestrator workspace,
+	 *  rewriting its instruction files. */
+	ensure: (profileId: string) =>
+		invoke<WorkspaceWithTabs>("orchestrator_ensure", { profileId }),
+	agent: (profileId: string) =>
+		invoke<string | null>("orchestrator_agent_get", { profileId }),
+	setAgent: (profileId: string, agentId: string | null) =>
+		invoke<void>("orchestrator_agent_set", { profileId, agentId }),
+};
+
 export const workspaces = {
 	create: (name: string, rootFolder: string, profileId: string) =>
 		invoke<WorkspaceWithTabs>("workspace_create", {

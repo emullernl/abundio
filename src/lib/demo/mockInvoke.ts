@@ -137,6 +137,11 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return { opened: [], active: null };
 		case "workspace_missing_folders":
 			return [];
+		// The demo has no Orchestrator Agent until the user picks one.
+		case "orchestrator_agent_get":
+			return null;
+		case "orchestrator_agent_set":
+			return undefined;
 		case "tab_list": {
 			const ws = fixtures.workspaces.find((w) => w.id === args.workspaceId);
 			return ws?.tabs ?? [];

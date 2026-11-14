@@ -23,6 +23,7 @@ pub mod git_libgit2;
 pub mod git_scheduler;
 pub mod hook_server;
 pub mod migrations;
+pub mod orchestrator;
 pub mod owner_map;
 pub mod pr_poller;
 pub mod process_monitor;
@@ -1452,6 +1453,9 @@ pub fn run() {
             commands::open_settings_window,
             commands::focus_window,
             commands::workspace_create,
+            orchestrator::orchestrator_ensure,
+            orchestrator::orchestrator_agent_get,
+            orchestrator::orchestrator_agent_set,
             commands::workspace_list,
             commands::workspace_update,
             commands::workspace_delete,
