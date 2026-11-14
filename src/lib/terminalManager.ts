@@ -46,6 +46,7 @@ import {
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
 import { targetPaneId } from "./fleetFocus";
+import { outsideWorkspaceView } from "./hiddenAgentStart";
 import { startUnlessShown } from "./hiddenSpawn";
 import { agentHooks, pty } from "./ipc";
 import { folderMissingReason } from "./missingFolder";
@@ -1311,7 +1312,10 @@ export function ensurePtySpawned(paneId: string): void {
  */
 export function startPtyUnlessShown(
 	paneId: string,
-	size: { cols: number; rows: number } | null,
+	size:
+		| { cols: number; rows: number }
+		| null
+		| (() => { cols: number; rows: number } | null),
 ): () => void {
 	return startUnlessShown({
 		exists: () => instances.has(paneId),
@@ -1319,13 +1323,31 @@ export function startPtyUnlessShown(
 		start: () => {
 			const managed = instances.get(paneId);
 			if (!managed) return;
-			if (size && size.cols > 0 && size.rows > 0) {
-				managed.term.resize(size.cols, size.rows);
+			// A function is asked at start time, when more of the Window is on
+			// screen to measure against (`lib/hiddenAgentStart.ts`).
+			const grid = typeof size === "function" ? size() : size;
+			if (grid && grid.cols > 0 && grid.rows > 0) {
+				managed.term.resize(grid.cols, grid.rows);
 			}
 			ensurePtySpawned(paneId);
 		},
 		subscribe: (listener) => subscribePaneRevision(paneId, listener),
 	});
+}
+
+/**
+ * The grid of `paneId`'s terminal while it is on screen in the Workspace
+ * view (`outsideWorkspaceView` is false) and laid out. Null otherwise.
+ */
+export function shownGrid(
+	paneId: string,
+): { cols: number; rows: number } | null {
+	const managed = instances.get(paneId);
+	const el = managed?.term.element;
+	if (!managed || !el?.isConnected) return null;
+	if (outsideWorkspaceView(el)) return null;
+	if (el.offsetWidth === 0 || el.offsetHeight === 0) return null;
+	return { cols: managed.term.cols, rows: managed.term.rows };
 }
 
 /** True if the PTY has been spawned (or is in the process of being spawned)

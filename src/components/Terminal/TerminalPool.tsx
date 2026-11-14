@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { isWatchedAgent, sizeForHiddenPane } from "../../lib/hiddenAgentStart";
 import { collectTerminals, parseTabLayout } from "../../lib/paneTree";
+import { hasPendingAgent } from "../../lib/pendingAgentRegistry";
+import { shownGrid, startPtyUnlessShown } from "../../lib/terminalManager";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { TerminalInstance } from "./TerminalInstance";
 
@@ -8,6 +12,8 @@ interface TerminalInfo {
 	paneId: string;
 	ptyId: string;
 	cwd?: string;
+	/** The Watched Agent this pane remembers, if any. */
+	agentId?: string;
 }
 
 export function TerminalPool() {
@@ -44,6 +50,7 @@ export function TerminalPool() {
 						paneId: t.id,
 						ptyId: t.ptyId,
 						cwd: t.cwd ?? workspace.rootFolder,
+						agentId: t.agentId,
 					});
 				}
 			}
@@ -51,8 +58,54 @@ export function TerminalPool() {
 		return result;
 	}, [workspaces, activeWorkspaceId, openedWorkspaceIds, loadAll]);
 
+	// An Opened workspace runs every Watched Agent its layout remembers, in
+	// every Tab — not only once its Tab is shown — so each is in the Agents
+	// list at once. A pane that is shown within moments starts the usual way;
+	// the rest start hidden, at a size worked out from the layout. Plain
+	// shells keep waiting for their Tab.
+	const agents = useSettingsStore((s) => s.agents);
+	const hiddenStarts = useRef(new Map<string, () => void>());
+	useEffect(() => {
+		const starts = hiddenStarts.current;
+		const present = new Set(terminals.map((t) => t.paneId));
+		for (const [paneId, cancel] of starts) {
+			if (present.has(paneId)) continue;
+			cancel();
+			starts.delete(paneId);
+		}
+		for (const t of terminals) {
+			if (starts.has(t.paneId)) continue;
+			if (!hasPendingAgent(t.paneId)) continue;
+			if (!isWatchedAgent(agents, t.agentId)) continue;
+			// Agent control's `agent start` in a hidden Tab also seeds a pending
+			// Agent and calls `startPtyUnlessShown` itself, so a pane can have two
+			// waits. That is harmless: both check `started()`, so the PTY spawns
+			// once, at whichever size is asked first.
+			starts.set(
+				t.paneId,
+				startPtyUnlessShown(t.paneId, () => {
+					const s = useWorkspaceStore.getState();
+					return sizeForHiddenPane(
+						t.paneId,
+						s.workspaces,
+						s.focusedPaneId,
+						shownGrid,
+					);
+				}),
+			);
+		}
+	}, [terminals, agents]);
+	useEffect(() => {
+		const starts = hiddenStarts.current;
+		return () => {
+			for (const cancel of starts.values()) cancel();
+			starts.clear();
+		};
+	}, []);
+
 	return (
 		<div
+			data-terminal-pool=""
 			style={{
 				position: "fixed",
 				left: "-9999px",
