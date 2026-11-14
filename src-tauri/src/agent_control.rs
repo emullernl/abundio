@@ -106,7 +106,8 @@ impl ControlTokens {
 
 #[derive(Default)]
 pub struct PendingRequests {
-    waiting: DashMap<String, Sender<Value>>,
+    /// Pending id → (where its reply goes, the Window it was sent to).
+    waiting: DashMap<String, (Sender<Value>, String)>,
     /// (caller's PTY, the CLI's id for a call) → (pending id, Window), while
     /// it waits. The CLI picks its id, so it is keyed by the PTY too: another
     /// pane sending the same id can neither replace nor cancel this entry.
@@ -139,18 +140,30 @@ impl PendingRequests {
         Some((window, id))
     }
 
-    pub fn register(&self) -> (String, Receiver<Value>) {
+    /// A request about to be sent to `window`, which alone may answer it.
+    pub fn register(&self, window: &str) -> (String, Receiver<Value>) {
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = bounded(1);
-        self.waiting.insert(id.clone(), tx);
+        self.waiting.insert(id.clone(), (tx, window.to_string()));
         (id, rx)
     }
 
-    /// Deliver a Window's reply. `false` if nothing waits for it any more (it
-    /// timed out, or the id is unknown).
+    /// End a wait from Rust's side (a cancel). `false` if nothing waits for
+    /// it any more.
     pub fn complete(&self, id: &str, reply: Value) -> bool {
         match self.waiting.remove(id) {
-            Some((_, tx)) => tx.try_send(reply).is_ok(),
+            Some((_, (tx, _))) => tx.try_send(reply).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Deliver a Window's reply. Only the Window the request was sent to may
+    /// answer it; any other (a File window, another Profile's Window) is
+    /// ignored and the request keeps waiting. `false` if nothing was
+    /// delivered.
+    pub fn reply_from(&self, window: &str, id: &str, reply: Value) -> bool {
+        match self.waiting.remove_if(id, |_, (_, to)| to == window) {
+            Some((_, (tx, _))) => tx.try_send(reply).is_ok(),
             None => false,
         }
     }
@@ -1288,21 +1301,7 @@ fn resolve_scope(app: &AppHandle, caller: &Caller, workspace: Option<&str>) -> R
     let store = app
         .try_state::<crate::workspace_store::WorkspaceStore>()
         .ok_or_else(|| error_answer(503, "unavailable", "Agent control is not ready"))?;
-    let profile = store
-        .profile_of(&caller.workspace_id)
-        .map_err(|e| error_answer(500, "internal", &e.to_string()))?
-        .ok_or_else(|| error_answer(409, "not_found", "your Workspace no longer exists"))?;
-    let rows: Vec<WorkspaceRow> = store
-        .list(&profile)
-        .map_err(|e| error_answer(500, "internal", &e.to_string()))?
-        .into_iter()
-        .map(|w| WorkspaceRow {
-            id: w.workspace.id,
-            name: w.workspace.name,
-            folder: w.workspace.root_folder,
-        })
-        .collect();
-    let target = pick_workspace(&rows, name).map_err(|(code, msg)| error_answer(409, code, &msg))?;
+    let target = workspace_in_profile(&store, caller, name)?;
     if target.id == caller.workspace_id {
         return Ok(Scope::home(caller));
     }
@@ -1332,6 +1331,30 @@ fn resolve_scope(app: &AppHandle, caller: &Caller, workspace: Option<&str>) -> R
             client_id: None,
         },
     })
+}
+
+/// The Workspace `name` names among those of the caller's own Profile. A
+/// Workspace of another Profile is never a candidate (ADR-0055).
+fn workspace_in_profile(
+    store: &crate::workspace_store::WorkspaceStore,
+    caller: &Caller,
+    name: &str,
+) -> Result<WorkspaceRow, Answer> {
+    let profile = store
+        .profile_of(&caller.workspace_id)
+        .map_err(|e| error_answer(500, "internal", &e.to_string()))?
+        .ok_or_else(|| error_answer(409, "not_found", "your Workspace no longer exists"))?;
+    let rows: Vec<WorkspaceRow> = store
+        .list(&profile)
+        .map_err(|e| error_answer(500, "internal", &e.to_string()))?
+        .into_iter()
+        .map(|w| WorkspaceRow {
+            id: w.workspace.id,
+            name: w.workspace.name,
+            folder: w.workspace.root_folder,
+        })
+        .collect();
+    pick_workspace(&rows, name).cloned().map_err(|(code, msg)| error_answer(409, code, &msg))
 }
 
 /// Terminal panes of a layout in tree order, with their Agent and handle.
@@ -1518,7 +1541,7 @@ fn ask_window(
     let pending = app
         .try_state::<PendingRequests>()
         .ok_or_else(|| error_answer(503, "unavailable", "Agent control is not ready"))?;
-    let (id, rx) = pending.register();
+    let (id, rx) = pending.register(&scope.window_label);
     if let Some(client) = &scope.client_id {
         pending.track_client(client, &id, &caller.pty_id, &scope.window_label);
     }
@@ -1855,20 +1878,30 @@ fn serve_inner(
 /// A pane closed: tell every Window (ADR-0055). Its **Spawned panes** and
 /// **Spawned tabs** may sit in other Workspaces, opened in other Windows, and
 /// only each Window may edit its own Workspaces' layouts.
+/// Only a Profile window holds panes, so any other window is ignored.
 #[tauri::command]
-pub fn agent_control_pane_closed(app: AppHandle, pane_id: String) -> Result<(), crate::error::AbundioError> {
+pub fn agent_control_pane_closed(
+    app: AppHandle,
+    window: tauri::Window,
+    pane_id: String,
+) -> Result<(), crate::error::AbundioError> {
+    if !crate::window_management::is_profile_window_label(window.label()) {
+        return Ok(());
+    }
     let _ = app.emit("agent-control-pane-closed", json!({ "paneId": pane_id }));
     Ok(())
 }
 
-/// A Window's answer to an `agent-control-request`.
+/// A Window's answer to an `agent-control-request`. Only the Window the
+/// request was sent to may answer it.
 #[tauri::command]
 pub fn agent_control_reply(
+    window: tauri::Window,
     pending: tauri::State<'_, PendingRequests>,
     id: String,
     reply: Value,
 ) -> Result<bool, crate::error::AbundioError> {
-    Ok(pending.complete(&id, reply))
+    Ok(pending.reply_from(window.label(), &id, reply))
 }
 
 #[tauri::command]
@@ -1992,18 +2025,30 @@ mod tests {
     #[test]
     fn a_reply_reaches_its_waiting_request_once() {
         let pending = PendingRequests::default();
-        let (id, rx) = pending.register();
-        assert!(pending.complete(&id, json!({ "result": 1 })));
+        let (id, rx) = pending.register("main");
+        assert!(pending.reply_from("main", &id, json!({ "result": 1 })));
         assert_eq!(rx.recv().unwrap(), json!({ "result": 1 }));
-        assert!(!pending.complete(&id, json!({ "result": 2 })));
+        assert!(!pending.reply_from("main", &id, json!({ "result": 2 })));
+    }
+
+    #[test]
+    fn only_the_window_asked_may_reply() {
+        let pending = PendingRequests::default();
+        let (id, rx) = pending.register("window-a");
+        // A File window, or a Window of another Profile, that learnt the id.
+        assert!(!pending.reply_from("md-1", &id, json!({ "result": "forged" })));
+        assert!(!pending.reply_from("window-b", &id, json!({ "result": "forged" })));
+        assert!(rx.try_recv().is_err());
+        assert!(pending.reply_from("window-a", &id, json!({ "result": 1 })));
+        assert_eq!(rx.recv().unwrap(), json!({ "result": 1 }));
     }
 
     #[test]
     fn a_reply_after_forgetting_is_dropped() {
         let pending = PendingRequests::default();
-        let (id, _rx) = pending.register();
+        let (id, _rx) = pending.register("main");
         pending.forget(&id);
-        assert!(!pending.complete(&id, json!({})));
+        assert!(!pending.reply_from("main", &id, json!({})));
     }
 
     // ── Wait graph ──
@@ -2282,12 +2327,12 @@ mod tests {
     #[test]
     fn only_the_callers_own_pty_can_cancel_its_call() {
         let p = PendingRequests::default();
-        let (id, rx) = p.register();
+        let (id, rx) = p.register("main");
         p.track_client("c1", &id, "pty-a", "main");
         assert_eq!(p.cancel_client("c1", "pty-b"), None);
         // Another pane picking the same id neither replaces the entry nor
         // removes it when its own call ends.
-        let (other, _rx2) = p.register();
+        let (other, _rx2) = p.register("main");
         p.track_client("c1", &other, "pty-b", "main");
         p.untrack_client("c1", "pty-b", &other);
         p.untrack_client("c1", "pty-a", "not-this-call");
@@ -2409,6 +2454,35 @@ mod tests {
         assert_eq!(list[1]["open"], true);
         // Numbered in tree order, like the Window does: the shell is p1.
         assert_eq!(list[1]["agents"], json!([{ "pane": "p2", "handle": "Agent One", "agent": "claude" }]));
+    }
+
+    #[test]
+    fn workspace_never_reaches_another_profile() {
+        use crate::workspace_store::WorkspaceStore;
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::migrations::run_migrations(&conn).unwrap();
+        conn.execute("INSERT INTO profiles (id, name, position) VALUES ('p2', 'Other', 1)", []).unwrap();
+        let store = WorkspaceStore::new(conn);
+        const PID: &str = "00000000-0000-0000-0000-000000000001";
+        let api = store.create("api", "/src/api", PID).unwrap();
+        let web = store.create("web", "/src/web", PID).unwrap();
+        let secret = store.create("secret", "/src/secret", "p2").unwrap();
+        // Same name in the other Profile: neither picked nor ambiguous.
+        store.create("web", "/src/other-web", "p2").unwrap();
+        let me = Caller { workspace_id: api.workspace.id.clone(), ..caller("a") };
+        assert_eq!(workspace_in_profile(&store, &me, "web").ok().map(|w| w.id), Some(web.workspace.id.clone()));
+        // By name, by id and by folder, the other Profile's Workspace is
+        // unknown, as if it did not exist.
+        for name in ["secret", secret.workspace.id.as_str(), "/src/secret"] {
+            let Err(answer) = workspace_in_profile(&store, &me, name) else {
+                panic!("{name} reached another Profile");
+            };
+            let body: Value = serde_json::from_str(&answer.body).unwrap();
+            assert_eq!(body["error"]["code"], json!("not_found"), "{name}");
+        }
+        // And from the other side.
+        let them = Caller { workspace_id: secret.workspace.id.clone(), ..caller("b") };
+        assert!(workspace_in_profile(&store, &them, "api").is_err());
     }
 
     #[test]

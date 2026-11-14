@@ -394,4 +394,49 @@ describe("pane close", () => {
 		await expect(close(1)).rejects.toMatchObject({ code: "not_owner" });
 		expect(closed).toEqual([]);
 	});
+
+	it("in another Workspace, closes only the caller's own Spawned pane", async () => {
+		useWorkspaceStore.setState((st) => ({
+			workspaces: [
+				...st.workspaces,
+				{
+					id: "ws2",
+					tabs: [
+						{
+							id: "t2",
+							workspaceId: "ws2",
+							name: "Other",
+							layoutJson: JSON.stringify({
+								type: "split",
+								id: "s3",
+								direction: "vertical",
+								ratio: 0.5,
+								first: { type: "terminal", id: "x", ptyId: "pty-x" },
+								second: {
+									type: "terminal",
+									id: "y",
+									ptyId: "pty-y",
+									spawnedBy: "a",
+								},
+							}),
+							position: 0,
+							createdAt: 0,
+							updatedAt: 0,
+						},
+					],
+				} as unknown as WorkspaceWithTabs,
+			],
+		}));
+		const there = (n: number) =>
+			runRequest(
+				caller,
+				{ op: "pane.close", target: { kind: "pane", value: n } },
+				undefined,
+				{ workspaceId: "ws2", open: false },
+			);
+		await expect(there(1)).rejects.toMatchObject({ code: "not_owner" });
+		expect(closed).toEqual([]);
+		await expect(there(2)).resolves.toEqual({ pane: "p2", closed: true });
+		expect(closed).toEqual([{ paneId: "y", opts: { keepFocus: true } }]);
+	});
 });
