@@ -1,5 +1,7 @@
 import { useMemo } from "react";
+import { handleForPane } from "../lib/agentHandle";
 import { type FleetTile, fleetTiles } from "../lib/fleetConsole";
+import { sortByHandle } from "../lib/handleOrder";
 import { buildWorkspaceRows, flattenRowsToIds } from "../lib/worktreeGrouping";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
@@ -77,4 +79,38 @@ export function useAgentPanes({
 		agentKey,
 		pendingTiles,
 	]);
+}
+
+/** The tiles in **Handle order**: the **Agents list** and the **Agent cycle**. */
+export function inHandleOrder(
+	tiles: readonly FleetTile[],
+	workspaces: ReturnType<typeof useWorkspaceStore.getState>["workspaces"],
+): FleetTile[] {
+	return sortByHandle(tiles, (t) => handleForPane(workspaces, t.paneId));
+}
+
+/** The **Agents list**'s rows, in Handle order. */
+export function useAgentsInHandleOrder(): FleetTile[] {
+	const tiles = useAgentPanes({ includePending: false });
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	return useMemo(() => inHandleOrder(tiles, workspaces), [tiles, workspaces]);
+}
+
+/** The Agents list's rows right now, outside React (the **Agent cycle**). */
+export function agentsInHandleOrderNow(): FleetTile[] {
+	const { workspaces } = useWorkspaceStore.getState();
+	const act = usePtyActivityStore.getState();
+	const tiles = fleetTiles({
+		workspaces,
+		sidebarOrder: flattenRowsToIds(
+			buildWorkspaceRows(
+				workspaces,
+				useWorkspaceGitStore.getState().worktreeFacts,
+			),
+		),
+		openedWorkspaceIds: act.openedWorkspaceIds,
+		activities: act.activities,
+		panePtyMap: act.panePtyMap,
+	});
+	return inHandleOrder(tiles, workspaces);
 }

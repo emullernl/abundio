@@ -1,5 +1,5 @@
 import { Bot, ChevronDown, ChevronRight } from "lucide-react";
-import { useAgentPanes } from "../../hooks/useAgentPanes";
+import { useAgentsInHandleOrder } from "../../hooks/useAgentPanes";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { AgentRow } from "./AgentRow";
 
@@ -7,13 +7,14 @@ const HEADER_HEIGHT = 30;
 
 /**
  * The **Agents list**: one **Agent row** per agent-mode pane of this
- * Window's Opened workspaces, in the Fleet Console's derived order. Sits
+ * Window's Opened workspaces, in **Handle order** (not the Fleet Console's
+ * derived order: the list is for finding an Agent by its handle). Sits
  * below the Workspace list and collapses to its header.
  */
 export function AgentsList() {
 	const collapsed = useWindowUiStore((s) => s.agentsListCollapsed);
 	const toggle = useWindowUiStore((s) => s.toggleAgentsListCollapsed);
-	const panes = useAgentPanes({ includePending: false });
+	const panes = useAgentsInHandleOrder();
 
 	return (
 		<div

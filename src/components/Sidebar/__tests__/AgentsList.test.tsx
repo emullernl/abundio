@@ -142,6 +142,29 @@ describe("AgentsList", () => {
 		).toBe("· 2");
 	});
 
+	it("sorts rows in Handle order across Workspaces", () => {
+		const named = (id: string, ptyId: string, agentHandle: string) =>
+			({ type: "terminal", id, ptyId, agentHandle }) as PaneNode;
+		useWorkspaceStore.setState({
+			workspaces: [
+				ws("a", "alpha", [["a1", "Main", named("pa1", "x1", "Agent Ten")]], 0),
+				ws(
+					"b",
+					"beta",
+					[
+						["b1", "Build", named("pb1", "y1", "Agent Two")],
+						["b2", "Shell", term("pb2", "y2")],
+					],
+					1,
+				),
+			],
+		});
+		render();
+		const r = rows();
+		expect(r[0].textContent).toContain("Agent Two");
+		expect(r[1].textContent).toContain("Agent Ten");
+	});
+
 	it("shows the Agent's terminal title, else the Agent's name", () => {
 		render();
 		const [codex, claude] = rows();
