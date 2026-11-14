@@ -168,23 +168,34 @@ async function restartLivePane(
 	}
 }
 
+export type RestartAgentResult = "restarted" | "no-pty" | "failed";
+
 /**
  * **Restart agent** from the **Agent menu**: kill one pane's PTY and relaunch
  * its Agent, resuming its session (ADR-0050), the same way an Environment
- * Bundle change restarts a Workspace. Does nothing when the pane has no live
- * PTY.
+ * Bundle change restarts a Workspace. Reports what happened, so a confirmed
+ * restart that could not run is never silent.
  */
-export async function restartAgentPane(paneId: string): Promise<void> {
+export async function restartAgentPane(
+	paneId: string,
+): Promise<RestartAgentResult> {
 	const store = useWorkspaceStore.getState();
 	const workspace = store.findWorkspaceForPane(paneId);
-	if (!workspace) return;
-	const pane = collectLivePanes(workspace.id).find((p) => p.paneId === paneId);
-	if (!pane) return;
-	await restartLivePane(
-		pane,
-		workspace.rootFolder,
-		countAgentPanesByFolder(store.workspaces),
-	);
+	const pane =
+		workspace &&
+		collectLivePanes(workspace.id).find((p) => p.paneId === paneId);
+	if (!workspace || !pane) return "no-pty";
+	try {
+		await restartLivePane(
+			pane,
+			workspace.rootFolder,
+			countAgentPanesByFolder(store.workspaces),
+		);
+		return "restarted";
+	} catch (err) {
+		console.warn("[restartAgentPane] restart failed", err);
+		return "failed";
+	}
 }
 
 /**

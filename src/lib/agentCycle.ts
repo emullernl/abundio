@@ -1,7 +1,7 @@
 // The **Agent cycle**: next / previous Agent in **Handle order**, wrapping.
 
-import { agentsInHandleOrderNow } from "../hooks/useAgentPanes";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { agentsInHandleOrderNow } from "./agentPanes";
 import { cycleTile, type FleetTile } from "./fleetConsole";
 import { cycleFleet, fleetConsoleShowing } from "./fleetFocus";
 import { switchToPane } from "./paneLocation";

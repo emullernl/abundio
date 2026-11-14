@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentMenuEntries } from "../agentMenu";
+import { agentMenuEntries, restartProblemText } from "../agentMenu";
 
 const ids = (opts: Parameters<typeof agentMenuEntries>[0]) =>
 	agentMenuEntries(opts).map((e) => ("separator" in e ? "---" : e.id));
@@ -31,5 +31,20 @@ describe("agentMenuEntries", () => {
 			"copy-handle",
 		);
 		expect(entries).toContainEqual({ id: "rename", label: "Name Agent…" });
+	});
+});
+
+describe("restartProblemText", () => {
+	it("says nothing when the restart ran", () => {
+		expect(restartProblemText("restarted", "Agent Two")).toBeNull();
+	});
+
+	it("explains a pane with no running terminal, and a failed restart", () => {
+		expect(restartProblemText("no-pty", "Agent Two")).toContain(
+			"no running terminal",
+		);
+		expect(restartProblemText("failed", "Agent Two")).toContain(
+			"could not be restarted",
+		);
 	});
 });

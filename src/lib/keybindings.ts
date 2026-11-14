@@ -229,7 +229,9 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 	// binds nothing to Ctrl+Cmd, and a Cmd chord never reaches the PTY).
 	// Windows/Linux: Ctrl+Shift+End / Home, since Ctrl+Alt is AltGr. That is
 	// also Monaco's "select to end/start of file", so the Agent cycle is left
-	// out of WORKSPACE_GLOBAL_ACTIONS and the editor keeps it.
+	// out of WORKSPACE_GLOBAL_ACTIONS and the editor keeps it; other text
+	// fields keep it through DEFERS_TO_TEXT_FIELDS. In a terminal it is taken:
+	// editors such as micro and nano lose it for selection (rebindable).
 	{
 		key: isMac ? "ArrowRight" : "End",
 		meta: isMac,
@@ -839,10 +841,32 @@ export function triggerAction(action: KeyAction) {
  *  Terminal paste (Ctrl+Shift+V, Linux/Windows) is the same shape: with focus
  *  on a dialog's button rather than a text input, it would write the clipboard
  *  into the terminal behind the dialog. A text input inside the dialog is
- *  unaffected — the key falls through to its native paste either way. */
+ *  unaffected — the key falls through to its native paste either way.
+ *
+ *  The Agent cycle would switch Agents behind the dialog. */
 function isSuppressedByOverlay(action: KeyAction): boolean {
-	return action === "paste" || action.startsWith("prompt-action-");
+	return (
+		action === "paste" ||
+		action === "next-agent" ||
+		action === "prev-agent" ||
+		action.startsWith("prompt-action-")
+	);
 }
+
+/**
+ * Actions that give way to a focused non-terminal text input, keyed by action
+ * id so the rule follows a rebind (ADR-0043).
+ * - Terminal copy/paste: otherwise the clipboard would be written to a
+ *   background terminal's PTY instead of the input.
+ * - The Agent cycle: its Windows/Linux default, Ctrl+Shift+Home/End, is
+ *   "select to start/end" in every text field.
+ */
+const DEFERS_TO_TEXT_FIELDS: ReadonlySet<KeyAction> = new Set([
+	"copy",
+	"paste",
+	"next-agent",
+	"prev-agent",
+]);
 
 export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of activeBindings) {
@@ -878,13 +902,9 @@ export function handleKeyDown(e: KeyboardEvent) {
 			if (binding.action === "save-file" && isTerminalFocused()) {
 				return;
 			}
-			// Terminal copy/paste must defer to a focused non-terminal text input
-			// (rename field, branch search, Notes editor) — otherwise the
-			// clipboard would be written to a background terminal's PTY.
-			if (
-				(binding.action === "copy" || binding.action === "paste") &&
-				isEditableFocused()
-			) {
+			// Some actions give way to a focused non-terminal text input (rename
+			// field, branch search, Notes editor): see DEFERS_TO_TEXT_FIELDS.
+			if (DEFERS_TO_TEXT_FIELDS.has(binding.action) && isEditableFocused()) {
 				return;
 			}
 			// Always prevent default for registered bindings, even if no handler yet

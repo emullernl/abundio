@@ -1,6 +1,8 @@
 // The **Agent menu**: what right-clicking an **Agent row** offers. Pure; the
 // row maps each id to its action.
 
+import type { RestartAgentResult } from "./paneRestart";
+
 export type AgentMenuId =
 	| "switch-to"
 	| "open-in-fleet"
@@ -35,4 +37,16 @@ export function agentMenuEntries(opts: {
 		{ id: "close", label: "Close Pane" },
 	);
 	return entries;
+}
+
+/** What to tell the user when a confirmed Restart agent did not happen. */
+export function restartProblemText(
+	result: RestartAgentResult,
+	label: string,
+): string | null {
+	if (result === "no-pty") {
+		return `${label} has no running terminal to restart. Open its Tab and try again.`;
+	}
+	if (result === "failed") return `${label} could not be restarted.`;
+	return null;
 }

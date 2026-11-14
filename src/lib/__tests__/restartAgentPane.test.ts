@@ -69,7 +69,7 @@ describe("restartAgentPane", () => {
 				} as PaneNode),
 			],
 		});
-		await restartAgentPane("pa");
+		expect(await restartAgentPane("pa")).toBe("restarted");
 		expect(restartPanePty).toHaveBeenCalledTimes(1);
 		expect(restartPanePty).toHaveBeenCalledWith(
 			"pa",
@@ -87,7 +87,23 @@ describe("restartAgentPane", () => {
 				workspace({ type: "terminal", id: "pz", ptyId: "" } as PaneNode),
 			],
 		});
-		await restartAgentPane("pz");
+		expect(await restartAgentPane("pz")).toBe("no-pty");
 		expect(restartPanePty).not.toHaveBeenCalled();
+	});
+
+	it("reports a restart that throws instead of dropping it", async () => {
+		useWorkspaceStore.setState({
+			workspaces: [
+				workspace({
+					type: "terminal",
+					id: "pa",
+					ptyId: "x1",
+					agentId: "claude",
+				} as PaneNode),
+			],
+		});
+		restartPanePty.mockRejectedValueOnce(new Error("spawn refused"));
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		expect(await restartAgentPane("pa")).toBe("failed");
 	});
 });

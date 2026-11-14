@@ -3,7 +3,11 @@ import { useState } from "react";
 import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
-import { type AgentMenuId, agentMenuEntries } from "../../lib/agentMenu";
+import {
+	type AgentMenuId,
+	agentMenuEntries,
+	restartProblemText,
+} from "../../lib/agentMenu";
 import { agentRowTitle } from "../../lib/agentRowTitle";
 import { writeClipboardText } from "../../lib/clipboard";
 import type { FleetTile } from "../../lib/fleetConsole";
@@ -62,6 +66,7 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 	const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
 	const [naming, setNaming] = useState(false);
 	const [confirmRestart, setConfirmRestart] = useState(false);
+	const [restartProblem, setRestartProblem] = useState<string | null>(null);
 
 	const AgentIcon = (agentId && getAgentIconComponent(agentId)) || undefined;
 	const displayName = agentName || "Agent";
@@ -203,9 +208,22 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 					confirmVariant="danger"
 					onConfirm={() => {
 						setConfirmRestart(false);
-						restartAgentPane(paneId).catch(() => {});
+						void restartAgentPane(paneId).then((result) => {
+							const problem = restartProblemText(result, label);
+							if (problem) setRestartProblem(problem);
+						});
 					}}
 					onCancel={() => setConfirmRestart(false)}
+				/>
+			)}
+			{restartProblem && (
+				<ConfirmDialog
+					title="Agent not restarted"
+					message={restartProblem}
+					confirmLabel="OK"
+					hideCancel
+					onConfirm={() => setRestartProblem(null)}
+					onCancel={() => setRestartProblem(null)}
 				/>
 			)}
 		</>

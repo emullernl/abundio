@@ -113,7 +113,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/agentTitleMap.ts` — **Title status** (ADR-0047): per-Agent title rules (Mistral Vibe's `>> ` / `? ` prefixes and blurred-pane suffixes) and the pure `titleStep` decision. terminalManager feeds it `onTitleChange`.
 - `lib/fleetConsole.ts` — Pure Fleet Console helpers: which panes are tiles and in what order, grid shape, Auto columns, divider drags, grid navigation.
 - `lib/agentRowTitle.ts` — An Agent row's first line: the Agent's terminal title, or its name.
-- `lib/handleOrder.ts` — Pure **Handle order** (Agents list, Agent cycle): Default handles by number. `lib/agentMenu.ts` — the **Agent menu**'s entries. `lib/agentCycle.ts` — the **Agent cycle**.
+- `lib/handleOrder.ts` — Pure **Handle order** (Agents list, Agent cycle): Default handles by number. `lib/agentMenu.ts` — the **Agent menu**'s entries. `lib/agentCycle.ts` — the **Agent cycle**. `lib/agentPanes.ts` — the agent-mode panes from store values (shared by `useAgentPanes` and the Agent cycle) and `inHandleOrder`.
 - `lib/leftSidebarLayout.ts` — Height split between the Workspace list and the Agents list.
 - `lib/fleetFocus.ts` — `targetPaneId()`: the Focused tile in the Fleet Console, the Focused pane otherwise. Every pane-scoped shortcut resolves its target here; `workspaceViewOnly` mutes layout shortcuts in the console.
 - `lib/paneLocation.ts` — `findPaneLocation`, `revealPane`, and `switchToPane` (the Fleet Console's **Switch to**).
