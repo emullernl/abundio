@@ -47,6 +47,14 @@ pub struct TaskLaunch {
     pub argv: Vec<String>,
     #[serde(default)]
     pub setup: Option<String>,
+    /// The Agent's plain launch line, run instead when `argv` (a session
+    /// resume) exits non-zero within `fallback_within_secs`: "nothing to
+    /// resume". Only the Orchestrator uses it (ADR-0057). A launch line, as
+    /// typed at a prompt on every other path, so the script `eval`s it.
+    #[serde(default)]
+    pub fallback: Option<String>,
+    #[serde(default)]
+    pub fallback_within_secs: Option<u32>,
 }
 
 /// Which Workspace a live PTY belongs to.
@@ -334,6 +342,15 @@ impl PtyManager {
                 cmd.env("ABUNDIO_TASK_ENV_KEYS", &keys_manifest);
             }
         }
+        // The resume fallback, read and unset by the task script before the
+        // Agent starts (see `task_script`).
+        if let Some(TaskLaunch { fallback: Some(fallback), fallback_within_secs, .. }) = task {
+            cmd.env("ABUNDIO_TASK_FALLBACK", fallback);
+            cmd.env(
+                "ABUNDIO_TASK_FALLBACK_WITHIN",
+                fallback_within_secs.unwrap_or(0).to_string(),
+            );
+        }
         if !skipped.is_empty() {
             log::warn!(
                 "[pty] dropped {} workspace environment variable(s) over the {} byte budget: {}",
@@ -596,6 +613,8 @@ fn task_script(reexec: &str) -> String {
     format!(
         r#"__abundio_sh=$0
 __abundio_keys=$ABUNDIO_TASK_ENV_KEYS; unset ABUNDIO_TASK_ENV_KEYS
+__abundio_fb=$ABUNDIO_TASK_FALLBACK; __abundio_within=${{ABUNDIO_TASK_FALLBACK_WITHIN:-0}}
+unset ABUNDIO_TASK_FALLBACK ABUNDIO_TASK_FALLBACK_WITHIN
 __abundio_setup=$1; shift
 __abundio_rc=0
 __abundio_cmd=
@@ -624,10 +643,21 @@ if [ "$__abundio_rc" -ne 0 ]; then
   printf '\033]7770;command_end;%s\007' "$__abundio_rc"
 else
   printf '\033]7770;command_start;%s\007' "${{1//$'\a'/ }}"
+  __abundio_t0=$SECONDS
   "$@"
-  printf '\033]7770;command_end;%s\007' "$?"
+  __abundio_rc=$?
+  # A resume that fails at once found nothing to resume: start fresh, still
+  # inside the one command_start/command_end, so the Pane never leaves agent
+  # mode in between (and keeps its Agent and handle).
+  if [ "$__abundio_rc" -ne 0 ] && [ -n "$__abundio_fb" ] \
+    && [ $((SECONDS - __abundio_t0)) -lt "$__abundio_within" ]; then
+    printf '\n\033[2mNothing to resume; starting a new session.\033[0m\n\n'
+    eval "$__abundio_fb"
+    __abundio_rc=$?
+  fi
+  printf '\033]7770;command_end;%s\007' "$__abundio_rc"
 fi
-unset __abundio_rc __abundio_cmd __abundio_sh
+unset __abundio_rc __abundio_cmd __abundio_sh __abundio_fb __abundio_within __abundio_t0
 {reexec}"#
     )
 }
@@ -2001,6 +2031,72 @@ mod task_launch_tests {
         TaskLaunch {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             setup: setup.map(|s| s.to_string()),
+            fallback: None,
+            fallback_within_secs: None,
+        }
+    }
+
+    /// The script with a resume fallback in its environment, as a spawn
+    /// sets it.
+    fn run_with_fallback(shell: &str, argv: &[&str], fallback: &str, within: u32) -> Option<String> {
+        if !Path::new(shell).exists() {
+            return None;
+        }
+        let script = task_script("echo REEXEC");
+        let mut args = vec!["-c".to_string(), script, shell.to_string(), String::new()];
+        args.extend(argv.iter().map(|s| s.to_string()));
+        let out = Command::new(shell)
+            .args(&args)
+            .env("ABUNDIO_TASK_FALLBACK", fallback)
+            .env("ABUNDIO_TASK_FALLBACK_WITHIN", within.to_string())
+            .output()
+            .ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[test]
+    fn a_resume_that_fails_at_once_starts_fresh_inside_one_command() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_with_fallback(shell, &["sh", "-c", "echo RESUME; exit 1"], "echo FRESH", 20)
+            else {
+                continue;
+            };
+            let resume = out.find("RESUME").expect("resume ran");
+            let fresh = out.find("FRESH").expect("fallback ran");
+            assert!(resume < fresh, "{shell}: {out}");
+            // One start, one end, and the end is the fallback's exit code.
+            assert_eq!(out.matches("7770;command_start").count(), 1, "{shell}: {out}");
+            assert_eq!(out.matches("7770;command_end").count(), 1, "{shell}: {out}");
+            assert!(out.contains("\x1b]7770;command_end;0\x07"), "{shell}: {out}");
+        }
+    }
+
+    #[test]
+    fn a_resume_that_works_or_fails_late_is_left_alone() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(ok) = run_with_fallback(shell, &["sh", "-c", "echo RESUME"], "echo FRESH", 20) else {
+                continue;
+            };
+            assert!(!ok.contains("FRESH"), "{shell}: {ok}");
+            // A zero window means "late" for every exit.
+            let late = run_with_fallback(shell, &["sh", "-c", "exit 3"], "echo FRESH", 0).unwrap();
+            assert!(!late.contains("FRESH"), "{shell}: {late}");
+            assert!(late.contains("\x1b]7770;command_end;3\x07"), "{shell}: {late}");
+        }
+    }
+
+    #[test]
+    fn the_agent_never_sees_the_fallback() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_with_fallback(
+                shell,
+                &["sh", "-c", "echo SAW=${ABUNDIO_TASK_FALLBACK:-none}"],
+                "echo FRESH",
+                20,
+            ) else {
+                continue;
+            };
+            assert!(out.contains("SAW=none"), "{shell}: {out}");
         }
     }
 

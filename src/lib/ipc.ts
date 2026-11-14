@@ -96,7 +96,12 @@ export interface PtySpawnOptions {
 	inheritFromWorkspaceId?: string;
 	/** A **New task** launch: the shell runs this argv (prompt included, as one
 	 *  element) after optional setup commands. zsh and bash only. ADR-0042. */
-	task?: { argv: string[]; setup?: string };
+	task?: {
+		argv: string[];
+		setup?: string;
+		fallback?: string;
+		fallbackWithinSecs?: number;
+	};
 }
 
 export const pty = {

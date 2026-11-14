@@ -14,16 +14,12 @@ import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { orchestrator as orchestratorApi } from "./ipc";
-import {
-	launchCommand,
-	paneRunsAgent,
-	stampOrchestrator,
-	startPane,
-} from "./orchestrator";
+import { orchestrator as orchestratorApi, shells } from "./ipc";
+import { shellSupportsTasks } from "./newTask";
+import { paneRunsAgent, stampOrchestrator, startPane } from "./orchestrator";
+import { orchestratorStart } from "./orchestratorLaunch";
 import { findNode, parseTabLayout } from "./paneTree";
-import { setPendingAgent } from "./pendingAgentRegistry";
-import { countAgentPanesByFolder, relaunchForPane } from "./sessionResume";
+import { setPendingAgent, setPendingTask } from "./pendingAgentRegistry";
 import { getTerminal, restartPanePty } from "./terminalManager";
 import type { WorkspaceWithTabs } from "./types";
 import { isOrchestrator } from "./workspaceKind";
@@ -55,76 +51,71 @@ function storedWorkspace(id: string): WorkspaceWithTabs | undefined {
 	return workspaces().workspaces.find((w) => w.id === id);
 }
 
-/**
- * Makes `agentId` the Agent of the Orchestrator's pane and starts it there:
- * stamps the pane (Agent and handle), then either seeds it so it launches on
- * first render, or restarts a live PTY into it. Resumes the folder's last
- * session when it can.
- */
 /** `keep`: start it only if the pane does not run it yet. `fresh`: a new
  *  conversation (a new pick). `resume`: start it again, resuming. */
 type StartMode = "keep" | "fresh" | "resume";
 
+/**
+ * Makes `agentId` the Agent of the Orchestrator's pane and starts it there:
+ * stamps the pane (Agent and handle), then starts it with the spawn (or, in
+ * a shell other than zsh or bash, by typing its line), restarting a live
+ * PTY. See `orchestratorLaunch.ts` for how a failed resume falls back.
+ */
 async function startAgentIn(
 	ws: WorkspaceWithTabs,
 	agentId: string,
 	mode: StartMode,
 ): Promise<void> {
-	const agent = useSettingsStore
-		.getState()
-		.agents.find((a) => a.id === agentId);
-	if (!agent) throw new Error("That agent is not available any more.");
-	const target = startPane(ws.tabs);
+	const settings = useSettingsStore.getState();
+	if (!settings.agents.some((a) => a.id === agentId)) {
+		throw new Error("That agent is not available any more.");
+	}
+	let target = startPane(ws.tabs);
 	if (!target) {
-		// Every Tab was closed: open a new one with the Agent in it.
-		const tab = await workspaces().createTab(ws.id, agent, undefined, {
+		// Every Tab was closed: open a new one for the Agent.
+		const tab = await workspaces().createTab(ws.id, undefined, undefined, {
 			activate: true,
 			name: "Orchestrator",
 		});
-		const layout = parseTabLayout(tab.layoutJson);
-		const paneId = layout ? startPane([tab])?.paneId : undefined;
-		if (layout && paneId) {
-			await workspaces().updateLayout(
-				tab.id,
-				stampOrchestrator(layout, paneId, agentId),
-			);
-		}
-		return;
+		target = startPane([tab]);
+		if (!target) return;
 	}
-	const tab = ws.tabs.find((t) => t.id === target.tabId);
+	const tab = storedWorkspace(ws.id)?.tabs.find((t) => t.id === target.tabId);
 	const layout = tab ? parseTabLayout(tab.layoutJson) : null;
 	if (!tab || !layout) return;
 	const sameAgent = paneRunsAgent(layout, target.paneId, agentId);
 	const stamped = stampOrchestrator(layout, target.paneId, agentId);
 	if (stamped !== layout) await workspaces().updateLayout(tab.id, stamped);
 
-	const live = getTerminal(target.paneId);
-	// A pane that already runs this Agent is left alone unless asked to start
-	// it again: the load seeded its relaunch (Session resume, ADR-0050).
-	if (sameAgent && mode !== "resume") return;
-	// A newly picked or changed Agent starts a new conversation: there is
-	// none of its own to resume here, and `--continue` with none fails.
-	// Otherwise the folder's last conversation is resumed, falling back to a
-	// plain start when there is none (`lib/resumeFallback.ts`).
+	const live = getTerminal(target.paneId)?.ptyId;
+	// Already running this Agent: leave it, unless asked to start it again.
+	if (mode === "keep" && sameAgent && live) return;
+	// A newly picked or changed Agent starts a new conversation (there is
+	// none of its own to resume here); otherwise its last one is resumed.
 	const node = findNode(stamped, target.paneId);
-	const relaunch =
-		mode !== "fresh" && node?.type === "terminal"
-			? relaunchForPane(
-					node,
-					ws.rootFolder,
-					countAgentPanesByFolder(workspaces().workspaces),
-				)
-			: undefined;
-	const command = relaunch?.command ?? launchCommand(agent);
-	if (live?.ptyId) {
+	const shell = settings.shellPath || (await shells.default().catch(() => ""));
+	const start = orchestratorStart({
+		agents: settings.agents,
+		agentId,
+		sessionId: node?.type === "terminal" ? node.agentSessionId : undefined,
+		mode: mode === "fresh" || !sameAgent ? "fresh" : "resume",
+		resumeSetting: settings.resumeAgentSessions,
+		shellOk: !shell || shellSupportsTasks(shell),
+	});
+	if (!start) return;
+	const cwd = storedWorkspace(ws.id)?.rootFolder ?? ws.rootFolder;
+	if (live) {
 		await restartPanePty(target.paneId, {
-			cwd: ws.rootFolder,
-			agentCommand: command,
-			agentFallback: relaunch?.fallback,
+			cwd,
+			...(start.kind === "spawn"
+				? { task: start.task }
+				: { agentCommand: start.command }),
 			preserveScrollback: true,
 		});
+	} else if (start.kind === "spawn") {
+		setPendingTask(target.paneId, start.task);
 	} else {
-		setPendingAgent(target.paneId, { command, fallback: relaunch?.fallback });
+		setPendingAgent(target.paneId, { command: start.command });
 	}
 }
 

@@ -26,3 +26,5 @@ With this, every view of a Window — **Workspace view**, Fleet Console, Orchest
 - Agent handles are unique per Profile (ADR-0055), so `Orchestrator` is refused for every other Agent.
 - Restoring the Orchestrator view starts the Orchestrator's Agent at launch.
 - Restoring the Fleet Console at launch shows the tiles of the restored Workspaces as Workspace restore (ADR-0052) opens them.
+- **The Orchestrator's Agent is started through the PTY spawn**, as a **New task** is (ADR-0042), never by a typed line (zsh and bash; other shells get the typed line). The spawn script sees the Agent's own exit code, so the Orchestrator is the one exception to ADR-0050's "no fallback": a resume (`claude --continue`) that exits non-zero within 20 seconds found nothing to resume, and the plain command runs instead, inside the same agent-mode command, so the pane keeps its Agent and handle. A newly picked Agent never resumes. Found when a first Orchestrator typed `claude --continue`, which took about 8 seconds to fail with "No conversation found to continue". Kept to the Orchestrator on purpose: everywhere else a non-zero exit may be the user quitting.
+

@@ -16,7 +16,7 @@ Agent control (ADR-0054, ADR-0055) already lets any Agent see and drive the whol
 | Where it shows | Only in the Orchestrator view. Left out of the Workspace list, Agents list, Fleet Console, Workspace cycle, Navigator, pickers and `abundio workspace list`. Still counts in the Overview bar and the Attention count. |
 | Agent | The user picks one (Installed Agents, Claude Code first) on first open; changeable from the view's menu (stops the old one). |
 | Handle | Reserved `Orchestrator`: refused for every other Agent, not renamable, skipped by Default handles. |
-| Start | When the Orchestrator view is first shown in a session (opened or restored). Session resume. If it exits: a "Start the Orchestrator" button. |
+| Start | When the Orchestrator view is first shown in a session (opened or restored), through the PTY spawn (New task's script) in zsh/bash. A new pick starts plainly; otherwise it resumes, and a resume failing within 20 s falls back to a plain start in the script. If it exits: a "Start the Orchestrator" button. |
 | Instructions | Abundio rewrites `AGENTS.md` (+ `CLAUDE.md` that points to it) on every start: role, plain language, use the abundio skill, ask before prompting/sending keys/starting/closing another Agent. Both include `my-instructions.md`, which is the user's and never touched. |
 | Friendliness | Real Agent TUI, plus a welcome card and seeded Prompt actions ("What is everyone working on?", "Who needs me right now?", "Summarise today"). |
 | View | Third view beside Workspace view and Fleet Console; exactly one on screen. Every view is restored on launch (reverses the Fleet Console's never-restored rule). |

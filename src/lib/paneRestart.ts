@@ -16,7 +16,7 @@ import {
 } from "./pendingAgentRegistry";
 import {
 	countAgentPanesByFolder,
-	relaunchForPane,
+	relaunchCommandForPane,
 	terminalNodes,
 } from "./sessionResume";
 import {
@@ -145,7 +145,7 @@ async function restartLivePane(
 	rootFolder: string,
 	counts: ReturnType<typeof countAgentPanesByFolder>,
 ): Promise<void> {
-	const relaunch = relaunchForPane(
+	const command = relaunchCommandForPane(
 		{
 			type: "terminal",
 			id: pane.paneId,
@@ -160,12 +160,11 @@ async function restartLivePane(
 	if (pane.mounted) {
 		await restartPanePty(pane.paneId, {
 			cwd: pane.cwd,
-			agentCommand: relaunch?.command,
-			agentFallback: relaunch?.fallback,
+			agentCommand: command,
 			preserveScrollback: true,
 		});
 	} else {
-		restartUnmountedPane(pane, relaunch?.command, relaunch?.fallback);
+		restartUnmountedPane(pane, command);
 	}
 }
 
@@ -240,7 +239,6 @@ export async function restartPaneWithTask(
 function restartUnmountedPane(
 	pane: Pick<LivePane, "paneId" | "ptyId" | "tabId">,
 	agentCommand?: string,
-	agentFallback?: string,
 ): void {
 	killUnmountedPanePty(pane.paneId, pane.ptyId);
 
@@ -252,12 +250,7 @@ function restartUnmountedPane(
 		store.updateLayoutLocal(tab.id, clearPtyId(layout, pane.paneId));
 	}
 
-	if (agentCommand) {
-		setPendingAgent(pane.paneId, {
-			command: agentCommand,
-			fallback: agentFallback,
-		});
-	}
+	if (agentCommand) setPendingAgent(pane.paneId, { command: agentCommand });
 }
 
 /** Blank one pane's ptyId, leaving the rest of the tree untouched. */

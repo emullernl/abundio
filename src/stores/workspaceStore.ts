@@ -33,7 +33,7 @@ import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
 import { perfMark } from "../lib/perfMarks";
 import {
 	countAgentPanesByFolder,
-	relaunchForPane,
+	relaunchCommandForPane,
 	terminalNodes,
 } from "../lib/sessionResume";
 import { FIRST_TAB_NAME, nextTabName } from "../lib/tabName";
@@ -453,9 +453,9 @@ function seedPendingAgentsForLayout(
 	counts: Map<string, number>,
 ): void {
 	for (const node of terminalNodes(layout)) {
-		const relaunch = relaunchForPane(node, rootFolder, counts);
-		if (!relaunch) continue;
-		setPendingAgent(node.id, relaunch);
+		const command = relaunchCommandForPane(node, rootFolder, counts);
+		if (!command) continue;
+		setPendingAgent(node.id, { command });
 	}
 }
 
@@ -562,6 +562,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// latest session depends on every other Workspace's panes.
 		const counts = countAgentPanesByFolder(cleaned);
 		for (const ws of cleaned) {
+			// The Orchestrator starts when its view opens, through the spawn
+			// (lib/orchestratorLaunch.ts), never by a typed relaunch line.
+			if (isOrchestrator(ws)) continue;
 			for (const t of ws.tabs) {
 				const layout = parseTabLayout(t.layoutJson);
 				if (layout) seedPendingAgentsForLayout(layout, ws.rootFolder, counts);
@@ -932,7 +935,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 								const layout = parseTabLayout(t.layoutJson);
 								if (!layout) return t;
 								const cleared = clearPtyIds(layout);
-								seedPendingAgentsForLayout(cleared, s.rootFolder, counts);
+								if (!isOrchestrator(s)) {
+									seedPendingAgentsForLayout(cleared, s.rootFolder, counts);
+								}
 								return {
 									...t,
 									layoutJson: JSON.stringify(cleared),

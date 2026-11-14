@@ -12,6 +12,7 @@ vi.mock("../ipc", async (orig) => ({
 		setAgent: (...a: unknown[]) => setAgent(...a),
 	},
 	tabs: { update: vi.fn(() => Promise.resolve()) },
+	shells: { default: () => Promise.resolve("/bin/zsh") },
 	workspaces: {
 		setRestoreActive: vi.fn(() => Promise.resolve()),
 		setRestoreOpened: vi.fn(() => Promise.resolve()),
@@ -23,9 +24,11 @@ vi.mock("../terminalManager", () => ({
 	restartPanePty: (...a: unknown[]) => restartPanePty(...a),
 }));
 const setPendingAgent = vi.fn();
+const setPendingTask = vi.fn();
 vi.mock("../pendingAgentRegistry", async (orig) => ({
 	...(await orig<typeof import("../pendingAgentRegistry")>()),
 	setPendingAgent: (...a: unknown[]) => setPendingAgent(...a),
+	setPendingTask: (...a: unknown[]) => setPendingTask(...a),
 }));
 
 const { enterOrchestratorView, leaveOrchestratorView, pickOrchestratorAgent } =
@@ -93,7 +96,13 @@ describe("orchestratorSession", () => {
 		useWindowUiStore.setState({ orchestratorViewOpen: true });
 		useSettingsStore.setState({
 			agents: [
-				{ id: "claude", name: "Claude Code", command: "claude", enabled: true },
+				{
+					id: "claude",
+					name: "Claude Code",
+					command: "claude",
+					enabled: true,
+					continueArgs: ["--continue"],
+				},
 			],
 		} as never);
 	});
@@ -113,7 +122,12 @@ describe("orchestratorSession", () => {
 		await enterOrchestratorView();
 		await pickOrchestratorAgent("claude");
 		expect(setAgent).toHaveBeenCalledWith(expect.any(String), "claude");
-		expect(setPendingAgent).toHaveBeenCalledWith("o1", { command: "claude" });
+		// A new pick starts plainly, through the spawn: nothing to resume.
+		expect(setPendingTask).toHaveBeenCalledWith("o1", {
+			argv: ["claude"],
+			agentId: "claude",
+		});
+		expect(setPendingAgent).not.toHaveBeenCalled();
 		const stored = useWorkspaceStore
 			.getState()
 			.workspaces.find((w) => w.id === "orch");
@@ -129,7 +143,7 @@ describe("orchestratorSession", () => {
 		expect(useOrchestratorStore.getState().phase).toBe("idle");
 	});
 
-	it("does not reseed an Orchestrator that already runs its Agent", async () => {
+	it("resumes a remembered Orchestrator that is not running yet", async () => {
 		const running = ws("orch", "orchestrator", {
 			type: "terminal",
 			id: "o1",
@@ -140,7 +154,15 @@ describe("orchestratorSession", () => {
 		ensure.mockResolvedValue(running);
 		agent.mockResolvedValue("claude");
 		await enterOrchestratorView();
-		expect(setPendingAgent).not.toHaveBeenCalled();
+		// Not live yet (app start): resumed through the spawn, with a plain
+		// start to fall back on.
+		expect(setPendingTask).toHaveBeenCalledWith(
+			"o1",
+			expect.objectContaining({
+				argv: ["claude", "--continue"],
+				fallback: "claude",
+			}),
+		);
 		expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("orch");
 	});
 });

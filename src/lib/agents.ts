@@ -298,11 +298,12 @@ export interface RelaunchOptions {
  * In order: the remembered session by id; else, when the Pane is alone in its
  * folder, the folder's most recent session; else fresh.
  *
- * There is deliberately no shell `|| <plain>` fallback. A shell cannot tell
- * "the resume failed" from "the user quit the resumed Agent with a non-zero
- * exit" (Copilot exits 1 on Ctrl+C), so a fallback would start an
- * unasked-for fresh Agent. The app retries instead, once, and only when the
- * resume fails within seconds (`lib/resumeFallback.ts`).
+ * There is deliberately no `|| <plain>` fallback. A shell cannot tell "the
+ * resume failed" from "the user quit the resumed Agent with a non-zero exit"
+ * (Copilot exits 1 on Ctrl+C), so a fallback would start an unasked-for fresh
+ * Agent. A failed resume instead leaves the Agent's error in a plain shell;
+ * the Agent process has exited, so the pane also forgets it and its session,
+ * and the next relaunch does not retry it.
  */
 export function agentRelaunchCommandFor(
 	agents: CodingAgent[],
@@ -322,6 +323,37 @@ export function agentRelaunchCommandFor(
 	}
 	if (opts.alone && agent.continueArgs?.length) {
 		return [plain, ...agent.continueArgs].join(" ");
+	}
+	return plain;
+}
+
+/**
+ * `agentRelaunchCommandFor` as an argv, for a launch that rides the PTY
+ * spawn instead of being typed (the Orchestrator, ADR-0057). The command is
+ * split on spaces as `agentTaskArgvFor` does. Undefined when the Agent is
+ * gone.
+ */
+export function agentRelaunchArgvFor(
+	agents: CodingAgent[],
+	agentId: string | undefined,
+	opts: RelaunchOptions,
+): string[] | undefined {
+	const agent = agents.find((a) => a.id === agentId);
+	if (!agent) return undefined;
+	const plain = [
+		...agent.command.trim().split(/\s+/).filter(Boolean),
+		...(agent.args ?? []),
+	];
+	if (!opts.resume) return plain;
+	if (isSafeSessionId(opts.sessionId) && isResumeForm(agent.resumeArgs)) {
+		const id = opts.sessionId;
+		return [
+			...plain,
+			...agent.resumeArgs.map((a) => a.replace(SESSION_ID_PLACEHOLDER, id)),
+		];
+	}
+	if (opts.alone && agent.continueArgs?.length) {
+		return [...plain, ...agent.continueArgs];
 	}
 	return plain;
 }

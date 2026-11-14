@@ -74,11 +74,6 @@ import {
 import { isMac } from "./platform";
 import { trackPtyResize } from "./projectionResize";
 import { stripControlChars } from "./promptActions";
-import {
-	fallbackAfterExit,
-	RESUME_FALLBACK_MS,
-	type ResumeFallback,
-} from "./resumeFallback";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { installFileLinkProvider } from "./terminalFileLinks";
@@ -430,9 +425,6 @@ export interface ManagedTerminal {
 	 *  cleaning it. Cleared on that `command_start`, or when the filter window
 	 *  ends, so it can never exempt the Agent's own redraws later. */
 	awaitingTypedAgentStart: boolean;
-	/** Set when the typed Agent line resumes a session: its plain line, typed
-	 *  if the resume fails at once (`lib/resumeFallback.ts`). */
-	resumeFallback: ResumeFallback | null;
 	/** The **Title status** last read from this agent session's terminal title
 	 *  (ADR-0047); null until its first title. */
 	titleStatus: TitleStatus | null;
@@ -1229,7 +1221,6 @@ export async function createTerminal(
 		awaitingTaskStart: false,
 		refused: false,
 		awaitingTypedAgentStart: false,
-		resumeFallback: null,
 		titleStatus: null,
 		titleStatusSeen: false,
 		titleBusyBeforeBare: null,
@@ -1734,24 +1725,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							actState.recordOutput(currentPtyId);
 						}
 					} else if (cmd.type === "command_end") {
-						// Before the startup flush below, which may type a new
-						// Agent line and arm a fresh fallback for it.
-						const retry = fallbackAfterExit(
-							managed.resumeFallback,
-							cmd.exitCode,
-							Date.now(),
-						);
-						managed.resumeFallback = null;
 						actState.setRunningCommand(currentPtyId, null);
 						managed.startupShellReady = true;
 						tryFlushStartup(managed);
 						// Exit agent mode when the command finishes (reads fresh state,
 						// since setAgentPty above may have mutated it).
-						// A retry keeps the pane in agent mode, with its Agent and
-						// handle: the Agent is starting again, not leaving.
-						const wasAgentMode = retry
-							? true
-							: applyAgentExit(currentPtyId, paneId);
+						const wasAgentMode = applyAgentExit(currentPtyId, paneId);
 						if (wasAgentMode) resetTitleStatus(managed);
 						const freshState = usePtyActivityStore.getState();
 						if (!managed.suppressActivity && !wasAgentMode) {
@@ -1764,13 +1743,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 								// recordExitSuccess routes shells straight to Idle.
 								freshState.recordExitSuccess(currentPtyId);
 							}
-						}
-						// A resume with nothing to resume: start the Agent plainly,
-						// once, the way the pending line was typed (ADR-0050).
-						if (retry && managed.ptyId) {
-							pty.write(managed.ptyId, `${retry}\n`).catch(() => {});
-							usePtyActivityStore.getState().setAgentPty(managed.ptyId);
-							managed.awaitingTypedAgentStart = true;
 						}
 					}
 				}
@@ -2271,12 +2243,6 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 		pty.write(managed.ptyId, `${pendingAgent.command}\n`).catch(() => {});
 		usePtyActivityStore.getState().setAgentPty(managed.ptyId);
 		managed.awaitingTypedAgentStart = true;
-		managed.resumeFallback = pendingAgent.fallback
-			? {
-					command: pendingAgent.fallback,
-					until: Date.now() + RESUME_FALLBACK_MS,
-				}
-			: null;
 	}
 }
 
@@ -2298,7 +2264,12 @@ async function spawnNewPty(
 	try {
 		const id = await pty.spawn({
 			...options,
-			task: { argv: task.argv, setup: task.setup },
+			task: {
+				argv: task.argv,
+				setup: task.setup,
+				fallback: task.fallback,
+				fallbackWithinSecs: task.fallbackWithinSecs,
+			},
 		});
 		usePtyActivityStore.getState().setAgentPty(id, task.agentId);
 		return id;
@@ -2574,8 +2545,6 @@ export async function restartPanePty(
 	opts: {
 		cwd: string;
 		agentCommand?: string;
-		/** The plain launch line if `agentCommand` resumes a session. */
-		agentFallback?: string;
 		/** Restart into a **New task** instead (Restart agent). Wins over
 		 *  `agentCommand`. */
 		task?: PendingTask;
@@ -2611,10 +2580,7 @@ export async function restartPanePty(
 	if (opts.task) {
 		setPendingTask(paneId, opts.task);
 	} else if (opts.agentCommand) {
-		setPendingAgent(paneId, {
-			command: opts.agentCommand,
-			fallback: opts.agentFallback,
-		});
+		setPendingAgent(paneId, { command: opts.agentCommand });
 	}
 
 	managed.term.reset();
