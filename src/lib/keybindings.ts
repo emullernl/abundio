@@ -10,6 +10,8 @@ export type KeyAction =
 	| "prev-pane"
 	| "next-workspace"
 	| "prev-workspace"
+	| "next-agent"
+	| "prev-agent"
 	| "add-worktree"
 	| "command-palette"
 	| "open-navigator"
@@ -221,6 +223,26 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		shift: !isMac,
 		ctrl: true,
 		action: "prev-workspace",
+	},
+	// Agent cycle: next/previous Agent in Handle order, across Workspaces.
+	// macOS: Ctrl+Cmd+→ / ← beside the workspace cycle's Ctrl+Cmd+↓ / ↑ (Monaco
+	// binds nothing to Ctrl+Cmd, and a Cmd chord never reaches the PTY).
+	// Windows/Linux: Ctrl+Shift+End / Home, since Ctrl+Alt is AltGr. That is
+	// also Monaco's "select to end/start of file", so the Agent cycle is left
+	// out of WORKSPACE_GLOBAL_ACTIONS and the editor keeps it.
+	{
+		key: isMac ? "ArrowRight" : "End",
+		meta: isMac,
+		shift: !isMac,
+		ctrl: true,
+		action: "next-agent",
+	},
+	{
+		key: isMac ? "ArrowLeft" : "Home",
+		meta: isMac,
+		shift: !isMac,
+		ctrl: true,
+		action: "prev-agent",
 	},
 	// Pane cycle. macOS: Ctrl+Cmd+] / [ — not Cmd+Option, which is Monaco's
 	// fold / unfold (see the workspace cycle above). Matched by `code`, like
@@ -568,6 +590,8 @@ export const ACTION_META: Record<KeyAction, ActionMeta> = {
 		label: "Previous opened workspace",
 		category: "Workspaces",
 	},
+	"next-agent": { label: "Next agent", category: "Workspaces" },
+	"prev-agent": { label: "Previous agent", category: "Workspaces" },
 	"toggle-right-sidebar-git": { label: "Toggle git panel", category: "Panels" },
 	"toggle-right-sidebar-explorer": {
 		label: "Toggle explorer panel",

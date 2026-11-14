@@ -19,8 +19,9 @@ Decided in a grilling session on 2026-11-14. Terms are in `GLOSSARY.md`
 - **Agent cycle**: `next-agent` / `prev-agent`, defaults Ctrl+Cmd+→/← (macOS)
   and Ctrl+Shift+End/Home (Windows/Linux), rebindable. Walks Handle order,
   wrapping. In the Workspace view it is a Switch to, starting from the Agent in
-  the Focused pane (the first Agent when that pane has none), and works with
-  the list collapsed or hidden. In the Fleet Console it moves the Focused tile
+  the Focused pane (when it has none, next goes to the first Agent and
+  previous to the last), and works with the list collapsed or hidden. Not
+  workspace-global: in the code editor Monaco keeps Ctrl+Shift+Home/End. In the Fleet Console it moves the Focused tile
   in the Console's own order (the same as the Pane cycle there) and never
   leaves it.
 

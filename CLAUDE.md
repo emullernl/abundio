@@ -113,6 +113,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/agentTitleMap.ts` — **Title status** (ADR-0047): per-Agent title rules (Mistral Vibe's `>> ` / `? ` prefixes and blurred-pane suffixes) and the pure `titleStep` decision. terminalManager feeds it `onTitleChange`.
 - `lib/fleetConsole.ts` — Pure Fleet Console helpers: which panes are tiles and in what order, grid shape, Auto columns, divider drags, grid navigation.
 - `lib/agentRowTitle.ts` — An Agent row's first line: the Agent's terminal title, or its name.
+- `lib/handleOrder.ts` — Pure **Handle order** (Agents list, Agent cycle): Default handles by number. `lib/agentMenu.ts` — the **Agent menu**'s entries. `lib/agentCycle.ts` — the **Agent cycle**.
 - `lib/leftSidebarLayout.ts` — Height split between the Workspace list and the Agents list.
 - `lib/fleetFocus.ts` — `targetPaneId()`: the Focused tile in the Fleet Console, the Focused pane otherwise. Every pane-scoped shortcut resolves its target here; `workspaceViewOnly` mutes layout shortcuts in the console.
 - `lib/paneLocation.ts` — `findPaneLocation`, `revealPane`, and `switchToPane` (the Fleet Console's **Switch to**).
@@ -314,6 +315,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux. These are the **defaults*
 | Focus pane on that side (Directional move) | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
 | Next / previous pane (Pane cycle) | `Ctrl+Cmd+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Next / previous Opened workspace | `Ctrl+Cmd+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
+| Next / previous Agent (Agent cycle, Handle order) | `Ctrl+Cmd+→` / `←` | `Ctrl+Shift+End` / `Home` |
 | Add worktree | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 | Command palette | `Cmd+K` | `Ctrl+K` |
 | Navigator | `Cmd+J` | `Ctrl+Shift+J` |

@@ -37,6 +37,7 @@ import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
 import { startAgentControl } from "./lib/agentControl/handleControlRequest";
+import { cycleAgent } from "./lib/agentCycle";
 import {
 	finalizeAllOpenTurns,
 	initAgentTurnTracker,
@@ -963,6 +964,10 @@ export function App() {
 			"prev-workspace",
 			workspaceViewOnly(() => cycleWorkspace(-1)),
 		);
+		// Agent cycle: Handle order, wrapping. Switch to in the Workspace view;
+		// the Focused tile in the Fleet Console.
+		registerAction("next-agent", () => cycleAgent(1));
+		registerAction("prev-agent", () => cycleAgent(-1));
 		registerAction("next-pane", () =>
 			fleetConsoleShowing() ? cycleFleet(1) : cycleFocusedPane(1),
 		);
