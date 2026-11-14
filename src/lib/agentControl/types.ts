@@ -32,7 +32,7 @@ export type ControlRequest =
 			direction: Direction | null;
 			args: string[];
 			focus: boolean;
-			/** Open in a new **Spawned tab** instead of a split. */
+			/** Open in a new Tab instead of a split. */
 			tab: boolean;
 			tabName: string | null;
 	  }
@@ -67,6 +67,8 @@ export type ControlRequest =
 	  }
 	| { op: "notes.read" }
 	| { op: "notes.append"; text: string }
+	| { op: "notes.write"; text: string }
+	| { op: "notes.edit"; old: string; new: string }
 	| {
 			op: "pane.watch";
 			target: Target;
@@ -108,6 +110,8 @@ export type ControlErrorCode =
 	/** The caller's pane runs no Agent, and this command speaks for one. */
 	| "agents_only"
 	| "invalid_pattern"
+	/** `notes edit`: the text to change appears more than once. */
+	| "ambiguous"
 	| "branch_in_use"
 	| "exists"
 	| "cancelled"

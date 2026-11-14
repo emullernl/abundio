@@ -19,9 +19,10 @@ We decided to give Agents two commands that speak to the user, each acting only 
 - **An `ask` command** that shows a card with the question on the asking Pane and waits for the answer. Built, then dropped: each coding Agent already has its own question tool, which shows Waiting and notifies the user without new UI. Instead the skill tells a calling Agent that finds its helper Waiting to answer only what it can settle from its own task, and to ask the user in its own conversation for the rest. A modal dialog or a sidebar inbox of questions were rejected before that, for interrupting the user and for being easy to overlook.
 - **`notify` as Waiting.** Rejected: see above.
 - **`status` as the command's name.** Rejected: "status" already means Working, Ready, Waiting and so on, in the app and in the skill.
-- **Turn Agent control off by default**, or allow it only in agent-mode Panes. Rejected by the user in favour of limits on each command. Read-only commands and `notes append` stay open to shells, so scripts can use them.
+- **Turn Agent control off by default**, or allow it only in agent-mode Panes. Rejected by the user in favour of limits on each command. Read-only commands and the notes commands stay open to shells, so scripts can use them.
 
 ## Consequences
 
 - The **Attention count** gains a second source besides PTY status. A Pane counts once, whether it has an open status, a flag, or both.
+- **Agents have full control of the Workspace's notes**: `notes append` adds signed text; `notes edit` replaces the one place a quoted text appears, and `notes write` replaces the whole note, both unsigned. They read and write the same Markdown-like text `notes read` prints, and `notes edit` rebuilds only the paragraphs and list items it touches, so the rest keeps what text cannot express. Considered: append only (the first version), which left Agents unable to tick an item or fix a stale line; and real Markdown, which the editor's few formats do not need. The skill tells Agents to change only their own lines unless the user asks.
 - A helper's question reaches the user through its caller, so the caller may answer a question it should have passed on. The skill draws the line: permission prompts and questions settled by the caller's task, yes; anything that needs the user's judgment, no.

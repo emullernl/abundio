@@ -248,9 +248,9 @@ interface WorkspaceState {
 		 *  not rearrange the Workspace view (ADR-0040). Defaults to true.
 		 *  `task`: start `agent` on a **New task**, in a Tab named after it.
 		 *  `name`: the Tab's name, over every default.
-		 *  `spawn`: a **Spawned tab** for Agent control (ADR-0054), owned by
-		 *  `ownerPaneId`; its pane is a Spawned pane of that owner, with
-		 *  `handle` as its Agent handle. */
+		 *  `spawn`: opened by Agent control (ADR-0054); its pane is a
+		 *  **Spawned pane** of `ownerPaneId`, with `handle` as its Agent
+		 *  handle. */
 		opts?: {
 			activate?: boolean;
 			task?: TaskSeed;
@@ -260,15 +260,7 @@ interface WorkspaceState {
 	) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
-	/** `byUser`: the user renamed it by hand (the Tab bar), which marks it
-	 *  **user-named**: Agent control may not rename it from then on. */
-	renameTab: (
-		tabId: string,
-		name: string,
-		opts?: { byUser?: boolean },
-	) => Promise<void>;
-	/** The Tabs `ownerPaneId` opened become ordinary Tabs (it closed). */
-	releaseSpawnedTabs: (ownerPaneId: string) => Promise<void>;
+	renameTab: (tabId: string, name: string) => Promise<void>;
 
 	// Pane/layout actions
 	setFocusedPane: (paneId: string | null) => void;
@@ -1142,8 +1134,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			}
 		}
 
-		// A Spawned tab: owner on the Tab and on its pane, written before the
-		// Tab reaches the store, so nothing can render (and spawn) without them.
+		// Opened by Agent control: the owner on its pane (a **Spawned pane**),
+		// written before the Tab reaches the store, so nothing can render (and
+		// spawn) without it.
 		if (opts?.spawn && !seedLayout) {
 			const { ownerPaneId, handle } = opts.spawn;
 			const layout = parseTabLayout(tab.layoutJson) ?? finalLayout;
@@ -1157,13 +1150,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				});
 				tab.layoutJson = JSON.stringify(owned);
 			}
-			tab.spawnedByPane = ownerPaneId;
-			tabsApi
-				.update(tab.id, {
-					layoutJson: tab.layoutJson,
-					spawnedByPane: ownerPaneId,
-				})
-				.catch(() => {});
+			tabsApi.update(tab.id, { layoutJson: tab.layoutJson }).catch(() => {});
 		}
 
 		if (!activate) {
@@ -1289,40 +1276,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		});
 	},
 
-	renameTab: async (tabId, name, opts) => {
-		const byUser = opts?.byUser === true;
-		await tabsApi.update(tabId, byUser ? { name, userNamed: true } : { name });
+	renameTab: async (tabId, name) => {
+		await tabsApi.update(tabId, { name });
 		set((state) => ({
 			workspaces: state.workspaces.map((s) => ({
 				...s,
-				tabs: s.tabs.map((t) =>
-					t.id === tabId
-						? { ...t, name, ...(byUser ? { userNamed: true } : {}) }
-						: t,
-				),
+				tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, name } : t)),
 			})),
 		}));
-	},
-
-	releaseSpawnedTabs: async (ownerPaneId) => {
-		const owned = get()
-			.workspaces.flatMap((w) => w.tabs)
-			.filter((t) => t.spawnedByPane === ownerPaneId);
-		if (owned.length === 0) return;
-		const ids = new Set(owned.map((t) => t.id));
-		set((state) => ({
-			workspaces: state.workspaces.map((s) => ({
-				...s,
-				tabs: s.tabs.map((t) =>
-					ids.has(t.id) ? { ...t, spawnedByPane: null } : t,
-				),
-			})),
-		}));
-		await Promise.all(
-			owned.map((t) =>
-				tabsApi.update(t.id, { spawnedByPane: null }).catch(() => {}),
-			),
-		);
 	},
 
 	// ── Pane/layout actions ──

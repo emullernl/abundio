@@ -233,17 +233,15 @@ describe("agent send-keys", () => {
 		expect(write).not.toHaveBeenCalled();
 	});
 
-	it("refuses an Agent the caller did not start", async () => {
+	it("reaches an Agent the caller did not start", async () => {
 		for (const owner of [undefined, "someone-else"]) {
 			ownedBy(owner);
-			await expect(
-				runRequest(caller, {
-					op: "agent.sendKeys",
-					target,
-					keys: ["enter"],
-				}),
-			).rejects.toMatchObject({ code: "not_owner" });
+			await runRequest(caller, {
+				op: "agent.sendKeys",
+				target,
+				keys: ["enter"],
+			});
 		}
-		expect(write).not.toHaveBeenCalled();
+		expect(write).toHaveBeenCalledTimes(2);
 	});
 });

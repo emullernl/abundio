@@ -113,11 +113,9 @@ describe("cleanCommand", () => {
 });
 
 describe("closeRefusal", () => {
-	it("allows only the owner, never on its own pane", () => {
-		expect(closeRefusal("a", "a", "b")).toBeNull();
-		expect(closeRefusal("c", "a", "b")?.code).toBe("not_owner");
-		expect(closeRefusal(undefined, "a", "b")?.code).toBe("not_owner");
-		expect(closeRefusal(undefined, "a", "a")?.code).toBe("not_owner");
+	it("allows any pane but the caller's own", () => {
+		expect(closeRefusal("a", "b")).toBeNull();
+		expect(closeRefusal("a", "a")?.code).toBe("not_owner");
 	});
 });
 

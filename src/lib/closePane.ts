@@ -30,8 +30,7 @@ export function locatePane(
 }
 
 /**
- * When a pane closes, its **Spawned panes** and **Spawned tabs** become
- * ordinary ones, in every Workspace Opened in this Window. Since ADR-0055
+ * When a pane closes, its **Spawned panes** become ordinary ones, in every Workspace Opened in this Window. Since ADR-0055
  * they may sit in another Workspace than their owner. Only Opened ones are
  * edited: this Window's copy of a Workspace another Window has open is
  * stale, and writing it back would undo that Window's changes. Every Window
@@ -50,8 +49,6 @@ export async function releaseOwner(ownerPaneId: string): Promise<void> {
 			if (cleared !== layout) await store.updateLayout(tab.id, cleared);
 		}
 	}
-	// Only the Tab row's owner column: safe for any Window to write.
-	await useWorkspaceStore.getState().releaseSpawnedTabs(ownerPaneId);
 }
 
 async function releaseSpawned(ownerPaneId: string) {

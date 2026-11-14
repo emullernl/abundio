@@ -226,7 +226,7 @@ The original list:
   - The pending task is seeded under a pre-made pane id **before** the node enters the layout, so the terminal cannot spawn first and miss it. If the split fails, the seed is taken back.
   - Reply: once the pane is in agent mode, with the Agent's description; `stalled` after 30 s.
 - `pane run`: refused for an exited shell (`not_found`), an agent-mode pane or a running command (`busy`), and a PTY where shell integration has not reported yet (`state_unknown`). That last signal is new: `ManagedTerminal.shellIntegrationSeen`, set on the first shell-integration sequence and reset by `restartPanePty`. After an app restart a reconnected shell is `state_unknown` until its next prompt. The command is made one line with no control characters, then written with `\r`.
-- `pane run` and `agent send-keys`: only into a Spawned pane, by its owner (`not_owner`), so an Agent cannot type into a shell or an Agent it did not start and get around that Agent's permission prompts (PR #258 review; ADR-0054).
+- `pane run` and `agent send-keys`: briefly limited to Spawned panes (PR #258 review), then opened to every pane: see "Full control" below.
 - `pane close`: only a Spawned pane, only by its owner, never one's own pane (`not_owner`).
   - **Changed from the plan:** no confirmation. Every user close asks "Close pane?", and that dialog would stop an Agent cold. The unsaved-edits checks only concern file panes, and a Spawned pane is always a terminal.
   - The close logic moved out of `useSplitPane` into `lib/closePane.ts`, used by both. The user's close behaves as before. Agent control passes `keepFocus`, so focus stays where the user has it.
@@ -312,7 +312,7 @@ In the real app the caller's pane lost keyboard focus when an Agent split it, al
 
 ## Tabs (second round: steps 11–15)
 
-Agents can open an Agent or a shell in a new **Tab** instead of splitting their own, and can name Tabs. When the caller's Tab is getting crowded, the reply suggests a new Tab. See **Spawned tab** in `GLOSSARY.md`.
+Agents can open an Agent or a shell in a new **Tab** instead of splitting their own, and can name Tabs. When the caller's Tab is getting crowded, the reply suggests a new Tab. (The **Spawned tab** of this step was later dropped: see "Full control" below.)
 
 ### Decisions
 
@@ -589,7 +589,7 @@ The plan:
 - Rust checks: lengths (message 200, progress 80, notes text 4 KB), no control characters except newlines in notes text, and branch names with the same rules as `isValidBranch` (one table for Rust and TS, like the handle grammar).
 - Regexes are JavaScript regexes, compiled in the Window. A bad one there is `invalid_pattern`.
 - `pane watch` is a wait: its default and `0` limits are like `agent wait`, the CLI retry rules for waits apply, and it goes through the wait graph like `agent wait`.
-- Mutating: `notify`, `progress`, `worktree new`, `notes append` (never retried after `connection_lost`).
+- Mutating: `notify`, `progress`, `worktree new`, `notes append`, `notes edit`, `notes write` (never retried after `connection_lost`).
 - Help: `notify`, `progress` under a new `You:` group; `worktree new` under `Workspaces:`; `notes` under a new `Notes:` group; `pane watch` under `Panes:`.
 - Tests: every shape, the limits, branch grammar from the shared table, the wait and mutating classification.
 
@@ -678,6 +678,23 @@ The plan:
 - Release notes draft: "Agents can call you over", "Agents spin up worktrees with a helper", "Shared notes", "Wait for a line of output".
 - Verify (below).
 
+## Full control (after the PR #258 review)
+
+The user chose full control over the ownership limits. Recorded in ADR-0054 (Considered Options) and ADR-0056.
+
+| Command | Before | Now |
+|---|---|---|
+| `pane run`, `agent send-keys` | the caller's Spawned panes | any pane in reach |
+| `pane close` | the caller's Spawned panes | any pane in reach but the caller's own |
+| `tab rename` | own Tab and Spawned tabs, never user-named | any Tab in reach |
+| notes | `read`, `append` | also `edit --old --new` (exactly one match, may span lines; empty `--new` deletes) and `write` (whole note) |
+
+- `spawn.closeRefusal` keeps only the own-pane check; `driveRefusal` and `tabRenameRefusal` are gone.
+- The **Spawned tab** is dropped: `tabs.spawned_by_pane` and `tabs.user_named` are no longer read or written (the columns stay; no migration), `releaseSpawnedTabs` and `renameTab`'s `byUser` are gone. Spawned panes stay, as a label for helpers.
+- `notesText`: `parseInline` (marks back from `**`/`*`/`~~`), `textToBlocks` (two-space nesting), `textToDoc` (`notes write`) and `editDoc` (`notes edit`, rebuilding only the touched paragraphs and list items). Through an open editor the change is one `setContent`, undoable, with the cursor clamped back. New error code `ambiguous`.
+- Skill: touch panes, Tabs, Agents and notes lines you did not create only when the user asks.
+- Tests: the parser round trip, edits that keep untouched formatting, deletion, an item turned paragraph between lists, not-found and ambiguous; run, send-keys, close and rename on panes and Tabs the caller did not open; notes edit and write through the handler and an open editor.
+
 ## Verify in the real app
 
 Unit tests will not catch the integration paths. Before calling it done:
@@ -699,5 +716,6 @@ Unit tests will not catch the integration paths. Before calling it done:
 - Worktree: `abundio worktree new feat/x --agent claude --prompt "…"` creates the folder next to the others, runs setup commands, opens the Workspace in the background with the Agent; the caller can prompt and close it.
 - Notes: with the Notes panel open and text half typed, an Agent's `notes append` appears at the end and the typed text survives.
 - Watch: `abundio pane split`, `abundio pane run p2 "pnpm dev"`, then `abundio pane watch p2 --match "ready in"` returns the line.
-- Spawned panes only: `pane run` into a shell the user opened, and `agent send-keys` to an Agent the caller did not start, are refused with `not_owner`; both work on panes the caller started.
+- Full control: `pane run` into a shell the user opened, `agent send-keys` answering a permission prompt of an Agent the user started, `pane close` on a user's pane and `tab rename` of a Tab the user named all work; `pane close` on the caller's own pane is refused.
+- Notes edit: with the Notes panel open, `notes edit --old "- [ ] x" --new "- [x] x"` ticks the item, the rest keeps its bold and line breaks, and Cmd+Z undoes it.
 - A plain shell running `abundio notify x` is refused with `agents_only`.

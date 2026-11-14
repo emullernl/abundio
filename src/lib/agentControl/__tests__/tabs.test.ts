@@ -27,8 +27,6 @@ vi.mock("../../ipc", () => ({
 				position: 9,
 				createdAt: 0,
 				updatedAt: 0,
-				spawnedByPane: null,
-				userNamed: false,
 			};
 		},
 	},
@@ -66,7 +64,6 @@ import type {
 	WorkspaceWithTabs,
 } from "../../types";
 import { runRequest } from "../handleControlRequest";
-import { tabRenameRefusal } from "../spawn";
 
 const caller = { ptyId: "pty-a", paneId: "a", workspaceId: "ws" };
 
@@ -172,22 +169,19 @@ async function startAndSettle(over: Parameters<typeof start>[0] = {}) {
 }
 
 describe("agent start --tab", () => {
-	it("opens a Spawned tab at the end, seeded, without moving the user", async () => {
+	it("opens a Tab at the end, seeded, without moving the user", async () => {
 		const { reply, tab: t } = await startAndSettle({ handle: "fixer" });
 		expect(tabs().map((x) => x.id)).toEqual(["t1", t.id]);
-		expect(t).toMatchObject({
-			name: "Fix the flaky login test",
-			spawnedByPane: "a",
-		});
+		expect(t.name).toBe("Fix the flaky login test");
 		expect(paneOf(t)).toMatchObject({
 			agentId: "claude",
 			agentHandle: "fixer",
 			spawnedBy: "a",
 		});
-		// The owner is written to the Tab row, not just held in memory.
+		// The owned pane is written to the database, not just held in memory.
 		expect(tabUpdates).toContainEqual([
 			t.id,
-			expect.objectContaining({ spawnedByPane: "a" }),
+			{ layoutJson: expect.stringContaining('"spawnedBy":"a"') },
 		]);
 		const s = useWorkspaceStore.getState();
 		expect(s.activeTabByWorkspace.ws).toBe("t1");
@@ -241,14 +235,14 @@ describe("agent start --tab", () => {
 });
 
 describe("tab new", () => {
-	it("opens a shell in a Spawned tab with the usual default name", async () => {
+	it("opens a shell in a new Tab with the usual default name", async () => {
 		const reply = await runRequest(caller, {
 			op: "tab.new",
 			name: null,
 			focus: false,
 		});
 		const t = lastTab();
-		expect(t).toMatchObject({ name: "Terminal 2", spawnedByPane: "a" });
+		expect(t.name).toBe("Terminal 2");
 		expect(paneOf(t)).toMatchObject({ spawnedBy: "a" });
 		expect(paneOf(t)).not.toHaveProperty("agentId");
 		expect(reply).toMatchObject({ mode: "shell", tab: "Terminal 2" });
@@ -271,12 +265,7 @@ describe("tab rename", () => {
 			tab(
 				"t3",
 				{ type: "terminal", id: "c", ptyId: "pty-c", spawnedBy: "a" },
-				{ position: 2, spawnedByPane: "a" },
-			),
-			tab(
-				"t4",
-				{ type: "terminal", id: "d", ptyId: "pty-d", spawnedBy: "a" },
-				{ position: 3, spawnedByPane: "a", userNamed: true },
+				{ position: 2 },
 			),
 		]);
 	});
@@ -288,7 +277,7 @@ describe("tab rename", () => {
 		});
 	const nameOf = (id: string) => tabs().find((t) => t.id === id)?.name;
 
-	it("renames the caller's own Tab, not marking it user-named", async () => {
+	it("renames the caller's own Tab", async () => {
 		await expect(rename("Login fix")).resolves.toEqual({
 			tab: "Login fix",
 			renamed: true,
@@ -302,25 +291,8 @@ describe("tab rename", () => {
 		expect(nameOf("t3")).toBe("Helper");
 	});
 
-	it("refuses a Tab it did not open, and one the user named", async () => {
-		await expect(rename("X", 2)).rejects.toMatchObject({ code: "not_owner" });
-		await expect(rename("X", 4)).rejects.toMatchObject({
-			code: "not_owner",
-			message: expect.stringContaining("the user named this Tab"),
-		});
-		expect(nameOf("t2")).toBe("Tab t2");
-		expect(nameOf("t4")).toBe("Tab t4");
-	});
-});
-
-describe("tabRenameRefusal", () => {
-	it("allows own and spawned Tabs, never user-named ones", () => {
-		const r = (ownTab: boolean, spawnedByCaller: boolean, userNamed: boolean) =>
-			tabRenameRefusal({ ownTab, spawnedByCaller, userNamed });
-		expect(r(true, false, false)).toBeNull();
-		expect(r(false, true, false)).toBeNull();
-		expect(r(false, false, false)?.code).toBe("not_owner");
-		expect(r(true, false, true)?.code).toBe("not_owner");
-		expect(r(false, true, true)?.code).toBe("not_owner");
+	it("renames a Tab it did not open, one the user named included", async () => {
+		await rename("X", 2);
+		expect(nameOf("t2")).toBe("X");
 	});
 });

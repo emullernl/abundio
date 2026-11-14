@@ -114,15 +114,16 @@ function AgentControlSettings() {
 						Agents in your panes can use the <code>abundio</code> command to
 						list panes and agents, read them, prompt another agent and wait for
 						its answer, start a new agent (also in a new git worktree), run
-						commands in idle shells and wait for their output, add to the
-						workspace's notes, and call you over or show their progress on their
-						own pane: in their own workspace, and in the other workspaces of
-						this profile when asked (one that is closed is opened in the
-						background). They never reach another profile, and can close, type
-						into or run commands in only the panes they opened. A badge on a
-						pane shows when another agent is driving it. Any program a pane runs
-						can do the same, not only its agent, so turn this off if you run
-						code you do not trust.
+						commands in idle shells and wait for their output, read and change
+						the workspace's notes, and call you over or show their progress on
+						their own pane: in their own workspace, and in the other workspaces
+						of this profile when asked (one that is closed is opened in the
+						background). They can type into, run commands in and close any pane,
+						answer another agent's permission prompts and rename any tab of this
+						profile, but never reach another profile. A badge on a pane shows
+						when another agent is driving it. Any program a pane runs can do the
+						same, not only its agent, so turn this off if you run code you do
+						not trust.
 					</>
 				}
 			/>

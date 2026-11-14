@@ -9,7 +9,7 @@ ADR-0054 limited **Agent control** to the caller's own **Workspace**: an Agent c
 We decided:
 
 - **An Agent reaches every Workspace of its own Profile, never another Profile.** Its own Workspace stays the default; `--workspace <name>` names another (matched ignoring case, refused if two Workspaces share the name). The Profile is the boundary because it is already the one the user draws between contexts, such as work and personal. The per-pane token of ADR-0054 is unchanged: it still says who is calling, and Rust now checks the target Workspace's Profile against the caller's instead of comparing Workspaces.
-- **Every command works in another Workspace, but never reshapes its layout.** A new Pane there always gets a **Spawned tab** of its own, owned by the caller, instead of splitting a Pane the user may be looking at in that Workspace.
+- **Every command works in another Workspace, but never reshapes its layout.** A new Pane there always gets a Tab of its own, its Pane owned by the caller, instead of splitting a Pane the user may be looking at in that Workspace.
 - **A Workspace that is not Opened is opened for the call,** in the background, exactly as the user would open it: its Panes spawn, its Agents relaunch with **Session resume**, it joins the Profile's restore list, and the user's view does not move. A Workspace whose folder is missing is still refused (ADR-0053). The skill tells Agents to cross Workspaces only when the user asks, because opening one can start several Agents.
 - **Rust routes each call to the Window that holds the target Workspace**, or to the caller's Window when it has to be opened there. The Window still carries the call out (ADR-0054).
 - **Every Agent has a name.** An Agent handle becomes a readable name ("Agent Two", "Reviewer"): letters, digits, spaces, `-` and `_`, up to 32 characters, matched ignoring case and treating a space and a dash alike. A Pane entering agent mode without one gets a **Default handle**, "Agent" and the lowest number in words not in use in the Profile. Handles are unique in the Profile, so an Agent can be addressed by name from any Workspace. Every name, chosen or default, goes with its Agent when it leaves the Pane, as before.
@@ -29,7 +29,7 @@ We decided:
 
 ## Consequences
 
-- A caller and its **Spawned panes** and **Spawned tabs** can sit in different Workspaces and different Windows. Releasing them when the owner closes can no longer be done by one Window's store alone; the other Windows of the Profile are told.
+- A caller and its **Spawned panes** can sit in different Workspaces and different Windows. Releasing them when the owner closes can no longer be done by one Window's store alone; the other Windows of the Profile are told.
 - The **Control badge** names the caller's Workspace when the caller is in another one.
 - The wait graph needs no change: Pane ids are unique app-wide, so a loop across Workspaces is still caught.
 - Handles set before this change (`reviewer`) are still valid. Agents running without one get a Default handle when this ships.

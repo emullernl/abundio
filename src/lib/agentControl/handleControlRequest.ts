@@ -53,7 +53,7 @@ import {
 	paneLabel,
 } from "./describe";
 import { keysToBytes } from "./keys";
-import { appendNotes, readNotes } from "./notesOps";
+import { appendNotes, editNotes, readNotes, writeNotes } from "./notesOps";
 import { cleanPromptText } from "./promptText";
 import { readBuffer } from "./readBuffer";
 import {
@@ -66,11 +66,9 @@ import {
 	autoDirection,
 	cleanCommand,
 	closeRefusal,
-	driveRefusal,
 	layoutDirection,
 	runRefusal,
 	startArgv,
-	tabRenameRefusal,
 } from "./spawn";
 import {
 	type ControlCaller,
@@ -299,6 +297,12 @@ export async function runRequest(
 			await appendNotes(scope.workspaceId, request.text, scope.callerName);
 			return { appended: true };
 		}
+		case "notes.write":
+			await writeNotes(scope.workspaceId, request.text);
+			return { written: true };
+		case "notes.edit":
+			await editNotes(scope.workspaceId, request.old, request.new);
+			return { edited: true };
 		case "worktree.new":
 			return newWorktree(scope, request, signal);
 		case "progress": {
@@ -393,12 +397,6 @@ export async function runRequest(
 		}
 		case "agent.sendKeys": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			const notYours = driveRefusal(
-				pane.node.spawnedBy,
-				caller.paneId,
-				"agent send-keys",
-			);
-			if (notYours) throw notYours;
 			return withBadge(scope, pane, async () => {
 				const managed = mountedTerminal(pane);
 				const appCursor = managed.term.modes.applicationCursorKeysMode;
@@ -418,7 +416,7 @@ export async function runRequest(
 		}
 		case "pane.split": {
 			// In another Workspace there is no caller pane to split, and its
-			// layout is not the caller's to rearrange: a Spawned tab instead.
+			// layout is not the caller's to rearrange: a Tab of its own instead.
 			if (!scope.home) {
 				const paneId = await openSpawnedTab(scope, {
 					handle: null,
@@ -445,12 +443,6 @@ export async function runRequest(
 			return renameTabFor(scope, request);
 		case "pane.run": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			const notYours = driveRefusal(
-				pane.node.spawnedBy,
-				caller.paneId,
-				"pane run",
-			);
-			if (notYours) throw notYours;
 			return withBadge(scope, pane, async () => {
 				const managed = mountedTerminal(pane);
 				const facts = liveFacts(pane);
@@ -476,11 +468,7 @@ export async function runRequest(
 		}
 		case "pane.close": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			const refusal = closeRefusal(
-				pane.node.spawnedBy,
-				caller.paneId,
-				pane.node.id,
-			);
+			const refusal = closeRefusal(caller.paneId, pane.node.id);
 			if (refusal) throw refusal;
 			const label = paneLabel(scope.numbers.get(pane.node.id) ?? 0);
 			await closePaneNow(pane.node.id, { keepFocus: true });
@@ -897,7 +885,7 @@ function withHint<T extends object>(reply: T, hint: string | null): T {
 }
 
 /**
- * Open a **Spawned tab** owned by the caller: at the end of the Tab bar,
+ * Open a Tab whose pane the caller owns: at the end of the Tab bar,
  * through the same path as New task's New tab (an Agent's argv rides the
  * spawn). The user's view does not change unless `focus`. Returns the new
  * pane's id.
@@ -970,12 +958,6 @@ async function renameTabFor(
 		.workspaces.find((w) => w.id === scope.workspaceId)
 		?.tabs.find((t) => t.id === pane.tabId);
 	if (!tab) throw new ControlError("not_found", "that Tab is no longer open");
-	const refusal = tabRenameRefusal({
-		ownTab: self !== undefined && tab.id === self.tabId,
-		spawnedByCaller: tab.spawnedByPane === scope.caller.paneId,
-		userNamed: tab.userNamed === true,
-	});
-	if (refusal) throw refusal;
 	await useWorkspaceStore.getState().renameTab(tab.id, request.name);
 	return { tab: request.name, renamed: true };
 }
@@ -1046,7 +1028,7 @@ async function promptAgent(
 	if (!canFire(facts.state ?? undefined)) {
 		throw new ControlError(
 			"busy",
-			"that Agent is Waiting for an answer (a permission prompt, say); read the pane; if you started that Agent, answer it with `agent send-keys`, otherwise ask the user to; then prompt again",
+			"that Agent is Waiting for an answer (a permission prompt, say); read the pane, answer it with `agent send-keys` (or ask the user, if it needs their judgment), then prompt again",
 		);
 	}
 	const text = cleanPromptText(request.text);

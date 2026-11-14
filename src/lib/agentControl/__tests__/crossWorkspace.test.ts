@@ -201,7 +201,7 @@ describe("calls into another Workspace", () => {
 		expect(r).toMatchObject({ handle: "Agent One", self: true });
 	});
 
-	it("never splits there: a new pane gets a Spawned tab owned by the caller", async () => {
+	it("never splits there: a new pane gets a Tab of its own, owned by the caller", async () => {
 		const r = await runRequest(
 			caller,
 			{ op: "pane.split", direction: null, focus: false },
@@ -213,7 +213,7 @@ describe("calls into another Workspace", () => {
 			.workspaces.find((w) => w.id === "api");
 		expect(api?.tabs.map((t) => t.id)).toEqual(["t-api", "new-tab-api"]);
 		const newTab = api?.tabs[1];
-		expect(newTab?.spawnedByPane).toBe("a");
+		expect(JSON.parse(newTab?.layoutJson ?? "{}").spawnedBy).toBe("a");
 		// Its owner sits in another Workspace, so it is named with it.
 		expect(r).toMatchObject({ spawnedBy: "p1 · home" });
 		expect(r).not.toHaveProperty("hint");
@@ -224,7 +224,7 @@ describe("calls into another Workspace", () => {
 		expect(JSON.parse(home?.tabs[0].layoutJson ?? "{}").type).toBe("terminal");
 	});
 
-	it("tab rename there needs --tab: the caller has no Tab of its own there", async () => {
+	it("tab rename there needs --tab, then renames any Tab", async () => {
 		await expect(
 			runRequest(
 				caller,
@@ -240,7 +240,7 @@ describe("calls into another Workspace", () => {
 				undefined,
 				there,
 			),
-		).rejects.toMatchObject({ code: "not_owner" });
+		).resolves.toEqual({ tab: "X", renamed: true });
 	});
 });
 

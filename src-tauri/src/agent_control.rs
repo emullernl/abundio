@@ -285,7 +285,7 @@ pub enum Request {
         /// Move keyboard focus to the new pane. Off by default: the user is
         /// usually typing to the caller.
         focus: bool,
-        /// Open it in a new **Spawned tab** instead of splitting the caller.
+        /// Open it in a new Tab instead of splitting the caller.
         tab: bool,
         /// The new Tab's name (only with `tab`); else a default.
         tab_name: Option<String>,
@@ -311,7 +311,7 @@ pub enum Request {
         target: Target,
         handle: Option<String>,
     },
-    /// A shell in a new **Spawned tab**.
+    /// A shell in a new Tab.
     #[serde(rename = "tab.new", rename_all = "camelCase")]
     TabNew { name: Option<String>, focus: bool },
     /// Rename the caller's own Tab (`target: None`), or the Tab holding
@@ -338,6 +338,13 @@ pub enum Request {
     NotesRead,
     #[serde(rename = "notes.append", rename_all = "camelCase")]
     NotesAppend { text: String },
+    /// Replace the whole note.
+    #[serde(rename = "notes.write", rename_all = "camelCase")]
+    NotesWrite { text: String },
+    /// Replace the one place `old` appears in the note's text; an empty
+    /// `new` deletes it.
+    #[serde(rename = "notes.edit", rename_all = "camelCase")]
+    NotesEdit { old: String, new: String },
     /// Wait for a line of new output matching `pattern` (a JavaScript regex,
     /// compiled by the Window).
     #[serde(rename = "pane.watch", rename_all = "camelCase")]
@@ -362,8 +369,10 @@ pub struct AgentSpec {
 /// Limits on what an Agent may show the user (ADR-0056), in characters.
 pub const NOTIFY_MAX: usize = 200;
 pub const PROGRESS_MAX: usize = 80;
-/// Notes text per `notes append`, in bytes.
+/// Notes text per `notes append`, and per side of `notes edit`, in bytes.
 pub const NOTES_APPEND_MAX: usize = 4096;
+/// A whole note given to `notes write`, in bytes.
+pub const NOTES_WRITE_MAX: usize = 65536;
 pub const PATTERN_MAX: usize = 500;
 
 /// What a command line asks for: a request, or help text.
@@ -1031,6 +1040,36 @@ fn parse_notes(command: &str, rest: &[String]) -> Result<Request, String> {
             }
             Ok(Request::NotesAppend { text })
         }
+        "write" => {
+            let a = split_args(rest, &[], &[])?;
+            expect_positionals(&a, 1, 1, "abundio notes write <text>")?;
+            let text = multi_line("text", a.positional[0])?;
+            if text.len() > NOTES_WRITE_MAX {
+                return Err(format!("at most {NOTES_WRITE_MAX} bytes per note"));
+            }
+            Ok(Request::NotesWrite { text })
+        }
+        "edit" => {
+            const USAGE: &str = "usage: abundio notes edit --old <text> --new <text>";
+            let a = split_args(rest, &["--old", "--new"], &[])?;
+            expect_positionals(&a, 0, 0, "abundio notes edit --old <text> --new <text>")?;
+            let (Some(Some(old)), Some(Some(new))) = (a.flags.get("--old"), a.flags.get("--new")) else {
+                return Err(USAGE.into());
+            };
+            // Not trimmed: the old text is matched exactly as given.
+            let old = old.replace("\r\n", "\n").replace('\r', "\n");
+            if old.trim().is_empty() {
+                return Err("--old is empty; quote the text to change".into());
+            }
+            let new = if new.trim().is_empty() { String::new() } else { multi_line("--new text", new)? };
+            if old.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t')) {
+                return Err("--old must not contain control characters".into());
+            }
+            if old.len() > NOTES_APPEND_MAX || new.len() > NOTES_APPEND_MAX {
+                return Err(format!("at most {NOTES_APPEND_MAX} bytes for --old and for --new"));
+            }
+            Ok(Request::NotesEdit { old, new })
+        }
         other => Err(format!(
             "unknown command `notes {other}`; run `abundio help notes`"
         )),
@@ -1053,8 +1092,7 @@ Panes (only those of your own Workspace):
   abundio pane split [--direction right|down] [--focus]
                                           a new shell pane beside yours
   abundio pane run <pane> <command>       run a one-line command in an idle shell
-                                          you started
-  abundio pane close <pane>               close a pane you created
+  abundio pane close <pane>               close a pane (never your own)
   abundio pane watch <pane> --match <regex> [-i] [--timeout <ms>]
                                           wait for a line of new output matching a
                                           JavaScript regex; prints that line
@@ -1073,8 +1111,7 @@ Agents:
                                           send a prompt; --wait returns when it settles
   abundio agent wait <agent> [--until settled|ready|waiting|error] [--timeout <ms>]
   abundio agent send-keys <agent|pane> <key>...
-                                          enter, esc, tab, ctrl+c, up, … (only to
-                                          a pane you started)
+                                          enter, esc, tab, ctrl+c, up, …
   abundio agent rename <agent> [<handle>] set or clear an Agent handle
 ";
     const WORKSPACE: &str = "\
@@ -1097,6 +1134,13 @@ Notes (the Workspace's shared notes):
   abundio notes read                      the notes as text
   abundio notes append <text>             add paragraphs, \"- \" bullets or \"- [ ] \" items
                                           at the end, signed with your name
+  abundio notes edit --old <text> --new <text>
+                                          change the one place <text> appears, as
+                                          `notes read` prints it; empty --new deletes
+                                          it. Write **bold**, *italic*, ~~strike~~,
+                                          \"- \" bullets and \"- [ ] \" items as read
+                                          shows them; two spaces of indent nest.
+  abundio notes write <text>              replace the whole note, in the same form
 ";
     const TAB: &str = "\
 Tabs:
@@ -1104,8 +1148,7 @@ Tabs:
                                           a shell in a new Tab
   abundio tab rename <name> [--tab <pane|agent>]
                                           rename your own Tab, or the Tab holding that
-                                          pane: only yours or ones you opened, never
-                                          one the user named
+                                          pane
 ";
     const HEAD: &str = "\
 abundio: control the panes and Agents of your Profile's Workspaces.
@@ -1230,7 +1273,7 @@ pub fn split_workspace(argv: &[String]) -> Result<(Option<String>, Vec<String>),
         }
         // A value that can be any text is copied as is, so `--agent-arg
         // --workspace` stays the Agent's own argument.
-        if matches!(a.as_str(), REPEATABLE | "--prompt" | "--match") {
+        if matches!(a.as_str(), REPEATABLE | "--prompt" | "--match" | "--old" | "--new") {
             rest.extend(argv[i..(i + 2).min(argv.len())].iter().cloned());
             i += 2;
             continue;
@@ -1877,8 +1920,8 @@ fn serve_inner(
 
 // ── Commands ──
 
-/// A pane closed: tell every Window (ADR-0055). Its **Spawned panes** and
-/// **Spawned tabs** may sit in other Workspaces, opened in other Windows, and
+/// A pane closed: tell every Window (ADR-0055). Its **Spawned panes** may
+/// sit in other Workspaces, opened in other Windows, and
 /// only each Window may edit its own Workspaces' layouts.
 /// Only a Profile window holds panes, so any other window is ignored.
 #[tauri::command]
@@ -2286,6 +2329,24 @@ mod tests {
         assert!(!is_mutating(&Request::NotesRead));
         assert!(is_mutating(&req(&["notes", "append", "x"])));
         assert!(matches!(parse_args(&argv(&["notes"])), Ok(Parsed::Help(t)) if t.contains("notes append")));
+        assert_eq!(req(&["notes", "write", "a\r\nb"]), Request::NotesWrite { text: "a\nb".into() });
+        assert!(usage_err(&["notes", "write", &"x".repeat(NOTES_WRITE_MAX + 1)]).contains("bytes"));
+        assert_eq!(
+            req(&["notes", "edit", "--old", " - [ ] run tests", "--new", "- [x] run tests"]),
+            Request::NotesEdit { old: " - [ ] run tests".into(), new: "- [x] run tests".into() }
+        );
+        assert_eq!(
+            req(&["notes", "edit", "--new", "", "--old", "drop me"]),
+            Request::NotesEdit { old: "drop me".into(), new: String::new() }
+        );
+        assert!(usage_err(&["notes", "edit", "--old", "x"]).starts_with("usage:"));
+        assert!(usage_err(&["notes", "edit", "--old", " ", "--new", "y"]).contains("--old is empty"));
+        assert!(is_mutating(&req(&["notes", "edit", "--old", "x", "--new", "y"])));
+        assert!(is_mutating(&req(&["notes", "write", "x"])));
+        // A value starting with -- is the text, not --workspace.
+        let (ws, rest) = split_workspace(&argv(&["notes", "edit", "--old", "--workspace", "--new", "y"])).unwrap();
+        assert_eq!(ws, None);
+        assert_eq!(rest.len(), 6);
     }
 
     #[test]

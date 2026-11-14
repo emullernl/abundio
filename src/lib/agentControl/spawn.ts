@@ -107,58 +107,16 @@ export function cleanCommand(command: string): string {
 	return command.replace(/[\u0000-\u001F\u007F-\u009F]/g, " ").trim();
 }
 
-/** `pane close` is allowed only on a **Spawned pane**, by its owner. */
+/** `pane close` works on any pane in reach but the caller's own: closing
+ *  that would end the Agent in the middle of its own call. */
 export function closeRefusal(
-	spawnedBy: string | undefined,
 	callerPaneId: string,
 	targetPaneId: string,
 ): ControlError | null {
 	if (targetPaneId === callerPaneId) {
-		return new ControlError("not_owner", "an Agent cannot close its own pane");
-	}
-	if (spawnedBy !== callerPaneId) {
 		return new ControlError(
 			"not_owner",
-			"you can only close panes you spawned (with `pane split` or `agent start`)",
-		);
-	}
-	return null;
-}
-
-/** `pane run` and `agent send-keys` type into a pane, which can get around
- *  the permission prompts of the Agent that would otherwise be asked (a
- *  shell runs whatever it is given; keys can approve a prompt). So they are
- *  allowed only on a **Spawned pane**, by its owner (ADR-0054). */
-export function driveRefusal(
-	spawnedBy: string | undefined,
-	callerPaneId: string,
-	command: "pane run" | "agent send-keys",
-): ControlError | null {
-	if (spawnedBy === callerPaneId) return null;
-	return new ControlError(
-		"not_owner",
-		`\`${command}\` works only in panes you started (with \`pane split\`, \`tab new\`, \`agent start\` or \`worktree new\`); ask the user to do it in this one`,
-	);
-}
-
-/** Why `tab rename` may not rename this Tab, or null when it may. An Agent
- *  names its own Tab and the **Spawned tabs** it opened, and never a Tab the
- *  user has named by hand: the user's name wins. */
-export function tabRenameRefusal(t: {
-	ownTab: boolean;
-	spawnedByCaller: boolean;
-	userNamed: boolean;
-}): ControlError | null {
-	if (!t.ownTab && !t.spawnedByCaller) {
-		return new ControlError(
-			"not_owner",
-			"you can rename only your own Tab and Tabs you opened",
-		);
-	}
-	if (t.userNamed) {
-		return new ControlError(
-			"not_owner",
-			"the user named this Tab; leave its name to them",
+			"an Agent cannot close its own pane; exit instead",
 		);
 	}
 	return null;

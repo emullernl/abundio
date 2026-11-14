@@ -69,7 +69,6 @@ beforeEach(() => {
 						position: 1,
 						createdAt: 0,
 						updatedAt: 0,
-						spawnedByPane: "a",
 					},
 				],
 			} as unknown as WorkspaceWithTabs,
@@ -103,46 +102,13 @@ describe("closePaneNow", () => {
 	});
 });
 
-describe("closePaneNow and Spawned tabs", () => {
-	it("makes the closed pane's Spawned tabs ordinary Tabs", async () => {
-		await closePaneNow("a");
-		const t2 = useWorkspaceStore
-			.getState()
-			.workspaces[0].tabs.find((t) => t.id === "t2");
-		expect(t2?.spawnedByPane).toBeNull();
-		expect(tabUpdates).toContainEqual(["t2", { spawnedByPane: null }]);
-	});
-
-	it("leaves them owned when another pane closes", async () => {
-		await closePaneNow("c");
-		const t2 = useWorkspaceStore
-			.getState()
-			.workspaces[0].tabs.find((t) => t.id === "t2");
-		expect(t2?.spawnedByPane).toBe("a");
-	});
-});
-
 describe("renameTab", () => {
-	it("marks a rename by the user as user-named", async () => {
-		await useWorkspaceStore
-			.getState()
-			.renameTab("t1", "Mine", { byUser: true });
-		const t1 = useWorkspaceStore
-			.getState()
-			.workspaces[0].tabs.find((t) => t.id === "t1");
-		expect(t1).toMatchObject({ name: "Mine", userNamed: true });
-		expect(tabUpdates).toContainEqual([
-			"t1",
-			{ name: "Mine", userNamed: true },
-		]);
-	});
-
-	it("does not mark the app's own renames", async () => {
+	it("renames, in the store and the database", async () => {
 		await useWorkspaceStore.getState().renameTab("t1", "Fix the build");
 		const t1 = useWorkspaceStore
 			.getState()
 			.workspaces[0].tabs.find((t) => t.id === "t1");
-		expect(t1?.userNamed).toBeUndefined();
+		expect(t1?.name).toBe("Fix the build");
 		expect(tabUpdates).toContainEqual(["t1", { name: "Fix the build" }]);
 	});
 });
@@ -161,7 +127,5 @@ describe("releasing across Workspaces and Windows (ADR-0055)", () => {
 			([, u]) => (u as { layoutJson?: string }).layoutJson !== undefined,
 		);
 		expect(layoutWrites).toEqual([]);
-		// The Tab row's owner column is still freed: safe from any Window.
-		expect(tabUpdates).toContainEqual(["t2", { spawnedByPane: null }]);
 	});
 });

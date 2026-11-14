@@ -142,20 +142,12 @@ export interface Tab {
 	position: number;
 	createdAt: number;
 	updatedAt: number;
-	/** The pane whose Agent opened this Tab: a **Spawned tab** (ADR-0054).
-	 *  Null (or absent, in fixtures) for an ordinary Tab. */
-	spawnedByPane?: string | null;
-	/** The user renamed this Tab by hand, so Agent control may not. */
-	userNamed?: boolean;
 }
 
 export interface TabUpdate {
 	name?: string;
 	layoutJson?: string;
 	position?: number;
-	/** `null` makes it an ordinary Tab again. */
-	spawnedByPane?: string | null;
-	userNamed?: boolean;
 }
 
 // ── File Explorer ──

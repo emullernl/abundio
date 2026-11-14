@@ -190,6 +190,66 @@ describe("notes", () => {
 		);
 		unregister();
 	});
+
+	it("edits one place in the note, unsigned, and writes it at once", async () => {
+		await runRequest(shell, { op: "notes.edit", old: "Mine", new: "**Ours**" });
+		expect(await runRequest(agent, { op: "notes.read" })).toEqual({
+			notes: "**Ours**",
+		});
+		expect(noteSets).toHaveLength(1);
+		await expect(
+			runRequest(agent, { op: "notes.edit", old: "nope", new: "x" }),
+		).rejects.toMatchObject({ code: "not_found" });
+	});
+
+	it("refuses an edit whose text appears twice", async () => {
+		await runRequest(agent, { op: "notes.write", text: "a\na" });
+		await expect(
+			runRequest(agent, { op: "notes.edit", old: "a", new: "b" }),
+		).rejects.toMatchObject({ code: "ambiguous" });
+	});
+
+	it("writes the whole note through an open editor, as one undoable step", async () => {
+		const setContent = vi.fn();
+		const setTextSelection = vi.fn();
+		const unregister = registerNotesEditor("ws", {
+			isDestroyed: false,
+			isEmpty: false,
+			getJSON: () => ({}),
+			state: {
+				selection: { from: 3, to: 3 },
+				doc: { content: { size: 2 } },
+			},
+			commands: { setContent, setTextSelection },
+		} as never);
+		await runRequest(agent, { op: "notes.write", text: "- [ ] one" });
+		expect(setContent).toHaveBeenCalledWith(
+			{
+				type: "doc",
+				content: [
+					{
+						type: "taskList",
+						content: [
+							{
+								type: "taskItem",
+								attrs: { checked: false },
+								content: [
+									{
+										type: "paragraph",
+										content: [{ type: "text", text: "one" }],
+									},
+								],
+							},
+						],
+					},
+				],
+			},
+			{ emitUpdate: true },
+		);
+		// The cursor is kept, clamped to the new note.
+		expect(setTextSelection).toHaveBeenCalledWith({ from: 2, to: 2 });
+		unregister();
+	});
 });
 
 describe("pane watch", () => {

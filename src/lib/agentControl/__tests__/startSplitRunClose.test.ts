@@ -359,7 +359,7 @@ describe("pane run", () => {
 		await expect(run("ls")).rejects.toMatchObject({ code: "state_unknown" });
 	});
 
-	it("refuses an idle shell the caller did not start", async () => {
+	it("runs in an idle shell the caller did not start", async () => {
 		setLayout({
 			type: "split",
 			id: "s",
@@ -368,8 +368,8 @@ describe("pane run", () => {
 			first: { type: "terminal", id: "a", ptyId: "pty-a" },
 			second: { type: "terminal", id: "b", ptyId: "pty-b" },
 		});
-		await expect(run("ls")).rejects.toMatchObject({ code: "not_owner" });
-		expect(write).not.toHaveBeenCalled();
+		await expect(run("ls")).resolves.toEqual({ pane: "p2", sent: true });
+		expect(write).toHaveBeenCalledWith("pty-b", "ls\r");
 	});
 });
 
@@ -402,13 +402,14 @@ describe("pane close", () => {
 		expect(closed).toEqual([{ paneId: "b", opts: { keepFocus: true } }]);
 	});
 
-	it("refuses a pane it did not spawn, and its own", async () => {
-		await expect(close(3)).rejects.toMatchObject({ code: "not_owner" });
+	it("closes a pane it did not spawn, never its own", async () => {
 		await expect(close(1)).rejects.toMatchObject({ code: "not_owner" });
 		expect(closed).toEqual([]);
+		await expect(close(3)).resolves.toEqual({ pane: "p3", closed: true });
+		expect(closed).toEqual([{ paneId: "c", opts: { keepFocus: true } }]);
 	});
 
-	it("in another Workspace, closes only the caller's own Spawned pane", async () => {
+	it("closes any pane in another Workspace", async () => {
 		useWorkspaceStore.setState((st) => ({
 			workspaces: [
 				...st.workspaces,
@@ -447,9 +448,8 @@ describe("pane close", () => {
 				undefined,
 				{ workspaceId: "ws2", open: false },
 			);
-		await expect(there(1)).rejects.toMatchObject({ code: "not_owner" });
-		expect(closed).toEqual([]);
+		await expect(there(1)).resolves.toEqual({ pane: "p1", closed: true });
 		await expect(there(2)).resolves.toEqual({ pane: "p2", closed: true });
-		expect(closed).toEqual([{ paneId: "y", opts: { keepFocus: true } }]);
+		expect(closed.map((c) => c.paneId)).toEqual(["x", "y"]);
 	});
 });

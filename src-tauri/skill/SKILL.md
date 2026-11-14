@@ -37,11 +37,11 @@ asks.
   `error`). Prefer this to sending and polling.
 - `status: "waiting"` means it is asking a question or wants permission:
   `abundio pane read <agent> --lines 40` to see it. Answer it yourself only
-  when you started that agent and your own task settles it (a permission
-  prompt for work you asked for, a detail you already know), with
-  `abundio agent send-keys <agent> …` (`enter`, `esc`, `up`, `down`, `tab`,
-  `ctrl+c`, …). If it needs the user's judgment, or you did not start it,
-  tell the user in your own conversation and let them answer it there.
+  when your own task settles it (a permission prompt for work you asked it
+  to do, a detail you already know), with `abundio agent send-keys <agent> …`
+  (`enter`, `esc`, `up`, `down`, `tab`, `ctrl+c`, …). If it needs the user's
+  judgment, ask the user in your own conversation, then pass their answer
+  on the same way.
 - After a prompt, `abundio pane read <agent> --lines 80` shows its answer.
 - `stalled` means it never started working; read the pane before sending
   again. After a `timeout` or `connection_lost`, the prompt may have arrived:
@@ -75,16 +75,12 @@ splitting yours. Prefer it when:
 
 The Tab is named after the task; `--tab-name "<name>"` sets a better one.
 `abundio tab rename "<name>"` names your own Tab, for example after the
-task you are on. You can rename only your own Tab and Tabs you opened, and
-never one the user has named: leave those as they are.
+task you are on. `--tab <pane>` renames the Tab holding that pane.
 
 `abundio pane split` opens a plain shell beside you, `abundio tab new` one in
 a new Tab; `abundio pane run <pane> "<command>"` runs one line in a shell
 that is at its prompt.
 
-`pane run` and `agent send-keys` work only in panes you started yourself
-(with `pane split`, `tab new`, `agent start` or `worktree new`). For any
-other pane, ask the user.
 
 ### Waiting for output
 
@@ -107,8 +103,16 @@ Workspace). Without `--agent` it only makes the worktree.
 `abundio notes read` prints the Workspace's notes (the Notes panel), which the
 user and other agents share. `abundio notes append "<text>"` adds to the end,
 signed with your name: paragraphs, `- ` bullets and `- [ ] ` checklist items.
-Use it to leave a short handoff or decision others will need. You cannot
-change what is already there.
+Use it to leave a short handoff or decision others will need.
+
+To change what is there, `abundio notes edit --old "<text>" --new "<text>"`
+replaces the one place that text appears, copied exactly from `notes read`
+(an empty `--new` deletes it); for example, tick an item with
+`--old "- [ ] run tests" --new "- [x] run tests"`. If the text appears more
+than once, quote more of it. `abundio notes write "<text>"` replaces the
+whole note. Write `**bold**`, `*italic*` and `~~strike~~` as `notes read`
+shows them, and indent two spaces to nest an item. Edit or rewrite only
+your own lines, unless the user asks you to change theirs.
 
 ## Reaching the user
 
@@ -139,8 +143,11 @@ each is open. Add `--workspace <name>` to any command to act there, e.g.
 
 ## Be a good neighbour
 
-- Only close panes you created: `abundio pane close <pane>`. Closing others
-  is refused.
+- You can type into, run commands in and close any pane, and rename any
+  Tab, not only your own. Touch panes, Tabs and Agents you did not start
+  only when the user asks; otherwise close only the panes you created
+  (`abundio pane close <pane>`) and leave the rest alone. You can never
+  close your own pane; exit instead.
 - Do not prompt an agent the user is working with unless the user asked you
   to.
 - Keep prompts self-contained: the other agent cannot see your conversation.
