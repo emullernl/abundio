@@ -12,5 +12,6 @@ export function nextTabName(existingNames: readonly string[]): string {
 	return `Tab ${n}`;
 }
 
-/** The name of a Workspace's first Tab. Rust uses the same literal. */
+/** The name of a Workspace's first Tab. Same literal as `FIRST_TAB_NAME`
+ *  in `src-tauri/src/workspace_store.rs`; change both together. */
 export const FIRST_TAB_NAME = "Tab 1";

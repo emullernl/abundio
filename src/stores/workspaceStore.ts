@@ -1085,16 +1085,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 		// The seed layout may be a bare file leaf, or — for markdown files opened
 		// with an auto-opened preview — a split containing the file pane.
-		let name = nextTabName(workspace?.tabs.map((t) => t.name) ?? []);
 		const seedFilePane = seedLayout ? findFilePaneInTree(seedLayout) : null;
-		if (seedFilePane) {
+		let name: string;
+		if (opts?.name) {
+			name = opts.name;
+		} else if (seedFilePane) {
 			name = seedFilePane.filePath.split("/").pop() || "file";
 		} else if (opts?.task) {
 			name = opts.task.tabName;
 		} else if (agent) {
 			name = agent.name;
+		} else {
+			name = nextTabName(workspace?.tabs.map((t) => t.name) ?? []);
 		}
-		if (opts?.name) name = opts.name;
 
 		const tab = await tabsApi.create(workspaceId, name);
 
