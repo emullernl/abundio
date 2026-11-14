@@ -21,12 +21,14 @@ export interface CloseBlockers {
 	unsaved: string[];
 }
 
-export const NO_BLOCKERS: CloseBlockers = {
+/** A fresh, empty set. A factory, not a shared constant, because
+ *  `addPtyBlocker` fills the arrays in place. */
+export const noBlockers = (): CloseBlockers => ({
 	working: [],
 	waiting: [],
 	commands: [],
 	unsaved: [],
-};
+});
 
 /** Sort one PTY's status entry into `blockers` under `label`. */
 export function addPtyBlocker(

@@ -51,6 +51,7 @@ import {
 	addPtyBlocker,
 	type CloseBlockers,
 	closeWorkspaceRefusal,
+	noBlockers,
 } from "./closeWorkspace";
 import { crowdHint } from "./crowding";
 import {
@@ -522,12 +523,8 @@ async function closeWorkspaceFor(
 		return { workspace: ws.name, closed: true, alreadyClosed: true };
 	}
 
-	const blockers: CloseBlockers = {
-		working: [],
-		waiting: [],
-		commands: [],
-		unsaved: [],
-	};
+	// Every await comes first. From the snapshot below to the close there is
+	// none, so an Agent starting a turn or an edit made meanwhile is seen.
 	const panes = workspacePanes(ws.tabs);
 	const numbers = new Map(
 		await agentControl.paneNumbers(
@@ -535,6 +532,22 @@ async function closeWorkspaceFor(
 			panes.map((p) => p.node.id),
 		),
 	);
+	// Edits in its File windows live in other webviews; Rust knows them. Not
+	// knowing is no licence to close: nobody could be asked.
+	let dirtyWindows: Awaited<ReturnType<typeof fileWindows.dirty>>;
+	try {
+		dirtyWindows = await fileWindows.dirty([ws.id]);
+	} catch {
+		throw new ControlError(
+			"state_unknown",
+			"could not check that Workspace's File windows for unsaved edits",
+		);
+	}
+
+	const blockers: CloseBlockers = noBlockers();
+	for (const d of dirtyWindows) {
+		blockers.unsaved.push(d.filePath.split(/[\\/]/).pop() || d.filePath);
+	}
 	const { activities } = usePtyActivityStore.getState();
 	for (const p of panes) {
 		const ptyId = ptyIdOf(p);
@@ -552,19 +565,6 @@ async function closeWorkspaceFor(
 			if (file?.isDirty) blockers.unsaved.push(file.fileName);
 		}
 	}
-	// Edits in its File windows live in other webviews; Rust knows them. Not
-	// knowing is no licence to close: nobody could be asked.
-	try {
-		for (const d of await fileWindows.dirty([ws.id])) {
-			blockers.unsaved.push(d.filePath.split(/[\\/]/).pop() || d.filePath);
-		}
-	} catch {
-		throw new ControlError(
-			"state_unknown",
-			"could not check that Workspace's File windows for unsaved edits",
-		);
-	}
-
 	const refusal = closeWorkspaceRefusal(ws.name, blockers, force);
 	if (refusal) throw refusal;
 	await useWorkspaceStore.getState().closeWorkspace(ws.id);

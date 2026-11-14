@@ -38,8 +38,8 @@ import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import type { PaneNode, WorkspaceWithTabs } from "../../types";
 import {
 	addPtyBlocker,
-	type CloseBlockers,
 	closeWorkspaceRefusal,
+	noBlockers,
 } from "../closeWorkspace";
 import { runRequest } from "../handleControlRequest";
 import { ControlError } from "../types";
@@ -129,12 +129,7 @@ beforeEach(() => {
 });
 
 describe("closeWorkspaceRefusal", () => {
-	const none = (): CloseBlockers => ({
-		working: [],
-		waiting: [],
-		commands: [],
-		unsaved: [],
-	});
+	const none = noBlockers;
 
 	it("lets a quiet Workspace close", () => {
 		expect(closeWorkspaceRefusal("api", none(), false)).toBeNull();
@@ -246,6 +241,16 @@ describe("workspace close", () => {
 			message: expect.stringContaining("README.md"),
 		});
 		expect(dirtyFileWindows).toHaveBeenCalledWith(["api"]);
+	});
+
+	it("sees an Agent that starts a turn while the checks are awaited", async () => {
+		dirtyFileWindows.mockImplementation(async () => {
+			setActivity("pty-r", { state: "active" });
+			return [];
+		});
+		await expect(
+			runRequest(caller, close(), undefined, api),
+		).rejects.toMatchObject({ code: "busy" });
 	});
 
 	it("refuses when File windows cannot be checked", async () => {

@@ -1379,6 +1379,19 @@ fn close_scope(app: &AppHandle, caller: &Caller, name: &str) -> Result<Scope, An
     close_scope_for(caller, &target, live)
 }
 
+/// `--workspace` on a command that names its Workspace as its argument
+/// (`workspace close <name>`) is a usage error, not a second target.
+pub fn refuse_workspace_flag(request: &Request, workspace: Option<&str>) -> Option<Answer> {
+    match (request, workspace) {
+        (Request::WorkspaceClose { .. }, Some(_)) => Some(error_answer(
+            400,
+            "usage",
+            "name the Workspace to close as the argument: abundio workspace close <name>",
+        )),
+        _ => None,
+    }
+}
+
 /// The pure half of [`close_scope`].
 pub fn close_scope_for(
     caller: &Caller,
@@ -1964,17 +1977,10 @@ fn serve_inner(
             format!("{who} op={op}"),
         );
     }
+    if let Some(answer) = refuse_workspace_flag(&request, workspace.as_deref()) {
+        return (answer, format!("{who} op=usage-error"));
+    }
     let scope = match &request {
-        Request::WorkspaceClose { .. } if workspace.is_some() => {
-            return (
-                error_answer(
-                    400,
-                    "usage",
-                    "name the Workspace to close as the argument: abundio workspace close <name>",
-                ),
-                format!("{who} op=usage-error"),
-            )
-        }
         Request::WorkspaceClose { name, .. } => close_scope(app, &caller, name),
         _ => resolve_scope(app, &caller, workspace.as_deref()),
     };
@@ -2571,6 +2577,19 @@ mod tests {
             json!({ "op": "workspace.close", "name": "api", "force": true })
         );
         assert!(help(Some("workspace")).contains("workspace close <name>"));
+    }
+
+    #[test]
+    fn workspace_close_refuses_the_workspace_flag() {
+        let argv = argv(&["workspace", "close", "api", "--workspace", "docs"]);
+        let (workspace, rest) = split_workspace(&argv).unwrap();
+        let Ok(Parsed::Request(request)) = parse_args(&rest) else { panic!("parses") };
+        let answer = refuse_workspace_flag(&request, workspace.as_deref()).unwrap();
+        assert_eq!(answer.status, 400);
+        assert!(answer.body.contains("\"usage\""));
+        assert!(refuse_workspace_flag(&request, None).is_none());
+        // Every other command still takes --workspace.
+        assert!(refuse_workspace_flag(&Request::AgentList, Some("docs")).is_none());
     }
 
     #[test]
