@@ -13,23 +13,30 @@ export const ORCHESTRATOR_DIVIDER = 6;
 export const ORCHESTRATOR_PANES_MIN = 160;
 
 /**
- * Height of the top area's content, clamped so the panes below keep
- * `ORCHESTRATOR_PANES_MIN`. `viewHeight` is the whole view's height (0 when
- * not measured yet: then the stored height is used as is).
+ * Height of the top area's content: `ratio` of what is left under the tab
+ * strip and the divider, clamped so the panes below keep
+ * `ORCHESTRATOR_PANES_MIN`. `viewHeight` is the whole view's height; 0 (not
+ * measured yet) gives 0.
  */
 export function topContentHeight(
-	stored: number,
+	ratio: number,
 	collapsed: boolean,
 	viewHeight: number,
 ): number {
-	if (collapsed) return 0;
-	if (viewHeight <= 0) return stored;
-	const room =
-		viewHeight -
-		ORCHESTRATOR_TAB_STRIP -
-		ORCHESTRATOR_DIVIDER -
-		ORCHESTRATOR_PANES_MIN;
-	return Math.max(0, Math.min(stored, room));
+	if (collapsed || viewHeight <= 0) return 0;
+	const room = Math.max(
+		0,
+		viewHeight - ORCHESTRATOR_TAB_STRIP - ORCHESTRATOR_DIVIDER,
+	);
+	const wanted = Math.round(room * ratio);
+	return Math.max(0, Math.min(wanted, room - ORCHESTRATOR_PANES_MIN));
+}
+
+/** The ratio a top area of `contentHeight` px is, in a view `viewHeight`
+ *  high: the inverse of `topContentHeight`, for divider drags. */
+export function ratioFor(contentHeight: number, viewHeight: number): number {
+	const room = viewHeight - ORCHESTRATOR_TAB_STRIP - ORCHESTRATOR_DIVIDER;
+	return room > 0 ? contentHeight / room : 0.5;
 }
 
 /** Offset of the panes from the top of the view. */

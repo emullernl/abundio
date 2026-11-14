@@ -113,12 +113,12 @@ interface WindowUiState {
 	setOrchestratorViewOpen: (open: boolean) => void;
 	/** Back to the **Workspace view** from either other view (Switch to). */
 	showWorkspaceView: () => void;
-	/** Height of the Orchestrator view's top area (its Orchestrator tabs'
-	 *  content), in px, and whether it is collapsed to the tab strip.
-	 *  Per Window, persisted. */
-	orchestratorTopHeight: number;
+	/** The Orchestrator view's split: the share of its height (below the tab
+	 *  strip) the top area takes, half by default, and whether that area is
+	 *  collapsed to the tab strip. Per Window, persisted. */
+	orchestratorTopRatio: number;
 	orchestratorTopCollapsed: boolean;
-	setOrchestratorTopHeight: (px: number) => void;
+	setOrchestratorTopRatio: (ratio: number) => void;
 	toggleOrchestratorTopCollapsed: () => void;
 	/** The **Focused tile**: the console's own focus, separate from the
 	 *  Workspace view's `focusedPaneId` so moving around the grid never
@@ -183,9 +183,10 @@ export interface NewTaskRequest {
 	onBack?: () => void;
 }
 
-/** Orchestrator view top area: default and smallest height, in px. */
-export const ORCHESTRATOR_TOP_DEFAULT = 280;
-export const ORCHESTRATOR_TOP_MIN = 120;
+/** Orchestrator view split: default and limits of the top area's share. */
+export const ORCHESTRATOR_TOP_DEFAULT = 0.5;
+export const ORCHESTRATOR_TOP_MIN = 0.1;
+export const ORCHESTRATOR_TOP_MAX = 0.9;
 
 const persistKey = `abundio-window-ui-${currentWindowLabel()}`;
 
@@ -282,11 +283,14 @@ export const useWindowUiStore = create<WindowUiState>()(
 				),
 			showWorkspaceView: () =>
 				set({ fleetConsoleOpen: false, orchestratorViewOpen: false }),
-			orchestratorTopHeight: ORCHESTRATOR_TOP_DEFAULT,
+			orchestratorTopRatio: ORCHESTRATOR_TOP_DEFAULT,
 			orchestratorTopCollapsed: false,
-			setOrchestratorTopHeight: (px) =>
+			setOrchestratorTopRatio: (ratio) =>
 				set({
-					orchestratorTopHeight: Math.round(Math.max(ORCHESTRATOR_TOP_MIN, px)),
+					orchestratorTopRatio: Math.min(
+						ORCHESTRATOR_TOP_MAX,
+						Math.max(ORCHESTRATOR_TOP_MIN, ratio),
+					),
 				}),
 			toggleOrchestratorTopCollapsed: () =>
 				set((s) => ({ orchestratorTopCollapsed: !s.orchestratorTopCollapsed })),
@@ -415,7 +419,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				// Every view is restored on launch (ADR-0057).
 				fleetConsoleOpen: s.fleetConsoleOpen,
 				orchestratorViewOpen: s.orchestratorViewOpen,
-				orchestratorTopHeight: s.orchestratorTopHeight,
+				orchestratorTopRatio: s.orchestratorTopRatio,
 				orchestratorTopCollapsed: s.orchestratorTopCollapsed,
 				foldedSetKeys: s.foldedSetKeys,
 				fleetGrid: s.fleetGrid,

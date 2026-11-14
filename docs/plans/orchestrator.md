@@ -21,7 +21,7 @@ Agent control (ADR-0054, ADR-0055) already lets any Agent see and drive the whol
 | Friendliness | Real Agent TUI, plus a welcome card and seeded Prompt actions ("What is everyone working on?", "Who needs me right now?", "Summarise today"). |
 | View | Third view beside Workspace view and Fleet Console; exactly one on screen. Every view is restored on launch (reverses the Fleet Console's never-restored rule). |
 | Entry | Overview bar button, `Cmd+Shift+O` / `Ctrl+Shift+O` (rebindable), Go ▸ Orchestrator, Command palette. A click on the Orchestrator's notification lands in the view. |
-| Layout | Orchestrator tabs on top (draggable height, collapsible, per Window); the Orchestrator workspace's own Tab bar and panes below, always visible. |
+| Layout | Orchestrator tabs on top (a 50/50 split by default, stored as a ratio; draggable, collapsible, per Window); the Orchestrator workspace's own Tab bar and panes below, always visible. |
 | Orchestrator tabs | Graph (first, never closed), at most one Peek, files of any Workspace of the Profile. Files are editable like a File pane. Remembered per Profile, except Peek. |
 | Graph | React Flow (`@xyflow/react`) with a fixed org-chart layout of our own (no layout library). Orchestrator on top, one group box per Workspace, Agent nodes with status icon, handle, Progress line. Spawned panes under their spawner. Agents of not-Opened Workspaces greyed. |
 | Animation | Agent control calls (caller → target edge, read dotted / act solid), spawning (node grows from spawner), status changes (pulse). `prefers-reduced-motion` respected. |

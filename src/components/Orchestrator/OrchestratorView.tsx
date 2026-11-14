@@ -6,6 +6,7 @@ import {
 	ORCHESTRATOR_DIVIDER,
 	ORCHESTRATOR_TAB_STRIP,
 	panesTop,
+	ratioFor,
 	topContentHeight,
 } from "../../lib/orchestratorLayout";
 import {
@@ -43,9 +44,9 @@ export function OrchestratorView({ topOffset }: { topOffset: number }) {
 function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 	const rootRef = useRef<HTMLDivElement>(null);
 	const [viewHeight, setViewHeight] = useState(0);
-	const stored = useWindowUiStore((s) => s.orchestratorTopHeight);
+	const ratio = useWindowUiStore((s) => s.orchestratorTopRatio);
 	const collapsed = useWindowUiStore((s) => s.orchestratorTopCollapsed);
-	const setTopHeight = useWindowUiStore((s) => s.setOrchestratorTopHeight);
+	const setTopRatio = useWindowUiStore((s) => s.setOrchestratorTopRatio);
 	const toggleCollapsed = useWindowUiStore(
 		(s) => s.toggleOrchestratorTopCollapsed,
 	);
@@ -62,7 +63,7 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 		return () => ro.disconnect();
 	}, []);
 
-	const content = topContentHeight(stored, collapsed, viewHeight);
+	const content = topContentHeight(ratio, collapsed, viewHeight);
 	const top = panesTop(content);
 	useEffect(() => {
 		useOrchestratorStore.getState().set({ panesTop: top });
@@ -91,7 +92,7 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 				</div>
 			)}
 			<Divider
-				onDrag={(dy) => setTopHeight(content + dy)}
+				onDrag={(dy) => setTopRatio(ratioFor(content + dy, viewHeight))}
 				disabled={collapsed}
 			/>
 			{showCard && (
@@ -234,6 +235,10 @@ function Divider({
 			}}
 			onPointerDown={(e) => {
 				if (disabled) return;
+				// No text selection while dragging, in the graph or the panes:
+				// the same body class the pane resizers use.
+				e.preventDefault();
+				document.body.classList.add("dragging");
 				start.current = e.clientY;
 				e.currentTarget.setPointerCapture(e.pointerId);
 			}}
@@ -246,7 +251,12 @@ function Divider({
 			}}
 			onPointerUp={(e) => {
 				start.current = null;
+				document.body.classList.remove("dragging");
 				e.currentTarget.releasePointerCapture(e.pointerId);
+			}}
+			onLostPointerCapture={() => {
+				start.current = null;
+				document.body.classList.remove("dragging");
 			}}
 		/>
 	);
