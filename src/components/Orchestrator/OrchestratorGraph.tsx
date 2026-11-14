@@ -37,11 +37,10 @@ import {
 } from "../../lib/orchestratorActions";
 import {
 	type GraphAgent,
+	type GraphWorkspace,
 	graphModel,
 	layoutGraph,
-	type Petal,
 	type Placed,
-	petalPath,
 	streamPath,
 } from "../../lib/orchestratorGraph";
 import { restartOrchestrator } from "../../lib/orchestratorSession";
@@ -68,15 +67,15 @@ const FADE_MS = 700;
 
 const ORCH_NODE = "orchestrator";
 const agentNodeId = (paneId: string) => `agent:${paneId}`;
+const wsNodeId = (id: string) => `ws:${id}`;
 
 type AgentData = {
 	agent: GraphAgent;
 	workspaceName: string;
 	fresh: boolean;
 	receiving: boolean;
-	small: boolean;
 };
-type PetalsData = { petals: Petal[]; radius: number };
+type WsData = { ws: GraphWorkspace };
 type OrchData = { receiving: boolean };
 type StreamData = { kind: "read" | "act"; ending: boolean };
 
@@ -120,9 +119,10 @@ function prefersReducedMotion(): boolean {
 
 /**
  * The **Orchestrator view**'s graph (ADR-0057): a flower with the
- * Orchestrator in the centre and one petal per Opened workspace, its Agents
- * on it. Single click peeks, double click is **Switch to**, right click opens
- * the Agent menu (or, on a petal, the Workspace's). While one pane's Agent
+ * Orchestrator in the centre, each Opened workspace a node on a ring round
+ * it, and its Agents circling their Workspace. Single click peeks, double
+ * click is **Switch to**, right click opens the Agent menu (or, on a
+ * Workspace, the Workspace's). While one pane's Agent
  * control call to another runs, a comet stream flows between them.
  */
 export function OrchestratorGraph() {
@@ -167,7 +167,7 @@ export function OrchestratorGraph() {
 	const known = useRef<Set<string> | null>(null);
 	const fresh = useMemo(() => {
 		const ids = [
-			...model.petals.flatMap((w) => w.agents.map((a) => a.paneId)),
+			...model.workspaces.flatMap((w) => w.agents.map((a) => a.paneId)),
 			...model.helpers.map((h) => h.paneId),
 		];
 		if (known.current === null) {
@@ -231,23 +231,8 @@ export function OrchestratorGraph() {
 		return set;
 	}, [calls, orchestratorPaneId]);
 
-	const radius = Math.max(
-		...layout.petals.map((p) => p.outer + 80),
-		Math.hypot(layout.add.x, layout.add.y) + 120,
-	);
-
 	const nodes = useMemo(() => {
 		const out: Node[] = [
-			{
-				id: "petals",
-				type: "petals",
-				position: { x: -radius, y: -radius },
-				style: { width: radius * 2, height: radius * 2 },
-				data: { petals: layout.petals, radius } satisfies PetalsData,
-				draggable: false,
-				selectable: false,
-				zIndex: -1,
-			},
 			{
 				id: ORCH_NODE,
 				type: "orchestrator",
@@ -269,7 +254,6 @@ export function OrchestratorGraph() {
 			agent: GraphAgent,
 			p: Placed,
 			workspaceName: string,
-			small: boolean,
 		): Node => ({
 			id: agentNodeId(agent.paneId),
 			type: "agent",
@@ -280,33 +264,47 @@ export function OrchestratorGraph() {
 				workspaceName,
 				fresh: fresh.has(agent.paneId),
 				receiving: receiving.has(agentNodeId(agent.paneId)),
-				small,
 			} satisfies AgentData,
 			draggable: false,
 			selected: agent.paneId === selected,
 		});
-		for (const ws of model.petals) {
+		for (const ws of model.workspaces) {
+			out.push({
+				id: wsNodeId(ws.id),
+				type: "workspace",
+				position: corner(layout.workspaces[ws.id]),
+				data: { ws } satisfies WsData,
+				draggable: false,
+				selectable: false,
+			});
 			for (const a of ws.agents) {
-				out.push(agentNode(a, layout.agents[a.paneId], ws.name, false));
+				out.push(agentNode(a, layout.agents[a.paneId], ws.name));
 			}
 		}
 		for (const h of model.helpers) {
-			out.push(agentNode(h, layout.helpers[h.paneId], "Orchestrator", true));
+			out.push(agentNode(h, layout.helpers[h.paneId], "Orchestrator"));
 		}
 		return out;
-	}, [model, layout, fresh, selected, receiving, radius]);
+	}, [model, layout, fresh, selected, receiving]);
 
 	const nodeIds = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes]);
 	const edges = useMemo(() => {
 		const endpoint = (paneId: string) =>
 			paneId === orchestratorPaneId ? ORCH_NODE : agentNodeId(paneId);
 		const out: Edge[] = [];
-		// Faint stems: the Orchestrator to each Agent, an Agent to its helpers.
-		for (const ws of model.petals) {
+		// Faint stems: the Orchestrator to each Workspace, a Workspace to its
+		// Agents, an Agent to its helpers.
+		for (const ws of model.workspaces) {
+			out.push({
+				id: `stem:ws:${ws.id}`,
+				source: ORCH_NODE,
+				target: wsNodeId(ws.id),
+				type: "stem",
+			});
 			for (const a of ws.agents) {
 				out.push({
 					id: `stem:${a.paneId}`,
-					source: a.spawnedBy ? agentNodeId(a.spawnedBy) : ORCH_NODE,
+					source: a.spawnedBy ? agentNodeId(a.spawnedBy) : wsNodeId(ws.id),
 					target: agentNodeId(a.paneId),
 					type: "stem",
 				});
@@ -329,7 +327,7 @@ export function OrchestratorGraph() {
 				source,
 				target,
 				type: "stream",
-				// Above the petals and the stems.
+				// Above the nodes and the stems.
 				zIndex: 1000,
 				data: { kind: call.kind, ending } satisfies StreamData,
 			});
@@ -426,80 +424,67 @@ function FitOnChange({ count }: { count: number }) {
 
 // ── Nodes ──
 
-/** The petals, drawn as one SVG behind everything, with their names. Right
- *  click on a petal opens its Workspace's menu. */
-const PetalsNode = memo(function PetalsNode({
+/** A Workspace: its name and how many Agents circle it. Right click opens
+ *  its menu. */
+const WorkspaceNode = memo(function WorkspaceNode({
 	data,
-}: NodeProps<Node<PetalsData>>) {
-	const { petals, radius } = data;
+}: NodeProps<Node<WsData>>) {
+	const { ws } = data;
 	const actions = useContext(ActionsContext);
-	const [menu, setMenu] = useState<{
-		x: number;
-		y: number;
-		id: string;
-	} | null>(null);
+	const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 	return (
 		<>
-			<svg
-				width={radius * 2}
-				height={radius * 2}
-				viewBox={`${-radius} ${-radius} ${radius * 2} ${radius * 2}`}
-				style={{ overflow: "visible", display: "block" }}
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: right-click menu of a Workspace node */}
+			<div
+				className="flex items-center justify-center select-none"
+				style={{
+					width: 160,
+					height: 40,
+					gap: 6,
+					padding: "0 12px",
+					borderRadius: 10,
+					border:
+						"1px solid color-mix(in srgb, var(--accent) 35%, var(--border))",
+					background:
+						"color-mix(in srgb, var(--accent) 8%, var(--bg-secondary))",
+					color: "var(--fg-primary)",
+				}}
+				title={`${ws.name} · ${ws.agents.length} agent${ws.agents.length === 1 ? "" : "s"}`}
+				onContextMenu={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					setMenu({ x: e.clientX, y: e.clientY });
+				}}
 			>
-				<title>Workspaces</title>
-				{petals.map((p, i) => (
-					<g key={p.workspaceId}>
-						{/* biome-ignore lint/a11y/noStaticElementInteractions: right-click menu of a petal */}
-						<path
-							d={petalPath(p)}
-							className={`orch-petal ${i % 2 ? "orch-petal-odd" : ""}`}
-							onContextMenu={(e) => {
-								e.preventDefault();
-								e.stopPropagation();
-								setMenu({ x: e.clientX, y: e.clientY, id: p.workspaceId });
-							}}
-						/>
-						<text
-							x={p.label.x}
-							y={p.label.y}
-							textAnchor={
-								Math.abs(p.label.x) < 40
-									? "middle"
-									: p.label.x > 0
-										? "start"
-										: "end"
-							}
-							dominantBaseline="middle"
-							style={{
-								fill: "var(--fg-secondary)",
-								fontSize: 15,
-								fontWeight: 600,
-								pointerEvents: "none",
-							}}
-						>
-							{p.name}
-						</text>
-					</g>
-				))}
-			</svg>
+				<CentreHandles />
+				<span className="truncate" style={{ fontSize: 12.5, fontWeight: 600 }}>
+					{ws.name}
+				</span>
+				<span
+					style={{
+						fontSize: 10.5,
+						color: "var(--fg-secondary)",
+						fontFamily: "var(--font-mono)",
+					}}
+				>
+					{ws.agents.length}
+				</span>
+			</div>
 			{menu && actions && (
 				<PaneContextMenu
 					x={menu.x}
 					y={menu.y}
 					onClose={() => setMenu(null)}
 					items={[
-						{
-							label: "New agent…",
-							onClick: () => actions.newAgentIn(menu.id),
-						},
+						{ label: "New agent…", onClick: () => actions.newAgentIn(ws.id) },
 						{
 							label: "New task…",
-							onClick: () => openNewTask({ workspaceId: menu.id }),
+							onClick: () => openNewTask({ workspaceId: ws.id }),
 						},
 						{ separator: true },
 						{
 							label: "Close Workspace",
-							onClick: () => actions.closeWorkspace(menu.id),
+							onClick: () => actions.closeWorkspace(ws.id),
 						},
 					]}
 				/>
@@ -568,7 +553,7 @@ const OrchestratorNode = memo(function OrchestratorNode({
 	);
 });
 
-/** "Open workspace…": the slot after the last petal. */
+/** "Open workspace…": one more slot on the ring of Workspaces. */
 const AddNode = memo(function AddNode() {
 	return (
 		<button
@@ -598,7 +583,7 @@ const AgentNode = memo(function AgentNode({
 	data,
 	selected,
 }: NodeProps<Node<AgentData>>) {
-	const { agent, workspaceName, fresh, receiving, small } = data;
+	const { agent, workspaceName, fresh, receiving } = data;
 	const status = usePaneStatus(agent.paneId);
 	const liveHandle = useAgentHandle(agent.paneId);
 	const handle = liveHandle ?? agent.handle;
@@ -649,8 +634,8 @@ const AgentNode = memo(function AgentNode({
 					receiving ? "orch-node-receiving" : ""
 				}`}
 				style={{
-					gap: small ? 6 : 8,
-					padding: small ? "0 8px" : "0 10px",
+					gap: 6,
+					padding: "0 10px 0 8px",
 					borderRadius: 999,
 					cursor: "pointer",
 					border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
@@ -661,7 +646,12 @@ const AgentNode = memo(function AgentNode({
 						? "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)"
 						: undefined,
 				}}
-				title={[label, progress, flag ? `Wants you: ${flag.message}` : ""]
+				title={[
+					name,
+					`${agentName} · ${workspaceName} · ${agent.tabName}`,
+					progress,
+					flag ? `Wants you: ${flag.message}` : "",
+				]
 					.filter(Boolean)
 					.join("\n")}
 				onContextMenu={(e) => {
@@ -675,32 +665,17 @@ const AgentNode = memo(function AgentNode({
 				<span style={{ color: "var(--fg-secondary)", display: "flex" }}>
 					{Icon ? <Icon size={14} /> : <FallbackAgentIcon size={13} />}
 				</span>
-				<span className="flex flex-col min-w-0 flex-1">
-					<span className="flex items-center min-w-0" style={{ gap: 5 }}>
-						<span
-							className="truncate"
-							style={{
-								fontSize: small ? 11.5 : 12.5,
-								color: "var(--fg-primary)",
-							}}
-						>
-							{name}
-						</span>
-						{flag && (
-							<span style={{ color: "var(--warning)", display: "flex" }}>
-								<BellRing size={11} />
-							</span>
-						)}
-					</span>
-					{!small && (
-						<span
-							className="truncate"
-							style={{ fontSize: 11, color: "var(--fg-secondary)" }}
-						>
-							{progress ?? `${agentName} · ${agent.tabName}`}
-						</span>
-					)}
+				<span
+					className="truncate flex-1 min-w-0"
+					style={{ fontSize: 12.5, color: "var(--fg-primary)" }}
+				>
+					{name}
 				</span>
+				{flag && (
+					<span style={{ color: "var(--warning)", display: "flex" }}>
+						<BellRing size={11} />
+					</span>
+				)}
 			</div>
 			{menu.element}
 		</>
@@ -708,7 +683,7 @@ const AgentNode = memo(function AgentNode({
 });
 
 const NODE_TYPES = {
-	petals: PetalsNode,
+	workspace: WorkspaceNode,
 	orchestrator: OrchestratorNode,
 	add: AddNode,
 	agent: AgentNode,

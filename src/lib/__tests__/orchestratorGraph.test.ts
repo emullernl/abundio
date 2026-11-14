@@ -5,7 +5,6 @@ import {
 	graphModel,
 	layoutGraph,
 	nestBySpawner,
-	petalPath,
 	streamPath,
 } from "../orchestratorGraph";
 import type { PaneNode, WorkspaceWithTabs } from "../types";
@@ -80,8 +79,11 @@ describe("graphModel", () => {
 			order: ["b", "a", "c"],
 			openedWorkspaceIds: new Set(["a", "b"]),
 		});
-		expect(model.petals.map((p) => p.id)).toEqual(["b", "a"]);
-		expect(model.petals[1].agents.map((x) => x.paneId)).toEqual(["a1", "a3"]);
+		expect(model.workspaces.map((p) => p.id)).toEqual(["b", "a"]);
+		expect(model.workspaces[1].agents.map((x) => x.paneId)).toEqual([
+			"a1",
+			"a3",
+		]);
 	});
 
 	it("puts the Orchestrator's own helpers on their own, without itself", () => {
@@ -92,8 +94,25 @@ describe("graphModel", () => {
 			order: [],
 			openedWorkspaceIds: new Set(["o"]),
 		});
-		expect(model.petals).toEqual([]);
+		expect(model.workspaces).toEqual([]);
 		expect(model.helpers.map((h) => h.paneId)).toEqual(["h1"]);
+	});
+
+	it("rings every Agent round its Workspace, a helper next to its spawner", () => {
+		const layout = split(
+			term("lead"),
+			split(term("other"), term("fred", { spawnedBy: "lead" })),
+		);
+		const model = graphModel({
+			...input,
+			panePtyMap: { lead: "x1", other: "x3", fred: "xb" },
+			workspaces: [ws("w", layout)],
+			order: [],
+			openedWorkspaceIds: new Set(["w"]),
+		});
+		const agents = model.workspaces[0].agents;
+		expect(agents.map((a) => a.paneId)).toEqual(["lead", "fred", "other"]);
+		expect(agents.every((a) => a.depth === 0 && !a.spawnedBy)).toBe(true);
 	});
 
 	it("leaves out an Opened Workspace with no Agent running", () => {
@@ -103,7 +122,7 @@ describe("graphModel", () => {
 			order: [],
 			openedWorkspaceIds: new Set(["d"]),
 		});
-		expect(model.petals).toEqual([]);
+		expect(model.workspaces).toEqual([]);
 	});
 });
 
@@ -137,77 +156,114 @@ describe("nestBySpawner", () => {
 });
 
 describe("layoutGraph", () => {
-	const dist = (p: { x: number; y: number }) => Math.hypot(p.x, p.y);
+	const dist = (p: { x: number; y: number }, q = { x: 0, y: 0 }) =>
+		Math.hypot(p.x - q.x, p.y - q.y);
+	const cluster = (id: string, agents: GraphAgent[]) => ({
+		id,
+		name: id,
+		agents,
+	});
+	type Box = { x: number; y: number; width: number; height: number };
+	const overlap = (a: Box, b: Box) =>
+		Math.abs(a.x - b.x) < (a.width + b.width) / 2 &&
+		Math.abs(a.y - b.y) < (a.height + b.height) / 2;
+	const allBoxes = (l: ReturnType<typeof layoutGraph>) => [
+		l.orchestrator,
+		l.add,
+		...Object.values(l.workspaces),
+		...Object.values(l.agents),
+		...Object.values(l.helpers),
+	];
+	const noOverlaps = (l: ReturnType<typeof layoutGraph>) => {
+		const boxes = allBoxes(l);
+		for (let i = 0; i < boxes.length; i++) {
+			for (let j = i + 1; j < boxes.length; j++) {
+				expect(overlap(boxes[i], boxes[j]), `${i} / ${j}`).toBe(false);
+			}
+		}
+	};
 
-	it("rings the Agents round the Orchestrator, helpers further out", () => {
+	it("rings the Workspaces round the Orchestrator, their Agents round them", () => {
 		const layout = layoutGraph({
-			petals: [
-				{ id: "a", name: "A", agents: [agent("a1"), agent("a2", 1)] },
-				{ id: "b", name: "B", agents: [agent("b1")] },
+			workspaces: [
+				cluster("a", [agent("a1"), agent("a2"), agent("a3")]),
+				cluster("b", [agent("b1")]),
 			],
 			helpers: [],
 		});
 		expect(layout.orchestrator).toMatchObject({ x: 0, y: 0 });
-		const r = dist(layout.agents.a1);
-		expect(dist(layout.agents.b1)).toBeCloseTo(r, 0);
-		expect(dist(layout.agents.a2)).toBeGreaterThan(r + 100);
-		expect(dist(layout.add)).toBeCloseTo(r, 0);
+		const a = layout.workspaces.a;
+		const b = layout.workspaces.b;
+		expect(dist(a)).toBeCloseTo(dist(b), -1);
+		// Each Agent is closer to its own Workspace than to the other one.
+		for (const id of ["a1", "a2", "a3"]) {
+			expect(dist(layout.agents[id], a)).toBeLessThan(
+				dist(layout.agents[id], b),
+			);
+		}
+		// The first Workspace sits at the top.
+		expect(a.y).toBeLessThan(0);
 		expect(layout.agents.a1.width).toBe(AGENT_W);
+		noOverlaps(layout);
 	});
 
-	it("gives a petal an angle in proportion to its Agents, in order", () => {
+	it("puts Open workspace right below the Orchestrator", () => {
 		const layout = layoutGraph({
-			petals: [
-				{ id: "a", name: "A", agents: [agent("a1"), agent("a2"), agent("a3")] },
-				{ id: "b", name: "B", agents: [agent("b1")] },
-			],
+			workspaces: [cluster("a", [agent("a1")])],
 			helpers: [],
 		});
-		const [a, b] = layout.petals;
-		expect(a.end - a.start).toBeCloseTo(3 * (b.end - b.start), 5);
-		expect(b.start).toBeCloseTo(a.end, 5);
-		// The first petal starts at the top.
-		expect(a.start).toBeCloseTo(-Math.PI / 2, 5);
+		expect(layout.add.x).toBe(0);
+		expect(layout.add.y).toBeGreaterThan(0);
+		expect(layout.add.y).toBeLessThan(80);
+		noOverlaps(layout);
 	});
 
-	it("never stacks neighbours on top of each other", () => {
-		const many = Array.from({ length: 24 }, (_, i) => agent(`p${i}`));
+	it("keeps the ring of Workspaces as tight as nothing-overlapping allows", () => {
 		const layout = layoutGraph({
-			petals: [{ id: "w", name: "W", agents: many }],
+			workspaces: [cluster("a", [agent("a1")]), cluster("b", [agent("b1")])],
 			helpers: [],
 		});
-		const pts = many.map((a) => layout.agents[a.paneId]);
-		for (let i = 1; i < pts.length; i++) {
-			const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-			expect(d).toBeGreaterThanOrEqual(AGENT_W);
+		noOverlaps(layout);
+		expect(dist(layout.workspaces.a)).toBeLessThan(450);
+	});
+
+	it("never overlaps two nodes, with many Workspaces and Agents", () => {
+		const many = Array.from({ length: 12 }, (_, i) =>
+			cluster(
+				`w${i}`,
+				Array.from({ length: (i % 4) + 1 }, (_, k) => agent(`w${i}-${k}`)),
+			),
+		);
+		noOverlaps(layoutGraph({ workspaces: many, helpers: [agent("h1")] }));
+	});
+
+	it("never overlaps Agents round a corner, whatever their number", () => {
+		for (let n = 1; n <= 14; n++) {
+			noOverlaps(
+				layoutGraph({
+					workspaces: [
+						cluster(
+							"w",
+							Array.from({ length: n }, (_, k) => agent(`a${k}`)),
+						),
+					],
+					helpers: [],
+				}),
+			);
 		}
 	});
 
 	it("rings the Orchestrator's own helpers close round it", () => {
 		const layout = layoutGraph({
-			petals: [{ id: "a", name: "A", agents: [agent("a1")] }],
+			workspaces: [cluster("a", [agent("a1")])],
 			helpers: [agent("h1"), agent("h2")],
 		});
-		expect(dist(layout.helpers.h1)).toBeLessThan(dist(layout.agents.a1));
+		expect(dist(layout.helpers.h1)).toBeLessThan(dist(layout.workspaces.a));
 		expect(layout.helpers.h1).not.toEqual(layout.helpers.h2);
 	});
 });
 
-describe("paths", () => {
-	it("draws a closed petal", () => {
-		const d = petalPath({
-			workspaceId: "w",
-			name: "W",
-			start: 0,
-			end: 1,
-			inner: 100,
-			outer: 300,
-			label: { x: 0, y: 0 },
-		});
-		expect(d.startsWith("M ")).toBe(true);
-		expect(d.endsWith("Z")).toBe(true);
-	});
-
+describe("streamPath", () => {
 	it("bows a stream toward the Orchestrator", () => {
 		// Two points on the right; the control point is pulled left, toward 0.
 		const d = streamPath(300, -100, 300, 100, 0, 0);

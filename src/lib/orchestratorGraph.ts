@@ -3,11 +3,12 @@
  * exist and where they sit. Pure; `OrchestratorGraph.tsx` draws it with React
  * Flow and adds what changes every second (status, progress, streams).
  *
- * Shape: a flower. The Orchestrator in the centre; one petal per **Opened
- * workspace**, its angle in proportion to its Agent count, in Left sidebar
- * order clockwise from the top; a helper one ring further out than the Agent
- * that spawned it; the Orchestrator's own helpers on a small ring round the
- * centre; and one more slot on the outer ring for "Open workspace…".
+ * Shape: the Orchestrator in the centre; each **Opened workspace** a node on
+ * a ring round it, in Left sidebar order clockwise from the top; each
+ * Workspace's Agents, all of them, in a ring round their Workspace, a helper
+ * next to the Agent that spawned it; the Orchestrator's own
+ * helpers close round the centre; and one more slot on the ring for "Open
+ * workspace…".
  */
 
 import { parseTabLayout } from "./paneTree";
@@ -32,9 +33,9 @@ export interface GraphAgent {
 	tabName: string;
 	agentId: string | undefined;
 	handle: string | undefined;
-	/** The pane whose Agent spawned this one, when it is in the same petal. */
+	/** The pane whose Agent spawned this one, when it is in the same Workspace. */
 	spawnedBy: string | undefined;
-	/** Rings out from its petal's first ring: 0 for a top-level Agent. */
+	/** Rings out from its Workspace's first ring: 0 for a top-level Agent. */
 	depth: number;
 }
 
@@ -45,7 +46,7 @@ export interface GraphWorkspace {
 }
 
 export interface GraphModel {
-	petals: GraphWorkspace[];
+	workspaces: GraphWorkspace[];
 	/** Agents in the Orchestrator's own Workspace, other than the
 	 *  Orchestrator itself. */
 	helpers: GraphAgent[];
@@ -90,7 +91,7 @@ function agentsOf(ws: WorkspaceWithTabs, input: GraphModelInput): GraphAgent[] {
 }
 
 /** Puts each helper right after the Agent that spawned it (depth-first), so
- *  a petal reads as a small tree. A spawner outside the petal (another
+ *  a cluster reads as a small tree. A spawner outside the cluster (another
  *  Workspace, or gone) leaves its helper at the top level. */
 export function nestBySpawner(agents: readonly GraphAgent[]): GraphAgent[] {
 	const ids = new Set(agents.map((a) => a.paneId));
@@ -123,7 +124,7 @@ export function nestBySpawner(agents: readonly GraphAgent[]): GraphAgent[] {
 	return out;
 }
 
-/** The flower's content: a petal per Opened workspace with Agents running,
+/** The graph's content: one cluster per Opened workspace with Agents running,
  *  in sidebar order, and the Orchestrator's own helpers. */
 export function graphModel(input: GraphModelInput): GraphModel {
 	const rank = new Map(input.order.map((id, i) => [id, i]));
@@ -132,7 +133,7 @@ export function graphModel(input: GraphModelInput): GraphModel {
 		.map((w, i) => ({ w, r: rank.get(w.id) ?? input.order.length + i }))
 		.sort((a, b) => a.r - b.r)
 		.map(({ w }) => w);
-	const petals: GraphWorkspace[] = [];
+	const clusters: GraphWorkspace[] = [];
 	const helpers: GraphAgent[] = [];
 	for (const ws of opened) {
 		const agents = agentsOf(ws, input);
@@ -143,30 +144,46 @@ export function graphModel(input: GraphModelInput): GraphModel {
 			continue;
 		}
 		if (agents.length === 0) continue;
-		petals.push({ id: ws.id, name: ws.name, agents: nestBySpawner(agents) });
+		// Every Agent circles its Workspace directly, whatever its Tab or who
+		// started it; a helper sits next to the Agent that spawned it.
+		clusters.push({
+			id: ws.id,
+			name: ws.name,
+			agents: nestBySpawner(agents).map((a) => ({
+				...a,
+				depth: 0,
+				spawnedBy: undefined,
+			})),
+		});
 	}
-	return { petals, helpers };
+	return { workspaces: clusters, helpers };
 }
 
 // ── Layout ──
 
-export const AGENT_W = 184;
-export const AGENT_H = 48;
+export const AGENT_W = 144;
+export const AGENT_H = 30;
+export const WS_W = 150;
+export const WS_H = 36;
 export const ORCH_W = 210;
 export const ORCH_H = 56;
-export const HELPER_W = 150;
-export const HELPER_H = 40;
-export const ADD_W = 150;
-export const ADD_H = 40;
-/** Space each Agent needs along the outer ring. */
-const SLOT_ARC = 220;
-/** The smallest first ring, so a small flower is not cramped round the
- *  Orchestrator. */
-const MIN_RADIUS = 260;
-/** Distance from one ring of Agents to the next (helpers). */
-const RING_STEP = 210;
-/** The Orchestrator's own helpers. */
-const HELPER_RADIUS = 125;
+export const HELPER_W = 144;
+export const HELPER_H = 30;
+export const ADD_W = 140;
+export const ADD_H = 34;
+/** Room between a Workspace's pill and its Agents' pills. */
+const PILL_GAP = 34;
+/** Distance between neighbouring Agents along the ring round their
+ *  Workspace. Enough that two pills either side of a corner never touch. */
+const AGENT_SPACING = 200;
+/** Room between two neighbouring Workspace clusters. */
+const CLUSTER_GAP = 24;
+/** Room between the Orchestrator and the nodes right round it. */
+const CENTRE_GAP = 14;
+/** How much the ring of Workspaces grows per try until nothing overlaps. */
+const RADIUS_STEP = 16;
+/** The smallest ring of Workspaces round the Orchestrator. */
+const MIN_RADIUS = 200;
 
 /** A node's centre and size. */
 export interface Placed {
@@ -176,115 +193,246 @@ export interface Placed {
 	height: number;
 }
 
-export interface Petal {
-	workspaceId: string;
-	name: string;
-	/** Angles in radians, clockwise from the top (screen coordinates). */
-	start: number;
-	end: number;
-	/** Radius of its inner and outer edge. */
-	inner: number;
-	outer: number;
-	/** Where its name goes, past the outer edge. */
-	label: { x: number; y: number };
-}
-
 export interface GraphLayout {
 	/** Every position is a centre, with the Orchestrator at (0, 0). */
 	orchestrator: Placed;
+	workspaces: Record<string, Placed>;
 	agents: Record<string, Placed>;
 	helpers: Record<string, Placed>;
-	petals: Petal[];
-	/** The "Open workspace…" node. */
+	/** The "Open workspace…" node, on the ring as one more Workspace. */
 	add: Placed;
 }
 
 const TOP = -Math.PI / 2;
 
-const at = (radius: number, angle: number) => ({
-	x: Math.round(radius * Math.cos(angle)),
-	y: Math.round(radius * Math.sin(angle)),
+const at = (cx: number, cy: number, radius: number, angle: number) => ({
+	x: Math.round(cx + radius * Math.cos(angle)),
+	y: Math.round(cy + radius * Math.sin(angle)),
 });
 
-/** Positions for `model`: see the module comment. */
-export function layoutGraph(model: GraphModel): GraphLayout {
-	const count = model.petals.reduce((n, p) => n + p.agents.length, 0);
-	const slots = count + 1; // + the "Open workspace…" slot
-	const step = (2 * Math.PI) / slots;
-	const radius = Math.max(
-		MIN_RADIUS,
-		Math.round((slots * SLOT_ARC) / (2 * Math.PI)),
+/** The rectangle Agents sit on round a Workspace pill: just clear of it
+ *  (pill half-sizes added), grown in proportion until every Agent has
+ *  `AGENT_SPACING` along its edge. Half-sizes. */
+function ringBox(
+	count: number,
+	centre = { w: WS_W, h: WS_H },
+	around = { w: AGENT_W, h: AGENT_H },
+	gap = PILL_GAP,
+): { hx: number; hy: number } {
+	const hx0 = centre.w / 2 + around.w / 2 + gap;
+	const hy0 = centre.h / 2 + around.h / 2 + gap;
+	const perimeter = 4 * (hx0 + hy0);
+	const grow = Math.max(1, (Math.max(count, 1) * AGENT_SPACING) / perimeter);
+	return { hx: Math.round(hx0 * grow), hy: Math.round(hy0 * grow) };
+}
+
+/** Where along the rectangle's edge (clockwise from its top-left corner)
+ *  the ray from its centre at `angle` meets it. */
+function edgeOffset(box: { hx: number; hy: number }, angle: number): number {
+	const { hx, hy } = box;
+	const c = Math.cos(angle);
+	const sn = Math.sin(angle);
+	const t = Math.min(
+		Math.abs(c) < 1e-9 ? Number.POSITIVE_INFINITY : hx / Math.abs(c),
+		Math.abs(sn) < 1e-9 ? Number.POSITIVE_INFINITY : hy / Math.abs(sn),
 	);
+	const x = t * c;
+	const y = t * sn;
+	if (Math.abs(y + hy) < 1e-6) return x + hx; // top
+	if (Math.abs(x - hx) < 1e-6) return 2 * hx + (y + hy); // right
+	if (Math.abs(y - hy) < 1e-6) return 2 * hx + 2 * hy + (hx - x); // bottom
+	return 4 * hx + 2 * hy + (hy - y); // left
+}
 
-	const agents: Record<string, Placed> = {};
-	const petals: Petal[] = [];
-	let slot = 0;
-	for (const ws of model.petals) {
-		const start = TOP + slot * step;
-		const maxDepth = Math.max(0, ...ws.agents.map((a) => a.depth));
-		ws.agents.forEach((a, i) => {
-			const angle = TOP + (slot + i + 0.5) * step;
-			agents[a.paneId] = {
-				...at(radius + a.depth * RING_STEP, angle),
-				width: AGENT_W,
-				height: AGENT_H,
-			};
-		});
-		slot += ws.agents.length;
-		const end = TOP + slot * step;
-		const outer = radius + maxDepth * RING_STEP + AGENT_H + 40;
-		petals.push({
-			workspaceId: ws.id,
-			name: ws.name,
-			start,
-			end,
-			inner: Math.round(radius * 0.55),
-			outer,
-			label: at(outer + 26, (start + end) / 2),
-		});
-	}
+/** The point `offset` along the rectangle's edge, clockwise from its
+ *  top-left corner, about its centre. */
+function edgePoint(
+	box: { hx: number; hy: number },
+	offset: number,
+): { x: number; y: number } {
+	const { hx, hy } = box;
+	const per = 4 * (hx + hy);
+	let d = ((offset % per) + per) % per;
+	if (d < 2 * hx) return { x: -hx + d, y: -hy };
+	d -= 2 * hx;
+	if (d < 2 * hy) return { x: hx, y: -hy + d };
+	d -= 2 * hy;
+	if (d < 2 * hx) return { x: hx - d, y: hy };
+	d -= 2 * hx;
+	return { x: -hx, y: hy - d };
+}
 
+type Box = { x: number; y: number; width: number; height: number };
+
+const overlaps = (a: Box, b: Box) =>
+	Math.abs(a.x - b.x) < (a.width + b.width) / 2 &&
+	Math.abs(a.y - b.y) < (a.height + b.height) / 2;
+
+/** The nodes right round the Orchestrator: "Open workspace…" just below it,
+ *  then its own helpers on round the same ring. */
+function centreRing(helperIds: string[]): {
+	add: Placed;
+	helpers: Record<string, Placed>;
+} {
+	const box = ringBox(
+		helperIds.length + 1,
+		{ w: ORCH_W, h: ORCH_H },
+		{ w: HELPER_W, h: HELPER_H },
+		CENTRE_GAP,
+	);
+	// Below the Orchestrator, as close as it fits.
+	const add: Placed = {
+		x: 0,
+		y: ORCH_H / 2 + CENTRE_GAP + ADD_H / 2,
+		width: ADD_W,
+		height: ADD_H,
+	};
+	const per = 4 * (box.hx + box.hy);
+	const step = per / (helperIds.length + 1);
+	const bottom = edgeOffset(box, Math.PI / 2);
 	const helpers: Record<string, Placed> = {};
-	const hStep = (2 * Math.PI) / Math.max(1, model.helpers.length);
-	model.helpers.forEach((h, i) => {
-		helpers[h.paneId] = {
-			...at(HELPER_RADIUS + ORCH_H / 2, TOP + Math.PI / 4 + i * hStep),
+	helperIds.forEach((id, k) => {
+		const p = edgePoint(box, bottom + (k + 1) * step);
+		helpers[id] = {
+			x: Math.round(p.x),
+			y: Math.round(p.y),
 			width: HELPER_W,
 			height: HELPER_H,
 		};
 	});
+	return { add, helpers };
+}
 
+/** A Workspace's pill and its Agents, about the Workspace's centre, with
+ *  the first Agent facing `mid` (away from the Orchestrator). */
+function clusterBoxes(
+	ws: GraphWorkspace,
+	mid: number,
+): { pill: Box; agents: [string, Box][] } {
+	const box = ringBox(ws.agents.length);
+	const per = 4 * (box.hx + box.hy);
+	const step = per / Math.max(1, ws.agents.length);
+	const start = edgeOffset(box, mid) + (ws.agents.length > 1 ? step / 2 : 0);
 	return {
-		orchestrator: { x: 0, y: 0, width: ORCH_W, height: ORCH_H },
-		agents,
-		helpers,
-		petals,
-		add: {
-			...at(radius, TOP + (slots - 0.5) * step),
-			width: ADD_W,
-			height: ADD_H,
-		},
+		pill: { x: 0, y: 0, width: WS_W, height: WS_H },
+		agents: ws.agents.map((a, k) => {
+			const p = edgePoint(box, start + k * step);
+			return [
+				a.paneId,
+				{ x: p.x, y: p.y, width: AGENT_W, height: AGENT_H },
+			] as [string, Box];
+		}),
 	};
 }
 
+/** How far a cluster reaches either way along the ring at angle `mid`: its
+ *  boxes projected on the ring's tangent there. */
+function tangentialHalf(ws: GraphWorkspace, mid: number): number {
+	const tx = -Math.sin(mid);
+	const ty = Math.cos(mid);
+	const { pill, agents } = clusterBoxes(ws, mid);
+	let half = 0;
+	for (const b of [pill, ...agents.map(([, b]) => b)]) {
+		const centre = Math.abs(b.x * tx + b.y * ty);
+		const extent = Math.abs((b.width / 2) * tx) + Math.abs((b.height / 2) * ty);
+		half = Math.max(half, centre + extent);
+	}
+	return half;
+}
+
+/** Angles round the ring for clusters needing `spans` each, the first
+ *  centred at the top. */
+function anglesFor(spans: number[]): number[] {
+	const total = Math.max(
+		1,
+		spans.reduce((a, b) => a + b, 0),
+	);
+	const mids: number[] = [];
+	let angle = TOP - (spans.length ? (spans[0] / total) * Math.PI : 0);
+	for (const span of spans) {
+		const share = (span / total) * 2 * Math.PI;
+		mids.push(angle + share / 2);
+		angle += share;
+	}
+	return mids;
+}
+
 /**
- * An SVG path for a petal: a rounded wedge from `inner` to `outer` between
- * its angles, drawn about the origin.
+ * Positions for `model`: the Workspaces on a ring round the Orchestrator,
+ * clockwise from the top in sidebar order, each given room along the ring
+ * for its cluster's real width there; each Workspace's Agents evenly round
+ * it, the first facing away from the Orchestrator; "Open workspace…" just
+ * below the Orchestrator, its own helpers round it. The ring is as small as
+ * it can be with no two nodes touching.
  */
-export function petalPath(p: Petal, gap = 0.035): string {
-	const a0 = p.start + gap;
-	const a1 = Math.max(a0 + 0.01, p.end - gap);
-	const pt = (r: number, a: number) =>
-		`${(r * Math.cos(a)).toFixed(1)} ${(r * Math.sin(a)).toFixed(1)}`;
-	const large = a1 - a0 > Math.PI ? 1 : 0;
-	return [
-		`M ${pt(p.inner, a0)}`,
-		`L ${pt(p.outer, a0)}`,
-		`A ${p.outer} ${p.outer} 0 ${large} 1 ${pt(p.outer, a1)}`,
-		`L ${pt(p.inner, a1)}`,
-		`A ${p.inner} ${p.inner} 0 ${large} 0 ${pt(p.inner, a0)}`,
-		"Z",
-	].join(" ");
+export function layoutGraph(model: GraphModel): GraphLayout {
+	const { add, helpers } = centreRing(model.helpers.map((h) => h.paneId));
+	const centre: Box[] = [
+		{ x: 0, y: 0, width: ORCH_W, height: ORCH_H },
+		add,
+		...Object.values(helpers),
+	];
+	const list = model.workspaces;
+	// Room along the ring: first guess from equal shares, then once more
+	// with the angles that guess gives.
+	let mids = anglesFor(list.map(() => 1));
+	for (let pass = 0; pass < 2; pass++) {
+		mids = anglesFor(
+			list.map((ws, i) => 2 * tangentialHalf(ws, mids[i]) + CLUSTER_GAP),
+		);
+	}
+	const spans = list.map(
+		(ws, i) => 2 * tangentialHalf(ws, mids[i]) + CLUSTER_GAP,
+	);
+	const circumference = spans.reduce((a, b) => a + b, 0);
+
+	const place = (radius: number) => {
+		const workspaces: Record<string, Placed> = {};
+		const agents: Record<string, Placed> = {};
+		list.forEach((ws, i) => {
+			const c = at(0, 0, radius, mids[i]);
+			workspaces[ws.id] = { ...c, width: WS_W, height: WS_H };
+			for (const [id, b] of clusterBoxes(ws, mids[i]).agents) {
+				agents[id] = {
+					x: Math.round(c.x + b.x),
+					y: Math.round(c.y + b.y),
+					width: AGENT_W,
+					height: AGENT_H,
+				};
+			}
+		});
+		return { workspaces, agents };
+	};
+	const clash = (placed: ReturnType<typeof place>) => {
+		const groups = list.map((ws) => [
+			placed.workspaces[ws.id],
+			...ws.agents.map((a) => placed.agents[a.paneId]),
+		]);
+		for (let i = 0; i < groups.length; i++) {
+			for (const b of groups[i]) {
+				if (centre.some((c) => overlaps(b, c))) return true;
+				for (let j = i + 1; j < groups.length; j++) {
+					if (groups[j].some((o) => overlaps(b, o))) return true;
+				}
+			}
+		}
+		return false;
+	};
+
+	let radius = Math.max(MIN_RADIUS, Math.round(circumference / (2 * Math.PI)));
+	let placed = place(radius);
+	for (let tries = 0; tries < 300 && clash(placed); tries++) {
+		radius += RADIUS_STEP;
+		placed = place(radius);
+	}
+
+	return {
+		orchestrator: { x: 0, y: 0, width: ORCH_W, height: ORCH_H },
+		workspaces: placed.workspaces,
+		agents: placed.agents,
+		helpers,
+		add,
+	};
 }
 
 /**

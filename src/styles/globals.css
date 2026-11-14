@@ -746,18 +746,6 @@ body,
 .orch-node-receiving {
 	animation: orch-node-receiving 1.6s ease-in-out infinite;
 }
-.orch-graph .orch-petal {
-	fill: color-mix(in srgb, var(--accent) 8%, transparent);
-	stroke: color-mix(in srgb, var(--accent) 22%, transparent);
-	stroke-width: 1.2;
-	transition: fill 160ms ease;
-}
-.orch-graph .orch-petal-odd {
-	fill: color-mix(in srgb, var(--accent) 5%, transparent);
-}
-.orch-graph .orch-petal:hover {
-	fill: color-mix(in srgb, var(--accent) 12%, transparent);
-}
 @media (prefers-reduced-motion: reduce) {
 	.orch-node-in,
 	.orch-node-pulse {
