@@ -36,10 +36,13 @@ export function NewAgentDialog({
 	onClose,
 	onBack,
 	animateIn = true,
+	initialWorkspaceId,
 }: {
 	onClose: () => void;
 	onBack?: () => void;
 	animateIn?: boolean;
+	/** Preselect this Workspace (the Orchestrator graph's Workspace menu). */
+	initialWorkspaceId?: string;
 }) {
 	const workspaces = useWorkWorkspaces();
 	// Listed but not choosable: nothing may start there (ADR-0053).
@@ -74,7 +77,12 @@ export function NewAgentDialog({
 		);
 	}, [ordered, query]);
 
-	const [wsIndex, setWsIndex] = useState(0);
+	const [wsIndex, setWsIndex] = useState(() =>
+		Math.max(
+			0,
+			ordered.findIndex((w) => w.id === initialWorkspaceId),
+		),
+	);
 	const [agentIndex, setAgentIndex] = useState(0);
 	const [worktree, setWorktree] = useState(false);
 	const [starting, setStarting] = useState(false);

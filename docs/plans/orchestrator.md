@@ -23,7 +23,7 @@ Agent control (ADR-0054, ADR-0055) already lets any Agent see and drive the whol
 | Entry | Overview bar button, `Cmd+Shift+O` / `Ctrl+Shift+O` (rebindable), Go ▸ Orchestrator, Command palette. A click on the Orchestrator's notification lands in the view. |
 | Layout | Orchestrator tabs on top (draggable height, collapsible, per Window); the Orchestrator workspace's own Tab bar and panes below, always visible. |
 | Orchestrator tabs | Graph (first, never closed), at most one Peek, files of any Workspace of the Profile. Files are editable like a File pane. Remembered per Profile, except Peek. |
-| Graph | React Flow (`@xyflow/react`) + automatic tree layout (`dagre`). Orchestrator on top, one group box per Workspace, Agent nodes with status icon, handle, Progress line. Spawned panes under their spawner. Agents of not-Opened Workspaces greyed. |
+| Graph | React Flow (`@xyflow/react`) with a fixed org-chart layout of our own (no layout library). Orchestrator on top, one group box per Workspace, Agent nodes with status icon, handle, Progress line. Spawned panes under their spawner. Agents of not-Opened Workspaces greyed. |
 | Animation | Agent control calls (caller → target edge, read dotted / act solid), spawning (node grows from spawner), status changes (pulse). `prefers-reduced-motion` respected. |
 | Click | Single: Peek. Double: Switch to. Greyed node: a card with Relaunch workspace. |
 | Menus | Agent node: the Agent menu + Peek + Ask the Orchestrator about it (sends at once; typed but not sent if the Orchestrator is Working). Workspace box: Open/Close Workspace, New agent, New task, Open file…. |
@@ -76,7 +76,7 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 
 ### 6. The graph
 
-- `pnpm add @xyflow/react dagre`.
+- `pnpm add @xyflow/react`. No layout library: `layoutGraph` places the boxes in rows that wrap to the graph area's shape (`aspect`), each row centred, the Orchestrator over them. Simpler than dagre and unit-tested.
 - Pure `lib/orchestratorGraph.ts`: nodes/edges from workspaces, layouts, statuses, Progress lines, `spawnedBy`, Dormant workspaces' remembered Agents. Tested.
 - `lib/controlActivity.ts`: a tiny pub/sub that `handleControlRequest` publishes to (caller pane, target pane, read/act) for animated edges; spawn and status-change events.
 - `OrchestratorGraph.tsx`: React Flow, custom Agent and Workspace nodes, click / double-click / context menus.

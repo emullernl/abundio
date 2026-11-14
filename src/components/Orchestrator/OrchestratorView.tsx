@@ -21,6 +21,7 @@ import {
 	primaryButtonClass,
 	secondaryButtonClass,
 } from "../PromptActions/fieldStyles";
+import { OrchestratorGraph } from "./OrchestratorGraph";
 
 /**
  * The **Orchestrator view** (ADR-0057): the Window's third view, beside the
@@ -86,7 +87,7 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 			<TabStrip collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
 			{content > 0 && (
 				<div className="relative shrink-0" style={{ height: content }}>
-					<WelcomeCard />
+					{phase === "ready" ? <OrchestratorGraph /> : <WelcomeCard />}
 				</div>
 			)}
 			<Divider

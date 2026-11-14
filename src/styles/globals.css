@@ -690,3 +690,64 @@ body,
 		animation: none;
 	}
 }
+
+/* ── Orchestrator graph (ADR-0057) ── */
+.orch-graph .react-flow {
+	background: transparent;
+	--xy-attribution-background-color: transparent;
+}
+.orch-graph .react-flow__attribution a {
+	color: var(--fg-secondary);
+	opacity: 0.5;
+}
+.orch-graph .react-flow__node {
+	cursor: default;
+}
+/* A helper that just appeared grows out of its place. */
+@keyframes orch-node-in {
+	from {
+		opacity: 0;
+		transform: scale(0.8);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+.orch-node-in {
+	animation: orch-node-in 360ms ease-out;
+}
+/* A status change brightens the node once. */
+@keyframes orch-node-pulse {
+	0% {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+	}
+	100% {
+		box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 0%, transparent);
+	}
+}
+.orch-node-pulse {
+	animation: orch-node-pulse 700ms ease-out;
+}
+/* An Agent control call fades out over its lifetime (PULSE_MS). */
+@keyframes orch-call-fade {
+	0%,
+	70% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+.orch-graph .orch-call path {
+	animation: orch-call-fade 2600ms ease-in forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+	.orch-node-in,
+	.orch-node-pulse {
+		animation: none;
+	}
+	.orch-graph .react-flow__edge.animated path {
+		animation: none;
+	}
+}

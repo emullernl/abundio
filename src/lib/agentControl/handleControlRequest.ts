@@ -15,6 +15,7 @@ import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { type TaskSeed, useWorkspaceStore } from "../../stores/workspaceStore";
 import { checkHandle } from "../agentHandle";
 import { closePaneNow, releaseOwner } from "../closePane";
+import { controlKind, publishControlActivity } from "../controlActivity";
 import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
 import {
@@ -288,6 +289,28 @@ export function requireAgentCaller(caller: ControlCaller): void {
 	}
 }
 
+/** Tells the Orchestrator view's graph which pane this call is aimed at, if
+ *  any. Best effort: a target that does not resolve is the call's own error
+ *  to report, not this one's. */
+function noteActivity(
+	caller: ControlCaller,
+	request: ControlRequest,
+	scope: Awaited<ReturnType<typeof loadScope>>,
+): void {
+	const ref = "target" in request ? request.target : null;
+	if (!ref) return;
+	try {
+		const pane = resolveTarget(ref, scope.panes, scope.numbers);
+		publishControlActivity({
+			callerPaneId: caller.paneId,
+			targetPaneId: pane.node.id,
+			kind: controlKind(request.op),
+		});
+	} catch {
+		// Not resolvable: the call itself reports it.
+	}
+}
+
 /** Carry out one request. Throws `ControlError` for an answer the Agent
  *  should see as an error. `target` is where Rust routed it (ADR-0055);
  *  without one, the caller's own Workspace. Exported for tests. */
@@ -303,6 +326,7 @@ export async function runRequest(
 		return closeWorkspaceFor(caller, request.force, target);
 	}
 	const scope = await loadScope(caller, target, signal);
+	noteActivity(caller, request, scope);
 	switch (request.op) {
 		case "notes.read":
 			return { notes: await readNotes(scope.workspaceId) };
