@@ -530,41 +530,45 @@ export function TabBar({
 	);
 }
 
-function NewTabButton({
+/** Opens a new Tab. Labelled "Tab" to pair with the **Task** button beside
+ *  it. It is also a drop target for a dragged pane; that state is drawn with
+ *  inline styles, while hover lives in classes (see CLAUDE.md). */
+export function NewTabButton({
 	onClick,
 	isDropTarget,
 }: {
 	onClick: () => void;
 	isDropTarget?: boolean;
 }) {
-	const [hovered, setHovered] = useState(false);
-
+	const newTabKey = useShortcutLabel("new-tab");
 	return (
 		<button
 			type="button"
 			onClick={onClick}
 			data-new-tab-button
-			className="flex items-center justify-center flex-shrink-0 rounded-md self-center"
+			title={withShortcut("New tab", newTabKey)}
+			aria-label="New tab"
+			className={`flex items-center flex-shrink-0 rounded-md self-center transition-colors ${
+				isDropTarget
+					? "text-[var(--accent)]"
+					: "text-[var(--fg-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
+			}`}
 			style={{
-				width: 26,
 				height: 26,
-				color:
-					isDropTarget || hovered ? "var(--accent)" : "var(--fg-secondary)",
-				backgroundColor: isDropTarget
-					? "color-mix(in srgb, var(--accent) 15%, transparent)"
-					: hovered
-						? "var(--bg-tertiary)"
-						: "transparent",
+				padding: "0 8px 0 6px",
+				gap: 5,
+				fontSize: 12,
 				marginLeft: 4,
 				marginBottom: 4,
-				transition: "all 120ms ease-out",
-				outline: isDropTarget ? "1.5px solid var(--accent)" : "none",
-				outlineOffset: 1,
+				...(isDropTarget && {
+					backgroundColor: "color-mix(in srgb, var(--accent) 15%, transparent)",
+					outline: "1.5px solid var(--accent)",
+					outlineOffset: 1,
+				}),
 			}}
-			onMouseEnter={() => setHovered(true)}
-			onMouseLeave={() => setHovered(false)}
 		>
 			<PlusIcon size={14} />
+			Tab
 		</button>
 	);
 }

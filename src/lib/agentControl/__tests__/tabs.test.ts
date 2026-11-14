@@ -242,10 +242,10 @@ describe("tab new", () => {
 			focus: false,
 		});
 		const t = lastTab();
-		expect(t.name).toBe("Terminal 2");
+		expect(t.name).toBe("Tab 1");
 		expect(paneOf(t)).toMatchObject({ spawnedBy: "a" });
 		expect(paneOf(t)).not.toHaveProperty("agentId");
-		expect(reply).toMatchObject({ mode: "shell", tab: "Terminal 2" });
+		expect(reply).toMatchObject({ mode: "shell", tab: "Tab 1" });
 		expect(useWorkspaceStore.getState().activeTabByWorkspace.ws).toBe("t1");
 	});
 

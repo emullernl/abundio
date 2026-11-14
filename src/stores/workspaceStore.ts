@@ -36,6 +36,7 @@ import {
 	relaunchCommandForPane,
 	terminalNodes,
 } from "../lib/sessionResume";
+import { FIRST_TAB_NAME, nextTabName } from "../lib/tabName";
 import { teardownTerminal } from "../lib/terminalManager";
 import type {
 	CodingAgent,
@@ -1081,11 +1082,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	createTab: async (workspaceId, agent, seedLayout, opts) => {
 		const activate = opts?.activate ?? true;
 		const workspace = get().workspaces.find((s) => s.id === workspaceId);
-		const nextNum = (workspace?.tabs.length ?? 0) + 1;
 
 		// The seed layout may be a bare file leaf, or — for markdown files opened
 		// with an auto-opened preview — a split containing the file pane.
-		let name = `Terminal ${nextNum}`;
+		let name = nextTabName(workspace?.tabs.map((t) => t.name) ?? []);
 		const seedFilePane = seedLayout ? findFilePaneInTree(seedLayout) : null;
 		if (seedFilePane) {
 			name = seedFilePane.filePath.split("/").pop() || "file";
@@ -1206,7 +1206,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 		// If this is the last tab, create a new one instead of closing
 		if (workspace.tabs.length <= 1) {
-			const newTab = await tabsApi.create(workspace.id, "Terminal 1");
+			const newTab = await tabsApi.create(workspace.id, FIRST_TAB_NAME);
 			await tabsApi.delete(tabId);
 			set((state) => ({
 				workspaces: state.workspaces.map((s) =>
@@ -1589,7 +1589,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			const tabName =
 				movedNode.type === "file"
 					? (movedNode.filePath.split("/").pop() ?? "file")
-					: `Terminal ${(workspace.tabs.length + 1).toString()}`;
+					: nextTabName(workspace.tabs.map((t) => t.name));
 
 			// Do all DB writes BEFORE any state update so React never sees
 			// the moved paneId in two layouts at the same time (which would

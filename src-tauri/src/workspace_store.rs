@@ -263,7 +263,7 @@ impl WorkspaceStore {
 
         conn.execute(
             "INSERT INTO tabs (id, workspace_id, name, layout_json, position) VALUES (?1, ?2, ?3, ?4, 0)",
-            rusqlite::params![tab_id, workspace_id, "Terminal 1", layout_json],
+            rusqlite::params![tab_id, workspace_id, "Tab 1", layout_json],
         )?;
 
         let workspace = Self::get_workspace_with_conn(&conn, &workspace_id)?;
@@ -1496,7 +1496,7 @@ mod tests {
         assert_eq!(result.workspace.root_folder, "/tmp");
         assert_eq!(result.workspace.profile_id, DEFAULT_PID);
         assert_eq!(result.tabs.len(), 1);
-        assert_eq!(result.tabs[0].name, "Terminal 1");
+        assert_eq!(result.tabs[0].name, "Tab 1");
     }
 
     #[test]
@@ -1611,7 +1611,7 @@ mod tests {
         store.create_tab(&workspace.workspace.id, "Tab 3").unwrap();
         let tabs = store.list_tabs(&workspace.workspace.id).unwrap();
         assert_eq!(tabs.len(), 3); // 1 default + 2 created
-        assert_eq!(tabs[0].name, "Terminal 1");
+        assert_eq!(tabs[0].name, "Tab 1");
         assert_eq!(tabs[1].name, "Tab 2");
         assert_eq!(tabs[2].name, "Tab 3");
     }
