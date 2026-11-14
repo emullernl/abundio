@@ -51,7 +51,7 @@ const target = (id: string): KeymapEntry =>
 describe("findConflict", () => {
 	it("finds a same-scope clash", () => {
 		const c = findConflict(target("app:search-in-terminal"), cmd("t"), entries);
-		expect(c).toEqual({ kind: "same-scope", other: target("app:new-tab") });
+		expect(c).toEqual({ kind: "clash", other: target("app:new-tab") });
 	});
 
 	it("is no conflict to rebind an action to its own chord", () => {
@@ -73,7 +73,7 @@ describe("findConflict", () => {
 		// Find in terminal falls through to Monaco's Find while the editor has focus.
 		expect(
 			findConflict(target("editor:comment"), cmd("f"), entries)?.kind,
-		).toBe("same-scope");
+		).toBe("clash");
 		const onlyApp = entries.filter((e) => e.id !== "editor:find");
 		expect(
 			findConflict(target("editor:comment"), cmd("f"), onlyApp),
@@ -108,6 +108,124 @@ describe("planRecording", () => {
 		expect(
 			planRecording(target("app:new-tab"), cmd("y", true), entries, true),
 		).toEqual({
+			kind: "commit",
+			notice: null,
+		});
+	});
+});
+
+describe("Navigator Shortcut conflicts", () => {
+	const navScope: KeymapEntry = {
+		id: "app:navigator-toggle-scope",
+		label: "Switch Opened / All workspaces",
+		scope: "navigator",
+		chord: { key: "Tab", meta: false, shift: false, ctrl: false },
+	};
+	const navWaiting: KeymapEntry = {
+		id: "app:navigator-filter-waiting",
+		label: "Toggle Waiting filter",
+		scope: "navigator",
+		chord: cmd("1"),
+	};
+	const prompt1: KeymapEntry = {
+		id: "app:prompt-action-1",
+		label: "Fire prompt action 1",
+		scope: "app",
+		chord: cmd("1"),
+		standsDownUnderNavigator: true,
+	};
+	const all = [...entries, navScope, navWaiting, prompt1];
+
+	it("shares a Chord with an app Shortcut that stands down", () => {
+		expect(findConflict(navWaiting, cmd("1"), all)).toBeNull();
+		expect(findConflict(prompt1, cmd("1"), all)).toBeNull();
+	});
+
+	it("clashes with an app Shortcut that still acts", () => {
+		expect(findConflict(navWaiting, cmd("t"), all)).toEqual({
+			kind: "clash",
+			other: target("app:new-tab"),
+		});
+		expect(findConflict(target("app:new-tab"), cmd("1"), all)).toEqual({
+			kind: "clash",
+			other: navWaiting,
+		});
+	});
+
+	it("clashes with another Navigator Shortcut", () => {
+		expect(findConflict(navScope, cmd("1"), all)).toEqual({
+			kind: "clash",
+			other: navWaiting,
+		});
+	});
+
+	it("never clashes with an editor Shortcut", () => {
+		expect(findConflict(navWaiting, cmd("/"), all)).toBeNull();
+	});
+
+	it("records a bare Tab, which an app Shortcut may not", () => {
+		const tab = { key: "Tab", meta: false, shift: false, ctrl: false };
+		expect(planRecording(navScope, tab, all, true)).toEqual({
+			kind: "commit",
+			notice: null,
+		});
+		expect(planRecording(target("app:new-tab"), tab, all, true).kind).toBe(
+			"refuse",
+		);
+	});
+});
+
+describe("the scope key's Shift alias", () => {
+	const tab = { key: "Tab", meta: false, shift: false, ctrl: false };
+	const scope: KeymapEntry = {
+		id: "app:navigator-toggle-scope",
+		label: "Switch Opened / All workspaces",
+		scope: "navigator",
+		chord: tab,
+		shiftAlias: true,
+	};
+	const alias: KeymapEntry = {
+		id: "app:navigator-toggle-scope#shift",
+		label: "Switch Opened / All workspaces (Shift alias)",
+		scope: "navigator",
+		chord: { ...tab, shift: true },
+		aliasOf: scope.id,
+	};
+	const waiting: KeymapEntry = {
+		id: "app:navigator-filter-waiting",
+		label: "Toggle Waiting filter",
+		scope: "navigator",
+		chord: cmd("1"),
+	};
+	const all = [...entries, scope, waiting, alias];
+
+	it("notes, rather than asks, when a Shortcut takes the alias's Chord", () => {
+		const plan = planRecording(waiting, { ...tab, shift: true }, all, true);
+		expect(plan.kind).toBe("commit");
+		expect(plan.kind === "commit" && plan.notice).toContain("Shift alias");
+	});
+
+	it("notes when the scope key's new alias is already taken", () => {
+		const plan = planRecording(scope, cmd("t", false), all, true);
+		// ⌘T is New tab itself: a real clash, still asked.
+		expect(plan.kind).toBe("ask");
+		const f2 = { key: "F2", meta: false, shift: false, ctrl: false };
+		const withShiftF2: KeymapEntry[] = [
+			...all,
+			{
+				id: "app:other",
+				label: "Other",
+				scope: "app",
+				chord: { ...f2, shift: true },
+			},
+		];
+		const p2 = planRecording(scope, f2, withShiftF2, true);
+		expect(p2.kind).toBe("commit");
+		expect(p2.kind === "commit" && p2.notice).toContain("“Other”");
+	});
+
+	it("never clashes with its own alias", () => {
+		expect(planRecording(scope, { ...tab, shift: true }, all, true)).toEqual({
 			kind: "commit",
 			notice: null,
 		});

@@ -9,10 +9,15 @@
  * on one Chord means the app wins while the editor has focus, which is worth a
  * warning but may well be what the user wants. A non-global app action falls
  * through to Monaco when the editor has focus, so it never clashes with one.
+ *
+ * A Navigator Shortcut acts only while the Navigator is open. It clashes with
+ * another Navigator Shortcut and with an app Shortcut that still acts then;
+ * one that stands down under the Navigator (a Prompt action) and every editor
+ * Shortcut leave it alone.
  */
-import { type Chord, chordsEqual, chordVerdict } from "./chords";
+import { type Chord, chordsEqual, chordVerdict, formatChord } from "./chords";
 
-export type KeymapScope = "app" | "editor";
+export type KeymapScope = "app" | "editor" | "navigator";
 
 export interface KeymapEntry {
 	/** Override id: `app:<action>` or `editor:<monaco id>`. */
@@ -23,11 +28,35 @@ export interface KeymapEntry {
 	chord: Chord | null;
 	/** App actions only: still fires while the editor has focus. */
 	global?: boolean;
+	/** App actions only: does nothing while the Navigator is open. */
+	standsDownUnderNavigator?: boolean;
+	/** This entry also fires on Shift + its Chord (the Navigator's scope key)
+	 *  unless that Chord already has Shift. */
+	shiftAlias?: boolean;
+	/** A read-only entry for another entry's Shift alias: its id. The alias
+	 *  sits last in the keymap, so whatever shares its Chord wins. */
+	aliasOf?: string;
 }
 
 export type Conflict =
-	| { kind: "same-scope"; other: KeymapEntry }
+	/** Both act on one key press: one would silently never fire. */
+	| { kind: "clash"; other: KeymapEntry }
+	/** App and editor share a Chord; the app wins while the editor has focus. */
 	| { kind: "cross-scope"; other: KeymapEntry };
+
+function relation(
+	a: KeymapEntry,
+	b: KeymapEntry,
+): "clash" | "cross-scope" | null {
+	if (a.scope === b.scope) return "clash";
+	if (a.scope === "navigator" || b.scope === "navigator") {
+		const other = a.scope === "navigator" ? b : a;
+		if (other.scope === "editor") return null;
+		return other.standsDownUnderNavigator ? null : "clash";
+	}
+	const appSide = a.scope === "app" ? a : b;
+	return appSide.global ? "cross-scope" : null;
+}
 
 export function findConflict(
 	target: KeymapEntry,
@@ -35,19 +64,26 @@ export function findConflict(
 	entries: readonly KeymapEntry[],
 ): Conflict | null {
 	let cross: KeymapEntry | null = null;
+	let aliasClash: KeymapEntry | null = null;
 	for (const other of entries) {
 		if (other.id === target.id || !other.chord) continue;
+		if (other.aliasOf === target.id || target.aliasOf === other.id) continue;
 		if (!chordsEqual(other.chord, chord)) continue;
-		if (other.scope === target.scope) return { kind: "same-scope", other };
-		const appSide = target.scope === "app" ? target : other;
-		if (appSide.global && !cross) cross = other;
+		const rel = relation(target, other);
+		if (rel === "clash") {
+			// A real clash outranks losing an alias.
+			if (!other.aliasOf) return { kind: "clash", other };
+			aliasClash ??= other;
+		}
+		if (rel === "cross-scope" && !cross) cross = other;
 	}
+	if (aliasClash) return { kind: "clash", other: aliasClash };
 	return cross ? { kind: "cross-scope", other: cross } : null;
 }
 
 export type RecordingOutcome =
 	| { kind: "refuse"; reason: string }
-	/** Same-scope clash: ask Reassign or Cancel before writing anything. */
+	/** A clash: ask Reassign or Cancel before writing anything. */
 	| { kind: "ask"; other: KeymapEntry; warning: string | null }
 	/** Safe to write; `notice` is a warning to show beside the row. */
 	| { kind: "commit"; notice: string | null };
@@ -64,11 +100,36 @@ export function planRecording(
 	entries: readonly KeymapEntry[],
 	mac: boolean,
 ): RecordingOutcome {
-	const verdict = chordVerdict(chord, mac);
+	const verdict = chordVerdict(chord, mac, {
+		navigator: target.scope === "navigator",
+	});
 	if (verdict.kind === "refuse") return verdict;
-	const warning = verdict.kind === "warn" ? verdict.reason : null;
+	let warning = verdict.kind === "warn" ? verdict.reason : null;
+	const addNote = (note: string) => {
+		warning = warning ? `${warning} ${note}` : note;
+	};
+	if (target.shiftAlias && !chord.shift) {
+		const alias = { ...chord, shift: true };
+		const lost = findConflict(
+			{ ...target, id: `${target.id}#shift`, aliasOf: target.id },
+			alias,
+			entries,
+		);
+		if (lost?.kind === "clash") {
+			addNote(
+				`${formatChord(alias, mac)} belongs to “${lost.other.label}”, so only ${formatChord(chord, mac)} does this.`,
+			);
+		}
+	}
 	const conflict = findConflict(target, chord, entries);
-	if (conflict?.kind === "same-scope") {
+	if (conflict?.kind === "clash" && conflict.other.aliasOf) {
+		// Taking an alias's Chord is allowed: the alias sits last and loses.
+		addNote(
+			`This takes ${formatChord(chord, mac)} from “${conflict.other.label}”.`,
+		);
+		return { kind: "commit", notice: warning };
+	}
+	if (conflict?.kind === "clash") {
 		return { kind: "ask", other: conflict.other, warning };
 	}
 	if (conflict?.kind === "cross-scope") {

@@ -12,6 +12,11 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import {
+	shortcutLabelFor,
+	useKeybindingOverrides,
+	withShortcut,
+} from "../../hooks/useShortcutLabel";
+import {
 	useTabRollups,
 	useWorkspaceRollups,
 } from "../../hooks/useWorkspaceRollups";
@@ -19,6 +24,17 @@ import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { focusFileWindow } from "../../lib/fileWindowRaise";
 import { targetPaneId } from "../../lib/fleetFocus";
 import { fileWindows, type OpenFileWindow } from "../../lib/ipc";
+import {
+	effectiveChord,
+	registerAction,
+	unregisterAction,
+} from "../../lib/keybindings";
+import {
+	NAVIGATOR_ACTIONS,
+	NAVIGATOR_STATUS_ACTIONS,
+	navigatorHints,
+	setNavigatorKeysLive,
+} from "../../lib/navigatorKeys";
 import {
 	initialSelection,
 	isFolder,
@@ -31,6 +47,7 @@ import {
 	parentKey,
 } from "../../lib/navigatorTree";
 import { revealPane, switchToPane } from "../../lib/paneLocation";
+import { isMac } from "../../lib/platform";
 import { getTerminal } from "../../lib/terminalManager";
 import type { Tab, WorkspaceWithTabs } from "../../lib/types";
 import { buildWorkspaceRows } from "../../lib/worktreeGrouping";
@@ -118,7 +135,8 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 		onClose();
 		restoreTerminalFocus();
 	}, [onClose]);
-	useEscapeKey(close);
+	const isTopmost = useEscapeKey(close);
+	const dialogRef = useRef<HTMLDivElement>(null);
 
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -265,14 +283,51 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 		[setFolded],
 	);
 
-	const toggleStatus = (st: NavStatus) => {
+	const toggleStatus = useCallback((st: NavStatus) => {
 		setStatuses((prev) => {
 			const next = new Set(prev);
 			if (next.has(st)) next.delete(st);
 			else next.add(st);
 			return next;
 		});
-	};
+	}, []);
+
+	// Navigator Shortcuts: claimed by the keymap only while this is mounted.
+	useEffect(() => {
+		registerAction("navigator-toggle-scope", () =>
+			setScope((s) => (s === "opened" ? "all" : "opened")),
+		);
+		for (const st of NAV_STATUSES) {
+			registerAction(NAVIGATOR_STATUS_ACTIONS[st], () => toggleStatus(st));
+		}
+		registerAction("navigator-filter-clear", () => setStatuses(NO_STATUSES));
+		// Live only while the Navigator has the user's attention: on top of the
+		// overlay stack, with focus in it (or nowhere). A dialog opened over it
+		// that is not on the stack (New workspace) still takes focus.
+		setNavigatorKeysLive(() => {
+			if (!isTopmost()) return false;
+			const el = document.activeElement;
+			return !el || el === document.body || !!dialogRef.current?.contains(el);
+		});
+		return () => {
+			setNavigatorKeysLive(null);
+			for (const a of NAVIGATOR_ACTIONS) unregisterAction(a);
+		};
+	}, [toggleStatus, isTopmost]);
+
+	const overrides = useKeybindingOverrides();
+	const hints = useMemo(
+		() =>
+			navigatorHints(
+				(a) => effectiveChord(a, overrides),
+				Object.fromEntries(
+					NAV_STATUSES.map((st) => [st, STATUS_CHIPS[st].label]),
+				) as Record<NavStatus, string>,
+				isMac,
+			),
+		[overrides],
+	);
+	const scopeKey = shortcutLabelFor("navigator-toggle-scope", overrides);
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
 		const move = (i: number) => {
@@ -322,6 +377,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 			onClick={close}
 		>
 			<div
+				ref={dialogRef}
 				role="dialog"
 				aria-label="Navigator"
 				data-testid="navigator"
@@ -381,6 +437,12 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 								key={value}
 								type="button"
 								aria-pressed={scope === value}
+								title={withShortcut(
+									value === "all"
+										? "Every workspace in this profile"
+										: "Opened workspaces only",
+									scopeKey,
+								)}
 								onMouseDown={(e) => e.preventDefault()}
 								onClick={() => setScope(value)}
 								className={`transition-colors ${
@@ -403,7 +465,10 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 									key={st}
 									type="button"
 									aria-pressed={on}
-									title={`Show only ${STATUS_CHIPS[st].label} agents`}
+									title={withShortcut(
+										`Show only ${STATUS_CHIPS[st].label} agents`,
+										shortcutLabelFor(NAVIGATOR_STATUS_ACTIONS[st], overrides),
+									)}
 									onMouseDown={(e) => e.preventDefault()}
 									onClick={() => toggleStatus(st)}
 									className={`flex items-center gap-1 rounded-full transition-colors ${
@@ -463,18 +528,23 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 					)}
 				</div>
 				<div
-					className="flex items-center gap-3"
+					data-testid="navigator-hints"
+					className="flex items-center flex-wrap"
 					style={{
 						padding: "6px 14px",
 						borderTop: "1px solid var(--border)",
 						fontSize: 11,
 						color: "var(--fg-secondary)",
+						columnGap: 12,
+						rowGap: 2,
 					}}
 				>
-					<span>↑↓ move</span>
-					<span>←→ fold</span>
-					<span>↵ go</span>
-					<span>esc close</span>
+					{hints.map((h) => (
+						<span key={`${h.keys} ${h.label}`}>
+							<span style={{ color: "var(--fg-primary)" }}>{h.keys}</span>{" "}
+							{h.label}
+						</span>
+					))}
 				</div>
 			</div>
 		</div>

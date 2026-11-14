@@ -261,13 +261,38 @@ function isFunctionKey(c: Chord): boolean {
 	return /^F\d{1,2}$/.test(c.key);
 }
 
+/** Keys a Navigator Shortcut may use with no Cmd/Ctrl/Alt: they neither type
+ *  nor edit in the Navigator's search box, nor move its selection. */
+const NAVIGATOR_BARE_KEYS = new Set(["Tab", "PageUp", "PageDown", "Insert"]);
+
+export interface ChordVerdictOptions {
+	/** Vetting a Navigator Shortcut: it acts only inside the Navigator, whose
+	 *  focus is its search box, never a terminal. */
+	navigator?: boolean;
+}
+
 /** Whether a recorded chord may be saved, and what to warn about if so. */
-export function chordVerdict(c: Chord, mac: boolean): ChordVerdict {
+export function chordVerdict(
+	c: Chord,
+	mac: boolean,
+	opts: ChordVerdictOptions = {},
+): ChordVerdict {
+	const navigator = opts.navigator ?? false;
 	if (isModifierKey(c.key)) {
 		return { kind: "refuse", reason: "Press a key along with the modifiers." };
 	}
+	const bareOk =
+		isFunctionKey(c) || (navigator && NAVIGATOR_BARE_KEYS.has(c.key));
 	// Shift alone is not a modifier here: Shift+letter is how a capital is typed.
-	if (!c.meta && !c.ctrl && !c.alt && !isFunctionKey(c)) {
+	if (navigator && !c.meta && !c.ctrl && !c.alt && !bareOk) {
+		return {
+			kind: "refuse",
+			reason: mac
+				? "Add ⌘, ⌃ or ⌥. Without one, this key belongs to the Navigator's search box and list."
+				: "Add Ctrl or Alt. Without one, this key belongs to the Navigator's search box and list.",
+		};
+	}
+	if (!c.meta && !c.ctrl && !c.alt && !bareOk) {
 		return {
 			kind: "refuse",
 			reason: mac
@@ -292,6 +317,7 @@ export function chordVerdict(c: Chord, mac: boolean): ChordVerdict {
 		};
 	}
 	if (
+		!navigator &&
 		!mac &&
 		c.ctrl &&
 		!c.shift &&

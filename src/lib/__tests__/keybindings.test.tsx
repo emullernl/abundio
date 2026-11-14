@@ -13,6 +13,7 @@ import {
 	setKeybindingOverrides,
 	unregisterAction,
 } from "../keybindings";
+import { setNavigatorKeysLive } from "../navigatorKeys";
 
 function makeKeyEvent(
 	opts: Partial<KeyboardEvent> & { key: string },
@@ -645,5 +646,76 @@ describe("font size", () => {
 		// A layout where the Equal key's character is something else.
 		handleKeyDown(makeKeyEvent({ key: "´", code: "Equal", [modKey]: true }));
 		expect(handler).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("Navigator Shortcuts", () => {
+	afterEach(() => {
+		setNavigatorKeysLive(null);
+		unregisterAction("navigator-toggle-scope");
+		unregisterAction("navigator-filter-waiting");
+		unregisterAction("prompt-action-1");
+		setKeybindingOverrides({});
+	});
+
+	it("leaves Tab alone while the Navigator is closed", () => {
+		const handler = vi.fn();
+		registerAction("navigator-toggle-scope", handler);
+		const e = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+		handleKeyDown(e);
+		expect(handler).not.toHaveBeenCalled();
+		expect(e.defaultPrevented).toBe(false);
+	});
+
+	it("claims Tab and Shift+Tab while it is open", () => {
+		const handler = vi.fn();
+		registerAction("navigator-toggle-scope", handler);
+		setNavigatorKeysLive(() => true);
+		const e = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+		handleKeyDown(e);
+		handleKeyDown(makeKeyEvent({ key: "Tab", shiftKey: true }));
+		expect(handler).toHaveBeenCalledTimes(2);
+		expect(e.defaultPrevented).toBe(true);
+	});
+
+	it("leaves a bare key to an input method mid-composition", () => {
+		const handler = vi.fn();
+		registerAction("navigator-toggle-scope", handler);
+		setNavigatorKeysLive(() => true);
+		handleKeyDown(
+			new KeyboardEvent("keydown", { key: "Tab", isComposing: true }),
+		);
+		expect(handler).not.toHaveBeenCalled();
+	});
+
+	it("the Shift alias follows a rebind", () => {
+		const handler = vi.fn();
+		registerAction("navigator-toggle-scope", handler);
+		setNavigatorKeysLive(() => true);
+		setKeybindingOverrides({
+			"app:navigator-toggle-scope": {
+				key: "F2",
+				meta: false,
+				shift: false,
+				ctrl: false,
+			},
+		});
+		handleKeyDown(makeKeyEvent({ key: "Tab", shiftKey: true }));
+		expect(handler).not.toHaveBeenCalled();
+		handleKeyDown(makeKeyEvent({ key: "F2", shiftKey: true }));
+		expect(handler).toHaveBeenCalledOnce();
+	});
+
+	it("a Prompt action muted by the dialog lets the Navigator have its digit", () => {
+		const prompt = vi.fn();
+		const waiting = vi.fn();
+		registerAction("prompt-action-1", prompt);
+		registerAction("navigator-filter-waiting", waiting);
+		setNavigatorKeysLive(() => true);
+		const release = pushOverlay();
+		handleKeyDown(makeKeyEvent({ key: "1", code: "Digit1", [modKey]: true }));
+		release();
+		expect(prompt).not.toHaveBeenCalled();
+		expect(waiting).toHaveBeenCalledOnce();
 	});
 });

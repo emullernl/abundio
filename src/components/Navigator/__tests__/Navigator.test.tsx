@@ -29,6 +29,9 @@ vi.mock("../../../lib/paneLocation", () => ({
 	revealPane: (...a: unknown[]) => revealPane(...a),
 }));
 
+import { useEscapeKey } from "../../../hooks/useEscapeKey";
+import { handleKeyDown } from "../../../lib/keybindings";
+import { navigatorKeysLive } from "../../../lib/navigatorKeys";
 import type { PaneNode, WorkspaceWithTabs } from "../../../lib/types";
 import {
 	type PtyActivityEntry,
@@ -124,6 +127,17 @@ function key(k: string) {
 		input().dispatchEvent(
 			new KeyboardEvent("keydown", { key: k, bubbles: true }),
 		);
+	});
+}
+
+const isMac = navigator.platform.toUpperCase().includes("MAC");
+const modKey = isMac ? "metaKey" : "ctrlKey";
+
+/** A key press through the app keymap, as the window's capture listener
+ *  would see it. */
+function shortcut(init: KeyboardEventInit) {
+	act(() => {
+		handleKeyDown(new KeyboardEvent("keydown", { bubbles: true, ...init }));
 	});
 }
 
@@ -246,6 +260,72 @@ describe("Navigator", () => {
 		const texts = rowTexts();
 		expect(texts).toHaveLength(3);
 		expect(texts[0]).toContain("alpha");
+	});
+
+	it("Tab switches scope and Shift+Tab switches back", () => {
+		render();
+		shortcut({ key: "Tab" });
+		expect(rowTexts().some((t) => t.includes("gamma"))).toBe(true);
+		shortcut({ key: "Tab", shiftKey: true });
+		expect(rowTexts().some((t) => t.includes("gamma"))).toBe(false);
+	});
+
+	it("Cmd/Ctrl+digit toggles a status filter; Cmd/Ctrl+0 clears it", () => {
+		render();
+		const before = rowTexts().length;
+		shortcut({ key: "1", code: "Digit1", [modKey]: true });
+		expect(rowTexts()).toHaveLength(3);
+		shortcut({ key: "1", code: "Digit1", [modKey]: true });
+		expect(rowTexts()).toHaveLength(before);
+		shortcut({ key: "1", code: "Digit1", [modKey]: true });
+		shortcut({ key: "0", code: "Digit0", [modKey]: true });
+		expect(rowTexts()).toHaveLength(before);
+	});
+
+	it("the footer spells the filter keys", () => {
+		render();
+		const text =
+			container.querySelector('[data-testid="navigator-hints"]')?.textContent ??
+			"";
+		expect(text).toContain(isMac ? "⌘1–5 status" : "Ctrl+1–5 status");
+		expect(text).toContain("scope");
+	});
+
+	it("gives Tab up to a dialog opened on top of it", () => {
+		render();
+		// Another overlay on the stack (New task) with focus in it.
+		const other = document.createElement("div");
+		document.body.appendChild(other);
+		const otherRoot = createRoot(other);
+		function Dialog() {
+			useEscapeKey(() => {});
+			return <input data-testid="other-input" />;
+		}
+		act(() => otherRoot.render(<Dialog />));
+		(other.querySelector("input") as HTMLInputElement).focus();
+		expect(navigatorKeysLive()).toBe(false);
+		shortcut({ key: "Tab" });
+		expect(rowTexts().some((t) => t.includes("gamma"))).toBe(false);
+		act(() => otherRoot.unmount());
+		other.remove();
+		input().focus();
+		expect(navigatorKeysLive()).toBe(true);
+	});
+
+	it("gives Tab up to a focused dialog that is not on the overlay stack", () => {
+		render();
+		const field = document.createElement("input");
+		document.body.appendChild(field);
+		field.focus();
+		expect(navigatorKeysLive()).toBe(false);
+		field.remove();
+	});
+
+	it("its keys are live only while it is open", () => {
+		render();
+		expect(navigatorKeysLive()).toBe(true);
+		act(() => root.render(<Navigator open={false} onClose={onClose} />));
+		expect(navigatorKeysLive()).toBe(false);
 	});
 
 	it("the scope toggle adds workspaces that are not Opened", () => {
