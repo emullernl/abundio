@@ -141,6 +141,14 @@ each is open. Add `--workspace <name>` to any command to act there, e.g.
   agents. Never do that uninvited.
 - A new pane in another Workspace always gets a Tab of its own there.
 
+`abundio workspace close <name>` closes another Workspace, just as the user's
+Close does: its terminals and agents stop, and its row, folder and files
+stay. You can never close your own. It is refused while an agent there is
+working or waiting for the user, or a command is running; `--force` closes
+anyway, so use it only when the user asks. It is always refused while that
+Workspace has unsaved edits. Close a Workspace you made with `worktree new`
+once its helper's work is done, or one the user names; leave the rest open.
+
 ## Be a good neighbour
 
 - You can type into, run commands in and close any pane, and rename any
