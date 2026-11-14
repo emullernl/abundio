@@ -2,7 +2,7 @@
 // remembered Agent on Workspace open or a Bundle restart.
 
 import { useSettingsStore } from "../stores/settingsStore";
-import { agentRelaunchCommandFor } from "./agents";
+import { agentCommandFor, agentRelaunchCommandFor } from "./agents";
 import { parseTabLayout } from "./paneTree";
 import type { PaneNode, WorkspaceWithTabs } from "./types";
 
@@ -72,6 +72,27 @@ export function relaunchCommandForPane(
 		),
 		resume: settings.resumeAgentSessions,
 	});
+}
+
+/**
+ * `relaunchCommandForPane` plus the plain launch line to fall back to when
+ * the relaunch resumes a session (`lib/resumeFallback.ts`). Undefined as
+ * `relaunchCommandForPane` is.
+ */
+export function relaunchForPane(
+	node: TerminalNode,
+	rootFolder: string,
+	counts: Map<string, number>,
+): { command: string; fallback?: string } | undefined {
+	const command = relaunchCommandForPane(node, rootFolder, counts);
+	if (!command) return undefined;
+	const plain = agentCommandFor(
+		useSettingsStore.getState().agents,
+		node.agentId,
+	);
+	return plain && plain !== command
+		? { command, fallback: plain }
+		: { command };
 }
 
 /** Terminal leaves of a layout, in tree order. */

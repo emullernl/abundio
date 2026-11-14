@@ -11,6 +11,9 @@ use crate::error::AbundioError;
 use crate::prompt_actions::PromptActionStore;
 use crate::workspace_store::{WorkspaceStore, WorkspaceWithTabs};
 
+/// Name of the Orchestrator's own folder, under `orchestrator/<profile-id>/`.
+const FOLDER_NAME: &str = "Orchestrator";
+
 /// The file the user may edit. Created once, never rewritten.
 pub const USER_FILE: &str = "my-instructions.md";
 
@@ -27,7 +30,9 @@ pub fn orchestrator_folder(root: &Path, profile_id: &str) -> Result<PathBuf, Abu
             "Not a Profile id: {profile_id:?}"
         )));
     }
-    Ok(root.join("orchestrator").join(profile_id))
+    // The last part is a name, not the id: a shell's title is its folder's
+    // name, and an id there reads as noise.
+    Ok(root.join("orchestrator").join(profile_id).join(FOLDER_NAME))
 }
 
 const AGENTS_MD: &str = r#"<!-- Written by Abundio on every start. Edits here are lost: put yours in my-instructions.md. -->
@@ -161,7 +166,10 @@ mod tests {
     #[test]
     fn folder_refuses_anything_but_an_id() {
         let root = Path::new("/data");
-        assert!(orchestrator_folder(root, PID).is_ok());
+        assert_eq!(
+            orchestrator_folder(root, PID).unwrap(),
+            root.join("orchestrator").join(PID).join("Orchestrator")
+        );
         for bad in ["", "..", "a/b", "../x", "a b"] {
             assert!(orchestrator_folder(root, bad).is_err(), "{bad:?}");
         }

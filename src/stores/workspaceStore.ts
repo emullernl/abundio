@@ -33,7 +33,7 @@ import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
 import { perfMark } from "../lib/perfMarks";
 import {
 	countAgentPanesByFolder,
-	relaunchCommandForPane,
+	relaunchForPane,
 	terminalNodes,
 } from "../lib/sessionResume";
 import { FIRST_TAB_NAME, nextTabName } from "../lib/tabName";
@@ -453,9 +453,9 @@ function seedPendingAgentsForLayout(
 	counts: Map<string, number>,
 ): void {
 	for (const node of terminalNodes(layout)) {
-		const command = relaunchCommandForPane(node, rootFolder, counts);
-		if (!command) continue;
-		setPendingAgent(node.id, { command });
+		const relaunch = relaunchForPane(node, rootFolder, counts);
+		if (!relaunch) continue;
+		setPendingAgent(node.id, relaunch);
 	}
 }
 

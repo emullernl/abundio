@@ -12,7 +12,7 @@ Agent control (ADR-0054, ADR-0055) already lets any Agent see and drive the whol
 |-------|----------|
 | How many | One Orchestrator per Profile. |
 | What it is | An ordinary Workspace row with `kind = 'orchestrator'`, so panes, Tabs, PTYs, Session resume and Agent control work unchanged. |
-| Folder | `shared_root()/orchestrator/<profile-id>/`, created and recreated by Abundio. Never picked by the user. |
+| Folder | `shared_root()/orchestrator/<profile-id>/Orchestrator/`, created and recreated by Abundio. Never picked by the user. |
 | Where it shows | Only in the Orchestrator view. Left out of the Workspace list, Agents list, Fleet Console, Workspace cycle, Navigator, pickers and `abundio workspace list`. Still counts in the Overview bar and the Attention count. |
 | Agent | The user picks one (Installed Agents, Claude Code first) on first open; changeable from the view's menu (stops the old one). |
 | Handle | Reserved `Orchestrator`: refused for every other Agent, not renamable, skipped by Default handles. |

@@ -186,6 +186,7 @@ describe("workspaceStore", () => {
 				await load(agentPane("p1", { agentSessionId: "sid-1" }));
 				expect(takePendingAgent("p1")).toEqual({
 					command: "claude --resume sid-1",
+					fallback: "claude",
 				});
 			});
 
@@ -193,6 +194,7 @@ describe("workspaceStore", () => {
 				await load(agentPane("p1"));
 				expect(takePendingAgent("p1")).toEqual({
 					command: "claude --continue",
+					fallback: "claude",
 				});
 			});
 
@@ -204,6 +206,7 @@ describe("workspaceStore", () => {
 				// Its own id still resumes: no ambiguity about whose session it is.
 				expect(takePendingAgent("p2")).toEqual({
 					command: "claude --resume sid-2",
+					fallback: "claude",
 				});
 			});
 

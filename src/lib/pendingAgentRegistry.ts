@@ -5,6 +5,9 @@
 
 interface PendingAgent {
 	command: string;
+	/** The plain launch line when `command` resumes a session: typed instead
+	 *  if the resume fails at once (`lib/resumeFallback.ts`). */
+	fallback?: string;
 }
 
 const pending = new Map<string, PendingAgent>();

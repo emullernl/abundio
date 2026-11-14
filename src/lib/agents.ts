@@ -298,12 +298,11 @@ export interface RelaunchOptions {
  * In order: the remembered session by id; else, when the Pane is alone in its
  * folder, the folder's most recent session; else fresh.
  *
- * There is deliberately no `|| <plain>` fallback. A shell cannot tell "the
- * resume failed" from "the user quit the resumed Agent with a non-zero exit"
- * (Copilot exits 1 on Ctrl+C), so a fallback would start an unasked-for fresh
- * Agent. A failed resume instead leaves the Agent's error in a plain shell;
- * the Agent process has exited, so the pane also forgets it and its session,
- * and the next relaunch does not retry it.
+ * There is deliberately no shell `|| <plain>` fallback. A shell cannot tell
+ * "the resume failed" from "the user quit the resumed Agent with a non-zero
+ * exit" (Copilot exits 1 on Ctrl+C), so a fallback would start an
+ * unasked-for fresh Agent. The app retries instead, once, and only when the
+ * resume fails within seconds (`lib/resumeFallback.ts`).
  */
 export function agentRelaunchCommandFor(
 	agents: CodingAgent[],
