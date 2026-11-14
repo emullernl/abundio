@@ -120,6 +120,8 @@ export interface WorkspaceWithTabs {
 	createdAt: number;
 	updatedAt: number;
 	worktreeSetupCommands: string;
+	/** See `Workspace.kind`. */
+	kind?: WorkspaceKind;
 	tabs: Tab[];
 }
 

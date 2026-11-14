@@ -53,6 +53,10 @@ pub fn number_words(n: u32) -> String {
     }
 }
 
+/// The handle of every Profile's Orchestrator (ADR-0057). No other Agent may
+/// take it.
+pub const ORCHESTRATOR_HANDLE: &str = "Orchestrator";
+
 /// The Default handle with number `n`.
 pub fn default_handle(n: u32) -> String {
     format!("Agent {}", number_words(n))
@@ -146,6 +150,16 @@ impl HandleReservations {
             return Ok(HandleCheck::refused("not_found", "that Workspace no longer exists".into()));
         };
         let key = handle_key(&name);
+        // Reserved for the Profile's Orchestrator (ADR-0057), so every Agent
+        // and the user can always reach it by that name.
+        if key == handle_key(ORCHESTRATOR_HANDLE)
+            && store.kind_of(workspace_id)?.as_deref() != Some("orchestrator")
+        {
+            return Ok(HandleCheck::refused(
+                "handle_taken",
+                format!("\"{name}\" is kept for the Orchestrator"),
+            ));
+        }
         if let Some(ws) = handles_in_use(store, &profile_id, pane_id)?.get(&key) {
             return Ok(HandleCheck::refused(
                 "handle_taken",
@@ -285,6 +299,21 @@ mod tests {
             )
             .unwrap();
         "p2".into()
+    }
+
+    #[test]
+    fn orchestrator_is_kept_for_the_orchestrator_workspace() {
+        let s = store();
+        let r = HandleReservations::default();
+        let work = workspace(&s, "w", PID, &[("a", None)]);
+        let orch = s.ensure_orchestrator(PID, "/o").unwrap().workspace.id;
+        for name in ["Orchestrator", "orchestrator", " ORCHESTRATOR "] {
+            assert!(
+                matches!(r.check(&s, &work, "a", name).unwrap(), HandleCheck::Refused { code: "handle_taken", .. }),
+                "{name}"
+            );
+        }
+        assert_eq!(r.check(&s, &orch, "o", "Orchestrator").unwrap(), HandleCheck::ok());
     }
 
     #[test]

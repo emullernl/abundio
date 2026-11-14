@@ -3,10 +3,10 @@ import { isOrchestrator, workWorkspaces } from "../workspaceKind";
 
 describe("workspaceKind", () => {
 	it("treats a missing kind as work", () => {
-		expect(isOrchestrator({})).toBe(false);
+		expect(isOrchestrator({ id: "a" })).toBe(false);
 		expect(isOrchestrator(null)).toBe(false);
-		expect(isOrchestrator({ kind: "work" })).toBe(false);
-		expect(isOrchestrator({ kind: "orchestrator" })).toBe(true);
+		expect(isOrchestrator({ id: "a", kind: "work" })).toBe(false);
+		expect(isOrchestrator({ id: "o", kind: "orchestrator" })).toBe(true);
 	});
 
 	it("drops only the Orchestrator workspace and keeps the order", () => {

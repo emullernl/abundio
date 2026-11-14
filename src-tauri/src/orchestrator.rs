@@ -142,10 +142,7 @@ mod tests {
     }
 
     fn temp_root(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "abundio-orch-{tag}-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("abundio-orch-{tag}-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -169,7 +166,12 @@ mod tests {
         assert_eq!(a.workspace.kind, "orchestrator");
         assert_eq!(a.tabs.len(), 1);
         let all = store.list(PID).unwrap();
-        assert_eq!(all.iter().filter(|w| w.workspace.kind == "orchestrator").count(), 1);
+        assert_eq!(
+            all.iter()
+                .filter(|w| w.workspace.kind == "orchestrator")
+                .count(),
+            1
+        );
         fs::remove_dir_all(root).ok();
     }
 
@@ -200,9 +202,14 @@ mod tests {
         fs::write(folder.join("AGENTS.md"), "stale").unwrap();
         fs::write(folder.join(USER_FILE), "mine").unwrap();
         write_instructions(&folder).unwrap();
-        assert_eq!(fs::read_to_string(folder.join("AGENTS.md")).unwrap(), AGENTS_MD);
+        assert_eq!(
+            fs::read_to_string(folder.join("AGENTS.md")).unwrap(),
+            AGENTS_MD
+        );
         assert_eq!(fs::read_to_string(folder.join(USER_FILE)).unwrap(), "mine");
-        assert!(fs::read_to_string(folder.join("CLAUDE.md")).unwrap().contains("@AGENTS.md"));
+        assert!(fs::read_to_string(folder.join("CLAUDE.md"))
+            .unwrap()
+            .contains("@AGENTS.md"));
         fs::remove_dir_all(root).ok();
     }
 
@@ -211,7 +218,10 @@ mod tests {
         let store = test_store();
         assert_eq!(store.orchestrator_agent(PID).unwrap(), None);
         store.set_orchestrator_agent(PID, Some("claude")).unwrap();
-        assert_eq!(store.orchestrator_agent(PID).unwrap().as_deref(), Some("claude"));
+        assert_eq!(
+            store.orchestrator_agent(PID).unwrap().as_deref(),
+            Some("claude")
+        );
         store.set_orchestrator_agent(PID, None).unwrap();
         assert_eq!(store.orchestrator_agent(PID).unwrap(), None);
         assert!(store.set_orchestrator_agent("nope", Some("x")).is_err());

@@ -1465,7 +1465,7 @@ fn workspace_in_profile(
         .map_err(|e| error_answer(500, "internal", &e.to_string()))?
         .ok_or_else(|| error_answer(409, "not_found", "your Workspace no longer exists"))?;
     let rows: Vec<WorkspaceRow> = store
-        .list(&profile)
+        .list_work(&profile)
         .map_err(|e| error_answer(500, "internal", &e.to_string()))?
         .into_iter()
         .map(|w| WorkspaceRow {
@@ -1509,7 +1509,7 @@ pub fn workspace_listing(
         return Ok(json!({ "workspaces": [] }));
     };
     let mut out = Vec::new();
-    for w in store.list(&profile)? {
+    for w in store.list_work(&profile)? {
         let mut panes = Vec::new();
         for tab in &w.tabs {
             if let Ok(tree) = serde_json::from_str::<Value>(&tab.layout_json) {

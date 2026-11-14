@@ -93,6 +93,7 @@ import {
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import { unsavedFilePaths } from "./lib/unsavedFiles";
 import { cycleOpenedWorkspace } from "./lib/workspaceCycle";
+import { workWorkspaces } from "./lib/workspaceKind";
 import {
 	addWorktreeTargetId,
 	buildWorkspaceRows,
@@ -201,7 +202,9 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 	const openedWorkspaces = usePtyActivityStore(
 		(s) => s.openedWorkspaceIds.size,
 	);
-	const totalWorkspaces = useWorkspaceStore((s) => s.workspaces.length);
+	const totalWorkspaces = useWorkspaceStore(
+		(s) => workWorkspaces(s.workspaces).length,
+	);
 	const idleAgents = usePtyActivityStore(selectIdleAgentCount);
 	const workingAgents = usePtyActivityStore(selectWorkingAgentCount);
 	const waitingAgents = usePtyActivityStore(selectWaitingAgentCount);

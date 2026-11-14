@@ -5,6 +5,7 @@ import {
 	useKeybindingOverrides,
 } from "../hooks/useShortcutLabel";
 import { useSplitPane } from "../hooks/useSplitPane";
+import { useWorkWorkspaces } from "../hooks/useWorkWorkspaces";
 import { isAgentPane } from "../lib/firePromptAction";
 import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
@@ -55,7 +56,7 @@ export function CommandPalette({
 	const keyOverrides = useKeybindingOverrides();
 	const listRef = useRef<HTMLDivElement>(null);
 
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const workspaces = useWorkWorkspaces();
 	const beginWorkspaceSwitch = useWorkspaceStore((s) => s.beginWorkspaceSwitch);
 	// In the Fleet Console, pane commands target the Focused tile (ADR-0040).
 	const focusedPaneId = useTargetPaneId();

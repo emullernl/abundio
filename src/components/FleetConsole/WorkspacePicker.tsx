@@ -2,6 +2,7 @@ import { FolderOpen, Layers } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmCloseWorkspace } from "../../hooks/useConfirmCloseWorkspace";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { useWorkWorkspaces } from "../../hooks/useWorkWorkspaces";
 import { hasFleetAgents, relaunchablePanes } from "../../lib/dormantWorkspaces";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import {
@@ -37,7 +38,7 @@ export function WorkspacePicker({
 }) {
 	const [open, setOpen] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
-	const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
+	const allWorkspaces = useWorkWorkspaces();
 	const agents = useSettingsStore((s) => s.agents);
 	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	// Every Opened Workspace, so it can always be closed here (the Console

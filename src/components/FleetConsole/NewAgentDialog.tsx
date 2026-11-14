@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, CornerDownLeft, GitBranch } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { useWorkWorkspaces } from "../../hooks/useWorkWorkspaces";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { collectTerminalIds, parseTabLayout } from "../../lib/paneTree";
 import type { Tab } from "../../lib/types";
@@ -40,7 +41,7 @@ export function NewAgentDialog({
 	onBack?: () => void;
 	animateIn?: boolean;
 }) {
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const workspaces = useWorkWorkspaces();
 	// Listed but not choosable: nothing may start there (ADR-0053).
 	const missingFolderIds = useWorkspaceStore((s) => s.missingFolderIds);
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);

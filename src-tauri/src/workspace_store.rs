@@ -342,6 +342,23 @@ impl WorkspaceStore {
         Ok(result)
     }
 
+    /// The Workspace's kind (`"work"` / `"orchestrator"`), or `None` if it no
+    /// longer exists.
+    pub fn kind_of(&self, workspace_id: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row("SELECT kind FROM workspaces WHERE id = ?1", [workspace_id], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// `list` without the Orchestrator workspace: what Agent control means
+    /// by "the Profile's Workspaces" (ADR-0057).
+    pub fn list_work(&self, profile_id: &str) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
+        let mut all = self.list(profile_id)?;
+        all.retain(|w| w.workspace.kind != "orchestrator");
+        Ok(all)
+    }
+
     pub fn update(&self, id: &str, updates: WorkspaceUpdate) -> Result<(), AbundioError> {
         let conn = self.conn.lock().unwrap();
 
@@ -616,7 +633,9 @@ impl WorkspaceStore {
     pub fn set_restore_opened(&self, workspace_id: &str, opened: bool) -> Result<(), AbundioError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE workspaces SET restore_opened = ?1 WHERE id = ?2",
+            // The Orchestrator workspace is opened by its view, never by
+            // Workspace restore (ADR-0057).
+            "UPDATE workspaces SET restore_opened = ?1 WHERE id = ?2 AND kind = 'work'",
             rusqlite::params![opened as i32, workspace_id],
         )?;
         Ok(())
@@ -1263,6 +1282,23 @@ mod tests {
 
     fn ids(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_orchestrator_is_left_out_of_list_work_and_workspace_restore() {
+        let store = test_store();
+        let work = store.create("w", "/w", DEFAULT_PID).unwrap().workspace.id;
+        let orch = store.ensure_orchestrator(DEFAULT_PID, "/o").unwrap().workspace.id;
+        let ids: Vec<String> = store.list_work(DEFAULT_PID).unwrap().into_iter().map(|w| w.workspace.id).collect();
+        assert_eq!(ids, vec![work.clone()]);
+        assert_eq!(store.list(DEFAULT_PID).unwrap().len(), 2);
+        store.set_restore_opened(&orch, true).unwrap();
+        store.set_restore_opened(&work, true).unwrap();
+        let conn = store.conn.lock().unwrap();
+        let flagged: i64 = conn
+            .query_row("SELECT COUNT(*) FROM workspaces WHERE restore_opened = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(flagged, 1);
     }
 
     #[test]
