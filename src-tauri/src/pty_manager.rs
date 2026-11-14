@@ -1190,7 +1190,9 @@ __abundio_send() {   # $1 = 1 to mark a retry; the rest are the arguments
   # No arguments must send an empty body, not one empty argument. The status
   # comes last, on a line of its own.
   # (`||`, not `&&`: under pipefail a false test would fail the whole pipe.)
-  { [ $# -eq 0 ] || printf '%s\0' "$@"; } |
+  # The working folder first, marked (\001cwd:), so a relative path in a
+  # command resolves against it (`file open`).
+  { printf '\001cwd:%s\0' "$PWD"; [ $# -eq 0 ] || printf '%s\0' "$@"; } |
     curl -s -w '\n%{http_code}' --connect-timeout 5 \
       -X POST --data-binary @- \
       -H @<(__abundio_token_header) \
@@ -1251,6 +1253,11 @@ if (-not $env:ABUNDIO_AGENT_TOKEN -or -not $env:ABUNDIO_HOOK_PORT) {
 }
 
 $bytes = New-Object System.Collections.Generic.List[byte]
+# The working folder first, marked (0x01 "cwd:"), so a relative path in a
+# command resolves against it (`file open`).
+$bytes.Add(1)
+$bytes.AddRange([Text.Encoding]::UTF8.GetBytes("cwd:" + (Get-Location).ProviderPath))
+$bytes.Add(0)
 foreach ($a in $args) {
     $bytes.AddRange([Text.Encoding]::UTF8.GetBytes([string]$a))
     $bytes.Add(0)
@@ -2755,6 +2762,14 @@ exit "$rc"
         }
     }
 
+    /// The arguments in a sent body, after the working folder the CLI puts
+    /// first (`\u{1}cwd:<folder>\0`), which must be there.
+    fn sent_args(body: &[u8]) -> Vec<u8> {
+        assert!(body.starts_with(b"\x01cwd:"), "no folder first: {body:?}");
+        let end = body.iter().position(|b| *b == 0).expect("the folder ends");
+        body[end + 1..].to_vec()
+    }
+
     fn stdout(o: &std::process::Output) -> String {
         String::from_utf8_lossy(&o.stdout).into_owned()
     }
@@ -2769,7 +2784,7 @@ exit "$rc"
         let out = f.run(&["agent", "prompt", "p2", "two words\nand a line", ""]);
         assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
         assert_eq!(stdout(&out), "{\"panes\":[]}\n");
-        assert_eq!(f.stdin(1), b"agent\0prompt\0p2\0two words\nand a line\0\0");
+        assert_eq!(sent_args(&f.stdin(1)), b"agent\0prompt\0p2\0two words\nand a line\0\0");
         let args = f.args(1);
         assert!(args.contains("X-Abundio-Agent-Token: tok"));
         // The token reaches curl through a pipe, never on its command line.
@@ -2779,10 +2794,10 @@ exit "$rc"
     }
 
     #[test]
-    fn no_arguments_send_an_empty_body() {
+    fn no_arguments_send_only_the_folder() {
         let f = Fixture::new(&["0 200 help text\\n"]);
         let out = f.run(&[]);
-        assert_eq!(f.stdin(1), b"");
+        assert_eq!(sent_args(&f.stdin(1)), b"");
         assert_eq!(out.status.code(), Some(0));
         assert_eq!(stdout(&out), "help text\n");
     }
@@ -2811,7 +2826,7 @@ exit "$rc"
         assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
         assert_eq!(f.calls(), 2);
         assert!(!f.args(2).contains("X-Abundio-Retry"));
-        assert_eq!(f.stdin(2), b"pane\0list\0");
+        assert_eq!(sent_args(&f.stdin(2)), b"pane\0list\0");
     }
 
     #[test]

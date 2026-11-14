@@ -149,6 +149,23 @@ anyway, so use it only when the user asks. It is always refused while that
 Workspace has unsaved edits. Close a Workspace you made with `worktree new`
 once its helper's work is done, or one the user names; leave the rest open.
 
+## Show the user a file
+
+`abundio file open <path>` puts a file of your Workspace on the user's
+screen; add `--workspace <name>` for another Workspace's. `<path>` is
+absolute or relative to your folder, and must be inside that Workspace.
+
+- It opens in a new Tab of the file's Workspace (or the Tab already showing
+  it). `--window` opens a window of its own instead. If you are the
+  Orchestrator, it opens in your own tabs, and the Workspace is not opened
+  for it.
+- `--line <n>` scrolls to a line, `--diff` shows the file's uncommitted
+  changes, `--commit <sha>` the file as that commit changed it, and
+  `--preview` renders markdown beside its text.
+- It does not take the user's focus. Add `--focus` only when the user asked
+  to see the file ("show me…", "open…"); never to get their attention, which
+  is what `notify` is for.
+
 ## Be a good neighbour
 
 - You can type into, run commands in and close any pane, and rename any

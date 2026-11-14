@@ -98,10 +98,12 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 
 ### 9. `abundio file open`
 
-- The CLI wrapper sends the caller's `$PWD` (`X-Abundio-Cwd`) so relative paths resolve.
-- Rust `Request::FileOpen { path, mode, focus, line, diff, preview, commit }`, parsing + help text + validation (reuse `file_windows::validate_target` logic; inside the scoped Workspace folder). Mutating. Not agents-only.
-- TS case: from the Orchestrator pane → Orchestrator tab; else `--window` → `openFileWindow`, `--tab` → `explorerStore.openFile` / `openDiff` / `openCommitDiff` with `activate: focus`, then `setPendingGotoLine`. Reuse if open. The caller's node pulses.
-- Skill: "Show the user a file" section; `--focus` only when the user asked.
+- The CLI (bash and PowerShell) sends its working folder as a marked first argument (`\u{1}cwd:<folder>`), which Rust takes off (`split_cwd`); a header would not carry a non-ASCII folder.
+- Rust `Request::FileOpen { path, rel, window, focus, line, diff, preview, commit }`: parsing (`--tab|--window`, `--commit` excludes `--diff`/`--preview`, a hex commit, a line from 1), help (`abundio help file`), mutating. `resolve_workspace_file` resolves the path (absolute, or against the caller's folder, else the Workspace's), decides inside-or-outside before existence (a refusal never says whether a file outside exists), and requires an existing file except for `--commit`. The Window gets the absolute path and the Workspace-relative one.
+- The Window (`lib/agentControl/fileOpen.ts`), before `loadScope`: from the Orchestrator, an Orchestrator tab (file, diff or commit; the Workspace is not opened); `--window`, a File window; otherwise a Tab of the file's Workspace, opened in the background first, without switching to it unless `--focus` (`explorerStore.openFile/openDiff/openCommitDiff` gained `{ activate }`), then `--line`. A live diff picks the first section where the file differs (`lib/liveDiff.ts`). The caller's node pulses in the graph.
+- Orchestrator tabs now render diff (seeded with `seedDiffPane`) and commit kinds, and a markdown file opened with `--preview` shows its rendered preview beside the text.
+- **Known limits:** a File window always comes forward (the existing open command focuses it); `--preview` does not choose a File window's view (it opens in the view it last had).
+- Skill: "Show the user a file"; `--focus` only when the user asked.
 
 ### 10. Docs
 

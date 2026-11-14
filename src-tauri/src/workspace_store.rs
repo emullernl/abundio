@@ -367,6 +367,16 @@ impl WorkspaceStore {
         Ok(result)
     }
 
+    /// The Workspace's folder, or `None` if it no longer exists.
+    pub fn root_folder_of(&self, workspace_id: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row("SELECT root_folder FROM workspaces WHERE id = ?1", [workspace_id], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
     /// The Workspace's kind (`"work"` / `"orchestrator"`), or `None` if it no
     /// longer exists.
     pub fn kind_of(&self, workspace_id: &str) -> Result<Option<String>, AbundioError> {

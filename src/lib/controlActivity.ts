@@ -20,7 +20,9 @@ export interface ControlActivity {
 
 export type ControlActivityEvent =
 	| { type: "start"; call: ControlActivity }
-	| { type: "end"; id: number };
+	| { type: "end"; id: number }
+	/** A call aimed at no pane (`file open`): the caller's node pulses. */
+	| { type: "pulse"; paneId: string };
 
 const READ_OPS = new Set<ControlRequest["op"]>([
 	"resolve",
@@ -58,6 +60,11 @@ export function startControlActivity(
 		if (!running.delete(call.id)) return;
 		emit({ type: "end", id: call.id });
 	};
+}
+
+/** A call that touched no other pane: its caller's node pulses once. */
+export function pulseControlActivity(paneId: string): void {
+	emit({ type: "pulse", paneId });
 }
 
 /** The calls running now, for a graph that mounts in the middle of them. */

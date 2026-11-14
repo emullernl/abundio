@@ -15,7 +15,11 @@ import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { type TaskSeed, useWorkspaceStore } from "../../stores/workspaceStore";
 import { checkHandle } from "../agentHandle";
 import { closePaneNow, releaseOwner } from "../closePane";
-import { controlKind, startControlActivity } from "../controlActivity";
+import {
+	controlKind,
+	pulseControlActivity,
+	startControlActivity,
+} from "../controlActivity";
 import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
 import {
@@ -62,6 +66,7 @@ import {
 	type PaneLiveFacts,
 	paneLabel,
 } from "./describe";
+import { openFileFor } from "./fileOpen";
 import { keysToBytes } from "./keys";
 import { appendNotes, editNotes, readNotes, writeNotes } from "./notesOps";
 import { cleanPromptText } from "./promptText";
@@ -325,6 +330,17 @@ export async function runRequest(
 	// Never through loadScope: that would open a closed Workspace.
 	if (request.op === "workspace.close") {
 		return closeWorkspaceFor(caller, request.force, target);
+	}
+	// Not through loadScope either: an Orchestrator tab shows a file of a
+	// Workspace without opening it (ADR-0058). A Tab or window opens it.
+	if (request.op === "file.open") {
+		const workspaceId = target?.workspaceId ?? caller.workspaceId;
+		const reply = await openFileFor(caller, request, workspaceId, async () => {
+			await loadScope(caller, target, signal);
+		});
+		// The caller's node pulses in the Orchestrator graph.
+		pulseControlActivity(caller.paneId);
+		return reply;
 	}
 	const scope = await loadScope(caller, target, signal);
 	// The graph draws the call for as long as it runs.

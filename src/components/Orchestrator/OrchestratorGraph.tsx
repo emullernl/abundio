@@ -67,6 +67,8 @@ import { PaneContextMenu } from "../Terminal/PaneContextMenu";
 
 /** How long a finished call's stream takes to fade. */
 const FADE_MS = 700;
+/** How long a node glows for a call that touched no other pane. */
+const PULSE_MS = 1600;
 
 const ORCH = "orchestrator";
 const ORCH_NODE = "orchestrator";
@@ -196,6 +198,9 @@ export function OrchestratorGraph() {
 		return now;
 	}, [model]);
 
+	// Nodes pulsing for a call that touched no other pane (`file open`).
+	const [pulsing, setPulsing] = useState<Set<string>>(() => new Set());
+
 	// ── Calls running now, plus the ones fading out ──
 	const [calls, setCalls] = useState<
 		Map<number, { call: ControlActivity; ending: boolean }>
@@ -208,6 +213,19 @@ export function OrchestratorGraph() {
 	useEffect(() => {
 		const timers = new Set<ReturnType<typeof setTimeout>>();
 		const stop = subscribeControlActivity((e) => {
+			if (e.type === "pulse") {
+				setPulsing((p) => new Set(p).add(e.paneId));
+				const t = setTimeout(() => {
+					timers.delete(t);
+					setPulsing((p) => {
+						const next = new Set(p);
+						next.delete(e.paneId);
+						return next;
+					});
+				}, PULSE_MS);
+				timers.add(t);
+				return;
+			}
 			if (e.type === "start") {
 				setCalls((m) =>
 					new Map(m).set(e.call.id, { call: e.call, ending: false }),
@@ -236,14 +254,16 @@ export function OrchestratorGraph() {
 	}, []);
 
 	const receiving = useMemo(() => {
-		const set = new Set<string>();
+		const set = new Set<string>(
+			[...pulsing].map((id) => nodeOf(routeKey(id, orchestratorPaneId))),
+		);
 		for (const { call, ending } of calls.values()) {
 			if (!ending) {
 				set.add(nodeOf(routeKey(call.targetPaneId, orchestratorPaneId)));
 			}
 		}
 		return set;
-	}, [calls, orchestratorPaneId]);
+	}, [calls, pulsing, orchestratorPaneId]);
 
 	const nodes = useMemo(() => {
 		const out: Node[] = [];
