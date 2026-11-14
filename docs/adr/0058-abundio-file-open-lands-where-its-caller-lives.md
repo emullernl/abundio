@@ -20,3 +20,10 @@ The **Orchestrator** (ADR-0057) must be able to show the user a file of any Work
 - **Always a Workspace Tab**, even for the Orchestrator. Rejected: the user would see the file only after leaving the Orchestrator view.
 - **Split beside the caller** for `--tab`. Rejected: it rearranges a layout the user built.
 - **Any file on disk.** Rejected: no Workspace owns it, and an Agent could put `~/.ssh` on screen.
+
+## Consequences
+
+- The CLI sends its working folder in front of every call's arguments, marked (`\u{1}cwd:`), and Rust takes it off; a header could not carry a folder name that is not ASCII.
+- Rust decides inside-or-outside before existence, so a refusal never tells an Agent whether a file outside the Workspace exists.
+- A File window opened this way always comes forward with focus (the window-open command focuses), and `--preview` does not choose a File window's view; both are left as they are for now.
+

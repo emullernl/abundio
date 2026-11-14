@@ -2,6 +2,8 @@
 
 One Agent per Profile that the user can ask about, and act through on, every other Agent of the Profile, in a third view of the Window. Plus `abundio file open`, so the Orchestrator (and every other pane) can show the user a file. See `GLOSSARY.md` (**Orchestrator**, **Orchestrator workspace**, **Orchestrator view**, **Orchestrator tab**, **Peek**), ADR-0057 and ADR-0058.
 
+**Status:** built on `feat/orchestrator`, steps 1–10. The graph, the Orchestrator's start and its behaviour after an exit were revised with the user along the way; the Decisions table records the final choices.
+
 ## Why
 
 Agent control (ADR-0054, ADR-0055) already lets any Agent see and drive the whole Profile. What is missing is a place for that Agent, made for users with no coding or Agent experience: a home that needs no folder, a view that shows the system at a glance, and a way to put a file on screen.
@@ -107,4 +109,4 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 
 ### 10. Docs
 
-- CLAUDE.md architecture map entries, GLOSSARY touch-ups, README feature line.
+- CLAUDE.md: the new modules in the architecture map and a conventions note (the Orchestrator workspace is never listed; who starts its Agent; `file open` paths are checked in Rust). README: a feature line and the shortcut. GLOSSARY and ADR-0057/0058 kept in step with each change.
