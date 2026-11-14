@@ -664,9 +664,10 @@ const AgentNode = memo(function AgentNode({
 					borderRadius: 999,
 					cursor: "pointer",
 					border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+					// A raised surface, lighter than the container it sits in.
 					background: selected
-						? "color-mix(in srgb, var(--accent) 14%, var(--bg-primary))"
-						: "var(--bg-primary)",
+						? "color-mix(in srgb, var(--accent) 16%, var(--bg-tertiary))"
+						: "var(--bg-tertiary)",
 					boxShadow: selected
 						? "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)"
 						: undefined,
