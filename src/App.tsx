@@ -14,6 +14,7 @@ import { Navigator } from "./components/Navigator/Navigator";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
+import { OrchestratorView } from "./components/Orchestrator/OrchestratorView";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
 import { RightSidebar } from "./components/RightSidebar/RightSidebar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
@@ -237,6 +238,10 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
 	);
 	const toggleFleet = useWindowUiStore((s) => s.toggleFleetConsole);
+	const orchestratorOpen = useWindowUiStore(
+		(s) => s.orchestratorViewOpen && !s.statisticsOverlayOpen,
+	);
+	const toggleOrchestrator = useWindowUiStore((s) => s.toggleOrchestratorView);
 	return (
 		<OverviewBar
 			openedWorkspaces={openedWorkspaces}
@@ -258,6 +263,8 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 			onToggleStatistics={toggleStatistics}
 			fleetConsoleOpen={fleetOpen}
 			onToggleFleetConsole={toggleFleet}
+			orchestratorViewOpen={orchestratorOpen}
+			onToggleOrchestratorView={toggleOrchestrator}
 		/>
 	);
 });
@@ -449,7 +456,10 @@ export function App() {
 		!openedWorkspaceIds.has(activeWorkspaceId)
 			? workspaces.find((w) => w.id === activeWorkspaceId)
 			: undefined;
-	const fleetConsoleOpen = useWindowUiStore((s) => s.fleetConsoleOpen);
+	// Both other views hide the sidebars (ADR-0040, ADR-0057).
+	const sidebarsHidden = useWindowUiStore(
+		(s) => s.fleetConsoleOpen || s.orchestratorViewOpen,
+	);
 	const newTaskRequest = useWindowUiStore((s) => s.newTaskRequest);
 
 	// Lazy-mount tabs. Active tab mounts immediately; others mount after workspace
@@ -817,6 +827,16 @@ export function App() {
 	// `settings` window via window_management::open_or_focus_settings_window.
 	// No frontend listener needed in profile windows for that path.
 
+	// Go ▸ Orchestrator in the native menu (ADR-0057).
+	useEffect(() => {
+		const unlisten = listenToThisWindow<void>("open-orchestrator", () => {
+			useWindowUiStore.getState().setOrchestratorViewOpen(true);
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
 	// Go ▸ Navigator… in the native menu. Rust aims it at one Window.
 	useEffect(() => {
 		const unlisten = listenToThisWindow<void>("open-navigator", () => {
@@ -1140,6 +1160,9 @@ export function App() {
 		registerAction("toggle-fleet-console", () => {
 			useWindowUiStore.getState().toggleFleetConsole();
 		});
+		registerAction("toggle-orchestrator-view", () => {
+			useWindowUiStore.getState().toggleOrchestratorView();
+		});
 		registerAction("toggle-statistics-overlay", () => {
 			useWindowUiStore.getState().toggleStatisticsOverlay();
 		});
@@ -1171,7 +1194,7 @@ export function App() {
 				    to, and its fixed-position dialogs escape this clip. */}
 				<div
 					className="flex shrink-0"
-					style={fleetConsoleOpen ? HIDDEN_SIDEBAR_STYLE : undefined}
+					style={sidebarsHidden ? HIDDEN_SIDEBAR_STYLE : undefined}
 				>
 					<Sidebar
 						titlebarHeight={TITLEBAR_HEIGHT}
@@ -1301,13 +1324,14 @@ export function App() {
 					    otherwise. Sits below the Overview bar's z-40 so its toggle stays
 					    clickable, above the workspace stack. See ADR-0018. */}
 					<FleetConsole topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT} />
+					<OrchestratorView topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT} />
 					<StatisticsOverlay
 						topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT}
 					/>
 				</div>
 				<div
 					className="flex shrink-0"
-					style={fleetConsoleOpen ? HIDDEN_SIDEBAR_STYLE : undefined}
+					style={sidebarsHidden ? HIDDEN_SIDEBAR_STYLE : undefined}
 				>
 					<RightSidebar titlebarHeight={TITLEBAR_HEIGHT} />
 				</div>

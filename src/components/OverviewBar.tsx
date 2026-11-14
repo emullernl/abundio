@@ -9,6 +9,7 @@ import {
 	HelpCircle,
 	LayoutGrid,
 	type LucideIcon,
+	Network,
 } from "lucide-react";
 import {
 	type ComponentType,
@@ -73,6 +74,9 @@ export interface OverviewBarProps {
 	/** Show/hide the Fleet Console. Navigation only, like Statistics: it
 	 *  switches view and never mutates workspace state. See ADR-0040. */
 	onToggleFleetConsole: () => void;
+	/** Whether the Orchestrator view is on screen (ADR-0057). */
+	orchestratorViewOpen: boolean;
+	onToggleOrchestratorView: () => void;
 }
 
 const TILE_WIDTH = 44;
@@ -152,6 +156,7 @@ type GlyphComponent = ComponentType<{
 export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 	const fleetKey = useShortcutLabel("toggle-fleet-console");
 	const statsKey = useShortcutLabel("toggle-statistics-overlay");
+	const orchestratorKey = useShortcutLabel("toggle-orchestrator-view");
 	const {
 		openedWorkspaces,
 		totalWorkspaces,
@@ -172,6 +177,8 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 		onToggleStatistics,
 		fleetConsoleOpen,
 		onToggleFleetConsole,
+		orchestratorViewOpen,
+		onToggleOrchestratorView,
 	} = props;
 
 	return (
@@ -230,6 +237,15 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 				className="flex items-center"
 				style={{ marginLeft: "auto", paddingLeft: SECTION_GAP, gap: 6 }}
 			>
+				<ViewToggle
+					open={orchestratorViewOpen}
+					onClick={onToggleOrchestratorView}
+					title={withShortcut(
+						"Orchestrator — ask about every agent in this profile",
+						orchestratorKey,
+					)}
+					icon={Network}
+				/>
 				<ViewToggle
 					open={fleetConsoleOpen}
 					onClick={onToggleFleetConsole}

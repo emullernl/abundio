@@ -19,7 +19,7 @@ Agent control (ADR-0054, ADR-0055) already lets any Agent see and drive the whol
 | Start | When the Orchestrator view is first shown in a session (opened or restored). Session resume. If it exits: a "Start the Orchestrator" button. |
 | Instructions | Abundio rewrites `AGENTS.md` (+ `CLAUDE.md` that points to it) on every start: role, plain language, use the abundio skill, ask before prompting/sending keys/starting/closing another Agent. Both include `my-instructions.md`, which is the user's and never touched. |
 | Friendliness | Real Agent TUI, plus a welcome card and seeded Prompt actions ("What is everyone working on?", "Who needs me right now?", "Summarise today"). |
-| View | Third view beside Workspace view and Fleet Console; exactly one on screen. Every view is restored on launch (reverses ADR-0040's rule). |
+| View | Third view beside Workspace view and Fleet Console; exactly one on screen. Every view is restored on launch (reverses the Fleet Console's never-restored rule). |
 | Entry | Overview bar button, `Cmd+Shift+O` / `Ctrl+Shift+O` (rebindable), Go ▸ Orchestrator, Command palette. A click on the Orchestrator's notification lands in the view. |
 | Layout | Orchestrator tabs on top (draggable height, collapsible, per Window); the Orchestrator workspace's own Tab bar and panes below, always visible. |
 | Orchestrator tabs | Graph (first, never closed), at most one Peek, files of any Workspace of the Profile. Files are editable like a File pane. Remembered per Profile, except Peek. |
@@ -57,10 +57,10 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 
 ### 3. The view switch
 
-- `windowUiStore`: `view: "workspace" | "fleet" | "orchestrator"` replaces `fleetConsoleOpen` (keep `fleetConsoleOpen`-style selectors as derived helpers so callers change little); persisted (version 3 migration: missing → `"workspace"`). `toggleOrchestratorView`. Statistics stays an overlay over any view.
+- `windowUiStore`: `orchestratorViewOpen` beside `fleetConsoleOpen` (at most one true; both false = Workspace view), both persisted. `toggleOrchestratorView`, `setOrchestratorViewOpen`, `showWorkspaceView` (what Switch to calls). Statistics stays an overlay over any view.
 - App.tsx: render `<OrchestratorView>` beside `<FleetConsole>`; hide the sidebars in both; `workspaceViewOnly` gates also in the Orchestrator view.
 - Keybinding action `toggle-orchestrator-view` (default `Cmd+Shift+O` / `Ctrl+Shift+O`), Command palette entry, Overview bar `ViewToggle`, Go ▸ Orchestrator menu item (`open-orchestrator` event via `emit_to_one_profile_window`, heard with `listenToThisWindow`).
-- Update GLOSSARY (Fleet Console restore), ADR-0040 note.
+- Update GLOSSARY (Fleet Console restore, Overview bar), CLAUDE.md shortcut table.
 
 ### 4. Orchestrator view shell + starting the Agent
 

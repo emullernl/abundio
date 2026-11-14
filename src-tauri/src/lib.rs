@@ -389,7 +389,10 @@ pub fn build_menu(
     // does; the webview's own Keymap already handles Cmd+J / Ctrl+Shift+J.
     let navigator_item =
         MenuItem::with_id(handle, "navigator", "Navigator…", true, None::<&str>)?;
-    let go_menu = Submenu::with_items(handle, "Go", true, &[&navigator_item])?;
+    let orchestrator_item =
+        MenuItem::with_id(handle, "orchestrator", "Orchestrator", true, None::<&str>)?;
+    let go_menu =
+        Submenu::with_items(handle, "Go", true, &[&navigator_item, &orchestrator_item])?;
 
     let window_menu = Submenu::with_items(
         handle,
@@ -1213,6 +1216,14 @@ pub fn run() {
                 let _ = window_management::emit_to_one_profile_window(
                     app,
                     "open-navigator",
+                    (),
+                );
+                return;
+            }
+            if id == "orchestrator" {
+                let _ = window_management::emit_to_one_profile_window(
+                    app,
+                    "open-orchestrator",
                     (),
                 );
                 return;

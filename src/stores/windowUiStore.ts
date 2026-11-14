@@ -96,14 +96,23 @@ interface WindowUiState {
 	toggleStatisticsOverlay: () => void;
 	setStatisticsOverlayOpen: (open: boolean) => void;
 	/** The **Fleet Console** replaces everything between the Overview bar and
-	 *  the Status bar with a grid of this Window's agent-mode panes. Not
-	 *  persisted: every launch opens in the Workspace view. It and the
-	 *  Statistics overlay are mutually exclusive on screen: opening Statistics
-	 *  covers the console, and closing Statistics reveals it again, while
-	 *  opening the console closes Statistics. See ADR-0040. */
+	 *  the Status bar with a grid of this Window's agent-mode panes. Persisted,
+	 *  like every view: a Window reopens in the view it was left in (ADR-0057).
+	 *  It and the Statistics overlay are mutually exclusive on screen: opening
+	 *  Statistics covers the console, and closing Statistics reveals it again,
+	 *  while opening the console closes Statistics. See ADR-0040. At most one
+	 *  of `fleetConsoleOpen` and `orchestratorViewOpen` is true; both false is
+	 *  the Workspace view. */
 	fleetConsoleOpen: boolean;
 	toggleFleetConsole: () => void;
 	setFleetConsoleOpen: (open: boolean) => void;
+	/** The **Orchestrator view** (ADR-0057): the Window's third view.
+	 *  Persisted. Same relation to Statistics as the Fleet Console. */
+	orchestratorViewOpen: boolean;
+	toggleOrchestratorView: () => void;
+	setOrchestratorViewOpen: (open: boolean) => void;
+	/** Back to the **Workspace view** from either other view (Switch to). */
+	showWorkspaceView: () => void;
 	/** The **Focused tile**: the console's own focus, separate from the
 	 *  Workspace view's `focusedPaneId` so moving around the grid never
 	 *  rearranges the view behind it. Not persisted. */
@@ -227,14 +236,41 @@ export const useWindowUiStore = create<WindowUiState>()(
 			toggleFleetConsole: () => {
 				const s = get();
 				// The button reads "show the console" while Statistics covers it.
-				if (s.statisticsOverlayOpen) {
-					set({ statisticsOverlayOpen: false, fleetConsoleOpen: true });
-				} else if (s.fleetConsoleOpen) {
-					set({ fleetConsoleOpen: false });
+				if (s.statisticsOverlayOpen || !s.fleetConsoleOpen) {
+					set({
+						statisticsOverlayOpen: false,
+						fleetConsoleOpen: true,
+						orchestratorViewOpen: false,
+					});
 				} else {
-					set({ fleetConsoleOpen: true });
+					set({ fleetConsoleOpen: false });
 				}
 			},
+			orchestratorViewOpen: false,
+			toggleOrchestratorView: () => {
+				const s = get();
+				if (s.statisticsOverlayOpen || !s.orchestratorViewOpen) {
+					set({
+						statisticsOverlayOpen: false,
+						orchestratorViewOpen: true,
+						fleetConsoleOpen: false,
+					});
+				} else {
+					set({ orchestratorViewOpen: false });
+				}
+			},
+			setOrchestratorViewOpen: (open) =>
+				set(
+					open
+						? {
+								orchestratorViewOpen: true,
+								fleetConsoleOpen: false,
+								statisticsOverlayOpen: false,
+							}
+						: { orchestratorViewOpen: false },
+				),
+			showWorkspaceView: () =>
+				set({ fleetConsoleOpen: false, orchestratorViewOpen: false }),
 			focusedTileId: null,
 			setFocusedTile: (paneId) => set({ focusedTileId: paneId }),
 			pendingTiles: {},
@@ -294,7 +330,11 @@ export const useWindowUiStore = create<WindowUiState>()(
 			setFleetConsoleOpen: (open) =>
 				set(
 					open
-						? { fleetConsoleOpen: true, statisticsOverlayOpen: false }
+						? {
+								fleetConsoleOpen: true,
+								orchestratorViewOpen: false,
+								statisticsOverlayOpen: false,
+							}
 						: { fleetConsoleOpen: false },
 				),
 			addWorktreeRequest: null,
@@ -353,6 +393,9 @@ export const useWindowUiStore = create<WindowUiState>()(
 				commitsSectionCollapsed: s.commitsSectionCollapsed,
 				agentsListCollapsed: s.agentsListCollapsed,
 				statisticsOverlayOpen: s.statisticsOverlayOpen,
+				// Every view is restored on launch (ADR-0057).
+				fleetConsoleOpen: s.fleetConsoleOpen,
+				orchestratorViewOpen: s.orchestratorViewOpen,
 				foldedSetKeys: s.foldedSetKeys,
 				fleetGrid: s.fleetGrid,
 			}),

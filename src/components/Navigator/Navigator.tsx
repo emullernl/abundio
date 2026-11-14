@@ -81,7 +81,7 @@ function goTo(row: NavRow): void {
 		switchToPane(row.paneId);
 		return;
 	}
-	useWindowUiStore.getState().setFleetConsoleOpen(false);
+	useWindowUiStore.getState().showWorkspaceView();
 	if (row.kind === "window") {
 		// Switching raises all its File windows without focus (once, from the
 		// store); focus the picked one after that raise, so it ends up on top.

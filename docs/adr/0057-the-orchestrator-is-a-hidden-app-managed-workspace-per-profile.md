@@ -10,7 +10,7 @@ We decided that each Profile has exactly one **Orchestrator workspace**: an ordi
 
 Abundio rewrites the Orchestrator's own instructions file on every start (its role, plain-language answers, and *ask the user before prompting, sending keys to, starting or closing another Agent*) and includes a second file the user may edit, which Abundio never touches. The ask-first rule lives in those instructions, not in Agent control: Agent control still never asks (ADR-0054); the **Control badge** and the graph's animated edges show what happens.
 
-With this, every view of a Window — **Workspace view**, Fleet Console, Orchestrator view — is restored on launch. This reverses the Fleet Console's "never restored" rule (ADR-0040): a user who lives in the Orchestrator view should not land somewhere else on every start, and one rule for all views is easier than two.
+With this, every view of a Window — **Workspace view**, Fleet Console, Orchestrator view — is restored on launch. This reverses the Fleet Console's "never restored" rule (its glossary entry; ADR-0040 is silent on it): a user who lives in the Orchestrator view should not land somewhere else on every start, and one rule for all views is easier than two.
 
 ## Considered Options
 
@@ -25,3 +25,4 @@ With this, every view of a Window — **Workspace view**, Fleet Console, Orchest
 - Every code path that lists a Profile's Workspaces must decide whether it includes the Orchestrator workspace. Most must not. The Orchestrator's own `abundio workspace list` must not list itself as a work Workspace.
 - Agent handles are unique per Profile (ADR-0055), so `Orchestrator` is refused for every other Agent.
 - Restoring the Orchestrator view starts the Orchestrator's Agent at launch.
+- Restoring the Fleet Console at launch shows the tiles of the restored Workspaces as Workspace restore (ADR-0052) opens them.

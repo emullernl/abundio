@@ -94,7 +94,7 @@ export function CommandPalette({
 				category: "Workspaces",
 				action: () => {
 					// Picking a Workspace is a request to see it.
-					useWindowUiStore.getState().setFleetConsoleOpen(false);
+					useWindowUiStore.getState().showWorkspaceView();
 					beginWorkspaceSwitch(s.id);
 				},
 			});
@@ -161,6 +161,13 @@ export function CommandPalette({
 			action: () => triggerAction("open-navigator"),
 		});
 
+		result.push({
+			id: "action-toggle-orchestrator-view",
+			label: "Toggle Orchestrator",
+			category: "Actions",
+			shortcut: "toggle-orchestrator-view",
+			action: () => triggerAction("toggle-orchestrator-view"),
+		});
 		result.push({
 			id: "action-toggle-fleet-console",
 			label: "Toggle Fleet Console",

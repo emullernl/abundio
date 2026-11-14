@@ -12,6 +12,12 @@ export function fleetConsoleShowing(): boolean {
 	return s.fleetConsoleOpen && !s.statisticsOverlayOpen;
 }
 
+/** Whether the Orchestrator view is the view on screen (ADR-0057). */
+export function orchestratorViewShowing(): boolean {
+	const s = useWindowUiStore.getState();
+	return s.orchestratorViewOpen && !s.statisticsOverlayOpen;
+}
+
 /**
  * The pane that pane-scoped commands act on: the **Focused tile** while the
  * Fleet Console is on screen, otherwise the Workspace view's **Focused pane**.
@@ -75,7 +81,7 @@ export function useTargetPaneId(): string | null {
  */
 export function workspaceViewOnly(fn: () => void): () => void {
 	return () => {
-		if (fleetConsoleShowing()) return;
+		if (fleetConsoleShowing() || orchestratorViewShowing()) return;
 		fn();
 	};
 }
