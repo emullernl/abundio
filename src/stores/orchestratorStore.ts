@@ -31,6 +31,9 @@ interface OrchestratorState {
 	/** Its Agent exited while its pane stayed: the view asks which Agent to
 	 *  start (the picker), until one is chosen or the user says not now. */
 	exited: boolean;
+	/** The "Open workspace…" list is open (tab strip button or the graph's
+	 *  '+' node). */
+	workspacePickerOpen: boolean;
 	/** The Agent selected in the graph (a single click). */
 	selectedPaneId: string | null;
 	set: (patch: Partial<Omit<OrchestratorState, "set">>) => void;
@@ -45,6 +48,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set) => ({
 	changingAgent: false,
 	panesTop: 0,
 	selectedPaneId: null,
+	workspacePickerOpen: false,
 	exited: false,
 	set: (patch) => set(patch),
 }));

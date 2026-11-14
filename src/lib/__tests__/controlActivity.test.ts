@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	controlKind,
-	publishControlActivity,
+	runningControlActivity,
+	startControlActivity,
 	subscribeControlActivity,
 } from "../controlActivity";
 
@@ -13,26 +14,31 @@ describe("controlActivity", () => {
 		expect(controlKind("pane.close")).toBe("act");
 	});
 
-	it("delivers a call to subscribers, never one aimed at the caller itself", () => {
+	it("reports a call's start and end, once each, and what runs now", () => {
 		const seen = vi.fn();
 		const stop = subscribeControlActivity(seen);
-		publishControlActivity({
+		const end = startControlActivity({
 			callerPaneId: "a",
 			targetPaneId: "b",
 			kind: "act",
 		});
-		publishControlActivity({
+		expect(runningControlActivity().map((c) => c.targetPaneId)).toEqual(["b"]);
+		end();
+		end();
+		stop();
+		expect(seen.mock.calls.map((c) => c[0].type)).toEqual(["start", "end"]);
+		expect(runningControlActivity()).toEqual([]);
+	});
+
+	it("never draws a call a pane makes at itself", () => {
+		const seen = vi.fn();
+		const stop = subscribeControlActivity(seen);
+		startControlActivity({
 			callerPaneId: "a",
 			targetPaneId: "a",
 			kind: "read",
-		});
+		})();
 		stop();
-		publishControlActivity({
-			callerPaneId: "a",
-			targetPaneId: "c",
-			kind: "act",
-		});
-		expect(seen).toHaveBeenCalledTimes(1);
-		expect(seen.mock.calls[0][0]).toMatchObject({ targetPaneId: "b" });
+		expect(seen).not.toHaveBeenCalled();
 	});
 });

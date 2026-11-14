@@ -1,12 +1,13 @@
 /**
- * The **Orchestrator view**'s graph (ADR-0057), as plain data: which boxes
+ * The **Orchestrator view**'s graph (ADR-0057), as plain data: which nodes
  * exist and where they sit. Pure; `OrchestratorGraph.tsx` draws it with React
- * Flow and adds what changes every second (status, progress, animations).
+ * Flow and adds what changes every second (status, progress, streams).
  *
- * Shape: the Orchestrator on top; under it one box per Workspace of the
- * Profile, in Left sidebar order; inside each box its Agents, a helper indented
- * under the Agent that spawned it. A Workspace that is not Opened shows the
- * Agents its layout remembers, greyed (**dormant**).
+ * Shape: a flower. The Orchestrator in the centre; one petal per **Opened
+ * workspace**, its angle in proportion to its Agent count, in Left sidebar
+ * order clockwise from the top; a helper one ring further out than the Agent
+ * that spawned it; the Orchestrator's own helpers on a small ring round the
+ * centre; and one more slot on the outer ring for "Open workspace…".
  */
 
 import { parseTabLayout } from "./paneTree";
@@ -31,19 +32,23 @@ export interface GraphAgent {
 	tabName: string;
 	agentId: string | undefined;
 	handle: string | undefined;
-	/** The pane whose Agent spawned this one, when it is in the same box. */
+	/** The pane whose Agent spawned this one, when it is in the same petal. */
 	spawnedBy: string | undefined;
-	/** Not running: its Workspace is not Opened. */
-	dormant: boolean;
-	/** Nesting under its spawner, 0 for a top-level Agent. */
+	/** Rings out from its petal's first ring: 0 for a top-level Agent. */
 	depth: number;
 }
 
 export interface GraphWorkspace {
 	id: string;
 	name: string;
-	opened: boolean;
 	agents: GraphAgent[];
+}
+
+export interface GraphModel {
+	petals: GraphWorkspace[];
+	/** Agents in the Orchestrator's own Workspace, other than the
+	 *  Orchestrator itself. */
+	helpers: GraphAgent[];
 }
 
 export interface GraphModelInput {
@@ -55,26 +60,20 @@ export interface GraphModelInput {
 	panePtyMap: Readonly<Record<string, string>>;
 	/** PTY id → whether it is in agent mode. */
 	isAgentPty: (ptyId: string) => boolean;
+	/** The Orchestrator's own pane, left out of `helpers`. */
+	orchestratorPaneId: string | null;
 }
 
-/** Agents in `ws`, in Tab then pane order, live or dormant. */
-function agentsOf(
-	ws: WorkspaceWithTabs,
-	opened: boolean,
-	input: GraphModelInput,
-): GraphAgent[] {
+/** Live agent-mode panes of `ws`, in Tab then pane order. */
+function agentsOf(ws: WorkspaceWithTabs, input: GraphModelInput): GraphAgent[] {
 	const out: GraphAgent[] = [];
 	const tabs = [...ws.tabs].sort((a, b) => a.position - b.position);
 	for (const tab of tabs) {
 		const layout = parseTabLayout(tab.layoutJson);
 		if (!layout) continue;
 		for (const t of terminals(layout)) {
-			if (opened) {
-				const ptyId = input.panePtyMap[t.id] ?? t.ptyId;
-				if (!ptyId || !input.isAgentPty(ptyId)) continue;
-			} else if (!t.agentId) {
-				continue;
-			}
+			const ptyId = input.panePtyMap[t.id] ?? t.ptyId;
+			if (!ptyId || !input.isAgentPty(ptyId)) continue;
 			out.push({
 				paneId: t.id,
 				workspaceId: ws.id,
@@ -83,17 +82,16 @@ function agentsOf(
 				agentId: t.agentId,
 				handle: t.agentHandle,
 				spawnedBy: t.spawnedBy,
-				dormant: !opened,
 				depth: 0,
 			});
 		}
 	}
-	return nestBySpawner(out);
+	return out;
 }
 
 /** Puts each helper right after the Agent that spawned it (depth-first), so
- *  a box reads as a small tree. A spawner outside the box (another Workspace,
- *  or gone) leaves its helper at the top level. */
+ *  a petal reads as a small tree. A spawner outside the petal (another
+ *  Workspace, or gone) leaves its helper at the top level. */
 export function nestBySpawner(agents: readonly GraphAgent[]): GraphAgent[] {
 	const ids = new Set(agents.map((a) => a.paneId));
 	const children = new Map<string, GraphAgent[]>();
@@ -125,38 +123,52 @@ export function nestBySpawner(agents: readonly GraphAgent[]): GraphAgent[] {
 	return out;
 }
 
-/** Every Workspace of the Profile that has Agents, in sidebar order. The
- *  Orchestrator workspace is the graph's top, never a box. */
-export function graphModel(input: GraphModelInput): GraphWorkspace[] {
+/** The flower's content: a petal per Opened workspace with Agents running,
+ *  in sidebar order, and the Orchestrator's own helpers. */
+export function graphModel(input: GraphModelInput): GraphModel {
 	const rank = new Map(input.order.map((id, i) => [id, i]));
-	const list = input.workspaces
-		.filter((w) => !isOrchestrator(w))
+	const opened = input.workspaces
+		.filter((w) => input.openedWorkspaceIds.has(w.id))
 		.map((w, i) => ({ w, r: rank.get(w.id) ?? input.order.length + i }))
 		.sort((a, b) => a.r - b.r)
 		.map(({ w }) => w);
-	const out: GraphWorkspace[] = [];
-	for (const ws of list) {
-		const opened = input.openedWorkspaceIds.has(ws.id);
-		const agents = agentsOf(ws, opened, input);
+	const petals: GraphWorkspace[] = [];
+	const helpers: GraphAgent[] = [];
+	for (const ws of opened) {
+		const agents = agentsOf(ws, input);
+		if (isOrchestrator(ws)) {
+			helpers.push(
+				...agents.filter((a) => a.paneId !== input.orchestratorPaneId),
+			);
+			continue;
+		}
 		if (agents.length === 0) continue;
-		out.push({ id: ws.id, name: ws.name, opened, agents });
+		petals.push({ id: ws.id, name: ws.name, agents: nestBySpawner(agents) });
 	}
-	return out;
+	return { petals, helpers };
 }
 
 // ── Layout ──
 
-export const AGENT_W = 210;
-export const AGENT_H = 54;
-export const ORCH_W = 240;
-export const ORCH_H = 58;
-const AGENT_GAP = 8;
-const INDENT = 18;
-const BOX_PAD = 12;
-const BOX_HEADER = 30;
-const BOX_GAP = 28;
-const LEVEL_GAP = 64;
+export const AGENT_W = 184;
+export const AGENT_H = 48;
+export const ORCH_W = 210;
+export const ORCH_H = 56;
+export const HELPER_W = 150;
+export const HELPER_H = 40;
+export const ADD_W = 150;
+export const ADD_H = 40;
+/** Space each Agent needs along the outer ring. */
+const SLOT_ARC = 220;
+/** The smallest first ring, so a small flower is not cramped round the
+ *  Orchestrator. */
+const MIN_RADIUS = 260;
+/** Distance from one ring of Agents to the next (helpers). */
+const RING_STEP = 210;
+/** The Orchestrator's own helpers. */
+const HELPER_RADIUS = 125;
 
+/** A node's centre and size. */
 export interface Placed {
 	x: number;
 	y: number;
@@ -164,91 +176,136 @@ export interface Placed {
 	height: number;
 }
 
+export interface Petal {
+	workspaceId: string;
+	name: string;
+	/** Angles in radians, clockwise from the top (screen coordinates). */
+	start: number;
+	end: number;
+	/** Radius of its inner and outer edge. */
+	inner: number;
+	outer: number;
+	/** Where its name goes, past the outer edge. */
+	label: { x: number; y: number };
+}
+
 export interface GraphLayout {
+	/** Every position is a centre, with the Orchestrator at (0, 0). */
 	orchestrator: Placed;
-	/** By Workspace id, absolute. */
-	boxes: Record<string, Placed>;
-	/** By pane id, relative to its box (React Flow's `parentId`). */
 	agents: Record<string, Placed>;
+	helpers: Record<string, Placed>;
+	petals: Petal[];
+	/** The "Open workspace…" node. */
+	add: Placed;
+}
+
+const TOP = -Math.PI / 2;
+
+const at = (radius: number, angle: number) => ({
+	x: Math.round(radius * Math.cos(angle)),
+	y: Math.round(radius * Math.sin(angle)),
+});
+
+/** Positions for `model`: see the module comment. */
+export function layoutGraph(model: GraphModel): GraphLayout {
+	const count = model.petals.reduce((n, p) => n + p.agents.length, 0);
+	const slots = count + 1; // + the "Open workspace…" slot
+	const step = (2 * Math.PI) / slots;
+	const radius = Math.max(
+		MIN_RADIUS,
+		Math.round((slots * SLOT_ARC) / (2 * Math.PI)),
+	);
+
+	const agents: Record<string, Placed> = {};
+	const petals: Petal[] = [];
+	let slot = 0;
+	for (const ws of model.petals) {
+		const start = TOP + slot * step;
+		const maxDepth = Math.max(0, ...ws.agents.map((a) => a.depth));
+		ws.agents.forEach((a, i) => {
+			const angle = TOP + (slot + i + 0.5) * step;
+			agents[a.paneId] = {
+				...at(radius + a.depth * RING_STEP, angle),
+				width: AGENT_W,
+				height: AGENT_H,
+			};
+		});
+		slot += ws.agents.length;
+		const end = TOP + slot * step;
+		const outer = radius + maxDepth * RING_STEP + AGENT_H + 40;
+		petals.push({
+			workspaceId: ws.id,
+			name: ws.name,
+			start,
+			end,
+			inner: Math.round(radius * 0.55),
+			outer,
+			label: at(outer + 26, (start + end) / 2),
+		});
+	}
+
+	const helpers: Record<string, Placed> = {};
+	const hStep = (2 * Math.PI) / Math.max(1, model.helpers.length);
+	model.helpers.forEach((h, i) => {
+		helpers[h.paneId] = {
+			...at(HELPER_RADIUS + ORCH_H / 2, TOP + Math.PI / 4 + i * hStep),
+			width: HELPER_W,
+			height: HELPER_H,
+		};
+	});
+
+	return {
+		orchestrator: { x: 0, y: 0, width: ORCH_W, height: ORCH_H },
+		agents,
+		helpers,
+		petals,
+		add: {
+			...at(radius, TOP + (slots - 0.5) * step),
+			width: ADD_W,
+			height: ADD_H,
+		},
+	};
 }
 
 /**
- * Positions for `model`. The boxes run in rows under the Orchestrator,
- * wrapped so the whole graph has about the `aspect` (width / height) of the
- * area it is drawn in; each row is centred, and the Orchestrator is centred
- * over the widest row.
+ * An SVG path for a petal: a rounded wedge from `inner` to `outer` between
+ * its angles, drawn about the origin.
  */
-export function layoutGraph(
-	model: readonly GraphWorkspace[],
-	aspect = 3,
-): GraphLayout {
-	const sized = model.map((ws) => {
-		const maxDepth = Math.max(0, ...ws.agents.map((a) => a.depth));
-		return {
-			ws,
-			width: AGENT_W + 2 * BOX_PAD + maxDepth * INDENT,
-			height:
-				BOX_HEADER +
-				ws.agents.length * (AGENT_H + AGENT_GAP) -
-				AGENT_GAP +
-				BOX_PAD,
-		};
-	});
-	// The row width that gives the asked-for shape: area = W * H with
-	// W / H = aspect, so W = sqrt(area * aspect). Never narrower than a box.
-	const area = sized.reduce(
-		(sum, b) => sum + (b.width + BOX_GAP) * (b.height + BOX_GAP),
-		0,
-	);
-	const widest = Math.max(0, ...sized.map((b) => b.width));
-	const maxRow = Math.max(widest, Math.sqrt(area * Math.max(0.5, aspect)));
+export function petalPath(p: Petal, gap = 0.035): string {
+	const a0 = p.start + gap;
+	const a1 = Math.max(a0 + 0.01, p.end - gap);
+	const pt = (r: number, a: number) =>
+		`${(r * Math.cos(a)).toFixed(1)} ${(r * Math.sin(a)).toFixed(1)}`;
+	const large = a1 - a0 > Math.PI ? 1 : 0;
+	return [
+		`M ${pt(p.inner, a0)}`,
+		`L ${pt(p.outer, a0)}`,
+		`A ${p.outer} ${p.outer} 0 ${large} 1 ${pt(p.outer, a1)}`,
+		`L ${pt(p.inner, a1)}`,
+		`A ${p.inner} ${p.inner} 0 ${large} 0 ${pt(p.inner, a0)}`,
+		"Z",
+	].join(" ");
+}
 
-	const rows: (typeof sized)[] = [];
-	let row: typeof sized = [];
-	let rowWidth = 0;
-	for (const b of sized) {
-		const next = rowWidth + (row.length > 0 ? BOX_GAP : 0) + b.width;
-		if (row.length > 0 && next > maxRow) {
-			rows.push(row);
-			row = [];
-			rowWidth = 0;
-		}
-		rowWidth += (row.length > 0 ? BOX_GAP : 0) + b.width;
-		row.push(b);
-	}
-	if (row.length > 0) rows.push(row);
-
-	const widthOf = (r: typeof sized) =>
-		r.reduce((w, b) => w + b.width, 0) + Math.max(0, r.length - 1) * BOX_GAP;
-	const total = Math.max(0, ...rows.map(widthOf));
-
-	const boxes: Record<string, Placed> = {};
-	const agents: Record<string, Placed> = {};
-	let y = ORCH_H + LEVEL_GAP;
-	for (const r of rows) {
-		let x = Math.round((total - widthOf(r)) / 2);
-		for (const { ws, width, height } of r) {
-			ws.agents.forEach((a, i) => {
-				agents[a.paneId] = {
-					x: BOX_PAD + a.depth * INDENT,
-					y: BOX_HEADER + i * (AGENT_H + AGENT_GAP),
-					width: AGENT_W,
-					height: AGENT_H,
-				};
-			});
-			boxes[ws.id] = { x, y, width, height };
-			x += width + BOX_GAP;
-		}
-		y += Math.max(...r.map((b) => b.height)) + BOX_GAP;
-	}
-	return {
-		orchestrator: {
-			x: Math.round(total / 2 - ORCH_W / 2),
-			y: 0,
-			width: ORCH_W,
-			height: ORCH_H,
-		},
-		boxes,
-		agents,
-	};
+/**
+ * The curve a call's stream follows from one centre to another: a quadratic
+ * Bézier whose control point is the midpoint pulled toward the Orchestrator
+ * (the origin), so streams between far-apart Agents bow inward instead of
+ * cutting across other nodes. `ox`/`oy` is the origin in the same
+ * coordinates as the two points.
+ */
+export function streamPath(
+	sx: number,
+	sy: number,
+	tx: number,
+	ty: number,
+	ox: number,
+	oy: number,
+	pull = 0.55,
+): string {
+	const mx = (sx + tx) / 2;
+	const my = (sy + ty) / 2;
+	const cx = mx + (ox - mx) * pull;
+	const cy = my + (oy - my) * pull;
+	return `M ${sx} ${sy} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${tx} ${ty}`;
 }

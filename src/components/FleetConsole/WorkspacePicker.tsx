@@ -32,11 +32,23 @@ import { MissingFolderMark } from "../Sidebar/MissingFolderMark";
  */
 export function WorkspacePicker({
 	agentCountByWorkspace,
+	open: openProp,
+	onOpenChange,
+	title = "Open or close workspaces — their agents join or leave the console",
+	align = "right",
 }: {
 	/** How many tiles each Workspace has in the Console now. */
 	agentCountByWorkspace: ReadonlyMap<string, number>;
+	/** Controlled from outside (the Orchestrator graph's '+' node opens it). */
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
+	title?: string;
+	/** Which edge of the button the list hangs from. */
+	align?: "left" | "right";
 }) {
-	const [open, setOpen] = useState(false);
+	const [ownOpen, setOwnOpen] = useState(false);
+	const open = openProp ?? ownOpen;
+	const setOpen = onOpenChange ?? setOwnOpen;
 	const rootRef = useRef<HTMLDivElement>(null);
 	const allWorkspaces = useWorkWorkspaces();
 	const agents = useSettingsStore((s) => s.agents);
@@ -66,7 +78,7 @@ export function WorkspacePicker({
 		};
 		document.addEventListener("mousedown", onDown, true);
 		return () => document.removeEventListener("mousedown", onDown, true);
-	}, [open]);
+	}, [open, setOpen]);
 
 	const openedCount = workspaces.filter((w) => openedIds.has(w.id)).length;
 
@@ -74,9 +86,9 @@ export function WorkspacePicker({
 		<div ref={rootRef} className="relative">
 			<button
 				type="button"
-				onClick={() => setOpen((o) => !o)}
+				onClick={() => setOpen(!open)}
 				aria-expanded={open}
-				title="Open or close workspaces — their agents join or leave the console"
+				title={title}
 				className="flex items-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
 				style={{
 					height: 24,
@@ -110,6 +122,7 @@ export function WorkspacePicker({
 						setOpen(false);
 					}}
 					onClose={() => setOpen(false)}
+					align={align}
 				/>
 			)}
 			{dialogProps && <ConfirmDialog {...dialogProps} />}
@@ -143,6 +156,7 @@ function WorkspaceList({
 	onOpen,
 	onCloseWorkspace,
 	onClose,
+	align = "right",
 }: {
 	workspaces: WorkspaceWithTabs[];
 	/** Every Workspace, so Worktree sets group as in the Left sidebar even when
@@ -153,6 +167,8 @@ function WorkspaceList({
 	onOpen: (id: string) => void;
 	onCloseWorkspace: (id: string) => void;
 	onClose: () => void;
+	/** Which edge of the button the list hangs from. */
+	align?: "left" | "right";
 }) {
 	useEscapeKey(onClose);
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
@@ -177,7 +193,7 @@ function WorkspaceList({
 
 	return (
 		<div
-			className="absolute right-0 z-50 flex flex-col select-none"
+			className={`absolute ${align === "left" ? "left-0" : "right-0"} z-50 flex flex-col select-none`}
 			style={{
 				top: "calc(100% + 6px)",
 				width: 380,

@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronUp, Network, RefreshCw } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useAgentPanes } from "../../hooks/useAgentPanes";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { orchestratorPane, pickerAgents } from "../../lib/orchestrator";
 import {
@@ -18,6 +19,7 @@ import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { WorkspacePicker } from "../FleetConsole/WorkspacePicker";
 import {
 	primaryButtonClass,
 	secondaryButtonClass,
@@ -141,6 +143,7 @@ function TabStrip({
 				<Network size={13} />
 				Agents
 			</div>
+			{phase === "ready" && <OpenWorkspaceButton />}
 			<div className="flex-1" />
 			{phase === "ready" && agent && (
 				<button
@@ -168,6 +171,30 @@ function TabStrip({
 				{collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
 			</button>
 		</div>
+	);
+}
+
+/** "Open workspace…": the Fleet Console's workspace picker, shared with the
+ *  graph's '+' node (both open the same list). */
+function OpenWorkspaceButton() {
+	const open = useOrchestratorStore((s) => s.workspacePickerOpen);
+	const tiles = useAgentPanes({ includePending: false });
+	const counts = useMemo(() => {
+		const m = new Map<string, number>();
+		for (const t of tiles)
+			m.set(t.workspaceId, (m.get(t.workspaceId) ?? 0) + 1);
+		return m;
+	}, [tiles]);
+	return (
+		<WorkspacePicker
+			agentCountByWorkspace={counts}
+			open={open}
+			onOpenChange={(o) =>
+				useOrchestratorStore.getState().set({ workspacePickerOpen: o })
+			}
+			title="Open a workspace — its agents join the graph"
+			align="left"
+		/>
 	);
 }
 

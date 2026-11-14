@@ -15,7 +15,7 @@ import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { type TaskSeed, useWorkspaceStore } from "../../stores/workspaceStore";
 import { checkHandle } from "../agentHandle";
 import { closePaneNow, releaseOwner } from "../closePane";
-import { controlKind, publishControlActivity } from "../controlActivity";
+import { controlKind, startControlActivity } from "../controlActivity";
 import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
 import {
@@ -296,18 +296,19 @@ function noteActivity(
 	caller: ControlCaller,
 	request: ControlRequest,
 	scope: Awaited<ReturnType<typeof loadScope>>,
-): void {
+): () => void {
 	const ref = "target" in request ? request.target : null;
-	if (!ref) return;
+	if (!ref) return () => {};
 	try {
 		const pane = resolveTarget(ref, scope.panes, scope.numbers);
-		publishControlActivity({
+		return startControlActivity({
 			callerPaneId: caller.paneId,
 			targetPaneId: pane.node.id,
 			kind: controlKind(request.op),
 		});
 	} catch {
 		// Not resolvable: the call itself reports it.
+		return () => {};
 	}
 }
 
@@ -326,7 +327,22 @@ export async function runRequest(
 		return closeWorkspaceFor(caller, request.force, target);
 	}
 	const scope = await loadScope(caller, target, signal);
-	noteActivity(caller, request, scope);
+	// The graph draws the call for as long as it runs.
+	const ended = noteActivity(caller, request, scope);
+	try {
+		return await runOp(caller, request, signal, scope);
+	} finally {
+		ended();
+	}
+}
+
+/** `runRequest`'s body once the scope is loaded: one case per op. */
+async function runOp(
+	caller: ControlCaller,
+	request: ControlRequest,
+	signal: AbortSignal,
+	scope: Awaited<ReturnType<typeof loadScope>>,
+): Promise<unknown> {
 	switch (request.op) {
 		case "notes.read":
 			return { notes: await readNotes(scope.workspaceId) };

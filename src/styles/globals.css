@@ -729,25 +729,42 @@ body,
 .orch-node-pulse {
 	animation: orch-node-pulse 700ms ease-out;
 }
-/* An Agent control call fades out over its lifetime (PULSE_MS). */
-@keyframes orch-call-fade {
+/* A node a running call is aimed at glows while the stream reaches it. */
+@keyframes orch-node-receiving {
 	0%,
-	70% {
-		opacity: 1;
-	}
 	100% {
-		opacity: 0;
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent),
+			0 0 10px 1px color-mix(in srgb, var(--accent) 25%, transparent);
+	}
+	50% {
+		box-shadow:
+			0 0 0 2px color-mix(in srgb, var(--accent) 80%, transparent),
+			0 0 22px 4px color-mix(in srgb, var(--accent) 40%, transparent);
 	}
 }
-.orch-graph .orch-call path {
-	animation: orch-call-fade 2600ms ease-in forwards;
+.orch-node-receiving {
+	animation: orch-node-receiving 1.6s ease-in-out infinite;
+}
+.orch-graph .orch-petal {
+	fill: color-mix(in srgb, var(--accent) 8%, transparent);
+	stroke: color-mix(in srgb, var(--accent) 22%, transparent);
+	stroke-width: 1.2;
+	transition: fill 160ms ease;
+}
+.orch-graph .orch-petal-odd {
+	fill: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.orch-graph .orch-petal:hover {
+	fill: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
 	.orch-node-in,
 	.orch-node-pulse {
 		animation: none;
 	}
-	.orch-graph .react-flow__edge.animated path {
+	.orch-node-receiving {
 		animation: none;
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
 	}
 }

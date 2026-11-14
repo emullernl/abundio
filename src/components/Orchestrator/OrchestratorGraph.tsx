@@ -1,6 +1,7 @@
 import "@xyflow/react/dist/style.css";
 import {
 	type Edge,
+	type EdgeProps,
 	Handle,
 	type Node,
 	type NodeProps,
@@ -8,7 +9,7 @@ import {
 	ReactFlow,
 	useReactFlow,
 } from "@xyflow/react";
-import { BellRing, Network, RefreshCw } from "lucide-react";
+import { BellRing, Network, Plus, RefreshCw } from "lucide-react";
 import {
 	createContext,
 	memo,
@@ -24,6 +25,7 @@ import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import {
 	type ControlActivity,
+	runningControlActivity,
 	subscribeControlActivity,
 } from "../../lib/controlActivity";
 import { openNewTask } from "../../lib/openNewTask";
@@ -35,9 +37,12 @@ import {
 } from "../../lib/orchestratorActions";
 import {
 	type GraphAgent,
-	type GraphWorkspace,
 	graphModel,
 	layoutGraph,
+	type Petal,
+	type Placed,
+	petalPath,
+	streamPath,
 } from "../../lib/orchestratorGraph";
 import { restartOrchestrator } from "../../lib/orchestratorSession";
 import { switchToPane } from "../../lib/paneLocation";
@@ -54,45 +59,71 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { NewAgentDialog } from "../FleetConsole/NewAgentDialog";
-import { openInBackground } from "../FleetConsole/WorkspacePicker";
 import { primaryButtonClass } from "../PromptActions/fieldStyles";
 import { useAgentMenu } from "../Sidebar/useAgentMenu";
 import { PaneContextMenu } from "../Terminal/PaneContextMenu";
 
-/** How long an Agent control call stays drawn on the graph. */
-const PULSE_MS = 2600;
+/** How long a finished call's stream takes to fade. */
+const FADE_MS = 700;
 
 const ORCH_NODE = "orchestrator";
-const wsNodeId = (id: string) => `ws:${id}`;
 const agentNodeId = (paneId: string) => `agent:${paneId}`;
 
-type AgentData = { agent: GraphAgent; workspaceName: string; fresh: boolean };
-type WorkspaceData = { ws: GraphWorkspace };
-type AgentNodeT = Node<AgentData, "agent">;
-type WorkspaceNodeT = Node<WorkspaceData, "workspace">;
-type OrchNodeT = Node<Record<string, never>, "orchestrator">;
+type AgentData = {
+	agent: GraphAgent;
+	workspaceName: string;
+	fresh: boolean;
+	receiving: boolean;
+	small: boolean;
+};
+type PetalsData = { petals: Petal[]; radius: number };
+type OrchData = { receiving: boolean };
+type StreamData = { kind: "read" | "act"; ending: boolean };
 
 /** What a node can ask the graph to do. */
 interface GraphActions {
-	showDormant: (agent: GraphAgent, x: number, y: number) => void;
 	closeWorkspace: (workspaceId: string) => void;
 	newAgentIn: (workspaceId: string) => void;
 }
 const ActionsContext = createContext<GraphActions | null>(null);
 
-const hiddenHandle = {
+/** Edges start and end at a node's centre: one hidden handle each way. */
+const centreHandle = {
 	opacity: 0,
 	width: 1,
 	height: 1,
 	minWidth: 0,
 	minHeight: 0,
+	left: "50%",
+	top: "50%",
+	transform: "translate(-50%, -50%)",
+	border: "none",
 };
+function CentreHandles() {
+	return (
+		<>
+			<Handle type="source" position={Position.Top} style={centreHandle} />
+			<Handle type="target" position={Position.Top} style={centreHandle} />
+		</>
+	);
+}
+
+/** React Flow places a node by its top-left corner; the layout gives centres. */
+const corner = (p: Placed) => ({ x: p.x - p.width / 2, y: p.y - p.height / 2 });
+
+function prefersReducedMotion(): boolean {
+	return (
+		typeof window !== "undefined" &&
+		!!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+	);
+}
 
 /**
- * The **Orchestrator view**'s graph (ADR-0057): the Orchestrator on top, one
- * box per Workspace of the Profile, its Agents inside. Single click peeks,
- * double click is **Switch to**, right click opens the Agent menu. Agent
- * control calls between panes are drawn as edges that fade.
+ * The **Orchestrator view**'s graph (ADR-0057): a flower with the
+ * Orchestrator in the centre and one petal per Opened workspace, its Agents
+ * on it. Single click peeks, double click is **Switch to**, right click opens
+ * the Agent menu (or, on a petal, the Workspace's). While one pane's Agent
+ * control call to another runs, a comet stream flows between them.
  */
 export function OrchestratorGraph() {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -103,8 +134,13 @@ export function OrchestratorGraph() {
 	const orchestratorWsId = useOrchestratorStore((s) => s.workspaceId);
 	const selected = useOrchestratorStore((s) => s.selectedPaneId);
 
-	// Which Agents are in agent mode changes far less often than activities
-	// do: key the model on that, not on every status tick.
+	const orchestratorPaneId = useMemo(() => {
+		const ws = workspaces.find((w) => w.id === orchestratorWsId);
+		return ws ? (orchestratorPane(ws.tabs)?.paneId ?? null) : null;
+	}, [workspaces, orchestratorWsId]);
+
+	// Which PTYs are in agent mode changes far less often than activities do:
+	// key the model on that, not on every status tick.
 	const agentPtyKey = useMemo(
 		() =>
 			Object.entries(activities)
@@ -122,36 +158,18 @@ export function OrchestratorGraph() {
 			openedWorkspaceIds: opened,
 			panePtyMap,
 			isAgentPty: (p) => agentPtys.has(p),
+			orchestratorPaneId,
 		});
-	}, [workspaces, facts, opened, panePtyMap, agentPtyKey]);
-	// The graph's shape follows its area's, so many Workspaces wrap into rows.
-	const areaRef = useRef<HTMLDivElement>(null);
-	const [aspect, setAspect] = useState(4);
-	useEffect(() => {
-		const el = areaRef.current;
-		if (!el) return;
-		const measure = () => {
-			if (el.clientHeight > 0) {
-				// Rounded, so a divider drag does not re-lay out on every pixel.
-				setAspect(Math.round((el.clientWidth / el.clientHeight) * 2) / 2);
-			}
-		};
-		measure();
-		const ro = new ResizeObserver(measure);
-		ro.observe(el);
-		return () => ro.disconnect();
-	}, []);
-	const layout = useMemo(() => layoutGraph(model, aspect), [model, aspect]);
-
-	const orchestratorPaneId = useMemo(() => {
-		const ws = workspaces.find((w) => w.id === orchestratorWsId);
-		return ws ? (orchestratorPane(ws.tabs)?.paneId ?? null) : null;
-	}, [workspaces, orchestratorWsId]);
+	}, [workspaces, facts, opened, panePtyMap, agentPtyKey, orchestratorPaneId]);
+	const layout = useMemo(() => layoutGraph(model), [model]);
 
 	// Agents that appear after the graph first drew grow in (spawned).
 	const known = useRef<Set<string> | null>(null);
 	const fresh = useMemo(() => {
-		const ids = model.flatMap((w) => w.agents.map((a) => a.paneId));
+		const ids = [
+			...model.petals.flatMap((w) => w.agents.map((a) => a.paneId)),
+			...model.helpers.map((h) => h.paneId),
+		];
 		if (known.current === null) {
 			known.current = new Set(ids);
 			return new Set<string>();
@@ -161,177 +179,204 @@ export function OrchestratorGraph() {
 		return now;
 	}, [model]);
 
+	// ── Calls running now, plus the ones fading out ──
+	const [calls, setCalls] = useState<
+		Map<number, { call: ControlActivity; ending: boolean }>
+	>(
+		() =>
+			new Map(
+				runningControlActivity().map((c) => [c.id, { call: c, ending: false }]),
+			),
+	);
+	useEffect(() => {
+		const timers = new Set<ReturnType<typeof setTimeout>>();
+		const stop = subscribeControlActivity((e) => {
+			if (e.type === "start") {
+				setCalls((m) =>
+					new Map(m).set(e.call.id, { call: e.call, ending: false }),
+				);
+				return;
+			}
+			setCalls((m) => {
+				const entry = m.get(e.id);
+				if (!entry) return m;
+				return new Map(m).set(e.id, { ...entry, ending: true });
+			});
+			const t = setTimeout(() => {
+				timers.delete(t);
+				setCalls((m) => {
+					const next = new Map(m);
+					next.delete(e.id);
+					return next;
+				});
+			}, FADE_MS);
+			timers.add(t);
+		});
+		return () => {
+			stop();
+			for (const t of timers) clearTimeout(t);
+		};
+	}, []);
+
+	const receiving = useMemo(() => {
+		const set = new Set<string>();
+		for (const { call, ending } of calls.values()) {
+			if (ending) continue;
+			set.add(
+				call.targetPaneId === orchestratorPaneId
+					? ORCH_NODE
+					: agentNodeId(call.targetPaneId),
+			);
+		}
+		return set;
+	}, [calls, orchestratorPaneId]);
+
+	const radius = Math.max(
+		...layout.petals.map((p) => p.outer + 80),
+		Math.hypot(layout.add.x, layout.add.y) + 120,
+	);
+
 	const nodes = useMemo(() => {
 		const out: Node[] = [
 			{
+				id: "petals",
+				type: "petals",
+				position: { x: -radius, y: -radius },
+				style: { width: radius * 2, height: radius * 2 },
+				data: { petals: layout.petals, radius } satisfies PetalsData,
+				draggable: false,
+				selectable: false,
+				zIndex: -1,
+			},
+			{
 				id: ORCH_NODE,
 				type: "orchestrator",
-				position: { x: layout.orchestrator.x, y: layout.orchestrator.y },
+				position: corner(layout.orchestrator),
+				data: { receiving: receiving.has(ORCH_NODE) } satisfies OrchData,
+				draggable: false,
+				selectable: false,
+			},
+			{
+				id: "add",
+				type: "add",
+				position: corner(layout.add),
 				data: {},
 				draggable: false,
 				selectable: false,
-			} satisfies OrchNodeT,
+			},
 		];
-		for (const ws of model) {
-			const box = layout.boxes[ws.id];
-			out.push({
-				id: wsNodeId(ws.id),
-				type: "workspace",
-				position: { x: box.x, y: box.y },
-				style: { width: box.width, height: box.height },
-				data: { ws },
-				draggable: false,
-				selectable: false,
-			} satisfies WorkspaceNodeT);
-			for (const agent of ws.agents) {
-				const p = layout.agents[agent.paneId];
-				out.push({
-					id: agentNodeId(agent.paneId),
-					type: "agent",
-					parentId: wsNodeId(ws.id),
-					extent: "parent",
-					position: { x: p.x, y: p.y },
-					style: { width: p.width, height: p.height },
-					data: {
-						agent,
-						workspaceName: ws.name,
-						fresh: fresh.has(agent.paneId),
-					},
-					draggable: false,
-					selected: agent.paneId === selected,
-				} satisfies AgentNodeT);
+		const agentNode = (
+			agent: GraphAgent,
+			p: Placed,
+			workspaceName: string,
+			small: boolean,
+		): Node => ({
+			id: agentNodeId(agent.paneId),
+			type: "agent",
+			position: corner(p),
+			style: { width: p.width, height: p.height },
+			data: {
+				agent,
+				workspaceName,
+				fresh: fresh.has(agent.paneId),
+				receiving: receiving.has(agentNodeId(agent.paneId)),
+				small,
+			} satisfies AgentData,
+			draggable: false,
+			selected: agent.paneId === selected,
+		});
+		for (const ws of model.petals) {
+			for (const a of ws.agents) {
+				out.push(agentNode(a, layout.agents[a.paneId], ws.name, false));
 			}
 		}
+		for (const h of model.helpers) {
+			out.push(agentNode(h, layout.helpers[h.paneId], "Orchestrator", true));
+		}
 		return out;
-	}, [model, layout, fresh, selected]);
-
-	// ── Agent control calls, drawn for a moment ──
-	const [pulses, setPulses] = useState<ControlActivity[]>([]);
-	useEffect(
-		() =>
-			subscribeControlActivity((a) => {
-				setPulses((list) => [
-					...list.filter(
-						(p) =>
-							!(
-								p.callerPaneId === a.callerPaneId &&
-								p.targetPaneId === a.targetPaneId
-							),
-					),
-					a,
-				]);
-				setTimeout(
-					() => setPulses((list) => list.filter((p) => p !== a)),
-					PULSE_MS,
-				);
-			}),
-		[],
-	);
+	}, [model, layout, fresh, selected, receiving, radius]);
 
 	const nodeIds = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes]);
 	const edges = useMemo(() => {
-		const out: Edge[] = model.map((ws) => ({
-			id: `tree:${ws.id}`,
-			source: ORCH_NODE,
-			target: wsNodeId(ws.id),
-			type: "smoothstep",
-			style: {
-				stroke: "color-mix(in srgb, var(--border) 90%, var(--fg-secondary))",
-				strokeWidth: 1.2,
-				opacity: ws.opened ? 1 : 0.5,
-			},
-		}));
 		const endpoint = (paneId: string) =>
 			paneId === orchestratorPaneId ? ORCH_NODE : agentNodeId(paneId);
-		for (const p of pulses) {
-			const source = endpoint(p.callerPaneId);
-			const target = endpoint(p.targetPaneId);
+		const out: Edge[] = [];
+		// Faint stems: the Orchestrator to each Agent, an Agent to its helpers.
+		for (const ws of model.petals) {
+			for (const a of ws.agents) {
+				out.push({
+					id: `stem:${a.paneId}`,
+					source: a.spawnedBy ? agentNodeId(a.spawnedBy) : ORCH_NODE,
+					target: agentNodeId(a.paneId),
+					type: "stem",
+				});
+			}
+		}
+		for (const h of model.helpers) {
+			out.push({
+				id: `stem:${h.paneId}`,
+				source: ORCH_NODE,
+				target: agentNodeId(h.paneId),
+				type: "stem",
+			});
+		}
+		for (const { call, ending } of calls.values()) {
+			const source = endpoint(call.callerPaneId);
+			const target = endpoint(call.targetPaneId);
 			if (!nodeIds.has(source) || !nodeIds.has(target)) continue;
 			out.push({
-				id: `call:${p.callerPaneId}:${p.targetPaneId}:${p.at}`,
+				id: `call:${call.id}`,
 				source,
 				target,
-				sourceHandle: "side",
-				targetHandle: "side-in",
-				animated: true,
-				// Above the Workspace boxes, or a call between two of them is
-				// hidden behind them.
+				type: "stream",
+				// Above the petals and the stems.
 				zIndex: 1000,
-				className: `orch-call orch-call-${p.kind}`,
-				style: {
-					stroke: p.kind === "act" ? "var(--accent)" : "var(--fg-secondary)",
-					strokeWidth: p.kind === "act" ? 2.2 : 1.4,
-					strokeDasharray: p.kind === "read" ? "3 4" : undefined,
-				},
+				data: { kind: call.kind, ending } satisfies StreamData,
 			});
 		}
 		return out;
-	}, [model, pulses, nodeIds, orchestratorPaneId]);
+	}, [model, calls, nodeIds, orchestratorPaneId]);
 
 	// ── Graph-level dialogs ──
-	const [dormant, setDormant] = useState<{
-		agent: GraphAgent;
-		x: number;
-		y: number;
-	} | null>(null);
 	const [newAgentWs, setNewAgentWs] = useState<string | null>(null);
 	const { requestClose, dialogProps } = useConfirmCloseWorkspace();
 	const actions = useMemo<GraphActions>(
-		() => ({
-			showDormant: (agent, x, y) => setDormant({ agent, x, y }),
-			closeWorkspace: requestClose,
-			newAgentIn: setNewAgentWs,
-		}),
+		() => ({ closeWorkspace: requestClose, newAgentIn: setNewAgentWs }),
 		[requestClose],
 	);
 
 	return (
 		<ActionsContext.Provider value={actions}>
-			<div ref={areaRef} className="absolute inset-0 orch-graph">
+			<div className="absolute inset-0 orch-graph">
 				<ReactFlow
 					nodes={nodes}
 					edges={edges}
 					nodeTypes={NODE_TYPES}
+					edgeTypes={EDGE_TYPES}
 					fitView
-					fitViewOptions={{ padding: 0.15, maxZoom: 1.1 }}
-					minZoom={0.25}
+					fitViewOptions={{ padding: 0.08, maxZoom: 1.1 }}
+					minZoom={0.15}
 					maxZoom={1.6}
 					nodesDraggable={false}
 					nodesConnectable={false}
 					elementsSelectable
 					zoomOnDoubleClick={false}
-					onNodeClick={(e, node) => {
-						if (node.type !== "agent") return;
-						const { agent } = node.data as AgentData;
-						if (agent.dormant) {
-							actions.showDormant(agent, e.clientX, e.clientY);
-						} else {
-							peekAgent(agent.paneId);
+					onNodeClick={(_, node) => {
+						if (node.type === "agent") {
+							peekAgent((node.data as AgentData).agent.paneId);
 						}
 					}}
 					onNodeDoubleClick={(_, node) => {
-						if (node.type !== "agent") return;
-						switchToPane((node.data as AgentData).agent.paneId);
+						if (node.type === "agent") {
+							switchToPane((node.data as AgentData).agent.paneId);
+						}
 					}}
-					onPaneClick={() => {
-						useOrchestratorStore.getState().set({ selectedPaneId: null });
-						setDormant(null);
-					}}
+					onPaneClick={() =>
+						useOrchestratorStore.getState().set({ selectedPaneId: null })
+					}
 				>
-					<FitOnChange count={nodes.length} aspect={aspect} />
+					<FitOnChange count={nodes.length} />
 				</ReactFlow>
-				{model.length === 0 && (
-					<div
-						className="absolute inset-x-0 flex justify-center pointer-events-none"
-						style={{ bottom: 24, fontSize: 12, color: "var(--fg-secondary)" }}
-					>
-						No agents yet. Ask the Orchestrator to start one, or start one from
-						a workspace.
-					</div>
-				)}
-				{dormant && (
-					<DormantCard {...dormant} onClose={() => setDormant(null)} />
-				)}
 			</div>
 			{newAgentWs && (
 				<NewAgentDialog
@@ -344,27 +389,128 @@ export function OrchestratorGraph() {
 	);
 }
 
-/** Re-fits the view when Agents come or go, so nobody lands off screen. */
-function FitOnChange({ count, aspect }: { count: number; aspect: number }) {
+/** Re-fits the view when Agents come or go, and when the graph's area is
+ *  resized (the divider, the window), so the flower always fills it. */
+function FitOnChange({ count }: { count: number }) {
 	const flow = useReactFlow();
 	const first = useRef(true);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: re-fit whenever the node count or the area's shape changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-fit whenever the node count changes
 	useEffect(() => {
 		if (first.current) {
 			first.current = false;
 			return;
 		}
 		const id = requestAnimationFrame(() =>
-			flow.fitView({ padding: 0.15, maxZoom: 1.1, duration: 300 }),
+			flow.fitView({ padding: 0.08, maxZoom: 1.1, duration: 300 }),
 		);
 		return () => cancelAnimationFrame(id);
-	}, [count, aspect, flow]);
+	}, [count, flow]);
+	useEffect(() => {
+		const el = document.querySelector(".orch-graph");
+		if (!el || typeof ResizeObserver === "undefined") return;
+		let frame = 0;
+		const ro = new ResizeObserver(() => {
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(() =>
+				flow.fitView({ padding: 0.08, maxZoom: 1.1 }),
+			);
+		});
+		ro.observe(el);
+		return () => {
+			ro.disconnect();
+			cancelAnimationFrame(frame);
+		};
+	}, [flow]);
 	return null;
 }
 
 // ── Nodes ──
 
-const OrchestratorNode = memo(function OrchestratorNode() {
+/** The petals, drawn as one SVG behind everything, with their names. Right
+ *  click on a petal opens its Workspace's menu. */
+const PetalsNode = memo(function PetalsNode({
+	data,
+}: NodeProps<Node<PetalsData>>) {
+	const { petals, radius } = data;
+	const actions = useContext(ActionsContext);
+	const [menu, setMenu] = useState<{
+		x: number;
+		y: number;
+		id: string;
+	} | null>(null);
+	return (
+		<>
+			<svg
+				width={radius * 2}
+				height={radius * 2}
+				viewBox={`${-radius} ${-radius} ${radius * 2} ${radius * 2}`}
+				style={{ overflow: "visible", display: "block" }}
+			>
+				<title>Workspaces</title>
+				{petals.map((p, i) => (
+					<g key={p.workspaceId}>
+						{/* biome-ignore lint/a11y/noStaticElementInteractions: right-click menu of a petal */}
+						<path
+							d={petalPath(p)}
+							className={`orch-petal ${i % 2 ? "orch-petal-odd" : ""}`}
+							onContextMenu={(e) => {
+								e.preventDefault();
+								e.stopPropagation();
+								setMenu({ x: e.clientX, y: e.clientY, id: p.workspaceId });
+							}}
+						/>
+						<text
+							x={p.label.x}
+							y={p.label.y}
+							textAnchor={
+								Math.abs(p.label.x) < 40
+									? "middle"
+									: p.label.x > 0
+										? "start"
+										: "end"
+							}
+							dominantBaseline="middle"
+							style={{
+								fill: "var(--fg-secondary)",
+								fontSize: 15,
+								fontWeight: 600,
+								pointerEvents: "none",
+							}}
+						>
+							{p.name}
+						</text>
+					</g>
+				))}
+			</svg>
+			{menu && actions && (
+				<PaneContextMenu
+					x={menu.x}
+					y={menu.y}
+					onClose={() => setMenu(null)}
+					items={[
+						{
+							label: "New agent…",
+							onClick: () => actions.newAgentIn(menu.id),
+						},
+						{
+							label: "New task…",
+							onClick: () => openNewTask({ workspaceId: menu.id }),
+						},
+						{ separator: true },
+						{
+							label: "Close Workspace",
+							onClick: () => actions.closeWorkspace(menu.id),
+						},
+					]}
+				/>
+			)}
+		</>
+	);
+});
+
+const OrchestratorNode = memo(function OrchestratorNode({
+	data,
+}: NodeProps<Node<OrchData>>) {
 	const workspaceId = useOrchestratorStore((s) => s.workspaceId);
 	const phase = useOrchestratorStore((s) => s.phase);
 	const tabs = useWorkspaceStore(
@@ -378,32 +524,20 @@ const OrchestratorNode = memo(function OrchestratorNode() {
 	const running = paneId !== "";
 	return (
 		<div
-			className="flex items-center"
+			className={`flex items-center ${data.receiving ? "orch-node-receiving" : ""}`}
 			style={{
-				width: 240,
-				height: 58,
+				width: 210,
+				height: 56,
 				gap: 10,
 				padding: "0 14px",
-				borderRadius: 12,
+				borderRadius: 28,
 				border: "1.5px solid var(--accent)",
 				background:
-					"color-mix(in srgb, var(--accent) 12%, var(--bg-secondary))",
+					"color-mix(in srgb, var(--accent) 14%, var(--bg-secondary))",
 				color: "var(--fg-primary)",
 			}}
 		>
-			<Handle type="source" position={Position.Bottom} style={hiddenHandle} />
-			<Handle
-				id="side"
-				type="source"
-				position={Position.Right}
-				style={hiddenHandle}
-			/>
-			<Handle
-				id="side-in"
-				type="target"
-				position={Position.Right}
-				style={hiddenHandle}
-			/>
+			<CentreHandles />
 			<Network size={18} style={{ color: "var(--accent)" }} />
 			<div className="flex flex-col min-w-0 flex-1">
 				<span style={{ fontSize: 13, fontWeight: 600 }}>Orchestrator</span>
@@ -434,79 +568,38 @@ const OrchestratorNode = memo(function OrchestratorNode() {
 	);
 });
 
-const WorkspaceNode = memo(function WorkspaceNode({
-	data,
-}: NodeProps<WorkspaceNodeT>) {
-	const { ws } = data;
-	const actions = useContext(ActionsContext);
-	const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+/** "Open workspace…": the slot after the last petal. */
+const AddNode = memo(function AddNode() {
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: right-click menu of a graph box
-		<div
-			className="w-full h-full"
+		<button
+			type="button"
+			className="nodrag flex items-center justify-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:border-[var(--accent)] border border-dashed border-[var(--border)]"
 			style={{
-				borderRadius: 12,
-				border: `1px ${ws.opened ? "solid" : "dashed"} var(--border)`,
-				background: ws.opened
-					? "color-mix(in srgb, var(--bg-secondary) 70%, transparent)"
-					: "transparent",
-				opacity: ws.opened ? 1 : 0.65,
+				width: 150,
+				height: 40,
+				gap: 6,
+				borderRadius: 20,
+				fontSize: 12,
+				background: "var(--bg-primary)",
+				cursor: "pointer",
 			}}
-			onContextMenu={(e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				setMenuAt({ x: e.clientX, y: e.clientY });
-			}}
+			title="Open a workspace — its agents join the graph"
+			onClick={() =>
+				useOrchestratorStore.getState().set({ workspacePickerOpen: true })
+			}
 		>
-			<Handle type="target" position={Position.Top} style={hiddenHandle} />
-			<div
-				className="truncate select-none"
-				style={{
-					height: 30,
-					lineHeight: "30px",
-					padding: "0 12px",
-					fontSize: 12,
-					fontWeight: 600,
-					color: ws.opened ? "var(--fg-primary)" : "var(--fg-secondary)",
-				}}
-				title={ws.opened ? ws.name : `${ws.name} (not open)`}
-			>
-				{ws.name}
-			</div>
-			{menuAt && actions && (
-				<PaneContextMenu
-					x={menuAt.x}
-					y={menuAt.y}
-					onClose={() => setMenuAt(null)}
-					items={[
-						ws.opened
-							? {
-									label: "Close Workspace",
-									onClick: () => actions.closeWorkspace(ws.id),
-								}
-							: {
-									label: "Open Workspace",
-									onClick: () => openInBackground(ws.id),
-								},
-						{ separator: true },
-						{ label: "New agent…", onClick: () => actions.newAgentIn(ws.id) },
-						{
-							label: "New task…",
-							onClick: () => openNewTask({ workspaceId: ws.id }),
-						},
-					]}
-				/>
-			)}
-		</div>
+			<Plus size={13} />
+			Open workspace…
+		</button>
 	);
 });
 
 const AgentNode = memo(function AgentNode({
 	data,
 	selected,
-}: NodeProps<AgentNodeT>) {
-	const { agent, workspaceName, fresh } = data;
-	const status = usePaneStatus(agent.dormant ? "" : agent.paneId);
+}: NodeProps<Node<AgentData>>) {
+	const { agent, workspaceName, fresh, receiving, small } = data;
+	const status = usePaneStatus(agent.paneId);
 	const liveHandle = useAgentHandle(agent.paneId);
 	const handle = liveHandle ?? agent.handle;
 	const agentName = useSettingsStore((s) =>
@@ -552,17 +645,18 @@ const AgentNode = memo(function AgentNode({
 				key={pulse}
 				className={`w-full h-full flex items-center select-none ${
 					fresh ? "orch-node-in" : ""
-				} ${pulse > 0 ? "orch-node-pulse" : ""}`}
+				} ${pulse > 0 ? "orch-node-pulse" : ""} ${
+					receiving ? "orch-node-receiving" : ""
+				}`}
 				style={{
-					gap: 8,
-					padding: "0 10px",
-					borderRadius: 9,
+					gap: small ? 6 : 8,
+					padding: small ? "0 8px" : "0 10px",
+					borderRadius: 999,
 					cursor: "pointer",
 					border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
 					background: selected
-						? "color-mix(in srgb, var(--accent) 12%, var(--bg-primary))"
+						? "color-mix(in srgb, var(--accent) 14%, var(--bg-primary))"
 						: "var(--bg-primary)",
-					opacity: agent.dormant ? 0.6 : 1,
 					boxShadow: selected
 						? "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)"
 						: undefined,
@@ -573,27 +667,11 @@ const AgentNode = memo(function AgentNode({
 				onContextMenu={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
-					if (!agent.dormant) menu.open(e.clientX, e.clientY);
+					menu.open(e.clientX, e.clientY);
 				}}
 			>
-				<Handle type="target" position={Position.Top} style={hiddenHandle} />
-				<Handle
-					id="side"
-					type="source"
-					position={Position.Right}
-					style={hiddenHandle}
-				/>
-				<Handle
-					id="side-in"
-					type="target"
-					position={Position.Left}
-					style={hiddenHandle}
-				/>
-				{agent.dormant ? (
-					<AgentStatusIcon status="grey" size={12} />
-				) : (
-					<AgentStatusIcon status={status} size={12} />
-				)}
+				<CentreHandles />
+				<AgentStatusIcon status={status} size={12} />
 				<span style={{ color: "var(--fg-secondary)", display: "flex" }}>
 					{Icon ? <Icon size={14} /> : <FallbackAgentIcon size={13} />}
 				</span>
@@ -601,7 +679,10 @@ const AgentNode = memo(function AgentNode({
 					<span className="flex items-center min-w-0" style={{ gap: 5 }}>
 						<span
 							className="truncate"
-							style={{ fontSize: 12.5, color: "var(--fg-primary)" }}
+							style={{
+								fontSize: small ? 11.5 : 12.5,
+								color: "var(--fg-primary)",
+							}}
 						>
 							{name}
 						</span>
@@ -611,14 +692,14 @@ const AgentNode = memo(function AgentNode({
 							</span>
 						)}
 					</span>
-					<span
-						className="truncate"
-						style={{ fontSize: 11, color: "var(--fg-secondary)" }}
-					>
-						{agent.dormant
-							? "Not running"
-							: (progress ?? `${agentName} · ${agent.tabName}`)}
-					</span>
+					{!small && (
+						<span
+							className="truncate"
+							style={{ fontSize: 11, color: "var(--fg-secondary)" }}
+						>
+							{progress ?? `${agentName} · ${agent.tabName}`}
+						</span>
+					)}
 				</span>
 			</div>
 			{menu.element}
@@ -627,71 +708,92 @@ const AgentNode = memo(function AgentNode({
 });
 
 const NODE_TYPES = {
+	petals: PetalsNode,
 	orchestrator: OrchestratorNode,
-	workspace: WorkspaceNode,
+	add: AddNode,
 	agent: AgentNode,
 };
 
-/** A single click on a greyed Agent: it is not running; offer to start its
- *  Workspace (in the background, as the Fleet Console's Relaunch does). */
-function DormantCard({
-	agent,
-	x,
-	y,
-	onClose,
-}: {
-	agent: GraphAgent;
-	x: number;
-	y: number;
-	onClose: () => void;
-}) {
-	const ws = useWorkspaceStore((s) =>
-		s.workspaces.find((w) => w.id === agent.workspaceId),
-	);
-	const name = agent.handle ?? "This agent";
+// ── Edges ──
+
+/** A faint line from a node's parent: the flower's structure. */
+function StemEdge({ sourceX, sourceY, targetX, targetY }: EdgeProps) {
 	return (
-		<div
-			className="fixed flex flex-col"
+		<path
+			d={`M ${sourceX} ${sourceY} L ${targetX} ${targetY}`}
 			style={{
-				left: x + 8,
-				top: y + 8,
-				zIndex: 60,
-				gap: 8,
-				width: 260,
-				padding: "12px 14px",
-				borderRadius: 10,
-				border: "1px solid var(--border)",
-				background: "var(--bg-secondary)",
-				boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-				fontSize: 12,
-				color: "var(--fg-secondary)",
+				fill: "none",
+				stroke: "color-mix(in srgb, var(--accent) 18%, transparent)",
+				strokeWidth: 1,
 			}}
-		>
-			<span>
-				<strong style={{ color: "var(--fg-primary)" }}>{name}</strong> in{" "}
-				{ws?.name ?? "its workspace"} is not running.
-			</span>
-			<div className="flex" style={{ gap: 8 }}>
-				<button
-					type="button"
-					className={primaryButtonClass}
-					style={{ height: 26, padding: "0 10px", fontSize: 12 }}
-					onClick={() => {
-						openInBackground(agent.workspaceId);
-						onClose();
-					}}
-				>
-					Start its workspace
-				</button>
-				<button
-					type="button"
-					className="text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
-					style={{ height: 26, padding: "0 8px", fontSize: 12 }}
-					onClick={onClose}
-				>
-					Not now
-				</button>
-			</div>
-		</div>
+		/>
 	);
 }
+
+/** How many comets flow along a stream at once, and how long one takes. */
+const PARTICLES = 6;
+const LAP_S = 1.6;
+/** A comet's head, then its tail just behind it. */
+const TAIL = [0, 0.05, 0.1];
+
+/**
+ * A running Agent control call: a stream of comets from caller to target
+ * along a curve that bows toward the Orchestrator. Fades out when the call
+ * ends; a steady line with reduced motion.
+ */
+function StreamEdge({
+	sourceX,
+	sourceY,
+	targetX,
+	targetY,
+	data,
+}: EdgeProps<Edge<StreamData>>) {
+	const act = data?.kind !== "read";
+	const ending = data?.ending ?? false;
+	const color = act ? "var(--accent)" : "var(--fg-secondary)";
+	const d = streamPath(sourceX, sourceY, targetX, targetY, 0, 0);
+	const still = prefersReducedMotion();
+	const comets = still ? [] : Array.from({ length: PARTICLES }, (_, i) => i);
+	return (
+		<g
+			className="orch-stream"
+			style={{
+				opacity: ending ? 0 : 1,
+				transition: `opacity ${FADE_MS}ms ease`,
+			}}
+		>
+			<path
+				d={d}
+				style={{
+					fill: "none",
+					stroke: color,
+					strokeOpacity: still ? 0.9 : 0.22,
+					strokeWidth: act ? 2.4 : 1.6,
+					strokeDasharray: act ? undefined : "3 5",
+				}}
+			/>
+			{comets.map((i) =>
+				TAIL.map((lag, j) => (
+					<circle
+						key={`${i}-${lag}`}
+						r={(act ? 3.4 : 2.6) * (1 - j * 0.28)}
+						style={{
+							fill: color,
+							opacity: 1 - j * 0.3,
+							filter: j === 0 ? `drop-shadow(0 0 4px ${color})` : undefined,
+						}}
+					>
+						<animateMotion
+							dur={`${LAP_S}s`}
+							repeatCount="indefinite"
+							begin={`${-(i * LAP_S) / PARTICLES - lag}s`}
+							path={d}
+						/>
+					</circle>
+				)),
+			)}
+		</g>
+	);
+}
+
+const EDGE_TYPES = { stem: StemEdge, stream: StreamEdge };
