@@ -4,6 +4,7 @@
 
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
+import { useExplorerStore } from "../../stores/explorerStore";
 import {
 	subscribeStatusChange,
 	usePtyActivityStore,
@@ -21,6 +22,7 @@ import {
 	type AgentControlRequestEvent,
 	agentControl,
 	agentHooks,
+	fileWindows,
 	pty,
 	shells,
 	worktrees as worktreesApi,
@@ -28,6 +30,7 @@ import {
 import { defaultWorktreeFolder, shellSupportsTasks } from "../newTask";
 import { revealPane } from "../paneLocation";
 import {
+	collectPaneIds,
 	collectTerminalIds,
 	markSpawned,
 	parseTabLayout,
@@ -44,6 +47,12 @@ import {
 import type { CodingAgent, WorkspaceWithTabs } from "../types";
 import { addWorktreeTargetId } from "../worktreeGrouping";
 import { basename, resolvePath } from "../worktreePath";
+import {
+	addPtyBlocker,
+	type CloseBlockers,
+	closeWorkspaceRefusal,
+	noBlockers,
+} from "./closeWorkspace";
 import { crowdHint } from "./crowding";
 import {
 	describeAgent,
@@ -289,6 +298,10 @@ export async function runRequest(
 	target?: ControlTarget,
 ): Promise<unknown> {
 	if (AGENTS_ONLY.has(request.op)) requireAgentCaller(caller);
+	// Never through loadScope: that would open a closed Workspace.
+	if (request.op === "workspace.close") {
+		return closeWorkspaceFor(caller, request.force, target);
+	}
 	const scope = await loadScope(caller, target, signal);
 	switch (request.op) {
 		case "notes.read":
@@ -480,6 +493,82 @@ export async function runRequest(
 				`\`${(request as { op: string }).op}\` is not available in this version of Abundio`,
 			);
 	}
+}
+
+/** `workspace close`: the Left sidebar's Close Workspace, without its
+ *  confirmations. What they would ask about is refused instead. */
+async function closeWorkspaceFor(
+	caller: ControlCaller,
+	force: boolean,
+	target: ControlTarget | undefined,
+): Promise<unknown> {
+	const workspaceId = target?.workspaceId;
+	// Rust refuses this first; kept so the Window never closes the caller.
+	if (!workspaceId || workspaceId === caller.workspaceId) {
+		throw new ControlError(
+			"own_workspace",
+			"you cannot close your own Workspace; that would stop you too",
+		);
+	}
+	const ws = useWorkspaceStore
+		.getState()
+		.workspaces.find((w) => w.id === workspaceId);
+	if (!ws) {
+		throw new ControlError(
+			"not_found",
+			"that Workspace is not loaded in this Window",
+		);
+	}
+	if (!usePtyActivityStore.getState().openedWorkspaceIds.has(ws.id)) {
+		return { workspace: ws.name, closed: true, alreadyClosed: true };
+	}
+
+	// Every await comes first. From the snapshot below to the close there is
+	// none, so an Agent starting a turn or an edit made meanwhile is seen.
+	const panes = workspacePanes(ws.tabs);
+	const numbers = new Map(
+		await agentControl.paneNumbers(
+			ws.id,
+			panes.map((p) => p.node.id),
+		),
+	);
+	// Edits in its File windows live in other webviews; Rust knows them. Not
+	// knowing is no licence to close: nobody could be asked.
+	let dirtyWindows: Awaited<ReturnType<typeof fileWindows.dirty>>;
+	try {
+		dirtyWindows = await fileWindows.dirty([ws.id]);
+	} catch {
+		throw new ControlError(
+			"state_unknown",
+			"could not check that Workspace's File windows for unsaved edits",
+		);
+	}
+
+	const blockers: CloseBlockers = noBlockers();
+	for (const d of dirtyWindows) {
+		blockers.unsaved.push(d.filePath.split(/[\\/]/).pop() || d.filePath);
+	}
+	const { activities } = usePtyActivityStore.getState();
+	for (const p of panes) {
+		const ptyId = ptyIdOf(p);
+		if (!ptyId) continue;
+		const n = paneLabel(numbers.get(p.node.id) ?? 0);
+		const label = p.node.agentHandle ? `${n} ${p.node.agentHandle}` : n;
+		addPtyBlocker(blockers, label, activities[ptyId]);
+	}
+	const { filePanes } = useExplorerStore.getState();
+	for (const tab of ws.tabs) {
+		const layout = parseTabLayout(tab.layoutJson);
+		if (!layout) continue;
+		for (const id of collectPaneIds(layout)) {
+			const file = filePanes[id];
+			if (file?.isDirty) blockers.unsaved.push(file.fileName);
+		}
+	}
+	const refusal = closeWorkspaceRefusal(ws.name, blockers, force);
+	if (refusal) throw refusal;
+	await useWorkspaceStore.getState().closeWorkspace(ws.id);
+	return { workspace: ws.name, closed: true };
 }
 
 /** `pane watch`: the first line of output from now on that matches. Ends

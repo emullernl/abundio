@@ -52,7 +52,7 @@ abundio help [<group>]
 
 `<pane>` is a Pane number. `<agent>` is an Agent handle or a Pane number. `--kind` takes the ids from `lib/agents.ts` (built-in and custom). Keys use logical names (`esc`, `enter`, `tab`, `ctrl+c`, `up`…); all keys are checked before any byte is written.
 
-Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`. A bad Tab name (steps 11–15) is a usage error, like a bad handle. Steps 16–20 add `ambiguous_workspace` and `folder_missing`.
+Error codes: `disabled`, `unauthorized`, `not_found`, `out_of_reach`, `not_an_agent`, `handle_taken`, `invalid_handle`, `busy` (Waiting, or a command is running), `state_unknown`, `stalled`, `timeout`, `cycle`, `not_owner`, `window_gone`, `unsupported_shell`, `empty_prompt` (nothing left once control characters are removed), `connection_lost`. A bad Tab name (steps 11–15) is a usage error, like a bad handle. Steps 16–20 add `ambiguous_workspace` and `folder_missing`. `workspace close` adds `own_workspace` and `unsaved`, and reuses `busy` (Working, Waiting, or a command running).
 
 Handle grammar: `[a-z][a-z0-9_-]{0,31}`, and never a Pane number (`p` followed by digits only), so the two never collide.
 

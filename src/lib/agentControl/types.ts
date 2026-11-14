@@ -65,6 +65,8 @@ export type ControlRequest =
 			agent: AgentSpec | null;
 			focus: boolean;
 	  }
+	/** Another Workspace of the Profile; Rust routed it here as `target`. */
+	| { op: "workspace.close"; name: string; force: boolean }
 	| { op: "notes.read" }
 	| { op: "notes.append"; text: string }
 	| { op: "notes.write"; text: string }
@@ -116,6 +118,10 @@ export type ControlErrorCode =
 	| "exists"
 	| "cancelled"
 	| "exited"
+	/** `workspace close` named the caller's own Workspace. */
+	| "own_workspace"
+	/** `workspace close` over unsaved edits; `--force` never overrides it. */
+	| "unsaved"
 	| "internal";
 
 /** Thrown by a handler; becomes `{ error: { code, message } }`. */

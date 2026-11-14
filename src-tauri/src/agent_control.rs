@@ -321,6 +321,12 @@ pub enum Request {
     /// Every Workspace of the caller's Profile. Answered by Rust alone.
     #[serde(rename = "workspace.list")]
     WorkspaceList,
+    /// Close another Workspace of the caller's Profile, as the Left
+    /// sidebar's Close Workspace does. Routed by [`close_scope`], never by
+    /// `--workspace`. `force` closes over Busy PTYs and Waiting Agents, never
+    /// over unsaved edits.
+    #[serde(rename = "workspace.close", rename_all = "camelCase")]
+    WorkspaceClose { name: String, force: bool },
     /// Set the caller's **Attention flag**.
     #[serde(rename = "notify", rename_all = "camelCase")]
     Notify { message: String },
@@ -607,6 +613,18 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
                 return Err("usage: abundio workspace list".into());
             }
             Ok(Parsed::Request(Request::WorkspaceList))
+        }
+        (Some("workspace"), Some("close")) => {
+            let a = split_args(rest, &[], &["--force"])?;
+            expect_positionals(&a, 1, 1, "abundio workspace close <name> [--force]")?;
+            let name = a.positional[0].trim();
+            if name.is_empty() {
+                return Err("usage: abundio workspace close <name> [--force]".into());
+            }
+            Ok(Parsed::Request(Request::WorkspaceClose {
+                name: name.to_string(),
+                force: a.flags.contains_key("--force"),
+            }))
         }
         (Some("workspace"), Some(c)) => Err(format!(
             "unknown command `workspace {c}`; run `abundio help workspace`"
@@ -1118,6 +1136,12 @@ Agents:
 Workspaces:
   abundio workspace list                  every Workspace of your Profile: name, folder,
                                           branch, whether it is open, and its Agents
+  abundio workspace close <name> [--force]
+                                          close another Workspace, as the sidebar's
+                                          Close does: its terminals stop, its row and
+                                          files stay. Refused while an Agent is working
+                                          or waiting, or a command runs, unless --force;
+                                          always refused over unsaved edits
   abundio worktree new <branch> [--agent <kind> [--prompt <text>] [--handle <h>]
                       [--agent-arg <arg>]...] [--focus]
                                           a git worktree of your repository as a new
@@ -1206,6 +1230,7 @@ pub fn enabled(store: &crate::workspace_store::WorkspaceStore) -> bool {
 /// An HTTP answer for the CLI: status 200 prints the body to stdout and exits
 /// 0; 400 is a usage error (exit 2); anything else prints to stderr and exits
 /// 1.
+#[derive(Debug)]
 pub struct Answer {
     pub status: u16,
     pub body: String,
@@ -1336,6 +1361,56 @@ pub fn pick_workspace<'a>(
             ))
         }
     }
+}
+
+/// Where `workspace close <name>` goes. Never the caller's own Workspace,
+/// and never opened for the call: a Workspace with no live PTY is routed to
+/// the caller's Window, which holds it if it is Opened at all (a Profile is
+/// open in at most one Window) and otherwise answers that it is closed.
+/// A Missing folder is no reason to refuse: closing starts nothing.
+fn close_scope(app: &AppHandle, caller: &Caller, name: &str) -> Result<Scope, Answer> {
+    let store = app
+        .try_state::<crate::workspace_store::WorkspaceStore>()
+        .ok_or_else(|| error_answer(503, "unavailable", "Agent control is not ready"))?;
+    let target = workspace_in_profile(&store, caller, name)?;
+    let live = app
+        .try_state::<crate::pty_manager::PtyManager>()
+        .and_then(|mgr| mgr.control_tokens().window_for_workspace(&target.id));
+    close_scope_for(caller, &target, live)
+}
+
+/// `--workspace` on a command that names its Workspace as its argument
+/// (`workspace close <name>`) is a usage error, not a second target.
+pub fn refuse_workspace_flag(request: &Request, workspace: Option<&str>) -> Option<Answer> {
+    match (request, workspace) {
+        (Request::WorkspaceClose { .. }, Some(_)) => Some(error_answer(
+            400,
+            "usage",
+            "name the Workspace to close as the argument: abundio workspace close <name>",
+        )),
+        _ => None,
+    }
+}
+
+/// The pure half of [`close_scope`].
+pub fn close_scope_for(
+    caller: &Caller,
+    target: &WorkspaceRow,
+    live_window: Option<String>,
+) -> Result<Scope, Answer> {
+    if target.id == caller.workspace_id {
+        return Err(error_answer(
+            409,
+            "own_workspace",
+            "you cannot close your own Workspace; that would stop you too",
+        ));
+    }
+    Ok(Scope {
+        workspace_id: target.id.clone(),
+        open: false,
+        window_label: live_window.unwrap_or_else(|| caller.window_label.clone()),
+        client_id: None,
+    })
 }
 
 /// Where a call naming `workspace` goes, for `caller`.
@@ -1902,7 +1977,14 @@ fn serve_inner(
             format!("{who} op={op}"),
         );
     }
-    let scope = match resolve_scope(app, &caller, workspace.as_deref()) {
+    if let Some(answer) = refuse_workspace_flag(&request, workspace.as_deref()) {
+        return (answer, format!("{who} op=usage-error"));
+    }
+    let scope = match &request {
+        Request::WorkspaceClose { name, .. } => close_scope(app, &caller, name),
+        _ => resolve_scope(app, &caller, workspace.as_deref()),
+    };
+    let scope = match scope {
         Ok(s) => Scope { client_id, ..s },
         Err(answer) => return (answer, format!("{who} op={op} target=?")),
     };
@@ -2478,6 +2560,51 @@ mod tests {
         assert!(usage_err(&["workspace", "open", "x"]).contains("unknown command `workspace open`"));
         assert!(matches!(parse_args(&argv(&["workspace"])), Ok(Parsed::Help(t)) if t.starts_with("Workspaces")));
         assert!(matches!(parse_args(&[]), Ok(Parsed::Help(t)) if t.contains("--workspace <name>")));
+    }
+
+    #[test]
+    fn workspace_close_parses_and_mutates() {
+        let close = |name: &str, force: bool| Request::WorkspaceClose { name: name.into(), force };
+        assert_eq!(req(&["workspace", "close", "api"]), close("api", false));
+        assert_eq!(req(&["workspace", "close", "--force", " api "]), close("api", true));
+        assert!(is_mutating(&close("api", false)));
+        assert!(usage_err(&["workspace", "close"]).contains("usage"));
+        assert!(usage_err(&["workspace", "close", "a", "b"]).contains("usage"));
+        assert!(usage_err(&["workspace", "close", "  "]).contains("usage"));
+        assert!(usage_err(&["workspace", "close", "a", "--now"]).contains("unknown option"));
+        assert_eq!(
+            serde_json::to_value(close("api", true)).unwrap(),
+            json!({ "op": "workspace.close", "name": "api", "force": true })
+        );
+        assert!(help(Some("workspace")).contains("workspace close <name>"));
+    }
+
+    #[test]
+    fn workspace_close_refuses_the_workspace_flag() {
+        let argv = argv(&["workspace", "close", "api", "--workspace", "docs"]);
+        let (workspace, rest) = split_workspace(&argv).unwrap();
+        let Ok(Parsed::Request(request)) = parse_args(&rest) else { panic!("parses") };
+        let answer = refuse_workspace_flag(&request, workspace.as_deref()).unwrap();
+        assert_eq!(answer.status, 400);
+        assert!(answer.body.contains("\"usage\""));
+        assert!(refuse_workspace_flag(&request, None).is_none());
+        // Every other command still takes --workspace.
+        assert!(refuse_workspace_flag(&Request::AgentList, Some("docs")).is_none());
+    }
+
+    #[test]
+    fn workspace_close_never_targets_the_callers_own_workspace() {
+        let me = caller("a");
+        let row = |id: &str| WorkspaceRow { id: id.into(), name: id.into(), folder: "/x".into() };
+        let own = close_scope_for(&me, &row("ws"), Some("main".into())).err().unwrap();
+        assert_eq!(own.status, 409);
+        assert!(own.body.contains("own_workspace"));
+        // Routed to the Window holding its live PTYs, never opened.
+        let there = close_scope_for(&me, &row("api"), Some("window-2".into())).unwrap();
+        assert_eq!((there.workspace_id.as_str(), there.open, there.window_label.as_str()), ("api", false, "window-2"));
+        // No live PTY: the caller's Window answers (it holds it if Opened at all).
+        let idle = close_scope_for(&me, &row("api"), None).unwrap();
+        assert_eq!((idle.open, idle.window_label.as_str()), (false, "main"));
     }
 
     #[test]
