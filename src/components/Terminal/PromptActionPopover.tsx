@@ -42,6 +42,9 @@ interface PromptActionPopoverProps {
 	/** Present when editing rather than creating. The same card serves both:
 	 *  the fields are identical, and a second component would drift. */
 	editing?: PromptAction;
+	/** The pane is in the Orchestrator workspace (ADR-0057): the narrow
+	 *  choice offered is "the Orchestrator only" instead of this Agent. */
+	inOrchestrator?: boolean;
 	onClose: () => void;
 }
 
@@ -50,8 +53,14 @@ function PromptActionPopoverBody({
 	anchor,
 	defaultAgentId,
 	editing,
+	inOrchestrator = false,
 	onClose,
 }: PromptActionPopoverProps) {
+	// An action of the Orchestrator's, or a new one made in its pane, keeps
+	// that scope as its narrow choice (ADR-0057).
+	const orchestratorScope = editing
+		? editing.scope.kind === "orchestrator"
+		: inOrchestrator;
 	const nameRef = useRef<HTMLInputElement>(null);
 	const [name, setName] = useState(editing?.name ?? "");
 	const [body, setBody] = useState(editing?.body ?? "");
@@ -72,7 +81,8 @@ function PromptActionPopoverBody({
 	// every later position number by one.
 	const [saving, setSaving] = useState(false);
 	const [scopeToAgent, setScopeToAgent] = useState(
-		editing ? editing.scope.kind === "set" : !!defaultAgentId,
+		orchestratorScope ||
+			(editing ? editing.scope.kind === "set" : !!defaultAgentId),
 	);
 
 	const createAction = usePromptActionStore((s) => s.createAction);
@@ -82,6 +92,7 @@ function PromptActionPopoverBody({
 	 *  an action already scoped to several Agents, that is the set it targets —
 	 *  not this pane's Agent, which would silently narrow it on save. */
 	const scopedLabel = useMemo(() => {
+		if (orchestratorScope) return "The Orchestrator only";
 		const ids =
 			editing?.scope.kind === "set" && editing.scope.agentIds.length > 0
 				? editing.scope.agentIds
@@ -93,7 +104,7 @@ function PromptActionPopoverBody({
 		if (names.length === 1) return `${names[0]} only`;
 		if (names.length === 2) return `${names[0]} and ${names[1]}`;
 		return `${names.length} agents`;
-	}, [agents, defaultAgentId, editing]);
+	}, [agents, defaultAgentId, editing, orchestratorScope]);
 
 	const derived = useMemo(() => deriveParams(body, params), [body, params]);
 
@@ -123,9 +134,11 @@ function PromptActionPopoverBody({
 					: [];
 		const keepsExistingSet = editing?.scope.kind === "set";
 		const scope: ActionScope =
-			scopeToAgent && (keepsExistingSet || scopedIds.length > 0)
-				? { kind: "set", agentIds: scopedIds }
-				: { kind: "all" };
+			scopeToAgent && orchestratorScope
+				? { kind: "orchestrator" }
+				: scopeToAgent && (keepsExistingSet || scopedIds.length > 0)
+					? { kind: "set", agentIds: scopedIds }
+					: { kind: "all" };
 		// Only metadata for parameters the body still refers to — an entry whose
 		// placeholder was deleted mid-edit is inert, but there is no reason to
 		// persist it.

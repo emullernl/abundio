@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, CornerDownLeft, GitBranch } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { useWorkWorkspaces } from "../../hooks/useWorkWorkspaces";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { collectTerminalIds, parseTabLayout } from "../../lib/paneTree";
 import type { Tab } from "../../lib/types";
@@ -35,12 +36,15 @@ export function NewAgentDialog({
 	onClose,
 	onBack,
 	animateIn = true,
+	initialWorkspaceId,
 }: {
 	onClose: () => void;
 	onBack?: () => void;
 	animateIn?: boolean;
+	/** Preselect this Workspace (the Orchestrator graph's Workspace menu). */
+	initialWorkspaceId?: string;
 }) {
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const workspaces = useWorkWorkspaces();
 	// Listed but not choosable: nothing may start there (ADR-0053).
 	const missingFolderIds = useWorkspaceStore((s) => s.missingFolderIds);
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
@@ -73,7 +77,12 @@ export function NewAgentDialog({
 		);
 	}, [ordered, query]);
 
-	const [wsIndex, setWsIndex] = useState(0);
+	const [wsIndex, setWsIndex] = useState(() =>
+		Math.max(
+			0,
+			ordered.findIndex((w) => w.id === initialWorkspaceId),
+		),
+	);
 	const [agentIndex, setAgentIndex] = useState(0);
 	const [worktree, setWorktree] = useState(false);
 	const [starting, setStarting] = useState(false);

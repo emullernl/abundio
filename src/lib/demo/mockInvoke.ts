@@ -8,6 +8,7 @@
  * Keyed off the stable **paneId** (`pty_spawn`'s `logId` arg), because
  * `workspaceStore.loadWorkspaces` clears layout ptyIds on load.
  */
+import type { OrchestratorFileTab } from "../ipc";
 import type { PromptActionRow } from "../types";
 import * as fixtures from "./fixtures";
 import { publish } from "./mockBus";
@@ -77,6 +78,37 @@ const demoPromptActions: PromptActionRow[] = [
 		createdAt: 0,
 		updatedAt: 0,
 	},
+	// The Orchestrator's suggested questions, as a real install seeds them
+	// (prompt_actions::ORCHESTRATOR_ACTIONS, ADR-0057).
+	...(
+		[
+			[
+				"What is everyone doing?",
+				"Give me a short overview of every agent in this profile: what each one is working on and how far along it is.",
+			],
+			[
+				"Who needs me?",
+				"Which agents are waiting for me or have finished and need a look? List them, most urgent first, and say what each one needs.",
+			],
+			[
+				"Summarise today",
+				"Summarise what the agents in this profile got done today, by workspace, in plain words.",
+			],
+		] as const
+	).map(
+		([name, body], i): PromptActionRow => ({
+			id: `demo-action-orchestrator-${i}`,
+			name,
+			body,
+			scopeKind: "orchestrator",
+			scopeAgentIds: [],
+			paramsJson: "{}",
+			showInBar: true,
+			position: 3 + i,
+			createdAt: 0,
+			updatedAt: 0,
+		}),
+	),
 ];
 
 function seedPane(paneId: string, ptyId: string): void {
@@ -98,6 +130,11 @@ function seedPane(paneId: string, ptyId: string): void {
 
 	seedPaneActivity(ptyId, paneId, spec);
 }
+
+const demoOrchestratorTabs: OrchestratorFileTab[] = [];
+
+/** The Orchestrator Agent picked in this demo session (ADR-0057). */
+let demoOrchestratorAgent: string | null = null;
 
 export function mockInvoke<T>(cmd: string, args?: Args): Promise<T> {
 	const result = dispatch(cmd, args ?? {});
@@ -137,6 +174,44 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return { opened: [], active: null };
 		case "workspace_missing_folders":
 			return [];
+		// The demo has no Orchestrator Agent until the user picks one.
+		case "orchestrator_ensure":
+			return fixtures.orchestratorWorkspace;
+		case "orchestrator_agent_get":
+			return demoOrchestratorAgent;
+		// Orchestrator file tabs live for the demo session only.
+		case "orchestrator_tabs_list":
+			return { tabs: demoOrchestratorTabs, selected: null };
+		case "orchestrator_tab_add": {
+			const tab = args?.tab as Record<string, unknown>;
+			const same = demoOrchestratorTabs.find(
+				(t) =>
+					t.workspaceId === tab.workspaceId &&
+					t.kind === tab.kind &&
+					t.path === tab.path,
+			);
+			if (same) return same;
+			const made = {
+				id: `demo-tab-${demoOrchestratorTabs.length + 1}`,
+				workspaceId: String(tab.workspaceId),
+				kind: tab.kind as "file" | "diff" | "commit",
+				path: String(tab.path),
+				commitOid: (tab.commitOid as string | null) ?? null,
+				preview: Boolean(tab.preview),
+			};
+			demoOrchestratorTabs.push(made);
+			return made;
+		}
+		case "orchestrator_tab_remove": {
+			const i = demoOrchestratorTabs.findIndex((t) => t.id === args?.id);
+			if (i >= 0) demoOrchestratorTabs.splice(i, 1);
+			return undefined;
+		}
+		case "orchestrator_tab_select":
+			return undefined;
+		case "orchestrator_agent_set":
+			demoOrchestratorAgent = (args?.agentId as string | null) ?? null;
+			return undefined;
 		case "tab_list": {
 			const ws = fixtures.workspaces.find((w) => w.id === args.workspaceId);
 			return ws?.tabs ?? [];
@@ -460,7 +535,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				id: `demo-action-${demoPromptActions.length + 1}`,
 				name: String(input.name ?? "Untitled"),
 				body: String(input.body ?? ""),
-				scopeKind: (input.scopeKind as "all" | "set") ?? "all",
+				scopeKind: (input.scopeKind as "all" | "set" | "orchestrator") ?? "all",
 				scopeAgentIds: (input.scopeAgentIds as string[]) ?? [],
 				paramsJson: String(input.paramsJson ?? "{}"),
 				showInBar: input.showInBar !== false,

@@ -71,6 +71,21 @@ describe("fleetTiles", () => {
 		expect(tiles[1]).toMatchObject({ workspaceId: "a", tabId: "a1" });
 	});
 
+	it("never shows the Orchestrator workspace's Agents (ADR-0057)", () => {
+		const o = {
+			...ws("o", [["o1", term("po1", "z1")]]),
+			kind: "orchestrator" as const,
+		};
+		const tiles = fleetTiles({
+			workspaces: [a, o],
+			sidebarOrder: ["o", "a"],
+			openedWorkspaceIds: new Set(["a", "o"]),
+			activities: { ...activities, z1: act("agent") },
+			panePtyMap: {},
+		});
+		expect(tiles.map((t) => t.workspaceId)).not.toContain("o");
+	});
+
 	it("skips Workspaces that are not Opened", () => {
 		const tiles = fleetTiles({
 			workspaces: [a, b],

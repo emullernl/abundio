@@ -2264,7 +2264,12 @@ async function spawnNewPty(
 	try {
 		const id = await pty.spawn({
 			...options,
-			task: { argv: task.argv, setup: task.setup },
+			task: {
+				argv: task.argv,
+				setup: task.setup,
+				fallback: task.fallback,
+				fallbackWithinSecs: task.fallbackWithinSecs,
+			},
 		});
 		usePtyActivityStore.getState().setAgentPty(id, task.agentId);
 		return id;

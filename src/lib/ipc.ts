@@ -96,7 +96,12 @@ export interface PtySpawnOptions {
 	inheritFromWorkspaceId?: string;
 	/** A **New task** launch: the shell runs this argv (prompt included, as one
 	 *  element) after optional setup commands. zsh and bash only. ADR-0042. */
-	task?: { argv: string[]; setup?: string };
+	task?: {
+		argv: string[];
+		setup?: string;
+		fallback?: string;
+		fallbackWithinSecs?: number;
+	};
 }
 
 export const pty = {
@@ -177,6 +182,47 @@ export const pty = {
 	cleanupStaleLogs: (paneIds: string[]) =>
 		invoke<void>("pty_cleanup_stale_logs", { paneIds }),
 };
+
+/** The Profile's Orchestrator workspace and its Agent choice (ADR-0057). */
+export const orchestrator = {
+	/** Creates (first time) and returns the Profile's Orchestrator workspace,
+	 *  rewriting its instruction files. */
+	ensure: (profileId: string) =>
+		invoke<WorkspaceWithTabs>("orchestrator_ensure", { profileId }),
+	agent: (profileId: string) =>
+		invoke<string | null>("orchestrator_agent_get", { profileId }),
+	setAgent: (profileId: string, agentId: string | null) =>
+		invoke<void>("orchestrator_agent_set", { profileId, agentId }),
+	/** The Profile's **Orchestrator tabs** holding files (ADR-0058) and the
+	 *  selected one (`null`: the graph). */
+	tabs: (profileId: string) =>
+		invoke<{ tabs: OrchestratorFileTab[]; selected: string | null }>(
+			"orchestrator_tabs_list",
+			{ profileId },
+		),
+	addTab: (profileId: string, tab: NewOrchestratorFileTab) =>
+		invoke<OrchestratorFileTab>("orchestrator_tab_add", { profileId, tab }),
+	removeTab: (profileId: string, id: string) =>
+		invoke<void>("orchestrator_tab_remove", { profileId, id }),
+	selectTab: (profileId: string, id: string | null) =>
+		invoke<void>("orchestrator_tab_select", { profileId, id }),
+};
+
+/** One **Orchestrator tab** holding a file. `path` is absolute for `file`,
+ *  Workspace-relative for `diff` and `commit`. */
+export interface OrchestratorFileTab {
+	id: string;
+	workspaceId: string;
+	kind: "file" | "diff" | "commit";
+	path: string;
+	commitOid: string | null;
+	preview: boolean;
+}
+
+export type NewOrchestratorFileTab = Omit<
+	OrchestratorFileTab,
+	"id" | "commitOid" | "preview"
+> & { commitOid?: string | null; preview?: boolean };
 
 export const workspaces = {
 	create: (name: string, rootFolder: string, profileId: string) =>

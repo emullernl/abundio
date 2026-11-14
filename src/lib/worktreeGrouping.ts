@@ -4,6 +4,7 @@
 // workspaces share a set iff they report the same `worktreeGroupKey`.
 
 import type { WorkspaceWithTabs } from "./types";
+import { workWorkspaces } from "./workspaceKind";
 
 /** The grouping facts a workspace contributes, sourced from `workspaceGitStore`. */
 export interface WorktreeGroupFacts {
@@ -53,6 +54,10 @@ export function buildWorkspaceRows(
 	const keyOf = (id: string): string | null =>
 		facts[id]?.worktreeGroupKey ?? null;
 	const isPrimary = (id: string): boolean => facts[id]?.isMainWorktree ?? false;
+	// The Orchestrator workspace is never a row (ADR-0057): this is the one
+	// order the sidebar, Fleet Console, Agents list, Workspace cycle and
+	// Navigator all share.
+	workspaces = workWorkspaces(workspaces);
 
 	// Bucket workspaces by group key.
 	const buckets = new Map<string, WorkspaceWithTabs[]>();

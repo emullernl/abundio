@@ -755,6 +755,39 @@ export const workspaces: WorkspaceWithTabs[] = WS_DEFS.map((def, i) => {
 	};
 });
 
+/** The demo Profile's Orchestrator workspace (ADR-0057). Not in
+ *  `workspaces`: it is created the first time the Orchestrator view opens. */
+export const orchestratorWorkspace: WorkspaceWithTabs = {
+	id: "demo-orchestrator",
+	name: "Orchestrator",
+	rootFolder: "/Users/demo/Library/Application Support/abundio/orchestrator",
+	agentPresetsJson: "[]",
+	fileTabsJson: "[]",
+	baseBranch: null,
+	lastBranch: null,
+	position: -1,
+	profileId: ACTIVE_PROFILE_ID,
+	createdAt: T0,
+	updatedAt: T0,
+	worktreeSetupCommands: "",
+	kind: "orchestrator",
+	tabs: [
+		{
+			id: "demo-orchestrator-tab",
+			workspaceId: "demo-orchestrator",
+			name: "Orchestrator",
+			layoutJson: JSON.stringify({
+				type: "terminal",
+				id: "demo-orchestrator-pane",
+				ptyId: "",
+			}),
+			position: 0,
+			createdAt: T0,
+			updatedAt: T0,
+		},
+	],
+};
+
 /** workspaceId → rootFolder, for resolving git/summary requests. */
 export const workspaceRoots: Record<string, string> = Object.fromEntries(
 	workspaces.map((w) => [w.id, w.rootFolder]),

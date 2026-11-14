@@ -9,6 +9,7 @@ import {
 	isShownAsFleetTile,
 } from "./fleetFocus";
 import { findPaneLocation, revealPane } from "./paneLocation";
+import { isOrchestrator } from "./workspaceKind";
 
 interface PtyExtra {
 	type: "pty";
@@ -67,6 +68,11 @@ export function handleNotificationClick(
 		);
 		if (!workspace) return;
 
+		// The Orchestrator lives only in its own view (ADR-0057).
+		if (isOrchestrator(workspace)) {
+			useWindowUiStore.getState().setOrchestratorViewOpen(true);
+			return;
+		}
 		// In the console, an agent's notification lands on its tile, so the
 		// answer can be typed right there. Anything that is not a tile (a
 		// shell's Error) leaves the console for the Workspace view.
@@ -74,7 +80,7 @@ export function handleNotificationClick(
 			useWindowUiStore.getState().setFocusedTile(paneId);
 			return;
 		}
-		useWindowUiStore.getState().setFleetConsoleOpen(false);
+		useWindowUiStore.getState().showWorkspaceView();
 		revealPane(paneId ?? null, workspaceId, tabId);
 	} else if (extra.type === "pr") {
 		const { workspaceId } = extra;
@@ -85,7 +91,7 @@ export function handleNotificationClick(
 		);
 		if (!workspace) return;
 
-		useWindowUiStore.getState().setFleetConsoleOpen(false);
+		useWindowUiStore.getState().showWorkspaceView();
 		wsStore.beginWorkspaceSwitch(workspaceId);
 		// PR notification was clicked — open the right sidebar and route to the
 		// Git tab so the PR section becomes visible. The PR section's own

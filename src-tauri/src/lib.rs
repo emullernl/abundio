@@ -23,6 +23,7 @@ pub mod git_libgit2;
 pub mod git_scheduler;
 pub mod hook_server;
 pub mod migrations;
+pub mod orchestrator;
 pub mod owner_map;
 pub mod pr_poller;
 pub mod process_monitor;
@@ -388,7 +389,10 @@ pub fn build_menu(
     // does; the webview's own Keymap already handles Cmd+J / Ctrl+Shift+J.
     let navigator_item =
         MenuItem::with_id(handle, "navigator", "Navigator…", true, None::<&str>)?;
-    let go_menu = Submenu::with_items(handle, "Go", true, &[&navigator_item])?;
+    let orchestrator_item =
+        MenuItem::with_id(handle, "orchestrator", "Orchestrator", true, None::<&str>)?;
+    let go_menu =
+        Submenu::with_items(handle, "Go", true, &[&navigator_item, &orchestrator_item])?;
 
     let window_menu = Submenu::with_items(
         handle,
@@ -1216,6 +1220,14 @@ pub fn run() {
                 );
                 return;
             }
+            if id == "orchestrator" {
+                let _ = window_management::emit_to_one_profile_window(
+                    app,
+                    "open-orchestrator",
+                    (),
+                );
+                return;
+            }
             if id == "quit-app" {
                 // Custom Quit handler — must run BEFORE Tauri starts
                 // destroying windows so we can snapshot windows.json with the
@@ -1452,6 +1464,13 @@ pub fn run() {
             commands::open_settings_window,
             commands::focus_window,
             commands::workspace_create,
+            orchestrator::orchestrator_ensure,
+            orchestrator::orchestrator_agent_get,
+            orchestrator::orchestrator_agent_set,
+            orchestrator::orchestrator_tabs_list,
+            orchestrator::orchestrator_tab_add,
+            orchestrator::orchestrator_tab_remove,
+            orchestrator::orchestrator_tab_select,
             commands::workspace_list,
             commands::workspace_update,
             commands::workspace_delete,

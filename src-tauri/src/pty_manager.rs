@@ -47,6 +47,14 @@ pub struct TaskLaunch {
     pub argv: Vec<String>,
     #[serde(default)]
     pub setup: Option<String>,
+    /// The Agent's plain launch line, run instead when `argv` (a session
+    /// resume) exits non-zero within `fallback_within_secs`: "nothing to
+    /// resume". Only the Orchestrator uses it (ADR-0057). A launch line, as
+    /// typed at a prompt on every other path, so the script `eval`s it.
+    #[serde(default)]
+    pub fallback: Option<String>,
+    #[serde(default)]
+    pub fallback_within_secs: Option<u32>,
 }
 
 /// Which Workspace a live PTY belongs to.
@@ -334,6 +342,15 @@ impl PtyManager {
                 cmd.env("ABUNDIO_TASK_ENV_KEYS", &keys_manifest);
             }
         }
+        // The resume fallback, read and unset by the task script before the
+        // Agent starts (see `task_script`).
+        if let Some(TaskLaunch { fallback: Some(fallback), fallback_within_secs, .. }) = task {
+            cmd.env("ABUNDIO_TASK_FALLBACK", fallback);
+            cmd.env(
+                "ABUNDIO_TASK_FALLBACK_WITHIN",
+                fallback_within_secs.unwrap_or(0).to_string(),
+            );
+        }
         if !skipped.is_empty() {
             log::warn!(
                 "[pty] dropped {} workspace environment variable(s) over the {} byte budget: {}",
@@ -596,6 +613,8 @@ fn task_script(reexec: &str) -> String {
     format!(
         r#"__abundio_sh=$0
 __abundio_keys=$ABUNDIO_TASK_ENV_KEYS; unset ABUNDIO_TASK_ENV_KEYS
+__abundio_fb=$ABUNDIO_TASK_FALLBACK; __abundio_within=${{ABUNDIO_TASK_FALLBACK_WITHIN:-0}}
+unset ABUNDIO_TASK_FALLBACK ABUNDIO_TASK_FALLBACK_WITHIN
 __abundio_setup=$1; shift
 __abundio_rc=0
 __abundio_cmd=
@@ -624,10 +643,24 @@ if [ "$__abundio_rc" -ne 0 ]; then
   printf '\033]7770;command_end;%s\007' "$__abundio_rc"
 else
   printf '\033]7770;command_start;%s\007' "${{1//$'\a'/ }}"
+  __abundio_t0=$SECONDS
   "$@"
-  printf '\033]7770;command_end;%s\007' "$?"
+  __abundio_rc=$?
+  # A resume that fails at once found nothing to resume: start fresh, still
+  # inside the one command_start/command_end, so the Pane never leaves agent
+  # mode in between (and keeps its Agent and handle).
+  # Whole seconds: a zsh setup may make SECONDS a float (typeset -F), and
+  # `[ -lt ]` takes integers only.
+  __abundio_el=$((SECONDS - __abundio_t0)); __abundio_el=${{__abundio_el%%.*}}
+  if [ "$__abundio_rc" -ne 0 ] && [ -n "$__abundio_fb" ] \
+    && [ "${{__abundio_el:-0}}" -lt "$__abundio_within" ]; then
+    printf '\n\033[2mNothing to resume; starting a new session.\033[0m\n\n'
+    eval "$__abundio_fb"
+    __abundio_rc=$?
+  fi
+  printf '\033]7770;command_end;%s\007' "$__abundio_rc"
 fi
-unset __abundio_rc __abundio_cmd __abundio_sh
+unset __abundio_rc __abundio_cmd __abundio_sh __abundio_fb __abundio_within __abundio_t0 __abundio_el
 {reexec}"#
     )
 }
@@ -1157,7 +1190,9 @@ __abundio_send() {   # $1 = 1 to mark a retry; the rest are the arguments
   # No arguments must send an empty body, not one empty argument. The status
   # comes last, on a line of its own.
   # (`||`, not `&&`: under pipefail a false test would fail the whole pipe.)
-  { [ $# -eq 0 ] || printf '%s\0' "$@"; } |
+  # The working folder first, marked (\001cwd:), so a relative path in a
+  # command resolves against it (`file open`).
+  { printf '\001cwd:%s\0' "$PWD"; [ $# -eq 0 ] || printf '%s\0' "$@"; } |
     curl -s -w '\n%{http_code}' --connect-timeout 5 \
       -X POST --data-binary @- \
       -H @<(__abundio_token_header) \
@@ -1218,6 +1253,11 @@ if (-not $env:ABUNDIO_AGENT_TOKEN -or -not $env:ABUNDIO_HOOK_PORT) {
 }
 
 $bytes = New-Object System.Collections.Generic.List[byte]
+# The working folder first, marked (0x01 "cwd:"), so a relative path in a
+# command resolves against it (`file open`).
+$bytes.Add(1)
+$bytes.AddRange([Text.Encoding]::UTF8.GetBytes("cwd:" + (Get-Location).ProviderPath))
+$bytes.Add(0)
 foreach ($a in $args) {
     $bytes.AddRange([Text.Encoding]::UTF8.GetBytes([string]$a))
     $bytes.Add(0)
@@ -2001,6 +2041,93 @@ mod task_launch_tests {
         TaskLaunch {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             setup: setup.map(|s| s.to_string()),
+            fallback: None,
+            fallback_within_secs: None,
+        }
+    }
+
+    /// The script with a resume fallback in its environment, as a spawn
+    /// sets it.
+    fn run_with_fallback(shell: &str, argv: &[&str], fallback: &str, within: u32) -> Option<String> {
+        if !Path::new(shell).exists() {
+            return None;
+        }
+        let script = task_script("echo REEXEC");
+        let mut args = vec!["-c".to_string(), script, shell.to_string(), String::new()];
+        args.extend(argv.iter().map(|s| s.to_string()));
+        let out = Command::new(shell)
+            .args(&args)
+            .env("ABUNDIO_TASK_FALLBACK", fallback)
+            .env("ABUNDIO_TASK_FALLBACK_WITHIN", within.to_string())
+            .output()
+            .ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[test]
+    fn a_resume_that_fails_at_once_starts_fresh_inside_one_command() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_with_fallback(shell, &["sh", "-c", "echo RESUME; exit 1"], "echo FRESH", 20)
+            else {
+                continue;
+            };
+            let resume = out.find("RESUME").expect("resume ran");
+            let fresh = out.find("FRESH").expect("fallback ran");
+            assert!(resume < fresh, "{shell}: {out}");
+            // One start, one end, and the end is the fallback's exit code.
+            assert_eq!(out.matches("7770;command_start").count(), 1, "{shell}: {out}");
+            assert_eq!(out.matches("7770;command_end").count(), 1, "{shell}: {out}");
+            assert!(out.contains("\x1b]7770;command_end;0\x07"), "{shell}: {out}");
+        }
+    }
+
+    /// A zsh setup that makes SECONDS a float (`typeset -F SECONDS`, as some
+    /// prompt themes do) must not break the window check.
+    #[test]
+    fn the_fallback_works_with_a_float_seconds() {
+        let shell = "/bin/zsh";
+        if !Path::new(shell).exists() {
+            return;
+        }
+        let script = format!("typeset -F SECONDS\n{}", task_script("echo REEXEC"));
+        let out = Command::new(shell)
+            .args(["-c", &script, shell, "", "sh", "-c", "echo RESUME; exit 1"])
+            .env("ABUNDIO_TASK_FALLBACK", "echo FRESH")
+            .env("ABUNDIO_TASK_FALLBACK_WITHIN", "20")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stdout.contains("FRESH"), "{stdout}\n{stderr}");
+        assert!(!stderr.contains("integer expression"), "{stderr}");
+    }
+
+    #[test]
+    fn a_resume_that_works_or_fails_late_is_left_alone() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(ok) = run_with_fallback(shell, &["sh", "-c", "echo RESUME"], "echo FRESH", 20) else {
+                continue;
+            };
+            assert!(!ok.contains("FRESH"), "{shell}: {ok}");
+            // A zero window means "late" for every exit.
+            let late = run_with_fallback(shell, &["sh", "-c", "exit 3"], "echo FRESH", 0).unwrap();
+            assert!(!late.contains("FRESH"), "{shell}: {late}");
+            assert!(late.contains("\x1b]7770;command_end;3\x07"), "{shell}: {late}");
+        }
+    }
+
+    #[test]
+    fn the_agent_never_sees_the_fallback() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_with_fallback(
+                shell,
+                &["sh", "-c", "echo SAW=${ABUNDIO_TASK_FALLBACK:-none}"],
+                "echo FRESH",
+                20,
+            ) else {
+                continue;
+            };
+            assert!(out.contains("SAW=none"), "{shell}: {out}");
         }
     }
 
@@ -2635,6 +2762,14 @@ exit "$rc"
         }
     }
 
+    /// The arguments in a sent body, after the working folder the CLI puts
+    /// first (`\u{1}cwd:<folder>\0`), which must be there.
+    fn sent_args(body: &[u8]) -> Vec<u8> {
+        assert!(body.starts_with(b"\x01cwd:"), "no folder first: {body:?}");
+        let end = body.iter().position(|b| *b == 0).expect("the folder ends");
+        body[end + 1..].to_vec()
+    }
+
     fn stdout(o: &std::process::Output) -> String {
         String::from_utf8_lossy(&o.stdout).into_owned()
     }
@@ -2649,7 +2784,7 @@ exit "$rc"
         let out = f.run(&["agent", "prompt", "p2", "two words\nand a line", ""]);
         assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
         assert_eq!(stdout(&out), "{\"panes\":[]}\n");
-        assert_eq!(f.stdin(1), b"agent\0prompt\0p2\0two words\nand a line\0\0");
+        assert_eq!(sent_args(&f.stdin(1)), b"agent\0prompt\0p2\0two words\nand a line\0\0");
         let args = f.args(1);
         assert!(args.contains("X-Abundio-Agent-Token: tok"));
         // The token reaches curl through a pipe, never on its command line.
@@ -2659,10 +2794,10 @@ exit "$rc"
     }
 
     #[test]
-    fn no_arguments_send_an_empty_body() {
+    fn no_arguments_send_only_the_folder() {
         let f = Fixture::new(&["0 200 help text\\n"]);
         let out = f.run(&[]);
-        assert_eq!(f.stdin(1), b"");
+        assert_eq!(sent_args(&f.stdin(1)), b"");
         assert_eq!(out.status.code(), Some(0));
         assert_eq!(stdout(&out), "help text\n");
     }
@@ -2691,7 +2826,7 @@ exit "$rc"
         assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
         assert_eq!(f.calls(), 2);
         assert!(!f.args(2).contains("X-Abundio-Retry"));
-        assert_eq!(f.stdin(2), b"pane\0list\0");
+        assert_eq!(sent_args(&f.stdin(2)), b"pane\0list\0");
     }
 
     #[test]

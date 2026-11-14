@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { useWorktreeProgress } from "../../hooks/useWorktreeProgress";
+import { useWorkWorkspaces } from "../../hooks/useWorkWorkspaces";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { agentTaskArgvFor } from "../../lib/agents";
 import { type GithubIssue, issues as issuesApi, shells } from "../../lib/ipc";
@@ -83,7 +84,7 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	const { fromFleet, onBack } = request;
 	const close = () => useWindowUiStore.getState().closeNewTask();
 
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const workspaces = useWorkWorkspaces();
 	const missingFolderIds = useWorkspaceStore((s) => s.missingFolderIds);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);

@@ -24,6 +24,8 @@ function baseProps(): OverviewBarProps {
 		onToggleStatistics: () => {},
 		fleetConsoleOpen: false,
 		onToggleFleetConsole: () => {},
+		orchestratorViewOpen: false,
+		onToggleOrchestratorView: () => {},
 	};
 }
 

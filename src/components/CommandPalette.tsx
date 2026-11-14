@@ -5,12 +5,14 @@ import {
 	useKeybindingOverrides,
 } from "../hooks/useShortcutLabel";
 import { useSplitPane } from "../hooks/useSplitPane";
+import { useWorkWorkspaces } from "../hooks/useWorkWorkspaces";
 import { isAgentPane } from "../lib/firePromptAction";
 import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { type KeyAction, triggerAction } from "../lib/keybindings";
 import { fileWindowTargetForPane } from "../lib/openFileWindow";
+import { paneInOrchestrator } from "../lib/orchestrator";
 import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
@@ -55,7 +57,7 @@ export function CommandPalette({
 	const keyOverrides = useKeybindingOverrides();
 	const listRef = useRef<HTMLDivElement>(null);
 
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const workspaces = useWorkWorkspaces();
 	const beginWorkspaceSwitch = useWorkspaceStore((s) => s.beginWorkspaceSwitch);
 	// In the Fleet Console, pane commands target the Focused tile (ADR-0040).
 	const focusedPaneId = useTargetPaneId();
@@ -93,7 +95,7 @@ export function CommandPalette({
 				category: "Workspaces",
 				action: () => {
 					// Picking a Workspace is a request to see it.
-					useWindowUiStore.getState().setFleetConsoleOpen(false);
+					useWindowUiStore.getState().showWorkspaceView();
 					beginWorkspaceSwitch(s.id);
 				},
 			});
@@ -160,6 +162,13 @@ export function CommandPalette({
 			action: () => triggerAction("open-navigator"),
 		});
 
+		result.push({
+			id: "action-toggle-orchestrator-view",
+			label: "Toggle Orchestrator",
+			category: "Actions",
+			shortcut: "toggle-orchestrator-view",
+			action: () => triggerAction("toggle-orchestrator-view"),
+		});
 		result.push({
 			id: "action-toggle-fleet-console",
 			label: "Toggle Fleet Console",
@@ -368,6 +377,10 @@ export function CommandPalette({
 				: false;
 			for (const action of actionsForPane(promptActionList, agentId, {
 				barOnly: false,
+				inOrchestrator: paneInOrchestrator(
+					useWorkspaceStore.getState().workspaces,
+					focusedPaneId,
+				),
 			})) {
 				result.push({
 					id: `prompt-action-${action.id}`,

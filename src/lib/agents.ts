@@ -327,6 +327,37 @@ export function agentRelaunchCommandFor(
 	return plain;
 }
 
+/**
+ * `agentRelaunchCommandFor` as an argv, for a launch that rides the PTY
+ * spawn instead of being typed (the Orchestrator, ADR-0057). The command is
+ * split on spaces as `agentTaskArgvFor` does. Undefined when the Agent is
+ * gone.
+ */
+export function agentRelaunchArgvFor(
+	agents: CodingAgent[],
+	agentId: string | undefined,
+	opts: RelaunchOptions,
+): string[] | undefined {
+	const agent = agents.find((a) => a.id === agentId);
+	if (!agent) return undefined;
+	const plain = [
+		...agent.command.trim().split(/\s+/).filter(Boolean),
+		...(agent.args ?? []),
+	];
+	if (!opts.resume) return plain;
+	if (isSafeSessionId(opts.sessionId) && isResumeForm(agent.resumeArgs)) {
+		const id = opts.sessionId;
+		return [
+			...plain,
+			...agent.resumeArgs.map((a) => a.replace(SESSION_ID_PLACEHOLDER, id)),
+		];
+	}
+	if (opts.alone && agent.continueArgs?.length) {
+		return [...plain, ...agent.continueArgs];
+	}
+	return plain;
+}
+
 /** A resume form with the session placeholder exactly once. */
 function isResumeForm(args: string[] | undefined): args is string[] {
 	if (!args) return false;

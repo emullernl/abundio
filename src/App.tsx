@@ -14,6 +14,7 @@ import { Navigator } from "./components/Navigator/Navigator";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
+import { OrchestratorView } from "./components/Orchestrator/OrchestratorView";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
 import { RightSidebar } from "./components/RightSidebar/RightSidebar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
@@ -57,6 +58,8 @@ import {
 	cycleFleet,
 	fleetConsoleShowing,
 	navigateFleet,
+	orchestratorViewShowing,
+	paneLayoutOnly,
 	stepTileZoom,
 	targetPaneId,
 	toggleFleetSpotlight,
@@ -82,6 +85,11 @@ import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
 import { applyMonacoOverrides } from "./lib/monacoKeymap";
 import { fileWindowTargetForPane, openFileWindow } from "./lib/openFileWindow";
 import { openNewTask } from "./lib/openNewTask";
+import { installOrchestratorSession } from "./lib/orchestratorSession";
+import {
+	tabPaneId,
+	toggleOrchestratorFileSearch,
+} from "./lib/orchestratorTabs";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { firePaneSlot } from "./lib/promptActionRegistry";
@@ -93,6 +101,7 @@ import {
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import { unsavedFilePaths } from "./lib/unsavedFiles";
 import { cycleOpenedWorkspace } from "./lib/workspaceCycle";
+import { isOrchestrator, workWorkspaces } from "./lib/workspaceKind";
 import {
 	addWorktreeTargetId,
 	buildWorkspaceRows,
@@ -107,6 +116,7 @@ import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
 import { confirmFileWindowsClean } from "./stores/fileWindowCloseConfirmStore";
 import { useNotesStore } from "./stores/notesStore";
+import { useOrchestratorStore } from "./stores/orchestratorStore";
 import {
 	clearPaneClose,
 	usePaneCloseConfirmStore,
@@ -198,10 +208,17 @@ const SwitchingOverlay = memo(function SwitchingOverlay() {
  *  primitive; Zustand's default Object.is equality bails re-render unless
  *  the specific count it watches has changed. */
 const OverviewBarWired = memo(function OverviewBarWired() {
-	const openedWorkspaces = usePtyActivityStore(
-		(s) => s.openedWorkspaceIds.size,
+	// The Orchestrator workspace is not one of the user's (ADR-0057).
+	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
+	const openedWorkspaces = useMemo(
+		() =>
+			workWorkspaces(allWorkspaces).filter((w) => openedIds.has(w.id)).length,
+		[allWorkspaces, openedIds],
 	);
-	const totalWorkspaces = useWorkspaceStore((s) => s.workspaces.length);
+	const totalWorkspaces = useWorkspaceStore(
+		(s) => workWorkspaces(s.workspaces).length,
+	);
 	const idleAgents = usePtyActivityStore(selectIdleAgentCount);
 	const workingAgents = usePtyActivityStore(selectWorkingAgentCount);
 	const waitingAgents = usePtyActivityStore(selectWaitingAgentCount);
@@ -234,6 +251,10 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
 	);
 	const toggleFleet = useWindowUiStore((s) => s.toggleFleetConsole);
+	const orchestratorOpen = useWindowUiStore(
+		(s) => s.orchestratorViewOpen && !s.statisticsOverlayOpen,
+	);
+	const toggleOrchestrator = useWindowUiStore((s) => s.toggleOrchestratorView);
 	return (
 		<OverviewBar
 			openedWorkspaces={openedWorkspaces}
@@ -255,6 +276,8 @@ const OverviewBarWired = memo(function OverviewBarWired() {
 			onToggleStatistics={toggleStatistics}
 			fleetConsoleOpen={fleetOpen}
 			onToggleFleetConsole={toggleFleet}
+			orchestratorViewOpen={orchestratorOpen}
+			onToggleOrchestratorView={toggleOrchestrator}
 		/>
 	);
 });
@@ -446,7 +469,20 @@ export function App() {
 		!openedWorkspaceIds.has(activeWorkspaceId)
 			? workspaces.find((w) => w.id === activeWorkspaceId)
 			: undefined;
-	const fleetConsoleOpen = useWindowUiStore((s) => s.fleetConsoleOpen);
+	// The Orchestrator workspace's panes, under the Orchestrator view's top
+	// area: shown once it is ready, hidden while its Agent picker is up.
+	const orchestratorViewShown = useWindowUiStore(
+		(s) => s.orchestratorViewOpen && !s.statisticsOverlayOpen,
+	);
+	const orchestratorReady = useOrchestratorStore(
+		(s) => s.phase === "ready" && !s.changingAgent && !s.exited,
+	);
+	const orchestratorPanesShown = orchestratorViewShown && orchestratorReady;
+	const orchestratorPanesTop = useOrchestratorStore((s) => s.panesTop);
+	// Both other views hide the sidebars (ADR-0040, ADR-0057).
+	const sidebarsHidden = useWindowUiStore(
+		(s) => s.fleetConsoleOpen || s.orchestratorViewOpen,
+	);
 	const newTaskRequest = useWindowUiStore((s) => s.newTaskRequest);
 
 	// Lazy-mount tabs. Active tab mounts immediately; others mount after workspace
@@ -814,6 +850,24 @@ export function App() {
 	// `settings` window via window_management::open_or_focus_settings_window.
 	// No frontend listener needed in profile windows for that path.
 
+	// The Orchestrator session follows its view, per Profile (ADR-0057).
+	const activeProfileId = useProfileStore((s) => s.activeProfileId);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-installed for each Profile
+	useEffect(() => {
+		if (!workspacesInitialized) return;
+		return installOrchestratorSession();
+	}, [workspacesInitialized, activeProfileId]);
+
+	// Go ▸ Orchestrator in the native menu (ADR-0057).
+	useEffect(() => {
+		const unlisten = listenToThisWindow<void>("open-orchestrator", () => {
+			useWindowUiStore.getState().setOrchestratorViewOpen(true);
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
 	// Go ▸ Navigator… in the native menu. Rust aims it at one Window.
 	useEffect(() => {
 		const unlisten = listenToThisWindow<void>("open-navigator", () => {
@@ -887,14 +941,14 @@ export function App() {
 	useEffect(() => {
 		registerAction(
 			"split-horizontal",
-			workspaceViewOnly(() => {
+			paneLayoutOnly(() => {
 				const paneId = useWorkspaceStore.getState().focusedPaneId;
 				if (paneId) splitPaneWithPicker(paneId, "horizontal");
 			}),
 		);
 		registerAction(
 			"split-vertical",
-			workspaceViewOnly(() => {
+			paneLayoutOnly(() => {
 				const paneId = useWorkspaceStore.getState().focusedPaneId;
 				if (paneId) splitPaneWithPicker(paneId, "vertical");
 			}),
@@ -985,14 +1039,21 @@ export function App() {
 			setFileSearchOpen(false);
 			setNavigatorOpen((v) => !v);
 		});
-		registerAction(
-			"open-file-search",
+		registerAction("open-file-search", () => {
+			// In the Orchestrator view: every Workspace's files, opened in an
+			// Orchestrator tab (ADR-0058).
+			if (orchestratorViewShowing()) {
+				setPaletteOpen(false);
+				setNavigatorOpen(false);
+				toggleOrchestratorFileSearch();
+				return;
+			}
 			workspaceViewOnly(() => {
 				setPaletteOpen(false);
 				setNavigatorOpen(false);
 				setFileSearchOpen((v) => !v);
-			}),
-		);
+			})();
+		});
 		registerAction("open-settings", () => {
 			setPaletteOpen(false);
 			// Settings is now a singleton OS window (ADR-0007). The Rust
@@ -1005,7 +1066,7 @@ export function App() {
 		);
 		registerAction(
 			"new-tab",
-			workspaceViewOnly(() => {
+			paneLayoutOnly(() => {
 				const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
 				if (workspaceId) requestNewTab(workspaceId);
 			}),
@@ -1015,14 +1076,14 @@ export function App() {
 		});
 		registerAction(
 			"close-tab",
-			workspaceViewOnly(() => {
+			paneLayoutOnly(() => {
 				const tab = useWorkspaceStore.getState().getActiveTab();
 				if (tab) requestCloseTerminalTab(tab.id);
 			}),
 		);
 		registerAction(
 			"next-tab",
-			workspaceViewOnly(() => {
+			paneLayoutOnly(() => {
 				const state = useWorkspaceStore.getState();
 				const workspace = state.getActiveWorkspace();
 				if (!workspace || workspace.tabs.length <= 1) return;
@@ -1034,7 +1095,7 @@ export function App() {
 		);
 		registerAction(
 			"prev-tab",
-			workspaceViewOnly(() => {
+			paneLayoutOnly(() => {
 				const state = useWorkspaceStore.getState();
 				const workspace = state.getActiveWorkspace();
 				if (!workspace || workspace.tabs.length <= 1) return;
@@ -1062,8 +1123,18 @@ export function App() {
 		});
 		registerAction(
 			"save-file",
-			workspaceViewOnly(() => {
+			paneLayoutOnly(() => {
 				const explorer = useExplorerStore.getState();
+				// A file in an Orchestrator tab, when that is where focus is.
+				const orch = useOrchestratorStore.getState();
+				if (
+					orchestratorViewShowing() &&
+					orch.fileTabFocused &&
+					orch.selectedTabId
+				) {
+					explorer.saveFile(tabPaneId(orch.selectedTabId));
+					return;
+				}
 				const focusedId = useWorkspaceStore.getState().focusedPaneId;
 				if (focusedId && explorer.filePanes[focusedId]) {
 					explorer.saveFile(focusedId);
@@ -1137,6 +1208,9 @@ export function App() {
 		registerAction("toggle-fleet-console", () => {
 			useWindowUiStore.getState().toggleFleetConsole();
 		});
+		registerAction("toggle-orchestrator-view", () => {
+			useWindowUiStore.getState().toggleOrchestratorView();
+		});
 		registerAction("toggle-statistics-overlay", () => {
 			useWindowUiStore.getState().toggleStatisticsOverlay();
 		});
@@ -1168,7 +1242,7 @@ export function App() {
 				    to, and its fixed-position dialogs escape this clip. */}
 				<div
 					className="flex shrink-0"
-					style={fleetConsoleOpen ? HIDDEN_SIDEBAR_STYLE : undefined}
+					style={sidebarsHidden ? HIDDEN_SIDEBAR_STYLE : undefined}
 				>
 					<Sidebar
 						titlebarHeight={TITLEBAR_HEIGHT}
@@ -1219,23 +1293,34 @@ export function App() {
 						.map((workspace) => {
 							const isActive = workspace.id === activeWorkspaceId;
 							const activeTabId = activeTabByWorkspace[workspace.id];
+							// The Orchestrator workspace is drawn under the Orchestrator
+							// view's top area, above the view, and only while that view
+							// shows it (ADR-0057).
+							const orchestrator = isOrchestrator(workspace);
+							const shown = orchestrator
+								? isActive && orchestratorPanesShown
+								: isActive;
 							return (
 								<div
 									key={workspace.id}
 									data-workspace-active={isActive ? "true" : "false"}
 									className="absolute flex flex-col"
 									style={{
-										top: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT,
+										top:
+											TITLEBAR_HEIGHT +
+											OVERVIEW_BAR_HEIGHT +
+											(orchestrator ? orchestratorPanesTop : 0),
 										left: 0,
 										right: 0,
 										bottom: 0,
+										...(orchestrator ? { zIndex: 26 } : {}),
 										// Paint the ambient gradient on the whole region (tab bar +
 										// content) so a single top-anchored glow runs through both;
 										// the tab bar, tabs, and content area below are transparent
 										// and reveal it.
 										background: "var(--ambient-glow-top), var(--bg-primary)",
-										visibility: isActive ? "visible" : "hidden",
-										pointerEvents: isActive ? "auto" : "none",
+										visibility: shown ? "visible" : "hidden",
+										pointerEvents: shown ? "auto" : "none",
 									}}
 								>
 									<div
@@ -1258,10 +1343,12 @@ export function App() {
 											onNew={() => requestNewTab(workspace.id)}
 											onRename={(tabId, name) => renameTab(tabId, name)}
 										/>
-										<OpenInDevEnvButton
-											workspaceFolder={workspace.rootFolder}
-											activeFilePath={isActive ? activeFocusedFilePath : null}
-										/>
+										{!orchestrator && (
+											<OpenInDevEnvButton
+												workspaceFolder={workspace.rootFolder}
+												activeFilePath={isActive ? activeFocusedFilePath : null}
+											/>
+										)}
 									</div>
 									<div
 										className="flex-1 min-h-0 relative"
@@ -1298,13 +1385,14 @@ export function App() {
 					    otherwise. Sits below the Overview bar's z-40 so its toggle stays
 					    clickable, above the workspace stack. See ADR-0018. */}
 					<FleetConsole topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT} />
+					<OrchestratorView topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT} />
 					<StatisticsOverlay
 						topOffset={TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT}
 					/>
 				</div>
 				<div
 					className="flex shrink-0"
-					style={fleetConsoleOpen ? HIDDEN_SIDEBAR_STYLE : undefined}
+					style={sidebarsHidden ? HIDDEN_SIDEBAR_STYLE : undefined}
 				>
 					<RightSidebar titlebarHeight={TITLEBAR_HEIGHT} />
 				</div>

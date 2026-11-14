@@ -50,6 +50,7 @@ See [all releases](https://github.com/emullernl/abundio/releases) for previous v
 * **Cross-platform** — macOS, Windows, and Linux support
 * **Command palette** — Quick access to actions via `Cmd+K` / `Ctrl+K`
 * **Fleet Console** — Every running agent in the window as a grid of live, interactive terminals, labelled with its workspace, branch and status; spotlight one, zoom the rest, open or close workspaces, start new agents or relaunch the ones a closed workspace had, and jump back to an agent's workspace
+* **Orchestrator** — One agent per profile you can simply ask what every other agent is doing, who needs you, or to pass a message along; it asks before it changes anything. Its view shows every open workspace's agents as a live organisation chart, with calls between agents flowing along it; click an agent to peek at its terminal, or open any workspace's files in its tabs. Agents can show you a file with `abundio file open`
 
 ### Fleet Console
 
@@ -112,6 +113,7 @@ Most shortcuts use `Cmd` on macOS where Windows/Linux use `Ctrl`. Some differ by
 | Save file                        | `Cmd+S`            | `Ctrl+S`                         |
 | Open settings                    | `Cmd+,`            | `Ctrl+,`                         |
 | Toggle Fleet Console             | `Cmd+Shift+A`      | `Ctrl+Shift+A`                   |
+| Toggle Orchestrator view         | `Cmd+Shift+O`      | `Ctrl+Shift+O`                   |
 
 > **Note:** The `Ctrl+Alt` split shortcuts can clash on some setups — a few
 > Linux window managers reserve `Ctrl+Alt`+key, and on international keyboard

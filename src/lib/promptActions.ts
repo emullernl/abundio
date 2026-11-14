@@ -54,7 +54,10 @@ export type ActionScope =
 	/** An explicit set. Distinct from `all` on purpose: `all` must pick up an
 	 *  Agent added tomorrow, a set naming every current Agent must not. May be
 	 *  empty when the only scoped Agent was deleted — kept, never rendered. */
-	| { kind: "set"; agentIds: string[] };
+	| { kind: "set"; agentIds: string[] }
+	/** Offered only in the Orchestrator workspace's panes (ADR-0057), for any
+	 *  Agent there; never elsewhere. */
+	| { kind: "orchestrator" };
 
 export interface PromptAction {
 	id: string;
@@ -351,11 +354,14 @@ export function canFire(state: PtyActivityState | undefined): boolean {
 
 // ── Scope ──
 
-/** Whether an action is offered for a given Agent. */
+/** Whether an action is offered for a given Agent, in a pane that is or is
+ *  not in the Orchestrator workspace. */
 export function isInScope(
 	scope: ActionScope,
 	agentId: string | undefined,
+	inOrchestrator = false,
 ): boolean {
+	if (scope.kind === "orchestrator") return inOrchestrator;
 	if (scope.kind === "all") return true;
 	if (!agentId) return false;
 	return scope.agentIds.includes(agentId);
@@ -377,7 +383,7 @@ export function isInScope(
 export function actionsForPane(
 	actions: PromptAction[],
 	agentId: string | undefined,
-	opts: { barOnly: boolean },
+	opts: { barOnly: boolean; inOrchestrator?: boolean },
 ): PromptAction[] {
 	const inScope = actions.filter(
 		(a) =>
@@ -387,14 +393,18 @@ export function actionsForPane(
 			// Agent. Kept and shown in Settings, exactly like an action whose scope
 			// set has emptied out.
 			a.body.trim().length > 0 &&
-			isInScope(a.scope, agentId) &&
+			isInScope(a.scope, agentId, opts.inOrchestrator ?? false) &&
 			(!opts.barOnly || a.showInBar),
 	);
 	const byPosition = (a: PromptAction, b: PromptAction) =>
 		a.position - b.position;
+	// The Orchestrator's own come first there: they are what it is for.
+	const orchestrator = inScope
+		.filter((a) => a.scope.kind === "orchestrator")
+		.sort(byPosition);
 	const scoped = inScope.filter((a) => a.scope.kind === "set").sort(byPosition);
 	const global = inScope.filter((a) => a.scope.kind === "all").sort(byPosition);
-	return [...scoped, ...global];
+	return [...orchestrator, ...scoped, ...global];
 }
 
 // ── Position numbers ──
@@ -452,7 +462,9 @@ export function fromRow(row: PromptActionRow): PromptAction {
 		scope:
 			row.scopeKind === "set"
 				? { kind: "set", agentIds: row.scopeAgentIds ?? [] }
-				: { kind: "all" },
+				: row.scopeKind === "orchestrator"
+					? { kind: "orchestrator" }
+					: { kind: "all" },
 		params,
 		showInBar: row.showInBar,
 		position: row.position,

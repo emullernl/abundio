@@ -287,11 +287,13 @@ function ActionRow({
 	const scopeLabel =
 		action.scope.kind === "all"
 			? "All agents"
-			: orphanedScope
-				? "No agents selected"
-				: action.scope.agentIds
-						.map((id) => agents.find((a) => a.id === id)?.name ?? id)
-						.join(", ");
+			: action.scope.kind === "orchestrator"
+				? "The Orchestrator"
+				: orphanedScope
+					? "No agents selected"
+					: action.scope.agentIds
+							.map((id) => agents.find((a) => a.id === id)?.name ?? id)
+							.join(", ");
 
 	function setParam(name: string, patch: Partial<ParamMeta>) {
 		const next: ParamMetaMap = {
@@ -581,10 +583,15 @@ function ScopeEditor({
 				options={[
 					{ value: "all", label: "All agents" },
 					{ value: "set", label: "Only the agents I pick…" },
+					{ value: "orchestrator", label: "Only the Orchestrator" },
 				]}
 				onChange={(v) =>
 					onChange(
-						v === "all" ? { kind: "all" } : { kind: "set", agentIds: selected },
+						v === "all"
+							? { kind: "all" }
+							: v === "orchestrator"
+								? { kind: "orchestrator" }
+								: { kind: "set", agentIds: selected },
 					)
 				}
 			/>

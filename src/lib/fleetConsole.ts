@@ -7,6 +7,7 @@
 import type { PtyActivityEntry } from "../stores/ptyActivityStore";
 import { collectTerminals, parseTabLayout } from "./paneTree";
 import type { WorkspaceWithTabs } from "./types";
+import { isOrchestrator } from "./workspaceKind";
 
 export interface FleetTile {
 	paneId: string;
@@ -42,13 +43,14 @@ export function fleetTiles(input: FleetTilesInput): FleetTile[] {
 	const seen = new Set<string>();
 	for (const id of input.sidebarOrder) {
 		const ws = byId.get(id);
-		if (ws && !seen.has(id)) {
+		if (ws && !seen.has(id) && !isOrchestrator(ws)) {
 			ordered.push(ws);
 			seen.add(id);
 		}
 	}
 	for (const ws of input.workspaces) {
-		if (!seen.has(ws.id)) ordered.push(ws);
+		// The Orchestrator is never a tile or an Agent row (ADR-0057).
+		if (!seen.has(ws.id) && !isOrchestrator(ws)) ordered.push(ws);
 	}
 
 	const tiles: FleetTile[] = [];

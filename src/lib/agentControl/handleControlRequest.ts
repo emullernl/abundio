@@ -15,6 +15,11 @@ import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { type TaskSeed, useWorkspaceStore } from "../../stores/workspaceStore";
 import { checkHandle } from "../agentHandle";
 import { closePaneNow, releaseOwner } from "../closePane";
+import {
+	controlKind,
+	pulseControlActivity,
+	startControlActivity,
+} from "../controlActivity";
 import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
 import {
@@ -61,6 +66,7 @@ import {
 	type PaneLiveFacts,
 	paneLabel,
 } from "./describe";
+import { openFileFor } from "./fileOpen";
 import { keysToBytes } from "./keys";
 import { appendNotes, editNotes, readNotes, writeNotes } from "./notesOps";
 import { cleanPromptText } from "./promptText";
@@ -288,6 +294,29 @@ export function requireAgentCaller(caller: ControlCaller): void {
 	}
 }
 
+/** Tells the Orchestrator view's graph which pane this call is aimed at, if
+ *  any. Best effort: a target that does not resolve is the call's own error
+ *  to report, not this one's. */
+function noteActivity(
+	caller: ControlCaller,
+	request: ControlRequest,
+	scope: Awaited<ReturnType<typeof loadScope>>,
+): () => void {
+	const ref = "target" in request ? request.target : null;
+	if (!ref) return () => {};
+	try {
+		const pane = resolveTarget(ref, scope.panes, scope.numbers);
+		return startControlActivity({
+			callerPaneId: caller.paneId,
+			targetPaneId: pane.node.id,
+			kind: controlKind(request.op),
+		});
+	} catch {
+		// Not resolvable: the call itself reports it.
+		return () => {};
+	}
+}
+
 /** Carry out one request. Throws `ControlError` for an answer the Agent
  *  should see as an error. `target` is where Rust routed it (ADR-0055);
  *  without one, the caller's own Workspace. Exported for tests. */
@@ -302,7 +331,34 @@ export async function runRequest(
 	if (request.op === "workspace.close") {
 		return closeWorkspaceFor(caller, request.force, target);
 	}
+	// Not through loadScope either: an Orchestrator tab shows a file of a
+	// Workspace without opening it (ADR-0058). A Tab or window opens it.
+	if (request.op === "file.open") {
+		const workspaceId = target?.workspaceId ?? caller.workspaceId;
+		const reply = await openFileFor(caller, request, workspaceId, async () => {
+			await loadScope(caller, target, signal);
+		});
+		// The caller's node pulses in the Orchestrator graph.
+		pulseControlActivity(caller.paneId);
+		return reply;
+	}
 	const scope = await loadScope(caller, target, signal);
+	// The graph draws the call for as long as it runs.
+	const ended = noteActivity(caller, request, scope);
+	try {
+		return await runOp(caller, request, signal, scope);
+	} finally {
+		ended();
+	}
+}
+
+/** `runRequest`'s body once the scope is loaded: one case per op. */
+async function runOp(
+	caller: ControlCaller,
+	request: ControlRequest,
+	signal: AbortSignal,
+	scope: Awaited<ReturnType<typeof loadScope>>,
+): Promise<unknown> {
 	switch (request.op) {
 		case "notes.read":
 			return { notes: await readNotes(scope.workspaceId) };

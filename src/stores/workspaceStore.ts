@@ -46,6 +46,7 @@ import type {
 	WorkspaceWithTabs,
 	WorktreeEntry,
 } from "../lib/types";
+import { isOrchestrator } from "../lib/workspaceKind";
 import {
 	forgetOpened,
 	pickActive,
@@ -53,6 +54,7 @@ import {
 } from "../lib/workspaceRestore";
 import { useExplorerStore } from "./explorerStore";
 import { useNotesStore } from "./notesStore";
+import { useOrchestratorStore } from "./orchestratorStore";
 import { fallbackProfileId } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
@@ -119,9 +121,22 @@ async function fetchMissingFolders(
  * The Active one goes first: `TerminalPool` spawns its terminals at once and
  * the others' a moment later, so the one you look at is ready first.
  */
+function orchestratorIsActive(): boolean {
+	const s = useWorkspaceStore.getState();
+	return isOrchestrator(s.workspaces.find((w) => w.id === s.activeWorkspaceId));
+}
+
+/** An Active workspace the user chose, which restore must not override. The
+ *  Orchestrator workspace being Active is not a choice of that kind. */
+function userPickedActive(): boolean {
+	return (
+		!!useWorkspaceStore.getState().activeWorkspaceId && !orchestratorIsActive()
+	);
+}
+
 async function restoreOpenedWorkspaces(profileId: string): Promise<void> {
 	if (!useSettingsStore.getState().reopenWorkspacesOnOpen) return;
-	if (useWorkspaceStore.getState().activeWorkspaceId) return;
+	if (userPickedActive()) return;
 	let set: Awaited<ReturnType<typeof workspacesApi.restoreSet>>;
 	try {
 		set = await workspacesApi.restoreSet(profileId);
@@ -132,11 +147,19 @@ async function restoreOpenedWorkspaces(profileId: string): Promise<void> {
 	const store = useWorkspaceStore.getState();
 	// The Profile may have changed, or the user picked a Workspace, while the
 	// read was in flight.
-	if (fallbackProfileId() !== profileId || store.activeWorkspaceId) return;
+	if (fallbackProfileId() !== profileId || userPickedActive()) return;
 	const known = new Set(store.workspaces.map((w) => w.id));
 	const opened = set.opened.filter((id) => known.has(id));
 	const active = pickActive({ opened, active: set.active });
-	if (active) store.setActiveWorkspace(active);
+	if (active) {
+		// The Orchestrator view, restored at launch, may already hold the
+		// Active slot (ADR-0057): the restored one is where it hands back to.
+		if (orchestratorIsActive()) {
+			useOrchestratorStore.getState().set({ returnWorkspaceId: active });
+		} else {
+			store.setActiveWorkspace(active);
+		}
+	}
 	const activity = usePtyActivityStore.getState();
 	for (const id of opened) activity.markWorkspaceOpened(id);
 }
@@ -539,6 +562,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// latest session depends on every other Workspace's panes.
 		const counts = countAgentPanesByFolder(cleaned);
 		for (const ws of cleaned) {
+			// The Orchestrator starts when its view opens, through the spawn
+			// (lib/orchestratorLaunch.ts), never by a typed relaunch line.
+			if (isOrchestrator(ws)) continue;
 			for (const t of ws.tabs) {
 				const layout = parseTabLayout(t.layoutJson);
 				if (layout) seedPendingAgentsForLayout(layout, ws.rootFolder, counts);
@@ -909,7 +935,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 								const layout = parseTabLayout(t.layoutJson);
 								if (!layout) return t;
 								const cleared = clearPtyIds(layout);
-								seedPendingAgentsForLayout(cleared, s.rootFolder, counts);
+								if (!isOrchestrator(s)) {
+									seedPendingAgentsForLayout(cleared, s.rootFolder, counts);
+								}
 								return {
 									...t,
 									layoutJson: JSON.stringify(cleared),
@@ -957,9 +985,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			!!id &&
 			get().missingFolderIds.has(id) &&
 			!usePtyActivityStore.getState().openedWorkspaceIds.has(id);
+		// The Orchestrator workspace is Active only while its view is on
+		// screen, so it is never the Workspace a Profile reopens on (ADR-0057).
+		const orchestrator = isOrchestrator(
+			id ? get().workspaces.find((w) => w.id === id) : null,
+		);
 		if (id && !missing) {
 			usePtyActivityStore.getState().markWorkspaceOpened(id);
-			rememberActive(fallbackProfileId(), id);
+			if (!orchestrator) rememberActive(fallbackProfileId(), id);
 		}
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
@@ -986,7 +1019,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Fetch real branch name and change stats for the newly active workspace.
 		// Deferred so the workspace UI (terminals, layout) renders first.
 		// Skipped for a Missing folder: there is no repository to ask.
-		if (id && !missing) {
+		if (id && !missing && !orchestrator) {
 			setTimeout(() => {
 				const ws = get().workspaces.find((s) => s.id === id);
 				if (ws) {

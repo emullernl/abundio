@@ -690,3 +690,69 @@ body,
 		animation: none;
 	}
 }
+
+/* ── Orchestrator graph (ADR-0057) ── */
+.orch-graph .react-flow {
+	background: transparent;
+	--xy-attribution-background-color: transparent;
+}
+.orch-graph .react-flow__attribution a {
+	color: var(--fg-secondary);
+	opacity: 0.5;
+}
+.orch-graph .react-flow__node {
+	cursor: default;
+}
+/* A helper that just appeared grows out of its place. */
+@keyframes orch-node-in {
+	from {
+		opacity: 0;
+		transform: scale(0.8);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+.orch-node-in {
+	animation: orch-node-in 360ms ease-out;
+}
+/* A status change brightens the node once. */
+@keyframes orch-node-pulse {
+	0% {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+	}
+	100% {
+		box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 0%, transparent);
+	}
+}
+.orch-node-pulse {
+	animation: orch-node-pulse 700ms ease-out;
+}
+/* A node a running call is aimed at glows while the stream reaches it. */
+@keyframes orch-node-receiving {
+	0%,
+	100% {
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent),
+			0 0 10px 1px color-mix(in srgb, var(--accent) 25%, transparent);
+	}
+	50% {
+		box-shadow:
+			0 0 0 2px color-mix(in srgb, var(--accent) 80%, transparent),
+			0 0 22px 4px color-mix(in srgb, var(--accent) 40%, transparent);
+	}
+}
+.orch-node-receiving {
+	animation: orch-node-receiving 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.orch-node-in,
+	.orch-node-pulse {
+		animation: none;
+	}
+	.orch-node-receiving {
+		animation: none;
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+	}
+}
