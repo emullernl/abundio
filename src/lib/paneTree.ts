@@ -81,8 +81,17 @@ export function setAgentId(
 		if (tree.agentId === agentId) return tree;
 		// The session belongs to the Agent it came from: forgetting the Agent,
 		// or replacing it with another, forgets the session too.
-		const { agentId: _drop, agentSessionId: _session, ...rest } = tree;
-		return agentId === undefined ? rest : { ...rest, agentId };
+		const {
+			agentId: _drop,
+			agentSessionId: _session,
+			agentHandle,
+			...rest
+		} = tree;
+		// So does the **Agent handle** — but a pane with no Agent yet keeps
+		// one: `agent start` names the pane before its Agent is detected.
+		const keep = tree.agentId === undefined && agentHandle !== undefined;
+		const base = keep ? { ...rest, agentHandle } : rest;
+		return agentId === undefined ? base : { ...base, agentId };
 	}
 	if (tree.type !== "split") return tree;
 	const first = setAgentId(tree.first, paneId, agentId);
@@ -112,6 +121,74 @@ export function setAgentSessionId(
 	if (tree.type !== "split") return tree;
 	const first = setAgentSessionId(tree.first, paneId, agentId, sessionId);
 	const second = setAgentSessionId(tree.second, paneId, agentId, sessionId);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
+/** `tree` with the terminal `paneId` owned by `ownerPaneId` (a **Spawned
+ *  pane**) and, when given, named `handle`. Unchanged when it already is. */
+export function markSpawned(
+	tree: PaneNode,
+	paneId: string,
+	ownerPaneId: string,
+	handle?: string,
+): PaneNode {
+	if (tree.type === "terminal") {
+		if (tree.id !== paneId) return tree;
+		if (
+			tree.spawnedBy === ownerPaneId &&
+			(handle === undefined || tree.agentHandle === handle)
+		) {
+			return tree;
+		}
+		return {
+			...tree,
+			spawnedBy: ownerPaneId,
+			...(handle !== undefined ? { agentHandle: handle } : {}),
+		};
+	}
+	if (tree.type !== "split") return tree;
+	const first = markSpawned(tree.first, paneId, ownerPaneId, handle);
+	const second = markSpawned(tree.second, paneId, ownerPaneId, handle);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
+/**
+ * Set or clear (`undefined`) the **Agent handle** of the terminal node with
+ * the given paneId. Checks nothing: see `lib/agentHandle.ts`. Returns the
+ * same tree when nothing changes.
+ */
+export function setAgentHandle(
+	tree: PaneNode,
+	paneId: string,
+	handle: string | undefined,
+): PaneNode {
+	if (tree.type === "terminal") {
+		if (tree.id !== paneId || tree.agentHandle === handle) return tree;
+		const { agentHandle: _old, ...rest } = tree;
+		return handle === undefined ? rest : { ...rest, agentHandle: handle };
+	}
+	if (tree.type !== "split") return tree;
+	const first = setAgentHandle(tree.first, paneId, handle);
+	const second = setAgentHandle(tree.second, paneId, handle);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
+/**
+ * Forget `ownerPaneId` as the owner of every **Spawned pane** it made: when
+ * the owner closes, they become ordinary panes. Same tree when none.
+ */
+export function clearSpawnedBy(tree: PaneNode, ownerPaneId: string): PaneNode {
+	if (tree.type === "terminal") {
+		if (tree.spawnedBy !== ownerPaneId) return tree;
+		const { spawnedBy: _owner, ...rest } = tree;
+		return rest;
+	}
+	if (tree.type !== "split") return tree;
+	const first = clearSpawnedBy(tree.first, ownerPaneId);
+	const second = clearSpawnedBy(tree.second, ownerPaneId);
 	if (first === tree.first && second === tree.second) return tree;
 	return { ...tree, first, second };
 }

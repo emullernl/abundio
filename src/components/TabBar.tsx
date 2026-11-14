@@ -1,10 +1,19 @@
 import { ListPlus } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useShortcutLabel, withShortcut } from "../hooks/useShortcutLabel";
 import { useTabRollups } from "../hooks/useWorkspaceRollups";
 import { useDragPaneStore } from "../lib/dragPaneStore";
 import { openNewTask } from "../lib/openNewTask";
 import { collectFilePaneIds, parseTabLayout } from "../lib/paneTree";
+import { scrollToShowTab } from "../lib/tabStripScroll";
 import type { Tab } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
 import { Terminal } from "./Icons";
@@ -13,6 +22,9 @@ import { StatusComposite } from "./StatusComposite";
 interface TabBarProps {
 	tabs: Tab[];
 	activeTabId: string | undefined;
+	/** The Tab bar's Workspace is the Active one. The active Tab is scrolled
+	 *  into view when it changes and when the Workspace becomes active. */
+	workspaceActive?: boolean;
 	onActivate: (tabId: string) => void;
 	onClose: (tabId: string) => void;
 	onNew: () => void;
@@ -319,11 +331,35 @@ const TabRollupIcons = memo(function TabRollupIcons({ tab }: { tab: Tab }) {
 export function TabBar({
 	tabs,
 	activeTabId,
+	workspaceActive = true,
 	onActivate,
 	onClose,
 	onNew,
 	onRename,
 }: TabBarProps) {
+	const stripRef = useRef<HTMLDivElement>(null);
+	const tabCount = tabs.length;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: tabCount re-runs it when a Tab is added or closed beside the active one
+	useLayoutEffect(() => {
+		const strip = stripRef.current;
+		if (!strip || !activeTabId || !workspaceActive) return;
+		const el = Array.from(
+			strip.querySelectorAll<HTMLElement>("[data-tab-id]"),
+		).find((t) => t.dataset.tabId === activeTabId);
+		if (!el) return;
+		const stripRect = strip.getBoundingClientRect();
+		const tabRect = el.getBoundingClientRect();
+		const left = tabRect.left - stripRect.left + strip.scrollLeft;
+		const next = scrollToShowTab({
+			scrollLeft: strip.scrollLeft,
+			viewWidth: strip.clientWidth,
+			contentWidth: strip.scrollWidth,
+			left,
+			right: left + tabRect.width,
+		});
+		if (next !== null) strip.scrollLeft = next;
+	}, [activeTabId, workspaceActive, tabCount]);
+
 	const [editingTabId, setEditingTabId] = useState<string | null>(null);
 	const [editValue, setEditValue] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -411,6 +447,7 @@ export function TabBar({
 		>
 			{/* Scrollable tab area */}
 			<div
+				ref={stripRef}
 				className="flex items-end flex-1 min-w-0 overflow-x-auto"
 				style={{ gap: 1, scrollbarWidth: "none" }}
 				role="tablist"

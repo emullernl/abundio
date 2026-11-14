@@ -1,3 +1,6 @@
+pub mod agent_control;
+pub mod agent_names;
+pub mod agent_skills;
 pub mod agent_hooks;
 pub mod app_badge;
 pub mod app_paths;
@@ -838,6 +841,8 @@ pub fn run() {
             // Window placement (ADR-0051). The old plugin file is read before
             // any window is placed, so a window with no placement yet can
             // start from where the plugin had it.
+            app.manage(agent_control::PendingRequests::default());
+            app.manage(agent_control::WaitGraph::default());
             app.manage(window_frame::PlacementTracker::default());
             app.manage(window_frame::LaunchRestore::default());
             app.manage(window_frame::LegacyPlacements::load(app.handle()));
@@ -941,6 +946,8 @@ pub fn run() {
             // per process even though every Window's settings rehydrate calls
             // `agent_hooks_provision_startup`. See ADR-0003 (Revisited).
             app.manage(agent_hooks::StartupProvisionGuard::default());
+            app.manage(agent_skills::SkillStartupGuard::default());
+            app.manage(agent_names::HandleReservations::default());
 
             // Restore windows from windows.json. The tauri.conf-spawned main
             // window is already mounting; we seed its profile from the
@@ -1452,6 +1459,17 @@ pub fn run() {
             commands::workspace_restore_set,
             commands::workspace_missing_folders,
             commands::workspace_set_restore_opened,
+            agent_control::agent_control_reply,
+            agent_control::agent_control_enabled,
+            agent_control::agent_control_set_enabled,
+            agent_control::agent_control_pane_numbers,
+            agent_control::agent_control_pane_for_number,
+            agent_control::agent_control_pane_closed,
+            agent_names::agent_handle_check,
+            agent_names::agent_handle_default,
+            agent_skills::agent_skill_provision,
+            agent_skills::agent_skill_provision_startup,
+            agent_skills::agent_skill_status,
             commands::workspace_set_restore_active,
             commands::pty_read_log,
             commands::pty_write_snapshot,

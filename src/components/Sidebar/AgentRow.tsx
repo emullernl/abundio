@@ -1,8 +1,11 @@
+import { BellRing } from "lucide-react";
+import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { agentRowTitle } from "../../lib/agentRowTitle";
 import type { FleetTile } from "../../lib/fleetConsole";
 import { switchToPane } from "../../lib/paneLocation";
+import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -18,6 +21,7 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 	const { paneId, ptyId, workspaceId, tabName } = tile;
 	const status = usePaneStatus(paneId);
 	const xtermTitle = usePtyActivityStore((s) => s.titles[paneId] ?? "");
+	const handle = useAgentHandle(paneId);
 	const agentId = usePtyActivityStore((s) => s.detectedAgentIds[ptyId]);
 	const agentName = useSettingsStore((s) =>
 		agentId ? (s.agents.find((a) => a.id === agentId)?.name ?? "") : "",
@@ -29,13 +33,24 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 		(s) => s.activeWorkspaceId === workspaceId && s.focusedPaneId === paneId,
 	);
 
+	// What the Agent says it is doing, and whether it asked for the user
+	// (ADR-0056).
+	const progress = useAgentSignalsStore((s) => s.progress[paneId]);
+	const flag = useAgentSignalsStore((s) => s.flags[paneId]);
+
 	const AgentIcon = (agentId && getAgentIconComponent(agentId)) || undefined;
 	const displayName = agentName || "Agent";
-	const title = agentRowTitle({ agentName: displayName, xtermTitle });
+	const title = agentRowTitle({
+		agentName: displayName,
+		xtermTitle,
+		handle,
+	});
 	const tooltip = [
 		displayName,
 		xtermTitle.trim(),
 		`${workspaceName} · ${tabName}`,
+		progress,
+		flag ? `Wants your attention: ${flag.message}` : "",
 	]
 		.filter(Boolean)
 		.join("\n");
@@ -82,15 +97,25 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 				</span>
 			</span>
 			<span className="flex flex-col min-w-0 flex-1">
-				<span
-					className="truncate"
-					style={{
-						fontSize: 12.5,
-						lineHeight: "18px",
-						color: "var(--fg-primary)",
-					}}
-				>
-					{title}
+				<span className="flex items-center min-w-0" style={{ gap: 5 }}>
+					<span
+						className="truncate"
+						style={{
+							fontSize: 12.5,
+							lineHeight: "18px",
+							color: "var(--fg-primary)",
+						}}
+					>
+						{title}
+					</span>
+					{flag && (
+						<span
+							className="flex-shrink-0 flex items-center"
+							style={{ color: "var(--warning)" }}
+						>
+							<BellRing size={11} />
+						</span>
+					)}
 				</span>
 				<span
 					className="truncate"
@@ -100,7 +125,7 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 						color: "var(--fg-secondary)",
 					}}
 				>
-					{workspaceName} · {tabName}
+					{progress ?? `${workspaceName} · ${tabName}`}
 				</span>
 			</span>
 		</button>

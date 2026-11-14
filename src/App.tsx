@@ -36,6 +36,7 @@ import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
+import { startAgentControl } from "./lib/agentControl/handleControlRequest";
 import {
 	finalizeAllOpenTurns,
 	initAgentTurnTracker,
@@ -97,6 +98,10 @@ import {
 	flattenRowsToIds,
 } from "./lib/worktreeGrouping";
 import { useAgentRegistryStore } from "./stores/agentRegistryStore";
+import {
+	panesWantingAttention,
+	useAgentSignalsStore,
+} from "./stores/agentSignalsStore";
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
 import { confirmFileWindowsClean } from "./stores/fileWindowCloseConfirmStore";
@@ -756,13 +761,21 @@ export function App() {
 			(count) => {
 				windowSession.reportAttentionCount(count).catch(() => {});
 			},
+			() => {
+				const map = usePtyActivityStore.getState().panePtyMap;
+				return [...panesWantingAttention(useAgentSignalsStore.getState())].map(
+					(paneId) => map[paneId] ?? `pane:${paneId}`,
+				);
+			},
 		);
 		report();
 		const unsubPty = usePtyActivityStore.subscribe(report);
 		const unsubSettings = useSettingsStore.subscribe(report);
+		const unsubSignals = useAgentSignalsStore.subscribe(report);
 		return () => {
 			unsubPty();
 			unsubSettings();
+			unsubSignals();
 		};
 	}, []);
 
@@ -811,6 +824,9 @@ export function App() {
 			unlisten.then((fn) => fn());
 		};
 	}, []);
+
+	// Agent control (ADR-0054): `abundio` calls from this Window's panes.
+	useEffect(() => startAgentControl(), []);
 
 	// Listen for native menu "Switch Profile" submenu clicks.
 	useEffect(() => {
@@ -1231,6 +1247,7 @@ export function App() {
 										<TabBar
 											tabs={workspace.tabs}
 											activeTabId={activeTabId}
+											workspaceActive={isActive}
 											onActivate={(tabId) => setActiveTab(workspace.id, tabId)}
 											onClose={(tabId) => requestCloseTerminalTab(tabId)}
 											onNew={() => requestNewTab(workspace.id)}

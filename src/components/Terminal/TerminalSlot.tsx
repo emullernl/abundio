@@ -6,6 +6,7 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
+import { useAgentHandle } from "../../hooks/useAgentHandle";
 import {
 	shortcutLabelFor,
 	useKeybindingOverrides,
@@ -52,6 +53,7 @@ import { FileDropHighlight } from "../FileDropHighlight";
 import { PaneDropIndicator } from "../PaneDropIndicator";
 import { ActionBar, PROMPT_ACTION_ATTR } from "./ActionBar";
 import { DebugActivityMeter } from "./DebugActivityMeter";
+import { NameAgentDialog } from "./NameAgentDialog";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { ParameterDialog } from "./ParameterDialog";
 import { PromptActionPopover } from "./PromptActionPopover";
@@ -211,6 +213,8 @@ export function TerminalSlot({
 	// and this menu is a small target reached by right-click, where a misclick
 	// is easy.
 	const [pendingDelete, setPendingDelete] = useState<PromptAction | null>(null);
+	const [naming, setNaming] = useState(false);
+	const agentHandle = useAgentHandle(paneId);
 
 	// The Agent this pane actually resolved to, which is what scopes its Prompt
 	// actions. Distinct from the `agentId` prop, which is the id the *layout*
@@ -567,6 +571,12 @@ export function TerminalSlot({
 		// The `⋯` menu is present in every pane, which is what makes this
 		// reachable. Offered only in an agent pane — a Prompt action has nothing
 		// to talk to in a shell.
+		// Agent handles belong to Agents (ADR-0054): offered in an agent pane only.
+		{
+			label: agentHandle ? "Rename Agent…" : "Name Agent…",
+			disabled: !isAgentMode,
+			onClick: () => setNaming(true),
+		},
 		{
 			label: "Add Prompt Action…",
 			disabled: !isAgentMode,
@@ -642,9 +652,6 @@ export function TerminalSlot({
 				className="w-full flex-1 min-h-0"
 				style={{ overflow: "hidden" }}
 			/>
-			{/* Below the terminal body, so it takes rows from it — the existing
-			    ResizeObserver on `innerRef` drives the xterm refit on appear and
-			    disappear. The space is deliberately not reserved. */}
 			<ActionBar
 				paneId={paneId}
 				onRequestParams={setParamAction}
@@ -681,6 +688,13 @@ export function TerminalSlot({
 						},
 					]}
 					onClose={() => setActionMenu(null)}
+				/>
+			)}
+			{naming && (
+				<NameAgentDialog
+					paneId={paneId}
+					current={agentHandle}
+					onClose={() => setNaming(false)}
 				/>
 			)}
 			{pendingDelete && (

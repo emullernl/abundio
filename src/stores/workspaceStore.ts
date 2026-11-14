@@ -1,6 +1,12 @@
 import { create } from "zustand";
+import {
+	checkHandle,
+	type HandleCheck,
+	normalizeHandle,
+} from "../lib/agentHandle";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
 import {
+	agentControl as agentControlApi,
 	fileWindows,
 	pty,
 	tabs as tabsApi,
@@ -13,9 +19,12 @@ import {
 	containsPane,
 	extractNode,
 	findFilePaneInTree,
+	findNode,
 	insertBesideNode,
 	parseTabLayout,
 	pruneOrphanDerived,
+	replaceNode,
+	setAgentHandle,
 	setAgentId,
 	setAgentSessionId,
 	setCwd,
@@ -237,8 +246,17 @@ interface WorkspaceState {
 		/** `activate: false` appends the Tab without making it the Workspace's
 		 *  active Tab or moving focus — the Fleet Console's New agent, which must
 		 *  not rearrange the Workspace view (ADR-0040). Defaults to true.
-		 *  `task`: start `agent` on a **New task**, in a Tab named after it. */
-		opts?: { activate?: boolean; task?: TaskSeed },
+		 *  `task`: start `agent` on a **New task**, in a Tab named after it.
+		 *  `name`: the Tab's name, over every default.
+		 *  `spawn`: opened by Agent control (ADR-0054); its pane is a
+		 *  **Spawned pane** of `ownerPaneId`, with `handle` as its Agent
+		 *  handle. */
+		opts?: {
+			activate?: boolean;
+			task?: TaskSeed;
+			name?: string;
+			spawn?: { ownerPaneId: string; handle?: string };
+		},
 	) => Promise<Tab>;
 	closeTab: (tabId: string) => Promise<void>;
 	setActiveTab: (workspaceId: string, tabId: string) => void;
@@ -255,6 +273,16 @@ interface WorkspaceState {
 		sessionId: string,
 	) => void;
 	stampCwdOnPane: (paneId: string, cwd: string) => void;
+	/** Name the Agent in `paneId`: its **Agent handle**, checked for grammar
+	 *  and (by Rust) for uniqueness in its Profile (ADR-0055). `null` clears
+	 *  it, and an Agent pane then gets a **Default handle** back. */
+	setAgentHandle: (
+		paneId: string,
+		handle: string | null,
+	) => Promise<HandleCheck>;
+	/** Give an Agent pane with no handle the lowest free **Default handle**.
+	 *  Does nothing for a pane that has one, or that runs no Agent. */
+	ensureDefaultHandle: (paneId: string) => Promise<void>;
 	updateLayout: (tabId: string, layout: PaneNode) => Promise<void>;
 	updateLayoutLocal: (tabId: string, layout: PaneNode) => void;
 	persistLayout: (tabId: string) => Promise<void>;
@@ -1066,6 +1094,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		} else if (agent) {
 			name = agent.name;
 		}
+		if (opts?.name) name = opts.name;
 
 		const tab = await tabsApi.create(workspaceId, name);
 
@@ -1103,6 +1132,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				tabsApi.update(tab.id, { layoutJson: stampedJson }).catch(() => {});
 				initialFocus = terminalFocus;
 			}
+		}
+
+		// Opened by Agent control: the owner on its pane (a **Spawned pane**),
+		// written before the Tab reaches the store, so nothing can render (and
+		// spawn) without it.
+		if (opts?.spawn && !seedLayout) {
+			const { ownerPaneId, handle } = opts.spawn;
+			const layout = parseTabLayout(tab.layoutJson) ?? finalLayout;
+			const paneId = collectTerminalIds(layout)[0];
+			const node = paneId ? findNode(layout, paneId) : null;
+			if (node?.type === "terminal") {
+				const owned = replaceNode(layout, node.id, {
+					...node,
+					spawnedBy: ownerPaneId,
+					...(handle ? { agentHandle: handle } : {}),
+				});
+				tab.layoutJson = JSON.stringify(owned);
+			}
+			tabsApi.update(tab.id, { layoutJson: tab.layoutJson }).catch(() => {});
 		}
 
 		if (!activate) {
@@ -1266,6 +1314,98 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	stampAgentSessionOnPane: (paneId, agentId, sessionId) => {
 		const result = findMutatedTabLayout(get().workspaces, (layout) =>
 			setAgentSessionId(layout, paneId, agentId, sessionId),
+		);
+		if (!result) return;
+		set((s) => ({
+			workspaces: updateTabInWorkspaces(
+				s.workspaces,
+				result.tabId,
+				result.layoutJson,
+			),
+		}));
+		tabsApi
+			.update(result.tabId, { layoutJson: result.layoutJson })
+			.catch(() => {});
+	},
+
+	setAgentHandle: async (paneId, handle) => {
+		// Stored trimmed, inner spaces collapsed ("  Agent  Two " → "Agent Two").
+		if (handle !== null) handle = normalizeHandle(handle) ?? handle;
+		const ws = get().findWorkspaceForPane(paneId);
+		if (!ws) {
+			return {
+				ok: false,
+				code: "invalid_handle",
+				message: "That pane is not open.",
+			};
+		}
+		if (handle !== null) {
+			// Grammar and this Workspace first, without a round trip; then
+			// Rust, which sees the whole Profile. A check that fails refuses
+			// the name: letting it through could make a duplicate.
+			const check = checkHandle(ws.tabs, paneId, handle);
+			if (!check.ok) return check;
+			const profileWide = await agentControlApi
+				.handleCheck(ws.id, paneId, handle)
+				.catch(
+					() =>
+						({
+							ok: false,
+							code: "invalid_handle",
+							message: "Could not check the name. Try again.",
+						}) as const,
+				);
+			if (!profileWide.ok) return profileWide;
+		}
+		const result = findMutatedTabLayout(
+			[get().findWorkspaceForPane(paneId) ?? ws],
+			(layout) => setAgentHandle(layout, paneId, handle ?? undefined),
+		);
+		if (result) {
+			set((s) => ({
+				workspaces: updateTabInWorkspaces(
+					s.workspaces,
+					result.tabId,
+					result.layoutJson,
+				),
+			}));
+			tabsApi
+				.update(result.tabId, { layoutJson: result.layoutJson })
+				.catch(() => {});
+		}
+		// Every Agent has a handle: clearing one hands out a default.
+		if (handle === null) await get().ensureDefaultHandle(paneId);
+		return { ok: true };
+	},
+
+	ensureDefaultHandle: async (paneId) => {
+		const nodeNow = () => {
+			const ws = get().findWorkspaceForPane(paneId);
+			const tab = ws?.tabs.find((t) => {
+				const l = parseTabLayout(t.layoutJson);
+				return l ? containsPane(l, paneId) : false;
+			});
+			const layout = tab ? parseTabLayout(tab.layoutJson) : null;
+			const node = layout ? findNode(layout, paneId) : null;
+			return node?.type === "terminal" ? { ws, node } : null;
+		};
+		const before = nodeNow();
+		if (!before?.ws || before.node.agentHandle) return;
+		const ptyId = usePtyActivityStore.getState().panePtyMap[paneId];
+		const inAgentMode =
+			!!ptyId &&
+			usePtyActivityStore.getState().activities[ptyId]?.detectionMode ===
+				"agent";
+		if (!before.node.agentId && !inAgentMode) return;
+		const handle = await agentControlApi
+			.handleDefault(before.ws.id, paneId)
+			.catch(() => null);
+		if (!handle) return;
+		// Named meanwhile (by the user, or the Agent left): leave it.
+		const after = nodeNow();
+		if (!after?.ws || after.node.agentHandle) return;
+		const result = findMutatedTabLayout([after.ws], (layout) =>
+			setAgentHandle(layout, paneId, handle),
 		);
 		if (!result) return;
 		set((s) => ({

@@ -1,5 +1,6 @@
 import {
 	ArrowUpRight,
+	BellRing,
 	Maximize2,
 	Minimize2,
 	MoreHorizontal,
@@ -10,6 +11,7 @@ import {
 	X,
 } from "lucide-react";
 import { useCallback, useSyncExternalStore } from "react";
+import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { usePaneDrag } from "../../hooks/usePaneDrag";
 import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { useShortcutLabel, withShortcut } from "../../hooks/useShortcutLabel";
@@ -19,6 +21,8 @@ import {
 	subscribePaneRevision,
 	togglePaneMouseBlocked,
 } from "../../lib/terminalManager";
+import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
+import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import {
 	type DotStatus,
 	usePtyActivityStore,
@@ -112,6 +116,96 @@ function TitleBarButton({
 	);
 }
 
+/** The pane's **Agent handle**, the name other Agents call it by. */
+function HandleChip({ handle }: { handle: string }) {
+	return (
+		<span
+			className="shrink-0 truncate select-none"
+			title={`Agent handle: other Agents address this one as "${handle}"`}
+			style={{
+				fontFamily: "var(--font-mono)",
+				fontSize: 11,
+				lineHeight: "22px",
+				color: "var(--accent)",
+				maxWidth: 120,
+				marginRight: 6,
+			}}
+		>
+			{handle}
+		</span>
+	);
+}
+
+/** The **Control badge**: another Agent is driving this pane right now. */
+function ControlBadge({ paneId }: { paneId: string }) {
+	const by = useControlBadgeStore((s) => s.badges[paneId]?.by);
+	if (!by) return null;
+	return (
+		<span
+			className="shrink-0 truncate select-none rounded"
+			title={`${by} is controlling this pane through Agent control`}
+			style={{
+				fontSize: 10,
+				lineHeight: "16px",
+				padding: "0 6px",
+				maxWidth: 140,
+				marginLeft: 6,
+				color: "var(--bg-primary)",
+				backgroundColor: "var(--accent)",
+			}}
+		>
+			{`← ${by}`}
+		</span>
+	);
+}
+
+/** The **Attention flag**: the pane's Agent asked the user to look
+ *  (ADR-0056). Its message is the tooltip. */
+export function AttentionFlagBadge({ paneId }: { paneId: string }) {
+	const flag = useAgentSignalsStore((s) => s.flags[paneId]);
+	if (!flag) return null;
+	return (
+		<span
+			className="shrink-0 flex items-center select-none"
+			title={flag.message}
+			role="img"
+			aria-label={`Wants your attention: ${flag.message}`}
+			style={{ marginLeft: 6, color: "var(--warning)" }}
+		>
+			<BellRing size={12} />
+		</span>
+	);
+}
+
+/** The **Progress line**: what the pane's Agent says it is doing. */
+export function ProgressText({
+	paneId,
+	maxWidth = 220,
+}: {
+	paneId: string;
+	maxWidth?: number;
+}) {
+	const text = useAgentSignalsStore((s) => s.progress[paneId]);
+	if (!text) return null;
+	return (
+		<span
+			className="shrink truncate select-none"
+			title={text}
+			style={{
+				fontSize: 10.5,
+				lineHeight: "16px",
+				maxWidth,
+				marginLeft: 6,
+				color: "var(--fg-secondary)",
+				opacity: 0.8,
+				fontStyle: "italic",
+			}}
+		>
+			{text}
+		</span>
+	);
+}
+
 /** The pane's mouse badge, or nothing at all when the program never asked for
  *  the mouse. Both states are worth surfacing: "blocked" explains why a TUI's
  *  mouse support appears broken, and "reporting" explains why right-click
@@ -193,6 +287,7 @@ export function TerminalTitleBar({
 		ptyId ? s.detectedAgentIds[ptyId] : undefined,
 	);
 	const dotStatus = usePaneStatus(paneId);
+	const handle = useAgentHandle(paneId);
 
 	// Only show agent identity while the agent is actively running (detectedAgentId set).
 	// Once it exits and detection clears, fall back to plain terminal title.
@@ -223,7 +318,7 @@ export function TerminalTitleBar({
 			<FleetTitleBar
 				paneId={paneId}
 				fleet={fleet}
-				title={title}
+				title={handle ? `${handle} · ${title}` : title}
 				agentIcon={
 					AgentIcon ? <AgentIcon size={14} /> : <FallbackAgentIcon size={13} />
 				}
@@ -270,6 +365,7 @@ export function TerminalTitleBar({
 					<Terminal size={12} />
 				)}
 			</span>
+			{handle && <HandleChip handle={handle} />}
 			<span
 				className="truncate flex-1 min-w-0 select-none"
 				style={{
@@ -281,6 +377,9 @@ export function TerminalTitleBar({
 			>
 				{title}
 			</span>
+			<ProgressText paneId={paneId} />
+			<AttentionFlagBadge paneId={paneId} />
+			<ControlBadge paneId={paneId} />
 			<MouseBadge paneId={paneId} />
 			<div className="shrink-0" style={{ width: 8 }} />
 			<TitleBarButton
@@ -398,6 +497,9 @@ function FleetTitleBar({
 					{fleet.tabName}
 				</span>
 			</span>
+			<ProgressText paneId={paneId} maxWidth={140} />
+			<AttentionFlagBadge paneId={paneId} />
+			<ControlBadge paneId={paneId} />
 			<MouseBadge paneId={paneId} />
 			<TitleBarButton
 				icon={fleet.spotlighted ? Minimize2 : Maximize2}

@@ -357,6 +357,43 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "agent_hook_status":
 			return fixtures.agentHookStatuses ?? [];
 
+		// ── Agent control (ADR-0054) — no `abundio` calls arrive in the demo ──
+		case "agent_control_enabled":
+			return true;
+		case "agent_control_set_enabled":
+		case "agent_control_reply":
+			return undefined;
+		case "agent_control_pane_numbers": {
+			const ids = (args.paneIds as string[] | undefined) ?? [];
+			return ids.map((id, i) => [id, i + 1]);
+		}
+		case "agent_control_pane_for_number":
+			return null;
+		case "agent_control_pane_closed":
+			return undefined;
+		// No other Window in the demo: the local check is the whole answer.
+		case "agent_handle_check":
+			return { ok: true };
+		case "agent_handle_default":
+			return "Agent One";
+		case "agent_skill_provision":
+		case "agent_skill_provision_startup":
+			return undefined;
+		case "agent_skill_status":
+			// Demo never touches the filesystem: show where the skill would go.
+			return [
+				{
+					location: "shared",
+					path: "~/.agents/skills/abundio",
+					state: "installed",
+				},
+				{
+					location: "claude",
+					path: "~/.claude/skills/abundio",
+					state: "linked",
+				},
+			];
+
 		// ── Agent Turn telemetry — synthesised demo dataset ──
 		case "telemetry_buckets":
 			return telemetry.telemetryBuckets(

@@ -46,6 +46,7 @@ import {
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
 import { targetPaneId } from "./fleetFocus";
+import { startUnlessShown } from "./hiddenSpawn";
 import { agentHooks, pty } from "./ipc";
 import { folderMissingReason } from "./missingFolder";
 import {
@@ -60,6 +61,7 @@ import {
 import { taskSetupFailed } from "./newTask";
 import { parseOsc52 } from "./osc52";
 import { publishPaneFontSize } from "./paneFontSize";
+import { notePaneInput } from "./paneInput";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
 import {
 	type PendingTask,
@@ -403,6 +405,10 @@ export interface ManagedTerminal {
 	filterResetsTimer: ReturnType<typeof setTimeout> | null;
 	/** True once the shell's first precmd/command_end has fired — shell init is complete */
 	startupShellReady: boolean;
+	/** Shell integration has reported in this PTY (a prompt, a command or a
+	 *  cwd). `abundio pane run` types only into a shell it can see is at its
+	 *  prompt, which takes this. */
+	shellIntegrationSeen: boolean;
 	/** A **New task** spawn whose Agent has not started yet. Such a pane has no
 	 *  startup buffer (its `-c` shell never prints a prompt, so the buffer would
 	 *  only drain at the safety timeout), and the task script's `command_start`
@@ -1210,6 +1216,7 @@ export async function createTerminal(
 		startupBuffer: [],
 		startupFlushScheduled: false,
 		startupShellReady: false,
+		shellIntegrationSeen: false,
 		awaitingTaskStart: false,
 		refused: false,
 		awaitingTypedAgentStart: false,
@@ -1294,6 +1301,31 @@ export function ensurePtySpawned(paneId: string): void {
 	if (!init) return;
 	managed.deferredInit = null;
 	init();
+}
+
+/**
+ * Start a new pane's PTY even if nothing shows it: Agent control opens panes
+ * in Tabs and Workspaces the user is not looking at (`lib/hiddenSpawn.ts`).
+ * It starts at `size` (the caller's grid is a fair guess); showing it later
+ * resizes it. Returns a cancel.
+ */
+export function startPtyUnlessShown(
+	paneId: string,
+	size: { cols: number; rows: number } | null,
+): () => void {
+	return startUnlessShown({
+		exists: () => instances.has(paneId),
+		started: () => isPtySpawned(paneId),
+		start: () => {
+			const managed = instances.get(paneId);
+			if (!managed) return;
+			if (size && size.cols > 0 && size.rows > 0) {
+				managed.term.resize(size.cols, size.rows);
+			}
+			ensurePtySpawned(paneId);
+		},
+		subscribe: (listener) => subscribePaneRevision(paneId, listener),
+	});
 }
 
 /** True if the PTY has been spawned (or is in the process of being spawned)
@@ -1470,6 +1502,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 		managed.lastInputAt = Date.now();
 		managed.bytesSinceIdle = 0;
+		notePaneInput(paneId);
 		const actStore = usePtyActivityStore.getState();
 		let entry = actStore.activities[currentPtyId];
 		// A **Mid-turn failure** painted this pane red while the Agent kept
@@ -1543,6 +1576,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				// Always parse and strip shell integration sequences in both modes,
 				// so command_end is detected even while in agent mode.
 				const { cleaned, commands } = shellIntegration.parse(data);
+				if (commands.length > 0) managed.shellIntegrationSeen = true;
 
 				// Cache store state once per chunk to avoid repeated getState() calls
 				const actState = usePtyActivityStore.getState();
@@ -2556,6 +2590,7 @@ export async function restartPanePty(
 	managed.startupShellReady = false;
 	managed.awaitingTaskStart = false;
 	managed.awaitingTypedAgentStart = false;
+	managed.shellIntegrationSeen = false;
 	// `settled` deliberately stays true: the pane is already projected and
 	// painted, and clearing it would make the flush wait for the safety timeout.
 

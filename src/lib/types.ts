@@ -11,6 +11,14 @@ export type PaneNode =
 			 *  `agentId`, and dropped with it. */
 			agentSessionId?: string;
 			cwd?: string;
+			/** The **Agent handle** (`reviewer`) other Agents address this
+			 *  pane's Agent by (ADR-0054). Belongs to the pane; cleared with
+			 *  `agentId` when the Agent leaves it. */
+			agentHandle?: string;
+			/** Set on a **Spawned pane**: the id of the pane whose Agent asked
+			 *  for it, its owner under Agent control (ADR-0054). Cleared when
+			 *  that pane closes. */
+			spawnedBy?: string;
 	  }
 	| {
 			type: "file";

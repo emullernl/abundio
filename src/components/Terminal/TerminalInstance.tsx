@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useRef } from "react";
-import { fleetConsoleShowing } from "../../lib/fleetFocus";
+import { fleetConsoleShowing, targetPaneId } from "../../lib/fleetFocus";
 import { perfMeasure } from "../../lib/perfMarks";
 import { getTarget, onTargetChange } from "../../lib/portalRegistry";
+import { shouldRefocusAfterProjection } from "../../lib/projectionFocus";
 import { needsPtyResizeOnProject } from "../../lib/projectionResize";
 import {
 	beginResizeFilter,
@@ -69,6 +70,9 @@ export const TerminalInstance = memo(function TerminalInstance({
 			const termEl = managed.term.element;
 			const projectStart = performance.now();
 
+			// Moving and hiding the element below drop keyboard focus (so did the
+			// retract before it); it is handed back on reveal (`projectionFocus.ts`).
+
 			// Hide terminal during projection to prevent flicker from fit/restore/resize
 			if (termEl) termEl.style.visibility = "hidden";
 
@@ -131,6 +135,17 @@ export const TerminalInstance = memo(function TerminalInstance({
 						// Reveal after the browser has painted the settled content
 						requestAnimationFrame(() => {
 							if (termEl) termEl.style.visibility = "";
+							if (
+								termEl &&
+								shouldRefocusAfterProjection({
+									isTarget: targetPaneId() === id,
+									active: document.activeElement,
+									body: document.body,
+									termEl,
+								})
+							) {
+								managed.term.focus();
+							}
 							markSettled(id);
 							perfMeasure("abundio:project", projectStart, id);
 						});

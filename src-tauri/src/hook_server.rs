@@ -213,6 +213,26 @@ fn slim_hook_payload(raw: &str) -> (String, String) {
 }
 
 fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request) {
+    // Agent control (ADR-0054) carries its own per-pane token, not the shared
+    // hook token, and runs on its own thread: this loop is sequential and a
+    // wait can last 30 minutes.
+    if request.url() == "/control" {
+        // An unknown token is answered here, before a thread or its body.
+        let Some(request) = crate::agent_control::refuse_unknown(app, request) else {
+            return;
+        };
+        let app = app.clone();
+        std::thread::spawn(move || {
+            if catch_unwind(AssertUnwindSafe(|| crate::agent_control::serve(app, request))).is_err() {
+                eprintln!(
+                    "[{}] [abundio:control] handler panicked",
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+                );
+            }
+        });
+        return;
+    }
+
     let token_bytes = token.as_bytes();
     let authorized = request.headers().iter().any(|h| {
         h.field.equiv("X-Abundio-Token")

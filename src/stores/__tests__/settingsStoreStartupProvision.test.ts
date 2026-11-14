@@ -5,6 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // factory results, so agentHooks is ONE shared object across imports — clear
 // call history per test.
 vi.mock("../../lib/ipc", () => ({
+	agentSkill: {
+		provision: vi.fn(() => Promise.resolve()),
+		provisionStartup: vi.fn(() => Promise.resolve()),
+		status: vi.fn(() => Promise.resolve([])),
+	},
 	agentHooks: {
 		provision: vi.fn(() => Promise.resolve()),
 		provisionStartup: vi.fn(() => Promise.resolve()),
@@ -89,5 +94,46 @@ describe("settingsStore — startup provisioning via rehydrate", () => {
 		);
 		const hooks = await importFresh();
 		expect(hooks.provisionStartup).not.toHaveBeenCalled();
+	});
+});
+
+describe("settingsStore — Skill provisioning at startup", () => {
+	beforeEach(() => {
+		localStorage.clear();
+		vi.clearAllMocks();
+	});
+
+	async function skillAfterLoad() {
+		await importFresh();
+		const ipc = await import("../../lib/ipc");
+		return vi.mocked(ipc.agentSkill.provisionStartup);
+	}
+
+	it("installs on a fresh profile", async () => {
+		const startup = await skillAfterLoad();
+		expect(startup).toHaveBeenCalledTimes(1);
+		expect(startup.mock.calls[0][0]).toBe(true);
+	});
+
+	it("installs on an upgraded install whose settings predate the skill", async () => {
+		localStorage.setItem(
+			"abundio-settings",
+			JSON.stringify({ state: { agentHooksEnabled: true }, version: 17 }),
+		);
+		const startup = await skillAfterLoad();
+		expect(startup.mock.calls[0][0]).toBe(true);
+	});
+
+	it("still runs when switched off, so Rust removes the skill", async () => {
+		localStorage.setItem(
+			"abundio-settings",
+			JSON.stringify({
+				state: { agentSkillEnabled: false, agentHooksEnabled: false },
+				version: 17,
+			}),
+		);
+		const startup = await skillAfterLoad();
+		expect(startup).toHaveBeenCalledTimes(1);
+		expect(startup.mock.calls[0][0]).toBe(false);
 	});
 });

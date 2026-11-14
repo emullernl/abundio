@@ -30,6 +30,11 @@ vi.mock("../../lib/ipc", () => ({
 		onUpdateAvailable: vi.fn(),
 		onDownloadProgress: vi.fn(),
 	},
+	agentSkill: {
+		provision: vi.fn(() => Promise.resolve()),
+		provisionStartup: vi.fn(() => Promise.resolve()),
+		status: vi.fn(() => Promise.resolve([])),
+	},
 	agentHooks: { provision },
 }));
 

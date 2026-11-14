@@ -3,7 +3,9 @@ import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import { type Content, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { useEffect } from "react";
 import { parseNoteContent } from "../../lib/notesContent";
+import { registerNotesEditor } from "../../lib/notesEditors";
 import { useNotesStore } from "../../stores/notesStore";
 import { NotesToolbar } from "./NotesToolbar";
 import "./Notes.css";
@@ -53,6 +55,12 @@ export function NotesEditor({ workspaceId, initialContent }: Props) {
 			attributes: { class: "notes-prosemirror" },
 		},
 	});
+
+	// An Agent's `notes append` inserts through this editor (ADR-0056).
+	useEffect(
+		() => (editor ? registerNotesEditor(workspaceId, editor) : undefined),
+		[editor, workspaceId],
+	);
 
 	return (
 		<div className="flex flex-col h-full min-h-0">

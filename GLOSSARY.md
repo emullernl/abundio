@@ -391,7 +391,7 @@ _Avoid_: main dot, big icon, agent icon (it is the Terminal rollup when there ar
 **Status badge**: The small icon on a **Status composite**'s lower-right corner, always the **Terminal rollup**, and drawn **only** when the **Primary icon** is the Agent rollup and the Terminal rollup is Error or Working. A terminal's Idle never earns a badge — the badge exists to surface what wants attention, and idle shells are the normal case. When the Terminal rollup *is* the Primary icon it shows Idle as usual: the suppression is a property of the badge, not of the rollup. Offset outward so most of it falls outside the Primary icon's box, because every status glyph is a stroked outline and two overlapping outlines read as neither.
 _Avoid_: corner dot, secondary status, overlay
 
-**Attention count**: The number of panes, across every **Window**, whose PTY is **Waiting**, **Ready** or **Error** (both a **Turn failure** and a **Mid-turn failure**). Each PTY counts once, however many places it is shown. A pane counts even while it is in view: the number always matches the status icons on screen.
+**Attention count**: The number of panes, across every **Window**, whose PTY is **Waiting**, **Ready** or **Error** (both a **Turn failure** and a **Mid-turn failure**), or that carry an **Attention flag**. Each PTY counts once, however many places it is shown. A pane counts even while it is in view: the number always matches the status icons on screen.
 _Avoid_: unread count, notification count
 
 **App icon badge**: The **Attention count** drawn on Abundio's app icon: the Dock on macOS, the launcher or dock on Linux (only on desktops that support it), and an overlay on each Window's taskbar button on Windows. Every Window shows the same app-wide total. Hidden when the count is zero or the user turns it off.
@@ -474,6 +474,37 @@ _Avoid_: file paste; "drag and drop" unqualified (collides with pane reordering)
 **Smart image drop**: The image special-case of **File drop**, governed by the global `smartImageDrop` setting (Terminal section, on by default). When **exactly one** image file (any raster format Abundio can decode — re-encoded to PNG) is dropped onto an **agent-mode PTY**, Abundio writes the PNG to the OS clipboard and sends the Agent a paste keystroke (`Ctrl+V` / byte `0x16`) so the Agent ingests it as if pasted, instead of inserting the path. It fires for *every* agent-mode pane regardless of whether that Agent can actually read a clipboard image, and does **not** restore the prior clipboard (see Flagged ambiguities). Multi-file drops, non-image files, **shell-mode PTYs**, and the setting being off all fall back to plain path insertion.
 _Avoid_: image paste, paste-as-clipboard.
 
+**Agent control**: Agents in a **Pane** driving other Panes through the `abundio` command: listing Panes and Agents, reading a Pane's text, prompting an Agent and waiting for it to **settle**, starting an Agent in a new Pane or Tab, sending keys, and running a command in an idle shell. Only a process inside one of the app's own Panes can make such a call. It reaches every **Workspace** of its own **Profile**, its own by default and another when named; a Workspace that is not Opened is opened for it, in the background, as the user would open it. It never reaches another Profile. Nothing asks the user first; a **Control badge** shows it happening instead. One app-wide setting turns it off.
+_Avoid_: agent orchestration, agent-to-agent API, remote control
+
+**Agent handle**: The readable name of the Agent in a Pane ("Agent Two", "Reviewer"), shown in its title bar and **Agent row** and used by other Agents to address it, ignoring case and treating a space and a dash alike. Every Agent has one: when a Pane enters agent mode without one, Abundio gives it a **Default handle**. The user or an Agent may rename it at any time. Unique within its **Profile**. It belongs to the Pane, survives a restart and **Session resume**, and is cleared when the Agent leaves the Pane (its **agent-mode PTY** leaves agent mode, or another Agent takes over), whoever chose it.
+
+**Default handle**: "Agent" followed by a number in words ("Agent One", "Agent Twenty-One"), the lowest one not in use in the **Profile**. A number is free again once its Agent leaves its Pane, so names stay short; a handle that is still in use is never handed out twice.
+_Avoid_: agent name (that is the Agent's product name, "Claude Code"), callsign, alias
+
+**Pane number**: A short, Workspace-wide id for a Pane (`p1`, `p2`…) used by **Agent control**. Never reused after its Pane closes, and kept across restarts.
+_Avoid_: pane id (the internal id, which is never shown to Agents)
+
+**Spawned pane**: A Pane created by **Agent control**. It is owned by the Pane whose Agent asked for it — the Pane, not the Agent, so it stays owned when that Pane later runs a different Agent. Its owner is told apart in listings as the Agent's helper; ownership grants no extra power, since Agent control may type into, run commands in and close any Pane in reach except the caller's own. If the owner closes, it becomes an ordinary Pane.
+_Avoid_: child pane, agent pane
+
+**Settled**: The state an Agent reaches when a prompted turn stops needing the caller: **Ready**, **Waiting** or **Error**, after it was first seen **Working**. A prompt that never produces Working within a few seconds is **stalled**, not settled.
+_Avoid_: done, finished, idle (each names only one of the three)
+
+**Skill provisioning**: Abundio writing its own skill, which teaches an Agent the `abundio` command, where its **Watched** Agents read skills. One copy sits in the skill folder most Agents share, so it serves every Agent that reads that folder at once and stays while any of them is Watched; an Agent that does not read it gets a link of its own that follows its own Watched toggle. It works the way **Hook provisioning** does: on by default, for new and upgraded installations alike, rewritten on every start so it matches the running app, and removed when its setting is turned off. The skill belongs to Abundio, so edits made to it by hand are overwritten, and a skill of the same name that Abundio did not write is never touched.
+_Avoid_: skill install (fine colloquially), skill injection
+
+**Control badge**: The marker on a Pane's title bar while another Pane's Agent is acting on it through **Agent control**, naming the caller by its **Agent handle** or **Pane number**, and by its **Workspace** too when the caller is in another one (a Pane number alone would point at the wrong Pane).
+_Avoid_: driven badge, remote badge
+
+**Attention flag**: A mark an Agent puts on its own Pane to ask the user to look (`notify`), carrying a short message. It is not a status: the Pane may still be Working. It counts in the **Attention count**, and clears when the user focuses the Pane or a new prompt reaches it.
+_Avoid_: notification (that is the desktop popup that may come with it), alert
+
+_Avoid_: prompt (that is what is sent to an Agent), dialog, popup
+
+**Progress line**: A short line of text an Agent sets on its own Pane to say what it is doing ("running migrations 3/7"), shown wherever the Pane is named. It lasts until the Agent replaces or clears it, or leaves its Pane, and is not remembered across a restart. It says nothing about the Pane's status, which the **status icon** shows.
+_Avoid_: status, status line, subtitle
+
 ## Relationships
 
 - A published **Release notes** body exists for every **Update**, but not for every running version: a development build, or a release still in draft, has none — which is a different state from "we could not reach GitHub" and is worded differently in the UI.
@@ -505,6 +536,7 @@ _Avoid_: image paste, paste-as-clipboard.
 
 ## Flagged ambiguities
 
+- "Agent name" was used both for an **Agent**'s product name ("Claude Code", what an **Agent row** falls back to) and for the word other Agents address it by. Resolved: the second is the **Agent handle**; "name" stays the product name.
 - "Release notes" and "changelog" were used interchangeably — resolved to **Release notes**, and there is deliberately **no** `CHANGELOG` file in the repository. The GitHub Release body is the only place they are authored, so the app reads them over the network at runtime. The consequence is accepted rather than worked around: with no cached copy on disk, an offline user cannot read their own version's notes at all.
 - "Show the release notes" does not mean "open the GitHub page". Notes are **rendered in-app** with the Markdown renderer; the link out survives only as a fallback when the fetch fails and as an "older releases" escape hatch. The `#123` shorthand in a release body is *not* linked by the API — the app linkifies PR references itself, and deliberately leaves `@mentions` and commit SHAs as plain text.
 - "The updater in the Settings window" is not a thing — there is **one** updater, app-global and owned by Rust. The **Settings window** and the update prompt card are two *views* of the same `UpdaterState`, differing only in which buttons they offer. A behavioural difference between them is therefore always either (a) a missing button or (b) a **Quit route** that skips the install — never "two updaters".

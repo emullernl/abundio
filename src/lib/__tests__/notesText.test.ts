@@ -1,0 +1,276 @@
+import { describe, expect, it } from "vitest";
+import {
+	appendToDoc,
+	type DocNode,
+	editDoc,
+	noteToText,
+	parseInline,
+	textToBlocks,
+	textToDoc,
+	textToNodes,
+} from "../notesText";
+
+const t = (text: string, ...marks: string[]) => ({
+	type: "text",
+	text,
+	...(marks.length ? { marks: marks.map((type) => ({ type })) } : {}),
+});
+const p = (...content: object[]): DocNode => ({
+	type: "paragraph",
+	content: content as DocNode[],
+});
+
+describe("noteToText", () => {
+	it("writes paragraphs, marks, bullets and nested task items", () => {
+		const doc = {
+			type: "doc",
+			content: [
+				p(t("Plan "), t("now", "bold"), t(" or "), t("later", "italic")),
+				p(t("old", "strike"), { type: "hardBreak" }, t("next line")),
+				{
+					type: "bulletList",
+					content: [{ type: "listItem", content: [p(t("a bullet"))] }],
+				},
+				{
+					type: "taskList",
+					content: [
+						{
+							type: "taskItem",
+							attrs: { checked: true },
+							content: [
+								p(t("done")),
+								{
+									type: "taskList",
+									content: [
+										{
+											type: "taskItem",
+											attrs: { checked: false },
+											content: [p(t("sub"))],
+										},
+									],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		expect(noteToText(doc)).toBe(
+			[
+				"Plan **now** or *later*",
+				"~~old~~",
+				"next line",
+				"- a bullet",
+				"- [x] done",
+				"  - [ ] sub",
+			].join("\n"),
+		);
+	});
+
+	it("is empty for no note or a broken one", () => {
+		expect(noteToText(null)).toBe("");
+		expect(noteToText({ type: "doc" })).toBe("");
+	});
+});
+
+describe("textToNodes", () => {
+	it("signs the first paragraph and groups list lines", () => {
+		expect(
+			textToNodes("Auth done\n\n- [ ] tests\n- [x] docs\n- note", "Agent Two"),
+		).toEqual([
+			p(t("Agent Two:", "bold"), t(" "), t("Auth done")),
+			{
+				type: "taskList",
+				content: [
+					{
+						type: "taskItem",
+						attrs: { checked: false },
+						content: [p(t("tests"))],
+					},
+					{
+						type: "taskItem",
+						attrs: { checked: true },
+						content: [p(t("docs"))],
+					},
+				],
+			},
+			{
+				type: "bulletList",
+				content: [{ type: "listItem", content: [p(t("note"))] }],
+			},
+		]);
+	});
+
+	it("puts the byline on its own line when the text starts with a list", () => {
+		const nodes = textToNodes("- [ ] one", "p2");
+		expect(nodes[0]).toEqual(p(t("p2:", "bold")));
+		expect(nodes[1].type).toBe("taskList");
+	});
+});
+
+describe("appendToDoc", () => {
+	const add = [p(t("new"))];
+	it("adds at the end", () => {
+		const doc = { type: "doc", content: [p(t("old"))] };
+		expect(appendToDoc(doc, add).content).toEqual([p(t("old")), p(t("new"))]);
+	});
+	it("replaces an empty note instead of keeping a blank line", () => {
+		expect(
+			appendToDoc({ type: "doc", content: [{ type: "paragraph" }] }, add)
+				.content,
+		).toEqual(add);
+		expect(appendToDoc(null, add).content).toEqual(add);
+	});
+});
+
+describe("parseInline", () => {
+	it("turns printed marks back into marks", () => {
+		expect(parseInline("a **b** *c* ~~d~~ ***e***")).toEqual([
+			t("a "),
+			t("b", "bold"),
+			t(" "),
+			t("c", "italic"),
+			t(" "),
+			t("d", "strike"),
+			t(" "),
+			t("e", "bold", "italic"),
+		]);
+	});
+
+	it("leaves an unmatched delimiter as typed", () => {
+		expect(parseInline("2*3 = 6")).toEqual([t("2*3 = 6")]);
+		expect(parseInline("**")).toEqual([t("**")]);
+	});
+});
+
+describe("textToBlocks", () => {
+	it("nests by two spaces of indent, never more than one level down", () => {
+		expect(textToBlocks("- [x] done\n      - [ ] sub\n- next")).toEqual([
+			{
+				type: "taskList",
+				content: [
+					{
+						type: "taskItem",
+						attrs: { checked: true },
+						content: [
+							p(t("done")),
+							{
+								type: "taskList",
+								content: [
+									{
+										type: "taskItem",
+										attrs: { checked: false },
+										content: [p(t("sub"))],
+									},
+								],
+							},
+						],
+					},
+				],
+			},
+			{
+				type: "bulletList",
+				content: [{ type: "listItem", content: [p(t("next"))] }],
+			},
+		]);
+	});
+});
+
+describe("noteToText and textToDoc round trip", () => {
+	it("gives back the same note", () => {
+		const doc = textToDoc(
+			"Plan **now** or *later*\n- [ ] one\n  - [x] ~~two~~\n- a bullet\nEnd",
+		);
+		expect(textToDoc(noteToText(doc))).toEqual(doc);
+		expect(textToDoc("")).toEqual({
+			type: "doc",
+			content: [{ type: "paragraph" }],
+		});
+	});
+});
+
+describe("editDoc", () => {
+	// A paragraph with a hard break (which text cannot express) stays as it
+	// is when an edit does not touch it.
+	const untouched = p(t("keep", "bold"), { type: "hardBreak" }, t("me"));
+	const doc = {
+		type: "doc",
+		content: [
+			untouched,
+			{
+				type: "taskList",
+				content: [
+					{
+						type: "taskItem",
+						attrs: { checked: false },
+						content: [p(t("run tests"))],
+					},
+					{
+						type: "taskItem",
+						attrs: { checked: false },
+						content: [p(t("ship"))],
+					},
+				],
+			},
+		],
+	};
+
+	it("changes only the item it touches", () => {
+		const r = editDoc(doc, "- [ ] run tests", "- [x] run tests");
+		expect(r.ok && r.doc.content).toEqual([
+			untouched,
+			{
+				type: "taskList",
+				content: [
+					{
+						type: "taskItem",
+						attrs: { checked: true },
+						content: [p(t("run tests"))],
+					},
+					{
+						type: "taskItem",
+						attrs: { checked: false },
+						content: [p(t("ship"))],
+					},
+				],
+			},
+		]);
+	});
+
+	it("matches inside a line and keeps its marks", () => {
+		const r = editDoc(doc, "ship", "ship **today**");
+		expect(r.ok && r.doc.content?.[1].content?.[1].content).toEqual([
+			p(t("ship "), t("today", "bold")),
+		]);
+	});
+
+	it("spans lines, and an empty replacement deletes", () => {
+		const r = editDoc(doc, "- [ ] run tests\n- [ ] ship", "");
+		expect(r.ok && r.doc.content).toEqual([untouched]);
+		const all = editDoc(doc, noteToText(doc), "");
+		expect(all.ok && all.doc).toEqual({
+			type: "doc",
+			content: [{ type: "paragraph" }],
+		});
+	});
+
+	it("can turn an item into a paragraph between two lists", () => {
+		const r = editDoc(doc, "- [ ] run tests", "Now:");
+		expect(r.ok && r.doc.content?.map((n) => n.type)).toEqual([
+			"paragraph",
+			"paragraph",
+			"taskList",
+		]);
+	});
+
+	it("refuses text that is missing or appears twice", () => {
+		expect(editDoc(doc, "nope", "x")).toEqual({
+			ok: false,
+			reason: "not_found",
+		});
+		expect(editDoc(doc, "- [ ]", "x")).toEqual({
+			ok: false,
+			reason: "ambiguous",
+		});
+	});
+});
