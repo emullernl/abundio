@@ -347,3 +347,32 @@ describe("the default Open settings accelerator", () => {
 		).toBe("F5");
 	});
 });
+
+describe("chordVerdict for a Navigator Shortcut", () => {
+	const nav = { navigator: true };
+
+	it("allows bare keys that never type in the search box", () => {
+		for (const k of ["Tab", "PageUp", "PageDown", "Insert", "F2"]) {
+			expect(chordVerdict(chord(k), true, nav).kind).toBe("ok");
+		}
+		expect(chordVerdict(chord("Tab", { shift: true }), false, nav).kind).toBe(
+			"ok",
+		);
+	});
+
+	it("still refuses letters, arrows and Enter without a modifier", () => {
+		for (const k of ["g", "ArrowDown", "Enter", "Home", "Backspace"]) {
+			expect(chordVerdict(chord(k), true, nav).kind).toBe("refuse");
+		}
+	});
+
+	it("does not refuse bare Tab outside the Navigator", () => {
+		expect(chordVerdict(chord("Tab"), true).kind).toBe("refuse");
+	});
+
+	it("skips the terminal control code warning", () => {
+		const c = chord("1", { code: "Digit1", ctrl: true });
+		expect(chordVerdict(c, false).kind).toBe("warn");
+		expect(chordVerdict(c, false, nav).kind).toBe("ok");
+	});
+});

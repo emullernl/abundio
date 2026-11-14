@@ -16,6 +16,7 @@ import {
 	isWorkspaceGlobal,
 	type KeyAction,
 	type ShortcutCategory,
+	standsDownUnderNavigator,
 } from "../../lib/keybindings";
 import { type KeymapEntry, planRecording } from "../../lib/keymapConflicts";
 import {
@@ -23,6 +24,7 @@ import {
 	editorOverrideId,
 	loadMonacoCatalogue,
 } from "../../lib/monacoKeymap";
+import { isNavigatorAction } from "../../lib/navigatorKeys";
 import { isMac } from "../../lib/platform";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { secondaryButtonClass } from "../PromptActions/fieldStyles";
@@ -40,6 +42,7 @@ const CATEGORY_ORDER: ShortcutCategory[] = [
 	"Terminal",
 	"Files",
 	"App",
+	"Navigator",
 	"Prompt actions",
 ];
 
@@ -77,9 +80,10 @@ export function appRows(overrides: KeybindingOverrides): Row[] {
 			entry: {
 				id,
 				label: meta.label,
-				scope: "app",
+				scope: isNavigatorAction(action) ? "navigator" : "app",
 				chord: effectiveChord(action, overrides),
 				global: firesInEditor(action),
+				standsDownUnderNavigator: standsDownUnderNavigator(action),
 			},
 			fallback: defaultChord(action),
 			fallbackLabel: null,

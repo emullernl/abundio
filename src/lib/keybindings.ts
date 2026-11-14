@@ -47,7 +47,9 @@ export type KeyAction =
 	| "prompt-action-6"
 	| "prompt-action-7"
 	| "prompt-action-8"
-	| "prompt-action-9";
+	| "prompt-action-9"
+	// Navigator Shortcuts: act only while the Navigator is open.
+	| NavigatorAction;
 
 /**
  * A built-in binding: a Chord plus the action it fires. The Chord fields are
@@ -79,6 +81,12 @@ import {
 	hasOverride,
 	type KeybindingOverrides,
 } from "./chords";
+import {
+	isNavigatorAction,
+	type NavigatorAction,
+	navigatorKeysLive,
+	scopeShiftAlias,
+} from "./navigatorKeys";
 import { isMac } from "./platform";
 
 // Actions that must always fire even when Monaco is focused — workspace/pane/tab
@@ -480,6 +488,43 @@ for (let n = 1; n <= 9; n++) {
 	});
 }
 
+// Navigator Shortcuts. Cmd/Ctrl+digit is free inside the Navigator: the
+// Prompt actions on those keys stand down under a dialog, and focus is in the
+// search box, never a terminal. Tab is bare on purpose (see GLOSSARY.md).
+DEFAULT_BINDINGS.push(
+	{
+		key: "Tab",
+		meta: false,
+		shift: false,
+		ctrl: false,
+		action: "navigator-toggle-scope",
+	},
+	...(
+		[
+			"navigator-filter-waiting",
+			"navigator-filter-working",
+			"navigator-filter-ready",
+			"navigator-filter-idle",
+			"navigator-filter-error",
+		] as const
+	).map((action, i) => ({
+		key: String(i + 1),
+		code: `Digit${i + 1}`,
+		meta: isMac,
+		shift: false,
+		ctrl: !isMac,
+		action,
+	})),
+	{
+		key: "0",
+		code: "Digit0",
+		meta: isMac,
+		shift: false,
+		ctrl: !isMac,
+		action: "navigator-filter-clear",
+	},
+);
+
 export type ShortcutCategory =
 	| "Panes"
 	| "Tabs"
@@ -489,6 +534,7 @@ export type ShortcutCategory =
 	| "Terminal"
 	| "Files"
 	| "App"
+	| "Navigator"
 	| "Prompt actions";
 
 export interface ActionMeta {
@@ -602,6 +648,34 @@ export const ACTION_META: Record<KeyAction, ActionMeta> = {
 		label: "Fire prompt action 9",
 		category: "Prompt actions",
 	},
+	"navigator-toggle-scope": {
+		label: "Switch Opened / All workspaces",
+		category: "Navigator",
+	},
+	"navigator-filter-waiting": {
+		label: "Toggle Waiting filter",
+		category: "Navigator",
+	},
+	"navigator-filter-working": {
+		label: "Toggle Working filter",
+		category: "Navigator",
+	},
+	"navigator-filter-ready": {
+		label: "Toggle Ready filter",
+		category: "Navigator",
+	},
+	"navigator-filter-idle": {
+		label: "Toggle Idle filter",
+		category: "Navigator",
+	},
+	"navigator-filter-error": {
+		label: "Toggle Error filter",
+		category: "Navigator",
+	},
+	"navigator-filter-clear": {
+		label: "Clear status filter",
+		category: "Navigator",
+	},
 };
 
 /** Actions with no built-in Chord. They are listed in Settings ▸ Keyboard
@@ -614,6 +688,17 @@ export const APP_ACTIONS: readonly KeyAction[] = [
 	...DEFAULT_BINDINGS.map((b) => b.action),
 	...UNBOUND_BY_DEFAULT,
 ];
+
+/** App actions that do nothing while the Navigator is open, so a Navigator
+ *  Shortcut may share their Chord. `handleKeyDown` skips them while the
+ *  Navigator is open; Prompt actions also stand down under any dialog. */
+export function standsDownUnderNavigator(action: KeyAction): boolean {
+	return (
+		action.startsWith("prompt-action-") ||
+		action === "fleet-spotlight" ||
+		action === "fleet-zoom-reset"
+	);
+}
 
 export function isWorkspaceGlobal(action: KeyAction): boolean {
 	return WORKSPACE_GLOBAL_ACTIONS.has(action);
@@ -666,12 +751,25 @@ export function effectiveBindings(
 // The keymap `handleKeyDown` walks. Pushed in by `App.tsx` from the settings
 // store — this module must not import the store (no module-graph cycles; same
 // spirit as `terminalSettingsBridge`).
-let activeBindings: KeyBinding[] = DEFAULT_BINDINGS;
+/** The bindings `handleKeyDown` walks: the effective ones plus the scope
+ *  key's Shift alias, last so it never shadows a real binding. */
+export function activeBindingsFor(
+	overrides: KeybindingOverrides,
+): KeyBinding[] {
+	const out = effectiveBindings(overrides);
+	const alias = scopeShiftAlias(
+		effectiveChord("navigator-toggle-scope", overrides),
+	);
+	if (alias) out.push({ ...alias, action: "navigator-toggle-scope" });
+	return out;
+}
+
+let activeBindings: KeyBinding[] = activeBindingsFor({});
 let activeOverrides: KeybindingOverrides = {};
 
 export function setKeybindingOverrides(overrides: KeybindingOverrides): void {
 	activeOverrides = overrides;
-	activeBindings = effectiveBindings(overrides);
+	activeBindings = activeBindingsFor(overrides);
 }
 
 /** The Chord an action currently fires on in this Window. */
@@ -725,11 +823,18 @@ function isSuppressedByOverlay(action: KeyAction): boolean {
 export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of activeBindings) {
 		if (eventMatchesChord(e, binding)) {
-			if (isSuppressedByOverlay(binding.action) && hasOverlay()) return;
+			// Muted under an overlay: move on, so a Navigator Shortcut on the
+			// same Chord (Cmd+1 is also Prompt action 1) still gets its turn.
+			if (isSuppressedByOverlay(binding.action) && hasOverlay()) continue;
 			// A closed gate means this binding does not claim the key right now:
 			// move on, so it never shadows a later binding on the same chord.
 			const gate = gates.get(binding.action);
 			if (gate && !gate()) continue;
+			// Navigator Shortcuts act only while it is open, and while it is,
+			// the app Shortcuts they may share a Chord with stand down.
+			if (navigatorKeysLive()) {
+				if (standsDownUnderNavigator(binding.action)) continue;
+			} else if (isNavigatorAction(binding.action)) continue;
 			// When Monaco is focused, let it handle any key that isn't a
 			// workspace-global shortcut so its built-in bindings (Find, Replace,
 			// multi-cursor, line ops, etc.) work.
