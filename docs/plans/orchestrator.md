@@ -64,7 +64,8 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 
 ### 4. Orchestrator view shell + starting the Agent
 
-- `components/Orchestrator/OrchestratorView.tsx`: top Orchestrator tab strip + area (graph placeholder first), divider, bottom = the Orchestrator workspace's Tab bar and `SplitContainer`.
+- `components/Orchestrator/OrchestratorView.tsx`: top Orchestrator tab strip + area (a welcome card until the graph, step 6), divider. The bottom is **not** drawn by the view: while the view is on screen the Orchestrator workspace is the **Active workspace** and `App.tsx` draws it in the ordinary Workspace stack, placed under the top area (`orchestratorStore.panesTop`, z-index above the view). That reuses the Tab bar, lazy mounting, focus, WebGL budget, `isPaneVisible` and every pane shortcut (`paneLayoutOnly` lets splits, Tabs and save through; sidebar and Workspace shortcuts stay off).
+- `lib/orchestratorSession.ts` (`installOrchestratorSession`, per Profile from `App.tsx`): enter = `orchestrator_ensure` → upsert into the store → picker if no Agent, else stamp the pane (Agent + handle) and seed/restart it → make it Active, remembering the Workspace to return to. Leave = make that one Active again. `setActiveWorkspace` never remembers it as the Profile's Active; Workspace restore treats it as "nothing picked" and hands its pick to the return slot.
 - On first show in a session: `orchestrator_ensure` → `markWorkspaceOpened` → if no Agent pane and an Agent is chosen, `createTab(..., agent)` with handle `Orchestrator`; otherwise the Agent picker card. Welcome card while the Agent has no Turn yet.
 - Exited Agent → "Start the Orchestrator" button.
 - Notification / Attention flag click for an Orchestrator pane → `view = "orchestrator"`.

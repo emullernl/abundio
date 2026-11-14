@@ -79,6 +79,16 @@ export function useTargetPaneId(): string | null {
  * Wrap a Workspace-view shortcut so it does nothing while the console is on
  * screen: it would change a layout or sidebar the user cannot see.
  */
+/** Like `workspaceViewOnly`, but also live in the Orchestrator view, where
+ *  the Orchestrator workspace is the Active workspace and its Tabs and panes
+ *  are on screen (ADR-0057): splits, Tabs and saving. */
+export function paneLayoutOnly(fn: () => void): () => void {
+	return () => {
+		if (fleetConsoleShowing()) return;
+		fn();
+	};
+}
+
 export function workspaceViewOnly(fn: () => void): () => void {
 	return () => {
 		if (fleetConsoleShowing() || orchestratorViewShowing()) return;

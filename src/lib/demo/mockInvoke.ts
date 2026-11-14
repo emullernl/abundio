@@ -99,6 +99,9 @@ function seedPane(paneId: string, ptyId: string): void {
 	seedPaneActivity(ptyId, paneId, spec);
 }
 
+/** The Orchestrator Agent picked in this demo session (ADR-0057). */
+let demoOrchestratorAgent: string | null = null;
+
 export function mockInvoke<T>(cmd: string, args?: Args): Promise<T> {
 	const result = dispatch(cmd, args ?? {});
 	return Promise.resolve(result as T);
@@ -138,9 +141,12 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "workspace_missing_folders":
 			return [];
 		// The demo has no Orchestrator Agent until the user picks one.
+		case "orchestrator_ensure":
+			return fixtures.orchestratorWorkspace;
 		case "orchestrator_agent_get":
-			return null;
+			return demoOrchestratorAgent;
 		case "orchestrator_agent_set":
+			demoOrchestratorAgent = (args?.agentId as string | null) ?? null;
 			return undefined;
 		case "tab_list": {
 			const ws = fixtures.workspaces.find((w) => w.id === args.workspaceId);

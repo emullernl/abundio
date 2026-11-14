@@ -113,6 +113,13 @@ interface WindowUiState {
 	setOrchestratorViewOpen: (open: boolean) => void;
 	/** Back to the **Workspace view** from either other view (Switch to). */
 	showWorkspaceView: () => void;
+	/** Height of the Orchestrator view's top area (its Orchestrator tabs'
+	 *  content), in px, and whether it is collapsed to the tab strip.
+	 *  Per Window, persisted. */
+	orchestratorTopHeight: number;
+	orchestratorTopCollapsed: boolean;
+	setOrchestratorTopHeight: (px: number) => void;
+	toggleOrchestratorTopCollapsed: () => void;
 	/** The **Focused tile**: the console's own focus, separate from the
 	 *  Workspace view's `focusedPaneId` so moving around the grid never
 	 *  rearranges the view behind it. Not persisted. */
@@ -175,6 +182,10 @@ export interface NewTaskRequest {
 	/** Set when opened from **Add agent**'s chooser, which it returns to. */
 	onBack?: () => void;
 }
+
+/** Orchestrator view top area: default and smallest height, in px. */
+export const ORCHESTRATOR_TOP_DEFAULT = 280;
+export const ORCHESTRATOR_TOP_MIN = 120;
 
 const persistKey = `abundio-window-ui-${currentWindowLabel()}`;
 
@@ -271,6 +282,14 @@ export const useWindowUiStore = create<WindowUiState>()(
 				),
 			showWorkspaceView: () =>
 				set({ fleetConsoleOpen: false, orchestratorViewOpen: false }),
+			orchestratorTopHeight: ORCHESTRATOR_TOP_DEFAULT,
+			orchestratorTopCollapsed: false,
+			setOrchestratorTopHeight: (px) =>
+				set({
+					orchestratorTopHeight: Math.round(Math.max(ORCHESTRATOR_TOP_MIN, px)),
+				}),
+			toggleOrchestratorTopCollapsed: () =>
+				set((s) => ({ orchestratorTopCollapsed: !s.orchestratorTopCollapsed })),
 			focusedTileId: null,
 			setFocusedTile: (paneId) => set({ focusedTileId: paneId }),
 			pendingTiles: {},
@@ -396,6 +415,8 @@ export const useWindowUiStore = create<WindowUiState>()(
 				// Every view is restored on launch (ADR-0057).
 				fleetConsoleOpen: s.fleetConsoleOpen,
 				orchestratorViewOpen: s.orchestratorViewOpen,
+				orchestratorTopHeight: s.orchestratorTopHeight,
+				orchestratorTopCollapsed: s.orchestratorTopCollapsed,
 				foldedSetKeys: s.foldedSetKeys,
 				fleetGrid: s.fleetGrid,
 			}),
