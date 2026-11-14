@@ -60,9 +60,11 @@ export function removeNode(tree: PaneNode, id: string): PaneNode | null {
 /** Collect all terminal node IDs in tree order (depth-first). */
 export function collectTerminals(
 	tree: PaneNode,
-): { id: string; ptyId: string; cwd?: string }[] {
+): { id: string; ptyId: string; cwd?: string; agentId?: string }[] {
 	if (tree.type === "terminal")
-		return [{ id: tree.id, ptyId: tree.ptyId, cwd: tree.cwd }];
+		return [
+			{ id: tree.id, ptyId: tree.ptyId, cwd: tree.cwd, agentId: tree.agentId },
+		];
 	if (tree.type !== "split") return [];
 	return [...collectTerminals(tree.first), ...collectTerminals(tree.second)];
 }

@@ -18,6 +18,11 @@ export function setPendingAgent(paneId: string, payload: PendingAgent): void {
 	pending.set(paneId, payload);
 }
 
+/** True while an Agent waits to be typed into `paneId` once its PTY starts. */
+export function hasPendingAgent(paneId: string): boolean {
+	return pending.has(paneId);
+}
+
 export function takePendingAgent(paneId: string): PendingAgent | undefined {
 	const value = pending.get(paneId);
 	if (value !== undefined) pending.delete(paneId);
