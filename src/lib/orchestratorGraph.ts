@@ -3,12 +3,10 @@
  * exist and where they sit. Pure; `OrchestratorGraph.tsx` draws it with React
  * Flow and adds what changes every second (status, progress, streams).
  *
- * Shape: the Orchestrator in the centre; each **Opened workspace** a node on
- * a ring round it, in Left sidebar order clockwise from the top; each
- * Workspace's Agents, all of them, in a ring round their Workspace, a helper
- * next to the Agent that spawned it; the Orchestrator's own
- * helpers close round the centre; and one more slot on the ring for "Open
- * workspace…".
+ * Shape: a horizontal organisation chart. The Orchestrator on the left;
+ * to its right one container per **Opened workspace**, stacked in Left
+ * sidebar order, its Agents (all of them, a helper right after the Agent
+ * that spawned it) in one row inside it; elbow lines between them.
  */
 
 import { parseTabLayout } from "./paneTree";
@@ -163,27 +161,33 @@ export function graphModel(input: GraphModelInput): GraphModel {
 
 export const AGENT_W = 144;
 export const AGENT_H = 30;
-export const WS_W = 150;
-export const WS_H = 36;
 export const ORCH_W = 210;
 export const ORCH_H = 56;
-export const HELPER_W = 144;
-export const HELPER_H = 30;
-export const ADD_W = 140;
+export const ADD_W = 150;
 export const ADD_H = 34;
-/** Room between a Workspace's pill and its Agents' pills. */
-const PILL_GAP = 34;
-/** Distance between neighbouring Agents along the ring round their
- *  Workspace. Enough that two pills either side of a corner never touch. */
-const AGENT_SPACING = 200;
-/** Room between two neighbouring Workspace clusters. */
-const CLUSTER_GAP = 24;
-/** Room between the Orchestrator and the nodes right round it. */
-const CENTRE_GAP = 14;
-/** How much the ring of Workspaces grows per try until nothing overlaps. */
-const RADIUS_STEP = 16;
-/** The smallest ring of Workspaces round the Orchestrator. */
-const MIN_RADIUS = 200;
+/** Space between two Agents in a row. */
+const AGENT_GAP = 16;
+/** A container's inner padding, and the height of its name. */
+const PAD = 14;
+const HEADER = 24;
+/** From the name down to the bus, and from the bus down to the Agents. */
+const BUS_GAP = 8;
+const DROP = 16;
+/** Space between two containers in the stack. */
+const STACK_GAP = 18;
+/** From the Orchestrator's right side to the trunk, and from the trunk to
+ *  the containers. */
+const TRUNK_GAP = 36;
+const BRANCH = 28;
+/** The narrowest container, so a short name still fits. */
+const MIN_CONTAINER_W = 180;
+/** Room between the Orchestrator and what sits below it. */
+const BELOW_GAP = 14;
+
+export interface Point {
+	x: number;
+	y: number;
+}
 
 /** A node's centre and size. */
 export interface Placed {
@@ -193,267 +197,185 @@ export interface Placed {
 	height: number;
 }
 
+/** A container: its box (centre and size, like a node) and the height of
+ *  the bus its Agents hang from. */
+export interface Container extends Placed {
+	busY: number;
+}
+
 export interface GraphLayout {
-	/** Every position is a centre, with the Orchestrator at (0, 0). */
 	orchestrator: Placed;
-	workspaces: Record<string, Placed>;
+	add: Placed;
+	/** By Workspace id. */
+	containers: Record<string, Container>;
+	/** The Orchestrator's own helpers' container, when it has helpers. */
+	helperContainer: Container | null;
+	/** Every Agent (and helper) by pane id. */
 	agents: Record<string, Placed>;
-	helpers: Record<string, Placed>;
-	/** The "Open workspace…" node, on the ring as one more Workspace. */
-	add: Placed;
+	/** The bus each Agent hangs from, by pane id. */
+	busOf: Record<string, number>;
+	/** The vertical line every branch leaves from. */
+	trunkX: number;
 }
 
-const TOP = -Math.PI / 2;
-
-const at = (cx: number, cy: number, radius: number, angle: number) => ({
-	x: Math.round(cx + radius * Math.cos(angle)),
-	y: Math.round(cy + radius * Math.sin(angle)),
-});
-
-/** The rectangle Agents sit on round a Workspace pill: just clear of it
- *  (pill half-sizes added), grown in proportion until every Agent has
- *  `AGENT_SPACING` along its edge. Half-sizes. */
-function ringBox(
-	count: number,
-	centre = { w: WS_W, h: WS_H },
-	around = { w: AGENT_W, h: AGENT_H },
-	gap = PILL_GAP,
-): { hx: number; hy: number } {
-	const hx0 = centre.w / 2 + around.w / 2 + gap;
-	const hy0 = centre.h / 2 + around.h / 2 + gap;
-	const perimeter = 4 * (hx0 + hy0);
-	const grow = Math.max(1, (Math.max(count, 1) * AGENT_SPACING) / perimeter);
-	return { hx: Math.round(hx0 * grow), hy: Math.round(hy0 * grow) };
-}
-
-/** Where along the rectangle's edge (clockwise from its top-left corner)
- *  the ray from its centre at `angle` meets it. */
-function edgeOffset(box: { hx: number; hy: number }, angle: number): number {
-	const { hx, hy } = box;
-	const c = Math.cos(angle);
-	const sn = Math.sin(angle);
-	const t = Math.min(
-		Math.abs(c) < 1e-9 ? Number.POSITIVE_INFINITY : hx / Math.abs(c),
-		Math.abs(sn) < 1e-9 ? Number.POSITIVE_INFINITY : hy / Math.abs(sn),
+function rowWidth(count: number): number {
+	return Math.max(
+		MIN_CONTAINER_W,
+		2 * PAD + count * AGENT_W + Math.max(0, count - 1) * AGENT_GAP,
 	);
-	const x = t * c;
-	const y = t * sn;
-	if (Math.abs(y + hy) < 1e-6) return x + hx; // top
-	if (Math.abs(x - hx) < 1e-6) return 2 * hx + (y + hy); // right
-	if (Math.abs(y - hy) < 1e-6) return 2 * hx + 2 * hy + (hx - x); // bottom
-	return 4 * hx + 2 * hy + (hy - y); // left
 }
 
-/** The point `offset` along the rectangle's edge, clockwise from its
- *  top-left corner, about its centre. */
-function edgePoint(
-	box: { hx: number; hy: number },
-	offset: number,
-): { x: number; y: number } {
-	const { hx, hy } = box;
-	const per = 4 * (hx + hy);
-	let d = ((offset % per) + per) % per;
-	if (d < 2 * hx) return { x: -hx + d, y: -hy };
-	d -= 2 * hx;
-	if (d < 2 * hy) return { x: hx, y: -hy + d };
-	d -= 2 * hy;
-	if (d < 2 * hx) return { x: hx - d, y: hy };
-	d -= 2 * hx;
-	return { x: -hx, y: hy - d };
+const CONTAINER_H = HEADER + BUS_GAP + DROP + AGENT_H + PAD;
+
+/** One container whose top-left corner is (`left`, `top`), with `ids` in a
+ *  row inside it. Writes the Agents into `agents`/`busOf`. */
+function container(
+	left: number,
+	top: number,
+	ids: string[],
+	agents: Record<string, Placed>,
+	busOf: Record<string, number>,
+): Container {
+	const width = rowWidth(ids.length);
+	const busY = top + HEADER + BUS_GAP;
+	const agentY = busY + DROP + AGENT_H / 2;
+	ids.forEach((id, k) => {
+		agents[id] = {
+			x: left + PAD + k * (AGENT_W + AGENT_GAP) + AGENT_W / 2,
+			y: agentY,
+			width: AGENT_W,
+			height: AGENT_H,
+		};
+		busOf[id] = busY;
+	});
+	return {
+		x: left + width / 2,
+		y: top + CONTAINER_H / 2,
+		width,
+		height: CONTAINER_H,
+		busY,
+	};
 }
 
-type Box = { x: number; y: number; width: number; height: number };
-
-const overlaps = (a: Box, b: Box) =>
-	Math.abs(a.x - b.x) < (a.width + b.width) / 2 &&
-	Math.abs(a.y - b.y) < (a.height + b.height) / 2;
-
-/** The nodes right round the Orchestrator: "Open workspace…" just below it,
- *  then its own helpers on round the same ring. */
-function centreRing(helperIds: string[]): {
-	add: Placed;
-	helpers: Record<string, Placed>;
-} {
-	const box = ringBox(
-		helperIds.length + 1,
-		{ w: ORCH_W, h: ORCH_H },
-		{ w: HELPER_W, h: HELPER_H },
-		CENTRE_GAP,
-	);
-	// Below the Orchestrator, as close as it fits.
+/**
+ * Positions for `model`: a horizontal organisation chart. The Orchestrator
+ * on the left, level with the middle of the stack, "Open workspace…" right
+ * below it and its own helpers' container below that; to the right of the
+ * trunk, one container per Workspace, left-aligned and stacked in order,
+ * each Workspace's Agents in one row inside it.
+ */
+export function layoutGraph(model: GraphModel): GraphLayout {
+	const trunkX = ORCH_W + TRUNK_GAP;
+	const left = trunkX + BRANCH;
+	const agents: Record<string, Placed> = {};
+	const busOf: Record<string, number> = {};
+	const containers: Record<string, Container> = {};
+	let top = 0;
+	for (const ws of model.workspaces) {
+		containers[ws.id] = container(
+			left,
+			top,
+			ws.agents.map((a) => a.paneId),
+			agents,
+			busOf,
+		);
+		top += CONTAINER_H + STACK_GAP;
+	}
+	const buses = Object.values(containers).map((c) => c.busY);
+	const orchY = buses.length
+		? Math.round((Math.min(...buses) + Math.max(...buses)) / 2)
+		: ORCH_H / 2;
+	const orchestrator: Placed = {
+		x: ORCH_W / 2,
+		y: orchY,
+		width: ORCH_W,
+		height: ORCH_H,
+	};
 	const add: Placed = {
-		x: 0,
-		y: ORCH_H / 2 + CENTRE_GAP + ADD_H / 2,
+		x: ORCH_W / 2,
+		y: orchY + ORCH_H / 2 + BELOW_GAP + ADD_H / 2,
 		width: ADD_W,
 		height: ADD_H,
 	};
-	const per = 4 * (box.hx + box.hy);
-	const step = per / (helperIds.length + 1);
-	const bottom = edgeOffset(box, Math.PI / 2);
-	const helpers: Record<string, Placed> = {};
-	helperIds.forEach((id, k) => {
-		const p = edgePoint(box, bottom + (k + 1) * step);
-		helpers[id] = {
-			x: Math.round(p.x),
-			y: Math.round(p.y),
-			width: HELPER_W,
-			height: HELPER_H,
-		};
-	});
-	return { add, helpers };
-}
-
-/** A Workspace's pill and its Agents, about the Workspace's centre, with
- *  the first Agent facing `mid` (away from the Orchestrator). */
-function clusterBoxes(
-	ws: GraphWorkspace,
-	mid: number,
-): { pill: Box; agents: [string, Box][] } {
-	const box = ringBox(ws.agents.length);
-	const per = 4 * (box.hx + box.hy);
-	const step = per / Math.max(1, ws.agents.length);
-	const start = edgeOffset(box, mid) + (ws.agents.length > 1 ? step / 2 : 0);
-	return {
-		pill: { x: 0, y: 0, width: WS_W, height: WS_H },
-		agents: ws.agents.map((a, k) => {
-			const p = edgePoint(box, start + k * step);
-			return [
-				a.paneId,
-				{ x: p.x, y: p.y, width: AGENT_W, height: AGENT_H },
-			] as [string, Box];
-		}),
-	};
-}
-
-/** How far a cluster reaches either way along the ring at angle `mid`: its
- *  boxes projected on the ring's tangent there. */
-function tangentialHalf(ws: GraphWorkspace, mid: number): number {
-	const tx = -Math.sin(mid);
-	const ty = Math.cos(mid);
-	const { pill, agents } = clusterBoxes(ws, mid);
-	let half = 0;
-	for (const b of [pill, ...agents.map(([, b]) => b)]) {
-		const centre = Math.abs(b.x * tx + b.y * ty);
-		const extent = Math.abs((b.width / 2) * tx) + Math.abs((b.height / 2) * ty);
-		half = Math.max(half, centre + extent);
-	}
-	return half;
-}
-
-/** Angles round the ring for clusters needing `spans` each, the first
- *  centred at the top. */
-function anglesFor(spans: number[]): number[] {
-	const total = Math.max(
-		1,
-		spans.reduce((a, b) => a + b, 0),
-	);
-	const mids: number[] = [];
-	let angle = TOP - (spans.length ? (spans[0] / total) * Math.PI : 0);
-	for (const span of spans) {
-		const share = (span / total) * 2 * Math.PI;
-		mids.push(angle + share / 2);
-		angle += share;
-	}
-	return mids;
-}
-
-/**
- * Positions for `model`: the Workspaces on a ring round the Orchestrator,
- * clockwise from the top in sidebar order, each given room along the ring
- * for its cluster's real width there; each Workspace's Agents evenly round
- * it, the first facing away from the Orchestrator; "Open workspace…" just
- * below the Orchestrator, its own helpers round it. The ring is as small as
- * it can be with no two nodes touching.
- */
-export function layoutGraph(model: GraphModel): GraphLayout {
-	const { add, helpers } = centreRing(model.helpers.map((h) => h.paneId));
-	const centre: Box[] = [
-		{ x: 0, y: 0, width: ORCH_W, height: ORCH_H },
-		add,
-		...Object.values(helpers),
-	];
-	const list = model.workspaces;
-	// Room along the ring: first guess from equal shares, then once more
-	// with the angles that guess gives.
-	let mids = anglesFor(list.map(() => 1));
-	for (let pass = 0; pass < 2; pass++) {
-		mids = anglesFor(
-			list.map((ws, i) => 2 * tangentialHalf(ws, mids[i]) + CLUSTER_GAP),
+	let helperContainer: Container | null = null;
+	if (model.helpers.length > 0) {
+		const width = rowWidth(model.helpers.length);
+		// Its right edge stays left of the trunk, so its branch comes in from
+		// the trunk like every other.
+		helperContainer = container(
+			Math.min(0, trunkX - BRANCH - width),
+			add.y + ADD_H / 2 + STACK_GAP,
+			model.helpers.map((h) => h.paneId),
+			agents,
+			busOf,
 		);
 	}
-	const spans = list.map(
-		(ws, i) => 2 * tangentialHalf(ws, mids[i]) + CLUSTER_GAP,
-	);
-	const circumference = spans.reduce((a, b) => a + b, 0);
-
-	const place = (radius: number) => {
-		const workspaces: Record<string, Placed> = {};
-		const agents: Record<string, Placed> = {};
-		list.forEach((ws, i) => {
-			const c = at(0, 0, radius, mids[i]);
-			workspaces[ws.id] = { ...c, width: WS_W, height: WS_H };
-			for (const [id, b] of clusterBoxes(ws, mids[i]).agents) {
-				agents[id] = {
-					x: Math.round(c.x + b.x),
-					y: Math.round(c.y + b.y),
-					width: AGENT_W,
-					height: AGENT_H,
-				};
-			}
-		});
-		return { workspaces, agents };
-	};
-	const clash = (placed: ReturnType<typeof place>) => {
-		const groups = list.map((ws) => [
-			placed.workspaces[ws.id],
-			...ws.agents.map((a) => placed.agents[a.paneId]),
-		]);
-		for (let i = 0; i < groups.length; i++) {
-			for (const b of groups[i]) {
-				if (centre.some((c) => overlaps(b, c))) return true;
-				for (let j = i + 1; j < groups.length; j++) {
-					if (groups[j].some((o) => overlaps(b, o))) return true;
-				}
-			}
-		}
-		return false;
-	};
-
-	let radius = Math.max(MIN_RADIUS, Math.round(circumference / (2 * Math.PI)));
-	let placed = place(radius);
-	for (let tries = 0; tries < 300 && clash(placed); tries++) {
-		radius += RADIUS_STEP;
-		placed = place(radius);
-	}
-
 	return {
-		orchestrator: { x: 0, y: 0, width: ORCH_W, height: ORCH_H },
-		workspaces: placed.workspaces,
-		agents: placed.agents,
-		helpers,
+		orchestrator,
 		add,
+		containers,
+		helperContainer,
+		agents,
+		busOf,
+		trunkX,
 	};
 }
 
+/** Where a node joins the chart's lines: the Orchestrator at the trunk, an
+ *  Agent up its drop and along its bus to the trunk. Ends at the trunk. */
+function toTrunk(layout: GraphLayout, id: string | "orchestrator"): Point[] {
+	if (id === "orchestrator") {
+		const o = layout.orchestrator;
+		return [
+			{ x: o.x + o.width / 2, y: o.y },
+			{ x: layout.trunkX, y: o.y },
+		];
+	}
+	const a = layout.agents[id];
+	const bus = layout.busOf[id];
+	return [
+		{ x: a.x, y: a.y - a.height / 2 },
+		{ x: a.x, y: bus },
+		{ x: layout.trunkX, y: bus },
+	];
+}
+
 /**
- * The curve a call's stream follows from one centre to another: a quadratic
- * Bézier whose control point is the midpoint pulled toward the Orchestrator
- * (the origin), so streams between far-apart Agents bow inward instead of
- * cutting across other nodes. `ox`/`oy` is the origin in the same
- * coordinates as the two points.
+ * The route along the chart's own lines from one node to another (pane ids,
+ * or "orchestrator"): up the first one's drop, along its bus, along the
+ * trunk, along the other's bus and down its drop. Two Agents on the same
+ * bus go straight along it. Null when either is not in the chart.
  */
-export function streamPath(
-	sx: number,
-	sy: number,
-	tx: number,
-	ty: number,
-	ox: number,
-	oy: number,
-	pull = 0.55,
-): string {
-	const mx = (sx + tx) / 2;
-	const my = (sy + ty) / 2;
-	const cx = mx + (ox - mx) * pull;
-	const cy = my + (oy - my) * pull;
-	return `M ${sx} ${sy} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${tx} ${ty}`;
+export function routeBetween(
+	layout: GraphLayout,
+	from: string,
+	to: string,
+): Point[] | null {
+	const known = (id: string) => id === "orchestrator" || id in layout.agents;
+	if (!known(from) || !known(to) || from === to) return null;
+	if (
+		from !== "orchestrator" &&
+		to !== "orchestrator" &&
+		layout.busOf[from] === layout.busOf[to]
+	) {
+		const a = layout.agents[from];
+		const b = layout.agents[to];
+		const bus = layout.busOf[from];
+		return [
+			{ x: a.x, y: a.y - a.height / 2 },
+			{ x: a.x, y: bus },
+			{ x: b.x, y: bus },
+			{ x: b.x, y: b.y - b.height / 2 },
+		];
+	}
+	return [...toTrunk(layout, from), ...toTrunk(layout, to).reverse()];
+}
+
+/** An SVG path through `points`. */
+export function polylinePath(points: readonly Point[]): string {
+	return points
+		.map(
+			(p, i) => `${i === 0 ? "M" : "L"} ${Math.round(p.x)} ${Math.round(p.y)}`,
+		)
+		.join(" ");
 }

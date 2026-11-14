@@ -5,7 +5,8 @@ import {
 	graphModel,
 	layoutGraph,
 	nestBySpawner,
-	streamPath,
+	polylinePath,
+	routeBetween,
 } from "../orchestratorGraph";
 import type { PaneNode, WorkspaceWithTabs } from "../types";
 
@@ -156,8 +157,6 @@ describe("nestBySpawner", () => {
 });
 
 describe("layoutGraph", () => {
-	const dist = (p: { x: number; y: number }, q = { x: 0, y: 0 }) =>
-		Math.hypot(p.x - q.x, p.y - q.y);
 	const cluster = (id: string, agents: GraphAgent[]) => ({
 		id,
 		name: id,
@@ -167,107 +166,137 @@ describe("layoutGraph", () => {
 	const overlap = (a: Box, b: Box) =>
 		Math.abs(a.x - b.x) < (a.width + b.width) / 2 &&
 		Math.abs(a.y - b.y) < (a.height + b.height) / 2;
-	const allBoxes = (l: ReturnType<typeof layoutGraph>) => [
-		l.orchestrator,
-		l.add,
-		...Object.values(l.workspaces),
-		...Object.values(l.agents),
-		...Object.values(l.helpers),
-	];
-	const noOverlaps = (l: ReturnType<typeof layoutGraph>) => {
-		const boxes = allBoxes(l);
-		for (let i = 0; i < boxes.length; i++) {
-			for (let j = i + 1; j < boxes.length; j++) {
-				expect(overlap(boxes[i], boxes[j]), `${i} / ${j}`).toBe(false);
-			}
+	const inside = (inner: Box, outer: Box) =>
+		inner.x - inner.width / 2 >= outer.x - outer.width / 2 &&
+		inner.x + inner.width / 2 <= outer.x + outer.width / 2 &&
+		inner.y - inner.height / 2 >= outer.y - outer.height / 2 &&
+		inner.y + inner.height / 2 <= outer.y + outer.height / 2;
+
+	const two = layoutGraph({
+		workspaces: [
+			cluster("a", [agent("a1"), agent("a2"), agent("a3")]),
+			cluster("b", [agent("b1")]),
+		],
+		helpers: [],
+	});
+
+	it("puts the Orchestrator on the left, the containers right of the trunk", () => {
+		const o = two.orchestrator;
+		expect(o.x + o.width / 2).toBeLessThan(two.trunkX);
+		for (const c of Object.values(two.containers)) {
+			expect(c.x - c.width / 2).toBeGreaterThan(two.trunkX);
 		}
-	};
-
-	it("rings the Workspaces round the Orchestrator, their Agents round them", () => {
-		const layout = layoutGraph({
-			workspaces: [
-				cluster("a", [agent("a1"), agent("a2"), agent("a3")]),
-				cluster("b", [agent("b1")]),
-			],
-			helpers: [],
-		});
-		expect(layout.orchestrator).toMatchObject({ x: 0, y: 0 });
-		const a = layout.workspaces.a;
-		const b = layout.workspaces.b;
-		expect(dist(a)).toBeCloseTo(dist(b), -1);
-		// Each Agent is closer to its own Workspace than to the other one.
-		for (const id of ["a1", "a2", "a3"]) {
-			expect(dist(layout.agents[id], a)).toBeLessThan(
-				dist(layout.agents[id], b),
-			);
-		}
-		// The first Workspace sits at the top.
-		expect(a.y).toBeLessThan(0);
-		expect(layout.agents.a1.width).toBe(AGENT_W);
-		noOverlaps(layout);
+		// Left-aligned and stacked in order.
+		const { a, b } = two.containers;
+		expect(a.x - a.width / 2).toBe(b.x - b.width / 2);
+		expect(b.y).toBeGreaterThan(a.y + a.height / 2);
 	});
 
-	it("puts Open workspace right below the Orchestrator", () => {
-		const layout = layoutGraph({
-			workspaces: [cluster("a", [agent("a1")])],
-			helpers: [],
-		});
-		expect(layout.add.x).toBe(0);
-		expect(layout.add.y).toBeGreaterThan(0);
-		expect(layout.add.y).toBeLessThan(80);
-		noOverlaps(layout);
+	it("lays each Workspace's Agents in one row inside its container", () => {
+		const { a } = two.containers;
+		const row = ["a1", "a2", "a3"].map((id) => two.agents[id]);
+		expect(new Set(row.map((r) => r.y)).size).toBe(1);
+		expect(row[1].x).toBeGreaterThan(row[0].x + AGENT_W);
+		expect(row[2].x).toBeGreaterThan(row[1].x + AGENT_W);
+		for (const r of row) expect(inside(r, a)).toBe(true);
+		// The bus runs above the row.
+		expect(a.busY).toBeLessThan(row[0].y - row[0].height / 2);
 	});
 
-	it("keeps the ring of Workspaces as tight as nothing-overlapping allows", () => {
-		const layout = layoutGraph({
-			workspaces: [cluster("a", [agent("a1")]), cluster("b", [agent("b1")])],
-			helpers: [],
-		});
-		noOverlaps(layout);
-		expect(dist(layout.workspaces.a)).toBeLessThan(450);
+	it("never wraps a long row", () => {
+		const many = Array.from({ length: 12 }, (_, k) => agent(`p${k}`));
+		const l = layoutGraph({ workspaces: [cluster("w", many)], helpers: [] });
+		expect(new Set(many.map((a) => l.agents[a.paneId].y)).size).toBe(1);
 	});
 
-	it("never overlaps two nodes, with many Workspaces and Agents", () => {
-		const many = Array.from({ length: 12 }, (_, i) =>
-			cluster(
-				`w${i}`,
-				Array.from({ length: (i % 4) + 1 }, (_, k) => agent(`w${i}-${k}`)),
-			),
-		);
-		noOverlaps(layoutGraph({ workspaces: many, helpers: [agent("h1")] }));
-	});
-
-	it("never overlaps Agents round a corner, whatever their number", () => {
-		for (let n = 1; n <= 14; n++) {
-			noOverlaps(
-				layoutGraph({
-					workspaces: [
-						cluster(
-							"w",
-							Array.from({ length: n }, (_, k) => agent(`a${k}`)),
-						),
-					],
-					helpers: [],
-				}),
-			);
-		}
-	});
-
-	it("rings the Orchestrator's own helpers close round it", () => {
-		const layout = layoutGraph({
+	it("puts Open workspace right below the Orchestrator, its helpers below that", () => {
+		const l = layoutGraph({
 			workspaces: [cluster("a", [agent("a1")])],
 			helpers: [agent("h1"), agent("h2")],
 		});
-		expect(dist(layout.helpers.h1)).toBeLessThan(dist(layout.workspaces.a));
-		expect(layout.helpers.h1).not.toEqual(layout.helpers.h2);
+		expect(l.add.x).toBe(l.orchestrator.x);
+		expect(l.add.y).toBeGreaterThan(l.orchestrator.y);
+		expect(l.add.y - l.orchestrator.y).toBeLessThan(80);
+		const hc = l.helperContainer;
+		expect(hc).not.toBeNull();
+		if (!hc) return;
+		expect(hc.y).toBeGreaterThan(l.add.y);
+		expect(hc.x + hc.width / 2).toBeLessThan(l.trunkX);
+		expect(inside(l.agents.h1, hc)).toBe(true);
+	});
+
+	it("never overlaps two nodes or two containers", () => {
+		const l = layoutGraph({
+			workspaces: Array.from({ length: 8 }, (_, i) =>
+				cluster(
+					`w${i}`,
+					Array.from({ length: (i % 5) + 1 }, (_, k) => agent(`w${i}-${k}`)),
+				),
+			),
+			helpers: [agent("h1")],
+		});
+		const nodes = [l.orchestrator, l.add, ...Object.values(l.agents)];
+		for (let i = 0; i < nodes.length; i++) {
+			for (let j = i + 1; j < nodes.length; j++) {
+				expect(overlap(nodes[i], nodes[j]), `${i}/${j}`).toBe(false);
+			}
+		}
+		const boxes = [
+			...Object.values(l.containers),
+			...(l.helperContainer ? [l.helperContainer] : []),
+		];
+		for (let i = 0; i < boxes.length; i++) {
+			for (let j = i + 1; j < boxes.length; j++) {
+				expect(overlap(boxes[i], boxes[j]), `c${i}/c${j}`).toBe(false);
+			}
+		}
 	});
 });
 
-describe("streamPath", () => {
-	it("bows a stream toward the Orchestrator", () => {
-		// Two points on the right; the control point is pulled left, toward 0.
-		const d = streamPath(300, -100, 300, 100, 0, 0);
-		const cx = Number(d.split(" Q ")[1].split(" ")[0]);
-		expect(cx).toBeLessThan(300);
+describe("routeBetween", () => {
+	const l = layoutGraph({
+		workspaces: [
+			{ id: "a", name: "a", agents: [agent("a1"), agent("a2")] },
+			{ id: "b", name: "b", agents: [agent("b1")] },
+		],
+		helpers: [],
+	});
+
+	it("goes along the bus between two Agents of one Workspace", () => {
+		const r = routeBetween(l, "a1", "a2");
+		expect(r).toHaveLength(4);
+		expect(r?.[1].y).toBe(l.containers.a.busY);
+		expect(r?.[2].y).toBe(l.containers.a.busY);
+	});
+
+	it("goes by way of the trunk between two Workspaces", () => {
+		const r = routeBetween(l, "a1", "b1") ?? [];
+		const xs = r.map((p) => p.x);
+		expect(xs).toContain(l.trunkX);
+		expect(r[0]).toMatchObject({ x: l.agents.a1.x });
+		expect(r[r.length - 1]).toMatchObject({ x: l.agents.b1.x });
+		// Only right angles: each step moves along one axis.
+		for (let i = 1; i < r.length; i++) {
+			expect(r[i].x === r[i - 1].x || r[i].y === r[i - 1].y).toBe(true);
+		}
+	});
+
+	it("starts at the Orchestrator's right side", () => {
+		const r = routeBetween(l, "orchestrator", "b1") ?? [];
+		expect(r[0].x).toBe(l.orchestrator.x + l.orchestrator.width / 2);
+		expect(r[r.length - 1].x).toBe(l.agents.b1.x);
+	});
+
+	it("has no route to an Agent that is not drawn", () => {
+		expect(routeBetween(l, "a1", "gone")).toBeNull();
+	});
+
+	it("writes an SVG path", () => {
+		expect(
+			polylinePath([
+				{ x: 0, y: 0 },
+				{ x: 10, y: 0 },
+			]),
+		).toBe("M 0 0 L 10 0");
 	});
 });

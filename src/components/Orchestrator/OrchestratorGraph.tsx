@@ -36,12 +36,14 @@ import {
 	peekAgent,
 } from "../../lib/orchestratorActions";
 import {
+	type Container,
 	type GraphAgent,
-	type GraphWorkspace,
 	graphModel,
 	layoutGraph,
 	type Placed,
-	streamPath,
+	type Point,
+	polylinePath,
+	routeBetween,
 } from "../../lib/orchestratorGraph";
 import { restartOrchestrator } from "../../lib/orchestratorSession";
 import { switchToPane } from "../../lib/paneLocation";
@@ -65,9 +67,15 @@ import { PaneContextMenu } from "../Terminal/PaneContextMenu";
 /** How long a finished call's stream takes to fade. */
 const FADE_MS = 700;
 
+const ORCH = "orchestrator";
 const ORCH_NODE = "orchestrator";
 const agentNodeId = (paneId: string) => `agent:${paneId}`;
-const wsNodeId = (id: string) => `ws:${id}`;
+const containerNodeId = (id: string) => `box:${id}`;
+
+/** A pane in the chart's terms: the Orchestrator, or its pane id. */
+const routeKey = (paneId: string, orchestratorPaneId: string | null) =>
+	paneId === orchestratorPaneId ? ORCH : paneId;
+const nodeOf = (key: string) => (key === ORCH ? ORCH_NODE : agentNodeId(key));
 
 type AgentData = {
 	agent: GraphAgent;
@@ -75,9 +83,19 @@ type AgentData = {
 	fresh: boolean;
 	receiving: boolean;
 };
-type WsData = { ws: GraphWorkspace };
+type ContainerData = {
+	/** A Workspace's id, or null for the Orchestrator's own helpers. */
+	workspaceId: string | null;
+	name: string;
+	count: number;
+};
 type OrchData = { receiving: boolean };
-type StreamData = { kind: "read" | "act"; ending: boolean };
+type WireData = { points: Point[] };
+type StreamData = {
+	points: Point[];
+	kind: "read" | "act";
+	ending: boolean;
+};
 
 /** What a node can ask the graph to do. */
 interface GraphActions {
@@ -86,23 +104,21 @@ interface GraphActions {
 }
 const ActionsContext = createContext<GraphActions | null>(null);
 
-/** Edges start and end at a node's centre: one hidden handle each way. */
-const centreHandle = {
+/** Edges are drawn from the layout's own routes; React Flow still wants a
+ *  handle on each end, so every node gets a hidden one. */
+const hiddenHandle = {
 	opacity: 0,
 	width: 1,
 	height: 1,
 	minWidth: 0,
 	minHeight: 0,
-	left: "50%",
-	top: "50%",
-	transform: "translate(-50%, -50%)",
 	border: "none",
 };
-function CentreHandles() {
+function HiddenHandles() {
 	return (
 		<>
-			<Handle type="source" position={Position.Top} style={centreHandle} />
-			<Handle type="target" position={Position.Top} style={centreHandle} />
+			<Handle type="source" position={Position.Right} style={hiddenHandle} />
+			<Handle type="target" position={Position.Left} style={hiddenHandle} />
 		</>
 	);
 }
@@ -118,12 +134,12 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * The **Orchestrator view**'s graph (ADR-0057): a flower with the
- * Orchestrator in the centre, each Opened workspace a node on a ring round
- * it, and its Agents circling their Workspace. Single click peeks, double
- * click is **Switch to**, right click opens the Agent menu (or, on a
- * Workspace, the Workspace's). While one pane's Agent
- * control call to another runs, a comet stream flows between them.
+ * The **Orchestrator view**'s graph (ADR-0057): a horizontal organisation
+ * chart. The Orchestrator on the left; one container per Opened workspace
+ * to its right, its Agents in a row inside; elbow lines between them. Single
+ * click peeks, double click is **Switch to**, right click opens the Agent
+ * menu (or, on a container, the Workspace's). While one pane's Agent control
+ * call to another runs, comets flow from one to the other along the lines.
  */
 export function OrchestratorGraph() {
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -221,18 +237,44 @@ export function OrchestratorGraph() {
 	const receiving = useMemo(() => {
 		const set = new Set<string>();
 		for (const { call, ending } of calls.values()) {
-			if (ending) continue;
-			set.add(
-				call.targetPaneId === orchestratorPaneId
-					? ORCH_NODE
-					: agentNodeId(call.targetPaneId),
-			);
+			if (!ending) {
+				set.add(nodeOf(routeKey(call.targetPaneId, orchestratorPaneId)));
+			}
 		}
 		return set;
 	}, [calls, orchestratorPaneId]);
 
 	const nodes = useMemo(() => {
-		const out: Node[] = [
+		const out: Node[] = [];
+		const box = (id: string, c: Container, data: ContainerData): Node => ({
+			id: containerNodeId(id),
+			type: "container",
+			position: corner(c),
+			style: { width: c.width, height: c.height },
+			data,
+			draggable: false,
+			selectable: false,
+			zIndex: -1,
+		});
+		for (const ws of model.workspaces) {
+			out.push(
+				box(ws.id, layout.containers[ws.id], {
+					workspaceId: ws.id,
+					name: ws.name,
+					count: ws.agents.length,
+				}),
+			);
+		}
+		if (layout.helperContainer) {
+			out.push(
+				box("orchestrator-helpers", layout.helperContainer, {
+					workspaceId: null,
+					name: "Orchestrator's helpers",
+					count: model.helpers.length,
+				}),
+			);
+		}
+		out.push(
 			{
 				id: ORCH_NODE,
 				type: "orchestrator",
@@ -249,91 +291,64 @@ export function OrchestratorGraph() {
 				draggable: false,
 				selectable: false,
 			},
-		];
-		const agentNode = (
-			agent: GraphAgent,
-			p: Placed,
-			workspaceName: string,
-		): Node => ({
-			id: agentNodeId(agent.paneId),
-			type: "agent",
-			position: corner(p),
-			style: { width: p.width, height: p.height },
-			data: {
-				agent,
-				workspaceName,
-				fresh: fresh.has(agent.paneId),
-				receiving: receiving.has(agentNodeId(agent.paneId)),
-			} satisfies AgentData,
-			draggable: false,
-			selected: agent.paneId === selected,
-		});
-		for (const ws of model.workspaces) {
-			out.push({
-				id: wsNodeId(ws.id),
-				type: "workspace",
-				position: corner(layout.workspaces[ws.id]),
-				data: { ws } satisfies WsData,
+		);
+		const agentNode = (agent: GraphAgent, workspaceName: string): Node => {
+			const p = layout.agents[agent.paneId];
+			return {
+				id: agentNodeId(agent.paneId),
+				type: "agent",
+				position: corner(p),
+				style: { width: p.width, height: p.height },
+				data: {
+					agent,
+					workspaceName,
+					fresh: fresh.has(agent.paneId),
+					receiving: receiving.has(agentNodeId(agent.paneId)),
+				} satisfies AgentData,
 				draggable: false,
-				selectable: false,
-			});
-			for (const a of ws.agents) {
-				out.push(agentNode(a, layout.agents[a.paneId], ws.name));
-			}
+				selected: agent.paneId === selected,
+			};
+		};
+		for (const ws of model.workspaces) {
+			for (const a of ws.agents) out.push(agentNode(a, ws.name));
 		}
-		for (const h of model.helpers) {
-			out.push(agentNode(h, layout.helpers[h.paneId], "Orchestrator"));
-		}
+		for (const h of model.helpers) out.push(agentNode(h, "Orchestrator"));
 		return out;
 	}, [model, layout, fresh, selected, receiving]);
 
-	const nodeIds = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes]);
 	const edges = useMemo(() => {
-		const endpoint = (paneId: string) =>
-			paneId === orchestratorPaneId ? ORCH_NODE : agentNodeId(paneId);
 		const out: Edge[] = [];
-		// Faint stems: the Orchestrator to each Workspace, a Workspace to its
-		// Agents, an Agent to its helpers.
-		for (const ws of model.workspaces) {
+		// The chart's lines: the route from the Orchestrator to every Agent.
+		// Routes share their trunk and buses, which then draw on top of each
+		// other in one solid colour.
+		for (const id of Object.keys(layout.agents)) {
+			const points = routeBetween(layout, ORCH, id);
+			if (!points) continue;
 			out.push({
-				id: `stem:ws:${ws.id}`,
+				id: `wire:${id}`,
 				source: ORCH_NODE,
-				target: wsNodeId(ws.id),
-				type: "stem",
-			});
-			for (const a of ws.agents) {
-				out.push({
-					id: `stem:${a.paneId}`,
-					source: a.spawnedBy ? agentNodeId(a.spawnedBy) : wsNodeId(ws.id),
-					target: agentNodeId(a.paneId),
-					type: "stem",
-				});
-			}
-		}
-		for (const h of model.helpers) {
-			out.push({
-				id: `stem:${h.paneId}`,
-				source: ORCH_NODE,
-				target: agentNodeId(h.paneId),
-				type: "stem",
+				target: agentNodeId(id),
+				type: "wire",
+				data: { points } satisfies WireData,
 			});
 		}
 		for (const { call, ending } of calls.values()) {
-			const source = endpoint(call.callerPaneId);
-			const target = endpoint(call.targetPaneId);
-			if (!nodeIds.has(source) || !nodeIds.has(target)) continue;
+			const from = routeKey(call.callerPaneId, orchestratorPaneId);
+			const to = routeKey(call.targetPaneId, orchestratorPaneId);
+			const points = routeBetween(layout, from, to);
+			if (!points) continue;
 			out.push({
 				id: `call:${call.id}`,
-				source,
-				target,
+				source: nodeOf(from),
+				target: nodeOf(to),
 				type: "stream",
-				// Above the nodes and the stems.
+				// Above the containers and the lines.
 				zIndex: 1000,
-				data: { kind: call.kind, ending } satisfies StreamData,
+				data: { points, kind: call.kind, ending } satisfies StreamData,
 			});
 		}
 		return out;
-	}, [model, calls, nodeIds, orchestratorPaneId]);
+	}, [layout, calls, orchestratorPaneId]);
 
 	// ── Graph-level dialogs ──
 	const [newAgentWs, setNewAgentWs] = useState<string | null>(null);
@@ -388,7 +403,7 @@ export function OrchestratorGraph() {
 }
 
 /** Re-fits the view when Agents come or go, and when the graph's area is
- *  resized (the divider, the window), so the flower always fills it. */
+ *  resized (the divider, the window), so the chart always fills it. */
 function FitOnChange({ count }: { count: number }) {
 	const flow = useReactFlow();
 	const first = useRef(true);
@@ -424,67 +439,77 @@ function FitOnChange({ count }: { count: number }) {
 
 // ── Nodes ──
 
-/** A Workspace: its name and how many Agents circle it. Right click opens
- *  its menu. */
-const WorkspaceNode = memo(function WorkspaceNode({
+/** A Workspace's container (or the Orchestrator's helpers'): its name in
+ *  the top-left corner. Right click on a Workspace opens its menu. */
+const ContainerNode = memo(function ContainerNode({
 	data,
-}: NodeProps<Node<WsData>>) {
-	const { ws } = data;
+}: NodeProps<Node<ContainerData>>) {
+	const { workspaceId, name, count } = data;
 	const actions = useContext(ActionsContext);
 	const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 	return (
 		<>
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: right-click menu of a Workspace node */}
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: right-click menu of a Workspace container */}
 			<div
-				className="flex items-center justify-center select-none"
+				className="w-full h-full select-none"
 				style={{
-					width: 160,
-					height: 40,
-					gap: 6,
-					padding: "0 12px",
-					borderRadius: 10,
+					borderRadius: 12,
 					border:
-						"1px solid color-mix(in srgb, var(--accent) 35%, var(--border))",
-					background:
-						"color-mix(in srgb, var(--accent) 8%, var(--bg-secondary))",
-					color: "var(--fg-primary)",
+						"1px solid color-mix(in srgb, var(--accent) 28%, var(--border))",
+					// Darker than the view behind it, so the Agents' pills stand out.
+					background: "color-mix(in srgb, var(--bg-primary) 82%, #000)",
 				}}
-				title={`${ws.name} · ${ws.agents.length} agent${ws.agents.length === 1 ? "" : "s"}`}
+				title={`${name} · ${count} agent${count === 1 ? "" : "s"}`}
 				onContextMenu={(e) => {
+					if (!workspaceId) return;
 					e.preventDefault();
 					e.stopPropagation();
 					setMenu({ x: e.clientX, y: e.clientY });
 				}}
 			>
-				<CentreHandles />
-				<span className="truncate" style={{ fontSize: 12.5, fontWeight: 600 }}>
-					{ws.name}
-				</span>
-				<span
+				<HiddenHandles />
+				<div
+					className="flex items-center truncate"
 					style={{
-						fontSize: 10.5,
-						color: "var(--fg-secondary)",
-						fontFamily: "var(--font-mono)",
+						height: 24,
+						padding: "0 12px",
+						gap: 6,
+						fontSize: 12,
+						fontWeight: 600,
+						color: "var(--fg-primary)",
 					}}
 				>
-					{ws.agents.length}
-				</span>
+					<span className="truncate">{name}</span>
+					<span
+						style={{
+							fontSize: 10.5,
+							fontWeight: 400,
+							color: "var(--fg-secondary)",
+							fontFamily: "var(--font-mono)",
+						}}
+					>
+						{count}
+					</span>
+				</div>
 			</div>
-			{menu && actions && (
+			{menu && actions && workspaceId && (
 				<PaneContextMenu
 					x={menu.x}
 					y={menu.y}
 					onClose={() => setMenu(null)}
 					items={[
-						{ label: "New agent…", onClick: () => actions.newAgentIn(ws.id) },
+						{
+							label: "New agent…",
+							onClick: () => actions.newAgentIn(workspaceId),
+						},
 						{
 							label: "New task…",
-							onClick: () => openNewTask({ workspaceId: ws.id }),
+							onClick: () => openNewTask({ workspaceId }),
 						},
 						{ separator: true },
 						{
 							label: "Close Workspace",
-							onClick: () => actions.closeWorkspace(ws.id),
+							onClick: () => actions.closeWorkspace(workspaceId),
 						},
 					]}
 				/>
@@ -522,7 +547,7 @@ const OrchestratorNode = memo(function OrchestratorNode({
 				color: "var(--fg-primary)",
 			}}
 		>
-			<CentreHandles />
+			<HiddenHandles />
 			<Network size={18} style={{ color: "var(--accent)" }} />
 			<div className="flex flex-col min-w-0 flex-1">
 				<span style={{ fontSize: 13, fontWeight: 600 }}>Orchestrator</span>
@@ -553,7 +578,7 @@ const OrchestratorNode = memo(function OrchestratorNode({
 	);
 });
 
-/** "Open workspace…": one more slot on the ring of Workspaces. */
+/** "Open workspace…": right below the Orchestrator. */
 const AddNode = memo(function AddNode() {
 	return (
 		<button
@@ -561,9 +586,9 @@ const AddNode = memo(function AddNode() {
 			className="nodrag flex items-center justify-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:border-[var(--accent)] border border-dashed border-[var(--border)]"
 			style={{
 				width: 150,
-				height: 40,
+				height: 34,
 				gap: 6,
-				borderRadius: 20,
+				borderRadius: 17,
 				fontSize: 12,
 				background: "var(--bg-primary)",
 				cursor: "pointer",
@@ -660,7 +685,7 @@ const AgentNode = memo(function AgentNode({
 					menu.open(e.clientX, e.clientY);
 				}}
 			>
-				<CentreHandles />
+				<HiddenHandles />
 				<AgentStatusIcon status={status} size={12} />
 				<span style={{ color: "var(--fg-secondary)", display: "flex" }}>
 					{Icon ? <Icon size={14} /> : <FallbackAgentIcon size={13} />}
@@ -683,7 +708,7 @@ const AgentNode = memo(function AgentNode({
 });
 
 const NODE_TYPES = {
-	workspace: WorkspaceNode,
+	container: ContainerNode,
 	orchestrator: OrchestratorNode,
 	add: AddNode,
 	agent: AgentNode,
@@ -691,49 +716,59 @@ const NODE_TYPES = {
 
 // ── Edges ──
 
-/** A faint line from a node's parent: the flower's structure. */
-function StemEdge({ sourceX, sourceY, targetX, targetY }: EdgeProps) {
+/** The chart's lines: one route from the Orchestrator to an Agent. */
+function WireEdge({ data }: EdgeProps<Edge<WireData>>) {
+	if (!data) return null;
 	return (
 		<path
-			d={`M ${sourceX} ${sourceY} L ${targetX} ${targetY}`}
+			d={polylinePath(data.points)}
 			style={{
 				fill: "none",
-				stroke: "color-mix(in srgb, var(--accent) 18%, transparent)",
-				strokeWidth: 1,
+				stroke: "color-mix(in srgb, var(--accent) 30%, var(--bg-primary))",
+				strokeWidth: 1.4,
+				strokeLinejoin: "round",
 			}}
 		/>
 	);
 }
 
-/** How many comets flow along a stream at once, and how long one takes. */
+/** How many comets flow along a stream at once, and their speed. */
 const PARTICLES = 6;
-const LAP_S = 1.6;
-/** A comet's head, then its tail just behind it. */
-const TAIL = [0, 0.05, 0.1];
+const SPEED_PX_S = 420;
+/** A comet's head, then its tail just behind it (seconds behind). */
+const TAIL = [0, 0.04, 0.08];
+
+/** Length of a route of right angles. */
+function routeLength(points: readonly Point[]): number {
+	let n = 0;
+	for (let i = 1; i < points.length; i++) {
+		n += Math.hypot(
+			points[i].x - points[i - 1].x,
+			points[i].y - points[i - 1].y,
+		);
+	}
+	return n;
+}
 
 /**
- * A running Agent control call: a stream of comets from caller to target
- * along a curve that bows toward the Orchestrator. Fades out when the call
- * ends; a steady line with reduced motion.
+ * A running Agent control call: comets flowing from caller to target along
+ * the chart's own lines, the route lit beneath them. Fades out when the call
+ * ends; the lit route alone with reduced motion.
  */
-function StreamEdge({
-	sourceX,
-	sourceY,
-	targetX,
-	targetY,
-	data,
-}: EdgeProps<Edge<StreamData>>) {
-	const act = data?.kind !== "read";
-	const ending = data?.ending ?? false;
+function StreamEdge({ data }: EdgeProps<Edge<StreamData>>) {
+	if (!data) return null;
+	const act = data.kind !== "read";
 	const color = act ? "var(--accent)" : "var(--fg-secondary)";
-	const d = streamPath(sourceX, sourceY, targetX, targetY, 0, 0);
+	const d = polylinePath(data.points);
+	// The same speed on every route, so a long route is not a blur.
+	const lap = Math.max(0.8, routeLength(data.points) / SPEED_PX_S);
 	const still = prefersReducedMotion();
 	const comets = still ? [] : Array.from({ length: PARTICLES }, (_, i) => i);
 	return (
 		<g
 			className="orch-stream"
 			style={{
-				opacity: ending ? 0 : 1,
+				opacity: data.ending ? 0 : 1,
 				transition: `opacity ${FADE_MS}ms ease`,
 			}}
 		>
@@ -742,8 +777,9 @@ function StreamEdge({
 				style={{
 					fill: "none",
 					stroke: color,
-					strokeOpacity: still ? 0.9 : 0.22,
-					strokeWidth: act ? 2.4 : 1.6,
+					strokeOpacity: still ? 0.9 : 0.35,
+					strokeWidth: act ? 2.4 : 1.8,
+					strokeLinejoin: "round",
 					strokeDasharray: act ? undefined : "3 5",
 				}}
 			/>
@@ -759,9 +795,9 @@ function StreamEdge({
 						}}
 					>
 						<animateMotion
-							dur={`${LAP_S}s`}
+							dur={`${lap}s`}
 							repeatCount="indefinite"
-							begin={`${-(i * LAP_S) / PARTICLES - lag}s`}
+							begin={`${-(i * lap) / PARTICLES - lag}s`}
 							path={d}
 						/>
 					</circle>
@@ -771,4 +807,4 @@ function StreamEdge({
 	);
 }
 
-const EDGE_TYPES = { stem: StemEdge, stream: StreamEdge };
+const EDGE_TYPES = { wire: WireEdge, stream: StreamEdge };
