@@ -69,19 +69,29 @@ export function hasOverlay(): boolean {
  * The callback is read through a ref, so a caller passing an inline arrow does
  * not re-order the stack on every render — which would quietly promote an
  * outer dialog above an inner one.
+ *
+ * Returns a stable `isTopmost()`: whether this overlay is the one on top.
  */
-export function useEscapeKey(onEscape: () => void): void {
+export function useEscapeKey(onEscape: () => void): () => boolean {
 	const latest = useRef(onEscape);
 	latest.current = onEscape;
+	const entryRef = useRef<Handler | null>(null);
+	const isTopmost = useRef(
+		() => !!entryRef.current && stack[stack.length - 1] === entryRef.current,
+	).current;
 
 	useEffect(() => {
 		const entry: Handler = () => latest.current();
+		entryRef.current = entry;
 		stack.push(entry);
 		ensureListening();
 		return () => {
 			const at = stack.lastIndexOf(entry);
 			if (at >= 0) stack.splice(at, 1);
+			entryRef.current = null;
 			stopListeningIfIdle();
 		};
 	}, []);
+
+	return isTopmost;
 }

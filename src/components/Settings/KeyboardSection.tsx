@@ -24,7 +24,11 @@ import {
 	editorOverrideId,
 	loadMonacoCatalogue,
 } from "../../lib/monacoKeymap";
-import { isNavigatorAction } from "../../lib/navigatorKeys";
+import {
+	isNavigatorAction,
+	SCOPE_OVERRIDE_ID,
+	scopeShiftAlias,
+} from "../../lib/navigatorKeys";
 import { isMac } from "../../lib/platform";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { secondaryButtonClass } from "../PromptActions/fieldStyles";
@@ -84,12 +88,32 @@ export function appRows(overrides: KeybindingOverrides): Row[] {
 				chord: effectiveChord(action, overrides),
 				global: firesInEditor(action),
 				standsDownUnderNavigator: standsDownUnderNavigator(action),
+				shiftAlias: id === SCOPE_OVERRIDE_ID,
 			},
 			fallback: defaultChord(action),
 			fallbackLabel: null,
 			overridden: has(overrides, id),
 			category: meta.category,
 		};
+	});
+}
+
+/** Read-only conflict entries for Shift aliases: never shown as rows, but a
+ *  rebind that takes one (or loses its own) is noted. */
+export function aliasEntries(rows: readonly Row[]): KeymapEntry[] {
+	return rows.flatMap(({ entry }) => {
+		const chord = entry.shiftAlias ? scopeShiftAlias(entry.chord) : null;
+		return chord
+			? [
+					{
+						id: `${entry.id}#shift`,
+						label: `${entry.label} (Shift alias)`,
+						scope: entry.scope,
+						chord,
+						aliasOf: entry.id,
+					},
+				]
+			: [];
 	});
 }
 
@@ -194,7 +218,7 @@ export function KeyboardSection() {
 		[catalogue, overrides],
 	);
 	const allEntries = useMemo(
-		() => [...app, ...editor].map((r) => r.entry),
+		() => [...app, ...editor].map((r) => r.entry).concat(aliasEntries(app)),
 		[app, editor],
 	);
 

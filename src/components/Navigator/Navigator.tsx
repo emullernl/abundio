@@ -135,7 +135,8 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 		onClose();
 		restoreTerminalFocus();
 	}, [onClose]);
-	useEscapeKey(close);
+	const isTopmost = useEscapeKey(close);
+	const dialogRef = useRef<HTMLDivElement>(null);
 
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -300,12 +301,19 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 			registerAction(NAVIGATOR_STATUS_ACTIONS[st], () => toggleStatus(st));
 		}
 		registerAction("navigator-filter-clear", () => setStatuses(NO_STATUSES));
-		setNavigatorKeysLive(true);
+		// Live only while the Navigator has the user's attention: on top of the
+		// overlay stack, with focus in it (or nowhere). A dialog opened over it
+		// that is not on the stack (New workspace) still takes focus.
+		setNavigatorKeysLive(() => {
+			if (!isTopmost()) return false;
+			const el = document.activeElement;
+			return !el || el === document.body || !!dialogRef.current?.contains(el);
+		});
 		return () => {
-			setNavigatorKeysLive(false);
+			setNavigatorKeysLive(null);
 			for (const a of NAVIGATOR_ACTIONS) unregisterAction(a);
 		};
-	}, [toggleStatus]);
+	}, [toggleStatus, isTopmost]);
 
 	const overrides = useKeybindingOverrides();
 	const hints = useMemo(
@@ -369,6 +377,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 			onClick={close}
 		>
 			<div
+				ref={dialogRef}
 				role="dialog"
 				aria-label="Navigator"
 				data-testid="navigator"

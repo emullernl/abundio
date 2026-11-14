@@ -174,3 +174,60 @@ describe("Navigator Shortcut conflicts", () => {
 		);
 	});
 });
+
+describe("the scope key's Shift alias", () => {
+	const tab = { key: "Tab", meta: false, shift: false, ctrl: false };
+	const scope: KeymapEntry = {
+		id: "app:navigator-toggle-scope",
+		label: "Switch Opened / All workspaces",
+		scope: "navigator",
+		chord: tab,
+		shiftAlias: true,
+	};
+	const alias: KeymapEntry = {
+		id: "app:navigator-toggle-scope#shift",
+		label: "Switch Opened / All workspaces (Shift alias)",
+		scope: "navigator",
+		chord: { ...tab, shift: true },
+		aliasOf: scope.id,
+	};
+	const waiting: KeymapEntry = {
+		id: "app:navigator-filter-waiting",
+		label: "Toggle Waiting filter",
+		scope: "navigator",
+		chord: cmd("1"),
+	};
+	const all = [...entries, scope, waiting, alias];
+
+	it("notes, rather than asks, when a Shortcut takes the alias's Chord", () => {
+		const plan = planRecording(waiting, { ...tab, shift: true }, all, true);
+		expect(plan.kind).toBe("commit");
+		expect(plan.kind === "commit" && plan.notice).toContain("Shift alias");
+	});
+
+	it("notes when the scope key's new alias is already taken", () => {
+		const plan = planRecording(scope, cmd("t", false), all, true);
+		// ⌘T is New tab itself: a real clash, still asked.
+		expect(plan.kind).toBe("ask");
+		const f2 = { key: "F2", meta: false, shift: false, ctrl: false };
+		const withShiftF2: KeymapEntry[] = [
+			...all,
+			{
+				id: "app:other",
+				label: "Other",
+				scope: "app",
+				chord: { ...f2, shift: true },
+			},
+		];
+		const p2 = planRecording(scope, f2, withShiftF2, true);
+		expect(p2.kind).toBe("commit");
+		expect(p2.kind === "commit" && p2.notice).toContain("“Other”");
+	});
+
+	it("never clashes with its own alias", () => {
+		expect(planRecording(scope, { ...tab, shift: true }, all, true)).toEqual({
+			kind: "commit",
+			notice: null,
+		});
+	});
+});

@@ -30,6 +30,15 @@ Keyboard control of the Navigator's scope toggle and status filter. See the
   they share modifiers and sit on consecutive digits in chip order; otherwise
   each is listed. Unbound ones are left out.
 - The Navigator still opens fresh (Opened scope, no filter, empty search).
+- Navigator Shortcuts are live only while the Navigator has the user's
+  attention: topmost on the overlay stack, with focus in it (or nowhere). A
+  dialog opened over it (New task, New workspace) keeps its own Tab.
+- **Trade-off**: with Tab and Shift+Tab claimed, the scope buttons and status
+  chips are no longer reached by Tab focus traversal; their Shortcuts replace
+  that path. A bare key pressed while an input method is composing is left
+  to the input method.
+- Settings notes (never asks) when a rebind takes the scope key's Shift
+  alias, or when the scope key's new alias is already taken.
 
 ## Steps (one branch, ordered commits)
 

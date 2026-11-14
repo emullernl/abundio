@@ -1,9 +1,10 @@
 /**
  * **Navigator Shortcuts**: the Keymap actions that act only while the
- * Navigator is open. Pure apart from the one "is it open" flag, which the
- * Navigator sets on mount and clears on unmount. `keybindings.ts` reads the
- * flag to gate these actions, so the keys are never claimed while the
- * Navigator is closed.
+ * Navigator is open and has the user's attention. Pure apart from the one
+ * "is it live" predicate, which the Navigator sets on mount and clears on
+ * unmount. `keybindings.ts` asks it to gate these actions, so the keys are
+ * never claimed while the Navigator is closed, nor while another dialog sits
+ * on top of it (New task, New workspace) and needs its own Tab.
  */
 import { type Chord, formatChord } from "./chords";
 import type { NavStatus } from "./navigatorTree";
@@ -38,15 +39,15 @@ export function isNavigatorAction(action: string): action is NavigatorAction {
 	return NAVIGATOR_ACTION_SET.has(action);
 }
 
-let live = false;
+let livePredicate: (() => boolean) | null = null;
 
-/** Set by the Navigator while it is mounted. */
-export function setNavigatorKeysLive(on: boolean): void {
-	live = on;
+/** Set by the Navigator while it is mounted; null when it unmounts. */
+export function setNavigatorKeysLive(isLive: (() => boolean) | null): void {
+	livePredicate = isLive;
 }
 
 export function navigatorKeysLive(): boolean {
-	return live;
+	return livePredicate?.() ?? false;
 }
 
 /** The Shift alias of the scope key: Shift + its Chord, or null when the
@@ -55,6 +56,9 @@ export function scopeShiftAlias(chord: Chord | null): Chord | null {
 	if (!chord || chord.shift) return null;
 	return { ...chord, shift: true };
 }
+
+/** Override id of the scope key, whose Shift alias Settings also vets. */
+export const SCOPE_OVERRIDE_ID = "app:navigator-toggle-scope";
 
 export interface NavigatorHint {
 	keys: string;

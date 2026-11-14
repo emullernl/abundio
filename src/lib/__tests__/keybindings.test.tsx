@@ -651,7 +651,7 @@ describe("font size", () => {
 
 describe("Navigator Shortcuts", () => {
 	afterEach(() => {
-		setNavigatorKeysLive(false);
+		setNavigatorKeysLive(null);
 		unregisterAction("navigator-toggle-scope");
 		unregisterAction("navigator-filter-waiting");
 		unregisterAction("prompt-action-1");
@@ -670,7 +670,7 @@ describe("Navigator Shortcuts", () => {
 	it("claims Tab and Shift+Tab while it is open", () => {
 		const handler = vi.fn();
 		registerAction("navigator-toggle-scope", handler);
-		setNavigatorKeysLive(true);
+		setNavigatorKeysLive(() => true);
 		const e = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
 		handleKeyDown(e);
 		handleKeyDown(makeKeyEvent({ key: "Tab", shiftKey: true }));
@@ -678,10 +678,20 @@ describe("Navigator Shortcuts", () => {
 		expect(e.defaultPrevented).toBe(true);
 	});
 
+	it("leaves a bare key to an input method mid-composition", () => {
+		const handler = vi.fn();
+		registerAction("navigator-toggle-scope", handler);
+		setNavigatorKeysLive(() => true);
+		handleKeyDown(
+			new KeyboardEvent("keydown", { key: "Tab", isComposing: true }),
+		);
+		expect(handler).not.toHaveBeenCalled();
+	});
+
 	it("the Shift alias follows a rebind", () => {
 		const handler = vi.fn();
 		registerAction("navigator-toggle-scope", handler);
-		setNavigatorKeysLive(true);
+		setNavigatorKeysLive(() => true);
 		setKeybindingOverrides({
 			"app:navigator-toggle-scope": {
 				key: "F2",
@@ -701,7 +711,7 @@ describe("Navigator Shortcuts", () => {
 		const waiting = vi.fn();
 		registerAction("prompt-action-1", prompt);
 		registerAction("navigator-filter-waiting", waiting);
-		setNavigatorKeysLive(true);
+		setNavigatorKeysLive(() => true);
 		const release = pushOverlay();
 		handleKeyDown(makeKeyEvent({ key: "1", code: "Digit1", [modKey]: true }));
 		release();

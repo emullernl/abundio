@@ -823,8 +823,15 @@ function isSuppressedByOverlay(action: KeyAction): boolean {
 export function handleKeyDown(e: KeyboardEvent) {
 	for (const binding of activeBindings) {
 		if (eventMatchesChord(e, binding)) {
+			// A bare key pressed mid-composition belongs to the input method
+			// (a Navigator Shortcut on Tab must not switch scope then).
+			if (e.isComposing && !binding.meta && !binding.ctrl && !binding.alt) {
+				continue;
+			}
 			// Muted under an overlay: move on, so a Navigator Shortcut on the
 			// same Chord (Cmd+1 is also Prompt action 1) still gets its turn.
+			// Any later binding on the Chord now gets it too (today none
+			// shares one with paste), so it may act while a dialog is open.
 			if (isSuppressedByOverlay(binding.action) && hasOverlay()) continue;
 			// A closed gate means this binding does not claim the key right now:
 			// move on, so it never shadows a later binding on the same chord.

@@ -29,6 +29,7 @@ vi.mock("../../../lib/paneLocation", () => ({
 	revealPane: (...a: unknown[]) => revealPane(...a),
 }));
 
+import { useEscapeKey } from "../../../hooks/useEscapeKey";
 import { handleKeyDown } from "../../../lib/keybindings";
 import { navigatorKeysLive } from "../../../lib/navigatorKeys";
 import type { PaneNode, WorkspaceWithTabs } from "../../../lib/types";
@@ -288,6 +289,36 @@ describe("Navigator", () => {
 			"";
 		expect(text).toContain(isMac ? "⌘1–5 status" : "Ctrl+1–5 status");
 		expect(text).toContain("scope");
+	});
+
+	it("gives Tab up to a dialog opened on top of it", () => {
+		render();
+		// Another overlay on the stack (New task) with focus in it.
+		const other = document.createElement("div");
+		document.body.appendChild(other);
+		const otherRoot = createRoot(other);
+		function Dialog() {
+			useEscapeKey(() => {});
+			return <input data-testid="other-input" />;
+		}
+		act(() => otherRoot.render(<Dialog />));
+		(other.querySelector("input") as HTMLInputElement).focus();
+		expect(navigatorKeysLive()).toBe(false);
+		shortcut({ key: "Tab" });
+		expect(rowTexts().some((t) => t.includes("gamma"))).toBe(false);
+		act(() => otherRoot.unmount());
+		other.remove();
+		input().focus();
+		expect(navigatorKeysLive()).toBe(true);
+	});
+
+	it("gives Tab up to a focused dialog that is not on the overlay stack", () => {
+		render();
+		const field = document.createElement("input");
+		document.body.appendChild(field);
+		field.focus();
+		expect(navigatorKeysLive()).toBe(false);
+		field.remove();
 	});
 
 	it("its keys are live only while it is open", () => {
