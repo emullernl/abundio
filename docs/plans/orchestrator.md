@@ -72,7 +72,7 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 
 ### 5. Seeded Prompt actions
 
-- Prompt actions are app-global today, scoped only by Agent id. Add `scope_kind = 'orchestrator'` (shown only in panes of an Orchestrator workspace; migration widens the CHECK if there is one). One-shot seed of three actions, keyed like Agent seeding so a deleted one is not re-added.
+- Prompt actions are app-global, scoped only by Agent id. Added `scope_kind = 'orchestrator'` (no CHECK to widen): offered only in panes of an Orchestrator workspace, first there. An older build of the same data epoch reads it as `all` and would show these three in every pane — accepted. Seeded once by `orchestrator_ensure` (`settings` key `orchestrator_actions_seeded`), so a deleted one stays deleted. Settings ▸ Prompt actions offers "Only the Orchestrator"; the bar's popover keeps that scope when editing, and defaults to it when creating in the Orchestrator's pane.
 
 ### 6. The graph
 

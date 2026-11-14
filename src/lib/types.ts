@@ -416,7 +416,7 @@ export interface PromptActionRow {
 	id: string;
 	name: string;
 	body: string;
-	scopeKind: "all" | "set";
+	scopeKind: "all" | "set" | "orchestrator";
 	scopeAgentIds: string[];
 	paramsJson: string;
 	showInBar: boolean;
@@ -428,7 +428,7 @@ export interface PromptActionRow {
 export interface PromptActionCreate {
 	name: string;
 	body: string;
-	scopeKind?: "all" | "set";
+	scopeKind?: "all" | "set" | "orchestrator";
 	scopeAgentIds?: string[];
 	paramsJson?: string;
 	showInBar?: boolean;
@@ -439,7 +439,7 @@ export interface PromptActionCreate {
 export interface PromptActionUpdate {
 	name?: string;
 	body?: string;
-	scopeKind?: "all" | "set";
+	scopeKind?: "all" | "set" | "orchestrator";
 	scopeAgentIds?: string[];
 	paramsJson?: string;
 	showInBar?: boolean;

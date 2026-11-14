@@ -12,6 +12,7 @@ import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { pty } from "../lib/ipc";
 import { type KeyAction, triggerAction } from "../lib/keybindings";
 import { fileWindowTargetForPane } from "../lib/openFileWindow";
+import { paneInOrchestrator } from "../lib/orchestrator";
 import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
@@ -376,6 +377,10 @@ export function CommandPalette({
 				: false;
 			for (const action of actionsForPane(promptActionList, agentId, {
 				barOnly: false,
+				inOrchestrator: paneInOrchestrator(
+					useWorkspaceStore.getState().workspaces,
+					focusedPaneId,
+				),
 			})) {
 				result.push({
 					id: `prompt-action-${action.id}`,

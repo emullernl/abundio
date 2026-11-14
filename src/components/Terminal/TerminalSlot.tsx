@@ -7,6 +7,7 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { useAgentHandle } from "../../hooks/useAgentHandle";
+import { usePaneInOrchestrator } from "../../hooks/usePaneInOrchestrator";
 import {
 	shortcutLabelFor,
 	useKeybindingOverrides,
@@ -15,6 +16,7 @@ import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { firePromptAction } from "../../lib/firePromptAction";
 import { pty } from "../../lib/ipc";
+import { paneInOrchestrator } from "../../lib/orchestrator";
 import { isMac } from "../../lib/platform";
 import {
 	FLEET_TILE_PRIORITY,
@@ -189,6 +191,7 @@ export function TerminalSlot({
 		x: number;
 		y: number;
 	} | null>(null);
+	const inOrchestrator = usePaneInOrchestrator(paneId);
 	const searchPaneId = useWorkspaceStore((s) => s.searchPaneId);
 	const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
@@ -259,7 +262,13 @@ export function TerminalSlot({
 				const ordered = actionsForPane(
 					usePromptActionStore.getState().actions,
 					detectedAgentId,
-					{ barOnly: true },
+					{
+						barOnly: true,
+						inOrchestrator: paneInOrchestrator(
+							useWorkspaceStore.getState().workspaces,
+							paneId,
+						),
+					},
 				);
 				const action = ordered[slot - 1];
 				if (!action) return; // digit past the end of the bar: do nothing
@@ -714,6 +723,7 @@ export function TerminalSlot({
 				<PromptActionPopover
 					anchor={editing.anchor}
 					defaultAgentId={detectedAgentId}
+					inOrchestrator={inOrchestrator}
 					editing={editing.action}
 					onClose={() => setEditing(null)}
 				/>
@@ -749,6 +759,7 @@ export function TerminalSlot({
 				<PromptActionPopover
 					anchor={addAnchor}
 					defaultAgentId={detectedAgentId}
+					inOrchestrator={inOrchestrator}
 					onClose={() => setAddAnchor(null)}
 				/>
 			)}

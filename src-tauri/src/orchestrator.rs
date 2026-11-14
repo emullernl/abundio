@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::error::AbundioError;
+use crate::prompt_actions::PromptActionStore;
 use crate::workspace_store::{WorkspaceStore, WorkspaceWithTabs};
 
 /// The file the user may edit. Created once, never rewritten.
@@ -104,10 +105,20 @@ pub fn ensure(
 
 #[tauri::command]
 pub async fn orchestrator_ensure(
+    app: tauri::AppHandle,
     store: State<'_, WorkspaceStore>,
+    actions: State<'_, PromptActionStore>,
     profile_id: String,
 ) -> Result<WorkspaceWithTabs, AbundioError> {
-    ensure(&store, &crate::app_paths::shared_root(), &profile_id)
+    let ws = ensure(&store, &crate::app_paths::shared_root(), &profile_id)?;
+    // The suggested questions, the first time any Orchestrator is set up. A
+    // failure here must not keep the Orchestrator from starting.
+    match actions.seed_orchestrator_actions() {
+        Ok(true) => crate::prompt_actions::broadcast(&app),
+        Ok(false) => {}
+        Err(e) => log::warn!("[orchestrator] could not seed prompt actions: {e}"),
+    }
+    Ok(ws)
 }
 
 #[tauri::command]

@@ -4,6 +4,7 @@ import {
 	launchCommand,
 	ORCHESTRATOR_HANDLE,
 	orchestratorPane,
+	paneInOrchestrator,
 	paneRunsAgent,
 	pickerAgents,
 	stampOrchestrator,
@@ -111,5 +112,19 @@ describe("orchestrator helpers", () => {
 		expect(
 			launchCommand({ ...agents[0], args: ["--yolo"] } as CodingAgent),
 		).toBe("codex --yolo");
+	});
+
+	it("tells whether a pane is in an Orchestrator workspace", () => {
+		const list = [
+			{ id: "a", tabs: [tab("ta", 0, term("pa"))] },
+			{
+				id: "o",
+				kind: "orchestrator" as const,
+				tabs: [tab("to", 0, term("po"))],
+			},
+		];
+		expect(paneInOrchestrator(list, "po")).toBe(true);
+		expect(paneInOrchestrator(list, "pa")).toBe(false);
+		expect(paneInOrchestrator(list, "nope")).toBe(false);
 	});
 });

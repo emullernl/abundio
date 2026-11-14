@@ -77,6 +77,37 @@ const demoPromptActions: PromptActionRow[] = [
 		createdAt: 0,
 		updatedAt: 0,
 	},
+	// The Orchestrator's suggested questions, as a real install seeds them
+	// (prompt_actions::ORCHESTRATOR_ACTIONS, ADR-0057).
+	...(
+		[
+			[
+				"What is everyone doing?",
+				"Give me a short overview of every agent in this profile: what each one is working on and how far along it is.",
+			],
+			[
+				"Who needs me?",
+				"Which agents are waiting for me or have finished and need a look? List them, most urgent first, and say what each one needs.",
+			],
+			[
+				"Summarise today",
+				"Summarise what the agents in this profile got done today, by workspace, in plain words.",
+			],
+		] as const
+	).map(
+		([name, body], i): PromptActionRow => ({
+			id: `demo-action-orchestrator-${i}`,
+			name,
+			body,
+			scopeKind: "orchestrator",
+			scopeAgentIds: [],
+			paramsJson: "{}",
+			showInBar: true,
+			position: 3 + i,
+			createdAt: 0,
+			updatedAt: 0,
+		}),
+	),
 ];
 
 function seedPane(paneId: string, ptyId: string): void {
@@ -471,7 +502,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 				id: `demo-action-${demoPromptActions.length + 1}`,
 				name: String(input.name ?? "Untitled"),
 				body: String(input.body ?? ""),
-				scopeKind: (input.scopeKind as "all" | "set") ?? "all",
+				scopeKind: (input.scopeKind as "all" | "set" | "orchestrator") ?? "all",
 				scopeAgentIds: (input.scopeAgentIds as string[]) ?? [],
 				paramsJson: String(input.paramsJson ?? "{}"),
 				showInBar: input.showInBar !== false,
