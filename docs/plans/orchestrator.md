@@ -83,7 +83,7 @@ Before running the app with step 1 in place, back up `abundio.db` (+ `-wal`, `-s
 
 ### 7. Peek
 
-- A Peek tab borrows the pane's terminal through `portalRegistry` at a priority over the Workspace-view slot (as Fleet tiles do, ADR-0040), and hands it back on close. Closes when its Agent exits.
+- The Peek (`PeekPane`) opens to the right of the graph, half the top area, with its own header (name, close). It is a `TerminalSlot` with Fleet-tile info: it registers at `FLEET_TILE_PRIORITY` over the Workspace-view slot (ADR-0040) and hands the terminal back on unmount. Normal font size, no Spotlight (`FleetSlotInfo.onToggleSpotlight` is optional), Switch to and the pane menu in its bar but no Close Pane, in the bar or the menu (`FleetSlotInfo.noClose`), so an Agent is never ended by accident; its own focus, given up when a pane below is focused. A single click on an Agent opens or replaces it and selects it; closing it, or the Agent leaving agent mode, ends it.
 
 ### 8. File Orchestrator tabs
 

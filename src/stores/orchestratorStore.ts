@@ -36,6 +36,8 @@ interface OrchestratorState {
 	workspacePickerOpen: boolean;
 	/** The Agent selected in the graph (a single click). */
 	selectedPaneId: string | null;
+	/** The Agent shown in the **Peek**, to the right of the graph. */
+	peekPaneId: string | null;
 	set: (patch: Partial<Omit<OrchestratorState, "set">>) => void;
 }
 
@@ -48,6 +50,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set) => ({
 	changingAgent: false,
 	panesTop: 0,
 	selectedPaneId: null,
+	peekPaneId: null,
 	workspacePickerOpen: false,
 	exited: false,
 	set: (patch) => set(patch),

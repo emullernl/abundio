@@ -10,9 +10,17 @@ import { firePromptAction } from "./firePromptAction";
 import { orchestratorPane } from "./orchestrator";
 import { getTerminal } from "./terminalManager";
 
-/** A single click on an Agent: select it (Peek shows it, step 7). */
+/** **Peek**: show an Agent's live terminal to the right of the graph (a
+ *  single click on it there). Replaces the Agent peeked at before. */
 export function peekAgent(paneId: string): void {
-	useOrchestratorStore.getState().set({ selectedPaneId: paneId });
+	useOrchestratorStore
+		.getState()
+		.set({ selectedPaneId: paneId, peekPaneId: paneId });
+}
+
+/** Close the Peek: the terminal goes back to its Workspace. */
+export function closePeek(): void {
+	useOrchestratorStore.getState().set({ peekPaneId: null });
 }
 
 /** The question "Ask the Orchestrator about it" sends. */

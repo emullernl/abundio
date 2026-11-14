@@ -1,8 +1,17 @@
-import { ChevronDown, ChevronUp, Network, RefreshCw } from "lucide-react";
+import {
+	ChevronDown,
+	ChevronUp,
+	Eye,
+	Network,
+	RefreshCw,
+	X,
+} from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { useAgentPanes } from "../../hooks/useAgentPanes";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { orchestratorPane, pickerAgents } from "../../lib/orchestrator";
+import { closePeek } from "../../lib/orchestratorActions";
 import {
 	ORCHESTRATOR_DIVIDER,
 	ORCHESTRATOR_TAB_STRIP,
@@ -16,6 +25,7 @@ import {
 	restartOrchestrator,
 } from "../../lib/orchestratorSession";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -25,6 +35,7 @@ import {
 	secondaryButtonClass,
 } from "../PromptActions/fieldStyles";
 import { OrchestratorGraph } from "./OrchestratorGraph";
+import { PeekPane } from "./PeekPane";
 
 /**
  * The **Orchestrator view** (ADR-0057): the Window's third view, beside the
@@ -72,6 +83,7 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 	}, [top]);
 
 	const exited = useOrchestratorStore((s) => s.exited);
+	const peekPaneId = useOrchestratorStore((s) => s.peekPaneId);
 	const showCard = phase !== "ready" || changingAgent || exited;
 
 	return (
@@ -91,7 +103,31 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 			<TabStrip collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
 			{content > 0 && (
 				<div className="relative shrink-0" style={{ height: content }}>
-					{phase === "ready" ? <OrchestratorGraph /> : <WelcomeCard />}
+					{phase !== "ready" ? (
+						<WelcomeCard />
+					) : (
+						// The graph, and the **Peek** to its right while there is one.
+						<div className="absolute inset-0 flex">
+							<div className="relative flex-1 min-w-0">
+								<OrchestratorGraph />
+							</div>
+							{peekPaneId && (
+								<div
+									className="relative flex flex-col min-w-0"
+									style={{
+										flex: "1 1 0",
+										borderLeft:
+											"1px solid color-mix(in srgb, var(--border) 60%, transparent)",
+									}}
+								>
+									<PeekHeader paneId={peekPaneId} />
+									<div className="relative flex-1 min-h-0">
+										<PeekPane paneId={peekPaneId} />
+									</div>
+								</div>
+							)}
+						</div>
+					)}
 				</div>
 			)}
 			<Divider
@@ -103,6 +139,102 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 					<BottomCard />
 				</div>
 			)}
+		</div>
+	);
+}
+
+/** One **Orchestrator tab** in the strip. */
+function TopTab({
+	active,
+	onSelect,
+	onClose,
+	title,
+	children,
+}: {
+	active: boolean;
+	onSelect: () => void;
+	onClose?: () => void;
+	title: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<div
+			className={`flex items-center ${
+				active
+					? "text-[var(--fg-primary)]"
+					: "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
+			}`}
+			style={{
+				height: 24,
+				borderRadius: 6,
+				background: active
+					? "color-mix(in srgb, var(--accent) 14%, transparent)"
+					: undefined,
+			}}
+		>
+			<button
+				type="button"
+				className="flex items-center"
+				style={{
+					height: 24,
+					padding: onClose ? "0 4px 0 10px" : "0 10px",
+					gap: 6,
+					fontSize: 12,
+					cursor: "pointer",
+					maxWidth: 220,
+				}}
+				aria-pressed={active}
+				title={title}
+				onClick={onSelect}
+			>
+				{children}
+			</button>
+			{onClose && (
+				<button
+					type="button"
+					className="flex items-center justify-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+					style={{ width: 20, height: 20, marginRight: 2, borderRadius: 4 }}
+					title="Close the Peek"
+					aria-label="Close the Peek"
+					onClick={onClose}
+				>
+					<X size={12} />
+				</button>
+			)}
+		</div>
+	);
+}
+
+/** The Peek's header: who is peeked at, and the button that ends it (the
+ *  terminal's own bar has Close Pane, which closes the real pane). */
+function PeekHeader({ paneId }: { paneId: string }) {
+	const handle = useAgentHandle(paneId);
+	const agentId = usePtyActivityStore((s) => {
+		const ptyId = s.panePtyMap[paneId];
+		return ptyId ? s.detectedAgentIds[ptyId] : undefined;
+	});
+	const name = useSettingsStore(
+		(s) => s.agents.find((a) => a.id === agentId)?.name,
+	);
+	return (
+		<div
+			className="flex items-center shrink-0 select-none text-[var(--fg-secondary)]"
+			style={{ height: 26, padding: "0 6px 0 12px", gap: 6, fontSize: 12 }}
+		>
+			<Eye size={13} />
+			<span className="truncate flex-1 text-[var(--fg-primary)]">
+				Peek: {handle ?? name ?? "Agent"}
+			</span>
+			<button
+				type="button"
+				className="flex items-center justify-center hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
+				style={{ width: 22, height: 22, borderRadius: 4 }}
+				title="Close the Peek"
+				aria-label="Close the Peek"
+				onClick={closePeek}
+			>
+				<X size={13} />
+			</button>
 		</div>
 	);
 }
@@ -129,20 +261,10 @@ function TabStrip({
 					"1px solid color-mix(in srgb, var(--border) 60%, transparent)",
 			}}
 		>
-			<div
-				className="flex items-center text-[var(--fg-primary)]"
-				style={{
-					height: 24,
-					padding: "0 10px",
-					gap: 6,
-					fontSize: 12,
-					borderRadius: 6,
-					background: "color-mix(in srgb, var(--accent) 14%, transparent)",
-				}}
-			>
+			<TopTab active onSelect={() => {}} title="All agents of this profile">
 				<Network size={13} />
 				Agents
-			</div>
+			</TopTab>
 			{phase === "ready" && <OpenWorkspaceButton />}
 			<div className="flex-1" />
 			{phase === "ready" && agent && (

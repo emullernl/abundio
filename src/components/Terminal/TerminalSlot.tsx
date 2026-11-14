@@ -615,12 +615,24 @@ export function TerminalSlot({
 					},
 					{ separator: true },
 				] satisfies ContextMenuItem[])),
-		{
-			label: "Close Pane",
-			shortcut: shortcutLabelFor("close-pane", keyOverrides),
-			onClick: onClose,
-		},
+		// Not in a **Peek**: closing there would end an Agent by accident.
+		...(fleet?.noClose
+			? []
+			: [
+					{
+						label: "Close Pane",
+						shortcut: shortcutLabelFor("close-pane", keyOverrides),
+						onClick: onClose,
+					},
+				]),
 	];
+	// No separator left dangling at the end.
+	while (
+		contextMenuItems.length > 0 &&
+		"separator" in contextMenuItems[contextMenuItems.length - 1]
+	) {
+		contextMenuItems.pop();
+	}
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: terminal pane container with context menu and focus handling
