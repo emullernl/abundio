@@ -88,6 +88,22 @@ describe("handleForPane", () => {
 		expect(handleForPane(workspaces, "a")).toBe("rev");
 		expect(handleForPane(workspaces, "b")).toBeUndefined();
 	});
+
+	it("returns the handle as stored, not its match key", () => {
+		const workspaces = [
+			{
+				tabs: [
+					tab("t1", {
+						type: "terminal",
+						id: "a",
+						ptyId: "",
+						agentHandle: "Agent Two",
+					}),
+				],
+			},
+		];
+		expect(handleForPane(workspaces, "a")).toBe("Agent Two");
+	});
 });
 
 describe("handle in the layout", () => {
