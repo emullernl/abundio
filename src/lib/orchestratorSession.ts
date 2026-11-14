@@ -259,8 +259,13 @@ export function installOrchestratorSession(): () => void {
  * is still there, the view asks which Agent to start: the same one resumes
  * its conversation, another starts fresh. Closing the pane is not an exit.
  */
+/** How long the pane stays readable after the Agent exits, before the
+ *  picker covers it. */
+export const EXIT_PICKER_DELAY_MS = 3000;
+
 function watchForExit(): () => void {
 	let paneId: string | null = null;
+	let timer: ReturnType<typeof setTimeout> | null = null;
 	const tabsNow = () => {
 		const { workspaceId } = store();
 		return storedWorkspace(workspaceId ?? "")?.tabs ?? null;
@@ -273,10 +278,22 @@ function watchForExit(): () => void {
 			paneId = current;
 			return;
 		}
-		if (!agentLeftPane(tabs, paneId)) return;
-		paneId = null;
+		if (!agentLeftPane(tabs, paneId) || timer) return;
 		const { agentId, phase } = store();
-		if (agentId && phase === "ready") store().set({ exited: true });
+		if (!agentId || phase !== "ready") return;
+		// Wait before covering the pane, so what the Agent printed as it
+		// stopped (an error) can be read first.
+		timer = setTimeout(() => {
+			timer = null;
+			const now = tabsNow();
+			// Started again meanwhile (picked, or restarted): nothing to ask.
+			if (!now || !agentLeftPane(now, paneId)) return;
+			paneId = null;
+			if (store().phase === "ready") store().set({ exited: true });
+		}, EXIT_PICKER_DELAY_MS);
 	});
-	return () => unsubscribe();
+	return () => {
+		unsubscribe();
+		if (timer) clearTimeout(timer);
+	};
 }

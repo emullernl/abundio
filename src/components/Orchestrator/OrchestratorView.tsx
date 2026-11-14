@@ -267,8 +267,7 @@ function BottomCard() {
 	const phase = useOrchestratorStore((s) => s.phase);
 	const error = useOrchestratorStore((s) => s.error);
 	const changingAgent = useOrchestratorStore((s) => s.changingAgent);
-	const exited = useOrchestratorStore((s) => s.exited);
-	if (phase === "pick" || changingAgent || exited) return <AgentPicker />;
+	if (phase === "pick" || changingAgent) return <AgentPicker />;
 	if (phase === "error") {
 		return (
 			<div

@@ -649,15 +649,18 @@ else
   # A resume that fails at once found nothing to resume: start fresh, still
   # inside the one command_start/command_end, so the Pane never leaves agent
   # mode in between (and keeps its Agent and handle).
+  # Whole seconds: a zsh setup may make SECONDS a float (typeset -F), and
+  # `[ -lt ]` takes integers only.
+  __abundio_el=$((SECONDS - __abundio_t0)); __abundio_el=${{__abundio_el%%.*}}
   if [ "$__abundio_rc" -ne 0 ] && [ -n "$__abundio_fb" ] \
-    && [ $((SECONDS - __abundio_t0)) -lt "$__abundio_within" ]; then
+    && [ "${{__abundio_el:-0}}" -lt "$__abundio_within" ]; then
     printf '\n\033[2mNothing to resume; starting a new session.\033[0m\n\n'
     eval "$__abundio_fb"
     __abundio_rc=$?
   fi
   printf '\033]7770;command_end;%s\007' "$__abundio_rc"
 fi
-unset __abundio_rc __abundio_cmd __abundio_sh __abundio_fb __abundio_within __abundio_t0
+unset __abundio_rc __abundio_cmd __abundio_sh __abundio_fb __abundio_within __abundio_t0 __abundio_el
 {reexec}"#
     )
 }
@@ -2069,6 +2072,27 @@ mod task_launch_tests {
             assert_eq!(out.matches("7770;command_end").count(), 1, "{shell}: {out}");
             assert!(out.contains("\x1b]7770;command_end;0\x07"), "{shell}: {out}");
         }
+    }
+
+    /// A zsh setup that makes SECONDS a float (`typeset -F SECONDS`, as some
+    /// prompt themes do) must not break the window check.
+    #[test]
+    fn the_fallback_works_with_a_float_seconds() {
+        let shell = "/bin/zsh";
+        if !Path::new(shell).exists() {
+            return;
+        }
+        let script = format!("typeset -F SECONDS\n{}", task_script("echo REEXEC"));
+        let out = Command::new(shell)
+            .args(["-c", &script, shell, "", "sh", "-c", "echo RESUME; exit 1"])
+            .env("ABUNDIO_TASK_FALLBACK", "echo FRESH")
+            .env("ABUNDIO_TASK_FALLBACK_WITHIN", "20")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stdout.contains("FRESH"), "{stdout}\n{stderr}");
+        assert!(!stderr.contains("integer expression"), "{stderr}");
     }
 
     #[test]

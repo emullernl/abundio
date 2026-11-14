@@ -32,6 +32,7 @@ vi.mock("../pendingAgentRegistry", async (orig) => ({
 }));
 
 const {
+	EXIT_PICKER_DELAY_MS,
 	enterOrchestratorView,
 	installOrchestratorSession,
 	leaveOrchestratorView,
@@ -189,9 +190,13 @@ describe("orchestratorSession", () => {
 						: w,
 				),
 			}));
+		vi.useFakeTimers();
 		try {
-			// The Agent exits: the pane stays, its Agent and handle go.
+			// The Agent exits: the pane stays, its Agent and handle go. The
+			// picker waits, so the Agent's last output can be read.
 			setLayout({ type: "terminal", id: "o1", ptyId: "" });
+			expect(useOrchestratorStore.getState().exited).toBe(false);
+			await vi.advanceTimersByTimeAsync(EXIT_PICKER_DELAY_MS + 10);
 			expect(useOrchestratorStore.getState().exited).toBe(true);
 			expect(setPendingTask).not.toHaveBeenCalled();
 			// The same Agent again resumes the conversation it left.
@@ -203,8 +208,10 @@ describe("orchestratorSession", () => {
 			);
 			// Closing the pane is not an exit.
 			setLayout({ type: "terminal", id: "other", ptyId: "" });
+			await vi.advanceTimersByTimeAsync(EXIT_PICKER_DELAY_MS + 10);
 			expect(useOrchestratorStore.getState().exited).toBe(false);
 		} finally {
+			vi.useRealTimers();
 			stop();
 		}
 	});
