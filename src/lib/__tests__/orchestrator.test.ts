@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	agentLeftPane,
 	findOrchestratorWorkspace,
 	launchCommand,
 	ORCHESTRATOR_HANDLE,
@@ -132,5 +133,23 @@ describe("orchestrator helpers", () => {
 		expect(paneInOrchestrator(list, "po")).toBe(true);
 		expect(paneInOrchestrator(list, "pa")).toBe(false);
 		expect(paneInOrchestrator(list, "nope")).toBe(false);
+	});
+});
+
+describe("after an exit", () => {
+	it("sees an exit only while the pane is still there", () => {
+		const exited = [tab("t", 0, term("p", { agentId: undefined }))];
+		const running = [
+			tab(
+				"t",
+				0,
+				term("p", { agentId: "claude", agentHandle: "Orchestrator" }),
+			),
+		];
+		const closed = [tab("t", 0, term("other"))];
+		expect(agentLeftPane(exited, "p")).toBe(true);
+		expect(agentLeftPane(running, "p")).toBe(false);
+		expect(agentLeftPane(closed, "p")).toBe(false);
+		expect(agentLeftPane(exited, null)).toBe(false);
 	});
 });

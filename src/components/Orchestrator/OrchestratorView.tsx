@@ -69,7 +69,8 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 		useOrchestratorStore.getState().set({ panesTop: top });
 	}, [top]);
 
-	const showCard = phase !== "ready" || changingAgent;
+	const exited = useOrchestratorStore((s) => s.exited);
+	const showCard = phase !== "ready" || changingAgent || exited;
 
 	return (
 		<div
@@ -266,7 +267,8 @@ function BottomCard() {
 	const phase = useOrchestratorStore((s) => s.phase);
 	const error = useOrchestratorStore((s) => s.error);
 	const changingAgent = useOrchestratorStore((s) => s.changingAgent);
-	if (phase === "pick" || changingAgent) return <AgentPicker />;
+	const exited = useOrchestratorStore((s) => s.exited);
+	if (phase === "pick" || changingAgent || exited) return <AgentPicker />;
 	if (phase === "error") {
 		return (
 			<div
@@ -299,6 +301,7 @@ function AgentPicker() {
 	const agents = useSettingsStore((s) => s.agents);
 	const current = useOrchestratorStore((s) => s.agentId);
 	const changingAgent = useOrchestratorStore((s) => s.changingAgent);
+	const exited = useOrchestratorStore((s) => s.exited);
 	const choices = useMemo(() => pickerAgents(agents), [agents]);
 	return (
 		<div
@@ -315,15 +318,19 @@ function AgentPicker() {
 			<div
 				style={{ fontSize: 15, fontWeight: 600, color: "var(--fg-primary)" }}
 			>
-				{changingAgent
-					? "Choose another Orchestrator"
-					: "Choose your Orchestrator"}
+				{exited
+					? "The Orchestrator has stopped"
+					: changingAgent
+						? "Choose another Orchestrator"
+						: "Choose your Orchestrator"}
 			</div>
 			<div
 				style={{ fontSize: 13, lineHeight: 1.5, color: "var(--fg-secondary)" }}
 			>
-				Pick the AI agent that answers your questions about the other agents.
-				{changingAgent && " The current one is stopped."}
+				{exited
+					? "Choose the agent to start again. The same one picks up where it left off."
+					: "Pick the AI agent that answers your questions about the other agents."}
+				{changingAgent && !exited && " The current one is stopped."}
 			</div>
 			{choices.length === 0 ? (
 				<span style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
@@ -352,22 +359,24 @@ function AgentPicker() {
 							>
 								{Icon ? <Icon size={14} /> : <FallbackAgentIcon size={13} />}
 								{a.name}
-								{isCurrent && " (current)"}
+								{isCurrent && (exited ? " (last used)" : " (current)")}
 							</button>
 						);
 					})}
 				</div>
 			)}
-			{changingAgent && (
+			{(changingAgent || exited) && (
 				<button
 					type="button"
 					className={secondaryButtonClass}
 					style={{ height: 24, padding: "0 10px", fontSize: 12 }}
 					onClick={() =>
-						useOrchestratorStore.getState().set({ changingAgent: false })
+						useOrchestratorStore
+							.getState()
+							.set({ changingAgent: false, exited: false })
 					}
 				>
-					Cancel
+					{exited ? "Not now" : "Cancel"}
 				</button>
 			)}
 		</div>

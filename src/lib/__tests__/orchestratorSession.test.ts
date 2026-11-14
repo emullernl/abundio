@@ -31,8 +31,12 @@ vi.mock("../pendingAgentRegistry", async (orig) => ({
 	setPendingTask: (...a: unknown[]) => setPendingTask(...a),
 }));
 
-const { enterOrchestratorView, leaveOrchestratorView, pickOrchestratorAgent } =
-	await import("../orchestratorSession");
+const {
+	enterOrchestratorView,
+	installOrchestratorSession,
+	leaveOrchestratorView,
+	pickOrchestratorAgent,
+} = await import("../orchestratorSession");
 const { useOrchestratorStore } = await import("../../stores/orchestratorStore");
 const { useWorkspaceStore } = await import("../../stores/workspaceStore");
 const { useWindowUiStore } = await import("../../stores/windowUiStore");
@@ -164,5 +168,44 @@ describe("orchestratorSession", () => {
 			}),
 		);
 		expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("orch");
+	});
+
+	it("asks for an Agent again when its Agent exits, not when its pane closes", async () => {
+		agent.mockResolvedValue(null);
+		useWindowUiStore.setState({ orchestratorViewOpen: false });
+		const stop = installOrchestratorSession();
+		useWindowUiStore.setState({ orchestratorViewOpen: true });
+		await enterOrchestratorView();
+		await pickOrchestratorAgent("claude");
+		setPendingTask.mockClear();
+		const setLayout = (layout: PaneNode) =>
+			useWorkspaceStore.setState((s) => ({
+				workspaces: s.workspaces.map((w) =>
+					w.id === "orch"
+						? {
+								...w,
+								tabs: [{ ...w.tabs[0], layoutJson: JSON.stringify(layout) }],
+							}
+						: w,
+				),
+			}));
+		try {
+			// The Agent exits: the pane stays, its Agent and handle go.
+			setLayout({ type: "terminal", id: "o1", ptyId: "" });
+			expect(useOrchestratorStore.getState().exited).toBe(true);
+			expect(setPendingTask).not.toHaveBeenCalled();
+			// The same Agent again resumes the conversation it left.
+			await pickOrchestratorAgent("claude");
+			expect(useOrchestratorStore.getState().exited).toBe(false);
+			expect(setPendingTask).toHaveBeenCalledWith(
+				"o1",
+				expect.objectContaining({ argv: ["claude", "--continue"] }),
+			);
+			// Closing the pane is not an exit.
+			setLayout({ type: "terminal", id: "other", ptyId: "" });
+			expect(useOrchestratorStore.getState().exited).toBe(false);
+		} finally {
+			stop();
+		}
 	});
 });

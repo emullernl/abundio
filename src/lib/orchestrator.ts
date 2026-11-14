@@ -134,3 +134,24 @@ export function paneInOrchestrator(
 	}
 	return false;
 }
+
+// ── After an exit ──
+
+/**
+ * Whether the Orchestrator's Agent has just exited in a pane that is still
+ * there: the pane that carried its handle no longer does, but still exists
+ * as a terminal. A closed pane (or a closed Tab) is not an exit.
+ */
+export function agentLeftPane(
+	tabs: readonly Tab[],
+	previousPaneId: string | null,
+): boolean {
+	if (!previousPaneId || orchestratorPane(tabs)) return false;
+	for (const tab of tabs) {
+		const layout = parseTabLayout(tab.layoutJson);
+		if (layout && findNode(layout, previousPaneId)?.type === "terminal") {
+			return true;
+		}
+	}
+	return false;
+}

@@ -470,7 +470,7 @@ export function App() {
 		(s) => s.orchestratorViewOpen && !s.statisticsOverlayOpen,
 	);
 	const orchestratorReady = useOrchestratorStore(
-		(s) => s.phase === "ready" && !s.changingAgent,
+		(s) => s.phase === "ready" && !s.changingAgent && !s.exited,
 	);
 	const orchestratorPanesShown = orchestratorViewShown && orchestratorReady;
 	const orchestratorPanesTop = useOrchestratorStore((s) => s.panesTop);

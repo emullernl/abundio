@@ -16,7 +16,13 @@ import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { orchestrator as orchestratorApi, shells } from "./ipc";
 import { shellSupportsTasks } from "./newTask";
-import { paneRunsAgent, stampOrchestrator, startPane } from "./orchestrator";
+import {
+	agentLeftPane,
+	orchestratorPane,
+	paneRunsAgent,
+	stampOrchestrator,
+	startPane,
+} from "./orchestrator";
 import { orchestratorStart } from "./orchestratorLaunch";
 import { findNode, parseTabLayout } from "./paneTree";
 import { setPendingAgent, setPendingTask } from "./pendingAgentRegistry";
@@ -84,6 +90,13 @@ async function startAgentIn(
 	const layout = tab ? parseTabLayout(tab.layoutJson) : null;
 	if (!tab || !layout) return;
 	const sameAgent = paneRunsAgent(layout, target.paneId, agentId);
+	// Another Agent ran here: nothing of this one's to resume. A pane with no
+	// Agent (it exited) resumes the conversation it left.
+	const before = findNode(layout, target.paneId);
+	const ranOtherAgent =
+		before?.type === "terminal" &&
+		before.agentId !== undefined &&
+		before.agentId !== agentId;
 	const stamped = stampOrchestrator(layout, target.paneId, agentId);
 	if (stamped !== layout) await workspaces().updateLayout(tab.id, stamped);
 
@@ -98,7 +111,7 @@ async function startAgentIn(
 		agents: settings.agents,
 		agentId,
 		sessionId: node?.type === "terminal" ? node.agentSessionId : undefined,
-		mode: mode === "fresh" || !sameAgent ? "fresh" : "resume",
+		mode: mode === "fresh" || ranOtherAgent ? "fresh" : "resume",
 		resumeSetting: settings.resumeAgentSessions,
 		shellOk: !shell || shellSupportsTasks(shell),
 	});
@@ -193,7 +206,7 @@ export async function pickOrchestratorAgent(agentId: string): Promise<void> {
 	if (!ws) return;
 	try {
 		await orchestratorApi.setAgent(profileId, agentId);
-		store().set({ agentId, changingAgent: false });
+		store().set({ agentId, changingAgent: false, exited: false });
 		if (before !== agentId) await startAgentIn(ws, agentId, "fresh");
 		else await startAgentIn(ws, agentId, "keep");
 		activate(storedWorkspace(ws.id) ?? ws);
@@ -207,6 +220,7 @@ export async function pickOrchestratorAgent(agentId: string): Promise<void> {
 
 /** "Start the Orchestrator" after its Agent exited. */
 export async function restartOrchestrator(): Promise<void> {
+	store().set({ exited: false });
 	const { workspaceId, agentId } = store();
 	const ws = workspaceId ? storedWorkspace(workspaceId) : undefined;
 	if (!ws || !agentId) return;
@@ -221,11 +235,48 @@ function orchestratorViewWanted(): boolean {
  *  Runs once the Window's Workspaces are loaded, and again for each Profile
  *  (`App.tsx`). Returns the unsubscribe. */
 export function installOrchestratorSession(): () => void {
-	store().set({ phase: "idle", workspaceId: null, agentId: null });
+	store().set({
+		phase: "idle",
+		workspaceId: null,
+		agentId: null,
+		exited: false,
+	});
 	if (orchestratorViewWanted()) void enterOrchestratorView();
-	return useWindowUiStore.subscribe((s, prev) => {
+	const stopView = useWindowUiStore.subscribe((s, prev) => {
 		if (s.orchestratorViewOpen === prev.orchestratorViewOpen) return;
 		if (s.orchestratorViewOpen) void enterOrchestratorView();
 		else leaveOrchestratorView();
 	});
+	const stopExit = watchForExit();
+	return () => {
+		stopView();
+		stopExit();
+	};
+}
+
+/**
+ * When the Orchestrator's Agent exits (`/exit`, Ctrl+C, a crash) and its pane
+ * is still there, the view asks which Agent to start: the same one resumes
+ * its conversation, another starts fresh. Closing the pane is not an exit.
+ */
+function watchForExit(): () => void {
+	let paneId: string | null = null;
+	const tabsNow = () => {
+		const { workspaceId } = store();
+		return storedWorkspace(workspaceId ?? "")?.tabs ?? null;
+	};
+	const unsubscribe = useWorkspaceStore.subscribe(() => {
+		const tabs = tabsNow();
+		if (!tabs) return;
+		const current = orchestratorPane(tabs)?.paneId ?? null;
+		if (current) {
+			paneId = current;
+			return;
+		}
+		if (!agentLeftPane(tabs, paneId)) return;
+		paneId = null;
+		const { agentId, phase } = store();
+		if (agentId && phase === "ready") store().set({ exited: true });
+	});
+	return () => unsubscribe();
 }

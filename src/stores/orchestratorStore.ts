@@ -28,6 +28,9 @@ interface OrchestratorState {
 	/** Where the Orchestrator workspace's panes start, in px from the top of
 	 *  the view. Measured by the view, read by the Workspace stack. */
 	panesTop: number;
+	/** Its Agent exited while its pane stayed: the view asks which Agent to
+	 *  start (the picker), until one is chosen or the user says not now. */
+	exited: boolean;
 	/** The Agent selected in the graph (a single click). */
 	selectedPaneId: string | null;
 	set: (patch: Partial<Omit<OrchestratorState, "set">>) => void;
@@ -42,5 +45,6 @@ export const useOrchestratorStore = create<OrchestratorState>((set) => ({
 	changingAgent: false,
 	panesTop: 0,
 	selectedPaneId: null,
+	exited: false,
 	set: (patch) => set(patch),
 }));

@@ -411,7 +411,7 @@ const OrchestratorNode = memo(function OrchestratorNode() {
 					className="truncate"
 					style={{ fontSize: 11, color: "var(--fg-secondary)" }}
 				>
-					{running ? "Ask me below" : "Not running"}
+					{running ? "Ask me below" : "Stopped"}
 				</span>
 			</div>
 			{running ? (
