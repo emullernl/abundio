@@ -153,7 +153,8 @@ once its helper's work is done, or one the user names; leave the rest open.
 
 `abundio file open <path>` puts a file of your Workspace on the user's
 screen; add `--workspace <name>` for another Workspace's. `<path>` is
-absolute or relative to your folder, and must be inside that Workspace.
+absolute, or relative to your folder (with `--workspace`, relative to that
+Workspace's folder), and must be inside that Workspace.
 
 - It opens in a new Tab of the file's Workspace (or the Tab already showing
   it). `--window` opens a window of its own instead. If you are the

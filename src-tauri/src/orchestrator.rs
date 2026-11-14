@@ -54,7 +54,7 @@ folder holds no project.
   experience: avoid jargon, say what an agent is doing and whether it needs
   the user, and keep answers short.
 - To show the user a file, use `abundio file open <path> --workspace <name>
-  --focus`.
+  --focus`, with `<path>` relative to that Workspace's folder (or absolute).
 
 ## Ask before you act
 
@@ -167,9 +167,34 @@ pub async fn orchestrator_tabs_list(
 pub async fn orchestrator_tab_add(
     store: State<'_, WorkspaceStore>,
     profile_id: String,
-    tab: NewOrchestratorTab,
+    mut tab: NewOrchestratorTab,
 ) -> Result<OrchestratorTab, AbundioError> {
+    let root = store
+        .root_folder_of(&tab.workspace_id)?
+        .ok_or_else(|| AbundioError::NotFound(format!("Workspace not found: {}", tab.workspace_id)))?;
+    tab.path = checked_tab_path(Path::new(&root), &tab.kind, &tab.path)?;
     store.add_orchestrator_tab(&profile_id, tab)
+}
+
+/// A tab's path, checked to lie inside its Workspace's folder before it is
+/// stored (tabs reopen at every start): a file tab's absolute path, as
+/// `file open` resolves it; a diff or commit tab's Workspace-relative path,
+/// with no `..` and not absolute.
+pub fn checked_tab_path(root: &Path, kind: &str, path: &str) -> Result<String, AbundioError> {
+    if kind == "file" {
+        return crate::agent_control::resolve_workspace_file(root, None, path, true)
+            .map(|(absolute, _)| absolute)
+            .map_err(|(_, why)| AbundioError::InvalidOperation(why));
+    }
+    let rel = Path::new(path);
+    let clean = !path.is_empty()
+        && rel.components().all(|c| matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir));
+    if !clean {
+        return Err(AbundioError::InvalidOperation(format!(
+            "Not a path inside the Workspace: {path}"
+        )));
+    }
+    Ok(path.to_string())
 }
 
 #[tauri::command]
@@ -193,6 +218,22 @@ pub async fn orchestrator_tab_select(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tab_path_must_lie_inside_its_workspace() {
+        let root = std::env::temp_dir().join(format!("abundio-tab-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.ts"), "x").unwrap();
+        let inside = root.join("src/a.ts").to_string_lossy().into_owned();
+        assert_eq!(checked_tab_path(&root, "file", &inside).unwrap(), inside);
+        assert!(checked_tab_path(&root, "file", "/etc/hosts").is_err());
+        assert!(checked_tab_path(&root, "file", &format!("{}/../x", root.display())).is_err());
+        assert_eq!(checked_tab_path(&root, "diff", "src/a.ts").unwrap(), "src/a.ts");
+        assert!(checked_tab_path(&root, "diff", "../x").is_err());
+        assert!(checked_tab_path(&root, "commit", "/etc/hosts").is_err());
+        assert!(checked_tab_path(&root, "diff", "").is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
     use rusqlite::Connection;
 
     const PID: &str = "00000000-0000-0000-0000-000000000001";

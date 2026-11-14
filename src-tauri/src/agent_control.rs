@@ -1049,6 +1049,18 @@ fn parse_file_open(rest: &[String]) -> Result<Request, String> {
     })
 }
 
+/// The folder a relative `file open` path is resolved against: the
+/// caller's own folder when it names a file of its own Workspace, else (with
+/// `--workspace`) none, so it resolves against the target Workspace's folder
+/// (the caller's folder is never inside another Workspace).
+pub fn file_base<'a>(target_ws: &str, caller_ws: &str, cwd: Option<&'a str>) -> Option<&'a Path> {
+    if target_ws == caller_ws {
+        cwd.map(Path::new)
+    } else {
+        None
+    }
+}
+
 /// Where `path` (as given, absolute or relative to `cwd`) is inside the
 /// Workspace folder `root`: the absolute path and the Workspace-relative one,
 /// both with `/`. The file must exist, except for `commit` (a file a commit
@@ -1059,6 +1071,7 @@ pub fn resolve_workspace_file(
     path: &str,
     must_exist: bool,
 ) -> Result<(String, String), (&'static str, String)> {
+    let stored_root = root;
     let root = root
         .canonicalize()
         .map_err(|_| ("not_found", "the Workspace's folder is missing".to_string()))?;
@@ -1111,7 +1124,12 @@ pub fn resolve_workspace_file(
         return Err(("not_a_file", format!("{path} is not a file")));
     }
     let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
-    Ok((slash(&real), slash(rel)))
+    // The absolute path rebuilt on the Workspace's folder as stored, not the
+    // canonical one: no Windows `\\?\` prefix, and byte for byte what the
+    // rest of the app (Explorer, File panes) uses for the same file, even
+    // where the stored folder is a symlink or differs in case.
+    let absolute = stored_root.join(rel);
+    Ok((absolute.to_string_lossy().into_owned(), slash(rel)))
 }
 
 fn parse_progress(rest: &[String]) -> Result<Request, String> {
@@ -1313,9 +1331,9 @@ Notes (the Workspace's shared notes):
 Files (show the user a file of a Workspace):
   abundio file open <path> [--tab | --window] [--focus] [--line <n>]
                     [--diff | --preview | --commit <sha>]
-                                          <path> is absolute or relative to your folder,
-                                          inside the Workspace (or the one named with
-                                          --workspace). --tab (the default) opens it in a
+                                          <path> is absolute, or relative to your folder
+                                          (with --workspace: to that Workspace's folder);
+                                          it must be inside the Workspace. --tab (the default) opens it in a
                                           new Tab of that Workspace; from the Orchestrator,
                                           in the Orchestrator's own tabs. --window opens a
                                           window of its own. --diff shows its uncommitted
@@ -2187,7 +2205,7 @@ fn serve_inner(
             };
             match resolve_workspace_file(
                 Path::new(&root),
-                cwd.as_deref().map(Path::new),
+                file_base(&scope.workspace_id, &caller.workspace_id, cwd.as_deref()),
                 &path,
                 commit.is_none(),
             ) {
@@ -2360,6 +2378,34 @@ mod tests {
         assert_eq!(split_cwd(with), (Some("/home/me/app".into()), argv(&["file", "open", "a"])));
         let without = argv(&["file", "open", "a"]);
         assert_eq!(split_cwd(without.clone()), (None, without));
+    }
+
+    #[test]
+    fn a_relative_path_for_another_workspace_resolves_against_its_folder() {
+        assert_eq!(file_base("w", "w", Some("/me/app")), Some(Path::new("/me/app")));
+        assert_eq!(file_base("other", "w", Some("/me/app")), None);
+        // The Orchestrator's folder is in no Workspace: `--workspace other`
+        // with `src/a.ts` lands in other's folder.
+        let root = std::env::temp_dir().join(format!("abundio-base-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.ts"), "x").unwrap();
+        let base = file_base("other", "orchestrator", Some("/data/orchestrator/p/Orchestrator"));
+        let (_, rel) = resolve_workspace_file(&root, base, "src/a.ts", true).unwrap();
+        assert_eq!(rel, "src/a.ts");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_absolute_path_is_built_on_the_folder_as_stored() {
+        // macOS: temp_dir is /var/…, canonically /private/var/…; the app knows
+        // the Workspace by the stored form, so the answer must use it too.
+        let root = std::env::temp_dir().join(format!("abundio-stored-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.md"), "x").unwrap();
+        let (abs, _) = resolve_workspace_file(&root, None, "a.md", true).unwrap();
+        assert_eq!(abs, root.join("a.md").to_string_lossy());
+        assert!(!abs.starts_with("\\\\?\\"));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
