@@ -1,14 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-	type GridSize,
-	hiddenPaneSize,
-	isWatchedAgent,
-	paneShare,
-} from "../../lib/hiddenAgentStart";
+import { isWatchedAgent, sizeForHiddenPane } from "../../lib/hiddenAgentStart";
 import { collectTerminals, parseTabLayout } from "../../lib/paneTree";
 import { hasPendingAgent } from "../../lib/pendingAgentRegistry";
 import { shownGrid, startPtyUnlessShown } from "../../lib/terminalManager";
-import type { WorkspaceWithTabs } from "../../lib/types";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -20,34 +14,6 @@ interface TerminalInfo {
 	cwd?: string;
 	/** The Watched Agent this pane remembers, if any. */
 	agentId?: string;
-}
-
-/**
- * A size for a pane that is not on screen, from its Tab's split ratios and a
- * terminal that is: the Focused pane when it is shown, else the first shown
- * terminal found. Null when nothing is on screen to measure against.
- */
-function sizeForHiddenPane(
-	paneId: string,
-	workspaces: WorkspaceWithTabs[],
-	focusedPaneId: string | null,
-): GridSize | null {
-	let target: ReturnType<typeof paneShare> = null;
-	let reference: (GridSize & { share: { w: number; h: number } }) | null = null;
-	for (const ws of workspaces) {
-		for (const tab of ws.tabs) {
-			const layout = parseTabLayout(tab.layoutJson);
-			if (!layout) continue;
-			target ??= paneShare(layout, paneId);
-			for (const t of collectTerminals(layout)) {
-				if (reference && t.id !== focusedPaneId) continue;
-				const grid = shownGrid(t.id);
-				const share = grid && paneShare(layout, t.id);
-				if (grid && share) reference = { ...grid, share };
-			}
-		}
-	}
-	return target && reference ? hiddenPaneSize(reference, target) : null;
 }
 
 export function TerminalPool() {
@@ -111,11 +77,20 @@ export function TerminalPool() {
 			if (starts.has(t.paneId)) continue;
 			if (!hasPendingAgent(t.paneId)) continue;
 			if (!isWatchedAgent(agents, t.agentId)) continue;
+			// Agent control's `agent start` in a hidden Tab also seeds a pending
+			// Agent and calls `startPtyUnlessShown` itself, so a pane can have two
+			// waits. That is harmless: both check `started()`, so the PTY spawns
+			// once, at whichever size is asked first.
 			starts.set(
 				t.paneId,
 				startPtyUnlessShown(t.paneId, () => {
 					const s = useWorkspaceStore.getState();
-					return sizeForHiddenPane(t.paneId, s.workspaces, s.focusedPaneId);
+					return sizeForHiddenPane(
+						t.paneId,
+						s.workspaces,
+						s.focusedPaneId,
+						shownGrid,
+					);
 				}),
 			);
 		}

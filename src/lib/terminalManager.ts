@@ -46,6 +46,7 @@ import {
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
 import { targetPaneId } from "./fleetFocus";
+import { outsideWorkspaceView } from "./hiddenAgentStart";
 import { startUnlessShown } from "./hiddenSpawn";
 import { agentHooks, pty } from "./ipc";
 import { folderMissingReason } from "./missingFolder";
@@ -1335,8 +1336,8 @@ export function startPtyUnlessShown(
 }
 
 /**
- * The grid of `paneId`'s terminal while it is on screen: projected into a
- * pane slot (not parked in the TerminalPool) and laid out. Null otherwise.
+ * The grid of `paneId`'s terminal while it is on screen in the Workspace
+ * view (`outsideWorkspaceView` is false) and laid out. Null otherwise.
  */
 export function shownGrid(
 	paneId: string,
@@ -1344,7 +1345,7 @@ export function shownGrid(
 	const managed = instances.get(paneId);
 	const el = managed?.term.element;
 	if (!managed || !el?.isConnected) return null;
-	if (el.closest("[data-terminal-pool]")) return null;
+	if (outsideWorkspaceView(el)) return null;
 	if (el.offsetWidth === 0 || el.offsetHeight === 0) return null;
 	return { cols: managed.term.cols, rows: managed.term.rows };
 }

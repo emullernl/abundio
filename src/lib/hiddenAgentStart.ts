@@ -5,6 +5,7 @@
 // pure helpers pick the panes to start and work out a size for each from its
 // Tab's split ratios and a terminal that is on screen.
 
+import { collectTerminals, parseTabLayout } from "./paneTree";
 import type { CodingAgent, PaneNode } from "./types";
 
 /** A pane's share of its Tab's area: width and height, each 0–1. */
@@ -77,4 +78,49 @@ export function isWatchedAgent(
 	if (!agentId) return false;
 	const agent = agents.find((a) => a.id === agentId);
 	return !!agent && agent.enabled;
+}
+
+/**
+ * A size for `paneId`, which is not on screen, from its Tab's split ratios
+ * and a terminal that is: the Focused pane when `shown` measures it, else
+ * the first terminal it measures. `shown` returns a terminal's grid while it
+ * is in the Workspace view, null otherwise. Null when nothing is measured
+ * (the PTY then starts at xterm's default grid).
+ */
+export function sizeForHiddenPane(
+	paneId: string,
+	workspaces: { tabs: { layoutJson: string }[] }[],
+	focusedPaneId: string | null,
+	shown: (paneId: string) => GridSize | null,
+): GridSize | null {
+	let target: PaneShare | null = null;
+	let reference: (GridSize & { share: PaneShare }) | null = null;
+	let referenceIsFocused = false;
+	for (const ws of workspaces) {
+		for (const tab of ws.tabs) {
+			const layout = parseTabLayout(tab.layoutJson);
+			if (!layout) continue;
+			target ??= paneShare(layout, paneId);
+			for (const t of collectTerminals(layout)) {
+				if (referenceIsFocused) break;
+				const isFocused = t.id === focusedPaneId;
+				if (reference && !isFocused) continue;
+				const grid = shown(t.id);
+				const share = grid && paneShare(layout, t.id);
+				if (!grid || !share) continue;
+				reference = { ...grid, share };
+				referenceIsFocused = isFocused;
+			}
+		}
+	}
+	return target && reference ? hiddenPaneSize(reference, target) : null;
+}
+
+/**
+ * True when a terminal element's grid says nothing about its pane's share of
+ * its Tab: parked in the TerminalPool, or shown in a Fleet tile, whose size
+ * is the grid cell's, not the pane's.
+ */
+export function outsideWorkspaceView(el: Element): boolean {
+	return !!el.closest("[data-terminal-pool], [data-fleet-tile]");
 }
