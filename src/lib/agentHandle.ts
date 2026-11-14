@@ -63,14 +63,18 @@ export function sameHandle(a: string | undefined, b: string): boolean {
 	return a !== undefined && handleKey(a) === handleKey(b);
 }
 
-function handlesIn(tree: PaneNode, out: Map<string, string>): void {
+/** Every handle in `tree`, as stored, with its pane id. */
+function handlesIn(
+	tree: PaneNode,
+	visit: (handle: string, paneId: string) => void,
+): void {
 	if (tree.type === "terminal") {
-		if (tree.agentHandle) out.set(handleKey(tree.agentHandle), tree.id);
+		if (tree.agentHandle) visit(tree.agentHandle, tree.id);
 		return;
 	}
 	if (tree.type !== "split") return;
-	handlesIn(tree.first, out);
-	handlesIn(tree.second, out);
+	handlesIn(tree.first, visit);
+	handlesIn(tree.second, visit);
 }
 
 /** handle key → pane id, across every Tab of a Workspace. */
@@ -78,7 +82,7 @@ export function workspaceHandles(tabs: readonly Tab[]): Map<string, string> {
 	const out = new Map<string, string>();
 	for (const tab of tabs) {
 		const layout = parseTabLayout(tab.layoutJson);
-		if (layout) handlesIn(layout, out);
+		if (layout) handlesIn(layout, (h, pane) => out.set(handleKey(h), pane));
 	}
 	return out;
 }
@@ -122,9 +126,11 @@ export function handleForPane(
 	if (workspaces !== lastWorkspaces) {
 		lastWorkspaces = workspaces;
 		lastByPane = new Map();
+		// The handle as stored ("Agent Two"), not its match key ("agent-two").
 		for (const ws of workspaces) {
-			for (const [handle, pane] of workspaceHandles(ws.tabs)) {
-				lastByPane.set(pane, handle);
+			for (const tab of ws.tabs) {
+				const layout = parseTabLayout(tab.layoutJson);
+				if (layout) handlesIn(layout, (h, pane) => lastByPane.set(pane, h));
 			}
 		}
 	}

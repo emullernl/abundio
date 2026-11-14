@@ -532,6 +532,89 @@ describe("pane and workspace cycle bindings (Windows/Linux)", () => {
 	});
 });
 
+describe("Agent cycle bindings", () => {
+	afterEach(() => {
+		unregisterAction("next-agent");
+		unregisterAction("prev-agent");
+		document.body.innerHTML = "";
+	});
+
+	// macOS: Ctrl+Cmd+Right / Left. Windows/Linux: Ctrl+Shift+End / Home.
+	const nextKey = () =>
+		makeKeyEvent(
+			isMac
+				? { key: "ArrowRight", metaKey: true, ctrlKey: true }
+				: { key: "End", ctrlKey: true, shiftKey: true },
+		);
+	const prevKey = () =>
+		makeKeyEvent(
+			isMac
+				? { key: "ArrowLeft", metaKey: true, ctrlKey: true }
+				: { key: "Home", ctrlKey: true, shiftKey: true },
+		);
+
+	it("fires next / previous agent", () => {
+		const next = vi.fn();
+		const prev = vi.fn();
+		registerAction("next-agent", next);
+		registerAction("prev-agent", prev);
+		handleKeyDown(nextKey());
+		handleKeyDown(prevKey());
+		expect(next).toHaveBeenCalledOnce();
+		expect(prev).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		["an input", () => document.createElement("input")],
+		[
+			"a contenteditable (Notes editor)",
+			() => {
+				const el = document.createElement("div");
+				el.contentEditable = "true";
+				el.tabIndex = 0;
+				// jsdom does not implement isContentEditable.
+				Object.defineProperty(el, "isContentEditable", { value: true });
+				return el;
+			},
+		],
+	])("gives the chord to %s, which selects text with it", (_, make) => {
+		const next = vi.fn();
+		registerAction("next-agent", next);
+		const el = make();
+		document.body.appendChild(el);
+		el.focus();
+		const e = nextKey();
+		const preventSpy = vi.spyOn(e, "preventDefault");
+		handleKeyDown(e);
+		expect(next).not.toHaveBeenCalled();
+		expect(preventSpy).not.toHaveBeenCalled();
+	});
+
+	it("still fires from a terminal", () => {
+		const next = vi.fn();
+		registerAction("next-agent", next);
+		const term = document.createElement("div");
+		term.className = "xterm";
+		const ta = document.createElement("textarea");
+		term.appendChild(ta);
+		document.body.appendChild(term);
+		ta.focus();
+		handleKeyDown(nextKey());
+		expect(next).toHaveBeenCalledOnce();
+	});
+
+	it("does not switch Agents behind a modal overlay", () => {
+		const next = vi.fn();
+		registerAction("next-agent", next);
+		const release = pushOverlay();
+		handleKeyDown(nextKey());
+		expect(next).not.toHaveBeenCalled();
+		release();
+		handleKeyDown(nextKey());
+		expect(next).toHaveBeenCalledOnce();
+	});
+});
+
 // Fleet Console keys are gated: outside the console the key is not claimed at
 // all, so Ctrl+0 / Ctrl+Shift+Enter still reach the terminal.
 describe("registerActionGate", () => {

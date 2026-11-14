@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { type FleetTile, fleetTiles } from "../lib/fleetConsole";
-import { buildWorkspaceRows, flattenRowsToIds } from "../lib/worktreeGrouping";
+import { agentPanesFrom, inHandleOrder } from "../lib/agentPanes";
+import type { FleetTile } from "../lib/fleetConsole";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
@@ -59,12 +59,10 @@ export function useAgentPanes({
 	);
 	return useMemo(() => {
 		void agentKey;
-		return fleetTiles({
+		return agentPanesFrom({
 			alsoShow: pendingTiles ? new Set(Object.keys(pendingTiles)) : NO_PENDING,
 			workspaces,
-			sidebarOrder: flattenRowsToIds(
-				buildWorkspaceRows(workspaces, worktreeFacts),
-			),
+			worktreeFacts,
 			openedWorkspaceIds,
 			activities: usePtyActivityStore.getState().activities,
 			panePtyMap,
@@ -77,4 +75,11 @@ export function useAgentPanes({
 		agentKey,
 		pendingTiles,
 	]);
+}
+
+/** The **Agents list**'s rows, in **Handle order**. */
+export function useAgentsInHandleOrder(): FleetTile[] {
+	const tiles = useAgentPanes({ includePending: false });
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	return useMemo(() => inHandleOrder(tiles, workspaces), [tiles, workspaces]);
 }

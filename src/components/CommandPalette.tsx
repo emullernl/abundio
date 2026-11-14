@@ -167,6 +167,22 @@ export function CommandPalette({
 			shortcut: "toggle-fleet-console",
 			action: () => triggerAction("toggle-fleet-console"),
 		});
+		result.push(
+			{
+				id: "action-next-agent",
+				label: "Next Agent",
+				category: "Actions",
+				shortcut: "next-agent",
+				action: () => triggerAction("next-agent"),
+			},
+			{
+				id: "action-prev-agent",
+				label: "Previous Agent",
+				category: "Actions",
+				shortcut: "prev-agent",
+				action: () => triggerAction("prev-agent"),
+			},
+		);
 		if (!inFleet) {
 			result.push(
 				{
