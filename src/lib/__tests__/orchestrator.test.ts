@@ -93,6 +93,12 @@ describe("orchestrator helpers", () => {
 		expect(paneRunsAgent(after, "a", "codex")).toBe(false);
 	});
 
+	it("forgets a remembered folder, so it starts in its own", () => {
+		const before = term("a", { cwd: "/old/place" });
+		const node = findNode(stampOrchestrator(before, "a", "claude"), "a");
+		expect(node && "cwd" in node).toBe(false);
+	});
+
 	it("keeps the session when the same Agent is stamped again", () => {
 		const before = term("a", {
 			agentId: "claude",

@@ -9,6 +9,7 @@ import {
 	collectTerminalIds,
 	findNode,
 	parseTabLayout,
+	replaceNode,
 	setAgentHandle,
 	setAgentId,
 } from "./paneTree";
@@ -86,14 +87,19 @@ export function paneRunsAgent(
 }
 
 /** `layout` with `paneId` stamped as the Orchestrator: its Agent and its
- *  handle. A different Agent before it loses its session (`setAgentId`). */
+ *  handle, and no remembered folder. A different Agent before it loses its session (`setAgentId`). */
 export function stampOrchestrator(
 	layout: PaneNode,
 	paneId: string,
 	agentId: string,
 ): PaneNode {
 	const withAgent = setAgentId(layout, paneId, agentId);
-	return setAgentHandle(withAgent, paneId, ORCHESTRATOR_HANDLE);
+	const named = setAgentHandle(withAgent, paneId, ORCHESTRATOR_HANDLE);
+	// It always starts in its own folder, never a remembered other one.
+	const node = findNode(named, paneId);
+	if (node?.type !== "terminal" || node.cwd === undefined) return named;
+	const { cwd: _drop, ...rest } = node;
+	return replaceNode(named, paneId, rest);
 }
 
 /** The Agents offered in the picker: the switched-on ones, Claude Code first
