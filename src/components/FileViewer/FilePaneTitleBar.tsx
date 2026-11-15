@@ -9,9 +9,13 @@ interface Props {
 	fileName: string;
 	fileType?: FileType;
 	isDirty?: boolean;
-	onSplitDown: () => void;
-	onSplitRight: () => void;
+	/** Absent where the file is not in a pane layout (an Orchestrator tab):
+	 *  no split buttons. */
+	onSplitDown?: () => void;
+	onSplitRight?: () => void;
 	onClose: () => void;
+	/** What the close button says it closes. */
+	closeLabel?: string;
 }
 
 interface ButtonProps {
@@ -111,6 +115,7 @@ export function FilePaneTitleBar({
 	onSplitDown,
 	onSplitRight,
 	onClose,
+	closeLabel = "Close Pane",
 }: Props) {
 	const ext = getExtension(fileName);
 	const { handleMouseDown } = usePaneDrag(paneId);
@@ -174,17 +179,21 @@ export function FilePaneTitleBar({
 					<circle cx={4} cy={4} r={3.5} fill="#60a5fa" />
 				</svg>
 			)}
-			<TitleBarButton
-				icon={SquareSplitVertical}
-				onClick={onSplitDown}
-				label="Split Down"
-			/>
-			<TitleBarButton
-				icon={SquareSplitHorizontal}
-				onClick={onSplitRight}
-				label="Split Right"
-			/>
-			<TitleBarButton icon={X} onClick={onClose} label="Close Pane" />
+			{onSplitDown && (
+				<TitleBarButton
+					icon={SquareSplitVertical}
+					onClick={onSplitDown}
+					label="Split Down"
+				/>
+			)}
+			{onSplitRight && (
+				<TitleBarButton
+					icon={SquareSplitHorizontal}
+					onClick={onSplitRight}
+					label="Split Right"
+				/>
+			)}
+			<TitleBarButton icon={X} onClick={onClose} label={closeLabel} />
 		</div>
 	);
 }

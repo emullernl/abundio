@@ -64,6 +64,9 @@ const MAX_BODY_LEN: usize = 100_000;
 pub enum ScopeKind {
     All,
     Set,
+    /// Offered only in panes of an Orchestrator workspace (ADR-0057), for any
+    /// Agent there. An older build reads it as `All` (`from_str`).
+    Orchestrator,
 }
 
 impl ScopeKind {
@@ -71,6 +74,7 @@ impl ScopeKind {
         match self {
             ScopeKind::All => "all",
             ScopeKind::Set => "set",
+            ScopeKind::Orchestrator => "orchestrator",
         }
     }
 
@@ -80,6 +84,7 @@ impl ScopeKind {
     fn from_str(s: &str) -> Self {
         match s {
             "set" => ScopeKind::Set,
+            "orchestrator" => ScopeKind::Orchestrator,
             _ => ScopeKind::All,
         }
     }
@@ -195,6 +200,26 @@ fn validate_params_json(raw: &str) -> Result<(), AbundioError> {
 
 // ── Store ──
 
+/// `settings` key set once the Orchestrator's actions have been seeded.
+const ORCHESTRATOR_SEEDED_KEY: &str = "orchestrator_actions_seeded";
+
+/// The Orchestrator's suggested questions: name, body. Plain words, because
+/// the Orchestrator is meant for people new to Agents.
+const ORCHESTRATOR_ACTIONS: [(&str, &str); 3] = [
+    (
+        "What is everyone doing?",
+        "Give me a short overview of every agent in this profile: what each one is working on and how far along it is.",
+    ),
+    (
+        "Who needs me?",
+        "Which agents are waiting for me or have finished and need a look? List them, most urgent first, and say what each one needs.",
+    ),
+    (
+        "Summarise today",
+        "Summarise what the agents in this profile got done today, by workspace, in plain words.",
+    ),
+];
+
 pub struct PromptActionStore {
     conn: Mutex<Connection>,
 }
@@ -235,6 +260,33 @@ impl PromptActionStore {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Adds the Orchestrator's suggested questions (ADR-0057), once per
+    /// database: a `settings` key marks it done, so deleting one later does not
+    /// bring it back. Returns whether anything was added.
+    pub fn seed_orchestrator_actions(&self) -> Result<bool, AbundioError> {
+        {
+            let conn = self.conn.lock().unwrap();
+            let claimed = conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, '1') ON CONFLICT(key) DO NOTHING",
+                [ORCHESTRATOR_SEEDED_KEY],
+            )?;
+            if claimed == 0 {
+                return Ok(false);
+            }
+        }
+        for (name, body) in ORCHESTRATOR_ACTIONS {
+            self.create(PromptActionCreate {
+                name: name.to_string(),
+                body: body.to_string(),
+                scope_kind: Some(ScopeKind::Orchestrator),
+                scope_agent_ids: None,
+                params_json: None,
+                show_in_bar: Some(true),
+            })?;
+        }
+        Ok(true)
     }
 
     pub fn create(&self, req: PromptActionCreate) -> Result<PromptAction, AbundioError> {
@@ -424,7 +476,7 @@ fn now() -> i64 {
 // ── IPC ──
 
 /// Tells every Window the list moved. Payload-free by design (ADR-0039).
-fn broadcast(app: &tauri::AppHandle) {
+pub(crate) fn broadcast(app: &tauri::AppHandle) {
     if let Err(e) = app.emit(PROMPT_ACTIONS_CHANGED, ()) {
         log::warn!("[prompt-actions] could not broadcast change: {e}");
     }
@@ -700,11 +752,25 @@ mod tests {
     }
 
     #[test]
+    fn orchestrator_actions_are_seeded_once() {
+        let s = store();
+        assert!(s.seed_orchestrator_actions().unwrap());
+        let list = s.list().unwrap();
+        assert_eq!(list.len(), ORCHESTRATOR_ACTIONS.len());
+        assert!(list.iter().all(|a| a.scope_kind == ScopeKind::Orchestrator));
+        // Deleting one does not bring it back.
+        s.delete(&list[0].id).unwrap();
+        assert!(!s.seed_orchestrator_actions().unwrap());
+        assert_eq!(s.list().unwrap().len(), ORCHESTRATOR_ACTIONS.len() - 1);
+    }
+
+    #[test]
     fn unknown_scope_kind_reads_as_all() {
         // A row written by a newer build should leave a usable bar, not an
         // error page.
         assert_eq!(ScopeKind::from_str("something-new"), ScopeKind::All);
         assert_eq!(ScopeKind::from_str("set"), ScopeKind::Set);
+        assert_eq!(ScopeKind::from_str("orchestrator"), ScopeKind::Orchestrator);
     }
 
     #[test]

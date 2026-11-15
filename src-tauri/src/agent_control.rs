@@ -14,6 +14,7 @@
 //! on whom ([`WaitGraph`]) and refuses a wait that would close a loop.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::io::Read;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -327,6 +328,24 @@ pub enum Request {
     /// over unsaved edits.
     #[serde(rename = "workspace.close", rename_all = "camelCase")]
     WorkspaceClose { name: String, force: bool },
+    /// Show the user a file of a Workspace (ADR-0058): in a **File window**
+    /// (`window`), or in a Tab of the file's Workspace, or, from the
+    /// Orchestrator, in an **Orchestrator tab**. Rust resolves `path` (the
+    /// argument, against the caller's folder) and checks it is inside the
+    /// Workspace before the Window sees it: `path` is then absolute and
+    /// `rel` Workspace-relative.
+    #[serde(rename = "file.open", rename_all = "camelCase")]
+    FileOpen {
+        path: String,
+        #[serde(default)]
+        rel: String,
+        window: bool,
+        focus: bool,
+        line: Option<u32>,
+        diff: bool,
+        preview: bool,
+        commit: Option<String>,
+    },
     /// Set the caller's **Attention flag**.
     #[serde(rename = "notify", rename_all = "camelCase")]
     Notify { message: String },
@@ -602,7 +621,7 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
     match (group, command) {
         (None, _) | (Some("help" | "--help" | "-h"), None) => Ok(Parsed::Help(help(None))),
         (Some("help"), Some(g)) => Ok(Parsed::Help(help(Some(g)))),
-        (Some(g @ ("pane" | "agent" | "tab" | "workspace" | "notes" | "worktree")), None | Some("--help" | "-h" | "help")) => {
+        (Some(g @ ("pane" | "agent" | "tab" | "workspace" | "notes" | "worktree" | "file")), None | Some("--help" | "-h" | "help")) => {
             Ok(Parsed::Help(help(Some(g))))
         }
         (Some("pane"), Some(c)) => parse_pane(c, rest).map(Parsed::Request),
@@ -636,6 +655,10 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
             "unknown command `worktree {c}`; run `abundio help worktree`"
         )),
         (Some("notes"), Some(c)) => parse_notes(c, rest).map(Parsed::Request),
+        (Some("file"), Some("open")) => parse_file_open(rest).map(Parsed::Request),
+        (Some("file"), Some(c)) => Err(format!(
+            "unknown command `file {c}`; run `abundio help file`"
+        )),
         (Some(g), _) => Err(format!("unknown command {g:?}; run `abundio help`")),
     }
 }
@@ -971,6 +994,144 @@ fn parse_notify(rest: &[String]) -> Result<Request, String> {
     })
 }
 
+fn parse_file_open(rest: &[String]) -> Result<Request, String> {
+    let usage = "abundio file open <path> [--tab | --window] [--focus] [--line <n>] [--diff | --preview | --commit <sha>]";
+    let a = split_args(
+        rest,
+        &["--line", "--commit"],
+        &["--tab", "--window", "--focus", "--diff", "--preview"],
+    )?;
+    expect_positionals(&a, 1, 1, usage)?;
+    let path = a.positional[0].trim();
+    if path.is_empty() {
+        return Err(format!("usage: {usage}"));
+    }
+    let window = a.flags.contains_key("--window");
+    if window && a.flags.contains_key("--tab") {
+        return Err("--tab and --window: pick one".into());
+    }
+    let line = match a.flags.get("--line").copied().flatten() {
+        None => None,
+        Some(v) => Some(
+            v.parse::<u32>()
+                .ok()
+                .filter(|n| *n >= 1)
+                .ok_or_else(|| format!("--line needs a line number from 1, not {v:?}"))?,
+        ),
+    };
+    let commit = match a.flags.get("--commit").copied().flatten() {
+        None => None,
+        Some(c) => {
+            let ok = (4..=64).contains(&c.len()) && c.chars().all(|ch| ch.is_ascii_hexdigit());
+            if !ok {
+                return Err(format!("--commit needs a commit id (hex), not {c:?}"));
+            }
+            Some(c.to_ascii_lowercase())
+        }
+    };
+    let diff = a.flags.contains_key("--diff");
+    let preview = a.flags.contains_key("--preview");
+    if commit.is_some() && (diff || preview) {
+        return Err("--commit shows the file as that commit changed it; leave out --diff and --preview".into());
+    }
+    if diff && preview {
+        return Err("--diff and --preview: pick one".into());
+    }
+    Ok(Request::FileOpen {
+        path: path.to_string(),
+        rel: String::new(),
+        window,
+        focus: a.flags.contains_key("--focus"),
+        line,
+        diff,
+        preview,
+        commit,
+    })
+}
+
+/// The folder a relative `file open` path is resolved against: the
+/// caller's own folder when it names a file of its own Workspace, else (with
+/// `--workspace`) none, so it resolves against the target Workspace's folder
+/// (the caller's folder is never inside another Workspace).
+pub fn file_base<'a>(target_ws: &str, caller_ws: &str, cwd: Option<&'a str>) -> Option<&'a Path> {
+    if target_ws == caller_ws {
+        cwd.map(Path::new)
+    } else {
+        None
+    }
+}
+
+/// Where `path` (as given, absolute or relative to `cwd`) is inside the
+/// Workspace folder `root`: the absolute path and the Workspace-relative one,
+/// both with `/`. The file must exist, except for `commit` (a file a commit
+/// deleted is gone from the folder). `Err((code, message))` otherwise.
+pub fn resolve_workspace_file(
+    root: &Path,
+    cwd: Option<&Path>,
+    path: &str,
+    must_exist: bool,
+) -> Result<(String, String), (&'static str, String)> {
+    let stored_root = root;
+    let root = root
+        .canonicalize()
+        .map_err(|_| ("not_found", "the Workspace's folder is missing".to_string()))?;
+    let given = Path::new(path);
+    let joined = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        cwd.map(Path::to_path_buf).unwrap_or_else(|| root.clone()).join(given)
+    };
+    // Lexically: `..` and `.` resolved without touching the disk, so a path
+    // that does not exist (a deleted file, for --commit) still resolves.
+    let mut clean = std::path::PathBuf::new();
+    for c in joined.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                clean.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => clean.push(other.as_os_str()),
+        }
+    }
+    // Resolved for real (symlinks) as far as it exists, the rest as given:
+    // inside-or-outside is decided before existence, so a refusal never says
+    // whether a file outside the Workspace exists.
+    let mut existing = clean.as_path();
+    let mut tail = Vec::new();
+    let base = loop {
+        if let Ok(p) = existing.canonicalize() {
+            break p;
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                tail.push(name.to_os_string());
+                existing = parent;
+            }
+            _ => break existing.to_path_buf(),
+        }
+    };
+    let real = tail.iter().rev().fold(base, |p, n| p.join(n));
+    let rel = real
+        .strip_prefix(&root)
+        .map_err(|_| ("outside_workspace", format!("{path} is not inside the Workspace's folder")))?;
+    if rel.as_os_str().is_empty() {
+        return Err(("not_a_file", format!("{path} is the Workspace's folder, not a file")));
+    }
+    if must_exist && !real.exists() {
+        return Err(("not_found", format!("no such file: {path}")));
+    }
+    if must_exist && !real.is_file() {
+        return Err(("not_a_file", format!("{path} is not a file")));
+    }
+    let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    // The absolute path rebuilt on the Workspace's folder as stored, not the
+    // canonical one: no Windows `\\?\` prefix, and byte for byte what the
+    // rest of the app (Explorer, File panes) uses for the same file, even
+    // where the stored folder is a symlink or differs in case.
+    let absolute = stored_root.join(rel);
+    Ok((absolute.to_string_lossy().into_owned(), slash(rel)))
+}
+
 fn parse_progress(rest: &[String]) -> Result<Request, String> {
     let usage = "abundio progress <text> | abundio progress --clear";
     let a = split_args(rest, &[], &["--clear"])?;
@@ -1166,6 +1327,21 @@ Notes (the Workspace's shared notes):
                                           shows them; two spaces of indent nest.
   abundio notes write <text>              replace the whole note, in the same form
 ";
+    const FILE: &str = "\
+Files (show the user a file of a Workspace):
+  abundio file open <path> [--tab | --window] [--focus] [--line <n>]
+                    [--diff | --preview | --commit <sha>]
+                                          <path> is absolute, or relative to your folder
+                                          (with --workspace: to that Workspace's folder);
+                                          it must be inside the Workspace. --tab (the default) opens it in a
+                                          new Tab of that Workspace; from the Orchestrator,
+                                          in the Orchestrator's own tabs. --window opens a
+                                          window of its own. --diff shows its uncommitted
+                                          changes, --preview renders markdown, --commit the
+                                          file as that commit changed it. Nothing moves the
+                                          user's focus unless --focus: use it only when
+                                          they asked to see the file.
+";
     const TAB: &str = "\
 Tabs:
   abundio tab new [--name <name>] [--focus]
@@ -1198,7 +1374,23 @@ gets a Tab of its own.
         Some("workspace" | "worktree") => WORKSPACE.to_string(),
         Some("notify" | "progress") => YOU.to_string(),
         Some("notes") => NOTES.to_string(),
-        _ => format!("{HEAD}{PANE}\n{AGENT}\n{TAB}\n{WORKSPACE}\n{YOU}\n{NOTES}"),
+        Some("file") => FILE.to_string(),
+        _ => format!("{HEAD}{PANE}\n{AGENT}\n{TAB}\n{WORKSPACE}\n{YOU}\n{NOTES}\n{FILE}"),
+    }
+}
+
+/// The CLI puts its working folder first, marked so no real argument can
+/// look like it: `\u{1}cwd:<folder>`. Older scripts do not; then there is
+/// none, and relative paths resolve against the Workspace's folder.
+pub const CWD_MARK: &str = "\u{1}cwd:";
+
+pub fn split_cwd(argv: Vec<String>) -> (Option<String>, Vec<String>) {
+    match argv.first().and_then(|a| a.strip_prefix(CWD_MARK)) {
+        Some(cwd) => {
+            let cwd = (!cwd.is_empty()).then(|| cwd.to_string());
+            (cwd, argv[1..].to_vec())
+        }
+        None => (None, argv),
     }
 }
 
@@ -1465,7 +1657,7 @@ fn workspace_in_profile(
         .map_err(|e| error_answer(500, "internal", &e.to_string()))?
         .ok_or_else(|| error_answer(409, "not_found", "your Workspace no longer exists"))?;
     let rows: Vec<WorkspaceRow> = store
-        .list(&profile)
+        .list_work(&profile)
         .map_err(|e| error_answer(500, "internal", &e.to_string()))?
         .into_iter()
         .map(|w| WorkspaceRow {
@@ -1509,7 +1701,7 @@ pub fn workspace_listing(
         return Ok(json!({ "workspaces": [] }));
     };
     let mut out = Vec::new();
-    for w in store.list(&profile)? {
+    for w in store.list_work(&profile)? {
         let mut panes = Vec::new();
         for tab in &w.tabs {
             if let Ok(tree) = serde_json::from_str::<Value>(&tab.layout_json) {
@@ -1945,6 +2137,7 @@ fn serve_inner(
         Ok(a) => a,
         Err(e) => return (error_answer(400, "usage", &e), who),
     };
+    let (cwd, argv) = split_cwd(argv);
     let (workspace, argv) = match split_workspace(&argv) {
         Ok(split) => split,
         Err(e) => return (error_answer(400, "usage", &e), format!("{who} op=usage-error")),
@@ -1987,6 +2180,51 @@ fn serve_inner(
     let scope = match scope {
         Ok(s) => Scope { client_id, ..s },
         Err(answer) => return (answer, format!("{who} op={op} target=?")),
+    };
+    // A file to show: resolved and checked here, so the Window never sees a
+    // path outside the Workspace (ADR-0058).
+    let request = match request {
+        Request::FileOpen {
+            path,
+            window,
+            focus,
+            line,
+            diff,
+            preview,
+            commit,
+            ..
+        } => {
+            let root = app
+                .try_state::<crate::workspace_store::WorkspaceStore>()
+                .and_then(|s| s.root_folder_of(&scope.workspace_id).ok().flatten());
+            let Some(root) = root else {
+                return (
+                    error_answer(409, "not_found", "that Workspace no longer exists"),
+                    format!("{who} op={op}"),
+                );
+            };
+            match resolve_workspace_file(
+                Path::new(&root),
+                file_base(&scope.workspace_id, &caller.workspace_id, cwd.as_deref()),
+                &path,
+                commit.is_none(),
+            ) {
+                Ok((path, rel)) => Request::FileOpen {
+                    path,
+                    rel,
+                    window,
+                    focus,
+                    line,
+                    diff,
+                    preview,
+                    commit,
+                },
+                Err((code, message)) => {
+                    return (error_answer(400, code, &message), format!("{who} op={op}"))
+                }
+            }
+        }
+        other => other,
     };
     let target = if scope.workspace_id == caller.workspace_id {
         String::new()
@@ -2094,6 +2332,116 @@ mod tests {
             workspace_id: "ws".into(),
             window_label: "main".into(),
         }
+    }
+
+    // ── file open (ADR-0058) ──
+
+    #[test]
+    fn file_open_parses_its_options() {
+        match req(&["file", "open", "docs/a.md", "--window", "--focus", "--line", "12"]) {
+            Request::FileOpen { path, window, focus, line, diff, preview, commit, .. } => {
+                assert_eq!(path, "docs/a.md");
+                assert!(window && focus && !diff && !preview);
+                assert_eq!(line, Some(12));
+                assert_eq!(commit, None);
+            }
+            other => panic!("{other:?}"),
+        }
+        match req(&["file", "open", "a.rs", "--commit", "ABC123f"]) {
+            Request::FileOpen { commit, window, .. } => {
+                assert_eq!(commit.as_deref(), Some("abc123f"));
+                assert!(!window);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(op_name(&req(&["file", "open", "a"])), "file.open");
+        assert!(is_mutating(&req(&["file", "open", "a"])));
+    }
+
+    #[test]
+    fn file_open_refuses_what_cannot_go_together() {
+        usage_err(&["file", "open"]);
+        usage_err(&["file", "open", "a", "b"]);
+        usage_err(&["file", "open", "a", "--tab", "--window"]);
+        usage_err(&["file", "open", "a", "--diff", "--preview"]);
+        usage_err(&["file", "open", "a", "--commit", "abc1", "--diff"]);
+        usage_err(&["file", "open", "a", "--commit", "not-hex"]);
+        usage_err(&["file", "open", "a", "--line", "0"]);
+        usage_err(&["file", "open", "a", "--line", "x"]);
+        usage_err(&["file", "shut", "a"]);
+        assert!(matches!(parse_args(&argv(&["file"])), Ok(Parsed::Help(_))));
+    }
+
+    #[test]
+    fn the_cli_folder_rides_in_front_and_is_taken_off() {
+        let with = argv(&["\u{1}cwd:/home/me/app", "file", "open", "a"]);
+        assert_eq!(split_cwd(with), (Some("/home/me/app".into()), argv(&["file", "open", "a"])));
+        let without = argv(&["file", "open", "a"]);
+        assert_eq!(split_cwd(without.clone()), (None, without));
+    }
+
+    #[test]
+    fn a_relative_path_for_another_workspace_resolves_against_its_folder() {
+        assert_eq!(file_base("w", "w", Some("/me/app")), Some(Path::new("/me/app")));
+        assert_eq!(file_base("other", "w", Some("/me/app")), None);
+        // The Orchestrator's folder is in no Workspace: `--workspace other`
+        // with `src/a.ts` lands in other's folder.
+        let root = std::env::temp_dir().join(format!("abundio-base-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.ts"), "x").unwrap();
+        let base = file_base("other", "orchestrator", Some("/data/orchestrator/p/Orchestrator"));
+        let (_, rel) = resolve_workspace_file(&root, base, "src/a.ts", true).unwrap();
+        assert_eq!(rel, "src/a.ts");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_absolute_path_is_built_on_the_folder_as_stored() {
+        // macOS: temp_dir is /var/…, canonically /private/var/…; the app knows
+        // the Workspace by the stored form, so the answer must use it too.
+        let root = std::env::temp_dir().join(format!("abundio-stored-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.md"), "x").unwrap();
+        let (abs, _) = resolve_workspace_file(&root, None, "a.md", true).unwrap();
+        assert_eq!(abs, root.join("a.md").to_string_lossy());
+        assert!(!abs.starts_with("\\\\?\\"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_file_resolves_inside_its_workspace_only() {
+        let root = std::env::temp_dir().join(format!("abundio-file-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.ts"), "x").unwrap();
+        let outside = root.with_extension("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret"), "x").unwrap();
+
+        // Relative to the caller's folder, and absolute.
+        let (abs, rel) = resolve_workspace_file(&root, Some(&root.join("src")), "a.ts", true).unwrap();
+        assert!(abs.ends_with("/src/a.ts"));
+        assert_eq!(rel, "src/a.ts");
+        let (_, rel) = resolve_workspace_file(&root, None, "src/a.ts", true).unwrap();
+        assert_eq!(rel, "src/a.ts");
+        // Out of the folder, by `..` or by an absolute path.
+        let out = outside.join("secret");
+        assert_eq!(
+            resolve_workspace_file(&root, Some(&root), "../x/../../secret", true).unwrap_err().0,
+            "outside_workspace"
+        );
+        assert_eq!(
+            resolve_workspace_file(&root, None, out.to_str().unwrap(), true).unwrap_err().0,
+            "outside_workspace"
+        );
+        // Missing, a folder, the root itself.
+        assert_eq!(resolve_workspace_file(&root, None, "nope.ts", true).unwrap_err().0, "not_found");
+        assert_eq!(resolve_workspace_file(&root, None, "src", true).unwrap_err().0, "not_a_file");
+        assert_eq!(resolve_workspace_file(&root, None, ".", true).unwrap_err().0, "not_a_file");
+        // A file a commit deleted need not exist.
+        let (_, rel) = resolve_workspace_file(&root, None, "src/gone.ts", false).unwrap();
+        assert_eq!(rel, "src/gone.ts");
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&outside).ok();
     }
 
     // ── Tokens ──

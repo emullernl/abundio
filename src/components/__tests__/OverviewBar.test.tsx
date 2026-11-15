@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { OverviewBar, type OverviewBarProps } from "../OverviewBar";
 
 function baseProps(): OverviewBarProps {
@@ -24,6 +26,8 @@ function baseProps(): OverviewBarProps {
 		onToggleStatistics: () => {},
 		fleetConsoleOpen: false,
 		onToggleFleetConsole: () => {},
+		orchestratorViewOpen: false,
+		onToggleOrchestratorView: () => {},
 	};
 }
 
@@ -297,5 +301,66 @@ describe("OverviewBar", () => {
 			button?.click();
 		});
 		expect(clicks).toBe(1);
+	});
+
+	it("the Orchestrator button carries the Orchestrator badge while an Agent runs there", () => {
+		const orchTab = (layout: object) => ({
+			id: "ot",
+			workspaceId: "orch",
+			name: "Orchestrator",
+			layoutJson: JSON.stringify(layout),
+			position: 0,
+			createdAt: 0,
+			updatedAt: 0,
+		});
+		useWorkspaceStore.setState({
+			workspaces: [
+				{
+					id: "orch",
+					kind: "orchestrator",
+					tabs: [
+						orchTab({
+							type: "split",
+							id: "s",
+							direction: "horizontal",
+							ratio: 0.5,
+							first: {
+								type: "terminal",
+								id: "o1",
+								ptyId: "p-o1",
+								agentHandle: "Orchestrator",
+							},
+							second: { type: "terminal", id: "h1", ptyId: "p-h1" },
+						}),
+					],
+				},
+			] as never,
+		});
+		usePtyActivityStore.setState({
+			panePtyMap: {},
+			activities: {
+				"p-o1": { state: "idle", detectionMode: "agent" },
+				"p-h1": { state: "waiting", detectionMode: "agent" },
+			} as never,
+		});
+		act(() => {
+			root.render(<OverviewBar {...baseProps()} />);
+		});
+		const button = Array.from(container.querySelectorAll("button")).find((b) =>
+			b.getAttribute("title")?.startsWith("Orchestrator"),
+		);
+		const badge = button?.querySelector("[data-testid=view-toggle-badge]");
+		// A Waiting helper turns the badge to Waiting; the tooltip says who.
+		expect(badge?.getAttribute("data-status")).toBe("skyblue");
+		expect(button?.getAttribute("title")).toContain(
+			"Orchestrator · Idle\nHelpers · 1 Waiting",
+		);
+
+		// No Agent there: no badge.
+		act(() => {
+			usePtyActivityStore.setState({ activities: {} });
+		});
+		expect(button?.querySelector("[data-testid=view-toggle-badge]")).toBeNull();
+		useWorkspaceStore.setState({ workspaces: [] });
 	});
 });

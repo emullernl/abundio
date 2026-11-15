@@ -41,8 +41,12 @@ export interface FleetSlotInfo {
 	onSwitchTo: () => void;
 	/** Whether this tile is the one in **Spotlight**. */
 	spotlighted: boolean;
-	/** Spotlight this tile, or end Spotlight if it already is. */
-	onToggleSpotlight: () => void;
+	/** Spotlight this tile, or end Spotlight if it already is. Absent where
+	 *  there is no Spotlight (the Orchestrator view's **Peek**): no button. */
+	onToggleSpotlight?: () => void;
+	/** No Close Pane, in the bar or its menu (the Orchestrator view's
+	 *  **Peek**, where closing would end an Agent by accident). */
+	noClose?: boolean;
 }
 
 interface Props {
@@ -501,14 +505,16 @@ function FleetTitleBar({
 			<AttentionFlagBadge paneId={paneId} />
 			<ControlBadge paneId={paneId} />
 			<MouseBadge paneId={paneId} />
-			<TitleBarButton
-				icon={fleet.spotlighted ? Minimize2 : Maximize2}
-				onClick={fleet.onToggleSpotlight}
-				label={withShortcut(
-					fleet.spotlighted ? "Back to the grid" : "Spotlight this agent",
-					spotlightKey,
-				)}
-			/>
+			{fleet.onToggleSpotlight && (
+				<TitleBarButton
+					icon={fleet.spotlighted ? Minimize2 : Maximize2}
+					onClick={fleet.onToggleSpotlight}
+					label={withShortcut(
+						fleet.spotlighted ? "Back to the grid" : "Spotlight this agent",
+						spotlightKey,
+					)}
+				/>
+			)}
 			<TitleBarButton
 				icon={ArrowUpRight}
 				onClick={fleet.onSwitchTo}
@@ -523,7 +529,9 @@ function FleetTitleBar({
 				label="Pane Menu"
 				menuAnchor
 			/>
-			<TitleBarButton icon={X} onClick={onClose} label="Close Pane" />
+			{!fleet.noClose && (
+				<TitleBarButton icon={X} onClick={onClose} label="Close Pane" />
+			)}
 		</div>
 	);
 }

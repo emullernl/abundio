@@ -690,3 +690,135 @@ body,
 		animation: none;
 	}
 }
+
+/* ── Orchestrator graph (ADR-0057) ── */
+.orch-graph .react-flow {
+	background: transparent;
+	--xy-attribution-background-color: transparent;
+}
+.orch-graph .react-flow__attribution a {
+	color: var(--fg-secondary);
+	opacity: 0.5;
+}
+.orch-graph .react-flow__node {
+	cursor: default;
+}
+/* A helper that just appeared grows out of its place. */
+@keyframes orch-node-in {
+	from {
+		opacity: 0;
+		transform: scale(0.8);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+.orch-node-in {
+	animation: orch-node-in 360ms ease-out;
+}
+/* A status change brightens the node once. */
+@keyframes orch-node-pulse {
+	0% {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+	}
+	100% {
+		box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 0%, transparent);
+	}
+}
+.orch-node-pulse {
+	animation: orch-node-pulse 700ms ease-out;
+}
+/* The Orchestrator graph's live-call look, after the organisation chart of
+   Abundia, in the theme's own colours. Only transform, opacity and
+   stroke-dashoffset animate: no SMIL, no CSS filter on SVG, no endless
+   box-shadow (see OrchestratorGraph.tsx's StreamEdge). */
+.orch-graph {
+	--orch-grad: linear-gradient(
+		135deg,
+		var(--accent) 0%,
+		var(--accent-hover) 50%,
+		color-mix(in srgb, var(--accent) 55%, var(--fg-primary)) 100%
+	);
+}
+/* A node a running call is aimed at: its border breathes in the theme's
+   gradient, and a ring swells out of it and fades. */
+.orch-node-receiving {
+	position: relative;
+	box-shadow: 0 0 26px -6px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.orch-node-receiving::after {
+	content: "";
+	position: absolute;
+	inset: -1.5px;
+	border-radius: inherit;
+	padding: 1.5px;
+	background: var(--orch-grad);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	pointer-events: none;
+	/* Its own layer: a masked element's opacity is otherwise repainted
+	   every frame. */
+	will-change: opacity;
+	animation: orch-breathe 2.4s ease-in-out infinite;
+}
+.orch-node-receiving::before {
+	content: "";
+	position: absolute;
+	inset: -1px;
+	border-radius: inherit;
+	border: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+	pointer-events: none;
+	will-change: transform, opacity;
+	animation: orch-ripple 2.2s ease-out infinite;
+}
+@keyframes orch-breathe {
+	0%,
+	100% {
+		opacity: 0.35;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+@keyframes orch-ripple {
+	0% {
+		transform: scale(1);
+		opacity: 0.9;
+	}
+	70%,
+	100% {
+		transform: scale(1.06, 1.25);
+		opacity: 0;
+	}
+}
+/* A running call's light (OrchestratorGraph.tsx, CallLight): moved by a
+   transform animation alone, so the compositor runs it and nothing repaints. */
+.orch-light {
+	position: absolute;
+	left: 0;
+	top: 0;
+	border-radius: 50%;
+	pointer-events: none;
+	will-change: transform;
+	z-index: 1000;
+}
+@media (prefers-reduced-motion: reduce) {
+	.orch-light {
+		display: none;
+	}
+	.orch-node-in,
+	.orch-node-pulse {
+		animation: none;
+	}
+	.orch-node-receiving::after {
+		animation: none;
+		opacity: 1;
+	}
+	.orch-node-receiving::before {
+		display: none;
+	}
+}

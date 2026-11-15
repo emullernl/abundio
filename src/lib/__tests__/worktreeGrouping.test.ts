@@ -41,6 +41,16 @@ describe("buildWorkspaceRows", () => {
 		expect(rows.every((r) => r.kind === "standalone")).toBe(true);
 	});
 
+	it("never makes the Orchestrator workspace a row (ADR-0057)", () => {
+		const list = [
+			ws("a", 0),
+			{ ...ws("o", -1), kind: "orchestrator" as const },
+		];
+		const rows = buildWorkspaceRows(list, {});
+		expect(rows).toHaveLength(1);
+		expect(rows[0].kind === "standalone" && rows[0].workspace.id).toBe("a");
+	});
+
 	it("does not group a single-worktree repo (no set chrome)", () => {
 		const list = [ws("a", 0)];
 		const facts = { a: { worktreeGroupKey: KEY, isMainWorktree: true } };

@@ -82,6 +82,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "022_tab_ownership",
         include_str!("../migrations/022_tab_ownership.sql"),
     ),
+    (
+        "023_orchestrator",
+        include_str!("../migrations/023_orchestrator.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {

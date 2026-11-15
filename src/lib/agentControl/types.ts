@@ -67,6 +67,20 @@ export type ControlRequest =
 	  }
 	/** Another Workspace of the Profile; Rust routed it here as `target`. */
 	| { op: "workspace.close"; name: string; force: boolean }
+	| {
+			/** Show the user a file (ADR-0058). Rust has resolved `path`
+			 *  (absolute) and `rel` (Workspace-relative) and checked both lie
+			 *  inside the target Workspace. */
+			op: "file.open";
+			path: string;
+			rel: string;
+			window: boolean;
+			focus: boolean;
+			line: number | null;
+			diff: boolean;
+			preview: boolean;
+			commit: string | null;
+	  }
 	| { op: "notes.read" }
 	| { op: "notes.append"; text: string }
 	| { op: "notes.write"; text: string }
@@ -122,6 +136,8 @@ export type ControlErrorCode =
 	| "own_workspace"
 	/** `workspace close` over unsaved edits; `--force` never overrides it. */
 	| "unsaved"
+	/** `file open`: a folder, or a file no File window can show. */
+	| "not_a_file"
 	| "internal";
 
 /** Thrown by a handler; becomes `{ error: { code, message } }`. */

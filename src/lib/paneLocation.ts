@@ -44,6 +44,6 @@ export function revealPane(
 export function switchToPane(paneId: string): void {
 	const loc = findPaneLocation(paneId);
 	if (!loc) return;
-	useWindowUiStore.getState().setFleetConsoleOpen(false);
+	useWindowUiStore.getState().showWorkspaceView();
 	revealPane(paneId, loc.workspaceId, loc.tabId);
 }

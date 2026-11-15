@@ -96,7 +96,12 @@ export interface PtySpawnOptions {
 	inheritFromWorkspaceId?: string;
 	/** A **New task** launch: the shell runs this argv (prompt included, as one
 	 *  element) after optional setup commands. zsh and bash only. ADR-0042. */
-	task?: { argv: string[]; setup?: string };
+	task?: {
+		argv: string[];
+		setup?: string;
+		fallback?: string;
+		fallbackWithinSecs?: number;
+	};
 }
 
 export const pty = {
@@ -178,6 +183,71 @@ export const pty = {
 		invoke<void>("pty_cleanup_stale_logs", { paneIds }),
 };
 
+/** The Profile's Orchestrator workspace and its Agent choice (ADR-0057). */
+export const orchestrator = {
+	/** Creates (first time) and returns the Profile's Orchestrator workspace,
+	 *  rewriting its instruction files. */
+	ensure: (profileId: string) =>
+		invoke<WorkspaceWithTabs>("orchestrator_ensure", { profileId }),
+	agent: (profileId: string) =>
+		invoke<string | null>("orchestrator_agent_get", { profileId }),
+	setAgent: (profileId: string, agentId: string | null) =>
+		invoke<void>("orchestrator_agent_set", { profileId, agentId }),
+	/** The Profile's **Orchestrator tabs** holding files (ADR-0058) and the
+	 *  selected one (`null`: the graph). */
+	tabs: (profileId: string) =>
+		invoke<{ tabs: OrchestratorFileTab[]; selected: string | null }>(
+			"orchestrator_tabs_list",
+			{ profileId },
+		),
+	addTab: (profileId: string, tab: NewOrchestratorFileTab) =>
+		invoke<OrchestratorFileTab>("orchestrator_tab_add", { profileId, tab }),
+	removeTab: (profileId: string, id: string) =>
+		invoke<void>("orchestrator_tab_remove", { profileId, id }),
+	selectTab: (profileId: string, id: string | null) =>
+		invoke<void>("orchestrator_tab_select", { profileId, id }),
+	/** The Profile's **Orchestrator folder** (ADR-0059). */
+	folder: (profileId: string) =>
+		invoke<OrchestratorFolder>("orchestrator_folder_get", { profileId }),
+	/** Chooses it (`null`: back to the default). Rust refuses a folder that is
+	 *  not empty and not an Orchestrator folder, or belongs to a Workspace;
+	 *  every Window hears `orchestrator-folder-changed`. */
+	setFolder: (profileId: string, path: string | null) =>
+		invoke<OrchestratorFolder>("orchestrator_folder_set", { profileId, path }),
+};
+
+/** A Profile's **Orchestrator folder**: `isDefault` when it is inside
+ *  Abundio's data folder (deleted with the Profile), not one the user chose. */
+export interface OrchestratorFolder {
+	path: string;
+	isDefault: boolean;
+	/** Where Reset to default puts it (`orchestrator/<Profile name>`). */
+	defaultPath: string;
+}
+
+/** One **Orchestrator tab** holding a file. `path` is absolute for `file`,
+ *  Workspace-relative for `diff` and `commit`. */
+export interface OrchestratorFileTab {
+	id: string;
+	workspaceId: string;
+	kind: "file" | "diff" | "commit";
+	path: string;
+	commitOid: string | null;
+	preview: boolean;
+}
+
+export type NewOrchestratorFileTab = Omit<
+	OrchestratorFileTab,
+	"id" | "commitOid" | "preview"
+> & { commitOid?: string | null; preview?: boolean };
+
+/** See `workspaces.folderCheck`. */
+export interface FolderCheck {
+	takenBy: { id: string; name: string } | null;
+	orchestrator: boolean;
+	otherProfiles: string[];
+}
+
 export const workspaces = {
 	create: (name: string, rootFolder: string, profileId: string) =>
 		invoke<WorkspaceWithTabs>("workspace_create", {
@@ -188,6 +258,13 @@ export const workspaces = {
 
 	list: (profileId: string) =>
 		invoke<WorkspaceWithTabs[]>("workspace_list", { profileId }),
+
+	/** What a Workspace of `profileId` would meet in `rootFolder`: another
+	 *  of its Workspaces there, an Orchestrator folder (both refused), or
+	 *  other Profiles' Workspaces (allowed). Rust enforces the refusals on
+	 *  create and on a folder change too. */
+	folderCheck: (rootFolder: string, profileId: string) =>
+		invoke<FolderCheck>("workspace_folder_check", { rootFolder, profileId }),
 
 	update: (id: string, updates: WorkspaceUpdate) =>
 		invoke<void>("workspace_update", { id, updates }),

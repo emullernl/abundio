@@ -4,6 +4,10 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { agentsInHandleOrderNow } from "./agentPanes";
 import { cycleTile, type FleetTile } from "./fleetConsole";
 import { cycleFleet, fleetConsoleShowing } from "./fleetFocus";
+import {
+	cycleOrchestrator,
+	orchestratorCycleApplies,
+} from "./orchestratorCycle";
 import { switchToPane } from "./paneLocation";
 
 /**
@@ -25,10 +29,16 @@ export function nextAgentPane(
 }
 
 /** Run the Agent cycle. In the Fleet Console it moves the **Focused tile** in
- *  the Console's own order and stays there; elsewhere it is a **Switch to**. */
+ *  the Console's own order and stays there; in the Orchestrator view it moves
+ *  the **Peek** (`orchestratorCycle.ts`); elsewhere it is a **Switch to**. */
 export function cycleAgent(step: 1 | -1): void {
 	if (fleetConsoleShowing()) {
 		cycleFleet(step);
+		return;
+	}
+	// In the Orchestrator view it moves the Peek and stays there.
+	if (orchestratorCycleApplies()) {
+		cycleOrchestrator(step);
 		return;
 	}
 	const ws = useWorkspaceStore.getState();

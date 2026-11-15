@@ -34,6 +34,7 @@ export type KeyAction =
 	| "open-markdown-window"
 	| "toggle-statistics-overlay"
 	| "toggle-fleet-console"
+	| "toggle-orchestrator-view"
 	| "fleet-spotlight"
 	| "fleet-zoom-reset"
 	| "open-settings"
@@ -124,6 +125,7 @@ const WORKSPACE_GLOBAL_ACTIONS: Set<KeyAction> = new Set([
 	"toggle-markdown-preview",
 	"toggle-statistics-overlay",
 	"toggle-fleet-console",
+	"toggle-orchestrator-view",
 	"open-settings",
 	"save-file",
 ]);
@@ -446,6 +448,13 @@ const DEFAULT_BINDINGS: KeyBinding[] = [
 		ctrl: !isMac,
 		action: "toggle-fleet-console",
 	},
+	{
+		key: "o",
+		meta: isMac,
+		shift: true,
+		ctrl: !isMac,
+		action: "toggle-orchestrator-view",
+	},
 	// Fleet Console only (gated in App): outside the console these keys reach
 	// the terminal untouched.
 	{
@@ -611,6 +620,10 @@ export const ACTION_META: Record<KeyAction, ActionMeta> = {
 	"toggle-fleet-console": {
 		label: "Toggle Fleet Console",
 		category: "Fleet Console",
+	},
+	"toggle-orchestrator-view": {
+		label: "Toggle Orchestrator",
+		category: "Panels",
 	},
 	"fleet-spotlight": {
 		label: "Spotlight tile / back to grid",

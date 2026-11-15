@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ListPlus, Plus, RotateCcw } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { useWorkWorkspaces } from "../../hooks/useWorkWorkspaces";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import {
 	type AgentCount,
@@ -13,7 +14,6 @@ import type { CodingAgent } from "../../lib/types";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { BackButton, NewAgentDialog } from "./NewAgentDialog";
 import { openInBackground } from "./WorkspacePicker";
 
@@ -22,7 +22,7 @@ export type AddAgentStep = "choose" | "new" | "relaunch";
 /** The Relaunch rows for this Window, kept live as Workspaces open. Computed
  *  once by the Console and handed to the dialog, since it parses every Tab. */
 export function useRelaunchRows(): RelaunchRow[] {
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const workspaces = useWorkWorkspaces();
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const opened = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const agents = useSettingsStore((s) => s.agents);

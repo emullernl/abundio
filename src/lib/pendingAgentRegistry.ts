@@ -43,6 +43,10 @@ export interface PendingTask {
 	setup?: string;
 	/** The Agent's id, so the pane enters agent mode as it spawns. */
 	agentId: string;
+	/** The plain launch line, run instead when `argv` (a session resume)
+	 *  fails within `fallbackWithinSecs`. The Orchestrator only (ADR-0057). */
+	fallback?: string;
+	fallbackWithinSecs?: number;
 }
 
 export function setPendingTask(paneId: string, task: PendingTask): void {

@@ -12,6 +12,12 @@ export function fleetConsoleShowing(): boolean {
 	return s.fleetConsoleOpen && !s.statisticsOverlayOpen;
 }
 
+/** Whether the Orchestrator view is the view on screen (ADR-0057). */
+export function orchestratorViewShowing(): boolean {
+	const s = useWindowUiStore.getState();
+	return s.orchestratorViewOpen && !s.statisticsOverlayOpen;
+}
+
 /**
  * The pane that pane-scoped commands act on: the **Focused tile** while the
  * Fleet Console is on screen, otherwise the Workspace view's **Focused pane**.
@@ -73,9 +79,19 @@ export function useTargetPaneId(): string | null {
  * Wrap a Workspace-view shortcut so it does nothing while the console is on
  * screen: it would change a layout or sidebar the user cannot see.
  */
-export function workspaceViewOnly(fn: () => void): () => void {
+/** Like `workspaceViewOnly`, but also live in the Orchestrator view, where
+ *  the Orchestrator workspace is the Active workspace and its Tabs and panes
+ *  are on screen (ADR-0057): splits, Tabs and saving. */
+export function paneLayoutOnly(fn: () => void): () => void {
 	return () => {
 		if (fleetConsoleShowing()) return;
+		fn();
+	};
+}
+
+export function workspaceViewOnly(fn: () => void): () => void {
+	return () => {
+		if (fleetConsoleShowing() || orchestratorViewShowing()) return;
 		fn();
 	};
 }

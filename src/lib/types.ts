@@ -89,7 +89,13 @@ export interface Workspace {
 	/** Worktree setup commands run in a newly created worktree's terminal after
 	 *  an in-app Add worktree. Only meaningful on a main-worktree Workspace. */
 	worktreeSetupCommands: string;
+	/** `"orchestrator"` for a Profile's Orchestrator workspace (ADR-0057),
+	 *  `"work"` otherwise. Absent is `"work"` (test and demo fixtures). Read it
+	 *  through `lib/workspaceKind.ts`. */
+	kind?: WorkspaceKind;
 }
+
+export type WorkspaceKind = "work" | "orchestrator";
 
 export interface WorkspaceUpdate {
 	name?: string;
@@ -114,6 +120,8 @@ export interface WorkspaceWithTabs {
 	createdAt: number;
 	updatedAt: number;
 	worktreeSetupCommands: string;
+	/** See `Workspace.kind`. */
+	kind?: WorkspaceKind;
 	tabs: Tab[];
 }
 
@@ -408,7 +416,7 @@ export interface PromptActionRow {
 	id: string;
 	name: string;
 	body: string;
-	scopeKind: "all" | "set";
+	scopeKind: "all" | "set" | "orchestrator";
 	scopeAgentIds: string[];
 	paramsJson: string;
 	showInBar: boolean;
@@ -420,7 +428,7 @@ export interface PromptActionRow {
 export interface PromptActionCreate {
 	name: string;
 	body: string;
-	scopeKind?: "all" | "set";
+	scopeKind?: "all" | "set" | "orchestrator";
 	scopeAgentIds?: string[];
 	paramsJson?: string;
 	showInBar?: boolean;
@@ -431,7 +439,7 @@ export interface PromptActionCreate {
 export interface PromptActionUpdate {
 	name?: string;
 	body?: string;
-	scopeKind?: "all" | "set";
+	scopeKind?: "all" | "set" | "orchestrator";
 	scopeAgentIds?: string[];
 	paramsJson?: string;
 	showInBar?: boolean;

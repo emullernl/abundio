@@ -9,6 +9,7 @@ import {
 	HelpCircle,
 	LayoutGrid,
 	type LucideIcon,
+	Network,
 } from "lucide-react";
 import {
 	type ComponentType,
@@ -16,6 +17,7 @@ import {
 	memo,
 	type ReactNode,
 } from "react";
+import { useOrchestratorBadge } from "../hooks/useOrchestratorBadge";
 import { useShortcutLabel, withShortcut } from "../hooks/useShortcutLabel";
 import type { DotStatus } from "../stores/ptyActivityStore";
 import { AgentStatusIcon, ShellChevronGlyph } from "./AgentStatusIcon";
@@ -73,6 +75,9 @@ export interface OverviewBarProps {
 	/** Show/hide the Fleet Console. Navigation only, like Statistics: it
 	 *  switches view and never mutates workspace state. See ADR-0040. */
 	onToggleFleetConsole: () => void;
+	/** Whether the Orchestrator view is on screen (ADR-0057). */
+	orchestratorViewOpen: boolean;
+	onToggleOrchestratorView: () => void;
 }
 
 const TILE_WIDTH = 44;
@@ -152,6 +157,8 @@ type GlyphComponent = ComponentType<{
 export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 	const fleetKey = useShortcutLabel("toggle-fleet-console");
 	const statsKey = useShortcutLabel("toggle-statistics-overlay");
+	const orchestratorKey = useShortcutLabel("toggle-orchestrator-view");
+	const orchestratorBadge = useOrchestratorBadge();
 	const {
 		openedWorkspaces,
 		totalWorkspaces,
@@ -172,6 +179,8 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 		onToggleStatistics,
 		fleetConsoleOpen,
 		onToggleFleetConsole,
+		orchestratorViewOpen,
+		onToggleOrchestratorView,
 	} = props;
 
 	return (
@@ -231,6 +240,18 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 				style={{ marginLeft: "auto", paddingLeft: SECTION_GAP, gap: 6 }}
 			>
 				<ViewToggle
+					open={orchestratorViewOpen}
+					onClick={onToggleOrchestratorView}
+					title={withShortcut(
+						orchestratorBadge
+							? `Orchestrator — ask about every agent in this profile\n${orchestratorBadge.tooltip}`
+							: "Orchestrator — ask about every agent in this profile",
+						orchestratorKey,
+					)}
+					icon={Network}
+					badge={orchestratorBadge?.status}
+				/>
+				<ViewToggle
 					open={fleetConsoleOpen}
 					onClick={onToggleFleetConsole}
 					title={withShortcut(
@@ -258,11 +279,14 @@ function ViewToggle({
 	onClick,
 	title,
 	icon: Icon,
+	badge,
 }: {
 	open: boolean;
 	onClick: () => void;
 	title: string;
 	icon: LucideIcon;
+	/** A status icon over the button's corner (the **Orchestrator badge**). */
+	badge?: DotStatus;
 }) {
 	return (
 		<button
@@ -271,7 +295,7 @@ function ViewToggle({
 			title={title}
 			aria-label={title}
 			aria-pressed={open}
-			className="flex items-center justify-center flex-shrink-0"
+			className="relative flex items-center justify-center flex-shrink-0"
 			style={{
 				width: 34,
 				height: TILE_HEIGHT,
@@ -284,6 +308,24 @@ function ViewToggle({
 			}}
 		>
 			<Icon size={14} strokeWidth={2.25} style={{ flexShrink: 0 }} />
+			{badge && (
+				<span
+					data-testid="view-toggle-badge"
+					data-status={badge}
+					className="absolute flex items-center justify-center"
+					style={{
+						top: -5,
+						right: -5,
+						width: 15,
+						height: 15,
+						borderRadius: 8,
+						background: "var(--bg-primary)",
+						pointerEvents: "none",
+					}}
+				>
+					<AgentStatusIcon status={badge} size={11} />
+				</span>
+			)}
 		</button>
 	);
 }

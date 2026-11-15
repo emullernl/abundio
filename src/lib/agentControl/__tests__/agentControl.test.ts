@@ -6,7 +6,7 @@ import {
 	describePane,
 	type PaneLiveFacts,
 } from "../describe";
-import { type BufferLike, readBuffer } from "../readBuffer";
+import { type BufferLike, readBuffer, suggestionStart } from "../readBuffer";
 import { resolveTarget, workspacePanes } from "../resolveTarget";
 import { ControlError } from "../types";
 
@@ -260,5 +260,54 @@ describe("readBuffer", () => {
 	it("starts a new line when the viewport begins mid-wrap", () => {
 		const b = buffer([{ text: "aaa" }, { text: "bbb", wrapped: true }], 1);
 		expect(readBuffer(b, 1, { lines: null, visible: true })).toEqual(["bbb"]);
+	});
+
+	/** A row of cells: `dim` marks the dim columns [from, to). */
+	const row = (text: string, dim: [number, number] | null = null) => ({
+		isWrapped: false,
+		length: text.length,
+		translateToString: (trim?: boolean, from = 0, to = text.length) => {
+			const t = text.slice(from, to);
+			return trim ? t.replace(/\s+$/, "") : t;
+		},
+		getCell: (x: number) => ({
+			getChars: () => text[x] ?? "",
+			isDim: () => (dim && x >= dim[0] && x < dim[1] ? 1 : 0),
+		}),
+	});
+
+	it("leaves out a suggestion: dim text after the cursor on its row", () => {
+		const rows = [
+			row("● Done."),
+			row("> add the confirmation dialog    ", [2, 33]),
+			row("  ? for shortcuts", [2, 17]),
+		];
+		const b: BufferLike = {
+			length: rows.length,
+			viewportY: 0,
+			baseY: 0,
+			cursorX: 2,
+			cursorY: 1,
+			getLine: (y) => rows[y],
+		};
+		// The hint under the box is dim too, but not where the cursor is.
+		expect(readBuffer(b, 24, all)).toEqual([
+			"● Done.",
+			">",
+			"  ? for shortcuts",
+		]);
+	});
+
+	it("keeps what was typed, and a row the cursor is not on", () => {
+		expect(suggestionStart(row("> fix the build"), 2)).toBeNull();
+		// Typed text, then a dim completion: not all dim, so kept whole.
+		expect(suggestionStart(row("> fix the build", [9, 15]), 2)).toBeNull();
+		expect(suggestionStart(row("> fix the build", [2, 15]), 2)).toBe(2);
+		// Only blanks after the cursor: nothing to leave out.
+		expect(suggestionStart(row(">    "), 2)).toBeNull();
+		// No cell access (an older buffer): never cut.
+		expect(
+			suggestionStart({ isWrapped: false, translateToString: () => "" }, 0),
+		).toBeNull();
 	});
 });

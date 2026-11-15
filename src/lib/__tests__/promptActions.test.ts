@@ -366,6 +366,32 @@ describe("actionsForPane", () => {
 		expect(out.map((a) => a.id)).toEqual(["s", "g"]);
 	});
 
+	it("offers the Orchestrator's pane its own actions only (ADR-0057)", () => {
+		const orch = action({
+			id: "o",
+			name: "Who needs me?",
+			position: 9,
+			scope: { kind: "orchestrator" },
+		});
+		const elsewhere = actionsForPane([global, scoped, orch], "claude-code", {
+			barOnly: true,
+		});
+		expect(elsewhere.map((a) => a.id)).toEqual(["s", "g"]);
+		const there = actionsForPane([global, scoped, orch], "claude-code", {
+			barOnly: true,
+			atOrchestrator: true,
+		});
+		// Not a coding Agent: neither `all` nor its Agent's set reaches it.
+		expect(there.map((a) => a.id)).toEqual(["o"]);
+		// With none of its own, its bar is empty.
+		expect(
+			actionsForPane([global, scoped], "claude-code", {
+				barOnly: true,
+				atOrchestrator: true,
+			}),
+		).toEqual([]);
+	});
+
 	it("shows global-only while the Agent id is unresolved", () => {
 		// The auto-launch path marks a PTY as an Agent knowing only the command
 		// string; the id is backfilled later. A usable bar beats no bar.

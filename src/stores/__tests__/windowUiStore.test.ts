@@ -95,3 +95,46 @@ describe("windowUiStore — Fleet Console", () => {
 		expect(s.fleetConsoleOpen).toBe(true);
 	});
 });
+
+describe("windowUiStore — Orchestrator view (ADR-0057)", () => {
+	beforeEach(() => {
+		useWindowUiStore.setState({
+			fleetConsoleOpen: false,
+			orchestratorViewOpen: false,
+			statisticsOverlayOpen: false,
+		});
+	});
+
+	it("is exclusive with the Fleet Console, both ways", () => {
+		const ui = () => useWindowUiStore.getState();
+		ui().toggleOrchestratorView();
+		expect(ui().orchestratorViewOpen).toBe(true);
+		ui().toggleFleetConsole();
+		expect(ui().fleetConsoleOpen).toBe(true);
+		expect(ui().orchestratorViewOpen).toBe(false);
+		ui().setOrchestratorViewOpen(true);
+		expect(ui().fleetConsoleOpen).toBe(false);
+		ui().setFleetConsoleOpen(true);
+		expect(ui().orchestratorViewOpen).toBe(false);
+	});
+
+	it("reveals itself from under Statistics instead of closing", () => {
+		useWindowUiStore.setState({
+			orchestratorViewOpen: true,
+			statisticsOverlayOpen: true,
+		});
+		useWindowUiStore.getState().toggleOrchestratorView();
+		const s = useWindowUiStore.getState();
+		expect(s.orchestratorViewOpen).toBe(true);
+		expect(s.statisticsOverlayOpen).toBe(false);
+	});
+
+	it("showWorkspaceView leaves both other views", () => {
+		useWindowUiStore.setState({ orchestratorViewOpen: true });
+		useWindowUiStore.getState().showWorkspaceView();
+		expect(useWindowUiStore.getState().orchestratorViewOpen).toBe(false);
+		useWindowUiStore.setState({ fleetConsoleOpen: true });
+		useWindowUiStore.getState().showWorkspaceView();
+		expect(useWindowUiStore.getState().fleetConsoleOpen).toBe(false);
+	});
+});

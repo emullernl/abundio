@@ -27,6 +27,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useIsOrchestratorPane } from "../../hooks/useIsOrchestratorPane";
 import {
 	shortcutLabelFor,
 	useKeybindingOverrides,
@@ -135,9 +136,10 @@ export function ActionBar({
 	const [fired, setFired] = useState<PulseEvent | null>(null);
 	useEffect(() => subscribePulse(paneId, setFired), [paneId]);
 
+	const atOrchestrator = useIsOrchestratorPane(paneId);
 	const visible = useMemo(
-		() => actionsForPane(actions, agentId, { barOnly: true }),
-		[actions, agentId],
+		() => actionsForPane(actions, agentId, { barOnly: true, atOrchestrator }),
+		[actions, agentId, atOrchestrator],
 	);
 
 	// Agent mode is read from `detectionMode` — the canonical signal the status

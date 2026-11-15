@@ -3,6 +3,7 @@ import { useProfileStore } from "../../stores/profileStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Plus, X } from "../Icons";
+import { OrchestratorFolderRow } from "./OrchestratorFolderRow";
 import { SectionLabel, ToggleRow } from "./primitives";
 
 /* ─── Profile row ─── */
@@ -235,21 +236,23 @@ export function ProfilesSection() {
 				/>
 				<div className="flex flex-col gap-0.5">
 					{profiles.map((p) => (
-						<ProfileRow
-							key={p.id}
-							name={p.name}
-							canDelete={profiles.length > 1}
-							onRename={(newName) =>
-								renameProfile(p.id, newName).catch(() => {})
-							}
-							onDelete={() =>
-								setPendingDelete({
-									id: p.id,
-									name: p.name,
-									ownerLabel: ownershipMap[p.id] ?? null,
-								})
-							}
-						/>
+						<div key={p.id}>
+							<ProfileRow
+								name={p.name}
+								canDelete={profiles.length > 1}
+								onRename={(newName) =>
+									renameProfile(p.id, newName).catch(() => {})
+								}
+								onDelete={() =>
+									setPendingDelete({
+										id: p.id,
+										name: p.name,
+										ownerLabel: ownershipMap[p.id] ?? null,
+									})
+								}
+							/>
+							<OrchestratorFolderRow profileId={p.id} />
+						</div>
 					))}
 				</div>
 			</div>
@@ -270,7 +273,7 @@ export function ProfilesSection() {
 					message={
 						pendingDelete.ownerLabel
 							? "This profile is currently open in another window. Deleting it will close that window and permanently remove all of its workspaces, tabs, and saved layouts."
-							: "This permanently removes the profile and all of its workspaces, tabs, and saved layouts."
+							: "This permanently removes the profile and all of its workspaces, tabs, and saved layouts, and its Orchestrator folder when that is the default one."
 					}
 					confirmLabel="Delete profile"
 					confirmVariant="danger"

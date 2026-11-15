@@ -104,7 +104,13 @@ interface ExplorerState {
 	clearWorkspaceFilePanes: (workspaceId: string) => void;
 
 	// Navigates to a file by updating the layout (or creating a new tab)
-	openFile: (workspaceId: string, filePath: string) => Promise<void>;
+	/** `activate: false` opens it without switching to its Tab (Agent
+	 *  control's `file open` without `--focus`). */
+	openFile: (
+		workspaceId: string,
+		filePath: string,
+		opts?: { activate?: boolean },
+	) => Promise<void>;
 	openFileAsDiff: (workspaceId: string, filePath: string) => Promise<void>;
 	openDiff: (
 		workspaceId: string,
@@ -113,6 +119,7 @@ interface ExplorerState {
 		modified: string,
 		section?: GitChangedFile["section"] | null,
 		isDeleted?: boolean,
+		opts?: { activate?: boolean },
 	) => void;
 	/** Open (or focus) the read-only **Commit diff pane** for one file at one
 	 *  commit. Keyed per commit, so it never replaces the live `diff:` pane. */
@@ -123,6 +130,7 @@ interface ExplorerState {
 		original: string,
 		modified: string,
 		isDeleted?: boolean,
+		opts?: { activate?: boolean },
 	) => void;
 	/** Shared body of `openDiff` / `openCommitDiff`, by pane key. */
 	openDiffPane: (
@@ -132,6 +140,16 @@ interface ExplorerState {
 		modified: string,
 		section: GitChangedFile["section"] | null,
 		isDeleted: boolean,
+		opts?: { activate?: boolean },
+	) => void;
+	/** Seed a diff pane's content under `paneId` before it mounts (an
+	 *  Orchestrator tab showing a live diff, ADR-0058). */
+	seedDiffPane: (
+		paneId: string,
+		diffKey: string,
+		original: string,
+		modified: string,
+		section: GitChangedFile["section"] | null,
 	) => void;
 	/** Fill a Commit diff pane that has no content — one restored from a saved
 	 *  layout, since diff content lives only in memory. Commits are immutable,
@@ -425,7 +443,8 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		});
 	},
 
-	openFile: async (workspaceId, filePath) => {
+	openFile: async (workspaceId, filePath, opts) => {
+		const activate = opts?.activate ?? true;
 		const wsStore = useWorkspaceStore.getState();
 		const workspace = wsStore.workspaces.find((w) => w.id === workspaceId);
 		if (workspace) {
@@ -434,15 +453,17 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				if (!layout) continue;
 				const existing = findFilePaneByPath(layout, filePath);
 				if (existing) {
-					wsStore.setActiveTab(workspaceId, tab.id);
-					wsStore.setFocusedPane(existing.id);
+					if (activate) {
+						wsStore.setActiveTab(workspaceId, tab.id);
+						wsStore.setFocusedPane(existing.id);
+					}
 					return;
 				}
 			}
 		}
 		// Markdown files open with a live preview pane beside them (auto-open).
 		const { layout: seedLayout } = buildFilePaneLayout(filePath);
-		await wsStore.createTab(workspaceId, undefined, seedLayout);
+		await wsStore.createTab(workspaceId, undefined, seedLayout, { activate });
 	},
 
 	openFileAsDiff: async (workspaceId, filePath) => {
@@ -515,7 +536,15 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		});
 	},
 
-	openDiff: (workspaceId, filePath, original, modified, section, isDeleted) =>
+	openDiff: (
+		workspaceId,
+		filePath,
+		original,
+		modified,
+		section,
+		isDeleted,
+		opts,
+	) =>
 		get().openDiffPane(
 			workspaceId,
 			`diff:${filePath}`,
@@ -523,9 +552,18 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			modified,
 			section ?? null,
 			isDeleted ?? false,
+			opts,
 		),
 
-	openCommitDiff: (workspaceId, oid, filePath, original, modified, isDeleted) =>
+	openCommitDiff: (
+		workspaceId,
+		oid,
+		filePath,
+		original,
+		modified,
+		isDeleted,
+		opts,
+	) =>
 		get().openDiffPane(
 			workspaceId,
 			commitDiffKey(oid, filePath),
@@ -533,6 +571,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 			modified,
 			null,
 			isDeleted ?? false,
+			opts,
 		),
 
 	loadCommitDiff: async (paneId, cwd) => {
@@ -581,7 +620,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		modified,
 		section,
 		isDeleted,
+		opts,
 	) => {
+		const activate = opts?.activate ?? true;
 		const wsStore = useWorkspaceStore.getState();
 		const workspace = wsStore.workspaces.find((w) => w.id === workspaceId);
 
@@ -605,8 +646,10 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 							},
 						},
 					}));
-					wsStore.setActiveTab(workspaceId, tab.id);
-					wsStore.setFocusedPane(existing.id);
+					if (activate) {
+						wsStore.setActiveTab(workspaceId, tab.id);
+						wsStore.setFocusedPane(existing.id);
+					}
 					return;
 				}
 			}
@@ -653,8 +696,37 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 		// Always open diff in a new tab
 		useWorkspaceStore
 			.getState()
-			.createTab(workspaceId, undefined, seedLayout)
+			.createTab(workspaceId, undefined, seedLayout, { activate })
 			.catch(() => {});
+	},
+
+	seedDiffPane: (paneId, diffKey, original, modified, section) => {
+		const realPath = diffRealPath(diffKey);
+		const ext = realPath.includes(".")
+			? realPath.split(".").pop() || null
+			: null;
+		set((s) => ({
+			filePanes: {
+				...s.filePanes,
+				[paneId]: {
+					filePath: diffKey,
+					fileName: diffPaneName(diffKey),
+					fileType: "diff",
+					content: null,
+					mime: null,
+					isDirty: false,
+					language: getLanguage(ext),
+					diffSource: "git",
+					externallyChanged: false,
+					deletedOnDisk: false,
+					loading: false,
+					diffOriginal: original,
+					diffModified: modified,
+					diffSection: section,
+					isDeleted: false,
+				},
+			},
+		}));
 	},
 
 	startCreate: async (parentDir, kind) => {

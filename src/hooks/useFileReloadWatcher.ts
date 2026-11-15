@@ -1,11 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { fs as fsApi } from "../lib/ipc";
+import { tabWorkspaceIds } from "../lib/orchestratorTabs";
 import {
 	applyFsChange as applyIndexFsChange,
 	dropWorkspaceIndex,
 	loadWorkspaceIndex,
 } from "../lib/workspaceFileIndex";
 import { useExplorerStore } from "../stores/explorerStore";
+import { useOrchestratorStore } from "../stores/orchestratorStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
@@ -83,7 +85,15 @@ export function diffRoots(
  * Closing or deleting a workspace stops its watcher.
  */
 export function useFileReloadWatcher() {
-	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	const opened = usePtyActivityStore((s) => s.openedWorkspaceIds);
+	const fileTabs = useOrchestratorStore((s) => s.fileTabs);
+	// Workspaces with a file open in an Orchestrator tab are watched too,
+	// Opened or not, so those tabs reload on outside changes (ADR-0058).
+	const openedWorkspaceIds = useMemo(() => {
+		const extra = tabWorkspaceIds(fileTabs);
+		if (extra.every((id) => opened.has(id))) return opened;
+		return new Set([...opened, ...extra]);
+	}, [opened, fileTabs]);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeRef = useRef<Map<string, ActiveWatcher>>(new Map());
 
