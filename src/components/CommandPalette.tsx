@@ -9,7 +9,6 @@ import { useWorkWorkspaces } from "../hooks/useWorkWorkspaces";
 import { isAgentPane } from "../lib/firePromptAction";
 import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
-import { pty } from "../lib/ipc";
 import { type KeyAction, triggerAction } from "../lib/keybindings";
 import { fileWindowTargetForPane } from "../lib/openFileWindow";
 import { isOrchestratorPane } from "../lib/orchestrator";
@@ -17,6 +16,7 @@ import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
+import { typedLaunch } from "../lib/typedLaunch";
 import { addWorktreeTargetId } from "../lib/worktreeGrouping";
 import { useExplorerStore } from "../stores/explorerStore";
 import { useProfileStore } from "../stores/profileStore";
@@ -345,11 +345,7 @@ export function CommandPalette({
 					label: `Launch ${agent.name}`,
 					category: "Agents",
 					action: () => {
-						const managed = getTerminal(focusedPaneId);
-						if (!managed?.ptyId) return;
-						const cmd = [agent.command, ...(agent.args || [])].join(" ");
-						pty.write(managed.ptyId, `${cmd}\n`);
-						usePtyActivityStore.getState().setAgentPty(managed.ptyId);
+						typedLaunch(focusedPaneId, agent.id);
 					},
 				});
 			}
