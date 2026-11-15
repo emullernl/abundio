@@ -178,6 +178,38 @@ pub fn migrate_geometry_to_main(
     serde_json::to_string_pretty(&root).ok()
 }
 
+/// Moves a window that is still at an old default size to the new default,
+/// inside the `tauri-plugin-window-state` JSON file contents. The plugin
+/// saves a window's size whenever it closes, resized or not, so a saved size
+/// equal to the old default (at any scale) is taken as never chosen. Any other
+/// size is the user's and is kept. Sizes are logical points; the file holds
+/// physical pixels, so the scale is read from the saved size itself, and must
+/// be one screens use (a quarter step). Returns
+/// the rewritten JSON, or `None` when there is nothing to change.
+pub fn upgrade_old_default_size(
+    contents: &str,
+    label: &str,
+    old: (f64, f64),
+    new: (f64, f64),
+) -> Option<String> {
+    let mut root: serde_json::Value = serde_json::from_str(contents).ok()?;
+    let entry = root.as_object_mut()?.get_mut(label)?.as_object_mut()?;
+    let width = entry.get("width")?.as_f64()?;
+    let height = entry.get("height")?.as_f64()?;
+    // Scales a screen really has come in quarter steps (1, 1.25, 1.5, … 4).
+    // A size of the old aspect at any other scale is one the user chose.
+    let scale = ((width / old.0) * 4.0).round() / 4.0;
+    let is_old = (1.0..=4.0).contains(&scale)
+        && (width - old.0 * scale).abs() <= 1.0
+        && (height - old.1 * scale).abs() <= 1.0;
+    if !is_old {
+        return None;
+    }
+    entry.insert("width".into(), serde_json::json!((new.0 * scale).round() as u64));
+    entry.insert("height".into(), serde_json::json!((new.1 * scale).round() as u64));
+    serde_json::to_string_pretty(&root).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,5 +444,56 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&entries).unwrap()).unwrap();
         assert_eq!(back[0].placement, entries[0].placement);
         assert_eq!(back[0].placement.as_ref().unwrap().home.monitor.name, "DELL");
+    }
+
+    const OLD: (f64, f64) = (840.0, 620.0);
+    const NEW: (f64, f64) = (1000.0, 760.0);
+
+    fn saved(width: u64, height: u64) -> String {
+        serde_json::json!({
+            "settings": {"width": width, "height": height, "x": 100, "y": 50, "maximized": false},
+            "other": {"width": 1680, "height": 1240}
+        })
+        .to_string()
+    }
+
+    fn size_of(contents: &str, label: &str) -> (u64, u64) {
+        let v: serde_json::Value = serde_json::from_str(contents).unwrap();
+        (v[label]["width"].as_u64().unwrap(), v[label]["height"].as_u64().unwrap())
+    }
+
+    #[test]
+    fn the_old_default_size_moves_to_the_new_one_at_its_scale() {
+        let out = upgrade_old_default_size(&saved(1680, 1240), "settings", OLD, NEW).unwrap();
+        assert_eq!(size_of(&out, "settings"), (2000, 1520));
+        let out = upgrade_old_default_size(&saved(840, 620), "settings", OLD, NEW).unwrap();
+        assert_eq!(size_of(&out, "settings"), (1000, 760));
+        let out = upgrade_old_default_size(&saved(1050, 775), "settings", OLD, NEW).unwrap();
+        assert_eq!(size_of(&out, "settings"), (1250, 950));
+    }
+
+    #[test]
+    fn upgrading_keeps_the_position_and_other_windows() {
+        let out = upgrade_old_default_size(&saved(1680, 1240), "settings", OLD, NEW).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!((v["settings"]["x"].as_i64(), v["settings"]["y"].as_i64()), (Some(100), Some(50)));
+        assert_eq!(size_of(&out, "other"), (1680, 1240));
+    }
+
+    #[test]
+    fn a_size_the_user_chose_is_kept() {
+        assert_eq!(upgrade_old_default_size(&saved(1700, 1240), "settings", OLD, NEW), None);
+        assert_eq!(upgrade_old_default_size(&saved(900, 700), "settings", OLD, NEW), None);
+        // The old aspect, but at no scale a screen has (1.19): resized by hand.
+        assert_eq!(upgrade_old_default_size(&saved(1000, 738), "settings", OLD, NEW), None);
+        assert_eq!(upgrade_old_default_size(&saved(1400, 1033), "settings", OLD, NEW), None);
+        // Already the new default: nothing to do, ever again.
+        assert_eq!(upgrade_old_default_size(&saved(2000, 1520), "settings", OLD, NEW), None);
+    }
+
+    #[test]
+    fn no_entry_or_a_broken_file_changes_nothing() {
+        assert_eq!(upgrade_old_default_size(&saved(1680, 1240), "nope", OLD, NEW), None);
+        assert_eq!(upgrade_old_default_size("not json", "settings", OLD, NEW), None);
     }
 }

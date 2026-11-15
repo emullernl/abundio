@@ -54,6 +54,7 @@ pub fn monitors<R: Runtime>(window: &WebviewWindow<R>) -> Vec<MonitorInfo> {
             let s = m.scale_factor();
             let pos = m.position();
             let size = m.size();
+            let work = m.work_area();
             MonitorInfo {
                 name: m.name().cloned().unwrap_or_default(),
                 rect: Rect::new(
@@ -61,6 +62,12 @@ pub fn monitors<R: Runtime>(window: &WebviewWindow<R>) -> Vec<MonitorInfo> {
                     physical_to_desktop(pos.y as f64, s),
                     physical_to_desktop(size.width as f64, s),
                     physical_to_desktop(size.height as f64, s),
+                ),
+                work_area: Rect::new(
+                    physical_to_desktop(work.position.x as f64, s),
+                    physical_to_desktop(work.position.y as f64, s),
+                    physical_to_desktop(work.size.width as f64, s),
+                    physical_to_desktop(work.size.height as f64, s),
                 ),
                 units_per_point: units_per_point(s),
                 scale: s,
@@ -116,17 +123,9 @@ pub fn capture<R: Runtime>(
     window_placement::capture(&frame, maximized, fullscreen, monitors, previous)
 }
 
-/// Puts the window where `placement` says, then maximises or makes it
-/// fullscreen if it was. Call it while the window is still hidden. Returns
-/// where it went, or `None` when no monitor is reported (the window is then
-/// left where the OS put it).
-pub fn apply<R: Runtime>(
-    window: &WebviewWindow<R>,
-    placement: &WindowPlacement,
-    monitors: &[MonitorInfo],
-) -> Option<Resolved> {
-    let resolved = window_placement::resolve(placement, monitors, chrome(window))?;
-    let f = resolved.frame;
+/// Moves and sizes the window to `f` (outer position, inner size, desktop
+/// space).
+fn set_frame<R: Runtime>(window: &WebviewWindow<R>, f: &Rect) {
     // Position first, then size: on Windows a move onto a monitor with another
     // DPI rescales the window, so a size set before the move would be undone.
     #[cfg(target_os = "macos")]
@@ -139,6 +138,42 @@ pub fn apply<R: Runtime>(
         let _ = window.set_position(PhysicalPosition::new(f.x.round() as i32, f.y.round() as i32));
         let _ = window.set_size(PhysicalSize::new(f.width.round() as u32, f.height.round() as u32));
     }
+}
+
+/// Places a Profile window that has no **Window placement** yet: centred on
+/// the monitor of the Profile window the user is in (the one that asked for
+/// it), else the main display, sized to suit that monitor, and stepped past
+/// any Profile window already at that spot (`window_placement::first_open`).
+fn place_first_open<R: Runtime>(window: &WebviewWindow<R>, monitors: &[MonitorInfo]) {
+    let others: Vec<(bool, Rect)> = window
+        .app_handle()
+        .webview_windows()
+        .into_iter()
+        // Hidden ones count too: at app start every restored window is still
+        // hidden, already placed, while the next one is placed.
+        .filter(|(label, _)| {
+            label != window.label() && crate::window_management::is_profile_window_label(label)
+        })
+        .filter_map(|(_, w)| Some((w.is_focused().unwrap_or(false), read_frame(&w)?)))
+        .collect();
+    let anchor = others.iter().find(|(focused, _)| *focused).map(|(_, r)| *r);
+    let taken: Vec<Rect> = others.iter().map(|(_, r)| *r).collect();
+    if let Some(f) = window_placement::first_open(monitors, anchor.as_ref(), &taken, chrome(window)) {
+        set_frame(window, &f);
+    }
+}
+
+/// Puts the window where `placement` says, then maximises or makes it
+/// fullscreen if it was. Call it while the window is still hidden. Returns
+/// where it went, or `None` when no monitor is reported (the window is then
+/// left where the OS put it).
+pub fn apply<R: Runtime>(
+    window: &WebviewWindow<R>,
+    placement: &WindowPlacement,
+    monitors: &[MonitorInfo],
+) -> Option<Resolved> {
+    let resolved = window_placement::resolve(placement, monitors, chrome(window))?;
+    set_frame(window, &resolved.frame);
     if placement.fullscreen {
         let _ = window.set_fullscreen(true);
     } else if placement.maximized {
@@ -400,7 +435,8 @@ impl LaunchRestore {
 }
 
 /// Places a freshly built, still hidden window where it was remembered (or,
-/// failing that, where the old window-state file had it). With
+/// failing that, where the old window-state file had it; a Profile window
+/// with neither opens sized to its monitor, see [`place_first_open`]). With
 /// `restore_desktop` it also puts it on its remembered desktop where that has
 /// to happen before the window shows (macOS), and returns the desktop for
 /// [`show_placed`]. The window stays hidden.
@@ -431,6 +467,9 @@ pub fn place(
         if let Some(tracker) = app.try_state::<PlacementTracker>() {
             tracker.set(window.label(), r.clone());
         }
+    } else if crate::window_management::is_profile_window_label(window.label()) {
+        // A File window keeps the size it was built at.
+        place_first_open(window, &monitors);
     }
     desktop
 }
@@ -553,6 +592,7 @@ mod tests {
         MonitorInfo {
             name: name.into(),
             rect: Rect::new(x, 0.0, 1000.0, 800.0),
+            work_area: Rect::new(x, 0.0, 1000.0, 800.0),
             units_per_point: 1.0,
             scale: 1.0,
             is_main: x == 0.0,
