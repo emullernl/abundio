@@ -797,10 +797,12 @@ body,
 }
 /* A finished stream fades on React Flow's own <svg> around the edge, an
    HTML box the compositor fades. Never on the <g> inside: WebKit repaints
-   the SVG every frame of that (OrchestratorGraph.tsx's StreamEdge). 700ms
-   is FADE_MS in lib/callStreams.ts. */
+   the SVG every frame of that (OrchestratorGraph.tsx's StreamEdge).
+   --orch-fade is FADE_MS (lib/callStreams.ts), set on .orch-graph. Needs
+   :has() (WebKitGTK 2.42+ on Linux): without it a stream simply vanishes
+   when its fade would end, which is harmless, not a regression. */
 .orch-graph .react-flow__edges svg:has(> .react-flow__edge-stream) {
-	transition: opacity 700ms ease;
+	transition: opacity var(--orch-fade, 700ms) ease;
 }
 .orch-graph .react-flow__edges svg:has(> .orch-stream-fading) {
 	opacity: 0;

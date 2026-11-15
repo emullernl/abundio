@@ -44,6 +44,7 @@ export function selectReceiving(paneId: string | null) {
 }
 
 let timer: ReturnType<typeof setTimeout> | null = null;
+const pulseTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function update(change: (s: Streams, now: number) => Streams): void {
 	const now = Date.now();
@@ -87,13 +88,19 @@ export function installCallStreams(): void {
 			useCallStreamsStore.setState((s) => ({
 				pulsing: new Set(s.pulsing).add(paneId),
 			}));
-			setTimeout(() => {
-				useCallStreamsStore.setState((s) => {
-					const next = new Set(s.pulsing);
-					next.delete(paneId);
-					return { pulsing: next };
-				});
-			}, PULSE_MS);
+			// A pulse during a pulse starts its glow over, never cut short.
+			clearTimeout(pulseTimers.get(paneId));
+			pulseTimers.set(
+				paneId,
+				setTimeout(() => {
+					pulseTimers.delete(paneId);
+					useCallStreamsStore.setState((s) => {
+						const next = new Set(s.pulsing);
+						next.delete(paneId);
+						return { pulsing: next };
+					});
+				}, PULSE_MS),
+			);
 		}
 	});
 	// Calls already running when this module loaded.

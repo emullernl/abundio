@@ -12,6 +12,7 @@ import {
 } from "@xyflow/react";
 import { BellRing, Network, Plus, RefreshCw } from "lucide-react";
 import {
+	type CSSProperties,
 	createContext,
 	memo,
 	useContext,
@@ -24,6 +25,7 @@ import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { useConfirmCloseWorkspace } from "../../hooks/useConfirmCloseWorkspace";
 import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
+import { FADE_MS } from "../../lib/callStreams";
 import { openNewTask } from "../../lib/openNewTask";
 import { orchestratorPane } from "../../lib/orchestrator";
 import {
@@ -92,6 +94,7 @@ type WireData = { points: Point[] };
 type StreamData = {
 	points: Point[];
 	kind: "read" | "act";
+	fading: boolean;
 };
 
 /** What a node can ask the graph to do. */
@@ -296,7 +299,7 @@ export function OrchestratorGraph() {
 				className: fading ? "orch-stream-fading" : undefined,
 				// Above the containers and the lines.
 				zIndex: 1000,
-				data: { points, kind: call.kind },
+				data: { points, kind: call.kind, fading },
 			});
 		}
 		return out;
@@ -308,7 +311,7 @@ export function OrchestratorGraph() {
 	const lights = useMemo(
 		() =>
 			streamEdges.flatMap((e) =>
-				e.className ? [] : [{ id: e.id, ...e.data }],
+				e.data.fading ? [] : [{ id: e.id, ...e.data }],
 			),
 		[streamEdges],
 	);
@@ -323,7 +326,11 @@ export function OrchestratorGraph() {
 
 	return (
 		<ActionsContext.Provider value={actions}>
-			<div className="absolute inset-0 orch-graph">
+			<div
+				className="absolute inset-0 orch-graph"
+				// The streams' fade (globals.css) takes its length from FADE_MS.
+				style={{ "--orch-fade": `${FADE_MS}ms` } as CSSProperties}
+			>
 				<ReactFlow
 					nodes={nodes}
 					edges={edges}

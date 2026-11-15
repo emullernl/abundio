@@ -54,6 +54,16 @@ describe("callStreamsStore", () => {
 		expect(receiving("p")).toBe(false);
 	});
 
+	it("starts the glow over when a pane pulses again mid-pulse", () => {
+		pulseControlActivity("q");
+		vi.advanceTimersByTime(1000);
+		pulseControlActivity("q");
+		vi.advanceTimersByTime(1000);
+		expect(receiving("q")).toBe(true);
+		vi.advanceTimersByTime(PULSE_MS - 1000);
+		expect(receiving("q")).toBe(false);
+	});
+
 	it("is never receiving for no pane", () => {
 		expect(selectReceiving(null)(useCallStreamsStore.getState())).toBe(false);
 	});
