@@ -18,6 +18,9 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
+# Direct, for the startup database dialog (db_startup.rs): same version and
+# features as the dialog plugin, so no second copy is built.
+rfd = { version = "0.16", default-features = false, features = ["common-controls-v6", "gtk3"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-os = "2"
 tauri-plugin-updater = "2"

@@ -709,27 +709,40 @@ mod tests {
     }
 }
 
-pub fn open_db() -> Result<Connection, rusqlite::Error> {
+pub fn open_db() -> Result<Connection, crate::db_startup::DbOpenError> {
+    use crate::db_startup::{DbOpenError, DbOpenStage};
+
     // On first run of this data epoch, seed it from the previous version's
     // database (a copy, so older builds keep working — see app_paths.rs).
     // Idempotent; the second and third `open_db` at startup are no-ops.
     crate::app_paths::import_legacy_state_if_needed();
 
     let db_path = crate::app_paths::db_path();
+    let fail = |stage: DbOpenStage, message: String| DbOpenError {
+        stage,
+        path: db_path.clone(),
+        message,
+    };
 
     // Sample before `Connection::open` below, which creates the file. See
     // DB_WAS_ABSENT_AT_STARTUP.
     let _ = DB_WAS_ABSENT_AT_STARTUP.set(sample_db_absence(&db_path));
 
     if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        std::fs::create_dir_all(parent).map_err(|e| fail(DbOpenStage::Folder, e.to_string()))?;
     }
 
-    let conn = Connection::open(db_path)?;
+    let conn = Connection::open(&db_path).map_err(|e| fail(DbOpenStage::Open, e.to_string()))?;
 
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    // Wait out short locks (security software scanning the file, another
+    // connection mid-write) inside SQLite instead of failing at once.
+    conn.busy_timeout(crate::db_startup::BUSY_TIMEOUT)
+        .map_err(|e| fail(DbOpenStage::Open, e.to_string()))?;
 
-    run_migrations(&conn)?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        .map_err(|e| fail(DbOpenStage::Open, e.to_string()))?;
+
+    run_migrations(&conn).map_err(|e| fail(DbOpenStage::Migrate, e.to_string()))?;
 
     Ok(conn)
 }
