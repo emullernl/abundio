@@ -171,6 +171,46 @@ describe("orchestratorSession", () => {
 		expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("orch");
 	});
 
+	it("focuses the pane that wants the user when the view opens", async () => {
+		const twoTabs = {
+			...ws("orch", "orchestrator", {
+				type: "terminal",
+				id: "o1",
+				ptyId: "p-o1",
+				agentId: "claude",
+				agentHandle: "Orchestrator",
+			}),
+		};
+		twoTabs.tabs = [
+			...twoTabs.tabs,
+			{
+				...twoTabs.tabs[0],
+				id: "orch-t2",
+				position: 1,
+				layoutJson: JSON.stringify({
+					type: "terminal",
+					id: "h1",
+					ptyId: "p-h1",
+				}),
+			},
+		];
+		ensure.mockResolvedValue(twoTabs);
+		agent.mockResolvedValue("claude");
+		const entry = (state: string) => ({ state, detectionMode: "agent" });
+		usePtyActivityStore.setState({
+			activities: {
+				"p-o1": entry("idle"),
+				"p-h1": entry("waiting"),
+			} as never,
+		});
+		await enterOrchestratorView();
+		// A helper is Waiting: its Tab comes forward and its pane takes focus.
+		expect(useWorkspaceStore.getState().activeTabByWorkspace.orch).toBe(
+			"orch-t2",
+		);
+		expect(useWorkspaceStore.getState().focusedPaneId).toBe("h1");
+	});
+
 	it("asks for an Agent again when its Agent exits, not when its pane closes", async () => {
 		agent.mockResolvedValue(null);
 		useWindowUiStore.setState({ orchestratorViewOpen: false });

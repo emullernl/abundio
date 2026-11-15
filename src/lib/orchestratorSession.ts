@@ -23,6 +23,7 @@ import {
 	stampOrchestrator,
 	startPane,
 } from "./orchestrator";
+import { badgeAgents, orchestratorBadge } from "./orchestratorBadge";
 import { orchestratorStart } from "./orchestratorLaunch";
 import { loadOrchestratorTabs } from "./orchestratorTabs";
 import { findNode, parseTabLayout } from "./paneTree";
@@ -147,6 +148,19 @@ function activate(ws: WorkspaceWithTabs): void {
 	store().set({ phase: "ready" });
 }
 
+/** On entering the view: the pane that wants the user most (the
+ *  Orchestrator, or a helper, Waiting or Ready) gets keyboard focus, its Tab
+ *  made active. Otherwise focus stays where the view last left it. */
+function focusWhoWantsYou(ws: WorkspaceWithTabs): void {
+	const { panePtyMap, activities } = usePtyActivityStore.getState();
+	const target = orchestratorBadge(
+		badgeAgents(ws.tabs, panePtyMap, activities),
+	)?.focus;
+	if (!target) return;
+	workspaces().setActiveTab(ws.id, target.tabId);
+	workspaces().setFocusedPane(target.paneId);
+}
+
 let entering: Promise<void> | null = null;
 
 /** The view came on screen (opened, or restored at launch). */
@@ -169,7 +183,9 @@ export function enterOrchestratorView(): Promise<void> {
 			await startAgentIn(ws, agentId, "keep");
 			// Leaving while we waited: stay out.
 			if (!orchestratorViewWanted()) return;
-			activate(storedWorkspace(ws.id) ?? ws);
+			const live = storedWorkspace(ws.id) ?? ws;
+			activate(live);
+			focusWhoWantsYou(live);
 		} catch (e) {
 			store().set({
 				phase: "error",

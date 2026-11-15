@@ -17,6 +17,7 @@ import {
 	memo,
 	type ReactNode,
 } from "react";
+import { useOrchestratorBadge } from "../hooks/useOrchestratorBadge";
 import { useShortcutLabel, withShortcut } from "../hooks/useShortcutLabel";
 import type { DotStatus } from "../stores/ptyActivityStore";
 import { AgentStatusIcon, ShellChevronGlyph } from "./AgentStatusIcon";
@@ -157,6 +158,7 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 	const fleetKey = useShortcutLabel("toggle-fleet-console");
 	const statsKey = useShortcutLabel("toggle-statistics-overlay");
 	const orchestratorKey = useShortcutLabel("toggle-orchestrator-view");
+	const orchestratorBadge = useOrchestratorBadge();
 	const {
 		openedWorkspaces,
 		totalWorkspaces,
@@ -241,10 +243,13 @@ export const OverviewBar = memo(function OverviewBar(props: OverviewBarProps) {
 					open={orchestratorViewOpen}
 					onClick={onToggleOrchestratorView}
 					title={withShortcut(
-						"Orchestrator — ask about every agent in this profile",
+						orchestratorBadge
+							? `Orchestrator — ask about every agent in this profile\n${orchestratorBadge.tooltip}`
+							: "Orchestrator — ask about every agent in this profile",
 						orchestratorKey,
 					)}
 					icon={Network}
+					badge={orchestratorBadge?.status}
 				/>
 				<ViewToggle
 					open={fleetConsoleOpen}
@@ -274,11 +279,14 @@ function ViewToggle({
 	onClick,
 	title,
 	icon: Icon,
+	badge,
 }: {
 	open: boolean;
 	onClick: () => void;
 	title: string;
 	icon: LucideIcon;
+	/** A status icon over the button's corner (the **Orchestrator badge**). */
+	badge?: DotStatus;
 }) {
 	return (
 		<button
@@ -287,7 +295,7 @@ function ViewToggle({
 			title={title}
 			aria-label={title}
 			aria-pressed={open}
-			className="flex items-center justify-center flex-shrink-0"
+			className="relative flex items-center justify-center flex-shrink-0"
 			style={{
 				width: 34,
 				height: TILE_HEIGHT,
@@ -300,6 +308,24 @@ function ViewToggle({
 			}}
 		>
 			<Icon size={14} strokeWidth={2.25} style={{ flexShrink: 0 }} />
+			{badge && (
+				<span
+					data-testid="view-toggle-badge"
+					data-status={badge}
+					className="absolute flex items-center justify-center"
+					style={{
+						top: -5,
+						right: -5,
+						width: 15,
+						height: 15,
+						borderRadius: 8,
+						background: "var(--bg-primary)",
+						pointerEvents: "none",
+					}}
+				>
+					<AgentStatusIcon status={badge} size={11} />
+				</span>
+			)}
 		</button>
 	);
 }
