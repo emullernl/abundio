@@ -43,6 +43,10 @@ asks.
   judgment, ask the user in your own conversation, then pass their answer
   on the same way.
 - After a prompt, `abundio pane read <agent> --lines 80` shows its answer.
+- An agent's input box can show a suggested next prompt in faint text;
+  `pane read` leaves it out, so text you do see after its prompt sign was
+  really typed. A suggestion never blocks `agent prompt`: your text replaces
+  it.
 - `stalled` means it never started working; read the pane before sending
   again. After a `timeout` or `connection_lost`, the prompt may have arrived:
   read the pane before you re-send anything.
