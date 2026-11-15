@@ -87,6 +87,7 @@ import {
 import { registerTerminalSettings } from "./terminalSettingsBridge";
 import { modifiedNavKeySequence } from "./terminalWordJump";
 import { terminalThemeFor } from "./themeUtils";
+import { typedLine } from "./typedLine";
 import type { PaneNode } from "./types";
 import {
 	MAX_WEBGL_CONTEXTS,
@@ -2240,7 +2241,7 @@ function flushStartupBuffer(managed: ManagedTerminal): void {
 	// by CommandPalette to launch agents into an existing terminal.
 	const pendingAgent = takePendingAgent(managed.paneId);
 	if (pendingAgent && managed.ptyId) {
-		pty.write(managed.ptyId, `${pendingAgent.command}\n`).catch(() => {});
+		pty.write(managed.ptyId, typedLine(pendingAgent.command)).catch(() => {});
 		usePtyActivityStore.getState().setAgentPty(managed.ptyId);
 		managed.awaitingTypedAgentStart = true;
 	}

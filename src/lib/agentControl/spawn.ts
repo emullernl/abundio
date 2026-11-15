@@ -6,6 +6,7 @@ import {
 	optionSafePrompt,
 	TASK_PROMPT_PLACEHOLDER,
 } from "../agents";
+import { oneLine } from "../typedLine";
 import type { CodingAgent, PtyDetectionMode } from "../types";
 import { ControlError, type Direction } from "./types";
 
@@ -103,8 +104,7 @@ export function runRefusal(f: RunFacts): ControlError | null {
 /** `pane run`'s command as typed: one line, no control characters, so it
  *  cannot carry its own Enter or escape sequences. */
 export function cleanCommand(command: string): string {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — we strip control characters
-	return command.replace(/[\u0000-\u001F\u007F-\u009F]/g, " ").trim();
+	return oneLine(command);
 }
 
 /** `pane close` works on any pane in reach but the caller's own: closing

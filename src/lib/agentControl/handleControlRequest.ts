@@ -49,6 +49,7 @@ import {
 	type ManagedTerminal,
 	startPtyUnlessShown,
 } from "../terminalManager";
+import { typedLine } from "../typedLine";
 import type { CodingAgent, WorkspaceWithTabs } from "../types";
 import { addWorktreeTargetId } from "../worktreeGrouping";
 import { basename, resolvePath } from "../worktreePath";
@@ -528,7 +529,7 @@ async function runOp(
 				if (command === "") {
 					throw new ControlError("empty_prompt", "the command is empty");
 				}
-				await pty.write(managed.ptyId, `${command}\r`);
+				await pty.write(managed.ptyId, typedLine(command));
 				return {
 					pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
 					sent: true,

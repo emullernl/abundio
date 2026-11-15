@@ -15,7 +15,6 @@ import {
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { firePromptAction } from "../../lib/firePromptAction";
-import { pty } from "../../lib/ipc";
 import { isOrchestratorPane } from "../../lib/orchestrator";
 import { isMac } from "../../lib/platform";
 import {
@@ -46,6 +45,7 @@ import {
 	resetTerminal,
 	subscribePaneRevision,
 } from "../../lib/terminalManager";
+import { typedLaunch } from "../../lib/typedLaunch";
 import { usePromptActionStore } from "../../stores/promptActionStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -519,14 +519,8 @@ export function TerminalSlot({
 	);
 
 	const handleLaunchAgent = useCallback(
-		(agent: { id: string; command: string; args?: string[] }) => {
-			const managed = getTerminal(paneId);
-			if (!managed?.ptyId) return;
-			const cmd = [agent.command, ...(agent.args ?? [])].join(" ");
-			pty.write(managed.ptyId, `${cmd}\n`);
-			usePtyActivityStore.getState().setAgentPty(managed.ptyId);
-			// Persist the agent identity onto the layout so it re-runs after restart.
-			useWorkspaceStore.getState().stampAgentOnPane(paneId, agent.id);
+		(agent: { id: string }) => {
+			typedLaunch(paneId, agent.id);
 		},
 		[paneId],
 	);
