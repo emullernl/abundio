@@ -423,6 +423,14 @@ export function OrchestratorGraph() {
 	);
 }
 
+/** Whether the graph's area has a size: a fit of an area with none (hidden
+ *  for a moment, or not laid out yet) moves the chart off-screen, and the
+ *  graph would show blank until the next fit. */
+function graphHasSize(): boolean {
+	const el = document.querySelector(".orch-graph");
+	return !!el && el.clientWidth > 0 && el.clientHeight > 0;
+}
+
 /** Re-fits the view when Agents come or go, and when the graph's area is
  *  resized (the divider, the window), so the chart always fills it. */
 function FitOnChange({ count }: { count: number }) {
@@ -434,9 +442,11 @@ function FitOnChange({ count }: { count: number }) {
 			first.current = false;
 			return;
 		}
-		const id = requestAnimationFrame(() =>
-			flow.fitView({ padding: 0.08, maxZoom: 1.1, duration: 300 }),
-		);
+		const id = requestAnimationFrame(() => {
+			if (graphHasSize()) {
+				flow.fitView({ padding: 0.08, maxZoom: 1.1, duration: 300 });
+			}
+		});
 		return () => cancelAnimationFrame(id);
 	}, [count, flow]);
 	useEffect(() => {
@@ -445,9 +455,9 @@ function FitOnChange({ count }: { count: number }) {
 		let frame = 0;
 		const ro = new ResizeObserver(() => {
 			cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(() =>
-				flow.fitView({ padding: 0.08, maxZoom: 1.1 }),
-			);
+			frame = requestAnimationFrame(() => {
+				if (graphHasSize()) flow.fitView({ padding: 0.08, maxZoom: 1.1 });
+			});
 		});
 		ro.observe(el);
 		return () => {
@@ -759,23 +769,19 @@ function WireEdge({ data }: EdgeProps<Edge<WireData>>) {
 	);
 }
 
-/** How many comets flow along a stream at once, and their speed. */
-const PARTICLES = 6;
+/**
+ * A comet is a short dash of the route's own stroke, repeated every
+ * `COMET_EVERY` px and moved along by animating `stroke-dashoffset` (the
+ * keyframes in globals.css run one period). Plain CSS on a plain path: no
+ * SMIL `<animateMotion>` and no CSS `filter` on SVG, which together made
+ * WebKit (the app's webview) now and then drop the graph's whole layer, so
+ * the chart went blank until the view was reopened. The glow is a wider,
+ * fainter copy of the same dashes underneath.
+ */
+const COMET_LEN = 9;
+const COMET_EVERY = 72;
 const SPEED_PX_S = 420;
-/** A comet's head, then its tail just behind it (seconds behind). */
-const TAIL = [0, 0.04, 0.08];
-
-/** Length of a route of right angles. */
-function routeLength(points: readonly Point[]): number {
-	let n = 0;
-	for (let i = 1; i < points.length; i++) {
-		n += Math.hypot(
-			points[i].x - points[i - 1].x,
-			points[i].y - points[i - 1].y,
-		);
-	}
-	return n;
-}
+const COMET_PERIOD_S = COMET_EVERY / SPEED_PX_S;
 
 /**
  * A running Agent control call: comets flowing from caller to target along
@@ -787,10 +793,24 @@ function StreamEdge({ data }: EdgeProps<Edge<StreamData>>) {
 	const act = data.kind !== "read";
 	const color = act ? "var(--accent)" : "var(--fg-secondary)";
 	const d = polylinePath(data.points);
-	// The same speed on every route, so a long route is not a blur.
-	const lap = Math.max(0.8, routeLength(data.points) / SPEED_PX_S);
 	const still = prefersReducedMotion();
-	const comets = still ? [] : Array.from({ length: PARTICLES }, (_, i) => i);
+	const width = act ? 2.4 : 1.8;
+	const comet = (strokeWidth: number, strokeOpacity: number) => (
+		<path
+			d={d}
+			className="orch-comet"
+			style={{
+				fill: "none",
+				stroke: color,
+				strokeWidth,
+				strokeOpacity,
+				strokeLinecap: "round",
+				strokeLinejoin: "round",
+				strokeDasharray: `${COMET_LEN} ${COMET_EVERY - COMET_LEN}`,
+				animationDuration: `${COMET_PERIOD_S}s`,
+			}}
+		/>
+	);
 	return (
 		<g
 			className="orch-stream"
@@ -805,31 +825,13 @@ function StreamEdge({ data }: EdgeProps<Edge<StreamData>>) {
 					fill: "none",
 					stroke: color,
 					strokeOpacity: still ? 0.9 : 0.35,
-					strokeWidth: act ? 2.4 : 1.8,
+					strokeWidth: width,
 					strokeLinejoin: "round",
 					strokeDasharray: act ? undefined : "3 5",
 				}}
 			/>
-			{comets.map((i) =>
-				TAIL.map((lag, j) => (
-					<circle
-						key={`${i}-${lag}`}
-						r={(act ? 3.4 : 2.6) * (1 - j * 0.28)}
-						style={{
-							fill: color,
-							opacity: 1 - j * 0.3,
-							filter: j === 0 ? `drop-shadow(0 0 4px ${color})` : undefined,
-						}}
-					>
-						<animateMotion
-							dur={`${lap}s`}
-							repeatCount="indefinite"
-							begin={`${-(i * lap) / PARTICLES - lag}s`}
-							path={d}
-						/>
-					</circle>
-				)),
-			)}
+			{!still && comet(width * 3.2, 0.22)}
+			{!still && comet(width * 1.6, 1)}
 		</g>
 	);
 }

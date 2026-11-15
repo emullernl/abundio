@@ -746,7 +746,25 @@ body,
 .orch-node-receiving {
 	animation: orch-node-receiving 1.6s ease-in-out infinite;
 }
+/* A running call's comets: dashes moving one period (COMET_EVERY in
+   OrchestratorGraph.tsx) from caller to target; the duration is inline. */
+@keyframes orch-comet {
+	from {
+		stroke-dashoffset: 72;
+	}
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+.orch-comet {
+	animation-name: orch-comet;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+}
 @media (prefers-reduced-motion: reduce) {
+	.orch-comet {
+		display: none;
+	}
 	.orch-node-in,
 	.orch-node-pulse {
 		animation: none;
