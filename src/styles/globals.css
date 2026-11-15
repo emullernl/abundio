@@ -795,6 +795,16 @@ body,
 		opacity: 0;
 	}
 }
+/* A finished stream fades on React Flow's own <svg> around the edge, an
+   HTML box the compositor fades. Never on the <g> inside: WebKit repaints
+   the SVG every frame of that (OrchestratorGraph.tsx's StreamEdge). 700ms
+   is FADE_MS in lib/callStreams.ts. */
+.orch-graph .react-flow__edges svg:has(> .react-flow__edge-stream) {
+	transition: opacity 700ms ease;
+}
+.orch-graph .react-flow__edges svg:has(> .orch-stream-fading) {
+	opacity: 0;
+}
 /* A running call's light (OrchestratorGraph.tsx, CallLight): moved by a
    transform animation alone, so the compositor runs it and nothing repaints. */
 .orch-light {

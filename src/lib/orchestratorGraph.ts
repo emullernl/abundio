@@ -9,6 +9,7 @@
  * that spawned it) in one row inside it; elbow lines between them.
  */
 
+import type { Position } from "@xyflow/react";
 import { parseTabLayout } from "./paneTree";
 import type { PaneNode, WorkspaceWithTabs } from "./types";
 import { isOrchestrator } from "./workspaceKind";
@@ -406,4 +407,39 @@ export function travelKeyframes(points: readonly Point[]): Keyframe[] {
 			offset: Math.min(1, done / total),
 		};
 	});
+}
+
+/**
+ * A React Flow node's place, size and handles, all given up front. React
+ * Flow re-measures a node whose object it has not seen before and, until it
+ * has, hides it and drops every line to it, so a chart rebuilt in a burst (a
+ * click, an Agent coming) would blink blank. With its size, measurement and
+ * handles given, a node is ready the moment it arrives. The handles are
+ * hidden: the lines are drawn from the layout's own routes.
+ */
+export function nodeFrame(p: Placed) {
+	return {
+		position: { x: p.x - p.width / 2, y: p.y - p.height / 2 },
+		width: p.width,
+		height: p.height,
+		measured: { width: p.width, height: p.height },
+		handles: [
+			{
+				type: "source" as const,
+				position: "right" as Position,
+				x: p.width - 1,
+				y: p.height / 2,
+				width: 1,
+				height: 1,
+			},
+			{
+				type: "target" as const,
+				position: "left" as Position,
+				x: 0,
+				y: p.height / 2,
+				width: 1,
+				height: 1,
+			},
+		],
+	};
 }

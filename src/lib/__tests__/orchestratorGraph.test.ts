@@ -5,6 +5,7 @@ import {
 	graphModel,
 	layoutGraph,
 	nestBySpawner,
+	nodeFrame,
 	polylinePath,
 	routeBetween,
 	routeLength,
@@ -328,5 +329,19 @@ describe("a call's travelling light", () => {
 			{ x: 5, y: 5 },
 		]);
 		expect(frames.map((f) => f.offset)).toEqual([0, 0]);
+	});
+});
+
+describe("nodeFrame", () => {
+	it("gives React Flow everything it would otherwise measure", () => {
+		const f = nodeFrame({ x: 100, y: 50, width: 40, height: 20 });
+		expect(f.position).toEqual({ x: 80, y: 40 });
+		expect(f.width).toBe(40);
+		expect(f.height).toBe(20);
+		expect(f.measured).toEqual({ width: 40, height: 20 });
+		expect(f.handles.map((h) => [h.type, h.position, h.x, h.y])).toEqual([
+			["source", "right", 39, 10],
+			["target", "left", 0, 10],
+		]);
 	});
 });

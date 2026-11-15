@@ -24,11 +24,6 @@ import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { useConfirmCloseWorkspace } from "../../hooks/useConfirmCloseWorkspace";
 import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
-import {
-	type ControlActivity,
-	runningControlActivity,
-	subscribeControlActivity,
-} from "../../lib/controlActivity";
 import { openNewTask } from "../../lib/openNewTask";
 import { orchestratorPane } from "../../lib/orchestrator";
 import {
@@ -41,7 +36,7 @@ import {
 	type GraphAgent,
 	graphModel,
 	layoutGraph,
-	type Placed,
+	nodeFrame,
 	type Point,
 	polylinePath,
 	routeBetween,
@@ -56,6 +51,10 @@ import {
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
+import {
+	selectReceiving,
+	useCallStreamsStore,
+} from "../../stores/callStreamsStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -67,11 +66,6 @@ import { NewAgentDialog } from "../FleetConsole/NewAgentDialog";
 import { primaryButtonClass } from "../PromptActions/fieldStyles";
 import { useAgentMenu } from "../Sidebar/useAgentMenu";
 import { PaneContextMenu } from "../Terminal/PaneContextMenu";
-
-/** How long a finished call's stream takes to fade. */
-const FADE_MS = 700;
-/** How long a node glows for a call that touched no other pane. */
-const PULSE_MS = 1600;
 
 const ORCH = "orchestrator";
 const ORCH_NODE = "orchestrator";
@@ -87,7 +81,6 @@ type AgentData = {
 	agent: GraphAgent;
 	workspaceName: string;
 	fresh: boolean;
-	receiving: boolean;
 };
 type ContainerData = {
 	/** A Workspace's id, or null for the Orchestrator's own helpers. */
@@ -95,12 +88,10 @@ type ContainerData = {
 	name: string;
 	count: number;
 };
-type OrchData = { receiving: boolean };
 type WireData = { points: Point[] };
 type StreamData = {
 	points: Point[];
 	kind: "read" | "act";
-	ending: boolean;
 };
 
 /** What a node can ask the graph to do. */
@@ -128,9 +119,6 @@ function HiddenHandles() {
 		</>
 	);
 }
-
-/** React Flow places a node by its top-left corner; the layout gives centres. */
-const corner = (p: Placed) => ({ x: p.x - p.width / 2, y: p.y - p.height / 2 });
 
 function prefersReducedMotion(): boolean {
 	return (
@@ -201,80 +189,15 @@ export function OrchestratorGraph() {
 		return now;
 	}, [model]);
 
-	// Nodes pulsing for a call that touched no other pane (`file open`).
-	const [pulsing, setPulsing] = useState<Set<string>>(() => new Set());
-
-	// ── Calls running now, plus the ones fading out ──
-	const [calls, setCalls] = useState<
-		Map<number, { call: ControlActivity; ending: boolean }>
-	>(
-		() =>
-			new Map(
-				runningControlActivity().map((c) => [c.id, { call: c, ending: false }]),
-			),
-	);
-	useEffect(() => {
-		const timers = new Set<ReturnType<typeof setTimeout>>();
-		const stop = subscribeControlActivity((e) => {
-			if (e.type === "pulse") {
-				setPulsing((p) => new Set(p).add(e.paneId));
-				const t = setTimeout(() => {
-					timers.delete(t);
-					setPulsing((p) => {
-						const next = new Set(p);
-						next.delete(e.paneId);
-						return next;
-					});
-				}, PULSE_MS);
-				timers.add(t);
-				return;
-			}
-			if (e.type === "start") {
-				setCalls((m) =>
-					new Map(m).set(e.call.id, { call: e.call, ending: false }),
-				);
-				return;
-			}
-			setCalls((m) => {
-				const entry = m.get(e.id);
-				if (!entry) return m;
-				return new Map(m).set(e.id, { ...entry, ending: true });
-			});
-			const t = setTimeout(() => {
-				timers.delete(t);
-				setCalls((m) => {
-					const next = new Map(m);
-					next.delete(e.id);
-					return next;
-				});
-			}, FADE_MS);
-			timers.add(t);
-		});
-		return () => {
-			stop();
-			for (const t of timers) clearTimeout(t);
-		};
-	}, []);
-
-	const receiving = useMemo(() => {
-		const set = new Set<string>(
-			[...pulsing].map((id) => nodeOf(routeKey(id, orchestratorPaneId))),
-		);
-		for (const { call, ending } of calls.values()) {
-			if (!ending) {
-				set.add(nodeOf(routeKey(call.targetPaneId, orchestratorPaneId)));
-			}
-		}
-		return set;
-	}, [calls, pulsing, orchestratorPaneId]);
+	// The streams: calls running now, plus the ones still showing or fading.
+	const streams = useCallStreamsStore((s) => s.streams);
 
 	const nodes = useMemo(() => {
 		const out: Node[] = [];
 		const box = (id: string, c: Container, data: ContainerData): Node => ({
 			id: containerNodeId(id),
 			type: "container",
-			position: corner(c),
-			style: { width: c.width, height: c.height },
+			...nodeFrame(c),
 			data,
 			draggable: false,
 			selectable: false,
@@ -302,15 +225,15 @@ export function OrchestratorGraph() {
 			{
 				id: ORCH_NODE,
 				type: "orchestrator",
-				position: corner(layout.orchestrator),
-				data: { receiving: receiving.has(ORCH_NODE) } satisfies OrchData,
+				...nodeFrame(layout.orchestrator),
+				data: {},
 				draggable: false,
 				selectable: false,
 			},
 			{
 				id: "add",
 				type: "add",
-				position: corner(layout.add),
+				...nodeFrame(layout.add),
 				data: {},
 				draggable: false,
 				selectable: false,
@@ -321,13 +244,11 @@ export function OrchestratorGraph() {
 			return {
 				id: agentNodeId(agent.paneId),
 				type: "agent",
-				position: corner(p),
-				style: { width: p.width, height: p.height },
+				...nodeFrame(p),
 				data: {
 					agent,
 					workspaceName,
 					fresh: fresh.has(agent.paneId),
-					receiving: receiving.has(agentNodeId(agent.paneId)),
 				} satisfies AgentData,
 				draggable: false,
 				selected: agent.paneId === selected,
@@ -338,9 +259,9 @@ export function OrchestratorGraph() {
 		}
 		for (const h of model.helpers) out.push(agentNode(h, "Orchestrator"));
 		return out;
-	}, [model, layout, fresh, selected, receiving]);
+	}, [model, layout, fresh, selected]);
 
-	const edges = useMemo(() => {
+	const wires = useMemo(() => {
 		const out: Edge[] = [];
 		// The chart's lines: the route from the Orchestrator to every Agent.
 		// Routes share their trunk and buses, which then draw on top of each
@@ -356,7 +277,12 @@ export function OrchestratorGraph() {
 				data: { points } satisfies WireData,
 			});
 		}
-		for (const { call, ending } of calls.values()) {
+		return out;
+	}, [layout]);
+
+	const streamEdges = useMemo(() => {
+		const out: (Edge & { data: StreamData })[] = [];
+		for (const { call, fading } of streams.values()) {
 			const from = routeKey(call.callerPaneId, orchestratorPaneId);
 			const to = routeKey(call.targetPaneId, orchestratorPaneId);
 			const points = routeBetween(layout, from, to);
@@ -366,23 +292,25 @@ export function OrchestratorGraph() {
 				source: nodeOf(from),
 				target: nodeOf(to),
 				type: "stream",
+				// On the edge's group; the fade is on its wrapper (globals.css).
+				className: fading ? "orch-stream-fading" : undefined,
 				// Above the containers and the lines.
 				zIndex: 1000,
-				data: { points, kind: call.kind, ending } satisfies StreamData,
+				data: { points, kind: call.kind },
 			});
 		}
 		return out;
-	}, [layout, calls, orchestratorPaneId]);
+	}, [layout, streams, orchestratorPaneId]);
 
-	// The travelling lights, one per running call (gone once it is ending).
+	const edges = useMemo(() => [...wires, ...streamEdges], [wires, streamEdges]);
+
+	// The travelling lights, one per lit stream (gone once it fades).
 	const lights = useMemo(
 		() =>
-			edges.flatMap((e) =>
-				e.type === "stream" && !(e.data as StreamData).ending
-					? [{ id: e.id, ...(e.data as StreamData) }]
-					: [],
+			streamEdges.flatMap((e) =>
+				e.className ? [] : [{ id: e.id, ...e.data }],
 			),
-		[edges],
+		[streamEdges],
 	);
 
 	// ── Graph-level dialogs ──
@@ -575,9 +503,7 @@ const ContainerNode = memo(function ContainerNode({
 	);
 });
 
-const OrchestratorNode = memo(function OrchestratorNode({
-	data,
-}: NodeProps<Node<OrchData>>) {
+const OrchestratorNode = memo(function OrchestratorNode() {
 	const workspaceId = useOrchestratorStore((s) => s.workspaceId);
 	const phase = useOrchestratorStore((s) => s.phase);
 	const tabs = useWorkspaceStore(
@@ -589,9 +515,10 @@ const OrchestratorNode = memo(function OrchestratorNode({
 	);
 	const status = usePaneStatus(paneId);
 	const running = paneId !== "";
+	const receiving = useCallStreamsStore(selectReceiving(paneId || null));
 	return (
 		<div
-			className={`flex items-center ${data.receiving ? "orch-node-receiving" : ""}`}
+			className={`flex items-center ${receiving ? "orch-node-receiving" : ""}`}
 			style={{
 				width: 210,
 				height: 56,
@@ -665,8 +592,9 @@ const AgentNode = memo(function AgentNode({
 	data,
 	selected,
 }: NodeProps<Node<AgentData>>) {
-	const { agent, workspaceName, fresh, receiving } = data;
+	const { agent, workspaceName, fresh } = data;
 	const status = usePaneStatus(agent.paneId);
+	const receiving = useCallStreamsStore(selectReceiving(agent.paneId));
 	const liveHandle = useAgentHandle(agent.paneId);
 	const handle = liveHandle ?? agent.handle;
 	const agentName = useSettingsStore((s) =>
@@ -876,7 +804,10 @@ function CallLight({
  * A running Agent control call, after the organisation chart of Abundia in
  * the theme's colours: the route lit with a gradient that brightens toward
  * the target, over a soft glow. Static: the light that travels it is
- * `CallLight`. Fades out when the call ends.
+ * `CallLight`. Fades out when the stream ends: the fade is on React Flow's
+ * own `<svg>` around the edge (globals.css), an HTML box the compositor can
+ * fade, never on anything inside the SVG, which WebKit would repaint every
+ * frame.
  */
 function StreamEdge({ id, data }: EdgeProps<Edge<StreamData>>) {
 	if (!data || data.points.length < 2) return null;
@@ -887,13 +818,7 @@ function StreamEdge({ id, data }: EdgeProps<Edge<StreamData>>) {
 	const gradientId = `orch-grad-${id}`;
 	const stroke = act ? `url(#${gradientId})` : "var(--fg-secondary)";
 	return (
-		<g
-			className="orch-stream"
-			style={{
-				opacity: data.ending ? 0 : 1,
-				transition: `opacity ${FADE_MS}ms ease`,
-			}}
-		>
+		<g className="orch-stream">
 			{act && (
 				<defs>
 					{/* userSpaceOnUse: a straight line has a zero-width box, which a
