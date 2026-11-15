@@ -345,15 +345,16 @@ export function installOrchestratorSession(): () => void {
 	};
 }
 
-/**
- * When the Orchestrator's Agent exits (`/exit`, Ctrl+C, a crash) and its pane
- * is still there, the view asks which Agent to start: the same one resumes
- * its conversation by the id remembered while it ran, another starts fresh. Closing the pane is not an exit.
- */
 /** How long the pane stays readable after the Agent exits, before the
  *  picker covers it. */
 export const EXIT_PICKER_DELAY_MS = 3000;
 
+/**
+ * When the Orchestrator's Agent exits (`/exit`, Ctrl+C, a crash) and its pane
+ * is still there, the view asks which Agent to start: the same one resumes
+ * its conversation by the id remembered while it ran, another starts fresh.
+ * Closing the pane is not an exit.
+ */
 function watchForExit(): () => void {
 	let paneId: string | null = null;
 	let timer: ReturnType<typeof setTimeout> | null = null;
@@ -364,10 +365,10 @@ function watchForExit(): () => void {
 	const unsubscribe = useWorkspaceStore.subscribe(() => {
 		const tabs = tabsNow();
 		if (!tabs) return;
-		const current = orchestratorPane(tabs)?.paneId ?? null;
-		if (current) {
-			paneId = current;
-			const session = orchestratorSessionOf(tabs);
+		const own = orchestratorPane(tabs);
+		if (own) {
+			paneId = own.paneId;
+			const session = orchestratorSessionOf(tabs, own);
 			const last = store().lastSession;
 			if (
 				session &&

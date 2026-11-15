@@ -67,16 +67,16 @@ export interface OrchestratorSession {
 }
 
 /**
- * The Agent and **Agent session id** of the Orchestrator's pane, or `null`
- * when it has no pane, no Agent or no id yet. Remembered while the Agent
- * runs, because its exit wipes both from the pane, and picking the same
- * Agent again resumes by that id (ADR-0060). Pure.
+ * The Agent and **Agent session id** of the Orchestrator's pane `own` (from
+ * `orchestratorPane`, so its caller parses no layout twice), or `null` when
+ * it has no Agent or no id yet. Remembered while the Agent runs, because its
+ * exit wipes both from the pane, and picking the same Agent again resumes by
+ * that id (ADR-0060). Pure.
  */
 export function orchestratorSessionOf(
 	tabs: readonly Tab[],
+	own: PaneRef,
 ): OrchestratorSession | null {
-	const own = orchestratorPane(tabs);
-	if (!own) return null;
 	const tab = tabs.find((t) => t.id === own.tabId);
 	const layout = tab ? parseTabLayout(tab.layoutJson) : null;
 	const node = layout ? terminalNode(layout, own.paneId) : undefined;

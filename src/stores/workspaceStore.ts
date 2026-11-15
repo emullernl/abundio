@@ -550,8 +550,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				return { ...t, layoutJson: JSON.stringify(cleared) };
 			}),
 		}));
-		// After every layout is cleaned: whether a pane may take its folder's
-		// latest session depends on every other Workspace's panes.
+		// Seed each pane's relaunch line (by session id only, ADR-0060).
 		for (const ws of cleaned) {
 			// The Orchestrator starts when its view opens, through the spawn
 			// (lib/orchestratorLaunch.ts), never by a typed relaunch line.

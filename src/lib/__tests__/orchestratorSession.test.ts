@@ -304,4 +304,77 @@ describe("orchestratorSession", () => {
 			stop();
 		}
 	});
+
+	it("resumes by a remembered id only for the Agent that reported it", async () => {
+		useSettingsStore.setState({
+			agents: [
+				...useSettingsStore.getState().agents,
+				{
+					id: "codex",
+					name: "Codex",
+					command: "codex",
+					enabled: true,
+					resumeArgs: ["resume", "{session}"],
+				},
+			],
+		} as never);
+		agent.mockResolvedValue(null);
+		useWindowUiStore.setState({ orchestratorViewOpen: false });
+		const stop = installOrchestratorSession();
+		useWindowUiStore.setState({ orchestratorViewOpen: true });
+		await enterOrchestratorView();
+		await pickOrchestratorAgent("claude");
+		const setLayout = (layout: PaneNode) =>
+			useWorkspaceStore.setState((s) => ({
+				workspaces: s.workspaces.map((w) =>
+					w.id === "orch"
+						? {
+								...w,
+								tabs: [{ ...w.tabs[0], layoutJson: JSON.stringify(layout) }],
+							}
+						: w,
+				),
+			}));
+		try {
+			setLayout({
+				type: "terminal",
+				id: "o1",
+				ptyId: "",
+				agentId: "claude",
+				agentHandle: "Orchestrator",
+				agentSessionId: "sid-a",
+			});
+			setLayout({ type: "terminal", id: "o1", ptyId: "" });
+			setPendingTask.mockClear();
+			// Another Agent after the exit starts fresh: Claude's id is not its.
+			await pickOrchestratorAgent("codex");
+			expect(setPendingTask).toHaveBeenLastCalledWith("o1", {
+				argv: ["codex"],
+				agentId: "codex",
+			});
+			// Codex exits before reporting an id. Picking Claude now is again a
+			// change of Agent, so it starts fresh too, not with Claude's old id.
+			setLayout({ type: "terminal", id: "o1", ptyId: "" });
+			await pickOrchestratorAgent("claude");
+			expect(setPendingTask).toHaveBeenLastCalledWith("o1", {
+				argv: ["claude"],
+				agentId: "claude",
+			});
+		} finally {
+			stop();
+		}
+	});
+
+	it("forgets the remembered session when installed for a Profile", () => {
+		useOrchestratorStore.setState({
+			lastSession: { agentId: "claude", sessionId: "sid-old" },
+		});
+		useWindowUiStore.setState({ orchestratorViewOpen: false });
+		const stop = installOrchestratorSession();
+		try {
+			expect(useOrchestratorStore.getState().lastSession).toBeNull();
+		} finally {
+			stop();
+		}
+	});
 });

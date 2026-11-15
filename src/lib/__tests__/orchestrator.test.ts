@@ -177,13 +177,15 @@ describe("orchestratorSessionOf", () => {
 				}),
 			),
 		];
-		expect(orchestratorSessionOf(tabs)).toEqual({
+		const own = orchestratorPane(tabs);
+		expect(own).not.toBeNull();
+		expect(own && orchestratorSessionOf(tabs, own)).toEqual({
 			agentId: "claude",
 			sessionId: "sid-1",
 		});
 	});
 
-	it("is null with no Orchestrator pane, or no id yet", () => {
+	it("is null while the pane has no id yet", () => {
 		const noId = [
 			tab(
 				"t",
@@ -191,7 +193,6 @@ describe("orchestratorSessionOf", () => {
 				term("p", { agentId: "claude", agentHandle: "Orchestrator" }),
 			),
 		];
-		expect(orchestratorSessionOf(noId)).toBeNull();
-		expect(orchestratorSessionOf([tab("t", 0, term("p"))])).toBeNull();
+		expect(orchestratorSessionOf(noId, { tabId: "t", paneId: "p" })).toBeNull();
 	});
 });
