@@ -355,13 +355,16 @@ export function canFire(state: PtyActivityState | undefined): boolean {
 // ── Scope ──
 
 /** Whether an action is offered for a given Agent, in a pane that is or is
- *  not in the Orchestrator workspace. */
+ *  not the **Orchestrator**'s own. That pane gets the Orchestrator's actions
+ *  only: it is not a coding Agent, so neither `all` nor its Agent's set
+ *  reaches it. */
 export function isInScope(
 	scope: ActionScope,
 	agentId: string | undefined,
-	inOrchestrator = false,
+	atOrchestrator = false,
 ): boolean {
-	if (scope.kind === "orchestrator") return inOrchestrator;
+	if (scope.kind === "orchestrator") return atOrchestrator;
+	if (atOrchestrator) return false;
 	if (scope.kind === "all") return true;
 	if (!agentId) return false;
 	return scope.agentIds.includes(agentId);
@@ -383,7 +386,7 @@ export function isInScope(
 export function actionsForPane(
 	actions: PromptAction[],
 	agentId: string | undefined,
-	opts: { barOnly: boolean; inOrchestrator?: boolean },
+	opts: { barOnly: boolean; atOrchestrator?: boolean },
 ): PromptAction[] {
 	const inScope = actions.filter(
 		(a) =>
@@ -393,12 +396,12 @@ export function actionsForPane(
 			// Agent. Kept and shown in Settings, exactly like an action whose scope
 			// set has emptied out.
 			a.body.trim().length > 0 &&
-			isInScope(a.scope, agentId, opts.inOrchestrator ?? false) &&
+			isInScope(a.scope, agentId, opts.atOrchestrator ?? false) &&
 			(!opts.barOnly || a.showInBar),
 	);
 	const byPosition = (a: PromptAction, b: PromptAction) =>
 		a.position - b.position;
-	// The Orchestrator's own come first there: they are what it is for.
+	// Only ever alone (the Orchestrator's pane), but kept first regardless.
 	const orchestrator = inScope
 		.filter((a) => a.scope.kind === "orchestrator")
 		.sort(byPosition);

@@ -115,9 +115,10 @@ export function launchCommand(agent: CodingAgent): string {
 	return [agent.command, ...(agent.args ?? [])].join(" ");
 }
 
-/** Whether `paneId` is a pane of an Orchestrator workspace among
- *  `workspaces`. Only those Workspaces' layouts are read. */
-export function paneInOrchestrator(
+/** Whether `paneId` is the **Orchestrator**'s own pane (the one carrying its
+ *  handle) in an Orchestrator workspace among `workspaces`. Its helpers'
+ *  panes are not. Only those Workspaces' layouts are read. */
+export function isOrchestratorPane(
 	workspaces: readonly {
 		id: string;
 		kind?: "work" | "orchestrator";
@@ -125,14 +126,9 @@ export function paneInOrchestrator(
 	}[],
 	paneId: string,
 ): boolean {
-	for (const ws of workspaces) {
-		if (!isOrchestrator(ws)) continue;
-		for (const tab of ws.tabs) {
-			const layout = parseTabLayout(tab.layoutJson);
-			if (layout && findNode(layout, paneId)) return true;
-		}
-	}
-	return false;
+	return workspaces.some(
+		(ws) => isOrchestrator(ws) && orchestratorPane(ws.tabs)?.paneId === paneId,
+	);
 }
 
 // ── After an exit ──

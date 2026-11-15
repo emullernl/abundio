@@ -7,7 +7,7 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { useAgentHandle } from "../../hooks/useAgentHandle";
-import { usePaneInOrchestrator } from "../../hooks/usePaneInOrchestrator";
+import { useIsOrchestratorPane } from "../../hooks/useIsOrchestratorPane";
 import {
 	shortcutLabelFor,
 	useKeybindingOverrides,
@@ -16,7 +16,7 @@ import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { firePromptAction } from "../../lib/firePromptAction";
 import { pty } from "../../lib/ipc";
-import { paneInOrchestrator } from "../../lib/orchestrator";
+import { isOrchestratorPane } from "../../lib/orchestrator";
 import { isMac } from "../../lib/platform";
 import {
 	FLEET_TILE_PRIORITY,
@@ -191,7 +191,7 @@ export function TerminalSlot({
 		x: number;
 		y: number;
 	} | null>(null);
-	const inOrchestrator = usePaneInOrchestrator(paneId);
+	const atOrchestrator = useIsOrchestratorPane(paneId);
 	const searchPaneId = useWorkspaceStore((s) => s.searchPaneId);
 	const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
 	const searchOpen = searchPaneId === paneId;
@@ -264,7 +264,7 @@ export function TerminalSlot({
 					detectedAgentId,
 					{
 						barOnly: true,
-						inOrchestrator: paneInOrchestrator(
+						atOrchestrator: isOrchestratorPane(
 							useWorkspaceStore.getState().workspaces,
 							paneId,
 						),
@@ -735,7 +735,7 @@ export function TerminalSlot({
 				<PromptActionPopover
 					anchor={editing.anchor}
 					defaultAgentId={detectedAgentId}
-					inOrchestrator={inOrchestrator}
+					atOrchestrator={atOrchestrator}
 					editing={editing.action}
 					onClose={() => setEditing(null)}
 				/>
@@ -771,7 +771,7 @@ export function TerminalSlot({
 				<PromptActionPopover
 					anchor={addAnchor}
 					defaultAgentId={detectedAgentId}
-					inOrchestrator={inOrchestrator}
+					atOrchestrator={atOrchestrator}
 					onClose={() => setAddAnchor(null)}
 				/>
 			)}

@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
 	agentLeftPane,
 	findOrchestratorWorkspace,
+	isOrchestratorPane,
 	launchCommand,
 	ORCHESTRATOR_HANDLE,
 	orchestratorPane,
-	paneInOrchestrator,
 	paneRunsAgent,
 	pickerAgents,
 	stampOrchestrator,
@@ -121,18 +121,26 @@ describe("orchestrator helpers", () => {
 		).toBe("codex --yolo");
 	});
 
-	it("tells whether a pane is in an Orchestrator workspace", () => {
+	it("tells the Orchestrator's own pane from its helpers' and the rest", () => {
 		const list = [
 			{ id: "a", tabs: [tab("ta", 0, term("pa"))] },
 			{
 				id: "o",
 				kind: "orchestrator" as const,
-				tabs: [tab("to", 0, term("po"))],
+				tabs: [
+					tab("to", 0, {
+						...term("po"),
+						agentHandle: "Orchestrator",
+					} as PaneNode),
+					tab("th", 1, term("helper")),
+				],
 			},
 		];
-		expect(paneInOrchestrator(list, "po")).toBe(true);
-		expect(paneInOrchestrator(list, "pa")).toBe(false);
-		expect(paneInOrchestrator(list, "nope")).toBe(false);
+		expect(isOrchestratorPane(list, "po")).toBe(true);
+		// A helper in its Workspace is an ordinary coding Agent.
+		expect(isOrchestratorPane(list, "helper")).toBe(false);
+		expect(isOrchestratorPane(list, "pa")).toBe(false);
+		expect(isOrchestratorPane(list, "nope")).toBe(false);
 	});
 });
 

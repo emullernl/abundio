@@ -42,9 +42,9 @@ interface PromptActionPopoverProps {
 	/** Present when editing rather than creating. The same card serves both:
 	 *  the fields are identical, and a second component would drift. */
 	editing?: PromptAction;
-	/** The pane is in the Orchestrator workspace (ADR-0057): the narrow
-	 *  choice offered is "the Orchestrator only" instead of this Agent. */
-	inOrchestrator?: boolean;
+	/** The pane is the Orchestrator's own (ADR-0057): the narrow choice
+	 *  offered is "the Orchestrator only" instead of this Agent. */
+	atOrchestrator?: boolean;
 	onClose: () => void;
 }
 
@@ -53,14 +53,14 @@ function PromptActionPopoverBody({
 	anchor,
 	defaultAgentId,
 	editing,
-	inOrchestrator = false,
+	atOrchestrator = false,
 	onClose,
 }: PromptActionPopoverProps) {
 	// An action of the Orchestrator's, or a new one made in its pane, keeps
 	// that scope as its narrow choice (ADR-0057).
 	const orchestratorScope = editing
 		? editing.scope.kind === "orchestrator"
-		: inOrchestrator;
+		: atOrchestrator;
 	const nameRef = useRef<HTMLInputElement>(null);
 	const [name, setName] = useState(editing?.name ?? "");
 	const [body, setBody] = useState(editing?.body ?? "");

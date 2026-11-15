@@ -88,7 +88,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `hooks/usePaneDrag.ts` — Drag-and-drop pane reordering logic.
 - `hooks/useAgentPanes.ts` — Every agent-mode pane of the Window's Opened workspaces in derived order; feeds the Fleet Console (with its pending tiles) and the Agents list (without).
 - `hooks/usePaneStatus.ts` — One pane's status icon state; shared by the pane title bar and the Agent row.
-- `hooks/useWorkWorkspaces.ts` — The store's Workspaces without the Orchestrator workspace, as a stable array; every Workspace list and picker reads it. `hooks/usePaneInOrchestrator.ts` — whether a pane is the Orchestrator workspace's.
+- `hooks/useWorkWorkspaces.ts` — The store's Workspaces without the Orchestrator workspace, as a stable array; every Workspace list and picker reads it. `hooks/useIsOrchestratorPane.ts` — whether a pane is the Orchestrator's own (its prompt actions are the Orchestrator's only; its helpers' panes get the ordinary ones).
 
 #### Stores
 
