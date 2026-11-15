@@ -33,6 +33,7 @@ import {
 	selectOrchestratorTab,
 	tabLabel,
 	tabPaneId,
+	tabTitle,
 } from "../../lib/orchestratorTabs";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
@@ -191,8 +192,8 @@ function OrchestratorFileSearch() {
 	);
 }
 
-/** A file's **Orchestrator tab**: its name, a dot while it has unsaved
- *  edits, its Workspace in the tooltip. */
+/** A file's **Orchestrator tab**: its Workspace's name, then its own, a dot
+ *  while it has unsaved edits, the full path in the tooltip. */
 function FileTopTab({
 	tab,
 	active,
@@ -214,9 +215,28 @@ function FileTopTab({
 			onSelect={() => selectOrchestratorTab(tab.id)}
 			onClose={onClose}
 			title={`${workspaceName} · ${tab.path}`}
+			ariaLabel={tabTitle(tab, workspaceName)}
 		>
-			<FileText size={13} />
-			<span className="truncate">{tabLabel(tab)}</span>
+			<FileText size={13} style={{ flexShrink: 0 }} />
+			{/* The Workspace's name gives way first, so the file's name stays
+			    readable in a narrow tab. */}
+			{workspaceName && (
+				<>
+					<span className="truncate text-[var(--fg-secondary)]">
+						{workspaceName}
+					</span>
+					<span
+						className="text-[var(--fg-secondary)]"
+						style={{ flexShrink: 0 }}
+						aria-hidden
+					>
+						›
+					</span>
+				</>
+			)}
+			<span className="truncate" style={{ flexShrink: 0, maxWidth: 160 }}>
+				{tabLabel(tab)}
+			</span>
 			{dirty && (
 				<span
 					title="Unsaved changes"
@@ -239,12 +259,14 @@ function TopTab({
 	onSelect,
 	onClose,
 	title,
+	ariaLabel,
 	children,
 }: {
 	active: boolean;
 	onSelect: () => void;
 	onClose?: () => void;
 	title: string;
+	ariaLabel?: string;
 	children: React.ReactNode;
 }) {
 	return (
@@ -271,9 +293,11 @@ function TopTab({
 					gap: 6,
 					fontSize: 12,
 					cursor: "pointer",
-					maxWidth: 220,
+					maxWidth: 280,
+					minWidth: 0,
 				}}
 				aria-pressed={active}
+				aria-label={ariaLabel}
 				title={title}
 				onClick={onSelect}
 			>

@@ -17,6 +17,7 @@ const {
 	openOrchestratorFile,
 	requestCloseOrchestratorTab,
 	tabLabel,
+	tabTitle,
 	tabPaneId,
 	tabWorkspaceIds,
 	toggleOrchestratorFileSearch,
@@ -115,6 +116,10 @@ describe("orchestratorTabs", () => {
 
 	it("names tabs, their panes and their Workspaces", () => {
 		expect(tabLabel(tab("a", "/w/docs/readme.md"))).toBe("readme.md");
+		expect(tabTitle(tab("a", "/w/docs/readme.md"), "api")).toBe(
+			"api › readme.md",
+		);
+		expect(tabTitle(tab("a", "/w/docs/readme.md"), "")).toBe("readme.md");
 		expect(tabPaneId("x")).toBe("orch-tab:x");
 		expect(
 			tabWorkspaceIds([tab("a"), tab("b"), tab("c", "/v/c", "v")]),

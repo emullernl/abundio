@@ -28,6 +28,17 @@ export function tabLabel(tab: Pick<OrchestratorFileTab, "path">): string {
 	return tab.path.split("/").pop() || tab.path;
 }
 
+/** The title a file tab shows in the tab strip: its Workspace's name, then
+ *  the file's name, so tabs of two Workspaces tell apart at a glance. Just
+ *  the file's name while the Workspace is unknown. */
+export function tabTitle(
+	tab: Pick<OrchestratorFileTab, "path">,
+	workspaceName: string,
+): string {
+	const name = tabLabel(tab);
+	return workspaceName ? `${workspaceName} › ${name}` : name;
+}
+
 /** Loads the Profile's file tabs and the selected one. */
 export async function loadOrchestratorTabs(profileId: string): Promise<void> {
 	try {
