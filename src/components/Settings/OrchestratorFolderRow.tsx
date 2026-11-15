@@ -97,7 +97,7 @@ export function OrchestratorFolderRow({ profileId }: { profileId: string }) {
 				>
 					Choose…
 				</button>
-				{!folder.isDefault && (
+				{folder.path !== folder.defaultPath && (
 					<button
 						type="button"
 						className={secondaryButtonClass}

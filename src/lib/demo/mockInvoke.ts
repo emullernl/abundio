@@ -185,6 +185,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return {
 				path: fixtures.orchestratorWorkspace.rootFolder,
 				isDefault: true,
+				defaultPath: fixtures.orchestratorWorkspace.rootFolder,
 			};
 		// Orchestrator file tabs live for the demo session only.
 		case "orchestrator_tabs_list":

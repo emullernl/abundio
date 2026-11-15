@@ -45,11 +45,10 @@ describe("OrchestratorFolderRow", () => {
 		container.remove();
 	});
 
-	it("shows the folder with ~, and Reset only for a chosen one", async () => {
-		folder.mockResolvedValue({
-			path: "/Users/me/Library/Application Support/abundio/orchestrator/Personal",
-			isDefault: true,
-		});
+	it("shows the folder with ~, and Reset only away from the default", async () => {
+		const path =
+			"/Users/me/Library/Application Support/abundio/orchestrator/Personal";
+		folder.mockResolvedValue({ path, isDefault: true, defaultPath: path });
 		act(() => root.render(<OrchestratorFolderRow profileId="p" />));
 		await flush();
 		expect(container.textContent).toContain(
@@ -61,7 +60,11 @@ describe("OrchestratorFolderRow", () => {
 	});
 
 	it("asks before moving the Orchestrator, and shows a refusal", async () => {
-		folder.mockResolvedValue({ path: "/Users/me/Orch", isDefault: false });
+		folder.mockResolvedValue({
+			path: "/Users/me/Orch",
+			isDefault: false,
+			defaultPath: "/data/orchestrator/Personal",
+		});
 		pick.mockResolvedValue("/Users/me/project");
 		setFolder.mockRejectedValue("Choose an empty folder");
 		act(() => root.render(<OrchestratorFolderRow profileId="p" />));
@@ -75,5 +78,16 @@ describe("OrchestratorFolderRow", () => {
 		await flush();
 		expect(setFolder).toHaveBeenCalledWith("p", "/Users/me/project");
 		expect(container.textContent).toContain("Choose an empty folder");
+	});
+
+	it("offers Reset for a Profile still in its old id folder", async () => {
+		folder.mockResolvedValue({
+			path: "/data/orchestrator/0000-1/Orchestrator",
+			isDefault: true,
+			defaultPath: "/data/orchestrator/Personal",
+		});
+		act(() => root.render(<OrchestratorFolderRow profileId="p" />));
+		await flush();
+		expect(button(container, "Reset to default")).toBeDefined();
 	});
 });

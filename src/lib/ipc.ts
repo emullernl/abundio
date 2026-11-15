@@ -221,6 +221,8 @@ export const orchestrator = {
 export interface OrchestratorFolder {
 	path: string;
 	isDefault: boolean;
+	/** Where Reset to default puts it (`orchestrator/<Profile name>`). */
+	defaultPath: string;
 }
 
 /** One **Orchestrator tab** holding a file. `path` is absolute for `file`,

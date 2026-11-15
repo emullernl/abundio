@@ -315,6 +315,18 @@ pub struct OrchestratorFolder {
     pub path: String,
     /// Inside Abundio's data folder (not one the user chose).
     pub is_default: bool,
+    /// Where Reset to default would put it: `orchestrator/<Profile name>`.
+    /// Differs from `path` for a chosen folder, and for a Profile from before
+    /// ADR-0059 still in `orchestrator/<id>/Orchestrator`.
+    pub default_path: String,
+}
+
+fn describe(store: &WorkspaceStore, root: &Path, profile_id: &str, path: PathBuf) -> Result<OrchestratorFolder, AbundioError> {
+    Ok(OrchestratorFolder {
+        is_default: is_default_folder(root, &path),
+        default_path: new_default(store, root, profile_id)?.to_string_lossy().into_owned(),
+        path: path.to_string_lossy().into_owned(),
+    })
 }
 
 #[tauri::command]
@@ -328,10 +340,7 @@ pub async fn orchestrator_folder_get(
         Some(f) => PathBuf::from(f),
         None => new_default(&store, &root, &profile_id)?,
     };
-    Ok(OrchestratorFolder {
-        is_default: is_default_folder(&root, &path),
-        path: path.to_string_lossy().into_owned(),
-    })
+    describe(&store, &root, &profile_id, path)
 }
 
 /// Chooses the Profile's Orchestrator folder (`None`: back to the default),
@@ -346,10 +355,7 @@ pub async fn orchestrator_folder_set(
     use tauri::Emitter;
     let root = crate::app_paths::shared_root();
     let folder = set_folder(&store, &root, &profile_id, path.as_deref().map(Path::new))?;
-    let out = OrchestratorFolder {
-        is_default: is_default_folder(&root, &folder),
-        path: folder.to_string_lossy().into_owned(),
-    };
+    let out = describe(&store, &root, &profile_id, folder)?;
     let _ = app.emit(
         "orchestrator-folder-changed",
         serde_json::json!({ "profileId": profile_id, "path": out.path }),
