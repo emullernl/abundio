@@ -31,10 +31,14 @@ pub fn default_parent(root: &Path) -> PathBuf {
     root.join("orchestrator")
 }
 
-/// Whether `folder` is a default one (inside `default_parent`): Abundio's to
-/// delete with its Profile. A folder the user chose never is.
+/// Whether `folder` is a default one (inside `default_parent`, never that
+/// folder itself): Abundio's to delete with its Profile. A folder the user
+/// chose never is: `set_folder` refuses one in there. Compared by real path.
 pub fn is_default_folder(root: &Path, folder: &Path) -> bool {
-    folder.starts_with(default_parent(root))
+    let parent = default_parent(root);
+    crate::workspace_folders::is_within(folder, &parent)
+        && crate::workspace_folders::folder_key(folder)
+            != crate::workspace_folders::folder_key(&parent)
 }
 
 /// A Profile's name as one safe folder name: characters no OS allows in a
@@ -237,7 +241,23 @@ pub fn set_folder(
                     "Choose a folder by its full path".into(),
                 ));
             }
-            if store.folder_in_use(&p.to_string_lossy(), profile_id)? {
+            // Abundio's own folder for default ones is not the user's to
+            // choose: a Profile's default could land inside it, and a
+            // chosen folder there would count as Abundio's to delete.
+            if crate::workspace_folders::is_within(p, &default_parent(root)) {
+                return Err(AbundioError::InvalidOperation(
+                    "Choose a folder outside Abundio's own; Reset to default goes back there".into(),
+                ));
+            }
+            // The Workspace folder rule's own comparison (real path, case,
+            // trailing slash), so both sides agree on "the same folder".
+            let key = crate::workspace_folders::folder_key(p);
+            let own = store.orchestrator_workspace_id(profile_id)?;
+            let clash = store.all_folders()?.into_iter().any(|r| {
+                Some(&r.id) != own.as_ref()
+                    && crate::workspace_folders::folder_key(Path::new(&r.root_folder)) == key
+            });
+            if clash {
                 return Err(AbundioError::InvalidOperation(
                     "That folder already belongs to a Workspace".into(),
                 ));
@@ -561,6 +581,34 @@ mod tests {
         assert_eq!(set_folder(&store, &root, PID, None).unwrap(), first);
         assert!(folder_is_usable(&mine));
         assert_eq!(set_folder(&store, &root, PID, Some(&mine)).unwrap(), mine);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn abundios_own_folder_is_never_a_chosen_one() {
+        let store = test_store();
+        let root = temp_root("own");
+        ensure(&store, &root, PID).unwrap();
+        // The parent of every default folder, or one inside it: refused.
+        assert!(set_folder(&store, &root, PID, Some(&default_parent(&root))).is_err());
+        let inside = default_parent(&root).join("mine");
+        assert!(set_folder(&store, &root, PID, Some(&inside)).is_err());
+        // And the parent itself is never "a default folder" to delete.
+        assert!(!is_default_folder(&root, &default_parent(&root)));
+        assert!(is_default_folder(&root, &default_parent(&root).join("P")));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_workspace_folder_written_differently_is_still_refused() {
+        let store = test_store();
+        let root = temp_root("same");
+        ensure(&store, &root, PID).unwrap();
+        let work = root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        store.create("w", &work.to_string_lossy(), PID).unwrap();
+        let trailing = PathBuf::from(format!("{}/", work.display()));
+        assert!(set_folder(&store, &root, PID, Some(&trailing)).is_err());
         fs::remove_dir_all(root).ok();
     }
 

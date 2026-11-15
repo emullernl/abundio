@@ -523,6 +523,18 @@ impl WorkspaceStore {
         Ok(rows)
     }
 
+    /// The id of `profile_id`'s Orchestrator workspace, once it exists.
+    pub fn orchestrator_workspace_id(&self, profile_id: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT id FROM workspaces WHERE profile_id = ?1 AND kind = 'orchestrator'",
+                [profile_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// The folder of `profile_id`'s Orchestrator workspace, once it exists.
     pub fn orchestrator_folder_of(&self, profile_id: &str) -> Result<Option<String>, AbundioError> {
         let conn = self.conn.lock().unwrap();

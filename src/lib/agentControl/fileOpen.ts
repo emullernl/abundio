@@ -61,12 +61,25 @@ export async function openFileFor(
 	const reply = { opened: place, path: request.path, workspaceId };
 
 	if (place === "orchestrator-tab") {
-		if (!ws())
+		const target = ws();
+		if (!target)
 			throw new ControlError(
 				"not_found",
 				"that Workspace is not loaded in this Window",
 			);
-		await openOrchestratorFile(
+		// The same answer as a Tab gives, and no dead tab kept for a commit
+		// that does not exist or never touched the file.
+		if (kind === "commit" && request.commit) {
+			await gitApi
+				.commitFileDiff(target.rootFolder, request.commit, request.rel)
+				.catch(() => {
+					throw new ControlError(
+						"not_found",
+						`no such commit, or it did not change ${request.rel}`,
+					);
+				});
+		}
+		const made = await openOrchestratorFile(
 			{
 				workspaceId,
 				kind,
@@ -79,7 +92,10 @@ export async function openFileFor(
 		if (request.focus) {
 			useOrchestratorStore.getState().set({ fileTabFocused: true });
 		}
-		if (request.line && kind === "file") {
+		// Only for a tab that is on screen: a pending line nobody consumes
+		// would wait for whichever File pane next opens this file, anywhere.
+		const shown = useOrchestratorStore.getState().selectedTabId === made.id;
+		if (request.line && kind === "file" && shown) {
 			useExplorerStore
 				.getState()
 				.setPendingGotoLine({ filePath: request.path, line: request.line });

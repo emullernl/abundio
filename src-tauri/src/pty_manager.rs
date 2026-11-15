@@ -652,9 +652,14 @@ else
   # Whole seconds: a zsh setup may make SECONDS a float (typeset -F), and
   # `[ -lt ]` takes integers only.
   __abundio_el=$((SECONDS - __abundio_t0)); __abundio_el=${{__abundio_el%%.*}}
-  if [ "$__abundio_rc" -ne 0 ] && [ -n "$__abundio_fb" ] \
+  # Not after Ctrl+C or a kill (130, 143): that is the user quitting, and a
+  # fresh session nobody asked for must not start.
+  if [ "$__abundio_rc" -ne 0 ] && [ "$__abundio_rc" -ne 130 ] \
+    && [ "$__abundio_rc" -ne 143 ] && [ -n "$__abundio_fb" ] \
     && [ "${{__abundio_el:-0}}" -lt "$__abundio_within" ]; then
     printf '\n\033[2mNothing to resume; starting a new session.\033[0m\n\n'
+    # eval: the fallback is the Agent's launch line from agentCommandFor,
+    # exactly what the user would type, never user data from elsewhere.
     eval "$__abundio_fb"
     __abundio_rc=$?
   fi
@@ -2113,6 +2118,25 @@ mod task_launch_tests {
             let late = run_with_fallback(shell, &["sh", "-c", "exit 3"], "echo FRESH", 0).unwrap();
             assert!(!late.contains("FRESH"), "{shell}: {late}");
             assert!(late.contains("\x1b]7770;command_end;3\x07"), "{shell}: {late}");
+        }
+    }
+
+    /// Ctrl+C or a kill is the user quitting a resumed Agent: no fresh
+    /// session starts, even inside the window.
+    #[test]
+    fn a_quit_never_starts_a_fresh_session() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            for rc in ["130", "143"] {
+                let Some(out) = run_with_fallback(shell, &["sh", "-c", &format!("exit {rc}")], "echo FRESH", 20)
+                else {
+                    continue;
+                };
+                assert!(!out.contains("FRESH"), "{shell} {rc}: {out}");
+                assert!(
+                    out.contains(&format!("\x1b]7770;command_end;{rc}\x07")),
+                    "{shell} {rc}: {out}"
+                );
+            }
         }
     }
 

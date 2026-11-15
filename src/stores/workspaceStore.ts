@@ -13,6 +13,7 @@ import {
 	workspaces as workspacesApi,
 	worktrees as worktreesApi,
 } from "../lib/ipc";
+import { isOrchestratorPane } from "../lib/orchestrator";
 import {
 	collectPaneIds,
 	collectTerminalIds,
@@ -1373,6 +1374,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				ok: false,
 				code: "invalid_handle",
 				message: "That pane is not open.",
+			};
+		}
+		// The Orchestrator is found by its handle: renaming it, or clearing
+		// it, would lose it (the exit picker, the badge, its prompt actions)
+		// and free the name for a helper.
+		if (isOrchestratorPane(get().workspaces, paneId)) {
+			return {
+				ok: false,
+				code: "handle_taken",
+				message: "The Orchestrator keeps its name.",
 			};
 		}
 		if (handle !== null) {
