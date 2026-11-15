@@ -117,7 +117,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `lib/agentTitleMap.ts` — **Title status** (ADR-0047): per-Agent title rules (Mistral Vibe's `>> ` / `? ` prefixes and blurred-pane suffixes) and the pure `titleStep` decision. terminalManager feeds it `onTitleChange`.
 - `lib/fleetConsole.ts` — Pure Fleet Console helpers: which panes are tiles and in what order, grid shape, Auto columns, divider drags, grid navigation.
 - `lib/workspaceKind.ts` — `isOrchestrator` / `workWorkspaces`: the one test for the Orchestrator workspace (ADR-0057). `buildWorkspaceRows` and `fleetTiles` leave it out.
-- `lib/orchestrator.ts` (pure: its pane, stamping, the picker's Agents, exit detection), `lib/orchestratorSession.ts` (enter/leave the view, pick and start the Agent, the picker after an exit), `lib/orchestratorLaunch.ts` (start through the PTY spawn with a resume fallback), `lib/orchestratorLayout.ts` (the view's split), `lib/orchestratorGraph.ts` (pure graph model, layout, `routeBetween`), `lib/orchestratorActions.ts` (Peek, Ask the Orchestrator), `lib/orchestratorTabs.ts` (file tabs, the multi-Workspace file search). `lib/orchestratorBadge.ts` (pure: the **Orchestrator badge**, the Agent rollup of the Orchestrator and its helpers, its tooltip, and the pane to focus when the view opens; `hooks/useOrchestratorBadge.ts` draws it on the Overview bar's Orchestrator button). `lib/controlActivity.ts` — Agent control calls' start, end and pulse, for the graph's streams. `lib/liveDiff.ts` — a file's uncommitted changes from whichever git section has them.
+- `lib/orchestrator.ts` (pure: its pane, stamping, the picker's Agents, exit detection), `lib/orchestratorSession.ts` (enter/leave the view, pick and start the Agent, the picker after an exit), `lib/orchestratorLaunch.ts` (start through the PTY spawn with a resume fallback), `lib/orchestratorLayout.ts` (the view's split), `lib/orchestratorGraph.ts` (pure graph model, layout, `routeBetween`), `lib/orchestratorActions.ts` (Peek, Ask the Orchestrator), `lib/orchestratorCycle.ts` (the Agent cycle in the view: the Peek through the graph's order, the Orchestrator as a stop), `lib/orchestratorTabs.ts` (file tabs, the multi-Workspace file search). `lib/orchestratorBadge.ts` (pure: the **Orchestrator badge**, the Agent rollup of the Orchestrator and its helpers, its tooltip, and the pane to focus when the view opens; `hooks/useOrchestratorBadge.ts` draws it on the Overview bar's Orchestrator button). `lib/controlActivity.ts` — Agent control calls' start, end and pulse, for the graph's streams. `lib/liveDiff.ts` — a file's uncommitted changes from whichever git section has them.
 - `lib/agentRowTitle.ts` — An Agent row's first line: the Agent's terminal title, or its name.
 - `lib/handleOrder.ts` — Pure **Handle order** (Agents list, Agent cycle): Default handles by number. `lib/agentMenu.ts` — the **Agent menu**'s entries. `lib/agentCycle.ts` — the **Agent cycle**. `lib/agentPanes.ts` — the agent-mode panes from store values (shared by `useAgentPanes` and the Agent cycle) and `inHandleOrder`.
 - `lib/leftSidebarLayout.ts` — Height split between the Workspace list and the Agents list.
@@ -322,7 +322,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux. These are the **defaults*
 | Focus pane on that side (Directional move) | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
 | Next / previous pane (Pane cycle) | `Ctrl+Cmd+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Next / previous Opened workspace | `Ctrl+Cmd+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
-| Next / previous Agent (Agent cycle, Handle order) | `Ctrl+Cmd+→` / `←` | `Ctrl+Shift+End` / `Home` |
+| Next / previous Agent (Agent cycle, Handle order; in the Orchestrator view it moves the Peek, graph order) | `Ctrl+Cmd+→` / `←` | `Ctrl+Shift+End` / `Home` |
 | Add worktree | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 | Command palette | `Cmd+K` | `Ctrl+K` |
 | Navigator | `Cmd+J` | `Ctrl+Shift+J` |
@@ -335,7 +335,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux. These are the **defaults*
 | Toggle markdown preview | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | Toggle Fleet Console | `Cmd+Shift+A` | `Ctrl+Shift+A` |
 | Toggle Orchestrator view | `Cmd+Shift+O` | `Ctrl+Shift+O` |
-| Spotlight focused tile / back to grid (Fleet Console only) | `Cmd+Shift+Enter` | `Ctrl+Shift+Enter` |
+| Spotlight focused tile / back to grid (Fleet Console); Switch to the peeked Agent (Orchestrator view) | `Cmd+Shift+Enter` | `Ctrl+Shift+Enter` |
 | Tile zoom in / out / reset (Fleet Console only) | `Cmd+=` / `Cmd+-` / `Cmd+0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | New workspace | `Cmd+Shift+N` | `Ctrl+Shift+N` |
 | New tab | `Cmd+T` | `Ctrl+T` |

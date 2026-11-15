@@ -90,6 +90,7 @@ import {
 	tabPaneId,
 	toggleOrchestratorFileSearch,
 } from "./lib/orchestratorTabs";
+import { switchToPane } from "./lib/paneLocation";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
 import { isMac } from "./lib/platform";
 import { firePaneSlot } from "./lib/promptActionRegistry";
@@ -1196,8 +1197,24 @@ export function App() {
 			}),
 		);
 		// Fleet Console only: the gate leaves these keys to the terminal elsewhere.
-		registerAction("fleet-spotlight", toggleFleetSpotlight);
-		registerActionGate("fleet-spotlight", fleetConsoleShowing);
+		// The Fleet Console's Spotlight; while peeking in the Orchestrator view,
+		// Switch to the peeked Agent instead.
+		registerAction("fleet-spotlight", () => {
+			const peek = useOrchestratorStore.getState().peekPaneId;
+			if (!fleetConsoleShowing() && orchestratorViewShowing() && peek) {
+				switchToPane(peek);
+			} else {
+				toggleFleetSpotlight();
+			}
+		});
+		registerActionGate(
+			"fleet-spotlight",
+			() =>
+				fleetConsoleShowing() ||
+				(orchestratorViewShowing() &&
+					useOrchestratorStore.getState().phase === "ready" &&
+					useOrchestratorStore.getState().peekPaneId !== null),
+		);
 		registerAction("fleet-zoom-reset", () => stepTileZoom(0));
 		registerActionGate("fleet-zoom-reset", fleetConsoleShowing);
 		registerAction("new-task", () => {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { closePeek } from "../../lib/orchestratorActions";
 import { findPaneLocation, switchToPane } from "../../lib/paneLocation";
+import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { requestPaneClose } from "../../stores/paneCloseConfirmStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
@@ -39,6 +40,11 @@ export function PeekPane({ paneId }: { paneId: string }) {
 	// Focus is the Peek's own, like a Fleet tile's: clicking into it takes
 	// it, and focusing a pane of the Workspace below gives it up.
 	const [focused, setFocused] = useState(false);
+	// The Agent cycle peeked: the Peek has the keyboard.
+	const focusTick = useOrchestratorStore((s) => s.peekFocusTick);
+	useEffect(() => {
+		if (focusTick > 0) setFocused(true);
+	}, [focusTick]);
 	useEffect(
 		() =>
 			useWorkspaceStore.subscribe((s, prev) => {
@@ -68,6 +74,7 @@ export function PeekPane({ paneId }: { paneId: string }) {
 	if (!where) return null;
 	return (
 		<div
+			data-peek-pane
 			className="absolute flex"
 			style={{
 				inset: 8,

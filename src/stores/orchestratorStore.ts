@@ -43,6 +43,8 @@ interface OrchestratorState {
 	selectedPaneId: string | null;
 	/** The Agent shown in the **Peek**, to the right of the graph. */
 	peekPaneId: string | null;
+	/** Bumped when the **Agent cycle** peeks: the Peek takes keyboard focus. */
+	peekFocusTick: number;
 	/** **Orchestrator tabs** holding files (ADR-0058), in order. */
 	fileTabs: OrchestratorFileTab[];
 	/** The selected Orchestrator tab: a file tab's id, or null for the graph. */
@@ -69,6 +71,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set) => ({
 	panesTop: 0,
 	selectedPaneId: null,
 	peekPaneId: null,
+	peekFocusTick: 0,
 	fileTabs: [],
 	selectedTabId: null,
 	fileTabFocused: false,
