@@ -6,9 +6,14 @@ import {
 	getAgentIconComponent,
 	TerminalBrandIcon,
 } from "../lib/agentIcons";
+import { type FolderCheck, workspaces as workspacesApi } from "../lib/ipc";
 import type { CodingAgent } from "../lib/types";
+import { folderVerdict } from "../lib/workspaceFolder";
+import { fallbackProfileId } from "../stores/profileStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { LaunchChoice } from "./LaunchPicker";
+import { secondaryButtonClass } from "./PromptActions/fieldStyles";
 
 interface NewWorkspaceDialogProps {
 	isOpen: boolean;
@@ -42,6 +47,22 @@ export function NewWorkspaceDialog({
 
 	const [name, setName] = useState("");
 	const [folderPath, setFolderPath] = useState("");
+	// What the chosen folder meets: another Workspace of this Profile there,
+	// an Orchestrator folder, other Profiles' Workspaces.
+	const [check, setCheck] = useState<FolderCheck | null>(null);
+	const verdict = folderVerdict(check);
+	useEffect(() => {
+		setCheck(null);
+		if (!folderPath) return;
+		let live = true;
+		workspacesApi
+			.folderCheck(folderPath, fallbackProfileId())
+			.then((c) => live && setCheck(c))
+			.catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [folderPath]);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const nameDirtyRef = useRef(false);
 
@@ -79,6 +100,7 @@ export function NewWorkspaceDialog({
 	const isValid =
 		name.trim().length > 0 &&
 		folderPath.length > 0 &&
+		!verdict.blocked &&
 		selectedIndex >= 0 &&
 		selectedIndex < options.length;
 
@@ -261,6 +283,44 @@ export function NewWorkspaceDialog({
 										{folderPath || "Choose folder…"}
 									</span>
 								</button>
+								{verdict.message && (
+									<div
+										role={verdict.blocked ? "alert" : "note"}
+										data-testid="folder-verdict"
+										className="flex items-center"
+										style={{
+											gap: 8,
+											fontSize: 12,
+											color: verdict.blocked
+												? "var(--error)"
+												: "var(--fg-secondary)",
+										}}
+									>
+										<span>{verdict.message}</span>
+										{verdict.open && (
+											<button
+												type="button"
+												className={secondaryButtonClass}
+												style={{
+													fontSize: 11,
+													padding: "2px 8px",
+													borderRadius: 5,
+												}}
+												onClick={() => {
+													const id = verdict.open?.id;
+													onClose();
+													if (id) {
+														useWorkspaceStore
+															.getState()
+															.beginWorkspaceSwitch(id);
+													}
+												}}
+											>
+												Open {verdict.open.name}
+											</button>
+										)}
+									</div>
+								)}
 							</div>
 
 							{/* Agent */}

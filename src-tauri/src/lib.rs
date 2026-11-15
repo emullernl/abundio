@@ -39,6 +39,7 @@ pub mod window_placement;
 pub mod window_frame;
 pub mod desktop;
 pub mod window_raise;
+pub mod workspace_folders;
 pub mod workspace_store;
 pub mod worktree_commands;
 pub mod worktree_watcher;
@@ -1465,6 +1466,7 @@ pub fn run() {
             commands::focus_window,
             commands::workspace_create,
             orchestrator::orchestrator_ensure,
+            workspace_folders::workspace_folder_check,
             orchestrator::orchestrator_folder_get,
             orchestrator::orchestrator_folder_set,
             orchestrator::orchestrator_agent_get,

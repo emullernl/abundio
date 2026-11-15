@@ -59,6 +59,17 @@ pub struct NewOrchestratorTab {
     pub preview: bool,
 }
 
+/// One Workspace's folder and owner, for the folder rules.
+#[derive(Debug, Clone)]
+pub struct FolderRow {
+    pub id: String,
+    pub name: String,
+    pub root_folder: String,
+    pub profile_id: String,
+    pub profile_name: String,
+    pub kind: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceUpdate {
@@ -487,6 +498,29 @@ impl WorkspaceStore {
         let workspace = Self::get_workspace_with_conn(&conn, &workspace_id)?;
         let tabs = Self::list_tabs_with_conn(&conn, &workspace_id)?;
         Ok(WorkspaceWithTabs { workspace, tabs })
+    }
+
+    /// Every Workspace's folder, with what the folder rules need
+    /// (`workspace_folders`).
+    pub fn all_folders(&self) -> Result<Vec<FolderRow>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT w.id, w.name, w.root_folder, w.profile_id, COALESCE(p.name, ''), w.kind
+               FROM workspaces w LEFT JOIN profiles p ON p.id = w.profile_id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(FolderRow {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    root_folder: r.get(2)?,
+                    profile_id: r.get(3)?,
+                    profile_name: r.get(4)?,
+                    kind: r.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// The folder of `profile_id`'s Orchestrator workspace, once it exists.

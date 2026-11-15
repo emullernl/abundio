@@ -228,7 +228,15 @@ pub async fn profile_delete(
     // Read before the row goes: a default Orchestrator folder goes with its
     // Profile, one the user chose stays (ADR-0059). Only once the delete
     // itself is allowed.
-    let orchestrator = workspaces.orchestrator_folder_of(&id).ok().flatten();
+    let orchestrator = workspaces
+        .orchestrator_folder_of(&id)
+        .ok()
+        .flatten()
+        // Never a folder another Workspace still points into.
+        .filter(|f| {
+            let rows = workspaces.all_folders().unwrap_or_default();
+            !crate::workspace_folders::holds_work(&rows, std::path::Path::new(f))
+        });
     store.delete(&id)?;
     if let Some(folder) = orchestrator {
         crate::orchestrator::forget_folder_at(
@@ -377,6 +385,14 @@ pub async fn workspace_create(
     root_folder: String,
     profile_id: String,
 ) -> Result<WorkspaceWithTabs, AbundioError> {
+    // One folder per Profile, never an Orchestrator folder (GLOSSARY.md).
+    crate::workspace_folders::enforce(&crate::workspace_folders::check(
+        &store,
+        &crate::app_paths::shared_root(),
+        &root_folder,
+        &profile_id,
+        None,
+    )?)?;
     store.create(&name, &root_folder, &profile_id)
 }
 
@@ -394,6 +410,17 @@ pub async fn workspace_update(
     id: String,
     updates: WorkspaceUpdate,
 ) -> Result<(), AbundioError> {
+    if let Some(folder) = &updates.root_folder {
+        if let Some(profile_id) = store.profile_of(&id)? {
+            crate::workspace_folders::enforce(&crate::workspace_folders::check(
+                &store,
+                &crate::app_paths::shared_root(),
+                folder,
+                &profile_id,
+                Some(&id),
+            )?)?;
+        }
+    }
     store.update(&id, updates)
 }
 

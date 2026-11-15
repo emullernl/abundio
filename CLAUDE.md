@@ -29,6 +29,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `pty_manager.rs` — Per-PTY dedicated OS threads with crossbeam channels. PTY types never cross async boundaries. Output is base64-encoded and emitted via Tauri events.
 - `app_paths.rs` — Every on-disk path, split into **shared** (`<data>/abundio/`: hook relay scripts, shims) and **epoch-versioned** (`<data>/abundio/v2/`: database, pty-logs, shell-integration, windows.json). Also does the one-time import of the previous epoch's database. See ADR-0025.
 - `workspace_store.rs` — SQLite CRUD for workspaces, layouts, tabs. DB at `~/Library/Application Support/abundio/v2/abundio.db`.
+- `workspace_folders.rs` — Which folder a Workspace may have: never one another Workspace of its Profile has, never an Orchestrator folder (another Profile's may share it; the New Workspace dialog says so). `folder_key` compares real paths. Enforced in `workspace_create` and a folder change in `workspace_update`; `workspace_folder_check` for the dialog.
 - `env_crypto.rs` — Master key in the OS credential store (`keyring`) + AES-256-GCM seal/open for environment variable values. No DB, no Tauri, so it tests with an injected key.
 - `env_vars.rs` — `EnvVarStore`: per-Workspace **Environment Bundles** and their variables, plus the `env_*` IPC commands. Owns its own DB connection so PTY spawn never queues behind the WorkspaceStore mutex. See ADR-0024.
 - `agent_registry.rs` — Detects installed agents by scanning `$PATH` directories (no subprocess spawning).

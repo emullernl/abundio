@@ -241,6 +241,13 @@ export type NewOrchestratorFileTab = Omit<
 	"id" | "commitOid" | "preview"
 > & { commitOid?: string | null; preview?: boolean };
 
+/** See `workspaces.folderCheck`. */
+export interface FolderCheck {
+	takenBy: { id: string; name: string } | null;
+	orchestrator: boolean;
+	otherProfiles: string[];
+}
+
 export const workspaces = {
 	create: (name: string, rootFolder: string, profileId: string) =>
 		invoke<WorkspaceWithTabs>("workspace_create", {
@@ -251,6 +258,13 @@ export const workspaces = {
 
 	list: (profileId: string) =>
 		invoke<WorkspaceWithTabs[]>("workspace_list", { profileId }),
+
+	/** What a Workspace of `profileId` would meet in `rootFolder`: another
+	 *  of its Workspaces there, an Orchestrator folder (both refused), or
+	 *  other Profiles' Workspaces (allowed). Rust enforces the refusals on
+	 *  create and on a folder change too. */
+	folderCheck: (rootFolder: string, profileId: string) =>
+		invoke<FolderCheck>("workspace_folder_check", { rootFolder, profileId }),
 
 	update: (id: string, updates: WorkspaceUpdate) =>
 		invoke<void>("workspace_update", { id, updates }),

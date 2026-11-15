@@ -174,6 +174,9 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return { opened: [], active: null };
 		case "workspace_missing_folders":
 			return [];
+		// Demo folders never clash.
+		case "workspace_folder_check":
+			return { takenBy: null, orchestrator: false, otherProfiles: [] };
 		// The demo has no Orchestrator Agent until the user picks one.
 		case "orchestrator_ensure":
 			return fixtures.orchestratorWorkspace;
