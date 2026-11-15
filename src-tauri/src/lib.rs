@@ -9,6 +9,7 @@ pub mod app_metrics;
 pub mod clipboard_image;
 pub mod commands;
 pub mod config;
+pub mod db_startup;
 pub mod dev_environments;
 pub mod env_crypto;
 pub mod env_vars;
@@ -793,7 +794,7 @@ pub fn run() {
             // the `_migrations` guard makes the second and third no-ops. These
             // are sequential on purpose — do not move any of them into a
             // spawned task, or two connections could race the same migration.
-            let conn = migrations::open_db().expect("Failed to open database");
+            let conn = db_startup::open_db_or_quit();
             let store = WorkspaceStore::new(conn);
 
             // Agent seeding is for new installs only (ADR-0037). Which case
@@ -823,25 +824,25 @@ pub fn run() {
 
             app.manage(store);
 
-            let profile_conn = migrations::open_db().expect("Failed to open database");
+            let profile_conn = db_startup::open_db_or_quit();
             let profile_store = ProfileStore::new(profile_conn);
             app.manage(profile_store);
 
             // Own connection: resolving a Workspace's environment sits on the
             // PTY spawn hot path and must not queue behind the WorkspaceStore
             // mutex while a git or telemetry write holds it.
-            let env_conn = migrations::open_db().expect("Failed to open database");
+            let env_conn = db_startup::open_db_or_quit();
             app.manage(env_vars::EnvVarStore::new(env_conn));
 
             // Own connection for the same reason: the Action bar reads this on
             // every pane render, and must not queue behind a git or telemetry
             // write holding the WorkspaceStore mutex.
-            let prompt_actions_conn = migrations::open_db().expect("Failed to open database");
+            let prompt_actions_conn = db_startup::open_db_or_quit();
             app.manage(prompt_actions::PromptActionStore::new(prompt_actions_conn));
 
             // Own connection: File windows read their row on every open and
             // view toggle, independent of the WorkspaceStore mutex. ADR-0046.
-            let file_window_conn = migrations::open_db().expect("Failed to open database");
+            let file_window_conn = db_startup::open_db_or_quit();
             app.manage(file_windows::FileWindowStore::new(file_window_conn));
             // Window placement (ADR-0051). The old plugin file is read before
             // any window is placed, so a window with no placement yet can

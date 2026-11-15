@@ -29,6 +29,7 @@ dependencies = [
  "portable-pty",
  "regex",
  "reqwest",
+ "rfd",
  "rusqlite",
  "rustls",
  "serde",

@@ -32,7 +32,7 @@
 //!   restore state on quit.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags};
@@ -88,47 +88,73 @@ pub fn hooks_dir() -> PathBuf {
 ///
 /// Copies rather than moves: the older build keeps working against its own
 /// database, which is the entire point. Idempotent and safe to call from every
-/// `open_db`, guarded both by a `OnceLock` and by the target's existence.
-pub fn import_legacy_state_if_needed() {
-    static IMPORTED: OnceLock<()> = OnceLock::new();
-    IMPORTED.get_or_init(|| {
-        let target = db_path();
-        if target.exists() {
-            return;
-        }
-        let legacy = legacy_db_path();
-        if !legacy.exists() {
-            // Fresh install: nothing to import.
-            return;
-        }
+/// `open_db`, guarded both by a done flag and by the target's existence.
+///
+/// Returns `true` once there is nothing left to do: the import succeeded, the
+/// database was already in place, or there was nothing to import. Returns
+/// `false` when it failed, and then it runs again on the next call. That
+/// matters for the startup **Try Again** (db_startup.rs): if security software
+/// blocked the first try, marking it done would let the retry create an empty
+/// database, and the previous version's data would never be imported.
+pub fn import_legacy_state_if_needed() -> bool {
+    static DONE: Mutex<bool> = Mutex::new(false);
+    let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
+    if *done {
+        return true;
+    }
+    *done = import_legacy_state(
+        &db_path(),
+        &legacy_db_path(),
+        &versioned_root(),
+        &legacy_pty_logs_dir(),
+        &pty_logs_dir(),
+    );
+    *done
+}
 
-        if let Err(e) = std::fs::create_dir_all(versioned_root()) {
-            log::error!("[paths] could not create {DATA_EPOCH} data dir: {e}");
-            return;
-        }
+/// The import itself, with its paths passed in so it tests against a temp dir.
+fn import_legacy_state(
+    target: &Path,
+    legacy: &Path,
+    root: &Path,
+    logs_from: &Path,
+    logs_to: &Path,
+) -> bool {
+    if target.exists() {
+        return true;
+    }
+    if !legacy.exists() {
+        // Fresh install: nothing to import.
+        return true;
+    }
 
-        match copy_database(&legacy, &target) {
-            Ok(()) => log::info!(
-                "[paths] seeded {DATA_EPOCH} database from the previous version's data"
-            ),
-            Err(e) => {
-                log::error!("[paths] could not import the previous database: {e}");
-                // Leave no half-written file behind — a fresh, empty database is
-                // recoverable, a truncated one is not. The sidecars matter too:
-                // `Connection::open` may have created them before the copy
-                // failed, and orphaned WAL/SHM alongside a fresh target on the
-                // next attempt is an avoidable state.
-                remove_database_files(&target);
-                return;
-            }
-        }
+    if let Err(e) = std::fs::create_dir_all(root) {
+        log::error!("[paths] could not create {DATA_EPOCH} data dir: {e}");
+        return false;
+    }
 
-        // Scrollback follows the pane ids we just copied, so bring the logs too.
-        // Best-effort: losing scrollback is a cosmetic regression, not a failure.
-        if let Err(e) = copy_dir_shallow(&legacy_pty_logs_dir(), &pty_logs_dir()) {
-            log::warn!("[paths] could not copy PTY scrollback logs: {e}");
+    match copy_database(legacy, target) {
+        Ok(()) => log::info!(
+            "[paths] seeded {DATA_EPOCH} database from the previous version's data"
+        ),
+        Err(e) => {
+            log::error!("[paths] could not import the previous database: {e}");
+            // Leave no half-written file behind — a fresh, empty database is
+            // recoverable, a truncated one is not. The sidecars matter too:
+            // `Connection::open` may have created them before the copy
+            // failed, and orphaned WAL/SHM alongside a fresh target on the
+            // next attempt is an avoidable state.
+            remove_database_files(target);
+            return false;
         }
-    });
+    }
+
+    // Scrollback follows the pane ids we just copied, so bring the logs too.
+    // Best-effort: losing scrollback is a cosmetic regression, not a failure.
+    if let Err(e) = copy_dir_shallow(logs_from, logs_to) {
+        log::warn!("[paths] could not copy PTY scrollback logs: {e}");
+    }
+    true
 }
 
 /// Remove a database and its WAL/SHM sidecars.
@@ -290,6 +316,46 @@ mod tests {
         copy_dir_shallow(&from, &to).unwrap();
         assert_eq!(std::fs::read(to.join("a.log")).unwrap(), b"hello");
         assert!(!to.join("nested").exists(), "copy is intentionally shallow");
+    }
+
+    #[test]
+    fn import_reports_a_failed_copy_so_it_can_run_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("v2");
+        let target = root.join("abundio.db");
+        let legacy = dir.path().join("legacy.db");
+        let logs_from = dir.path().join("logs-old");
+        let logs_to = root.join("pty-logs");
+
+        // Not a database: the copy fails, and no half-written target is left.
+        std::fs::write(&legacy, b"not a sqlite file").unwrap();
+        assert!(!import_legacy_state(&target, &legacy, &root, &logs_from, &logs_to));
+        assert!(!target.exists());
+
+        // Once the legacy database is readable, the next call imports it.
+        std::fs::remove_file(&legacy).unwrap();
+        {
+            let conn = Connection::open(&legacy).unwrap();
+            conn.execute_batch("CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('kept');")
+                .unwrap();
+        }
+        assert!(import_legacy_state(&target, &legacy, &root, &logs_from, &logs_to));
+        let v: String = Connection::open(&target)
+            .unwrap()
+            .query_row("SELECT v FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, "kept");
+    }
+
+    #[test]
+    fn import_is_done_when_there_is_nothing_to_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("v2");
+        let target = root.join("abundio.db");
+        let legacy = dir.path().join("missing.db");
+        let logs = dir.path().join("logs");
+        assert!(import_legacy_state(&target, &legacy, &root, &logs, &logs));
+        assert!(!target.exists());
     }
 }
 
