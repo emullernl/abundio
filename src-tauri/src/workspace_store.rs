@@ -489,6 +489,39 @@ impl WorkspaceStore {
         Ok(WorkspaceWithTabs { workspace, tabs })
     }
 
+    /// The folder of `profile_id`'s Orchestrator workspace, once it exists.
+    pub fn orchestrator_folder_of(&self, profile_id: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT root_folder FROM workspaces WHERE profile_id = ?1 AND kind = 'orchestrator'",
+                [profile_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// A Profile's name, for its default **Orchestrator folder**.
+    pub fn profile_name(&self, profile_id: &str) -> Result<Option<String>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row("SELECT name FROM profiles WHERE id = ?1", [profile_id], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// Whether any Workspace other than `profile_id`'s Orchestrator workspace
+    /// is bound to `folder` (in any Profile).
+    pub fn folder_in_use(&self, folder: &str, profile_id: &str) -> Result<bool, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE root_folder = ?1
+               AND NOT (profile_id = ?2 AND kind = 'orchestrator')",
+            rusqlite::params![folder, profile_id],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
     // ── Orchestrator tabs (ADR-0058) ──
 
     /// The Profile's Orchestrator file tabs, in order, and the selected one.

@@ -179,6 +179,13 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return fixtures.orchestratorWorkspace;
 		case "orchestrator_agent_get":
 			return demoOrchestratorAgent;
+		// The Orchestrator folder stays put in the demo.
+		case "orchestrator_folder_get":
+		case "orchestrator_folder_set":
+			return {
+				path: fixtures.orchestratorWorkspace.rootFolder,
+				isDefault: true,
+			};
 		// Orchestrator file tabs live for the demo session only.
 		case "orchestrator_tabs_list":
 			return { tabs: demoOrchestratorTabs, selected: null };

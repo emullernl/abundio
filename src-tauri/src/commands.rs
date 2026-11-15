@@ -207,6 +207,7 @@ pub async fn profile_update(
 pub async fn profile_delete(
     app: AppHandle,
     store: State<'_, ProfileStore>,
+    workspaces: State<'_, WorkspaceStore>,
     active_state: State<'_, ActiveProfileState>,
     id: String,
 ) -> Result<(), AbundioError> {
@@ -224,7 +225,17 @@ pub async fn profile_delete(
         active_state.remove_for_window(&owner_label);
     }
 
+    // Read before the row goes: a default Orchestrator folder goes with its
+    // Profile, one the user chose stays (ADR-0059). Only once the delete
+    // itself is allowed.
+    let orchestrator = workspaces.orchestrator_folder_of(&id).ok().flatten();
     store.delete(&id)?;
+    if let Some(folder) = orchestrator {
+        crate::orchestrator::forget_folder_at(
+            &crate::app_paths::shared_root(),
+            std::path::Path::new(&folder),
+        );
+    }
     rebuild_menu_after_profile_change(&app);
     let _ = app.emit("profiles-changed", ());
     let _ = app.emit("profile-ownership-changed", ());

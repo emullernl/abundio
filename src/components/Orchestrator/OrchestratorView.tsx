@@ -22,6 +22,7 @@ import {
 	topContentHeight,
 } from "../../lib/orchestratorLayout";
 import {
+	chooseOrchestratorFolder,
 	enterOrchestratorView,
 	pickOrchestratorAgent,
 	restartOrchestrator,
@@ -567,7 +568,9 @@ function BottomCard() {
 	const error = useOrchestratorStore((s) => s.error);
 	const changingAgent = useOrchestratorStore((s) => s.changingAgent);
 	const exited = useOrchestratorStore((s) => s.exited);
+	const missingFolder = useOrchestratorStore((s) => s.missingFolder);
 	if (phase === "pick" || changingAgent || exited) return <AgentPicker />;
+	if (phase === "error" && missingFolder) return <MissingFolderCard />;
 	if (phase === "error") {
 		return (
 			<div
@@ -593,6 +596,62 @@ function BottomCard() {
 		<span style={{ fontSize: 13, color: "var(--fg-secondary)" }}>
 			Starting the Orchestrator…
 		</span>
+	);
+}
+
+/** The **Orchestrator folder** is gone and cannot be made again (ADR-0059):
+ *  choose another, or go back to the default. Never starts elsewhere on its
+ *  own (ADR-0053). */
+function MissingFolderCard() {
+	const folder = useOrchestratorStore((s) => s.missingFolder);
+	const error = useOrchestratorStore((s) => s.error);
+	const choose = async () => {
+		const { open } = await import("@tauri-apps/plugin-dialog");
+		const picked = await open({
+			directory: true,
+			multiple: false,
+			title: "Choose an empty folder for the Orchestrator",
+		});
+		if (typeof picked === "string") void chooseOrchestratorFolder(picked);
+	};
+	return (
+		<div
+			className="flex flex-col items-center text-center"
+			style={{ gap: 10, fontSize: 13, color: "var(--fg-secondary)" }}
+			data-testid="orchestrator-missing-folder"
+		>
+			<span style={{ color: "var(--fg-primary)" }}>
+				The Orchestrator's folder is missing.
+			</span>
+			<span style={{ fontSize: 12, maxWidth: 520 }}>
+				{folder} is gone, and so is the folder it was in (an unplugged drive,
+				perhaps). Choose another folder, or use the default one. Its
+				conversation starts over there.
+			</span>
+			{error && !error.includes(folder ?? "\u0000") && (
+				<span role="alert" style={{ fontSize: 12, color: "var(--error)" }}>
+					{error.replace(/^Error:\s*/, "")}
+				</span>
+			)}
+			<div className="flex items-center" style={{ gap: 8 }}>
+				<button
+					type="button"
+					className={secondaryButtonClass}
+					style={{ height: 26, padding: "0 12px", fontSize: 12 }}
+					onClick={() => void choose()}
+				>
+					Choose folder…
+				</button>
+				<button
+					type="button"
+					className={secondaryButtonClass}
+					style={{ height: 26, padding: "0 12px", fontSize: 12 }}
+					onClick={() => void chooseOrchestratorFolder(null)}
+				>
+					Use default
+				</button>
+			</div>
+		</div>
 	);
 }
 

@@ -1,6 +1,7 @@
-//! The **Orchestrator workspace** (ADR-0057): one per Profile, in a folder
-//! Abundio owns under the app data folder, with instructions Abundio rewrites
-//! on every start and a file of the user's own that it never touches.
+//! The **Orchestrator workspace** (ADR-0057): one per Profile, in its
+//! **Orchestrator folder** (ADR-0059: by default `orchestrator/<Profile name>`
+//! in the app data folder, or one the user chose), with instructions Abundio
+//! rewrites on every start and a file of the user's own that it never touches.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,28 +14,114 @@ use crate::workspace_store::{
     NewOrchestratorTab, OrchestratorTab, WorkspaceStore, WorkspaceWithTabs,
 };
 
-/// Name of the Orchestrator's own folder, under `orchestrator/<profile-id>/`.
-const FOLDER_NAME: &str = "Orchestrator";
-
 /// The file the user may edit. Created once, never rewritten.
 pub const USER_FILE: &str = "my-instructions.md";
 
-/// Folder of a Profile's Orchestrator workspace, inside `root`
-/// (`app_paths::shared_root()` in the app). The Profile id is a UUID, so it is
-/// always a safe single path component; anything else is refused.
-pub fn orchestrator_folder(root: &Path, profile_id: &str) -> Result<PathBuf, AbundioError> {
-    let safe = !profile_id.is_empty()
-        && profile_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-');
-    if !safe {
-        return Err(AbundioError::InvalidOperation(format!(
-            "Not a Profile id: {profile_id:?}"
-        )));
+/// The marker Abundio leaves in an **Orchestrator folder** (ADR-0059): only an
+/// empty folder, or one carrying this, may be chosen as one. Holds the
+/// Profile's id.
+pub const MARKER: &str = ".abundio-orchestrator";
+
+/// Files an "empty" folder may still hold: the OS's own, and the marker.
+const IGNORED: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini", MARKER];
+
+/// Where default Orchestrator folders live, inside `root`
+/// (`app_paths::shared_root()` in the app).
+pub fn default_parent(root: &Path) -> PathBuf {
+    root.join("orchestrator")
+}
+
+/// Whether `folder` is a default one (inside `default_parent`): Abundio's to
+/// delete with its Profile. A folder the user chose never is.
+pub fn is_default_folder(root: &Path, folder: &Path) -> bool {
+    folder.starts_with(default_parent(root))
+}
+
+/// A Profile's name as one safe folder name: characters no OS allows in a
+/// name become `-`; no leading or trailing dots or spaces; never empty.
+pub fn folder_name_for(profile_name: &str) -> String {
+    let cleaned: String = profile_name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    if trimmed.is_empty() {
+        "Orchestrator".to_string()
+    } else {
+        trimmed.to_string()
     }
-    // The last part is a name, not the id: a shell's title is its folder's
-    // name, and an id there reads as noise.
-    Ok(root.join("orchestrator").join(profile_id).join(FOLDER_NAME))
+}
+
+/// The marker's Profile id, if `folder` carries one.
+fn marker_of(folder: &Path) -> Option<String> {
+    fs::read_to_string(folder.join(MARKER))
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+/// `profile_id`'s default **Orchestrator folder**: `orchestrator/<name>`, or
+/// `<name> 2`, `<name> 3`… when that is taken (exists for another Profile,
+/// or `in_use` says another Workspace has it).
+pub fn default_folder(
+    root: &Path,
+    profile_id: &str,
+    profile_name: &str,
+    in_use: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    let base = folder_name_for(profile_name);
+    let parent = default_parent(root);
+    let mut n = 1;
+    loop {
+        let name = if n == 1 { base.clone() } else { format!("{base} {n}") };
+        let candidate = parent.join(name);
+        let mine = marker_of(&candidate).as_deref() == Some(profile_id);
+        if mine || (!candidate.exists() && !in_use(&candidate)) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Whether a folder may become an Orchestrator folder: empty (but for the
+/// OS's own files), or one Abundio set up as one. A missing folder may.
+pub fn folder_is_usable(folder: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return !folder.exists();
+    };
+    if folder.join(MARKER).is_file() {
+        return true;
+    }
+    entries.flatten().all(|e| {
+        IGNORED
+            .iter()
+            .any(|n| e.file_name().to_string_lossy() == *n)
+    })
+}
+
+/// Makes sure `folder` is there before the Orchestrator starts in it: a
+/// default one is always made; a chosen one is made again only when its
+/// parent still exists, else `FolderMissing` (ADR-0053: never elsewhere).
+pub fn prepare_folder(root: &Path, folder: &Path) -> Result<(), AbundioError> {
+    if folder.is_dir() {
+        return Ok(());
+    }
+    if is_default_folder(root, folder) {
+        fs::create_dir_all(folder)?;
+        return Ok(());
+    }
+    match folder.parent() {
+        Some(parent) if parent.is_dir() => {
+            fs::create_dir(folder)?;
+            Ok(())
+        }
+        _ => Err(AbundioError::FolderMissing(folder.to_string_lossy().into_owned())),
+    }
 }
 
 const AGENTS_MD: &str = r#"<!-- Written by Abundio on every start. Edits here are lost: put yours in my-instructions.md. -->
@@ -83,10 +170,11 @@ Write anything here you want the Orchestrator to know or always do.
 Abundio never changes this file.
 "#;
 
-/// Creates `folder` if needed, rewrites Abundio's own instruction files, and
-/// creates the user's file only when it does not exist yet.
-pub fn write_instructions(folder: &Path) -> Result<(), AbundioError> {
-    fs::create_dir_all(folder)?;
+/// Rewrites Abundio's own instruction files and the marker in `folder`
+/// (which must exist), and creates the user's file only when it does not
+/// exist yet.
+pub fn write_instructions(folder: &Path, profile_id: &str) -> Result<(), AbundioError> {
+    fs::write(folder.join(MARKER), format!("{profile_id}\n"))?;
     fs::write(folder.join("AGENTS.md"), AGENTS_MD)?;
     fs::write(folder.join("CLAUDE.md"), CLAUDE_MD)?;
     let user = folder.join(USER_FILE);
@@ -97,15 +185,107 @@ pub fn write_instructions(folder: &Path) -> Result<(), AbundioError> {
 }
 
 /// Ensures `profile_id`'s Orchestrator workspace: its folder, its
-/// instructions and its database row. Returns the Workspace.
+/// instructions and its database row. Returns the Workspace. A Profile keeps
+/// the folder it has (one from before ADR-0059 too); a new one gets its
+/// default folder.
 pub fn ensure(
     store: &WorkspaceStore,
     root: &Path,
     profile_id: &str,
 ) -> Result<WorkspaceWithTabs, AbundioError> {
-    let folder = orchestrator_folder(root, profile_id)?;
-    write_instructions(&folder)?;
+    let folder = match store.orchestrator_folder_of(profile_id)? {
+        Some(f) => PathBuf::from(f),
+        None => new_default(store, root, profile_id)?,
+    };
+    prepare_folder(root, &folder)?;
+    write_instructions(&folder, profile_id)?;
     store.ensure_orchestrator(profile_id, &folder.to_string_lossy())
+}
+
+fn new_default(store: &WorkspaceStore, root: &Path, profile_id: &str) -> Result<PathBuf, AbundioError> {
+    let name = store.profile_name(profile_id)?.unwrap_or_default();
+    Ok(default_folder(root, profile_id, &name, |p| {
+        store
+            .folder_in_use(&p.to_string_lossy(), profile_id)
+            .unwrap_or(true)
+    }))
+}
+
+/// Moves `profile_id`'s Orchestrator to `chosen`, or back to its default
+/// folder (`None`). Only an empty folder or an Orchestrator folder of its
+/// own, not bound to another Workspace. Copies `my-instructions.md` across
+/// when the new folder has none; the old folder is left as it was. Returns
+/// the new folder.
+pub fn set_folder(
+    store: &WorkspaceStore,
+    root: &Path,
+    profile_id: &str,
+    chosen: Option<&Path>,
+) -> Result<PathBuf, AbundioError> {
+    let current = ensure(store, root, profile_id)
+        .map(|ws| PathBuf::from(ws.workspace.root_folder))
+        .or_else(|e| match e {
+            // A missing current folder is exactly when one is chosen.
+            AbundioError::FolderMissing(p) => Ok(PathBuf::from(p)),
+            e => Err(e),
+        })?;
+    let target = match chosen {
+        None => new_default(store, root, profile_id)?,
+        Some(p) => {
+            if !p.is_absolute() {
+                return Err(AbundioError::InvalidOperation(
+                    "Choose a folder by its full path".into(),
+                ));
+            }
+            if store.folder_in_use(&p.to_string_lossy(), profile_id)? {
+                return Err(AbundioError::InvalidOperation(
+                    "That folder already belongs to a Workspace".into(),
+                ));
+            }
+            if let Some(owner) = marker_of(p) {
+                if owner != profile_id && store.profile_name(&owner)?.is_some() {
+                    return Err(AbundioError::InvalidOperation(
+                        "That folder is another Profile's Orchestrator folder".into(),
+                    ));
+                }
+            }
+            if !folder_is_usable(p) {
+                return Err(AbundioError::InvalidOperation(
+                    "Choose an empty folder: Abundio writes the Orchestrator's own AGENTS.md and CLAUDE.md there".into(),
+                ));
+            }
+            p.to_path_buf()
+        }
+    };
+    if target == current {
+        return Ok(target);
+    }
+    prepare_folder(root, &target)?;
+    let mine = current.join(USER_FILE);
+    let theirs = target.join(USER_FILE);
+    if mine.is_file() && !theirs.exists() {
+        fs::copy(&mine, &theirs)?;
+    }
+    write_instructions(&target, profile_id)?;
+    store.ensure_orchestrator(profile_id, &target.to_string_lossy())?;
+    Ok(target)
+}
+
+/// Deletes `profile_id`'s Orchestrator folder when it is a default one,
+/// before the Profile itself goes. A folder the user chose is theirs.
+pub fn forget_folder(store: &WorkspaceStore, root: &Path, profile_id: &str) {
+    if let Ok(Some(folder)) = store.orchestrator_folder_of(profile_id) {
+        forget_folder_at(root, Path::new(&folder));
+    }
+}
+
+/// `forget_folder` for a folder already looked up.
+pub fn forget_folder_at(root: &Path, folder: &Path) {
+    if is_default_folder(root, folder) && folder.is_dir() {
+        if let Err(e) = fs::remove_dir_all(folder) {
+            log::warn!("[orchestrator] could not delete {}: {e}", folder.display());
+        }
+    }
 }
 
 // ── Commands ──
@@ -126,6 +306,55 @@ pub async fn orchestrator_ensure(
         Err(e) => log::warn!("[orchestrator] could not seed prompt actions: {e}"),
     }
     Ok(ws)
+}
+
+/// A Profile's **Orchestrator folder**, for Settings ▸ Profiles.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorFolder {
+    pub path: String,
+    /// Inside Abundio's data folder (not one the user chose).
+    pub is_default: bool,
+}
+
+#[tauri::command]
+pub async fn orchestrator_folder_get(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+) -> Result<OrchestratorFolder, AbundioError> {
+    let root = crate::app_paths::shared_root();
+    // Not set up yet: where it would go, without making anything.
+    let path = match store.orchestrator_folder_of(&profile_id)? {
+        Some(f) => PathBuf::from(f),
+        None => new_default(&store, &root, &profile_id)?,
+    };
+    Ok(OrchestratorFolder {
+        is_default: is_default_folder(&root, &path),
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Chooses the Profile's Orchestrator folder (`None`: back to the default),
+/// then tells every Window, so the one running it restarts it there.
+#[tauri::command]
+pub async fn orchestrator_folder_set(
+    app: tauri::AppHandle,
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    path: Option<String>,
+) -> Result<OrchestratorFolder, AbundioError> {
+    use tauri::Emitter;
+    let root = crate::app_paths::shared_root();
+    let folder = set_folder(&store, &root, &profile_id, path.as_deref().map(Path::new))?;
+    let out = OrchestratorFolder {
+        is_default: is_default_folder(&root, &folder),
+        path: folder.to_string_lossy().into_owned(),
+    };
+    let _ = app.emit(
+        "orchestrator-folder-changed",
+        serde_json::json!({ "profileId": profile_id, "path": out.path }),
+    );
+    Ok(out)
 }
 
 #[tauri::command]
@@ -252,15 +481,120 @@ mod tests {
     }
 
     #[test]
-    fn folder_refuses_anything_but_an_id() {
-        let root = Path::new("/data");
+    fn a_profile_name_becomes_one_safe_folder_name() {
+        assert_eq!(folder_name_for("Personal"), "Personal");
+        assert_eq!(folder_name_for("Work / Client: A"), "Work - Client- A");
+        assert_eq!(folder_name_for("  ..hidden. "), "hidden");
+        assert_eq!(folder_name_for("../.."), "-");
+        assert_eq!(folder_name_for("   "), "Orchestrator");
+    }
+
+    #[test]
+    fn a_new_profile_gets_its_name_and_a_taken_name_a_number() {
+        let store = test_store();
+        let root = temp_root("named");
+        let name = store.profile_name(PID).unwrap().unwrap();
+        let ws = ensure(&store, &root, PID).unwrap();
+        let folder = PathBuf::from(&ws.workspace.root_folder);
+        assert_eq!(folder, default_parent(&root).join(folder_name_for(&name)));
+        assert_eq!(marker_of(&folder).as_deref(), Some(PID));
+        // Its own folder stays its default; another Profile with the same
+        // name gets a number.
+        assert_eq!(default_folder(&root, PID, &name, |_| false), folder);
         assert_eq!(
-            orchestrator_folder(root, PID).unwrap(),
-            root.join("orchestrator").join(PID).join("Orchestrator")
+            default_folder(&root, "other", &name, |_| false),
+            default_parent(&root).join(format!("{} 2", folder_name_for(&name)))
         );
-        for bad in ["", "..", "a/b", "../x", "a b"] {
-            assert!(orchestrator_folder(root, bad).is_err(), "{bad:?}");
-        }
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_profile_from_before_keeps_its_folder() {
+        let store = test_store();
+        let root = temp_root("old");
+        let old = default_parent(&root).join(PID).join("Orchestrator");
+        store.ensure_orchestrator(PID, &old.to_string_lossy()).unwrap();
+        let ws = ensure(&store, &root, PID).unwrap();
+        assert_eq!(PathBuf::from(ws.workspace.root_folder), old);
+        assert!(old.join("AGENTS.md").is_file());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn only_an_empty_folder_or_an_orchestrator_folder_may_be_chosen() {
+        let store = test_store();
+        let root = temp_root("choose");
+        let first = PathBuf::from(ensure(&store, &root, PID).unwrap().workspace.root_folder);
+        fs::write(first.join(USER_FILE), "mine").unwrap();
+
+        // A project folder: refused, and nothing written into it.
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("CLAUDE.md"), "the project's own").unwrap();
+        assert!(set_folder(&store, &root, PID, Some(&project)).is_err());
+        assert_eq!(fs::read_to_string(project.join("CLAUDE.md")).unwrap(), "the project's own");
+
+        // Another Workspace's folder: refused.
+        let work = root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        store.create("w", &work.to_string_lossy(), PID).unwrap();
+        assert!(set_folder(&store, &root, PID, Some(&work)).is_err());
+
+        // An empty one (but for the OS's own files): chosen, my-instructions
+        // copied, the old folder left as it was.
+        let mine = root.join("mine");
+        fs::create_dir_all(&mine).unwrap();
+        fs::write(mine.join(".DS_Store"), "").unwrap();
+        assert_eq!(set_folder(&store, &root, PID, Some(&mine)).unwrap(), mine);
+        assert_eq!(fs::read_to_string(mine.join(USER_FILE)).unwrap(), "mine");
+        assert!(first.join(USER_FILE).is_file());
+        assert_eq!(store.orchestrator_folder_of(PID).unwrap(), Some(mine.to_string_lossy().into()));
+
+        // Now it carries the marker, so it may be chosen again later; back
+        // to the default meanwhile.
+        assert_eq!(set_folder(&store, &root, PID, None).unwrap(), first);
+        assert!(folder_is_usable(&mine));
+        assert_eq!(set_folder(&store, &root, PID, Some(&mine)).unwrap(), mine);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_missing_folder_is_made_again_only_where_it_can_be() {
+        let root = temp_root("missing");
+        // A default one: always made.
+        let default = default_parent(&root).join("Personal");
+        prepare_folder(&root, &default).unwrap();
+        assert!(default.is_dir());
+        // A chosen one whose parent is there: made again.
+        let chosen = root.join("chosen");
+        prepare_folder(&root, &chosen).unwrap();
+        assert!(chosen.is_dir());
+        // Its parent gone too (an unplugged drive): refused, nothing made.
+        let gone = root.join("unplugged").join("Orchestrator");
+        assert!(matches!(
+            prepare_folder(&root, &gone),
+            Err(AbundioError::FolderMissing(_))
+        ));
+        assert!(!root.join("unplugged").exists());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn deleting_a_profile_deletes_a_default_folder_only() {
+        let store = test_store();
+        let root = temp_root("forget");
+        let folder = PathBuf::from(ensure(&store, &root, PID).unwrap().workspace.root_folder);
+        forget_folder(&store, &root, PID);
+        assert!(!folder.exists());
+
+        let store = test_store();
+        let chosen = root.join("chosen");
+        fs::create_dir_all(&chosen).unwrap();
+        ensure(&store, &root, PID).unwrap();
+        set_folder(&store, &root, PID, Some(&chosen)).unwrap();
+        forget_folder(&store, &root, PID);
+        assert!(chosen.join(USER_FILE).is_file());
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -304,11 +638,12 @@ mod tests {
     #[test]
     fn instructions_are_rewritten_but_the_user_file_is_kept() {
         let root = temp_root("instr");
-        let folder = orchestrator_folder(&root, PID).unwrap();
-        write_instructions(&folder).unwrap();
+        let folder = default_parent(&root).join("Personal");
+        prepare_folder(&root, &folder).unwrap();
+        write_instructions(&folder, PID).unwrap();
         fs::write(folder.join("AGENTS.md"), "stale").unwrap();
         fs::write(folder.join(USER_FILE), "mine").unwrap();
-        write_instructions(&folder).unwrap();
+        write_instructions(&folder, PID).unwrap();
         assert_eq!(
             fs::read_to_string(folder.join("AGENTS.md")).unwrap(),
             AGENTS_MD

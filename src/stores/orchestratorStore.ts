@@ -22,6 +22,10 @@ interface OrchestratorState {
 	workspaceId: string | null;
 	agentId: string | null;
 	error: string | null;
+	/** The **Orchestrator folder** is missing and cannot be made again (its
+	 *  parent is gone too): the view offers to choose one or use the default
+	 *  (ADR-0059). */
+	missingFolder: string | null;
 	/** The Active workspace before the view took over, restored on leaving. */
 	returnWorkspaceId: string | null;
 	/** The picker opened over a running Orchestrator (Change agent…). */
@@ -59,6 +63,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set) => ({
 	workspaceId: null,
 	agentId: null,
 	error: null,
+	missingFolder: null,
 	returnWorkspaceId: null,
 	changingAgent: false,
 	panesTop: 0,

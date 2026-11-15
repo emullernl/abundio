@@ -206,7 +206,22 @@ export const orchestrator = {
 		invoke<void>("orchestrator_tab_remove", { profileId, id }),
 	selectTab: (profileId: string, id: string | null) =>
 		invoke<void>("orchestrator_tab_select", { profileId, id }),
+	/** The Profile's **Orchestrator folder** (ADR-0059). */
+	folder: (profileId: string) =>
+		invoke<OrchestratorFolder>("orchestrator_folder_get", { profileId }),
+	/** Chooses it (`null`: back to the default). Rust refuses a folder that is
+	 *  not empty and not an Orchestrator folder, or belongs to a Workspace;
+	 *  every Window hears `orchestrator-folder-changed`. */
+	setFolder: (profileId: string, path: string | null) =>
+		invoke<OrchestratorFolder>("orchestrator_folder_set", { profileId, path }),
 };
+
+/** A Profile's **Orchestrator folder**: `isDefault` when it is inside
+ *  Abundio's data folder (deleted with the Profile), not one the user chose. */
+export interface OrchestratorFolder {
+	path: string;
+	isDefault: boolean;
+}
 
 /** One **Orchestrator tab** holding a file. `path` is absolute for `file`,
  *  Workspace-relative for `diff` and `commit`. */

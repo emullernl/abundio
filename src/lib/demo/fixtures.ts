@@ -760,7 +760,8 @@ export const workspaces: WorkspaceWithTabs[] = WS_DEFS.map((def, i) => {
 export const orchestratorWorkspace: WorkspaceWithTabs = {
 	id: "demo-orchestrator",
 	name: "Orchestrator",
-	rootFolder: "/Users/demo/Library/Application Support/abundio/orchestrator",
+	rootFolder:
+		"/Users/demo/Library/Application Support/abundio/orchestrator/Personal",
 	agentPresetsJson: "[]",
 	fileTabsJson: "[]",
 	baseBranch: null,

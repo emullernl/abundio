@@ -4,12 +4,14 @@ import type { PaneNode, WorkspaceWithTabs } from "../types";
 const ensure = vi.fn();
 const agent = vi.fn();
 const setAgent = vi.fn();
+const setFolder = vi.fn();
 vi.mock("../ipc", async (orig) => ({
 	...(await orig<typeof import("../ipc")>()),
 	orchestrator: {
 		ensure: (...a: unknown[]) => ensure(...a),
 		agent: (...a: unknown[]) => agent(...a),
 		setAgent: (...a: unknown[]) => setAgent(...a),
+		setFolder: (...a: unknown[]) => setFolder(...a),
 	},
 	tabs: { update: vi.fn(() => Promise.resolve()) },
 	shells: { default: () => Promise.resolve("/bin/zsh") },
@@ -33,6 +35,7 @@ vi.mock("../pendingAgentRegistry", async (orig) => ({
 
 const {
 	EXIT_PICKER_DELAY_MS,
+	chooseOrchestratorFolder,
 	enterOrchestratorView,
 	installOrchestratorSession,
 	leaveOrchestratorView,
@@ -169,6 +172,40 @@ describe("orchestratorSession", () => {
 			}),
 		);
 		expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("orch");
+	});
+
+	it("offers to choose a folder when the Orchestrator folder is missing", async () => {
+		ensure.mockRejectedValueOnce("Folder not found: /Volumes/ssd/Orchestrator");
+		agent.mockResolvedValue(null);
+		await enterOrchestratorView();
+		expect(useOrchestratorStore.getState()).toMatchObject({
+			phase: "error",
+			missingFolder: "/Volumes/ssd/Orchestrator",
+		});
+
+		// Using the default: Rust moves it, then the Orchestrator starts.
+		setFolder.mockResolvedValue({
+			path: "/data/orchestrator/P",
+			isDefault: true,
+		});
+		await chooseOrchestratorFolder(null);
+		expect(setFolder).toHaveBeenCalledWith(expect.any(String), null);
+		expect(useOrchestratorStore.getState()).toMatchObject({
+			phase: "pick",
+			missingFolder: null,
+		});
+	});
+
+	it("keeps the card up with the reason when a chosen folder is refused", async () => {
+		ensure.mockRejectedValueOnce("Folder not found: /Volumes/ssd/Orchestrator");
+		await enterOrchestratorView();
+		setFolder.mockRejectedValue("Choose an empty folder");
+		await chooseOrchestratorFolder("/Users/me/project");
+		expect(useOrchestratorStore.getState()).toMatchObject({
+			phase: "error",
+			missingFolder: "/Volumes/ssd/Orchestrator",
+			error: "Choose an empty folder",
+		});
 	});
 
 	it("focuses the pane that wants the user when the view opens", async () => {

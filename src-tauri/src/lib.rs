@@ -1465,6 +1465,8 @@ pub fn run() {
             commands::focus_window,
             commands::workspace_create,
             orchestrator::orchestrator_ensure,
+            orchestrator::orchestrator_folder_get,
+            orchestrator::orchestrator_folder_set,
             orchestrator::orchestrator_agent_get,
             orchestrator::orchestrator_agent_set,
             orchestrator::orchestrator_tabs_list,

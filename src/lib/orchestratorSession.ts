@@ -14,7 +14,13 @@ import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { orchestrator as orchestratorApi, shells } from "./ipc";
+import {
+	FOLDER_MISSING_PREFIX,
+	listen,
+	orchestrator as orchestratorApi,
+	shells,
+} from "./ipc";
+import { folderMissingReason } from "./missingFolder";
 import { shellSupportsTasks } from "./newTask";
 import {
 	agentLeftPane,
@@ -168,7 +174,7 @@ export function enterOrchestratorView(): Promise<void> {
 	if (entering) return entering;
 	entering = (async () => {
 		const profileId = fallbackProfileId();
-		store().set({ phase: "loading", error: null });
+		store().set({ phase: "loading", error: null, missingFolder: null });
 		try {
 			const ensured = await orchestratorApi.ensure(profileId);
 			upsertWorkspace(ensured);
@@ -187,9 +193,13 @@ export function enterOrchestratorView(): Promise<void> {
 			activate(live);
 			focusWhoWantsYou(live);
 		} catch (e) {
+			const missing = folderMissingReason(e);
 			store().set({
 				phase: "error",
 				error: e instanceof Error ? e.message : String(e),
+				missingFolder: missing
+					? missing.slice(FOLDER_MISSING_PREFIX.length).trim()
+					: null,
 			});
 		}
 	})().finally(() => {
@@ -245,6 +255,47 @@ export async function restartOrchestrator(): Promise<void> {
 	await startAgentIn(ws, agentId, "resume");
 }
 
+/** Moves the Orchestrator to `path` (`null`: its default folder), from the
+ *  view's "folder is missing" card, then starts it there. */
+export async function chooseOrchestratorFolder(
+	path: string | null,
+): Promise<void> {
+	try {
+		await orchestratorApi.setFolder(fallbackProfileId(), path);
+	} catch (e) {
+		store().set({ error: e instanceof Error ? e.message : String(e) });
+		return;
+	}
+	await enterOrchestratorView();
+}
+
+/**
+ * The Profile's **Orchestrator folder** changed (Settings, or the view's
+ * missing-folder card; ADR-0059). The Workspace now points there; a running
+ * Orchestrator restarts in it with a new conversation (its history is kept
+ * per folder), and a view stuck on the missing folder tries again.
+ */
+export async function orchestratorFolderChanged(
+	profileId: string,
+): Promise<void> {
+	if (profileId !== fallbackProfileId()) return;
+	const { phase, workspaceId, agentId } = store();
+	if (phase === "error") {
+		if (orchestratorViewWanted()) await enterOrchestratorView();
+		return;
+	}
+	if (!workspaceId) return;
+	try {
+		upsertWorkspace(await orchestratorApi.ensure(profileId));
+	} catch {
+		return;
+	}
+	const ws = storedWorkspace(workspaceId);
+	const pane = ws ? orchestratorPane(ws.tabs) : null;
+	if (!ws || !agentId || !pane || !getTerminal(pane.paneId)?.ptyId) return;
+	await startAgentIn(ws, agentId, "fresh");
+}
+
 function orchestratorViewWanted(): boolean {
 	return useWindowUiStore.getState().orchestratorViewOpen;
 }
@@ -270,7 +321,17 @@ export function installOrchestratorSession(): () => void {
 		else leaveOrchestratorView();
 	});
 	const stopExit = watchForExit();
+	let stopFolder: (() => void) | null = null;
+	let gone = false;
+	void listen<{ profileId: string }>("orchestrator-folder-changed", (e) => {
+		void orchestratorFolderChanged(e.payload.profileId);
+	}).then((un) => {
+		if (gone) un();
+		else stopFolder = un;
+	});
 	return () => {
+		gone = true;
+		stopFolder?.();
 		stopView();
 		stopExit();
 	};

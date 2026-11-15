@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (its folder: superseded by ADR-0059)
 ---
 
 # The Orchestrator is a hidden, app-managed Workspace per Profile
