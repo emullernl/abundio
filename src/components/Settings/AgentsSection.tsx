@@ -1,7 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
 	isTaskCapable,
-	parseContinueArgsForm,
 	parseTaskArgsForm,
 	TASK_PROMPT_PLACEHOLDER,
 } from "../../lib/agents";
@@ -277,29 +276,6 @@ function TaskArgsField({
 	);
 }
 
-/** A custom Agent's continue form, used by a **Session resume** when the
- *  pane is the only one running that Agent in its folder (ADR-0050). */
-function ContinueArgsField({
-	agent,
-	onChange,
-}: {
-	agent: CodingAgent;
-	onChange: (continueArgs: string[] | undefined) => void;
-}) {
-	return (
-		<ArgsField
-			saved={agent.continueArgs?.join(" ") ?? ""}
-			label="Continue arguments"
-			placeholder="Continue arguments (optional), e.g. --continue"
-			parse={(form) => {
-				const parsed = parseContinueArgsForm(form);
-				return "error" in parsed ? parsed : { args: parsed.continueArgs };
-			}}
-			onChange={onChange}
-		/>
-	);
-}
-
 function HookBadge({ label, tone }: { label: string; tone: HookTone }) {
 	const color = HOOK_TONE_COLOR[tone];
 	return (
@@ -462,7 +438,6 @@ function AgentRow({
 	onToggle,
 	onRemove,
 	onTaskArgsChange,
-	onContinueArgsChange,
 }: {
 	agent: CodingAgent;
 	installed: boolean;
@@ -472,7 +447,6 @@ function AgentRow({
 	onRemove?: () => void;
 	/** Only for custom Agents; built-ins have a fixed form. */
 	onTaskArgsChange?: (taskArgs: string[] | undefined) => void;
-	onContinueArgsChange?: (continueArgs: string[] | undefined) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const supported = hookStatus !== undefined;
@@ -599,9 +573,6 @@ function AgentRow({
 			</div>
 			{onTaskArgsChange && (
 				<TaskArgsField agent={agent} onChange={onTaskArgsChange} />
-			)}
-			{onContinueArgsChange && (
-				<ContinueArgsField agent={agent} onChange={onContinueArgsChange} />
 			)}
 			{expanded && hookStatus && (
 				<HookFootprint status={hookStatus} hooksEnabled={hooksEnabled} />
@@ -978,11 +949,6 @@ export function AgentsSection() {
 								agent.builtin
 									? undefined
 									: (taskArgs) => updateAgent(agent.id, { taskArgs })
-							}
-							onContinueArgsChange={
-								agent.builtin
-									? undefined
-									: (continueArgs) => updateAgent(agent.id, { continueArgs })
 							}
 						/>
 					))}

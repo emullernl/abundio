@@ -10,7 +10,6 @@ const claude = {
 	name: "Claude Code",
 	command: "claude",
 	enabled: true,
-	continueArgs: ["--continue"],
 	resumeArgs: ["--resume", "{session}"],
 } as unknown as CodingAgent;
 
@@ -30,11 +29,13 @@ describe("orchestratorStart", () => {
 		});
 	});
 
-	it("resumes the folder's last conversation, falling back to a plain start", () => {
-		expect(orchestratorStart({ ...base, mode: "resume" })).toEqual({
+	it("resumes a known session by id, falling back to a plain start", () => {
+		expect(
+			orchestratorStart({ ...base, mode: "resume", sessionId: "abc-123" }),
+		).toEqual({
 			kind: "spawn",
 			task: {
-				argv: ["claude", "--continue"],
+				argv: ["claude", "--resume", "abc-123"],
 				agentId: "claude",
 				fallback: "claude",
 				fallbackWithinSecs: ORCHESTRATOR_FALLBACK_SECS,
@@ -42,15 +43,10 @@ describe("orchestratorStart", () => {
 		});
 	});
 
-	it("resumes a known session by id", () => {
-		const start = orchestratorStart({
-			...base,
-			mode: "resume",
-			sessionId: "abc-123",
-		});
-		expect(start).toMatchObject({
+	it("starts plainly with no session id: no continue-latest fallback", () => {
+		expect(orchestratorStart({ ...base, mode: "resume" })).toEqual({
 			kind: "spawn",
-			task: { argv: ["claude", "--resume", "abc-123"], fallback: "claude" },
+			task: { argv: ["claude"], agentId: "claude" },
 		});
 	});
 
@@ -62,8 +58,13 @@ describe("orchestratorStart", () => {
 
 	it("types the line in a shell other than zsh or bash", () => {
 		expect(
-			orchestratorStart({ ...base, mode: "resume", shellOk: false }),
-		).toEqual({ kind: "typed", command: "claude --continue" });
+			orchestratorStart({
+				...base,
+				mode: "resume",
+				sessionId: "abc-123",
+				shellOk: false,
+			}),
+		).toEqual({ kind: "typed", command: "claude --resume abc-123" });
 	});
 
 	it("gives nothing for an Agent that is gone", () => {

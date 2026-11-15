@@ -3,8 +3,8 @@
  *
  * In zsh and bash it rides the PTY spawn, as a **New task** does (ADR-0042),
  * instead of being typed: the spawn script then sees the Agent's own exit
- * code, so a resume that fails at once ("No conversation found to
- * continue") is followed by a plain start, inside the same agent-mode
+ * code, so a resume that fails at once (a deleted session) is followed by a
+ * plain start, inside the same agent-mode
  * command. Any other shell gets the typed line, with no fallback.
  */
 
@@ -44,10 +44,9 @@ export function orchestratorStart(input: {
 	const { agents, agentId, sessionId, mode, shellOk } = input;
 	const plainLine = agentCommandFor(agents, agentId);
 	if (!plainLine) return undefined;
-	// The Orchestrator is the only Agent in its folder, so it is always alone.
+	// Resumes only by its remembered session id, like every Agent (ADR-0060).
 	const opts = {
 		sessionId,
-		alone: true,
 		resume: input.resumeSetting && mode === "resume",
 	};
 	if (!shellOk) {

@@ -151,7 +151,7 @@ describe("workspaceStore", () => {
 			expect(useWorkspaceStore.getState().workspacesInitialized).toBe(true);
 		});
 
-		describe("Session resume (ADR-0050)", () => {
+		describe("Session resume (ADR-0050, ADR-0060)", () => {
 			const agentPane = (id: string, extra: Partial<PaneNode> = {}) =>
 				({
 					type: "terminal",
@@ -189,30 +189,20 @@ describe("workspaceStore", () => {
 				});
 			});
 
-			it("continues the folder's latest session for a pane alone in it", async () => {
+			it("starts fresh with no id, even when the pane is alone in its folder", async () => {
 				await load(agentPane("p1"));
-				expect(takePendingAgent("p1")).toEqual({
-					command: "claude --continue",
-				});
-			});
-
-			it("starts fresh when two panes share the Agent and folder", async () => {
-				await load(
-					split(agentPane("p1"), agentPane("p2", { agentSessionId: "sid-2" })),
-				);
 				expect(takePendingAgent("p1")).toEqual({ command: "claude" });
-				// Its own id still resumes: no ambiguity about whose session it is.
-				expect(takePendingAgent("p2")).toEqual({
-					command: "claude --resume sid-2",
-				});
 			});
 
-			it("continues for each pane when their folders differ", async () => {
+			it("resumes each pane by its own id when they share a folder", async () => {
 				await load(
-					split(agentPane("p1", { cwd: "/a" }), agentPane("p2", { cwd: "/b" })),
+					split(
+						agentPane("p1", { agentSessionId: "sid-1" }),
+						agentPane("p2", { agentSessionId: "sid-2" }),
+					),
 				);
-				expect(takePendingAgent("p1")?.command).toBe("claude --continue");
-				expect(takePendingAgent("p2")?.command).toBe("claude --continue");
+				expect(takePendingAgent("p1")?.command).toBe("claude --resume sid-1");
+				expect(takePendingAgent("p2")?.command).toBe("claude --resume sid-2");
 			});
 
 			it("starts fresh when the setting is off", async () => {

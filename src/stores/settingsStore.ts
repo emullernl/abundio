@@ -169,10 +169,7 @@ interface SettingsState {
 	updateAgent: (
 		id: string,
 		updates: Partial<
-			Pick<
-				CodingAgent,
-				"name" | "command" | "args" | "taskArgs" | "continueArgs"
-			>
+			Pick<CodingAgent, "name" | "command" | "args" | "taskArgs">
 		>,
 	) => void;
 	setLastOpenedDevEnvId: (id: string) => void;

@@ -6,6 +6,7 @@ import {
 	launchCommand,
 	ORCHESTRATOR_HANDLE,
 	orchestratorPane,
+	orchestratorSessionOf,
 	paneRunsAgent,
 	pickerAgents,
 	stampOrchestrator,
@@ -159,5 +160,39 @@ describe("after an exit", () => {
 		expect(agentLeftPane(running, "p")).toBe(false);
 		expect(agentLeftPane(closed, "p")).toBe(false);
 		expect(agentLeftPane(exited, null)).toBe(false);
+	});
+});
+
+describe("orchestratorSessionOf", () => {
+	it("reads the Orchestrator pane's Agent and session id", () => {
+		const tabs = [
+			tab("a", 0, term("helper", { agentId: "codex", agentSessionId: "x" })),
+			tab(
+				"b",
+				1,
+				term("p", {
+					agentId: "claude",
+					agentHandle: "Orchestrator",
+					agentSessionId: "sid-1",
+				}),
+			),
+		];
+		const own = orchestratorPane(tabs);
+		expect(own).not.toBeNull();
+		expect(own && orchestratorSessionOf(tabs, own)).toEqual({
+			agentId: "claude",
+			sessionId: "sid-1",
+		});
+	});
+
+	it("is null while the pane has no id yet", () => {
+		const noId = [
+			tab(
+				"t",
+				0,
+				term("p", { agentId: "claude", agentHandle: "Orchestrator" }),
+			),
+		];
+		expect(orchestratorSessionOf(noId, { tabId: "t", paneId: "p" })).toBeNull();
 	});
 });

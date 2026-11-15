@@ -25,6 +25,7 @@ import { shellSupportsTasks } from "./newTask";
 import {
 	agentLeftPane,
 	orchestratorPane,
+	orchestratorSessionOf,
 	paneRunsAgent,
 	stampOrchestrator,
 	startPane,
@@ -114,11 +115,17 @@ async function startAgentIn(
 	// A newly picked or changed Agent starts a new conversation (there is
 	// none of its own to resume here); otherwise its last one is resumed.
 	const node = findNode(stamped, target.paneId);
+	// The pane forgets its session when its Agent exits; the same Agent
+	// picked again resumes by the id remembered while it ran (ADR-0060).
+	const last = store().lastSession;
+	const sessionId =
+		(node?.type === "terminal" ? node.agentSessionId : undefined) ??
+		(last?.agentId === agentId ? last.sessionId : undefined);
 	const shell = settings.shellPath || (await shells.default().catch(() => ""));
 	const start = orchestratorStart({
 		agents: settings.agents,
 		agentId,
-		sessionId: node?.type === "terminal" ? node.agentSessionId : undefined,
+		sessionId,
 		mode: mode === "fresh" || ranOtherAgent ? "fresh" : "resume",
 		resumeSetting: settings.resumeAgentSessions,
 		shellOk: !shell || shellSupportsTasks(shell),
@@ -309,7 +316,8 @@ export function installOrchestratorSession(): () => void {
 		workspaceId: null,
 		agentId: null,
 		exited: false,
-		// Another Profile's tabs are not this one's.
+		// Another Profile's Orchestrator, tabs and session are not this one's.
+		lastSession: null,
 		fileTabs: [],
 		selectedTabId: null,
 		peekPaneId: null,
@@ -337,15 +345,16 @@ export function installOrchestratorSession(): () => void {
 	};
 }
 
-/**
- * When the Orchestrator's Agent exits (`/exit`, Ctrl+C, a crash) and its pane
- * is still there, the view asks which Agent to start: the same one resumes
- * its conversation, another starts fresh. Closing the pane is not an exit.
- */
 /** How long the pane stays readable after the Agent exits, before the
  *  picker covers it. */
 export const EXIT_PICKER_DELAY_MS = 3000;
 
+/**
+ * When the Orchestrator's Agent exits (`/exit`, Ctrl+C, a crash) and its pane
+ * is still there, the view asks which Agent to start: the same one resumes
+ * its conversation by the id remembered while it ran, another starts fresh.
+ * Closing the pane is not an exit.
+ */
 function watchForExit(): () => void {
 	let paneId: string | null = null;
 	let timer: ReturnType<typeof setTimeout> | null = null;
@@ -356,9 +365,18 @@ function watchForExit(): () => void {
 	const unsubscribe = useWorkspaceStore.subscribe(() => {
 		const tabs = tabsNow();
 		if (!tabs) return;
-		const current = orchestratorPane(tabs)?.paneId ?? null;
-		if (current) {
-			paneId = current;
+		const own = orchestratorPane(tabs);
+		if (own) {
+			paneId = own.paneId;
+			const session = orchestratorSessionOf(tabs, own);
+			const last = store().lastSession;
+			if (
+				session &&
+				(session.agentId !== last?.agentId ||
+					session.sessionId !== last?.sessionId)
+			) {
+				store().set({ lastSession: session });
+			}
 			return;
 		}
 		if (!agentLeftPane(tabs, paneId) || timer) return;
