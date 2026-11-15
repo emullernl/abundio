@@ -14,11 +14,7 @@ import {
 	setPendingAgent,
 	setPendingTask,
 } from "./pendingAgentRegistry";
-import {
-	countAgentPanesByFolder,
-	relaunchCommandForPane,
-	terminalNodes,
-} from "./sessionResume";
+import { relaunchCommandForPane, terminalNodes } from "./sessionResume";
 import {
 	killUnmountedPanePty,
 	livePtyIdByPane,
@@ -119,16 +115,12 @@ export async function restartWorkspacePtys(
 	workspaceId: string,
 ): Promise<{ restarted: number; failed: number }> {
 	const panes = collectLivePanes(workspaceId);
-	const store = useWorkspaceStore.getState();
-	const rootFolder =
-		store.workspaces.find((w) => w.id === workspaceId)?.rootFolder ?? ".";
-	const counts = countAgentPanesByFolder(store.workspaces);
 	let restarted = 0;
 	let failed = 0;
 
 	for (const pane of panes) {
 		try {
-			await restartLivePane(pane, rootFolder, counts);
+			await restartLivePane(pane);
 			restarted++;
 		} catch {
 			failed++;
@@ -140,23 +132,15 @@ export async function restartWorkspacePtys(
 
 /** Kill and respawn one live pane, relaunching its Agent with **Session
  *  resume** when it has one. */
-async function restartLivePane(
-	pane: LivePane,
-	rootFolder: string,
-	counts: ReturnType<typeof countAgentPanesByFolder>,
-): Promise<void> {
-	const command = relaunchCommandForPane(
-		{
-			type: "terminal",
-			id: pane.paneId,
-			ptyId: pane.ptyId,
-			agentId: pane.agentId,
-			agentSessionId: pane.agentSessionId,
-			cwd: pane.cwd,
-		},
-		rootFolder,
-		counts,
-	);
+async function restartLivePane(pane: LivePane): Promise<void> {
+	const command = relaunchCommandForPane({
+		type: "terminal",
+		id: pane.paneId,
+		ptyId: pane.ptyId,
+		agentId: pane.agentId,
+		agentSessionId: pane.agentSessionId,
+		cwd: pane.cwd,
+	});
 	if (pane.mounted) {
 		await restartPanePty(pane.paneId, {
 			cwd: pane.cwd,
@@ -186,11 +170,7 @@ export async function restartAgentPane(
 		collectLivePanes(workspace.id).find((p) => p.paneId === paneId);
 	if (!workspace || !pane) return "no-pty";
 	try {
-		await restartLivePane(
-			pane,
-			workspace.rootFolder,
-			countAgentPanesByFolder(store.workspaces),
-		);
+		await restartLivePane(pane);
 		return "restarted";
 	} catch (err) {
 		console.warn("[restartAgentPane] restart failed", err);

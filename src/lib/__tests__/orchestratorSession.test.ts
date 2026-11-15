@@ -100,6 +100,7 @@ describe("orchestratorSession", () => {
 			agentId: null,
 			returnWorkspaceId: null,
 			changingAgent: false,
+			lastSession: null,
 		});
 		useWindowUiStore.setState({ orchestratorViewOpen: true });
 		useSettingsStore.setState({
@@ -109,7 +110,7 @@ describe("orchestratorSession", () => {
 					name: "Claude Code",
 					command: "claude",
 					enabled: true,
-					continueArgs: ["--continue"],
+					resumeArgs: ["--resume", "{session}"],
 				},
 			],
 		} as never);
@@ -158,16 +159,17 @@ describe("orchestratorSession", () => {
 			ptyId: "",
 			agentId: "claude",
 			agentHandle: "Orchestrator",
+			agentSessionId: "sid-1",
 		});
 		ensure.mockResolvedValue(running);
 		agent.mockResolvedValue("claude");
 		await enterOrchestratorView();
-		// Not live yet (app start): resumed through the spawn, with a plain
-		// start to fall back on.
+		// Not live yet (app start): resumed by id through the spawn, with a
+		// plain start to fall back on.
 		expect(setPendingTask).toHaveBeenCalledWith(
 			"o1",
 			expect.objectContaining({
-				argv: ["claude", "--continue"],
+				argv: ["claude", "--resume", "sid-1"],
 				fallback: "claude",
 			}),
 		);
@@ -269,19 +271,29 @@ describe("orchestratorSession", () => {
 			}));
 		vi.useFakeTimers();
 		try {
-			// The Agent exits: the pane stays, its Agent and handle go. The
+			// The Agent reports its session id while it runs.
+			setLayout({
+				type: "terminal",
+				id: "o1",
+				ptyId: "",
+				agentId: "claude",
+				agentHandle: "Orchestrator",
+				agentSessionId: "sid-9",
+			});
+			// The Agent exits: the pane stays, its Agent, handle and id go. The
 			// picker waits, so the Agent's last output can be read.
 			setLayout({ type: "terminal", id: "o1", ptyId: "" });
 			expect(useOrchestratorStore.getState().exited).toBe(false);
 			await vi.advanceTimersByTimeAsync(EXIT_PICKER_DELAY_MS + 10);
 			expect(useOrchestratorStore.getState().exited).toBe(true);
 			expect(setPendingTask).not.toHaveBeenCalled();
-			// The same Agent again resumes the conversation it left.
+			// The same Agent again resumes the conversation it left, by the
+			// id remembered while it ran.
 			await pickOrchestratorAgent("claude");
 			expect(useOrchestratorStore.getState().exited).toBe(false);
 			expect(setPendingTask).toHaveBeenCalledWith(
 				"o1",
-				expect.objectContaining({ argv: ["claude", "--continue"] }),
+				expect.objectContaining({ argv: ["claude", "--resume", "sid-9"] }),
 			);
 			// Closing the pane is not an exit.
 			setLayout({ type: "terminal", id: "other", ptyId: "" });

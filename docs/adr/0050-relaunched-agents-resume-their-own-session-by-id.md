@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+> Superseded in part by ADR-0060: rule 2 (the folder's most recent session) and custom Agents' "Continue arguments" are gone. With no id, an Agent starts fresh.
+
 # Relaunched agents resume their own session by id
 
 Until now every relaunch started a fresh agent session: opening a Workspace (app start, Fleet Console **Relaunch**) and restarting a Workspace's terminals for a changed injected Bundle all ran the agent's plain launch command. Now these automatic relaunches do a **Session resume**: the agent comes back into the conversation it last had in that pane. One global setting turns this off. It is on by default.

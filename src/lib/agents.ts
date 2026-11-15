@@ -20,7 +20,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		command: "claude",
 		taskArgs: ["{prompt}"],
 		resumeArgs: ["--resume", "{session}"],
-		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -30,7 +29,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		command: "copilot",
 		taskArgs: ["-i", "{prompt}"],
 		resumeArgs: ["--resume={session}"],
-		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -40,7 +38,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		command: "gemini",
 		taskArgs: ["-i", "{prompt}"],
 		resumeArgs: ["--resume", "{session}"],
-		continueArgs: ["--resume", "latest"],
 		builtin: true,
 		enabled: true,
 	},
@@ -50,7 +47,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		command: "codex",
 		taskArgs: ["{prompt}"],
 		resumeArgs: ["resume", "{session}"],
-		continueArgs: ["resume", "--last"],
 		builtin: true,
 		enabled: true,
 	},
@@ -60,7 +56,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		command: "opencode",
 		taskArgs: ["--prompt", "{prompt}"],
 		resumeArgs: ["--session", "{session}"],
-		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -70,7 +65,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		command: "qwen",
 		taskArgs: ["-i", "{prompt}"],
 		resumeArgs: ["--resume", "{session}"],
-		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -79,7 +73,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		name: "Kimi Code",
 		command: "kimi",
 		resumeArgs: ["--session", "{session}"],
-		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -89,7 +82,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		command: "grok",
 		taskArgs: ["{prompt}"],
 		resumeArgs: ["--resume", "{session}"],
-		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -99,7 +91,6 @@ export const BUILTIN_AGENTS: CodingAgent[] = [
 		command: "vibe",
 		taskArgs: ["{prompt}"],
 		resumeArgs: ["--resume", "{session}"],
-		continueArgs: ["--continue"],
 		builtin: true,
 		enabled: true,
 	},
@@ -223,7 +214,8 @@ export function mergeAgentsWithBuiltins(
 	}
 
 	// Add user-created agents, and convert Watched retired built-ins into them
-	for (const agent of persisted) {
+	for (const saved of persisted) {
+		const agent = withoutLegacyFields(saved);
 		if (!agent.builtin) {
 			result.push(agent);
 			continue;
@@ -245,6 +237,18 @@ export function mergeAgentsWithBuiltins(
 	}
 
 	return result;
+}
+
+/**
+ * A persisted Agent without the fields a later release dropped:
+ * `continueArgs`, the "most recent session in this folder" form that
+ * ADR-0060 removed. Stripped so stale data does not linger in settings.
+ */
+function withoutLegacyFields(agent: CodingAgent): CodingAgent {
+	const { continueArgs: _dropped, ...rest } = agent as CodingAgent & {
+		continueArgs?: unknown;
+	};
+	return rest;
 }
 
 /**
@@ -283,9 +287,6 @@ export function isSafeSessionId(id: string | undefined): id is string {
 export interface RelaunchOptions {
 	/** The Pane's remembered **Agent session id**, if any. */
 	sessionId?: string;
-	/** True when this Pane is the only one running this Agent in its launch
-	 *  folder, so "most recent session in this folder" means *its* session. */
-	alone: boolean;
 	/** The global **Session resume** setting. */
 	resume: boolean;
 }
@@ -293,10 +294,11 @@ export interface RelaunchOptions {
 /**
  * The line typed to relaunch an Agent on Workspace open or a Bundle restart:
  * a **Session resume** when one is possible, else the plain launch command
- * (ADR-0050). Undefined when the Agent is gone.
+ * (ADR-0050, ADR-0060). Undefined when the Agent is gone.
  *
- * In order: the remembered session by id; else, when the Pane is alone in its
- * folder, the folder's most recent session; else fresh.
+ * Only the Pane's remembered session id resumes. With no id the Agent starts
+ * fresh: there is no "most recent session in this folder" fallback, so
+ * whether a Pane resumes never depends on what other Panes share its folder.
  *
  * There is deliberately no `|| <plain>` fallback. A shell cannot tell "the
  * resume failed" from "the user quit the resumed Agent with a non-zero exit"
@@ -320,9 +322,6 @@ export function agentRelaunchCommandFor(
 			a.replace(SESSION_ID_PLACEHOLDER, id),
 		);
 		return [plain, ...resumeArgs].join(" ");
-	}
-	if (opts.alone && agent.continueArgs?.length) {
-		return [plain, ...agent.continueArgs].join(" ");
 	}
 	return plain;
 }
@@ -351,9 +350,6 @@ export function agentRelaunchArgvFor(
 			...plain,
 			...agent.resumeArgs.map((a) => a.replace(SESSION_ID_PLACEHOLDER, id)),
 		];
-	}
-	if (opts.alone && agent.continueArgs?.length) {
-		return [...plain, ...agent.continueArgs];
 	}
 	return plain;
 }
@@ -428,32 +424,6 @@ export function parseTaskArgsForm(
 		};
 	}
 	return { taskArgs: parts };
-}
-
-/**
- * Parse the continue argument form a user types for a custom Agent (for
- * example `--continue`): what reopens its most recent session in the launch
- * folder. Empty input means "cannot resume" (`continueArgs: undefined`). A
- * placeholder is an error: a custom Agent is never given a prompt or an id
- * on relaunch, so the form must stand on its own.
- */
-export function parseContinueArgsForm(
-	form: string,
-): { continueArgs: string[] | undefined } | { error: string } {
-	const parts = form.trim().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) return { continueArgs: undefined };
-	if (
-		parts.some(
-			(p) =>
-				p.includes(TASK_PROMPT_PLACEHOLDER) ||
-				p.includes(SESSION_ID_PLACEHOLDER),
-		)
-	) {
-		return {
-			error: `No placeholders here: just the flag that continues the latest session (for example: --continue)`,
-		};
-	}
-	return { continueArgs: parts };
 }
 
 function escapeRegExp(s: string): string {

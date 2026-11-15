@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { OrchestratorFileTab } from "../lib/ipc";
+import type { OrchestratorSession } from "../lib/orchestrator";
 
 /**
  * The Window's **Orchestrator** session (ADR-0057), in memory only: where the
@@ -36,6 +37,11 @@ interface OrchestratorState {
 	/** Its Agent exited while its pane stayed: the view asks which Agent to
 	 *  start (the picker), until one is chosen or the user says not now. */
 	exited: boolean;
+	/** The Orchestrator Agent's last known session, kept while it runs so
+	 *  that picking the same Agent after it exits resumes that conversation
+	 *  by id (ADR-0060). In memory only: across an app restart the pane
+	 *  itself still holds it. */
+	lastSession: OrchestratorSession | null;
 	/** The "Open workspace…" list is open (tab strip button or the graph's
 	 *  '+' node). */
 	workspacePickerOpen: boolean;
@@ -79,5 +85,6 @@ export const useOrchestratorStore = create<OrchestratorState>((set) => ({
 	fileSearch: null,
 	workspacePickerOpen: false,
 	exited: false,
+	lastSession: null,
 	set: (patch) => set(patch),
 }));

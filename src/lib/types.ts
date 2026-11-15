@@ -236,10 +236,6 @@ export interface CodingAgent {
 	 *  (Copilot's `--resume={session}`). Built-ins only: a custom Agent has no
 	 *  hooks, so it never learns an id. */
 	resumeArgs?: string[];
-	/** How to relaunch this Agent into its most recent session in the launch
-	 *  folder (`--continue`). Used only when the Pane is the sole one running
-	 *  this Agent in that folder. The user sets it for a custom Agent. */
-	continueArgs?: string[];
 	builtin: boolean;
 	enabled: boolean;
 	/** Set on a custom Agent converted from a **retired built-in** until a

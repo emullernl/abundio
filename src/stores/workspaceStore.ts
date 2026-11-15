@@ -32,11 +32,7 @@ import {
 } from "../lib/paneTree";
 import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
 import { perfMark } from "../lib/perfMarks";
-import {
-	countAgentPanesByFolder,
-	relaunchCommandForPane,
-	terminalNodes,
-} from "../lib/sessionResume";
+import { relaunchCommandForPane, terminalNodes } from "../lib/sessionResume";
 import { FIRST_TAB_NAME, nextTabName } from "../lib/tabName";
 import { teardownTerminal } from "../lib/terminalManager";
 import type {
@@ -445,16 +441,11 @@ function clearPtyIds(node: PaneNode): PaneNode {
  * For each terminal pane in the layout that has an agentId, seed
  * pendingAgentRegistry so the agent re-runs the next time the pane spawns its
  * PTY — resuming its last session when it can (**Session resume**, ADR-0050).
- * `counts` is `countAgentPanesByFolder` over every loaded Workspace. Agents
- * that no longer exist are skipped — the pane comes up as a plain shell.
+ * Agents that no longer exist are skipped — the pane comes up as a plain shell.
  */
-function seedPendingAgentsForLayout(
-	layout: PaneNode,
-	rootFolder: string,
-	counts: Map<string, number>,
-): void {
+function seedPendingAgentsForLayout(layout: PaneNode): void {
 	for (const node of terminalNodes(layout)) {
-		const command = relaunchCommandForPane(node, rootFolder, counts);
+		const command = relaunchCommandForPane(node);
 		if (!command) continue;
 		setPendingAgent(node.id, { command });
 	}
@@ -561,14 +552,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}));
 		// After every layout is cleaned: whether a pane may take its folder's
 		// latest session depends on every other Workspace's panes.
-		const counts = countAgentPanesByFolder(cleaned);
 		for (const ws of cleaned) {
 			// The Orchestrator starts when its view opens, through the spawn
 			// (lib/orchestratorLaunch.ts), never by a typed relaunch line.
 			if (isOrchestrator(ws)) continue;
 			for (const t of ws.tabs) {
 				const layout = parseTabLayout(t.layoutJson);
-				if (layout) seedPendingAgentsForLayout(layout, ws.rootFolder, counts);
+				if (layout) seedPendingAgentsForLayout(layout);
 			}
 		}
 
@@ -926,7 +916,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// Clear ptyIds from layouts so fresh PTYs spawn on next open, and re-seed
 		// pendingAgentRegistry for any pane that remembers an agent.
 		const isActive = state.activeWorkspaceId === id;
-		const counts = countAgentPanesByFolder(state.workspaces);
 		set({
 			workspaces: state.workspaces.map((s) =>
 				s.id === id
@@ -937,7 +926,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 								if (!layout) return t;
 								const cleared = clearPtyIds(layout);
 								if (!isOrchestrator(s)) {
-									seedPendingAgentsForLayout(cleared, s.rootFolder, counts);
+									seedPendingAgentsForLayout(cleared);
 								}
 								return {
 									...t,
