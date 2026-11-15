@@ -769,45 +769,74 @@ function WireEdge({ data }: EdgeProps<Edge<WireData>>) {
 	);
 }
 
-/**
- * A comet is a short dash of the route's own stroke, repeated every
- * `COMET_EVERY` px and moved along by animating `stroke-dashoffset` (the
- * keyframes in globals.css run one period). Plain CSS on a plain path: no
- * SMIL `<animateMotion>` and no CSS `filter` on SVG, which together made
- * WebKit (the app's webview) now and then drop the graph's whole layer, so
- * the chart went blank until the view was reopened. The glow is a wider,
- * fainter copy of the same dashes underneath.
- */
-const COMET_LEN = 9;
-const COMET_EVERY = 72;
-const SPEED_PX_S = 420;
-const COMET_PERIOD_S = COMET_EVERY / SPEED_PX_S;
+/** How fast a call's light travels, and the shortest lap. */
+const SPEED_PX_S = 380;
+const MIN_LAP_S = 0.9;
+/** The light's tail, in px behind its head. */
+const TAIL_PX = 34;
+
+/** Length of a route of right angles. */
+function routeLength(points: readonly Point[]): number {
+	let n = 0;
+	for (let i = 1; i < points.length; i++) {
+		n += Math.hypot(
+			points[i].x - points[i - 1].x,
+			points[i].y - points[i - 1].y,
+		);
+	}
+	return n;
+}
 
 /**
- * A running Agent control call: comets flowing from caller to target along
- * the chart's own lines, the route lit beneath them. Fades out when the call
- * ends; the lit route alone with reduced motion.
+ * A running Agent control call, after the organisation chart of Abundia in
+ * the theme's colours: the route lit with a gradient that brightens toward
+ * the target over a soft glow, and a light with a tail travelling it from
+ * caller to target. Fades out when the call ends; the lit route alone with
+ * reduced motion.
+ *
+ * Plain SVG strokes moved by CSS (`stroke-dashoffset`, globals.css
+ * `orch-travel`), never SMIL `<animateMotion>` or a CSS `filter` on SVG:
+ * those made WebKit (the app's webview) now and then drop the graph's whole
+ * layer, so the chart went blank until the view was reopened. Each path has
+ * `pathLength` 100, so one keyframe set serves every route.
  */
-function StreamEdge({ data }: EdgeProps<Edge<StreamData>>) {
-	if (!data) return null;
+function StreamEdge({ id, data }: EdgeProps<Edge<StreamData>>) {
+	if (!data || data.points.length < 2) return null;
 	const act = data.kind !== "read";
-	const color = act ? "var(--accent)" : "var(--fg-secondary)";
 	const d = polylinePath(data.points);
+	const length = Math.max(1, routeLength(data.points));
+	const lap = Math.max(MIN_LAP_S, length / SPEED_PX_S);
 	const still = prefersReducedMotion();
-	const width = act ? 2.4 : 1.8;
-	const comet = (strokeWidth: number, strokeOpacity: number) => (
+	const from = data.points[0];
+	const to = data.points[data.points.length - 1];
+	const gradientId = `orch-grad-${id}`;
+	const stroke = act ? `url(#${gradientId})` : "var(--fg-secondary)";
+	const head = act
+		? "color-mix(in srgb, var(--accent) 45%, var(--fg-primary))"
+		: "var(--fg-primary)";
+	// The tail is the head's own dash, longer and one tail-length behind:
+	// the same animation, started that much later in its lap.
+	const tail = Math.min(40, (TAIL_PX / length) * 100);
+	const light = (
+		dash: number,
+		width: number,
+		color: string,
+		opacity: number,
+		lag: number,
+	) => (
 		<path
 			d={d}
-			className="orch-comet"
+			pathLength={100}
+			className="orch-light"
 			style={{
 				fill: "none",
 				stroke: color,
-				strokeWidth,
-				strokeOpacity,
+				strokeWidth: width,
+				strokeOpacity: opacity,
 				strokeLinecap: "round",
-				strokeLinejoin: "round",
-				strokeDasharray: `${COMET_LEN} ${COMET_EVERY - COMET_LEN}`,
-				animationDuration: `${COMET_PERIOD_S}s`,
+				strokeDasharray: `${dash} ${300 - dash}`,
+				animationDuration: `${lap}s`,
+				animationDelay: `${-lap + lag}s`,
 			}}
 		/>
 	);
@@ -819,19 +848,66 @@ function StreamEdge({ data }: EdgeProps<Edge<StreamData>>) {
 				transition: `opacity ${FADE_MS}ms ease`,
 			}}
 		>
+			{act && (
+				<defs>
+					{/* userSpaceOnUse: a straight line has a zero-width box, which a
+					    bounding-box gradient cannot fill. */}
+					<linearGradient
+						id={gradientId}
+						gradientUnits="userSpaceOnUse"
+						x1={from.x}
+						y1={from.y}
+						x2={to.x}
+						y2={to.y}
+					>
+						<stop
+							offset="0%"
+							style={{
+								stopColor:
+									"color-mix(in srgb, var(--accent) 40%, var(--bg-primary))",
+							}}
+						/>
+						<stop offset="55%" style={{ stopColor: "var(--accent)" }} />
+						<stop
+							offset="100%"
+							style={{
+								stopColor:
+									"color-mix(in srgb, var(--accent-hover) 60%, var(--fg-primary))",
+							}}
+						/>
+					</linearGradient>
+				</defs>
+			)}
+			{/* The glow: a wide, faint copy of the lit route. */}
 			<path
 				d={d}
 				style={{
 					fill: "none",
-					stroke: color,
-					strokeOpacity: still ? 0.9 : 0.35,
-					strokeWidth: width,
+					stroke,
+					strokeWidth: act ? 8 : 6,
+					strokeOpacity: 0.16,
+					strokeLinejoin: "round",
+					strokeLinecap: "round",
+				}}
+			/>
+			<path
+				d={d}
+				style={{
+					fill: "none",
+					stroke,
+					strokeWidth: act ? 2.2 : 1.6,
+					strokeOpacity: still ? 1 : 0.85,
 					strokeLinejoin: "round",
 					strokeDasharray: act ? undefined : "3 5",
 				}}
 			/>
-			{!still && comet(width * 3.2, 0.22)}
-			{!still && comet(width * 1.6, 1)}
+			{!still && (
+				<>
+					{light(tail, act ? 3 : 2.4, head, 0.35, (lap * tail) / 100)}
+					{light(0.01, act ? 14 : 10, head, 0.22, 0)}
+					{light(0.01, act ? 6.5 : 5, head, 1, 0)}
+				</>
+			)}
 		</g>
 	);
 }

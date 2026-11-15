@@ -729,48 +729,97 @@ body,
 .orch-node-pulse {
 	animation: orch-node-pulse 700ms ease-out;
 }
-/* A node a running call is aimed at glows while the stream reaches it. */
-@keyframes orch-node-receiving {
+/* The Orchestrator graph's live-call look, after the organisation chart of
+   Abundia, in the theme's own colours. Only transform, opacity and
+   stroke-dashoffset animate: no SMIL, no CSS filter on SVG, no endless
+   box-shadow (see OrchestratorGraph.tsx's StreamEdge). */
+.orch-graph {
+	--orch-grad: linear-gradient(
+		135deg,
+		var(--accent) 0%,
+		var(--accent-hover) 50%,
+		color-mix(in srgb, var(--accent) 55%, var(--fg-primary)) 100%
+	);
+}
+/* A node a running call is aimed at: its border breathes in the theme's
+   gradient, and a ring swells out of it and fades. */
+.orch-node-receiving {
+	position: relative;
+	box-shadow: 0 0 26px -6px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.orch-node-receiving::after {
+	content: "";
+	position: absolute;
+	inset: -1.5px;
+	border-radius: inherit;
+	padding: 1.5px;
+	background: var(--orch-grad);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	pointer-events: none;
+	animation: orch-breathe 2.4s ease-in-out infinite;
+}
+.orch-node-receiving::before {
+	content: "";
+	position: absolute;
+	inset: -1px;
+	border-radius: inherit;
+	border: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+	pointer-events: none;
+	animation: orch-ripple 2.2s ease-out infinite;
+}
+@keyframes orch-breathe {
 	0%,
 	100% {
-		box-shadow:
-			0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent),
-			0 0 10px 1px color-mix(in srgb, var(--accent) 25%, transparent);
+		opacity: 0.35;
 	}
 	50% {
-		box-shadow:
-			0 0 0 2px color-mix(in srgb, var(--accent) 80%, transparent),
-			0 0 22px 4px color-mix(in srgb, var(--accent) 40%, transparent);
+		opacity: 1;
 	}
 }
-.orch-node-receiving {
-	animation: orch-node-receiving 1.6s ease-in-out infinite;
+@keyframes orch-ripple {
+	0% {
+		transform: scale(1);
+		opacity: 0.9;
+	}
+	70%,
+	100% {
+		transform: scale(1.06, 1.25);
+		opacity: 0;
+	}
 }
-/* A running call's comets: dashes moving one period (COMET_EVERY in
-   OrchestratorGraph.tsx) from caller to target; the duration is inline. */
-@keyframes orch-comet {
+/* A running call's light: a dash travelling the route once per lap. The
+   path's pathLength is 100, so every route runs 0 to -100; the lap's
+   duration and the tail's phase are inline. */
+@keyframes orch-travel {
 	from {
-		stroke-dashoffset: 72;
-	}
-	to {
 		stroke-dashoffset: 0;
 	}
+	to {
+		stroke-dashoffset: -100;
+	}
 }
-.orch-comet {
-	animation-name: orch-comet;
-	animation-timing-function: linear;
+.orch-light {
+	animation-name: orch-travel;
+	animation-timing-function: cubic-bezier(0.45, 0.05, 0.55, 0.95);
 	animation-iteration-count: infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-	.orch-comet {
+	.orch-light {
 		display: none;
 	}
 	.orch-node-in,
 	.orch-node-pulse {
 		animation: none;
 	}
-	.orch-node-receiving {
+	.orch-node-receiving::after {
 		animation: none;
-		box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+		opacity: 1;
+	}
+	.orch-node-receiving::before {
+		display: none;
 	}
 }
