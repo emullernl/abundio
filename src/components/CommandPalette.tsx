@@ -337,8 +337,9 @@ export function CommandPalette({
 			action: () => triggerAction("toggle-markdown-preview"),
 		});
 
-		// Agents
-		if (focusedPaneId) {
+		// Agents — not into a pane already running one (typedLaunch refuses it,
+		// as the pane menu's disabled "Agents" entry does).
+		if (focusedPaneId && !isAgentPane(getTerminal(focusedPaneId)?.ptyId)) {
 			for (const agent of agents.filter((a) => a.enabled)) {
 				result.push({
 					id: `agent-${agent.id}`,

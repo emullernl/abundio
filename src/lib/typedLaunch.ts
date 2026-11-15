@@ -13,12 +13,17 @@ import { typedLine } from "./typedLine";
  * the next start. Stamping here, not later from shell integration or a hook,
  * is what makes it relaunch from a shell that reports neither (cmd.exe).
  *
- * Returns false, and does nothing, when the pane has no PTY yet or the Agent
- * is unknown.
+ * Returns false, and does nothing, when the pane has no PTY yet, the Agent is
+ * unknown, or the pane is already running an Agent. Typing into a running
+ * Agent would only reach its prompt, but the stamp would replace its Agent,
+ * forgetting its session and its handle, and it would relaunch as the wrong
+ * Agent.
  */
 export function typedLaunch(paneId: string, agentId: string): boolean {
 	const ptyId = getTerminal(paneId)?.ptyId;
 	if (!ptyId) return false;
+	const activity = usePtyActivityStore.getState().activities[ptyId];
+	if (activity?.detectionMode === "agent") return false;
 	const command = agentCommandFor(useSettingsStore.getState().agents, agentId);
 	if (!command) return false;
 	pty.write(ptyId, typedLine(command)).catch(() => {});
