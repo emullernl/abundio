@@ -727,6 +727,15 @@ mod tests {
     }
 
     #[test]
+    fn first_open_uses_the_nearest_monitor_for_an_asker_off_every_screen() {
+        let mons = [laptop(), external("DELL", 1728.0)];
+        // Dragged almost entirely off the right edge of the external.
+        let asker = Rect::new(4300.0, 200.0, 800.0, 600.0);
+        let f = first_open(&mons, Some(&asker), &[], NO_CHROME).unwrap();
+        assert_eq!((f.x, f.y), (1728.0 + 256.0, 144.0));
+    }
+
+    #[test]
     fn first_open_needs_a_monitor() {
         assert_eq!(first_open(&[], None, &[], NO_CHROME), None);
     }

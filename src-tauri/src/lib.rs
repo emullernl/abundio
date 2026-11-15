@@ -724,6 +724,30 @@ fn adopt_survivor_geometry_into_main() -> Option<window_persistence::Restoration
     Some(plan)
 }
 
+/// The bundle identifier, which names the window-state plugin's folder. Must
+/// match `identifier` in `tauri.conf.json` (checked by a test).
+const BUNDLE_IDENTIFIER: &str = "com.abundio.desktop";
+
+/// The window-state plugin's file: `<app config dir>/.window-state.json`,
+/// where the app config dir is `config_dir()/<bundle identifier>`. Resolved by
+/// hand because the helpers using it run before the Tauri builder exists.
+fn window_state_file() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|d| d.join(BUNDLE_IDENTIFIER).join(tauri_plugin_window_state::DEFAULT_FILENAME))
+}
+
+/// Writes the window-state file atomically (tmp + rename): a half-written
+/// file would make the plugin reset *every* window's geometry next launch.
+fn write_window_state_file(path: &std::path::Path, contents: &str, what: &str) {
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, contents) {
+        eprintln!("[abundio] failed to write window-state {what}: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        eprintln!("[abundio] failed to commit window-state {what}: {e}");
+    }
+}
+
 /// Copies `from_label`'s geometry onto the main window's key inside the
 /// window-state plugin's `.window-state.json`, atomically (tmp + rename). A
 /// half-written file would make the plugin reset *all* window geometries on the
@@ -733,10 +757,7 @@ fn migrate_main_geometry(from_label: &str, main_label: &str) {
     // The plugin stores geometry at <app_config_dir>/.window-state.json, where
     // app_config_dir = config_dir()/<bundle identifier> (see tauri.conf.json's
     // "identifier"). We're pre-Builder here, so resolve the path ourselves.
-    let Some(path) = dirs::config_dir().map(|d| {
-        d.join("com.abundio.desktop")
-            .join(tauri_plugin_window_state::DEFAULT_FILENAME)
-    }) else {
+    let Some(path) = window_state_file() else {
         return;
     };
     let contents = match std::fs::read_to_string(&path) {
@@ -753,24 +774,14 @@ fn migrate_main_geometry(from_label: &str, main_label: &str) {
     else {
         return;
     };
-    let tmp = path.with_extension("json.tmp");
-    if let Err(e) = std::fs::write(&tmp, rewritten) {
-        eprintln!("[abundio] failed to write window-state geometry adoption: {e}");
-        return;
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        eprintln!("[abundio] failed to commit window-state geometry adoption: {e}");
-    }
+    write_window_state_file(&path, &rewritten, "geometry adoption");
 }
 
 /// Moves a Settings window still saved at its old default size to the new
 /// one, in the window-state plugin's file (atomically, like
 /// [`migrate_main_geometry`]).
 fn upgrade_settings_default_size() {
-    let Some(path) = dirs::config_dir().map(|d| {
-        d.join("com.abundio.desktop")
-            .join(tauri_plugin_window_state::DEFAULT_FILENAME)
-    }) else {
+    let Some(path) = window_state_file() else {
         return;
     };
     let Ok(contents) = std::fs::read_to_string(&path) else {
@@ -784,14 +795,7 @@ fn upgrade_settings_default_size() {
     ) else {
         return;
     };
-    let tmp = path.with_extension("json.tmp");
-    if let Err(e) = std::fs::write(&tmp, rewritten) {
-        eprintln!("[abundio] failed to write window-state size upgrade: {e}");
-        return;
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        eprintln!("[abundio] failed to commit window-state size upgrade: {e}");
-    }
+    write_window_state_file(&path, &rewritten, "size upgrade");
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -811,6 +815,12 @@ pub fn run() {
             // they land on the right monitor whatever its scale (ADR-0051).
             tauri_plugin_window_state::Builder::new()
                 .with_filter(|label| !window_frame::has_placement(label))
+                // Settings is built hidden and shown once it fits its screen
+                // (`open_settings_window`); the plugin must not show it first.
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
                 .build(),
         )
         .plugin(tauri_plugin_os::init())
@@ -1655,6 +1665,16 @@ pub fn run() {
                 on_app_exit(app_handle);
             }
         });
+}
+
+#[cfg(test)]
+mod window_state_file_tests {
+    #[test]
+    fn the_bundle_identifier_matches_tauri_conf() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"].as_str(), Some(super::BUNDLE_IDENTIFIER));
+    }
 }
 
 #[cfg(test)]

@@ -149,10 +149,10 @@ fn place_first_open<R: Runtime>(window: &WebviewWindow<R>, monitors: &[MonitorIn
         .app_handle()
         .webview_windows()
         .into_iter()
-        .filter(|(label, w)| {
-            label != window.label()
-                && crate::window_management::is_profile_window_label(label)
-                && w.is_visible().unwrap_or(false)
+        // Hidden ones count too: at app start every restored window is still
+        // hidden, already placed, while the next one is placed.
+        .filter(|(label, _)| {
+            label != window.label() && crate::window_management::is_profile_window_label(label)
         })
         .filter_map(|(_, w)| Some((w.is_focused().unwrap_or(false), read_frame(&w)?)))
         .collect();

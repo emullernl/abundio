@@ -213,6 +213,9 @@ pub fn open_or_focus_settings_window(
     .min_inner_size(600.0, 400.0)
     // Where it opens with no saved position; a saved one wins.
     .center()
+    // Hidden until it fits its screen, so it never shows overflowing first.
+    // The window-state plugin leaves showing it to us (lib.rs).
+    .visible(false)
     .resizable(true);
     #[cfg(target_os = "macos")]
     {
@@ -224,25 +227,40 @@ pub fn open_or_focus_settings_window(
         .build()
         .map_err(|e| AbundioError::InvalidOperation(format!("Settings window build failed: {}", e)))?;
     shrink_to_fit(&window);
+    let _ = window.show();
+    let _ = window.set_focus();
     Ok(())
 }
 
 /// Shrinks a window that is bigger than its monitor's usable area (a small
-/// screen, or a size saved on a bigger one) to fit inside it.
+/// screen, or a size saved on a bigger one) to fit inside it, and moves it
+/// only as far as it must to be fully inside, so a saved position is kept
+/// where it can be.
 fn shrink_to_fit(window: &tauri::WebviewWindow<Wry>) {
-    let (Ok(Some(monitor)), Ok(inner), Ok(outer)) =
-        (window.current_monitor(), window.inner_size(), window.outer_size())
-    else {
+    let (Ok(Some(monitor)), Ok(inner), Ok(outer), Ok(pos)) = (
+        window.current_monitor(),
+        window.inner_size(),
+        window.outer_size(),
+        window.outer_position(),
+    ) else {
         return;
     };
-    let work = monitor.work_area().size;
+    let work = monitor.work_area();
     let chrome_w = outer.width.saturating_sub(inner.width);
     let chrome_h = outer.height.saturating_sub(inner.height);
-    let width = inner.width.min(work.width.saturating_sub(chrome_w));
-    let height = inner.height.min(work.height.saturating_sub(chrome_h));
-    if (width, height) != (inner.width, inner.height) {
-        let _ = window.set_size(tauri::PhysicalSize::new(width, height));
-        let _ = window.center();
+    let width = inner.width.min(work.size.width.saturating_sub(chrome_w));
+    let height = inner.height.min(work.size.height.saturating_sub(chrome_h));
+    if (width, height) == (inner.width, inner.height) {
+        return;
+    }
+    let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+    let right = work.position.x + work.size.width as i32 - (width + chrome_w) as i32;
+    let bottom = work.position.y + work.size.height as i32 - (height + chrome_h) as i32;
+    // `min` then `max`, never `clamp`, which panics if the bounds cross.
+    let x = pos.x.min(right).max(work.position.x);
+    let y = pos.y.min(bottom).max(work.position.y);
+    if (x, y) != (pos.x, pos.y) {
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
     }
 }
 

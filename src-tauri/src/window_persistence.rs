@@ -183,7 +183,8 @@ pub fn migrate_geometry_to_main(
 /// saves a window's size whenever it closes, resized or not, so a saved size
 /// equal to the old default (at any scale) is taken as never chosen. Any other
 /// size is the user's and is kept. Sizes are logical points; the file holds
-/// physical pixels, so the scale is read from the saved size itself. Returns
+/// physical pixels, so the scale is read from the saved size itself, and must
+/// be one screens use (a quarter step). Returns
 /// the rewritten JSON, or `None` when there is nothing to change.
 pub fn upgrade_old_default_size(
     contents: &str,
@@ -195,10 +196,12 @@ pub fn upgrade_old_default_size(
     let entry = root.as_object_mut()?.get_mut(label)?.as_object_mut()?;
     let width = entry.get("width")?.as_f64()?;
     let height = entry.get("height")?.as_f64()?;
-    let scale = width / old.0;
-    // Within a pixel of the old default at one scale for both sides, and a
-    // scale a screen really has.
-    let is_old = (1.0..=4.0).contains(&scale) && (height - old.1 * scale).abs() <= 1.0;
+    // Scales a screen really has come in quarter steps (1, 1.25, 1.5, … 4).
+    // A size of the old aspect at any other scale is one the user chose.
+    let scale = ((width / old.0) * 4.0).round() / 4.0;
+    let is_old = (1.0..=4.0).contains(&scale)
+        && (width - old.0 * scale).abs() <= 1.0
+        && (height - old.1 * scale).abs() <= 1.0;
     if !is_old {
         return None;
     }
@@ -481,6 +484,9 @@ mod tests {
     fn a_size_the_user_chose_is_kept() {
         assert_eq!(upgrade_old_default_size(&saved(1700, 1240), "settings", OLD, NEW), None);
         assert_eq!(upgrade_old_default_size(&saved(900, 700), "settings", OLD, NEW), None);
+        // The old aspect, but at no scale a screen has (1.19): resized by hand.
+        assert_eq!(upgrade_old_default_size(&saved(1000, 738), "settings", OLD, NEW), None);
+        assert_eq!(upgrade_old_default_size(&saved(1400, 1033), "settings", OLD, NEW), None);
         // Already the new default: nothing to do, ever again.
         assert_eq!(upgrade_old_default_size(&saved(2000, 1520), "settings", OLD, NEW), None);
     }
