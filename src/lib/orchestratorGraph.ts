@@ -379,3 +379,31 @@ export function polylinePath(points: readonly Point[]): string {
 		)
 		.join(" ");
 }
+
+/** Length of a route of right angles. */
+export function routeLength(points: readonly Point[]): number {
+	let n = 0;
+	for (let i = 1; i < points.length; i++) {
+		n += Math.hypot(
+			points[i].x - points[i - 1].x,
+			points[i].y - points[i - 1].y,
+		);
+	}
+	return n;
+}
+
+/** The keyframes that move a point along `points` at an even speed: one per
+ *  corner, offset by the distance travelled. Pure. */
+export function travelKeyframes(points: readonly Point[]): Keyframe[] {
+	const total = routeLength(points) || 1;
+	let done = 0;
+	return points.map((p, i) => {
+		if (i > 0) {
+			done += Math.hypot(p.x - points[i - 1].x, p.y - points[i - 1].y);
+		}
+		return {
+			transform: `translate(${p.x}px, ${p.y}px)`,
+			offset: Math.min(1, done / total),
+		};
+	});
+}

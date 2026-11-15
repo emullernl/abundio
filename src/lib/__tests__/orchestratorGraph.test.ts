@@ -7,6 +7,8 @@ import {
 	nestBySpawner,
 	polylinePath,
 	routeBetween,
+	routeLength,
+	travelKeyframes,
 } from "../orchestratorGraph";
 import type { PaneNode, WorkspaceWithTabs } from "../types";
 
@@ -298,5 +300,33 @@ describe("routeBetween", () => {
 				{ x: 10, y: 0 },
 			]),
 		).toBe("M 0 0 L 10 0");
+	});
+});
+
+describe("a call's travelling light", () => {
+	const route = [
+		{ x: 0, y: 0 },
+		{ x: 30, y: 0 },
+		{ x: 30, y: 10 },
+	];
+
+	it("measures a route of right angles", () => {
+		expect(routeLength(route)).toBe(40);
+	});
+
+	it("moves at an even speed: one keyframe per corner, offset by distance", () => {
+		expect(travelKeyframes(route)).toEqual([
+			{ transform: "translate(0px, 0px)", offset: 0 },
+			{ transform: "translate(30px, 0px)", offset: 0.75 },
+			{ transform: "translate(30px, 10px)", offset: 1 },
+		]);
+	});
+
+	it("survives a route of no length", () => {
+		const frames = travelKeyframes([
+			{ x: 5, y: 5 },
+			{ x: 5, y: 5 },
+		]);
+		expect(frames.map((f) => f.offset)).toEqual([0, 0]);
 	});
 });

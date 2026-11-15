@@ -8,6 +8,7 @@ import {
 	Position,
 	ReactFlow,
 	useReactFlow,
+	ViewportPortal,
 } from "@xyflow/react";
 import { BellRing, Network, Plus, RefreshCw } from "lucide-react";
 import {
@@ -44,6 +45,8 @@ import {
 	type Point,
 	polylinePath,
 	routeBetween,
+	routeLength,
+	travelKeyframes,
 } from "../../lib/orchestratorGraph";
 import { restartOrchestrator } from "../../lib/orchestratorSession";
 import { toggleOrchestratorFileSearch } from "../../lib/orchestratorTabs";
@@ -371,6 +374,17 @@ export function OrchestratorGraph() {
 		return out;
 	}, [layout, calls, orchestratorPaneId]);
 
+	// The travelling lights, one per running call (gone once it is ending).
+	const lights = useMemo(
+		() =>
+			edges.flatMap((e) =>
+				e.type === "stream" && !(e.data as StreamData).ending
+					? [{ id: e.id, ...(e.data as StreamData) }]
+					: [],
+			),
+		[edges],
+	);
+
 	// ── Graph-level dialogs ──
 	const [newAgentWs, setNewAgentWs] = useState<string | null>(null);
 	const { requestClose, dialogProps } = useConfirmCloseWorkspace();
@@ -410,6 +424,13 @@ export function OrchestratorGraph() {
 					}
 				>
 					<FitOnChange count={nodes.length} />
+					{!prefersReducedMotion() && (
+						<ViewportPortal>
+							{lights.map((l) => (
+								<CallLight key={l.id} points={l.points} kind={l.kind} />
+							))}
+						</ViewportPortal>
+					)}
 				</ReactFlow>
 			</div>
 			{newAgentWs && (
@@ -772,74 +793,99 @@ function WireEdge({ data }: EdgeProps<Edge<WireData>>) {
 /** How fast a call's light travels, and the shortest lap. */
 const SPEED_PX_S = 380;
 const MIN_LAP_S = 0.9;
-/** The light's tail, in px behind its head. */
-const TAIL_PX = 34;
+/** The light's head, its halo, and the two tail dots behind it (ms). */
+const LIGHT_PARTS = [
+	{ size: 18, opacity: 0.3, lagMs: 0 },
+	{ size: 7, opacity: 1, lagMs: 0 },
+	{ size: 5, opacity: 0.55, lagMs: 45 },
+	{ size: 3.5, opacity: 0.3, lagMs: 90 },
+];
 
-/** Length of a route of right angles. */
-function routeLength(points: readonly Point[]): number {
-	let n = 0;
-	for (let i = 1; i < points.length; i++) {
-		n += Math.hypot(
-			points[i].x - points[i - 1].x,
-			points[i].y - points[i - 1].y,
+/**
+ * A running call's light, travelling its route from caller to target with a
+ * halo and a short tail: small HTML dots in the graph's own coordinates
+ * (React Flow's viewport portal), moved by a `transform` animation.
+ *
+ * Not SVG: animating anything drawn in the edges' SVG (SMIL motion, CSS
+ * filters, a moving dash) makes WebKit, the app's webview, repaint that
+ * whole layer every frame, which showed as a flickering redraw, froze the
+ * status icons, and now and then left the graph blank. A transform
+ * animation runs on the compositor and repaints nothing.
+ */
+function CallLight({
+	points,
+	kind,
+}: {
+	points: readonly Point[];
+	kind: "read" | "act";
+}) {
+	const refs = useRef<(HTMLDivElement | null)[]>([]);
+	const key = points.map((p) => `${p.x},${p.y}`).join(" ");
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `points`
+	useEffect(() => {
+		const frames = travelKeyframes(points);
+		const lap = Math.max(MIN_LAP_S, routeLength(points) / SPEED_PX_S) * 1000;
+		const running = refs.current.flatMap((el, i) =>
+			el?.animate
+				? [
+						el.animate(frames, {
+							duration: lap,
+							iterations: Number.POSITIVE_INFINITY,
+							easing: "cubic-bezier(0.45, 0.05, 0.55, 0.95)",
+							delay: LIGHT_PARTS[i].lagMs,
+							fill: "backwards",
+						}),
+					]
+				: [],
 		);
-	}
-	return n;
+		return () => {
+			for (const a of running) a.cancel();
+		};
+	}, [key]);
+	const color =
+		kind === "act"
+			? "color-mix(in srgb, var(--accent) 45%, var(--fg-primary))"
+			: "var(--fg-secondary)";
+	return (
+		<>
+			{LIGHT_PARTS.map((part, i) => (
+				<div
+					key={`${part.size}-${part.lagMs}`}
+					ref={(el) => {
+						refs.current[i] = el;
+					}}
+					className="orch-light"
+					style={{
+						width: part.size,
+						height: part.size,
+						marginLeft: -part.size / 2,
+						marginTop: -part.size / 2,
+						opacity: part.opacity,
+						background:
+							i === 0
+								? `radial-gradient(circle, ${color} 0%, transparent 70%)`
+								: color,
+					}}
+				/>
+			))}
+		</>
+	);
 }
 
 /**
  * A running Agent control call, after the organisation chart of Abundia in
  * the theme's colours: the route lit with a gradient that brightens toward
- * the target over a soft glow, and a light with a tail travelling it from
- * caller to target. Fades out when the call ends; the lit route alone with
- * reduced motion.
- *
- * Plain SVG strokes moved by CSS (`stroke-dashoffset`, globals.css
- * `orch-travel`), never SMIL `<animateMotion>` or a CSS `filter` on SVG:
- * those made WebKit (the app's webview) now and then drop the graph's whole
- * layer, so the chart went blank until the view was reopened. Each path has
- * `pathLength` 100, so one keyframe set serves every route.
+ * the target, over a soft glow. Static: the light that travels it is
+ * `CallLight`. Fades out when the call ends.
  */
 function StreamEdge({ id, data }: EdgeProps<Edge<StreamData>>) {
 	if (!data || data.points.length < 2) return null;
 	const act = data.kind !== "read";
 	const d = polylinePath(data.points);
-	const length = Math.max(1, routeLength(data.points));
-	const lap = Math.max(MIN_LAP_S, length / SPEED_PX_S);
-	const still = prefersReducedMotion();
 	const from = data.points[0];
 	const to = data.points[data.points.length - 1];
 	const gradientId = `orch-grad-${id}`;
 	const stroke = act ? `url(#${gradientId})` : "var(--fg-secondary)";
-	const head = act
-		? "color-mix(in srgb, var(--accent) 45%, var(--fg-primary))"
-		: "var(--fg-primary)";
-	// The tail is the head's own dash, longer and one tail-length behind:
-	// the same animation, started that much later in its lap.
-	const tail = Math.min(40, (TAIL_PX / length) * 100);
-	const light = (
-		dash: number,
-		width: number,
-		color: string,
-		opacity: number,
-		lag: number,
-	) => (
-		<path
-			d={d}
-			pathLength={100}
-			className="orch-light"
-			style={{
-				fill: "none",
-				stroke: color,
-				strokeWidth: width,
-				strokeOpacity: opacity,
-				strokeLinecap: "round",
-				strokeDasharray: `${dash} ${300 - dash}`,
-				animationDuration: `${lap}s`,
-				animationDelay: `${-lap + lag}s`,
-			}}
-		/>
-	);
 	return (
 		<g
 			className="orch-stream"
@@ -896,18 +942,10 @@ function StreamEdge({ id, data }: EdgeProps<Edge<StreamData>>) {
 					fill: "none",
 					stroke,
 					strokeWidth: act ? 2.2 : 1.6,
-					strokeOpacity: still ? 1 : 0.85,
 					strokeLinejoin: "round",
 					strokeDasharray: act ? undefined : "3 5",
 				}}
 			/>
-			{!still && (
-				<>
-					{light(tail, act ? 3 : 2.4, head, 0.35, (lap * tail) / 100)}
-					{light(0.01, act ? 14 : 10, head, 0.22, 0)}
-					{light(0.01, act ? 6.5 : 5, head, 1, 0)}
-				</>
-			)}
 		</g>
 	);
 }

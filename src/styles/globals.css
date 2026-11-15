@@ -760,6 +760,9 @@ body,
 	-webkit-mask-composite: xor;
 	mask-composite: exclude;
 	pointer-events: none;
+	/* Its own layer: a masked element's opacity is otherwise repainted
+	   every frame. */
+	will-change: opacity;
 	animation: orch-breathe 2.4s ease-in-out infinite;
 }
 .orch-node-receiving::before {
@@ -769,6 +772,7 @@ body,
 	border-radius: inherit;
 	border: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
 	pointer-events: none;
+	will-change: transform, opacity;
 	animation: orch-ripple 2.2s ease-out infinite;
 }
 @keyframes orch-breathe {
@@ -791,21 +795,16 @@ body,
 		opacity: 0;
 	}
 }
-/* A running call's light: a dash travelling the route once per lap. The
-   path's pathLength is 100, so every route runs 0 to -100; the lap's
-   duration and the tail's phase are inline. */
-@keyframes orch-travel {
-	from {
-		stroke-dashoffset: 0;
-	}
-	to {
-		stroke-dashoffset: -100;
-	}
-}
+/* A running call's light (OrchestratorGraph.tsx, CallLight): moved by a
+   transform animation alone, so the compositor runs it and nothing repaints. */
 .orch-light {
-	animation-name: orch-travel;
-	animation-timing-function: cubic-bezier(0.45, 0.05, 0.55, 0.95);
-	animation-iteration-count: infinite;
+	position: absolute;
+	left: 0;
+	top: 0;
+	border-radius: 50%;
+	pointer-events: none;
+	will-change: transform;
+	z-index: 1000;
 }
 @media (prefers-reduced-motion: reduce) {
 	.orch-light {
