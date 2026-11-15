@@ -4,17 +4,16 @@
 //! from opening. Before this module every startup `open_db` was an `expect`,
 //! so the app panicked with no window and no message. Now:
 //!
-//! 1. SQLite waits out short locks itself (`BUSY_TIMEOUT`, set in `open_db`).
-//! 2. The open is retried quietly for a few seconds (`open_with_retries`).
+//! 1. SQLite waits out short locks itself (rusqlite gives every connection a
+//!    5 s busy timeout).
+//! 2. The open is retried quietly for a few seconds (`open_with_retries`),
+//!    except after a failed migration, which would only fail the same way.
 //! 3. If it still fails, a native dialog explains why and offers Try Again or
 //!    Quit. The database is never deleted, reset or moved here.
 
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::Duration;
-
-/// How long SQLite waits on a locked database before giving up on a statement.
-pub const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Quiet retries before the user is asked: 5 tries, one second apart.
 const QUIET_ATTEMPTS: u32 = 5;
@@ -56,25 +55,35 @@ impl std::error::Error for DbOpenError {}
 
 /// The dialog's title and body for a failure.
 pub fn failure_message(err: &DbOpenError) -> (String, String) {
-    let (title, lead) = match err.stage {
+    let blocked_hint = format!(
+        "Security software, a full disk, or folder permissions can cause this. \
+         If your antivirus is blocking Abundio, allow it and choose {TRY_AGAIN}."
+    );
+    let (title, lead, hint) = match err.stage {
         DbOpenStage::Folder => (
             "Abundio could not create its data folder",
             "Abundio could not create the folder that holds its database.",
+            blocked_hint,
         ),
         DbOpenStage::Open => (
             "Abundio could not open its database",
             "Abundio could not open or create its database.",
+            blocked_hint,
         ),
+        // Each migration commits on its own, so earlier ones from this run
+        // may have been applied; only the failing one is rolled back.
         DbOpenStage::Migrate => (
             "Abundio could not upgrade its database",
             "Abundio opened its database but could not bring it up to date. \
-             Your data has not been changed or deleted.",
+             Nothing has been deleted; the update that failed was undone.",
+            "This is unlikely to be caused by security software. If it keeps \
+             happening, update Abundio or report the error below."
+                .to_string(),
         ),
     };
     let body = format!(
         "{lead}\n\n\
-         Security software, a full disk, or folder permissions can cause this. \
-         If your antivirus is blocking Abundio, allow it and choose {TRY_AGAIN}.\n\n\
+         {hint}\n\n\
          Database: {}\n\
          Error: {}",
         err.path.display(),
@@ -84,17 +93,19 @@ pub fn failure_message(err: &DbOpenError) -> (String, String) {
 }
 
 /// Runs `open` up to `attempts` times, calling `sleep` between tries.
-/// Returns the first success, or the last error.
+/// Returns the first success, or the last error. An error `retryable` says
+/// no to is returned at once.
 pub fn open_with_retries<T, E>(
     attempts: u32,
     mut open: impl FnMut() -> Result<T, E>,
     mut sleep: impl FnMut(),
+    retryable: impl Fn(&E) -> bool,
 ) -> Result<T, E> {
     let mut tries = 1;
     loop {
         match open() {
             Ok(v) => return Ok(v),
-            Err(e) if tries >= attempts.max(1) => return Err(e),
+            Err(e) if tries >= attempts.max(1) || !retryable(&e) => return Err(e),
             Err(_) => {
                 tries += 1;
                 sleep();
@@ -109,10 +120,11 @@ pub fn open_with_retries<T, E>(
 pub fn open_or_ask<T, E>(
     mut open: impl FnMut() -> Result<T, E>,
     mut sleep: impl FnMut(),
+    retryable: impl Fn(&E) -> bool,
     mut ask: impl FnMut(&E) -> bool,
 ) -> Option<T> {
     loop {
-        match open_with_retries(QUIET_ATTEMPTS, &mut open, &mut sleep) {
+        match open_with_retries(QUIET_ATTEMPTS, &mut open, &mut sleep, &retryable) {
             Ok(v) => return Some(v),
             Err(e) => {
                 if !ask(&e) {
@@ -121,6 +133,13 @@ pub fn open_or_ask<T, E>(
             }
         }
     }
+}
+
+/// A failed migration is almost always the same on the next try (bad SQL, a
+/// constraint), and SQLite's busy timeout already waited out any lock, so
+/// quiet retries would only delay the dialog.
+fn is_quietly_retryable(err: &DbOpenError) -> bool {
+    err.stage != DbOpenStage::Migrate
 }
 
 /// Shows the failure in a native dialog. True means Try Again.
@@ -163,6 +182,7 @@ pub fn open_db_or_quit() -> Connection {
             })
         },
         || std::thread::sleep(QUIET_DELAY),
+        is_quietly_retryable,
         |e| {
             log::error!("[db] giving up for now, asking the user: {e}");
             ask_user(e)
@@ -205,6 +225,7 @@ mod tests {
                 }
             },
             || sleeps.set(sleeps.get() + 1),
+            |_| true,
         );
         assert_eq!(r, Ok(7));
         assert_eq!(calls.get(), 3);
@@ -222,6 +243,7 @@ mod tests {
                 Err("locked")
             },
             || sleeps.set(sleeps.get() + 1),
+            |_| true,
         );
         assert_eq!(r, Err("locked"));
         assert_eq!(calls.get(), 3);
@@ -238,6 +260,7 @@ mod tests {
                 Err(())
             },
             || {},
+            |_| true,
         );
         assert_eq!(calls.get(), 1);
     }
@@ -248,6 +271,7 @@ mod tests {
         let r: Option<()> = open_or_ask(
             || Err::<(), _>("blocked"),
             || {},
+            |_| true,
             |_| {
                 asked.set(asked.get() + 1);
                 false
@@ -272,6 +296,7 @@ mod tests {
                 }
             },
             || {},
+            |_| true,
             |_| {
                 asked.set(asked.get() + 1);
                 true
@@ -280,6 +305,31 @@ mod tests {
         assert_eq!(r, Some("db"));
         assert_eq!(asked.get(), 1);
         assert_eq!(calls.get(), QUIET_ATTEMPTS + 1);
+    }
+
+    #[test]
+    fn a_non_retryable_error_returns_at_once() {
+        let calls = Cell::new(0);
+        let sleeps = Cell::new(0);
+        let r: Result<(), &str> = open_with_retries(
+            5,
+            || {
+                calls.set(calls.get() + 1);
+                Err("bad migration")
+            },
+            || sleeps.set(sleeps.get() + 1),
+            |_| false,
+        );
+        assert_eq!(r, Err("bad migration"));
+        assert_eq!(calls.get(), 1);
+        assert_eq!(sleeps.get(), 0);
+    }
+
+    #[test]
+    fn only_a_failed_migration_skips_the_quiet_retries() {
+        assert!(is_quietly_retryable(&err(DbOpenStage::Folder)));
+        assert!(is_quietly_retryable(&err(DbOpenStage::Open)));
+        assert!(!is_quietly_retryable(&err(DbOpenStage::Migrate)));
     }
 
     #[test]
@@ -296,7 +346,9 @@ mod tests {
     fn migration_failure_says_upgrade_and_that_data_is_untouched() {
         let (title, body) = failure_message(&err(DbOpenStage::Migrate));
         assert!(title.contains("upgrade"));
-        assert!(body.contains("has not been changed or deleted"));
+        assert!(body.contains("Nothing has been deleted; the update that failed was undone."));
+        assert!(!body.contains("not been changed"));
+        assert!(!body.contains("antivirus"));
     }
 
     #[test]

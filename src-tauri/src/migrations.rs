@@ -714,8 +714,9 @@ pub fn open_db() -> Result<Connection, crate::db_startup::DbOpenError> {
 
     // On first run of this data epoch, seed it from the previous version's
     // database (a copy, so older builds keep working — see app_paths.rs).
-    // Idempotent; the second and third `open_db` at startup are no-ops.
-    crate::app_paths::import_legacy_state_if_needed();
+    // Once it has succeeded, later calls are no-ops; a failed import runs
+    // again on the next call.
+    let import_done = crate::app_paths::import_legacy_state_if_needed();
 
     let db_path = crate::app_paths::db_path();
     let fail = |stage: DbOpenStage, message: String| DbOpenError {
@@ -725,24 +726,30 @@ pub fn open_db() -> Result<Connection, crate::db_startup::DbOpenError> {
     };
 
     // Sample before `Connection::open` below, which creates the file. See
-    // DB_WAS_ABSENT_AT_STARTUP.
-    let _ = DB_WAS_ABSENT_AT_STARTUP.set(sample_db_absence(&db_path));
+    // DB_WAS_ABSENT_AT_STARTUP. Not while the import is still owed: the file
+    // is absent then only because the copy failed, and a Try Again that
+    // imports it would otherwise be taken for a new install.
+    let absent = sample_db_absence(&db_path);
+    if import_done {
+        let _ = DB_WAS_ABSENT_AT_STARTUP.set(absent);
+    }
 
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| fail(DbOpenStage::Folder, e.to_string()))?;
     }
 
+    // rusqlite already gives every connection a 5 s busy timeout, so short
+    // locks (security software scanning the file) are waited out here.
     let conn = Connection::open(&db_path).map_err(|e| fail(DbOpenStage::Open, e.to_string()))?;
-
-    // Wait out short locks (security software scanning the file, another
-    // connection mid-write) inside SQLite instead of failing at once.
-    conn.busy_timeout(crate::db_startup::BUSY_TIMEOUT)
-        .map_err(|e| fail(DbOpenStage::Open, e.to_string()))?;
 
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
         .map_err(|e| fail(DbOpenStage::Open, e.to_string()))?;
 
     run_migrations(&conn).map_err(|e| fail(DbOpenStage::Migrate, e.to_string()))?;
+
+    // The import failed but the database opened anyway (a fresh, empty one,
+    // as before this retry existed): record the sample now, so it is set.
+    let _ = DB_WAS_ABSENT_AT_STARTUP.set(absent);
 
     Ok(conn)
 }
