@@ -763,11 +763,44 @@ fn migrate_main_geometry(from_label: &str, main_label: &str) {
     }
 }
 
+/// Moves a Settings window still saved at its old default size to the new
+/// one, in the window-state plugin's file (atomically, like
+/// [`migrate_main_geometry`]).
+fn upgrade_settings_default_size() {
+    let Some(path) = dirs::config_dir().map(|d| {
+        d.join("com.abundio.desktop")
+            .join(tauri_plugin_window_state::DEFAULT_FILENAME)
+    }) else {
+        return;
+    };
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Some(rewritten) = window_persistence::upgrade_old_default_size(
+        &contents,
+        window_management::SETTINGS_WINDOW_LABEL,
+        window_management::SETTINGS_OLD_DEFAULT_SIZE,
+        window_management::SETTINGS_DEFAULT_SIZE,
+    ) else {
+        return;
+    };
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, rewritten) {
+        eprintln!("[abundio] failed to write window-state size upgrade: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        eprintln!("[abundio] failed to commit window-state size upgrade: {e}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Must happen before the window-state plugin is initialised below. Returns
     // the precomputed plan (rare case) for setup() to reuse.
     let preplan = adopt_survivor_geometry_into_main();
+    // Also before the plugin: it reads the file once, at initialisation.
+    upgrade_settings_default_size();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())

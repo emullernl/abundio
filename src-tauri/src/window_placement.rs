@@ -57,6 +57,9 @@ pub struct MonitorInfo {
     pub name: String,
     /// Where the monitor is, in desktop space.
     pub rect: Rect,
+    /// The part of it windows may use (without the menu bar, Dock or
+    /// taskbar), in desktop space.
+    pub work_area: Rect,
     /// Desktop-space units per logical point on this monitor: 1 on macOS
     /// (desktop space is points), the scale factor on Windows and X11.
     pub units_per_point: f64,
@@ -198,6 +201,59 @@ pub fn capture(
         fullscreen,
         desktop,
     })
+}
+
+/// The share of its monitor's usable area a window with no placement takes.
+const FIRST_OPEN_SHARE: f64 = 0.8;
+/// The smallest inner size, in logical points, a window with no placement
+/// opens at, unless the screen itself is smaller.
+const FIRST_OPEN_MIN: (f64, f64) = (1200.0, 800.0);
+/// How far, in logical points, a new window steps right and down from a
+/// window already at its spot, so it does not land exactly on top of it.
+const CASCADE_STEP: f64 = 30.0;
+
+/// Where a Profile window with no **Window placement** opens: centred on the
+/// monitor `anchor` (the window that asked for it) is on, else the main
+/// display, at [`FIRST_OPEN_SHARE`] of that monitor's usable area but never
+/// below [`FIRST_OPEN_MIN`] unless the screen is smaller. It steps right and
+/// down past any of the `taken` frames already at its spot. Returns the frame
+/// in the form [`Resolved::frame`] has (outer position, inner size), or `None`
+/// when no monitor is reported.
+pub fn first_open(
+    monitors: &[MonitorInfo],
+    anchor: Option<&Rect>,
+    taken: &[Rect],
+    chrome: (f64, f64),
+) -> Option<Rect> {
+    let index = match anchor {
+        Some(a) => monitor_for(a, monitors)?,
+        None => main_monitor(monitors)?,
+    };
+    let m = &monitors[index];
+    let work = m.work_area;
+    let u = m.units_per_point;
+    let (cw, ch) = (chrome.0.max(0.0), chrome.1.max(0.0));
+    let width = (work.width * FIRST_OPEN_SHARE)
+        .max(FIRST_OPEN_MIN.0 * u)
+        .min(work.width - cw)
+        .max(1.0);
+    let height = (work.height * FIRST_OPEN_SHARE)
+        .max(FIRST_OPEN_MIN.1 * u)
+        .min(work.height - ch)
+        .max(1.0);
+    let mut x = work.x + ((work.width - width - cw) / 2.0).max(0.0);
+    let mut y = work.y + ((work.height - height - ch) / 2.0).max(0.0);
+    let step = CASCADE_STEP * u;
+    let close = |r: &Rect, x: f64, y: f64| (r.x - x).abs() < step / 2.0 && (r.y - y).abs() < step / 2.0;
+    while taken.iter().any(|r| close(r, x, y)) {
+        // Stop stepping where the window would leave the usable area.
+        if x + step + width + cw > work.x + work.width || y + step + height + ch > work.y + work.height {
+            break;
+        }
+        x += step;
+        y += step;
+    }
+    Some(Rect::new(x, y, width, height))
 }
 
 /// Finds the remembered monitor among those connected now.
@@ -363,6 +419,7 @@ mod tests {
         MonitorInfo {
             name: "Built-in Retina Display".into(),
             rect: Rect::new(0.0, 0.0, 1728.0, 1117.0),
+            work_area: Rect::new(0.0, 33.0, 1728.0, 1084.0),
             units_per_point: 1.0,
             scale: 2.0,
             is_main: true,
@@ -372,6 +429,7 @@ mod tests {
         MonitorInfo {
             name: name.into(),
             rect: Rect::new(x, 0.0, 2560.0, 1440.0),
+            work_area: Rect::new(x, 0.0, 2560.0, 1440.0),
             units_per_point: 1.0,
             scale: 1.0,
             is_main: false,
@@ -431,7 +489,7 @@ mod tests {
 
     #[test]
     fn a_zero_size_monitor_does_not_panic() {
-        let zero = MonitorInfo { rect: Rect::new(0.0, 0.0, 0.0, 0.0), ..laptop() };
+        let zero = MonitorInfo { rect: Rect::new(0.0, 0.0, 0.0, 0.0), work_area: Rect::new(0.0, 0.0, 0.0, 0.0), ..laptop() };
         let r = resolve(&placement("Built-in Retina Display", 0, 10.0, 10.0, 800.0, 600.0), &[zero], NO_CHROME)
             .unwrap();
         assert_eq!(r.frame, Rect::new(0.0, 0.0, 1.0, 1.0));
@@ -481,6 +539,7 @@ mod tests {
         let m = MonitorInfo {
             name: "Generic PnP Monitor".into(),
             rect: Rect::new(1920.0, 0.0, 3840.0, 2160.0),
+            work_area: Rect::new(1920.0, 0.0, 3840.0, 2160.0),
             units_per_point: 1.5,
             scale: 1.5,
             is_main: false,
@@ -488,6 +547,7 @@ mod tests {
         let main = MonitorInfo {
             name: "Main".into(),
             rect: Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            work_area: Rect::new(0.0, 0.0, 1920.0, 1080.0),
             units_per_point: 1.0,
             scale: 1.0,
             is_main: true,
@@ -595,5 +655,79 @@ mod tests {
         let minimal = r#"{"monitor":{"name":"A","arrangementIndex":0},"relX":0,"relY":0,"width":1,"height":1}"#;
         let p: WindowPlacement = serde_json::from_str(minimal).unwrap();
         assert!(!p.maximized && !p.fullscreen && p.desktop.is_none());
+    }
+
+    #[test]
+    fn first_open_takes_most_of_a_large_monitor_centred_on_the_main_display() {
+        let f = first_open(&[laptop(), external("DELL", 1728.0)], None, &[], NO_CHROME).unwrap();
+        // 80% of the laptop's usable area, which is above the 1200 × 800 floor.
+        assert_eq!((f.width, f.height), (1728.0 * 0.8, 1084.0 * 0.8));
+        assert!((f.x - (1728.0 - f.width) / 2.0).abs() < 1e-9);
+        assert!((f.y - (33.0 + (1084.0 - f.height) / 2.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn first_open_follows_the_window_that_asked() {
+        let mons = [laptop(), external("DELL", 1728.0)];
+        let asker = Rect::new(2000.0, 100.0, 800.0, 600.0);
+        let f = first_open(&mons, Some(&asker), &[], NO_CHROME).unwrap();
+        assert_eq!((f.width, f.height), (2560.0 * 0.8, 1440.0 * 0.8));
+        assert_eq!((f.x, f.y), (1728.0 + 256.0, 144.0));
+    }
+
+    #[test]
+    fn first_open_never_goes_below_the_floor_unless_the_screen_is_smaller() {
+        let small = MonitorInfo {
+            rect: Rect::new(0.0, 0.0, 1280.0, 800.0),
+            work_area: Rect::new(0.0, 25.0, 1280.0, 775.0),
+            ..laptop()
+        };
+        let f = first_open(&[small], None, &[], (0.0, 28.0)).unwrap();
+        // Width: the 1200 floor beats 80%. Height: the screen is smaller than
+        // the floor, so the window fills it, title bar included.
+        assert_eq!((f.width, f.height), (1200.0, 775.0 - 28.0));
+        assert_eq!((f.x, f.y), (40.0, 25.0));
+    }
+
+    #[test]
+    fn first_open_floor_is_in_points_on_a_scaled_monitor() {
+        let m = MonitorInfo {
+            rect: Rect::new(0.0, 0.0, 2880.0, 1800.0),
+            work_area: Rect::new(0.0, 0.0, 2880.0, 1800.0),
+            units_per_point: 2.0,
+            scale: 2.0,
+            ..laptop()
+        };
+        let f = first_open(&[m], None, &[], NO_CHROME).unwrap();
+        assert_eq!((f.width, f.height), (2400.0, 1600.0));
+    }
+
+    #[test]
+    fn first_open_steps_past_windows_already_at_its_spot() {
+        let mons = [external("DELL", 0.0)];
+        let first = first_open(&mons, None, &[], NO_CHROME).unwrap();
+        let second = first_open(&mons, None, &[first], NO_CHROME).unwrap();
+        assert_eq!((second.x, second.y), (first.x + 30.0, first.y + 30.0));
+        let third = first_open(&mons, None, &[second, first], NO_CHROME).unwrap();
+        assert_eq!((third.x, third.y), (first.x + 60.0, first.y + 60.0));
+        // A window elsewhere is no reason to step.
+        let away = Rect::new(5.0, 5.0, 400.0, 300.0);
+        assert_eq!(first_open(&mons, None, &[away], NO_CHROME).unwrap(), first);
+    }
+
+    #[test]
+    fn first_open_stops_stepping_at_the_edge_of_the_usable_area() {
+        let mons = [external("DELL", 0.0)];
+        let mut taken = vec![];
+        for _ in 0..20 {
+            let f = first_open(&mons, None, &taken, NO_CHROME).unwrap();
+            assert!(f.x + f.width <= 2560.0 && f.y + f.height <= 1440.0);
+            taken.push(f);
+        }
+    }
+
+    #[test]
+    fn first_open_needs_a_monitor() {
+        assert_eq!(first_open(&[], None, &[], NO_CHROME), None);
     }
 }
