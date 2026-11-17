@@ -26,12 +26,17 @@ import { PreviewPane } from "../FileViewer/PreviewPane";
  * Mounted for as long as the Window lives, not only while the Orchestrator
  * view is on screen: a File pane drops its buffer when it unmounts, and
  * closing the view must never lose an unsaved edit. Hidden unless the view
- * shows a file tab; placed over the view's top area.
+ * shows a file tab; placed over the view's top area, left of the **Peek**
+ * while there is one, so a file and an Agent show side by side.
  */
 export function OrchestratorFileTabs({ topOffset }: { topOffset: number }) {
 	const tabs = useOrchestratorStore((s) => s.fileTabs);
 	const selected = useOrchestratorStore((s) => s.selectedTabId);
 	const panesTop = useOrchestratorStore((s) => s.panesTop);
+	// The Peek stays on screen beside a file tab.
+	const peekWidth = useOrchestratorStore((s) =>
+		s.peekPaneId ? s.peekWidth : 0,
+	);
 	const phase = useOrchestratorStore((s) => s.phase);
 	const viewShown = useWindowUiStore(
 		(s) => s.orchestratorViewOpen && !s.statisticsOverlayOpen,
@@ -68,7 +73,7 @@ export function OrchestratorFileTabs({ topOffset }: { topOffset: number }) {
 			style={{
 				top: topOffset + ORCHESTRATOR_TAB_STRIP,
 				left: 0,
-				right: 0,
+				right: peekWidth,
 				height,
 				zIndex: 26,
 				visibility: shown ? "visible" : "hidden",

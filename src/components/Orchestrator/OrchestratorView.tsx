@@ -108,6 +108,28 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 	const peekPaneId = useOrchestratorStore((s) => s.peekPaneId);
 	const showCard = phase !== "ready" || changingAgent || exited;
 
+	// The Peek column's width, for the file tabs drawn over the top area: a
+	// selected file sits left of the Peek, never over it.
+	const peekColumnRef = useRef<HTMLDivElement>(null);
+	const hasPeekColumn = phase === "ready" && content > 0 && !!peekPaneId;
+	useLayoutEffect(() => {
+		const el = peekColumnRef.current;
+		const put = (w: number) =>
+			useOrchestratorStore.getState().set({ peekWidth: w });
+		if (!hasPeekColumn || !el) {
+			put(0);
+			return;
+		}
+		const measure = () => put(el.getBoundingClientRect().width);
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		return () => {
+			ro.disconnect();
+			put(0);
+		};
+	}, [hasPeekColumn]);
+
 	return (
 		<div
 			ref={rootRef}
@@ -135,6 +157,7 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 							</div>
 							{peekPaneId && (
 								<div
+									ref={peekColumnRef}
 									className="relative flex flex-col min-w-0"
 									style={{
 										flex: "1 1 0",

@@ -2,7 +2,8 @@
  * The **Agent cycle** in the **Orchestrator view** (GLOSSARY.md): it moves
  * the **Peek** through the graph's own order and never leaves the view. The
  * Orchestrator itself is the stop before the first Agent: landing there
- * closes the Peek and gives its pane the keyboard back.
+ * closes the Peek and gives its pane the keyboard back. It never changes the
+ * selected Orchestrator tab: the Peek sits beside a file tab as well.
  */
 
 import { useOrchestratorStore } from "../stores/orchestratorStore";
@@ -13,7 +14,6 @@ import { orchestratorViewShowing } from "./fleetFocus";
 import { orchestratorPane } from "./orchestrator";
 import { closePeek, peekAgent } from "./orchestratorActions";
 import { type GraphModel, graphModel } from "./orchestratorGraph";
-import { selectOrchestratorTab } from "./orchestratorTabs";
 import { getTerminal } from "./terminalManager";
 import { buildWorkspaceRows, flattenRowsToIds } from "./worktreeGrouping";
 
@@ -95,8 +95,8 @@ function focusWhenPlaced(paneId: string, within: string | null): void {
 /** Runs the Agent cycle in the Orchestrator view. */
 export function cycleOrchestrator(step: 1 | -1): void {
 	const orch = useOrchestratorStore.getState();
-	// The Peek sits beside the graph: bring the graph to the front.
-	if (orch.selectedTabId !== null) selectOrchestratorTab(null);
+	// The Peek sits beside whichever Orchestrator tab is selected, a file
+	// tab too, so the cycle never changes the tab.
 	const stop = nextPeekStop(
 		graphCycleOrder(currentModel()),
 		orch.peekPaneId,

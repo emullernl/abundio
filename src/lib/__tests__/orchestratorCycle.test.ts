@@ -104,12 +104,13 @@ describe("cycleOrchestrator", () => {
 		});
 	});
 
-	it("peeks at the next Agent, brings the graph forward, and hands it the keyboard", () => {
+	it("peeks at the next Agent beside the file tab, and hands it the keyboard", () => {
 		cycleOrchestrator(1);
 		expect(useOrchestratorStore.getState()).toMatchObject({
 			peekPaneId: "a1",
 			selectedPaneId: "a1",
-			selectedTabId: null,
+			// The Peek sits beside a file tab too: the file stays in view.
+			selectedTabId: "file-tab",
 			peekFocusTick: 1,
 		});
 	});
