@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import { copyPathEntries } from "../../lib/copyPathEntries";
+import { fileTreeMenu } from "../../lib/fileTreeMenu";
 import { fileWindowKindFor } from "../../lib/fileWindowKind";
 import { fs as fsApi } from "../../lib/ipc";
 import {
@@ -19,6 +20,12 @@ import { FileTreeItem } from "./FileTreeItem";
 interface FileTreeProps {
 	rootPath: string;
 	workspaceId: string;
+	/** Only open, reveal and copy paths: no create, rename or delete (the
+	 *  **Peek explorer**). */
+	readOnly?: boolean;
+	/** Where a plain click on a file opens it. The Explorer's own Tab by
+	 *  default; Cmd/Ctrl+click still opens a File window. */
+	onOpenFile?: (filePath: string) => void;
 }
 
 const REVEAL_LABEL = revealLabel();
@@ -32,17 +39,22 @@ function TreeLevel({
 	workspaceId,
 	depth,
 	onContextMenu,
+	openPath,
+	readOnly,
 }: {
 	dirPath: string;
 	workspaceId: string;
 	depth: number;
 	onContextMenu: (x: number, y: number, entry: DirEntry) => void;
+	openPath: (filePath: string) => void;
+	readOnly: boolean;
 }) {
 	const entries = useExplorerStore((s) => s.dirContents[dirPath]);
 	const expandedDirs = useExplorerStore((s) => s.expandedDirs);
 	const toggleDir = useExplorerStore((s) => s.toggleDir);
-	const openFile = useExplorerStore((s) => s.openFile);
-	const pendingEdit = useExplorerStore((s) => s.pendingEdit);
+	const storeEdit = useExplorerStore((s) => s.pendingEdit);
+	// A read-only tree never shows the inline create / rename rows.
+	const pendingEdit = readOnly ? null : storeEdit;
 	const commitEdit = useExplorerStore((s) => s.commitEdit);
 	const cancelEdit = useExplorerStore((s) => s.cancelEdit);
 
@@ -76,7 +88,7 @@ function TreeLevel({
 						onOpenFile={(filePath, modifiers) =>
 							clickOpensFileWindow(modifiers, filePath)
 								? openFileWindowForPath(workspaceId, filePath)
-								: openFile(workspaceId, filePath)
+								: openPath(filePath)
 						}
 						onContextMenu={onContextMenu}
 						pendingRename={isPendingRename}
@@ -87,6 +99,8 @@ function TreeLevel({
 								workspaceId={workspaceId}
 								depth={depth + 1}
 								onContextMenu={onContextMenu}
+								openPath={openPath}
+								readOnly={readOnly}
 							/>
 						)}
 					</FileTreeItem>
@@ -96,13 +110,23 @@ function TreeLevel({
 	);
 }
 
-export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
+export function FileTree({
+	rootPath,
+	workspaceId,
+	readOnly = false,
+	onOpenFile,
+}: FileTreeProps) {
 	const loadDir = useExplorerStore((s) => s.loadDir);
 	const entries = useExplorerStore((s) => s.dirContents[rootPath]);
 	const startCreate = useExplorerStore((s) => s.startCreate);
 	const startRename = useExplorerStore((s) => s.startRename);
 	const openFileAsDiff = useExplorerStore((s) => s.openFileAsDiff);
-	const pendingEdit = useExplorerStore((s) => s.pendingEdit);
+	const storeEdit = useExplorerStore((s) => s.pendingEdit);
+	const pendingEdit = readOnly ? null : storeEdit;
+	const openPath = (filePath: string) => {
+		if (onOpenFile) onOpenFile(filePath);
+		else void useExplorerStore.getState().openFile(workspaceId, filePath);
+	};
 
 	const [menu, setMenu] = useState<{
 		x: number;
@@ -144,163 +168,121 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 	const buildMenuItems = (): ContextMenuItem[] => {
 		if (!menu) return [];
 		const { entry } = menu;
-
-		if (entry === null) {
-			// Empty-area menu — scoped to workspace root
-			return [
-				{
-					label: "New File…",
-					onClick: () => {
-						setMenu(null);
-						startCreate(rootPath, "file");
-					},
-				},
-				{
-					label: "New Folder…",
-					onClick: () => {
-						setMenu(null);
-						startCreate(rootPath, "folder");
-					},
-				},
-				{ separator: true as const },
-				{
-					label: REVEAL_LABEL.replace("in ", "Folder in "),
-					onClick: () => {
-						setMenu(null);
-						fsApi.revealInFolder(rootPath).catch(console.error);
-					},
-				},
-			];
-		}
-
-		if (entry.isDir) {
-			return [
-				{
-					label: "New File…",
-					onClick: () => {
-						setMenu(null);
-						startCreate(entry.path, "file");
-					},
-				},
-				{
-					label: "New Folder…",
-					onClick: () => {
-						setMenu(null);
-						startCreate(entry.path, "folder");
-					},
-				},
-				{ separator: true as const },
-				{
-					label: REVEAL_LABEL,
-					onClick: () => {
-						setMenu(null);
-						fsApi.revealInFolder(entry.path).catch(console.error);
-					},
-				},
-				{ separator: true as const },
-				...copyPathItems(entry.path),
-				{ separator: true as const },
-				{
-					label: "Rename",
-					onClick: () => {
-						setMenu(null);
-						startRename(entry.path, true);
-					},
-				},
-				{
-					label: "Delete",
-					onClick: () => {
-						setMenu(null);
-						setPendingDelete({
-							path: entry.path,
-							name: entry.name,
-							isDir: true,
-						});
-					},
-				},
-			];
-		}
-
-		// File entry
-		const openFile = useExplorerStore.getState().openFile;
-		const openFileInSplit = useExplorerStore.getState().openFileInSplit;
-		const isDiffFile = /\.(diff|patch)$/i.test(entry.name);
-		return [
-			{
-				label: "Open in New Tab",
-				onClick: () => {
-					setMenu(null);
-					openFile(workspaceId, entry.path);
-				},
-			},
-			{
-				label: "Open Beside",
-				onClick: () => {
-					setMenu(null);
-					openFileInSplit(workspaceId, entry.path, "vertical");
-				},
-			},
-			{
-				label: "Open Below",
-				onClick: () => {
-					setMenu(null);
-					openFileInSplit(workspaceId, entry.path, "horizontal");
-				},
-			},
-			...(!entry.isDir && fileWindowKindFor(entry.name)
-				? [
+		const target = entry?.path ?? rootPath;
+		const store = useExplorerStore.getState();
+		const act = (run: () => void) => () => {
+			setMenu(null);
+			run();
+		};
+		const ids = fileTreeMenu({
+			entry,
+			hasFileWindow: !!entry && !entry.isDir && !!fileWindowKindFor(entry.name),
+			readOnly,
+		});
+		return ids.flatMap((id): ContextMenuItem[] => {
+			switch (id) {
+				case "separator":
+					return [{ separator: true as const }];
+				case "new-file":
+					return [
+						{
+							label: "New File…",
+							onClick: act(() => startCreate(target, "file")),
+						},
+					];
+				case "new-folder":
+					return [
+						{
+							label: "New Folder…",
+							onClick: act(() => startCreate(target, "folder")),
+						},
+					];
+				case "reveal":
+				case "reveal-folder":
+					return [
+						{
+							label:
+								id === "reveal"
+									? REVEAL_LABEL
+									: REVEAL_LABEL.replace("in ", "Folder in "),
+							onClick: act(() => {
+								fsApi.revealInFolder(target).catch(console.error);
+							}),
+						},
+					];
+				case "copy-path":
+					return copyPathItems(target);
+				case "rename":
+					return [
+						{
+							label: "Rename",
+							onClick: act(() => startRename(target, !!entry?.isDir)),
+						},
+					];
+				case "delete":
+					return entry
+						? [
+								{
+									label: "Delete",
+									onClick: act(() =>
+										setPendingDelete({
+											path: entry.path,
+											name: entry.name,
+											isDir: entry.isDir,
+										}),
+									),
+								},
+							]
+						: [];
+				case "open":
+					return [{ label: "Open", onClick: act(() => openPath(target)) }];
+				case "open-tab":
+					return [
+						{
+							label: "Open in New Tab",
+							onClick: act(() => store.openFile(workspaceId, target)),
+						},
+					];
+				case "open-beside":
+					return [
+						{
+							label: "Open Beside",
+							onClick: act(() =>
+								store.openFileInSplit(workspaceId, target, "vertical"),
+							),
+						},
+					];
+				case "open-below":
+					return [
+						{
+							label: "Open Below",
+							onClick: act(() =>
+								store.openFileInSplit(workspaceId, target, "horizontal"),
+							),
+						},
+					];
+				case "open-window":
+					return [
 						{
 							label: "Open in Separate Window",
-							onClick: () => {
-								setMenu(null);
-								void openFileWindowForPath(workspaceId, entry.path);
-							},
+							onClick: act(() => {
+								void openFileWindowForPath(workspaceId, target);
+							}),
 						},
-					]
-				: []),
-			...(isDiffFile
-				? [
+					];
+				case "open-diff":
+					return [
 						{
 							label: "Open in Diff Viewer",
-							onClick: () => {
-								setMenu(null);
-								void openFileAsDiff(workspaceId, entry.path).catch(
-									console.error,
-								);
-							},
+							onClick: act(() => {
+								void openFileAsDiff(workspaceId, target).catch(console.error);
+							}),
 						},
-					]
-				: []),
-			{ separator: true as const },
-			{
-				label: REVEAL_LABEL,
-				onClick: () => {
-					setMenu(null);
-					fsApi.revealInFolder(entry.path).catch(console.error);
-				},
-			},
-			{ separator: true as const },
-			...copyPathItems(entry.path),
-			{ separator: true as const },
-			{
-				label: "Rename",
-				onClick: () => {
-					setMenu(null);
-					startRename(entry.path, false);
-				},
-			},
-			{
-				label: "Delete",
-				onClick: () => {
-					setMenu(null);
-					setPendingDelete({
-						path: entry.path,
-						name: entry.name,
-						isDir: false,
-					});
-				},
-			},
-		];
+					];
+				default:
+					return [];
+			}
+		});
 	};
 
 	if (!entries) {
@@ -358,6 +340,8 @@ export function FileTree({ rootPath, workspaceId }: FileTreeProps) {
 				workspaceId={workspaceId}
 				depth={0}
 				onContextMenu={handleContextMenu}
+				openPath={openPath}
+				readOnly={readOnly}
 			/>
 
 			{menu && (
