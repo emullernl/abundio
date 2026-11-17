@@ -3,6 +3,7 @@ import {
 	ChevronUp,
 	Eye,
 	FileText,
+	FolderTree,
 	Network,
 	RefreshCw,
 	X,
@@ -51,6 +52,7 @@ import {
 import { SaveConfirmDialog } from "../SaveConfirmDialog";
 import { OrchestratorFileTabs } from "./OrchestratorFileTabs";
 import { OrchestratorGraph } from "./OrchestratorGraph";
+import { PeekExplorer } from "./PeekExplorer";
 import { PeekPane } from "./PeekPane";
 
 /**
@@ -106,6 +108,7 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 
 	const exited = useOrchestratorStore((s) => s.exited);
 	const peekPaneId = useOrchestratorStore((s) => s.peekPaneId);
+	const peekWidth = useOrchestratorStore((s) => s.peekWidth);
 	const showCard = phase !== "ready" || changingAgent || exited;
 
 	// The Peek column's width, for the file tabs drawn over the top area: a
@@ -166,8 +169,11 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 									}}
 								>
 									<PeekHeader paneId={peekPaneId} />
-									<div className="relative flex-1 min-h-0">
-										<PeekPane paneId={peekPaneId} />
+									<div className="flex flex-1 min-h-0">
+										<PeekExplorer paneId={peekPaneId} columnWidth={peekWidth} />
+										<div className="relative flex-1 min-w-0">
+											<PeekPane paneId={peekPaneId} />
+										</div>
 									</div>
 								</div>
 							)}
@@ -354,6 +360,8 @@ function PeekHeader({ paneId }: { paneId: string }) {
 	const name = useSettingsStore(
 		(s) => s.agents.find((a) => a.id === agentId)?.name,
 	);
+	const explorerOpen = useWindowUiStore((s) => s.peekExplorerOpen);
+	const toggleExplorer = useWindowUiStore((s) => s.togglePeekExplorer);
 	return (
 		<div
 			className="flex items-center shrink-0 select-none text-[var(--fg-secondary)]"
@@ -363,6 +371,19 @@ function PeekHeader({ paneId }: { paneId: string }) {
 			<span className="truncate flex-1 text-[var(--fg-primary)]">
 				Peek: {handle ?? name ?? "Agent"}
 			</span>
+			<button
+				type="button"
+				className={`flex items-center justify-center hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)] ${
+					explorerOpen ? "text-[var(--fg-primary)]" : ""
+				}`}
+				style={{ width: 22, height: 22, borderRadius: 4 }}
+				title={explorerOpen ? "Hide the files" : "Show the files"}
+				aria-label={explorerOpen ? "Hide the files" : "Show the files"}
+				aria-pressed={explorerOpen}
+				onClick={toggleExplorer}
+			>
+				<FolderTree size={13} />
+			</button>
 			<button
 				type="button"
 				className="flex items-center justify-center hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"

@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { currentWindowLabel } from "../lib/appWindow";
+import {
+	clampPeekExplorerWidth,
+	PEEK_EXPLORER_DEFAULT,
+} from "../lib/orchestratorLayout";
 
 /** Per-window UI state — collapse/expand of the left sidebar and the right
  *  sidebar, plus the right sidebar's active tab and PR-section collapsed
@@ -120,6 +124,12 @@ interface WindowUiState {
 	orchestratorTopCollapsed: boolean;
 	setOrchestratorTopRatio: (ratio: number) => void;
 	toggleOrchestratorTopCollapsed: () => void;
+	/** The **Peek explorer**: shown or hidden, and its width in px, as the
+	 *  user last left them. Per Window, persisted. */
+	peekExplorerOpen: boolean;
+	peekExplorerWidth: number;
+	togglePeekExplorer: () => void;
+	setPeekExplorerWidth: (width: number) => void;
 	/** The **Focused tile**: the console's own focus, separate from the
 	 *  Workspace view's `focusedPaneId` so moving around the grid never
 	 *  rearranges the view behind it. Not persisted. */
@@ -294,6 +304,12 @@ export const useWindowUiStore = create<WindowUiState>()(
 				}),
 			toggleOrchestratorTopCollapsed: () =>
 				set((s) => ({ orchestratorTopCollapsed: !s.orchestratorTopCollapsed })),
+			peekExplorerOpen: true,
+			peekExplorerWidth: PEEK_EXPLORER_DEFAULT,
+			togglePeekExplorer: () =>
+				set((s) => ({ peekExplorerOpen: !s.peekExplorerOpen })),
+			setPeekExplorerWidth: (width) =>
+				set({ peekExplorerWidth: clampPeekExplorerWidth(width) }),
 			focusedTileId: null,
 			setFocusedTile: (paneId) => set({ focusedTileId: paneId }),
 			pendingTiles: {},
@@ -421,6 +437,8 @@ export const useWindowUiStore = create<WindowUiState>()(
 				orchestratorViewOpen: s.orchestratorViewOpen,
 				orchestratorTopRatio: s.orchestratorTopRatio,
 				orchestratorTopCollapsed: s.orchestratorTopCollapsed,
+				peekExplorerOpen: s.peekExplorerOpen,
+				peekExplorerWidth: s.peekExplorerWidth,
 				foldedSetKeys: s.foldedSetKeys,
 				fleetGrid: s.fleetGrid,
 			}),

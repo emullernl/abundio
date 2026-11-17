@@ -43,3 +43,36 @@ export function ratioFor(contentHeight: number, viewHeight: number): number {
 export function panesTop(contentHeight: number): number {
 	return ORCHESTRATOR_TAB_STRIP + contentHeight + ORCHESTRATOR_DIVIDER;
 }
+
+/** The **Peek explorer**'s width: its default, and the range a drag keeps
+ *  it in. */
+export const PEEK_EXPLORER_DEFAULT = 220;
+export const PEEK_EXPLORER_MIN = 140;
+export const PEEK_EXPLORER_MAX = 480;
+/** The peeked terminal always keeps at least this much width. */
+export const PEEK_TERMINAL_MIN = 260;
+
+/** A Peek explorer width the user asked for, kept in range. */
+export function clampPeekExplorerWidth(width: number): number {
+	if (!Number.isFinite(width)) return PEEK_EXPLORER_DEFAULT;
+	return Math.round(
+		Math.min(PEEK_EXPLORER_MAX, Math.max(PEEK_EXPLORER_MIN, width)),
+	);
+}
+
+/**
+ * The width the Peek explorer is drawn at in a Peek column `columnWidth`
+ * wide: the user's width, narrowed so the terminal keeps
+ * `PEEK_TERMINAL_MIN`; 0 (not drawn) when that leaves it under
+ * `PEEK_EXPLORER_MIN`. A column not measured yet (0) draws it as asked.
+ */
+export function peekExplorerShownWidth(
+	width: number,
+	columnWidth: number,
+): number {
+	const wanted = clampPeekExplorerWidth(width);
+	if (columnWidth <= 0) return wanted;
+	const room = columnWidth - PEEK_TERMINAL_MIN;
+	if (room < PEEK_EXPLORER_MIN) return 0;
+	return Math.min(wanted, room);
+}
