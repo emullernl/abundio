@@ -9,6 +9,7 @@ import {
 	PEEK_EXPLORER_MIN,
 	PEEK_TERMINAL_MIN,
 	panesTop,
+	peekExplorerDragWidth,
 	peekExplorerShownWidth,
 	ratioFor,
 	topContentHeight,
@@ -61,5 +62,16 @@ describe("the Peek explorer's width", () => {
 		).toBe(0);
 		// Not measured yet: as asked.
 		expect(peekExplorerShownWidth(220, 0)).toBe(220);
+	});
+});
+
+describe("dragging the Peek explorer's edge", () => {
+	it("never stores more than the column can show", () => {
+		const column = PEEK_TERMINAL_MIN + 300;
+		expect(peekExplorerDragWidth(470, column)).toBe(300);
+		expect(peekExplorerDragWidth(250, column)).toBe(250);
+		expect(peekExplorerDragWidth(10, column)).toBe(PEEK_EXPLORER_MIN);
+		// Not measured yet: only kept in range.
+		expect(peekExplorerDragWidth(9999, 0)).toBe(PEEK_EXPLORER_MAX);
 	});
 });

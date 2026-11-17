@@ -1,5 +1,8 @@
-import { useMemo, useRef } from "react";
-import { peekExplorerShownWidth } from "../../lib/orchestratorLayout";
+import { useEffect, useRef, useState } from "react";
+import {
+	peekExplorerDragWidth,
+	peekExplorerShownWidth,
+} from "../../lib/orchestratorLayout";
 import { openOrchestratorFile } from "../../lib/orchestratorTabs";
 import { findPaneLocation } from "../../lib/paneLocation";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
@@ -15,7 +18,8 @@ const HANDLE = 5;
  * left edge of the Peek, read-only. Opening a file makes it a selected
  * **Orchestrator tab**, which sits left of the Peek, so the file and the
  * Agent show side by side. Folders expand as in the Workspace's Explorer
- * tab: the tree shares its state, kept by path.
+ * tab: the tree shares its state, kept by path. No tooltip on the tree: every
+ * row would inherit it.
  */
 export function PeekExplorer({
 	paneId,
@@ -28,16 +32,42 @@ export function PeekExplorer({
 	const open = useWindowUiStore((s) => s.peekExplorerOpen);
 	const width = useWindowUiStore((s) => s.peekExplorerWidth);
 	const setWidth = useWindowUiStore((s) => s.setPeekExplorerWidth);
-	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const missing = useWorkspaceStore((s) => s.missingFolderIds);
-	const ws = useMemo(() => {
-		const loc = findPaneLocation(paneId);
-		return loc ? workspaces.find((w) => w.id === loc.workspaceId) : undefined;
-	}, [workspaces, paneId]);
+	// A pane never changes Workspace, so look it up once per pane: the
+	// lookup parses every Tab's layout. Until the pane is in a layout (a
+	// helper just started), look again on every layout change.
+	// Kept with the pane it was found for, so peeking at another Agent never
+	// shows the last one's tree for a render.
+	const [found, setFound] = useState<{ paneId: string; wsId: string } | null>(
+		null,
+	);
+	const wsId = found?.paneId === paneId ? found.wsId : undefined;
+	const layoutsWhileUnknown = useWorkspaceStore((s) =>
+		wsId ? null : s.workspaces,
+	);
+	useEffect(() => {
+		// Layouts change while the pane is unknown: look again.
+		if (wsId || !layoutsWhileUnknown) return;
+		const id = findPaneLocation(paneId)?.workspaceId;
+		if (id) setFound({ paneId, wsId: id });
+	}, [paneId, wsId, layoutsWhileUnknown]);
+	const ws = useWorkspaceStore((s) =>
+		wsId ? s.workspaces.find((w) => w.id === wsId) : undefined,
+	);
 
-	const shown = peekExplorerShownWidth(width, columnWidth);
+	// While dragging, the width lives here and is saved on release, like
+	// every layout divider; it never goes past what the column can show.
+	const [dragWidth, setDragWidth] = useState<number | null>(null);
+	const shown = peekExplorerShownWidth(dragWidth ?? width, columnWidth);
 	const start = useRef<{ x: number; width: number } | null>(null);
 	if (!open || !ws || missing.has(ws.id) || shown === 0) return null;
+
+	const endDrag = () => {
+		start.current = null;
+		document.body.classList.remove("dragging");
+		if (dragWidth !== null) setWidth(dragWidth);
+		setDragWidth(null);
+	};
 
 	const openFile = (path: string) => {
 		void openOrchestratorFile(
@@ -54,7 +84,6 @@ export function PeekExplorer({
 				data-peek-explorer
 				className="shrink-0 min-h-0 overflow-y-auto overflow-x-hidden"
 				style={{ width: shown, background: "var(--bg-secondary)" }}
-				title={ws.rootFolder}
 			>
 				<FileTree
 					rootPath={ws.rootFolder}
@@ -78,17 +107,18 @@ export function PeekExplorer({
 				}}
 				onPointerMove={(e) => {
 					if (!start.current) return;
-					setWidth(start.current.width + e.clientX - start.current.x);
+					setDragWidth(
+						peekExplorerDragWidth(
+							start.current.width + e.clientX - start.current.x,
+							columnWidth,
+						),
+					);
 				}}
 				onPointerUp={(e) => {
-					start.current = null;
-					document.body.classList.remove("dragging");
 					e.currentTarget.releasePointerCapture(e.pointerId);
+					endDrag();
 				}}
-				onLostPointerCapture={() => {
-					start.current = null;
-					document.body.classList.remove("dragging");
-				}}
+				onLostPointerCapture={endDrag}
 			/>
 		</>
 	);

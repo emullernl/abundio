@@ -76,3 +76,21 @@ export function peekExplorerShownWidth(
 	if (room < PEEK_EXPLORER_MIN) return 0;
 	return Math.min(wanted, room);
 }
+
+/**
+ * The width a drag of the Peek explorer's edge asks for: in range, and no
+ * wider than the column can show beside the terminal, so a drag past the
+ * edge never stores a width the user did not see. A column not measured
+ * yet (0) only keeps it in range.
+ */
+export function peekExplorerDragWidth(
+	width: number,
+	columnWidth: number,
+): number {
+	const inRange = clampPeekExplorerWidth(width);
+	if (columnWidth <= 0) return inRange;
+	return Math.max(
+		PEEK_EXPLORER_MIN,
+		Math.min(inRange, columnWidth - PEEK_TERMINAL_MIN),
+	);
+}
