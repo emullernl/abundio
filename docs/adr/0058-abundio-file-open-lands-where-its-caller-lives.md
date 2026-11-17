@@ -26,4 +26,4 @@ The **Orchestrator** (ADR-0057) must be able to show the user a file of any Work
 - The CLI sends its working folder in front of every call's arguments, marked (`\u{1}cwd:`), and Rust takes it off; a header could not carry a folder name that is not ASCII.
 - Rust decides inside-or-outside before existence, so a refusal never tells an Agent whether a file outside the Workspace exists.
 - A File window opened this way always comes forward with focus (the window-open command focuses), and `--preview` does not choose a File window's view; both are left as they are for now.
-
+- 2026-11-17: a selected file tab no longer covers the **Peek**. While there is one, the file takes the graph's place and the Peek stays on its right, so a file opened by the Orchestrator sits beside the Agent being peeked. The **Peek explorer** opens files the same way (`docs/plans/peek-explorer.md`).
