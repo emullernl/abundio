@@ -1337,10 +1337,12 @@ Files (show the user a file of a Workspace):
                                           new Tab of that Workspace; from the Orchestrator,
                                           in the Orchestrator's own tabs. --window opens a
                                           window of its own. --diff shows its uncommitted
-                                          changes, --preview renders markdown, --commit the
-                                          file as that commit changed it. Nothing moves the
-                                          user's focus unless --focus: use it only when
-                                          they asked to see the file.
+                                          changes, --preview opens markdown rendered (it
+                                          does by default, unless the user set it to open as
+                                          text), --line shows the source at that line,
+                                          --commit the file as that commit changed it.
+                                          Nothing moves the user's focus unless --focus:
+                                          use it only when they asked to see the file.
 ";
     const TAB: &str = "\
 Tabs:

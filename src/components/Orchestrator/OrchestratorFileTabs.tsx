@@ -1,14 +1,15 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { commitDiffKey } from "../../lib/commitDiffKey";
-import type { OrchestratorFileTab } from "../../lib/ipc";
-import { isMarkdownFile } from "../../lib/isMarkdownFile";
+import type { MarkdownView, OrchestratorFileTab } from "../../lib/ipc";
 import { liveDiff } from "../../lib/liveDiff";
 import {
 	ORCHESTRATOR_DIVIDER,
 	ORCHESTRATOR_TAB_STRIP,
 } from "../../lib/orchestratorLayout";
 import {
+	openOrchestratorFile,
 	requestCloseOrchestratorTab,
+	setOrchestratorTabView,
 	tabPaneId,
 } from "../../lib/orchestratorTabs";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -16,7 +17,6 @@ import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FilePane } from "../FileViewer/FilePane";
-import { PreviewPane } from "../FileViewer/PreviewPane";
 
 /**
  * The files open in **Orchestrator tabs** (ADR-0058), each a File pane of
@@ -120,8 +120,9 @@ function paneKey(tab: OrchestratorFileTab): string {
 	return tab.path;
 }
 
-/** One tab's content: its File pane, with the rendered markdown beside it
- *  when the tab asked for a preview. */
+/** One tab's content: its File pane. A markdown file has the pane's own
+ *  Rendered / Source views (ADR-0061), kept on the tab; its links open more
+ *  Orchestrator tabs. */
 function TabBody({
 	tab,
 	paneId,
@@ -163,8 +164,37 @@ function TabBody({
 		};
 	}, [tab.kind, tab.path, cwd, paneId, seeded]);
 
+	const onMarkdownViewChange = useCallback(
+		(view: MarkdownView) => setOrchestratorTabView(tab.id, view),
+		[tab.id],
+	);
+	const onOpenMarkdownLink = useCallback(
+		(path: string) => {
+			// A tab already showing the file keeps its own view; a new one
+			// opens rendered, as a link from a Workspace Tab does.
+			const open = useOrchestratorStore
+				.getState()
+				.fileTabs.find(
+					(t) =>
+						t.workspaceId === workspaceId &&
+						t.kind === "file" &&
+						t.path === path,
+				);
+			void openOrchestratorFile(
+				{
+					workspaceId,
+					kind: "file",
+					path,
+					...(open ? {} : { view: "rendered" as const }),
+				},
+				{ focus: true },
+			).catch((e) => console.warn("[orchestrator] could not open a link", e));
+		},
+		[workspaceId],
+	);
+
 	if (tab.kind === "diff" && !seeded) return null;
-	const pane = (
+	return (
 		<FilePane
 			paneId={paneId}
 			filePath={paneKey(tab)}
@@ -174,24 +204,9 @@ function TabBody({
 			diffSource={isDiff ? "git" : undefined}
 			isFocused={isFocused}
 			onFocus={onFocus}
-			embedded={{ onClose, closeLabel: "Close Tab" }}
+			embedded={{ onClose, closeLabel: "Close Tab", onOpenMarkdownLink }}
+			markdownView={tab.view ?? undefined}
+			onMarkdownViewChange={onMarkdownViewChange}
 		/>
-	);
-	if (!tab.preview || isDiff || !isMarkdownFile(tab.path)) return pane;
-	return (
-		<div className="flex w-full h-full">
-			<div className="relative flex-1 min-w-0">{pane}</div>
-			<div
-				className="relative flex-1 min-w-0"
-				style={{ borderLeft: "1px solid var(--border)" }}
-			>
-				<PreviewPane
-					paneId={`${paneId}:preview`}
-					sourcePaneId={paneId}
-					isFocused={false}
-					onFocus={onFocus}
-				/>
-			</div>
-		</div>
 	);
 }

@@ -32,7 +32,7 @@ const tab = (id: string, path = `/w/${id}.md`, workspaceId = "w") => ({
 	kind: "file" as const,
 	path,
 	commitOid: null,
-	preview: false,
+	view: null,
 });
 
 describe("orchestratorTabs", () => {

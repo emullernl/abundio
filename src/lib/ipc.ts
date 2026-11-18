@@ -207,6 +207,8 @@ export const orchestrator = {
 		invoke<void>("orchestrator_tab_remove", { profileId, id }),
 	selectTab: (profileId: string, id: string | null) =>
 		invoke<void>("orchestrator_tab_select", { profileId, id }),
+	setTabView: (profileId: string, id: string, view: MarkdownView) =>
+		invoke<void>("orchestrator_tab_set_view", { profileId, id, view }),
 	/** The Profile's **Orchestrator folder** (ADR-0059). */
 	folder: (profileId: string) =>
 		invoke<OrchestratorFolder>("orchestrator_folder_get", { profileId }),
@@ -234,13 +236,15 @@ export interface OrchestratorFileTab {
 	kind: "file" | "diff" | "commit";
 	path: string;
 	commitOid: string | null;
-	preview: boolean;
+	/** A markdown file's view (ADR-0061); null: follow the setting. */
+	view: MarkdownView | null;
 }
 
+/** `view` on a tab already open replaces its own (`file open --preview`). */
 export type NewOrchestratorFileTab = Omit<
 	OrchestratorFileTab,
-	"id" | "commitOid" | "preview"
-> & { commitOid?: string | null; preview?: boolean };
+	"id" | "commitOid" | "view"
+> & { commitOid?: string | null; view?: MarkdownView | null };
 
 /** See `workspaces.folderCheck`. */
 export interface FolderCheck {

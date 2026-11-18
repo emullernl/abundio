@@ -44,7 +44,9 @@ pub struct OrchestratorTab {
     pub kind: String,
     pub path: String,
     pub commit_oid: Option<String>,
-    pub preview: bool,
+    /// A markdown file's view (ADR-0061): `rendered`, `source`, or `None`
+    /// to follow the "Open markdown rendered" setting.
+    pub view: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -55,8 +57,18 @@ pub struct NewOrchestratorTab {
     pub path: String,
     #[serde(default)]
     pub commit_oid: Option<String>,
+    /// The view to open in; on a tab already open, it replaces that
+    /// tab's (`file open --preview`). `None` leaves it alone.
     #[serde(default)]
-    pub preview: bool,
+    pub view: Option<String>,
+}
+
+/// Whether `view` is one an Orchestrator tab can store.
+fn check_tab_view(view: Option<&str>) -> Result<(), AbundioError> {
+    match view {
+        None | Some("rendered") | Some("source") => Ok(()),
+        Some(other) => Err(AbundioError::InvalidOperation(format!("Not a view: {other}"))),
+    }
 }
 
 /// One Workspace's folder and owner, for the folder rules.
@@ -577,7 +589,7 @@ impl WorkspaceStore {
     ) -> Result<(Vec<OrchestratorTab>, Option<String>), AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_id, kind, path, commit_oid, preview FROM orchestrator_tabs
+            "SELECT id, workspace_id, kind, path, commit_oid, view FROM orchestrator_tabs
              WHERE profile_id = ?1 ORDER BY position ASC, created_at ASC",
         )?;
         let tabs = stmt
@@ -588,7 +600,7 @@ impl WorkspaceStore {
                     kind: r.get(2)?,
                     path: r.get(3)?,
                     commit_oid: r.get(4)?,
-                    preview: r.get::<_, i64>(5)? != 0,
+                    view: r.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -614,6 +626,7 @@ impl WorkspaceStore {
         if !matches!(tab.kind.as_str(), "file" | "diff" | "commit") {
             return Err(AbundioError::InvalidOperation(format!("Not a tab kind: {}", tab.kind)));
         }
+        check_tab_view(tab.view.as_deref())?;
         let conn = self.conn.lock().unwrap();
         let owner: Option<String> = conn
             .query_row("SELECT profile_id FROM workspaces WHERE id = ?1", [&tab.workspace_id], |r| r.get(0))
@@ -621,22 +634,32 @@ impl WorkspaceStore {
         if owner.as_deref() != Some(profile_id) {
             return Err(AbundioError::NotFound(format!("Workspace not found: {}", tab.workspace_id)));
         }
-        let existing: Option<(String, i64)> = conn
+        let existing: Option<(String, Option<String>)> = conn
             .query_row(
-                "SELECT id, preview FROM orchestrator_tabs WHERE profile_id = ?1 AND workspace_id = ?2
+                "SELECT id, view FROM orchestrator_tabs WHERE profile_id = ?1 AND workspace_id = ?2
                    AND kind = ?3 AND path = ?4 AND COALESCE(commit_oid, '') = COALESCE(?5, '')",
                 rusqlite::params![profile_id, tab.workspace_id, tab.kind, tab.path, tab.commit_oid],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        if let Some((id, preview)) = existing {
+        if let Some((id, stored)) = existing {
+            let view = match tab.view {
+                Some(view) => {
+                    conn.execute(
+                        "UPDATE orchestrator_tabs SET view = ?2 WHERE id = ?1",
+                        rusqlite::params![id, view],
+                    )?;
+                    Some(view)
+                }
+                None => stored,
+            };
             return Ok(OrchestratorTab {
                 id,
                 workspace_id: tab.workspace_id,
                 kind: tab.kind,
                 path: tab.path,
                 commit_oid: tab.commit_oid,
-                preview: preview != 0,
+                view,
             });
         }
         let id = uuid::Uuid::new_v4().to_string();
@@ -646,7 +669,7 @@ impl WorkspaceStore {
             |r| r.get(0),
         )?;
         conn.execute(
-            "INSERT INTO orchestrator_tabs (id, profile_id, workspace_id, position, kind, path, commit_oid, preview)
+            "INSERT INTO orchestrator_tabs (id, profile_id, workspace_id, position, kind, path, commit_oid, view)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 id,
@@ -656,7 +679,7 @@ impl WorkspaceStore {
                 tab.kind,
                 tab.path,
                 tab.commit_oid,
-                tab.preview as i64
+                tab.view
             ],
         )?;
         Ok(OrchestratorTab {
@@ -665,8 +688,24 @@ impl WorkspaceStore {
             kind: tab.kind,
             path: tab.path,
             commit_oid: tab.commit_oid,
-            preview: tab.preview,
+            view: tab.view,
         })
+    }
+
+    /// Remembers a file tab's markdown view (ADR-0061).
+    pub fn set_orchestrator_tab_view(
+        &self,
+        profile_id: &str,
+        id: &str,
+        view: &str,
+    ) -> Result<(), AbundioError> {
+        check_tab_view(Some(view))?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE orchestrator_tabs SET view = ?3 WHERE profile_id = ?1 AND id = ?2",
+            rusqlite::params![profile_id, id, view],
+        )?;
+        Ok(())
     }
 
     pub fn remove_orchestrator_tab(&self, profile_id: &str, id: &str) -> Result<(), AbundioError> {

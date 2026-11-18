@@ -9,6 +9,7 @@ import { useOrchestratorStore } from "../stores/orchestratorStore";
 import { fallbackProfileId } from "../stores/profileStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import {
+	type MarkdownView,
 	type NewOrchestratorFileTab,
 	type OrchestratorFileTab,
 	orchestrator as orchestratorApi,
@@ -68,9 +69,26 @@ export async function openOrchestratorFile(
 	const tabs = store().fileTabs;
 	if (!tabs.some((t) => t.id === made.id)) {
 		store().set({ fileTabs: [...tabs, made] });
+	} else if (tab.view) {
+		// Opened again with a view: the tab took it.
+		store().set({
+			fileTabs: tabs.map((t) => (t.id === made.id ? made : t)),
+		});
 	}
 	if (focus) selectOrchestratorTab(made.id);
 	return made;
+}
+
+/** Remembers a file tab's markdown view (ADR-0061). */
+export function setOrchestratorTabView(id: string, view: MarkdownView): void {
+	store().set({
+		fileTabs: store().fileTabs.map((t) => (t.id === id ? { ...t, view } : t)),
+	});
+	orchestratorApi
+		.setTabView(fallbackProfileId(), id, view)
+		.catch((e) =>
+			console.warn("[orchestrator] could not keep a tab's view", e),
+		);
 }
 
 /** Whether a file tab holds unsaved edits. */

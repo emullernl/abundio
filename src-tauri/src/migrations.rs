@@ -86,6 +86,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "023_orchestrator",
         include_str!("../migrations/023_orchestrator.sql"),
     ),
+    (
+        "024_orchestrator_tab_view",
+        include_str!("../migrations/024_orchestrator_tab_view.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
