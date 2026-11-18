@@ -87,6 +87,7 @@ import { fileWindowTargetForPane, openFileWindow } from "./lib/openFileWindow";
 import { openNewTask } from "./lib/openNewTask";
 import { installOrchestratorSession } from "./lib/orchestratorSession";
 import {
+	requestCloseOrchestratorTab,
 	tabPaneId,
 	toggleOrchestratorFileSearch,
 } from "./lib/orchestratorTabs";
@@ -1078,6 +1079,17 @@ export function App() {
 		registerAction(
 			"close-tab",
 			paneLayoutOnly(() => {
+				// A file's Orchestrator tab, when that is where focus is: it closes
+				// (asking first about unsaved edits), not the Tab of the panes below.
+				const orch = useOrchestratorStore.getState();
+				if (
+					orchestratorViewShowing() &&
+					orch.fileTabFocused &&
+					orch.selectedTabId
+				) {
+					requestCloseOrchestratorTab(orch.selectedTabId);
+					return;
+				}
 				const tab = useWorkspaceStore.getState().getActiveTab();
 				if (tab) requestCloseTerminalTab(tab.id);
 			}),
