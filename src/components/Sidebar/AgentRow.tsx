@@ -21,11 +21,14 @@ import { useAgentMenu } from "./useAgentMenu";
  */
 export function AgentRow({
 	tile,
-	showWorkspace = true,
+	variant = "flat",
 }: {
 	tile: FleetTile;
-	showWorkspace?: boolean;
+	/** `grouped`: inside a Workspace card, so the Tab alone on the second line
+	 *  and a denser row. `flat`: Workspace and Tab, normal density. */
+	variant?: "flat" | "grouped";
 }) {
+	const grouped = variant === "grouped";
 	const { paneId, ptyId, workspaceId, tabName } = tile;
 	const status = usePaneStatus(paneId);
 	const xtermTitle = usePtyActivityStore((s) => s.titles[paneId] ?? "");
@@ -90,7 +93,7 @@ export function AgentRow({
 				}`}
 				style={{
 					// Tighter inside a grouped list's cards: it can hold many Agents.
-					padding: showWorkspace ? "6px 10px 6px 8px" : "3px 10px 3px 8px",
+					padding: grouped ? "3px 10px 3px 8px" : "6px 10px 6px 8px",
 					borderLeft: selected
 						? "2px solid var(--accent)"
 						: "2px solid transparent",
@@ -142,8 +145,7 @@ export function AgentRow({
 							color: "var(--fg-secondary)",
 						}}
 					>
-						{progress ??
-							(showWorkspace ? `${workspaceName} · ${tabName}` : tabName)}
+						{progress ?? (grouped ? tabName : `${workspaceName} · ${tabName}`)}
 					</span>
 				</span>
 			</button>

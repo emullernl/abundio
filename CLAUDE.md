@@ -325,7 +325,7 @@ Shortcuts use `Cmd` on macOS, `Ctrl` on Windows/Linux. These are the **defaults*
 | Focus pane on that side (Directional move) | `Cmd+Shift+Arrow` | `Ctrl+Shift+Arrow` |
 | Next / previous pane (Pane cycle) | `Ctrl+Cmd+]` / `[` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Next / previous Opened workspace | `Ctrl+Cmd+↓` / `↑` | `Ctrl+Shift+PageDown` / `PageUp` |
-| Next / previous Agent (Agent cycle, Handle order; in the Orchestrator view it moves the Peek, graph order) | `Ctrl+Cmd+→` / `←` | `Ctrl+Shift+End` / `Home` |
+| Next / previous Agent (Agent cycle, in the Agents list's order: by Workspace when grouped, else Handle order; in the Orchestrator view it moves the Peek, graph order) | `Ctrl+Cmd+→` / `←` | `Ctrl+Shift+End` / `Home` |
 | Add worktree | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 | Command palette | `Cmd+K` | `Ctrl+K` |
 | Navigator | `Cmd+J` | `Ctrl+Shift+J` |

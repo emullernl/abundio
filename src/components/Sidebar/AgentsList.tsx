@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, ChevronRight, List, ListTree } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, ListTree } from "lucide-react";
 import { useAgentsListGroups } from "../../hooks/useAgentPanes";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -75,15 +75,21 @@ export function AgentsList() {
 					onClick={() => setGrouped(!grouped)}
 					aria-pressed={grouped}
 					aria-label="Group by Workspace"
-					title={grouped ? "Show as one list" : "Group by Workspace"}
+					title="Group by Workspace"
 					data-testid="agents-group-toggle"
-					className="flex items-center justify-center flex-shrink-0 h-full transition-colors text-[var(--fg-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--fg-primary)]"
+					// One fixed icon, drawn in the accent colour while pressed, so the
+					// icon and its label never disagree.
+					className={`flex items-center justify-center flex-shrink-0 h-full transition-colors hover:bg-[var(--bg-tertiary)] ${
+						grouped
+							? "text-[var(--accent)]"
+							: "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+					}`}
 					style={{
 						width: 30,
 						transitionDuration: "var(--transition-fast)",
 					}}
 				>
-					{grouped ? <ListTree size={13} /> : <List size={13} />}
+					<ListTree size={13} />
 				</button>
 			</div>
 
@@ -132,7 +138,7 @@ export function AgentsList() {
 									<AgentRow
 										key={tile.paneId}
 										tile={tile}
-										showWorkspace={!grouped}
+										variant={grouped ? "grouped" : "flat"}
 									/>
 								))}
 							</div>
@@ -149,6 +155,9 @@ function GroupLabel({ workspaceId }: { workspaceId: string }) {
 	const name = useWorkspaceStore(
 		(s) => s.workspaces.find((w) => w.id === workspaceId)?.name ?? "",
 	);
+	// A Workspace being closed can outlive its tiles for a moment: draw no
+	// empty, padded label then.
+	if (!name) return null;
 	return (
 		<div
 			className="truncate select-none"

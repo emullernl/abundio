@@ -3,7 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("../terminalManager", () => ({}));
 
-import { groupByWorkspace, inListOrder } from "../agentPanes";
+import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { useSettingsStore } from "../../stores/settingsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
+import {
+	agentsInListOrderNow,
+	groupByWorkspace,
+	inListOrder,
+} from "../agentPanes";
 import type { FleetTile } from "../fleetConsole";
 import type { WorkspaceWithTabs } from "../types";
 
@@ -20,13 +27,18 @@ function ws(id: string, panes: [string, string][]): WorkspaceWithTabs {
 	const layout = panes.reduceRight<unknown>(
 		(second, [paneId, agentHandle]) =>
 			second === null
-				? { type: "terminal", id: paneId, ptyId: "", agentHandle }
+				? { type: "terminal", id: paneId, ptyId: `pty-${paneId}`, agentHandle }
 				: {
 						type: "split",
 						id: `s-${paneId}`,
 						direction: "horizontal",
 						ratio: 0.5,
-						first: { type: "terminal", id: paneId, ptyId: "", agentHandle },
+						first: {
+							type: "terminal",
+							id: paneId,
+							ptyId: `pty-${paneId}`,
+							agentHandle,
+						},
 						second,
 					},
 		null,
@@ -83,5 +95,28 @@ describe("inListOrder", () => {
 			"b2",
 			"b1",
 		]);
+	});
+});
+
+describe("agentsInListOrderNow (the Agent cycle's stops)", () => {
+	it("follows the Agents list's grouped / flat setting", () => {
+		useWorkspaceStore.setState({
+			workspaces: [
+				ws("a", [["a1", "Agent Ten"]]),
+				ws("b", [["b1", "Agent Two"]]),
+			],
+		});
+		const agent = { detectionMode: "agent" } as never;
+		usePtyActivityStore.setState({
+			openedWorkspaceIds: new Set(["a", "b"]),
+			panePtyMap: {},
+			activities: { "pty-a1": agent, "pty-b1": agent },
+		});
+
+		useSettingsStore.setState({ agentsListGrouped: true });
+		expect(agentsInListOrderNow().map((t) => t.paneId)).toEqual(["a1", "b1"]);
+
+		useSettingsStore.setState({ agentsListGrouped: false });
+		expect(agentsInListOrderNow().map((t) => t.paneId)).toEqual(["b1", "a1"]);
 	});
 });
