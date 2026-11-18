@@ -1,6 +1,7 @@
-import { lazy, memo, type ReactNode, Suspense } from "react";
+import { lazy, memo, type ReactNode, Suspense, useCallback } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
-import type { PaneNode } from "../../lib/types";
+import { setMarkdownViewForPane } from "../../lib/markdownPreview";
+import type { MarkdownView, PaneNode } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FilePane } from "../FileViewer/FilePane";
 import { MergeSidePane } from "../FileViewer/MergeSidePane";
@@ -58,6 +59,12 @@ const FileLeaf = memo(function FileLeaf({
 }) {
 	const isFocused = useWorkspaceStore((s) => s.focusedPaneId === node.id);
 	const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
+	const onMarkdownViewChange = useCallback(
+		(view: MarkdownView) => {
+			void setMarkdownViewForPane(workspaceId, node.id, view);
+		},
+		[workspaceId, node.id],
+	);
 
 	return (
 		<FilePane
@@ -71,6 +78,8 @@ const FileLeaf = memo(function FileLeaf({
 			isDeleted={node.isDeleted}
 			isFocused={isFocused}
 			onFocus={() => setFocusedPane(node.id)}
+			markdownView={node.markdownView}
+			onMarkdownViewChange={onMarkdownViewChange}
 		/>
 	);
 });

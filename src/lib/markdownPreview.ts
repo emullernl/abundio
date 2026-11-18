@@ -4,7 +4,9 @@ import {
 	collectFilePaneIds,
 	findNode,
 	findPreviewForSource,
+	parseTabLayout,
 	removeNode,
+	setFileNodeView,
 	wrapInSplit,
 } from "./paneTree";
 import type { MarkdownView, PaneNode } from "./types";
@@ -89,4 +91,25 @@ export function pruneNonMarkdownPreviews(tree: PaneNode): PaneNode {
 		if (next) result = next;
 	}
 	return result;
+}
+
+/**
+ * Remember a File pane's markdown view on its node (ADR-0061), in whichever
+ * Tab of the Workspace holds it.
+ */
+export async function setMarkdownViewForPane(
+	workspaceId: string,
+	paneId: string,
+	view: MarkdownView,
+): Promise<void> {
+	const ws = useWorkspaceStore.getState();
+	const workspace = ws.workspaces.find((w) => w.id === workspaceId);
+	if (!workspace) return;
+	for (const tab of workspace.tabs) {
+		const layout = parseTabLayout(tab.layoutJson);
+		if (!layout || !findNode(layout, paneId)) continue;
+		const next = setFileNodeView(layout, paneId, view);
+		if (next !== layout) await ws.updateLayout(tab.id, next);
+		return;
+	}
 }

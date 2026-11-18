@@ -104,8 +104,28 @@ describe("fileWindowTargetForPane", () => {
 		expect(target("img")).toEqual({ kind: "image", filePath: "/r/logo.png" });
 	});
 
-	it("follows a Preview pane to its source", () => {
-		expect(target("p1")).toEqual({ kind: "text", filePath: "/r/a.md" });
+	it("follows a Preview pane to its source, rendered", () => {
+		expect(target("p1")).toEqual({
+			kind: "text",
+			filePath: "/r/a.md",
+			view: "rendered",
+		});
+	});
+
+	it("opens a markdown File pane's window in the pane's view", () => {
+		const withView: PaneNode = {
+			type: "file",
+			id: "f1",
+			filePath: "/r/a.md",
+			markdownView: "source",
+		};
+		expect(fileWindowTargetForPane("f1", withView, filePanes)).toEqual({
+			kind: "text",
+			filePath: "/r/a.md",
+			view: "source",
+		});
+		// No view of its own: the window keeps the one it was last in.
+		expect(target("f1")).toEqual({ kind: "text", filePath: "/r/a.md" });
 	});
 
 	it("gives a live diff pane's diff, with its section", () => {

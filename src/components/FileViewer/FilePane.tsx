@@ -18,8 +18,14 @@ import {
 import { useDragPaneStore } from "../../lib/dragPaneStore";
 import { git } from "../../lib/ipc";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
+import { followRenderedLink } from "../../lib/markdownLinkOpen";
 import { toggleMarkdownPreviewForPane } from "../../lib/markdownPreview";
-import { requestPreviewPrint } from "../../lib/markdownPreviewPrint";
+import { printMarkdownPreview } from "../../lib/markdownPrint";
+import {
+	effectiveMarkdownView,
+	type LinkModifiers,
+} from "../../lib/markdownView";
+import { registerMarkdownViewToggle } from "../../lib/markdownViewToggles";
 import { registerResultEditor } from "../../lib/mergeScrollSync";
 import {
 	getActiveConflictBlock,
@@ -41,10 +47,11 @@ import {
 	relativeToWorkspace,
 	resolveWorkspacePath,
 } from "../../lib/resolveWorkspacePath";
-import type { GitChangedFile } from "../../lib/types";
+import type { GitChangedFile, MarkdownView } from "../../lib/types";
 import { isUnifiedDiffFile } from "../../lib/unifiedDiff";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
@@ -63,6 +70,7 @@ import { ConflictToolbar } from "./ConflictToolbar";
 import { FileChangeBanner } from "./FileChangeBanner";
 import { FilePaneTitleBar } from "./FilePaneTitleBar";
 import { ImageViewer } from "./ImageViewer";
+import { RenderedMarkdownView } from "./RenderedMarkdownView";
 import { UnsupportedFile } from "./UnsupportedFile";
 
 interface FilePaneProps {
@@ -78,8 +86,23 @@ interface FilePaneProps {
 	onFocus: () => void;
 	/** Set when the file is not a pane of any layout (an **Orchestrator
 	 *  tab**, ADR-0058): no splits, and closing closes that instead. */
-	embedded?: { onClose: () => void; closeLabel: string };
+	embedded?: {
+		onClose: () => void;
+		closeLabel: string;
+		/** Where a link to another markdown file opens, instead of a Tab. */
+		onOpenMarkdownLink?: (path: string) => void;
+	};
+	/** A markdown file's stored view (ADR-0061); absent: the setting's. */
+	markdownView?: MarkdownView;
+	/** Remember a new view (on the layout node, or the Orchestrator tab). */
+	onMarkdownViewChange?: (view: MarkdownView) => void;
 }
+
+// A print asked for from the source view waits for the rendering, which is
+// debounced (250ms in MarkdownRendered), plus a beat for Mermaid to settle.
+const PRINT_AFTER_SWITCH_MS = 450;
+
+const dirOf = (path: string) => path.replace(/[\\/][^\\/]*$/, "");
 
 export function FilePane({
 	paneId,
@@ -93,6 +116,8 @@ export function FilePane({
 	isFocused,
 	onFocus,
 	embedded,
+	markdownView,
+	onMarkdownViewChange,
 }: FilePaneProps) {
 	const registerFilePane = useExplorerStore((s) => s.registerFilePane);
 	const keyOverrides = useKeybindingOverrides();
@@ -287,6 +312,110 @@ export function FilePane({
 
 	const { splitPaneWithPicker, closePane } = useSplitPane();
 
+	// ── Markdown view (ADR-0061) ──
+	const isMarkdown =
+		paneState?.fileType === "text" && isMarkdownFile(paneState.fileName);
+	const openRendered = useSettingsStore((s) => s.markdownOpenRendered);
+	// The view picked here, shown at once; the stored one catches up through
+	// the layout (or the Orchestrator tab) a moment later.
+	const [pickedView, setPickedView] = useState<MarkdownView | undefined>(
+		undefined,
+	);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a new stored view or file drops the local pick
+	useEffect(() => {
+		setPickedView(undefined);
+	}, [markdownView, filePath]);
+	const view = effectiveMarkdownView({
+		stored: pickedView ?? markdownView,
+		openRendered,
+		isMarkdown,
+		isUnmerged,
+	});
+	const viewRef = useRef(view);
+	viewRef.current = view;
+	const changeView = useCallback(
+		(next: MarkdownView) => {
+			setPickedView(next);
+			onMarkdownViewChange?.(next);
+		},
+		[onMarkdownViewChange],
+	);
+	// Monaco mounts the first time the source is shown and then stays, hidden
+	// under the rendering, so its undo history and caret survive a switch.
+	const [sourceMounted, setSourceMounted] = useState(view === "source");
+	useEffect(() => {
+		if (view === "source") setSourceMounted(true);
+	}, [view]);
+
+	// Cmd/Ctrl+Shift+M. Registered while this is a markdown pane; a conflicted
+	// one stays on its source, so the switch does nothing there.
+	useEffect(() => {
+		if (!isMarkdown) return;
+		return registerMarkdownViewToggle(paneId, () => {
+			if (isUnmerged) return;
+			changeView(viewRef.current === "rendered" ? "source" : "rendered");
+		});
+	}, [isMarkdown, isUnmerged, paneId, changeView]);
+
+	// Find in the rendering: the same "Find" shortcut that opens a terminal's
+	// search bar (`searchPaneId`).
+	const findOpen = useWorkspaceStore((s) => s.searchPaneId === paneId);
+	const setFindOpen = useCallback(
+		(open: boolean) => {
+			const ws = useWorkspaceStore.getState();
+			if ((ws.searchPaneId === paneId) !== open) ws.toggleSearch(paneId);
+		},
+		[paneId],
+	);
+	useEffect(() => {
+		if (view === "source" && findOpen) setFindOpen(false);
+	}, [view, findOpen, setFindOpen]);
+
+	// A jump to a line (search result, terminal link, `file open --line`)
+	// means the source. The editor takes the line once it is shown.
+	const gotoThisFile = useExplorerStore(
+		(s) =>
+			s.pendingGotoLine != null &&
+			s.pendingGotoLine.filePath === s.filePanes[paneId]?.filePath,
+	);
+	useEffect(() => {
+		if (gotoThisFile && isFocused && viewRef.current === "rendered") {
+			changeView("source");
+		}
+	}, [gotoThisFile, isFocused, changeView]);
+
+	const renderedRef = useRef<HTMLDivElement | null>(null);
+	const doPrint = useCallback(() => {
+		if (renderedRef.current) printMarkdownPreview(renderedRef.current);
+	}, []);
+	const [printPending, setPrintPending] = useState(false);
+	useEffect(() => {
+		if (!printPending || view !== "rendered") return;
+		const t = setTimeout(() => {
+			setPrintPending(false);
+			doPrint();
+		}, PRINT_AFTER_SWITCH_MS);
+		return () => clearTimeout(t);
+	}, [printPending, view, doPrint]);
+
+	const onOpenMarkdownLink = embedded?.onOpenMarkdownLink;
+	const onLinkClick = useCallback(
+		(href: string | undefined, modifiers?: LinkModifiers) => {
+			const path = useExplorerStore.getState().filePanes[paneId]?.filePath;
+			if (!path) return;
+			followRenderedLink({
+				href,
+				modifiers,
+				baseDir: dirOf(path),
+				workspaceId,
+				workspaceRoot: cwd,
+				scrollEl: renderedRef.current,
+				openInTab: onOpenMarkdownLink,
+			});
+		},
+		[paneId, workspaceId, cwd, onOpenMarkdownLink],
+	);
+
 	const isDragSource = useDragPaneStore(
 		(s) => s.isDragging && s.sourcePaneId === paneId,
 	);
@@ -378,9 +507,6 @@ export function FilePane({
 		});
 	};
 
-	const isMarkdown =
-		paneState.fileType === "text" && isMarkdownFile(paneState.fileName);
-
 	// For a diff pane, the underlying real (repo-relative) path, sans its key
 	// prefix (`diff:` or a Commit diff pane's `diff@<oid>:`).
 	const diffRealPath =
@@ -415,37 +541,54 @@ export function FilePane({
 				}
 			: undefined;
 
-	const handlePrintMarkdown = async () => {
-		const ws = useWorkspaceStore.getState();
-		const layout = ws.getActiveLayout();
-		const hasPreview = layout ? !!findPreviewForSource(layout, paneId) : false;
-		// Printing operates on the preview pane's rendered DOM — open one first
-		// if this file pane doesn't have a preview yet.
-		if (!hasPreview) await toggleMarkdownPreviewForPane(paneId);
-		requestPreviewPrint(paneId);
+	// Prints the pane's own rendering, switching to it first from the source.
+	const handlePrintMarkdown = () => {
+		if (view === "rendered") doPrint();
+		else if (!isUnmerged) {
+			changeView("rendered");
+			setPrintPending(true);
+		}
 	};
 
+	const hasPreview =
+		!embedded && activeLayout
+			? !!findPreviewForSource(activeLayout, paneId)
+			: false;
 	const markdownItems: ContextMenuItem[] = isMarkdown
 		? [
-				{
-					label: "Toggle Preview",
-					shortcut: shortcutLabelFor("toggle-markdown-preview", keyOverrides),
-					onClick: () => {
-						toggleMarkdownPreviewForPane(paneId);
-					},
-				},
-				{
-					label: "Print",
-					onClick: () => {
-						handlePrintMarkdown();
-					},
-				},
+				...(isUnmerged
+					? []
+					: [
+							{
+								label: view === "rendered" ? "Show Source" : "Show Rendered",
+								shortcut: shortcutLabelFor(
+									"toggle-markdown-preview",
+									keyOverrides,
+								),
+								onClick: () =>
+									changeView(view === "rendered" ? "source" : "rendered"),
+							},
+						]),
+				// A Preview pane is a pane of a layout: none in an Orchestrator tab.
+				...(embedded
+					? []
+					: [
+							{
+								label: hasPreview ? "Close Preview" : "Open Preview Beside",
+								onClick: () => {
+									void toggleMarkdownPreviewForPane(paneId);
+								},
+							},
+						]),
+				...(isUnmerged
+					? []
+					: [{ label: "Print", onClick: handlePrintMarkdown }]),
 				{ separator: true },
 			]
 		: [];
 
 	const editorItems: ContextMenuItem[] =
-		paneState.fileType === "text"
+		paneState.fileType === "text" && view === "source"
 			? [
 					{
 						label: "Copy",
@@ -536,9 +679,13 @@ export function FilePane({
 			];
 
 	// The window shows what this pane shows: a diff pane gives a diff window.
-	const windowTarget = fileWindowTargetForPane(paneId, null, {
+	const paneTarget = fileWindowTargetForPane(paneId, null, {
 		[paneId]: paneState,
 	});
+	const windowTarget =
+		paneTarget?.kind === "text" && isMarkdown
+			? { ...paneTarget, view }
+			: paneTarget;
 	const windowItems: ContextMenuItem[] = windowTarget
 		? [
 				{
@@ -601,6 +748,20 @@ export function FilePane({
 						embedded?.onClose ?? (() => closePane(paneId, paneState.fileName))
 					}
 					closeLabel={embedded?.closeLabel}
+					markdown={
+						isMarkdown
+							? {
+									view,
+									onViewChange: changeView,
+									conflicted: isUnmerged,
+									onFind: () => setFindOpen(true),
+									onPrint: doPrint,
+									onOpenInWindow: windowTarget
+										? () => void openFileWindow(workspaceId, windowTarget)
+										: undefined,
+								}
+							: undefined
+					}
 				/>
 			)}
 			{showBanner && (
@@ -633,20 +794,42 @@ export function FilePane({
 				/>
 			)}
 			<div className="flex-1 min-h-0 relative">
-				{paneState.fileType === "text" && (
-					<CodeEditor
-						tabId={paneId}
-						isActive={isFocused}
-						content={paneState.content ?? ""}
-						language={paneState.language}
-						initialEditorState={null}
-						onChange={handleEditorChange}
-						forceWordWrap={isMarkdown}
-						onCursorLine={handleCursorLine}
-						activeConflictBlock={activeBlock}
-						onEditorMounted={() => setResultEditorReady(true)}
-					/>
+				{paneState.fileType === "text" && view === "rendered" && (
+					<div className="absolute inset-0 flex flex-col">
+						<RenderedMarkdownView
+							ref={renderedRef}
+							content={paneState.content ?? ""}
+							baseDir={dirOf(paneState.filePath)}
+							onLinkClick={onLinkClick}
+							findOpen={findOpen}
+							onCloseFind={() => setFindOpen(false)}
+							layout="pane"
+							focused={isFocused}
+						/>
+					</div>
 				)}
+				{paneState.fileType === "text" &&
+					(view === "source" || sourceMounted) && (
+						<div
+							className="absolute inset-0"
+							style={view === "source" ? undefined : { display: "none" }}
+						>
+							<CodeEditor
+								tabId={paneId}
+								// Never while hidden, or it would take keyboard focus and
+								// typing would edit a text nobody can see.
+								isActive={isFocused && view === "source"}
+								content={paneState.content ?? ""}
+								language={paneState.language}
+								initialEditorState={null}
+								onChange={handleEditorChange}
+								forceWordWrap={isMarkdown}
+								onCursorLine={handleCursorLine}
+								activeConflictBlock={activeBlock}
+								onEditorMounted={() => setResultEditorReady(true)}
+							/>
+						</div>
+					)}
 				{paneState.fileType === "diff" &&
 					paneState.diffOriginal == null &&
 					paneState.diffLoadFailed && (
