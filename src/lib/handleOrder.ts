@@ -1,4 +1,5 @@
-// **Handle order**: the order of the **Agents list** and the **Agent cycle**.
+// **Handle order**: the order of the **Agents list** (inside each Workspace
+// when grouped) and of the **Agent cycle**.
 // By **Agent handle**, ignoring case; **Default handles** ("Agent Two") by
 // their number, where "Agent" falls alphabetically. Pure.
 

@@ -123,7 +123,17 @@ beforeEach(() => {
 		agentsListCollapsed: false,
 		pendingTiles: {},
 	});
+	useSettingsStore.setState({ agentsListGrouped: true });
 });
+
+function groupLabels(): string[] {
+	return Array.from(
+		container.querySelectorAll('[data-testid="agents-group-label"]'),
+	).map((el) => el.textContent ?? "");
+}
+
+const named = (id: string, ptyId: string, agentHandle: string) =>
+	({ type: "terminal", id, ptyId, agentHandle }) as PaneNode;
 
 afterEach(() => {
 	act(() => root.unmount());
@@ -131,20 +141,22 @@ afterEach(() => {
 });
 
 describe("AgentsList", () => {
-	it("lists agent-mode panes of Opened workspaces, in sidebar order", () => {
+	it("lists agent-mode panes of Opened workspaces, grouped in sidebar order", () => {
 		render();
 		const r = rows();
 		expect(r).toHaveLength(2);
-		expect(r[0].textContent).toContain("alpha · Main");
-		expect(r[1].textContent).toContain("beta · Build");
+		expect(groupLabels()).toEqual(["alpha", "beta"]);
+		// The group names the Workspace, so the row shows the Tab alone.
+		expect(r[0].textContent).toContain("Main");
+		expect(r[0].textContent).not.toContain("alpha · Main");
+		expect(r[1].textContent).toContain("Build");
 		expect(
 			container.querySelector('[data-testid="agents-count"]')?.textContent,
 		).toBe("· 2");
 	});
 
-	it("sorts rows in Handle order across Workspaces", () => {
-		const named = (id: string, ptyId: string, agentHandle: string) =>
-			({ type: "terminal", id, ptyId, agentHandle }) as PaneNode;
+	it("flat: sorts rows in Handle order across Workspaces", () => {
+		useSettingsStore.setState({ agentsListGrouped: false });
 		useWorkspaceStore.setState({
 			workspaces: [
 				ws("a", "alpha", [["a1", "Main", named("pa1", "x1", "Agent Ten")]], 0),
@@ -161,8 +173,55 @@ describe("AgentsList", () => {
 		});
 		render();
 		const r = rows();
+		expect(groupLabels()).toEqual([]);
 		expect(r[0].textContent).toContain("Agent Two");
+		expect(r[0].textContent).toContain("beta · Build");
 		expect(r[1].textContent).toContain("Agent Ten");
+	});
+
+	it("grouped: Handle order inside each Workspace, groups in sidebar order", () => {
+		useWorkspaceStore.setState({
+			workspaces: [
+				ws(
+					"a",
+					"alpha",
+					[
+						["a1", "Main", named("pa1", "x1", "Agent Ten")],
+						["a2", "Other", named("pa2", "x2", "Agent Three")],
+					],
+					0,
+				),
+				ws("b", "beta", [["b1", "Build", named("pb1", "y1", "Agent Two")]], 1),
+			],
+		});
+		usePtyActivityStore.setState({
+			activities: {
+				x1: entry("agent"),
+				x2: entry("agent"),
+				y1: entry("agent"),
+			},
+		});
+		render();
+		expect(groupLabels()).toEqual(["alpha", "beta"]);
+		const r = rows().map((el) => el.textContent ?? "");
+		expect(r[0]).toContain("Agent Three");
+		expect(r[1]).toContain("Agent Ten");
+		expect(r[2]).toContain("Agent Two");
+	});
+
+	it("the header button switches between grouped and flat", () => {
+		render();
+		const toggle = container.querySelector(
+			'[data-testid="agents-group-toggle"]',
+		) as HTMLButtonElement;
+		expect(toggle.getAttribute("aria-pressed")).toBe("true");
+		act(() => toggle.click());
+		expect(useSettingsStore.getState().agentsListGrouped).toBe(false);
+		expect(toggle.getAttribute("aria-pressed")).toBe("false");
+		expect(groupLabels()).toEqual([]);
+		expect(rows()[0].textContent).toContain("alpha · Main");
+		// It is not the collapse button.
+		expect(useWindowUiStore.getState().agentsListCollapsed).toBe(false);
 	});
 
 	it("shows the Agent's terminal title, else the Agent's name", () => {
