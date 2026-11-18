@@ -5,6 +5,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	cycleFleet,
 	focusedPeekPaneId,
+	focusLeavesPeek,
 	focusPaneForInput,
 	isFleetTileOnScreen,
 	navigateFleet,
@@ -263,6 +264,20 @@ describe("fleetFocus — input focus and on-screen tiles", () => {
 			expect(useOrchestratorStore.getState().peekFocused).toBe(true);
 			expect(useOrchestratorStore.getState().fileTabFocused).toBe(false);
 			expect(useWorkspaceStore.getState().focusedPaneId).toBe("ws-pane");
+		});
+
+		it("gives the Peek's keyboard up only to another pane", () => {
+			document.body.innerHTML = `
+				<div data-peek-pane><div data-pane-id="peeked"><textarea id="in-peek"></textarea></div></div>
+				<div data-pane-id="orch-pane"><textarea id="in-orch"></textarea></div>
+				<div id="graph"><button id="node"></button></div>`;
+			const at = (id: string) => document.getElementById(id);
+			expect(focusLeavesPeek(at("in-orch"))).toBe(true);
+			expect(focusLeavesPeek(at("in-peek"))).toBe(false);
+			// The graph, the palette, a menu: shortcuts still reach the Peek.
+			expect(focusLeavesPeek(at("node"))).toBe(false);
+			expect(focusLeavesPeek(null)).toBe(false);
+			document.body.innerHTML = "";
 		});
 
 		it("acting on another pane focuses it as before", () => {

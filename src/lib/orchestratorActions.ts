@@ -13,9 +13,13 @@ import { getTerminal } from "./terminalManager";
 /** **Peek**: show an Agent's live terminal to the right of the graph (a
  *  single click on it there). Replaces the Agent peeked at before. */
 export function peekAgent(paneId: string): void {
+	const { peekFocused } = useOrchestratorStore.getState();
 	useOrchestratorStore
 		.getState()
 		.set({ selectedPaneId: paneId, peekPaneId: paneId });
+	// Focus follows the Peek: a click on another Agent in the graph, while
+	// the Peek had the keyboard, gives that Agent's terminal the keyboard.
+	if (peekFocused) focusWhenPlaced(paneId, "[data-peek-pane]");
 }
 
 /** Close the Peek: the terminal goes back to its Workspace. */

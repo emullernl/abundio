@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { focusLeavesPeek } from "../../lib/fleetFocus";
 import { closePeek, focusPeek } from "../../lib/orchestratorActions";
 import { findPaneLocation, switchToPane } from "../../lib/paneLocation";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
@@ -32,10 +33,15 @@ export function PeekPane({ paneId }: { paneId: string }) {
 		return ws && tab ? { ws, tab } : null;
 	}, [workspaces, paneId]);
 
-	// The Agent left (it exited, or its pane closed): the Peek goes with it.
+	const opened = usePtyActivityStore((s) =>
+		where ? s.openedWorkspaceIds.has(where.ws.id) : false,
+	);
+
+	// The Agent left (it exited, its pane closed, or its Workspace was
+	// closed): the Peek goes with it, so no shortcut is left aiming at it.
 	useEffect(() => {
-		if (!where || (ptyId && !isAgent)) closePeek();
-	}, [where, ptyId, isAgent]);
+		if (!where || !opened || (ptyId && !isAgent)) closePeek();
+	}, [where, opened, ptyId, isAgent]);
 
 	// Focus is the Peek's own, like a Fleet tile's: clicking into it takes
 	// it, and focusing a pane of the Workspace below (or a file tab) gives it
@@ -53,8 +59,7 @@ export function PeekPane({ paneId }: { paneId: string }) {
 		// A click into the pane that is already the Focused pane changes no
 		// store value, so watch focus itself too.
 		const onFocusIn = (e: FocusEvent) => {
-			const el = e.target instanceof Element ? e.target : null;
-			if (el?.closest("[data-pane-id]") && !el.closest("[data-peek-pane]")) {
+			if (focusLeavesPeek(e.target instanceof Element ? e.target : null)) {
 				giveUp();
 			}
 		};

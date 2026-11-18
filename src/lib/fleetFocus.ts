@@ -27,6 +27,14 @@ export function focusedPeekPaneId(): string | null {
 	return peekFocused ? peekPaneId : null;
 }
 
+/** Whether focus landing on `el` takes the keyboard away from the **Peek**:
+ *  it went into another pane (a terminal or a file pane) outside the Peek.
+ *  Focus anywhere else (the graph, the palette, a menu) keeps it, so the
+ *  palette's prompt actions still reach the peeked Agent. */
+export function focusLeavesPeek(el: Element | null): boolean {
+	return !!el?.closest("[data-pane-id]") && !el.closest("[data-peek-pane]");
+}
+
 /**
  * The pane that pane-scoped commands act on: the **Focused tile** while the
  * Fleet Console is on screen, the peeked pane while the **Peek** has the
