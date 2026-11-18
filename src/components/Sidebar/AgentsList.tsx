@@ -89,7 +89,9 @@ export function AgentsList() {
 
 			{!collapsed && (
 				<div
-					className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5"
+					className={`flex-1 min-h-0 overflow-y-auto flex flex-col ${
+						grouped ? "gap-1.5" : "gap-0.5"
+					}`}
 					style={{ padding: "6px 8px" }}
 				>
 					{count === 0 ? (
@@ -109,6 +111,20 @@ export function AgentsList() {
 								className="flex flex-col gap-0.5"
 								role={grouped ? "group" : undefined}
 								data-testid={grouped ? "agents-group" : undefined}
+								// A grouped Workspace sits on a card, so its Agents read as one
+								// block. Tinted with the text colour, not --bg-tertiary, so a
+								// row's hover (--bg-tertiary) still shows on top of it, in light
+								// and dark themes alike.
+								style={
+									grouped
+										? {
+												background:
+													"color-mix(in srgb, var(--fg-primary) 8%, transparent)",
+												borderRadius: 6,
+												padding: 2,
+											}
+										: undefined
+								}
 							>
 								{group.workspaceId && (
 									<GroupLabel workspaceId={group.workspaceId} />
@@ -143,7 +159,7 @@ function GroupLabel({ workspaceId }: { workspaceId: string }) {
 				fontWeight: 600,
 				lineHeight: "16px",
 				color: "var(--fg-secondary)",
-				padding: "6px 10px 2px",
+				padding: "4px 10px 2px",
 			}}
 		>
 			{name}
