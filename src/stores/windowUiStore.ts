@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { currentWindowLabel } from "../lib/appWindow";
 import {
 	clampPeekExplorerWidth,
+	clampPeekTerminalWidth,
 	PEEK_EXPLORER_DEFAULT,
 } from "../lib/orchestratorLayout";
 
@@ -130,6 +131,11 @@ interface WindowUiState {
 	peekExplorerWidth: number;
 	togglePeekExplorer: () => void;
 	setPeekExplorerWidth: (width: number) => void;
+	/** The **Peek** terminal's width in px without the Peek explorer, as the
+	 *  user last dragged the divider beside it; null (half the top area)
+	 *  until then. Per Window, persisted. */
+	peekTerminalWidth: number | null;
+	setPeekTerminalWidth: (width: number) => void;
 	/** The **Focused tile**: the console's own focus, separate from the
 	 *  Workspace view's `focusedPaneId` so moving around the grid never
 	 *  rearranges the view behind it. Not persisted. */
@@ -310,6 +316,9 @@ export const useWindowUiStore = create<WindowUiState>()(
 				set((s) => ({ peekExplorerOpen: !s.peekExplorerOpen })),
 			setPeekExplorerWidth: (width) =>
 				set({ peekExplorerWidth: clampPeekExplorerWidth(width) }),
+			peekTerminalWidth: null,
+			setPeekTerminalWidth: (width) =>
+				set({ peekTerminalWidth: clampPeekTerminalWidth(width) }),
 			focusedTileId: null,
 			setFocusedTile: (paneId) => set({ focusedTileId: paneId }),
 			pendingTiles: {},
@@ -439,6 +448,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				orchestratorTopCollapsed: s.orchestratorTopCollapsed,
 				peekExplorerOpen: s.peekExplorerOpen,
 				peekExplorerWidth: s.peekExplorerWidth,
+				peekTerminalWidth: s.peekTerminalWidth,
 				foldedSetKeys: s.foldedSetKeys,
 				fleetGrid: s.fleetGrid,
 			}),

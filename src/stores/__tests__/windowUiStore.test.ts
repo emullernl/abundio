@@ -138,3 +138,23 @@ describe("windowUiStore — Orchestrator view (ADR-0057)", () => {
 		expect(useWindowUiStore.getState().fleetConsoleOpen).toBe(false);
 	});
 });
+
+describe("windowUiStore — the Peek's width", () => {
+	beforeEach(() => {
+		useWindowUiStore.setState({ peekTerminalWidth: null });
+	});
+
+	it("starts with no width of its own (half the area)", () => {
+		expect(useWindowUiStore.getState().peekTerminalWidth).toBeNull();
+	});
+
+	it("keeps a dragged width, rounded and never under the terminal minimum", () => {
+		const { setPeekTerminalWidth } = useWindowUiStore.getState();
+		setPeekTerminalWidth(512.6);
+		expect(useWindowUiStore.getState().peekTerminalWidth).toBe(513);
+		setPeekTerminalWidth(10);
+		expect(useWindowUiStore.getState().peekTerminalWidth).toBe(260);
+		setPeekTerminalWidth(Number.NaN);
+		expect(useWindowUiStore.getState().peekTerminalWidth).toBe(260);
+	});
+});
