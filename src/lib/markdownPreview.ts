@@ -1,4 +1,3 @@
-import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { isMarkdownFile } from "./isMarkdownFile";
 import {
@@ -8,61 +7,39 @@ import {
 	removeNode,
 	wrapInSplit,
 } from "./paneTree";
-import type { PaneNode } from "./types";
-
-// In-memory, per-session suppression. When the user manually closes a preview
-// for a file pane, we don't re-spawn it automatically until they reopen it.
-// Not persisted — a fresh session starts with auto-open rules in full effect.
-const suppressed = new Set<string>();
-
-export function suppressMarkdownPreview(filePaneId: string): void {
-	suppressed.add(filePaneId);
-}
-
-export function unsuppressMarkdownPreview(filePaneId: string): void {
-	suppressed.delete(filePaneId);
-}
-
-export function isMarkdownPreviewSuppressed(filePaneId: string): boolean {
-	return suppressed.has(filePaneId);
-}
+import type { MarkdownView, PaneNode } from "./types";
 
 function makePreviewNode(sourcePaneId: string): PaneNode {
 	return { type: "preview", id: crypto.randomUUID(), sourcePaneId };
 }
 
 /**
- * Build the layout for a freshly-opened file. Markdown files get a preview
- * pane spawned beside them (vertical split, 50/50) when auto-open is enabled.
- * Used only on user-initiated file opens — never on layout restore.
+ * Build the layout for a freshly-opened file: one File pane. A markdown file
+ * shows its own rendered view (ADR-0061), so no Preview pane is added; `view`
+ * pins the view (a link, `file open --preview`), else the pane follows the
+ * **Open markdown rendered** setting.
  */
-export function buildFilePaneLayout(filePath: string): {
+export function buildFilePaneLayout(
+	filePath: string,
+	view?: MarkdownView,
+): {
 	layout: PaneNode;
 	filePaneId: string;
 } {
 	const filePaneId = crypto.randomUUID();
-	const fileNode: PaneNode = { type: "file", id: filePaneId, filePath };
-	const autoOpen = useSettingsStore.getState().markdownPreviewAutoOpen;
-	if (!autoOpen || !isMarkdownFile(filePath)) {
-		return { layout: fileNode, filePaneId };
-	}
-	return {
-		layout: {
-			type: "split",
-			id: crypto.randomUUID(),
-			direction: "vertical",
-			ratio: 0.5,
-			first: fileNode,
-			second: makePreviewNode(filePaneId),
-		},
-		filePaneId,
+	const layout: PaneNode = {
+		type: "file",
+		id: filePaneId,
+		filePath,
+		...(view && isMarkdownFile(filePath) ? { markdownView: view } : {}),
 	};
+	return { layout, filePaneId };
 }
 
 /**
- * Toggle the markdown preview for a pane in the active tab. Accepts either a
- * markdown file pane or its preview pane. Closing a preview this way suppresses
- * auto-open for that file pane; opening one clears the suppression.
+ * Open or close the **Preview pane** beside a markdown File pane in the active
+ * tab (the pane menu's Open Preview Beside / Close Preview). Accepts either
+ * the file pane or its preview pane.
  */
 export async function toggleMarkdownPreviewForPane(
 	paneId: string,
@@ -82,12 +59,10 @@ export async function toggleMarkdownPreviewForPane(
 	if (existing) {
 		const next = removeNode(layout, existing.id);
 		if (!next) return;
-		suppressMarkdownPreview(filePaneId);
 		await ws.updateLayout(tab.id, next);
 		return;
 	}
 
-	unsuppressMarkdownPreview(filePaneId);
 	const next = wrapInSplit(
 		layout,
 		filePaneId,

@@ -65,7 +65,7 @@ describe("settingsBroadcast", () => {
 		"autoCheckUpdatesEnabled",
 		"editorWordWrap",
 		"debugActivityMeter",
-		"markdownPreviewAutoOpen",
+		"markdownOpenRendered",
 	])("includes %s in the broadcast slice", (key) => {
 		expect(Object.keys(broadcastSliceOf(persistedState()))).toContain(key);
 	});

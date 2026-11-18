@@ -3,7 +3,6 @@ import { useExplorerStore } from "../stores/explorerStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { agentControl } from "./ipc";
-import { suppressMarkdownPreview } from "./markdownPreview";
 import {
 	clearSpawnedBy,
 	collectTerminals,
@@ -91,10 +90,6 @@ export async function closePaneNow(
 	} else if (node?.type === "file") {
 		useExplorerStore.getState().unregisterFilePane(paneId);
 		cascadePreviewId = findPreviewForSource(layout, paneId)?.id ?? null;
-	} else if (node?.type === "preview") {
-		// Manually closing a preview suppresses auto-open for its source
-		// pane until the user reopens it.
-		suppressMarkdownPreview(node.sourcePaneId);
 	}
 
 	let newLayout = removeNode(layout, paneId);

@@ -22,7 +22,12 @@ import {
 	parseTabLayout,
 	wrapInSplit,
 } from "../lib/paneTree";
-import type { DirEntry, GitChangedFile, PaneNode } from "../lib/types";
+import type {
+	DirEntry,
+	GitChangedFile,
+	MarkdownView,
+	PaneNode,
+} from "../lib/types";
 import { isUnifiedDiffFile, parseUnifiedDiff } from "../lib/unifiedDiff";
 import { useWorkspaceStore } from "./workspaceStore";
 
@@ -109,7 +114,9 @@ interface ExplorerState {
 	openFile: (
 		workspaceId: string,
 		filePath: string,
-		opts?: { activate?: boolean },
+		/** `view`: the markdown view a *new* pane starts in (ADR-0061). A Tab
+		 *  already showing the file keeps its own. */
+		opts?: { activate?: boolean; view?: MarkdownView },
 	) => Promise<void>;
 	openFileAsDiff: (workspaceId: string, filePath: string) => Promise<void>;
 	openDiff: (
@@ -461,8 +468,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 				}
 			}
 		}
-		// Markdown files open with a live preview pane beside them (auto-open).
-		const { layout: seedLayout } = buildFilePaneLayout(filePath);
+		const { layout: seedLayout } = buildFilePaneLayout(filePath, opts?.view);
 		await wsStore.createTab(workspaceId, undefined, seedLayout, { activate });
 	},
 
