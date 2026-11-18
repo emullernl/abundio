@@ -119,7 +119,7 @@ interface WindowUiState {
 	/** Back to the **Workspace view** from either other view (Switch to). */
 	showWorkspaceView: () => void;
 	/** The Orchestrator view's split: the share of its height (below the tab
-	 *  strip) the top area takes, half by default, and whether that area is
+	 *  strip) the top area takes, two thirds by default, and whether that area is
 	 *  collapsed to the tab strip. Per Window, persisted. */
 	orchestratorTopRatio: number;
 	orchestratorTopCollapsed: boolean;
@@ -199,8 +199,10 @@ export interface NewTaskRequest {
 	onBack?: () => void;
 }
 
-/** Orchestrator view split: default and limits of the top area's share. */
-export const ORCHESTRATOR_TOP_DEFAULT = 0.5;
+/** Orchestrator view split: default and limits of the top area's share.
+ *  By default the top area takes two thirds, the Orchestrator's panes a
+ *  third. */
+export const ORCHESTRATOR_TOP_DEFAULT = 2 / 3;
 export const ORCHESTRATOR_TOP_MIN = 0.1;
 export const ORCHESTRATOR_TOP_MAX = 0.9;
 
@@ -395,7 +397,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 		}),
 		{
 			name: persistKey,
-			version: 2,
+			version: 3,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -420,6 +422,13 @@ export const useWindowUiStore = create<WindowUiState>()(
 							fleetGrid: { ...grid, filmstripRatio: FILMSTRIP_DEFAULT },
 						};
 					}
+				}
+				// v3: the Orchestrator view's top area widened from half to two
+				// thirds. A stored 0.5 is the old default, never dragged, so it
+				// follows the new one. A drag that landed on exactly half moves
+				// too; that is rare and accepted, as in v2.
+				if (version < 3 && state.orchestratorTopRatio === 0.5) {
+					state = { ...state, orchestratorTopRatio: ORCHESTRATOR_TOP_DEFAULT };
 				}
 				return state;
 			},

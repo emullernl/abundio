@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useWindowUiStore } from "../windowUiStore";
+import { ORCHESTRATOR_TOP_DEFAULT, useWindowUiStore } from "../windowUiStore";
 
 /** Fold state for Worktree sets — see the "Folded set" entry in GLOSSARY.md. */
 describe("windowUiStore — folded sets", () => {
@@ -136,6 +136,46 @@ describe("windowUiStore — Orchestrator view (ADR-0057)", () => {
 		useWindowUiStore.setState({ fleetConsoleOpen: true });
 		useWindowUiStore.getState().showWorkspaceView();
 		expect(useWindowUiStore.getState().fleetConsoleOpen).toBe(false);
+	});
+
+	it("gives the top area two thirds by default, the panes a third", () => {
+		expect(ORCHESTRATOR_TOP_DEFAULT).toBeCloseTo(2 / 3);
+	});
+
+	const migrate = (state: object, version: number) => {
+		const fn = useWindowUiStore.persist.getOptions().migrate;
+		if (!fn) throw new Error("expected a migrate function");
+		return fn(state, version) as Record<string, unknown>;
+	};
+
+	it("moves the old 50% default to the new one", () => {
+		expect(migrate({ orchestratorTopRatio: 0.5 }, 2).orchestratorTopRatio).toBe(
+			ORCHESTRATOR_TOP_DEFAULT,
+		);
+	});
+
+	it("keeps a split the user dragged", () => {
+		expect(migrate({ orchestratorTopRatio: 0.4 }, 2).orchestratorTopRatio).toBe(
+			0.4,
+		);
+		expect(migrate({ orchestratorTopRatio: 0.5 }, 3).orchestratorTopRatio).toBe(
+			0.5,
+		);
+	});
+
+	it("leaves a state without the field alone, for merge to fill", () => {
+		expect(migrate({}, 2)).not.toHaveProperty("orchestratorTopRatio");
+	});
+
+	it("runs a v1 state through both the v2 and the v3 steps", () => {
+		const s = migrate(
+			{ orchestratorTopRatio: 0.5, fleetGrid: { filmstripRatio: 0.25 } },
+			1,
+		);
+		expect(s.orchestratorTopRatio).toBe(ORCHESTRATOR_TOP_DEFAULT);
+		expect((s.fleetGrid as { filmstripRatio: number }).filmstripRatio).toBe(
+			1 / 3,
+		);
 	});
 });
 

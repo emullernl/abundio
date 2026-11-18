@@ -23,7 +23,7 @@ describe("orchestratorLayout", () => {
 	const room = (view: number) =>
 		view - ORCHESTRATOR_TAB_STRIP - ORCHESTRATOR_DIVIDER;
 
-	it("splits the room by the ratio, half by default", () => {
+	it("splits the room by the ratio", () => {
 		expect(topContentHeight(0.5, false, 1000)).toBe(Math.round(room(1000) / 2));
 		expect(topContentHeight(0.25, false, 1000)).toBe(
 			Math.round(room(1000) / 4),
