@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneNode, WorkspaceWithTabs } from "../../types";
-import { agentPanes, workspaces } from "../fixtures";
+import { agentPanes, orchestratorWorkspace, workspaces } from "../fixtures";
 import { mockInvoke } from "../mockInvoke";
 
 function collectPaneIds(node: PaneNode, into: Set<string>): void {
@@ -13,7 +13,7 @@ function collectPaneIds(node: PaneNode, into: Set<string>): void {
 
 function allPaneIds(): Set<string> {
 	const ids = new Set<string>();
-	for (const ws of workspaces) {
+	for (const ws of [...workspaces, orchestratorWorkspace]) {
 		for (const tab of ws.tabs) {
 			collectPaneIds(JSON.parse(tab.layoutJson) as PaneNode, ids);
 		}

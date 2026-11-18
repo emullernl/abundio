@@ -58,6 +58,12 @@ See [all releases](https://github.com/emullernl/abundio/releases) for previous v
 
 *The Fleet Console (`Cmd+Shift+A` / `Ctrl+Shift+A`): every agent in the window at a glance. Each tile is the agent's live terminal — type into it, answer a waiting prompt, or fire a prompt action — with a coloured edge for its status, so the ones that need you stand out.*
 
+### Orchestrator
+
+![Orchestrator view with the agent graph, a Peek at one agent and the Orchestrator's answer](.github/assets/orchestrator-screenshot.png)
+
+*The Orchestrator view (`Cmd+Shift+O` / `Ctrl+Shift+O`): every open workspace's agents as a live organisation chart. Click an agent to peek at its terminal and browse its files; ask the Orchestrator below what everyone is doing or who needs you.*
+
 ## Supported coding agents
 
 Abundio ships built-in support for these AI coding CLI agents. Any that are installed on your `$PATH` are auto-detected — no configuration needed — and can be launched straight into a pane.
