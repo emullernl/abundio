@@ -89,7 +89,8 @@ export function AgentRow({
 						: "hover:bg-[var(--row-hover-bg)]"
 				}`}
 				style={{
-					padding: "6px 10px 6px 8px",
+					// Tighter inside a grouped list's cards: it can hold many Agents.
+					padding: showWorkspace ? "6px 10px 6px 8px" : "3px 10px 3px 8px",
 					borderLeft: selected
 						? "2px solid var(--accent)"
 						: "2px solid transparent",

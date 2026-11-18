@@ -90,7 +90,7 @@ export function AgentsList() {
 			{!collapsed && (
 				<div
 					className={`flex-1 min-h-0 overflow-y-auto flex flex-col ${
-						grouped ? "gap-1.5" : "gap-0.5"
+						grouped ? "gap-1" : "gap-0.5"
 					}`}
 					style={{ padding: "6px 8px" }}
 				>
@@ -108,7 +108,7 @@ export function AgentsList() {
 						groups.map((group) => (
 							<div
 								key={group.workspaceId ?? "all"}
-								className="flex flex-col gap-0.5"
+								className={`flex flex-col ${grouped ? "" : "gap-0.5"}`}
 								role={grouped ? "group" : undefined}
 								data-testid={grouped ? "agents-group" : undefined}
 								// A grouped Workspace sits on a darker card, so its Agents read
@@ -156,9 +156,9 @@ function GroupLabel({ workspaceId }: { workspaceId: string }) {
 			style={{
 				fontSize: 10.5,
 				fontWeight: 600,
-				lineHeight: "16px",
+				lineHeight: "14px",
 				color: "var(--fg-secondary)",
-				padding: "4px 10px 2px",
+				padding: "3px 10px 1px",
 			}}
 		>
 			{name}
