@@ -789,6 +789,15 @@ export const orchestratorWorkspace: WorkspaceWithTabs = {
 	],
 };
 
+// The Orchestrator's own pane: not in WS_DEFS, so register it by hand.
+// "ready" because it has just answered.
+agentPanes["demo-orchestrator-pane"] = {
+	mode: "agent",
+	agentId: "claude",
+	state: "ready",
+	transcript: "orchestratorSession",
+};
+
 /** workspaceId → rootFolder, for resolving git/summary requests. */
 export const workspaceRoots: Record<string, string> = Object.fromEntries(
 	workspaces.map((w) => [w.id, w.rootFolder]),

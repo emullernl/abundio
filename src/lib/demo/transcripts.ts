@@ -268,6 +268,20 @@ const sqlRun = [
 	`${DIM}~/code/data-warehouse${RESET} ${GREEN}❯${RESET} `,
 ].join("\r\n");
 
+/** The Orchestrator (Claude Code) answering "Who needs me?" — ready. */
+const orchestratorSession = [
+	`${ORANGE}✻${RESET} ${BOLD}Claude Code${RESET} ${DIM}v2.0.14 · Orchestrator · Personal profile${RESET}`,
+	"",
+	`${GREY}> Who needs me?${RESET}`,
+	`${ORANGE}●${RESET} Four agents are waiting for you, and one has failed:`,
+	`  ${BOLD}payments-api${RESET} ${DIM}(Copilot)${RESET}        finished the Stripe webhook retry, 24 tests pass`,
+	`  ${BOLD}design-system${RESET} ${DIM}(Kimi)${RESET}          asks to apply the palette to ${CYAN}tokens/elevation.css${RESET}`,
+	`  ${BOLD}data-warehouse${RESET} ${DIM}(Qwen)${RESET}         asks before a full refresh of ${CYAN}fact_orders${RESET}`,
+	`  ${BOLD}legacy-monolith${RESET} ${DIM}(Copilot)${RESET}     finished and is waiting for your next task`,
+	`  ${RED}infra-terraform${RESET} ${DIM}(Codex)${RESET}       ${RED}failed:${RESET} the AWS provider must be pinned to ^5.0`,
+	`  Want me to pass a message to any of them?`,
+].join("\r\n");
+
 /**
  * Shown in panes the user creates at runtime (new tab, split, launch picker) —
  * these pane ids aren't in `fixtures.agentPanes`, so there's no canned
@@ -300,4 +314,5 @@ export const TRANSCRIPTS: Record<string, string> = {
 	pythonTrain,
 	terraformPlan,
 	sqlRun,
+	orchestratorSession,
 };
