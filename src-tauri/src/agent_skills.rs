@@ -357,6 +357,29 @@ mod tests {
         assert!(SKILL_MD.contains("ABUNDIO_AGENT_TOKEN"));
     }
 
+    /// Agents choose a skill by its description alone, and several cut it
+    /// off past 1024 characters without warning. It is a plain YAML scalar,
+    /// so `: ` or ` #` inside it would break the frontmatter.
+    #[test]
+    fn skill_description_fits_and_parses() {
+        // `lines()` also strips a CR, so a CRLF checkout parses the same.
+        let line = SKILL_MD
+            .lines()
+            .skip(1)
+            .take_while(|l| *l != "---")
+            .find_map(|l| l.strip_prefix("description: "))
+            .expect("frontmatter has a description");
+        let first = line.chars().next().expect("description is not empty");
+        assert!(line.chars().count() <= 1024, "{} chars", line.chars().count());
+        assert!(!line.contains(": "), "`: ` in the description");
+        assert!(!line.contains(" #"), "` #` in the description");
+        assert!(
+            !"\"'[]{}>|*&!%@`#,-?:".contains(first),
+            "description starts with YAML indicator {first:?}"
+        );
+        assert!(!line.ends_with(':'), "description ends with `:`");
+    }
+
     #[test]
     fn rewrites_a_changed_copy_and_leaves_an_equal_one_alone() {
         let (_d, p) = setup();

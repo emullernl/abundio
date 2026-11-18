@@ -1,6 +1,6 @@
 ---
 name: abundio
-description: Work with the other agents and terminal panes in Abundio — in your own Workspace, and in the other Workspaces of your Profile when the user asks — list them, read their output, prompt another agent and wait for its answer, start a helper agent in a new pane or a new git worktree, run a command in an idle shell and wait for its output, share the Workspace's notes, and reach the user (call them over, show your progress). Use when the user asks you to delegate to, coordinate with, check on or review the work of another agent, or to use another pane. Only works inside an Abundio pane.
+description: Inside an Abundio pane (ABUNDIO_AGENT_TOKEN set), use whenever the user asks for anything beyond your own pane — open, start or spin up a new or helper agent ("open a new agent", "start Codex on this", "start another Claude in a new pane"); open a new pane, tab, split or terminal, or run something in another one; work in a new git worktree, or in parallel in another pane or worktree; prompt, check on, read, review or wait for another agent or pane; read or add to the Workspace notes; notify the user or show progress. Use it even when the user does not say "Abundio" or "skill". The `abundio` command lists, reads, prompts, starts and waits for the agents and panes of your Workspace and of the other Workspaces of your Profile. Outside an Abundio pane it does nothing; for work you can do yourself, such as your own subagents, it is not needed.
 ---
 
 # Abundio: other agents and panes
