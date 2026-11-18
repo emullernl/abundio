@@ -425,7 +425,8 @@ export const useWindowUiStore = create<WindowUiState>()(
 				}
 				// v3: the Orchestrator view's top area widened from half to two
 				// thirds. A stored 0.5 is the old default, never dragged, so it
-				// follows the new one.
+				// follows the new one. A drag that landed on exactly half moves
+				// too; that is rare and accepted, as in v2.
 				if (version < 3 && state.orchestratorTopRatio === 0.5) {
 					state = { ...state, orchestratorTopRatio: ORCHESTRATOR_TOP_DEFAULT };
 				}

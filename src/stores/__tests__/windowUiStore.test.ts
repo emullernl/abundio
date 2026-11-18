@@ -162,6 +162,21 @@ describe("windowUiStore — Orchestrator view (ADR-0057)", () => {
 			0.5,
 		);
 	});
+
+	it("leaves a state without the field alone, for merge to fill", () => {
+		expect(migrate({}, 2)).not.toHaveProperty("orchestratorTopRatio");
+	});
+
+	it("runs a v1 state through both the v2 and the v3 steps", () => {
+		const s = migrate(
+			{ orchestratorTopRatio: 0.5, fleetGrid: { filmstripRatio: 0.25 } },
+			1,
+		);
+		expect(s.orchestratorTopRatio).toBe(ORCHESTRATOR_TOP_DEFAULT);
+		expect((s.fleetGrid as { filmstripRatio: number }).filmstripRatio).toBe(
+			1 / 3,
+		);
+	});
 });
 
 describe("windowUiStore — the Peek's width", () => {
