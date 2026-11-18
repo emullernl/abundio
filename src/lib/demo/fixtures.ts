@@ -789,6 +789,8 @@ export const orchestratorWorkspace: WorkspaceWithTabs = {
 	],
 };
 
+// The Orchestrator's own pane: not in WS_DEFS, so register it by hand.
+// "ready" because it has just answered.
 agentPanes["demo-orchestrator-pane"] = {
 	mode: "agent",
 	agentId: "claude",

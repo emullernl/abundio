@@ -278,7 +278,7 @@ const orchestratorSession = [
 	`  ${BOLD}design-system${RESET} ${DIM}(Kimi)${RESET}          asks to apply the palette to ${CYAN}tokens/elevation.css${RESET}`,
 	`  ${BOLD}data-warehouse${RESET} ${DIM}(Qwen)${RESET}         asks before a full refresh of ${CYAN}fact_orders${RESET}`,
 	`  ${BOLD}legacy-monolith${RESET} ${DIM}(Copilot)${RESET}     finished and is waiting for your next task`,
-	`  ${RED}infra-terraform${RESET} ${DIM}(Codex)${RESET}        ${RED}failed:${RESET} the AWS provider must be pinned to ^5.0`,
+	`  ${RED}infra-terraform${RESET} ${DIM}(Codex)${RESET}       ${RED}failed:${RESET} the AWS provider must be pinned to ^5.0`,
 	`  Want me to pass a message to any of them?`,
 ].join("\r\n");
 
