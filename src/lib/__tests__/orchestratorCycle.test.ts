@@ -100,7 +100,8 @@ describe("cycleOrchestrator", () => {
 			phase: "ready",
 			peekPaneId: null,
 			selectedTabId: "file-tab",
-			peekFocusTick: 0,
+			peekFocused: false,
+			fileTabFocused: true,
 		});
 	});
 
@@ -111,7 +112,9 @@ describe("cycleOrchestrator", () => {
 			selectedPaneId: "a1",
 			// The Peek sits beside a file tab too: the file stays in view.
 			selectedTabId: "file-tab",
-			peekFocusTick: 1,
+			peekFocused: true,
+			// A file tab gives the keyboard up to the Peek.
+			fileTabFocused: false,
 		});
 	});
 
@@ -120,6 +123,7 @@ describe("cycleOrchestrator", () => {
 		useWorkspaceStore.setState({ focusedPaneId: "a1" });
 		cycleOrchestrator(1);
 		expect(useOrchestratorStore.getState().peekPaneId).toBeNull();
+		expect(useOrchestratorStore.getState().peekFocused).toBe(false);
 		expect(useWorkspaceStore.getState().focusedPaneId).toBe("o1");
 	});
 });

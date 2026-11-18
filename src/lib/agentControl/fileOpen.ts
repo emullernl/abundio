@@ -110,7 +110,9 @@ export async function openFileFor(
 			{ focus: request.focus },
 		);
 		if (request.focus) {
-			useOrchestratorStore.getState().set({ fileTabFocused: true });
+			useOrchestratorStore
+				.getState()
+				.set({ fileTabFocused: true, peekFocused: false });
 		}
 		// Only for a tab that is on screen: a pending line nobody consumes
 		// would wait for whichever File pane next opens this file, anywhere.

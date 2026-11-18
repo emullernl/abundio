@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { closePeek } from "../../lib/orchestratorActions";
+import { useEffect, useMemo } from "react";
+import { closePeek, focusPeek } from "../../lib/orchestratorActions";
 import { findPaneLocation, switchToPane } from "../../lib/paneLocation";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { requestPaneClose } from "../../stores/paneCloseConfirmStore";
@@ -38,20 +38,32 @@ export function PeekPane({ paneId }: { paneId: string }) {
 	}, [where, ptyId, isAgent]);
 
 	// Focus is the Peek's own, like a Fleet tile's: clicking into it takes
-	// it, and focusing a pane of the Workspace below gives it up.
-	const [focused, setFocused] = useState(false);
-	// The Agent cycle peeked: the Peek has the keyboard.
-	const focusTick = useOrchestratorStore((s) => s.peekFocusTick);
+	// it, and focusing a pane of the Workspace below (or a file tab) gives it
+	// up. It is in the store so pane shortcuts can find it (`targetPaneId`).
+	const focused = useOrchestratorStore((s) => s.peekFocused);
 	useEffect(() => {
-		if (focusTick > 0) setFocused(true);
-	}, [focusTick]);
-	useEffect(
-		() =>
-			useWorkspaceStore.subscribe((s, prev) => {
-				if (s.focusedPaneId !== prev.focusedPaneId) setFocused(false);
-			}),
-		[],
-	);
+		const giveUp = () => {
+			if (useOrchestratorStore.getState().peekFocused) {
+				useOrchestratorStore.getState().set({ peekFocused: false });
+			}
+		};
+		const stopStore = useWorkspaceStore.subscribe((s, prev) => {
+			if (s.focusedPaneId !== prev.focusedPaneId) giveUp();
+		});
+		// A click into the pane that is already the Focused pane changes no
+		// store value, so watch focus itself too.
+		const onFocusIn = (e: FocusEvent) => {
+			const el = e.target instanceof Element ? e.target : null;
+			if (el?.closest("[data-pane-id]") && !el.closest("[data-peek-pane]")) {
+				giveUp();
+			}
+		};
+		document.addEventListener("focusin", onFocusIn);
+		return () => {
+			stopStore();
+			document.removeEventListener("focusin", onFocusIn);
+		};
+	}, []);
 
 	const workspaceName = where?.ws.name ?? "";
 	const tabName = where?.tab.name ?? "";
@@ -93,7 +105,7 @@ export function PeekPane({ paneId }: { paneId: string }) {
 					agentId={agentId}
 					fleet={fleet}
 					isFocused={focused}
-					onFocus={() => setFocused(true)}
+					onFocus={focusPeek}
 					onSplitHorizontal={() => {}}
 					onSplitVertical={() => {}}
 					onClose={() =>

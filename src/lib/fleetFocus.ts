@@ -1,3 +1,4 @@
+import { useOrchestratorStore } from "../stores/orchestratorStore";
 import {
 	TILE_ZOOM_DEFAULT,
 	TILE_ZOOM_STEP,
@@ -18,16 +19,24 @@ export function orchestratorViewShowing(): boolean {
 	return s.orchestratorViewOpen && !s.statisticsOverlayOpen;
 }
 
+/** The peeked pane, when the Orchestrator view is on screen and its **Peek**
+ *  has keyboard focus; null otherwise. */
+export function focusedPeekPaneId(): string | null {
+	if (fleetConsoleShowing() || !orchestratorViewShowing()) return null;
+	const { peekFocused, peekPaneId } = useOrchestratorStore.getState();
+	return peekFocused ? peekPaneId : null;
+}
+
 /**
  * The pane that pane-scoped commands act on: the **Focused tile** while the
- * Fleet Console is on screen, otherwise the Workspace view's **Focused pane**.
- * Every "act on the focused pane" shortcut resolves its target through here,
- * so none can reach into the hidden Workspace view from the console.
+ * Fleet Console is on screen, the peeked pane while the **Peek** has the
+ * keyboard in the Orchestrator view, otherwise the Workspace view's
+ * **Focused pane**. Every "act on the focused pane" shortcut resolves its
+ * target through here, so none can reach into a pane the user is not in.
  */
 export function targetPaneId(): string | null {
-	return fleetConsoleShowing()
-		? useWindowUiStore.getState().focusedTileId
-		: useWorkspaceStore.getState().focusedPaneId;
+	if (fleetConsoleShowing()) return useWindowUiStore.getState().focusedTileId;
+	return focusedPeekPaneId() ?? useWorkspaceStore.getState().focusedPaneId;
 }
 
 /**
@@ -36,11 +45,20 @@ export function targetPaneId(): string | null {
  * setting the Workspace view's Focused pane there would point the hidden view
  * at a pane that is usually in another Workspace or Tab, and after the
  * Console closes typing and pane shortcuts would land in a terminal nobody
- * can see.
+ * can see. The same holds for the **Peek** in the Orchestrator view.
  */
 export function focusPaneForInput(paneId: string): void {
 	if (fleetConsoleShowing()) {
 		useWindowUiStore.getState().setFocusedTile(paneId);
+	} else if (
+		orchestratorViewShowing() &&
+		paneId === useOrchestratorStore.getState().peekPaneId
+	) {
+		// The peeked pane belongs to another Workspace: the Peek takes focus,
+		// and the Orchestrator workspace's Focused pane stays its own.
+		useOrchestratorStore
+			.getState()
+			.set({ peekFocused: true, fileTabFocused: false });
 	} else {
 		useWorkspaceStore.getState().setFocusedPane(paneId);
 	}
@@ -70,9 +88,16 @@ export function useTargetPaneId(): string | null {
 	const inFleet = useWindowUiStore(
 		(s) => s.fleetConsoleOpen && !s.statisticsOverlayOpen,
 	);
+	const inOrchestrator = useWindowUiStore(
+		(s) => s.orchestratorViewOpen && !s.statisticsOverlayOpen,
+	);
 	const tile = useWindowUiStore((s) => s.focusedTileId);
+	const peek = useOrchestratorStore((s) =>
+		s.peekFocused ? s.peekPaneId : null,
+	);
 	const pane = useWorkspaceStore((s) => s.focusedPaneId);
-	return inFleet ? tile : pane;
+	if (inFleet) return tile;
+	return (inOrchestrator ? peek : null) ?? pane;
 }
 
 /**

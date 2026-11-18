@@ -99,7 +99,9 @@ export function OrchestratorFileTabs({ topOffset }: { topOffset: number }) {
 							workspaceId={ws.id}
 							isFocused={shown && isSelected && focused}
 							onFocus={() =>
-								useOrchestratorStore.getState().set({ fileTabFocused: true })
+								useOrchestratorStore
+									.getState()
+									.set({ fileTabFocused: true, peekFocused: false })
 							}
 							onClose={() => requestCloseOrchestratorTab(tab.id)}
 						/>

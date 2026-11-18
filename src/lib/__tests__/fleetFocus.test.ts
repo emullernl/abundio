@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
 	cycleFleet,
+	focusedPeekPaneId,
 	focusPaneForInput,
 	isFleetTileOnScreen,
 	navigateFleet,
@@ -18,6 +20,7 @@ describe("fleetFocus", () => {
 	beforeEach(() => {
 		useWindowUiStore.setState({
 			fleetConsoleOpen: false,
+			orchestratorViewOpen: false,
 			statisticsOverlayOpen: false,
 			focusedTileId: null,
 			spotlightTileId: null,
@@ -211,5 +214,61 @@ describe("fleetFocus — input focus and on-screen tiles", () => {
 		expect(isFleetTileOnScreen("near")).toBe(true);
 		expect(isFleetTileOnScreen("far")).toBe(false);
 		expect(isFleetTileOnScreen("not-a-tile")).toBe(false);
+	});
+
+	describe("the Peek in the Orchestrator view", () => {
+		beforeEach(() => {
+			useWindowUiStore.setState({ orchestratorViewOpen: true });
+			useOrchestratorStore.setState({
+				peekPaneId: "peeked",
+				peekFocused: false,
+				fileTabFocused: false,
+			});
+		});
+
+		it("targets the peeked pane while the Peek has the keyboard", () => {
+			useOrchestratorStore.setState({ peekFocused: true });
+			expect(focusedPeekPaneId()).toBe("peeked");
+			expect(targetPaneId()).toBe("peeked");
+		});
+
+		it("targets the Focused pane while the Peek does not", () => {
+			expect(focusedPeekPaneId()).toBeNull();
+			expect(targetPaneId()).toBe("ws-pane");
+		});
+
+		it("ignores a stale Peek focus once the view is gone", () => {
+			useOrchestratorStore.setState({ peekFocused: true });
+			useWindowUiStore.setState({ orchestratorViewOpen: false });
+			expect(targetPaneId()).toBe("ws-pane");
+			useWindowUiStore.setState({
+				orchestratorViewOpen: true,
+				statisticsOverlayOpen: true,
+			});
+			expect(targetPaneId()).toBe("ws-pane");
+		});
+
+		it("lets the Fleet Console's Focused tile win", () => {
+			useOrchestratorStore.setState({ peekFocused: true });
+			useWindowUiStore.setState({
+				fleetConsoleOpen: true,
+				focusedTileId: "tile-1",
+			});
+			expect(targetPaneId()).toBe("tile-1");
+		});
+
+		it("acting on the peeked pane focuses the Peek, not the Focused pane", () => {
+			useOrchestratorStore.setState({ fileTabFocused: true });
+			focusPaneForInput("peeked");
+			expect(useOrchestratorStore.getState().peekFocused).toBe(true);
+			expect(useOrchestratorStore.getState().fileTabFocused).toBe(false);
+			expect(useWorkspaceStore.getState().focusedPaneId).toBe("ws-pane");
+		});
+
+		it("acting on another pane focuses it as before", () => {
+			focusPaneForInput("orch-pane");
+			expect(useOrchestratorStore.getState().peekFocused).toBe(false);
+			expect(useWorkspaceStore.getState().focusedPaneId).toBe("orch-pane");
+		});
 	});
 });
