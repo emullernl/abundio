@@ -77,7 +77,11 @@ export function PeekExplorer({
 			{ workspaceId: ws.id, kind: "file", path },
 			{ focus: true },
 		)
-			.then(() => useOrchestratorStore.getState().set({ fileTabFocused: true }))
+			.then(() =>
+				useOrchestratorStore
+					.getState()
+					.set({ fileTabFocused: true, peekFocused: false }),
+			)
 			.catch((e) => console.warn("[peek explorer] could not open", e));
 	};
 

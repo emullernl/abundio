@@ -12,9 +12,13 @@ import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { orchestratorViewShowing } from "./fleetFocus";
 import { orchestratorPane } from "./orchestrator";
-import { closePeek, peekAgent } from "./orchestratorActions";
+import {
+	closePeekToOrchestrator,
+	focusPeek,
+	focusWhenPlaced,
+	peekAgent,
+} from "./orchestratorActions";
 import { type GraphModel, graphModel } from "./orchestratorGraph";
-import { getTerminal } from "./terminalManager";
 import { buildWorkspaceRows, flattenRowsToIds } from "./worktreeGrouping";
 
 /** The Agents in the graph's order: Workspaces top to bottom, Agents left
@@ -71,27 +75,6 @@ function currentModel(): GraphModel {
 	});
 }
 
-/**
- * Gives `paneId`'s terminal the keyboard once it is where it is going.
- * Moving a terminal into the Peek drops its focus, and the move hides it
- * until it has painted (ADR-0040): a browser ignores `focus()` on a hidden
- * element. So keep trying, frame by frame, until focus is really inside it
- * (`within`: the container it must sit in, or anywhere when null).
- */
-function focusWhenPlaced(paneId: string, within: string | null): void {
-	let frames = 0;
-	const tick = () => {
-		const term = getTerminal(paneId)?.term;
-		const el = term?.element;
-		if (term && el?.isConnected && (!within || el.closest(within))) {
-			term.focus();
-			if (el.contains(document.activeElement)) return;
-		}
-		if (++frames < 90) requestAnimationFrame(tick);
-	};
-	requestAnimationFrame(tick);
-}
-
 /** Runs the Agent cycle in the Orchestrator view. */
 export function cycleOrchestrator(step: 1 | -1): void {
 	const orch = useOrchestratorStore.getState();
@@ -104,18 +87,9 @@ export function cycleOrchestrator(step: 1 | -1): void {
 	);
 	if (stop) {
 		peekAgent(stop);
-		orch.set({ peekFocusTick: orch.peekFocusTick + 1 });
+		focusPeek();
 		focusWhenPlaced(stop, "[data-peek-pane]");
 		return;
 	}
-	closePeek();
-	const ws = useWorkspaceStore
-		.getState()
-		.workspaces.find((w) => w.id === orch.workspaceId);
-	const own = ws ? orchestratorPane(ws.tabs) : null;
-	if (!ws || !own) return;
-	const store = useWorkspaceStore.getState();
-	store.setActiveTab(ws.id, own.tabId);
-	store.setFocusedPane(own.paneId);
-	focusWhenPlaced(own.paneId, null);
+	closePeekToOrchestrator();
 }

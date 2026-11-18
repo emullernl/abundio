@@ -26,7 +26,9 @@ vi.mock("../../windowFocus", () => ({
 const sent = h.sent;
 
 import { useAgentSignalsStore } from "../../../stores/agentSignalsStore";
+import { useOrchestratorStore } from "../../../stores/orchestratorStore";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
+import { useWindowUiStore } from "../../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { notePaneInput } from "../../paneInput";
 import { requireAgentCaller } from "../handleControlRequest";
@@ -119,6 +121,18 @@ describe("when a flag clears", () => {
 		h.windowFocused = true;
 		for (const l of h.focusListeners) l(true);
 		expect(flags().a).toBeUndefined();
+		useWorkspaceStore.setState({ focusedPaneId: null });
+	});
+
+	it("when the Peek takes the keyboard in the Orchestrator view", () => {
+		useWorkspaceStore.setState({ focusedPaneId: "orch" });
+		useWindowUiStore.setState({ orchestratorViewOpen: true });
+		useOrchestratorStore.setState({ peekPaneId: "a", peekFocused: false });
+		useAgentSignalsStore.getState().setFlag("a", "look");
+		useOrchestratorStore.setState({ peekFocused: true });
+		expect(flags().a).toBeUndefined();
+		useWindowUiStore.setState({ orchestratorViewOpen: false });
+		useOrchestratorStore.setState({ peekPaneId: null, peekFocused: false });
 		useWorkspaceStore.setState({ focusedPaneId: null });
 	});
 });

@@ -6,6 +6,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITerminalOptions, type ITheme, Terminal } from "@xterm/xterm";
+import { useOrchestratorStore } from "../stores/orchestratorStore";
 import {
 	hasActiveSubagent,
 	peekPreErrorState,
@@ -894,13 +895,24 @@ setTimeout(() => {
 		// context was ready. Meanwhile those panes draw with the DOM renderer.
 		scheduleWebglReconcile();
 	});
-	// The focus flags follow the Focused tile while the Console is on screen,
-	// so they must also move when it does, or when the Console opens/closes.
+	// The focus flags follow the Focused tile while the Console is on screen
+	// and the Peek while it has the keyboard in the Orchestrator view
+	// (`targetPaneId`), so they must also move when those do, or when either
+	// view opens or closes.
 	useWindowUiStore.subscribe((state, prev) => {
 		if (
 			state.focusedTileId !== prev.focusedTileId ||
 			state.fleetConsoleOpen !== prev.fleetConsoleOpen ||
+			state.orchestratorViewOpen !== prev.orchestratorViewOpen ||
 			state.statisticsOverlayOpen !== prev.statisticsOverlayOpen
+		) {
+			syncFocusFlags();
+		}
+	});
+	useOrchestratorStore?.subscribe?.((state, prev) => {
+		if (
+			state.peekFocused !== prev.peekFocused ||
+			state.peekPaneId !== prev.peekPaneId
 		) {
 			syncFocusFlags();
 		}

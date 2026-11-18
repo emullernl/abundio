@@ -57,6 +57,7 @@ import { useDemoBootstrap } from "./lib/demo/useDemoBootstrap";
 import {
 	cycleFleet,
 	fleetConsoleShowing,
+	focusedPeekPaneId,
 	navigateFleet,
 	orchestratorViewShowing,
 	paneLayoutOnly,
@@ -86,6 +87,7 @@ import { toggleMarkdownView } from "./lib/markdownViewToggles";
 import { applyMonacoOverrides } from "./lib/monacoKeymap";
 import { fileWindowTargetForPane, openFileWindow } from "./lib/openFileWindow";
 import { openNewTask } from "./lib/openNewTask";
+import { closePeekToOrchestrator } from "./lib/orchestratorActions";
 import { installOrchestratorSession } from "./lib/orchestratorSession";
 import {
 	requestCloseOrchestratorTab,
@@ -957,6 +959,12 @@ export function App() {
 			}),
 		);
 		registerAction("close-pane", () => {
+			// The Peek borrows another Workspace's Agent: Close pane closes the
+			// Peek, never that Agent's pane.
+			if (focusedPeekPaneId()) {
+				closePeekToOrchestrator();
+				return;
+			}
 			const paneId = targetPaneId();
 			if (paneId) closePane(paneId);
 		});

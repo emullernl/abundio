@@ -218,7 +218,7 @@ export function enterOrchestratorView(): Promise<void> {
 /** The view left the screen: give the Workspace view its Workspace back. */
 export function leaveOrchestratorView(): void {
 	const { workspaceId, returnWorkspaceId } = store();
-	store().set({ phase: "idle", changingAgent: false });
+	store().set({ phase: "idle", changingAgent: false, peekFocused: false });
 	const active = workspaces().activeWorkspaceId;
 	if (!workspaceId || active !== workspaceId) return;
 	const opened = usePtyActivityStore.getState().openedWorkspaceIds;
@@ -321,6 +321,7 @@ export function installOrchestratorSession(): () => void {
 		fileTabs: [],
 		selectedTabId: null,
 		peekPaneId: null,
+		peekFocused: false,
 	});
 	if (orchestratorViewWanted()) void enterOrchestratorView();
 	const stopView = useWindowUiStore.subscribe((s, prev) => {

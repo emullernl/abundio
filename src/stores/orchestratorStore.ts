@@ -52,8 +52,11 @@ interface OrchestratorState {
 	/** Width of the Peek's column, in px; 0 with no Peek. Measured by the
 	 *  view, read by the file tabs so a selected file sits beside the Peek. */
 	peekWidth: number;
-	/** Bumped when the **Agent cycle** peeks: the Peek takes keyboard focus. */
-	peekFocusTick: number;
+	/** Keyboard focus is in the Peek's terminal: pane-scoped shortcuts
+	 *  (prompt action numbers, find, copy, paste, Close pane) act on the
+	 *  peeked pane, as they do on the Focused tile in the Fleet Console.
+	 *  Kept when another Agent is peeked at, so focus follows the Peek. */
+	peekFocused: boolean;
 	/** **Orchestrator tabs** holding files (ADR-0058), in order. */
 	fileTabs: OrchestratorFileTab[];
 	/** The selected Orchestrator tab: a file tab's id, or null for the graph. */
@@ -80,7 +83,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set) => ({
 	panesTop: 0,
 	selectedPaneId: null,
 	peekPaneId: null,
-	peekFocusTick: 0,
+	peekFocused: false,
 	peekWidth: 0,
 	fileTabs: [],
 	selectedTabId: null,

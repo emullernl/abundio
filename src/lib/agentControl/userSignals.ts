@@ -4,6 +4,7 @@
 
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
+import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { currentNotificationTitle } from "../../stores/profileStore";
 import {
 	subscribeStatusChange,
@@ -124,7 +125,17 @@ export function startSignalClearing(): () => void {
 		useWindowUiStore.subscribe((s, prev) => {
 			if (
 				s.focusedTileId !== prev.focusedTileId ||
-				s.fleetConsoleOpen !== prev.fleetConsoleOpen
+				s.fleetConsoleOpen !== prev.fleetConsoleOpen ||
+				s.orchestratorViewOpen !== prev.orchestratorViewOpen
+			) {
+				clearIfTarget();
+			}
+		}),
+		// The Peek taking the keyboard in the Orchestrator view.
+		useOrchestratorStore.subscribe((s, prev) => {
+			if (
+				s.peekFocused !== prev.peekFocused ||
+				s.peekPaneId !== prev.peekPaneId
 			) {
 				clearIfTarget();
 			}

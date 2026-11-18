@@ -171,7 +171,9 @@ function OrchestratorFileSearch() {
 									{ workspaceId, kind: "file", path: entry.path },
 									{ focus: true },
 								).then(() =>
-									useOrchestratorStore.getState().set({ fileTabFocused: true }),
+									useOrchestratorStore
+										.getState()
+										.set({ fileTabFocused: true, peekFocused: false }),
 								);
 							},
 						}
