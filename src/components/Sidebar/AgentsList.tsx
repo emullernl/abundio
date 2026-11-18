@@ -111,15 +111,14 @@ export function AgentsList() {
 								className="flex flex-col gap-0.5"
 								role={grouped ? "group" : undefined}
 								data-testid={grouped ? "agents-group" : undefined}
-								// A grouped Workspace sits on a card, so its Agents read as one
-								// block. Tinted with the text colour, not --bg-tertiary, so a
-								// row's hover (--bg-tertiary) still shows on top of it, in light
-								// and dark themes alike.
+								// A grouped Workspace sits on a darker card, so its Agents read
+								// as one block. Black at partial opacity darkens whatever the
+								// sidebar is in every theme (--bg-primary is lighter than the
+								// sidebar in many themes), and a row's hover still shows on it.
 								style={
 									grouped
 										? {
-												background:
-													"color-mix(in srgb, var(--fg-primary) 8%, transparent)",
+												background: "rgba(0, 0, 0, 0.25)",
 												borderRadius: 6,
 												padding: 2,
 											}
