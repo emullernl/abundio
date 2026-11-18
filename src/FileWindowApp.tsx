@@ -3,9 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CodeEditor } from "./components/FileViewer/CodeEditor";
 import { FileChangeBanner } from "./components/FileViewer/FileChangeBanner";
 import { ImageViewer } from "./components/FileViewer/ImageViewer";
-import { MarkdownRendered } from "./components/FileViewer/MarkdownRendered";
+import { RenderedMarkdownView } from "./components/FileViewer/RenderedMarkdownView";
 import { FileWindowToolbar } from "./components/FileWindow/FileWindowToolbar";
-import { MarkdownFindBar } from "./components/FileWindow/MarkdownFindBar";
 import "./components/FileWindow/FileWindow.css";
 import { DiffViewer } from "./components/GitChanges/DiffViewer";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
@@ -41,17 +40,12 @@ import { printMarkdownPreview } from "./lib/markdownPrint";
 import { applyMonacoOverrides } from "./lib/monacoKeymap";
 import { detectLanguage } from "./lib/monacoShared";
 import { openFileWindowForPath } from "./lib/openFileWindow";
-import { resolvePreviewColorMode } from "./lib/previewColorMode";
 import { resolveWorkspacePath } from "./lib/resolveWorkspacePath";
-import { getTheme } from "./lib/themes";
 import type { GitFileDiff } from "./lib/types";
 import { requestSettingsSnapshot } from "./SettingsApp";
 import type { FilePaneState } from "./stores/explorerStore";
 import { useSettingsStore } from "./stores/settingsStore";
 
-// Base editor font size — the rendered zoom follows Cmd+= / Cmd+- like the
-// Preview pane does.
-const BASE_FONT_SIZE = 14;
 // CodeEditor caches view state by this id. One editor per window.
 const EDITOR_ID = "file-window";
 
@@ -131,14 +125,10 @@ function TextWindow({ info }: { info: FileWindowInfo }) {
 	const infoRef = useRef(info);
 	infoRef.current = info;
 
-	const fontSize = useSettingsStore((s) => s.fontSize);
 	const colorMode = useSettingsStore((s) => s.markdownPreviewColorMode);
 	const toggleColorMode = useSettingsStore(
 		(s) => s.toggleMarkdownPreviewColorMode,
 	);
-	const themeVariant = useSettingsStore((s) => getTheme(s.theme).variant);
-	const resolvedMode = resolvePreviewColorMode(colorMode, themeVariant);
-	const followTheme = colorMode === "auto";
 	const findLabel = useShortcutLabel("search-in-terminal");
 	const toggleLabel = useShortcutLabel("toggle-markdown-preview");
 
@@ -403,36 +393,15 @@ function TextWindow({ info }: { info: FileWindowInfo }) {
 			/>
 			<div className="relative flex-1 min-h-0 flex flex-col">
 				{view === "rendered" ? (
-					<>
-						{findOpen && (
-							<MarkdownFindBar
-								target={contentRef.current}
-								contentKey={buffer.content}
-								onClose={() => setFindOpen(false)}
-							/>
-						)}
-						<div
-							ref={contentRef}
-							tabIndex={-1}
-							className="flex-1 min-h-0 overflow-auto abundio-md-preview outline-none"
-							data-color-mode={resolvedMode}
-							data-themed={followTheme ? "true" : undefined}
-							style={{
-								padding: "32px 44px",
-								background: followTheme ? "var(--bg-primary)" : "#ffffff",
-							}}
-						>
-							<div style={{ maxWidth: 860, margin: "0 auto" }}>
-								<MarkdownRendered
-									content={buffer.content}
-									baseDir={dirOf(info.filePath)}
-									resolvedMode={resolvedMode}
-									zoom={fontSize / BASE_FONT_SIZE}
-									onLinkClick={onLinkClick}
-								/>
-							</div>
-						</div>
-					</>
+					<RenderedMarkdownView
+						ref={contentRef}
+						content={buffer.content}
+						baseDir={dirOf(info.filePath)}
+						onLinkClick={onLinkClick}
+						findOpen={findOpen}
+						onCloseFind={() => setFindOpen(false)}
+						layout="window"
+					/>
 				) : (
 					<CodeEditor
 						tabId={EDITOR_ID}

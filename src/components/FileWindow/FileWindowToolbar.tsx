@@ -2,6 +2,7 @@ import { Monitor, Printer, Search, Sun } from "lucide-react";
 import type { MarkdownView } from "../../lib/ipc";
 import { isMac } from "../../lib/platform";
 import type { PreviewColorMode } from "../../lib/previewColorMode";
+import { MarkdownViewSwitch } from "../FileViewer/MarkdownViewSwitch";
 
 /** Height of the one bar a File window has. On macOS it is also the title
  *  bar: the native traffic lights float over its left end. */
@@ -38,13 +39,6 @@ const iconButtonClass =
 	"flex items-center justify-center rounded cursor-pointer border-0 bg-transparent " +
 	"text-[var(--fg-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--fg-primary)] " +
 	"focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--accent)] transition-colors duration-100";
-
-const segmentClass =
-	"flex items-center justify-center rounded-[4px] cursor-pointer border-0 transition-colors duration-100 " +
-	"focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--accent)]";
-const segmentOn = "bg-[var(--bg-primary)] text-[var(--fg-primary)] shadow-sm";
-const segmentOff =
-	"bg-transparent text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]";
 
 function IconButton({
 	icon: Icon,
@@ -137,10 +131,6 @@ function MarkdownTools({
 	findLabel,
 	toggleLabel,
 }: MarkdownControls) {
-	const views: Array<{ id: MarkdownView; label: string }> = [
-		{ id: "rendered", label: "Rendered" },
-		{ id: "source", label: "Source" },
-	];
 	return (
 		<>
 			<div className="flex items-center gap-1">
@@ -161,29 +151,12 @@ function MarkdownTools({
 				)}
 			</div>
 
-			<div
+			<MarkdownViewSwitch
+				view={view}
+				onChange={onViewChange}
 				title={toggleLabel}
-				className="flex items-center"
-				style={{
-					padding: 2,
-					gap: 2,
-					borderRadius: 6,
-					background: "var(--bg-tertiary)",
-				}}
-			>
-				{views.map((v) => (
-					<button
-						key={v.id}
-						type="button"
-						aria-pressed={view === v.id}
-						onClick={() => onViewChange(v.id)}
-						className={`${segmentClass} ${view === v.id ? segmentOn : segmentOff}`}
-						style={{ height: 22, padding: "0 10px", fontSize: 12 }}
-					>
-						{v.label}
-					</button>
-				))}
-			</div>
+				size="window"
+			/>
 		</>
 	);
 }

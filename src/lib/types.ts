@@ -1,5 +1,9 @@
 // ── Pane layout tree (recursive) ──
 
+/** Which view a markdown file shows, one at a time: rendered (read-only)
+ *  or source (editable). File panes and File windows alike (ADR-0061). */
+export type MarkdownView = "rendered" | "source";
+
 export type PaneNode =
 	| {
 			type: "terminal";
@@ -28,6 +32,9 @@ export type PaneNode =
 			diffSource?: "git" | "file";
 			diffSection?: GitChangedFile["section"];
 			isDeleted?: boolean;
+			/** A markdown file's view (ADR-0061). Absent: follow the
+			 *  **Open markdown rendered** setting. */
+			markdownView?: MarkdownView;
 	  }
 	| {
 			// A live markdown preview bound to a file pane (its "source pane").

@@ -90,7 +90,7 @@ pub enum MarkdownView {
 }
 
 impl MarkdownView {
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             MarkdownView::Rendered => "rendered",
             MarkdownView::Source => "source",
@@ -99,7 +99,7 @@ impl MarkdownView {
 
     /// Unknown values read as `Rendered`: a row written by a newer build should
     /// still open, in the safe read-only view.
-    fn from_str(s: &str) -> Self {
+    pub(crate) fn from_str(s: &str) -> Self {
         match s {
             "source" => MarkdownView::Source,
             _ => MarkdownView::Rendered,
@@ -698,6 +698,7 @@ pub async fn file_window_open(
     file_path: String,
     commit_oid: Option<String>,
     diff_section: Option<String>,
+    view: Option<MarkdownView>,
 ) -> Result<(), AbundioError> {
     let meta = store
         .workspace_meta(&workspace_id)?
@@ -713,7 +714,15 @@ pub async fn file_window_open(
     } else {
         native_spelling(&target.file_path)
     };
-    let row = store.upsert(&workspace_id, &target, &canonical)?;
+    let mut row = store.upsert(&workspace_id, &target, &canonical)?;
+    // The view the caller shows (a File pane's, ADR-0061), for a window that
+    // opens now. One already open keeps the view it is in.
+    if let Some(view) = view.filter(|_| kind == FileWindowKind::Text) {
+        if app.get_webview_window(&row.label).is_none() {
+            store.set_view(&row.label, view)?;
+            row.view = view;
+        }
+    }
     open_or_focus(&app, &row, &meta)
 }
 

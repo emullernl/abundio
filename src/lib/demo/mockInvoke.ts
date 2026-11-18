@@ -8,7 +8,7 @@
  * Keyed off the stable **paneId** (`pty_spawn`'s `logId` arg), because
  * `workspaceStore.loadWorkspaces` clears layout ptyIds on load.
  */
-import type { OrchestratorFileTab } from "../ipc";
+import type { MarkdownView, OrchestratorFileTab } from "../ipc";
 import type { PromptActionRow } from "../types";
 import * as fixtures from "./fixtures";
 import { publish } from "./mockBus";
@@ -201,14 +201,17 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 					t.kind === tab.kind &&
 					t.path === tab.path,
 			);
-			if (same) return same;
+			if (same) {
+				if (tab.view) same.view = tab.view as MarkdownView;
+				return same;
+			}
 			const made = {
 				id: `demo-tab-${demoOrchestratorTabs.length + 1}`,
 				workspaceId: String(tab.workspaceId),
 				kind: tab.kind as "file" | "diff" | "commit",
 				path: String(tab.path),
 				commitOid: (tab.commitOid as string | null) ?? null,
-				preview: Boolean(tab.preview),
+				view: (tab.view as MarkdownView | null) ?? null,
 			};
 			demoOrchestratorTabs.push(made);
 			return made;
@@ -220,6 +223,11 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		}
 		case "orchestrator_tab_select":
 			return undefined;
+		case "orchestrator_tab_set_view": {
+			const t = demoOrchestratorTabs.find((x) => x.id === args?.id);
+			if (t) t.view = args?.view as MarkdownView;
+			return undefined;
+		}
 		case "orchestrator_agent_set":
 			demoOrchestratorAgent = (args?.agentId as string | null) ?? null;
 			return undefined;

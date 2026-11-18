@@ -6,6 +6,7 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkFrontmatter from "remark-frontmatter";
 import { remarkFrontmatterTable } from "../../lib/markdownFrontmatter";
 import { markdownSanitizeSchema } from "../../lib/markdownSanitizeSchema";
+import type { LinkModifiers } from "../../lib/markdownView";
 import { rehypeSourceLines } from "../../lib/rehypeSourceLines";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { makeMarkdownImageComponent } from "./MarkdownImage";
@@ -41,7 +42,8 @@ interface MarkdownRenderedProps {
 	zoom: number;
 	/** Every link click lands here, never in the webview — a plain `<a>`
 	 *  click would navigate the whole window away from the app. */
-	onLinkClick: (href: string | undefined) => void;
+	/** `e`: the click's modifier keys (Cmd/Ctrl+click opens a File window). */
+	onLinkClick: (href: string | undefined, e?: LinkModifiers) => void;
 }
 
 /**
@@ -85,7 +87,10 @@ export function MarkdownRendered({
 			}) => {
 				const intercept = (e: React.MouseEvent) => {
 					e.preventDefault();
-					onLinkClickRef.current(href);
+					onLinkClickRef.current(href, {
+						metaKey: e.metaKey,
+						ctrlKey: e.ctrlKey,
+					});
 				};
 				return (
 					<a

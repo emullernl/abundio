@@ -19,7 +19,9 @@ vi.mock("../../ipc", async (orig) => ({
 	},
 }));
 
-const { fileOpenPlace, openFileFor } = await import("../fileOpen");
+const { fileOpenPlace, fileOpenView, openFileFor } = await import(
+	"../fileOpen"
+);
 const { useWorkspaceStore } = await import("../../../stores/workspaceStore");
 const { useExplorerStore } = await import("../../../stores/explorerStore");
 
@@ -68,6 +70,40 @@ describe("file open", () => {
 		expect(fileOpenPlace({ window: false }, false)).toBe("tab");
 	});
 
+	it("asks for a view only for --preview or --line (ADR-0061)", () => {
+		const r = { line: null, preview: false, diff: false, commit: null };
+		expect(fileOpenView(r)).toBeUndefined();
+		expect(fileOpenView({ ...r, preview: true })).toBe("rendered");
+		expect(fileOpenView({ ...r, line: 3 })).toBe("source");
+		// --line wins: a line means something only in the source.
+		expect(fileOpenView({ ...r, line: 3, preview: true })).toBe("source");
+		expect(fileOpenView({ ...r, diff: true, line: 3 })).toBeUndefined();
+	});
+
+	it("--preview opens rendered in a Tab, a tab or a window", async () => {
+		await openFileFor(caller("w"), request({ preview: true }), "w", vi.fn());
+		expect(openFile).toHaveBeenCalledWith("w", "/repo/src/a.ts", {
+			activate: false,
+			view: "rendered",
+		});
+		await openFileFor(caller("o"), request({ preview: true }), "w", vi.fn());
+		expect(openOrchestratorFile).toHaveBeenCalledWith(
+			expect.objectContaining({ view: "rendered" }),
+			{ focus: false },
+		);
+		await openFileFor(
+			caller("w"),
+			request({ preview: true, window: true }),
+			"w",
+			vi.fn(),
+		);
+		expect(openFileWindow).toHaveBeenCalledWith("w", {
+			kind: "text",
+			filePath: "/repo/src/a.ts",
+			view: "rendered",
+		});
+	});
+
 	it("from the Orchestrator, opens a tab without opening the Workspace", async () => {
 		const ensure = vi.fn(() => Promise.resolve());
 		const reply = await openFileFor(
@@ -106,8 +142,10 @@ describe("file open", () => {
 		);
 		expect(reply.opened).toBe("tab");
 		expect(ensure).toHaveBeenCalled();
+		// A line means the source (ADR-0061).
 		expect(openFile).toHaveBeenCalledWith("w", "/repo/src/a.ts", {
 			activate: false,
+			view: "source",
 		});
 		expect(setPendingGotoLine).toHaveBeenCalledWith({
 			filePath: "/repo/src/a.ts",

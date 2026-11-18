@@ -1,6 +1,19 @@
-import { SquareSplitHorizontal, SquareSplitVertical, X } from "lucide-react";
+import {
+	AppWindow,
+	Monitor,
+	Printer,
+	Search,
+	SquareSplitHorizontal,
+	SquareSplitVertical,
+	Sun,
+	X,
+} from "lucide-react";
 import { usePaneDrag } from "../../hooks/usePaneDrag";
+import { useShortcutLabel } from "../../hooks/useShortcutLabel";
+import type { MarkdownView } from "../../lib/types";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { File, GitCompare, Image } from "../Icons";
+import { MarkdownViewSwitch } from "./MarkdownViewSwitch";
 
 type FileType = "text" | "image" | "binary" | "diff";
 
@@ -16,6 +29,19 @@ interface Props {
 	onClose: () => void;
 	/** What the close button says it closes. */
 	closeLabel?: string;
+	/** A markdown file's Rendered / Source switch and the rendered view's
+	 *  tools (ADR-0061). */
+	markdown?: MarkdownControls;
+}
+
+interface MarkdownControls {
+	view: MarkdownView;
+	onViewChange: (view: MarkdownView) => void;
+	/** Merge conflicts: the source is shown and the switch is off. */
+	conflicted: boolean;
+	onFind: () => void;
+	onPrint: () => void;
+	onOpenInWindow?: () => void;
 }
 
 interface ButtonProps {
@@ -116,6 +142,7 @@ export function FilePaneTitleBar({
 	onSplitRight,
 	onClose,
 	closeLabel = "Close Pane",
+	markdown,
 }: Props) {
 	const ext = getExtension(fileName);
 	const { handleMouseDown } = usePaneDrag(paneId);
@@ -179,6 +206,7 @@ export function FilePaneTitleBar({
 					<circle cx={4} cy={4} r={3.5} fill="#60a5fa" />
 				</svg>
 			)}
+			{markdown && <MarkdownTools {...markdown} />}
 			{onSplitDown && (
 				<TitleBarButton
 					icon={SquareSplitVertical}
@@ -195,5 +223,67 @@ export function FilePaneTitleBar({
 			)}
 			<TitleBarButton icon={X} onClick={onClose} label={closeLabel} />
 		</div>
+	);
+}
+
+function MarkdownTools({
+	view,
+	onViewChange,
+	conflicted,
+	onFind,
+	onPrint,
+	onOpenInWindow,
+}: MarkdownControls) {
+	const colorMode = useSettingsStore((s) => s.markdownPreviewColorMode);
+	const toggleColorMode = useSettingsStore(
+		(s) => s.toggleMarkdownPreviewColorMode,
+	);
+	const findKey = useShortcutLabel("search-in-terminal");
+	const toggleKey = useShortcutLabel("toggle-markdown-preview");
+	const windowKey = useShortcutLabel("open-markdown-window");
+	const withKey = (label: string, key: string) =>
+		key ? `${label} (${key})` : label;
+	return (
+		<>
+			{view === "rendered" && (
+				<>
+					<TitleBarButton
+						icon={Search}
+						onClick={onFind}
+						label={withKey("Find", findKey)}
+					/>
+					<TitleBarButton
+						icon={colorMode === "auto" ? Monitor : Sun}
+						onClick={toggleColorMode}
+						label={
+							colorMode === "auto"
+								? "Following the theme. Switch to printed paper"
+								: "Printed paper. Switch to following the theme"
+						}
+					/>
+					<TitleBarButton icon={Printer} onClick={onPrint} label="Print" />
+					{onOpenInWindow && (
+						<TitleBarButton
+							icon={AppWindow}
+							onClick={onOpenInWindow}
+							label={withKey("Open in Separate Window", windowKey)}
+						/>
+					)}
+				</>
+			)}
+			<span style={{ display: "flex", margin: "0 4px" }}>
+				<MarkdownViewSwitch
+					view={view}
+					onChange={onViewChange}
+					size="pane"
+					disabled={conflicted}
+					title={
+						conflicted
+							? "Shown as source while the file has merge conflicts"
+							: withKey("Switch view", toggleKey)
+					}
+				/>
+			</span>
+		</>
 	);
 }

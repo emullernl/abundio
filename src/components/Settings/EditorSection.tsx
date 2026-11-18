@@ -2,19 +2,17 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { SectionLabel, ToggleRow } from "./primitives";
 
 /**
- * Sibling of the Terminal page: configures the file pane and the preview pane.
+ * Sibling of the Terminal page: configures the file pane.
  *
- * "Editor" is a UI label, not a domain term — the page covers both pane types.
+ * "Editor" is a UI label, not a domain term.
  * See GLOSSARY.md.
  */
 export function EditorSection() {
 	const editorWordWrap = useSettingsStore((s) => s.editorWordWrap);
 	const toggleEditorWordWrap = useSettingsStore((s) => s.toggleEditorWordWrap);
-	const markdownPreviewAutoOpen = useSettingsStore(
-		(s) => s.markdownPreviewAutoOpen,
-	);
-	const toggleMarkdownPreviewAutoOpen = useSettingsStore(
-		(s) => s.toggleMarkdownPreviewAutoOpen,
+	const markdownOpenRendered = useSettingsStore((s) => s.markdownOpenRendered);
+	const toggleMarkdownOpenRendered = useSettingsStore(
+		(s) => s.toggleMarkdownOpenRendered,
 	);
 
 	return (
@@ -31,10 +29,10 @@ export function EditorSection() {
 			<div className="flex-shrink-0">
 				<SectionLabel>Markdown</SectionLabel>
 				<ToggleRow
-					checked={markdownPreviewAutoOpen}
-					onChange={toggleMarkdownPreviewAutoOpen}
-					label="Open a preview pane for markdown files"
-					description="Opening a .md file splits the pane and renders a live preview beside it. When off, markdown opens as plain text and you can still add a preview yourself."
+					checked={markdownOpenRendered}
+					onChange={toggleMarkdownOpenRendered}
+					label="Open markdown rendered"
+					description="A markdown file opens as a formatted document, with a Source button to edit its text. When off, it opens as text. Each pane remembers the view you last picked."
 				/>
 				{/* The colour toggle deliberately stays on the preview's title bar —
 				    its icon IS the state readout, which a settings row can't be
@@ -47,8 +45,8 @@ export function EditorSection() {
 						lineHeight: 1.5,
 					}}
 				>
-					Preview colours follow your theme. Switch to printed-paper white from
-					the preview pane's title bar.
+					Rendered markdown follows your theme. Switch to printed-paper white
+					from the pane's title bar.
 				</p>
 			</div>
 		</div>

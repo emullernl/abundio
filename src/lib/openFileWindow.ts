@@ -2,6 +2,7 @@ import type { FilePaneState } from "../stores/explorerStore";
 import { parseCommitDiffKey } from "./commitDiffKey";
 import { fileWindowKindFor } from "./fileWindowKind";
 import { type FileWindowTarget, fileWindows } from "./ipc";
+import { isMarkdownFile } from "./isMarkdownFile";
 import { findNode } from "./paneTree";
 import { isMac } from "./platform";
 import type { PaneNode } from "./types";
@@ -65,9 +66,21 @@ export function fileWindowTargetForPane(
 	if (node?.type === "preview") fileId = node.sourcePaneId;
 	const pane = filePanes[fileId];
 	if (!pane?.filePath) return null;
+	// The window opens in the view the pane shows: a Preview pane's is the
+	// rendering, a File pane's the one on its node (ADR-0061).
+	const view =
+		node?.type === "preview"
+			? "rendered"
+			: node?.type === "file"
+				? node.markdownView
+				: undefined;
 	switch (pane.fileType) {
 		case "text":
-			return { kind: "text", filePath: pane.filePath };
+			return {
+				kind: "text",
+				filePath: pane.filePath,
+				...(view && isMarkdownFile(pane.filePath) ? { view } : {}),
+			};
 		case "image":
 			return { kind: "image", filePath: pane.filePath };
 		case "diff": {

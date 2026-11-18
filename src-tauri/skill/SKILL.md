@@ -164,9 +164,10 @@ Workspace's folder), and must be inside that Workspace.
   it). `--window` opens a window of its own instead. If you are the
   Orchestrator, it opens in your own tabs, and the Workspace is not opened
   for it.
-- `--line <n>` scrolls to a line, `--diff` shows the file's uncommitted
-  changes, `--commit <sha>` the file as that commit changed it, and
-  `--preview` renders markdown beside its text.
+- `--line <n>` shows the source at that line, `--diff` the file's
+  uncommitted changes, `--commit <sha>` the file as that commit changed it.
+  Markdown opens rendered unless the user set it to open as text;
+  `--preview` opens it rendered either way.
 - It does not take the user's focus. Add `--focus` only when the user asked
   to see the file ("show me…", "open…"); never to get their attention, which
   is what `notify` is for.

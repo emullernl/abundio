@@ -65,7 +65,9 @@ interface SettingsState {
 	agents: CodingAgent[];
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
-	markdownPreviewAutoOpen: boolean;
+	/** **Open markdown rendered**: a markdown file with no view of its own
+	 *  opens rendered (ADR-0061). */
+	markdownOpenRendered: boolean;
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	/** **Skill provisioning** (ADR-0054): install the Abundio skill for every
@@ -174,7 +176,8 @@ interface SettingsState {
 	) => void;
 	setLastOpenedDevEnvId: (id: string) => void;
 	toggleEditorWordWrap: () => void;
-	toggleMarkdownPreviewAutoOpen: () => void;
+	/** **Open markdown rendered** (ADR-0061). */
+	toggleMarkdownOpenRendered: () => void;
 	toggleMarkdownPreviewColorMode: () => void;
 	/** Resolves once (un)provisioning has settled — see `toggleAgent`. */
 	setAgentHooksEnabled: (enabled: boolean) => Promise<void>;
@@ -223,7 +226,7 @@ export type TaskDestinationPreference = "restart" | "newTab" | "worktree";
  * One list means a newly-added global setting propagates to other Windows *by
  * default* instead of silently not propagating — the failure mode that lost
  * `shellPath`, `autoCheckUpdatesEnabled`, `editorWordWrap`, `debugActivityMeter`
- * and `markdownPreviewAutoOpen`. See ADR-0008.
+ * and `markdownPreviewAutoOpen` (now `markdownOpenRendered`). See ADR-0008.
  */
 export const PERSISTED_KEYS = [
 	"terminalFontFamily",
@@ -243,7 +246,7 @@ export const PERSISTED_KEYS = [
 	"agents",
 	"lastOpenedDevEnvId",
 	"editorWordWrap",
-	"markdownPreviewAutoOpen",
+	"markdownOpenRendered",
 	"markdownPreviewColorMode",
 	"agentHooksEnabled",
 	"agentSkillEnabled",
@@ -297,7 +300,9 @@ const PERSISTED_DEFAULTS: {
 	agents: CodingAgent[];
 	lastOpenedDevEnvId: string | null;
 	editorWordWrap: boolean;
-	markdownPreviewAutoOpen: boolean;
+	/** **Open markdown rendered**: a markdown file with no view of its own
+	 *  opens rendered (ADR-0061). */
+	markdownOpenRendered: boolean;
 	markdownPreviewColorMode: PreviewColorMode;
 	agentHooksEnabled: boolean;
 	/** **Skill provisioning** (ADR-0054): install the Abundio skill for every
@@ -340,7 +345,7 @@ const PERSISTED_DEFAULTS: {
 		agents: BUILTIN_AGENTS as CodingAgent[],
 		lastOpenedDevEnvId: null as string | null,
 		editorWordWrap: true,
-		markdownPreviewAutoOpen: true,
+		markdownOpenRendered: true,
 		markdownPreviewColorMode: "auto" as PreviewColorMode,
 		agentHooksEnabled: true,
 		agentSkillEnabled: true,
@@ -443,10 +448,14 @@ const PERSISTED_DEFAULTS: {
 				typeof s.editorWordWrap === "boolean"
 					? s.editorWordWrap
 					: defaults.editorWordWrap,
-			markdownPreviewAutoOpen:
-				typeof s.markdownPreviewAutoOpen === "boolean"
-					? s.markdownPreviewAutoOpen
-					: defaults.markdownPreviewAutoOpen,
+			// v18 renamed markdownPreviewAutoOpen (ADR-0061); accept the old key
+			// too, as the migrate function below does.
+			markdownOpenRendered:
+				typeof s.markdownOpenRendered === "boolean"
+					? s.markdownOpenRendered
+					: typeof s.markdownPreviewAutoOpen === "boolean"
+						? s.markdownPreviewAutoOpen
+						: defaults.markdownOpenRendered,
 			markdownPreviewColorMode:
 				s.markdownPreviewColorMode === "light" ||
 				s.markdownPreviewColorMode === "auto"
@@ -664,7 +673,7 @@ export const useSettingsStore = create<SettingsState>()(
 			agents: PERSISTED_DEFAULTS.agents,
 			lastOpenedDevEnvId: PERSISTED_DEFAULTS.lastOpenedDevEnvId,
 			editorWordWrap: PERSISTED_DEFAULTS.editorWordWrap,
-			markdownPreviewAutoOpen: PERSISTED_DEFAULTS.markdownPreviewAutoOpen,
+			markdownOpenRendered: PERSISTED_DEFAULTS.markdownOpenRendered,
 			markdownPreviewColorMode: PERSISTED_DEFAULTS.markdownPreviewColorMode,
 			agentHooksEnabled: PERSISTED_DEFAULTS.agentHooksEnabled,
 			agentSkillEnabled: PERSISTED_DEFAULTS.agentSkillEnabled,
@@ -832,9 +841,9 @@ export const useSettingsStore = create<SettingsState>()(
 			setLastOpenedDevEnvId: (id) => set({ lastOpenedDevEnvId: id }),
 			toggleEditorWordWrap: () =>
 				set((s) => ({ editorWordWrap: !s.editorWordWrap })),
-			toggleMarkdownPreviewAutoOpen: () =>
+			toggleMarkdownOpenRendered: () =>
 				set((s) => ({
-					markdownPreviewAutoOpen: !s.markdownPreviewAutoOpen,
+					markdownOpenRendered: !s.markdownOpenRendered,
 				})),
 			toggleMarkdownPreviewColorMode: () =>
 				set((s) => ({
@@ -935,7 +944,7 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "abundio-settings",
-			version: 17,
+			version: 18,
 			// biome-ignore lint/suspicious/noExplicitAny: persisted shape is opaque pre-migration
 			migrate: (persistedState: any, version: number) => {
 				if (!persistedState) return persistedState;
@@ -1045,6 +1054,19 @@ export const useSettingsStore = create<SettingsState>()(
 				// default-true key, as v15.
 				if (version < 17) {
 					state = { reopenWorkspacesOnOpen: true, ...state };
+				}
+				// v18: "auto-open a Preview pane" became "Open markdown rendered"
+				// (ADR-0061). The answer carries over: someone who turned the
+				// preview off now gets source, the view they were used to.
+				if (version < 18) {
+					const { markdownPreviewAutoOpen, ...rest } = state;
+					state = {
+						...rest,
+						markdownOpenRendered:
+							typeof markdownPreviewAutoOpen === "boolean"
+								? markdownPreviewAutoOpen
+								: true,
+					};
 				}
 				// v7: app-global PR poller (ADR-0019). Additive default keys;
 				// PERSISTED_DEFAULTS + merge already supply them — this only

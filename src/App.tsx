@@ -82,6 +82,7 @@ import {
 	setKeybindingOverrides,
 } from "./lib/keybindings";
 import { toggleMarkdownPreviewForPane } from "./lib/markdownPreview";
+import { toggleMarkdownView } from "./lib/markdownViewToggles";
 import { applyMonacoOverrides } from "./lib/monacoKeymap";
 import { fileWindowTargetForPane, openFileWindow } from "./lib/openFileWindow";
 import { openNewTask } from "./lib/openNewTask";
@@ -1063,9 +1064,22 @@ export function App() {
 			// dedicated window, not as a modal here.
 			invoke("open_settings_window").catch(() => {});
 		});
-		registerAction("search-in-terminal", () =>
-			useWorkspaceStore.getState().toggleSearch(targetPaneId()),
-		);
+		registerAction("search-in-terminal", () => {
+			// A file's Orchestrator tab, when that is where focus is: find in
+			// its rendered markdown.
+			const orch = useOrchestratorStore.getState();
+			if (
+				orchestratorViewShowing() &&
+				orch.fileTabFocused &&
+				orch.selectedTabId
+			) {
+				useWorkspaceStore
+					.getState()
+					.toggleSearch(tabPaneId(orch.selectedTabId));
+				return;
+			}
+			useWorkspaceStore.getState().toggleSearch(targetPaneId());
+		});
 		registerAction(
 			"new-tab",
 			paneLayoutOnly(() => {
@@ -1180,13 +1194,22 @@ export function App() {
 				useWindowUiStore.getState().toggleRightSidebarTab("notes");
 			}),
 		);
-		registerAction(
-			"toggle-markdown-preview",
-			workspaceViewOnly(() => {
-				const paneId = useWorkspaceStore.getState().focusedPaneId;
-				if (paneId) toggleMarkdownPreviewForPane(paneId);
-			}),
-		);
+		registerAction("toggle-markdown-preview", () => {
+			// A markdown File pane switches its view (ADR-0061); a Preview pane
+			// closes. In the Orchestrator view, its focused file tab.
+			if (fleetConsoleShowing()) return;
+			const orch = useOrchestratorStore.getState();
+			if (orchestratorViewShowing()) {
+				if (orch.fileTabFocused && orch.selectedTabId) {
+					toggleMarkdownView(tabPaneId(orch.selectedTabId));
+				}
+				return;
+			}
+			const paneId = useWorkspaceStore.getState().focusedPaneId;
+			if (paneId && !toggleMarkdownView(paneId)) {
+				void toggleMarkdownPreviewForPane(paneId);
+			}
+		});
 		registerAction(
 			"open-markdown-window",
 			workspaceViewOnly(() => {

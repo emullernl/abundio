@@ -1519,6 +1519,7 @@ pub fn run() {
             orchestrator::orchestrator_tab_add,
             orchestrator::orchestrator_tab_remove,
             orchestrator::orchestrator_tab_select,
+            orchestrator::orchestrator_tab_set_view,
             commands::workspace_list,
             commands::workspace_update,
             commands::workspace_delete,

@@ -19,6 +19,7 @@ import type {
 	GitChangedFile,
 	GitFileDiff,
 	LaunchFile,
+	MarkdownView,
 	PrChange,
 	Profile,
 	ProfileUpdate,
@@ -206,6 +207,8 @@ export const orchestrator = {
 		invoke<void>("orchestrator_tab_remove", { profileId, id }),
 	selectTab: (profileId: string, id: string | null) =>
 		invoke<void>("orchestrator_tab_select", { profileId, id }),
+	setTabView: (profileId: string, id: string, view: MarkdownView) =>
+		invoke<void>("orchestrator_tab_set_view", { profileId, id, view }),
 	/** The Profile's **Orchestrator folder** (ADR-0059). */
 	folder: (profileId: string) =>
 		invoke<OrchestratorFolder>("orchestrator_folder_get", { profileId }),
@@ -233,13 +236,15 @@ export interface OrchestratorFileTab {
 	kind: "file" | "diff" | "commit";
 	path: string;
 	commitOid: string | null;
-	preview: boolean;
+	/** A markdown file's view (ADR-0061); null: follow the setting. */
+	view: MarkdownView | null;
 }
 
+/** `view` on a tab already open replaces its own (`file open --preview`). */
 export type NewOrchestratorFileTab = Omit<
 	OrchestratorFileTab,
-	"id" | "commitOid" | "preview"
-> & { commitOid?: string | null; preview?: boolean };
+	"id" | "commitOid" | "view"
+> & { commitOid?: string | null; view?: MarkdownView | null };
 
 /** See `workspaces.folderCheck`. */
 export interface FolderCheck {
@@ -1309,7 +1314,7 @@ export const env = {
 };
 
 /** Which of its two views a markdown **File window** shows (ADR-0046). */
-export type MarkdownView = "rendered" | "source";
+export type { MarkdownView };
 
 /** What a **File window** shows (ADR-0049). */
 export type FileWindowKind = "text" | "image" | "diff" | "commit-diff";
@@ -1317,7 +1322,14 @@ export type FileWindowKind = "text" | "image" | "diff" | "commit-diff";
 /** What to open in a File window. Text and image paths are absolute; diff
  *  paths are Workspace-relative, as git and diff panes spell them. */
 export type FileWindowTarget =
-	| { kind: "text" | "image"; filePath: string }
+	| {
+			kind: "text";
+			filePath: string;
+			/** The view a markdown window opens in (ADR-0061); absent: the
+			 *  one it was last in. A window already open keeps its own. */
+			view?: MarkdownView;
+	  }
+	| { kind: "image"; filePath: string }
 	| { kind: "diff"; filePath: string; diffSection: string }
 	| { kind: "commit-diff"; filePath: string; commitOid: string };
 
@@ -1356,6 +1368,7 @@ export const fileWindows = {
 			filePath: target.filePath,
 			commitOid: target.kind === "commit-diff" ? target.commitOid : null,
 			diffSection: target.kind === "diff" ? target.diffSection : null,
+			view: target.kind === "text" ? (target.view ?? null) : null,
 		}),
 
 	/** The calling File window's target, Workspace and last view. */

@@ -462,6 +462,16 @@ pub async fn orchestrator_tab_remove(
 }
 
 #[tauri::command]
+pub async fn orchestrator_tab_set_view(
+    store: State<'_, WorkspaceStore>,
+    profile_id: String,
+    id: String,
+    view: crate::file_windows::MarkdownView,
+) -> Result<(), AbundioError> {
+    store.set_orchestrator_tab_view(&profile_id, &id, view)
+}
+
+#[tauri::command]
 pub async fn orchestrator_tab_select(
     store: State<'_, WorkspaceStore>,
     profile_id: String,
@@ -718,7 +728,7 @@ mod tests {
             kind: "file".into(),
             path: path.into(),
             commit_oid: None,
-            preview: false,
+            view: None,
         };
         let a = store.add_orchestrator_tab(PID, new("/w/a.md")).unwrap();
         let again = store.add_orchestrator_tab(PID, new("/w/a.md")).unwrap();
@@ -751,6 +761,70 @@ mod tests {
     }
 
     #[test]
+    fn a_file_tabs_view_is_remembered() {
+        use crate::file_windows::MarkdownView::{Rendered, Source};
+        let store = test_store();
+        let ws = store.create("w", "/w", PID).unwrap().workspace.id;
+        let new = |view| NewOrchestratorTab {
+            workspace_id: ws.clone(),
+            kind: "file".into(),
+            path: "/w/a.md".into(),
+            commit_oid: None,
+            view,
+        };
+        // No view: follow the setting.
+        let a = store.add_orchestrator_tab(PID, new(None)).unwrap();
+        assert_eq!(a.view, None);
+        store.set_orchestrator_tab_view(PID, &a.id, Source).unwrap();
+        let (tabs, _) = store.orchestrator_tabs(PID).unwrap();
+        assert_eq!(tabs[0].view, Some(Source));
+        // Opened again with no view: the tab keeps its own.
+        let again = store.add_orchestrator_tab(PID, new(None)).unwrap();
+        assert_eq!(again.view, Some(Source));
+        // Opened again with one (`file open --preview`): it takes that one.
+        let pinned = store.add_orchestrator_tab(PID, new(Some(Rendered))).unwrap();
+        assert_eq!(pinned.id, a.id);
+        assert_eq!(pinned.view, Some(Rendered));
+        let (tabs, _) = store.orchestrator_tabs(PID).unwrap();
+        assert_eq!(tabs[0].view, Some(Rendered));
+        // A tab that is not there, or another Profile's: not found.
+        assert!(matches!(
+            store.set_orchestrator_tab_view(PID, "nope", Source),
+            Err(AbundioError::NotFound(_))
+        ));
+        assert!(matches!(
+            store.set_orchestrator_tab_view("someone-else", &a.id, Source),
+            Err(AbundioError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_tab_view_that_is_not_a_view_is_refused_at_the_ipc_edge() {
+        let bad: Result<NewOrchestratorTab, _> = serde_json::from_str(
+            r#"{"workspaceId":"w","kind":"file","path":"/w/a.md","view":"split"}"#,
+        );
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn a_tab_that_asked_for_a_preview_opens_rendered_after_the_migration() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE orchestrator_tabs (id TEXT PRIMARY KEY, preview INTEGER NOT NULL DEFAULT 0);
+             INSERT INTO orchestrator_tabs (id, preview) VALUES ('p', 1), ('q', 0);",
+        )
+        .unwrap();
+        conn.execute_batch(include_str!("../migrations/024_orchestrator_tab_view.sql"))
+            .unwrap();
+        let view = |id: &str| -> Option<String> {
+            conn.query_row("SELECT view FROM orchestrator_tabs WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(view("p").as_deref(), Some("rendered"));
+        assert_eq!(view("q"), None);
+    }
+
+    #[test]
     fn a_file_tab_of_another_profiles_workspace_is_refused() {
         let store = test_store();
         let ws = store.create("w", "/w", PID).unwrap().workspace.id;
@@ -759,7 +833,7 @@ mod tests {
             kind: "file".into(),
             path: "/w/a".into(),
             commit_oid: None,
-            preview: false,
+            view: None,
         };
         assert!(store.add_orchestrator_tab("someone-else", tab).is_err());
     }

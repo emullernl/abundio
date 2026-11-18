@@ -1,18 +1,10 @@
 import "./PreviewPane.css";
-import { open } from "@tauri-apps/plugin-shell";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
 import { isMarkdownFile } from "../../lib/isMarkdownFile";
-import {
-	classifyMarkdownLink,
-	scrollToFragment,
-} from "../../lib/markdownLinks";
-import {
-	consumePendingPrint,
-	registerPreviewPrinter,
-	unregisterPreviewPrinter,
-} from "../../lib/markdownPreviewPrint";
+import { followRenderedLink } from "../../lib/markdownLinkOpen";
 import { printMarkdownPreview } from "../../lib/markdownPrint";
+import type { LinkModifiers } from "../../lib/markdownView";
 import { openFileWindow } from "../../lib/openFileWindow";
 import { resolvePreviewColorMode } from "../../lib/previewColorMode";
 import {
@@ -29,10 +21,6 @@ import { PreviewPaneTitleBar } from "./PreviewPaneTitleBar";
 // Base editor font size — the preview zoom is computed relative to this so
 // Cmd+= / Cmd+- scales the preview alongside the Monaco editor.
 const BASE_FONT_SIZE = 14;
-
-// A print requested before this pane mounted waits for the debounced render
-// (250ms in MarkdownRendered) plus a beat for Mermaid to settle.
-const PENDING_PRINT_DELAY_MS = 450;
 
 interface PreviewPaneProps {
 	paneId: string;
@@ -84,31 +72,18 @@ export function PreviewPane({
 	const activeWorkspace = useWorkspaceStore((s) =>
 		s.workspaces.find((w) => w.id === s.activeWorkspaceId),
 	);
+	// The same rule as a File pane's rendered view (ADR-0061).
 	const onLinkClick = useCallback(
-		(href: string | undefined) => {
-			const action = classifyMarkdownLink(
+		(href: string | undefined, modifiers?: LinkModifiers) => {
+			if (!activeWorkspace) return;
+			followRenderedLink({
 				href,
+				modifiers,
 				baseDir,
-				activeWorkspace?.rootFolder ?? "",
-			);
-			switch (action.kind) {
-				case "fragment":
-					if (contentRef.current)
-						scrollToFragment(contentRef.current, action.id);
-					return;
-				case "external":
-					open(action.url).catch(() => {});
-					return;
-				case "workspace-markdown":
-					if (activeWorkspace) {
-						useExplorerStore
-							.getState()
-							.openFile(activeWorkspace.id, action.path);
-					}
-					return;
-				default:
-					return;
-			}
+				workspaceId: activeWorkspace.id,
+				workspaceRoot: activeWorkspace.rootFolder,
+				scrollEl: contentRef.current,
+			});
 		},
 		[baseDir, activeWorkspace],
 	);
@@ -130,21 +105,6 @@ export function PreviewPane({
 	const doPrint = useCallback(() => {
 		if (contentRef.current) printMarkdownPreview(contentRef.current);
 	}, []);
-
-	// Expose printing to the source file pane's "Print" menu item, which may
-	// open this preview specifically in order to print it.
-	useEffect(() => {
-		registerPreviewPrinter(sourcePaneId, doPrint);
-		return () => unregisterPreviewPrinter(sourcePaneId);
-	}, [sourcePaneId, doPrint]);
-
-	// If a print was requested before this pane mounted, run it once the
-	// (debounced) content is on screen — give Mermaid a beat to settle first.
-	useEffect(() => {
-		if (!content || !consumePendingPrint(sourcePaneId)) return;
-		const t = setTimeout(doPrint, PENDING_PRINT_DELAY_MS);
-		return () => clearTimeout(t);
-	}, [content, sourcePaneId, doPrint]);
 
 	// Link this preview's scroll container to its source editor for scroll sync.
 	useEffect(() => {
@@ -183,6 +143,7 @@ export function PreviewPane({
 						void openFileWindow(activeWorkspace.id, {
 							kind: "text",
 							filePath: sourceState.filePath,
+							view: "rendered",
 						});
 					}
 				}}

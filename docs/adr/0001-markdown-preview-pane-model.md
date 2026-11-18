@@ -1,5 +1,7 @@
 # Markdown preview is a dedicated `PaneNode` type linked to its editor
 
+> Amended by ADR-0061: a Preview pane no longer opens automatically beside a markdown file. A markdown File pane has its own rendered view, and the Preview pane is opened only on request. The model below is unchanged.
+
 When a markdown file is opened in the Monaco editor, a live preview opens as a
 separate pane beside it. We model that preview as a new `PaneNode` variant —
 `{ type: "preview"; id; sourcePaneId }` — rather than overloading the existing
@@ -17,7 +19,7 @@ reflect unsaved edits.
   later requires a layout migration.
 - On workspace load, any persisted `preview` node whose `sourcePaneId` no longer
   resolves must be pruned — analogous to how stale `ptyId`s are cleared on load.
-- Auto-open of previews must fire only on user-initiated file opens, never on
-  layout restore (restored layouts already carry their `preview` nodes).
+- ~~Auto-open of previews must fire only on user-initiated file opens, never on
+  layout restore.~~ No longer applies: there is no auto-open (ADR-0061).
 - Editor and preview are otherwise ordinary, independently-placeable panes: the
   link is logical, not structural, so the drag/split system needs no changes.

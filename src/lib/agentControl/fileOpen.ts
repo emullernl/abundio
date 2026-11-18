@@ -15,10 +15,16 @@
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { git as gitApi } from "../ipc";
+import {
+	type FileWindowTarget,
+	git as gitApi,
+	type MarkdownView,
+} from "../ipc";
 import { liveDiff } from "../liveDiff";
+import { setMarkdownViewForPane } from "../markdownPreview";
 import { fileWindowTargetForPath, openFileWindow } from "../openFileWindow";
 import { openOrchestratorFile } from "../orchestratorTabs";
+import { findFilePaneByPath, parseTabLayout } from "../paneTree";
 import { isOrchestrator } from "../workspaceKind";
 import { type ControlCaller, ControlError, type ControlRequest } from "./types";
 
@@ -29,6 +35,19 @@ export interface FileOpenReply {
 	opened: "window" | "orchestrator-tab" | "tab";
 	path: string;
 	workspaceId: string;
+}
+
+/**
+ * The markdown view a call asks for (ADR-0061): `--line` means the source,
+ * `--preview` the rendering whatever the setting; neither, the setting.
+ * Only a file has views. Pure.
+ */
+export function fileOpenView(
+	request: Pick<FileOpen, "line" | "preview" | "diff" | "commit">,
+): MarkdownView | undefined {
+	if (request.diff || request.commit) return undefined;
+	if (request.line) return "source";
+	return request.preview ? "rendered" : undefined;
 }
 
 /** Where a call lands, from who calls and how. Pure. */
@@ -58,6 +77,7 @@ export async function openFileFor(
 		.workspaces.find((w) => w.id === caller.workspaceId);
 	const place = fileOpenPlace(request, isOrchestrator(callerWs));
 	const kind = request.commit ? "commit" : request.diff ? "diff" : "file";
+	const view = fileOpenView(request);
 	const reply = { opened: place, path: request.path, workspaceId };
 
 	if (place === "orchestrator-tab") {
@@ -85,7 +105,7 @@ export async function openFileFor(
 				kind,
 				path: kind === "file" ? request.path : request.rel,
 				commitOid: request.commit,
-				preview: request.preview,
+				view,
 			},
 			{ focus: request.focus },
 		);
@@ -128,7 +148,7 @@ export async function openFileFor(
 								(await liveDiff(target.rootFolder, request.rel))?.section ??
 								"unstaged",
 						}
-					: fileWindowTargetForPath(request.path);
+					: withView(fileWindowTargetForPath(request.path), view);
 		if (!windowTarget) {
 			throw new ControlError(
 				"not_a_file",
@@ -173,7 +193,9 @@ export async function openFileFor(
 			{ activate },
 		);
 	} else {
-		await explorer.openFile(workspaceId, request.path, { activate });
+		await explorer.openFile(workspaceId, request.path, { activate, view });
+		// A Tab that already showed the file takes the asked-for view too.
+		if (view) await setViewOfOpenFile(workspaceId, request.path, view);
 		if (request.line) {
 			explorer.setPendingGotoLine({
 				filePath: request.path,
@@ -189,4 +211,31 @@ export async function openFileFor(
 		useWorkspaceStore.getState().beginWorkspaceSwitch(workspaceId);
 	}
 	return reply;
+}
+
+/** A text File window target with the asked-for view. */
+function withView(
+	target: FileWindowTarget | null,
+	view: MarkdownView | undefined,
+): FileWindowTarget | null {
+	return target?.kind === "text" && view ? { ...target, view } : target;
+}
+
+/** Sets the view of the File pane showing `path` in a Tab of the Workspace. */
+async function setViewOfOpenFile(
+	workspaceId: string,
+	path: string,
+	view: MarkdownView,
+): Promise<void> {
+	const workspace = useWorkspaceStore
+		.getState()
+		.workspaces.find((w) => w.id === workspaceId);
+	for (const tab of workspace?.tabs ?? []) {
+		const layout = parseTabLayout(tab.layoutJson);
+		const pane = layout ? findFilePaneByPath(layout, path) : null;
+		if (pane) {
+			await setMarkdownViewForPane(workspaceId, pane.id, view);
+			return;
+		}
+	}
 }
