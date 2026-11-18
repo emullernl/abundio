@@ -1,5 +1,6 @@
 import { FolderOpen, Layers } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useConfirmCloseWorkspace } from "../../hooks/useConfirmCloseWorkspace";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { useWorkWorkspaces } from "../../hooks/useWorkWorkspaces";
@@ -50,6 +51,8 @@ export function WorkspacePicker({
 	const open = openProp ?? ownOpen;
 	const setOpen = onOpenChange ?? setOwnOpen;
 	const rootRef = useRef<HTMLDivElement>(null);
+	const listRef = useRef<HTMLDivElement>(null);
+	const anchor = useAnchorRect(rootRef, open);
 	const allWorkspaces = useWorkWorkspaces();
 	const agents = useSettingsStore((s) => s.agents);
 	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
@@ -71,6 +74,7 @@ export function WorkspacePicker({
 		const onDown = (e: MouseEvent) => {
 			const t = e.target as Node;
 			if (rootRef.current?.contains(t)) return;
+			if (listRef.current?.contains(t)) return;
 			// The Close Workspace confirmation is portaled to <body>; clicking it must
 			// not also close this list underneath.
 			if ((t as Element).closest?.('[role="dialog"]')) return;
@@ -105,8 +109,10 @@ export function WorkspacePicker({
 				<Layers size={12} />
 				{openedCount}/{workspaces.length} open
 			</button>
-			{open && (
+			{open && anchor && (
 				<WorkspaceList
+					listRef={listRef}
+					anchor={anchor}
 					workspaces={workspaces}
 					allWorkspaces={allWorkspaces}
 					openedIds={openedIds}
@@ -148,7 +154,36 @@ export function openInBackground(workspaceId: string): void {
 	useWindowUiStore.getState().expectFleetTiles(relaunchablePanes(ws, known));
 }
 
+/**
+ * Where the button is on screen while the list is open, kept current as the
+ * window resizes. The list is drawn on <body> and placed from it: hung inside
+ * its view, it would sit under any layer the view's own stacking context
+ * cannot rise above (the Orchestrator view's file tabs).
+ */
+function useAnchorRect(
+	ref: React.RefObject<HTMLDivElement | null>,
+	open: boolean,
+): DOMRect | null {
+	const [rect, setRect] = useState<DOMRect | null>(null);
+	useLayoutEffect(() => {
+		if (!open) {
+			setRect(null);
+			return;
+		}
+		const measure = () => {
+			const el = ref.current;
+			if (el) setRect(el.getBoundingClientRect());
+		};
+		measure();
+		window.addEventListener("resize", measure);
+		return () => window.removeEventListener("resize", measure);
+	}, [open, ref]);
+	return rect;
+}
+
 function WorkspaceList({
+	listRef,
+	anchor,
 	workspaces,
 	allWorkspaces,
 	openedIds,
@@ -158,6 +193,9 @@ function WorkspaceList({
 	onClose,
 	align = "right",
 }: {
+	listRef: React.RefObject<HTMLDivElement | null>;
+	/** The button's place on screen; the list hangs below it. */
+	anchor: DOMRect;
 	workspaces: WorkspaceWithTabs[];
 	/** Every Workspace, so Worktree sets group as in the Left sidebar even when
 	 *  some members are not listed. */
@@ -191,11 +229,16 @@ function WorkspaceList({
 			: list;
 	}, [workspaces, allWorkspaces, facts, query]);
 
-	return (
+	return createPortal(
 		<div
-			className={`absolute ${align === "left" ? "left-0" : "right-0"} z-50 flex flex-col select-none`}
+			ref={listRef}
+			className="fixed flex flex-col select-none"
 			style={{
-				top: "calc(100% + 6px)",
+				zIndex: 150,
+				top: anchor.bottom + 6,
+				...(align === "left"
+					? { left: anchor.left }
+					: { right: window.innerWidth - anchor.right }),
 				width: 380,
 				maxHeight: "min(520px, 70vh)",
 				borderRadius: 8,
@@ -320,6 +363,7 @@ function WorkspaceList({
 					);
 				})}
 			</div>
-		</div>
+		</div>,
+		document.body,
 	);
 }
