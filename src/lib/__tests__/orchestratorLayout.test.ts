@@ -157,6 +157,47 @@ describe("dragging the divider beside the Peek", () => {
 		expect(withExplorer).toBe(l.terminal + 100);
 	});
 
+	it("gives back the terminal the user saw after a drag with a narrowed explorer", () => {
+		// The explorer is drawn narrower than chosen only when both sides are
+		// at their minimums, so a divider drag there cannot move anything.
+		const narrow =
+			PEEK_DIVIDER +
+			PEEK_EXPLORER_HANDLE +
+			PEEK_LEFT_MIN +
+			PEEK_TERMINAL_MIN +
+			200;
+		const chosen = 300;
+		const drawn = peekLayout({
+			area: narrow,
+			terminalWidth: null,
+			explorerWidth: chosen,
+		});
+		expect(drawn).toEqual({
+			left: PEEK_LEFT_MIN,
+			terminal: PEEK_TERMINAL_MIN,
+			explorer: 200,
+		});
+		for (const left of [0, PEEK_LEFT_MIN, 5000]) {
+			const stored = peekTerminalWidthFor(left, narrow, drawn.explorer);
+			expect(
+				peekLayout({
+					area: narrow,
+					terminalWidth: stored,
+					explorerWidth: chosen,
+				}),
+			).toEqual(drawn);
+			// Wider again: the explorer grows back, and the terminal is still
+			// the width the user saw.
+			const wide = peekLayout({
+				area: 2000,
+				terminalWidth: stored,
+				explorerWidth: chosen,
+			});
+			expect(wide.explorer).toBe(chosen);
+			expect(wide.terminal).toBe(PEEK_TERMINAL_MIN);
+		}
+	});
+
 	it("keeps both sides at their minimums", () => {
 		expect(peekTerminalWidthFor(0, area, 0)).toBe(1200 - PEEK_LEFT_MIN);
 		expect(peekTerminalWidthFor(5000, area, 0)).toBe(PEEK_TERMINAL_MIN);

@@ -23,12 +23,13 @@ export function usePeekWorkspace(paneId: string): Workspace | undefined {
 		null,
 	);
 	const wsId = found?.paneId === paneId ? found.wsId : undefined;
+	// No pane (no Peek): nothing to look for, so no layout subscription.
 	const layoutsWhileUnknown = useWorkspaceStore((s) =>
-		wsId ? null : s.workspaces,
+		!paneId || wsId ? null : s.workspaces,
 	);
 	useEffect(() => {
 		// Layouts change while the pane is unknown: look again.
-		if (wsId || !layoutsWhileUnknown) return;
+		if (!paneId || wsId || !layoutsWhileUnknown) return;
 		const id = findPaneLocation(paneId)?.workspaceId;
 		if (id) setFound({ paneId, wsId: id });
 	}, [paneId, wsId, layoutsWhileUnknown]);

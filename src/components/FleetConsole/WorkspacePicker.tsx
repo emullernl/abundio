@@ -155,10 +155,12 @@ export function openInBackground(workspaceId: string): void {
 }
 
 /**
- * Where the button is on screen while the list is open, kept current as the
- * window resizes. The list is drawn on <body> and placed from it: hung inside
- * its view, it would sit under any layer the view's own stacking context
- * cannot rise above (the Orchestrator view's file tabs).
+ * Where the button is on screen while the list is open, kept current every
+ * frame: the button moves without any resize (a file tab opening beside it
+ * in the Orchestrator view, a sidebar folding). The list is drawn on <body>
+ * and placed from it: hung inside its view, it would sit under any layer the
+ * view's own stacking context cannot rise above (the Orchestrator view's
+ * file tabs). The list is open only briefly, so the frame loop costs little.
  */
 function useAnchorRect(
 	ref: React.RefObject<HTMLDivElement | null>,
@@ -170,13 +172,27 @@ function useAnchorRect(
 			setRect(null);
 			return;
 		}
+		let last: DOMRect | null = null;
+		let frame = 0;
 		const measure = () => {
 			const el = ref.current;
-			if (el) setRect(el.getBoundingClientRect());
+			if (el) {
+				const r = el.getBoundingClientRect();
+				// A new rect only when the button moved, or every frame re-renders.
+				if (
+					!last ||
+					r.left !== last.left ||
+					r.right !== last.right ||
+					r.bottom !== last.bottom
+				) {
+					last = r;
+					setRect(r);
+				}
+			}
+			frame = requestAnimationFrame(measure);
 		};
 		measure();
-		window.addEventListener("resize", measure);
-		return () => window.removeEventListener("resize", measure);
+		return () => cancelAnimationFrame(frame);
 	}, [open, ref]);
 	return rect;
 }

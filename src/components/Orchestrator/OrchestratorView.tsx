@@ -343,6 +343,10 @@ function GraphAndPeek({ peekPaneId }: { peekPaneId: string | null }) {
 	// every layout divider.
 	const [explorerDrag, setExplorerDrag] = useState<number | null>(null);
 	const [terminalDrag, setTerminalDrag] = useState<number | null>(null);
+	// The latest drag values, saved from on release: a pointerup in the same
+	// frame as the last move can run against the render before it.
+	const explorerDragRef = useRef<number | null>(null);
+	const terminalDragRef = useRef<number | null>(null);
 	const ws = usePeekWorkspace(peekPaneId ?? "");
 
 	const layout =
@@ -377,11 +381,15 @@ function GraphAndPeek({ peekPaneId }: { peekPaneId: string | null }) {
 				<>
 					<PeekDivider
 						left={layout.left}
-						onDrag={(left) =>
-							setTerminalDrag(peekTerminalWidthFor(left, area, layout.explorer))
-						}
+						onDrag={(left) => {
+							const w = peekTerminalWidthFor(left, area, layout.explorer);
+							terminalDragRef.current = w;
+							setTerminalDrag(w);
+						}}
 						onDragEnd={() => {
-							if (terminalDrag !== null) setTerminalWidth(terminalDrag);
+							const w = terminalDragRef.current;
+							terminalDragRef.current = null;
+							if (w !== null) setTerminalWidth(w);
 							setTerminalDrag(null);
 						}}
 					/>
@@ -395,11 +403,15 @@ function GraphAndPeek({ peekPaneId }: { peekPaneId: string | null }) {
 								<PeekExplorer
 									workspace={ws}
 									width={layout.explorer}
-									onDrag={(w) =>
-										setExplorerDrag(peekExplorerDragWidth(w, area))
-									}
+									onDrag={(w) => {
+										const width = peekExplorerDragWidth(w, area);
+										explorerDragRef.current = width;
+										setExplorerDrag(width);
+									}}
 									onDragEnd={() => {
-										if (explorerDrag !== null) setExplorerWidth(explorerDrag);
+										const width = explorerDragRef.current;
+										explorerDragRef.current = null;
+										if (width !== null) setExplorerWidth(width);
 										setExplorerDrag(null);
 									}}
 								/>
