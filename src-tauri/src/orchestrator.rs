@@ -466,9 +466,9 @@ pub async fn orchestrator_tab_set_view(
     store: State<'_, WorkspaceStore>,
     profile_id: String,
     id: String,
-    view: String,
+    view: crate::file_windows::MarkdownView,
 ) -> Result<(), AbundioError> {
-    store.set_orchestrator_tab_view(&profile_id, &id, &view)
+    store.set_orchestrator_tab_view(&profile_id, &id, view)
 }
 
 #[tauri::command]
@@ -761,34 +761,49 @@ mod tests {
     }
 
     #[test]
-    fn a_file_tabs_view_is_remembered_and_checked() {
+    fn a_file_tabs_view_is_remembered() {
+        use crate::file_windows::MarkdownView::{Rendered, Source};
         let store = test_store();
         let ws = store.create("w", "/w", PID).unwrap().workspace.id;
-        let new = |view: Option<&str>| NewOrchestratorTab {
+        let new = |view| NewOrchestratorTab {
             workspace_id: ws.clone(),
             kind: "file".into(),
             path: "/w/a.md".into(),
             commit_oid: None,
-            view: view.map(String::from),
+            view,
         };
         // No view: follow the setting.
         let a = store.add_orchestrator_tab(PID, new(None)).unwrap();
         assert_eq!(a.view, None);
-        store.set_orchestrator_tab_view(PID, &a.id, "source").unwrap();
+        store.set_orchestrator_tab_view(PID, &a.id, Source).unwrap();
         let (tabs, _) = store.orchestrator_tabs(PID).unwrap();
-        assert_eq!(tabs[0].view.as_deref(), Some("source"));
+        assert_eq!(tabs[0].view, Some(Source));
         // Opened again with no view: the tab keeps its own.
         let again = store.add_orchestrator_tab(PID, new(None)).unwrap();
-        assert_eq!(again.view.as_deref(), Some("source"));
+        assert_eq!(again.view, Some(Source));
         // Opened again with one (`file open --preview`): it takes that one.
-        let pinned = store.add_orchestrator_tab(PID, new(Some("rendered"))).unwrap();
+        let pinned = store.add_orchestrator_tab(PID, new(Some(Rendered))).unwrap();
         assert_eq!(pinned.id, a.id);
-        assert_eq!(pinned.view.as_deref(), Some("rendered"));
+        assert_eq!(pinned.view, Some(Rendered));
         let (tabs, _) = store.orchestrator_tabs(PID).unwrap();
-        assert_eq!(tabs[0].view.as_deref(), Some("rendered"));
-        // Not a view we know.
-        assert!(store.set_orchestrator_tab_view(PID, &a.id, "split").is_err());
-        assert!(store.add_orchestrator_tab(PID, new(Some("split"))).is_err());
+        assert_eq!(tabs[0].view, Some(Rendered));
+        // A tab that is not there, or another Profile's: not found.
+        assert!(matches!(
+            store.set_orchestrator_tab_view(PID, "nope", Source),
+            Err(AbundioError::NotFound(_))
+        ));
+        assert!(matches!(
+            store.set_orchestrator_tab_view("someone-else", &a.id, Source),
+            Err(AbundioError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_tab_view_that_is_not_a_view_is_refused_at_the_ipc_edge() {
+        let bad: Result<NewOrchestratorTab, _> = serde_json::from_str(
+            r#"{"workspaceId":"w","kind":"file","path":"/w/a.md","view":"split"}"#,
+        );
+        assert!(bad.is_err());
     }
 
     #[test]

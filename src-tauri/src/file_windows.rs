@@ -90,7 +90,7 @@ pub enum MarkdownView {
 }
 
 impl MarkdownView {
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             MarkdownView::Rendered => "rendered",
             MarkdownView::Source => "source",
@@ -99,7 +99,7 @@ impl MarkdownView {
 
     /// Unknown values read as `Rendered`: a row written by a newer build should
     /// still open, in the safe read-only view.
-    fn from_str(s: &str) -> Self {
+    pub(crate) fn from_str(s: &str) -> Self {
         match s {
             "source" => MarkdownView::Source,
             _ => MarkdownView::Rendered,

@@ -98,9 +98,11 @@ interface FilePaneProps {
 	onMarkdownViewChange?: (view: MarkdownView) => void;
 }
 
-// A print asked for from the source view waits for the rendering, which is
-// debounced (250ms in MarkdownRendered), plus a beat for Mermaid to settle.
-const PRINT_AFTER_SWITCH_MS = 450;
+// A print asked for from the source view waits for the rendered document to
+// be in the page. Its first render is not debounced, and Print re-renders
+// every Mermaid diagram from its source, so nothing else needs to settle.
+// The cap only stops a wait that would never end.
+const PRINT_WAIT_MAX_FRAMES = 120;
 
 const dirOf = (path: string) => path.replace(/[\\/][^\\/]*$/, "");
 
@@ -391,11 +393,19 @@ export function FilePane({
 	const [printPending, setPrintPending] = useState(false);
 	useEffect(() => {
 		if (!printPending || view !== "rendered") return;
-		const t = setTimeout(() => {
-			setPrintPending(false);
-			doPrint();
-		}, PRINT_AFTER_SWITCH_MS);
-		return () => clearTimeout(t);
+		let frame = 0;
+		let raf = 0;
+		const tryPrint = () => {
+			const ready = renderedRef.current?.querySelector(".wmde-markdown");
+			if (ready || ++frame >= PRINT_WAIT_MAX_FRAMES) {
+				setPrintPending(false);
+				if (ready) doPrint();
+				return;
+			}
+			raf = requestAnimationFrame(tryPrint);
+		};
+		raf = requestAnimationFrame(tryPrint);
+		return () => cancelAnimationFrame(raf);
 	}, [printPending, view, doPrint]);
 
 	const onOpenMarkdownLink = embedded?.onOpenMarkdownLink;

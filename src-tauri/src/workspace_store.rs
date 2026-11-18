@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
 use crate::error::AbundioError;
+use crate::file_windows::MarkdownView;
 
 /// The name of a new Workspace's first Tab. Same literal as `FIRST_TAB_NAME`
 /// in `src/lib/tabName.ts`; change both together.
@@ -46,7 +47,7 @@ pub struct OrchestratorTab {
     pub commit_oid: Option<String>,
     /// A markdown file's view (ADR-0061): `rendered`, `source`, or `None`
     /// to follow the "Open markdown rendered" setting.
-    pub view: Option<String>,
+    pub view: Option<MarkdownView>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -60,15 +61,13 @@ pub struct NewOrchestratorTab {
     /// The view to open in; on a tab already open, it replaces that
     /// tab's (`file open --preview`). `None` leaves it alone.
     #[serde(default)]
-    pub view: Option<String>,
+    pub view: Option<MarkdownView>,
 }
 
-/// Whether `view` is one an Orchestrator tab can store.
-fn check_tab_view(view: Option<&str>) -> Result<(), AbundioError> {
-    match view {
-        None | Some("rendered") | Some("source") => Ok(()),
-        Some(other) => Err(AbundioError::InvalidOperation(format!("Not a view: {other}"))),
-    }
+/// A stored view, read as `file_windows` reads its own: an unknown value
+/// (from a newer build) opens rendered. The column's CHECK keeps others out.
+fn tab_view(stored: Option<String>) -> Option<MarkdownView> {
+    stored.map(|v| MarkdownView::from_str(&v))
 }
 
 /// One Workspace's folder and owner, for the folder rules.
@@ -600,7 +599,7 @@ impl WorkspaceStore {
                     kind: r.get(2)?,
                     path: r.get(3)?,
                     commit_oid: r.get(4)?,
-                    view: r.get(5)?,
+                    view: tab_view(r.get(5)?),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -626,7 +625,6 @@ impl WorkspaceStore {
         if !matches!(tab.kind.as_str(), "file" | "diff" | "commit") {
             return Err(AbundioError::InvalidOperation(format!("Not a tab kind: {}", tab.kind)));
         }
-        check_tab_view(tab.view.as_deref())?;
         let conn = self.conn.lock().unwrap();
         let owner: Option<String> = conn
             .query_row("SELECT profile_id FROM workspaces WHERE id = ?1", [&tab.workspace_id], |r| r.get(0))
@@ -647,11 +645,11 @@ impl WorkspaceStore {
                 Some(view) => {
                     conn.execute(
                         "UPDATE orchestrator_tabs SET view = ?2 WHERE id = ?1",
-                        rusqlite::params![id, view],
+                        rusqlite::params![id, view.as_str()],
                     )?;
                     Some(view)
                 }
-                None => stored,
+                None => tab_view(stored),
             };
             return Ok(OrchestratorTab {
                 id,
@@ -679,7 +677,7 @@ impl WorkspaceStore {
                 tab.kind,
                 tab.path,
                 tab.commit_oid,
-                tab.view
+                tab.view.map(|v| v.as_str())
             ],
         )?;
         Ok(OrchestratorTab {
@@ -697,14 +695,16 @@ impl WorkspaceStore {
         &self,
         profile_id: &str,
         id: &str,
-        view: &str,
+        view: MarkdownView,
     ) -> Result<(), AbundioError> {
-        check_tab_view(Some(view))?;
         let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let changed = conn.execute(
             "UPDATE orchestrator_tabs SET view = ?3 WHERE profile_id = ?1 AND id = ?2",
-            rusqlite::params![profile_id, id, view],
+            rusqlite::params![profile_id, id, view.as_str()],
         )?;
+        if changed == 0 {
+            return Err(AbundioError::NotFound(format!("Orchestrator tab not found: {id}")));
+        }
         Ok(())
     }
 

@@ -196,9 +196,12 @@ export const CodeEditor = memo(function CodeEditor({
 		}
 	}, [isActive]);
 
-	// Handle pending go-to-line from search results
+	// Handle pending go-to-line from search results. Waits for Monaco's mount
+	// (`editorMounted`): a markdown pane shown rendered mounts its editor only
+	// when a jump switches it to source (ADR-0061), after this has run once.
 	useEffect(() => {
-		if (!isActive || !pendingGotoLine || !editorRef.current) return;
+		if (!isActive || !pendingGotoLine || !editorMounted || !editorRef.current)
+			return;
 		const pane = useExplorerStore.getState().filePanes[tabId];
 		if (!pane || pane.filePath !== pendingGotoLine.filePath) return;
 
@@ -208,7 +211,7 @@ export const CodeEditor = memo(function CodeEditor({
 		ed.setPosition({ lineNumber: line, column: 1 });
 		ed.focus();
 		useExplorerStore.getState().setPendingGotoLine(null);
-	}, [isActive, pendingGotoLine, tabId]);
+	}, [isActive, pendingGotoLine, tabId, editorMounted]);
 
 	// Update font when settings change
 	useEffect(() => {
