@@ -51,7 +51,7 @@ dependencies = [
  "tokio",
  "toml_edit 0.25.8+spec-1.1.0",
  "uuid",
- "windows 0.61.3",
+ "windows 0.62.2",
  "zeroize",
 ]
 
