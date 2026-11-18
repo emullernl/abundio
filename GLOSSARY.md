@@ -43,10 +43,25 @@ _Avoid_: combo, key sequence.
 
 **Settings ▸ Editor**: A UI label, not a domain term — the section configures the **file pane**: wrap long lines, and **Open markdown rendered** (whether a markdown file opens in the rendered view or in source). It is named for what users call Monaco, and is deliberately not folded into Appearance: which view a file opens in is behaviour, not look. The **Preview color mode** stays on the preview's title bar per ADR-0013; the section points at it rather than duplicating it.
 
-**Profile**: A top-level grouping of Workspaces — a named bundle the user uses to organize unrelated bodies of work (e.g. "Work", "Personal"). Each **Workspace** belongs to exactly one Profile and cannot be moved between Profiles after creation. The only per-Profile data today is the Workspace list; appearance, custom agents and GitHub identity remain global, and environment variables are per-**Workspace** (see Environment Bundle). Scope is intentionally narrow so the term may broaden later. A Profile is bound to at most one **Window** at any moment.
+**Profile**: A top-level grouping of Workspaces — a named bundle the user uses to organize unrelated bodies of work (e.g. "Work", "Personal"). Each **Workspace** belongs to exactly one Profile and cannot be moved between Profiles after creation. The only per-Profile data today is the Workspace list; appearance, custom agents and GitHub identity remain global, and environment variables are per-**Workspace** (see Environment Bundle). Scope is intentionally narrow so the term may broaden later. Every Profile lives on exactly one **Host**. A local Profile is bound to at most one **Window** at any moment; a **Remote profile** may be shown by several **Clients** at once, all seeing the same state.
 _Avoid_: space, group, namespace, context
 
-**Active profile**: The single Profile currently shown in a given Window. Per-Window singleton — Window A's active profile is independent of Window B's, but a Profile cannot be active in two Windows at the same time. Switching Profile closes every Opened workspace in the previous Active profile of *that Window* (with a confirm dialog when any are open). Persisted across restarts per-Window.
+**Host**: The machine where a Profile's Workspaces, PTYs and Agents live: this computer for a local Profile, a server for a **Remote profile**. A Profile's Host is fixed when the Profile is made.
+_Avoid_: server (for the machine), remote, box, machine
+
+**Remote profile**: A Profile whose **Host** is not the computer the desktop app runs on. Its Agents keep running, keep their status and keep serving Agent control while no Client is attached.
+_Avoid_: remote workspace, server profile, cloud profile
+
+**Abundio server**: The headless program on a Remote profile's Host that owns its Workspaces, PTYs, pane status and Agent control. It has no windows of its own. One Abundio server may hold several Remote profiles, and it runs until it is stopped, not until the last Client leaves.
+_Avoid_: daemon, backend, agent host
+
+**Client**: A desktop app Window attached to an **Abundio server** to show a Remote profile, either as its Active profile or as a **Joined profile**. Several Clients may be attached at once; none of them is needed for the Agents to keep working.
+_Avoid_: viewer, frontend, session
+
+**Joined profile**: A **Remote profile** shown inside a local Profile's Window, in its own section of the Workspace list and Agents list, marked with its **Host**. Joining changes only what the Window shows: the Joined profile keeps its own Workspaces, handles and Agent control, and Agents never reach across the join. A local Profile may join several Remote profiles, and one Remote profile may be joined into Profiles on several computers.
+_Avoid_: merged profile, linked profile, attached profile, remote workspace
+
+**Active profile**: The single Profile currently shown in a given Window. Per-Window singleton — Window A's active profile is independent of Window B's, but a local Profile cannot be active in two Windows at the same time (a **Remote profile** can, one per **Client**). Switching Profile closes every Opened workspace in the previous Active profile of *that Window* (with a confirm dialog when any are open). Persisted across restarts per-Window.
 _Avoid_: current profile, selected profile, focused profile
 
 **Default profile**: The Profile created at migration time to host pre-existing Workspaces. After migration it has no permanent specialness: it can be renamed, and it can be deleted as long as another Profile exists. The system invariant is "at least one Profile must always exist" — not "the Default must exist".
