@@ -14,11 +14,18 @@ import { useAgentMenu } from "./useAgentMenu";
 
 /**
  * One **Agent row** of the **Agents list**: status icon, Agent icon and the
- * Agent's terminal title, then the Workspace and Tab. Clicking it is
+ * Agent's terminal title, then the Workspace and Tab (the Tab alone in a
+ * grouped list, whose label already names the Workspace). Clicking it is
  * **Switch to**; right-clicking opens the **Agent menu**. Each row selects only its own pane's slices, so a chatty
  * Agent's title changes redraw its row, not the list.
  */
-export function AgentRow({ tile }: { tile: FleetTile }) {
+export function AgentRow({
+	tile,
+	showWorkspace = true,
+}: {
+	tile: FleetTile;
+	showWorkspace?: boolean;
+}) {
 	const { paneId, ptyId, workspaceId, tabName } = tile;
 	const status = usePaneStatus(paneId);
 	const xtermTitle = usePtyActivityStore((s) => s.titles[paneId] ?? "");
@@ -134,7 +141,8 @@ export function AgentRow({ tile }: { tile: FleetTile }) {
 							color: "var(--fg-secondary)",
 						}}
 					>
-						{progress ?? `${workspaceName} · ${tabName}`}
+						{progress ??
+							(showWorkspace ? `${workspaceName} · ${tabName}` : tabName)}
 					</span>
 				</span>
 			</button>

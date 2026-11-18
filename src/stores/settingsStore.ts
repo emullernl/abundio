@@ -96,6 +96,10 @@ interface SettingsState {
 	 *  Command palette still reaches them. A preference, which is why it lives
 	 *  here and the actions themselves do not (ADR-0039). */
 	showActionBar: boolean;
+	/** Whether the **Agents list** is grouped by Workspace (the default) or
+	 *  one flat list in **Handle order**. Also sets the **Agent cycle**'s
+	 *  order in the Workspace view. */
+	agentsListGrouped: boolean;
 	/** Whether the Git changes tab shows its Sections in **Tree view** (rows
 	 *  nested under **Folder rows**) rather than **List view**. */
 	gitChangesTreeView: boolean;
@@ -190,6 +194,7 @@ interface SettingsState {
 	setReopenWorkspacesOnOpen: (enabled: boolean) => void;
 	setFocusSweep: (enabled: boolean) => void;
 	setShowActionBar: (enabled: boolean) => void;
+	setAgentsListGrouped: (grouped: boolean) => void;
 	setGitChangesTreeView: (enabled: boolean) => void;
 	setAutoCheckUpdatesEnabled: (enabled: boolean) => void;
 	setSkippedUpdateVersion: (version: string | null) => void;
@@ -257,6 +262,7 @@ export const PERSISTED_KEYS = [
 	"resumeAgentSessions",
 	"reopenWorkspacesOnOpen",
 	"showActionBar",
+	"agentsListGrouped",
 	"gitChangesTreeView",
 	"focusSweep",
 	"autoCheckUpdatesEnabled",
@@ -315,6 +321,7 @@ const PERSISTED_DEFAULTS: {
 	resumeAgentSessions: boolean;
 	reopenWorkspacesOnOpen: boolean;
 	showActionBar: boolean;
+	agentsListGrouped: boolean;
 	gitChangesTreeView: boolean;
 	focusSweep: boolean;
 	autoCheckUpdatesEnabled: boolean;
@@ -356,6 +363,7 @@ const PERSISTED_DEFAULTS: {
 		resumeAgentSessions: true,
 		reopenWorkspacesOnOpen: true,
 		showActionBar: true,
+		agentsListGrouped: true,
 		gitChangesTreeView: true,
 		focusSweep: true,
 		autoCheckUpdatesEnabled: true,
@@ -497,6 +505,10 @@ const PERSISTED_DEFAULTS: {
 				typeof s.showActionBar === "boolean"
 					? s.showActionBar
 					: defaults.showActionBar,
+			agentsListGrouped:
+				typeof s.agentsListGrouped === "boolean"
+					? s.agentsListGrouped
+					: defaults.agentsListGrouped,
 			gitChangesTreeView:
 				typeof s.gitChangesTreeView === "boolean"
 					? s.gitChangesTreeView
@@ -684,6 +696,7 @@ export const useSettingsStore = create<SettingsState>()(
 			resumeAgentSessions: PERSISTED_DEFAULTS.resumeAgentSessions,
 			reopenWorkspacesOnOpen: PERSISTED_DEFAULTS.reopenWorkspacesOnOpen,
 			showActionBar: PERSISTED_DEFAULTS.showActionBar,
+			agentsListGrouped: PERSISTED_DEFAULTS.agentsListGrouped,
 			gitChangesTreeView: PERSISTED_DEFAULTS.gitChangesTreeView,
 			focusSweep: PERSISTED_DEFAULTS.focusSweep,
 			autoCheckUpdatesEnabled: PERSISTED_DEFAULTS.autoCheckUpdatesEnabled,
@@ -887,6 +900,7 @@ export const useSettingsStore = create<SettingsState>()(
 			setReopenWorkspacesOnOpen: (reopenWorkspacesOnOpen) =>
 				set({ reopenWorkspacesOnOpen }),
 			setShowActionBar: (showActionBar) => set({ showActionBar }),
+			setAgentsListGrouped: (agentsListGrouped) => set({ agentsListGrouped }),
 			setGitChangesTreeView: (gitChangesTreeView) =>
 				set({ gitChangesTreeView }),
 			setFocusSweep: (focusSweep) => set({ focusSweep }),

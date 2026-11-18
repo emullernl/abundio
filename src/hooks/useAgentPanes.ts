@@ -1,7 +1,12 @@
 import { useMemo } from "react";
-import { agentPanesFrom, inHandleOrder } from "../lib/agentPanes";
+import {
+	agentPanesFrom,
+	groupByWorkspace,
+	inHandleOrder,
+} from "../lib/agentPanes";
 import type { FleetTile } from "../lib/fleetConsole";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -77,9 +82,20 @@ export function useAgentPanes({
 	]);
 }
 
-/** The **Agents list**'s rows, in **Handle order**. */
-export function useAgentsInHandleOrder(): FleetTile[] {
+/** The **Agents list**'s rows: one group per Workspace when grouped, else a
+ *  single group (`workspaceId: null`) of every Agent in **Handle order**. */
+export function useAgentsListGroups(): {
+	grouped: boolean;
+	groups: { workspaceId: string | null; tiles: FleetTile[] }[];
+	count: number;
+} {
 	const tiles = useAgentPanes({ includePending: false });
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
-	return useMemo(() => inHandleOrder(tiles, workspaces), [tiles, workspaces]);
+	const grouped = useSettingsStore((s) => s.agentsListGrouped);
+	return useMemo(() => {
+		const groups: { workspaceId: string | null; tiles: FleetTile[] }[] = grouped
+			? groupByWorkspace(tiles, workspaces)
+			: [{ workspaceId: null, tiles: inHandleOrder(tiles, workspaces) }];
+		return { grouped, groups, count: tiles.length };
+	}, [tiles, workspaces, grouped]);
 }

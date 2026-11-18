@@ -4,6 +4,7 @@
 // imperative path, so they always agree on which Agents exist.
 
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { handleForPane } from "./agentHandle";
@@ -42,8 +43,46 @@ export function inHandleOrder(
 	return sortByHandle(tiles, (t) => handleForPane(workspaces, t.paneId));
 }
 
+/** One group of a grouped **Agents list**: a Workspace and its Agents. */
+export interface AgentGroup {
+	workspaceId: string;
+	tiles: FleetTile[];
+}
+
+/**
+ * The tiles grouped by Workspace, groups in the tiles' own (Left sidebar)
+ * order, Agents in **Handle order** inside each. Workspaces with no Agent
+ * have no group; each Linked worktree is its own Workspace, so its own group.
+ */
+export function groupByWorkspace(
+	tiles: readonly FleetTile[],
+	workspaces: readonly WorkspaceWithTabs[],
+): AgentGroup[] {
+	const groups = new Map<string, FleetTile[]>();
+	for (const t of tiles) {
+		const g = groups.get(t.workspaceId);
+		if (g) g.push(t);
+		else groups.set(t.workspaceId, [t]);
+	}
+	return [...groups].map(([workspaceId, g]) => ({
+		workspaceId,
+		tiles: inHandleOrder(g, workspaces),
+	}));
+}
+
+/** The Agents list's rows top to bottom as drawn: grouped or flat. */
+export function inListOrder(
+	tiles: readonly FleetTile[],
+	workspaces: readonly WorkspaceWithTabs[],
+	grouped: boolean,
+): FleetTile[] {
+	return grouped
+		? groupByWorkspace(tiles, workspaces).flatMap((g) => g.tiles)
+		: inHandleOrder(tiles, workspaces);
+}
+
 /** The Agents list's rows right now, outside React (the Agent cycle). */
-export function agentsInHandleOrderNow(): FleetTile[] {
+export function agentsInListOrderNow(): FleetTile[] {
 	const { workspaces } = useWorkspaceStore.getState();
 	const act = usePtyActivityStore.getState();
 	const tiles = agentPanesFrom({
@@ -53,5 +92,9 @@ export function agentsInHandleOrderNow(): FleetTile[] {
 		activities: act.activities,
 		panePtyMap: act.panePtyMap,
 	});
-	return inHandleOrder(tiles, workspaces);
+	return inListOrder(
+		tiles,
+		workspaces,
+		useSettingsStore.getState().agentsListGrouped,
+	);
 }

@@ -1,7 +1,8 @@
-// The **Agent cycle**: next / previous Agent in **Handle order**, wrapping.
+// The **Agent cycle**: next / previous Agent in the **Agents list**'s order
+// (grouped by Workspace, or flat in **Handle order**), wrapping.
 
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { agentsInHandleOrderNow } from "./agentPanes";
+import { agentsInListOrderNow } from "./agentPanes";
 import { cycleTile, type FleetTile } from "./fleetConsole";
 import { cycleFleet, fleetConsoleShowing } from "./fleetFocus";
 import {
@@ -43,7 +44,7 @@ export function cycleAgent(step: 1 | -1): void {
 	}
 	const ws = useWorkspaceStore.getState();
 	const target = nextAgentPane(
-		agentsInHandleOrderNow(),
+		agentsInListOrderNow(),
 		ws.focusedPaneId,
 		// A switch still in flight: step from it, so a held key keeps advancing.
 		ws.switchingWorkspaceId ?? ws.activeWorkspaceId,
