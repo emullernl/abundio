@@ -362,14 +362,22 @@ mod tests {
     /// so `: ` or ` #` inside it would break the frontmatter.
     #[test]
     fn skill_description_fits_and_parses() {
-        let frontmatter = SKILL_MD.split("\n---\n").next().unwrap();
-        let line = frontmatter
+        // `lines()` also strips a CR, so a CRLF checkout parses the same.
+        let line = SKILL_MD
             .lines()
+            .skip(1)
+            .take_while(|l| *l != "---")
             .find_map(|l| l.strip_prefix("description: "))
             .expect("frontmatter has a description");
-        assert!(!line.is_empty());
+        let first = line.chars().next().expect("description is not empty");
         assert!(line.chars().count() <= 1024, "{} chars", line.chars().count());
-        assert!(!line.contains(": ") && !line.contains(" #"));
+        assert!(!line.contains(": "), "`: ` in the description");
+        assert!(!line.contains(" #"), "` #` in the description");
+        assert!(
+            !"\"'[]{}>|*&!%@`#,-?:".contains(first),
+            "description starts with YAML indicator {first:?}"
+        );
+        assert!(!line.ends_with(':'), "description ends with `:`");
     }
 
     #[test]
