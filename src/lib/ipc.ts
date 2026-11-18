@@ -19,6 +19,7 @@ import type {
 	GitChangedFile,
 	GitFileDiff,
 	LaunchFile,
+	MarkdownView,
 	PrChange,
 	Profile,
 	ProfileUpdate,
@@ -1309,7 +1310,7 @@ export const env = {
 };
 
 /** Which of its two views a markdown **File window** shows (ADR-0046). */
-export type MarkdownView = "rendered" | "source";
+export type { MarkdownView };
 
 /** What a **File window** shows (ADR-0049). */
 export type FileWindowKind = "text" | "image" | "diff" | "commit-diff";

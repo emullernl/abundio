@@ -1,4 +1,4 @@
-import type { PaneNode } from "./types";
+import type { MarkdownView, PaneNode } from "./types";
 
 /** Parse a Tab's stored layoutJson. Returns null on malformed JSON rather than throwing. */
 export function parseTabLayout(layoutJson: string): PaneNode | null {
@@ -216,6 +216,26 @@ export function setCwd(
 	if (tree.type !== "split") return tree;
 	const first = setCwd(tree.first, paneId, cwd);
 	const second = setCwd(tree.second, paneId, cwd);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
+/**
+ * Set the markdown view of the file node with the given paneId (ADR-0061).
+ * Same tree when there is no such node or it already has that view.
+ */
+export function setFileNodeView(
+	tree: PaneNode,
+	paneId: string,
+	view: MarkdownView,
+): PaneNode {
+	if (tree.type === "file") {
+		if (tree.id !== paneId || tree.markdownView === view) return tree;
+		return { ...tree, markdownView: view };
+	}
+	if (tree.type !== "split") return tree;
+	const first = setFileNodeView(tree.first, paneId, view);
+	const second = setFileNodeView(tree.second, paneId, view);
 	if (first === tree.first && second === tree.second) return tree;
 	return { ...tree, first, second };
 }
