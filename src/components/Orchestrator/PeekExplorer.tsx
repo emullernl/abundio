@@ -1,37 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import {
-	peekExplorerDragWidth,
-	peekExplorerShownWidth,
-} from "../../lib/orchestratorLayout";
+import { PEEK_EXPLORER_HANDLE } from "../../lib/orchestratorLayout";
 import { openOrchestratorFile } from "../../lib/orchestratorTabs";
 import { findPaneLocation } from "../../lib/paneLocation";
+import type { Workspace } from "../../lib/types";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
-import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FileTree } from "../Explorer/FileTree";
 
-/** Width of the drag handle between the Peek explorer and the terminal. */
-const HANDLE = 5;
-
 /**
- * The **Peek explorer**: the peeked Agent's Workspace's file tree, on the
- * left edge of the Peek, read-only. Opening a file makes it a selected
- * **Orchestrator tab**, which sits left of the Peek, so the file and the
- * Agent show side by side. Folders expand as in the Workspace's Explorer
- * tab: the tree shares its state, kept by path. No tooltip on the tree: every
- * row would inherit it.
+ * The Workspace the **Peek explorer** shows for a peeked pane: the pane's
+ * own, or undefined while the pane is not in a layout yet or its folder is
+ * missing (then there is nothing to show, and the view gives the room back).
  */
-export function PeekExplorer({
-	paneId,
-	columnWidth,
-}: {
-	paneId: string;
-	/** The Peek column's width, so the terminal keeps its room. */
-	columnWidth: number;
-}) {
-	const open = useWindowUiStore((s) => s.peekExplorerOpen);
-	const width = useWindowUiStore((s) => s.peekExplorerWidth);
-	const setWidth = useWindowUiStore((s) => s.setPeekExplorerWidth);
+export function usePeekWorkspace(paneId: string): Workspace | undefined {
 	const missing = useWorkspaceStore((s) => s.missingFolderIds);
 	// A pane never changes Workspace, so look it up once per pane: the
 	// lookup parses every Tab's layout. Until the pane is in a layout (a
@@ -42,31 +23,53 @@ export function PeekExplorer({
 		null,
 	);
 	const wsId = found?.paneId === paneId ? found.wsId : undefined;
+	// No pane (no Peek): nothing to look for, so no layout subscription.
 	const layoutsWhileUnknown = useWorkspaceStore((s) =>
-		wsId ? null : s.workspaces,
+		!paneId || wsId ? null : s.workspaces,
 	);
 	useEffect(() => {
 		// Layouts change while the pane is unknown: look again.
-		if (wsId || !layoutsWhileUnknown) return;
+		if (!paneId || wsId || !layoutsWhileUnknown) return;
 		const id = findPaneLocation(paneId)?.workspaceId;
 		if (id) setFound({ paneId, wsId: id });
 	}, [paneId, wsId, layoutsWhileUnknown]);
 	const ws = useWorkspaceStore((s) =>
 		wsId ? s.workspaces.find((w) => w.id === wsId) : undefined,
 	);
+	return ws && !missing.has(ws.id) ? ws : undefined;
+}
 
-	// While dragging, the width lives here and is saved on release, like
-	// every layout divider; it never goes past what the column can show.
-	const [dragWidth, setDragWidth] = useState<number | null>(null);
-	const shown = peekExplorerShownWidth(dragWidth ?? width, columnWidth);
+/**
+ * The **Peek explorer**: the peeked Agent's Workspace's file tree, on the
+ * right edge of the Peek, read-only. Opening a file makes it a selected
+ * **Orchestrator tab**, which sits left of the Peek, so the file and the
+ * Agent show side by side. Folders expand as in the Workspace's Explorer
+ * tab: the tree shares its state, kept by path. No tooltip on the tree: every
+ * row would inherit it.
+ *
+ * Its width is the view's to decide (`peekLayout`); the handle on its left
+ * edge reports drags, in px wider than at the start, and the view keeps the
+ * explorer's room shared between the terminal and the left side.
+ */
+export function PeekExplorer({
+	workspace: ws,
+	width,
+	onDrag,
+	onDragEnd,
+}: {
+	workspace: Workspace;
+	width: number;
+	/** The width the user is dragging to, from the width at the start. */
+	onDrag: (width: number) => void;
+	onDragEnd: () => void;
+}) {
 	const start = useRef<{ x: number; width: number } | null>(null);
-	if (!open || !ws || missing.has(ws.id) || shown === 0) return null;
 
 	const endDrag = () => {
+		if (!start.current) return;
 		start.current = null;
 		document.body.classList.remove("dragging");
-		if (dragWidth !== null) setWidth(dragWidth);
-		setDragWidth(null);
+		onDragEnd();
 	};
 
 	const openFile = (path: string) => {
@@ -81,9 +84,33 @@ export function PeekExplorer({
 	return (
 		<>
 			<div
+				className="shrink-0 hover:bg-[var(--accent)]"
+				style={{
+					width: PEEK_EXPLORER_HANDLE,
+					cursor: "col-resize",
+					background: "color-mix(in srgb, var(--border) 40%, transparent)",
+				}}
+				onPointerDown={(e) => {
+					e.preventDefault();
+					document.body.classList.add("dragging");
+					start.current = { x: e.clientX, width };
+					e.currentTarget.setPointerCapture(e.pointerId);
+				}}
+				onPointerMove={(e) => {
+					if (!start.current) return;
+					// The explorer's right edge stays put: dragging left widens it.
+					onDrag(start.current.width + start.current.x - e.clientX);
+				}}
+				onPointerUp={(e) => {
+					e.currentTarget.releasePointerCapture(e.pointerId);
+					endDrag();
+				}}
+				onLostPointerCapture={endDrag}
+			/>
+			<div
 				data-peek-explorer
 				className="shrink-0 min-h-0 overflow-y-auto overflow-x-hidden"
-				style={{ width: shown, background: "var(--bg-secondary)" }}
+				style={{ width, background: "var(--bg-secondary)" }}
 			>
 				<FileTree
 					rootPath={ws.rootFolder}
@@ -92,34 +119,6 @@ export function PeekExplorer({
 					onOpenFile={openFile}
 				/>
 			</div>
-			<div
-				className="shrink-0 hover:bg-[var(--accent)]"
-				style={{
-					width: HANDLE,
-					cursor: "col-resize",
-					background: "color-mix(in srgb, var(--border) 40%, transparent)",
-				}}
-				onPointerDown={(e) => {
-					e.preventDefault();
-					document.body.classList.add("dragging");
-					start.current = { x: e.clientX, width: shown };
-					e.currentTarget.setPointerCapture(e.pointerId);
-				}}
-				onPointerMove={(e) => {
-					if (!start.current) return;
-					setDragWidth(
-						peekExplorerDragWidth(
-							start.current.width + e.clientX - start.current.x,
-							columnWidth,
-						),
-					);
-				}}
-				onPointerUp={(e) => {
-					e.currentTarget.releasePointerCapture(e.pointerId);
-					endDrag();
-				}}
-				onLostPointerCapture={endDrag}
-			/>
 		</>
 	);
 }

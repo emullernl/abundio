@@ -9,6 +9,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { useAgentPanes } from "../../hooks/useAgentPanes";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
@@ -18,7 +19,11 @@ import { closePeek } from "../../lib/orchestratorActions";
 import {
 	ORCHESTRATOR_DIVIDER,
 	ORCHESTRATOR_TAB_STRIP,
+	PEEK_DIVIDER,
 	panesTop,
+	peekExplorerDragWidth,
+	peekLayout,
+	peekTerminalWidthFor,
 	ratioFor,
 	topContentHeight,
 } from "../../lib/orchestratorLayout";
@@ -37,6 +42,7 @@ import {
 	tabPaneId,
 	tabTitle,
 } from "../../lib/orchestratorTabs";
+import { scrollToShowTab } from "../../lib/tabStripScroll";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
@@ -52,7 +58,7 @@ import {
 import { SaveConfirmDialog } from "../SaveConfirmDialog";
 import { OrchestratorFileTabs } from "./OrchestratorFileTabs";
 import { OrchestratorGraph } from "./OrchestratorGraph";
-import { PeekExplorer } from "./PeekExplorer";
+import { PeekExplorer, usePeekWorkspace } from "./PeekExplorer";
 import { PeekPane } from "./PeekPane";
 
 /**
@@ -108,30 +114,7 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 
 	const exited = useOrchestratorStore((s) => s.exited);
 	const peekPaneId = useOrchestratorStore((s) => s.peekPaneId);
-	const peekWidth = useOrchestratorStore((s) => s.peekWidth);
 	const showCard = phase !== "ready" || changingAgent || exited;
-
-	// The Peek column's width, for the file tabs drawn over the top area: a
-	// selected file sits left of the Peek, never over it.
-	const peekColumnRef = useRef<HTMLDivElement>(null);
-	const hasPeekColumn = phase === "ready" && content > 0 && !!peekPaneId;
-	useLayoutEffect(() => {
-		const el = peekColumnRef.current;
-		const put = (w: number) =>
-			useOrchestratorStore.getState().set({ peekWidth: w });
-		if (!hasPeekColumn || !el) {
-			put(0);
-			return;
-		}
-		const measure = () => put(el.getBoundingClientRect().width);
-		measure();
-		const ro = new ResizeObserver(measure);
-		ro.observe(el);
-		return () => {
-			ro.disconnect();
-			put(0);
-		};
-	}, [hasPeekColumn]);
 
 	return (
 		<div
@@ -153,31 +136,7 @@ function OrchestratorViewBody({ topOffset }: { topOffset: number }) {
 					{phase !== "ready" ? (
 						<WelcomeCard />
 					) : (
-						// The graph, and the **Peek** to its right while there is one.
-						<div className="absolute inset-0 flex">
-							<div className="relative flex-1 min-w-0">
-								<OrchestratorGraph />
-							</div>
-							{peekPaneId && (
-								<div
-									ref={peekColumnRef}
-									className="relative flex flex-col min-w-0"
-									style={{
-										flex: "1 1 0",
-										borderLeft:
-											"1px solid color-mix(in srgb, var(--border) 60%, transparent)",
-									}}
-								>
-									<PeekHeader paneId={peekPaneId} />
-									<div className="flex flex-1 min-h-0">
-										<PeekExplorer paneId={peekPaneId} columnWidth={peekWidth} />
-										<div className="relative flex-1 min-w-0">
-											<PeekPane paneId={peekPaneId} />
-										</div>
-									</div>
-								</div>
-							)}
-						</div>
+						<GraphAndPeek peekPaneId={peekPaneId} />
 					)}
 				</div>
 			)}
@@ -241,6 +200,7 @@ function FileTopTab({
 	);
 	return (
 		<TopTab
+			id={tab.id}
 			active={active}
 			onSelect={() => selectOrchestratorTab(tab.id)}
 			onClose={onClose}
@@ -285,6 +245,7 @@ function FileTopTab({
 
 /** One **Orchestrator tab** in the strip. */
 function TopTab({
+	id,
 	active,
 	onSelect,
 	onClose,
@@ -292,6 +253,8 @@ function TopTab({
 	ariaLabel,
 	children,
 }: {
+	/** A file tab's id, so the strip can scroll it into view. */
+	id?: string;
 	active: boolean;
 	onSelect: () => void;
 	onClose?: () => void;
@@ -301,7 +264,8 @@ function TopTab({
 }) {
 	return (
 		<div
-			className={`flex items-center ${
+			data-orchestrator-tab-id={id}
+			className={`flex items-center shrink-0 ${
 				active
 					? "text-[var(--fg-primary)]"
 					: "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
@@ -346,6 +310,163 @@ function TopTab({
 				</button>
 			)}
 		</div>
+	);
+}
+
+/**
+ * The graph, and the **Peek** to its right while there is one:
+ * [graph | divider | terminal | Peek explorer]. Widths come from
+ * `peekLayout`: the user drags the divider to set the terminal's width, and
+ * the explorer's room comes half from the terminal, half from the graph.
+ * Publishes the Peek's width (`peekWidth`) so a selected file tab, drawn
+ * over the graph's place, sits beside the Peek and shrinks the same way.
+ */
+function GraphAndPeek({ peekPaneId }: { peekPaneId: string | null }) {
+	const areaRef = useRef<HTMLDivElement>(null);
+	const [area, setArea] = useState(0);
+	useLayoutEffect(() => {
+		const el = areaRef.current;
+		if (!el) return;
+		const measure = () => setArea(el.getBoundingClientRect().width);
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, []);
+
+	const explorerOpen = useWindowUiStore((s) => s.peekExplorerOpen);
+	const explorerWidth = useWindowUiStore((s) => s.peekExplorerWidth);
+	const terminalWidth = useWindowUiStore((s) => s.peekTerminalWidth);
+	const setExplorerWidth = useWindowUiStore((s) => s.setPeekExplorerWidth);
+	const setTerminalWidth = useWindowUiStore((s) => s.setPeekTerminalWidth);
+	// While a drag runs, the width lives here and is saved on release, like
+	// every layout divider.
+	const [explorerDrag, setExplorerDrag] = useState<number | null>(null);
+	const [terminalDrag, setTerminalDrag] = useState<number | null>(null);
+	// The latest drag values, saved from on release: a pointerup in the same
+	// frame as the last move can run against the render before it.
+	const explorerDragRef = useRef<number | null>(null);
+	const terminalDragRef = useRef<number | null>(null);
+	const ws = usePeekWorkspace(peekPaneId ?? "");
+
+	const layout =
+		peekPaneId && area > 0
+			? peekLayout({
+					area,
+					terminalWidth: terminalDrag ?? terminalWidth,
+					explorerWidth:
+						explorerOpen && ws ? (explorerDrag ?? explorerWidth) : null,
+				})
+			: null;
+	const peekWidth = layout ? area - layout.left : 0;
+	useLayoutEffect(() => {
+		useOrchestratorStore.getState().set({ peekWidth });
+	}, [peekWidth]);
+	useEffect(
+		() => () => useOrchestratorStore.getState().set({ peekWidth: 0 }),
+		[],
+	);
+
+	return (
+		<div ref={areaRef} className="absolute inset-0 flex">
+			<div
+				className="relative min-w-0"
+				style={
+					layout ? { width: layout.left, flexShrink: 0 } : { flex: "1 1 0" }
+				}
+			>
+				<OrchestratorGraph />
+			</div>
+			{peekPaneId && layout && (
+				<>
+					<PeekDivider
+						left={layout.left}
+						onDrag={(left) => {
+							const w = peekTerminalWidthFor(left, area, layout.explorer);
+							terminalDragRef.current = w;
+							setTerminalDrag(w);
+						}}
+						onDragEnd={() => {
+							const w = terminalDragRef.current;
+							terminalDragRef.current = null;
+							if (w !== null) setTerminalWidth(w);
+							setTerminalDrag(null);
+						}}
+					/>
+					<div className="relative flex flex-col flex-1 min-w-0">
+						<PeekHeader paneId={peekPaneId} />
+						<div className="flex flex-1 min-h-0">
+							<div className="relative flex-1 min-w-0">
+								<PeekPane paneId={peekPaneId} />
+							</div>
+							{layout.explorer > 0 && ws && (
+								<PeekExplorer
+									workspace={ws}
+									width={layout.explorer}
+									onDrag={(w) => {
+										const width = peekExplorerDragWidth(w, area);
+										explorerDragRef.current = width;
+										setExplorerDrag(width);
+									}}
+									onDragEnd={() => {
+										const width = explorerDragRef.current;
+										explorerDragRef.current = null;
+										if (width !== null) setExplorerWidth(width);
+										setExplorerDrag(null);
+									}}
+								/>
+							)}
+						</div>
+					</div>
+				</>
+			)}
+		</div>
+	);
+}
+
+/** The divider between the graph (or a file tab) and the **Peek**: drags
+ *  report where the graph's right edge is asked to be. */
+function PeekDivider({
+	left,
+	onDrag,
+	onDragEnd,
+}: {
+	left: number;
+	onDrag: (left: number) => void;
+	onDragEnd: () => void;
+}) {
+	const start = useRef<{ x: number; left: number } | null>(null);
+	const end = () => {
+		if (!start.current) return;
+		start.current = null;
+		document.body.classList.remove("dragging");
+		onDragEnd();
+	};
+	return (
+		<div
+			data-peek-divider
+			className="shrink-0 hover:bg-[var(--accent)]"
+			style={{
+				width: PEEK_DIVIDER,
+				cursor: "col-resize",
+				background: "color-mix(in srgb, var(--border) 40%, transparent)",
+			}}
+			onPointerDown={(e) => {
+				e.preventDefault();
+				document.body.classList.add("dragging");
+				start.current = { x: e.clientX, left };
+				e.currentTarget.setPointerCapture(e.pointerId);
+			}}
+			onPointerMove={(e) => {
+				if (!start.current) return;
+				onDrag(start.current.left + e.clientX - start.current.x);
+			}}
+			onPointerUp={(e) => {
+				e.currentTarget.releasePointerCapture(e.pointerId);
+				end();
+			}}
+			onLostPointerCapture={end}
+		/>
 	);
 }
 
@@ -415,6 +536,29 @@ function TabStrip({
 	const closing = fileTabs.find((t) => t.id === closingTabId) ?? null;
 	const clearClosing = () =>
 		useOrchestratorStore.getState().set({ closingTabId: null });
+	// Keep the selected file tab in view, as the Tab bar does.
+	const stripRef = useRef<HTMLDivElement>(null);
+	const tabCount = fileTabs.length;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: tabCount re-runs it when a tab is added or closed beside the selected one
+	useLayoutEffect(() => {
+		const strip = stripRef.current;
+		if (!strip || !selectedTabId) return;
+		const el = Array.from(
+			strip.querySelectorAll<HTMLElement>("[data-orchestrator-tab-id]"),
+		).find((t) => t.dataset.orchestratorTabId === selectedTabId);
+		if (!el) return;
+		const stripRect = strip.getBoundingClientRect();
+		const tabRect = el.getBoundingClientRect();
+		const left = tabRect.left - stripRect.left + strip.scrollLeft;
+		const next = scrollToShowTab({
+			scrollLeft: strip.scrollLeft,
+			viewWidth: strip.clientWidth,
+			contentWidth: strip.scrollWidth,
+			left,
+			right: left + tabRect.width,
+		});
+		if (next !== null) strip.scrollLeft = next;
+	}, [selectedTabId, tabCount]);
 	return (
 		<div
 			className="flex items-center shrink-0 select-none"
@@ -434,20 +578,34 @@ function TabStrip({
 				<Network size={13} />
 				Agents
 			</TopTab>
-			{fileTabs.map((tab) => (
-				<FileTopTab
-					key={tab.id}
-					tab={tab}
-					active={selectedTabId === tab.id}
-					onClose={() => requestCloseOrchestratorTab(tab.id)}
-				/>
-			))}
+			{/* The file tabs scroll sideways when there are more than fit; the
+			    graph's tab and the buttons stay where they are. */}
+			<div
+				ref={stripRef}
+				className="flex items-center min-w-0 overflow-x-auto"
+				style={{ flex: "0 1 auto", gap: 8, scrollbarWidth: "none" }}
+				onWheel={(e) => {
+					// A mouse wheel has no sideways axis: turn it.
+					const strip = e.currentTarget;
+					if (e.deltaX !== 0 || strip.scrollWidth <= strip.clientWidth) return;
+					strip.scrollLeft += e.deltaY;
+				}}
+			>
+				{fileTabs.map((tab) => (
+					<FileTopTab
+						key={tab.id}
+						tab={tab}
+						active={selectedTabId === tab.id}
+						onClose={() => requestCloseOrchestratorTab(tab.id)}
+					/>
+				))}
+			</div>
 			{phase === "ready" && <OpenWorkspaceButton />}
 			<div className="flex-1" />
 			{phase === "ready" && agent && (
 				<button
 					type="button"
-					className={secondaryButtonClass}
+					className={`${secondaryButtonClass} shrink-0 whitespace-nowrap`}
 					style={{ height: 24, padding: "0 10px", fontSize: 12 }}
 					title="Choose another agent to be the Orchestrator"
 					onClick={() =>
@@ -459,7 +617,7 @@ function TabStrip({
 			)}
 			<button
 				type="button"
-				className="flex items-center justify-center text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
+				className="flex items-center justify-center shrink-0 text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-tertiary)]"
 				style={{ width: 24, height: 24, borderRadius: 6 }}
 				title={collapsed ? "Show the agents panel" : "Hide the agents panel"}
 				aria-label={
@@ -469,24 +627,28 @@ function TabStrip({
 			>
 				{collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
 			</button>
-			{closing && (
-				<SaveConfirmDialog
-					fileName={tabLabel(closing)}
-					onSave={() => {
-						const tab = closing;
-						clearClosing();
-						void useExplorerStore
-							.getState()
-							.saveFile(tabPaneId(tab.id))
-							.then(() => closeOrchestratorTab(tab.id));
-					}}
-					onDontSave={() => {
-						closeOrchestratorTab(closing.id);
-						clearClosing();
-					}}
-					onCancel={() => clearClosing()}
-				/>
-			)}
+			{/* On <body>: inside the view's stacking context (z-index 25) the
+			    dialog would sit under the file tabs' layer (26). */}
+			{closing &&
+				createPortal(
+					<SaveConfirmDialog
+						fileName={tabLabel(closing)}
+						onSave={() => {
+							const tab = closing;
+							clearClosing();
+							void useExplorerStore
+								.getState()
+								.saveFile(tabPaneId(tab.id))
+								.then(() => closeOrchestratorTab(tab.id));
+						}}
+						onDontSave={() => {
+							closeOrchestratorTab(closing.id);
+							clearClosing();
+						}}
+						onCancel={() => clearClosing()}
+					/>,
+					document.body,
+				)}
 		</div>
 	);
 }
@@ -502,16 +664,19 @@ function OpenWorkspaceButton() {
 			m.set(t.workspaceId, (m.get(t.workspaceId) ?? 0) + 1);
 		return m;
 	}, [tiles]);
+	// Never squeezed by a long tab strip: the file tabs scroll instead.
 	return (
-		<WorkspacePicker
-			agentCountByWorkspace={counts}
-			open={open}
-			onOpenChange={(o) =>
-				useOrchestratorStore.getState().set({ workspacePickerOpen: o })
-			}
-			title="Open a workspace — its agents join the graph"
-			align="left"
-		/>
+		<div className="shrink-0 whitespace-nowrap">
+			<WorkspacePicker
+				agentCountByWorkspace={counts}
+				open={open}
+				onOpenChange={(o) =>
+					useOrchestratorStore.getState().set({ workspacePickerOpen: o })
+				}
+				title="Open a workspace — its agents join the graph"
+				align="left"
+			/>
+		</div>
 	);
 }
 

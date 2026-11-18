@@ -60,37 +60,110 @@ export function clampPeekExplorerWidth(width: number): number {
 	);
 }
 
+/** The graph (or the selected file tab) beside the Peek keeps at least
+ *  this much width while there is room for it. */
+export const PEEK_LEFT_MIN = 240;
+/** The divider between the graph (or file) and the Peek. */
+export const PEEK_DIVIDER = 5;
+/** The drag handle on the Peek explorer's left edge. */
+export const PEEK_EXPLORER_HANDLE = 5;
+
+/** Widths across the Orchestrator view's top area while there is a Peek:
+ *  [left (graph or file) | divider | terminal | handle | explorer]. An
+ *  `explorer` of 0 means it is not drawn (and neither is its handle). */
+export interface PeekLayout {
+	left: number;
+	terminal: number;
+	explorer: number;
+}
+
+/** A Peek terminal width the user dragged to, kept sane. */
+export function clampPeekTerminalWidth(width: number): number {
+	if (!Number.isFinite(width)) return PEEK_TERMINAL_MIN;
+	return Math.round(Math.max(PEEK_TERMINAL_MIN, width));
+}
+
+/** Split `space` between the left side and the terminal, the terminal
+ *  wanting `terminal`, each keeping its minimum while both fit. */
+function split(space: number, terminal: number): PeekLayout {
+	if (space < PEEK_LEFT_MIN + PEEK_TERMINAL_MIN) {
+		const t = Math.round(space / 2);
+		return { left: space - t, terminal: t, explorer: 0 };
+	}
+	const t = Math.round(
+		Math.min(space - PEEK_LEFT_MIN, Math.max(PEEK_TERMINAL_MIN, terminal)),
+	);
+	return { left: space - t, terminal: t, explorer: 0 };
+}
+
 /**
- * The width the Peek explorer is drawn at in a Peek column `columnWidth`
- * wide: the user's width, narrowed so the terminal keeps
- * `PEEK_TERMINAL_MIN`; 0 (not drawn) when that leaves it under
- * `PEEK_EXPLORER_MIN`. A column not measured yet (0) draws it as asked.
+ * The top area's widths with a Peek, in an area `area` px wide.
+ *
+ * `terminalWidth` is the terminal's width *without* the explorer, as the
+ * user dragged it (null: half the area, as before any drag). The explorer
+ * (`explorerWidth`, null while hidden) takes its room half from the
+ * terminal and half from the left side, so the terminal moves left rather
+ * than being squeezed; when one of them reaches its minimum the other gives
+ * the rest. With no room for the explorer at its minimum, it is not drawn.
+ * An area not measured yet (0) gives all zeros.
  */
-export function peekExplorerShownWidth(
-	width: number,
-	columnWidth: number,
+export function peekLayout(opts: {
+	area: number;
+	terminalWidth: number | null;
+	explorerWidth: number | null;
+}): PeekLayout {
+	const { area, terminalWidth, explorerWidth } = opts;
+	if (area <= 0) return { left: 0, terminal: 0, explorer: 0 };
+	const room = Math.max(0, area - PEEK_DIVIDER);
+	const base = terminalWidth ?? room / 2;
+	if (explorerWidth === null) return split(room, base);
+	const space = room - PEEK_EXPLORER_HANDLE;
+	const most = space - PEEK_LEFT_MIN - PEEK_TERMINAL_MIN;
+	if (most < PEEK_EXPLORER_MIN) return split(room, base);
+	const explorer = Math.min(clampPeekExplorerWidth(explorerWidth), most);
+	const rest = space - explorer;
+	const terminal = Math.round(
+		Math.min(
+			rest - PEEK_LEFT_MIN,
+			Math.max(PEEK_TERMINAL_MIN, base - explorer / 2),
+		),
+	);
+	return { left: rest - terminal, terminal, explorer };
+}
+
+/**
+ * The terminal width to remember when the divider is dragged so the left
+ * side is `left` px wide: the inverse of `peekLayout`, with the explorer
+ * (`explorer`, 0 while not drawn) staying as it is. Kept so both sides
+ * keep their minimums, and stored as the width without the explorer, so
+ * hiding the explorer later gives the terminal its half back.
+ */
+export function peekTerminalWidthFor(
+	left: number,
+	area: number,
+	explorer: number,
 ): number {
-	const wanted = clampPeekExplorerWidth(width);
-	if (columnWidth <= 0) return wanted;
-	const room = columnWidth - PEEK_TERMINAL_MIN;
-	if (room < PEEK_EXPLORER_MIN) return 0;
-	return Math.min(wanted, room);
+	const room =
+		area - PEEK_DIVIDER - (explorer > 0 ? PEEK_EXPLORER_HANDLE + explorer : 0);
+	const most = Math.max(PEEK_TERMINAL_MIN, room - PEEK_LEFT_MIN);
+	const terminal = Math.min(most, Math.max(PEEK_TERMINAL_MIN, room - left));
+	return clampPeekTerminalWidth(terminal + explorer / 2);
 }
 
 /**
  * The width a drag of the Peek explorer's edge asks for: in range, and no
- * wider than the column can show beside the terminal, so a drag past the
- * edge never stores a width the user did not see. A column not measured
- * yet (0) only keeps it in range.
+ * wider than the area can show beside the left side and the terminal at
+ * their minimums, so a drag past the edge never stores a width the user did
+ * not see. An area not measured yet (0) only keeps it in range.
  */
-export function peekExplorerDragWidth(
-	width: number,
-	columnWidth: number,
-): number {
+export function peekExplorerDragWidth(width: number, area: number): number {
 	const inRange = clampPeekExplorerWidth(width);
-	if (columnWidth <= 0) return inRange;
-	return Math.max(
-		PEEK_EXPLORER_MIN,
-		Math.min(inRange, columnWidth - PEEK_TERMINAL_MIN),
-	);
+	if (area <= 0) return inRange;
+	const most =
+		area -
+		PEEK_DIVIDER -
+		PEEK_EXPLORER_HANDLE -
+		PEEK_LEFT_MIN -
+		PEEK_TERMINAL_MIN;
+	return Math.max(PEEK_EXPLORER_MIN, Math.min(inRange, most));
 }
