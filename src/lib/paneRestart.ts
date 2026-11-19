@@ -227,7 +227,7 @@ function restartUnmountedPane(
 	const tab = workspace?.tabs.find((t) => t.id === pane.tabId);
 	const layout = tab ? parseTabLayout(tab.layoutJson) : null;
 	if (tab && layout) {
-		store.updateLayoutLocal(tab.id, clearPtyId(layout, pane.paneId));
+		void store.updateLayout(tab.id, clearPtyId(layout, pane.paneId));
 	}
 
 	if (agentCommand) setPendingAgent(pane.paneId, { command: agentCommand });

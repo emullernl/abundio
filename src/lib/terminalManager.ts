@@ -2120,7 +2120,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				if (!layout) continue;
 				if (containsPane(layout, paneId)) {
 					const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
-					store.updateLayoutLocal(tab.id, updated);
+					// Saved, so Rust knows which PTY the pane runs (Agent
+					// control reads it there, ADR-0063).
+					void store.updateLayout(tab.id, updated);
 					break;
 				}
 			}
