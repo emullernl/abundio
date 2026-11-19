@@ -22,6 +22,7 @@ mod layout_ops;
 pub mod layout_store;
 pub mod pane_facts;
 pub mod control_local;
+pub mod control_protocol;
 pub mod status_store;
 pub mod events;
 pub mod file_explorer;
