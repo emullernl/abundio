@@ -17,6 +17,7 @@ pub mod error;
 pub mod change_hub;
 pub mod event_sink;
 pub mod screen;
+pub mod status_machine;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
