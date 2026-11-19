@@ -59,66 +59,87 @@ Today every PTY is a child of the desktop app, so closing the laptop stops every
 7. **Connect** and list the Host's Profiles; offer "Create Profile" and "Join into <current Profile>".
 8. **Update**: same path for a new version; ask first if Agents are live. **Remove Host**: stop the service, delete `~/.abundio-server`.
 
-## Steps (ordered commits on one branch)
+## Phases (ordered commits on one branch, `feat/remote-hosts`)
 
-Back up `abundio.db` (+ `-wal`, `-shm`) before running any step with a migration.
+Everything lands on this one branch, as ordered commits; rebase on `main` often, since it will live for months. The app stays working after every phase. The remote feature is visible in dev builds only (`import.meta.env.DEV` / a Rust `cfg(debug_assertions)` gate) until phase 11 removes the gate.
 
-### 1. Status machine, layouts and Agent control into Rust (local only)
+Back up `abundio.db` (+ `-wal`, `-shm`) before running any phase with a migration.
 
-ADR-0063. Ships on its own, for local Profiles; behaviour unchanged for the user.
+### Part A: the logic moves into Rust (local only, no visible change)
 
-- Port `statusReducer.ts` and the hook/title/activity inputs to a Rust status machine; emit status changes; frontend status code becomes a reader. Keep the shared table tests by running the same fixtures in both languages during the move, then delete the TS reducer.
-- Move Attention flags, Progress lines and the Attention count into Rust.
-- Move pane-tree editing (`paneTree.ts` operations used by stores and Agent control) into Rust; layouts are edited by command and broadcast; the Window applies broadcasts.
-- Add an `alacritty_terminal` emulator per PTY (fed from the PTY reader thread, scrollback from the terminal setting) for `pane read` / `pane watch` / prompt detection. Port `readBuffer.ts`'s rules (wrapped lines, autosuggestion trim) and check them against xterm.js with shared fixtures of recorded PTY output.
-- Move PTY output to a per-Window Tauri Channel with raw bytes; drop the base64 `pty-output-*` events (update the CLAUDE.md convention).
-- Move `lib/agentControl/*` into Rust; `agent-control-request` round-trip to the Window goes away except for UI-only effects (focus, File window open), which become events to the Window that should act.
-- Tests: the existing TS tests' cases re-expressed in Rust; settle/wait, cycles, spawn, close refusals.
-
-### 2. Split the crate: core library, desktop app, server
-
-- New workspace crates: `abundio-core` (PTY manager, stores, git, search, explorer, status, control, layout), `abundio-desktop` (Tauri), `abundio-server` (headless binary).
-- Replace `AppHandle`/`emit` in core with an `EventSink` trait; replace window-label keys (`owner_map`, git scheduler, file watcher, search progress, profile ownership) with a `ClientId` (a Window locally, a connection remotely).
-- Hook server, relay scripts, shell integration, `abundio` CLI and the skill are written under the Host's data folder by core.
-- `env_crypto`: key-file fallback when the keyring is unavailable.
-
-### 3. Server protocol
-
-- One framed, versioned message protocol over a byte stream: request/response (command name + JSON args), subscriptions, server-pushed events (PTY output batches, status, layout broadcasts, signals).
-- Server side: socket listener, `connect` stdio bridge, per-Client subscriptions, last-actor PTY sizing, emulator snapshot on attach, bounded per-Client buffers with skip-ahead snapshots.
-- Version handshake: exact match or refuse.
-
-### 4. Frontend transport switch
+#### 1. Groundwork
 
 - Move the ~22 files that import Tauri directly (`invoke`, `event`, `plugin-*`, `api/path`) behind `lib/ipc.ts`.
 - Label every command **host** (goes to the Workspace's Host) or **desktop** (always local: windows, placement, badge, notifications, clipboard, dialogs, updater, File window chrome).
-- `ipc.ts` routes host commands by the Workspace's Host: to local Rust, or to one generic desktop command that forwards over that Host's shared SSH connection. The webview never spawns processes or opens sockets.
-- Stores keyed by Workspace or pane id carry the Host where ids could clash.
+- Rust: an `EventSink` trait in place of `AppHandle`/`emit` in core modules; a `ClientId` in place of window-label keys (`owner_map`, git scheduler, file watcher, search progress, profile ownership).
+- PTY output over a per-Window Tauri Channel as raw bytes; drop the base64 `pty-output-*` events and update the CLAUDE.md convention.
 
-### 5. Hosts in the desktop app
+#### 2. Rust emulator, shadow mode
 
-- Settings ▸ Hosts: Add / Update / Remove, the checklist, server status.
-- Desktop Rust: one `ssh` process per Host, the askpass helper and its dialog, binary cache, download + signature check, upload, service install per platform.
-- Reconnect loop with backoff and `ServerAliveInterval` to notice a dead link; "Sign in needed" when `BatchMode=yes` fails, then a connect with askpass.
+- `alacritty_terminal` per PTY, fed by the PTY reader thread; scrollback from the terminal setting. It never draws.
+- Port `readBuffer.ts`'s rules (wrapped lines, autosuggestion trim) and `watchLines`.
+- **Shadow mode (dev builds):** every `pane read` / `pane watch` computes both and logs any difference. Shared fixtures of recorded PTY output (Claude Code, Codex, a shell with autosuggestions, an alt-screen TUI) in both test suites.
+- Switch Agent control's reads to Rust once the logs are quiet; delete the xterm.js read path.
 
-### 6. Joined profiles and remote UI
+#### 3. Status machine into Rust, shadow mode
 
-- Local Profile's list of Joined profiles (desktop DB).
-- Workspace list and Agents list sections, Host chip, `@ host` on clashes, greyed offline rows with "last seen".
-- Fleet Console, Navigator, cycles, quick-open and badge include joined Workspaces.
+- Port `statusReducer.ts`, the hook inputs, title rules (`agentTitleMap.ts`) and PTY activity. Attention flags, Progress lines and the Attention count move with it.
+- **Shadow mode (dev builds):** both machines run on every input; disagreements are logged with the input sequence. Verify in the real app for each Agent, auto-launch and manual paths (not just tests).
+- Switch the frontend to read Rust's status events; delete the TS reducer.
+
+#### 4. Layouts owned by Rust
+
+- Pane-tree edits (`paneTree.ts` operations used by stores and Agent control) become Rust commands; Rust saves and broadcasts; Windows apply broadcasts.
+- Split shared state (layouts, Tabs, Opened workspaces, handles, notes) from per-Window view state (Active workspace, Focused pane, panels).
+
+#### 5. Agent control into Rust
+
+- Needs 2–4. Move `lib/agentControl/*` into Rust; the `agent-control-request` round-trip goes away except for UI-only effects (focus, File window open), which become events to the Window that should act.
+- Port the TS tests' cases to Rust: settle/wait, cycles, spawn, close refusals, notes ops.
+
+**Checkpoint:** the local app behaves exactly as before, with status, layout and Agent control in Rust. Full manual pass over Agents, Orchestrator, Fleet Console before Part B.
+
+### Part B: the remote path (dev builds only)
+
+#### 6. Crate split and headless server
+
+- Workspace crates: `abundio-core`, `abundio-desktop` (Tauri), `abundio-server`.
+- Hook server, relay scripts, shell integration, `abundio` CLI and the skill written under the Host's data folder by core.
+- `env_crypto`: key-file fallback when no keyring is usable.
+- Run the server on this Mac and reach it with `ssh localhost`, so the whole remote path is tested before any real server.
+
+#### 7. Protocol, connection, routing: a Remote profile as Active profile
+
+- Framed, versioned protocol over a byte stream: requests, subscriptions, pushed events (PTY bytes, status, layout broadcasts, signals). Exact-version handshake.
+- Server: socket (`0600`), `connect` stdio bridge, emulator snapshot on attach.
+- Desktop: one `ssh <host> abundio-server connect` per Host, askpass helper + dialog, `BatchMode` at start, reconnect with backoff, `ServerAliveInterval`.
+- `ipc.ts` routes host commands by Host; stores keyed by Workspace/pane tell Hosts apart.
+- A Window can make a Remote profile its Active profile, one Client. Freeze + reconnect banner; dropped-input rule.
+
+#### 8. Host setup
+
+- Settings ▸ Hosts: Add / Update / Remove, the checklist, server status (see "Host setup").
+- Binary download + signature check + cache, upload, `systemd --user` (+ linger), LaunchAgent, detached fallback; update prompt with live Agents.
+- CI builds and signs `abundio-server` for linux-x86_64-musl, linux-aarch64-musl, macOS universal. Needs the updater signing key set up first.
+
+#### 9. Several Clients
+
+- Shared state broadcast to every Client; per-Client view state stays in the Window.
+- Last-actor PTY sizing; bounded per-Client buffers with skip-ahead snapshots.
+- Two-Client tests: a layout edit on one appears on the other; resize follows the last actor; a slow Client skips ahead.
+
+#### 10. Joined profiles
+
+- A local Profile's list of Joined profiles (desktop DB); "+ Join remote profile…", Add Host's last step, "Leave".
+- Workspace list and Agents list sections, Host chip, `@ host` on clashes, greyed offline rows with "last seen", background reconnect with "Sign in needed".
+- Fleet Console, Navigator, cycles, quick-open and the badge include joined Workspaces.
 - Host Orchestrator from the section menu; New Workspace Location picker with remote folder browsing.
-- Freeze + reconnect banner; dropped-input rule; update prompt.
 - Remote-SSH IDE links; hide Reveal in Finder and default-app open.
 
-### 7. Several Clients
+#### 11. macOS Host polish, then open it up
 
-- Shared vs per-Client state split as in the table; per-Client view state stays in the Window.
-- Two-Client tests: layout edit on one appears on the other; resize follows the last actor.
-
-### 8. Release
-
-- CI builds and signs `abundio-server` for linux-x86_64-musl, linux-aarch64-musl, macOS universal; attaches to the release with checksums.
-- Needs the updater signing key set up first.
+- TCC / Full Disk Access check in the checklist; LaunchDaemon option.
+- Remove the dev-build gate; the feature ships.
 
 ### Later: Windows Hosts
 
@@ -126,6 +147,7 @@ PowerShell probe and install steps, Scheduled Task, named pipe, DPAPI, path rule
 
 ## Open risks
 
-- Step 1 is large and touches the most-tested logic in the app; land it in several commits, each green.
+- Part A is large and touches the most-tested logic in the app; land each phase in several commits, each green, with shadow mode before every switch.
+- One branch for months: rebase on `main` often, or conflicts in `ipc.ts`, stores and `commands.rs` pile up.
 - The Rust VT emulator and xterm.js must agree on screen text closely enough for `pane watch` and prompt detection.
 - Keystroke latency over SSH is the network's; nothing hides it.
