@@ -914,15 +914,27 @@ export function applyRustUpdate(u: StatusUpdate, fromScan: boolean): void {
 	deferredScanCause.delete(u.ptyId);
 	const hostCause = unheardHost ? (u.hostCause ?? undefined) : undefined;
 	const cause = deferred ?? hostCause ?? u.change?.cause ?? null;
-	if (!fromScan && !deferred && !hostCause && cause?.kind !== "tick") {
-		const fields = (Object.keys(u.view) as (keyof StatusView)[])
-			.filter((k) => JSON.stringify(local?.[k]) !== JSON.stringify(u.view?.[k]))
-			.map(
-				(k) =>
-					`${k}: ${JSON.stringify(local?.[k])} → ${JSON.stringify(u.view?.[k])}`,
-			);
+	const fields = (Object.keys(u.view) as (keyof StatusView)[]).filter(
+		(k) => JSON.stringify(local?.[k]) !== JSON.stringify(u.view?.[k]),
+	);
+	// The last activity time is stamped by both sides as each sees output, a
+	// hook or a title, so a few milliseconds apart is no wrong prediction (it
+	// leaves the Window when output activity moves to Rust, phase 6d-5).
+	const onlyActivityTime =
+		fields.length === 1 && fields[0] === "lastActivityAt";
+	if (
+		!fromScan &&
+		!deferred &&
+		!hostCause &&
+		!onlyActivityTime &&
+		cause?.kind !== "tick"
+	) {
+		const shown = fields.map(
+			(k) =>
+				`${k}: ${JSON.stringify(local?.[k])} → ${JSON.stringify(u.view?.[k])}`,
+		);
 		console.warn(
-			`[status] Rust corrected the Window's status (${fields.join(", ")}; cause ${cause?.kind ?? "none"})`,
+			`[status] Rust corrected the Window's status (${shown.join(", ")}; cause ${cause?.kind ?? "none"})`,
 			{ ptyId: u.ptyId, window: local, rust: u.view },
 		);
 	}

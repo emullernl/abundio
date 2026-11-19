@@ -177,6 +177,17 @@ describe("applying Rust's status updates", () => {
 		warn.mockRestore();
 	});
 
+	it("takes a different activity time alone without calling it a correction", () => {
+		workingAgent(1);
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		applyRustUpdate(update("p", { ...view, lastActivityAt: 12345 }), false);
+		expect(warn).not.toHaveBeenCalled();
+		expect(__statusViewForTests("p")?.lastActivityAt).toBe(12345);
+		warn.mockRestore();
+	});
+
 	it("never applies an older update over a newer one", () => {
 		workingAgent(1);
 		const view = __statusViewForTests("p");
